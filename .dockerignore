@@ -1,0 +1,10 @@
+# Keep the Docker build context lean. The Dockerfile doesn't COPY anything
+# from the repo today, so this is mostly defensive — but it also means
+# `docker build` doesn't ship gigabytes-of-history (.git) to the daemon as
+# the repo grows.
+.git
+.gitignore
+.dockerignore
+.claude
+docs
+*.md
