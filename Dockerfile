@@ -21,15 +21,15 @@ FROM node:22-slim
 # runs as root and rejects non-root connections, so socat sits between
 # node and the agent socket.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git ca-certificates openssh-client socat \
-    && rm -rf /var/lib/apt/lists/*
+  && apt-get install -y --no-install-recommends git ca-certificates openssh-client socat \
+  && rm -rf /var/lib/apt/lists/*
 
 # Install claude-code globally. Pinned to the version verified in the v1
 # build (`claude --version` returns 2.1.126). Bump deliberately when
 # rolling forward; an unpinned install would mean rebuilds silently pick
 # up new behavior.
 RUN npm install -g --no-fund --no-audit @anthropic-ai/claude-code@2.1.126 \
-    && npm cache clean --force
+  && npm cache clean --force
 
 # Run as a non-root user. The node image already provides a `node` user
 # (uid 1000) with a home directory, which is where claude-code will write

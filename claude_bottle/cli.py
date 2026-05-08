@@ -24,7 +24,6 @@ from . import ssh as ssh_mod
 from .env_resolve import env_resolve
 from .log import Die, die, info, warn
 from .manifest import (
-    Manifest,
     manifest_agent_bottle,
     manifest_env_names,
     manifest_prompt,
