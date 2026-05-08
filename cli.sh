@@ -285,7 +285,7 @@ cmd_start() {
     exit 2
   fi
 
-  local SLUG
+  # Not declared local: needed by cleanup_all after cmd_start returns (see MANIFEST_FILE note below).
   SLUG="$(slugify "$NAME")"
 
   local IMAGE="${CLAUDE_BOTTLE_IMAGE:-claude-bottle:latest}"
