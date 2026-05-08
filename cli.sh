@@ -96,8 +96,8 @@ cmd_info() {
   prompt_len="${#prompt_content}"
   prompt_first_line="$(printf '%s' "$prompt_content" | awk 'NR==1{print; exit}')"
 
-  local box_name
-  box_name="$(manifest_agent_box "$MANIFEST_FILE" "$NAME")"
+  local bottle_name
+  bottle_name="$(manifest_agent_bottle "$MANIFEST_FILE" "$NAME")"
 
   local ssh_entries=() _se
   while IFS= read -r _se; do
@@ -110,8 +110,8 @@ cmd_info() {
   info "env (names only): ${env_names:-(none)}"
   info "skills          : ${skill_names[*]:-(none)}"
   info "prompt          : ${prompt_len} chars; first line: ${prompt_first_line:-(empty)}"
-  if [ -n "$box_name" ]; then
-    info "box             : ${box_name}"
+  if [ -n "$bottle_name" ]; then
+    info "bottle             : ${bottle_name}"
     if [ "${#ssh_entries[@]}" -gt 0 ]; then
       local _n _h _u _p _k _khk
       for _se in "${ssh_entries[@]}"; do
@@ -128,7 +128,7 @@ cmd_info() {
       info "  ssh hosts     : (none)"
     fi
   else
-    info "box             : (none)"
+    info "bottle             : (none)"
   fi
   printf '\n'
 }
@@ -378,16 +378,16 @@ cmd_start() {
     skills_validate_all "${SKILL_NAMES[@]}"
   fi
 
-  # Resolve the box referenced by this agent and validate it exists.
-  # A box is required — agents without one are rejected before launch.
-  local BOX_NAME
-  BOX_NAME="$(manifest_agent_box "$MANIFEST_FILE" "$NAME")"
-  if [ -z "$BOX_NAME" ]; then
-    die "agent '${NAME}' has no 'box' field. Add a box association to this agent in claude-bottle.json."
+  # Resolve the bottle referenced by this agent and validate it exists.
+  # A bottle is required — agents without one are rejected before launch.
+  local BOTTLE_NAME
+  BOTTLE_NAME="$(manifest_agent_bottle "$MANIFEST_FILE" "$NAME")"
+  if [ -z "$BOTTLE_NAME" ]; then
+    die "agent '${NAME}' has no 'bottle' field. Add a bottle association to this agent in claude-bottle.json."
   fi
-  manifest_require_box "$MANIFEST_FILE" "$BOX_NAME"
+  manifest_require_bottle "$MANIFEST_FILE" "$BOTTLE_NAME"
 
-  # SSH entries come from the agent's box (empty if no box set).
+  # SSH entries come from the agent's bottle (empty if no bottle set).
   local SSH_ENTRIES=()
   local _se
   while IFS= read -r _se; do
@@ -457,8 +457,8 @@ cmd_start() {
   else
     info "skills          : (none)"
   fi
-  if [ -n "$BOX_NAME" ]; then
-    info "box             : ${BOX_NAME}"
+  if [ -n "$BOTTLE_NAME" ]; then
+    info "bottle             : ${BOTTLE_NAME}"
     if [ "${#SSH_ENTRIES[@]}" -gt 0 ]; then
       local _ssh_names="" _se
       for _se in "${SSH_ENTRIES[@]}"; do
@@ -471,7 +471,7 @@ cmd_start() {
       info "  ssh hosts     : (none)"
     fi
   else
-    info "box             : (none)"
+    info "bottle             : (none)"
   fi
   info "prompt          : ${PROMPT_LEN} chars; first line: ${PROMPT_FIRST_LINE:-(empty)}"
   printf '\n' >&2
@@ -708,34 +708,34 @@ cmd_init() {
     fi
   done
 
-  # --- Box association ---
+  # --- Bottle association ---
   printf '\n' >&2
-  printf 'Associate this agent with a box? [y/N] ' >&2
-  local _box_yn=""
-  IFS= read -r _box_yn </dev/tty
-  local BOX_NAME=""
-  local BOX_SSH_JSON='[]'
-  local BOX_ENV_JSON='{}'
-  local _box_exists=0
-  case "$_box_yn" in
+  printf 'Associate this agent with a bottle? [y/N] ' >&2
+  local _bottle_yn=""
+  IFS= read -r _bottle_yn </dev/tty
+  local BOTTLE_NAME=""
+  local BOTTLE_SSH_JSON='[]'
+  local BOTTLE_ENV_JSON='{}'
+  local _bottle_exists=0
+  case "$_bottle_yn" in
     y|Y|yes|YES)
-      while [ -z "$BOX_NAME" ]; do
-        printf '  Box name: ' >&2
-        IFS= read -r BOX_NAME </dev/tty
-        BOX_NAME="$(printf '%s' "$BOX_NAME" | tr ' ' '-')"
-        if [ -z "$BOX_NAME" ]; then
-          warn "box name cannot be empty"
+      while [ -z "$BOTTLE_NAME" ]; do
+        printf '  Bottle name: ' >&2
+        IFS= read -r BOTTLE_NAME </dev/tty
+        BOTTLE_NAME="$(printf '%s' "$BOTTLE_NAME" | tr ' ' '-')"
+        if [ -z "$BOTTLE_NAME" ]; then
+          warn "bottle name cannot be empty"
         fi
       done
 
-      # Check whether the box already exists in the target file.
-      if [ -f "$TARGET_FILE" ] && jq -e --arg b "$BOX_NAME" '.boxes | has($b)' "$TARGET_FILE" >/dev/null 2>&1; then
-        _box_exists=1
-        info "Box '${BOX_NAME}' already exists in ${TARGET_FILE}; agent will reference it."
+      # Check whether the bottle already exists in the target file.
+      if [ -f "$TARGET_FILE" ] && jq -e --arg b "$BOTTLE_NAME" '.bottles | has($b)' "$TARGET_FILE" >/dev/null 2>&1; then
+        _bottle_exists=1
+        info "Bottle '${BOTTLE_NAME}' already exists in ${TARGET_FILE}; agent will reference it."
       else
-        info "Creating new box '${BOX_NAME}'."
+        info "Creating new bottle '${BOTTLE_NAME}'."
 
-        # --- Env vars (stored on the box) ---
+        # --- Env vars (stored on the bottle) ---
         printf '\n' >&2
         info "Env vars — enter each var name then its mode. Press Enter with no name to finish."
         info "  Modes:  secret (prompt at runtime) | interpolated (read from host env) | literal (hardcoded value)"
@@ -779,10 +779,10 @@ cmd_init() {
               ;;
           esac
 
-          BOX_ENV_JSON="$(printf '%s' "$BOX_ENV_JSON" | jq --arg k "$_vname" --arg v "$_vval" '.[$k] = $v')"
+          BOTTLE_ENV_JSON="$(printf '%s' "$BOTTLE_ENV_JSON" | jq --arg k "$_vname" --arg v "$_vval" '.[$k] = $v')"
         done
 
-        printf '  Add SSH host entries to this box? [y/N] ' >&2
+        printf '  Add SSH host entries to this bottle? [y/N] ' >&2
         local _ssh_yn=""
         IFS= read -r _ssh_yn </dev/tty
         case "$_ssh_yn" in
@@ -829,7 +829,7 @@ cmd_init() {
               if [ -n "$_skhk" ]; then
                 _entry="$(printf '%s' "$_entry" | jq --arg khk "$_skhk" '. + {KnownHostKey: $khk}')"
               fi
-              BOX_SSH_JSON="$(printf '%s' "$BOX_SSH_JSON" | jq --argjson e "$_entry" '. + [$e]')"
+              BOTTLE_SSH_JSON="$(printf '%s' "$BOTTLE_SSH_JSON" | jq --argjson e "$_entry" '. + [$e]')"
             done
             ;;
         esac
@@ -844,21 +844,21 @@ cmd_init() {
     --arg     prompt "$PROMPT_CONTENT" \
     '{skills: $skills, prompt: $prompt}')"
 
-  if [ -n "$BOX_NAME" ]; then
-    AGENT_JSON="$(printf '%s' "$AGENT_JSON" | jq --arg b "$BOX_NAME" '. + {box: $b}')"
+  if [ -n "$BOTTLE_NAME" ]; then
+    AGENT_JSON="$(printf '%s' "$AGENT_JSON" | jq --arg b "$BOTTLE_NAME" '. + {bottle: $b}')"
   fi
 
-  # Build the new entry. When creating a brand-new box, include it so the
-  # merge below writes both boxes and agents in one step. env lives on the box.
+  # Build the new entry. When creating a brand-new bottle, include it so the
+  # merge below writes both bottles and agents in one step. env lives on the bottle.
   local NEW_ENTRY
-  if [ -n "$BOX_NAME" ] && [ "$_box_exists" = "0" ]; then
+  if [ -n "$BOTTLE_NAME" ] && [ "$_bottle_exists" = "0" ]; then
     NEW_ENTRY="$(jq -n \
-      --arg    box_name  "$BOX_NAME" \
-      --argjson box_env   "$BOX_ENV_JSON" \
-      --argjson box_ssh   "$BOX_SSH_JSON" \
+      --arg    bottle_name  "$BOTTLE_NAME" \
+      --argjson bottle_env   "$BOTTLE_ENV_JSON" \
+      --argjson bottle_ssh   "$BOTTLE_SSH_JSON" \
       --arg    agent_name "$AGENT_NAME" \
       --argjson agent      "$AGENT_JSON" \
-      '{"boxes": {($box_name): {env: $box_env, ssh: $box_ssh}}, "agents": {($agent_name): $agent}}')"
+      '{"bottles": {($bottle_name): {env: $bottle_env, ssh: $bottle_ssh}}, "agents": {($agent_name): $agent}}')"
   else
     NEW_ENTRY="$(jq -n \
       --arg    name  "$AGENT_NAME" \
@@ -878,7 +878,7 @@ cmd_init() {
       die "${TARGET_FILE} exists but is not valid JSON; fix or remove it first"
     fi
     if ! printf '%s' "$NEW_ENTRY" | jq -s '{
-      "boxes":  ((.[0].boxes  // {}) * (.[1].boxes  // {})),
+      "bottles":  ((.[0].bottles  // {}) * (.[1].bottles  // {})),
       "agents": ((.[0].agents // {}) * (.[1].agents // {}))
     }' "$TARGET_FILE" - > "$TMP_FILE"; then
       rm -f "$TMP_FILE"

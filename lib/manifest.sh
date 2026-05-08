@@ -5,8 +5,8 @@
 # The manifest schema is documented in CLAUDE.md "Intended design". In
 # short:
 #   {
-#     "boxes": {
-#       "<box-name>": {
+#     "bottles": {
+#       "<bottle-name>": {
 #         "env":     { "<NAME>": <env-entry>, ... },
 #         "ssh":     [ <ssh-entry>, ... ]
 #       },
@@ -16,14 +16,14 @@
 #       "<agent-name>": {
 #         "skills":  [ "<skill-name>", ... ],
 #         "prompt":  "<string>",
-#         "box":     "<box-name>"
+#         "bottle":     "<bottle-name>"
 #       },
 #       ...
 #     }
 #   }
 #
-# A box groups shared infrastructure (SSH keys, known hosts) that multiple
-# agents can reference by name. The "box" field is required on every agent;
+# A bottle groups shared infrastructure (SSH keys, known hosts) that multiple
+# agents can reference by name. The "bottle" field is required on every agent;
 # cli.sh start rejects agents that omit it.
 #
 # An <env-entry> is a JSON string. Mode is selected by sentinel prefix:
@@ -96,9 +96,9 @@ manifest_resolve() {
   elif [ "$has_cwd" = "0" ] && [ "$has_home" = "1" ]; then
     cat "$home_file"
   else
-    # Merge: home is the base, cwd overrides on name conflict for both boxes and agents.
+    # Merge: home is the base, cwd overrides on name conflict for both bottles and agents.
     jq -s '{
-      "boxes":  ((.[0].boxes  // {}) * (.[1].boxes  // {})),
+      "bottles":  ((.[0].bottles  // {}) * (.[1].bottles  // {})),
       "agents": ((.[0].agents // {}) * (.[1].agents // {}))
     }' "$home_file" "$cwd_file"
   fi
@@ -130,40 +130,40 @@ manifest_require_agent() {
 }
 
 # manifest_env_names <manifest_file> <name> — prints one env-var name per line
-# on stdout (the keys of boxes[agent.box].env, in declaration order). No values.
-# Prints nothing if the agent has no box or the box has no env.
+# on stdout (the keys of bottles[agent.bottle].env, in declaration order). No values.
+# Prints nothing if the agent has no bottle or the bottle has no env.
 manifest_env_names() {
   local manifest_file="${1:?manifest_env_names: missing manifest file}"
   local name="${2:?manifest_env_names: missing agent name}"
   jq -r --arg n "$name" '
-    .agents[$n].box as $box |
-    if ($box == null or $box == "") then empty
-    else (.boxes[$box].env // {} | keys_unsorted[])
+    .agents[$n].bottle as $bottle |
+    if ($bottle == null or $bottle == "") then empty
+    else (.bottles[$bottle].env // {} | keys_unsorted[])
     end
   ' "$manifest_file"
 }
 
 # manifest_env_entry <manifest_file> <agent> <env_name> — prints the raw
 # string value of a single env entry on stdout (no quoting, no JSON
-# encoding). Env entries live on the agent's box (boxes[agent.box].env).
+# encoding). Env entries live on the agent's bottle (bottles[agent.bottle].env).
 # Used by env_resolve.sh, which classifies the result by sentinel. Dies
-# if the agent has no box, or the entry is not a JSON string; the
+# if the agent has no bottle, or the entry is not a JSON string; the
 # prompt-at-runtime form is "?<message>", not JSON null.
 manifest_env_entry() {
   local manifest_file="${1:?manifest_env_entry: missing manifest file}"
   local agent="${2:?manifest_env_entry: missing agent name}"
   local var="${3:?manifest_env_entry: missing env var name}"
-  local box
-  box="$(jq -r --arg a "$agent" '.agents[$a].box // ""' "$manifest_file")"
-  if [ -z "$box" ]; then
-    die "env entry ${var} for agent ${agent}: agent has no 'box' field"
+  local bottle
+  bottle="$(jq -r --arg a "$agent" '.agents[$a].bottle // ""' "$manifest_file")"
+  if [ -z "$bottle" ]; then
+    die "env entry ${var} for agent ${agent}: agent has no 'bottle' field"
   fi
   local entry_type
-  entry_type="$(jq -r --arg b "$box" --arg v "$var" '.boxes[$b].env[$v] | type' "$manifest_file")"
+  entry_type="$(jq -r --arg b "$bottle" --arg v "$var" '.bottles[$b].env[$v] | type' "$manifest_file")"
   if [ "$entry_type" != "string" ]; then
     die "env entry ${var} for agent ${agent} must be a JSON string (was ${entry_type}). Use \"?<message>\" for prompt-at-runtime."
   fi
-  jq -r --arg b "$box" --arg v "$var" '.boxes[$b].env[$v]' "$manifest_file"
+  jq -r --arg b "$bottle" --arg v "$var" '.bottles[$b].env[$v]' "$manifest_file"
 }
 
 # manifest_skills <manifest_file> <name> — prints one skill name per line on
@@ -183,61 +183,61 @@ manifest_prompt() {
   jq -r --arg n "$name" '.agents[$n].prompt // ""' "$manifest_file"
 }
 
-# manifest_agent_box <manifest_file> <name> — prints the box name referenced
-# by the agent on stdout, or an empty string if the agent has no "box" field.
-manifest_agent_box() {
-  local manifest_file="${1:?manifest_agent_box: missing manifest file}"
-  local name="${2:?manifest_agent_box: missing agent name}"
-  jq -r --arg n "$name" '.agents[$n].box // ""' "$manifest_file"
+# manifest_agent_bottle <manifest_file> <name> — prints the bottle name referenced
+# by the agent on stdout, or an empty string if the agent has no "bottle" field.
+manifest_agent_bottle() {
+  local manifest_file="${1:?manifest_agent_bottle: missing manifest file}"
+  local name="${2:?manifest_agent_bottle: missing agent name}"
+  jq -r --arg n "$name" '.agents[$n].bottle // ""' "$manifest_file"
 }
 
-# manifest_has_box <manifest_file> <box_name> — returns 0 if the named box
+# manifest_has_bottle <manifest_file> <bottle_name> — returns 0 if the named bottle
 # exists in the manifest, else 1.
-manifest_has_box() {
-  local manifest_file="${1:?manifest_has_box: missing manifest file}"
-  local box_name="${2:?manifest_has_box: missing box name}"
-  jq -e --arg b "$box_name" '.boxes | has($b)' "$manifest_file" >/dev/null 2>&1
+manifest_has_bottle() {
+  local manifest_file="${1:?manifest_has_bottle: missing manifest file}"
+  local bottle_name="${2:?manifest_has_bottle: missing bottle name}"
+  jq -e --arg b "$bottle_name" '.bottles | has($b)' "$manifest_file" >/dev/null 2>&1
 }
 
-# manifest_require_box <manifest_file> <box_name> — like manifest_has_box but
-# dies with a useful message (and prints available box names) if the box is
+# manifest_require_bottle <manifest_file> <bottle_name> — like manifest_has_bottle but
+# dies with a useful message (and prints available bottle names) if the bottle is
 # not defined.
-manifest_require_box() {
-  local manifest_file="${1:?manifest_require_box: missing manifest file}"
-  local box_name="${2:?manifest_require_box: missing box name}"
-  if ! manifest_has_box "$manifest_file" "$box_name"; then
+manifest_require_bottle() {
+  local manifest_file="${1:?manifest_require_bottle: missing manifest file}"
+  local bottle_name="${2:?manifest_require_bottle: missing bottle name}"
+  if ! manifest_has_bottle "$manifest_file" "$bottle_name"; then
     local available
-    available="$(jq -r '.boxes // {} | keys_unsorted | join(", ")' "$manifest_file" 2>/dev/null || echo "")"
+    available="$(jq -r '.bottles // {} | keys_unsorted | join(", ")' "$manifest_file" 2>/dev/null || echo "")"
     if [ -n "$available" ]; then
-      die "box '${box_name}' not defined in claude-bottle.json. Available boxes: ${available}"
+      die "bottle '${bottle_name}' not defined in claude-bottle.json. Available bottles: ${available}"
     else
-      die "box '${box_name}' not defined in claude-bottle.json (no boxes defined)."
+      die "bottle '${bottle_name}' not defined in claude-bottle.json (no bottles defined)."
     fi
   fi
 }
 
-# manifest_box_ssh <manifest_file> <box_name> — prints one compact JSON object
-# per line for each ssh entry in boxes[box_name].ssh. Prints nothing if the
-# box has no ssh array or it is empty.
-manifest_box_ssh() {
-  local manifest_file="${1:?manifest_box_ssh: missing manifest file}"
-  local box_name="${2:?manifest_box_ssh: missing box name}"
-  jq -c --arg b "$box_name" '.boxes[$b].ssh // [] | .[]' "$manifest_file"
+# manifest_bottle_ssh <manifest_file> <bottle_name> — prints one compact JSON object
+# per line for each ssh entry in bottles[bottle_name].ssh. Prints nothing if the
+# bottle has no ssh array or it is empty.
+manifest_bottle_ssh() {
+  local manifest_file="${1:?manifest_bottle_ssh: missing manifest file}"
+  local bottle_name="${2:?manifest_bottle_ssh: missing bottle name}"
+  jq -c --arg b "$bottle_name" '.bottles[$b].ssh // [] | .[]' "$manifest_file"
 }
 
 # manifest_ssh <manifest_file> <name> — prints one compact JSON object per line
 # for each ssh entry associated with the agent. SSH entries are resolved via
-# the agent's "box" field: if set, entries come from boxes[box].ssh; if the
-# agent has no "box" field, prints nothing.
+# the agent's "bottle" field: if set, entries come from bottles[bottle].ssh; if the
+# agent has no "bottle" field, prints nothing.
 # Each object has: Host, IdentityFile, Hostname, User, Port (required);
 # KnownHostKey (optional).
 manifest_ssh() {
   local manifest_file="${1:?manifest_ssh: missing manifest file}"
   local name="${2:?manifest_ssh: missing agent name}"
-  local box
-  box="$(jq -r --arg n "$name" '.agents[$n].box // ""' "$manifest_file")"
-  if [ -z "$box" ]; then
+  local bottle
+  bottle="$(jq -r --arg n "$name" '.agents[$n].bottle // ""' "$manifest_file")"
+  if [ -z "$bottle" ]; then
     return 0
   fi
-  jq -c --arg b "$box" '.boxes[$b].ssh // [] | .[]' "$manifest_file"
+  jq -c --arg b "$bottle" '.bottles[$b].ssh // [] | .[]' "$manifest_file"
 }
