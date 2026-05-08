@@ -51,6 +51,11 @@ Code skills used while working in this repo) — don't conflate them.
 - Research notes live in `docs/research/`.
 - Low dependencies by default. The project is bash-first; ask before adding new
   tools, runtimes, or package managers.
+- Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/):
+  `<type>[(scope)][!]: <description>`, where `<type>` is one of `feat`, `fix`,
+  `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`.
+  A `commit-msg` hook in `.githooks/` enforces this. Activate it once per clone
+  with `git config core.hooksPath .githooks`.
 
 ## Intended design
 

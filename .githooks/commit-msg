@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Enforce Conventional Commits on the first line of the commit message.
+# https://www.conventionalcommits.org/en/v1.0.0/
+#
+# Activate per clone with:
+#   git config core.hooksPath .githooks
+
+set -euo pipefail
+
+msg_file="${1:?commit-msg: missing message file path}"
+first_line="$(awk 'NR==1{print; exit}' "$msg_file")"
+
+case "$first_line" in
+  "Merge "*|"Revert "*|"fixup! "*|"squash! "*|"amend! "*) exit 0 ;;
+esac
+
+pattern='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9._-]+\))?!?: .+'
+
+if ! printf '%s' "$first_line" | grep -qE "$pattern"; then
+  printf 'commit-msg: aborting — message does not follow Conventional Commits.\n' >&2
+  printf '  expected: <type>[(<scope>)][!]: <description>\n' >&2
+  printf '  types:    feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert\n' >&2
+  printf '  got:      %s\n' "$first_line" >&2
+  exit 1
+fi
