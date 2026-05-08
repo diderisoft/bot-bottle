@@ -252,20 +252,23 @@ cmd_cleanup() {
 # ---------------------------------------------------------------------------
 cmd_start() {
   usage_start() {
-    printf 'usage: %s start [--dry-run] [--cwd] <name>\n' "$(basename "$0")" >&2
+    printf 'usage: %s start [--dry-run] [--cwd] [--remote-control] <name>\n' "$(basename "$0")" >&2
     printf '  <name> must be defined in claude-bottle.json at the repo root.\n' >&2
-    printf '  --cwd         copy the current working directory into a derived image at\n' >&2
-    printf '                /home/node/workspace and start claude there.\n' >&2
+    printf '  --cwd             copy the current working directory into a derived image at\n' >&2
+    printf '                    /home/node/workspace and start claude there.\n' >&2
+    printf '  --remote-control  start claude with --remote-control enabled.\n' >&2
   }
 
   local DRY_RUN="${CLAUDE_BOTTLE_DRY_RUN:-0}"
   local COPY_CWD=0
+  local REMOTE_CONTROL=0
   local NAME=""
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --dry-run) DRY_RUN=1; shift ;;
       --cwd) COPY_CWD=1; shift ;;
+      --remote-control) REMOTE_CONTROL=1; shift ;;
       -h|--help) usage_start; exit 0 ;;
       --) shift; break ;;
       -*) usage_start; die "unknown flag: $1" ;;
@@ -491,6 +494,11 @@ cmd_start() {
     info "bottle             : (none)"
   fi
   info "prompt          : ${PROMPT_LEN} chars; first line: ${PROMPT_FIRST_LINE:-(empty)}"
+  if [ "$REMOTE_CONTROL" = "1" ]; then
+    info "remote-control  : enabled"
+  else
+    info "remote-control  : disabled"
+  fi
   printf '\n' >&2
 
   if [ "$DRY_RUN" = "1" ]; then
@@ -670,12 +678,15 @@ cmd_start() {
   fi
 
   info "attaching interactive claude session (Ctrl-D or 'exit' to leave; container will be removed)"
-  # --remote-control: enable Remote Control (hidden flag; see --remote-control-session-name-prefix
-  #   in `claude --help` — the prefix flag is the only surfaced piece, the toggle itself is hidden,
-  #   same pattern as --append-system-prompt-file).
   # --dangerously-skip-permissions: bypass permission prompts. Safe here because the whole point of
   #   claude-bottle is sandboxing claude inside a container (see CLAUDE.md "What this is").
-  local CLAUDE_ARGS=(--remote-control --dangerously-skip-permissions)
+  # --remote-control (opt-in via `start --remote-control`): enable Remote Control (hidden flag; see
+  #   --remote-control-session-name-prefix in `claude --help` — the prefix flag is the only surfaced
+  #   piece, the toggle itself is hidden, same pattern as --append-system-prompt-file).
+  local CLAUDE_ARGS=(--dangerously-skip-permissions)
+  if [ "$REMOTE_CONTROL" = "1" ]; then
+    CLAUDE_ARGS+=(--remote-control)
+  fi
   # `|| true` so a non-zero exit from the REPL doesn't skip the trap output.
   if [ -n "$PROMPT_CONTENT" ]; then
     docker exec -it "$CONTAINER" claude "${CLAUDE_ARGS[@]}" --append-system-prompt-file "$CONTAINER_PROMPT_PATH" || true
