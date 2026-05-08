@@ -34,6 +34,10 @@ REPO_DIR="$SCRIPT_DIR"
 . "${SCRIPT_DIR}/lib/skills.sh"
 # shellcheck source=lib/ssh.sh
 . "${SCRIPT_DIR}/lib/ssh.sh"
+# shellcheck source=lib/network.sh
+. "${SCRIPT_DIR}/lib/network.sh"
+# shellcheck source=lib/pipelock.sh
+. "${SCRIPT_DIR}/lib/pipelock.sh"
 
 usage() {
   printf 'usage: %s <command> [args...]\n' "$(basename "$0")" >&2
@@ -400,12 +404,15 @@ cmd_start() {
     ssh_validate_entries "${SSH_ENTRIES[@]}"
   fi
 
-  # Stage env-file + args-file under a mktemp dir; clean up on exit.
+  # Stage env-file + args-file + pipelock yaml under a mktemp dir;
+  # clean up on exit.
   # Not declared local: needed by cleanup_stage after cmd_start returns (see MANIFEST_FILE note above).
   STAGE_DIR="$(mktemp -d -t claude-bottle-stage.XXXXXX)"
   local ENV_FILE="${STAGE_DIR}/agent.env"
   local ARGS_FILE="${STAGE_DIR}/docker-args"
   local PROMPT_FILE="${STAGE_DIR}/prompt.txt"
+  local PIPELOCK_YAML_FILENAME="pipelock.yaml"
+  local PIPELOCK_YAML="${STAGE_DIR}/${PIPELOCK_YAML_FILENAME}"
   : > "$ENV_FILE"
   chmod 600 "$ENV_FILE"
   : > "$ARGS_FILE"
@@ -419,6 +426,15 @@ cmd_start() {
     rm -f "${MANIFEST_FILE:-}"
   }
   trap cleanup_stage EXIT
+
+  # Generate the pipelock YAML config from the bottle's egress.allowlist
+  # union'd with the baked-in defaults. The file is mode 600 inside the
+  # mktemp dir; cleanup_stage removes the whole dir on exit.
+  pipelock_write_yaml "$MANIFEST_FILE" "$BOTTLE_NAME" "$PIPELOCK_YAML"
+
+  # Resolved one-line summary for the preflight display.
+  local PIPELOCK_ALLOWLIST_SUMMARY
+  PIPELOCK_ALLOWLIST_SUMMARY="$(pipelock_allowlist_summary "$MANIFEST_FILE" "$BOTTLE_NAME")"
 
   # Resolve env entries: prompts secrets (silent /dev/tty), copies
   # interpolated host vars into this process, writes literal pairs to
@@ -470,6 +486,7 @@ cmd_start() {
     else
       info "  ssh hosts     : (none)"
     fi
+    info "  egress        : ${PIPELOCK_ALLOWLIST_SUMMARY}"
   else
     info "bottle             : (none)"
   fi
@@ -496,23 +513,82 @@ cmd_start() {
     build_image_with_cwd "$DERIVED_IMAGE" "$IMAGE" "$USER_CWD"
   fi
 
-  # Cleanup container on exit too. Compose with stage cleanup.
+  # PRD 0001: per-agent egress topology. Create the two Docker
+  # networks the sidecar needs, then start the pipelock sidecar on
+  # them BEFORE the agent container, so the agent's HTTPS_PROXY target
+  # exists at the moment the agent boots.
+  #
+  # The agent container itself stays on INTERNAL_NETWORK only — only
+  # the sidecar straddles both. The egress network is the sidecar's
+  # path to the upstream internet (must be a user-defined bridge so
+  # Docker's embedded DNS resolves api.anthropic.com et al.; the
+  # legacy `bridge` network has no embedded DNS and is the wrong
+  # answer here — see lib/network.sh).
+  #
+  # Not declared local: needed by cleanup_all after cmd_start returns
+  # (same reason as MANIFEST_FILE / STAGE_DIR / CONTAINER above).
+  INTERNAL_NETWORK=""
+  EGRESS_NETWORK=""
+  PIPELOCK_CONTAINER=""
+
+  # Define cleanup_all and INSTALL THE TRAP before any of the docker
+  # resources below are created. Without this, a failure in
+  # network_create_egress or pipelock_start (e.g. the image can't be
+  # pulled) would leave behind orphan networks that the previous
+  # cleanup_stage trap had no way to remove. cleanup_all is a no-op
+  # for resources whose tracking variable is empty, and the helpers
+  # it calls (pipelock_stop, network_remove) are idempotent against
+  # missing resources, so installing the trap eagerly here is safe.
+  #
+  # Order matters at teardown: sidecar first, then networks — docker
+  # refuses to remove a network with attached containers.
   cleanup_all() {
-    if container_exists "$CONTAINER"; then
+    if [ -n "${CONTAINER:-}" ] && container_exists "$CONTAINER"; then
       docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+    fi
+    if [ -n "${PIPELOCK_CONTAINER:-}" ]; then
+      pipelock_stop "$SLUG"
+    fi
+    if [ -n "${INTERNAL_NETWORK:-}" ]; then
+      network_remove "$INTERNAL_NETWORK"
+    fi
+    if [ -n "${EGRESS_NETWORK:-}" ]; then
+      network_remove "$EGRESS_NETWORK"
     fi
     cleanup_stage
   }
   # Replaces the cleanup_stage EXIT trap above; cleanup_all calls cleanup_stage internally.
   trap cleanup_all EXIT INT TERM
 
+  INTERNAL_NETWORK="$(network_create_internal "$SLUG")"
+  EGRESS_NETWORK="$(network_create_egress "$SLUG")"
+  PIPELOCK_CONTAINER="$(pipelock_start "$SLUG" "$INTERNAL_NETWORK" "$EGRESS_NETWORK" "$STAGE_DIR" "$PIPELOCK_YAML_FILENAME")"
+
   # Assemble docker run argv:
   #   - --rm -d --name CONTAINER
+  #   - --network INTERNAL_NETWORK so the agent's only egress route is
+  #     the pipelock sidecar (the network is created with --internal,
+  #     so there's no default gateway).
   #   - --env-file ENV_FILE  (only if it has any entries)
   #   - one `-e NAME` pair per line in ARGS_FILE  (secret + interpolated)
+  #   - HTTPS_PROXY / HTTP_PROXY pointing at the sidecar by service
+  #     name on the internal network. Belt-and-suspenders alongside
+  #     --internal: any code path that ignores the proxy env will hit
+  #     the no-route-to-host wall instead of leaking; any code path
+  #     that honors it goes through pipelock.
   #   - IMAGE
   #   - sleep infinity (so we can `docker exec` an interactive session)
-  local DOCKER_ARGS=(--rm -d --name "$CONTAINER")
+  local PIPELOCK_PROXY_URL
+  PIPELOCK_PROXY_URL="$(pipelock_proxy_url "$SLUG")"
+  local DOCKER_ARGS=(--rm -d --name "$CONTAINER" --network "$INTERNAL_NETWORK")
+  DOCKER_ARGS+=(-e "HTTPS_PROXY=${PIPELOCK_PROXY_URL}")
+  DOCKER_ARGS+=(-e "HTTP_PROXY=${PIPELOCK_PROXY_URL}")
+  # NO_PROXY: leave loopback off so the agent does not bypass pipelock
+  # for unexpected localhost services. The deployment-recipes guide
+  # warns specifically against widening NO_PROXY for sidecar-on-loopback,
+  # but our sidecar is on a separate network, so the safe minimum here
+  # is just localhost / 127.0.0.1, which is what most clients honor.
+  DOCKER_ARGS+=(-e "NO_PROXY=localhost,127.0.0.1")
   if [ -s "$ENV_FILE" ]; then
     DOCKER_ARGS+=(--env-file "$ENV_FILE")
   fi
@@ -574,7 +650,9 @@ cmd_start() {
 
   # Set up SSH keys and config.
   if [ "${#SSH_ENTRIES[@]}" -gt 0 ]; then
-    ssh_setup "$CONTAINER" "$STAGE_DIR" "${SSH_ENTRIES[@]}"
+    local PIPELOCK_PROXY_HOST_PORT
+    PIPELOCK_PROXY_HOST_PORT="$(pipelock_proxy_host_port "$SLUG")"
+    ssh_setup "$CONTAINER" "$STAGE_DIR" "$PIPELOCK_PROXY_HOST_PORT" "${SSH_ENTRIES[@]}"
   fi
 
   # When --cwd is on, ship the host repo's .git directory in via `docker cp`

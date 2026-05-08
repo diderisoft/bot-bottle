@@ -8,7 +8,8 @@
 #     "bottles": {
 #       "<bottle-name>": {
 #         "env":     { "<NAME>": <env-entry>, ... },
-#         "ssh":     [ <ssh-entry>, ... ]
+#         "ssh":     [ <ssh-entry>, ... ],
+#         "egress":  { "allowlist": [ "<hostname>", ... ] }
 #       },
 #       ...
 #     },
@@ -22,9 +23,17 @@
 #     }
 #   }
 #
-# A bottle groups shared infrastructure (SSH keys, known hosts) that multiple
-# agents can reference by name. The "bottle" field is required on every agent;
-# cli.sh start rejects agents that omit it.
+# A bottle groups shared infrastructure (SSH keys, known hosts, egress
+# allowlist) that multiple agents can reference by name. The "bottle" field
+# is required on every agent; cli.sh start rejects agents that omit it.
+#
+# The "egress" object is added in PRD 0001. Today it carries one key:
+#   - allowlist: array of hostnames the agent is allowed to reach. The
+#     effective allowlist at launch is this list UNIONED with the
+#     baked-in defaults for Claude Code's required hosts (see
+#     lib/pipelock.sh). Bottles with no "egress" block use defaults
+#     only. Future keys (mode, dlp, data_budget, ...) are reserved
+#     under the same object; v1 ignores anything we don't recognize.
 #
 # An <env-entry> is a JSON string. Mode is selected by sentinel prefix:
 #   "?<message>"   → prompt for the value at runtime, displaying <message>
@@ -223,6 +232,24 @@ manifest_bottle_ssh() {
   local manifest_file="${1:?manifest_bottle_ssh: missing manifest file}"
   local bottle_name="${2:?manifest_bottle_ssh: missing bottle name}"
   jq -c --arg b "$bottle_name" '.bottles[$b].ssh // [] | .[]' "$manifest_file"
+}
+
+# manifest_bottle_egress_allowlist <manifest_file> <bottle_name> — prints one
+# hostname per line on stdout for the entries in
+# bottles[bottle_name].egress.allowlist. Prints nothing if the field is missing
+# or the array is empty. Validates only that the field, when present, is an
+# array; per-element string typing is checked at use-time in lib/pipelock.sh
+# so the validation lives next to the YAML generator that consumes it.
+manifest_bottle_egress_allowlist() {
+  local manifest_file="${1:?manifest_bottle_egress_allowlist: missing manifest file}"
+  local bottle_name="${2:?manifest_bottle_egress_allowlist: missing bottle name}"
+  local field_type
+  field_type="$(jq -r --arg b "$bottle_name" '.bottles[$b].egress.allowlist | type' "$manifest_file" 2>/dev/null || echo "null")"
+  case "$field_type" in
+    array|null) : ;;
+    *) die "bottle '${bottle_name}' egress.allowlist must be an array (was ${field_type})." ;;
+  esac
+  jq -r --arg b "$bottle_name" '.bottles[$b].egress.allowlist // [] | .[]' "$manifest_file"
 }
 
 # manifest_ssh <manifest_file> <name> — prints one compact JSON object per line

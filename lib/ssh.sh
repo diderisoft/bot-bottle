@@ -89,7 +89,12 @@ ssh_validate_entries() {
 ssh_setup() {
   local container="${1:?ssh_setup: missing container}"
   local stage_dir="${2:?ssh_setup: missing stage dir}"
-  shift 2
+  # proxy_host_port is the pipelock sidecar as <host>:<port> (no scheme).
+  # Used as socat's PROXY: argument so the agent can reach SSH hosts
+  # over the agent's --internal network — the only egress route is the
+  # pipelock CONNECT proxy. Required.
+  local proxy_host_port="${3:?ssh_setup: missing proxy_host_port}"
+  shift 3
 
   local container_home="${CLAUDE_BOTTLE_CONTAINER_HOME:-/home/node}"
   local container_ssh="${container_home}/.ssh"
@@ -140,8 +145,18 @@ ssh_setup() {
     # No IdentityFile — IdentityAgent points SSH at the public (forwarded)
     # socket. Pointing at the real agent socket directly would be rejected
     # by ssh-agent's UID-match check (see file header).
-    printf 'Host %s\n  HostName %s\n  User %s\n  Port %s\n  IdentityAgent %s\n\n' \
-      "$name" "$hostname" "$user" "$port" "$public_socket" >> "$config_file"
+    #
+    # ProxyCommand tunnels the SSH connection through pipelock via HTTP
+    # CONNECT. The agent container has no default route (--internal
+    # network); pipelock is the only path to anywhere. socat's PROXY:
+    # mode does CONNECT host:port to the proxy. %h / %p expand to this
+    # block's HostName / Port. The SSH host must also appear in
+    # pipelock's allowlist — pipelock_effective_allowlist auto-includes
+    # bottle.ssh[].Hostname entries so this just works for declared
+    # hosts.
+    printf 'Host %s\n  HostName %s\n  User %s\n  Port %s\n  IdentityAgent %s\n  ProxyCommand socat - PROXY:%s:%%h:%%p,proxyport=%s\n\n' \
+      "$name" "$hostname" "$user" "$port" "$public_socket" \
+      "${proxy_host_port%:*}" "${proxy_host_port##*:}" >> "$config_file"
 
     if [ -n "$known_host_key" ]; then
       # Write under both the Host alias and the Hostname so SSH finds the key

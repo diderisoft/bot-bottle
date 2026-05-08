@@ -37,6 +37,38 @@ The container is removed automatically when the session ends. If the script
 is killed with SIGKILL the exit trap won't fire and the container may be
 left running; remove it with `docker rm -f <container-name>`.
 
+## Egress
+
+Agent containers route HTTP / HTTPS traffic through a per-agent
+[pipelock](https://github.com/luckyPipewrench/pipelock) sidecar
+attached to a Docker `--internal` network. The sidecar enforces a
+hostname allowlist, runs DLP scanning (48 default credential
+patterns), and detects URL-embedded high-entropy secret leaks. Without
+the proxy the agent has no route off-box at all — the internal network
+has no default gateway. The sidecar and network are torn down with the
+agent on session exit.
+
+The effective allowlist is the union of a baked-in default for Claude
+Code's required hosts (`api.anthropic.com`, `claude.ai`, ...) and the
+optional `bottles.<name>.egress.allowlist` field in
+`claude-bottle.json`:
+
+```jsonc
+{
+  "bottles": {
+    "default": {
+      "env":    { },
+      "ssh":    [ ],
+      "egress": { "allowlist": ["github.com"] }
+    }
+  }
+}
+```
+
+The resolved allowlist is shown in the y/N preflight before launch.
+See `docs/prds/0001-per-agent-egress-proxy-via-pipelock.md` for the
+design and `docs/research/pipelock-assessment.md` for the rationale.
+
 ## Auth: OAuth token, not API key
 
 claude-bottle authenticates `claude` inside the container with the same
