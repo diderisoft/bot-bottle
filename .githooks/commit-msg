@@ -1,25 +1,45 @@
-#!/usr/bin/env bash
-# Enforce Conventional Commits on the first line of the commit message.
-# https://www.conventionalcommits.org/en/v1.0.0/
-#
-# Activate per clone with:
-#   git config core.hooksPath .githooks
+#!/usr/bin/env python3
+"""Enforce Conventional Commits on the first line of the commit message.
+https://www.conventionalcommits.org/en/v1.0.0/
 
-set -euo pipefail
+Activate per clone with:
+  git config core.hooksPath .githooks
+"""
 
-msg_file="${1:?commit-msg: missing message file path}"
-first_line="$(awk 'NR==1{print; exit}' "$msg_file")"
+from __future__ import annotations
 
-case "$first_line" in
-  "Merge "*|"Revert "*|"fixup! "*|"squash! "*|"amend! "*) exit 0 ;;
-esac
+import re
+import sys
+from pathlib import Path
 
-pattern='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9._-]+\))?!?: .+'
+ALLOWED_PREFIXES = ("Merge ", "Revert ", "fixup! ", "squash! ", "amend! ")
+PATTERN = re.compile(
+    r"^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)"
+    r"(\([a-z0-9._-]+\))?!?: .+"
+)
 
-if ! printf '%s' "$first_line" | grep -qE "$pattern"; then
-  printf 'commit-msg: aborting — message does not follow Conventional Commits.\n' >&2
-  printf '  expected: <type>[(<scope>)][!]: <description>\n' >&2
-  printf '  types:    feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert\n' >&2
-  printf '  got:      %s\n' "$first_line" >&2
-  exit 1
-fi
+
+def main(argv: list[str]) -> int:
+    if len(argv) < 1:
+        print("commit-msg: missing message file path", file=sys.stderr)
+        return 1
+
+    msg_file = Path(argv[0])
+    text = msg_file.read_text(encoding="utf-8", errors="replace")
+    first_line = text.splitlines()[0] if text else ""
+
+    if any(first_line.startswith(p) for p in ALLOWED_PREFIXES):
+        return 0
+
+    if not PATTERN.match(first_line):
+        sys.stderr.write("commit-msg: aborting — message does not follow Conventional Commits.\n")
+        sys.stderr.write("  expected: <type>[(<scope>)][!]: <description>\n")
+        sys.stderr.write("  types:    feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert\n")
+        sys.stderr.write(f"  got:      {first_line}\n")
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
