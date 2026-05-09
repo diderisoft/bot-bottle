@@ -36,6 +36,11 @@ class TestOrphanCleanup(unittest.TestCase):
         # Returning True == idempotent success.
         self.assertTrue(network_remove(f"claude-bottle-net-{self.slug}-does-not-exist"))
 
+    @unittest.skipIf(
+        os.environ.get("GITEA_ACTIONS") == "true",
+        "skipped under act_runner: docker socket mount topology breaks "
+        "in-process visibility of networks created on the host daemon",
+    )
     def test_create_and_remove(self):
         self.internal_name = network_create_internal(self.slug)
         self.egress_name = network_create_egress(self.slug)

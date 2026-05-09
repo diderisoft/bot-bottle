@@ -31,6 +31,11 @@ class TestPipelockSidecarSmoke(unittest.TestCase):
         )
         shutil.rmtree(self.work_dir, ignore_errors=True)
 
+    @unittest.skipIf(
+        os.environ.get("GITEA_ACTIONS") == "true",
+        "skipped under act_runner: published port is on the host's "
+        "loopback, not reachable from the job container's 127.0.0.1",
+    )
     def test_smoke(self):
         yaml_path = self.work_dir / "pipelock.yaml"
         pipelock_write_yaml(fixture_minimal(), "dev", yaml_path)

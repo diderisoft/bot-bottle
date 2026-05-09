@@ -1,5 +1,7 @@
 # claude-bottle
 
+[![test](https://gitea.dideric.is/didericis/claude-bottle/actions/workflows/test.yml/badge.svg?branch=main)](https://gitea.dideric.is/didericis/claude-bottle/actions?workflow=test.yml)
+
 Spins up an isolated container for running Claude Code with a curated set of skills and env vars.
 
 ## Why "claude-bottle"?
