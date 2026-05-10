@@ -37,24 +37,9 @@ the host: a misbehaving Claude Code session can't read files outside
 the bottle, can't reach the host's network without going through
 pipelock, and can't see other bottles. By default it is not a hardened
 boundary against a determined attacker with kernel-level escape
-capability — see `docs/research/stronger-isolation-alternatives.md`
-for the broader v2 discussion.
-
-Linux hosts can opt into [gVisor](https://gvisor.dev/) per bottle for
-a userspace syscall barrier between the agent and the host kernel:
-
-```jsonc
-{
-  "bottles": {
-    "default": { "runtime": "runsc" }
-  }
-}
-```
-
-When `runtime` is set to `"runsc"`, claude-bottle verifies the runtime
-is registered with Docker before launch and passes `--runtime=runsc`
-to the agent container. Default is `"runc"` (Docker's default). gVisor
-is not available on macOS.
+capability — Linux hosts can opt into [gVisor](https://gvisor.dev/)
+per bottle (see `runtime` in the manifest below); the broader v2
+discussion lives in `docs/research/stronger-isolation-alternatives.md`.
 
 The egress proxy and OAuth-token handling below are the load-bearing
 pieces of v1.
@@ -72,37 +57,72 @@ The container is removed automatically when the session ends. If the script
 is killed with SIGKILL the exit trap won't fire and the container may be
 left running; remove it with `docker rm -f <container-name>`.
 
-## Egress
+## Manifest
 
-Agent containers route HTTP / HTTPS traffic through a per-agent
-[pipelock](https://github.com/luckyPipewrench/pipelock) sidecar
-attached to a Docker `--internal` network. The sidecar enforces a
-hostname allowlist, runs DLP scanning (48 default credential
-patterns), and detects URL-embedded high-entropy secret leaks. Without
-the proxy the agent has no route off-box at all — the internal network
-has no default gateway. The sidecar and network are torn down with the
-agent on session exit.
-
-The effective allowlist is the union of a baked-in default for Claude
-Code's required hosts (`api.anthropic.com`, `claude.ai`, ...) and the
-optional `bottles.<name>.egress.allowlist` field in
-`claude-bottle.json`:
+Agents and the bottles they run in are declared in `claude-bottle.json`
+in your project root or `$HOME` (both files merge if present, with
+project entries overriding home entries on key conflict).
 
 ```jsonc
 {
   "bottles": {
-    "default": {
-      "env":    { },
-      "ssh":    [ ],
-      "egress": { "allowlist": ["github.com"] }
+    "gitea-dev": {
+      // Container runtime for the agent. Default "runc"; set to
+      // "runsc" on Linux hosts to launch the agent under gVisor for
+      // a userspace syscall barrier between the agent and the host
+      // kernel. claude-bottle verifies the runtime is registered with
+      // Docker before launch; gVisor is not available on macOS.
+      "runtime": "runsc",
+
+      "env": {
+        "GITEA_TOKEN":     "?paste your Gitea API token",
+        "GITHUB_TOKEN":    "${GH_PAT}",
+        "GIT_AUTHOR_NAME": "Eric Diderich"
+      },
+
+      "ssh": [
+        {
+          "Host":         "gitea",
+          "Hostname":     "gitea.dideric.is",
+          "User":         "git",
+          "Port":         30009,
+          "IdentityFile": "/Users/didericis/.ssh/id_ed25519_gitea",
+          "KnownHostKey": "gitea.dideric.is ssh-ed25519 AAAA..."
+        }
+      ],
+
+      // Egress is forced through a per-agent
+      // [pipelock](https://github.com/luckyPipewrench/pipelock) sidecar
+      // on a Docker `--internal` network — without the proxy the agent
+      // has no route off-box. The effective allowlist is the union of
+      // baked-in defaults (api.anthropic.com, claude.ai, ...) and the
+      // hostnames listed here. Pipelock also runs DLP scanning and
+      // detects URL-embedded high-entropy secrets. The resolved
+      // allowlist is shown in the y/N preflight before launch.
+      "egress": {
+        "allowlist": [
+          "github.com",
+          "registry.npmjs.org",
+          "pypi.org"
+        ]
+      }
+    }
+  },
+
+  "agents": {
+    "gitea-helper": {
+      "bottle": "gitea-dev",
+      "skills": ["init-prd"],
+      "prompt": "You help maintain Gitea-hosted projects."
     }
   }
 }
 ```
 
-The resolved allowlist is shown in the y/N preflight before launch.
-See `docs/prds/0001-per-agent-egress-proxy-via-pipelock.md` for the
-design and `docs/research/pipelock-assessment.md` for the rationale.
+Comments are illustrative; the file itself must be valid JSON. See
+`claude-bottle.example.json` for a working starting point. Pipelock's
+design lives in `docs/prds/0001-per-agent-egress-proxy-via-pipelock.md`
+and the rationale in `docs/research/pipelock-assessment.md`.
 
 ## Auth: OAuth token, not API key
 
