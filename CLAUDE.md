@@ -26,19 +26,14 @@ and env vars into it.
 - `CLAUDE.md` — this file, orientation for future Claude sessions.
 - `.gitignore` — OS junk.
 - `claude-bottle.json` — manifest of named agents (env / skills / prompt
-  per agent), consumed by `cli.sh`. See "Manifest" under
+  per agent), consumed by `cli.py`. See "Manifest" under
   "Intended design".
-- `docs/INDEX.md` — pointer to the journal and research notes.
-- `docs/JOURNAL.md` — append-only log of decisions and state changes.
+- `docs/INDEX.md` — pointer to the research notes.
 - `docs/prds/` — product requirement docs.
 - `docs/research/` — research notes (empty for now, kept tracked via `.gitkeep`).
-- `.claude/skills/init-entry/` — project-local Claude Code skill providing `/init-entry` for adding journal entries. Snapshotted from `~/.claude/skills/init-entry/` at scaffold time; refresh deliberately if it drifts.
 
 ## Conventions
 
-- Text-driven content. `docs/JOURNAL.md` is an append-only stream of thought,
-  newest first. Entries are timestamps followed by freeform prose — no
-  templates, no required sections. Add entries with `/init-entry`.
 - Product requirement docs live in `docs/prds/`.
 - Research notes live in `docs/research/`.
 - Low dependencies by default. The project is bash-first; ask before adding new

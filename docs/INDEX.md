@@ -1,1 +1,1 @@
-Decisions and state changes are logged in `JOURNAL.md`. Research notes live in `research/`.
+Research notes live in `research/`. Product requirement docs live in `prds/`.
