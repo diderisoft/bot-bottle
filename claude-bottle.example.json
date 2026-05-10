@@ -1,0 +1,63 @@
+{
+  "bottles": {
+    "default": {
+      "env": {},
+      "ssh": [],
+      "egress": {
+        "allowlist": [
+          "github.com",
+          "objects.githubusercontent.com",
+          "registry.npmjs.org"
+        ]
+      }
+    },
+
+    "gitea-dev": {
+      "env": {
+        "GITEA_TOKEN":     "?paste your Gitea API token",
+        "GITHUB_TOKEN":    "${GH_PAT}",
+        "GIT_AUTHOR_NAME": "Eric Diderich",
+        "NODE_ENV":        "development"
+      },
+      "ssh": [
+        {
+          "Host":         "gitea",
+          "Hostname":     "gitea.dideric.is",
+          "User":         "git",
+          "Port":         30009,
+          "IdentityFile": "/Users/didericis/.ssh/id_ed25519_gitea",
+          "KnownHostKey": "gitea.dideric.is ssh-ed25519 AAAA..."
+        }
+      ],
+      "egress": {
+        "allowlist": [
+          "github.com",
+          "objects.githubusercontent.com",
+          "registry.npmjs.org",
+          "pypi.org",
+          "files.pythonhosted.org"
+        ]
+      }
+    }
+  },
+
+  "agents": {
+    "researcher": {
+      "bottle": "default",
+      "skills": ["init-entry"],
+      "prompt": "You are a research assistant. Read widely, summarise concisely, and cite sources by URL. Do not write code unless explicitly asked."
+    },
+
+    "gitea-helper": {
+      "bottle": "gitea-dev",
+      "skills": ["init-entry", "init-prd"],
+      "prompt": "You help maintain Gitea-hosted projects. Prefer small, focused commits. Follow Conventional Commits. Run tests before pushing."
+    },
+
+    "minimal": {
+      "bottle": "default",
+      "skills": [],
+      "prompt": ""
+    }
+  }
+}
