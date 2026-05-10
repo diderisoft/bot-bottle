@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/logo.svg" alt="claude-bottle logo" width="140">
+</p>
+
 # claude-bottle
 
 [![test](https://gitea.dideric.is/didericis/claude-bottle/actions/workflows/test.yml/badge.svg?branch=main)](https://gitea.dideric.is/didericis/claude-bottle/actions?workflow=test.yml)
@@ -136,3 +140,11 @@ to your subscription tier (Pro/Max/Team/Enterprise), it does not work
 with `claude --bare` (which only reads `ANTHROPIC_API_KEY`), and if it
 leaks, regenerate via `claude setup-token` again. Reference:
 <https://code.claude.com/docs/en/authentication>.
+
+## Trademarks
+
+claude-bottle is an independent project and is not affiliated with,
+endorsed by, or sponsored by Anthropic, PBC. "Claude" and "Claude
+Code" are trademarks of Anthropic, PBC; the project name uses
+"claude" descriptively to indicate that the tool runs Claude Code
+inside a sandbox.
