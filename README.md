@@ -20,11 +20,22 @@ bottle is destroyed and the genie does not persist.
 - Allow me to easily spin up agent tasks in parallel
 - Create isolated, well defined, easily updated, shareable agents
 
-## Non-goals
+## Security model
 
-- Communicating between agents directly
-- Self hosted VMs (v1 uses local Docker containers, not VMs)
-- Advanced agent auditing (lean on git history for auditing)
+Each agent runs in its own bottle: its own container, its own internal
+Docker network, and its own pipelock sidecar. Bottles don't share
+state, don't talk to each other, and only get the env vars, skills,
+SSH identities, and egress hosts the manifest grants them — nothing
+more. Any one agent only has the access it needs to do its job.
+
+The container is the boundary against an uncoordinated agent reaching
+the host: a misbehaving Claude Code session can't read files outside
+the bottle, can't reach the host's network without going through
+pipelock, and can't see other bottles. It is not a hardened boundary
+against a determined attacker with kernel-level escape capability —
+that's a v2 question (see
+`docs/research/stronger-isolation-alternatives.md`). The egress proxy
+and OAuth-token handling below are the load-bearing pieces of v1.
 
 ## Quickstart
 
