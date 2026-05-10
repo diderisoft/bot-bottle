@@ -6,23 +6,23 @@
 
 [![test](https://gitea.dideric.is/didericis/claude-bottle/actions/workflows/test.yml/badge.svg?branch=main)](https://gitea.dideric.is/didericis/claude-bottle/actions?workflow=test.yml)
 
-Spins up an isolated container for running Claude Code with a curated set of skills and env vars.
+Run multiple Claude Code agents on your own machine, each scoped to its own secrets, skills, and egress allowlist.
 
 ## Why "claude-bottle"?
 
-Each container is a bottle; Claude is the genie inside. The genie has
-broad powers within the bottle — read, write, run anything — but it
-cannot escape to the host. You uncork one bottle per agent
-(`./cli.py start <agent>`), many bottles run in parallel, and each
-one's powers are scoped to what the manifest grants it: a curated set
-of skills, env vars, and a starting prompt. When the session ends the
-bottle is destroyed and the genie does not persist.
+Each container is a bottle; Claude is the genie inside. The genie's
+powers are exactly what the manifest grants it — a specific set of
+skills, a specific set of secrets, and a specific set of hosts it can
+reach — nothing more. You uncork one bottle per agent
+(`./cli.py start <agent>`), many bottles run in parallel, and each is
+scoped to its task. When the session ends the bottle is destroyed and
+the genie does not persist.
 
 ## Goals
 
-- Minimize risk of running claude with full permissions
-- Allow me to easily spin up agent tasks in parallel
-- Create isolated, well defined, easily updated, shareable agents
+- Scope each agent to the minimum credentials and network egress its task actually needs
+- Run multiple agents in parallel, isolated from each other
+- Keep code, credentials, and agent activity on infrastructure I control — no third-party agent runtime
 
 ## Security model
 
@@ -39,13 +39,16 @@ not a personal SSH key — so even a compromised or misbehaving agent
 only handles credentials it was already trusted with for its job.
 Egress flows through pipelock, which constrains where those
 credentials can travel: an agent with a Gitea token can reach
-`gitea.dideric.is`, not arbitrary attacker-controlled hosts. The
-container itself adds a layer between the agent and the host, but the
-v1 design leans more on secret minimization and egress allowlisting
-than on the container as a hardened boundary. Linux hosts can opt into
-[gVisor](https://gvisor.dev/) per bottle (see `runtime` in the
-manifest below) for a userspace syscall barrier; the broader v2
-discussion lives in `docs/research/stronger-isolation-alternatives.md`.
+`gitea.dideric.is`, not arbitrary attacker-controlled hosts. The same
+constraint blocks DNS-over-HTTPS as an exfil channel — a DoH resolver
+like `cloudflare-dns.com` would have to be on the allowlist for the
+agent to reach it at all. The container itself adds a layer between
+the agent and the host, but the v1 design leans more on secret
+minimization and egress allowlisting than on the container as a
+hardened boundary. Linux hosts can opt into [gVisor](https://gvisor.dev/)
+per bottle (see `runtime` in the manifest below) for a userspace
+syscall barrier; the broader v2 discussion lives in
+`docs/research/stronger-isolation-alternatives.md`.
 
 The egress proxy and OAuth-token handling below are the load-bearing
 pieces of v1.
