@@ -48,6 +48,7 @@ class TestDryRunPlan(unittest.TestCase):
             # 7 baked defaults + 1 bottle entry = 8.
             self.assertRegex(out, r"8 hosts allowed", "preflight: bottle entry counted")
             self.assertIn("api.anthropic.com", out, "preflight: baked default shown")
+            self.assertRegex(out, r"runtime\s*:\s*runc", "preflight: default runtime shown")
             self.assertIn("dry-run requested", out, "dry-run banner present")
             self.assertNotIn("/dev/tty", out, "dry-run exited before tty prompt")
 

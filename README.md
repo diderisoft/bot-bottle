@@ -31,11 +31,29 @@ more. Any one agent only has the access it needs to do its job.
 The container is the boundary against an uncoordinated agent reaching
 the host: a misbehaving Claude Code session can't read files outside
 the bottle, can't reach the host's network without going through
-pipelock, and can't see other bottles. It is not a hardened boundary
-against a determined attacker with kernel-level escape capability —
-that's a v2 question (see
-`docs/research/stronger-isolation-alternatives.md`). The egress proxy
-and OAuth-token handling below are the load-bearing pieces of v1.
+pipelock, and can't see other bottles. By default it is not a hardened
+boundary against a determined attacker with kernel-level escape
+capability — see `docs/research/stronger-isolation-alternatives.md`
+for the broader v2 discussion.
+
+Linux hosts can opt into [gVisor](https://gvisor.dev/) per bottle for
+a userspace syscall barrier between the agent and the host kernel:
+
+```jsonc
+{
+  "bottles": {
+    "default": { "runtime": "runsc" }
+  }
+}
+```
+
+When `runtime` is set to `"runsc"`, claude-bottle verifies the runtime
+is registered with Docker before launch and passes `--runtime=runsc`
+to the agent container. Default is `"runc"` (Docker's default). gVisor
+is not available on macOS.
+
+The egress proxy and OAuth-token handling below are the load-bearing
+pieces of v1.
 
 ## Quickstart
 

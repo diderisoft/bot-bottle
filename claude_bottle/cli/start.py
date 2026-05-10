@@ -21,6 +21,7 @@ from ..env_resolve import env_resolve
 from ..log import die, info
 from ..manifest import (
     manifest_agent_bottle,
+    manifest_bottle_runtime,
     manifest_env_names,
     manifest_prompt,
     manifest_require_agent,
@@ -101,6 +102,10 @@ def cmd_start(argv: list[str]) -> int:
         )
     manifest_require_bottle(manifest, bottle_name)
 
+    runtime = manifest_bottle_runtime(manifest, bottle_name)
+    if runtime == "runsc":
+        docker_mod.require_runsc()
+
     ssh_entries = manifest_ssh(manifest, name)
     if ssh_entries:
         ssh_mod.ssh_validate_entries(ssh_entries)
@@ -166,6 +171,7 @@ def cmd_start(argv: list[str]) -> int:
         )
         info("skills          : " + (" ".join(skill_names) if skill_names else "(none)"))
         info(f"bottle             : {bottle_name}")
+        info(f"  runtime       : {runtime}{' (gVisor)' if runtime == 'runsc' else ''}")
         if ssh_entries:
             ssh_names = ", ".join(e.get("Host", "") for e in ssh_entries)
             info(f"  ssh hosts     : {ssh_names}")
@@ -216,6 +222,8 @@ def cmd_start(argv: list[str]) -> int:
             "-e", f"HTTP_PROXY={proxy_url}",
             "-e", "NO_PROXY=localhost,127.0.0.1",
         ]
+        if runtime != "runc":
+            docker_args.extend(["--runtime", runtime])
         if env_file.stat().st_size > 0:
             docker_args.extend(["--env-file", str(env_file)])
 

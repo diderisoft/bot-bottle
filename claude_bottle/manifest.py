@@ -154,6 +154,30 @@ def manifest_bottle_ssh(manifest: Manifest, bottle_name: str) -> list[dict[str, 
     return list(bottle.get("ssh") or [])
 
 
+_SUPPORTED_RUNTIMES: tuple[str, ...] = ("runc", "runsc")
+
+
+def manifest_bottle_runtime(manifest: Manifest, bottle_name: str) -> str:
+    """Container runtime for the bottle's agent container. Returns
+    "runc" (Docker default) or "runsc" (gVisor opt-in). Dies if the
+    field is present but not one of the supported values."""
+    bottle = (manifest.get("bottles") or {}).get(bottle_name) or {}
+    raw = bottle.get("runtime")
+    if raw is None:
+        return "runc"
+    if not isinstance(raw, str):
+        die(
+            f"bottle '{bottle_name}' runtime must be a string "
+            f"(was {_json_type(raw)})."
+        )
+    if raw not in _SUPPORTED_RUNTIMES:
+        die(
+            f"bottle '{bottle_name}' runtime '{raw}' is not supported. "
+            f"Use one of: {', '.join(_SUPPORTED_RUNTIMES)}."
+        )
+    return raw
+
+
 def manifest_bottle_egress_allowlist(manifest: Manifest, bottle_name: str) -> list[str]:
     """Hostnames in bottles[bottle_name].egress.allowlist. Dies if the
     field is present but not an array. Per-element string typing is
