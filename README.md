@@ -32,7 +32,7 @@ Requires Docker on the host and a long-lived Claude Code OAuth token in
 your shell env.
 
 ```sh
-./cli.sh start <agent>   # builds the image on first run, drops you into claude
+./cli.py start <agent>   # builds the image on first run, drops you into claude
 ```
 
 The container is removed automatically when the session ends. If the script

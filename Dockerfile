@@ -44,21 +44,6 @@ WORKDIR /home/node
 # future change to the launcher copies in as a different user.
 RUN mkdir -p /home/node/.claude/skills
 
-# Pre-populate ~/.claude.json so claude skips the first-run onboarding
-# screens on every fresh container launch: the theme picker
-# (`hasCompletedOnboarding`), the "trust this folder" dialog
-# (`projects.<cwd>.hasTrustDialogAccepted`), the implicit theme
-# default, and the bypass-permissions-mode warning that fires the
-# first time `--dangerously-skip-permissions` is used in a profile
-# (`bypassPermissionsModeAccepted`). Without these, an ephemeral
-# container shows all four on every start. The fifth screen —
-# "Detected a custom API key in your environment" — only fires on the
-# ANTHROPIC_API_KEY fallback path; under the primary OAuth-token flow
-# (CLAUDE_CODE_OAUTH_TOKEN) it does not appear. When it does fire it
-# is handled at launch time by scripts/lib/auth.sh, which computes
-# the key suffix inside the container so the value never crosses
-# host argv.
-#
 # Heredoc delimiter is unquoted so $HOME expands; no other `$` appears
 # in the body, so this is safe under dash (Docker's default RUN shell).
 RUN cat > "$HOME/.claude.json" <<JSON
