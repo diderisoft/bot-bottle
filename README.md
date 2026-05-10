@@ -32,13 +32,19 @@ state, don't talk to each other, and only get the env vars, skills,
 SSH identities, and egress hosts the manifest grants them — nothing
 more. Any one agent only has the access it needs to do its job.
 
-The container is the boundary against an uncoordinated agent reaching
-the host: a misbehaving Claude Code session can't read files outside
-the bottle, can't reach the host's network without going through
-pipelock, and can't see other bottles. By default it is not a hardened
-boundary against a determined attacker with kernel-level escape
-capability — Linux hosts can opt into [gVisor](https://gvisor.dev/)
-per bottle (see `runtime` in the manifest below); the broader v2
+The bottle limits both what an agent can see and where it can send
+it. Each bottle gets only the secrets and SSH identities the manifest
+grants it — a Gitea token but not a GitHub token, a deploy key but
+not a personal SSH key — so even a compromised or misbehaving agent
+only handles credentials it was already trusted with for its job.
+Egress flows through pipelock, which constrains where those
+credentials can travel: an agent with a Gitea token can reach
+`gitea.dideric.is`, not arbitrary attacker-controlled hosts. The
+container itself adds a layer between the agent and the host, but the
+v1 design leans more on secret minimization and egress allowlisting
+than on the container as a hardened boundary. Linux hosts can opt into
+[gVisor](https://gvisor.dev/) per bottle (see `runtime` in the
+manifest below) for a userspace syscall barrier; the broader v2
 discussion lives in `docs/research/stronger-isolation-alternatives.md`.
 
 The egress proxy and OAuth-token handling below are the load-bearing
