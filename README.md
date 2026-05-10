@@ -77,7 +77,7 @@ project entries overriding home entries on key conflict).
       "env": {
         "GITEA_TOKEN":     "?paste your Gitea API token",
         "GITHUB_TOKEN":    "${GH_PAT}",
-        "GIT_AUTHOR_NAME": "Eric Diderich"
+        "GIT_AUTHOR_NAME": "didericis"
       },
 
       "ssh": [
@@ -168,3 +168,10 @@ endorsed by, or sponsored by Anthropic, PBC. "Claude" and "Claude
 Code" are trademarks of Anthropic, PBC; the project name uses
 "claude" descriptively to indicate that the tool runs Claude Code
 inside a sandbox.
+
+## License
+
+Copyright 2026 Eric Bauerfeld
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE)
+for the full text.
