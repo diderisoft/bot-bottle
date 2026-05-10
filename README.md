@@ -9,7 +9,7 @@ Spins up an isolated container for running Claude Code with a curated set of ski
 Each container is a bottle; Claude is the genie inside. The genie has
 broad powers within the bottle — read, write, run anything — but it
 cannot escape to the host. You uncork one bottle per agent
-(`./cli.sh start <agent>`), many bottles run in parallel, and each
+(`./cli.py start <agent>`), many bottles run in parallel, and each
 one's powers are scoped to what the manifest grants it: a curated set
 of skills, env vars, and a starting prompt. When the session ends the
 bottle is destroyed and the genie does not persist.
@@ -97,7 +97,7 @@ as `CLAUDE_BOTTLE_OAUTH_TOKEN`:
 export CLAUDE_BOTTLE_OAUTH_TOKEN="<token>"
 ```
 
-`cli.sh` automatically forwards it to every container as
+`cli.py` automatically forwards it to every container as
 `CLAUDE_CODE_OAUTH_TOKEN` via `docker run -e` — no manifest wiring
 required, and the value is never written to disk or placed on argv.
 

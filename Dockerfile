@@ -17,7 +17,7 @@ FROM node:22-slim
 # image, those features fail in surprising ways once the user does any
 # real work. ca-certificates is already in the slim base; listed for
 # clarity in case the base ever drops it. socat is the privileged
-# forwarder for the in-container ssh-agent (see lib/ssh.sh): the agent
+# forwarder for the in-container ssh-agent (see claude_bottle/ssh.py): the agent
 # runs as root and rejects non-root connections, so socat sits between
 # node and the agent socket.
 RUN apt-get update \
@@ -38,7 +38,7 @@ USER node
 WORKDIR /home/node
 
 # Pre-create the skills directory so PRD 0002's host->container skill
-# copier (scripts/lib/skills.sh) drops files into a path owned by the
+# copier (claude_bottle/skills.py) drops files into a path owned by the
 # `node` user. `skills_copy_into` also `mkdir -p`s defensively, but
 # baking it into the image avoids a permission-confusion footgun if a
 # future change to the launcher copies in as a different user.
@@ -58,7 +58,7 @@ RUN cat > "$HOME/.claude.json" <<JSON
 JSON
 
 # Default to an interactive claude session. In the v1 launcher,
-# `scripts/start.sh` runs the container detached and uses `docker exec`
+# `claude_bottle/cli/start.py` runs the container detached and uses `docker exec`
 # to attach a TTY, but this CMD makes `docker run -it claude-bottle` also
 # do something useful for ad-hoc debugging.
 CMD ["claude"]
