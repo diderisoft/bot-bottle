@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Iterator
 
 from ... import pipelock
-from ... import skills as skills_mod
 from ... import ssh as ssh_mod
 from ...env_resolve import env_resolve
 from ...log import die, info
@@ -87,7 +86,7 @@ class DockerBottleBackend(BottleBackend):
                     )
 
         if agent.skills:
-            skills_mod.skills_validate_all(list(agent.skills))
+            self.validate_skills(list(agent.skills))
         if bottle.ssh:
             ssh_mod.ssh_validate_entries(bottle.ssh)
 
@@ -289,6 +288,25 @@ class DockerBottleBackend(BottleBackend):
         agent = plan.spec.manifest.agents[plan.spec.agent_name]
         return in_container_prompt_path if agent.prompt else None
 
+    def validate_skills(self, skills: list[str]) -> None:
+        """Fail loudly if any named skill is missing from the host's
+        ~/.claude/skills/. Called from `prepare` before the y/N so the
+        user doesn't get a launch prompt for a plan that's already
+        known to break."""
+        for name in skills:
+            path = self._host_skill_dir(name)
+            if not os.path.isdir(path):
+                die(
+                    f"skill '{name}' not found on host at {path}. "
+                    f"Create it under ~/.claude/skills/, then re-run."
+                )
+
+    def _host_skill_dir(self, name: str) -> str:
+        home = os.environ.get("HOME")
+        if not home:
+            die("HOME not set")
+        return f"{home}/.claude/skills/{name}"
+
     def provision_skills(self, plan: BottlePlan, target: str) -> None:
         """Copy each of the agent's named skills from the host's
         ~/.claude/skills/<name>/ into the container's equivalent path.
@@ -314,7 +332,7 @@ class DockerBottleBackend(BottleBackend):
         )
 
         for n in agent.skills:
-            src = skills_mod.host_skill_dir(n)
+            src = self._host_skill_dir(n)
             if not os.path.isdir(src):
                 die(f"skill '{n}' disappeared from host between validation and copy at {src}.")
             dst = f"{skills_dir}/{n}"
