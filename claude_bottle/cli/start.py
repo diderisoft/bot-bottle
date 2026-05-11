@@ -11,8 +11,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-from ..bottles import get_bottle_platform
-from ..bottles.docker import DockerBottlePlan, DockerBottleSpec
+from ..bottles import BottleSpec, get_bottle_platform
+from ..bottles.docker import DockerBottlePlan
 from ..log import info
 from ..manifest import Manifest
 from ._common import PROG, USER_CWD, read_tty_line
@@ -72,7 +72,7 @@ def cmd_start(argv: list[str]) -> int:
     dry_run = args.dry_run or os.environ.get("CLAUDE_BOTTLE_DRY_RUN") == "1"
 
     manifest = Manifest.resolve(USER_CWD)
-    spec = DockerBottleSpec(
+    spec = BottleSpec(
         manifest=manifest,
         agent_name=args.name,
         copy_cwd=args.cwd,

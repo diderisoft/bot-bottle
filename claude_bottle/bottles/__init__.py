@@ -25,7 +25,9 @@ from dataclasses import dataclass
 from typing import Callable, Protocol
 
 from ..log import die
-from .docker import launch_docker_bottle, prepare_docker_bottle
+from .docker import BottleSpec, launch_docker_bottle, prepare_docker_bottle
+
+__all__ = ["Bottle", "BottlePlatform", "BottleSpec", "get_bottle_platform"]
 
 
 class Bottle(Protocol):

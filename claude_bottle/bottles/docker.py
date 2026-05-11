@@ -55,10 +55,11 @@ def runsc_available() -> bool:
 
 
 @dataclass(frozen=True)
-class DockerBottleSpec:
-    """CLI-supplied inputs to the Docker factory. Small and intent-only;
-    everything else (image names, container name, scratch file paths,
-    runsc availability) is resolved by prepare_docker_bottle."""
+class BottleSpec:
+    """CLI-supplied intent. Platform-agnostic — each platform's prepare
+    step consumes it and produces its own platform-specific plan.
+    Resolved values (image names, container name, scratch paths, runsc
+    availability) live on the plan, not the spec."""
 
     manifest: Manifest
     agent_name: str
@@ -72,7 +73,7 @@ class DockerBottlePlan:
     """Output of prepare_docker_bottle. Frozen; the launch step consumes
     it without further resolution. show_plan reads from it directly."""
 
-    spec: DockerBottleSpec
+    spec: BottleSpec
     slug: str
     container_name: str
     container_name_pinned: bool
@@ -130,7 +131,7 @@ class _DockerBottle:
 # --- Prepare ---------------------------------------------------------------
 
 
-def prepare_docker_bottle(spec: DockerBottleSpec, *, stage_dir: Path) -> DockerBottlePlan:
+def prepare_docker_bottle(spec: BottleSpec, *, stage_dir: Path) -> DockerBottlePlan:
     """Resolve names, validate, write scratch files. No Docker resources
     are created; the only side effects are host-side files under
     stage_dir and a probe of `docker info`."""
