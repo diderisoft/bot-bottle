@@ -1,7 +1,7 @@
 """Cross-cutting utility helpers used by multiple modules.
 
-Top-level (i.e. backend-agnostic) — Docker-specific helpers live in
-claude_bottle/backend/docker/util.py."""
+Top-level (i.e. backend-agnostic) — backend-specific helpers live one
+level deeper, under their backend package."""
 
 from __future__ import annotations
 

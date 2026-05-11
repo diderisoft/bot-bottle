@@ -107,7 +107,7 @@ class PipelockProxyPlan:
 class PipelockProxy(ABC):
     """The pipelock egress proxy. Encapsulates the YAML-config
     generation; the sidecar's start/stop lifecycle is backend-specific
-    and lives on concrete subclasses (e.g. DockerPipelockProxy)."""
+    and lives on concrete subclasses."""
 
     def prepare(
         self, bottle: Bottle, slug: str, yaml_path: Path

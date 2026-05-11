@@ -119,9 +119,9 @@ class Bottle:
         if "runtime" in d:
             die(
                 f"bottle '{name}' has a 'runtime' field, which is no longer "
-                f"supported. gVisor (runsc) is now auto-detected when "
-                f"registered with Docker; remove the 'runtime' field from "
-                f"the bottle definition."
+                f"supported. gVisor (runsc) is now auto-detected by the "
+                f"backend; remove the 'runtime' field from the bottle "
+                f"definition."
             )
 
         env: dict[str, str] = {}

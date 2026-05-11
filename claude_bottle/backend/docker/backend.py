@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Iterator, Sequence
 
 from ... import pipelock
-from ...env import resolve_env_into
+from ...env import ResolvedEnv, resolve_env
 from ...log import die, info
 from ...manifest import SshEntry
 from ...util import expand_tilde
@@ -101,14 +101,12 @@ class DockerBottleBackend(BottleBackend):
         env_file = stage_dir / "agent.env"
         args_file = stage_dir / "docker-args"
         prompt_file = stage_dir / "prompt.txt"
-        env_file.write_text("")
-        env_file.chmod(0o600)
-        args_file.write_text("")
         prompt_file.write_text("")
         prompt_file.chmod(0o600)
 
         proxy_plan = self.prepare_proxy(spec, stage_dir)
-        resolve_env_into(manifest, spec.agent_name, env_file, args_file)
+        resolved = resolve_env(manifest, spec.agent_name)
+        self._write_env_files(resolved, env_file, args_file)
         prompt_file.write_text(agent.prompt)
 
         allowlist_summary = pipelock.pipelock_allowlist_summary(bottle)
@@ -130,6 +128,28 @@ class DockerBottleBackend(BottleBackend):
             allowlist_summary=allowlist_summary,
             use_runsc=use_runsc,
         )
+
+    def _write_env_files(
+        self, resolved: ResolvedEnv, env_file: Path, args_file: Path
+    ) -> None:
+        """Serialize a ResolvedEnv into the two on-disk formats the launch
+        step consumes: `--env-file` syntax for literals (NAME=VALUE per
+        line) and a paired `-e\\nNAME\\n` stream for forwarded names.
+        Both files are created here (mode 600 on the literals file,
+        which may carry sensitive verbatim values from the manifest)."""
+        env_lines: list[str] = []
+        for name, value in resolved.literals.items():
+            if "\n" in value:
+                die(
+                    f"env entry {name} (literal) contains a newline; "
+                    f"docker --env-file cannot represent multi-line values."
+                )
+            env_lines.append(f"{name}={value}")
+        env_file.write_text("\n".join(env_lines) + ("\n" if env_lines else ""))
+        env_file.chmod(0o600)
+
+        args_lines = [f"-e\n{name}" for name in resolved.forwarded]
+        args_file.write_text("\n".join(args_lines) + ("\n" if args_lines else ""))
 
     def prepare_proxy(self, spec: BottleSpec, stage_dir: Path) -> pipelock.PipelockProxyPlan:
         """Decide where the pipelock yaml lives in `stage_dir`, delegate
