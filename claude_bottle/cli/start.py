@@ -19,17 +19,7 @@ from .. import skills as skills_mod
 from .. import ssh as ssh_mod
 from ..env_resolve import env_resolve
 from ..log import die, info
-from ..manifest import (
-    manifest_agent_bottle,
-    manifest_bottle_runtime,
-    manifest_env_names,
-    manifest_prompt,
-    manifest_require_agent,
-    manifest_require_bottle,
-    manifest_resolve,
-    manifest_skills,
-    manifest_ssh,
-)
+from ..manifest import Manifest
 from ._common import PROG, REPO_DIR, USER_CWD, read_tty_line
 
 
@@ -57,8 +47,11 @@ def cmd_start(argv: list[str]) -> int:
         runtime_image = derived_image
 
     docker_mod.require_docker()
-    manifest = manifest_resolve(USER_CWD)
-    manifest_require_agent(manifest, name)
+    manifest = Manifest.resolve(USER_CWD)
+    manifest.require_agent(name)
+    agent = manifest.agents[name]
+    bottle_name = agent.bottle
+    bottle = manifest.bottle_for(name)
 
     container = pinned_container or default_container
     suffix = 2
@@ -81,7 +74,7 @@ def cmd_start(argv: list[str]) -> int:
                 )
 
     # --- Plan resolution (host-only, no container yet) ---
-    env_names = manifest_env_names(manifest, name)
+    env_names = list(bottle.env.keys())
 
     # CLAUDE_BOTTLE_OAUTH_TOKEN → CLAUDE_CODE_OAUTH_TOKEN forwarding.
     # Host-side token is always forwarded so every container can authenticate.
@@ -90,23 +83,14 @@ def cmd_start(argv: list[str]) -> int:
     if forward_oauth_token:
         display_env_names.append("CLAUDE_CODE_OAUTH_TOKEN")
 
-    skill_names = manifest_skills(manifest, name)
-    if skill_names:
-        skills_mod.skills_validate_all(skill_names)
+    if agent.skills:
+        skills_mod.skills_validate_all(list(agent.skills))
 
-    bottle_name = manifest_agent_bottle(manifest, name)
-    if not bottle_name:
-        die(
-            f"agent '{name}' has no 'bottle' field. "
-            f"Add a bottle association to this agent in claude-bottle.json."
-        )
-    manifest_require_bottle(manifest, bottle_name)
-
-    runtime = manifest_bottle_runtime(manifest, bottle_name)
+    runtime = bottle.runtime
     if runtime == "runsc":
         docker_mod.require_runsc()
 
-    ssh_entries = manifest_ssh(manifest, name)
+    ssh_entries = bottle.ssh
     if ssh_entries:
         ssh_mod.ssh_validate_entries(ssh_entries)
 
@@ -153,7 +137,7 @@ def cmd_start(argv: list[str]) -> int:
 
         env_resolve(manifest, name, env_file, args_file)
 
-        prompt_content = manifest_prompt(manifest, name)
+        prompt_content = agent.prompt
         prompt_file.write_text(prompt_content)
         prompt_first_line = prompt_content.splitlines()[0] if prompt_content else ""
 
@@ -169,11 +153,11 @@ def cmd_start(argv: list[str]) -> int:
             "env (names only): "
             + (", ".join(display_env_names) if display_env_names else "(none)")
         )
-        info("skills          : " + (" ".join(skill_names) if skill_names else "(none)"))
+        info("skills          : " + (" ".join(agent.skills) if agent.skills else "(none)"))
         info(f"bottle             : {bottle_name}")
         info(f"  runtime       : {runtime}{' (gVisor)' if runtime == 'runsc' else ''}")
         if ssh_entries:
-            ssh_names = ", ".join(e.get("Host", "") for e in ssh_entries)
+            ssh_names = ", ".join(e.Host for e in ssh_entries)
             info(f"  ssh hosts     : {ssh_names}")
         else:
             info("  ssh hosts     : (none)")
@@ -293,8 +277,8 @@ def cmd_start(argv: list[str]) -> int:
             check=True,
         )
 
-        if skill_names:
-            skills_mod.skills_copy_into(container, skill_names)
+        if agent.skills:
+            skills_mod.skills_copy_into(container, list(agent.skills))
 
         if ssh_entries:
             proxy_host_port = pipelock.pipelock_proxy_host_port(slug)

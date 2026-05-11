@@ -35,7 +35,7 @@ import sys
 from pathlib import Path
 
 from .log import die
-from .manifest import Manifest, manifest_env_entry, manifest_env_names
+from .manifest import Manifest
 
 _INTERPOLATED_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
 
@@ -108,10 +108,10 @@ def env_resolve(
       - interpolated: copy host value; export under target name; append `-e NAME`
       - literal:      append `NAME=VALUE` to env_file
     """
-    for name in manifest_env_names(manifest, agent):
+    bottle = manifest.bottle_for(agent)
+    for name, raw in bottle.env.items():
         if not name:
             continue
-        raw = manifest_env_entry(manifest, agent, name)
         kind = env_entry_kind(raw)
         if kind == "secret":
             prompt_body = env_entry_secret_prompt(raw)

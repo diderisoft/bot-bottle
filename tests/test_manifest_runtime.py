@@ -1,16 +1,18 @@
-"""Unit: bottle runtime — manifest_bottle_runtime returns the configured
-runtime (defaulting to runc); manifest_validate rejects unknown values,
-non-strings, and empty strings."""
+"""Unit: bottle runtime — Manifest.from_json_obj defaults runtime to runc,
+accepts runsc, and rejects unknown values, non-strings, and empty strings."""
 
 import unittest
 
 from claude_bottle.log import Die
-from claude_bottle.manifest import manifest_bottle_runtime, manifest_validate
+from claude_bottle.manifest import Manifest
 
 
-def _bottle(runtime_value: object | None) -> dict:
-    """Build a minimal manifest with one bottle whose runtime field is
-    set (or absent if `runtime_value is _ABSENT`)."""
+_ABSENT = object()
+
+
+def _bottle(runtime_value: object) -> dict:
+    """Build a minimal manifest JSON shape with one bottle whose runtime
+    field is set (or absent if `runtime_value is _ABSENT`)."""
     bottle: dict = {}
     if runtime_value is not _ABSENT:
         bottle["runtime"] = runtime_value
@@ -20,30 +22,30 @@ def _bottle(runtime_value: object | None) -> dict:
     }
 
 
-_ABSENT = object()
-
-
 class TestManifestBottleRuntime(unittest.TestCase):
     def test_default_runc_when_absent(self):
-        self.assertEqual("runc", manifest_bottle_runtime(_bottle(_ABSENT), "dev"))
+        m = Manifest.from_json_obj(_bottle(_ABSENT))
+        self.assertEqual("runc", m.bottles["dev"].runtime)
 
     def test_explicit_runc(self):
-        self.assertEqual("runc", manifest_bottle_runtime(_bottle("runc"), "dev"))
+        m = Manifest.from_json_obj(_bottle("runc"))
+        self.assertEqual("runc", m.bottles["dev"].runtime)
 
     def test_explicit_runsc(self):
-        self.assertEqual("runsc", manifest_bottle_runtime(_bottle("runsc"), "dev"))
+        m = Manifest.from_json_obj(_bottle("runsc"))
+        self.assertEqual("runsc", m.bottles["dev"].runtime)
 
     def test_rejects_unknown_runtime(self):
         with self.assertRaises(Die):
-            manifest_validate(_bottle("kata-runtime"))
+            Manifest.from_json_obj(_bottle("kata-runtime"))
 
     def test_rejects_non_string(self):
         with self.assertRaises(Die):
-            manifest_validate(_bottle(42))
+            Manifest.from_json_obj(_bottle(42))
 
     def test_rejects_empty_string(self):
         with self.assertRaises(Die):
-            manifest_validate(_bottle(""))
+            Manifest.from_json_obj(_bottle(""))
 
 
 if __name__ == "__main__":

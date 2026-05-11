@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from claude_bottle.manifest import Manifest
 from claude_bottle.pipelock import pipelock_write_yaml
 from tests.fixtures import fixture_minimal, fixture_with_ssh
 
@@ -50,7 +51,7 @@ class TestPipelockYaml(unittest.TestCase):
         self.assertIn("192.0.2.10", content)
 
     def test_secret_hygiene(self):
-        manifest = {
+        manifest = Manifest.from_json_obj({
             "bottles": {
                 "dev": {
                     "env": {
@@ -61,7 +62,7 @@ class TestPipelockYaml(unittest.TestCase):
                 }
             },
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
-        }
+        })
         yaml_path = self.out_dir / "secret.yaml"
         pipelock_write_yaml(manifest, "dev", yaml_path)
         content = yaml_path.read_text()

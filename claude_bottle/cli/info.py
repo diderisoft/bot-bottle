@@ -5,15 +5,7 @@ from __future__ import annotations
 import argparse
 
 from ..log import info
-from ..manifest import (
-    manifest_agent_bottle,
-    manifest_env_names,
-    manifest_prompt,
-    manifest_require_agent,
-    manifest_resolve,
-    manifest_skills,
-    manifest_ssh,
-)
+from ..manifest import Manifest
 from ._common import PROG, USER_CWD
 
 
@@ -22,39 +14,33 @@ def cmd_info(argv: list[str]) -> int:
     parser.add_argument("name", help="agent name defined in claude-bottle.json")
     args = parser.parse_args(argv)
 
-    manifest = manifest_resolve(USER_CWD)
-    manifest_require_agent(manifest, args.name)
+    manifest = Manifest.resolve(USER_CWD)
+    manifest.require_agent(args.name)
 
-    env_names = manifest_env_names(manifest, args.name)
-    skill_names = manifest_skills(manifest, args.name)
-    prompt_content = manifest_prompt(manifest, args.name)
-    prompt_first_line = prompt_content.splitlines()[0] if prompt_content else ""
-
-    bottle_name = manifest_agent_bottle(manifest, args.name)
-    ssh_entries = manifest_ssh(manifest, args.name)
+    agent = manifest.agents[args.name]
+    bottle = manifest.bottle_for(args.name)
+    env_names = list(bottle.env.keys())
+    prompt_first_line = agent.prompt.splitlines()[0] if agent.prompt else ""
 
     print()
     info(f"agent           : {args.name}")
     info(f"env (names only): {', '.join(env_names) if env_names else '(none)'}")
-    info(f"skills          : {' '.join(skill_names) if skill_names else '(none)'}")
+    info(f"skills          : {' '.join(agent.skills) if agent.skills else '(none)'}")
     info(
-        f"prompt          : {len(prompt_content)} chars; "
+        f"prompt          : {len(agent.prompt)} chars; "
         f"first line: {prompt_first_line or '(empty)'}"
     )
-    if bottle_name:
-        info(f"bottle             : {bottle_name}")
-        if ssh_entries:
-            for e in ssh_entries:
-                info(
-                    f"  ssh host      : {e.get('Host')} "
-                    f"(Hostname={e.get('Hostname')}, User={e.get('User')}, "
-                    f"Port={e.get('Port')}, IdentityFile={e.get('IdentityFile')})"
-                )
-                if e.get("KnownHostKey"):
-                    info(f"    KnownHostKey: {e['KnownHostKey']}")
-        else:
-            info("  ssh hosts     : (none)")
+    info(f"bottle             : {agent.bottle}")
+    if bottle.ssh:
+        for e in bottle.ssh:
+            info(
+                f"  ssh host      : {e.Host} "
+                f"(Hostname={e.Hostname}, User={e.User}, "
+                f"Port={e.Port}, IdentityFile={e.IdentityFile})"
+            )
+            if e.KnownHostKey:
+                info(f"    KnownHostKey: {e.KnownHostKey}")
     else:
-        info("bottle             : (none)")
+        info("  ssh hosts     : (none)")
     print()
     return 0

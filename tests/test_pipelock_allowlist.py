@@ -5,6 +5,7 @@ pipelock_bottle_ssh_trusted_domains, pipelock_effective_allowlist."""
 import unittest
 
 from claude_bottle.log import Die
+from claude_bottle.manifest import Manifest
 from claude_bottle.pipelock import (
     pipelock_bottle_allowlist,
     pipelock_bottle_ssh_hostnames,
@@ -32,7 +33,7 @@ class TestBottleAllowlist(unittest.TestCase):
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
         }
         with self.assertRaises(Die):
-            pipelock_bottle_allowlist(bad, "dev")
+            Manifest.from_json_obj(bad)
 
 
 class TestSSHHostnames(unittest.TestCase):
@@ -54,7 +55,7 @@ class TestSSHHostnames(unittest.TestCase):
 
 class TestEffectiveAllowlist(unittest.TestCase):
     def test_union_and_dedup(self):
-        manifest = {
+        manifest = Manifest.from_json_obj({
             "bottles": {
                 "dev": {
                     "egress": {"allowlist": ["registry.npmjs.org"]},
@@ -67,7 +68,7 @@ class TestEffectiveAllowlist(unittest.TestCase):
                 }
             },
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
-        }
+        })
         eff = pipelock_effective_allowlist(manifest, "dev")
         self.assertIn("api.anthropic.com", eff)
         self.assertIn("registry.npmjs.org", eff)
