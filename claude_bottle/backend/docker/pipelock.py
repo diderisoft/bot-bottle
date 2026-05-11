@@ -12,8 +12,19 @@ from ...pipelock import (
     PIPELOCK_PORT,
     PipelockProxy,
     PipelockProxyPlan,
-    pipelock_container_name,
 )
+
+
+def pipelock_container_name(slug: str) -> str:
+    return f"claude-bottle-pipelock-{slug}"
+
+
+def pipelock_proxy_url(slug: str) -> str:
+    return f"http://{pipelock_container_name(slug)}:{PIPELOCK_PORT}"
+
+
+def pipelock_proxy_host_port(slug: str) -> str:
+    return f"{pipelock_container_name(slug)}:{PIPELOCK_PORT}"
 
 
 class DockerPipelockProxy(PipelockProxy):

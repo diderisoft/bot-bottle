@@ -13,8 +13,10 @@ from claude_bottle.backend.docker.network import (
     network_create_internal,
     network_remove,
 )
-from claude_bottle.backend.docker.pipelock import DockerPipelockProxy
-from claude_bottle.pipelock import pipelock_container_name
+from claude_bottle.backend.docker.pipelock import (
+    DockerPipelockProxy,
+    pipelock_container_name,
+)
 from tests._docker import skip_unless_docker
 
 

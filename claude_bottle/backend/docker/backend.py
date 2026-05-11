@@ -29,7 +29,11 @@ from . import util as docker_mod
 from .bottle import DockerBottle
 from .bottle_cleanup_plan import DockerBottleCleanupPlan
 from .bottle_plan import DockerBottlePlan
-from .pipelock import DockerPipelockProxy
+from .pipelock import (
+    DockerPipelockProxy,
+    pipelock_proxy_host_port,
+    pipelock_proxy_url,
+)
 
 
 # Where the repo root lives, for `docker build` context. Computed once.
@@ -204,7 +208,7 @@ class DockerBottleBackend(BottleBackend):
         """Build the `docker run` argv and execute it, handling
         name-conflict races by incrementing the suffix (unless the name
         was user-pinned). Returns the resolved container name."""
-        proxy_url = pipelock.pipelock_proxy_url(plan.slug)
+        proxy_url = pipelock_proxy_url(plan.slug)
         docker_args: list[str] = [
             "--rm", "-d",
             "--name", plan.container_name,
@@ -411,7 +415,7 @@ class DockerBottleBackend(BottleBackend):
             return
 
         container = target
-        proxy_host_port = pipelock.pipelock_proxy_host_port(plan.slug)
+        proxy_host_port = pipelock_proxy_host_port(plan.slug)
         container_home = os.environ.get("CLAUDE_BOTTLE_CONTAINER_HOME", "/home/node")
         container_ssh = f"{container_home}/.ssh"
         agent_socket = "/run/claude-bottle-agent.sock"
