@@ -5,7 +5,7 @@ docker."""
 import subprocess
 import unittest
 
-from claude_bottle.pipelock import PIPELOCK_IMAGE
+from claude_bottle.backend.docker.pipelock import PIPELOCK_IMAGE
 from tests._docker import skip_unless_docker
 
 

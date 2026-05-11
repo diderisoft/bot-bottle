@@ -12,8 +12,10 @@ import unittest
 import urllib.request
 from pathlib import Path
 
-from claude_bottle.backend.docker.pipelock import DockerPipelockProxy
-from claude_bottle.pipelock import PIPELOCK_IMAGE
+from claude_bottle.backend.docker.pipelock import (
+    PIPELOCK_IMAGE,
+    DockerPipelockProxy,
+)
 from tests._docker import skip_unless_docker
 from tests.fixtures import fixture_minimal
 

@@ -12,23 +12,12 @@ Image pin: ghcr.io/luckypipewrench/pipelock@sha256:<digest> for tag 2.3.0.
 
 from __future__ import annotations
 
-import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 
 from .manifest import Bottle, Manifest
 from .util import is_ipv4_literal
-
-# Pipelock image, pinned by digest. The digest is the multi-arch image
-# index for ghcr.io/luckypipewrench/pipelock:2.3.0.
-PIPELOCK_IMAGE = os.environ.get(
-    "CLAUDE_BOTTLE_PIPELOCK_IMAGE",
-    "ghcr.io/luckypipewrench/pipelock@sha256:3b1a39417b98406ddc5dc2d8fcb42865ddc0c68a43d355db55f0f8cb06bc6de9",
-)
-
-# Listening port for pipelock's forward proxy.
-PIPELOCK_PORT = os.environ.get("CLAUDE_BOTTLE_PIPELOCK_PORT", "8888")
 
 # Baked-in default allowlist for hosts Claude Code itself needs.
 DEFAULT_ALLOWLIST: tuple[str, ...] = (

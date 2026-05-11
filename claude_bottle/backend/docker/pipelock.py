@@ -4,15 +4,22 @@ YAML-config generation from PipelockProxy."""
 
 from __future__ import annotations
 
+import os
 import subprocess
 
 from ...log import die, info, warn
-from ...pipelock import (
-    PIPELOCK_IMAGE,
-    PIPELOCK_PORT,
-    PipelockProxy,
-    PipelockProxyPlan,
+from ...pipelock import PipelockProxy, PipelockProxyPlan
+
+
+# Pipelock image, pinned by digest. The digest is the multi-arch image
+# index for ghcr.io/luckypipewrench/pipelock:2.3.0.
+PIPELOCK_IMAGE = os.environ.get(
+    "CLAUDE_BOTTLE_PIPELOCK_IMAGE",
+    "ghcr.io/luckypipewrench/pipelock@sha256:3b1a39417b98406ddc5dc2d8fcb42865ddc0c68a43d355db55f0f8cb06bc6de9",
 )
+
+# Listening port for pipelock's forward proxy.
+PIPELOCK_PORT = os.environ.get("CLAUDE_BOTTLE_PIPELOCK_PORT", "8888")
 
 
 def pipelock_container_name(slug: str) -> str:
