@@ -158,130 +158,6 @@ class _DockerBottle:
         self._teardown()
 
 
-# --- Container internals ---------------------------------------------------
-
-
-def _run_agent_container(plan: DockerBottlePlan, internal_network: str) -> str:
-    """Build the `docker run` argv and execute it, handling name-conflict
-    races by incrementing the suffix (unless the name was user-pinned).
-    Returns the resolved container name."""
-    proxy_url = pipelock.pipelock_proxy_url(plan.slug)
-    docker_args: list[str] = [
-        "--rm", "-d",
-        "--name", plan.container_name,
-        "--network", internal_network,
-        "-e", f"HTTPS_PROXY={proxy_url}",
-        "-e", f"HTTP_PROXY={proxy_url}",
-        "-e", "NO_PROXY=localhost,127.0.0.1",
-    ]
-    if plan.use_runsc:
-        docker_args.extend(["--runtime", "runsc"])
-    if plan.env_file.stat().st_size > 0:
-        docker_args.extend(["--env-file", str(plan.env_file)])
-
-    # ARGS_FILE pairs (-e, NAME) line-by-line.
-    args_lines = plan.args_file.read_text().splitlines()
-    i = 0
-    while i < len(args_lines):
-        flag = args_lines[i]
-        i += 1
-        if not flag:
-            continue
-        if i >= len(args_lines):
-            break
-        vname = args_lines[i]
-        i += 1
-        docker_args.extend([flag, vname])
-
-    if plan.spec.forward_oauth_token:
-        os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = os.environ["CLAUDE_BOTTLE_OAUTH_TOKEN"]
-        docker_args.extend(["-e", "CLAUDE_CODE_OAUTH_TOKEN"])
-
-    docker_args.extend([plan.runtime_image, "sleep", "infinity"])
-
-    info(f"starting container {plan.container_name} from {plan.runtime_image}")
-
-    container = plan.container_name
-    base_name = plan.container_name
-    suffix = 2
-    while True:
-        run_result = subprocess.run(
-            ["docker", "run", *docker_args],
-            capture_output=True,
-            text=True,
-        )
-        if run_result.returncode == 0:
-            return container
-        err_text = run_result.stderr
-        if plan.container_name_pinned or "is already in use" not in err_text:
-            sys.stderr.write(err_text + "\n")
-            die(f"docker run failed for container '{container}'")
-        if suffix > 100:
-            die(
-                f"could not find a free container name after "
-                f"{base_name}-99 retries; clean up old containers"
-            )
-        container = f"{base_name}-{suffix}"
-        suffix += 1
-        name_idx = docker_args.index("--name") + 1
-        docker_args[name_idx] = container
-        info(f"name conflict; retrying as {container}")
-
-
-def _provision_container(plan: DockerBottlePlan, container: str) -> str | None:
-    """Copy prompt, skills, ssh keys, and (optionally) .git into the
-    running container. Returns the in-container prompt path if a prompt
-    was provisioned, else None — the Bottle handle uses it to decide
-    whether to add --append-system-prompt-file to claude's argv."""
-    container_home = os.environ.get("CLAUDE_BOTTLE_CONTAINER_HOME", "/home/node")
-    in_container_prompt_path = f"{container_home}/.claude-bottle-prompt.txt"
-
-    subprocess.run(
-        ["docker", "cp", str(plan.prompt_file), f"{container}:{in_container_prompt_path}"],
-        stdout=subprocess.DEVNULL,
-        check=True,
-    )
-    # `docker cp` preserves host UID; re-own/mode as root so node can
-    # read its own mode-600 prompt regardless of host UID.
-    subprocess.run(
-        ["docker", "exec", "-u", "0", container, "chown", "node:node", in_container_prompt_path],
-        stdout=subprocess.DEVNULL,
-        check=True,
-    )
-    subprocess.run(
-        ["docker", "exec", "-u", "0", container, "chmod", "600", in_container_prompt_path],
-        stdout=subprocess.DEVNULL,
-        check=True,
-    )
-
-    agent = plan.spec.manifest.agents[plan.spec.agent_name]
-    if agent.skills:
-        skills_mod.skills_copy_into(container, list(agent.skills))
-
-    bottle = plan.spec.manifest.bottle_for(plan.spec.agent_name)
-    if bottle.ssh:
-        proxy_host_port = pipelock.pipelock_proxy_host_port(plan.slug)
-        ssh_mod.ssh_setup(container, plan.stage_dir, proxy_host_port, bottle.ssh)
-
-    if plan.spec.copy_cwd and Path(plan.spec.user_cwd, ".git").is_dir():
-        info(f"copying {plan.spec.user_cwd}/.git -> {container}:/home/node/workspace/.git")
-        subprocess.run(
-            ["docker", "cp", f"{plan.spec.user_cwd}/.git", f"{container}:/home/node/workspace/.git"],
-            stdout=subprocess.DEVNULL,
-            check=True,
-        )
-        subprocess.run(
-            [
-                "docker", "exec", "-u", "0", container,
-                "chown", "-R", "node:node", "/home/node/workspace/.git",
-            ],
-            stdout=subprocess.DEVNULL,
-            check=True,
-        )
-
-    return in_container_prompt_path if agent.prompt else None
-
-
 # --- Platform --------------------------------------------------------------
 
 
@@ -433,12 +309,132 @@ class DockerBottlePlatform(BottlePlatform):
                 plan.pipelock_yaml_filename,
             )
 
-            container = _run_agent_container(plan, state["internal_network"])
+            container = self._run_agent_container(plan, state["internal_network"])
             state["container"] = container
 
-            prompt_path = _provision_container(plan, container)
+            prompt_path = self._provision_container(plan, container)
 
             bottle = _DockerBottle(container, teardown, prompt_path)
             yield bottle
         finally:
             teardown()
+
+    def _run_agent_container(self, plan: DockerBottlePlan, internal_network: str) -> str:
+        """Build the `docker run` argv and execute it, handling
+        name-conflict races by incrementing the suffix (unless the name
+        was user-pinned). Returns the resolved container name."""
+        proxy_url = pipelock.pipelock_proxy_url(plan.slug)
+        docker_args: list[str] = [
+            "--rm", "-d",
+            "--name", plan.container_name,
+            "--network", internal_network,
+            "-e", f"HTTPS_PROXY={proxy_url}",
+            "-e", f"HTTP_PROXY={proxy_url}",
+            "-e", "NO_PROXY=localhost,127.0.0.1",
+        ]
+        if plan.use_runsc:
+            docker_args.extend(["--runtime", "runsc"])
+        if plan.env_file.stat().st_size > 0:
+            docker_args.extend(["--env-file", str(plan.env_file)])
+
+        # ARGS_FILE pairs (-e, NAME) line-by-line.
+        args_lines = plan.args_file.read_text().splitlines()
+        i = 0
+        while i < len(args_lines):
+            flag = args_lines[i]
+            i += 1
+            if not flag:
+                continue
+            if i >= len(args_lines):
+                break
+            vname = args_lines[i]
+            i += 1
+            docker_args.extend([flag, vname])
+
+        if plan.spec.forward_oauth_token:
+            os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = os.environ["CLAUDE_BOTTLE_OAUTH_TOKEN"]
+            docker_args.extend(["-e", "CLAUDE_CODE_OAUTH_TOKEN"])
+
+        docker_args.extend([plan.runtime_image, "sleep", "infinity"])
+
+        info(f"starting container {plan.container_name} from {plan.runtime_image}")
+
+        container = plan.container_name
+        base_name = plan.container_name
+        suffix = 2
+        while True:
+            run_result = subprocess.run(
+                ["docker", "run", *docker_args],
+                capture_output=True,
+                text=True,
+            )
+            if run_result.returncode == 0:
+                return container
+            err_text = run_result.stderr
+            if plan.container_name_pinned or "is already in use" not in err_text:
+                sys.stderr.write(err_text + "\n")
+                die(f"docker run failed for container '{container}'")
+            if suffix > 100:
+                die(
+                    f"could not find a free container name after "
+                    f"{base_name}-99 retries; clean up old containers"
+                )
+            container = f"{base_name}-{suffix}"
+            suffix += 1
+            name_idx = docker_args.index("--name") + 1
+            docker_args[name_idx] = container
+            info(f"name conflict; retrying as {container}")
+
+    def _provision_container(self, plan: DockerBottlePlan, container: str) -> str | None:
+        """Copy prompt, skills, ssh keys, and (optionally) .git into the
+        running container. Returns the in-container prompt path if a
+        prompt was provisioned, else None — the Bottle handle uses it
+        to decide whether to add --append-system-prompt-file to
+        claude's argv."""
+        container_home = os.environ.get("CLAUDE_BOTTLE_CONTAINER_HOME", "/home/node")
+        in_container_prompt_path = f"{container_home}/.claude-bottle-prompt.txt"
+
+        subprocess.run(
+            ["docker", "cp", str(plan.prompt_file), f"{container}:{in_container_prompt_path}"],
+            stdout=subprocess.DEVNULL,
+            check=True,
+        )
+        # `docker cp` preserves host UID; re-own/mode as root so node
+        # can read its own mode-600 prompt regardless of host UID.
+        subprocess.run(
+            ["docker", "exec", "-u", "0", container, "chown", "node:node", in_container_prompt_path],
+            stdout=subprocess.DEVNULL,
+            check=True,
+        )
+        subprocess.run(
+            ["docker", "exec", "-u", "0", container, "chmod", "600", in_container_prompt_path],
+            stdout=subprocess.DEVNULL,
+            check=True,
+        )
+
+        agent = plan.spec.manifest.agents[plan.spec.agent_name]
+        if agent.skills:
+            skills_mod.skills_copy_into(container, list(agent.skills))
+
+        bottle = plan.spec.manifest.bottle_for(plan.spec.agent_name)
+        if bottle.ssh:
+            proxy_host_port = pipelock.pipelock_proxy_host_port(plan.slug)
+            ssh_mod.ssh_setup(container, plan.stage_dir, proxy_host_port, bottle.ssh)
+
+        if plan.spec.copy_cwd and Path(plan.spec.user_cwd, ".git").is_dir():
+            info(f"copying {plan.spec.user_cwd}/.git -> {container}:/home/node/workspace/.git")
+            subprocess.run(
+                ["docker", "cp", f"{plan.spec.user_cwd}/.git", f"{container}:/home/node/workspace/.git"],
+                stdout=subprocess.DEVNULL,
+                check=True,
+            )
+            subprocess.run(
+                [
+                    "docker", "exec", "-u", "0", container,
+                    "chown", "-R", "node:node", "/home/node/workspace/.git",
+                ],
+                stdout=subprocess.DEVNULL,
+                check=True,
+            )
+
+        return in_container_prompt_path if agent.prompt else None
