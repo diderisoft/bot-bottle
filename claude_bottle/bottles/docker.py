@@ -22,7 +22,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
@@ -34,7 +34,7 @@ from .. import skills as skills_mod
 from .. import ssh as ssh_mod
 from ..env_resolve import env_resolve
 from ..log import die, info
-from . import BottlePlan, BottleSpec
+from . import BottlePlan, BottlePlatform, BottleSpec
 
 
 # --- Runtime detection -----------------------------------------------------
@@ -434,3 +434,24 @@ def _provision_container(plan: DockerBottlePlan, container: str) -> str | None:
         )
 
     return in_container_prompt_path if agent.prompt else None
+
+
+# --- Platform --------------------------------------------------------------
+
+
+class DockerBottlePlatform(BottlePlatform):
+    """Docker platform implementation. Selected by CLAUDE_BOTTLE_PLATFORM
+    (default). The methods delegate to the module-level prepare/launch
+    functions so the platform class itself stays a thin dispatch layer."""
+
+    name = "docker"
+
+    def prepare(self, spec: BottleSpec, *, stage_dir: Path) -> BottlePlan:
+        return prepare_docker_bottle(spec, stage_dir=stage_dir)
+
+    def launch(self, plan: BottlePlan) -> AbstractContextManager[_DockerBottle]:
+        assert isinstance(plan, DockerBottlePlan), (
+            f"DockerBottlePlatform.launch expects DockerBottlePlan, "
+            f"got {type(plan).__name__}"
+        )
+        return launch_docker_bottle(plan)

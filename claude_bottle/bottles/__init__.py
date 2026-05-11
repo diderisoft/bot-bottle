@@ -24,7 +24,7 @@ from abc import ABC, abstractmethod
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Protocol
 
 from ..log import die
 from ..manifest import Manifest
@@ -58,12 +58,6 @@ class BottlePlan(ABC):
         """Render the y/N preflight summary to stderr."""
 
 
-# Import concrete platform factories AFTER the base types are defined,
-# so each platform module can pull BottleSpec / BottlePlan via
-# `from . import ...` without hitting a partially-initialized module.
-from .docker import launch_docker_bottle, prepare_docker_bottle  # noqa: E402
-
-
 class Bottle(Protocol):
     """Handle to a running bottle. Yielded by a platform's launch step.
 
@@ -79,21 +73,31 @@ class Bottle(Protocol):
     def close(self) -> None: ...
 
 
-@dataclass(frozen=True)
-class BottlePlatform:
-    """Bundles a platform's two-phase factory under one selectable name."""
+class BottlePlatform(ABC):
+    """Abstract base for selectable bottle platforms. Concrete subclasses
+    (e.g. DockerBottlePlatform) own their own prepare/launch impls.
+    Symmetric with the BottlePlan → DockerBottlePlan hierarchy."""
 
     name: str
-    prepare: Callable[..., BottlePlan]
-    launch: Callable[..., AbstractContextManager[Bottle]]
+
+    @abstractmethod
+    def prepare(self, spec: BottleSpec, *, stage_dir: Path) -> BottlePlan:
+        """Resolve names, validate host-side prerequisites, write
+        scratch files. No remote/runtime resources created yet."""
+
+    @abstractmethod
+    def launch(self, plan: BottlePlan) -> AbstractContextManager[Bottle]:
+        """Build/run the bottle and yield a handle; tear down on exit."""
+
+
+# Import concrete platform classes AFTER the base types are defined, so
+# each platform module can pull BottleSpec / BottlePlan / BottlePlatform
+# via `from . import ...` without hitting a partially-initialized module.
+from .docker import DockerBottlePlatform  # noqa: E402
 
 
 _PLATFORMS: dict[str, BottlePlatform] = {
-    "docker": BottlePlatform(
-        name="docker",
-        prepare=prepare_docker_bottle,
-        launch=launch_docker_bottle,
-    ),
+    "docker": DockerBottlePlatform(),
 }
 
 
