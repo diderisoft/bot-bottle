@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ...log import info
-from ...pipelock import PipelockProxyPlan
+from ...pipelock import PipelockProxyPlan, pipelock_effective_allowlist
 from .. import BottlePlan
 
 
@@ -75,3 +75,36 @@ class DockerBottlePlan(BottlePlan):
         )
         info("remote-control  : " + ("enabled" if remote_control else "disabled"))
         print(file=sys.stderr)
+
+    def to_dict(self, *, remote_control: bool) -> dict[str, object]:
+        spec = self.spec
+        manifest = spec.manifest
+        agent = manifest.agents[spec.agent_name]
+        bottle = manifest.bottle_for(spec.agent_name)
+
+        env_names = list(bottle.env.keys())
+        if spec.forward_oauth_token:
+            env_names.append("CLAUDE_CODE_OAUTH_TOKEN")
+
+        hosts = pipelock_effective_allowlist(bottle)
+        return {
+            "agent": spec.agent_name,
+            "bottle": agent.bottle,
+            "container_name": self.container_name,
+            "image": self.image,
+            "derived_image": self.derived_image,
+            "stage_dir": str(self.stage_dir),
+            "runtime": "runsc" if self.use_runsc else "runc",
+            "env_names": env_names,
+            "skills": list(agent.skills),
+            "ssh_hosts": [e.Host for e in bottle.ssh],
+            "egress": {
+                "host_count": len(hosts),
+                "hosts": hosts,
+            },
+            "prompt": {
+                "length": len(agent.prompt),
+                "first_line": agent.prompt.splitlines()[0] if agent.prompt else "",
+            },
+            "remote_control": remote_control,
+        }

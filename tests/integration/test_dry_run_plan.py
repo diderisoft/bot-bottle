@@ -1,10 +1,9 @@
-"""Integration: cli.py start --dry-run renders the planned shape and
-does not create any docker resources. Confirms the preflight contract
-from PRD 0001 (allowlist line in the plan, no docker side effects)."""
+"""Integration: cli.py start --dry-run --format=json renders a stable
+machine-readable plan and creates zero Docker resources. The shape of
+the JSON document is part of the CLI's user-facing contract."""
 
 import json
 import os
-import re
 import subprocess
 import sys
 import tempfile
@@ -13,12 +12,12 @@ from pathlib import Path
 
 from tests._docker import skip_unless_docker
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 @skip_unless_docker()
 class TestDryRunPlan(unittest.TestCase):
-    def test_dry_run(self):
+    def test_dry_run_emits_structured_plan(self):
         work_dir = Path(tempfile.mkdtemp())
         try:
             manifest = work_dir / "claude-bottle.json"
@@ -34,28 +33,75 @@ class TestDryRunPlan(unittest.TestCase):
 
             env = os.environ.copy()
             env["HOME"] = str(work_dir)
-            env["CLAUDE_BOTTLE_DRY_RUN"] = "1"
+            env.pop("CLAUDE_BOTTLE_DRY_RUN", None)
             result = subprocess.run(
-                [sys.executable, str(REPO_ROOT / "cli.py"), "start", "demo"],
+                [
+                    sys.executable, str(REPO_ROOT / "cli.py"),
+                    "start", "--dry-run", "--format", "json", "demo",
+                ],
                 cwd=work_dir,
                 env=env,
                 capture_output=True,
                 text=True,
             )
-            out = result.stdout + result.stderr
+            self.assertEqual(
+                0, result.returncode,
+                f"start --dry-run failed: stderr={result.stderr}",
+            )
 
-            self.assertIn("egress", out, "preflight: egress line present")
-            # 7 baked defaults + 1 bottle entry = 8.
-            self.assertRegex(out, r"8 hosts allowed", "preflight: bottle entry counted")
-            self.assertIn("api.anthropic.com", out, "preflight: baked default shown")
-            self.assertRegex(out, r"runtime\s*:\s*runc", "preflight: default runtime shown")
-            self.assertIn("dry-run requested", out, "dry-run banner present")
-            self.assertNotIn("/dev/tty", out, "dry-run exited before tty prompt")
+            plan = json.loads(result.stdout)
 
+            self.assertEqual("demo", plan["agent"])
+            self.assertEqual("dev", plan["bottle"])
+            self.assertEqual("runc", plan["runtime"],
+                             "runsc isn't available on the CI runner")
+            self.assertEqual([], plan["skills"])
+            self.assertEqual([], plan["ssh_hosts"])
+            self.assertEqual(False, plan["remote_control"])
+            self.assertEqual(0, plan["prompt"]["length"])
+
+            # User-declared host + a baked default both present; the union
+            # is sorted and deduplicated.
+            hosts = plan["egress"]["hosts"]
+            self.assertIn("example.org", hosts)
+            self.assertIn("api.anthropic.com", hosts)
+            self.assertEqual(plan["egress"]["host_count"], len(hosts))
+            self.assertEqual(sorted(set(hosts)), hosts,
+                             "hosts must be sorted and deduplicated")
+
+            # No Docker side effects.
             self.assertEqual(nets_before, self._count_claude_bottle_networks(),
                              "no networks created")
             self.assertEqual(ctrs_before, self._count_claude_bottle_containers(),
                              "no containers created")
+        finally:
+            import shutil
+            shutil.rmtree(work_dir, ignore_errors=True)
+
+    def test_json_format_requires_dry_run(self):
+        """The CLI rejects --format=json without --dry-run; emitting JSON
+        in a real run would race the y/N prompt."""
+        work_dir = Path(tempfile.mkdtemp())
+        try:
+            manifest = work_dir / "claude-bottle.json"
+            manifest.write_text(json.dumps({
+                "bottles": {"dev": {}},
+                "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+            }))
+            env = os.environ.copy()
+            env["HOME"] = str(work_dir)
+            env.pop("CLAUDE_BOTTLE_DRY_RUN", None)
+            result = subprocess.run(
+                [
+                    sys.executable, str(REPO_ROOT / "cli.py"),
+                    "start", "--format", "json", "demo",
+                ],
+                cwd=work_dir,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(0, result.returncode)
         finally:
             import shutil
             shutil.rmtree(work_dir, ignore_errors=True)
