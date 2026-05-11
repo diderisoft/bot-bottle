@@ -21,6 +21,7 @@ from ... import pipelock
 from ...env_resolve import env_resolve
 from ...log import die, info
 from ...manifest import SshEntry
+from ...util import expand_tilde
 from .. import BottleBackend, BottleCleanupPlan, BottlePlan, BottleSpec
 from . import network as network_mod
 from . import util as docker_mod
@@ -360,7 +361,7 @@ class DockerBottleBackend(BottleBackend):
         the y/N so the user doesn't get prompted for a plan with a
         missing key."""
         for entry in entries:
-            key = self._expand_tilde(entry.IdentityFile)
+            key = expand_tilde(entry.IdentityFile)
             if not os.path.isfile(key):
                 die(f"ssh key file not found for host '{entry.Host}': {key}")
 
@@ -431,7 +432,7 @@ class DockerBottleBackend(BottleBackend):
         container_key_paths: list[str] = []
         for entry in bottle.ssh:
             name = entry.Host
-            key = self._expand_tilde(entry.IdentityFile)
+            key = expand_tilde(entry.IdentityFile)
             hostname = entry.Hostname
             user = entry.User
             port = entry.Port
@@ -539,12 +540,6 @@ class DockerBottleBackend(BottleBackend):
             stdout=subprocess.DEVNULL,
             check=True,
         )
-
-    def _expand_tilde(self, path: str) -> str:
-        if path.startswith("~"):
-            home = os.environ.get("HOME", "")
-            return home + path[1:]
-        return path
 
     def provision_git(self, plan: BottlePlan, target: str) -> None:
         """If --cwd was set and the host cwd has a .git directory, copy
