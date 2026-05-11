@@ -9,7 +9,7 @@ The bulk of the implementation lives in sibling modules:
   - platform:             DockerBottlePlatform
 
 This file only re-exports the public names so
-`from claude_bottle.bottles.docker import DockerBottlePlatform` keeps
+`from claude_bottle.platform.docker import DockerBottlePlatform` keeps
 working.
 """
 

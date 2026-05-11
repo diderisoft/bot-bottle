@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from ..bottles import get_bottle_platform
+from ..platform import get_bottle_platform
 from ..manifest import Manifest
 from ._common import PROG, USER_CWD
 

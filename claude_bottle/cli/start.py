@@ -11,7 +11,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from ..bottles import BottleSpec, get_bottle_platform
+from ..platform import BottleSpec, get_bottle_platform
 from ..log import info
 from ..manifest import Manifest
 from ._common import PROG, USER_CWD, read_tty_line

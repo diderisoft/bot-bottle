@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import sys
 
-from ..bottles import get_bottle_platform
+from ..platform import get_bottle_platform
 from ..log import info
 from ._common import read_tty_line
 
