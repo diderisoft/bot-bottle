@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from ..platform import get_bottle_platform
+from ..backend import get_bottle_backend
 from ..manifest import Manifest
 from ._common import PROG, USER_CWD
 
@@ -20,5 +20,5 @@ def cmd_list(argv: list[str]) -> int:
             print(name)
         return 0
 
-    get_bottle_platform().list_active()
+    get_bottle_backend().list_active()
     return 0

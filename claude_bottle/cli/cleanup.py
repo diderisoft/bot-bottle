@@ -5,14 +5,14 @@ from __future__ import annotations
 
 import sys
 
-from ..platform import get_bottle_platform
+from ..backend import get_bottle_backend
 from ..log import info
 from ._common import read_tty_line
 
 
 def cmd_cleanup(_argv: list[str]) -> int:
-    platform = get_bottle_platform()
-    plan = platform.prepare_cleanup()
+    backend = get_bottle_backend()
+    plan = backend.prepare_cleanup()
 
     if plan.empty:
         info("no claude-bottle resources to clean up")
@@ -26,6 +26,6 @@ def cmd_cleanup(_argv: list[str]) -> int:
         info("aborted")
         return 0
 
-    platform.cleanup(plan)
+    backend.cleanup(plan)
     info("done")
     return 0

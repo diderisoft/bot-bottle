@@ -1,7 +1,7 @@
 """DockerBottleCleanupPlan — concrete subclass of BottleCleanupPlan.
 
 Holds the tuples of container and network names that
-DockerBottlePlatform.cleanup will remove. The y/N preflight reads
+DockerBottleBackend.cleanup will remove. The y/N preflight reads
 these via `print`; the CLI short-circuits via `empty`.
 """
 
@@ -16,7 +16,7 @@ from .. import BottleCleanupPlan
 
 @dataclass(frozen=True)
 class DockerBottleCleanupPlan(BottleCleanupPlan):
-    """Resources DockerBottlePlatform.cleanup will remove. Produced by
+    """Resources DockerBottleBackend.cleanup will remove. Produced by
     `prepare_cleanup` from a snapshot of `docker ps -a` + `docker
     network ls`; sorted so the y/N output is stable."""
 

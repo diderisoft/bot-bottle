@@ -1,5 +1,5 @@
 """DockerBottle — concrete Bottle handle yielded by
-DockerBottlePlatform.launch.
+DockerBottleBackend.launch.
 
 Holds the container name plus the in-container prompt path so
 exec_claude can transparently add --append-system-prompt-file when a

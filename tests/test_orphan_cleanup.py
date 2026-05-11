@@ -7,7 +7,7 @@ import os
 import subprocess
 import unittest
 
-from claude_bottle.platform.docker.network import (
+from claude_bottle.backend.docker.network import (
     network_create_egress,
     network_create_internal,
     network_remove,

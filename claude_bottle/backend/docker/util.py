@@ -1,4 +1,4 @@
-"""Docker host-side primitives used by DockerBottlePlatform: probing
+"""Docker host-side primitives used by DockerBottleBackend: probing
 for docker on PATH, slugifying agent names, checking image/container
 existence, and building images."""
 

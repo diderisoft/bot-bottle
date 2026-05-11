@@ -11,7 +11,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from ..platform import BottleSpec, get_bottle_platform
+from ..backend import BottleSpec, get_bottle_backend
 from ..log import info
 from ..manifest import Manifest
 from ._common import PROG, USER_CWD, read_tty_line
@@ -38,8 +38,8 @@ def cmd_start(argv: list[str]) -> int:
 
     stage_dir = Path(tempfile.mkdtemp(prefix="claude-bottle-stage."))
     try:
-        platform = get_bottle_platform()
-        plan = platform.prepare(spec, stage_dir=stage_dir)
+        backend = get_bottle_backend()
+        plan = backend.prepare(spec, stage_dir=stage_dir)
         plan.print(remote_control=args.remote_control)
 
         if dry_run:
@@ -53,7 +53,7 @@ def cmd_start(argv: list[str]) -> int:
             info("aborted by user")
             return 0
 
-        with platform.launch(plan) as bottle:
+        with backend.launch(plan) as bottle:
             info(
                 "attaching interactive claude session "
                 "(Ctrl-D or 'exit' to leave; container will be removed)"

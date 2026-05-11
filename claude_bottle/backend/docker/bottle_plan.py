@@ -1,7 +1,7 @@
 """DockerBottlePlan — concrete subclass of BottlePlan.
 
 Carries the Docker-specific resolved fields produced by
-DockerBottlePlatform.prepare. The launch step consumes it without
+DockerBottleBackend.prepare. The launch step consumes it without
 further resolution; show_plan-style rendering is the `print` method.
 """
 
@@ -18,7 +18,7 @@ from .. import BottlePlan
 @dataclass(frozen=True)
 class DockerBottlePlan(BottlePlan):
     """Docker-specific resolved fields produced by
-    DockerBottlePlatform.prepare. Inherits `spec` and `stage_dir` from
+    DockerBottleBackend.prepare. Inherits `spec` and `stage_dir` from
     BottlePlan."""
 
     slug: str

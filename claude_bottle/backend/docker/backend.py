@@ -1,4 +1,4 @@
-"""DockerBottlePlatform — the Docker implementation of BottlePlatform.
+"""DockerBottleBackend — the Docker implementation of BottleBackend.
 
 Methods:
   .prepare(spec, stage_dir=...) -> DockerBottlePlan
@@ -22,7 +22,7 @@ from ... import skills as skills_mod
 from ... import ssh as ssh_mod
 from ...env_resolve import env_resolve
 from ...log import die, info
-from .. import BottleCleanupPlan, BottlePlan, BottlePlatform, BottleSpec
+from .. import BottleBackend, BottleCleanupPlan, BottlePlan, BottleSpec
 from . import network as network_mod
 from . import util as docker_mod
 from .bottle import DockerBottle
@@ -34,8 +34,8 @@ from .bottle_plan import DockerBottlePlan
 _REPO_DIR = str(Path(__file__).resolve().parent.parent.parent.parent)
 
 
-class DockerBottlePlatform(BottlePlatform):
-    """Docker platform implementation. Selected by CLAUDE_BOTTLE_PLATFORM
+class DockerBottleBackend(BottleBackend):
+    """Docker backend implementation. Selected by CLAUDE_BOTTLE_BACKEND
     (default)."""
 
     name = "docker"
@@ -131,7 +131,7 @@ class DockerBottlePlatform(BottlePlatform):
     def launch(self, plan: BottlePlan) -> Iterator[DockerBottle]:
         """Build, launch, and provision a Docker bottle. Teardown on exit."""
         assert isinstance(plan, DockerBottlePlan), (
-            f"DockerBottlePlatform.launch expects DockerBottlePlan, "
+            f"DockerBottleBackend.launch expects DockerBottlePlan, "
             f"got {type(plan).__name__}"
         )
 
@@ -358,7 +358,7 @@ class DockerBottlePlatform(BottlePlatform):
         Containers first; networks would refuse to delete while
         containers are still attached."""
         assert isinstance(plan, DockerBottleCleanupPlan), (
-            f"DockerBottlePlatform.cleanup expects DockerBottleCleanupPlan, "
+            f"DockerBottleBackend.cleanup expects DockerBottleCleanupPlan, "
             f"got {type(plan).__name__}"
         )
         for name in plan.containers:

@@ -1,7 +1,7 @@
-"""Per-platform bottle factories.
+"""Per-backend bottle factories.
 
 A bottle is a running, isolated environment with claude inside. Each
-platform exposes four methods:
+backend exposes five methods:
 
   prepare(spec, stage_dir=...) -> BottlePlan
       Resolves names, validates host-side prerequisites, and writes
@@ -19,8 +19,11 @@ platform exposes four methods:
   cleanup(plan) -> None
       Actually removes everything described by the cleanup plan.
 
-Selection is driven by CLAUDE_BOTTLE_PLATFORM (default "docker"). Per
-PRD 0003 the manifest does not carry a platform field; the host
+  list_active() -> None
+      Print every currently-running bottle on this backend to stderr.
+
+Selection is driven by CLAUDE_BOTTLE_BACKEND (default "docker"). Per
+PRD 0003 the manifest does not carry a backend field; the host
 environment picks.
 """
 
@@ -38,8 +41,8 @@ from ..manifest import Manifest
 
 @dataclass(frozen=True)
 class BottleSpec:
-    """CLI-supplied intent. Platform-agnostic — each platform's prepare
-    step consumes it and produces its own platform-specific plan.
+    """CLI-supplied intent. Backend-agnostic — each backend's prepare
+    step consumes it and produces its own backend-specific plan.
     Resolved values (image names, container name, scratch paths, runsc
     availability) live on the plan, not the spec."""
 
@@ -52,8 +55,8 @@ class BottleSpec:
 
 @dataclass(frozen=True)
 class BottlePlan(ABC):
-    """Base output of a platform's prepare step. Concrete subclasses
-    (e.g. DockerBottlePlan) add platform-specific resolved fields and
+    """Base output of a backend's prepare step. Concrete subclasses
+    (e.g. DockerBottlePlan) add backend-specific resolved fields and
     implement `print`."""
 
     spec: BottleSpec
@@ -66,8 +69,8 @@ class BottlePlan(ABC):
 
 @dataclass(frozen=True)
 class BottleCleanupPlan(ABC):
-    """Base output of a platform's prepare_cleanup step. Concrete
-    subclasses (e.g. DockerBottleCleanupPlan) carry platform-specific
+    """Base output of a backend's prepare_cleanup step. Concrete
+    subclasses (e.g. DockerBottleCleanupPlan) carry backend-specific
     lists of resources to be removed and implement `print` + `empty`."""
 
     @abstractmethod
@@ -82,7 +85,7 @@ class BottleCleanupPlan(ABC):
 
 
 class Bottle(ABC):
-    """Handle to a running bottle. Yielded by a platform's launch step.
+    """Handle to a running bottle. Yielded by a backend's launch step.
 
     `exec_claude` runs `claude` inside the bottle and blocks until the
     session ends. `cp_in` copies a host path into the bottle. `close`
@@ -101,9 +104,9 @@ class Bottle(ABC):
     def close(self) -> None: ...
 
 
-class BottlePlatform(ABC):
-    """Abstract base for selectable bottle platforms. Concrete subclasses
-    (e.g. DockerBottlePlatform) own their own prepare/launch impls.
+class BottleBackend(ABC):
+    """Abstract base for selectable bottle backends. Concrete subclasses
+    (e.g. DockerBottleBackend) own their own prepare/launch impls.
     Symmetric with the BottlePlan → DockerBottlePlan hierarchy."""
 
     name: str
@@ -128,37 +131,37 @@ class BottlePlatform(ABC):
 
     @abstractmethod
     def list_active(self) -> None:
-        """Print every currently-running bottle on this platform to
+        """Print every currently-running bottle on this backend to
         stderr (name + status)."""
 
 
-# Import concrete platform classes AFTER the base types are defined, so
-# each platform module can pull BottleSpec / BottlePlan / BottlePlatform
+# Import concrete backend classes AFTER the base types are defined, so
+# each backend module can pull BottleSpec / BottlePlan / BottleBackend
 # via `from . import ...` without hitting a partially-initialized module.
-from .docker import DockerBottlePlatform  # noqa: E402
+from .docker import DockerBottleBackend  # noqa: E402
 
 
-_PLATFORMS: dict[str, BottlePlatform] = {
-    "docker": DockerBottlePlatform(),
+_BACKENDS: dict[str, BottleBackend] = {
+    "docker": DockerBottleBackend(),
 }
 
 
-def get_bottle_platform() -> BottlePlatform:
-    """Resolve the bottle platform for the active environment. Dies with
-    a pointer at the known platforms if CLAUDE_BOTTLE_PLATFORM names an
+def get_bottle_backend() -> BottleBackend:
+    """Resolve the bottle backend for the active environment. Dies with
+    a pointer at the known backends if CLAUDE_BOTTLE_BACKEND names an
     unimplemented one."""
-    name = os.environ.get("CLAUDE_BOTTLE_PLATFORM", "docker")
-    if name not in _PLATFORMS:
-        known = ", ".join(sorted(_PLATFORMS))
-        die(f"unknown CLAUDE_BOTTLE_PLATFORM={name!r}; known platforms: {known}")
-    return _PLATFORMS[name]
+    name = os.environ.get("CLAUDE_BOTTLE_BACKEND", "docker")
+    if name not in _BACKENDS:
+        known = ", ".join(sorted(_BACKENDS))
+        die(f"unknown CLAUDE_BOTTLE_BACKEND={name!r}; known backends: {known}")
+    return _BACKENDS[name]
 
 
 __all__ = [
     "Bottle",
+    "BottleBackend",
     "BottleCleanupPlan",
     "BottlePlan",
-    "BottlePlatform",
     "BottleSpec",
-    "get_bottle_platform",
+    "get_bottle_backend",
 ]
