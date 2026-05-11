@@ -12,53 +12,9 @@ import tempfile
 from pathlib import Path
 
 from ..bottles import BottleSpec, get_bottle_platform
-from ..bottles.docker import DockerBottlePlan
 from ..log import info
 from ..manifest import Manifest
 from ._common import PROG, USER_CWD, read_tty_line
-
-
-def show_plan(plan: DockerBottlePlan, *, remote_control: bool) -> None:
-    """Render the y/N preflight summary to stderr. Reads everything off
-    the plan; pure presentation."""
-    spec = plan.spec
-    manifest = spec.manifest
-    agent = manifest.agents[spec.agent_name]
-    bottle = manifest.bottle_for(spec.agent_name)
-
-    env_names = list(bottle.env.keys())
-    if spec.forward_oauth_token:
-        env_names.append("CLAUDE_CODE_OAUTH_TOKEN")
-
-    ssh_hosts = [e.Host for e in bottle.ssh]
-    prompt_first_line = agent.prompt.splitlines()[0] if agent.prompt else ""
-    runtime_label = "runsc (gVisor)" if plan.use_runsc else "runc (default)"
-
-    print(file=sys.stderr)
-    info(f"agent           : {spec.agent_name}")
-    info(f"image           : {plan.image}")
-    if plan.derived_image:
-        info(
-            f"cwd             : {spec.user_cwd} -> /home/node/workspace "
-            f"(derived: {plan.derived_image})"
-        )
-    info(f"container       : {plan.container_name}")
-    info(f"stage dir       : {plan.stage_dir}")
-    info("env (names only): " + (", ".join(env_names) if env_names else "(none)"))
-    info("skills          : " + (" ".join(agent.skills) if agent.skills else "(none)"))
-    info(f"docker runtime  : {runtime_label}")
-    info(f"bottle             : {agent.bottle}")
-    if ssh_hosts:
-        info(f"  ssh hosts     : {', '.join(ssh_hosts)}")
-    else:
-        info("  ssh hosts     : (none)")
-    info(f"  egress        : {plan.allowlist_summary}")
-    info(
-        f"prompt          : {len(agent.prompt)} chars; "
-        f"first line: {prompt_first_line or '(empty)'}"
-    )
-    info("remote-control  : " + ("enabled" if remote_control else "disabled"))
-    print(file=sys.stderr)
 
 
 def cmd_start(argv: list[str]) -> int:
@@ -84,7 +40,7 @@ def cmd_start(argv: list[str]) -> int:
     try:
         platform = get_bottle_platform()
         plan = platform.prepare(spec, stage_dir=stage_dir)
-        show_plan(plan, remote_control=args.remote_control)
+        plan.print(remote_control=args.remote_control)
 
         if dry_run:
             info("dry-run requested; not starting container.")
