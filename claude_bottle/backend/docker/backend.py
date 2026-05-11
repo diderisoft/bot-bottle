@@ -34,6 +34,7 @@ from .pipelock import (
     DockerPipelockProxy,
     pipelock_proxy_url,
 )
+from .provision import git as _git
 from .provision import prompt as _prompt
 from .provision import skills as _skills
 from .provision import ssh as _ssh
@@ -320,27 +321,8 @@ class DockerBottleBackend(BottleBackend):
         _ssh.provision_ssh(plan, target)
 
     def provision_git(self, plan: BottlePlan, target: str) -> None:
-        """If --cwd was set and the host cwd has a .git directory, copy
-        it into /home/node/workspace/.git and fix ownership. No-op
-        otherwise."""
         assert isinstance(plan, DockerBottlePlan)
-        if not (plan.spec.copy_cwd and Path(plan.spec.user_cwd, ".git").is_dir()):
-            return
-        container = target
-        info(f"copying {plan.spec.user_cwd}/.git -> {container}:/home/node/workspace/.git")
-        subprocess.run(
-            ["docker", "cp", f"{plan.spec.user_cwd}/.git", f"{container}:/home/node/workspace/.git"],
-            stdout=subprocess.DEVNULL,
-            check=True,
-        )
-        subprocess.run(
-            [
-                "docker", "exec", "-u", "0", container,
-                "chown", "-R", "node:node", "/home/node/workspace/.git",
-            ],
-            stdout=subprocess.DEVNULL,
-            check=True,
-        )
+        _git.provision_git(plan, target)
 
     # --- Cleanup ---
 
