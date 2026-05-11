@@ -7,6 +7,7 @@ The bulk of the implementation lives in sibling modules:
   - bottle_plan:          DockerBottlePlan
   - bottle_cleanup_plan:  DockerBottleCleanupPlan
   - bottle:               DockerBottle handle
+  - provisioner:          DockerBottleProvisioner
   - backend:              DockerBottleBackend
 
 This file only re-exports the public names so
@@ -20,10 +21,12 @@ from .backend import DockerBottleBackend
 from .bottle import DockerBottle
 from .bottle_cleanup_plan import DockerBottleCleanupPlan
 from .bottle_plan import DockerBottlePlan
+from .provisioner import DockerBottleProvisioner
 
 __all__ = [
     "DockerBottle",
     "DockerBottleBackend",
     "DockerBottleCleanupPlan",
     "DockerBottlePlan",
+    "DockerBottleProvisioner",
 ]
