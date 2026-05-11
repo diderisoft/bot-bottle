@@ -97,7 +97,7 @@ def _read_secret_silent(name: str, prompt_body: str) -> str:
     return value
 
 
-def env_resolve(
+def resolve_env_into(
     manifest: Manifest,
     agent: str,
     env_file: Path,

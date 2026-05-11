@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Iterator, Sequence
 
 from ... import pipelock
-from ...env_resolve import env_resolve
+from ...env import resolve_env_into
 from ...log import die, info
 from ...manifest import SshEntry
 from ...util import expand_tilde
@@ -108,7 +108,7 @@ class DockerBottleBackend(BottleBackend):
         prompt_file.chmod(0o600)
 
         proxy_plan = self.prepare_proxy(spec, stage_dir)
-        env_resolve(manifest, spec.agent_name, env_file, args_file)
+        resolve_env_into(manifest, spec.agent_name, env_file, args_file)
         prompt_file.write_text(agent.prompt)
 
         allowlist_summary = pipelock.pipelock_allowlist_summary(bottle)
