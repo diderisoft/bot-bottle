@@ -8,47 +8,58 @@ tests need Docker and skip cleanly otherwise.
 
 ```
 tests/
-  run_tests.py                    # entry point
-  fixtures.py                     # JSON manifest builders
-  _docker.py                      # docker-availability skip helper
-  test_pipelock_naming.py         # unit
-  test_pipelock_classify.py       # unit
-  test_pipelock_allowlist.py      # unit
-  test_pipelock_yaml.py           # unit
-  test_pipelock_image.py          # integration
-  test_pipelock_sidecar_smoke.py  # integration
-  test_dry_run_plan.py            # integration
-  test_orphan_cleanup.py          # integration
+  fixtures.py                       # JSON manifest builders (shared)
+  _docker.py                        # docker-availability skip helper (shared)
+  unit/
+    test_pipelock_classify.py
+    test_pipelock_allowlist.py
+    test_pipelock_yaml.py
+    test_manifest_runtime.py
+  integration/
+    test_pipelock_sidecar_smoke.py
+    test_dry_run_plan.py
+    test_orphan_cleanup.py
+  canaries/
+    test_pipelock_image.py          # opt-in; see below
 ```
+
+Classification falls out of the directory — no hand-maintained list to
+keep in sync.
 
 ## Running
 
 ```bash
-tests/run_tests.py                                  # everything
-tests/run_tests.py unit                             # unit only
-tests/run_tests.py integration                      # integration only
-tests/run_tests.py tests/test_pipelock_yaml.py      # one file
+python -m unittest discover -t . -s tests/unit -v         # unit only
+python -m unittest discover -t . -s tests/integration -v  # integration only
+python -m unittest discover -t . -s tests -v              # both (recursive)
+python -m unittest tests.unit.test_pipelock_yaml          # one file
 ```
 
-You can also run via `python -m unittest`:
-
-```bash
-python -m unittest discover -s tests
-python -m unittest tests.test_pipelock_yaml
-```
+Discovery is invoked with `-t .` (top-level dir = repo root) so the
+`claude_bottle` package on `sys.path` resolves correctly.
 
 ## What the integration tests cover
 
-- `test_pipelock_image.py` — the pinned digest is reachable, ENTRYPOINT
-  is `/pipelock`, and `CMD` includes `run`.
-- `test_pipelock_sidecar_smoke.py` — `docker create` + `docker cp` the
-  generated YAML to `/etc/pipelock.yaml` + `docker start`, then probe
-  `/health`.
-- `test_dry_run_plan.py` — `cli.py start --dry-run` shows the resolved
-  egress allowlist and creates zero docker resources.
-- `test_orphan_cleanup.py` — network_remove and pipelock_stop are
-  idempotent against missing resources, so the EXIT trap can call them
-  unconditionally.
+- `test_pipelock_sidecar_smoke.py` — drives `DockerPipelockProxy.prepare`
+  + `.start` (the production code path) against a real Docker daemon and
+  probes the sidecar's `/health` from an in-network curl container.
+- `test_dry_run_plan.py` — `cli.py start --dry-run --format=json` emits
+  a structured plan that contains the resolved egress allowlist and
+  the bottle's runtime, and creates zero Docker resources.
+- `test_orphan_cleanup.py` — `network_remove` and `PipelockProxy.stop`
+  are idempotent against missing resources, so the EXIT trap can call
+  them unconditionally.
+
+## Canaries
+
+`tests/canaries/` holds upstream-regression checks (e.g. the pinned
+pipelock digest's binary still runs). These are gated on
+`CLAUDE_BOTTLE_RUN_CANARIES=1` and not part of the per-push suite.
+They're invoked by the scheduled `canaries` workflow.
+
+```bash
+CLAUDE_BOTTLE_RUN_CANARIES=1 python -m unittest discover -t . -s tests/canaries -v
+```
 
 ## What's NOT covered
 
@@ -60,9 +71,10 @@ python -m unittest tests.test_pipelock_yaml
 
 ## Adding a test
 
-1. Pick a filename: `test_<topic>.py`. Add it to `INTEGRATION_NAMES`
-   in `run_tests.py` if it needs Docker.
-2. Boilerplate:
+1. Pick the directory: `tests/unit/` for a pure unit test,
+   `tests/integration/` for one that needs Docker.
+2. Filename: `test_<topic>.py`.
+3. Boilerplate:
    ```python
    import unittest
 
@@ -75,5 +87,5 @@ python -m unittest tests.test_pipelock_yaml
    if __name__ == "__main__":
        unittest.main()
    ```
-3. For Docker-dependent tests, decorate the class with
+4. For Docker-dependent tests, decorate the class with
    `@skip_unless_docker()` from `tests._docker`.

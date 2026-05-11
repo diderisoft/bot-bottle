@@ -1,7 +1,13 @@
-"""Integration: the pinned pipelock image's binary actually runs.
-Catches a broken upstream packaging at the pinned digest. Requires
-docker."""
+"""Canary: the pinned pipelock image's binary actually runs.
 
+This test exists to catch a broken upstream packaging at the pinned
+digest. It is NOT part of the per-push suite — that would couple every
+dev push to upstream registry availability. Set
+CLAUDE_BOTTLE_RUN_CANARIES=1 to opt in (a scheduled CI workflow does
+this; humans can run it ad-hoc the same way).
+"""
+
+import os
 import subprocess
 import unittest
 
@@ -9,6 +15,10 @@ from claude_bottle.backend.docker.pipelock import PIPELOCK_IMAGE
 from tests._docker import skip_unless_docker
 
 
+@unittest.skipUnless(
+    os.environ.get("CLAUDE_BOTTLE_RUN_CANARIES") == "1",
+    "canary suite is opt-in; set CLAUDE_BOTTLE_RUN_CANARIES=1 to run",
+)
 @skip_unless_docker()
 class TestPipelockImage(unittest.TestCase):
     @classmethod
