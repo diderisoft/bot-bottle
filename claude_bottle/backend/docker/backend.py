@@ -24,6 +24,7 @@ from ...log import die, info
 from ...manifest import SshEntry
 from ...util import expand_tilde
 from .. import BottleBackend, BottleCleanupPlan, BottlePlan, BottleSpec
+from ..util import host_skill_dir
 from . import network as network_mod
 from . import util as docker_mod
 from .bottle import DockerBottle
@@ -307,18 +308,12 @@ class DockerBottleBackend(BottleBackend):
         user doesn't get a launch prompt for a plan that's already
         known to break."""
         for name in skills:
-            path = self._host_skill_dir(name)
+            path = host_skill_dir(name)
             if not os.path.isdir(path):
                 die(
                     f"skill '{name}' not found on host at {path}. "
                     f"Create it under ~/.claude/skills/, then re-run."
                 )
-
-    def _host_skill_dir(self, name: str) -> str:
-        home = os.environ.get("HOME")
-        if not home:
-            die("HOME not set")
-        return f"{home}/.claude/skills/{name}"
 
     def provision_skills(self, plan: BottlePlan, target: str) -> None:
         """Copy each of the agent's named skills from the host's
@@ -345,7 +340,7 @@ class DockerBottleBackend(BottleBackend):
         )
 
         for n in agent.skills:
-            src = self._host_skill_dir(n)
+            src = host_skill_dir(n)
             if not os.path.isdir(src):
                 die(f"skill '{n}' disappeared from host between validation and copy at {src}.")
             dst = f"{skills_dir}/{n}"
@@ -423,14 +418,14 @@ class DockerBottleBackend(BottleBackend):
         keys_dir = "/root/.claude-bottle-keys"
 
         # ~/.ssh for node (700, owned by node).
-        self._docker_exec_root(container, ["mkdir", "-p", container_ssh])
-        self._docker_exec_root(container, ["chown", "node:node", container_ssh])
-        self._docker_exec_root(container, ["chmod", "700", container_ssh])
+        docker_mod.docker_exec_root(container, ["mkdir", "-p", container_ssh])
+        docker_mod.docker_exec_root(container, ["chown", "node:node", container_ssh])
+        docker_mod.docker_exec_root(container, ["chmod", "700", container_ssh])
 
         # /root/.claude-bottle-keys for root (700, root-owned).
-        self._docker_exec_root(container, ["mkdir", "-p", keys_dir])
-        self._docker_exec_root(container, ["chown", "root:root", keys_dir])
-        self._docker_exec_root(container, ["chmod", "700", keys_dir])
+        docker_mod.docker_exec_root(container, ["mkdir", "-p", keys_dir])
+        docker_mod.docker_exec_root(container, ["chown", "root:root", keys_dir])
+        docker_mod.docker_exec_root(container, ["chmod", "700", keys_dir])
 
         config_file = plan.stage_dir / "ssh_config"
         known_hosts_file = plan.stage_dir / "ssh_known_hosts"
@@ -459,8 +454,8 @@ class DockerBottleBackend(BottleBackend):
                 stdout=subprocess.DEVNULL,
                 check=True,
             )
-            self._docker_exec_root(container, ["chown", "root:root", container_key_path])
-            self._docker_exec_root(container, ["chmod", "600", container_key_path])
+            docker_mod.docker_exec_root(container, ["chown", "root:root", container_key_path])
+            docker_mod.docker_exec_root(container, ["chmod", "600", container_key_path])
 
             container_key_paths.append(container_key_path)
 
@@ -533,8 +528,8 @@ class DockerBottleBackend(BottleBackend):
             stdout=subprocess.DEVNULL,
             check=True,
         )
-        self._docker_exec_root(container, ["chown", "node:node", f"{container_ssh}/config"])
-        self._docker_exec_root(container, ["chmod", "600", f"{container_ssh}/config"])
+        docker_mod.docker_exec_root(container, ["chown", "node:node", f"{container_ssh}/config"])
+        docker_mod.docker_exec_root(container, ["chmod", "600", f"{container_ssh}/config"])
 
         if known_hosts_file.stat().st_size > 0:
             info(f"writing {container_ssh}/known_hosts")
@@ -543,15 +538,8 @@ class DockerBottleBackend(BottleBackend):
                 stdout=subprocess.DEVNULL,
                 check=True,
             )
-            self._docker_exec_root(container, ["chown", "node:node", f"{container_ssh}/known_hosts"])
-            self._docker_exec_root(container, ["chmod", "600", f"{container_ssh}/known_hosts"])
-
-    def _docker_exec_root(self, container: str, argv: list[str]) -> None:
-        subprocess.run(
-            ["docker", "exec", "-u", "0", container, *argv],
-            stdout=subprocess.DEVNULL,
-            check=True,
-        )
+            docker_mod.docker_exec_root(container, ["chown", "node:node", f"{container_ssh}/known_hosts"])
+            docker_mod.docker_exec_root(container, ["chmod", "600", f"{container_ssh}/known_hosts"])
 
     def provision_git(self, plan: BottlePlan, target: str) -> None:
         """If --cwd was set and the host cwd has a .git directory, copy

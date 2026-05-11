@@ -48,6 +48,16 @@ def container_exists(name: str) -> bool:
     return bool(result.stdout.strip())
 
 
+def docker_exec_root(container: str, argv: list[str]) -> None:
+    """Run `docker exec -u 0` in the named container, check=True. Used
+    by SSH provisioning to chown/chmod files that need root."""
+    subprocess.run(
+        ["docker", "exec", "-u", "0", container, *argv],
+        stdout=subprocess.DEVNULL,
+        check=True,
+    )
+
+
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
