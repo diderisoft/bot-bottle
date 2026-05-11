@@ -29,6 +29,7 @@ from . import util as docker_mod
 from .bottle import DockerBottle
 from .bottle_cleanup_plan import DockerBottleCleanupPlan
 from .bottle_plan import DockerBottlePlan
+from .pipelock import DockerPipelockProxy
 
 
 # Where the repo root lives, for `docker build` context. Computed once.
@@ -40,7 +41,7 @@ class DockerBottleBackend(BottleBackend):
     (default)."""
 
     name = "docker"
-    _proxy: pipelock.PipelockProxy = pipelock.PipelockProxy()
+    _proxy: DockerPipelockProxy = DockerPipelockProxy()
 
     def prepare(self, spec: BottleSpec, *, stage_dir: Path) -> DockerBottlePlan:
         """Resolve names, validate, write scratch files. No Docker

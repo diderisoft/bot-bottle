@@ -13,7 +13,8 @@ from claude_bottle.backend.docker.network import (
     network_create_internal,
     network_remove,
 )
-from claude_bottle.pipelock import PipelockProxy, pipelock_container_name
+from claude_bottle.backend.docker.pipelock import DockerPipelockProxy
+from claude_bottle.pipelock import pipelock_container_name
 from tests._docker import skip_unless_docker
 
 
@@ -69,7 +70,7 @@ class TestOrphanCleanup(unittest.TestCase):
 
     def test_pipelock_stop_missing_sidecar(self):
         # Should not raise.
-        PipelockProxy().stop(pipelock_container_name(f"missing-{self.slug}"))
+        DockerPipelockProxy().stop(pipelock_container_name(f"missing-{self.slug}"))
 
 
 if __name__ == "__main__":

@@ -7,15 +7,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from claude_bottle.backend.docker.pipelock import DockerPipelockProxy
 from claude_bottle.manifest import Manifest
-from claude_bottle.pipelock import PipelockProxy
 from tests.fixtures import fixture_minimal, fixture_with_ssh
 
 
 class TestPipelockProxyPrepare(unittest.TestCase):
     def setUp(self):
         self.out_dir = Path(tempfile.mkdtemp())
-        self.proxy = PipelockProxy()
+        self.proxy = DockerPipelockProxy()
 
     def tearDown(self):
         import shutil
