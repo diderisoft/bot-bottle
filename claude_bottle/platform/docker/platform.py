@@ -17,13 +17,13 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from ... import network as network_mod
 from ... import pipelock
 from ... import skills as skills_mod
 from ... import ssh as ssh_mod
 from ...env_resolve import env_resolve
 from ...log import die, info
 from .. import BottleCleanupPlan, BottlePlan, BottlePlatform, BottleSpec
+from . import network as network_mod
 from . import util as docker_mod
 from .bottle import DockerBottle
 from .bottle_cleanup_plan import DockerBottleCleanupPlan
