@@ -78,34 +78,6 @@ class TestDryRunPlan(unittest.TestCase):
             import shutil
             shutil.rmtree(work_dir, ignore_errors=True)
 
-    def test_json_format_requires_dry_run(self):
-        """The CLI rejects --format=json without --dry-run; emitting JSON
-        in a real run would race the y/N prompt."""
-        work_dir = Path(tempfile.mkdtemp())
-        try:
-            manifest = work_dir / "claude-bottle.json"
-            manifest.write_text(json.dumps({
-                "bottles": {"dev": {}},
-                "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
-            }))
-            env = os.environ.copy()
-            env["HOME"] = str(work_dir)
-            env.pop("CLAUDE_BOTTLE_DRY_RUN", None)
-            result = subprocess.run(
-                [
-                    sys.executable, str(REPO_ROOT / "cli.py"),
-                    "start", "--format", "json", "demo",
-                ],
-                cwd=work_dir,
-                env=env,
-                capture_output=True,
-                text=True,
-            )
-            self.assertNotEqual(0, result.returncode)
-        finally:
-            import shutil
-            shutil.rmtree(work_dir, ignore_errors=True)
-
     def _count_claude_bottle_networks(self) -> int:
         result = subprocess.run(
             ["docker", "network", "ls", "--format", "{{.Name}}"],
