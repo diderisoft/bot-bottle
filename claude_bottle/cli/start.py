@@ -10,6 +10,7 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
+from typing import Sequence
 
 from .. import docker as docker_mod
 from .. import pipelock
@@ -25,6 +26,50 @@ from ..env_resolve import env_resolve
 from ..log import die, info
 from ..manifest import Manifest
 from ._common import PROG, USER_CWD, read_tty_line
+
+
+def show_plan(
+    *,
+    agent_name: str,
+    image: str,
+    derived_image: str,
+    user_cwd: str,
+    container: str,
+    stage_dir: Path,
+    env_names: Sequence[str],
+    skills: Sequence[str],
+    docker_runtime: str,
+    bottle_name: str,
+    ssh_hosts: Sequence[str],
+    allowlist_summary: str,
+    prompt_content: str,
+    remote_control: bool,
+) -> None:
+    """Render the y/N preflight summary to stderr. Pure presentation; no
+    side effects beyond writing to stderr."""
+    prompt_first_line = prompt_content.splitlines()[0] if prompt_content else ""
+    print(file=sys.stderr)
+    info(f"agent           : {agent_name}")
+    info(f"image           : {image}")
+    if derived_image:
+        info(f"cwd             : {user_cwd} -> /home/node/workspace (derived: {derived_image})")
+    info(f"container       : {container}")
+    info(f"stage dir       : {stage_dir}")
+    info("env (names only): " + (", ".join(env_names) if env_names else "(none)"))
+    info("skills          : " + (" ".join(skills) if skills else "(none)"))
+    info(f"docker runtime  : {docker_runtime}")
+    info(f"bottle             : {bottle_name}")
+    if ssh_hosts:
+        info(f"  ssh hosts     : {', '.join(ssh_hosts)}")
+    else:
+        info("  ssh hosts     : (none)")
+    info(f"  egress        : {allowlist_summary}")
+    info(
+        f"prompt          : {len(prompt_content)} chars; "
+        f"first line: {prompt_first_line or '(empty)'}"
+    )
+    info("remote-control  : " + ("enabled" if remote_control else "disabled"))
+    print(file=sys.stderr)
 
 
 def cmd_start(argv: list[str]) -> int:
@@ -114,35 +159,23 @@ def cmd_start(argv: list[str]) -> int:
 
         prompt_content = agent.prompt
         prompt_file.write_text(prompt_content)
-        prompt_first_line = prompt_content.splitlines()[0] if prompt_content else ""
 
-        # --- Plan + confirm ---
-        print(file=sys.stderr)
-        info(f"agent           : {name}")
-        info(f"image           : {image}")
-        if derived_image:
-            info(f"cwd             : {USER_CWD} -> /home/node/workspace (derived: {derived_image})")
-        info(f"container       : {container}")
-        info(f"stage dir       : {stage_dir}")
-        info(
-            "env (names only): "
-            + (", ".join(display_env_names) if display_env_names else "(none)")
+        show_plan(
+            agent_name=name,
+            image=image,
+            derived_image=derived_image,
+            user_cwd=USER_CWD,
+            container=container,
+            stage_dir=stage_dir,
+            env_names=display_env_names,
+            skills=agent.skills,
+            docker_runtime=docker_runtime_label(),
+            bottle_name=bottle_name,
+            ssh_hosts=[e.Host for e in ssh_entries],
+            allowlist_summary=allowlist_summary,
+            prompt_content=prompt_content,
+            remote_control=args.remote_control,
         )
-        info("skills          : " + (" ".join(agent.skills) if agent.skills else "(none)"))
-        info(f"docker runtime  : {docker_runtime_label()}")
-        info(f"bottle             : {bottle_name}")
-        if ssh_entries:
-            ssh_names = ", ".join(e.Host for e in ssh_entries)
-            info(f"  ssh hosts     : {ssh_names}")
-        else:
-            info("  ssh hosts     : (none)")
-        info(f"  egress        : {allowlist_summary}")
-        info(
-            f"prompt          : {len(prompt_content)} chars; "
-            f"first line: {prompt_first_line or '(empty)'}"
-        )
-        info("remote-control  : " + ("enabled" if args.remote_control else "disabled"))
-        print(file=sys.stderr)
 
         if dry_run:
             info("dry-run requested; not starting container.")
