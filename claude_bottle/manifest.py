@@ -97,7 +97,7 @@ class BottleEgress:
         if not isinstance(allow, list):
             die(
                 f"bottle '{bottle_name}' egress.allowlist must be an array "
-                f"(was {_json_type(allow)})"
+                f"(was {type(allow).__name__})"
             )
         items: list[str] = []
         allow_list = cast(list[object], allow)
@@ -105,7 +105,7 @@ class BottleEgress:
             if not isinstance(host, str):
                 die(
                     f"bottle '{bottle_name}' egress.allowlist[{i}] must be a string "
-                    f"(was {_json_type(host)})"
+                    f"(was {type(host).__name__})"
                 )
             items.append(host)
         return cls(allowlist=tuple(items))
@@ -130,7 +130,7 @@ class Bottle:
                 if not isinstance(value, str):
                     die(
                         f"env entry {var} in bottle '{name}' must be a JSON string "
-                        f"(was {_json_type(value)}). Use \"?<message>\" for prompt-at-runtime."
+                        f"(was {type(value).__name__}). Use \"?<message>\" for prompt-at-runtime."
                     )
                 env[var] = value
 
@@ -138,7 +138,7 @@ class Bottle:
         ssh_raw = d.get("ssh")
         if ssh_raw is not None:
             if not isinstance(ssh_raw, list):
-                die(f"bottle '{name}' ssh must be an array (was {_json_type(ssh_raw)})")
+                die(f"bottle '{name}' ssh must be an array (was {type(ssh_raw).__name__})")
             ssh_list = cast(list[object], ssh_raw)
             ssh = tuple(
                 SshEntry.from_dict(name, i, entry)
@@ -158,7 +158,7 @@ class Bottle:
             runtime = "runc"
         else:
             if not isinstance(runtime_raw, str):
-                die(f"bottle '{name}' runtime must be a string (was {_json_type(runtime_raw)})")
+                die(f"bottle '{name}' runtime must be a string (was {type(runtime_raw).__name__})")
             if runtime_raw not in _SUPPORTED_RUNTIMES:
                 die(
                     f"bottle '{name}' runtime '{runtime_raw}' is not supported. "
@@ -193,14 +193,14 @@ class Agent:
         skills_raw = d.get("skills")
         if skills_raw is not None:
             if not isinstance(skills_raw, list):
-                die(f"agent '{name}' skills must be an array (was {_json_type(skills_raw)})")
+                die(f"agent '{name}' skills must be an array (was {type(skills_raw).__name__})")
             collected: list[str] = []
             skills_list = cast(list[object], skills_raw)
             for i, skill in enumerate(skills_list):
                 if not isinstance(skill, str):
                     die(
                         f"agent '{name}' skills[{i}] must be a string "
-                        f"(was {_json_type(skill)})"
+                        f"(was {type(skill).__name__})"
                     )
                 collected.append(skill)
             skills = tuple(collected)
@@ -211,7 +211,7 @@ class Agent:
         elif isinstance(prompt_raw, str):
             prompt = prompt_raw
         else:
-            die(f"agent '{name}' prompt must be a string (was {_json_type(prompt_raw)})")
+            die(f"agent '{name}' prompt must be a string (was {type(prompt_raw).__name__})")
 
         return cls(bottle=bottle, skills=skills, prompt=prompt)
 
@@ -302,12 +302,12 @@ def _as_json_object(value: object, label: str) -> dict[str, object]:
     a view typed as `dict[str, object]` so downstream `.get(...)` calls
     have a typed surface."""
     if not isinstance(value, dict):
-        die(f"{label} must be a JSON object (was {_json_type(value)})")
+        die(f"{label} must be a JSON object (was {type(value).__name__})")
     items = cast(dict[object, object], value)
     out: dict[str, object] = {}
     for k, v in items.items():
         if not isinstance(k, str):
-            die(f"{label} keys must be strings (found {_json_type(k)})")
+            die(f"{label} keys must be strings (found {type(k).__name__})")
         out[k] = v
     return out
 
@@ -332,7 +332,7 @@ def _opt_str(value: object, label: str) -> str:
     if value is None:
         return ""
     if not isinstance(value, str):
-        die(f"{label} must be a string (was {_json_type(value)})")
+        die(f"{label} must be a string (was {type(value).__name__})")
     return value
 
 
@@ -346,21 +346,4 @@ def _opt_port(value: object, label: str) -> str:
         return str(value)
     if isinstance(value, str):
         return value
-    die(f"{label} must be a string or number (was {_json_type(value)})")
-
-
-def _json_type(value: object) -> str:
-    """Mirror jq's type names for parity with the original bash error messages."""
-    if value is None:
-        return "null"
-    if isinstance(value, bool):
-        return "boolean"
-    if isinstance(value, (int, float)):
-        return "number"
-    if isinstance(value, str):
-        return "string"
-    if isinstance(value, list):
-        return "array"
-    if isinstance(value, dict):
-        return "object"
-    return type(value).__name__
+    die(f"{label} must be a string or number (was {type(value).__name__})")
