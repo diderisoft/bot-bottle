@@ -1,7 +1,7 @@
 """Per-platform bottle factories.
 
 A bottle is a running, isolated environment with claude inside. Each
-platform exposes two functions:
+platform exposes four methods:
 
   prepare(spec, stage_dir=...) -> BottlePlan
       Resolves names, validates host-side prerequisites, and writes
@@ -11,6 +11,13 @@ platform exposes two functions:
   launch(plan) -> ContextManager[Bottle]
       Brings up the container (or VM, or remote machine), provisions
       it, yields a Bottle handle, and tears everything down on exit.
+
+  prepare_cleanup() -> BottleCleanupPlan
+      Enumerates orphaned resources left behind by previous bottles
+      (containers, networks, ...). Idempotent; no side effects.
+
+  cleanup(plan) -> None
+      Actually removes everything described by the cleanup plan.
 
 Selection is driven by CLAUDE_BOTTLE_PLATFORM (default "docker"). Per
 PRD 0003 the manifest does not carry a platform field; the host
@@ -58,6 +65,23 @@ class BottlePlan(ABC):
         """Render the y/N preflight summary to stderr."""
 
 
+@dataclass(frozen=True)
+class BottleCleanupPlan(ABC):
+    """Base output of a platform's prepare_cleanup step. Concrete
+    subclasses (e.g. DockerBottleCleanupPlan) carry platform-specific
+    lists of resources to be removed and implement `print` + `empty`."""
+
+    @abstractmethod
+    def print(self) -> None:
+        """Render the cleanup y/N summary to stderr."""
+
+    @property
+    @abstractmethod
+    def empty(self) -> bool:
+        """True iff there is nothing to clean up; the CLI uses this to
+        short-circuit before showing the y/N."""
+
+
 class Bottle(Protocol):
     """Handle to a running bottle. Yielded by a platform's launch step.
 
@@ -89,6 +113,15 @@ class BottlePlatform(ABC):
     def launch(self, plan: BottlePlan) -> AbstractContextManager[Bottle]:
         """Build/run the bottle and yield a handle; tear down on exit."""
 
+    @abstractmethod
+    def prepare_cleanup(self) -> BottleCleanupPlan:
+        """Enumerate orphaned resources from previous bottles. No side
+        effects; safe to call before the y/N."""
+
+    @abstractmethod
+    def cleanup(self, plan: BottleCleanupPlan) -> None:
+        """Remove everything described by the cleanup plan."""
+
 
 # Import concrete platform classes AFTER the base types are defined, so
 # each platform module can pull BottleSpec / BottlePlan / BottlePlatform
@@ -114,6 +147,7 @@ def get_bottle_platform() -> BottlePlatform:
 
 __all__ = [
     "Bottle",
+    "BottleCleanupPlan",
     "BottlePlan",
     "BottlePlatform",
     "BottleSpec",

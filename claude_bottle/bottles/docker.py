@@ -34,7 +34,7 @@ from .. import skills as skills_mod
 from .. import ssh as ssh_mod
 from ..env_resolve import env_resolve
 from ..log import die, info
-from . import BottlePlan, BottlePlatform, BottleSpec
+from . import BottleCleanupPlan, BottlePlan, BottlePlatform, BottleSpec
 
 
 # Where the repo root lives, for `docker build` context. Computed once.
@@ -117,6 +117,31 @@ class DockerBottlePlan(BottlePlan):
             f"first line: {prompt_first_line or '(empty)'}"
         )
         info("remote-control  : " + ("enabled" if remote_control else "disabled"))
+        print(file=sys.stderr)
+
+
+# --- Cleanup plan ----------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class DockerBottleCleanupPlan(BottleCleanupPlan):
+    """Resources DockerBottlePlatform.cleanup will remove. Produced by
+    `prepare_cleanup` from a snapshot of `docker ps -a` + `docker
+    network ls`; sorted so the y/N output is stable."""
+
+    containers: tuple[str, ...]
+    networks: tuple[str, ...]
+
+    @property
+    def empty(self) -> bool:
+        return not self.containers and not self.networks
+
+    def print(self) -> None:
+        print(file=sys.stderr)
+        for name in self.containers:
+            info(f"container: {name}")
+        for name in self.networks:
+            info(f"network:   {name}")
         print(file=sys.stderr)
 
 
@@ -438,3 +463,67 @@ class DockerBottlePlatform(BottlePlatform):
             )
 
         return in_container_prompt_path if agent.prompt else None
+
+    # --- Cleanup ---
+
+    def prepare_cleanup(self) -> DockerBottleCleanupPlan:
+        """Enumerate all claude-bottle-prefixed containers (running or
+        stopped) and networks. No removals — caller confirms first."""
+        docker_mod.require_docker()
+
+        # `docker ps -a --filter name=...` uses regex matching; anchor at
+        # the start so we don't pick up containers that merely contain
+        # "claude-bottle-" mid-name.
+        cr = subprocess.run(
+            [
+                "docker", "ps", "-a",
+                "--filter", "name=^claude-bottle-",
+                "--format", "{{.Names}}",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        containers = tuple(sorted(
+            line for line in (cr.stdout or "").splitlines() if line
+        ))
+
+        # `docker network ls --filter name=...` uses substring matching.
+        # "claude-bottle-" is specific enough that false positives are
+        # not a concern.
+        nr = subprocess.run(
+            [
+                "docker", "network", "ls",
+                "--filter", "name=claude-bottle-",
+                "--format", "{{.Name}}",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        networks = tuple(sorted(
+            line for line in (nr.stdout or "").splitlines() if line
+        ))
+
+        return DockerBottleCleanupPlan(containers=containers, networks=networks)
+
+    def cleanup(self, plan: BottleCleanupPlan) -> None:
+        """Remove the containers and networks listed in the plan.
+        Containers first; networks would refuse to delete while
+        containers are still attached."""
+        assert isinstance(plan, DockerBottleCleanupPlan), (
+            f"DockerBottlePlatform.cleanup expects DockerBottleCleanupPlan, "
+            f"got {type(plan).__name__}"
+        )
+        for name in plan.containers:
+            info(f"removing container {name}")
+            subprocess.run(
+                ["docker", "rm", "-f", name],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        for name in plan.networks:
+            info(f"removing network {name}")
+            subprocess.run(
+                ["docker", "network", "rm", name],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
