@@ -1,4 +1,4 @@
-"""_DockerBottle — concrete Bottle handle yielded by
+"""DockerBottle — concrete Bottle handle yielded by
 DockerBottlePlatform.launch.
 
 Holds the container name plus the in-container prompt path so
@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import subprocess
 
+from .. import Bottle
 
-class _DockerBottle:
+
+class DockerBottle(Bottle):
     """Concrete Bottle for Docker."""
 
     def __init__(self, container: str, teardown, prompt_path_in_container: str | None):

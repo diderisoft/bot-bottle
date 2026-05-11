@@ -2,7 +2,7 @@
 
 Methods:
   .prepare(spec, stage_dir=...) -> DockerBottlePlan
-  .launch(plan) -> ContextManager[_DockerBottle]
+  .launch(plan) -> ContextManager[DockerBottle]
   .prepare_cleanup() -> DockerBottleCleanupPlan
   .cleanup(plan) -> None
   .list_active() -> None
@@ -25,7 +25,7 @@ from ...env_resolve import env_resolve
 from ...log import die, info
 from .. import BottleCleanupPlan, BottlePlan, BottlePlatform, BottleSpec
 from . import util as docker_mod
-from .bottle import _DockerBottle
+from .bottle import DockerBottle
 from .bottle_cleanup_plan import DockerBottleCleanupPlan
 from .bottle_plan import DockerBottlePlan
 
@@ -128,7 +128,7 @@ class DockerBottlePlatform(BottlePlatform):
         )
 
     @contextmanager
-    def launch(self, plan: BottlePlan) -> Iterator[_DockerBottle]:
+    def launch(self, plan: BottlePlan) -> Iterator[DockerBottle]:
         """Build, launch, and provision a Docker bottle. Teardown on exit."""
         assert isinstance(plan, DockerBottlePlan), (
             f"DockerBottlePlatform.launch expects DockerBottlePlan, "
@@ -187,7 +187,7 @@ class DockerBottlePlatform(BottlePlatform):
 
             prompt_path = self._provision_container(plan, container)
 
-            bottle = _DockerBottle(container, teardown, prompt_path)
+            bottle = DockerBottle(container, teardown, prompt_path)
             yield bottle
         finally:
             teardown()

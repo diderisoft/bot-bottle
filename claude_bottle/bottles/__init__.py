@@ -31,7 +31,6 @@ from abc import ABC, abstractmethod
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
 
 from ..log import die
 from ..manifest import Manifest
@@ -82,7 +81,7 @@ class BottleCleanupPlan(ABC):
         short-circuit before showing the y/N."""
 
 
-class Bottle(Protocol):
+class Bottle(ABC):
     """Handle to a running bottle. Yielded by a platform's launch step.
 
     `exec_claude` runs `claude` inside the bottle and blocks until the
@@ -92,8 +91,13 @@ class Bottle(Protocol):
 
     name: str
 
+    @abstractmethod
     def exec_claude(self, argv: list[str], *, tty: bool = True) -> int: ...
+
+    @abstractmethod
     def cp_in(self, host_path: str, container_path: str) -> None: ...
+
+    @abstractmethod
     def close(self) -> None: ...
 
 
