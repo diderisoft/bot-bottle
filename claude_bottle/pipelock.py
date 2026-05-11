@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 from .log import die, info, warn
@@ -121,6 +122,15 @@ def pipelock_allowlist_summary(manifest: Manifest, bottle_name: str) -> str:
 
 
 # --- Proxy class -----------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ProxyPlan:
+    """Output of a proxy's prepare step; consumed by launch when the
+    proxy needs to be brought up. Currently single-field (the on-host
+    yaml path); kept as a dataclass so future proxy state has a home."""
+
+    yaml_path: Path
 
 
 class PipelockProxy:

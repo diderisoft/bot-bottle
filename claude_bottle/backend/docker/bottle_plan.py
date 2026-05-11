@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ...log import info
+from ...pipelock import ProxyPlan
 from .. import BottlePlan
 
 
@@ -30,8 +31,7 @@ class DockerBottlePlan(BottlePlan):
     env_file: Path
     args_file: Path
     prompt_file: Path
-    pipelock_yaml_path: Path
-    pipelock_yaml_filename: str
+    proxy_plan: ProxyPlan
     allowlist_summary: str
     use_runsc: bool
 

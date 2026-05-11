@@ -101,7 +101,7 @@ class DockerBottleBackend(BottleBackend):
         prompt_file.write_text("")
         prompt_file.chmod(0o600)
 
-        pipelock_yaml = self.prepare_proxy(spec, stage_dir)
+        proxy_plan = self.prepare_proxy(spec, stage_dir)
         env_resolve(manifest, spec.agent_name, env_file, args_file)
         prompt_file.write_text(agent.prompt)
 
@@ -120,20 +120,20 @@ class DockerBottleBackend(BottleBackend):
             env_file=env_file,
             args_file=args_file,
             prompt_file=prompt_file,
-            pipelock_yaml_path=pipelock_yaml,
-            pipelock_yaml_filename=pipelock_yaml.name,
+            proxy_plan=proxy_plan,
             allowlist_summary=allowlist_summary,
             use_runsc=use_runsc,
         )
 
-    def prepare_proxy(self, spec: BottleSpec, stage_dir: Path) -> Path:
+    def prepare_proxy(self, spec: BottleSpec, stage_dir: Path) -> pipelock.ProxyPlan:
         """Decide where the pipelock yaml lives in `stage_dir`, delegate
-        to PipelockProxy to write it, and return the resolved path.
-        Stage-only: no Docker resources created yet."""
+        to PipelockProxy to write it, and return the resolved ProxyPlan
+        for the launch step to consume. Stage-only: no Docker resources
+        created yet."""
         yaml_path = stage_dir / "pipelock.yaml"
         bottle_name = spec.manifest.agents[spec.agent_name].bottle
         self._proxy.prepare(spec.manifest, bottle_name, yaml_path)
-        return yaml_path
+        return pipelock.ProxyPlan(yaml_path=yaml_path)
 
     @contextmanager
     def launch(self, plan: BottlePlan) -> Iterator[DockerBottle]:
@@ -186,8 +186,8 @@ class DockerBottleBackend(BottleBackend):
                 plan.slug,
                 state["internal_network"],
                 state["egress_network"],
-                plan.stage_dir,
-                plan.pipelock_yaml_filename,
+                plan.proxy_plan.yaml_path.parent,
+                plan.proxy_plan.yaml_path.name,
             )
 
             container = self._run_agent_container(plan, state["internal_network"])
