@@ -1,103 +1,113 @@
-"""Integration: full sidecar smoke test. Boots a pipelock container the
-same way cli.py does (docker create + docker cp YAML + docker start),
-then probes /health."""
+"""Integration: drive the production pipelock-sidecar bring-up
+(`DockerPipelockProxy.prepare` → `.start`) and probe /health from a
+sibling container on the same internal network. The point is that the
+test exercises the production code path — if the docker create/cp/start
+sequence in DockerPipelockProxy.start changes shape, this test should
+notice.
 
+We don't probe /health from the host because the sidecar is created
+attached to an `--internal` network with no published port (that's
+the production topology). An in-network curl container reaches it the
+same way the agent container would in production.
+"""
+
+import dataclasses
 import os
-import re
 import shutil
 import subprocess
 import tempfile
-import time
 import unittest
-import urllib.request
 from pathlib import Path
 
+from claude_bottle.backend.docker.network import (
+    network_create_egress,
+    network_create_internal,
+    network_remove,
+)
 from claude_bottle.backend.docker.pipelock import (
-    PIPELOCK_IMAGE,
+    PIPELOCK_PORT,
     DockerPipelockProxy,
+    pipelock_container_name,
 )
 from tests._docker import skip_unless_docker
 from tests.fixtures import fixture_minimal
 
+CURL_IMAGE = "curlimages/curl:latest"
+
 
 @skip_unless_docker()
 class TestPipelockSidecarSmoke(unittest.TestCase):
-    def setUp(self):
-        self.name = f"cb-test-pipelock-smoke-{os.getpid()}"
-        self.work_dir = Path(tempfile.mkdtemp())
-
-    def tearDown(self):
-        subprocess.run(
-            ["docker", "rm", "-f", self.name],
+    @classmethod
+    def setUpClass(cls):
+        # Pre-pull curlimages/curl so the per-test retry loop isn't
+        # racing the registry. Skip cleanly if the pull fails (the
+        # canary suite will surface a real registry outage separately).
+        result = subprocess.run(
+            ["docker", "pull", CURL_IMAGE],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+        if result.returncode != 0:
+            raise unittest.SkipTest(f"could not pull {CURL_IMAGE}")
+
+    def setUp(self):
+        self.slug = f"cb-test-smoke-{os.getpid()}"
+        self.sidecar_name = ""
+        self.internal_net = ""
+        self.egress_net = ""
+        self.work_dir = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        if self.sidecar_name:
+            DockerPipelockProxy().stop(self.sidecar_name)
+        for n in (self.internal_net, self.egress_net):
+            if n:
+                network_remove(n)
         shutil.rmtree(self.work_dir, ignore_errors=True)
 
-    @unittest.skipIf(
-        os.environ.get("GITEA_ACTIONS") == "true",
-        "skipped under act_runner: published port is on the host's "
-        "loopback, not reachable from the job container's 127.0.0.1",
-    )
-    def test_smoke(self):
+    def test_prepare_and_start_yield_healthy_sidecar(self):
+        proxy = DockerPipelockProxy()
+
         yaml_path = self.work_dir / "pipelock.yaml"
-        DockerPipelockProxy().prepare(fixture_minimal().bottles["dev"], "demo", yaml_path)
+        prep = proxy.prepare(fixture_minimal().bottles["dev"], self.slug, yaml_path)
 
-        create = subprocess.run(
+        self.internal_net = network_create_internal(self.slug)
+        self.egress_net = network_create_egress(self.slug)
+
+        plan = dataclasses.replace(
+            prep,
+            internal_network=self.internal_net,
+            egress_network=self.egress_net,
+        )
+
+        self.sidecar_name = proxy.start(plan)
+        self.assertEqual(pipelock_container_name(self.slug), self.sidecar_name)
+
+        # Probe /health from a sibling container on the internal network —
+        # same access topology the agent container uses in production.
+        # curl retries on connection refused while pipelock is booting.
+        probe = subprocess.run(
             [
-                "docker", "create",
-                "--name", self.name,
-                "-p", "0:8888",
-                PIPELOCK_IMAGE,
-                "run", "--config", "/etc/pipelock.yaml",
-                "--listen", "0.0.0.0:8888",
+                "docker", "run", "--rm",
+                "--network", self.internal_net,
+                CURL_IMAGE,
+                "-sf", "--max-time", "2",
+                "--retry", "15",
+                "--retry-delay", "1",
+                "--retry-connrefused",
+                f"http://{self.sidecar_name}:{PIPELOCK_PORT}/health",
             ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
+            timeout=60,
         )
-        self.assertEqual(0, create.returncode, f"docker create failed: {create.stderr}")
-
-        # Guard against /etc/pipelock/ regressions: the path must be
-        # /etc/pipelock.yaml, since the image is distroless.
-        cp = subprocess.run(
-            ["docker", "cp", str(yaml_path), f"{self.name}:/etc/pipelock.yaml"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
+        self.assertEqual(
+            0, probe.returncode,
+            f"health probe failed: stdout={probe.stdout!r} stderr={probe.stderr!r}",
         )
-        self.assertEqual(0, cp.returncode, f"docker cp failed: {cp.stderr}")
-
-        start = subprocess.run(
-            ["docker", "start", self.name],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        self.assertEqual(0, start.returncode,
-                         f"docker start failed; check argv 'run --listen 0.0.0.0:8888'")
-
-        port_result = subprocess.run(
-            ["docker", "port", self.name, "8888"],
-            capture_output=True, text=True,
-        )
-        first_line = (port_result.stdout or "").splitlines()[0] if port_result.stdout else ""
-        host_port = first_line.rsplit(":", 1)[-1] if first_line else ""
-        self.assertTrue(host_port, "could not determine published port")
-
-        health_url = f"http://127.0.0.1:{host_port}/health"
-        body = ""
-        for _ in range(15):
-            try:
-                with urllib.request.urlopen(health_url, timeout=2) as resp:
-                    body = resp.read().decode("utf-8")
-                    break
-            except (urllib.error.URLError, urllib.error.HTTPError, ConnectionError):
-                time.sleep(1)
-
-        self.assertIn('"status":"healthy"', body, "health body status:healthy")
-        self.assertRegex(body, r'"version":"[0-9]+\.[0-9]+\.[0-9]+"',
-                         "health body has version field")
+        body = probe.stdout
+        self.assertIn('"status":"healthy"', body)
+        self.assertRegex(body, r'"version":"[0-9]+\.[0-9]+\.[0-9]+"')
 
 
 if __name__ == "__main__":
