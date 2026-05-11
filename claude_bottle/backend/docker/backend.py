@@ -52,7 +52,6 @@ class DockerBottleBackend(BottleBackend):
         manifest.require_agent(spec.agent_name)
         agent = manifest.agents[spec.agent_name]
         bottle = manifest.bottle_for(spec.agent_name)
-        bottle_name = agent.bottle
 
         slug = docker_mod.slugify(spec.agent_name)
 
@@ -106,7 +105,7 @@ class DockerBottleBackend(BottleBackend):
         env_resolve(manifest, spec.agent_name, env_file, args_file)
         prompt_file.write_text(agent.prompt)
 
-        allowlist_summary = pipelock.pipelock_allowlist_summary(manifest, bottle_name)
+        allowlist_summary = pipelock.pipelock_allowlist_summary(bottle)
         use_runsc = docker_mod.runsc_available()
 
         return DockerBottlePlan(
