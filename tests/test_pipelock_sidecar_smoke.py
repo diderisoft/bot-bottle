@@ -12,7 +12,10 @@ import unittest
 import urllib.request
 from pathlib import Path
 
-from claude_bottle.pipelock import PIPELOCK_IMAGE, pipelock_write_yaml
+from claude_bottle.backend.docker.pipelock import (
+    PIPELOCK_IMAGE,
+    DockerPipelockProxy,
+)
 from tests._docker import skip_unless_docker
 from tests.fixtures import fixture_minimal
 
@@ -38,7 +41,7 @@ class TestPipelockSidecarSmoke(unittest.TestCase):
     )
     def test_smoke(self):
         yaml_path = self.work_dir / "pipelock.yaml"
-        pipelock_write_yaml(fixture_minimal(), "dev", yaml_path)
+        DockerPipelockProxy().prepare(fixture_minimal().bottles["dev"], "demo", yaml_path)
 
         create = subprocess.run(
             [

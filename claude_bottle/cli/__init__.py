@@ -1,6 +1,6 @@
 """Main CLI dispatcher.
 
-Commands: build, cleanup, edit, info, init, list, start
+Commands: cleanup, edit, info, init, list, start
 """
 
 from __future__ import annotations
@@ -9,7 +9,6 @@ import sys
 
 from ..log import Die, die
 from ._common import PROG
-from .build import cmd_build
 from .cleanup import cmd_cleanup
 from .edit import cmd_edit
 from .info import cmd_info
@@ -18,7 +17,6 @@ from .list import cmd_list
 from .start import cmd_start
 
 COMMANDS = {
-    "build": cmd_build,
     "cleanup": cmd_cleanup,
     "edit": cmd_edit,
     "info": cmd_info,
@@ -31,7 +29,6 @@ COMMANDS = {
 def usage() -> None:
     sys.stderr.write(f"usage: {PROG} <command> [args...]\n\n")
     sys.stderr.write("Commands:\n")
-    sys.stderr.write("  build     build (or rebuild) the claude-bottle Docker image\n")
     sys.stderr.write("  cleanup   stop and remove all active claude-bottle containers\n")
     sys.stderr.write("  edit      open an agent in vim for editing\n")
     sys.stderr.write("  info      print env, skills, and prompt details for a named agent\n")

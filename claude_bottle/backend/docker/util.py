@@ -1,4 +1,6 @@
-"""Docker helpers. Build/inspect primitives shared by the CLI."""
+"""Docker host-side primitives used by DockerBottleBackend: probing
+for docker on PATH, slugifying agent names, checking image/container
+existence, and building images."""
 
 from __future__ import annotations
 
@@ -7,7 +9,18 @@ import shutil
 import subprocess
 from typing import Iterable
 
-from .log import die, info
+from ...log import die, info
+
+
+def runsc_available() -> bool:
+    """Return True if the Docker daemon has the gVisor (`runsc`) runtime
+    registered. Called once per prepare; the result lives on the plan."""
+    r = subprocess.run(
+        ["docker", "info", "--format", "{{json .Runtimes}}"],
+        capture_output=True,
+        text=True,
+    )
+    return r.returncode == 0 and "runsc" in r.stdout
 
 
 def require_docker() -> None:
@@ -17,22 +30,6 @@ def require_docker() -> None:
         info("macOS:  install Docker Desktop  https://docs.docker.com/desktop/install/mac-install/")
         info("Linux:  install Docker Engine   https://docs.docker.com/engine/install/")
         die("docker not found")
-
-
-def require_runsc() -> None:
-    """Fail with an install pointer if the `runsc` (gVisor) runtime is
-    not registered with the local Docker daemon. Called when a bottle
-    sets `runtime: "runsc"`."""
-    result = subprocess.run(
-        ["docker", "info", "--format", "{{json .Runtimes}}"],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0 or "runsc" not in result.stdout:
-        info("This bottle requested runtime 'runsc' but the gVisor runtime is not registered with Docker.")
-        info("Install gVisor and register it with the daemon:  https://gvisor.dev/docs/user_guide/install/")
-        info("On macOS, gVisor is not available natively; remove 'runtime' from the bottle or run on Linux.")
-        die("runsc runtime not available")
 
 
 def image_exists(ref: str) -> bool:
@@ -49,6 +46,16 @@ def container_exists(name: str) -> bool:
         text=True,
     )
     return bool(result.stdout.strip())
+
+
+def docker_exec_root(container: str, argv: list[str]) -> None:
+    """Run `docker exec -u 0` in the named container, check=True. Used
+    by SSH provisioning to chown/chmod files that need root."""
+    subprocess.run(
+        ["docker", "exec", "-u", "0", container, *argv],
+        stdout=subprocess.DEVNULL,
+        check=True,
+    )
 
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")

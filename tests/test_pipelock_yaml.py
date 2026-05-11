@@ -1,20 +1,21 @@
-"""Unit: pipelock_write_yaml — produces a YAML config containing the
-expected top-level keys and per-bottle entries. We don't fully parse
-YAML; we grep for content shape."""
+"""Unit: PipelockProxy.prepare — produces a pipelock YAML config
+containing the expected top-level keys and per-bottle entries. We
+don't fully parse YAML; we grep for content shape."""
 
 import os
 import tempfile
 import unittest
 from pathlib import Path
 
+from claude_bottle.backend.docker.pipelock import DockerPipelockProxy
 from claude_bottle.manifest import Manifest
-from claude_bottle.pipelock import pipelock_write_yaml
 from tests.fixtures import fixture_minimal, fixture_with_ssh
 
 
-class TestPipelockYaml(unittest.TestCase):
+class TestPipelockProxyPrepare(unittest.TestCase):
     def setUp(self):
         self.out_dir = Path(tempfile.mkdtemp())
+        self.proxy = DockerPipelockProxy()
 
     def tearDown(self):
         import shutil
@@ -22,7 +23,7 @@ class TestPipelockYaml(unittest.TestCase):
 
     def test_minimal(self):
         yaml_path = self.out_dir / "min.yaml"
-        pipelock_write_yaml(fixture_minimal(), "dev", yaml_path)
+        self.proxy.prepare(fixture_minimal().bottles["dev"], "demo", yaml_path)
         content = yaml_path.read_text()
         self.assertIn("mode: strict", content)
         self.assertIn("enforce: true", content)
@@ -40,7 +41,7 @@ class TestPipelockYaml(unittest.TestCase):
 
     def test_ssh_blocks(self):
         yaml_path = self.out_dir / "ssh.yaml"
-        pipelock_write_yaml(fixture_with_ssh(), "dev", yaml_path)
+        self.proxy.prepare(fixture_with_ssh().bottles["dev"], "demo", yaml_path)
         content = yaml_path.read_text()
         self.assertIn("trusted_domains:", content)
         self.assertIn("github.com", content)
@@ -64,7 +65,7 @@ class TestPipelockYaml(unittest.TestCase):
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
         })
         yaml_path = self.out_dir / "secret.yaml"
-        pipelock_write_yaml(manifest, "dev", yaml_path)
+        self.proxy.prepare(manifest.bottles["dev"], "demo", yaml_path)
         content = yaml_path.read_text()
         self.assertNotIn("literal-value-should-not-appear", content)
         self.assertNotIn("MY_SECRET", content)
@@ -72,7 +73,7 @@ class TestPipelockYaml(unittest.TestCase):
 
     def test_file_mode_is_600(self):
         yaml_path = self.out_dir / "min.yaml"
-        pipelock_write_yaml(fixture_minimal(), "dev", yaml_path)
+        self.proxy.prepare(fixture_minimal().bottles["dev"], "demo", yaml_path)
         mode = os.stat(yaml_path).st_mode & 0o777
         self.assertEqual(0o600, mode)
 

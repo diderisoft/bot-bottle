@@ -1,12 +1,10 @@
-"""list: list available agents or active containers."""
+"""list: list available agents or active bottles."""
 
 from __future__ import annotations
 
 import argparse
-import subprocess
 
-from .. import docker as docker_mod
-from ..log import info
+from ..backend import get_bottle_backend
 from ..manifest import Manifest
 from ._common import PROG, USER_CWD
 
@@ -22,23 +20,5 @@ def cmd_list(argv: list[str]) -> int:
             print(name)
         return 0
 
-    docker_mod.require_docker()
-    result = subprocess.run(
-        [
-            "docker", "ps",
-            "--filter", "name=^claude-bottle-",
-            "--format", "{{.Names}}\t{{.Status}}",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    containers = (result.stdout or "").strip()
-    if not containers:
-        info("no active claude-bottle containers")
-        return 0
-    print()
-    for line in containers.splitlines():
-        name, _, status = line.partition("\t")
-        info(f"container: {name}  status: {status}")
-    print()
+    get_bottle_backend().list_active()
     return 0

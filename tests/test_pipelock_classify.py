@@ -1,10 +1,10 @@
 """Unit: is_ipv4_literal — the classifier that decides whether
-bottle.ssh[].Hostname goes into ssrf.ip_allowlist (IPv4 literal) or
-trusted_domains (hostname)."""
+bottle.ssh[].Hostname goes into pipelock's ssrf.ip_allowlist (IPv4
+literal) or trusted_domains (hostname)."""
 
 import unittest
 
-from claude_bottle.pipelock import is_ipv4_literal
+from claude_bottle.util import is_ipv4_literal
 
 
 class TestIPv4Classify(unittest.TestCase):

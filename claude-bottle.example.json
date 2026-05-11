@@ -13,7 +13,6 @@
     },
 
     "gitea-dev": {
-      "runtime": "runsc",
       "env": {
         "GITEA_TOKEN":     "?paste your Gitea API token",
         "GITHUB_TOKEN":    "${GH_PAT}",
