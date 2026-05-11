@@ -122,7 +122,6 @@ class BottleBackend(ABC):
     def launch(self, plan: BottlePlan) -> AbstractContextManager[Bottle]:
         """Build/run the bottle and yield a handle; tear down on exit."""
 
-    @abstractmethod
     def provision(self, plan: BottlePlan, target: str) -> str | None:
         """Copy host-side files (prompt, skills, SSH keys, .git) into
         the running bottle. Called from `launch` after the container/
@@ -131,7 +130,39 @@ class BottleBackend(ABC):
         machine id). Returns the in-container prompt path if a prompt
         was provisioned, else None — the Bottle handle uses it to
         decide whether to add --append-system-prompt-file to claude's
-        argv."""
+        argv.
+
+        Default orchestration: prompt → skills → ssh → git. Subclasses
+        typically don't override this; they implement the four
+        sub-methods below."""
+        prompt_path = self.provision_prompt(plan, target)
+        self.provision_skills(plan, target)
+        self.provision_ssh(plan, target)
+        self.provision_git(plan, target)
+        return prompt_path
+
+    @abstractmethod
+    def provision_prompt(self, plan: BottlePlan, target: str) -> str | None:
+        """Copy the prompt file into the running bottle. Returns the
+        in-container path iff the agent has a non-empty prompt;
+        callers use the return value to decide whether to add
+        --append-system-prompt-file to claude's argv."""
+
+    @abstractmethod
+    def provision_skills(self, plan: BottlePlan, target: str) -> None:
+        """Copy the agent's named skills from the host into the
+        running bottle. No-op when the agent has no skills."""
+
+    @abstractmethod
+    def provision_ssh(self, plan: BottlePlan, target: str) -> None:
+        """Set up SSH in the running bottle (config, agent, keys)
+        so the bottle can reach the manifest's declared SSH hosts.
+        No-op when the bottle has no SSH entries."""
+
+    @abstractmethod
+    def provision_git(self, plan: BottlePlan, target: str) -> None:
+        """Copy the host's cwd `.git` directory into the running
+        bottle if the user requested --cwd. No-op otherwise."""
 
     @abstractmethod
     def prepare_cleanup(self) -> BottleCleanupPlan:

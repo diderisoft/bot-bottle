@@ -258,29 +258,13 @@ class DockerBottleBackend(BottleBackend):
             docker_args[name_idx] = container
             info(f"name conflict; retrying as {container}")
 
-    def provision(self, plan: BottlePlan, target: str) -> str | None:
-        """Copy prompt, skills, ssh keys, and (optionally) .git into
-        the running container. `target` is the resolved container
-        name. Returns the in-container prompt path if a prompt was
-        provisioned, else None — the Bottle handle uses it to decide
-        whether to add --append-system-prompt-file to claude's argv."""
-        assert isinstance(plan, DockerBottlePlan), (
-            f"DockerBottleBackend.provision expects DockerBottlePlan, "
-            f"got {type(plan).__name__}"
-        )
-        container = target
-
-        prompt_path = self.provision_prompt(plan, container)
-        self.provision_skills(plan, container)
-        self.provision_ssh(plan, container)
-        self.provision_git(plan, container)
-        return prompt_path
-
-    def provision_prompt(self, plan: DockerBottlePlan, container: str) -> str | None:
+    def provision_prompt(self, plan: BottlePlan, target: str) -> str | None:
         """Copy the prompt file into the container, fix ownership/mode.
         Returns the in-container path if the agent has a non-empty
         prompt (drives --append-system-prompt-file), else None. The
         file is copied either way so the path always exists."""
+        assert isinstance(plan, DockerBottlePlan)
+        container = target
         container_home = os.environ.get("CLAUDE_BOTTLE_CONTAINER_HOME", "/home/node")
         in_container_prompt_path = f"{container_home}/.claude-bottle-prompt.txt"
 
@@ -305,31 +289,35 @@ class DockerBottleBackend(BottleBackend):
         agent = plan.spec.manifest.agents[plan.spec.agent_name]
         return in_container_prompt_path if agent.prompt else None
 
-    def provision_skills(self, plan: DockerBottlePlan, container: str) -> None:
+    def provision_skills(self, plan: BottlePlan, target: str) -> None:
         """Copy each of the agent's named skills from the host's
         ~/.claude/skills/<name>/ into the container's equivalent path.
         No-op when the agent has no skills."""
+        assert isinstance(plan, DockerBottlePlan)
         agent = plan.spec.manifest.agents[plan.spec.agent_name]
         if not agent.skills:
             return
-        skills_mod.skills_copy_into(container, list(agent.skills))
+        skills_mod.skills_copy_into(target, list(agent.skills))
 
-    def provision_ssh(self, plan: DockerBottlePlan, container: str) -> None:
+    def provision_ssh(self, plan: BottlePlan, target: str) -> None:
         """If the bottle has SSH entries, set up the in-container
         ssh-agent and config so node can authenticate without ever
         seeing the key bytes. No-op when the bottle has no SSH."""
+        assert isinstance(plan, DockerBottlePlan)
         bottle = plan.spec.manifest.bottle_for(plan.spec.agent_name)
         if not bottle.ssh:
             return
         proxy_host_port = pipelock.pipelock_proxy_host_port(plan.slug)
-        ssh_mod.ssh_setup(container, plan.stage_dir, proxy_host_port, bottle.ssh)
+        ssh_mod.ssh_setup(target, plan.stage_dir, proxy_host_port, bottle.ssh)
 
-    def provision_git(self, plan: DockerBottlePlan, container: str) -> None:
+    def provision_git(self, plan: BottlePlan, target: str) -> None:
         """If --cwd was set and the host cwd has a .git directory, copy
         it into /home/node/workspace/.git and fix ownership. No-op
         otherwise."""
+        assert isinstance(plan, DockerBottlePlan)
         if not (plan.spec.copy_cwd and Path(plan.spec.user_cwd, ".git").is_dir()):
             return
+        container = target
         info(f"copying {plan.spec.user_cwd}/.git -> {container}:/home/node/workspace/.git")
         subprocess.run(
             ["docker", "cp", f"{plan.spec.user_cwd}/.git", f"{container}:/home/node/workspace/.git"],
