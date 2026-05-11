@@ -1,4 +1,6 @@
-"""Docker helpers. Build/inspect primitives shared by the CLI."""
+"""Docker host-side primitives used by DockerBottlePlatform: probing
+for docker on PATH, slugifying agent names, checking image/container
+existence, and building images."""
 
 from __future__ import annotations
 
@@ -7,7 +9,7 @@ import shutil
 import subprocess
 from typing import Iterable
 
-from .log import die, info
+from ...log import die, info
 
 
 def require_docker() -> None:

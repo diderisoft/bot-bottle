@@ -27,18 +27,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
-from .. import docker as docker_mod
-from .. import network as network_mod
-from .. import pipelock
-from .. import skills as skills_mod
-from .. import ssh as ssh_mod
-from ..env_resolve import env_resolve
-from ..log import die, info
-from . import BottleCleanupPlan, BottlePlan, BottlePlatform, BottleSpec
+from ... import network as network_mod
+from ... import pipelock
+from ... import skills as skills_mod
+from ... import ssh as ssh_mod
+from ...env_resolve import env_resolve
+from ...log import die, info
+from .. import BottleCleanupPlan, BottlePlan, BottlePlatform, BottleSpec
+from . import util as docker_mod
 
 
 # Where the repo root lives, for `docker build` context. Computed once.
-_REPO_DIR = str(Path(__file__).resolve().parent.parent.parent)
+_REPO_DIR = str(Path(__file__).resolve().parent.parent.parent.parent)
 
 
 # --- Runtime detection -----------------------------------------------------
