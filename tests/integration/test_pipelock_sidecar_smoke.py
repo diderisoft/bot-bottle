@@ -68,8 +68,7 @@ class TestPipelockSidecarSmoke(unittest.TestCase):
     def test_prepare_and_start_yield_healthy_sidecar(self):
         proxy = DockerPipelockProxy()
 
-        yaml_path = self.work_dir / "pipelock.yaml"
-        prep = proxy.prepare(fixture_minimal().bottles["dev"], self.slug, yaml_path)
+        prep = proxy.prepare(fixture_minimal().bottles["dev"], self.slug, self.work_dir)
 
         self.internal_net = network_create_internal(self.slug)
         self.egress_net = network_create_egress(self.slug)

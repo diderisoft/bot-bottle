@@ -177,9 +177,9 @@ class PipelockProxy(ABC):
     and lives on concrete subclasses."""
 
     def prepare(
-        self, bottle: Bottle, slug: str, yaml_path: Path
+        self, bottle: Bottle, slug: str, stage_dir: Path
     ) -> PipelockProxyPlan:
-        """Write the pipelock yaml config (mode 600) to `yaml_path`
+        """Write the pipelock yaml config (mode 600) under `stage_dir`
         and return the plan for `.start`.
 
         `slug` is the agent-derived identifier (lowercased,
@@ -188,6 +188,7 @@ class PipelockProxy(ABC):
         (`claude-bottle-pipelock-<slug>`), the internal/egress
         networks. It's stored on the returned plan so the backend's
         start step can derive the sidecar's container name."""
+        yaml_path = stage_dir / "pipelock.yaml"
         self._build_pipelock_yaml(bottle, yaml_path)
         return PipelockProxyPlan(yaml_path=yaml_path, slug=slug)
 

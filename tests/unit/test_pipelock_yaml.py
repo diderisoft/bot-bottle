@@ -66,11 +66,10 @@ class TestRenderAndWrite(unittest.TestCase):
             self.assertIn(required, text)
 
     def test_prepare_writes_file_at_mode_600(self):
-        yaml_path = self.out_dir / "min.yaml"
-        DockerPipelockProxy().prepare(
-            fixture_minimal().bottles["dev"], "demo", yaml_path
+        plan = DockerPipelockProxy().prepare(
+            fixture_minimal().bottles["dev"], "demo", self.out_dir
         )
-        self.assertEqual(0o600, os.stat(yaml_path).st_mode & 0o777)
+        self.assertEqual(0o600, os.stat(plan.yaml_path).st_mode & 0o777)
 
     def test_prepare_does_not_leak_env_names_or_values(self):
         manifest = Manifest.from_json_obj({
@@ -85,9 +84,10 @@ class TestRenderAndWrite(unittest.TestCase):
             },
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
         })
-        yaml_path = self.out_dir / "secret.yaml"
-        DockerPipelockProxy().prepare(manifest.bottles["dev"], "demo", yaml_path)
-        content = yaml_path.read_text()
+        plan = DockerPipelockProxy().prepare(
+            manifest.bottles["dev"], "demo", self.out_dir
+        )
+        content = plan.yaml_path.read_text()
         self.assertNotIn("literal-value-should-not-appear", content)
         self.assertNotIn("MY_SECRET", content)
         self.assertNotIn("prompt-message", content)

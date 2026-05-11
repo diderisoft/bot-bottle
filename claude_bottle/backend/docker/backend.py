@@ -104,7 +104,7 @@ class DockerBottleBackend(BottleBackend):
         prompt_file.write_text("")
         prompt_file.chmod(0o600)
 
-        proxy_plan = self.prepare_proxy(spec, stage_dir)
+        proxy_plan = self._proxy.prepare(bottle, slug, stage_dir)
         resolved = resolve_env(manifest, spec.agent_name)
         self._write_env_files(resolved, env_file, args_file)
         prompt_file.write_text(agent.prompt)
@@ -150,16 +150,6 @@ class DockerBottleBackend(BottleBackend):
 
         args_lines = [f"-e\n{name}" for name in resolved.forwarded]
         args_file.write_text("\n".join(args_lines) + ("\n" if args_lines else ""))
-
-    def prepare_proxy(self, spec: BottleSpec, stage_dir: Path) -> pipelock.PipelockProxyPlan:
-        """Decide where the pipelock yaml lives in `stage_dir`, delegate
-        to PipelockProxy to write it, and return the resolved
-        PipelockProxyPlan for the launch step to consume. Stage-only:
-        no Docker resources created yet."""
-        yaml_path = stage_dir / "pipelock.yaml"
-        bottle = spec.manifest.bottle_for(spec.agent_name)
-        slug = docker_mod.slugify(spec.agent_name)
-        return self._proxy.prepare(bottle, slug, yaml_path)
 
     @contextmanager
     def launch(self, plan: BottlePlan) -> Iterator[DockerBottle]:
