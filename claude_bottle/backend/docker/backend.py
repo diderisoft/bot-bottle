@@ -14,7 +14,7 @@ import dataclasses
 import os
 import subprocess
 import sys
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Iterator, Sequence
 
@@ -42,6 +42,15 @@ from .provision import ssh as _ssh
 
 # Where the repo root lives, for `docker build` context. Computed once.
 _REPO_DIR = str(Path(__file__).resolve().parent.parent.parent.parent)
+
+
+def _force_remove_container(name: str) -> None:
+    if docker_mod.container_exists(name):
+        subprocess.run(
+            ["docker", "rm", "-f", name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
 
 class DockerBottleBackend(BottleBackend):
@@ -162,31 +171,11 @@ class DockerBottleBackend(BottleBackend):
             f"got {type(plan).__name__}"
         )
 
-        state: dict[str, str] = {
-            "container": "",
-            "pipelock": "",
-            "internal_network": "",
-            "egress_network": "",
-        }
+        stack = ExitStack()
 
         def teardown() -> None:
             try:
-                if state["container"] and docker_mod.container_exists(state["container"]):
-                    subprocess.run(
-                        ["docker", "rm", "-f", state["container"]],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                    )
-                    state["container"] = ""
-                if state["pipelock"]:
-                    self._proxy.stop(state["pipelock"])
-                    state["pipelock"] = ""
-                if state["internal_network"]:
-                    network_mod.network_remove(state["internal_network"])
-                    state["internal_network"] = ""
-                if state["egress_network"]:
-                    network_mod.network_remove(state["egress_network"])
-                    state["egress_network"] = ""
+                stack.close()
             except BaseException:
                 # Teardown must not raise; swallow so the caller's
                 # __exit__ path can still propagate the original error.
@@ -199,22 +188,26 @@ class DockerBottleBackend(BottleBackend):
                     plan.derived_image, plan.image, plan.spec.user_cwd
                 )
 
-            state["internal_network"] = network_mod.network_create_internal(plan.slug)
-            state["egress_network"] = network_mod.network_create_egress(plan.slug)
+            internal_network = network_mod.network_create_internal(plan.slug)
+            stack.callback(network_mod.network_remove, internal_network)
+
+            egress_network = network_mod.network_create_egress(plan.slug)
+            stack.callback(network_mod.network_remove, egress_network)
+
             proxy_plan = dataclasses.replace(
                 plan.proxy_plan,
-                internal_network=state["internal_network"],
-                egress_network=state["egress_network"],
+                internal_network=internal_network,
+                egress_network=egress_network,
             )
-            state["pipelock"] = self._proxy.start(proxy_plan)
+            pipelock_name = self._proxy.start(proxy_plan)
+            stack.callback(self._proxy.stop, pipelock_name)
 
-            container = self._run_agent_container(plan, state["internal_network"])
-            state["container"] = container
+            container = self._run_agent_container(plan, internal_network)
+            stack.callback(_force_remove_container, container)
 
             prompt_path = self.provision(plan, container)
 
-            bottle = DockerBottle(container, teardown, prompt_path)
-            yield bottle
+            yield DockerBottle(container, teardown, prompt_path)
         finally:
             teardown()
 
