@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from typing import NoReturn
 
 
 def info(msg: str) -> None:
@@ -18,6 +19,6 @@ class Die(SystemExit):
     fatal exit from an unrelated SystemExit."""
 
 
-def die(msg: str) -> "Die":
+def die(msg: str) -> NoReturn:
     print(f"claude-bottle: error: {msg}", file=sys.stderr)
     raise Die(1)

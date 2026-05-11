@@ -33,13 +33,17 @@ import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Mapping
+from typing import Literal, Mapping, cast
 
 from .log import die
 
 
-_SUPPORTED_RUNTIMES: tuple[str, ...] = ("runc", "runsc")
 Runtime = Literal["runc", "runsc"]
+_SUPPORTED_RUNTIMES: tuple[Runtime, ...] = ("runc", "runsc")
+
+
+def _empty_str_dict() -> dict[str, str]:
+    return {}
 
 
 @dataclass(frozen=True)
@@ -52,26 +56,22 @@ class SshEntry:
     KnownHostKey: str = ""
 
     @classmethod
-    def _from_dict(cls, bottle_name: str, idx: int, raw: Any) -> "SshEntry":
-        if not isinstance(raw, dict):
-            die(
-                f"bottle '{bottle_name}' ssh[{idx}] must be a JSON object "
-                f"(was {_json_type(raw)})"
-            )
-        host = raw.get("Host")
+    def from_dict(cls, bottle_name: str, idx: int, raw: object) -> "SshEntry":
+        d = _as_json_object(raw, f"bottle '{bottle_name}' ssh[{idx}]")
+        host = d.get("Host")
         if not isinstance(host, str) or not host:
             die(f"bottle '{bottle_name}' ssh[{idx}] missing required string field 'Host'")
-        ident = raw.get("IdentityFile")
+        ident = d.get("IdentityFile")
         if not isinstance(ident, str) or not ident:
             die(
                 f"bottle '{bottle_name}' ssh '{host}' missing required string field "
                 f"'IdentityFile'"
             )
-        hostname = _opt_str(raw.get("Hostname"), f"bottle '{bottle_name}' ssh '{host}' Hostname")
-        user = _opt_str(raw.get("User"), f"bottle '{bottle_name}' ssh '{host}' User")
-        port = _opt_port(raw.get("Port"), f"bottle '{bottle_name}' ssh '{host}' Port")
+        hostname = _opt_str(d.get("Hostname"), f"bottle '{bottle_name}' ssh '{host}' Hostname")
+        user = _opt_str(d.get("User"), f"bottle '{bottle_name}' ssh '{host}' User")
+        port = _opt_port(d.get("Port"), f"bottle '{bottle_name}' ssh '{host}' Port")
         khk = _opt_str(
-            raw.get("KnownHostKey"),
+            d.get("KnownHostKey"),
             f"bottle '{bottle_name}' ssh '{host}' KnownHostKey",
         )
         return cls(
@@ -89,13 +89,9 @@ class BottleEgress:
     allowlist: tuple[str, ...] = ()
 
     @classmethod
-    def _from_dict(cls, bottle_name: str, raw: Any) -> "BottleEgress":
-        if not isinstance(raw, dict):
-            die(
-                f"bottle '{bottle_name}' egress must be a JSON object "
-                f"(was {_json_type(raw)})"
-            )
-        allow = raw.get("allowlist")
+    def from_dict(cls, bottle_name: str, raw: object) -> "BottleEgress":
+        d = _as_json_object(raw, f"bottle '{bottle_name}' egress")
+        allow = d.get("allowlist")
         if allow is None:
             return cls()
         if not isinstance(allow, list):
@@ -103,33 +99,34 @@ class BottleEgress:
                 f"bottle '{bottle_name}' egress.allowlist must be an array "
                 f"(was {_json_type(allow)})"
             )
-        for i, host in enumerate(allow):
+        items: list[str] = []
+        allow_list = cast(list[object], allow)
+        for i, host in enumerate(allow_list):
             if not isinstance(host, str):
                 die(
                     f"bottle '{bottle_name}' egress.allowlist[{i}] must be a string "
                     f"(was {_json_type(host)})"
                 )
-        return cls(allowlist=tuple(allow))
+            items.append(host)
+        return cls(allowlist=tuple(items))
 
 
 @dataclass(frozen=True)
 class Bottle:
-    env: Mapping[str, str] = field(default_factory=dict)
+    env: Mapping[str, str] = field(default_factory=_empty_str_dict)
     ssh: tuple[SshEntry, ...] = ()
     egress: BottleEgress = field(default_factory=BottleEgress)
     runtime: Runtime = "runc"
 
     @classmethod
-    def _from_dict(cls, name: str, raw: Any) -> "Bottle":
-        if not isinstance(raw, dict):
-            die(f"bottle '{name}' must be a JSON object (was {_json_type(raw)})")
+    def from_dict(cls, name: str, raw: object) -> "Bottle":
+        d = _as_json_object(raw, f"bottle '{name}'")
 
-        env_raw = raw.get("env")
         env: dict[str, str] = {}
+        env_raw = d.get("env")
         if env_raw is not None:
-            if not isinstance(env_raw, dict):
-                die(f"bottle '{name}' env must be a JSON object (was {_json_type(env_raw)})")
-            for var, value in env_raw.items():
+            env_dict = _as_json_object(env_raw, f"bottle '{name}' env")
+            for var, value in env_dict.items():
                 if not isinstance(value, str):
                     die(
                         f"env entry {var} in bottle '{name}' must be a JSON string "
@@ -137,25 +134,28 @@ class Bottle:
                     )
                 env[var] = value
 
-        ssh_raw = raw.get("ssh")
         ssh: tuple[SshEntry, ...] = ()
+        ssh_raw = d.get("ssh")
         if ssh_raw is not None:
             if not isinstance(ssh_raw, list):
                 die(f"bottle '{name}' ssh must be an array (was {_json_type(ssh_raw)})")
+            ssh_list = cast(list[object], ssh_raw)
             ssh = tuple(
-                SshEntry._from_dict(name, i, entry) for i, entry in enumerate(ssh_raw)
+                SshEntry.from_dict(name, i, entry)
+                for i, entry in enumerate(ssh_list)
             )
 
-        egress_raw = raw.get("egress")
+        egress_raw = d.get("egress")
         egress = (
-            BottleEgress._from_dict(name, egress_raw)
+            BottleEgress.from_dict(name, egress_raw)
             if egress_raw is not None
             else BottleEgress()
         )
 
-        runtime_raw = raw.get("runtime")
+        runtime_raw = d.get("runtime")
+        runtime: Runtime
         if runtime_raw is None:
-            runtime: Runtime = "runc"
+            runtime = "runc"
         else:
             if not isinstance(runtime_raw, str):
                 die(f"bottle '{name}' runtime must be a string (was {_json_type(runtime_raw)})")
@@ -164,7 +164,7 @@ class Bottle:
                     f"bottle '{name}' runtime '{runtime_raw}' is not supported. "
                     f"Use one of: {', '.join(_SUPPORTED_RUNTIMES)}."
                 )
-            runtime = runtime_raw  # type: ignore[assignment]
+            runtime = runtime_raw
 
         return cls(env=env, ssh=ssh, egress=egress, runtime=runtime)
 
@@ -176,11 +176,10 @@ class Agent:
     prompt: str = ""
 
     @classmethod
-    def _from_dict(cls, name: str, raw: Any, bottle_names: set[str]) -> "Agent":
-        if not isinstance(raw, dict):
-            die(f"agent '{name}' must be a JSON object (was {_json_type(raw)})")
+    def from_dict(cls, name: str, raw: object, bottle_names: set[str]) -> "Agent":
+        d = _as_json_object(raw, f"agent '{name}'")
 
-        bottle = raw.get("bottle")
+        bottle = d.get("bottle")
         if not isinstance(bottle, str) or not bottle:
             die(f"agent '{name}' must declare a 'bottle' field naming a defined bottle")
         if bottle not in bottle_names:
@@ -190,20 +189,23 @@ class Agent:
                 f"Available: {available}"
             )
 
-        skills_raw = raw.get("skills")
         skills: tuple[str, ...] = ()
+        skills_raw = d.get("skills")
         if skills_raw is not None:
             if not isinstance(skills_raw, list):
                 die(f"agent '{name}' skills must be an array (was {_json_type(skills_raw)})")
-            for i, skill in enumerate(skills_raw):
+            collected: list[str] = []
+            skills_list = cast(list[object], skills_raw)
+            for i, skill in enumerate(skills_list):
                 if not isinstance(skill, str):
                     die(
                         f"agent '{name}' skills[{i}] must be a string "
                         f"(was {_json_type(skill)})"
                     )
-            skills = tuple(skills_raw)
+                collected.append(skill)
+            skills = tuple(collected)
 
-        prompt_raw = raw.get("prompt")
+        prompt_raw = d.get("prompt")
         if prompt_raw is None:
             prompt = ""
         elif isinstance(prompt_raw, str):
@@ -235,30 +237,32 @@ class Manifest:
         if cwd_doc is None and home_doc is None:
             die(f"no claude-bottle.json found in {cwd} or {os.environ['HOME']}")
 
-        h = home_doc or {}
-        c = cwd_doc or {}
-        merged: dict[str, Any] = {
-            "bottles": {**(h.get("bottles") or {}), **(c.get("bottles") or {})},
-            "agents": {**(h.get("agents") or {}), **(c.get("agents") or {})},
+        h: dict[str, object] = home_doc if home_doc is not None else {}
+        c: dict[str, object] = cwd_doc if cwd_doc is not None else {}
+        h_bottles = _section_dict(h.get("bottles"), "bottles")
+        c_bottles = _section_dict(c.get("bottles"), "bottles")
+        h_agents = _section_dict(h.get("agents"), "agents")
+        c_agents = _section_dict(c.get("agents"), "agents")
+        merged: dict[str, object] = {
+            "bottles": {**h_bottles, **c_bottles},
+            "agents": {**h_agents, **c_agents},
         }
         return cls.from_json_obj(merged)
 
     @classmethod
-    def from_json_obj(cls, obj: Any) -> "Manifest":
+    def from_json_obj(cls, obj: object) -> "Manifest":
         """Validate and build a Manifest from a raw JSON-like dict."""
-        if not isinstance(obj, dict):
-            die(f"manifest must be a JSON object (was {_json_type(obj)})")
+        d = _as_json_object(obj, "manifest")
+        raw_bottles = _section_dict(d.get("bottles"), "manifest 'bottles'")
+        raw_agents = _section_dict(d.get("agents"), "manifest 'agents'")
 
-        raw_bottles = obj.get("bottles") or {}
-        raw_agents = obj.get("agents") or {}
-        if not isinstance(raw_bottles, dict):
-            die(f"manifest 'bottles' must be a JSON object (was {_json_type(raw_bottles)})")
-        if not isinstance(raw_agents, dict):
-            die(f"manifest 'agents' must be a JSON object (was {_json_type(raw_agents)})")
-
-        bottles = {n: Bottle._from_dict(n, b) for n, b in raw_bottles.items()}
+        bottles: dict[str, Bottle] = {
+            n: Bottle.from_dict(n, b) for n, b in raw_bottles.items()
+        }
         bottle_names = set(bottles.keys())
-        agents = {n: Agent._from_dict(n, a, bottle_names) for n, a in raw_agents.items()}
+        agents: dict[str, Agent] = {
+            n: Agent.from_dict(n, a, bottle_names) for n, a in raw_agents.items()
+        }
         return cls(bottles=bottles, agents=agents)
 
     def has_agent(self, name: str) -> bool:
@@ -293,18 +297,38 @@ class Manifest:
         return self.bottles[self.agents[agent_name].bottle]
 
 
-def _load_json_or_die(path: Path) -> dict[str, Any]:
+def _as_json_object(value: object, label: str) -> dict[str, object]:
+    """Assert that `value` is a JSON object (str-keyed dict) and return
+    a view typed as `dict[str, object]` so downstream `.get(...)` calls
+    have a typed surface."""
+    if not isinstance(value, dict):
+        die(f"{label} must be a JSON object (was {_json_type(value)})")
+    items = cast(dict[object, object], value)
+    out: dict[str, object] = {}
+    for k, v in items.items():
+        if not isinstance(k, str):
+            die(f"{label} keys must be strings (found {_json_type(k)})")
+        out[k] = v
+    return out
+
+
+def _section_dict(value: object, label: str) -> dict[str, object]:
+    """Like _as_json_object but treats absent/null as an empty section."""
+    if value is None:
+        return {}
+    return _as_json_object(value, label)
+
+
+def _load_json_or_die(path: Path) -> dict[str, object]:
     try:
         with path.open() as f:
-            doc = json.load(f)
+            doc: object = json.load(f)
     except json.JSONDecodeError:
         die(f"claude-bottle.json at {path} is not valid JSON")
-    if not isinstance(doc, dict):
-        die(f"claude-bottle.json at {path} must be a JSON object")
-    return doc
+    return _as_json_object(doc, f"claude-bottle.json at {path}")
 
 
-def _opt_str(value: Any, label: str) -> str:
+def _opt_str(value: object, label: str) -> str:
     if value is None:
         return ""
     if not isinstance(value, str):
@@ -312,7 +336,7 @@ def _opt_str(value: Any, label: str) -> str:
     return value
 
 
-def _opt_port(value: Any, label: str) -> str:
+def _opt_port(value: object, label: str) -> str:
     """Port accepts string or int (JSON-friendly) and is normalized to str."""
     if value is None:
         return ""
@@ -325,7 +349,7 @@ def _opt_port(value: Any, label: str) -> str:
     die(f"{label} must be a string or number (was {_json_type(value)})")
 
 
-def _json_type(value: Any) -> str:
+def _json_type(value: object) -> str:
     """Mirror jq's type names for parity with the original bash error messages."""
     if value is None:
         return "null"
