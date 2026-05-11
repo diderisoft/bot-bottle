@@ -10,7 +10,6 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
-from typing import Sequence
 
 from .. import docker as docker_mod
 from .. import pipelock
@@ -28,44 +27,44 @@ from ..manifest import Manifest
 from ._common import PROG, USER_CWD, read_tty_line
 
 
-def show_plan(
-    *,
-    agent_name: str,
-    image: str,
-    derived_image: str,
-    user_cwd: str,
-    container: str,
-    stage_dir: Path,
-    env_names: Sequence[str],
-    skills: Sequence[str],
-    docker_runtime: str,
-    bottle_name: str,
-    ssh_hosts: Sequence[str],
-    allowlist_summary: str,
-    prompt_content: str,
-    remote_control: bool,
-) -> None:
-    """Render the y/N preflight summary to stderr. Pure presentation; no
-    side effects beyond writing to stderr."""
-    prompt_first_line = prompt_content.splitlines()[0] if prompt_content else ""
+def show_plan(spec: DockerBottleSpec, *, remote_control: bool) -> None:
+    """Render the y/N preflight summary to stderr. Pure presentation;
+    reads manifest-backed fields off `spec` and probes the Docker
+    runtime label. `remote_control` is the only field not already on
+    the spec — it's a claude CLI flag, not a bottle property."""
+    manifest = spec.manifest
+    agent = manifest.agents[spec.agent_name]
+    bottle = manifest.bottle_for(spec.agent_name)
+
+    env_names = list(bottle.env.keys())
+    if spec.forward_oauth_token:
+        env_names.append("CLAUDE_CODE_OAUTH_TOKEN")
+
+    ssh_hosts = [e.Host for e in bottle.ssh]
+    allowlist_summary = pipelock.pipelock_allowlist_summary(manifest, agent.bottle)
+    prompt_first_line = agent.prompt.splitlines()[0] if agent.prompt else ""
+
     print(file=sys.stderr)
-    info(f"agent           : {agent_name}")
-    info(f"image           : {image}")
-    if derived_image:
-        info(f"cwd             : {user_cwd} -> /home/node/workspace (derived: {derived_image})")
-    info(f"container       : {container}")
-    info(f"stage dir       : {stage_dir}")
+    info(f"agent           : {spec.agent_name}")
+    info(f"image           : {spec.image}")
+    if spec.derived_image:
+        info(
+            f"cwd             : {spec.user_cwd} -> /home/node/workspace "
+            f"(derived: {spec.derived_image})"
+        )
+    info(f"container       : {spec.container_name}")
+    info(f"stage dir       : {spec.stage_dir}")
     info("env (names only): " + (", ".join(env_names) if env_names else "(none)"))
-    info("skills          : " + (" ".join(skills) if skills else "(none)"))
-    info(f"docker runtime  : {docker_runtime}")
-    info(f"bottle             : {bottle_name}")
+    info("skills          : " + (" ".join(agent.skills) if agent.skills else "(none)"))
+    info(f"docker runtime  : {docker_runtime_label()}")
+    info(f"bottle             : {agent.bottle}")
     if ssh_hosts:
         info(f"  ssh hosts     : {', '.join(ssh_hosts)}")
     else:
         info("  ssh hosts     : (none)")
     info(f"  egress        : {allowlist_summary}")
     info(
-        f"prompt          : {len(prompt_content)} chars; "
+        f"prompt          : {len(agent.prompt)} chars; "
         f"first line: {prompt_first_line or '(empty)'}"
     )
     info("remote-control  : " + ("enabled" if remote_control else "disabled"))
@@ -122,22 +121,15 @@ def cmd_start(argv: list[str]) -> int:
                     f"'docker rm -f <name>'"
                 )
 
-    # --- Plan resolution (host-only, no container yet) ---
-    env_names = list(bottle.env.keys())
-
     # CLAUDE_BOTTLE_OAUTH_TOKEN → CLAUDE_CODE_OAUTH_TOKEN forwarding.
     # Host-side token is always forwarded so every container can authenticate.
     forward_oauth_token = bool(os.environ.get("CLAUDE_BOTTLE_OAUTH_TOKEN"))
-    display_env_names = list(env_names)
-    if forward_oauth_token:
-        display_env_names.append("CLAUDE_CODE_OAUTH_TOKEN")
 
     if agent.skills:
         skills_mod.skills_validate_all(list(agent.skills))
 
-    ssh_entries = bottle.ssh
-    if ssh_entries:
-        ssh_mod.ssh_validate_entries(ssh_entries)
+    if bottle.ssh:
+        ssh_mod.ssh_validate_entries(bottle.ssh)
 
     stage_dir = Path(tempfile.mkdtemp(prefix="claude-bottle-stage."))
     env_file = stage_dir / "agent.env"
@@ -153,40 +145,11 @@ def cmd_start(argv: list[str]) -> int:
 
     try:
         pipelock.pipelock_write_yaml(manifest, bottle_name, pipelock_yaml)
-        allowlist_summary = pipelock.pipelock_allowlist_summary(manifest, bottle_name)
 
         env_resolve(manifest, name, env_file, args_file)
 
         prompt_content = agent.prompt
         prompt_file.write_text(prompt_content)
-
-        show_plan(
-            agent_name=name,
-            image=image,
-            derived_image=derived_image,
-            user_cwd=USER_CWD,
-            container=container,
-            stage_dir=stage_dir,
-            env_names=display_env_names,
-            skills=agent.skills,
-            docker_runtime=docker_runtime_label(),
-            bottle_name=bottle_name,
-            ssh_hosts=[e.Host for e in ssh_entries],
-            allowlist_summary=allowlist_summary,
-            prompt_content=prompt_content,
-            remote_control=args.remote_control,
-        )
-
-        if dry_run:
-            info("dry-run requested; not starting container.")
-            return 0
-
-        sys.stderr.write("claude-bottle: launch this agent? [y/N] ")
-        sys.stderr.flush()
-        reply = read_tty_line()
-        if reply not in ("y", "Y", "yes", "YES"):
-            info("aborted by user")
-            return 0
 
         spec = DockerBottleSpec(
             agent_name=name,
@@ -207,6 +170,19 @@ def cmd_start(argv: list[str]) -> int:
             pipelock_yaml_filename=pipelock_yaml_filename,
             forward_oauth_token=forward_oauth_token,
         )
+
+        show_plan(spec, remote_control=args.remote_control)
+
+        if dry_run:
+            info("dry-run requested; not starting container.")
+            return 0
+
+        sys.stderr.write("claude-bottle: launch this agent? [y/N] ")
+        sys.stderr.flush()
+        reply = read_tty_line()
+        if reply not in ("y", "Y", "yes", "YES"):
+            info("aborted by user")
+            return 0
 
         factory = get_bottle_factory()
         with factory(spec) as bottle_handle:
