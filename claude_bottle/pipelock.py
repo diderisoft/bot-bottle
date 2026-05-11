@@ -13,13 +13,13 @@ Image pin: ghcr.io/luckypipewrench/pipelock@sha256:<digest> for tag 2.3.0.
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 from .log import die, info, warn
 from .manifest import Manifest
+from .util import is_ipv4_literal
 
 # Pipelock image, pinned by digest. The digest is the multi-arch image
 # index for ghcr.io/luckypipewrench/pipelock:2.3.0.
@@ -65,18 +65,6 @@ def pipelock_bottle_allowlist(manifest: Manifest, bottle_name: str) -> list[str]
 
 def pipelock_bottle_ssh_hostnames(manifest: Manifest, bottle_name: str) -> list[str]:
     return [e.Hostname for e in manifest.bottles[bottle_name].ssh if e.Hostname]
-
-
-_IPV4_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$")
-
-
-def is_ipv4_literal(s: str) -> bool:
-    """Pipelock's SSRF check fires on resolved IP, so an IP-literal
-    Hostname goes to ssrf.ip_allowlist while a hostname goes to
-    trusted_domains."""
-    if not s:
-        return False
-    return bool(_IPV4_RE.match(s))
 
 
 def pipelock_bottle_ssh_trusted_domains(manifest: Manifest, bottle_name: str) -> list[str]:
