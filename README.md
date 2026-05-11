@@ -45,9 +45,10 @@ like `cloudflare-dns.com` would have to be on the allowlist for the
 agent to reach it at all. The container itself adds a layer between
 the agent and the host, but the v1 design leans more on secret
 minimization and egress allowlisting than on the container as a
-hardened boundary. Linux hosts can opt into [gVisor](https://gvisor.dev/)
-per bottle (see `runtime` in the manifest below) for a userspace
-syscall barrier; the broader v2 discussion lives in
+hardened boundary. On Linux hosts where [gVisor](https://gvisor.dev/)
+is registered with Docker, claude-bottle auto-detects it and launches
+every bottle under `runsc` for a userspace syscall barrier — no
+manifest configuration required. The broader v2 discussion lives in
 `docs/research/stronger-isolation-alternatives.md`.
 
 The egress proxy and OAuth-token handling below are the load-bearing
@@ -76,13 +77,6 @@ project entries overriding home entries on key conflict).
 {
   "bottles": {
     "gitea-dev": {
-      // Container runtime for the agent. Default "runc"; set to
-      // "runsc" on Linux hosts to launch the agent under gVisor for
-      // a userspace syscall barrier between the agent and the host
-      // kernel. claude-bottle verifies the runtime is registered with
-      // Docker before launch; gVisor is not available on macOS.
-      "runtime": "runsc",
-
       "env": {
         "GITEA_TOKEN":     "?paste your Gitea API token",
         "GITHUB_TOKEN":    "${GH_PAT}",

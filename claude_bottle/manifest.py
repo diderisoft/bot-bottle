@@ -7,8 +7,7 @@ Schema (see CLAUDE.md "Intended design"):
       "<bottle-name>": {
         "env":     { "<NAME>": <env-entry>, ... },
         "ssh":     [ <ssh-entry>, ... ],
-        "egress":  { "allowlist": [ "<hostname>", ... ] },
-        "runtime": "runc" | "runsc"
+        "egress":  { "allowlist": [ "<hostname>", ... ] }
       }
     },
     "agents": {
@@ -33,13 +32,9 @@ import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, Mapping, cast
+from typing import Mapping, cast
 
 from .log import die
-
-
-Runtime = Literal["runc", "runsc"]
-_SUPPORTED_RUNTIMES: tuple[Runtime, ...] = ("runc", "runsc")
 
 
 def _empty_str_dict() -> dict[str, str]:
@@ -116,11 +111,18 @@ class Bottle:
     env: Mapping[str, str] = field(default_factory=_empty_str_dict)
     ssh: tuple[SshEntry, ...] = ()
     egress: BottleEgress = field(default_factory=BottleEgress)
-    runtime: Runtime = "runc"
 
     @classmethod
     def from_dict(cls, name: str, raw: object) -> "Bottle":
         d = _as_json_object(raw, f"bottle '{name}'")
+
+        if "runtime" in d:
+            die(
+                f"bottle '{name}' has a 'runtime' field, which is no longer "
+                f"supported. gVisor (runsc) is now auto-detected when "
+                f"registered with Docker; remove the 'runtime' field from "
+                f"the bottle definition."
+            )
 
         env: dict[str, str] = {}
         env_raw = d.get("env")
@@ -152,21 +154,7 @@ class Bottle:
             else BottleEgress()
         )
 
-        runtime_raw = d.get("runtime")
-        runtime: Runtime
-        if runtime_raw is None:
-            runtime = "runc"
-        else:
-            if not isinstance(runtime_raw, str):
-                die(f"bottle '{name}' runtime must be a string (was {type(runtime_raw).__name__})")
-            if runtime_raw not in _SUPPORTED_RUNTIMES:
-                die(
-                    f"bottle '{name}' runtime '{runtime_raw}' is not supported. "
-                    f"Use one of: {', '.join(_SUPPORTED_RUNTIMES)}."
-                )
-            runtime = runtime_raw
-
-        return cls(env=env, ssh=ssh, egress=egress, runtime=runtime)
+        return cls(env=env, ssh=ssh, egress=egress)
 
 
 @dataclass(frozen=True)

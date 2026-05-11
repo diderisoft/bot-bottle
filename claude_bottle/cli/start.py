@@ -7,20 +7,24 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 from .. import docker as docker_mod
-from .. import network as network_mod
 from .. import pipelock
 from .. import skills as skills_mod
 from .. import ssh as ssh_mod
+from ..bottles import get_bottle_factory
+from ..bottles.docker import (
+    DockerBottleSpec,
+    container_prompt_path,
+    docker_runtime_label,
+)
 from ..env_resolve import env_resolve
 from ..log import die, info
 from ..manifest import Manifest
-from ._common import PROG, REPO_DIR, USER_CWD, read_tty_line
+from ._common import PROG, USER_CWD, read_tty_line
 
 
 def cmd_start(argv: list[str]) -> int:
@@ -86,10 +90,6 @@ def cmd_start(argv: list[str]) -> int:
     if agent.skills:
         skills_mod.skills_validate_all(list(agent.skills))
 
-    runtime = bottle.runtime
-    if runtime == "runsc":
-        docker_mod.require_runsc()
-
     ssh_entries = bottle.ssh
     if ssh_entries:
         ssh_mod.ssh_validate_entries(ssh_entries)
@@ -105,31 +105,6 @@ def cmd_start(argv: list[str]) -> int:
     args_file.write_text("")
     prompt_file.write_text("")
     prompt_file.chmod(0o600)
-
-    # cleanup state — populated as resources come up.
-    state: dict[str, str] = {
-        "container": "",
-        "pipelock": "",
-        "internal_network": "",
-        "egress_network": "",
-    }
-
-    def cleanup_all() -> None:
-        try:
-            if state["container"] and docker_mod.container_exists(state["container"]):
-                subprocess.run(
-                    ["docker", "rm", "-f", state["container"]],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-            if state["pipelock"]:
-                pipelock.pipelock_stop(slug)
-            if state["internal_network"]:
-                network_mod.network_remove(state["internal_network"])
-            if state["egress_network"]:
-                network_mod.network_remove(state["egress_network"])
-        finally:
-            shutil.rmtree(stage_dir, ignore_errors=True)
 
     try:
         pipelock.pipelock_write_yaml(manifest, bottle_name, pipelock_yaml)
@@ -154,8 +129,8 @@ def cmd_start(argv: list[str]) -> int:
             + (", ".join(display_env_names) if display_env_names else "(none)")
         )
         info("skills          : " + (" ".join(agent.skills) if agent.skills else "(none)"))
+        info(f"docker runtime  : {docker_runtime_label()}")
         info(f"bottle             : {bottle_name}")
-        info(f"  runtime       : {runtime}{' (gVisor)' if runtime == 'runsc' else ''}")
         if ssh_entries:
             ssh_names = ", ".join(e.Host for e in ssh_entries)
             info(f"  ssh hosts     : {ssh_names}")
@@ -171,7 +146,6 @@ def cmd_start(argv: list[str]) -> int:
 
         if dry_run:
             info("dry-run requested; not starting container.")
-            cleanup_all()
             return 0
 
         sys.stderr.write("claude-bottle: launch this agent? [y/N] ")
@@ -179,144 +153,43 @@ def cmd_start(argv: list[str]) -> int:
         reply = read_tty_line()
         if reply not in ("y", "Y", "yes", "YES"):
             info("aborted by user")
-            cleanup_all()
             return 0
 
-        # --- Build & launch ---
-        docker_mod.build_image(image, REPO_DIR)
-        if derived_image:
-            docker_mod.build_image_with_cwd(derived_image, image, USER_CWD)
-
-        state["internal_network"] = network_mod.network_create_internal(slug)
-        state["egress_network"] = network_mod.network_create_egress(slug)
-        state["pipelock"] = pipelock.pipelock_start(
-            slug,
-            state["internal_network"],
-            state["egress_network"],
-            stage_dir,
-            pipelock_yaml_filename,
+        spec = DockerBottleSpec(
+            agent_name=name,
+            slug=slug,
+            manifest=manifest,
+            container_name=container,
+            container_name_pinned=bool(pinned_container),
+            image=image,
+            derived_image=derived_image,
+            runtime_image=runtime_image,
+            user_cwd=USER_CWD,
+            copy_cwd_git=bool(args.cwd and Path(USER_CWD, ".git").is_dir()),
+            stage_dir=stage_dir,
+            prompt_file=prompt_file,
+            env_file=env_file,
+            args_file=args_file,
+            pipelock_yaml_path=pipelock_yaml,
+            pipelock_yaml_filename=pipelock_yaml_filename,
+            forward_oauth_token=forward_oauth_token,
         )
 
-        proxy_url = pipelock.pipelock_proxy_url(slug)
-        docker_args: list[str] = [
-            "--rm", "-d",
-            "--name", container,
-            "--network", state["internal_network"],
-            "-e", f"HTTPS_PROXY={proxy_url}",
-            "-e", f"HTTP_PROXY={proxy_url}",
-            "-e", "NO_PROXY=localhost,127.0.0.1",
-        ]
-        if runtime != "runc":
-            docker_args.extend(["--runtime", runtime])
-        if env_file.stat().st_size > 0:
-            docker_args.extend(["--env-file", str(env_file)])
-
-        # ARGS_FILE pairs (-e, NAME) line-by-line.
-        args_lines = args_file.read_text().splitlines()
-        i = 0
-        while i < len(args_lines):
-            flag = args_lines[i]
-            i += 1
-            if not flag:
-                continue
-            if i >= len(args_lines):
-                break
-            vname = args_lines[i]
-            i += 1
-            docker_args.extend([flag, vname])
-
-        if forward_oauth_token:
-            os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = os.environ["CLAUDE_BOTTLE_OAUTH_TOKEN"]
-            docker_args.extend(["-e", "CLAUDE_CODE_OAUTH_TOKEN"])
-
-        docker_args.extend([runtime_image, "sleep", "infinity"])
-
-        info(f"starting container {container} from {runtime_image}")
-        # Retry-on-name-conflict loop to mirror the bash version.
-        while True:
-            full_argv = ["docker", "run", *docker_args]
-            run_result = subprocess.run(full_argv, capture_output=True, text=True)
-            if run_result.returncode == 0:
-                state["container"] = container
-                break
-            err_text = run_result.stderr
-            if pinned_container or "is already in use" not in err_text:
-                sys.stderr.write(err_text + "\n")
-                die(f"docker run failed for container '{container}'")
-            if suffix > 100:
-                die(
-                    f"could not find a free container name after "
-                    f"{default_container}-99 retries; clean up old containers"
+        factory = get_bottle_factory()
+        with factory(spec) as bottle_handle:
+            info(
+                "attaching interactive claude session "
+                "(Ctrl-D or 'exit' to leave; container will be removed)"
+            )
+            claude_args = ["--dangerously-skip-permissions"]
+            if args.remote_control:
+                claude_args.append("--remote-control")
+            if prompt_content:
+                claude_args.extend(
+                    ["--append-system-prompt-file", container_prompt_path()]
                 )
-            container = f"{default_container}-{suffix}"
-            suffix += 1
-            # Replace --name slot in docker_args.
-            name_idx = docker_args.index("--name") + 1
-            docker_args[name_idx] = container
-            info(f"name conflict; retrying as {container}")
-
-        container_prompt_path = (
-            os.environ.get("CLAUDE_BOTTLE_CONTAINER_HOME", "/home/node")
-            + "/.claude-bottle-prompt.txt"
-        )
-        subprocess.run(
-            ["docker", "cp", str(prompt_file), f"{container}:{container_prompt_path}"],
-            stdout=subprocess.DEVNULL,
-            check=True,
-        )
-        # `docker cp` preserves host UID; re-own/mode as root in the container
-        # so node can read its own mode-600 prompt regardless of host UID.
-        subprocess.run(
-            ["docker", "exec", "-u", "0", container, "chown", "node:node", container_prompt_path],
-            stdout=subprocess.DEVNULL,
-            check=True,
-        )
-        subprocess.run(
-            ["docker", "exec", "-u", "0", container, "chmod", "600", container_prompt_path],
-            stdout=subprocess.DEVNULL,
-            check=True,
-        )
-
-        if agent.skills:
-            skills_mod.skills_copy_into(container, list(agent.skills))
-
-        if ssh_entries:
-            proxy_host_port = pipelock.pipelock_proxy_host_port(slug)
-            ssh_mod.ssh_setup(container, stage_dir, proxy_host_port, ssh_entries)
-
-        if args.cwd and Path(USER_CWD, ".git").is_dir():
-            info(f"copying {USER_CWD}/.git -> {container}:/home/node/workspace/.git")
-            subprocess.run(
-                ["docker", "cp", f"{USER_CWD}/.git", f"{container}:/home/node/workspace/.git"],
-                stdout=subprocess.DEVNULL,
-                check=True,
-            )
-            subprocess.run(
-                ["docker", "exec", "-u", "0", container, "chown", "-R", "node:node", "/home/node/workspace/.git"],
-                stdout=subprocess.DEVNULL,
-                check=True,
-            )
-
-        info(
-            "attaching interactive claude session "
-            "(Ctrl-D or 'exit' to leave; container will be removed)"
-        )
-        claude_args = ["--dangerously-skip-permissions"]
-        if args.remote_control:
-            claude_args.append("--remote-control")
-        if prompt_content:
-            subprocess.run(
-                [
-                    "docker", "exec", "-it", container, "claude",
-                    *claude_args,
-                    "--append-system-prompt-file", container_prompt_path,
-                ]
-            )
-        else:
-            subprocess.run(
-                ["docker", "exec", "-it", container, "claude", *claude_args]
-            )
-        info(f"session ended; container {container} will be removed")
-        return 0
+            bottle_handle.exec_claude(claude_args, tty=True)
+            info(f"session ended; container {bottle_handle.name} will be removed")
+            return 0
     finally:
-        cleanup_all()
+        shutil.rmtree(stage_dir, ignore_errors=True)

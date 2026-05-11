@@ -19,22 +19,6 @@ def require_docker() -> None:
         die("docker not found")
 
 
-def require_runsc() -> None:
-    """Fail with an install pointer if the `runsc` (gVisor) runtime is
-    not registered with the local Docker daemon. Called when a bottle
-    sets `runtime: "runsc"`."""
-    result = subprocess.run(
-        ["docker", "info", "--format", "{{json .Runtimes}}"],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0 or "runsc" not in result.stdout:
-        info("This bottle requested runtime 'runsc' but the gVisor runtime is not registered with Docker.")
-        info("Install gVisor and register it with the daemon:  https://gvisor.dev/docs/user_guide/install/")
-        info("On macOS, gVisor is not available natively; remove 'runtime' from the bottle or run on Linux.")
-        die("runsc runtime not available")
-
-
 def image_exists(ref: str) -> bool:
     return _silent_run(["docker", "image", "inspect", ref]) == 0
 
