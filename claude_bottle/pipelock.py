@@ -16,7 +16,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 
-from .manifest import Bottle, Manifest
+from .manifest import Bottle
 from .util import is_ipv4_literal
 
 # Baked-in default allowlist for hosts Claude Code itself needs.
@@ -110,8 +110,21 @@ class PipelockProxy(ABC):
     and lives on concrete subclasses (e.g. DockerPipelockProxy)."""
 
     def prepare(
-        self, manifest: Manifest, bottle_name: str, slug: str, yaml_path: Path
+        self, bottle: Bottle, slug: str, yaml_path: Path
     ) -> PipelockProxyPlan:
+        """Write the pipelock yaml config (mode 600) to `yaml_path`
+        and return the plan for `.start`.
+
+        `slug` is the agent-derived identifier (lowercased,
+        hyphen-normalized) used as the suffix in every per-agent
+        resource name — the agent container, the pipelock container
+        (`claude-bottle-pipelock-<slug>`), the internal/egress
+        networks. It's stored on the returned plan so the backend's
+        start step can derive the sidecar's container name."""
+        self._build_pipelock_yaml(bottle, yaml_path)
+        return PipelockProxyPlan(yaml_path=yaml_path, slug=slug)
+
+    def _build_pipelock_yaml(self, bottle: Bottle, yaml_path: Path):
         """Write the pipelock yaml config (mode 600) to `yaml_path`
         for the sidecar to consume when it boots. Carries the
         effective allowlist (bottle.egress.allowlist UNION
@@ -119,12 +132,6 @@ class PipelockProxy(ABC):
         port, strict mode + forward_proxy + DLP defaults + scan_env.
         Deliberately contains no env values, no secrets, no per-agent
         customization beyond the hostname list."""
-        return self._build_pipelock_yaml(manifest, bottle_name, slug, yaml_path)
-
-    def _build_pipelock_yaml(
-        self, manifest: Manifest, bottle_name: str, slug: str, yaml_path: Path
-    ) -> PipelockProxyPlan:
-        bottle = manifest.bottles[bottle_name]
         allowlist = pipelock_effective_allowlist(bottle)
         trusted = pipelock_bottle_ssh_trusted_domains(bottle)
         ip_cidrs = pipelock_bottle_ssh_ip_cidrs(bottle)
@@ -160,8 +167,6 @@ class PipelockProxy(ABC):
 
         yaml_path.write_text("\n".join(lines) + "\n")
         yaml_path.chmod(0o600)
-
-        return PipelockProxyPlan(yaml_path=yaml_path, slug=slug)
 
     @abstractmethod
     def start(self, plan: PipelockProxyPlan) -> str:

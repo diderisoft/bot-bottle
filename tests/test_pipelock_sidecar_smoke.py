@@ -41,7 +41,7 @@ class TestPipelockSidecarSmoke(unittest.TestCase):
     )
     def test_smoke(self):
         yaml_path = self.work_dir / "pipelock.yaml"
-        DockerPipelockProxy().prepare(fixture_minimal(), "dev", "demo", yaml_path)
+        DockerPipelockProxy().prepare(fixture_minimal().bottles["dev"], "demo", yaml_path)
 
         create = subprocess.run(
             [

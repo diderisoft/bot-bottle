@@ -136,9 +136,9 @@ class DockerBottleBackend(BottleBackend):
         PipelockProxyPlan for the launch step to consume. Stage-only:
         no Docker resources created yet."""
         yaml_path = stage_dir / "pipelock.yaml"
-        bottle_name = spec.manifest.agents[spec.agent_name].bottle
+        bottle = spec.manifest.bottle_for(spec.agent_name)
         slug = docker_mod.slugify(spec.agent_name)
-        return self._proxy.prepare(spec.manifest, bottle_name, slug, yaml_path)
+        return self._proxy.prepare(bottle, slug, yaml_path)
 
     @contextmanager
     def launch(self, plan: BottlePlan) -> Iterator[DockerBottle]:

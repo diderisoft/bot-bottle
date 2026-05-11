@@ -23,7 +23,7 @@ class TestPipelockProxyPrepare(unittest.TestCase):
 
     def test_minimal(self):
         yaml_path = self.out_dir / "min.yaml"
-        self.proxy.prepare(fixture_minimal(), "dev", "demo", yaml_path)
+        self.proxy.prepare(fixture_minimal().bottles["dev"], "demo", yaml_path)
         content = yaml_path.read_text()
         self.assertIn("mode: strict", content)
         self.assertIn("enforce: true", content)
@@ -41,7 +41,7 @@ class TestPipelockProxyPrepare(unittest.TestCase):
 
     def test_ssh_blocks(self):
         yaml_path = self.out_dir / "ssh.yaml"
-        self.proxy.prepare(fixture_with_ssh(), "dev", "demo", yaml_path)
+        self.proxy.prepare(fixture_with_ssh().bottles["dev"], "demo", yaml_path)
         content = yaml_path.read_text()
         self.assertIn("trusted_domains:", content)
         self.assertIn("github.com", content)
@@ -65,7 +65,7 @@ class TestPipelockProxyPrepare(unittest.TestCase):
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
         })
         yaml_path = self.out_dir / "secret.yaml"
-        self.proxy.prepare(manifest, "dev", "demo", yaml_path)
+        self.proxy.prepare(manifest.bottles["dev"], "demo", yaml_path)
         content = yaml_path.read_text()
         self.assertNotIn("literal-value-should-not-appear", content)
         self.assertNotIn("MY_SECRET", content)
@@ -73,7 +73,7 @@ class TestPipelockProxyPrepare(unittest.TestCase):
 
     def test_file_mode_is_600(self):
         yaml_path = self.out_dir / "min.yaml"
-        self.proxy.prepare(fixture_minimal(), "dev", "demo", yaml_path)
+        self.proxy.prepare(fixture_minimal().bottles["dev"], "demo", yaml_path)
         mode = os.stat(yaml_path).st_mode & 0o777
         self.assertEqual(0o600, mode)
 
