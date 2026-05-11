@@ -119,53 +119,6 @@ def pipelock_allowlist_summary(manifest: Manifest, bottle_name: str) -> str:
     return f"{count} hosts allowed ({joined})"
 
 
-# --- YAML generation -------------------------------------------------------
-
-
-def pipelock_write_yaml(manifest: Manifest, bottle_name: str, out_path: Path) -> None:
-    """Write a pipelock YAML config (mode 600) carrying:
-      - the effective allowlist (hostnames),
-      - a fixed listen port,
-      - strict mode + forward_proxy.enabled + DLP defaults + scan_env.
-
-    Deliberately contains no env values, no secrets, no per-agent
-    customization beyond the hostname list."""
-    allowlist = pipelock_effective_allowlist(manifest, bottle_name)
-    trusted = pipelock_bottle_ssh_trusted_domains(manifest, bottle_name)
-    ip_cidrs = pipelock_bottle_ssh_ip_cidrs(manifest, bottle_name)
-
-    lines: list[str] = []
-    lines.append("version: 1")
-    lines.append("mode: strict")
-    lines.append("enforce: true")
-    lines.append("")
-    lines.append("# Hostnames the agent is allowed to reach. Effective list is")
-    lines.append("# claude-bottle defaults UNION bottle.egress.allowlist (sorted, deduped).")
-    lines.append("api_allowlist:")
-    for h in allowlist:
-        lines.append(f'  - "{h}"')
-    lines.append("")
-    lines.append("forward_proxy:")
-    lines.append("  enabled: true")
-    lines.append("")
-    if trusted:
-        lines.append("trusted_domains:")
-        for td in trusted:
-            lines.append(f'  - "{td}"')
-        lines.append("")
-    if ip_cidrs:
-        lines.append("ssrf:")
-        lines.append("  ip_allowlist:")
-        for cidr in ip_cidrs:
-            lines.append(f'    - "{cidr}"')
-        lines.append("")
-    lines.append("dlp:")
-    lines.append("  include_defaults: true")
-    lines.append("  scan_env: true")
-
-    out_path.write_text("\n".join(lines) + "\n")
-    out_path.chmod(0o600)
-
 
 # --- Sidecar lifecycle -----------------------------------------------------
 
@@ -188,7 +141,7 @@ def pipelock_start(
     name = pipelock_container_name(slug)
     host_yaml = yaml_dir / yaml_filename
     if not host_yaml.is_file():
-        die(f"pipelock yaml not found at {host_yaml}; pipelock_write_yaml must run first")
+        die(f"pipelock yaml not found at {host_yaml}; backend.prepare_proxy must run first")
 
     info(f"starting pipelock sidecar {name} on network {internal_network}")
 

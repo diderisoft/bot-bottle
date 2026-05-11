@@ -102,7 +102,7 @@ class DockerBottleBackend(BottleBackend):
         prompt_file.write_text("")
         prompt_file.chmod(0o600)
 
-        pipelock.pipelock_write_yaml(manifest, bottle_name, pipelock_yaml)
+        self.prepare_proxy(spec, pipelock_yaml)
         env_resolve(manifest, spec.agent_name, env_file, args_file)
         prompt_file.write_text(agent.prompt)
 
@@ -126,6 +126,51 @@ class DockerBottleBackend(BottleBackend):
             allowlist_summary=allowlist_summary,
             use_runsc=use_runsc,
         )
+
+    def prepare_proxy(self, spec: BottleSpec, yaml_path: Path) -> None:
+        """Write the pipelock proxy's yaml config (mode 600) to
+        `yaml_path` for the sidecar to consume when it boots in
+        `launch`. Carries the effective allowlist (bottle.egress.allowlist
+        UNION claude-bottle defaults UNION ssh hostnames), a fixed
+        listen port, strict mode + forward_proxy + DLP defaults +
+        scan_env. Deliberately contains no env values, no secrets, no
+        per-agent customization beyond the hostname list."""
+        bottle_name = spec.manifest.agents[spec.agent_name].bottle
+        allowlist = pipelock.pipelock_effective_allowlist(spec.manifest, bottle_name)
+        trusted = pipelock.pipelock_bottle_ssh_trusted_domains(spec.manifest, bottle_name)
+        ip_cidrs = pipelock.pipelock_bottle_ssh_ip_cidrs(spec.manifest, bottle_name)
+
+        lines: list[str] = []
+        lines.append("version: 1")
+        lines.append("mode: strict")
+        lines.append("enforce: true")
+        lines.append("")
+        lines.append("# Hostnames the agent is allowed to reach. Effective list is")
+        lines.append("# claude-bottle defaults UNION bottle.egress.allowlist (sorted, deduped).")
+        lines.append("api_allowlist:")
+        for h in allowlist:
+            lines.append(f'  - "{h}"')
+        lines.append("")
+        lines.append("forward_proxy:")
+        lines.append("  enabled: true")
+        lines.append("")
+        if trusted:
+            lines.append("trusted_domains:")
+            for td in trusted:
+                lines.append(f'  - "{td}"')
+            lines.append("")
+        if ip_cidrs:
+            lines.append("ssrf:")
+            lines.append("  ip_allowlist:")
+            for cidr in ip_cidrs:
+                lines.append(f'    - "{cidr}"')
+            lines.append("")
+        lines.append("dlp:")
+        lines.append("  include_defaults: true")
+        lines.append("  scan_env: true")
+
+        yaml_path.write_text("\n".join(lines) + "\n")
+        yaml_path.chmod(0o600)
 
     @contextmanager
     def launch(self, plan: BottlePlan) -> Iterator[DockerBottle]:

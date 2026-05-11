@@ -12,7 +12,9 @@ import unittest
 import urllib.request
 from pathlib import Path
 
-from claude_bottle.pipelock import PIPELOCK_IMAGE, pipelock_write_yaml
+from claude_bottle.backend import BottleSpec
+from claude_bottle.backend.docker import DockerBottleBackend
+from claude_bottle.pipelock import PIPELOCK_IMAGE
 from tests._docker import skip_unless_docker
 from tests.fixtures import fixture_minimal
 
@@ -38,7 +40,14 @@ class TestPipelockSidecarSmoke(unittest.TestCase):
     )
     def test_smoke(self):
         yaml_path = self.work_dir / "pipelock.yaml"
-        pipelock_write_yaml(fixture_minimal(), "dev", yaml_path)
+        spec = BottleSpec(
+            manifest=fixture_minimal(),
+            agent_name="demo",
+            copy_cwd=False,
+            user_cwd="/tmp",
+            forward_oauth_token=False,
+        )
+        DockerBottleBackend().prepare_proxy(spec, yaml_path)
 
         create = subprocess.run(
             [
