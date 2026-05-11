@@ -104,20 +104,6 @@ class Bottle(ABC):
     def close(self) -> None: ...
 
 
-class BottleProvisioner(ABC):
-    """Copies host-side files (prompt, skills, SSH keys, .git) into a
-    running bottle after the container/machine is up. Owned by a
-    BottleBackend; called from its launch step before yielding the
-    Bottle handle."""
-
-    @abstractmethod
-    def provision(self, plan: BottlePlan, target: str) -> str | None:
-        """Provision the running bottle described by `plan`. `target`
-        identifies the running instance in backend-specific terms
-        (Docker: resolved container name; fly: machine id). Returns the
-        in-container prompt path if a prompt was provisioned, else
-        None — the Bottle handle uses it to decide whether to add
-        --append-system-prompt-file to claude's argv."""
 
 
 class BottleBackend(ABC):
@@ -135,6 +121,17 @@ class BottleBackend(ABC):
     @abstractmethod
     def launch(self, plan: BottlePlan) -> AbstractContextManager[Bottle]:
         """Build/run the bottle and yield a handle; tear down on exit."""
+
+    @abstractmethod
+    def provision(self, plan: BottlePlan, target: str) -> str | None:
+        """Copy host-side files (prompt, skills, SSH keys, .git) into
+        the running bottle. Called from `launch` after the container/
+        machine is up. `target` identifies the running instance in
+        backend-specific terms (Docker: resolved container name; fly:
+        machine id). Returns the in-container prompt path if a prompt
+        was provisioned, else None — the Bottle handle uses it to
+        decide whether to add --append-system-prompt-file to claude's
+        argv."""
 
     @abstractmethod
     def prepare_cleanup(self) -> BottleCleanupPlan:
@@ -178,7 +175,6 @@ __all__ = [
     "BottleBackend",
     "BottleCleanupPlan",
     "BottlePlan",
-    "BottleProvisioner",
     "BottleSpec",
     "get_bottle_backend",
 ]
