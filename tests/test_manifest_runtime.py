@@ -1,10 +1,11 @@
-"""Unit: manifest_bottle_runtime — defaults to runc, accepts runsc,
-rejects unknown values and non-strings."""
+"""Unit: bottle runtime — manifest_bottle_runtime returns the configured
+runtime (defaulting to runc); manifest_validate rejects unknown values,
+non-strings, and empty strings."""
 
 import unittest
 
 from claude_bottle.log import Die
-from claude_bottle.manifest import manifest_bottle_runtime
+from claude_bottle.manifest import manifest_bottle_runtime, manifest_validate
 
 
 def _bottle(runtime_value: object | None) -> dict:
@@ -34,15 +35,15 @@ class TestManifestBottleRuntime(unittest.TestCase):
 
     def test_rejects_unknown_runtime(self):
         with self.assertRaises(Die):
-            manifest_bottle_runtime(_bottle("kata-runtime"), "dev")
+            manifest_validate(_bottle("kata-runtime"))
 
     def test_rejects_non_string(self):
         with self.assertRaises(Die):
-            manifest_bottle_runtime(_bottle(42), "dev")
+            manifest_validate(_bottle(42))
 
     def test_rejects_empty_string(self):
         with self.assertRaises(Die):
-            manifest_bottle_runtime(_bottle(""), "dev")
+            manifest_validate(_bottle(""))
 
 
 if __name__ == "__main__":
