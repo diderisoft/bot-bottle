@@ -36,31 +36,26 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Sequence
 
 from .log import die, info
+from .manifest import SshEntry
 
 
-def ssh_validate_entries(entries: list[dict[str, Any]]) -> None:
-    """Each entry must have Host + IdentityFile, and the IdentityFile
-    must exist on the host (after expanding leading ~)."""
+def ssh_validate_entries(entries: Sequence[SshEntry]) -> None:
+    """The IdentityFile must exist on the host (after expanding leading ~).
+    Host and IdentityFile shape are already enforced by Manifest validation."""
     for entry in entries:
-        name = entry.get("Host", "")
-        key = entry.get("IdentityFile", "")
-        if not name:
-            die(f"ssh entry missing required field 'Host': {entry}")
-        if not key:
-            die(f"ssh entry '{name}' missing required field 'IdentityFile'")
-        key = _expand_tilde(key)
+        key = _expand_tilde(entry.IdentityFile)
         if not os.path.isfile(key):
-            die(f"ssh key file not found for host '{name}': {key}")
+            die(f"ssh key file not found for host '{entry.Host}': {key}")
 
 
 def ssh_setup(
     container: str,
     stage_dir: Path,
     proxy_host_port: str,
-    entries: list[dict[str, Any]],
+    entries: Sequence[SshEntry],
 ) -> None:
     """Set up SSH in the container so node can authenticate using each
     entry's key without the key file being readable by node."""
@@ -91,12 +86,12 @@ def ssh_setup(
 
     container_key_paths: list[str] = []
     for entry in entries:
-        name = entry["Host"]
-        key = _expand_tilde(entry["IdentityFile"])
-        hostname = entry["Hostname"]
-        user = entry["User"]
-        port = str(entry["Port"])
-        known_host_key = entry.get("KnownHostKey", "")
+        name = entry.Host
+        key = _expand_tilde(entry.IdentityFile)
+        hostname = entry.Hostname
+        user = entry.User
+        port = entry.Port
+        known_host_key = entry.KnownHostKey
 
         key_basename = os.path.basename(key)
         container_key_path = f"{keys_dir}/{key_basename}"

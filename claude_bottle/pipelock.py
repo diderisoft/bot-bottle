@@ -18,7 +18,7 @@ import subprocess
 from pathlib import Path
 
 from .log import die, info, warn
-from .manifest import Manifest, manifest_bottle_egress_allowlist, manifest_bottle_ssh
+from .manifest import Manifest
 
 # Pipelock image, pinned by digest. The digest is the multi-arch image
 # index for ghcr.io/luckypipewrench/pipelock:2.3.0.
@@ -58,23 +58,12 @@ def pipelock_proxy_host_port(slug: str) -> str:
 
 
 def pipelock_bottle_allowlist(manifest: Manifest, bottle_name: str) -> list[str]:
-    """Hostnames in bottles[<bottle_name>].egress.allowlist. Validates
-    that each entry is a string."""
-    raw = manifest_bottle_egress_allowlist(manifest, bottle_name)
-    for entry in raw:
-        if not isinstance(entry, str):
-            t = _json_type(entry)
-            die(f"bottle '{bottle_name}' egress.allowlist must contain only strings; found a '{t}' entry.")
-    return list(raw)
+    """Hostnames in bottles[<bottle_name>].egress.allowlist."""
+    return list(manifest.bottles[bottle_name].egress.allowlist)
 
 
 def pipelock_bottle_ssh_hostnames(manifest: Manifest, bottle_name: str) -> list[str]:
-    out: list[str] = []
-    for entry in manifest_bottle_ssh(manifest, bottle_name):
-        h = entry.get("Hostname") or ""
-        if h:
-            out.append(h)
-    return out
+    return [e.Hostname for e in manifest.bottles[bottle_name].ssh if e.Hostname]
 
 
 _IPV4_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$")
@@ -256,19 +245,3 @@ def pipelock_stop(slug: str) -> None:
             stderr=subprocess.DEVNULL,
         ).returncode != 0:
             warn(f"failed to remove pipelock sidecar {name}; clean up with 'docker rm -f {name}'")
-
-
-def _json_type(value: object) -> str:
-    if value is None:
-        return "null"
-    if isinstance(value, bool):
-        return "boolean"
-    if isinstance(value, (int, float)):
-        return "number"
-    if isinstance(value, str):
-        return "string"
-    if isinstance(value, list):
-        return "array"
-    if isinstance(value, dict):
-        return "object"
-    return type(value).__name__

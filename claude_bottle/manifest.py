@@ -1,5 +1,5 @@
-"""Manifest helpers. Read claude-bottle.json and pull the definition for a
-named agent.
+"""Manifest dataclasses. Read claude-bottle.json (cwd + $HOME, deep-merged)
+into a frozen, validated Manifest tree.
 
 Schema (see CLAUDE.md "Intended design"):
   {
@@ -7,7 +7,8 @@ Schema (see CLAUDE.md "Intended design"):
       "<bottle-name>": {
         "env":     { "<NAME>": <env-entry>, ... },
         "ssh":     [ <ssh-entry>, ... ],
-        "egress":  { "allowlist": [ "<hostname>", ... ] }
+        "egress":  { "allowlist": [ "<hostname>", ... ] },
+        "runtime": "runc" | "runsc"
       }
     },
     "agents": {
@@ -21,199 +22,328 @@ Schema (see CLAUDE.md "Intended design"):
 
 Bottles group shared infrastructure (SSH keys, known hosts, egress allowlist)
 that multiple agents can reference. Every agent must reference a bottle.
+
+Validation runs once at construction (Manifest.from_json_obj) so getters
+can trust the shape.
 """
 
 from __future__ import annotations
 
 import json
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Literal, Mapping, cast
 
 from .log import die
 
-Manifest = dict[str, Any]
+
+Runtime = Literal["runc", "runsc"]
+_SUPPORTED_RUNTIMES: tuple[Runtime, ...] = ("runc", "runsc")
 
 
-def manifest_resolve(cwd: str) -> Manifest:
-    """Look for claude-bottle.json in <cwd> and in $HOME, deep-merge
-    them (cwd entries override home entries on key conflict for both
-    bottles and agents). Dies if neither file is found or either is
-    invalid JSON."""
-    cwd_file = Path(cwd) / "claude-bottle.json"
-    home_file = Path(os.environ["HOME"]) / "claude-bottle.json"
-
-    cwd_doc = _load_json_or_die(cwd_file) if cwd_file.is_file() else None
-    home_doc = _load_json_or_die(home_file) if home_file.is_file() else None
-
-    if cwd_doc is None and home_doc is None:
-        die(f"no claude-bottle.json found in {cwd} or {os.environ['HOME']}")
-
-    if cwd_doc is None:
-        return home_doc  # type: ignore[return-value]
-    if home_doc is None:
-        return cwd_doc
-
-    return {
-        "bottles": {**(home_doc.get("bottles") or {}), **(cwd_doc.get("bottles") or {})},
-        "agents": {**(home_doc.get("agents") or {}), **(cwd_doc.get("agents") or {})},
-    }
+def _empty_str_dict() -> dict[str, str]:
+    return {}
 
 
-def _load_json_or_die(path: Path) -> Manifest:
-    try:
-        with path.open() as f:
-            doc = json.load(f)
-    except json.JSONDecodeError:
-        die(f"claude-bottle.json at {path} is not valid JSON")
-    if not isinstance(doc, dict):
-        die(f"claude-bottle.json at {path} must be a JSON object")
-    return doc
+@dataclass(frozen=True)
+class SshEntry:
+    Host: str
+    IdentityFile: str
+    Hostname: str = ""
+    User: str = ""
+    Port: str = ""
+    KnownHostKey: str = ""
+
+    @classmethod
+    def from_dict(cls, bottle_name: str, idx: int, raw: object) -> "SshEntry":
+        d = _as_json_object(raw, f"bottle '{bottle_name}' ssh[{idx}]")
+        host = d.get("Host")
+        if not isinstance(host, str) or not host:
+            die(f"bottle '{bottle_name}' ssh[{idx}] missing required string field 'Host'")
+        ident = d.get("IdentityFile")
+        if not isinstance(ident, str) or not ident:
+            die(
+                f"bottle '{bottle_name}' ssh '{host}' missing required string field "
+                f"'IdentityFile'"
+            )
+        hostname = _opt_str(d.get("Hostname"), f"bottle '{bottle_name}' ssh '{host}' Hostname")
+        user = _opt_str(d.get("User"), f"bottle '{bottle_name}' ssh '{host}' User")
+        port = _opt_port(d.get("Port"), f"bottle '{bottle_name}' ssh '{host}' Port")
+        khk = _opt_str(
+            d.get("KnownHostKey"),
+            f"bottle '{bottle_name}' ssh '{host}' KnownHostKey",
+        )
+        return cls(
+            Host=host,
+            IdentityFile=ident,
+            Hostname=hostname,
+            User=user,
+            Port=port,
+            KnownHostKey=khk,
+        )
 
 
-def manifest_has_agent(manifest: Manifest, name: str) -> bool:
-    return name in (manifest.get("agents") or {})
+@dataclass(frozen=True)
+class BottleEgress:
+    allowlist: tuple[str, ...] = ()
+
+    @classmethod
+    def from_dict(cls, bottle_name: str, raw: object) -> "BottleEgress":
+        d = _as_json_object(raw, f"bottle '{bottle_name}' egress")
+        allow = d.get("allowlist")
+        if allow is None:
+            return cls()
+        if not isinstance(allow, list):
+            die(
+                f"bottle '{bottle_name}' egress.allowlist must be an array "
+                f"(was {type(allow).__name__})"
+            )
+        items: list[str] = []
+        allow_list = cast(list[object], allow)
+        for i, host in enumerate(allow_list):
+            if not isinstance(host, str):
+                die(
+                    f"bottle '{bottle_name}' egress.allowlist[{i}] must be a string "
+                    f"(was {type(host).__name__})"
+                )
+            items.append(host)
+        return cls(allowlist=tuple(items))
 
 
-def manifest_require_agent(manifest: Manifest, name: str) -> None:
-    """Like has_agent but dies with the available agent names listed."""
-    if manifest_has_agent(manifest, name):
-        return
-    available = ", ".join((manifest.get("agents") or {}).keys())
-    if available:
-        die(f"agent '{name}' not defined in claude-bottle.json. Available: {available}")
-    else:
+@dataclass(frozen=True)
+class Bottle:
+    env: Mapping[str, str] = field(default_factory=_empty_str_dict)
+    ssh: tuple[SshEntry, ...] = ()
+    egress: BottleEgress = field(default_factory=BottleEgress)
+    runtime: Runtime = "runc"
+
+    @classmethod
+    def from_dict(cls, name: str, raw: object) -> "Bottle":
+        d = _as_json_object(raw, f"bottle '{name}'")
+
+        env: dict[str, str] = {}
+        env_raw = d.get("env")
+        if env_raw is not None:
+            env_dict = _as_json_object(env_raw, f"bottle '{name}' env")
+            for var, value in env_dict.items():
+                if not isinstance(value, str):
+                    die(
+                        f"env entry {var} in bottle '{name}' must be a JSON string "
+                        f"(was {type(value).__name__}). Use \"?<message>\" for prompt-at-runtime."
+                    )
+                env[var] = value
+
+        ssh: tuple[SshEntry, ...] = ()
+        ssh_raw = d.get("ssh")
+        if ssh_raw is not None:
+            if not isinstance(ssh_raw, list):
+                die(f"bottle '{name}' ssh must be an array (was {type(ssh_raw).__name__})")
+            ssh_list = cast(list[object], ssh_raw)
+            ssh = tuple(
+                SshEntry.from_dict(name, i, entry)
+                for i, entry in enumerate(ssh_list)
+            )
+
+        egress_raw = d.get("egress")
+        egress = (
+            BottleEgress.from_dict(name, egress_raw)
+            if egress_raw is not None
+            else BottleEgress()
+        )
+
+        runtime_raw = d.get("runtime")
+        runtime: Runtime
+        if runtime_raw is None:
+            runtime = "runc"
+        else:
+            if not isinstance(runtime_raw, str):
+                die(f"bottle '{name}' runtime must be a string (was {type(runtime_raw).__name__})")
+            if runtime_raw not in _SUPPORTED_RUNTIMES:
+                die(
+                    f"bottle '{name}' runtime '{runtime_raw}' is not supported. "
+                    f"Use one of: {', '.join(_SUPPORTED_RUNTIMES)}."
+                )
+            runtime = runtime_raw
+
+        return cls(env=env, ssh=ssh, egress=egress, runtime=runtime)
+
+
+@dataclass(frozen=True)
+class Agent:
+    bottle: str
+    skills: tuple[str, ...] = ()
+    prompt: str = ""
+
+    @classmethod
+    def from_dict(cls, name: str, raw: object, bottle_names: set[str]) -> "Agent":
+        d = _as_json_object(raw, f"agent '{name}'")
+
+        bottle = d.get("bottle")
+        if not isinstance(bottle, str) or not bottle:
+            die(f"agent '{name}' must declare a 'bottle' field naming a defined bottle")
+        if bottle not in bottle_names:
+            available = ", ".join(sorted(bottle_names)) or "(none defined)"
+            die(
+                f"agent '{name}' references bottle '{bottle}', which is not defined. "
+                f"Available: {available}"
+            )
+
+        skills: tuple[str, ...] = ()
+        skills_raw = d.get("skills")
+        if skills_raw is not None:
+            if not isinstance(skills_raw, list):
+                die(f"agent '{name}' skills must be an array (was {type(skills_raw).__name__})")
+            collected: list[str] = []
+            skills_list = cast(list[object], skills_raw)
+            for i, skill in enumerate(skills_list):
+                if not isinstance(skill, str):
+                    die(
+                        f"agent '{name}' skills[{i}] must be a string "
+                        f"(was {type(skill).__name__})"
+                    )
+                collected.append(skill)
+            skills = tuple(collected)
+
+        prompt_raw = d.get("prompt")
+        if prompt_raw is None:
+            prompt = ""
+        elif isinstance(prompt_raw, str):
+            prompt = prompt_raw
+        else:
+            die(f"agent '{name}' prompt must be a string (was {type(prompt_raw).__name__})")
+
+        return cls(bottle=bottle, skills=skills, prompt=prompt)
+
+
+@dataclass(frozen=True)
+class Manifest:
+    bottles: Mapping[str, Bottle]
+    agents: Mapping[str, Agent]
+
+    @classmethod
+    def resolve(cls, cwd: str) -> "Manifest":
+        """Look for claude-bottle.json in <cwd> and in $HOME, deep-merge
+        them (cwd entries override home entries on key conflict for both
+        bottles and agents), then validate. Dies if neither file is
+        found, either is invalid JSON, or the merged shape violates the
+        schema."""
+        cwd_file = Path(cwd) / "claude-bottle.json"
+        home_file = Path(os.environ["HOME"]) / "claude-bottle.json"
+
+        cwd_doc = _load_json_or_die(cwd_file) if cwd_file.is_file() else None
+        home_doc = _load_json_or_die(home_file) if home_file.is_file() else None
+
+        if cwd_doc is None and home_doc is None:
+            die(f"no claude-bottle.json found in {cwd} or {os.environ['HOME']}")
+
+        h: dict[str, object] = home_doc if home_doc is not None else {}
+        c: dict[str, object] = cwd_doc if cwd_doc is not None else {}
+        h_bottles = _section_dict(h.get("bottles"), "bottles")
+        c_bottles = _section_dict(c.get("bottles"), "bottles")
+        h_agents = _section_dict(h.get("agents"), "agents")
+        c_agents = _section_dict(c.get("agents"), "agents")
+        merged: dict[str, object] = {
+            "bottles": {**h_bottles, **c_bottles},
+            "agents": {**h_agents, **c_agents},
+        }
+        return cls.from_json_obj(merged)
+
+    @classmethod
+    def from_json_obj(cls, obj: object) -> "Manifest":
+        """Validate and build a Manifest from a raw JSON-like dict."""
+        d = _as_json_object(obj, "manifest")
+        raw_bottles = _section_dict(d.get("bottles"), "manifest 'bottles'")
+        raw_agents = _section_dict(d.get("agents"), "manifest 'agents'")
+
+        bottles: dict[str, Bottle] = {
+            n: Bottle.from_dict(n, b) for n, b in raw_bottles.items()
+        }
+        bottle_names = set(bottles.keys())
+        agents: dict[str, Agent] = {
+            n: Agent.from_dict(n, a, bottle_names) for n, a in raw_agents.items()
+        }
+        return cls(bottles=bottles, agents=agents)
+
+    def has_agent(self, name: str) -> bool:
+        return name in self.agents
+
+    def require_agent(self, name: str) -> None:
+        if self.has_agent(name):
+            return
+        available = ", ".join(self.agents.keys())
+        if available:
+            die(f"agent '{name}' not defined in claude-bottle.json. Available: {available}")
         die(f"agent '{name}' not defined in claude-bottle.json (manifest is empty).")
 
+    def has_bottle(self, name: str) -> bool:
+        return name in self.bottles
 
-def manifest_env_names(manifest: Manifest, name: str) -> list[str]:
-    """Names (not values) of bottles[agent.bottle].env, in declaration
-    order. Empty list if the agent has no bottle or the bottle has no env."""
-    agent = (manifest.get("agents") or {}).get(name) or {}
-    bottle_name = agent.get("bottle") or ""
-    if not bottle_name:
-        return []
-    bottle = (manifest.get("bottles") or {}).get(bottle_name) or {}
-    return list((bottle.get("env") or {}).keys())
+    def require_bottle(self, name: str) -> None:
+        if self.has_bottle(name):
+            return
+        available = ", ".join(self.bottles.keys())
+        if available:
+            die(
+                f"bottle '{name}' not defined in claude-bottle.json. "
+                f"Available bottles: {available}"
+            )
+        die(f"bottle '{name}' not defined in claude-bottle.json (no bottles defined).")
+
+    def bottle_for(self, agent_name: str) -> Bottle:
+        """Resolve the Bottle the named agent references. The validator
+        guarantees both lookups succeed for a manifest built via
+        from_json_obj."""
+        return self.bottles[self.agents[agent_name].bottle]
 
 
-def manifest_env_entry(manifest: Manifest, agent: str, var: str) -> str:
-    """Raw string value of one env entry. Used by env_resolve, which
-    classifies the result by sentinel. Dies if the agent has no bottle,
-    or the entry is not a string."""
-    agent_def = (manifest.get("agents") or {}).get(agent) or {}
-    bottle_name = agent_def.get("bottle") or ""
-    if not bottle_name:
-        die(f"env entry {var} for agent {agent}: agent has no 'bottle' field")
-    bottle = (manifest.get("bottles") or {}).get(bottle_name) or {}
-    env = bottle.get("env") or {}
-    value = env.get(var)
+def _as_json_object(value: object, label: str) -> dict[str, object]:
+    """Assert that `value` is a JSON object (str-keyed dict) and return
+    a view typed as `dict[str, object]` so downstream `.get(...)` calls
+    have a typed surface."""
+    if not isinstance(value, dict):
+        die(f"{label} must be a JSON object (was {type(value).__name__})")
+    items = cast(dict[object, object], value)
+    out: dict[str, object] = {}
+    for k, v in items.items():
+        if not isinstance(k, str):
+            die(f"{label} keys must be strings (found {type(k).__name__})")
+        out[k] = v
+    return out
+
+
+def _section_dict(value: object, label: str) -> dict[str, object]:
+    """Like _as_json_object but treats absent/null as an empty section."""
+    if value is None:
+        return {}
+    return _as_json_object(value, label)
+
+
+def _load_json_or_die(path: Path) -> dict[str, object]:
+    try:
+        with path.open() as f:
+            doc: object = json.load(f)
+    except json.JSONDecodeError:
+        die(f"claude-bottle.json at {path} is not valid JSON")
+    return _as_json_object(doc, f"claude-bottle.json at {path}")
+
+
+def _opt_str(value: object, label: str) -> str:
+    if value is None:
+        return ""
     if not isinstance(value, str):
-        actual = _json_type(value)
-        die(
-            f"env entry {var} for agent {agent} must be a JSON string "
-            f"(was {actual}). Use \"?<message>\" for prompt-at-runtime."
-        )
+        die(f"{label} must be a string (was {type(value).__name__})")
     return value
 
 
-def manifest_skills(manifest: Manifest, name: str) -> list[str]:
-    agent = (manifest.get("agents") or {}).get(name) or {}
-    return list(agent.get("skills") or [])
-
-
-def manifest_prompt(manifest: Manifest, name: str) -> str:
-    agent = (manifest.get("agents") or {}).get(name) or {}
-    return agent.get("prompt") or ""
-
-
-def manifest_agent_bottle(manifest: Manifest, name: str) -> str:
-    agent = (manifest.get("agents") or {}).get(name) or {}
-    return agent.get("bottle") or ""
-
-
-def manifest_has_bottle(manifest: Manifest, bottle_name: str) -> bool:
-    return bottle_name in (manifest.get("bottles") or {})
-
-
-def manifest_require_bottle(manifest: Manifest, bottle_name: str) -> None:
-    if manifest_has_bottle(manifest, bottle_name):
-        return
-    available = ", ".join((manifest.get("bottles") or {}).keys())
-    if available:
-        die(
-            f"bottle '{bottle_name}' not defined in claude-bottle.json. "
-            f"Available bottles: {available}"
-        )
-    else:
-        die(f"bottle '{bottle_name}' not defined in claude-bottle.json (no bottles defined).")
-
-
-def manifest_bottle_ssh(manifest: Manifest, bottle_name: str) -> list[dict[str, Any]]:
-    bottle = (manifest.get("bottles") or {}).get(bottle_name) or {}
-    return list(bottle.get("ssh") or [])
-
-
-_SUPPORTED_RUNTIMES: tuple[str, ...] = ("runc", "runsc")
-
-
-def manifest_bottle_runtime(manifest: Manifest, bottle_name: str) -> str:
-    """Container runtime for the bottle's agent container. Returns
-    "runc" (Docker default) or "runsc" (gVisor opt-in). Dies if the
-    field is present but not one of the supported values."""
-    bottle = (manifest.get("bottles") or {}).get(bottle_name) or {}
-    raw = bottle.get("runtime")
-    if raw is None:
-        return "runc"
-    if not isinstance(raw, str):
-        die(
-            f"bottle '{bottle_name}' runtime must be a string "
-            f"(was {_json_type(raw)})."
-        )
-    if raw not in _SUPPORTED_RUNTIMES:
-        die(
-            f"bottle '{bottle_name}' runtime '{raw}' is not supported. "
-            f"Use one of: {', '.join(_SUPPORTED_RUNTIMES)}."
-        )
-    return raw
-
-
-def manifest_bottle_egress_allowlist(manifest: Manifest, bottle_name: str) -> list[str]:
-    """Hostnames in bottles[bottle_name].egress.allowlist. Dies if the
-    field is present but not an array. Per-element string typing is
-    re-checked at use-time in pipelock."""
-    bottle = (manifest.get("bottles") or {}).get(bottle_name) or {}
-    allowlist = (bottle.get("egress") or {}).get("allowlist")
-    if allowlist is None:
-        return []
-    if not isinstance(allowlist, list):
-        die(
-            f"bottle '{bottle_name}' egress.allowlist must be an array "
-            f"(was {_json_type(allowlist)})."
-        )
-    return list(allowlist)
-
-
-def manifest_ssh(manifest: Manifest, agent_name: str) -> list[dict[str, Any]]:
-    """SSH entries resolved via the agent's "bottle" field; empty if no bottle set."""
-    bottle_name = manifest_agent_bottle(manifest, agent_name)
-    if not bottle_name:
-        return []
-    return manifest_bottle_ssh(manifest, bottle_name)
-
-
-def _json_type(value: Any) -> str:
-    """Mirror jq's type names for parity with the bash error messages."""
+def _opt_port(value: object, label: str) -> str:
+    """Port accepts string or int (JSON-friendly) and is normalized to str."""
     if value is None:
-        return "null"
+        return ""
     if isinstance(value, bool):
-        return "boolean"
-    if isinstance(value, (int, float)):
-        return "number"
+        die(f"{label} must be a string or number (was boolean)")
+    if isinstance(value, int):
+        return str(value)
     if isinstance(value, str):
-        return "string"
-    if isinstance(value, list):
-        return "array"
-    if isinstance(value, dict):
-        return "object"
-    return type(value).__name__
+        return value
+    die(f"{label} must be a string or number (was {type(value).__name__})")

@@ -7,7 +7,7 @@ import subprocess
 
 from .. import docker as docker_mod
 from ..log import info
-from ..manifest import manifest_resolve
+from ..manifest import Manifest
 from ._common import PROG, USER_CWD
 
 
@@ -17,8 +17,8 @@ def cmd_list(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     if args.scope == "available":
-        manifest = manifest_resolve(USER_CWD)
-        for name in (manifest.get("agents") or {}).keys():
+        manifest = Manifest.resolve(USER_CWD)
+        for name in manifest.agents.keys():
             print(name)
         return 0
 
