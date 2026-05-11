@@ -125,21 +125,28 @@ def pipelock_allowlist_summary(manifest: Manifest, bottle_name: str) -> str:
 
 
 @dataclass(frozen=True)
-class ProxyPlan:
-    """Output of a proxy's prepare step; consumed by launch when the
-    proxy needs to be brought up. Currently single-field (the on-host
-    yaml path); kept as a dataclass so future proxy state has a home."""
+class PipelockProxyPlan:
+    """Output of PipelockProxy.prepare; consumed by .start when the
+    sidecar needs to be brought up.
+
+    yaml_path + slug are filled in at prepare time. internal_network
+    and egress_network default to empty and are populated by the
+    backend's launch step (via dataclasses.replace) once those networks
+    have actually been created."""
 
     yaml_path: Path
+    slug: str
+    internal_network: str = ""
+    egress_network: str = ""
 
 
 class PipelockProxy:
     """The pipelock egress proxy. Encapsulates the YAML-config
-    generation (and is the natural home for any future proxy-level
-    state). Backends that use pipelock hold a PipelockProxy instance
-    and delegate the prepare step to it."""
+    generation and the sidecar's start/stop lifecycle."""
 
-    def prepare(self, manifest: Manifest, bottle_name: str, yaml_path: Path) -> None:
+    def prepare(
+        self, manifest: Manifest, bottle_name: str, slug: str, yaml_path: Path
+    ) -> PipelockProxyPlan:
         """Write the pipelock yaml config (mode 600) to `yaml_path`
         for the sidecar to consume when it boots. Carries the
         effective allowlist (bottle.egress.allowlist UNION
@@ -183,82 +190,80 @@ class PipelockProxy:
         yaml_path.write_text("\n".join(lines) + "\n")
         yaml_path.chmod(0o600)
 
+        return PipelockProxyPlan(yaml_path=yaml_path, slug=slug)
 
-# --- Sidecar lifecycle -----------------------------------------------------
+    def start(self, plan: PipelockProxyPlan) -> str:
+        """Boot the pipelock sidecar:
+          1. `docker create` on the internal network with the canonical
+             name and argv `run --config /etc/pipelock.yaml --listen
+             0.0.0.0:<port>`.
+          2. `docker cp` the YAML config to /etc/pipelock.yaml in the
+             writable layer (parent dir must already exist; image is
+             distroless).
+          3. Attach to the per-agent egress network.
+          4. `docker start`.
+        Returns the container name (the proxy_target passed to .stop)."""
+        name = pipelock_container_name(plan.slug)
+        if not plan.yaml_path.is_file():
+            die(
+                f"pipelock yaml not found at {plan.yaml_path}; "
+                f"PipelockProxy.prepare must run first"
+            )
 
+        info(f"starting pipelock sidecar {name} on network {plan.internal_network}")
 
-def pipelock_start(
-    slug: str,
-    internal_network: str,
-    egress_network: str,
-    yaml_dir: Path,
-    yaml_filename: str,
-) -> str:
-    """Boot the pipelock sidecar:
-      1. `docker create` on the internal network with the canonical name
-         and argv `run --config /etc/pipelock.yaml --listen 0.0.0.0:<port>`.
-      2. `docker cp` the YAML config to /etc/pipelock.yaml in the
-         writable layer (parent dir must already exist; image is distroless).
-      3. Attach to the per-agent egress network.
-      4. `docker start`.
-    Returns the container name."""
-    name = pipelock_container_name(slug)
-    host_yaml = yaml_dir / yaml_filename
-    if not host_yaml.is_file():
-        die(f"pipelock yaml not found at {host_yaml}; backend.prepare_proxy must run first")
+        create_args = [
+            "docker", "create",
+            "--name", name,
+            "--network", plan.internal_network,
+            PIPELOCK_IMAGE,
+            "run", "--config", "/etc/pipelock.yaml",
+            "--listen", f"0.0.0.0:{PIPELOCK_PORT}",
+        ]
+        if subprocess.run(create_args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
+            die(f"failed to create pipelock sidecar {name}")
 
-    info(f"starting pipelock sidecar {name} on network {internal_network}")
+        cp_result = subprocess.run(
+            ["docker", "cp", str(plan.yaml_path), f"{name}:/etc/pipelock.yaml"],
+            capture_output=True,
+            text=True,
+        )
+        if cp_result.returncode != 0:
+            subprocess.run(["docker", "rm", "-f", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            die(f"failed to copy pipelock yaml into {name}: {cp_result.stderr.strip()}")
 
-    create_args = [
-        "docker", "create",
-        "--name", name,
-        "--network", internal_network,
-        PIPELOCK_IMAGE,
-        "run", "--config", "/etc/pipelock.yaml",
-        "--listen", f"0.0.0.0:{PIPELOCK_PORT}",
-    ]
-    if subprocess.run(create_args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
-        die(f"failed to create pipelock sidecar {name}")
-
-    cp_result = subprocess.run(
-        ["docker", "cp", str(host_yaml), f"{name}:/etc/pipelock.yaml"],
-        capture_output=True,
-        text=True,
-    )
-    if cp_result.returncode != 0:
-        subprocess.run(["docker", "rm", "-f", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        die(f"failed to copy pipelock yaml into {name}: {cp_result.stderr.strip()}")
-
-    if subprocess.run(
-        ["docker", "network", "connect", egress_network, name],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    ).returncode != 0:
-        subprocess.run(["docker", "rm", "-f", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        die(f"failed to attach pipelock sidecar {name} to egress network {egress_network}")
-
-    if subprocess.run(
-        ["docker", "start", name],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    ).returncode != 0:
-        subprocess.run(["docker", "rm", "-f", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        die(f"failed to start pipelock sidecar {name}")
-
-    return name
-
-
-def pipelock_stop(slug: str) -> None:
-    """Idempotent: missing container is success."""
-    name = pipelock_container_name(slug)
-    if subprocess.run(
-        ["docker", "inspect", name],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    ).returncode == 0:
         if subprocess.run(
-            ["docker", "rm", "-f", name],
+            ["docker", "network", "connect", plan.egress_network, name],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         ).returncode != 0:
-            warn(f"failed to remove pipelock sidecar {name}; clean up with 'docker rm -f {name}'")
+            subprocess.run(["docker", "rm", "-f", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            die(f"failed to attach pipelock sidecar {name} to egress network {plan.egress_network}")
+
+        if subprocess.run(
+            ["docker", "start", name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ).returncode != 0:
+            subprocess.run(["docker", "rm", "-f", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            die(f"failed to start pipelock sidecar {name}")
+
+        return name
+
+    def stop(self, proxy_target: str) -> None:
+        """Idempotent: missing container is success. `proxy_target` is
+        the container name returned by .start."""
+        if subprocess.run(
+            ["docker", "inspect", proxy_target],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ).returncode == 0:
+            if subprocess.run(
+                ["docker", "rm", "-f", proxy_target],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            ).returncode != 0:
+                warn(
+                    f"failed to remove pipelock sidecar {proxy_target}; "
+                    f"clean up with 'docker rm -f {proxy_target}'"
+                )

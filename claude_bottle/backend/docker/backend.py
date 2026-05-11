@@ -10,6 +10,7 @@ Methods:
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import subprocess
 import sys
@@ -125,15 +126,15 @@ class DockerBottleBackend(BottleBackend):
             use_runsc=use_runsc,
         )
 
-    def prepare_proxy(self, spec: BottleSpec, stage_dir: Path) -> pipelock.ProxyPlan:
+    def prepare_proxy(self, spec: BottleSpec, stage_dir: Path) -> pipelock.PipelockProxyPlan:
         """Decide where the pipelock yaml lives in `stage_dir`, delegate
-        to PipelockProxy to write it, and return the resolved ProxyPlan
-        for the launch step to consume. Stage-only: no Docker resources
-        created yet."""
+        to PipelockProxy to write it, and return the resolved
+        PipelockProxyPlan for the launch step to consume. Stage-only:
+        no Docker resources created yet."""
         yaml_path = stage_dir / "pipelock.yaml"
         bottle_name = spec.manifest.agents[spec.agent_name].bottle
-        self._proxy.prepare(spec.manifest, bottle_name, yaml_path)
-        return pipelock.ProxyPlan(yaml_path=yaml_path)
+        slug = docker_mod.slugify(spec.agent_name)
+        return self._proxy.prepare(spec.manifest, bottle_name, slug, yaml_path)
 
     @contextmanager
     def launch(self, plan: BottlePlan) -> Iterator[DockerBottle]:
@@ -160,7 +161,7 @@ class DockerBottleBackend(BottleBackend):
                     )
                     state["container"] = ""
                 if state["pipelock"]:
-                    pipelock.pipelock_stop(plan.slug)
+                    self._proxy.stop(state["pipelock"])
                     state["pipelock"] = ""
                 if state["internal_network"]:
                     network_mod.network_remove(state["internal_network"])
@@ -182,13 +183,12 @@ class DockerBottleBackend(BottleBackend):
 
             state["internal_network"] = network_mod.network_create_internal(plan.slug)
             state["egress_network"] = network_mod.network_create_egress(plan.slug)
-            state["pipelock"] = pipelock.pipelock_start(
-                plan.slug,
-                state["internal_network"],
-                state["egress_network"],
-                plan.proxy_plan.yaml_path.parent,
-                plan.proxy_plan.yaml_path.name,
+            proxy_plan = dataclasses.replace(
+                plan.proxy_plan,
+                internal_network=state["internal_network"],
+                egress_network=state["egress_network"],
             )
+            state["pipelock"] = self._proxy.start(proxy_plan)
 
             container = self._run_agent_container(plan, state["internal_network"])
             state["container"] = container
