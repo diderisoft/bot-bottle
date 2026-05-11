@@ -15,6 +15,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from .manifest import Bottle
 from .util import is_ipv4_literal
@@ -85,6 +86,72 @@ def pipelock_allowlist_summary(bottle: Bottle) -> str:
 
 
 
+# --- Config build + YAML render --------------------------------------------
+
+
+def pipelock_build_config(bottle: Bottle) -> dict[str, object]:
+    """Build the structured pipelock config dict the sidecar will load.
+
+    Deliberately carries no env values, no secrets, no per-agent
+    customization beyond the resolved hostname list. The shape mirrors
+    the YAML pipelock expects on disk; `pipelock_render_yaml` serializes
+    it. Tests assert on this dict; production code renders it."""
+    cfg: dict[str, object] = {
+        "version": 1,
+        "mode": "strict",
+        "enforce": True,
+        "api_allowlist": pipelock_effective_allowlist(bottle),
+        "forward_proxy": {"enabled": True},
+    }
+    trusted = pipelock_bottle_ssh_trusted_domains(bottle)
+    if trusted:
+        cfg["trusted_domains"] = trusted
+    ip_cidrs = pipelock_bottle_ssh_ip_cidrs(bottle)
+    if ip_cidrs:
+        cfg["ssrf"] = {"ip_allowlist": ip_cidrs}
+    cfg["dlp"] = {"include_defaults": True, "scan_env": True}
+    return cfg
+
+
+def pipelock_render_yaml(cfg: dict[str, object]) -> str:
+    """Render a pipelock config dict (as produced by
+    `pipelock_build_config`) as YAML. Hand-rolled so we don't take a
+    YAML-parser dependency for a fixed, narrow shape."""
+    def _bool(b: object) -> str:
+        return "true" if b else "false"
+
+    lines: list[str] = []
+    lines.append(f"version: {cfg['version']}")
+    lines.append(f"mode: {cfg['mode']}")
+    lines.append(f"enforce: {_bool(cfg['enforce'])}")
+    lines.append("")
+    lines.append("api_allowlist:")
+    for h in cast(list[str], cfg["api_allowlist"]):
+        lines.append(f'  - "{h}"')
+    lines.append("")
+    lines.append("forward_proxy:")
+    fp = cast(dict[str, object], cfg["forward_proxy"])
+    lines.append(f"  enabled: {_bool(fp['enabled'])}")
+    lines.append("")
+    if "trusted_domains" in cfg:
+        lines.append("trusted_domains:")
+        for td in cast(list[str], cfg["trusted_domains"]):
+            lines.append(f'  - "{td}"')
+        lines.append("")
+    if "ssrf" in cfg:
+        lines.append("ssrf:")
+        ssrf = cast(dict[str, object], cfg["ssrf"])
+        lines.append("  ip_allowlist:")
+        for cidr in cast(list[str], ssrf["ip_allowlist"]):
+            lines.append(f'    - "{cidr}"')
+        lines.append("")
+    lines.append("dlp:")
+    dlp = cast(dict[str, object], cfg["dlp"])
+    lines.append(f"  include_defaults: {_bool(dlp['include_defaults'])}")
+    lines.append(f"  scan_env: {_bool(dlp['scan_env'])}")
+    return "\n".join(lines) + "\n"
+
+
 # --- Proxy class -----------------------------------------------------------
 
 
@@ -125,47 +192,8 @@ class PipelockProxy(ABC):
         return PipelockProxyPlan(yaml_path=yaml_path, slug=slug)
 
     def _build_pipelock_yaml(self, bottle: Bottle, yaml_path: Path):
-        """Write the pipelock yaml config (mode 600) to `yaml_path`
-        for the sidecar to consume when it boots. Carries the
-        effective allowlist (bottle.egress.allowlist UNION
-        claude-bottle defaults UNION ssh hostnames), a fixed listen
-        port, strict mode + forward_proxy + DLP defaults + scan_env.
-        Deliberately contains no env values, no secrets, no per-agent
-        customization beyond the hostname list."""
-        allowlist = pipelock_effective_allowlist(bottle)
-        trusted = pipelock_bottle_ssh_trusted_domains(bottle)
-        ip_cidrs = pipelock_bottle_ssh_ip_cidrs(bottle)
-
-        lines: list[str] = []
-        lines.append("version: 1")
-        lines.append("mode: strict")
-        lines.append("enforce: true")
-        lines.append("")
-        lines.append("# Hostnames the agent is allowed to reach. Effective list is")
-        lines.append("# claude-bottle defaults UNION bottle.egress.allowlist (sorted, deduped).")
-        lines.append("api_allowlist:")
-        for h in allowlist:
-            lines.append(f'  - "{h}"')
-        lines.append("")
-        lines.append("forward_proxy:")
-        lines.append("  enabled: true")
-        lines.append("")
-        if trusted:
-            lines.append("trusted_domains:")
-            for td in trusted:
-                lines.append(f'  - "{td}"')
-            lines.append("")
-        if ip_cidrs:
-            lines.append("ssrf:")
-            lines.append("  ip_allowlist:")
-            for cidr in ip_cidrs:
-                lines.append(f'    - "{cidr}"')
-            lines.append("")
-        lines.append("dlp:")
-        lines.append("  include_defaults: true")
-        lines.append("  scan_env: true")
-
-        yaml_path.write_text("\n".join(lines) + "\n")
+        """Write the pipelock yaml config (mode 600) to `yaml_path`."""
+        yaml_path.write_text(pipelock_render_yaml(pipelock_build_config(bottle)))
         yaml_path.chmod(0o600)
 
     @abstractmethod

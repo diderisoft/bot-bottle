@@ -1,6 +1,10 @@
-"""Unit: PipelockProxy.prepare — produces a pipelock YAML config
-containing the expected top-level keys and per-bottle entries. We
-don't fully parse YAML; we grep for content shape."""
+"""Unit: pipelock config building and YAML rendering.
+
+`pipelock_build_config` produces the structured config dict pipelock
+will load; tests assert on that dict so they don't break on cosmetic
+YAML changes. A small set of tests still hit the rendered output for
+properties that only make sense on disk (file mode, no-secret-leakage).
+"""
 
 import os
 import tempfile
@@ -9,49 +13,66 @@ from pathlib import Path
 
 from claude_bottle.backend.docker.pipelock import DockerPipelockProxy
 from claude_bottle.manifest import Manifest
+from claude_bottle.pipelock import pipelock_build_config, pipelock_render_yaml
 from tests.fixtures import fixture_minimal, fixture_with_ssh
 
 
-class TestPipelockProxyPrepare(unittest.TestCase):
+class TestBuildConfig(unittest.TestCase):
+    def test_minimal_shape(self):
+        cfg = pipelock_build_config(fixture_minimal().bottles["dev"])
+        self.assertEqual("strict", cfg["mode"])
+        self.assertEqual(True, cfg["enforce"])
+        self.assertEqual({"enabled": True}, cfg["forward_proxy"])
+        self.assertEqual(
+            {"include_defaults": True, "scan_env": True}, cfg["dlp"]
+        )
+        # Baked defaults always present.
+        self.assertIn("api.anthropic.com", cfg["api_allowlist"])
+        self.assertIn("raw.githubusercontent.com", cfg["api_allowlist"])
+        # No SSH entries → no trusted_domains, no ssrf.
+        self.assertNotIn("trusted_domains", cfg)
+        self.assertNotIn("ssrf", cfg)
+
+    def test_ssh_shape(self):
+        cfg = pipelock_build_config(fixture_with_ssh().bottles["dev"])
+        self.assertIn("github.com", cfg["trusted_domains"])
+        self.assertNotIn("192.0.2.10", cfg["trusted_domains"])
+        self.assertIn("192.0.2.10/32", cfg["ssrf"]["ip_allowlist"])
+        # Strict mode: IPv4 host is also in the api_allowlist union.
+        self.assertIn("192.0.2.10", cfg["api_allowlist"])
+
+
+class TestRenderAndWrite(unittest.TestCase):
     def setUp(self):
         self.out_dir = Path(tempfile.mkdtemp())
-        self.proxy = DockerPipelockProxy()
 
     def tearDown(self):
         import shutil
         shutil.rmtree(self.out_dir, ignore_errors=True)
 
-    def test_minimal(self):
+    def test_render_emits_required_top_level_keys(self):
+        """One render-level smoke check: the serialized YAML is plausibly
+        the shape pipelock expects. We don't grep every key here — that's
+        what TestBuildConfig is for."""
+        cfg = pipelock_build_config(fixture_with_ssh().bottles["dev"])
+        text = pipelock_render_yaml(cfg)
+        for required in (
+            "api_allowlist:",
+            "forward_proxy:",
+            "trusted_domains:",
+            "ssrf:",
+            "dlp:",
+        ):
+            self.assertIn(required, text)
+
+    def test_prepare_writes_file_at_mode_600(self):
         yaml_path = self.out_dir / "min.yaml"
-        self.proxy.prepare(fixture_minimal().bottles["dev"], "demo", yaml_path)
-        content = yaml_path.read_text()
-        self.assertIn("mode: strict", content)
-        self.assertIn("enforce: true", content)
-        self.assertIn("api_allowlist:", content)
-        self.assertIn("api.anthropic.com", content)
-        self.assertIn("raw.githubusercontent.com", content)
-        self.assertIn("forward_proxy:", content)
-        self.assertIn("enabled: true", content)
-        self.assertIn("dlp:", content)
-        self.assertIn("include_defaults: true", content)
-        self.assertIn("scan_env: true", content)
-        # No ssh entries → no trusted_domains nor ssrf block.
-        self.assertNotIn("trusted_domains:", content)
-        self.assertNotIn("ssrf:", content)
+        DockerPipelockProxy().prepare(
+            fixture_minimal().bottles["dev"], "demo", yaml_path
+        )
+        self.assertEqual(0o600, os.stat(yaml_path).st_mode & 0o777)
 
-    def test_ssh_blocks(self):
-        yaml_path = self.out_dir / "ssh.yaml"
-        self.proxy.prepare(fixture_with_ssh().bottles["dev"], "demo", yaml_path)
-        content = yaml_path.read_text()
-        self.assertIn("trusted_domains:", content)
-        self.assertIn("github.com", content)
-        self.assertIn("ssrf:", content)
-        self.assertIn("ip_allowlist:", content)
-        self.assertIn("192.0.2.10/32", content)
-        # ipv4 host should also be in api_allowlist (strict mode requires both).
-        self.assertIn("192.0.2.10", content)
-
-    def test_secret_hygiene(self):
+    def test_prepare_does_not_leak_env_names_or_values(self):
         manifest = Manifest.from_json_obj({
             "bottles": {
                 "dev": {
@@ -65,17 +86,11 @@ class TestPipelockProxyPrepare(unittest.TestCase):
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
         })
         yaml_path = self.out_dir / "secret.yaml"
-        self.proxy.prepare(manifest.bottles["dev"], "demo", yaml_path)
+        DockerPipelockProxy().prepare(manifest.bottles["dev"], "demo", yaml_path)
         content = yaml_path.read_text()
         self.assertNotIn("literal-value-should-not-appear", content)
         self.assertNotIn("MY_SECRET", content)
         self.assertNotIn("prompt-message", content)
-
-    def test_file_mode_is_600(self):
-        yaml_path = self.out_dir / "min.yaml"
-        self.proxy.prepare(fixture_minimal().bottles["dev"], "demo", yaml_path)
-        mode = os.stat(yaml_path).st_mode & 0o777
-        self.assertEqual(0o600, mode)
 
 
 if __name__ == "__main__":
