@@ -12,6 +12,17 @@ from typing import Iterable
 from ...log import die, info
 
 
+def runsc_available() -> bool:
+    """Return True if the Docker daemon has the gVisor (`runsc`) runtime
+    registered. Called once per prepare; the result lives on the plan."""
+    r = subprocess.run(
+        ["docker", "info", "--format", "{{json .Runtimes}}"],
+        capture_output=True,
+        text=True,
+    )
+    return r.returncode == 0 and "runsc" in r.stdout
+
+
 def require_docker() -> None:
     """Fail with an install pointer if `docker` is not on PATH."""
     if shutil.which("docker") is None:
