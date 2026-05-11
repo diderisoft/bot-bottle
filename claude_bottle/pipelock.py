@@ -120,6 +120,60 @@ def pipelock_allowlist_summary(manifest: Manifest, bottle_name: str) -> str:
 
 
 
+# --- Proxy class -----------------------------------------------------------
+
+
+class PipelockProxy:
+    """The pipelock egress proxy. Encapsulates the YAML-config
+    generation (and is the natural home for any future proxy-level
+    state). Backends that use pipelock hold a PipelockProxy instance
+    and delegate the prepare step to it."""
+
+    def prepare(self, manifest: Manifest, bottle_name: str, yaml_path: Path) -> None:
+        """Write the pipelock yaml config (mode 600) to `yaml_path`
+        for the sidecar to consume when it boots. Carries the
+        effective allowlist (bottle.egress.allowlist UNION
+        claude-bottle defaults UNION ssh hostnames), a fixed listen
+        port, strict mode + forward_proxy + DLP defaults + scan_env.
+        Deliberately contains no env values, no secrets, no per-agent
+        customization beyond the hostname list."""
+        allowlist = pipelock_effective_allowlist(manifest, bottle_name)
+        trusted = pipelock_bottle_ssh_trusted_domains(manifest, bottle_name)
+        ip_cidrs = pipelock_bottle_ssh_ip_cidrs(manifest, bottle_name)
+
+        lines: list[str] = []
+        lines.append("version: 1")
+        lines.append("mode: strict")
+        lines.append("enforce: true")
+        lines.append("")
+        lines.append("# Hostnames the agent is allowed to reach. Effective list is")
+        lines.append("# claude-bottle defaults UNION bottle.egress.allowlist (sorted, deduped).")
+        lines.append("api_allowlist:")
+        for h in allowlist:
+            lines.append(f'  - "{h}"')
+        lines.append("")
+        lines.append("forward_proxy:")
+        lines.append("  enabled: true")
+        lines.append("")
+        if trusted:
+            lines.append("trusted_domains:")
+            for td in trusted:
+                lines.append(f'  - "{td}"')
+            lines.append("")
+        if ip_cidrs:
+            lines.append("ssrf:")
+            lines.append("  ip_allowlist:")
+            for cidr in ip_cidrs:
+                lines.append(f'    - "{cidr}"')
+            lines.append("")
+        lines.append("dlp:")
+        lines.append("  include_defaults: true")
+        lines.append("  scan_env: true")
+
+        yaml_path.write_text("\n".join(lines) + "\n")
+        yaml_path.chmod(0o600)
+
+
 # --- Sidecar lifecycle -----------------------------------------------------
 
 
