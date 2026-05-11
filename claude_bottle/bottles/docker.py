@@ -527,3 +527,28 @@ class DockerBottlePlatform(BottlePlatform):
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
+
+    # --- List ---
+
+    def list_active(self) -> None:
+        """Print all running claude-bottle containers (name + status).
+        Prints a single-line banner if there are none."""
+        docker_mod.require_docker()
+        result = subprocess.run(
+            [
+                "docker", "ps",
+                "--filter", "name=^claude-bottle-",
+                "--format", "{{.Names}}\t{{.Status}}",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        containers = (result.stdout or "").strip()
+        if not containers:
+            info("no active claude-bottle containers")
+            return
+        print()
+        for line in containers.splitlines():
+            name, _, status = line.partition("\t")
+            info(f"container: {name}  status: {status}")
+        print()

@@ -122,6 +122,11 @@ class BottlePlatform(ABC):
     def cleanup(self, plan: BottleCleanupPlan) -> None:
         """Remove everything described by the cleanup plan."""
 
+    @abstractmethod
+    def list_active(self) -> None:
+        """Print every currently-running bottle on this platform to
+        stderr (name + status)."""
+
 
 # Import concrete platform classes AFTER the base types are defined, so
 # each platform module can pull BottleSpec / BottlePlan / BottlePlatform
