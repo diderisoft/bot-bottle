@@ -1,27 +1,35 @@
 """Per-platform bottle factories.
 
 A bottle is a running, isolated environment with claude inside. Each
-platform exposes a factory (currently only Docker) that owns the
-end-to-end lifecycle: image build, container/sidecar launch, file
-provisioning, and teardown.
+platform exposes two functions:
 
-Selection is driven by the CLAUDE_BOTTLE_PLATFORM env var (default
-"docker"). Per PRD 0003 the manifest does not carry a platform field;
-the host environment picks.
+  prepare(spec, stage_dir=...) -> Plan
+      Resolves names, validates host-side prerequisites, and writes
+      scratch files. No remote/runtime resources are created yet.
+      Safe to call before the y/N preflight.
+
+  launch(plan) -> ContextManager[Bottle]
+      Brings up the container (or VM, or remote machine), provisions
+      it, yields a Bottle handle, and tears everything down on exit.
+
+Selection is driven by CLAUDE_BOTTLE_PLATFORM (default "docker"). Per
+PRD 0003 the manifest does not carry a platform field; the host
+environment picks.
 """
 
 from __future__ import annotations
 
 import os
 from contextlib import AbstractContextManager
+from dataclasses import dataclass
 from typing import Callable, Protocol
 
 from ..log import die
-from .docker import create_docker_bottle
+from .docker import launch_docker_bottle, prepare_docker_bottle
 
 
 class Bottle(Protocol):
-    """Handle to a running bottle. Yielded by a factory's context manager.
+    """Handle to a running bottle. Yielded by a platform's launch step.
 
     `exec_claude` runs `claude` inside the bottle and blocks until the
     session ends. `cp_in` copies a host path into the bottle. `close`
@@ -35,20 +43,30 @@ class Bottle(Protocol):
     def close(self) -> None: ...
 
 
-BottleFactory = Callable[..., AbstractContextManager[Bottle]]
+@dataclass(frozen=True)
+class BottlePlatform:
+    """Bundles a platform's two-phase factory under one selectable name."""
+
+    name: str
+    prepare: Callable[..., object]
+    launch: Callable[..., AbstractContextManager[Bottle]]
 
 
-_FACTORIES: dict[str, BottleFactory] = {
-    "docker": create_docker_bottle,
+_PLATFORMS: dict[str, BottlePlatform] = {
+    "docker": BottlePlatform(
+        name="docker",
+        prepare=prepare_docker_bottle,
+        launch=launch_docker_bottle,
+    ),
 }
 
 
-def get_bottle_factory() -> BottleFactory:
-    """Resolve the bottle factory for the active platform. Dies with a
-    pointer at the known platforms if CLAUDE_BOTTLE_PLATFORM names an
+def get_bottle_platform() -> BottlePlatform:
+    """Resolve the bottle platform for the active environment. Dies with
+    a pointer at the known platforms if CLAUDE_BOTTLE_PLATFORM names an
     unimplemented one."""
     name = os.environ.get("CLAUDE_BOTTLE_PLATFORM", "docker")
-    if name not in _FACTORIES:
-        known = ", ".join(sorted(_FACTORIES))
+    if name not in _PLATFORMS:
+        known = ", ".join(sorted(_PLATFORMS))
         die(f"unknown CLAUDE_BOTTLE_PLATFORM={name!r}; known platforms: {known}")
-    return _FACTORIES[name]
+    return _PLATFORMS[name]
