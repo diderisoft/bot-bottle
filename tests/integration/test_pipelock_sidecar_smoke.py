@@ -65,6 +65,11 @@ class TestPipelockSidecarSmoke(unittest.TestCase):
                 network_remove(n)
         shutil.rmtree(self.work_dir, ignore_errors=True)
 
+    @unittest.skipIf(
+        os.environ.get("GITEA_ACTIONS") == "true",
+        "skipped under act_runner: docker socket mount topology breaks "
+        "in-process visibility of networks created on the host daemon",
+    )
     def test_prepare_and_start_yield_healthy_sidecar(self):
         proxy = DockerPipelockProxy()
 
