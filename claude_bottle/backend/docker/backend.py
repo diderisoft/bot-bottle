@@ -271,9 +271,7 @@ class DockerBottleBackend(BottleBackend):
         container = target
 
         prompt_path = self.provision_prompt(plan, container)
-        agent = plan.spec.manifest.agents[plan.spec.agent_name]
-        if agent.skills:
-            skills_mod.skills_copy_into(container, list(agent.skills))
+        self.provision_skills(plan, container)
         self.provision_ssh(plan, container)
         self.provision_git(plan, container)
         return prompt_path
@@ -306,6 +304,15 @@ class DockerBottleBackend(BottleBackend):
 
         agent = plan.spec.manifest.agents[plan.spec.agent_name]
         return in_container_prompt_path if agent.prompt else None
+
+    def provision_skills(self, plan: DockerBottlePlan, container: str) -> None:
+        """Copy each of the agent's named skills from the host's
+        ~/.claude/skills/<name>/ into the container's equivalent path.
+        No-op when the agent has no skills."""
+        agent = plan.spec.manifest.agents[plan.spec.agent_name]
+        if not agent.skills:
+            return
+        skills_mod.skills_copy_into(container, list(agent.skills))
 
     def provision_ssh(self, plan: DockerBottlePlan, container: str) -> None:
         """If the bottle has SSH entries, set up the in-container
