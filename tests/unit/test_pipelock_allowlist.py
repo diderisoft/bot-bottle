@@ -1,56 +1,20 @@
-"""Unit: allowlist resolution — pipelock_bottle_allowlist,
-pipelock_bottle_ssh_hostnames, pipelock_bottle_ssh_ip_cidrs,
-pipelock_bottle_ssh_trusted_domains, pipelock_effective_allowlist."""
+"""Unit: pipelock_effective_allowlist — the union of baked-in defaults,
+bottle.egress.allowlist, and bottle.ssh[].Hostname. Plus a small check
+that IPv4 hostnames pick up the /32 suffix when classified as CIDRs.
+
+The lower-level one-line helpers (pipelock_bottle_allowlist,
+pipelock_bottle_ssh_hostnames, pipelock_bottle_ssh_trusted_domains)
+are exercised end-to-end by test_union_and_dedup, so they don't get
+their own tests."""
 
 import unittest
 
-from claude_bottle.log import Die
 from claude_bottle.manifest import Manifest
 from claude_bottle.pipelock import (
-    pipelock_bottle_allowlist,
-    pipelock_bottle_ssh_hostnames,
     pipelock_bottle_ssh_ip_cidrs,
-    pipelock_bottle_ssh_trusted_domains,
     pipelock_effective_allowlist,
 )
-from tests.fixtures import fixture_minimal, fixture_with_egress, fixture_with_ssh
-
-
-class TestBottleAllowlist(unittest.TestCase):
-    def test_egress_allowlist_present(self):
-        out = pipelock_bottle_allowlist(fixture_with_egress().bottles["dev"])
-        self.assertIn("github.com", out)
-        self.assertIn("gitlab.com", out)
-        self.assertIn("registry.npmjs.org", out)
-
-    def test_empty_when_no_egress_block(self):
-        out = pipelock_bottle_allowlist(fixture_minimal().bottles["dev"])
-        self.assertEqual([], out)
-
-    def test_rejects_non_string_entry(self):
-        bad = {
-            "bottles": {"dev": {"egress": {"allowlist": ["github.com", 42]}}},
-            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
-        }
-        with self.assertRaises(Die):
-            Manifest.from_json_obj(bad)
-
-
-class TestSSHHostnames(unittest.TestCase):
-    def test_hostnames_include_both(self):
-        hosts = pipelock_bottle_ssh_hostnames(fixture_with_ssh().bottles["dev"])
-        self.assertIn("192.0.2.10", hosts)
-        self.assertIn("github.com", hosts)
-
-    def test_ip_cidrs_only_ipv4(self):
-        cidrs = pipelock_bottle_ssh_ip_cidrs(fixture_with_ssh().bottles["dev"])
-        self.assertIn("192.0.2.10/32", cidrs)
-        self.assertNotIn("github.com", cidrs)
-
-    def test_trusted_domains_only_hostnames(self):
-        trusted = pipelock_bottle_ssh_trusted_domains(fixture_with_ssh().bottles["dev"])
-        self.assertIn("github.com", trusted)
-        self.assertNotIn("192.0.2.10", trusted)
+from tests.fixtures import fixture_with_ssh
 
 
 class TestEffectiveAllowlist(unittest.TestCase):
@@ -70,12 +34,21 @@ class TestEffectiveAllowlist(unittest.TestCase):
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
         })
         eff = pipelock_effective_allowlist(manifest.bottles["dev"])
-        self.assertIn("api.anthropic.com", eff)
-        self.assertIn("registry.npmjs.org", eff)
-        self.assertIn("192.0.2.10", eff)
-        self.assertIn("github.com", eff)
+        self.assertIn("api.anthropic.com", eff, "baked default present")
+        self.assertIn("registry.npmjs.org", eff, "egress.allowlist present")
+        self.assertIn("192.0.2.10", eff, "ssh ipv4 hostname present")
+        self.assertIn("github.com", eff, "ssh hostname present")
         self.assertEqual(len(eff), len(set(eff)), "deduplicated")
         self.assertEqual(eff, sorted(eff), "sorted")
+
+
+class TestSSHIPCidrs(unittest.TestCase):
+    def test_ipv4_hostname_gets_32_suffix(self):
+        cidrs = pipelock_bottle_ssh_ip_cidrs(fixture_with_ssh().bottles["dev"])
+        self.assertIn("192.0.2.10/32", cidrs)
+        # Hostname-typed entries don't end up here.
+        self.assertNotIn("github.com", cidrs)
+        self.assertNotIn("github.com/32", cidrs)
 
 
 if __name__ == "__main__":
