@@ -95,15 +95,13 @@ class DockerBottleBackend(BottleBackend):
         env_file = stage_dir / "agent.env"
         args_file = stage_dir / "docker-args"
         prompt_file = stage_dir / "prompt.txt"
-        pipelock_yaml_filename = "pipelock.yaml"
-        pipelock_yaml = stage_dir / pipelock_yaml_filename
         env_file.write_text("")
         env_file.chmod(0o600)
         args_file.write_text("")
         prompt_file.write_text("")
         prompt_file.chmod(0o600)
 
-        self.prepare_proxy(spec, pipelock_yaml)
+        pipelock_yaml = self.prepare_proxy(spec, stage_dir)
         env_resolve(manifest, spec.agent_name, env_file, args_file)
         prompt_file.write_text(agent.prompt)
 
@@ -123,16 +121,19 @@ class DockerBottleBackend(BottleBackend):
             args_file=args_file,
             prompt_file=prompt_file,
             pipelock_yaml_path=pipelock_yaml,
-            pipelock_yaml_filename=pipelock_yaml_filename,
+            pipelock_yaml_filename=pipelock_yaml.name,
             allowlist_summary=allowlist_summary,
             use_runsc=use_runsc,
         )
 
-    def prepare_proxy(self, spec: BottleSpec, yaml_path: Path) -> None:
-        """Delegate to PipelockProxy to write the sidecar's yaml
-        config. Stage-only: no Docker resources created yet."""
+    def prepare_proxy(self, spec: BottleSpec, stage_dir: Path) -> Path:
+        """Decide where the pipelock yaml lives in `stage_dir`, delegate
+        to PipelockProxy to write it, and return the resolved path.
+        Stage-only: no Docker resources created yet."""
+        yaml_path = stage_dir / "pipelock.yaml"
         bottle_name = spec.manifest.agents[spec.agent_name].bottle
         self._proxy.prepare(spec.manifest, bottle_name, yaml_path)
+        return yaml_path
 
     @contextmanager
     def launch(self, plan: BottlePlan) -> Iterator[DockerBottle]:
