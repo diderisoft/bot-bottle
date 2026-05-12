@@ -28,6 +28,7 @@ from claude_bottle.backend.docker.pipelock import (
     PIPELOCK_PORT,
     DockerPipelockProxy,
     pipelock_container_name,
+    pipelock_tls_init,
 )
 from tests._docker import skip_unless_docker
 from tests.fixtures import fixture_minimal
@@ -79,10 +80,17 @@ class TestPipelockSidecarSmoke(unittest.TestCase):
         self.internal_net = network_create_internal(self.slug)
         self.egress_net = network_create_egress(self.slug)
 
+        # PRD 0006: pipelock's tls_interception block in the rendered
+        # YAML references in-container CA paths; .start docker-cp's
+        # those files in. The full launch flow generates the CA via
+        # `pipelock_tls_init`; this smoke test calls it directly.
+        ca_cert_host, ca_key_host = pipelock_tls_init(self.work_dir)
         plan = dataclasses.replace(
             prep,
             internal_network=self.internal_net,
             egress_network=self.egress_net,
+            ca_cert_host_path=ca_cert_host,
+            ca_key_host_path=ca_key_host,
         )
 
         self.sidecar_name = proxy.start(plan)
