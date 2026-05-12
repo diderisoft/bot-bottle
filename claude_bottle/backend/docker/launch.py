@@ -72,7 +72,7 @@ def launch(
         stack.callback(proxy.stop, pipelock_name)
 
         container = _run_agent_container(plan, internal_network)
-        stack.callback(_force_remove_container, container)
+        stack.callback(docker_mod.force_remove_container, container)
 
         prompt_path = provision(plan, container)
 
@@ -135,11 +135,3 @@ def _run_agent_container(plan: DockerBottlePlan, internal_network: str) -> str:
     )
 
 
-def _force_remove_container(name: str) -> None:
-    if docker_mod.container_exists(name):
-        subprocess.run(
-            ["docker", "rm", "-f", name],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )

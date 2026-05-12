@@ -64,6 +64,19 @@ def container_exists(name: str) -> bool:
     return bool(result.stdout.strip())
 
 
+def force_remove_container(name: str) -> None:
+    """`docker rm -f` the named container if it exists. No-op if it
+    doesn't — and the rm itself is best-effort (errors swallowed) so
+    this is safe to register as a teardown callback."""
+    if container_exists(name):
+        subprocess.run(
+            ["docker", "rm", "-f", name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+
+
 def docker_exec_root(container: str, argv: list[str]) -> None:
     """Run `docker exec -u 0` in the named container, check=True. Used
     by SSH provisioning to chown/chmod files that need root."""
