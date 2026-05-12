@@ -118,6 +118,11 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
 
         proxy_plan = self._proxy.prepare(bottle, slug, stage_dir)
         resolved = resolve_env(manifest, spec.agent_name)
+        if spec.forward_oauth_token:
+            # Re-export under the name claude expects, then forward by-name
+            # so the value never lands on argv or in env_file.
+            os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = os.environ["CLAUDE_BOTTLE_OAUTH_TOKEN"]
+            resolved.forwarded.append("CLAUDE_CODE_OAUTH_TOKEN")
         self._write_env_files(resolved, env_file, args_file)
         prompt_file.write_text(agent.prompt)
 
@@ -237,10 +242,6 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
             vname = args_lines[i]
             i += 1
             docker_args.extend([flag, vname])
-
-        if plan.spec.forward_oauth_token:
-            os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = os.environ["CLAUDE_BOTTLE_OAUTH_TOKEN"]
-            docker_args.extend(["-e", "CLAUDE_CODE_OAUTH_TOKEN"])
 
         docker_args.extend([plan.runtime_image, "sleep", "infinity"])
 
