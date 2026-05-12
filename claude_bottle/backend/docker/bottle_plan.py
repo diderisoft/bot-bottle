@@ -28,8 +28,8 @@ class DockerBottlePlan(BottlePlan):
     image: str
     derived_image: str           # "" -> no derived image
     runtime_image: str           # image actually launched (derived or base)
-    env_file: Path
-    args_file: Path
+    env_file: Path               # docker --env-file: NAME=VALUE literals
+    forwarded_env: tuple[str, ...]  # docker -e <NAME>: forwarded by-name
     prompt_file: Path
     proxy_plan: PipelockProxyPlan
     allowlist_summary: str

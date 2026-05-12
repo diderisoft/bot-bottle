@@ -112,7 +112,6 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
             self.validate_ssh_entries(bottle.ssh)
 
         env_file = stage_dir / "agent.env"
-        args_file = stage_dir / "docker-args"
         prompt_file = stage_dir / "prompt.txt"
         prompt_file.write_text("")
         prompt_file.chmod(0o600)
@@ -124,7 +123,7 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
             # so the value never lands on argv or in env_file.
             os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = os.environ["CLAUDE_BOTTLE_OAUTH_TOKEN"]
             resolved.forwarded.append("CLAUDE_CODE_OAUTH_TOKEN")
-        self._write_env_files(resolved, env_file, args_file)
+        self._write_env_file(resolved, env_file)
         prompt_file.write_text(agent.prompt)
 
         allowlist_summary = pipelock.pipelock_allowlist_summary(bottle)
@@ -140,21 +139,18 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
             derived_image=derived_image,
             runtime_image=runtime_image,
             env_file=env_file,
-            args_file=args_file,
+            forwarded_env=tuple(resolved.forwarded),
             prompt_file=prompt_file,
             proxy_plan=proxy_plan,
             allowlist_summary=allowlist_summary,
             use_runsc=use_runsc,
         )
 
-    def _write_env_files(
-        self, resolved: ResolvedEnv, env_file: Path, args_file: Path
-    ) -> None:
-        """Serialize a ResolvedEnv into the two on-disk formats the launch
-        step consumes: `--env-file` syntax for literals (NAME=VALUE per
-        line) and a paired `-e\\nNAME\\n` stream for forwarded names.
-        Both files are created here (mode 600 on the literals file,
-        which may carry sensitive verbatim values from the manifest)."""
+    def _write_env_file(self, resolved: ResolvedEnv, env_file: Path) -> None:
+        """Serialize the literal portion of a ResolvedEnv into docker's
+        `--env-file` syntax (NAME=VALUE per line, mode 600 since the
+        file may carry verbatim values from the manifest). Forwarded
+        names ride on the plan as a structured tuple instead."""
         env_lines: list[str] = []
         for name, value in resolved.literals.items():
             if "\n" in value:
@@ -165,9 +161,6 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
             env_lines.append(f"{name}={value}")
         env_file.write_text("\n".join(env_lines) + ("\n" if env_lines else ""))
         env_file.chmod(0o600)
-
-        args_lines = [f"-e\n{name}" for name in resolved.forwarded]
-        args_file.write_text("\n".join(args_lines) + ("\n" if args_lines else ""))
 
     @contextmanager
     def launch(self, plan: DockerBottlePlan) -> Iterator[DockerBottle]:
@@ -229,20 +222,8 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
             docker_args.extend(["--runtime", "runsc"])
         if plan.env_file.stat().st_size > 0:
             docker_args.extend(["--env-file", str(plan.env_file)])
-
-        # ARGS_FILE pairs (-e, NAME) line-by-line.
-        args_lines = plan.args_file.read_text().splitlines()
-        i = 0
-        while i < len(args_lines):
-            flag = args_lines[i]
-            i += 1
-            if not flag:
-                continue
-            if i >= len(args_lines):
-                break
-            vname = args_lines[i]
-            i += 1
-            docker_args.extend([flag, vname])
+        for name in plan.forwarded_env:
+            docker_args.extend(["-e", name])
 
         docker_args.extend([plan.runtime_image, "sleep", "infinity"])
 
