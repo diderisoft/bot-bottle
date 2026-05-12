@@ -29,6 +29,7 @@ from .provision import git as _git
 from .provision import prompt as _prompt
 from .provision import skills as _skills
 from .provision import ssh as _ssh
+from .ssh_gate import DockerSSHGate
 
 
 class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanupPlan"]):
@@ -39,13 +40,18 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
 
     def __init__(self) -> None:
         self._proxy = DockerPipelockProxy()
+        self._gate = DockerSSHGate()
 
     def _resolve_plan(self, spec: BottleSpec, *, stage_dir: Path) -> DockerBottlePlan:
-        return _prepare.resolve_plan(spec, stage_dir=stage_dir, proxy=self._proxy)
+        return _prepare.resolve_plan(
+            spec, stage_dir=stage_dir, proxy=self._proxy, gate=self._gate
+        )
 
     @contextmanager
     def launch(self, plan: DockerBottlePlan) -> Generator[DockerBottle, None, None]:
-        with _launch.launch(plan, proxy=self._proxy, provision=self.provision) as bottle:
+        with _launch.launch(
+            plan, proxy=self._proxy, gate=self._gate, provision=self.provision
+        ) as bottle:
             yield bottle
 
     def provision_ca(self, plan: DockerBottlePlan, target: str) -> None:

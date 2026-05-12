@@ -37,10 +37,6 @@ def pipelock_proxy_url(slug: str) -> str:
     return f"http://{pipelock_container_name(slug)}:{PIPELOCK_PORT}"
 
 
-def pipelock_proxy_host_port(slug: str) -> str:
-    return f"{pipelock_container_name(slug)}:{PIPELOCK_PORT}"
-
-
 def pipelock_tls_init(stage_dir: Path) -> tuple[Path, Path]:
     """Generate a fresh per-bottle CA via a one-shot pipelock container.
 

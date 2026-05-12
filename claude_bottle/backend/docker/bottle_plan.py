@@ -14,6 +14,7 @@ from pathlib import Path
 from ...log import info
 from ...manifest import Agent, Bottle
 from ...pipelock import PipelockProxyPlan, pipelock_effective_allowlist
+from ...ssh_gate import SSHGatePlan
 from .. import BottlePlan
 
 
@@ -49,6 +50,7 @@ class DockerBottlePlan(BottlePlan):
     forwarded_env: dict[str, str] = field(repr=False)
     prompt_file: Path
     proxy_plan: PipelockProxyPlan
+    gate_plan: SSHGatePlan
     allowlist_summary: str
     use_runsc: bool
 
@@ -90,6 +92,12 @@ class DockerBottlePlan(BottlePlan):
         info(f"bottle             : {v.agent.bottle}")
         if v.ssh_hosts:
             info(f"  ssh hosts     : {', '.join(v.ssh_hosts)}")
+            gate_lines = [
+                f"{u.bottle_host_alias} -> {u.upstream_host}:{u.upstream_port} "
+                f"(listen {u.listen_port})"
+                for u in self.gate_plan.upstreams
+            ]
+            info(f"  ssh gate      : {'; '.join(gate_lines)}")
         else:
             info("  ssh hosts     : (none)")
         info(f"  egress        : {self.allowlist_summary}")
@@ -115,6 +123,14 @@ class DockerBottlePlan(BottlePlan):
             "env_names": v.env_names,
             "skills": list(v.agent.skills),
             "ssh_hosts": v.ssh_hosts,
+            "ssh_gate": [
+                {
+                    "host": u.bottle_host_alias,
+                    "upstream": f"{u.upstream_host}:{u.upstream_port}",
+                    "listen_port": u.listen_port,
+                }
+                for u in self.gate_plan.upstreams
+            ],
             "egress": {
                 "host_count": len(hosts),
                 "hosts": hosts,
