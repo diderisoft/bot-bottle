@@ -1,10 +1,10 @@
 """Copy host-side skill directories into a running Docker bottle.
 
-Skills are validated on the host before launch by
-`DockerBottleBackend.validate_skills`; this module assumes that
-validation has already run. A skill disappearing between validation
-and copy still dies loudly rather than silently producing a partial
-container."""
+Skills are validated on the host before launch by the base class's
+`BottleBackend._validate_skills` (called from `prepare`); this module
+assumes that validation has already run. A skill disappearing between
+validation and copy still dies loudly rather than silently producing
+a partial container."""
 
 from __future__ import annotations
 

@@ -34,10 +34,12 @@ from abc import ABC, abstractmethod
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, Sequence, TypeVar
 
 from ..log import die
-from ..manifest import Manifest
+from ..manifest import Manifest, SshEntry
+from ..util import expand_tilde
+from .util import host_skill_dir
 
 
 @dataclass(frozen=True)
@@ -127,10 +129,53 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
 
     name: str
 
-    @abstractmethod
     def prepare(self, spec: BottleSpec, *, stage_dir: Path) -> PlanT:
-        """Resolve names, validate host-side prerequisites, write
-        scratch files. No remote/runtime resources created yet."""
+        """Template method: run cross-backend host-side validation, then
+        delegate to the subclass's `_resolve_plan` for the
+        backend-specific resolution (names, scratch files, etc.). The
+        validation step is enforced here so a future backend cannot
+        accidentally skip it. No remote/runtime resources are created."""
+        self._validate(spec)
+        return self._resolve_plan(spec, stage_dir=stage_dir)
+
+    def _validate(self, spec: BottleSpec) -> None:
+        """Cross-backend pre-launch checks. Confirms the agent exists,
+        the named skills are present on the host, and every SSH
+        IdentityFile resolves. Subclasses with additional preconditions
+        should override and call `super()._validate(spec)` first."""
+        manifest = spec.manifest
+        manifest.require_agent(spec.agent_name)
+        agent = manifest.agents[spec.agent_name]
+        bottle = manifest.bottle_for(spec.agent_name)
+        self._validate_skills(agent.skills)
+        self._validate_ssh_entries(bottle.ssh)
+
+    def _validate_skills(self, skills: Sequence[str]) -> None:
+        """Each named skill must be a directory under the host's
+        `~/.claude/skills/`. The check is purely host-side, so the
+        default impl covers every backend."""
+        for name in skills:
+            path = host_skill_dir(name)
+            if not os.path.isdir(path):
+                die(
+                    f"skill '{name}' not found on host at {path}. "
+                    f"Create it under ~/.claude/skills/, then re-run."
+                )
+
+    def _validate_ssh_entries(self, entries: Sequence[SshEntry]) -> None:
+        """Each entry's IdentityFile must exist on the host (after
+        expanding leading ~). Shape is already enforced by Manifest
+        validation; this only checks file presence."""
+        for entry in entries:
+            key = expand_tilde(entry.IdentityFile)
+            if not os.path.isfile(key):
+                die(f"ssh key file not found for host '{entry.Host}': {key}")
+
+    @abstractmethod
+    def _resolve_plan(self, spec: BottleSpec, *, stage_dir: Path) -> PlanT:
+        """Backend-specific plan resolution: image/container names,
+        env-file, prompt-file, proxy plan, runtime detection. Called by
+        `prepare` after `_validate` succeeds."""
 
     @abstractmethod
     def launch(self, plan: PlanT) -> AbstractContextManager[Bottle]:

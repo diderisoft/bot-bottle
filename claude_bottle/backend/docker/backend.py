@@ -1,11 +1,9 @@
 """DockerBottleBackend — the Docker implementation of BottleBackend.
 
-Methods:
-  .prepare(spec, stage_dir=...) -> DockerBottlePlan
-  .launch(plan) -> ContextManager[DockerBottle]
-  .prepare_cleanup() -> DockerBottleCleanupPlan
-  .cleanup(plan) -> None
-  .list_active() -> None
+The base class's `prepare` template runs cross-backend host-side
+validation, then calls this module's `_resolve_plan` for the Docker-
+specific resolution. Other public methods are backend-implemented as
+declared on `BottleBackend`.
 """
 
 from __future__ import annotations
@@ -16,15 +14,12 @@ import subprocess
 import sys
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from typing import Generator, Sequence
+from typing import Generator
 
 from ... import pipelock
 from ...env import ResolvedEnv, resolve_env
 from ...log import die, info
-from ...manifest import SshEntry
-from ...util import expand_tilde
 from .. import BottleBackend, BottleSpec
-from ..util import host_skill_dir
 from . import network as network_mod
 from . import util as docker_mod
 from .bottle import DockerBottle
@@ -63,14 +58,15 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
     def __init__(self) -> None:
         self._proxy = DockerPipelockProxy()
 
-    def prepare(self, spec: BottleSpec, *, stage_dir: Path) -> DockerBottlePlan:
-        """Resolve names, validate, write scratch files. No Docker
-        resources are created; the only side effects are host-side
-        files under stage_dir and a probe of `docker info`."""
+    def _resolve_plan(self, spec: BottleSpec, *, stage_dir: Path) -> DockerBottlePlan:
+        """Resolve Docker-specific names, write scratch files. No
+        Docker resources are created; the only side effects are
+        host-side files under stage_dir and a probe of `docker info`.
+        Cross-backend validation has already run via the base class's
+        `prepare` template."""
         docker_mod.require_docker()
 
         manifest = spec.manifest
-        manifest.require_agent(spec.agent_name)
         agent = manifest.agents[spec.agent_name]
         bottle = manifest.bottle_for(spec.agent_name)
 
@@ -108,11 +104,6 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
                     f"{default_container}-{docker_mod.MAX_CONTAINER_SUFFIX}; "
                     f"clean up old containers with 'docker rm -f <name>'"
                 )
-
-        if agent.skills:
-            self.validate_skills(list(agent.skills))
-        if bottle.ssh:
-            self.validate_ssh_entries(bottle.ssh)
 
         env_file = stage_dir / "agent.env"
         prompt_file = stage_dir / "prompt.txt"
@@ -266,32 +257,8 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
     def provision_prompt(self, plan: DockerBottlePlan, target: str) -> str | None:
         return _prompt.provision_prompt(plan, target)
 
-    def validate_skills(self, skills: list[str]) -> None:
-        """Fail loudly if any named skill is missing from the host's
-        ~/.claude/skills/. Called from `prepare` before the y/N so the
-        user doesn't get a launch prompt for a plan that's already
-        known to break."""
-        for name in skills:
-            path = host_skill_dir(name)
-            if not os.path.isdir(path):
-                die(
-                    f"skill '{name}' not found on host at {path}. "
-                    f"Create it under ~/.claude/skills/, then re-run."
-                )
-
     def provision_skills(self, plan: DockerBottlePlan, target: str) -> None:
         _skills.provision_skills(plan, target)
-
-    def validate_ssh_entries(self, entries: Sequence[SshEntry]) -> None:
-        """Each entry's IdentityFile must exist on the host (after
-        expanding leading ~). Host and IdentityFile shape are already
-        enforced by Manifest validation. Called from `prepare` before
-        the y/N so the user doesn't get prompted for a plan with a
-        missing key."""
-        for entry in entries:
-            key = expand_tilde(entry.IdentityFile)
-            if not os.path.isfile(key):
-                die(f"ssh key file not found for host '{entry.Host}': {key}")
 
     def provision_ssh(self, plan: DockerBottlePlan, target: str) -> None:
         _ssh.provision_ssh(plan, target)
