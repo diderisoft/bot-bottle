@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import Any, Generic, Sequence, TypeVar
 
 from ..log import die
-from ..manifest import Manifest, SshEntry
+from ..manifest import GitEntry, Manifest, SshEntry
 from ..util import expand_tilde
 from .util import host_skill_dir
 
@@ -171,6 +171,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         bottle = manifest.bottle_for(spec.agent_name)
         self._validate_skills(agent.skills)
         self._validate_ssh_entries(bottle.ssh)
+        self._validate_git_entries(bottle.git)
 
     def _validate_skills(self, skills: Sequence[str]) -> None:
         """Each named skill must be a directory under the host's
@@ -192,6 +193,16 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
             key = expand_tilde(entry.IdentityFile)
             if not os.path.isfile(key):
                 die(f"ssh key file not found for host '{entry.Host}': {key}")
+
+    def _validate_git_entries(self, entries: Sequence[GitEntry]) -> None:
+        """Each entry's IdentityFile must exist on the host (after
+        expanding leading ~) — the git-gate copies it in at start time
+        to authenticate the upstream push (PRD 0008). Shape is already
+        enforced by Manifest validation; this only checks presence."""
+        for entry in entries:
+            key = expand_tilde(entry.IdentityFile)
+            if not os.path.isfile(key):
+                die(f"git upstream key file not found for '{entry.Name}': {key}")
 
     @abstractmethod
     def _resolve_plan(self, spec: BottleSpec, *, stage_dir: Path) -> PlanT:
