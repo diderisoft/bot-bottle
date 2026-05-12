@@ -6,11 +6,18 @@ End-to-end: drives `BottleBackend.prepare → launch` so the real
 image build, network plumbing, pipelock_tls_init, sidecar bring-up,
 and provision_ca (CA install in the agent's trust store) are all in
 the loop. The probe is a single `curl --proxy "$HTTPS_PROXY" -X POST
-... https://api.anthropic.com/...` — curl natively does CONNECT
-through the proxy, the agent's trust store now contains pipelock's
-per-bottle CA so curl trusts pipelock's bumped leaf, and pipelock
-sees the decrypted body and returns its known
-`blocked: request body contains secret: <pattern>` 403."""
+... https://raw.githubusercontent.com/...` — curl natively does
+CONNECT through the proxy, the agent's trust store now contains
+pipelock's per-bottle CA so curl trusts pipelock's bumped leaf, and
+pipelock sees the decrypted body and returns its known
+`blocked: request body contains secret: <pattern>` 403.
+
+The host has to be allowlisted (so the CONNECT is accepted) but NOT
+in `tls_interception.passthrough_domains` (so the body actually gets
+scanned). `api.anthropic.com` is passthrough'd to skip MITM on the
+LLM endpoint, so this probe targets `raw.githubusercontent.com` —
+also on the baked allowlist (Claude Code fetches release assets from
+it) and intercepted+scanned like any non-passthrough host."""
 
 from __future__ import annotations
 
@@ -66,7 +73,7 @@ class TestPipelockBlocksSecretHttpsPost(unittest.TestCase):
                     "  -w 'status=%{http_code}\\n' \\\n"
                     "  -o /tmp/probe-body.txt \\\n"
                     '  -X POST -d "token=$FAKE_TOKEN" \\\n'
-                    "  https://api.anthropic.com/dlp-probe\n"
+                    "  https://raw.githubusercontent.com/dlp-probe\n"
                     'echo "body=$(head -c 200 /tmp/probe-body.txt)"\n'
                 )
                 result = bottle.exec(script)

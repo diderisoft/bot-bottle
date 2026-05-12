@@ -14,7 +14,11 @@ from typing import Any, cast
 
 from claude_bottle.backend.docker.pipelock import DockerPipelockProxy
 from claude_bottle.manifest import Manifest
-from claude_bottle.pipelock import pipelock_build_config, pipelock_render_yaml
+from claude_bottle.pipelock import (
+    DEFAULT_TLS_PASSTHROUGH,
+    pipelock_build_config,
+    pipelock_render_yaml,
+)
 from tests.fixtures import fixture_minimal, fixture_with_ssh
 
 
@@ -56,7 +60,11 @@ class TestBuildConfig(unittest.TestCase):
 
     def test_tls_interception_block_emitted_when_paths_supplied(self):
         # PRD 0006: paths flow in via DockerPipelockProxy's in-container
-        # constants; this directly pins the dict shape.
+        # constants; this directly pins the dict shape. passthrough_domains
+        # is baked in so LLM provider endpoints (api.anthropic.com) skip
+        # MITM — pipelock's docs explicitly recommend this for LLM hosts,
+        # and without it the BIP-39 body scanner false-positives on
+        # Claude conversation traffic.
         cfg = pipelock_build_config(
             fixture_minimal().bottles["dev"],
             ca_cert_path="/etc/pipelock-ca.pem",
@@ -67,9 +75,11 @@ class TestBuildConfig(unittest.TestCase):
                 "enabled": True,
                 "ca_cert": "/etc/pipelock-ca.pem",
                 "ca_key": "/etc/pipelock-ca-key.pem",
+                "passthrough_domains": list(DEFAULT_TLS_PASSTHROUGH),
             },
             cfg["tls_interception"],
         )
+        self.assertIn("api.anthropic.com", DEFAULT_TLS_PASSTHROUGH)
 
     def test_tls_interception_requires_both_paths(self):
         # Half-set is a programmer error, not a silent omission.
@@ -135,9 +145,10 @@ class TestRenderAndWrite(unittest.TestCase):
     def test_render_emits_tls_interception_via_prepare(self):
         """`DockerPipelockProxy.prepare` plumbs its in-container CA
         constants through to the YAML. The block should land in the
-        rendered output with `enabled: true` and the configured paths.
-        The actual host-side CA generation happens in launch (not
-        prepare), so this test exercises only the YAML rendering."""
+        rendered output with `enabled: true`, the configured paths,
+        and the baked LLM-provider passthrough list. The actual
+        host-side CA generation happens in launch (not prepare), so
+        this test exercises only the YAML rendering."""
         plan = DockerPipelockProxy().prepare(
             fixture_minimal().bottles["dev"], "demo", self.out_dir
         )
@@ -146,6 +157,8 @@ class TestRenderAndWrite(unittest.TestCase):
         self.assertIn("enabled: true", content)
         self.assertIn('ca_cert: "/etc/pipelock-ca.pem"', content)
         self.assertIn('ca_key: "/etc/pipelock-ca-key.pem"', content)
+        self.assertIn("passthrough_domains:", content)
+        self.assertIn('- "api.anthropic.com"', content)
 
 
 if __name__ == "__main__":
