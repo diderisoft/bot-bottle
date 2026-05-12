@@ -119,13 +119,13 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
 
         proxy_plan = self._proxy.prepare(bottle, slug, stage_dir)
         resolved = resolve_env(manifest, spec.agent_name)
+        # Everything that should reach the bottle by-name (so its value
+        # never lands on argv or in env_file) goes into one dict. The
+        # rename from CLAUDE_BOTTLE_OAUTH_TOKEN to CLAUDE_CODE_OAUTH_TOKEN
+        # happens here; nothing mutates the host os.environ.
+        forwarded_env: dict[str, str] = dict(resolved.forwarded)
         if spec.forward_oauth_token:
-            # Forward by-name so the value never lands on argv or in
-            # env_file; the parent-side rename from CLAUDE_BOTTLE_OAUTH_TOKEN
-            # to CLAUDE_CODE_OAUTH_TOKEN happens in `_run_agent_container`
-            # via a per-subprocess env dict, so global os.environ stays
-            # untouched and `prepare` remains side-effect-free.
-            resolved.forwarded.append("CLAUDE_CODE_OAUTH_TOKEN")
+            forwarded_env["CLAUDE_CODE_OAUTH_TOKEN"] = os.environ["CLAUDE_BOTTLE_OAUTH_TOKEN"]
         self._write_env_file(resolved, env_file)
         prompt_file.write_text(agent.prompt)
 
@@ -142,7 +142,7 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
             derived_image=derived_image,
             runtime_image=runtime_image,
             env_file=env_file,
-            forwarded_env=tuple(resolved.forwarded),
+            forwarded_env=forwarded_env,
             prompt_file=prompt_file,
             proxy_plan=proxy_plan,
             allowlist_summary=allowlist_summary,
@@ -232,12 +232,11 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
 
         info(f"starting container {plan.container_name} from {plan.runtime_image}")
 
-        # Rename CLAUDE_BOTTLE_OAUTH_TOKEN -> CLAUDE_CODE_OAUTH_TOKEN in the
-        # child docker process's env (not in our own), so `-e CLAUDE_CODE_OAUTH_TOKEN`
-        # forwards by-name without the value landing on argv.
-        child_env: dict[str, str] | None = None
-        if plan.spec.forward_oauth_token:
-            child_env = {**os.environ, "CLAUDE_CODE_OAUTH_TOKEN": os.environ["CLAUDE_BOTTLE_OAUTH_TOKEN"]}
+        # Inject forwarded values (secrets, interpolated host vars, the
+        # renamed OAuth token) into the docker-run child's env so the
+        # `-e NAME` flags above pick them up — without touching our own
+        # os.environ or putting values on argv.
+        child_env: dict[str, str] = {**os.environ, **plan.forwarded_env}
 
         name_idx = docker_args.index("--name") + 1
         for candidate in docker_mod.container_name_candidates(plan.container_name):

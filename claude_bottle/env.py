@@ -2,11 +2,11 @@
 backend-neutral ResolvedEnv describing how the bottle should receive
 each variable:
 
-  - `forwarded` — names whose values have been placed into this
-    process's env (from a tty prompt for `secret`, from the matching
-    host var for `interpolated`). The backend is expected to pass
-    these to the bottle by-name so the value never appears on argv,
-    in a file, or in a log line.
+  - `forwarded` — name→value pairs the backend must inject into the
+    launched process's environment directly (e.g. via
+    `subprocess.run(env=...)`), so the value never appears on argv,
+    in a file, or in a log line. The dict is excluded from the
+    dataclass-generated repr so accidental logging doesn't leak it.
   - `literals` — name→value pairs that the manifest carries verbatim.
     The backend serializes these however its launcher accepts env
     (an env-file, an API payload, etc.).
@@ -22,6 +22,8 @@ Critical rules:
     interpolated env var. Both are treated as potentially sensitive:
     nothing about their value (other than presence) ever lands on
     disk, in a log line, or on argv.
+  - resolve_env does NOT mutate the host process's os.environ; the
+    backend builds a child env dict and passes it to its launcher.
   - Errors mention only the variable NAME, never any portion of the value.
 """
 
@@ -43,11 +45,15 @@ _INTERPOLATED_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
 class ResolvedEnv:
     """Backend-neutral env resolution result.
 
-    `forwarded` names have already been exported into os.environ by
-    resolve_env; the backend forwards by-name. `literals` carry their
-    values verbatim and are serialized by the backend."""
+    `forwarded` maps name→value for entries whose values must not land
+    on argv or in a file; backends inject them into the launched
+    process's environment directly. `repr=False` so a stray `repr(...)`
+    or log of the dataclass doesn't dump secret values.
 
-    forwarded: list[str] = field(default_factory=list[str])
+    `literals` carry values verbatim and are serialized by the backend
+    however its launcher accepts non-secret env."""
+
+    forwarded: dict[str, str] = field(default_factory=dict[str, str], repr=False)
     literals: dict[str, str] = field(default_factory=dict[str, str])
 
 
@@ -110,11 +116,13 @@ def _read_secret_silent(name: str, prompt_body: str) -> str:
 
 def resolve_env(manifest: Manifest, agent: str) -> ResolvedEnv:
     """Iterate the agent's env entries:
-      - secret:       always prompt; export into this process; mark forwarded
-      - interpolated: copy host value; export under target name; mark forwarded
+      - secret:       prompt at runtime; carry value in forwarded
+      - interpolated: read $HOST_VAR from os.environ; carry value in forwarded
       - literal:      include in the literals map verbatim
-    """
-    forwarded: list[str] = []
+
+    The host process's os.environ is read but never mutated; the
+    backend injects forwarded values via its launcher's env parameter."""
+    forwarded: dict[str, str] = {}
     literals: dict[str, str] = {}
     bottle = manifest.bottle_for(agent)
     for name, raw in bottle.env.items():
@@ -123,9 +131,7 @@ def resolve_env(manifest: Manifest, agent: str) -> ResolvedEnv:
         kind = env_entry_kind(raw)
         if kind == "secret":
             prompt_body = env_entry_secret_prompt(raw)
-            value = _read_secret_silent(name, prompt_body)
-            os.environ[name] = value
-            forwarded.append(name)
+            forwarded[name] = _read_secret_silent(name, prompt_body)
         elif kind == "interpolated":
             host_var = env_entry_interpolated_from(raw)
             host_value = os.environ.get(host_var, "")
@@ -134,8 +140,7 @@ def resolve_env(manifest: Manifest, agent: str) -> ResolvedEnv:
                     f"env entry {name} is interpolated from ${host_var}, "
                     f"but ${host_var} is unset or empty in the host environment."
                 )
-            os.environ[name] = host_value
-            forwarded.append(name)
+            forwarded[name] = host_value
         else:  # literal
             literals[name] = raw
     return ResolvedEnv(forwarded=forwarded, literals=literals)

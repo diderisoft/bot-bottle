@@ -8,7 +8,7 @@ further resolution; show_plan-style rendering is the `print` method.
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ...log import info
@@ -42,7 +42,11 @@ class DockerBottlePlan(BottlePlan):
     derived_image: str           # "" -> no derived image
     runtime_image: str           # image actually launched (derived or base)
     env_file: Path               # docker --env-file: NAME=VALUE literals
-    forwarded_env: tuple[str, ...]  # docker -e <NAME>: forwarded by-name
+    # name -> value for vars forwarded into the docker-run child process
+    # via subprocess env (so values never land on argv or in a file).
+    # repr=False keeps secret/interpolated/OAuth values out of any
+    # accidental log of the plan dataclass.
+    forwarded_env: dict[str, str] = field(repr=False)
     prompt_file: Path
     proxy_plan: PipelockProxyPlan
     allowlist_summary: str
