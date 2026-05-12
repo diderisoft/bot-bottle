@@ -22,7 +22,7 @@ from . import network as network_mod
 from . import util as docker_mod
 from .bottle import DockerBottle
 from .bottle_plan import DockerBottlePlan
-from .pipelock import DockerPipelockProxy, pipelock_proxy_url
+from .pipelock import DockerPipelockProxy, pipelock_proxy_url, pipelock_tls_init
 
 
 # Where the repo root lives, for `docker build` context. Computed once.
@@ -63,10 +63,19 @@ def launch(
         egress_network = network_mod.network_create_egress(plan.slug)
         stack.callback(network_mod.network_remove, egress_network)
 
+        # Per-bottle ephemeral CA for pipelock's TLS interception
+        # (PRD 0006). One-shot pipelock container writes ca.pem +
+        # ca-key.pem under plan.stage_dir; .start docker-cp's them
+        # into the sidecar. The private key never leaves the host
+        # stage dir, which start.py's outer finally `shutil.rmtree`s
+        # after the sidecar is torn down.
+        ca_cert_host, ca_key_host = pipelock_tls_init(plan.stage_dir)
         proxy_plan = dataclasses.replace(
             plan.proxy_plan,
             internal_network=internal_network,
             egress_network=egress_network,
+            ca_cert_host_path=ca_cert_host,
+            ca_key_host_path=ca_key_host,
         )
         pipelock_name = proxy.start(proxy_plan)
         stack.callback(proxy.stop, pipelock_name)

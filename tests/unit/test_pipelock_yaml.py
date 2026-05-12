@@ -37,6 +37,9 @@ class TestBuildConfig(unittest.TestCase):
         # No SSH entries → no trusted_domains, no ssrf.
         self.assertNotIn("trusted_domains", cfg)
         self.assertNotIn("ssrf", cfg)
+        # Without CA paths, the tls_interception block is omitted —
+        # pipelock falls back to its built-in default of `enabled: false`.
+        self.assertNotIn("tls_interception", cfg)
 
     def test_ssh_shape(self):
         cfg = pipelock_build_config(fixture_with_ssh().bottles["dev"])
@@ -48,6 +51,31 @@ class TestBuildConfig(unittest.TestCase):
         )
         # Strict mode: IPv4 host is also in the api_allowlist union.
         self.assertIn("192.0.2.10", cast(list[str], cfg["api_allowlist"]))
+
+    def test_tls_interception_block_emitted_when_paths_supplied(self):
+        # PRD 0006: paths flow in via DockerPipelockProxy's in-container
+        # constants; this directly pins the dict shape.
+        cfg = pipelock_build_config(
+            fixture_minimal().bottles["dev"],
+            ca_cert_path="/etc/pipelock-ca.pem",
+            ca_key_path="/etc/pipelock-ca-key.pem",
+        )
+        self.assertEqual(
+            {
+                "enabled": True,
+                "ca_cert": "/etc/pipelock-ca.pem",
+                "ca_key": "/etc/pipelock-ca-key.pem",
+            },
+            cfg["tls_interception"],
+        )
+
+    def test_tls_interception_requires_both_paths(self):
+        # Half-set is a programmer error, not a silent omission.
+        with self.assertRaises(ValueError):
+            pipelock_build_config(
+                fixture_minimal().bottles["dev"],
+                ca_cert_path="/etc/pipelock-ca.pem",
+            )
 
 
 class TestRenderAndWrite(unittest.TestCase):
@@ -100,6 +128,21 @@ class TestRenderAndWrite(unittest.TestCase):
         self.assertNotIn("literal-value-should-not-appear", content)
         self.assertNotIn("MY_SECRET", content)
         self.assertNotIn("prompt-message", content)
+
+    def test_render_emits_tls_interception_via_prepare(self):
+        """`DockerPipelockProxy.prepare` plumbs its in-container CA
+        constants through to the YAML. The block should land in the
+        rendered output with `enabled: true` and the configured paths.
+        The actual host-side CA generation happens in launch (not
+        prepare), so this test exercises only the YAML rendering."""
+        plan = DockerPipelockProxy().prepare(
+            fixture_minimal().bottles["dev"], "demo", self.out_dir
+        )
+        content = plan.yaml_path.read_text()
+        self.assertIn("tls_interception:", content)
+        self.assertIn("enabled: true", content)
+        self.assertIn('ca_cert: "/etc/pipelock-ca.pem"', content)
+        self.assertIn('ca_key: "/etc/pipelock-ca-key.pem"', content)
 
 
 if __name__ == "__main__":
