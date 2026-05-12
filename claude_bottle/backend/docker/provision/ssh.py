@@ -17,11 +17,11 @@ from __future__ import annotations
 import os
 import subprocess
 
-from ....log import info
+from ....log import die, info
 from ....util import expand_tilde
 from .. import util as docker_mod
 from ..bottle_plan import DockerBottlePlan
-from ..pipelock import pipelock_proxy_host_port
+from ..ssh_gate import ssh_gate_host
 
 
 def provision_ssh(plan: DockerBottlePlan, target: str) -> None:
@@ -61,12 +61,22 @@ def provision_ssh(plan: DockerBottlePlan, target: str) -> None:
         return
 
     container = target
-    proxy_host_port = pipelock_proxy_host_port(plan.slug)
+    gate_target = ssh_gate_host(plan.slug)
     container_home = os.environ.get("CLAUDE_BOTTLE_CONTAINER_HOME", "/home/node")
     container_ssh = f"{container_home}/.ssh"
     agent_socket = "/run/claude-bottle-agent.sock"
     public_socket = "/run/claude-bottle-agent-public.sock"
     keys_dir = "/root/.claude-bottle-keys"
+
+    # Per-entry listen ports come off the gate plan (PRD 0007).
+    # Indexed by the bottle.ssh entry's Host alias so each ssh_config
+    # block knows which port its forwarder lives on.
+    upstreams_by_alias = {u.bottle_host_alias: u for u in plan.gate_plan.upstreams}
+    if set(upstreams_by_alias) != {e.Host for e in bottle.ssh}:
+        die(
+            "ssh-gate upstream table is out of sync with bottle.ssh; "
+            "this is an internal bug"
+        )
 
     # ~/.ssh for node (700, owned by node).
     docker_mod.docker_exec_root(container, ["mkdir", "-p", container_ssh])
@@ -85,16 +95,15 @@ def provision_ssh(plan: DockerBottlePlan, target: str) -> None:
     known_hosts_file.write_text("")
     known_hosts_file.chmod(0o600)
 
-    proxy_host, _, proxy_port = proxy_host_port.partition(":")
-
     container_key_paths: list[str] = []
     for entry in bottle.ssh:
         name = entry.Host
         key = expand_tilde(entry.IdentityFile)
         hostname = entry.Hostname
         user = entry.User
-        port = entry.Port
         known_host_key = entry.KnownHostKey
+        upstream = upstreams_by_alias[name]
+        listen_port = upstream.listen_port
 
         key_basename = os.path.basename(key)
         container_key_path = f"{keys_dir}/{key_basename}"
@@ -110,35 +119,32 @@ def provision_ssh(plan: DockerBottlePlan, target: str) -> None:
 
         container_key_paths.append(container_key_path)
 
-        # ProxyCommand tunnels SSH through pipelock via HTTP
-        # CONNECT. %h / %p expand to this block's HostName /
-        # Port. socat's PROXY: mode does CONNECT host:port to
-        # the proxy.
+        # Each Host block points at the gate container + its
+        # per-entry listen port. HostKeyAlias makes ssh validate
+        # the host key against `hostname` (the real upstream
+        # name) instead of the gate container; CheckHostIP=no
+        # skips the resolved-IP lookup, which would also point at
+        # the gate.
         block = (
             f"Host {name}\n"
-            f"  HostName {hostname}\n"
+            f"  HostName {gate_target}\n"
             f"  User {user}\n"
-            f"  Port {port}\n"
+            f"  Port {listen_port}\n"
             f"  IdentityAgent {public_socket}\n"
-            f"  ProxyCommand socat - PROXY:{proxy_host}:%h:%p,proxyport={proxy_port}\n"
+            f"  HostKeyAlias {hostname}\n"
+            f"  CheckHostIP no\n"
             f"\n"
         )
         with config_file.open("a") as f:
             f.write(block)
 
         if known_host_key:
-            entries_to_write: list[str] = []
-            if port == "22":
-                entries_to_write.append(f"{name} {known_host_key}\n")
-                if hostname != name:
-                    entries_to_write.append(f"{hostname} {known_host_key}\n")
-            else:
-                entries_to_write.append(f"[{name}]:{port} {known_host_key}\n")
-                if hostname != name:
-                    entries_to_write.append(f"[{hostname}]:{port} {known_host_key}\n")
+            # HostKeyAlias makes ssh look up known_hosts under
+            # `hostname` (the upstream's real name / IP literal),
+            # not the gate container. One unambiguous entry per
+            # ssh entry.
             with known_hosts_file.open("a") as f:
-                for e in entries_to_write:
-                    f.write(e)
+                f.write(f"{hostname} {known_host_key}\n")
 
     # Boot the agent, load each key, delete the key files, then
     # start the root-owned socat forwarder. One docker exec so the
