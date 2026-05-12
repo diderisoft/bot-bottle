@@ -119,9 +119,11 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
         proxy_plan = self._proxy.prepare(bottle, slug, stage_dir)
         resolved = resolve_env(manifest, spec.agent_name)
         if spec.forward_oauth_token:
-            # Re-export under the name claude expects, then forward by-name
-            # so the value never lands on argv or in env_file.
-            os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = os.environ["CLAUDE_BOTTLE_OAUTH_TOKEN"]
+            # Forward by-name so the value never lands on argv or in
+            # env_file; the parent-side rename from CLAUDE_BOTTLE_OAUTH_TOKEN
+            # to CLAUDE_CODE_OAUTH_TOKEN happens in `_run_agent_container`
+            # via a per-subprocess env dict, so global os.environ stays
+            # untouched and `prepare` remains side-effect-free.
             resolved.forwarded.append("CLAUDE_CODE_OAUTH_TOKEN")
         self._write_env_file(resolved, env_file)
         prompt_file.write_text(agent.prompt)
@@ -229,6 +231,13 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
 
         info(f"starting container {plan.container_name} from {plan.runtime_image}")
 
+        # Rename CLAUDE_BOTTLE_OAUTH_TOKEN -> CLAUDE_CODE_OAUTH_TOKEN in the
+        # child docker process's env (not in our own), so `-e CLAUDE_CODE_OAUTH_TOKEN`
+        # forwards by-name without the value landing on argv.
+        child_env: dict[str, str] | None = None
+        if plan.spec.forward_oauth_token:
+            child_env = {**os.environ, "CLAUDE_CODE_OAUTH_TOKEN": os.environ["CLAUDE_BOTTLE_OAUTH_TOKEN"]}
+
         name_idx = docker_args.index("--name") + 1
         for candidate in docker_mod.container_name_candidates(plan.container_name):
             docker_args[name_idx] = candidate
@@ -236,6 +245,7 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
                 ["docker", "run", *docker_args],
                 capture_output=True,
                 text=True,
+                env=child_env,
             )
             if run_result.returncode == 0:
                 return candidate
