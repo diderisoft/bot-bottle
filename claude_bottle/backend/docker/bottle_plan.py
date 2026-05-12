@@ -93,6 +93,7 @@ class DockerBottlePlan(BottlePlan):
         else:
             info("  ssh hosts     : (none)")
         info(f"  egress        : {self.allowlist_summary}")
+        info("  tls intercept : pipelock (per-bottle ephemeral CA, generated at launch)")
         info(
             f"prompt          : {len(v.agent.prompt)} chars; "
             f"first line: {v.prompt_first_line or '(empty)'}"
@@ -117,6 +118,15 @@ class DockerBottlePlan(BottlePlan):
             "egress": {
                 "host_count": len(hosts),
                 "hosts": hosts,
+                # PRD 0006: pipelock's `tls_interception` block is on
+                # for every launched bottle. ca_fingerprint is always
+                # null at dry-run because the CA doesn't exist yet —
+                # real launches print the fingerprint to stderr from
+                # provision_ca. Reserved field for forward-compat.
+                "tls_interception": {
+                    "enabled": True,
+                    "ca_fingerprint": None,
+                },
             },
             "prompt": {
                 "length": len(v.agent.prompt),

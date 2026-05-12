@@ -89,13 +89,26 @@ def pipelock_allowlist_summary(bottle: Bottle) -> str:
 # --- Config build + YAML render --------------------------------------------
 
 
-def pipelock_build_config(bottle: Bottle) -> dict[str, object]:
+def pipelock_build_config(
+    bottle: Bottle,
+    *,
+    ca_cert_path: str = "",
+    ca_key_path: str = "",
+) -> dict[str, object]:
     """Build the structured pipelock config dict the sidecar will load.
 
     Deliberately carries no env values, no secrets, no per-agent
     customization beyond the resolved hostname list. The shape mirrors
     the YAML pipelock expects on disk; `pipelock_render_yaml` serializes
-    it. Tests assert on this dict; production code renders it."""
+    it. Tests assert on this dict; production code renders it.
+
+    `ca_cert_path` / `ca_key_path` are the **in-container** paths the
+    pipelock sidecar will read its CA from at runtime (they're
+    populated into the container at start time via `docker cp`).
+    Pass both or neither: both → emit `tls_interception` block with
+    `enabled: true`; neither → omit the block entirely (pipelock
+    falls back to its built-in default of `enabled: false`). Used
+    by PRD 0006 to turn on pipelock's native TLS interception."""
     cfg: dict[str, object] = {
         "version": 1,
         "mode": "strict",
@@ -116,6 +129,17 @@ def pipelock_build_config(bottle: Bottle) -> dict[str, object]:
     # with a log line); claude-bottle's default is "block" so a hit
     # actually stops the request from leaving the egress network.
     cfg["request_body_scanning"] = {"action": bottle.egress.dlp_action}
+    if ca_cert_path or ca_key_path:
+        if not (ca_cert_path and ca_key_path):
+            raise ValueError(
+                "pipelock_build_config: pass both ca_cert_path and ca_key_path "
+                "to enable tls_interception, or neither to leave it off"
+            )
+        cfg["tls_interception"] = {
+            "enabled": True,
+            "ca_cert": ca_cert_path,
+            "ca_key": ca_key_path,
+        }
     return cfg
 
 
@@ -159,6 +183,13 @@ def pipelock_render_yaml(cfg: dict[str, object]) -> str:
     lines.append("request_body_scanning:")
     rbs = cast(dict[str, object], cfg["request_body_scanning"])
     lines.append(f'  action: "{rbs["action"]}"')
+    if "tls_interception" in cfg:
+        lines.append("")
+        lines.append("tls_interception:")
+        tls = cast(dict[str, object], cfg["tls_interception"])
+        lines.append(f"  enabled: {_bool(tls['enabled'])}")
+        lines.append(f'  ca_cert: "{tls["ca_cert"]}"')
+        lines.append(f'  ca_key: "{tls["ca_key"]}"')
     return "\n".join(lines) + "\n"
 
 
@@ -170,42 +201,66 @@ class PipelockProxyPlan:
     """Output of PipelockProxy.prepare; consumed by .start when the
     sidecar needs to be brought up.
 
-    yaml_path + slug are filled in at prepare time. internal_network
-    and egress_network default to empty and are populated by the
-    backend's launch step (via dataclasses.replace) once those networks
-    have actually been created."""
+    yaml_path + slug are filled in at prepare time (host-side, side-
+    effect-free; the YAML references the in-container CA paths
+    already so it doesn't need the host paths to be valid). The
+    remaining fields are populated by the backend's launch step
+    via `dataclasses.replace`: internal/egress networks once
+    those networks exist, and the CA host paths once the
+    one-shot `pipelock tls init` has run. Empty defaults are
+    sentinels meaning "not yet set"; `.start` validates that
+    they are populated."""
 
     yaml_path: Path
     slug: str
     internal_network: str = ""
     egress_network: str = ""
+    ca_cert_host_path: Path = Path()
+    ca_key_host_path: Path = Path()
 
 
 class PipelockProxy(ABC):
     """The pipelock egress proxy. Encapsulates the YAML-config
     generation; the sidecar's start/stop lifecycle is backend-specific
-    and lives on concrete subclasses."""
+    and lives on concrete subclasses.
+
+    The class-level constants `CA_CERT_IN_CONTAINER` /
+    `CA_KEY_IN_CONTAINER` are the in-container paths the YAML config
+    references — they correspond to wherever the backend's `.start`
+    places the CA cert and key inside the sidecar. Subclasses
+    override the constants."""
+
+    CA_CERT_IN_CONTAINER: str = ""
+    CA_KEY_IN_CONTAINER: str = ""
 
     def prepare(
         self, bottle: Bottle, slug: str, stage_dir: Path
     ) -> PipelockProxyPlan:
         """Write the pipelock yaml config (mode 600) under `stage_dir`
-        and return the plan for `.start`.
+        and return the plan for `.start`. Pure host-side, no docker
+        subprocess.
 
         `slug` is the agent-derived identifier (lowercased,
         hyphen-normalized) used as the suffix in every per-agent
         resource name — the agent container, the pipelock container
         (`claude-bottle-pipelock-<slug>`), the internal/egress
         networks. It's stored on the returned plan so the backend's
-        start step can derive the sidecar's container name."""
-        yaml_path = stage_dir / "pipelock.yaml"
-        self._build_pipelock_yaml(bottle, yaml_path)
-        return PipelockProxyPlan(yaml_path=yaml_path, slug=slug)
+        start step can derive the sidecar's container name.
 
-    def _build_pipelock_yaml(self, bottle: Bottle, yaml_path: Path):
-        """Write the pipelock yaml config (mode 600) to `yaml_path`."""
-        yaml_path.write_text(pipelock_render_yaml(pipelock_build_config(bottle)))
+        The CA paths the YAML references are the in-container paths
+        from the concrete subclass's class-level constants. The
+        host-side counterparts are generated by the launch step
+        (not here, so prepare stays side-effect-free on docker) and
+        added to the plan via `dataclasses.replace` before `.start`."""
+        yaml_path = stage_dir / "pipelock.yaml"
+        cfg = pipelock_build_config(
+            bottle,
+            ca_cert_path=self.CA_CERT_IN_CONTAINER,
+            ca_key_path=self.CA_KEY_IN_CONTAINER,
+        )
+        yaml_path.write_text(pipelock_render_yaml(cfg))
         yaml_path.chmod(0o600)
+        return PipelockProxyPlan(yaml_path=yaml_path, slug=slug)
 
     @abstractmethod
     def start(self, plan: PipelockProxyPlan) -> str:

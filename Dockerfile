@@ -19,9 +19,11 @@ FROM node:22-slim
 # clarity in case the base ever drops it. socat is the privileged
 # forwarder for the in-container ssh-agent (see claude_bottle/ssh.py): the agent
 # runs as root and rejects non-root connections, so socat sits between
-# node and the agent socket.
+# node and the agent socket. curl is here so any HTTPS_PROXY-aware
+# tool (curl itself, plus anything that shells out to it) works
+# against pipelock's bumped TLS without the agent needing local DNS.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends git ca-certificates openssh-client socat \
+  && apt-get install -y --no-install-recommends git ca-certificates openssh-client socat curl \
   && rm -rf /var/lib/apt/lists/*
 
 # Install claude-code globally. Pinned to the version verified in the v1

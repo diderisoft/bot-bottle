@@ -92,6 +92,14 @@ class TestDryRunPlan(unittest.TestCase):
             self.assertEqual(sorted(set(hosts)), hosts,
                              "hosts must be sorted and deduplicated")
 
+            # PRD 0006: TLS interception is on for every launched
+            # bottle. Fingerprint is null at dry-run (no CA exists
+            # yet); real launches log it from provision_ca.
+            self.assertEqual(
+                {"enabled": True, "ca_fingerprint": None},
+                plan["egress"]["tls_interception"],
+            )
+
             # No Docker side effects (see the GITEA_ACTIONS skip note
             # above — this guard runs locally only).
             if check_side_effects:

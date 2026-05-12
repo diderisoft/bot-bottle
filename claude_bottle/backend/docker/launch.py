@@ -22,7 +22,8 @@ from . import network as network_mod
 from . import util as docker_mod
 from .bottle import DockerBottle
 from .bottle_plan import DockerBottlePlan
-from .pipelock import DockerPipelockProxy, pipelock_proxy_url
+from .pipelock import DockerPipelockProxy, pipelock_proxy_url, pipelock_tls_init
+from .provision.ca import AGENT_CA_BUNDLE, AGENT_CA_PATH
 
 
 # Where the repo root lives, for `docker build` context. Computed once.
@@ -63,12 +64,25 @@ def launch(
         egress_network = network_mod.network_create_egress(plan.slug)
         stack.callback(network_mod.network_remove, egress_network)
 
+        # Per-bottle ephemeral CA for pipelock's TLS interception
+        # (PRD 0006). One-shot pipelock container writes ca.pem +
+        # ca-key.pem under plan.stage_dir; .start docker-cp's them
+        # into the sidecar. The private key never leaves the host
+        # stage dir, which start.py's outer finally `shutil.rmtree`s
+        # after the sidecar is torn down.
+        ca_cert_host, ca_key_host = pipelock_tls_init(plan.stage_dir)
         proxy_plan = dataclasses.replace(
             plan.proxy_plan,
             internal_network=internal_network,
             egress_network=egress_network,
+            ca_cert_host_path=ca_cert_host,
+            ca_key_host_path=ca_key_host,
         )
-        pipelock_name = proxy.start(proxy_plan)
+        # Re-bind the outer plan so provision_ca (which runs later
+        # from `provision(plan, container)`) can read the populated
+        # CA paths off plan.proxy_plan.
+        plan = dataclasses.replace(plan, proxy_plan=proxy_plan)
+        pipelock_name = proxy.start(plan.proxy_plan)
         stack.callback(proxy.stop, pipelock_name)
 
         container = _run_agent_container(plan, internal_network)
@@ -93,6 +107,16 @@ def _run_agent_container(plan: DockerBottlePlan, internal_network: str) -> str:
         "-e", f"HTTPS_PROXY={proxy_url}",
         "-e", f"HTTP_PROXY={proxy_url}",
         "-e", "NO_PROXY=localhost,127.0.0.1",
+        # CA trust trio for the agent process. Docker propagates
+        # run-time env into `docker exec`, so `claude` sees these
+        # without per-exec threading. NODE_EXTRA_CA_CERTS points at
+        # the cert file (Node appends it to its bundled roots);
+        # SSL_CERT_FILE / REQUESTS_CA_BUNDLE point at the system
+        # bundle that `update-ca-certificates` rebuilds in
+        # provision_ca.
+        "-e", f"NODE_EXTRA_CA_CERTS={AGENT_CA_PATH}",
+        "-e", f"SSL_CERT_FILE={AGENT_CA_BUNDLE}",
+        "-e", f"REQUESTS_CA_BUNDLE={AGENT_CA_BUNDLE}",
     ]
     if plan.use_runsc:
         docker_args.extend(["--runtime", "runsc"])

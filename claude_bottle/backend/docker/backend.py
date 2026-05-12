@@ -24,6 +24,7 @@ from .bottle import DockerBottle
 from .bottle_cleanup_plan import DockerBottleCleanupPlan
 from .bottle_plan import DockerBottlePlan
 from .pipelock import DockerPipelockProxy
+from .provision import ca as _ca
 from .provision import git as _git
 from .provision import prompt as _prompt
 from .provision import skills as _skills
@@ -46,6 +47,9 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
     def launch(self, plan: DockerBottlePlan) -> Generator[DockerBottle, None, None]:
         with _launch.launch(plan, proxy=self._proxy, provision=self.provision) as bottle:
             yield bottle
+
+    def provision_ca(self, plan: DockerBottlePlan, target: str) -> None:
+        _ca.provision_ca(plan, target)
 
     def provision_prompt(self, plan: DockerBottlePlan, target: str) -> str | None:
         return _prompt.provision_prompt(plan, target)
