@@ -80,6 +80,7 @@ class TestDryRunPlan(unittest.TestCase):
                              "runsc isn't available on the CI runner")
             self.assertEqual([], plan["skills"])
             self.assertEqual([], plan["ssh_hosts"])
+            self.assertEqual([], plan["ssh_gate"])
             self.assertEqual(False, plan["remote_control"])
             self.assertEqual(0, plan["prompt"]["length"])
 
