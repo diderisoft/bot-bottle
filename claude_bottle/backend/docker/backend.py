@@ -50,6 +50,7 @@ def _force_remove_container(name: str) -> None:
             ["docker", "rm", "-f", name],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            check=False,
         )
 
 
@@ -246,6 +247,7 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
                 capture_output=True,
                 text=True,
                 env=child_env,
+                check=False,
             )
             if run_result.returncode == 0:
                 return candidate
@@ -314,6 +316,7 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
             ],
             capture_output=True,
             text=True,
+            check=True,
         )
         containers = tuple(sorted(
             line for line in (cr.stdout or "").splitlines() if line
@@ -330,6 +333,7 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
             ],
             capture_output=True,
             text=True,
+            check=True,
         )
         networks = tuple(sorted(
             line for line in (nr.stdout or "").splitlines() if line
@@ -347,6 +351,7 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
                 ["docker", "rm", "-f", name],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                check=False,
             )
         for name in plan.networks:
             info(f"removing network {name}")
@@ -354,6 +359,7 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
                 ["docker", "network", "rm", name],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                check=False,
             )
 
     # --- List ---
@@ -370,6 +376,7 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
             ],
             capture_output=True,
             text=True,
+            check=True,
         )
         containers = (result.stdout or "").strip()
         if not containers:

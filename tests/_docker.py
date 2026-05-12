@@ -15,6 +15,7 @@ def docker_available() -> bool:
             ["docker", "info"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            check=False,
         ).returncode
         == 0
     )

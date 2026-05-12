@@ -38,6 +38,7 @@ class TestStartFormatFlag(unittest.TestCase):
                 env=env,
                 capture_output=True,
                 text=True,
+                check=False,
             )
             self.assertNotEqual(0, result.returncode)
             self.assertIn(

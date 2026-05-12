@@ -27,6 +27,7 @@ class TestPipelockImage(unittest.TestCase):
             ["docker", "pull", PIPELOCK_IMAGE],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            check=False,
         )
         if result.returncode != 0:
             raise unittest.SkipTest(f"could not pull {PIPELOCK_IMAGE}")
@@ -34,7 +35,7 @@ class TestPipelockImage(unittest.TestCase):
     def test_binary_runs(self):
         result = subprocess.run(
             ["docker", "run", "--rm", PIPELOCK_IMAGE, "--version"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, check=False,
         )
         out = result.stdout + result.stderr
         self.assertRegex(out, r"[Pp]ipelock|2\.[0-9]+\.[0-9]+")

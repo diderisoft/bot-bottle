@@ -46,6 +46,7 @@ class TestPipelockSidecarSmoke(unittest.TestCase):
             ["docker", "pull", CURL_IMAGE],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            check=False,
         )
         if result.returncode != 0:
             raise unittest.SkipTest(f"could not pull {CURL_IMAGE}")
@@ -104,6 +105,7 @@ class TestPipelockSidecarSmoke(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=60,
+            check=False,
         )
         self.assertEqual(
             0, probe.returncode,

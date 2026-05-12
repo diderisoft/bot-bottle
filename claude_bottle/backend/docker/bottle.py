@@ -36,7 +36,7 @@ class DockerBottle(Bottle):
         if tty:
             cmd.append("-it")
         cmd.extend([self.name, "claude", *full_argv])
-        return subprocess.run(cmd).returncode
+        return subprocess.run(cmd, check=False).returncode
 
     def cp_in(self, host_path: str, container_path: str) -> None:
         subprocess.run(

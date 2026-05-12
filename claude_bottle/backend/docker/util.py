@@ -33,6 +33,7 @@ def runsc_available() -> bool:
         ["docker", "info", "--format", "{{json .Runtimes}}"],
         capture_output=True,
         text=True,
+        check=False,
     )
     return r.returncode == 0 and "runsc" in r.stdout
 
@@ -58,6 +59,7 @@ def container_exists(name: str) -> bool:
         ["docker", "ps", "-a", "-q", "-f", f"name=^{name}$"],
         capture_output=True,
         text=True,
+        check=True,
     )
     return bool(result.stdout.strip())
 
@@ -129,4 +131,5 @@ def _silent_run(cmd: Iterable[str]) -> int:
         list(cmd),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        check=False,
     ).returncode

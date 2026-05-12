@@ -43,6 +43,7 @@ class TestDryRunPlan(unittest.TestCase):
                 env=env,
                 capture_output=True,
                 text=True,
+                check=False,
             )
             self.assertEqual(
                 0, result.returncode,
@@ -83,6 +84,7 @@ class TestDryRunPlan(unittest.TestCase):
             ["docker", "network", "ls", "--format", "{{.Name}}"],
             capture_output=True,
             text=True,
+            check=True,
         )
         return sum(1 for n in result.stdout.splitlines() if n.startswith("claude-bottle"))
 
@@ -91,6 +93,7 @@ class TestDryRunPlan(unittest.TestCase):
             ["docker", "ps", "-a", "--format", "{{.Names}}"],
             capture_output=True,
             text=True,
+            check=True,
         )
         return sum(1 for n in result.stdout.splitlines() if n.startswith("claude-bottle"))
 

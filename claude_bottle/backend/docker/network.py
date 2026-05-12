@@ -35,6 +35,7 @@ def network_exists(name: str) -> bool:
             ["docker", "network", "inspect", name],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            check=False,
         ).returncode
         == 0
     )
@@ -61,7 +62,7 @@ def _network_create_with_prefix(base: str, internal: bool) -> str:
         args.append("--internal")
     args.append(name)
     info(f"creating {kind} network {name}")
-    result = subprocess.run(args, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    result = subprocess.run(args, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=False)
     if result.returncode != 0:
         flag = " --internal" if internal else ""
         die(f"docker network create{flag} {name} failed")
@@ -85,6 +86,7 @@ def network_attach(network: str, container: str) -> None:
         ["docker", "network", "connect", network, container],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        check=False,
     )
     if result.returncode != 0:
         die(f"docker network connect {network} {container} failed")
@@ -100,6 +102,7 @@ def network_remove(name: str) -> bool:
         ["docker", "network", "rm", name],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        check=False,
     )
     if result.returncode != 0:
         warn(f"failed to remove network {name}; clean up with 'docker network rm {name}'")

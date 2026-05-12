@@ -34,6 +34,7 @@ class TestOrphanCleanup(unittest.TestCase):
                     ["docker", "network", "rm", n],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
+                    check=False,
                 )
 
     def test_remove_missing_is_noop(self):
@@ -51,7 +52,7 @@ class TestOrphanCleanup(unittest.TestCase):
 
         nets = subprocess.run(
             ["docker", "network", "ls", "--format", "{{.Name}}"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, check=True,
         ).stdout.splitlines()
         self.assertIn(self.internal_name, nets)
         self.assertIn(self.egress_name, nets)
@@ -61,7 +62,7 @@ class TestOrphanCleanup(unittest.TestCase):
 
         nets_after = subprocess.run(
             ["docker", "network", "ls", "--format", "{{.Name}}"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, check=True,
         ).stdout.splitlines()
         self.assertNotIn(self.internal_name, nets_after)
         self.assertNotIn(self.egress_name, nets_after)
