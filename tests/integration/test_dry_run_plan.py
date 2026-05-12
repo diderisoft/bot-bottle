@@ -34,6 +34,20 @@ class TestDryRunPlan(unittest.TestCase):
             env = os.environ.copy()
             env["HOME"] = str(work_dir)
             env.pop("CLAUDE_BOTTLE_DRY_RUN", None)
+            # The HOME override above isolates the manifest under test
+            # from the dev's real ~/claude-bottle.json. On Docker Desktop
+            # that same override breaks docker CLI endpoint resolution,
+            # since the active context lives in $HOME/.docker/config.json
+            # and the per-user socket sits under $HOME/.docker/run/.
+            # Pin DOCKER_HOST to the parent's resolved endpoint so the
+            # subprocess reaches the same daemon regardless of $HOME.
+            endpoint = subprocess.run(
+                ["docker", "context", "inspect",
+                 "--format", "{{.Endpoints.docker.Host}}"],
+                capture_output=True, text=True, check=True,
+            ).stdout.strip()
+            if endpoint:
+                env["DOCKER_HOST"] = endpoint
             result = subprocess.run(
                 [
                     sys.executable, str(REPO_ROOT / "cli.py"),
