@@ -16,7 +16,7 @@ import subprocess
 import sys
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from typing import Iterator, Sequence
+from typing import Generator, Sequence
 
 from ... import pipelock
 from ...env import ResolvedEnv, resolve_env
@@ -165,7 +165,7 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
         env_file.chmod(0o600)
 
     @contextmanager
-    def launch(self, plan: DockerBottlePlan) -> Iterator[DockerBottle]:
+    def launch(self, plan: DockerBottlePlan) -> Generator[DockerBottle, None, None]:
         """Build, launch, and provision a Docker bottle. Teardown on exit."""
         stack = ExitStack()
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from claude_bottle.manifest import Manifest
 
@@ -77,7 +77,7 @@ def fixture_with_ssh() -> Manifest:
     return Manifest.from_json_obj(fixture_with_ssh_dict())
 
 
-def write_fixture(fn) -> Path:
+def write_fixture(fn: Callable[[], dict[str, Any]]) -> Path:
     """Write fixture JSON to a temp file; return the path. Caller must rm.
     Accepts a function returning either a dict (JSON shape) or a Manifest;
     only the dict form is supported here since we need to serialize."""

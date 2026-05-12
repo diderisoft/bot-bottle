@@ -1,0 +1,15 @@
+{
+  "include": [
+    "cli.py",
+    "claude_bottle",
+    "tests"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    "**/.venv",
+    "**/venv"
+  ],
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "strict",
+  "reportMissingTypeStubs": "none"
+}

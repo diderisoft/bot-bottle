@@ -34,7 +34,7 @@ from abc import ABC, abstractmethod
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
 from ..log import die
 from ..manifest import Manifest
@@ -199,14 +199,16 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
 from .docker import DockerBottleBackend  # noqa: E402
 
 
-# The dict carries heterogeneous BottleBackend specializations; callers
-# use it through the unparameterized BottleBackend interface.
-_BACKENDS: dict[str, BottleBackend] = {
+# The dict is heterogeneous: each value is a BottleBackend specialized
+# over its own plan type. Concrete plan types are erased here because
+# the registry is selected at runtime and the CLI only needs the
+# unparameterized methods (prepare → plan → launch(plan), cleanup, etc.).
+_BACKENDS: dict[str, BottleBackend[Any, Any]] = {
     "docker": DockerBottleBackend(),
 }
 
 
-def get_bottle_backend() -> BottleBackend:
+def get_bottle_backend() -> BottleBackend[Any, Any]:
     """Resolve the bottle backend for the active environment. Dies with
     a pointer at the known backends if CLAUDE_BOTTLE_BACKEND names an
     unimplemented one."""

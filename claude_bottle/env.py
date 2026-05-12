@@ -47,8 +47,8 @@ class ResolvedEnv:
     resolve_env; the backend forwards by-name. `literals` carry their
     values verbatim and are serialized by the backend."""
 
-    forwarded: list[str] = field(default_factory=list)
-    literals: dict[str, str] = field(default_factory=dict)
+    forwarded: list[str] = field(default_factory=list[str])
+    literals: dict[str, str] = field(default_factory=dict[str, str])
 
 
 def env_entry_kind(raw: str) -> str:

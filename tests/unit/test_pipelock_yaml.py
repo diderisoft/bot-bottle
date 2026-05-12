@@ -10,6 +10,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any, cast
 
 from claude_bottle.backend.docker.pipelock import DockerPipelockProxy
 from claude_bottle.manifest import Manifest
@@ -27,19 +28,22 @@ class TestBuildConfig(unittest.TestCase):
             {"include_defaults": True, "scan_env": True}, cfg["dlp"]
         )
         # Baked defaults always present.
-        self.assertIn("api.anthropic.com", cfg["api_allowlist"])
-        self.assertIn("raw.githubusercontent.com", cfg["api_allowlist"])
+        self.assertIn("api.anthropic.com", cast(list[str], cfg["api_allowlist"]))
+        self.assertIn("raw.githubusercontent.com", cast(list[str], cfg["api_allowlist"]))
         # No SSH entries → no trusted_domains, no ssrf.
         self.assertNotIn("trusted_domains", cfg)
         self.assertNotIn("ssrf", cfg)
 
     def test_ssh_shape(self):
         cfg = pipelock_build_config(fixture_with_ssh().bottles["dev"])
-        self.assertIn("github.com", cfg["trusted_domains"])
-        self.assertNotIn("192.0.2.10", cfg["trusted_domains"])
-        self.assertIn("192.0.2.10/32", cfg["ssrf"]["ip_allowlist"])
+        self.assertIn("github.com", cast(list[str], cfg["trusted_domains"]))
+        self.assertNotIn("192.0.2.10", cast(list[str], cfg["trusted_domains"]))
+        self.assertIn(
+            "192.0.2.10/32",
+            cast(dict[str, Any], cfg["ssrf"])["ip_allowlist"],
+        )
         # Strict mode: IPv4 host is also in the api_allowlist union.
-        self.assertIn("192.0.2.10", cfg["api_allowlist"])
+        self.assertIn("192.0.2.10", cast(list[str], cfg["api_allowlist"]))
 
 
 class TestRenderAndWrite(unittest.TestCase):

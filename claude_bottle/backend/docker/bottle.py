@@ -9,6 +9,7 @@ prompt was provisioned.
 from __future__ import annotations
 
 import subprocess
+from typing import Callable
 
 from .. import Bottle
 
@@ -16,7 +17,12 @@ from .. import Bottle
 class DockerBottle(Bottle):
     """Concrete Bottle for Docker."""
 
-    def __init__(self, container: str, teardown, prompt_path_in_container: str | None):
+    def __init__(
+        self,
+        container: str,
+        teardown: Callable[[], None],
+        prompt_path_in_container: str | None,
+    ):
         self.name = container
         self._teardown = teardown
         self._prompt_path = prompt_path_in_container

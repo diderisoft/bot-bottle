@@ -9,12 +9,14 @@ import sys
 
 from ..log import Die, die
 from ._common import PROG
+from . import list as _list_mod
 from .cleanup import cmd_cleanup
 from .edit import cmd_edit
 from .info import cmd_info
 from .init import cmd_init
-from .list import cmd_list
 from .start import cmd_start
+
+cmd_list = _list_mod.cmd_list
 
 COMMANDS = {
     "cleanup": cmd_cleanup,
