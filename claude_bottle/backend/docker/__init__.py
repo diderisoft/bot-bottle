@@ -4,10 +4,14 @@ The bulk of the implementation lives in sibling modules:
 
   - util:                 thin Docker subprocess wrappers
   - network:              Docker network plumbing
+  - pipelock:             DockerPipelockProxy lifecycle
   - bottle_plan:          DockerBottlePlan
   - bottle_cleanup_plan:  DockerBottleCleanupPlan
   - bottle:               DockerBottle handle
-  - backend:              DockerBottleBackend
+  - prepare:              host-side resolution into a DockerBottlePlan
+  - launch:               bring-up + teardown context manager
+  - cleanup:              orphan enumeration, removal, active listing
+  - backend:              DockerBottleBackend façade wiring the above
 
 This file only re-exports the public names so
 `from claude_bottle.backend.docker import DockerBottleBackend` keeps
