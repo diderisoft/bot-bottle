@@ -59,7 +59,9 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
     (default)."""
 
     name = "docker"
-    _proxy: DockerPipelockProxy = DockerPipelockProxy()
+
+    def __init__(self) -> None:
+        self._proxy = DockerPipelockProxy()
 
     def prepare(self, spec: BottleSpec, *, stage_dir: Path) -> DockerBottlePlan:
         """Resolve names, validate, write scratch files. No Docker
