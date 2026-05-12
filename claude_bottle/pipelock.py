@@ -110,6 +110,12 @@ def pipelock_build_config(bottle: Bottle) -> dict[str, object]:
     if ip_cidrs:
         cfg["ssrf"] = {"ip_allowlist": ip_cidrs}
     cfg["dlp"] = {"include_defaults": True, "scan_env": True}
+    # Body-scan enforcement is a separate pipelock section (each DLP
+    # "surface" — body, MCP, response — has its own action). Pipelock's
+    # built-in default for request_body_scanning is "warn" (forward
+    # with a log line); claude-bottle's default is "block" so a hit
+    # actually stops the request from leaving the egress network.
+    cfg["request_body_scanning"] = {"action": bottle.egress.dlp_action}
     return cfg
 
 
@@ -149,6 +155,10 @@ def pipelock_render_yaml(cfg: dict[str, object]) -> str:
     dlp = cast(dict[str, object], cfg["dlp"])
     lines.append(f"  include_defaults: {_bool(dlp['include_defaults'])}")
     lines.append(f"  scan_env: {_bool(dlp['scan_env'])}")
+    lines.append("")
+    lines.append("request_body_scanning:")
+    rbs = cast(dict[str, object], cfg["request_body_scanning"])
+    lines.append(f'  action: "{rbs["action"]}"')
     return "\n".join(lines) + "\n"
 
 

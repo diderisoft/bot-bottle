@@ -27,6 +27,10 @@ class TestBuildConfig(unittest.TestCase):
         self.assertEqual(
             {"include_defaults": True, "scan_env": True}, cfg["dlp"]
         )
+        # Default body-scan action is "block" — see BottleEgress.dlp_action.
+        self.assertEqual(
+            {"action": "block"}, cfg["request_body_scanning"]
+        )
         # Baked defaults always present.
         self.assertIn("api.anthropic.com", cast(list[str], cfg["api_allowlist"]))
         self.assertIn("raw.githubusercontent.com", cast(list[str], cfg["api_allowlist"]))
@@ -66,6 +70,7 @@ class TestRenderAndWrite(unittest.TestCase):
             "trusted_domains:",
             "ssrf:",
             "dlp:",
+            "request_body_scanning:",
         ):
             self.assertIn(required, text)
 
