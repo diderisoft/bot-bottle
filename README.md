@@ -54,6 +54,55 @@ manifest configuration required. The broader v2 discussion lives in
 The egress proxy and OAuth-token handling below are the load-bearing
 pieces of v1.
 
+## Architecture
+
+A bottle is three containers on a per-agent Docker `--internal`
+network. The agent has no default route off-box; its only way out is
+through the pipelock sidecar (for HTTP/HTTPS) or the ssh-gate sidecar
+(for SSH). Both sidecars also sit on an egress network that does have
+internet access, so the agent's traffic always passes through a
+container that enforces the manifest before it leaves the host.
+
+```
+                            host  ( ./cli.py )
+                                  │
+                          starts  │  stops
+                                  ▼
+   ┌─────────────────────────── bottle ──────────────────────────┐
+   │                                                             │
+   │   ┌──────────────────┐                                      │
+   │   │ agent image      │   HTTPS_PROXY    ┌────────────────┐  │  HTTPS to
+   │   │ (claude-code,    │ ───────────────► │ pipelock image │──┼──►  allowlisted
+   │   │  built locally)  │                  │ (TLS bump, DLP,│  │     hosts
+   │   │                  │                  │  allowlist)    │  │
+   │   │ skills, env,     │                  └────────────────┘  │
+   │   │ ~/.ssh/config    │                                      │
+   │   │                  │   ssh            ┌────────────────┐  │  TCP to
+   │   │                  │ ───────────────► │ socat/ssh image│──┼──►  bottle.ssh
+   │   │                  │                  │ (alpine/socat, │  │     upstreams
+   │   │                  │                  │  L4 forwarder) │  │
+   │   └──────────────────┘                  └────────────────┘  │
+   │                                                             │
+   │   agent on internal network (no default route);             │
+   │   sidecars also attached to an egress network.              │
+   └─────────────────────────────────────────────────────────────┘
+```
+
+- **agent image** — built from the repo `Dockerfile` (`node:22-slim`
+  base) on first run; runs `claude` with the manifest-granted skills,
+  env vars, and `~/.ssh/config`.
+- **pipelock image** — per-agent sidecar. Terminates the agent's
+  outbound HTTP/HTTPS, enforces the resolved allowlist, runs DLP
+  scanning. Design in `docs/prds/0001-per-agent-egress-proxy-via-pipelock.md`
+  and `docs/prds/0006-pipelock-tls-interception.md`.
+- **socat/ssh image** — per-agent sidecar built on `alpine/socat`.
+  One container, one socat listener per `bottle.ssh` entry, each
+  forwarding TCP to the upstream `Hostname:Port`. SSH does *not* go
+  through pipelock. Design in `docs/prds/0007-ssh-egress-gate.md`.
+
+When the agent exits, `cli.py` tears down both sidecars and the two
+networks; nothing about a bottle persists between runs.
+
 ## Quickstart
 
 Requires Docker on the host and a long-lived Claude Code OAuth token in
