@@ -204,23 +204,35 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         """Build/run the bottle and yield a handle; tear down on exit."""
 
     def provision(self, plan: PlanT, target: str) -> str | None:
-        """Copy host-side files (prompt, skills, SSH keys, .git) into
-        the running bottle. Called from `launch` after the container/
-        machine is up. `target` identifies the running instance in
-        backend-specific terms (Docker: resolved container name; fly:
-        machine id). Returns the in-container prompt path if a prompt
-        was provisioned, else None — the Bottle handle uses it to
-        decide whether to add --append-system-prompt-file to claude's
-        argv.
+        """Copy host-side files (CA cert, prompt, skills, SSH keys,
+        .git) into the running bottle. Called from `launch` after the
+        container/machine is up. `target` identifies the running
+        instance in backend-specific terms (Docker: resolved
+        container name; fly: machine id). Returns the in-container
+        prompt path if a prompt was provisioned, else None — the
+        Bottle handle uses it to decide whether to add
+        --append-system-prompt-file to claude's argv.
 
-        Default orchestration: prompt → skills → ssh → git. Subclasses
-        typically don't override this; they implement the four
-        sub-methods below."""
+        Default orchestration: ca → prompt → skills → ssh → git.
+        CA install runs first so the agent's trust store is rebuilt
+        before anything inside the agent makes a TLS call. Subclasses
+        typically don't override this; they implement the sub-methods
+        below."""
+        self.provision_ca(plan, target)
         prompt_path = self.provision_prompt(plan, target)
         self.provision_skills(plan, target)
         self.provision_ssh(plan, target)
         self.provision_git(plan, target)
         return prompt_path
+
+    def provision_ca(self, plan: PlanT, target: str) -> None:
+        """Install pipelock's per-bottle CA into the agent's trust
+        store so the agent trusts the bumped CONNECT cert pipelock
+        presents. Default impl is a no-op so backends that don't
+        yet support TLS interception (every backend except Docker
+        today) aren't forced to implement it. The Docker backend
+        overrides to docker-cp the cert in and run
+        `update-ca-certificates`."""
 
     @abstractmethod
     def provision_prompt(self, plan: PlanT, target: str) -> str | None:
