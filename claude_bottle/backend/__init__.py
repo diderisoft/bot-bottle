@@ -94,18 +94,40 @@ class BottleCleanupPlan(ABC):
         short-circuit before showing the y/N."""
 
 
+@dataclass(frozen=True)
+class ExecResult:
+    """Captured result of `Bottle.exec`. Backend-neutral: the Docker
+    impl populates it from a `subprocess.CompletedProcess`, but a
+    future fly/smolmachines backend could populate it from any source
+    that produces a returncode + captured streams."""
+
+    returncode: int
+    stdout: str
+    stderr: str
+
+
 class Bottle(ABC):
     """Handle to a running bottle. Yielded by a backend's launch step.
 
     `exec_claude` runs `claude` inside the bottle and blocks until the
-    session ends. `cp_in` copies a host path into the bottle. `close`
-    is an idempotent alias for context-manager teardown.
+    session ends. `exec` runs a POSIX shell script inside the bottle
+    and returns the captured result. `cp_in` copies a host path into
+    the bottle. `close` is an idempotent alias for context-manager
+    teardown.
     """
 
     name: str
 
     @abstractmethod
     def exec_claude(self, argv: list[str], *, tty: bool = True) -> int: ...
+
+    @abstractmethod
+    def exec(self, script: str) -> ExecResult:
+        """Run `script` as a POSIX shell script inside the bottle and
+        return the captured stdout/stderr/returncode. The bottle's
+        environment (including HTTPS_PROXY pointing at the pipelock
+        sidecar) is inherited by the child. Non-zero exit does not
+        raise — callers inspect `returncode` themselves."""
 
     @abstractmethod
     def cp_in(self, host_path: str, container_path: str) -> None: ...
@@ -270,5 +292,6 @@ __all__ = [
     "BottleCleanupPlan",
     "BottlePlan",
     "BottleSpec",
+    "ExecResult",
     "get_bottle_backend",
 ]

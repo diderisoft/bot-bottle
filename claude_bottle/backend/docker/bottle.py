@@ -11,7 +11,7 @@ from __future__ import annotations
 import subprocess
 from typing import Callable
 
-from .. import Bottle
+from .. import Bottle, ExecResult
 
 
 class DockerBottle(Bottle):
@@ -37,6 +37,23 @@ class DockerBottle(Bottle):
             cmd.append("-it")
         cmd.extend([self.name, "claude", *full_argv])
         return subprocess.run(cmd, check=False).returncode
+
+    def exec(self, script: str) -> ExecResult:
+        # Pipe via stdin to `sh -s` so the caller never has to worry
+        # about quoting; the script source lands inside the container
+        # without crossing argv.
+        result = subprocess.run(
+            ["docker", "exec", "-i", self.name, "sh", "-s"],
+            input=script,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return ExecResult(
+            returncode=result.returncode,
+            stdout=result.stdout,
+            stderr=result.stderr,
+        )
 
     def cp_in(self, host_path: str, container_path: str) -> None:
         subprocess.run(
