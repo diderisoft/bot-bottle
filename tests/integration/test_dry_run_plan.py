@@ -28,8 +28,16 @@ class TestDryRunPlan(unittest.TestCase):
                 },
             }))
 
-            nets_before = self._count_claude_bottle_networks()
-            ctrs_before = self._count_claude_bottle_containers()
+            # Under act_runner with a host-mounted docker socket, the
+            # `docker network ls` / `docker ps -a` calls from inside the
+            # job container exit non-zero (see docs/ci.md for the same
+            # topology issue affecting other integration tests). Skip
+            # the side-effects guard there; locally the check still
+            # catches accidental docker resource creation by the dry
+            # run.
+            check_side_effects = os.environ.get("GITEA_ACTIONS") != "true"
+            nets_before = self._count_claude_bottle_networks() if check_side_effects else 0
+            ctrs_before = self._count_claude_bottle_containers() if check_side_effects else 0
 
             env = os.environ.copy()
             env["HOME"] = str(work_dir)
@@ -84,32 +92,38 @@ class TestDryRunPlan(unittest.TestCase):
             self.assertEqual(sorted(set(hosts)), hosts,
                              "hosts must be sorted and deduplicated")
 
-            # No Docker side effects.
-            self.assertEqual(nets_before, self._count_claude_bottle_networks(),
-                             "no networks created")
-            self.assertEqual(ctrs_before, self._count_claude_bottle_containers(),
-                             "no containers created")
+            # No Docker side effects (see the GITEA_ACTIONS skip note
+            # above — this guard runs locally only).
+            if check_side_effects:
+                self.assertEqual(nets_before, self._count_claude_bottle_networks(),
+                                 "no networks created")
+                self.assertEqual(ctrs_before, self._count_claude_bottle_containers(),
+                                 "no containers created")
         finally:
             import shutil
             shutil.rmtree(work_dir, ignore_errors=True)
 
     def _count_claude_bottle_networks(self) -> int:
-        result = subprocess.run(
-            ["docker", "network", "ls", "--format", "{{.Name}}"],
-            capture_output=True,
-            text=True,
-            check=True,
+        return self._count_with_prefix(
+            ["docker", "network", "ls", "--format", "{{.Name}}"], "claude-bottle"
         )
-        return sum(1 for n in result.stdout.splitlines() if n.startswith("claude-bottle"))
 
     def _count_claude_bottle_containers(self) -> int:
-        result = subprocess.run(
-            ["docker", "ps", "-a", "--format", "{{.Names}}"],
-            capture_output=True,
-            text=True,
-            check=True,
+        return self._count_with_prefix(
+            ["docker", "ps", "-a", "--format", "{{.Names}}"], "claude-bottle"
         )
-        return sum(1 for n in result.stdout.splitlines() if n.startswith("claude-bottle"))
+
+    def _count_with_prefix(self, cmd: list[str], prefix: str) -> int:
+        # capture_output + explicit returncode check so a docker
+        # failure surfaces its stderr in the test report instead of
+        # the bare CalledProcessError we used to get.
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            self.fail(
+                f"{' '.join(cmd)!r} failed (exit {result.returncode}): "
+                f"stderr={result.stderr.strip()!r}"
+            )
+        return sum(1 for n in result.stdout.splitlines() if n.startswith(prefix))
 
 
 if __name__ == "__main__":
