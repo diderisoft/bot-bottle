@@ -7,9 +7,23 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
-from typing import Iterable
+from typing import Iterable, Iterator
 
 from ...log import die, info
+
+
+# Cap on the suffix the container-name conflict logic will try before
+# giving up: base, base-2, ..., base-MAX_CONTAINER_SUFFIX.
+MAX_CONTAINER_SUFFIX = 100
+
+
+def container_name_candidates(base: str) -> Iterator[str]:
+    """Yield `base`, then `base-2`, `base-3`, ... up to
+    `base-MAX_CONTAINER_SUFFIX`. Both the prepare-time probe and the
+    launch-time race retry walk this sequence."""
+    yield base
+    for suffix in range(2, MAX_CONTAINER_SUFFIX + 1):
+        yield f"{base}-{suffix}"
 
 
 def runsc_available() -> bool:

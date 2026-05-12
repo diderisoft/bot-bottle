@@ -84,10 +84,9 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
 
         default_container = f"claude-bottle-{slug}"
         pinned_container = os.environ.get("CLAUDE_BOTTLE_CONTAINER", "")
-        container_name = pinned_container or default_container
         container_name_pinned = bool(pinned_container)
-        suffix = 2
         if container_name_pinned:
+            container_name = pinned_container
             if docker_mod.container_exists(container_name):
                 die(
                     f"container '{container_name}' already exists "
@@ -95,15 +94,17 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
                     f"Remove it with 'docker rm -f {container_name}' or unset the override."
                 )
         else:
-            while docker_mod.container_exists(container_name):
-                container_name = f"{default_container}-{suffix}"
-                suffix += 1
-                if suffix > 100:
-                    die(
-                        f"could not find a free container name after "
-                        f"{default_container}-99; clean up old containers with "
-                        f"'docker rm -f <name>'"
-                    )
+            container_name = ""
+            for candidate in docker_mod.container_name_candidates(default_container):
+                if not docker_mod.container_exists(candidate):
+                    container_name = candidate
+                    break
+            if not container_name:
+                die(
+                    f"could not find a free container name after "
+                    f"{default_container}-{docker_mod.MAX_CONTAINER_SUFFIX}; "
+                    f"clean up old containers with 'docker rm -f <name>'"
+                )
 
         if agent.skills:
             self.validate_skills(list(agent.skills))
@@ -247,31 +248,26 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
 
         info(f"starting container {plan.container_name} from {plan.runtime_image}")
 
-        container = plan.container_name
-        base_name = plan.container_name
-        suffix = 2
-        while True:
+        name_idx = docker_args.index("--name") + 1
+        for candidate in docker_mod.container_name_candidates(plan.container_name):
+            docker_args[name_idx] = candidate
             run_result = subprocess.run(
                 ["docker", "run", *docker_args],
                 capture_output=True,
                 text=True,
             )
             if run_result.returncode == 0:
-                return container
+                return candidate
             err_text = run_result.stderr
             if plan.container_name_pinned or "is already in use" not in err_text:
                 sys.stderr.write(err_text + "\n")
-                die(f"docker run failed for container '{container}'")
-            if suffix > 100:
-                die(
-                    f"could not find a free container name after "
-                    f"{base_name}-99 retries; clean up old containers"
-                )
-            container = f"{base_name}-{suffix}"
-            suffix += 1
-            name_idx = docker_args.index("--name") + 1
-            docker_args[name_idx] = container
-            info(f"name conflict; retrying as {container}")
+                die(f"docker run failed for container '{candidate}'")
+            info(f"name conflict on {candidate}; retrying with next candidate")
+        die(
+            f"could not find a free container name after "
+            f"{plan.container_name}-{docker_mod.MAX_CONTAINER_SUFFIX} retries; "
+            f"clean up old containers"
+        )
 
     def provision_prompt(self, plan: DockerBottlePlan, target: str) -> str | None:
         return _prompt.provision_prompt(plan, target)
