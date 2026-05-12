@@ -6,8 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from claude_bottle.manifest import Manifest
 from claude_bottle.ssh_gate import (
-    BASE_LISTEN_PORT,
     SSHGate,
     SSHGatePlan,
     SSHGateUpstream,
@@ -29,17 +29,20 @@ class _StubGate(SSHGate):
 
 
 class TestUpstreamAssignment(unittest.TestCase):
-    def test_indexed_listen_ports(self):
+    def test_listen_port_matches_upstream_port(self):
+        # Critical: URLs like ssh://git@host:30009/... override the
+        # config Port directive, so the gate must listen on the same
+        # port the URL names.
         bottle = fixture_with_ssh().bottles["dev"]
         upstreams = ssh_gate_upstreams_for_bottle(bottle)
         self.assertEqual(2, len(upstreams))
-        self.assertEqual(BASE_LISTEN_PORT, upstreams[0].listen_port)
-        self.assertEqual(BASE_LISTEN_PORT + 1, upstreams[1].listen_port)
+        # Fixture: tailscale-gitea -> 192.0.2.10:30009, github -> github.com:22.
+        self.assertEqual(30009, upstreams[0].listen_port)
+        self.assertEqual(22, upstreams[1].listen_port)
 
     def test_upstream_fields_mirror_ssh_entry(self):
         bottle = fixture_with_ssh().bottles["dev"]
         first = ssh_gate_upstreams_for_bottle(bottle)[0]
-        # The fixture's first ssh entry: tailscale-gitea / 192.0.2.10:30009.
         self.assertEqual("tailscale-gitea", first.bottle_host_alias)
         self.assertEqual("192.0.2.10", first.upstream_host)
         self.assertEqual("30009", first.upstream_port)
@@ -48,20 +51,40 @@ class TestUpstreamAssignment(unittest.TestCase):
         bottle = fixture_minimal().bottles["dev"]
         self.assertEqual((), ssh_gate_upstreams_for_bottle(bottle))
 
+    def test_duplicate_upstream_port_is_rejected(self):
+        # Two entries on the same upstream port can't both have a
+        # listener — the gate is one container with a flat port
+        # space. Surface as a clear config error.
+        manifest = Manifest.from_json_obj({
+            "bottles": {
+                "dev": {
+                    "ssh": [
+                        {"Host": "a", "IdentityFile": "/dev/null",
+                         "Hostname": "host-a.example", "User": "git", "Port": 22},
+                        {"Host": "b", "IdentityFile": "/dev/null",
+                         "Hostname": "host-b.example", "User": "git", "Port": 22},
+                    ],
+                }
+            },
+            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        })
+        with self.assertRaises(SystemExit):
+            ssh_gate_upstreams_for_bottle(manifest.bottles["dev"])
+
 
 class TestEntrypointRender(unittest.TestCase):
     def test_one_socat_line_per_upstream(self):
         upstreams = (
-            SSHGateUpstream(30000, "gitea.example", "22", "gitea"),
-            SSHGateUpstream(30001, "github.com", "22", "gh"),
+            SSHGateUpstream(30009, "gitea.example", "30009", "gitea"),
+            SSHGateUpstream(22, "github.com", "22", "gh"),
         )
         script = ssh_gate_render_entrypoint(upstreams)
         self.assertIn("#!/bin/sh", script)
         self.assertIn(
-            "socat TCP-LISTEN:30000,reuseaddr,fork TCP:gitea.example:22 &", script
+            "socat TCP-LISTEN:30009,reuseaddr,fork TCP:gitea.example:30009 &", script
         )
         self.assertIn(
-            "socat TCP-LISTEN:30001,reuseaddr,fork TCP:github.com:22 &", script
+            "socat TCP-LISTEN:22,reuseaddr,fork TCP:github.com:22 &", script
         )
         # wait blocks the entrypoint so PID 1 stays alive while sockets
         # are open.

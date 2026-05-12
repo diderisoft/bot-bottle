@@ -17,13 +17,11 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 
+from .log import die
 from .manifest import Bottle
 
-# First listen port on the gate; entry i listens on BASE_LISTEN_PORT + i.
-# Picked high enough to avoid colliding with anything an alpine image
-# might pre-bind. The port space is per-gate (gate is per-agent) so
-# collisions across bottles aren't possible.
-BASE_LISTEN_PORT = 30000
+# Default port when an ssh entry has no `Port` field. Matches OpenSSH.
+_DEFAULT_SSH_PORT = 22
 
 
 @dataclass(frozen=True)
@@ -32,7 +30,15 @@ class SSHGateUpstream:
     forward each connection to `upstream_host:upstream_port`. The
     `bottle_host_alias` is the `Host` value from the manifest entry,
     kept for diagnostics + so the ssh provisioner can correlate
-    upstreams with their alias."""
+    upstreams with their alias.
+
+    `listen_port` mirrors the upstream port. That choice lets git
+    URLs that bake the upstream port into the remote (e.g.
+    `ssh://git@host:30009/repo.git`) work without rewriting: OpenSSH
+    treats a URL-supplied port as overriding the config's `Port`
+    directive, so the gate must be reachable on the same port the URL
+    names. Two ssh entries that share an upstream port are a config
+    error and rejected at prepare time."""
 
     listen_port: int
     upstream_host: str
@@ -60,19 +66,33 @@ class SSHGatePlan:
 
 
 def ssh_gate_upstreams_for_bottle(bottle: Bottle) -> tuple[SSHGateUpstream, ...]:
-    """Deterministic assignment of listen ports to bottle.ssh entries:
-    BASE_LISTEN_PORT + index. Order matches `bottle.ssh` so a manifest
-    re-order yields a different port mapping (intentional — the
-    provisioner reads the same tuple)."""
-    return tuple(
-        SSHGateUpstream(
-            listen_port=BASE_LISTEN_PORT + i,
-            upstream_host=e.Hostname,
-            upstream_port=e.Port,
-            bottle_host_alias=e.Host,
+    """Build the gate's upstream table. Each ssh entry's listen port
+    equals its upstream port so URL-supplied ports (which override
+    `~/.ssh/config`'s `Port` directive) still reach the gate.
+
+    Dies on two entries sharing an upstream port — the gate is a
+    single container with a flat port space, so each listener has to
+    be unique."""
+    seen_ports: dict[int, str] = {}
+    upstreams: list[SSHGateUpstream] = []
+    for e in bottle.ssh:
+        port = int(e.Port) if e.Port else _DEFAULT_SSH_PORT
+        if port in seen_ports:
+            die(
+                f"ssh entries '{seen_ports[port]}' and '{e.Host}' share upstream port "
+                f"{port}; the per-agent ssh gate can only forward one upstream "
+                f"per port. Change one of the upstream Ports in claude-bottle.json."
+            )
+        seen_ports[port] = e.Host
+        upstreams.append(
+            SSHGateUpstream(
+                listen_port=port,
+                upstream_host=e.Hostname,
+                upstream_port=e.Port,
+                bottle_host_alias=e.Host,
+            )
         )
-        for i, e in enumerate(bottle.ssh)
-    )
+    return tuple(upstreams)
 
 
 def ssh_gate_render_entrypoint(upstreams: tuple[SSHGateUpstream, ...]) -> str:
