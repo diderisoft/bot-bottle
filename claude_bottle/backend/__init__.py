@@ -34,6 +34,7 @@ from abc import ABC, abstractmethod
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Generic, TypeVar
 
 from ..log import die
 from ..manifest import Manifest
@@ -113,23 +114,29 @@ class Bottle(ABC):
 
 
 
-class BottleBackend(ABC):
+PlanT = TypeVar("PlanT", bound=BottlePlan)
+CleanupT = TypeVar("CleanupT", bound=BottleCleanupPlan)
+
+
+class BottleBackend(ABC, Generic[PlanT, CleanupT]):
     """Abstract base for selectable bottle backends. Concrete subclasses
     (e.g. DockerBottleBackend) own their own prepare/launch impls.
-    Symmetric with the BottlePlan → DockerBottlePlan hierarchy."""
+    Parameterized over the backend's concrete plan + cleanup-plan types
+    so subclass methods get the narrow type without isinstance
+    boilerplate."""
 
     name: str
 
     @abstractmethod
-    def prepare(self, spec: BottleSpec, *, stage_dir: Path) -> BottlePlan:
+    def prepare(self, spec: BottleSpec, *, stage_dir: Path) -> PlanT:
         """Resolve names, validate host-side prerequisites, write
         scratch files. No remote/runtime resources created yet."""
 
     @abstractmethod
-    def launch(self, plan: BottlePlan) -> AbstractContextManager[Bottle]:
+    def launch(self, plan: PlanT) -> AbstractContextManager[Bottle]:
         """Build/run the bottle and yield a handle; tear down on exit."""
 
-    def provision(self, plan: BottlePlan, target: str) -> str | None:
+    def provision(self, plan: PlanT, target: str) -> str | None:
         """Copy host-side files (prompt, skills, SSH keys, .git) into
         the running bottle. Called from `launch` after the container/
         machine is up. `target` identifies the running instance in
@@ -149,35 +156,35 @@ class BottleBackend(ABC):
         return prompt_path
 
     @abstractmethod
-    def provision_prompt(self, plan: BottlePlan, target: str) -> str | None:
+    def provision_prompt(self, plan: PlanT, target: str) -> str | None:
         """Copy the prompt file into the running bottle. Returns the
         in-container path iff the agent has a non-empty prompt;
         callers use the return value to decide whether to add
         --append-system-prompt-file to claude's argv."""
 
     @abstractmethod
-    def provision_skills(self, plan: BottlePlan, target: str) -> None:
+    def provision_skills(self, plan: PlanT, target: str) -> None:
         """Copy the agent's named skills from the host into the
         running bottle. No-op when the agent has no skills."""
 
     @abstractmethod
-    def provision_ssh(self, plan: BottlePlan, target: str) -> None:
+    def provision_ssh(self, plan: PlanT, target: str) -> None:
         """Set up SSH in the running bottle (config, agent, keys)
         so the bottle can reach the manifest's declared SSH hosts.
         No-op when the bottle has no SSH entries."""
 
     @abstractmethod
-    def provision_git(self, plan: BottlePlan, target: str) -> None:
+    def provision_git(self, plan: PlanT, target: str) -> None:
         """Copy the host's cwd `.git` directory into the running
         bottle if the user requested --cwd. No-op otherwise."""
 
     @abstractmethod
-    def prepare_cleanup(self) -> BottleCleanupPlan:
+    def prepare_cleanup(self) -> CleanupT:
         """Enumerate orphaned resources from previous bottles. No side
         effects; safe to call before the y/N."""
 
     @abstractmethod
-    def cleanup(self, plan: BottleCleanupPlan) -> None:
+    def cleanup(self, plan: CleanupT) -> None:
         """Remove everything described by the cleanup plan."""
 
     @abstractmethod
@@ -192,6 +199,8 @@ class BottleBackend(ABC):
 from .docker import DockerBottleBackend  # noqa: E402
 
 
+# The dict carries heterogeneous BottleBackend specializations; callers
+# use it through the unparameterized BottleBackend interface.
 _BACKENDS: dict[str, BottleBackend] = {
     "docker": DockerBottleBackend(),
 }

@@ -23,7 +23,7 @@ from ...env import ResolvedEnv, resolve_env
 from ...log import die, info
 from ...manifest import SshEntry
 from ...util import expand_tilde
-from .. import BottleBackend, BottleCleanupPlan, BottlePlan, BottleSpec
+from .. import BottleBackend, BottleSpec
 from ..util import host_skill_dir
 from . import network as network_mod
 from . import util as docker_mod
@@ -53,7 +53,7 @@ def _force_remove_container(name: str) -> None:
         )
 
 
-class DockerBottleBackend(BottleBackend):
+class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanupPlan"]):
     """Docker backend implementation. Selected by CLAUDE_BOTTLE_BACKEND
     (default)."""
 
@@ -164,13 +164,8 @@ class DockerBottleBackend(BottleBackend):
         args_file.write_text("\n".join(args_lines) + ("\n" if args_lines else ""))
 
     @contextmanager
-    def launch(self, plan: BottlePlan) -> Iterator[DockerBottle]:
+    def launch(self, plan: DockerBottlePlan) -> Iterator[DockerBottle]:
         """Build, launch, and provision a Docker bottle. Teardown on exit."""
-        assert isinstance(plan, DockerBottlePlan), (
-            f"DockerBottleBackend.launch expects DockerBottlePlan, "
-            f"got {type(plan).__name__}"
-        )
-
         stack = ExitStack()
 
         def teardown() -> None:
@@ -277,8 +272,7 @@ class DockerBottleBackend(BottleBackend):
             docker_args[name_idx] = container
             info(f"name conflict; retrying as {container}")
 
-    def provision_prompt(self, plan: BottlePlan, target: str) -> str | None:
-        assert isinstance(plan, DockerBottlePlan)
+    def provision_prompt(self, plan: DockerBottlePlan, target: str) -> str | None:
         return _prompt.provision_prompt(plan, target)
 
     def validate_skills(self, skills: list[str]) -> None:
@@ -294,8 +288,7 @@ class DockerBottleBackend(BottleBackend):
                     f"Create it under ~/.claude/skills/, then re-run."
                 )
 
-    def provision_skills(self, plan: BottlePlan, target: str) -> None:
-        assert isinstance(plan, DockerBottlePlan)
+    def provision_skills(self, plan: DockerBottlePlan, target: str) -> None:
         _skills.provision_skills(plan, target)
 
     def validate_ssh_entries(self, entries: Sequence[SshEntry]) -> None:
@@ -309,12 +302,10 @@ class DockerBottleBackend(BottleBackend):
             if not os.path.isfile(key):
                 die(f"ssh key file not found for host '{entry.Host}': {key}")
 
-    def provision_ssh(self, plan: BottlePlan, target: str) -> None:
-        assert isinstance(plan, DockerBottlePlan)
+    def provision_ssh(self, plan: DockerBottlePlan, target: str) -> None:
         _ssh.provision_ssh(plan, target)
 
-    def provision_git(self, plan: BottlePlan, target: str) -> None:
-        assert isinstance(plan, DockerBottlePlan)
+    def provision_git(self, plan: DockerBottlePlan, target: str) -> None:
         _git.provision_git(plan, target)
 
     # --- Cleanup ---
@@ -358,14 +349,10 @@ class DockerBottleBackend(BottleBackend):
 
         return DockerBottleCleanupPlan(containers=containers, networks=networks)
 
-    def cleanup(self, plan: BottleCleanupPlan) -> None:
+    def cleanup(self, plan: DockerBottleCleanupPlan) -> None:
         """Remove the containers and networks listed in the plan.
         Containers first; networks would refuse to delete while
         containers are still attached."""
-        assert isinstance(plan, DockerBottleCleanupPlan), (
-            f"DockerBottleBackend.cleanup expects DockerBottleCleanupPlan, "
-            f"got {type(plan).__name__}"
-        )
         for name in plan.containers:
             info(f"removing container {name}")
             subprocess.run(
