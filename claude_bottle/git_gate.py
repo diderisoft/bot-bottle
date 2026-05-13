@@ -30,10 +30,16 @@ backend-specific and lives on concrete subclasses (see
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Mapping
 
+from .log import die
 from .manifest import Bottle
+
+
+def _empty_str_map() -> dict[str, str]:
+    return {}
 
 
 @dataclass(frozen=True)
@@ -47,7 +53,12 @@ class GitGateUpstream:
     `identity_file` is the host-side absolute path the gate's start
     step will docker-cp into the container. `known_host_key` is the
     KnownHostKey string from the manifest; the gate's start step
-    materialises it into a known_hosts file if non-empty."""
+    materialises it into a known_hosts file if non-empty.
+
+    `extra_hosts` is a `{hostname: ip}` map the backend injects into
+    the gate container's `/etc/hosts` via `--add-host` so the gate
+    can resolve upstream hostnames that aren't reachable via the
+    container's default DNS (e.g. Tailscale-only hosts)."""
 
     name: str
     upstream_url: str
@@ -55,6 +66,7 @@ class GitGateUpstream:
     upstream_port: str
     identity_file: str
     known_host_key: str
+    extra_hosts: Mapping[str, str] = field(default_factory=_empty_str_map)
 
 
 @dataclass(frozen=True)
@@ -92,9 +104,36 @@ def git_gate_upstreams_for_bottle(bottle: Bottle) -> tuple[GitGateUpstream, ...]
             upstream_port=e.UpstreamPort,
             identity_file=e.IdentityFile,
             known_host_key=e.KnownHostKey,
+            extra_hosts=dict(e.ExtraHosts),
         )
         for e in bottle.git
     )
+
+
+def git_gate_aggregate_extra_hosts(
+    upstreams: tuple[GitGateUpstream, ...],
+) -> dict[str, str]:
+    """Merge every upstream's `extra_hosts` into a single
+    `{hostname: ip}` map for `--add-host` on the gate container. Two
+    entries naming the same hostname with different IPs is a manifest
+    bug — the gate has one /etc/hosts — so die loudly with the
+    conflicting names rather than silently picking one."""
+    merged: dict[str, str] = {}
+    source: dict[str, str] = {}
+    for u in upstreams:
+        for host, ip in u.extra_hosts.items():
+            existing = merged.get(host)
+            if existing is None:
+                merged[host] = ip
+                source[host] = u.name
+            elif existing != ip:
+                die(
+                    f"git-gate ExtraHosts conflict: '{host}' maps to "
+                    f"'{existing}' in upstream '{source[host]}' and to "
+                    f"'{ip}' in upstream '{u.name}'. The gate has one "
+                    f"/etc/hosts; pick one IP."
+                )
+    return merged
 
 
 def git_gate_known_hosts_line(host: str, port: str, key: str) -> str:

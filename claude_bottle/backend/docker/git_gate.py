@@ -8,7 +8,12 @@ import os
 import subprocess
 from pathlib import Path
 
-from ...git_gate import GitGate, GitGatePlan, git_gate_known_hosts_line
+from ...git_gate import (
+    GitGate,
+    GitGatePlan,
+    git_gate_aggregate_extra_hosts,
+    git_gate_known_hosts_line,
+)
 from ...log import die, info, warn
 from ...util import expand_tilde
 from . import util as docker_mod
@@ -101,8 +106,10 @@ class DockerGitGate(GitGate):
             "docker", "create",
             "--name", name,
             "--network", plan.internal_network,
-            GIT_GATE_IMAGE,
         ]
+        for host, ip in git_gate_aggregate_extra_hosts(plan.upstreams).items():
+            create_args.extend(["--add-host", f"{host}:{ip}"])
+        create_args.append(GIT_GATE_IMAGE)
         if subprocess.run(
             create_args,
             stdout=subprocess.DEVNULL,
