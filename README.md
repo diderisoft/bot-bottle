@@ -118,8 +118,14 @@ that enforces the manifest before it leaves the host.
   upstream has *now* (fail-closed if unreachable). The agent's
   `~/.gitconfig` rewrites the real URL to the gate via `insteadOf`,
   so push, fetch, clone, and pull all route through. The agent
-  never sees the upstream credential. Brought up only when
-  `bottle.git` has entries. Design in `docs/prds/0008-git-gate.md`.
+  never sees the upstream credential. If the upstream's hostname
+  isn't resolvable from the gate container (e.g. a Tailscale-only
+  host whose public DNS points elsewhere), pin its IP via
+  `ExtraHosts: { "<hostname>": "<ip>" }` on the `bottle.git` entry —
+  the gate's `/etc/hosts` gets the override while the agent's
+  `insteadOf` rewrite still keys off the original hostname. Brought
+  up only when `bottle.git` has entries. Design in
+  `docs/prds/0008-git-gate.md`.
 
 When the agent exits, `cli.py` tears down every sidecar that was
 brought up and the two networks; nothing about a bottle persists

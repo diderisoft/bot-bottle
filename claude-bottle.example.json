@@ -19,14 +19,13 @@
         "GIT_AUTHOR_NAME": "Eric Diderich",
         "NODE_ENV":        "development"
       },
-      "ssh": [
+      "git": [
         {
-          "Host":         "gitea",
-          "Hostname":     "gitea.dideric.is",
-          "User":         "git",
-          "Port":         30009,
+          "Name":         "claude-bottle",
+          "Upstream":     "ssh://git@gitea.dideric.is:30009/didericis/claude-bottle.git",
           "IdentityFile": "/Users/didericis/.ssh/id_ed25519_gitea",
-          "KnownHostKey": "gitea.dideric.is ssh-ed25519 AAAA..."
+          "KnownHostKey": "ssh-ed25519 AAAA...",
+          "ExtraHosts":   { "gitea.dideric.is": "192.0.2.10" }
         }
       ],
       "egress": {
