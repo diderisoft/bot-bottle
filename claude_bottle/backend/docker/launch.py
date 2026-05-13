@@ -25,7 +25,6 @@ from .bottle_plan import DockerBottlePlan
 from .git_gate import DockerGitGate
 from .pipelock import DockerPipelockProxy, pipelock_proxy_url, pipelock_tls_init
 from .provision.ca import AGENT_CA_BUNDLE, AGENT_CA_PATH
-from .ssh_gate import DockerSSHGate
 
 
 # Where the repo root lives, for `docker build` context. Computed once.
@@ -37,7 +36,6 @@ def launch(
     plan: DockerBottlePlan,
     *,
     proxy: DockerPipelockProxy,
-    gate: DockerSSHGate,
     git_gate: DockerGitGate,
     provision: Callable[[DockerBottlePlan, str], str | None],
 ) -> Generator[DockerBottle, None, None]:
@@ -88,21 +86,6 @@ def launch(
         plan = dataclasses.replace(plan, proxy_plan=proxy_plan)
         pipelock_name = proxy.start(plan.proxy_plan)
         stack.callback(proxy.stop, pipelock_name)
-
-        # SSH egress gate (PRD 0007). One sidecar per agent, only
-        # brought up when the bottle has ssh entries. Lives on the
-        # same internal + egress networks pipelock straddles; the
-        # agent dials it by container name (DNS works on --internal,
-        # confirmed by the PRD 0007 spike).
-        if plan.gate_plan.upstreams:
-            gate_plan = dataclasses.replace(
-                plan.gate_plan,
-                internal_network=internal_network,
-                egress_network=egress_network,
-            )
-            plan = dataclasses.replace(plan, gate_plan=gate_plan)
-            gate_name = gate.start(plan.gate_plan)
-            stack.callback(gate.stop, gate_name)
 
         # Git gate (PRD 0008). One sidecar per agent, only brought up
         # when the bottle has git entries. Same internal + egress

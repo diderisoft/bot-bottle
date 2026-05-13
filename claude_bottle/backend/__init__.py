@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import Any, Generic, Sequence, TypeVar
 
 from ..log import die
-from ..manifest import GitEntry, Manifest, SshEntry
+from ..manifest import GitEntry, Manifest
 from ..util import expand_tilde
 from .util import host_skill_dir
 
@@ -162,7 +162,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
 
     def _validate(self, spec: BottleSpec) -> None:
         """Cross-backend pre-launch checks. Confirms the agent exists,
-        the named skills are present on the host, and every SSH
+        the named skills are present on the host, and every git
         IdentityFile resolves. Subclasses with additional preconditions
         should override and call `super()._validate(spec)` first."""
         manifest = spec.manifest
@@ -170,7 +170,6 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         agent = manifest.agents[spec.agent_name]
         bottle = manifest.bottle_for(spec.agent_name)
         self._validate_skills(agent.skills)
-        self._validate_ssh_entries(bottle.ssh)
         self._validate_git_entries(bottle.git)
 
     def _validate_skills(self, skills: Sequence[str]) -> None:
@@ -184,15 +183,6 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
                     f"skill '{name}' not found on host at {path}. "
                     f"Create it under ~/.claude/skills/, then re-run."
                 )
-
-    def _validate_ssh_entries(self, entries: Sequence[SshEntry]) -> None:
-        """Each entry's IdentityFile must exist on the host (after
-        expanding leading ~). Shape is already enforced by Manifest
-        validation; this only checks file presence."""
-        for entry in entries:
-            key = expand_tilde(entry.IdentityFile)
-            if not os.path.isfile(key):
-                die(f"ssh key file not found for host '{entry.Host}': {key}")
 
     def _validate_git_entries(self, entries: Sequence[GitEntry]) -> None:
         """Each entry's IdentityFile must exist on the host (after
@@ -215,24 +205,23 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         """Build/run the bottle and yield a handle; tear down on exit."""
 
     def provision(self, plan: PlanT, target: str) -> str | None:
-        """Copy host-side files (CA cert, prompt, skills, SSH keys,
-        .git) into the running bottle. Called from `launch` after the
-        container/machine is up. `target` identifies the running
-        instance in backend-specific terms (Docker: resolved
-        container name; fly: machine id). Returns the in-container
-        prompt path if a prompt was provisioned, else None — the
-        Bottle handle uses it to decide whether to add
-        --append-system-prompt-file to claude's argv.
+        """Copy host-side files (CA cert, prompt, skills, .git) into
+        the running bottle. Called from `launch` after the container
+        / machine is up. `target` identifies the running instance in
+        backend-specific terms (Docker: resolved container name; fly:
+        machine id). Returns the in-container prompt path if a prompt
+        was provisioned, else None — the Bottle handle uses it to
+        decide whether to add --append-system-prompt-file to claude's
+        argv.
 
-        Default orchestration: ca → prompt → skills → ssh → git.
-        CA install runs first so the agent's trust store is rebuilt
-        before anything inside the agent makes a TLS call. Subclasses
+        Default orchestration: ca → prompt → skills → git. CA install
+        runs first so the agent's trust store is rebuilt before
+        anything inside the agent makes a TLS call. Subclasses
         typically don't override this; they implement the sub-methods
         below."""
         self.provision_ca(plan, target)
         prompt_path = self.provision_prompt(plan, target)
         self.provision_skills(plan, target)
-        self.provision_ssh(plan, target)
         self.provision_git(plan, target)
         return prompt_path
 
@@ -256,12 +245,6 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
     def provision_skills(self, plan: PlanT, target: str) -> None:
         """Copy the agent's named skills from the host into the
         running bottle. No-op when the agent has no skills."""
-
-    @abstractmethod
-    def provision_ssh(self, plan: PlanT, target: str) -> None:
-        """Set up SSH in the running bottle (config, agent, keys)
-        so the bottle can reach the manifest's declared SSH hosts.
-        No-op when the bottle has no SSH entries."""
 
     @abstractmethod
     def provision_git(self, plan: PlanT, target: str) -> None:

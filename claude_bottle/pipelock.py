@@ -57,9 +57,9 @@ def pipelock_bottle_allowlist(bottle: Bottle) -> list[str]:
 
 def pipelock_effective_allowlist(bottle: Bottle) -> list[str]:
     """Deduplicated union of: baked-in defaults, bottle.egress.allowlist.
-    Sorted for stability. Per PRD 0007, bottle.ssh entries do NOT
-    contribute here — SSH traffic flows through the per-agent ssh-gate
-    sidecar, not pipelock."""
+    Sorted for stability. Git upstreams declared in `bottle.git` do NOT
+    contribute here — git traffic flows through the per-agent git-gate
+    sidecar (PRD 0008), not pipelock."""
     seen: dict[str, None] = {}
     for h in DEFAULT_ALLOWLIST:
         seen.setdefault(h, None)

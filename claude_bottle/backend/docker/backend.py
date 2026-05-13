@@ -29,8 +29,6 @@ from .provision import ca as _ca
 from .provision import git as _git
 from .provision import prompt as _prompt
 from .provision import skills as _skills
-from .provision import ssh as _ssh
-from .ssh_gate import DockerSSHGate
 
 
 class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanupPlan"]):
@@ -41,7 +39,6 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
 
     def __init__(self) -> None:
         self._proxy = DockerPipelockProxy()
-        self._gate = DockerSSHGate()
         self._git_gate = DockerGitGate()
 
     def _resolve_plan(self, spec: BottleSpec, *, stage_dir: Path) -> DockerBottlePlan:
@@ -49,7 +46,6 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
             spec,
             stage_dir=stage_dir,
             proxy=self._proxy,
-            gate=self._gate,
             git_gate=self._git_gate,
         )
 
@@ -58,7 +54,6 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
         with _launch.launch(
             plan,
             proxy=self._proxy,
-            gate=self._gate,
             git_gate=self._git_gate,
             provision=self.provision,
         ) as bottle:
@@ -72,9 +67,6 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
 
     def provision_skills(self, plan: DockerBottlePlan, target: str) -> None:
         _skills.provision_skills(plan, target)
-
-    def provision_ssh(self, plan: DockerBottlePlan, target: str) -> None:
-        _ssh.provision_ssh(plan, target)
 
     def provision_git(self, plan: DockerBottlePlan, target: str) -> None:
         _git.provision_git(plan, target)
