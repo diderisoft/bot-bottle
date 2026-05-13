@@ -55,8 +55,35 @@ def pipelock_bottle_allowlist(bottle: Bottle) -> list[str]:
     return list(bottle.egress.allowlist)
 
 
+def pipelock_token_hosts(bottle: Bottle) -> list[str]:
+    """Hostnames the cred-proxy sidecar (PRD 0010) talks to upstream
+    on the agent's behalf. Derived from `bottle.tokens[]`. Returned
+    sorted+deduped.
+
+    These hosts must be on pipelock's allowlist so cred-proxy's
+    outbound HTTPS traffic can leave the egress network, and on
+    pipelock's TLS-passthrough list so pipelock does not MITM them —
+    cred-proxy validates real upstream certs with the system CA store,
+    so a pipelock-bumped cert would fail trust."""
+    hosts: set[str] = set()
+    for t in bottle.tokens:
+        if t.Kind == "github":
+            hosts.add("api.github.com")
+            hosts.add("github.com")
+        elif t.Kind == "gitea":
+            if t.UpstreamHost:
+                hosts.add(t.UpstreamHost)
+        elif t.Kind == "npm":
+            hosts.add("registry.npmjs.org")
+        elif t.Kind == "anthropic":
+            # Already on DEFAULT_ALLOWLIST + DEFAULT_TLS_PASSTHROUGH.
+            hosts.add("api.anthropic.com")
+    return sorted(hosts)
+
+
 def pipelock_effective_allowlist(bottle: Bottle) -> list[str]:
-    """Deduplicated union of: baked-in defaults, bottle.egress.allowlist.
+    """Deduplicated union of: baked-in defaults, bottle.egress.allowlist,
+    and the cred-proxy upstream hosts derived from bottle.tokens.
     Sorted for stability. Git upstreams declared in `bottle.git` do NOT
     contribute here — git traffic flows through the per-agent git-gate
     sidecar (PRD 0008), not pipelock."""
@@ -66,6 +93,22 @@ def pipelock_effective_allowlist(bottle: Bottle) -> list[str]:
     for h in pipelock_bottle_allowlist(bottle):
         if h:
             seen.setdefault(h, None)
+    for h in pipelock_token_hosts(bottle):
+        seen.setdefault(h, None)
+    return sorted(seen.keys())
+
+
+def pipelock_effective_tls_passthrough(bottle: Bottle) -> list[str]:
+    """Hostnames pipelock should pass through (no TLS MITM, no body
+    scan). Default carries the LLM API endpoint (its request bodies
+    legitimately trip DLP); cred-proxy upstream hosts are added so
+    cred-proxy's HTTPS client (which trusts only the real CA bundle)
+    can complete the upstream handshake."""
+    seen: dict[str, None] = {}
+    for h in DEFAULT_TLS_PASSTHROUGH:
+        seen.setdefault(h, None)
+    for h in pipelock_token_hosts(bottle):
+        seen.setdefault(h, None)
     return sorted(seen.keys())
 
 
@@ -135,7 +178,7 @@ def pipelock_build_config(
             "enabled": True,
             "ca_cert": ca_cert_path,
             "ca_key": ca_key_path,
-            "passthrough_domains": list(DEFAULT_TLS_PASSTHROUGH),
+            "passthrough_domains": pipelock_effective_tls_passthrough(bottle),
         }
     return cfg
 
