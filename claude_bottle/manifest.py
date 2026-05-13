@@ -7,6 +7,7 @@ Schema (see CLAUDE.md "Intended design"):
       "<bottle-name>": {
         "env":     { "<NAME>": <env-entry>, ... },
         "git":     [ <git-entry>, ... ],
+        "tokens":  [ <token-entry>, ... ],
         "egress":  { "allowlist": [ "<hostname>", ... ] }
       }
     },
@@ -113,6 +114,94 @@ class GitEntry:
         )
 
 
+TOKEN_KINDS = ("anthropic", "github", "gitea", "npm")
+
+
+@dataclass(frozen=True)
+class TokenEntry:
+    """One credential the per-bottle cred-proxy sidecar (PRD 0010)
+    holds and injects on the agent's behalf.
+
+    `Kind` selects the route handler: `anthropic` / `github` / `npm`
+    have fixed upstream URLs; `gitea` requires an explicit `Url`
+    because the upstream is per-instance.
+
+    `TokenRef` is the name of the host env var the CLI resolves at
+    launch time. The value is forwarded into the cred-proxy
+    container's environ via `docker run -e NAME` — never onto argv,
+    never into a file. The value does NOT land in the agent's
+    environ.
+
+    `UpstreamHost` is parsed from `Url` for `gitea` entries (or the
+    documented default for the other kinds). It exists so the
+    cross-validator can spot collisions with `bottle.git` upstreams
+    without re-parsing URLs at every call site."""
+
+    Kind: str
+    TokenRef: str
+    Url: str = ""
+    UpstreamHost: str = ""
+
+    @classmethod
+    def from_dict(cls, bottle_name: str, idx: int, raw: object) -> "TokenEntry":
+        d = _as_json_object(raw, f"bottle '{bottle_name}' tokens[{idx}]")
+        kind = d.get("Kind")
+        if not isinstance(kind, str) or not kind:
+            die(
+                f"bottle '{bottle_name}' tokens[{idx}] missing required string field "
+                f"'Kind'"
+            )
+        if kind not in TOKEN_KINDS:
+            die(
+                f"bottle '{bottle_name}' tokens[{idx}] Kind {kind!r} is not one of "
+                f"{', '.join(TOKEN_KINDS)}"
+            )
+        token_ref = d.get("TokenRef")
+        if not isinstance(token_ref, str) or not token_ref:
+            die(
+                f"bottle '{bottle_name}' tokens[{idx}] ({kind}) missing required "
+                f"string field 'TokenRef' (name of the host env var to forward)"
+            )
+        url_raw = d.get("Url")
+        if url_raw is None:
+            url = ""
+        elif isinstance(url_raw, str):
+            url = url_raw
+        else:
+            die(
+                f"bottle '{bottle_name}' tokens[{idx}] ({kind}) Url must be a string "
+                f"(was {type(url_raw).__name__})"
+            )
+        if kind == "gitea":
+            if not url:
+                die(
+                    f"bottle '{bottle_name}' tokens[{idx}] (gitea) requires a Url "
+                    f"(the Gitea instance, e.g. https://gitea.dideric.is)"
+                )
+            host = _parse_https_host(
+                url, f"bottle '{bottle_name}' tokens[{idx}] (gitea) Url"
+            )
+        else:
+            if url:
+                die(
+                    f"bottle '{bottle_name}' tokens[{idx}] ({kind}) cannot set Url; "
+                    f"the upstream for this Kind is fixed by cred-proxy. Drop the "
+                    f"'Url' field."
+                )
+            host = _TOKEN_DEFAULT_HOST[kind]
+        return cls(Kind=kind, TokenRef=token_ref, Url=url, UpstreamHost=host)
+
+
+# Hostnames the cred-proxy talks to upstream for the non-gitea kinds.
+# Used both for the proxy's route table and for the manifest cross-
+# validator that rejects overlap with `bottle.git`.
+_TOKEN_DEFAULT_HOST: dict[str, str] = {
+    "anthropic": "api.anthropic.com",
+    "github": "github.com",
+    "npm": "registry.npmjs.org",
+}
+
+
 DLP_ACTIONS = ("block", "warn")
 
 
@@ -168,6 +257,7 @@ class BottleEgress:
 class Bottle:
     env: Mapping[str, str] = field(default_factory=_empty_str_dict)
     git: tuple[GitEntry, ...] = ()
+    tokens: tuple[TokenEntry, ...] = ()
     egress: BottleEgress = field(default_factory=BottleEgress)
 
     @classmethod
@@ -215,6 +305,21 @@ class Bottle:
             )
             _validate_unique_git_names(name, git)
 
+        tokens: tuple[TokenEntry, ...] = ()
+        tokens_raw = d.get("tokens")
+        if tokens_raw is not None:
+            if not isinstance(tokens_raw, list):
+                die(
+                    f"bottle '{name}' tokens must be an array "
+                    f"(was {type(tokens_raw).__name__})"
+                )
+            tokens_list = cast(list[object], tokens_raw)
+            tokens = tuple(
+                TokenEntry.from_dict(name, i, entry)
+                for i, entry in enumerate(tokens_list)
+            )
+            _validate_tokens(name, tokens, git)
+
         egress_raw = d.get("egress")
         egress = (
             BottleEgress.from_dict(name, egress_raw)
@@ -222,7 +327,7 @@ class Bottle:
             else BottleEgress()
         )
 
-        return cls(env=env, git=git, egress=egress)
+        return cls(env=env, git=git, tokens=tokens, egress=egress)
 
 
 @dataclass(frozen=True)
@@ -439,6 +544,65 @@ def _parse_git_upstream(url: str, label: str) -> tuple[str, str, str, str]:
     if not host:
         die(f"{label} host is empty in {url!r}")
     return (user, host, port, path)
+
+
+def _parse_https_host(url: str, label: str) -> str:
+    """Extract the host from an `https://host[:port][/path]` URL.
+    Dies if `url` is not an https:// URL or the host segment is empty.
+    Used to derive `TokenEntry.UpstreamHost` from a gitea Url so the
+    cross-validator can spot collisions with `bottle.git` hosts."""
+    if not url.startswith("https://"):
+        die(f"{label} must be an https:// URL (was {url!r})")
+    rest = url[len("https://"):]
+    hostport, _, _ = rest.partition("/")
+    host, _, _port = hostport.partition(":")
+    if not host:
+        die(f"{label} host is empty in {url!r}")
+    return host
+
+
+def _validate_tokens(
+    bottle_name: str,
+    tokens: tuple[TokenEntry, ...],
+    git: tuple[GitEntry, ...],
+) -> None:
+    """Cross-validation for `bottle.tokens`:
+
+    - At most one entry per Kind, except `gitea` which may have
+      multiple entries (one per Gitea instance) with distinct Urls.
+    - No overlap with `bottle.git` hosts: a `github` or `gitea` token
+      whose host matches a `bottle.git` upstream host would put two
+      credential brokers on the same remote (git-gate's gitleaks-
+      scanning gate AND cred-proxy's bearer injection). Pick one.
+    """
+    by_kind: dict[str, list[TokenEntry]] = {}
+    for t in tokens:
+        by_kind.setdefault(t.Kind, []).append(t)
+    for kind, entries in by_kind.items():
+        if kind == "gitea":
+            seen: dict[str, None] = {}
+            for e in entries:
+                if e.Url in seen:
+                    die(
+                        f"bottle '{bottle_name}' tokens has duplicate gitea Url "
+                        f"{e.Url!r}; one entry per Gitea instance."
+                    )
+                seen[e.Url] = None
+        elif len(entries) > 1:
+            die(
+                f"bottle '{bottle_name}' tokens has {len(entries)} entries with "
+                f"Kind {kind!r}; at most one is allowed (gitea is the only Kind "
+                f"that may have multiple entries)."
+            )
+
+    git_hosts = {g.UpstreamHost for g in git}
+    for t in tokens:
+        if t.Kind in ("github", "gitea") and t.UpstreamHost in git_hosts:
+            die(
+                f"bottle '{bottle_name}' token ({t.Kind}, host {t.UpstreamHost!r}) "
+                f"overlaps a bottle.git upstream on the same host. git-gate already "
+                f"brokers this remote; drop the token entry or remove the git entry."
+            )
 
 
 def _validate_unique_git_names(bottle_name: str, git: tuple[GitEntry, ...]) -> None:
