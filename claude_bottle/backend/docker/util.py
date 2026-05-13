@@ -100,12 +100,20 @@ def slugify(name: str) -> str:
     return slug
 
 
-def build_image(ref: str, context: str) -> None:
+def build_image(ref: str, context: str, *, dockerfile: str = "") -> None:
     """Invokes `docker build` every call. Layer cache makes no-change
     rebuilds cheap; running every time means Dockerfile edits land
-    without manual `docker rmi`."""
+    without manual `docker rmi`.
+
+    `dockerfile` is an optional path (relative to `context`, or
+    absolute) for callers that need to build from a non-default
+    Dockerfile in the same context — e.g. `Dockerfile.git-gate`."""
     info(f"building image {ref} from {context} (layer cache keeps repeat builds fast)")
-    subprocess.run(["docker", "build", "-t", ref, context], check=True)
+    args = ["docker", "build", "-t", ref]
+    if dockerfile:
+        args.extend(["-f", dockerfile])
+    args.append(context)
+    subprocess.run(args, check=True)
 
 
 _TRUST_DIALOG_NODE_SCRIPT = (
