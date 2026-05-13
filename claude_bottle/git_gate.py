@@ -1,11 +1,19 @@
 """Per-agent git-gate (PRD 0008).
 
 A third per-agent sidecar that fronts the bottle's declared git
-upstreams. Each `bottle.git` entry maps to a bare repo on the gate;
-the gate runs `git daemon --enable=receive-pack` so the agent can
-push to it via `git://<gate>/<name>.git`. A pre-receive hook scans
-the incoming refs with gitleaks; on clean, it forwards the refs to
-the real upstream using a credential the gate holds.
+upstreams as a transparent mirror. Each `bottle.git` entry maps to
+a bare repo on the gate; `git daemon` serves the bare repos over
+`git://<gate>/<name>.git`. Two hooks make the mirror bidirectional:
+
+- **`pre-receive`** (push path) — gitleaks-scans incoming refs and,
+  on clean, forwards them to the real upstream with the
+  gate-resident credential.
+- **`--access-hook`** (fetch path) — runs `git fetch origin --prune`
+  against the real upstream before every `upload-pack`, so an
+  agent fetch returns whatever the upstream has *now*. Fail-closed
+  if the upstream is unreachable.
+
+The agent never sees the upstream credential under either path.
 
 Why a third sidecar (not folded into pipelock or ssh-gate): the
 gate is the only one of the three that holds upstream push
@@ -53,16 +61,20 @@ class GitGateUpstream:
 class GitGatePlan:
     """Output of GitGate.prepare; consumed by .start.
 
-    `upstreams` + `slug` + `entrypoint_script` + `hook_script` are
-    filled in at prepare time (host-side, side-effect-free on docker).
-    The network fields are populated by the backend's launch step via
-    `dataclasses.replace` once those networks exist. Empty defaults
-    are sentinels meaning "not yet set"; `.start` validates that
-    they are populated."""
+    The script + slug + upstream fields are filled at prepare time
+    (host-side, side-effect-free on docker). The network fields are
+    populated by the backend's launch step via `dataclasses.replace`
+    once those networks exist. Empty defaults are sentinels meaning
+    "not yet set"; `.start` validates that they are populated.
+
+    `hook_script` is the shared `pre-receive` for push-time gating;
+    `access_hook_script` is `git daemon`'s `--access-hook` for the
+    fetch-time upstream refresh."""
 
     slug: str
     entrypoint_script: Path
     hook_script: Path
+    access_hook_script: Path
     upstreams: tuple[GitGateUpstream, ...]
     internal_network: str = ""
     egress_network: str = ""
@@ -101,8 +113,8 @@ def git_gate_render_entrypoint(upstreams: tuple[GitGateUpstream, ...]) -> str:
     upstream, then `exec git daemon`. The function reads
     `/git-gate/creds/<name>-{key,known_hosts}` (laid down by
     `DockerGitGate.start` via docker cp) and wires them into each
-    bare repo's config so the shared pre-receive hook can pick them
-    up at push time."""
+    bare repo's config; the access-hook + pre-receive hook pick those
+    paths up at fetch / push time."""
     lines = [
         "#!/bin/sh",
         "set -eu",
@@ -121,8 +133,13 @@ def git_gate_render_entrypoint(upstreams: tuple[GitGateUpstream, ...]) -> str:
         "  repo=/git/${name}.git",
         "  if [ ! -d \"$repo\" ]; then",
         "    git init --bare \"$repo\" >/dev/null",
+        # --mirror=fetch sets remote.origin.fetch = +refs/*:refs/* so",
+        # a later `git fetch origin` mirrors the upstream's full ref",
+        # graph (heads, tags, notes) into the bare repo at canonical",
+        # paths. It does NOT set remote.origin.mirror=true, so an",
+        # explicit `git push origin <ref>:<ref>` still pushes one ref.",
+        "    git -C \"$repo\" remote add --mirror=fetch origin \"$upstream_url\"",
         "  fi",
-        "  git -C \"$repo\" config remote.upstream.url \"$upstream_url\"",
         "  git -C \"$repo\" config git-gate.identityFile \"$keyfile\"",
         "  git -C \"$repo\" config git-gate.knownHosts \"$hostsfile\"",
         "  git -C \"$repo\" config receive.denyCurrentBranch ignore",
@@ -143,6 +160,7 @@ def git_gate_render_entrypoint(upstreams: tuple[GitGateUpstream, ...]) -> str:
         "  --base-path=/git \\",
         "  --export-all \\",
         "  --enable=receive-pack \\",
+        "  --access-hook=/etc/git-gate/access-hook \\",
         "  --verbose",
     ])
     return "\n".join(lines) + "\n"
@@ -150,9 +168,9 @@ def git_gate_render_entrypoint(upstreams: tuple[GitGateUpstream, ...]) -> str:
 
 def git_gate_render_hook() -> str:
     """The shared pre-receive hook: gitleaks-scan all incoming refs,
-    then forward each accepted ref to the real upstream using the
-    per-repo credential. Failure in either phase aborts the push so
-    the agent sees a real rejection. POSIX sh.
+    then forward each accepted ref to the real upstream (`origin`)
+    using the per-repo credential. Failure in either phase aborts
+    the push so the agent sees a real rejection. POSIX sh.
 
     Two phases (scan all, then push all) keeps a hit on ref N from
     half-pushing refs 1..N-1; both phases re-read stdin from a temp
@@ -183,7 +201,8 @@ while IFS=' ' read -r old new ref; do
   fi
 done < "$refs_file"
 
-# Phase 2: forward each ref to the upstream.
+# Phase 2: forward each ref to the upstream (`origin`, configured
+# in the entrypoint via `git remote add --mirror=fetch`).
 keyfile=$(git config --get git-gate.identityFile)
 hostsfile=$(git config --get git-gate.knownHosts)
 if [ ! -f "$hostsfile" ]; then
@@ -200,13 +219,59 @@ while IFS=' ' read -r old new ref; do
   else
     refspec="$new:$ref"
   fi
-  echo "git-gate: forwarding $ref to upstream" >&2
-  if ! GIT_SSH_COMMAND="$ssh_cmd" git push upstream "$refspec" 1>&2; then
+  echo "git-gate: forwarding $ref to origin" >&2
+  if ! GIT_SSH_COMMAND="$ssh_cmd" git push origin "$refspec" 1>&2; then
     echo "git-gate: upstream push failed for $ref" >&2
     exit 1
   fi
 done < "$refs_file"
 
+exit 0
+"""
+
+
+def git_gate_render_access_hook() -> str:
+    """`git daemon --access-hook` script. Runs before each protocol
+    service; for `upload-pack` (fetch / clone / ls-remote / pull) it
+    refreshes the bare repo from upstream first, so the response
+    reflects upstream's current state. For other services (notably
+    `receive-pack`) it returns 0 immediately and lets the existing
+    pre-receive hook gate the operation. POSIX sh.
+
+    The hook receives:
+      $1  service name (`upload-pack`, `receive-pack`, ...)
+      $2  absolute path to the resolved repo
+      $3  client hostname (unused)
+      $4  client tcp address (unused)
+
+    Fail-closed on upstream errors: the agent's fetch fails too,
+    so it never silently sees stale data — matches the PRD's
+    'equivalent to operations against the upstream' contract."""
+    return r"""#!/bin/sh
+# git-gate access-hook (PRD 0008). $1=service $2=repo $3=host $4=peer
+set -u
+service=$1
+repo_dir=$2
+
+# Push path keeps its own gating in pre-receive (gitleaks +
+# forward). Only refresh-from-upstream on fetch operations.
+if [ "$service" != "upload-pack" ]; then
+  exit 0
+fi
+
+keyfile=$(git -C "$repo_dir" config --get git-gate.identityFile 2>/dev/null || true)
+hostsfile=$(git -C "$repo_dir" config --get git-gate.knownHosts 2>/dev/null || true)
+if [ -z "$keyfile" ] || [ ! -f "$hostsfile" ]; then
+  echo "git-gate: missing credentials for $repo_dir; refusing fetch" >&2
+  exit 1
+fi
+ssh_cmd="ssh -i $keyfile -o UserKnownHostsFile=$hostsfile -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes"
+
+echo "git-gate: refreshing $repo_dir from upstream" >&2
+if ! GIT_SSH_COMMAND="$ssh_cmd" git -C "$repo_dir" fetch origin --prune >&2; then
+  echo "git-gate: upstream fetch failed for $repo_dir; refusing to serve stale data" >&2
+  exit 1
+fi
 exit 0
 """
 
@@ -219,8 +284,8 @@ class GitGate(ABC):
 
     def prepare(self, bottle: Bottle, slug: str, stage_dir: Path) -> GitGatePlan:
         """Compute the upstream table from `bottle.git` and write the
-        entrypoint + pre-receive scripts (mode 600) under `stage_dir`.
-        Pure host-side, no docker subprocess.
+        entrypoint, pre-receive hook, and access-hook scripts (mode
+        600) under `stage_dir`. Pure host-side, no docker subprocess.
 
         Returned plan is incomplete: the launch step must fill
         `internal_network` / `egress_network` via `dataclasses.replace`
@@ -232,10 +297,17 @@ class GitGate(ABC):
         hook = stage_dir / "git_gate_pre_receive.sh"
         hook.write_text(git_gate_render_hook())
         hook.chmod(0o600)
+        access_hook = stage_dir / "git_gate_access_hook.sh"
+        access_hook.write_text(git_gate_render_access_hook())
+        # 0o700 (not 0o600): git daemon execs --access-hook directly,
+        # not via `sh`, so the script needs the x bit. docker cp
+        # preserves source mode into the container.
+        access_hook.chmod(0o700)
         return GitGatePlan(
             slug=slug,
             entrypoint_script=entrypoint,
             hook_script=hook,
+            access_hook_script=access_hook,
             upstreams=upstreams,
         )
 

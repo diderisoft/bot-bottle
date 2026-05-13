@@ -23,6 +23,7 @@ GIT_GATE_DOCKERFILE = "Dockerfile.git-gate"
 
 GIT_GATE_ENTRYPOINT_IN_CONTAINER = "/git-gate-entrypoint.sh"
 GIT_GATE_HOOK_IN_CONTAINER = "/etc/git-gate/pre-receive"
+GIT_GATE_ACCESS_HOOK_IN_CONTAINER = "/etc/git-gate/access-hook"
 GIT_GATE_CREDS_DIR_IN_CONTAINER = "/git-gate/creds"
 
 # git daemon's default listening port. Surfaced as a constant because
@@ -85,6 +86,11 @@ class DockerGitGate(GitGate):
                 f"git-gate hook missing at {plan.hook_script}; "
                 f"GitGate.prepare must run first"
             )
+        if not plan.access_hook_script.is_file():
+            die(
+                f"git-gate access-hook missing at {plan.access_hook_script}; "
+                f"GitGate.prepare must run first"
+            )
 
         build_git_gate_image()
 
@@ -111,6 +117,7 @@ class DockerGitGate(GitGate):
         cps: list[tuple[str, str, str]] = [
             (str(plan.entrypoint_script), GIT_GATE_ENTRYPOINT_IN_CONTAINER, "entrypoint"),
             (str(plan.hook_script), GIT_GATE_HOOK_IN_CONTAINER, "pre-receive hook"),
+            (str(plan.access_hook_script), GIT_GATE_ACCESS_HOOK_IN_CONTAINER, "access-hook"),
         ]
         for u in plan.upstreams:
             keypath = expand_tilde(u.identity_file)

@@ -10,6 +10,7 @@ from claude_bottle.git_gate import (
     GitGatePlan,
     GitGateUpstream,
     git_gate_known_hosts_line,
+    git_gate_render_access_hook,
     git_gate_render_entrypoint,
     git_gate_render_hook,
     git_gate_upstreams_for_bottle,
@@ -87,6 +88,12 @@ class TestEntrypointRender(unittest.TestCase):
         self.assertIn("exec git daemon", script)
         self.assertIn("--enable=receive-pack", script)
         self.assertIn("--base-path=/git", script)
+        # The access-hook is what makes fetch a mirror operation
+        # against the upstream (PRD 0008 v1.1).
+        self.assertIn("--access-hook=/etc/git-gate/access-hook", script)
+        # Each repo's `origin` remote is wired to the upstream via
+        # --mirror=fetch so `git fetch origin` mirrors all refs.
+        self.assertIn("remote add --mirror=fetch origin", script)
 
     def test_empty_upstreams_still_execs_daemon(self):
         # A no-upstream gate is a no-op for repos but the daemon still
@@ -97,15 +104,34 @@ class TestEntrypointRender(unittest.TestCase):
 
 
 class TestHookRender(unittest.TestCase):
-    def test_hook_has_two_phases(self):
+    def test_pre_receive_hook_has_two_phases(self):
         hook = git_gate_render_hook()
-        # Phase 1: gitleaks. Phase 2: forward.
+        # Phase 1: gitleaks. Phase 2: forward to origin.
         self.assertIn("gitleaks git", hook)
-        self.assertIn("git push upstream", hook)
+        self.assertIn("git push origin", hook)
         # KnownHostKey absence is fail-closed.
         self.assertIn("refusing to push", hook)
         # Stdin is buffered to a tempfile so both phases can re-read.
         self.assertIn("refs_file=$(mktemp)", hook)
+
+
+class TestAccessHookRender(unittest.TestCase):
+    def test_access_hook_refreshes_origin_on_upload_pack(self):
+        hook = git_gate_render_access_hook()
+        # Service-name guard: only upload-pack (fetch / clone / pull /
+        # ls-remote) triggers the upstream refresh; receive-pack
+        # bypasses this and the pre-receive hook gates it instead.
+        self.assertIn('service=$1', hook)
+        self.assertIn('"$service" != "upload-pack"', hook)
+        # The fetch is what makes the gate a transparent mirror.
+        self.assertIn("git -C \"$repo_dir\" fetch origin --prune", hook)
+
+    def test_access_hook_fail_closed_on_upstream_error(self):
+        hook = git_gate_render_access_hook()
+        # Upstream-fetch failure exits non-zero, which propagates to
+        # the agent's fetch as a real error rather than stale data.
+        self.assertIn("refusing to serve stale data", hook)
+        self.assertIn("exit 1", hook)
 
 
 class TestPrepare(unittest.TestCase):
@@ -117,7 +143,7 @@ class TestPrepare(unittest.TestCase):
 
         shutil.rmtree(self.stage, ignore_errors=True)
 
-    def test_prepare_writes_entrypoint_and_hook_mode_600(self):
+    def test_prepare_writes_all_three_scripts(self):
         plan = _StubGate().prepare(
             fixture_with_git().bottles["dev"], "demo", self.stage
         )
@@ -127,8 +153,17 @@ class TestPrepare(unittest.TestCase):
         self.assertEqual(
             self.stage / "git_gate_pre_receive.sh", plan.hook_script
         )
+        self.assertEqual(
+            self.stage / "git_gate_access_hook.sh", plan.access_hook_script
+        )
+        # Entrypoint + pre-receive are mode 600 (loaded into the
+        # gate by docker cp and then `install -m 755`'d into each
+        # bare repo's hooks/ — source bit doesn't matter). The
+        # access-hook is execed directly by git daemon, so it has to
+        # carry the x bit through docker cp.
         self.assertEqual(0o600, os.stat(plan.entrypoint_script).st_mode & 0o777)
         self.assertEqual(0o600, os.stat(plan.hook_script).st_mode & 0o777)
+        self.assertEqual(0o700, os.stat(plan.access_hook_script).st_mode & 0o777)
 
     def test_prepare_plan_carries_upstreams_and_slug(self):
         plan = _StubGate().prepare(

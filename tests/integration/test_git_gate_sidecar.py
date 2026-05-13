@@ -2,16 +2,19 @@
 
 Two tests against a real Docker daemon:
 
-  1. A freshly-started gate answers ls-remote requests on its
-     internal-network address. Proves the daemon is up and the
-     bare repos rendered by the entrypoint are exported.
+  1. ls-remote against a gate whose upstream is unreachable fails
+     with the access-hook's fail-closed rejection. Proves the
+     daemon is bound to its port AND the access-hook is wired:
+     a working ls-remote against the gate is necessarily a working
+     ls-remote against the upstream (PRD 0008's transparent-mirror
+     contract).
   2. A push containing a gitleaks-detectable secret is rejected
      by the pre-receive hook with a non-zero exit on the agent
-     side and a gitleaks-rejection line in the response. This is
-     the PRD's success criterion.
+     side and a gitleaks-rejection line in the response. The PRD's
+     primary success criterion.
 
-A successful clean-push roundtrip needs a real upstream SSH host;
-deferred to a follow-up integration test.
+A successful round-trip (clone through gate reflects upstream)
+needs a reachable upstream SSH host; deferred to a follow-up.
 """
 
 import dataclasses
@@ -124,14 +127,18 @@ class TestGitGateSidecar(unittest.TestCase):
         "skipped under act_runner: docker socket mount topology breaks "
         "in-process visibility of networks created on the host daemon",
     )
-    def test_ls_remote_succeeds_against_fresh_gate(self):
-        """A freshly-started gate has an empty bare repo per upstream;
-        `git ls-remote` returns no refs and exits 0. Probes the gate
-        from a sibling container on the same internal network — same
-        access topology the agent uses in production."""
+    def test_ls_remote_fails_closed_when_upstream_unreachable(self):
+        """The gate's access-hook runs `git fetch origin --prune` before
+        every upload-pack. With the fixture's deliberately unreachable
+        `ssh://git@upstream.invalid/...`, that fetch fails and the
+        hook exits 1; the daemon reports access-denied. Asserting
+        non-zero here is what proves the access-hook is wired: under
+        the v1 (push-only) design ls-remote against a fresh gate
+        returned exit 0 with no refs."""
         gate = self._start_gate("foo")
-        # git ls-remote retries weren't strictly needed in local runs,
-        # but the daemon takes a beat to bind after docker start.
+        # Daemon still has to bind first; retry the TCP connect a few
+        # times. The expected end state is a non-zero exit from the
+        # daemon's access-denied response — not a connection refused.
         probe = subprocess.run(
             ["docker", "run", "--rm",
              "--network", self.internal_net,
@@ -139,15 +146,23 @@ class TestGitGateSidecar(unittest.TestCase):
              CLIENT_IMAGE,
              "-c",
              f"for i in $(seq 1 15); do "
-             f"  git ls-remote git://{gate}/foo.git >/tmp/out 2>&1 && exit 0;"
+             f"  out=$(git ls-remote git://{gate}/foo.git 2>&1) && exit 99;"
+             f"  case \"$out\" in *'access denied'*|*'not exported'*) "
+             f"    echo \"$out\"; exit 1;; esac;"
              f"  sleep 1;"
              f"done;"
-             f"cat /tmp/out; exit 1"],
+             f"echo TIMEOUT; exit 2"],
             capture_output=True, text=True, timeout=60, check=False,
         )
+        # exit 1: daemon access-denied as expected. exit 99 would mean
+        # ls-remote actually succeeded against the unreachable upstream
+        # (impossible — would indicate stale-data serving, the very
+        # thing the access-hook is meant to prevent).
         self.assertEqual(
-            0, probe.returncode,
-            f"ls-remote failed: stdout={probe.stdout!r} stderr={probe.stderr!r}",
+            1, probe.returncode,
+            f"expected fail-closed access-denied; got "
+            f"exit={probe.returncode} stdout={probe.stdout!r} "
+            f"stderr={probe.stderr!r}",
         )
 
     @unittest.skipIf(
@@ -164,10 +179,14 @@ class TestGitGateSidecar(unittest.TestCase):
         push_script = (
             "set -e\n"
             "cd /tmp\n"
-            # Wait for git daemon to bind. ls-remote retries until
-            # connection works; we then assume the gate is ready.
+            # Wait for git daemon to bind. Under the v1.1 design,
+            # ls-remote never returns 0 against an unreachable
+            # upstream (access-hook fail-closed), so we wait for *any*
+            # response (the daemon's access-denied line) as the
+            # readiness signal.
             f"for i in $(seq 1 15); do "
-            f"  git ls-remote git://{gate}/foo.git >/dev/null 2>&1 && break;"
+            f"  out=$(git ls-remote git://{gate}/foo.git 2>&1) || true;"
+            f"  case \"$out\" in *'remote error'*|*'access denied'*) break;; esac;"
             f"  sleep 1;"
             f"done\n"
             "git init -q -b main repo\n"
