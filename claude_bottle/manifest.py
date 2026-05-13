@@ -6,7 +6,6 @@ Schema (see CLAUDE.md "Intended design"):
     "bottles": {
       "<bottle-name>": {
         "env":     { "<NAME>": <env-entry>, ... },
-        "ssh":     [ <ssh-entry>, ... ],
         "git":     [ <git-entry>, ... ],
         "egress":  { "allowlist": [ "<hostname>", ... ] }
       }
@@ -20,8 +19,9 @@ Schema (see CLAUDE.md "Intended design"):
     }
   }
 
-Bottles group shared infrastructure (SSH keys, known hosts, egress allowlist)
-that multiple agents can reference. Every agent must reference a bottle.
+Bottles group shared infrastructure (git upstreams + their gate credentials,
+egress allowlist) that multiple agents can reference. Every agent must
+reference a bottle.
 
 Validation runs once at construction (Manifest.from_json_obj) so getters
 can trust the shape.
@@ -40,44 +40,6 @@ from .log import die
 
 def _empty_str_dict() -> dict[str, str]:
     return {}
-
-
-@dataclass(frozen=True)
-class SshEntry:
-    Host: str
-    IdentityFile: str
-    Hostname: str = ""
-    User: str = ""
-    Port: str = ""
-    KnownHostKey: str = ""
-
-    @classmethod
-    def from_dict(cls, bottle_name: str, idx: int, raw: object) -> "SshEntry":
-        d = _as_json_object(raw, f"bottle '{bottle_name}' ssh[{idx}]")
-        host = d.get("Host")
-        if not isinstance(host, str) or not host:
-            die(f"bottle '{bottle_name}' ssh[{idx}] missing required string field 'Host'")
-        ident = d.get("IdentityFile")
-        if not isinstance(ident, str) or not ident:
-            die(
-                f"bottle '{bottle_name}' ssh '{host}' missing required string field "
-                f"'IdentityFile'"
-            )
-        hostname = _opt_str(d.get("Hostname"), f"bottle '{bottle_name}' ssh '{host}' Hostname")
-        user = _opt_str(d.get("User"), f"bottle '{bottle_name}' ssh '{host}' User")
-        port = _opt_port(d.get("Port"), f"bottle '{bottle_name}' ssh '{host}' Port")
-        khk = _opt_str(
-            d.get("KnownHostKey"),
-            f"bottle '{bottle_name}' ssh '{host}' KnownHostKey",
-        )
-        return cls(
-            Host=host,
-            IdentityFile=ident,
-            Hostname=hostname,
-            User=user,
-            Port=port,
-            KnownHostKey=khk,
-        )
 
 
 @dataclass(frozen=True)
@@ -205,7 +167,6 @@ class BottleEgress:
 @dataclass(frozen=True)
 class Bottle:
     env: Mapping[str, str] = field(default_factory=_empty_str_dict)
-    ssh: tuple[SshEntry, ...] = ()
     git: tuple[GitEntry, ...] = ()
     egress: BottleEgress = field(default_factory=BottleEgress)
 
@@ -221,6 +182,15 @@ class Bottle:
                 f"definition."
             )
 
+        if "ssh" in d:
+            die(
+                f"bottle '{name}' has an 'ssh' field, which has been removed "
+                f"(PRD 0009). Move each entry to 'git': declare the upstream "
+                f"as a git remote with Name + Upstream URL + IdentityFile, "
+                f"and the per-bottle git-gate (PRD 0008) will hold the "
+                f"credential and gitleaks-scan pushes."
+            )
+
         env: dict[str, str] = {}
         env_raw = d.get("env")
         if env_raw is not None:
@@ -233,17 +203,6 @@ class Bottle:
                     )
                 env[var] = value
 
-        ssh: tuple[SshEntry, ...] = ()
-        ssh_raw = d.get("ssh")
-        if ssh_raw is not None:
-            if not isinstance(ssh_raw, list):
-                die(f"bottle '{name}' ssh must be an array (was {type(ssh_raw).__name__})")
-            ssh_list = cast(list[object], ssh_raw)
-            ssh = tuple(
-                SshEntry.from_dict(name, i, entry)
-                for i, entry in enumerate(ssh_list)
-            )
-
         git: tuple[GitEntry, ...] = ()
         git_raw = d.get("git")
         if git_raw is not None:
@@ -255,7 +214,6 @@ class Bottle:
                 for i, entry in enumerate(git_list)
             )
             _validate_unique_git_names(name, git)
-            _validate_no_shadow_route(name, ssh, git)
 
         egress_raw = d.get("egress")
         egress = (
@@ -264,7 +222,7 @@ class Bottle:
             else BottleEgress()
         )
 
-        return cls(env=env, ssh=ssh, git=git, egress=egress)
+        return cls(env=env, git=git, egress=egress)
 
 
 @dataclass(frozen=True)
@@ -434,19 +392,6 @@ def _opt_str(value: object, label: str) -> str:
     return value
 
 
-def _opt_port(value: object, label: str) -> str:
-    """Port accepts string or int (JSON-friendly) and is normalized to str."""
-    if value is None:
-        return ""
-    if isinstance(value, bool):
-        die(f"{label} must be a string or number (was boolean)")
-    if isinstance(value, int):
-        return str(value)
-    if isinstance(value, str):
-        return value
-    die(f"{label} must be a string or number (was {type(value).__name__})")
-
-
 def _opt_extra_hosts(value: object, label: str) -> dict[str, str]:
     """Validate a `{hostname: ip}` object and return a plain dict. None
     yields an empty dict so callers can treat ExtraHosts as always
@@ -507,27 +452,3 @@ def _validate_unique_git_names(bottle_name: str, git: tuple[GitEntry, ...]) -> N
         seen[g.Name] = None
 
 
-def _validate_no_shadow_route(
-    bottle_name: str,
-    ssh: tuple[SshEntry, ...],
-    git: tuple[GitEntry, ...],
-) -> None:
-    """Reject if any git entry's (host, port) matches an ssh entry's
-    (Hostname, Port). The same upstream reachable two ways — once through
-    the L4 ssh-gate, once through the gitleaks-bearing git-gate — defeats
-    the git-gate."""
-    ssh_targets: dict[tuple[str, str], str] = {}
-    for e in ssh:
-        if not e.Hostname:
-            continue
-        port = e.Port or "22"
-        ssh_targets[(e.Hostname, port)] = e.Host
-    for g in git:
-        ssh_host = ssh_targets.get((g.UpstreamHost, g.UpstreamPort))
-        if ssh_host is not None:
-            die(
-                f"bottle '{bottle_name}' has ssh entry '{ssh_host}' "
-                f"({g.UpstreamHost}:{g.UpstreamPort}) and git entry '{g.Name}' "
-                f"pointing at the same upstream. The same remote reachable two "
-                f"ways defeats the git-gate; remove one."
-            )
