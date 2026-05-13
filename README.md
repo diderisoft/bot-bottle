@@ -78,13 +78,7 @@ that enforces the manifest before it leaves the host.
    │   │  built locally)  │                  │ (TLS bump, DLP,│  │     hosts
    │   │                  │                  │  allowlist)    │  │
    │   │ skills, env,     │                  └────────────────┘  │
-   │   │ ~/.ssh/config,   │                                      │
-   │   │ ~/.gitconfig     │   ssh            ┌────────────────┐  │  TCP to
-   │   │                  │ ───────────────► │ socat/ssh image│──┼──►  bottle.ssh
-   │   │                  │                  │ (alpine/socat, │  │     upstreams
-   │   │                  │                  │  L4 forwarder) │  │
-   │   │                  │                  └────────────────┘  │
-   │   │                  │                                      │
+   │   │ ~/.gitconfig     │                                      │
    │   │                  │   git ops        ┌────────────────┐  │  SSH (push/
    │   │                  │ ───────────────► │ git-gate image │──┼──►  fetch) to
    │   │                  │                  │ (gitleaks +    │  │     bottle.git
@@ -98,16 +92,12 @@ that enforces the manifest before it leaves the host.
 
 - **agent image** — built from the repo `Dockerfile` (`node:22-slim`
   base) on first run; runs `claude` with the manifest-granted skills,
-  env vars, `~/.ssh/config`, and `~/.gitconfig` (the latter for the
-  git-gate's `pushInsteadOf` rules when `bottle.git` is set).
+  env vars, and `~/.gitconfig` (the latter for the git-gate's
+  `insteadOf` rules when `bottle.git` is set).
 - **pipelock image** — per-agent sidecar. Terminates the agent's
   outbound HTTP/HTTPS, enforces the resolved allowlist, runs DLP
   scanning. Design in `docs/prds/0001-per-agent-egress-proxy-via-pipelock.md`
   and `docs/prds/0006-pipelock-tls-interception.md`.
-- **socat/ssh image** — per-agent sidecar built on `alpine/socat`.
-  One container, one socat listener per `bottle.ssh` entry, each
-  forwarding TCP to the upstream `Hostname:Port`. SSH does *not* go
-  through pipelock. Design in `docs/prds/0007-ssh-egress-gate.md`.
 - **git-gate image** — per-agent sidecar built on `zricethezav/gitleaks`
   (alpine + gitleaks + git-daemon + openssh-client). Runs
   `git daemon` over `git://` as a bidirectional mirror of each
@@ -160,14 +150,12 @@ project entries overriding home entries on key conflict).
         "GIT_AUTHOR_NAME": "didericis"
       },
 
-      "ssh": [
+      "git": [
         {
-          "Host":         "gitea",
-          "Hostname":     "gitea.dideric.is",
-          "User":         "git",
-          "Port":         30009,
+          "Name":         "claude-bottle",
+          "Upstream":     "ssh://git@gitea.dideric.is:30009/didericis/claude-bottle.git",
           "IdentityFile": "/Users/didericis/.ssh/id_ed25519_gitea",
-          "KnownHostKey": "gitea.dideric.is ssh-ed25519 AAAA..."
+          "KnownHostKey": "ssh-ed25519 AAAA..."
         }
       ],
 

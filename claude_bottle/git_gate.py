@@ -93,9 +93,8 @@ class GitGatePlan:
 
 
 def git_gate_upstreams_for_bottle(bottle: Bottle) -> tuple[GitGateUpstream, ...]:
-    """Lift each `bottle.git` entry into a GitGateUpstream. Cross-entry
-    validation (unique Names, no shadow route with bottle.ssh) already
-    ran in `manifest.Bottle.from_dict`."""
+    """Lift each `bottle.git` entry into a GitGateUpstream. Unique-Name
+    validation already ran in `manifest.Bottle.from_dict`."""
     return tuple(
         GitGateUpstream(
             name=e.Name,
