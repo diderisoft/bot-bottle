@@ -81,6 +81,8 @@ class TestDryRunPlan(unittest.TestCase):
             self.assertEqual([], plan["skills"])
             self.assertEqual([], plan["ssh_hosts"])
             self.assertEqual([], plan["ssh_gate"])
+            self.assertEqual([], plan["git_remotes"])
+            self.assertEqual([], plan["git_gate"])
             self.assertEqual(False, plan["remote_control"])
             self.assertEqual(0, plan["prompt"]["length"])
 

@@ -1,0 +1,37 @@
+# Per-agent git-gate sidecar image (PRD 0008).
+#
+# Runs `git daemon --enable=receive-pack` so the agent in the bottle
+# can push to it over git://. A shared pre-receive hook runs gitleaks
+# against each incoming ref; on clean, it forwards the ref to the real
+# upstream using a credential the gate holds. The agent never sees the
+# upstream credential.
+#
+# The agent-facing leg sits on a Docker --internal network with no
+# default route, so the image is fully self-contained: no apk pulls at
+# boot, no remote registry lookups during the entrypoint.
+
+# Base on the upstream gitleaks image (alpine + gitleaks v8.x);
+# alpine doesn't package gitleaks so this avoids a separate
+# install path. Pinned by digest for reproducibility.
+FROM zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+
+# openssh-client supplies the upstream SSH transport the pre-receive
+# hook uses to forward accepted refs. git-daemon is the listener the
+# agent pushes to (alpine ships `git-daemon` as a sub-package, not
+# part of `git`). The `git` core binary is already in the base image.
+RUN apk add --no-cache openssh-client git-daemon
+
+# Layout the gate uses at runtime:
+#   /git-gate-entrypoint.sh          — docker-cp'd at start time
+#   /etc/git-gate/pre-receive         — shared hook, docker-cp'd at start
+#   /git-gate/creds/<name>-key         — per-upstream identity, docker-cp'd
+#   /git-gate/creds/<name>-known_hosts — per-upstream known_hosts, docker-cp'd
+#   /git/<name>.git                    — bare repos, created by the entrypoint
+#
+# The intermediate directories must exist before `docker cp` runs (cp
+# does not create them); the bare-repo parent (/git) is also pre-created
+# defensively.
+RUN mkdir -p /etc/git-gate /git-gate/creds /git
+
+# Base image's ENTRYPOINT is the gitleaks binary; override explicitly.
+ENTRYPOINT ["/bin/sh", "/git-gate-entrypoint.sh"]

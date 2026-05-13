@@ -7,6 +7,7 @@ Schema (see CLAUDE.md "Intended design"):
       "<bottle-name>": {
         "env":     { "<NAME>": <env-entry>, ... },
         "ssh":     [ <ssh-entry>, ... ],
+        "git":     [ <git-entry>, ... ],
         "egress":  { "allowlist": [ "<hostname>", ... ] }
       }
     },
@@ -79,6 +80,65 @@ class SshEntry:
         )
 
 
+@dataclass(frozen=True)
+class GitEntry:
+    """One upstream the per-agent git-gate (PRD 0008) is allowed to
+    talk to. `Upstream` is the real remote URL the agent would push to
+    if there were no gate; the gate hosts a bare repo at /git/<Name>.git
+    and `IdentityFile` is the SSH key the gate uses to push that repo
+    upstream after gitleaks passes. The agent itself never holds the
+    upstream credential.
+
+    The Upstream URL is parsed once at construction and the pieces are
+    stashed in the `Upstream*` fields so the git-gate render step
+    doesn't have to re-parse."""
+
+    Name: str
+    Upstream: str
+    IdentityFile: str
+    KnownHostKey: str = ""
+    UpstreamUser: str = ""
+    UpstreamHost: str = ""
+    UpstreamPort: str = ""
+    UpstreamPath: str = ""
+
+    @classmethod
+    def from_dict(cls, bottle_name: str, idx: int, raw: object) -> "GitEntry":
+        d = _as_json_object(raw, f"bottle '{bottle_name}' git[{idx}]")
+        name = d.get("Name")
+        if not isinstance(name, str) or not name:
+            die(f"bottle '{bottle_name}' git[{idx}] missing required string field 'Name'")
+        upstream = d.get("Upstream")
+        if not isinstance(upstream, str) or not upstream:
+            die(
+                f"bottle '{bottle_name}' git '{name}' missing required string field "
+                f"'Upstream'"
+            )
+        ident = d.get("IdentityFile")
+        if not isinstance(ident, str) or not ident:
+            die(
+                f"bottle '{bottle_name}' git '{name}' missing required string field "
+                f"'IdentityFile'"
+            )
+        khk = _opt_str(
+            d.get("KnownHostKey"),
+            f"bottle '{bottle_name}' git '{name}' KnownHostKey",
+        )
+        user, host, port, path = _parse_git_upstream(
+            upstream, f"bottle '{bottle_name}' git '{name}' Upstream"
+        )
+        return cls(
+            Name=name,
+            Upstream=upstream,
+            IdentityFile=ident,
+            KnownHostKey=khk,
+            UpstreamUser=user,
+            UpstreamHost=host,
+            UpstreamPort=port,
+            UpstreamPath=path,
+        )
+
+
 DLP_ACTIONS = ("block", "warn")
 
 
@@ -134,6 +194,7 @@ class BottleEgress:
 class Bottle:
     env: Mapping[str, str] = field(default_factory=_empty_str_dict)
     ssh: tuple[SshEntry, ...] = ()
+    git: tuple[GitEntry, ...] = ()
     egress: BottleEgress = field(default_factory=BottleEgress)
 
     @classmethod
@@ -171,6 +232,19 @@ class Bottle:
                 for i, entry in enumerate(ssh_list)
             )
 
+        git: tuple[GitEntry, ...] = ()
+        git_raw = d.get("git")
+        if git_raw is not None:
+            if not isinstance(git_raw, list):
+                die(f"bottle '{name}' git must be an array (was {type(git_raw).__name__})")
+            git_list = cast(list[object], git_raw)
+            git = tuple(
+                GitEntry.from_dict(name, i, entry)
+                for i, entry in enumerate(git_list)
+            )
+            _validate_unique_git_names(name, git)
+            _validate_no_shadow_route(name, ssh, git)
+
         egress_raw = d.get("egress")
         egress = (
             BottleEgress.from_dict(name, egress_raw)
@@ -178,7 +252,7 @@ class Bottle:
             else BottleEgress()
         )
 
-        return cls(env=env, ssh=ssh, egress=egress)
+        return cls(env=env, ssh=ssh, git=git, egress=egress)
 
 
 @dataclass(frozen=True)
@@ -359,3 +433,69 @@ def _opt_port(value: object, label: str) -> str:
     if isinstance(value, str):
         return value
     die(f"{label} must be a string or number (was {type(value).__name__})")
+
+
+def _parse_git_upstream(url: str, label: str) -> tuple[str, str, str, str]:
+    """Parse `ssh://user@host[:port]/path` into (user, host, port, path).
+    Dies if `url` doesn't match the ssh:// shape v1 supports. Default
+    port is 22 (matches OpenSSH)."""
+    if not url.startswith("ssh://"):
+        die(f"{label} must be an ssh:// URL (was {url!r})")
+    rest = url[len("ssh://"):]
+    if "@" not in rest:
+        die(f"{label} must include a user (e.g. ssh://git@host/path.git); was {url!r}")
+    user, _, hostpart = rest.partition("@")
+    if not user:
+        die(f"{label} user is empty in {url!r}")
+    if "/" not in hostpart:
+        die(f"{label} must include a path (e.g. ssh://git@host/path.git); was {url!r}")
+    hostport, _, path = hostpart.partition("/")
+    if not path:
+        die(f"{label} path is empty in {url!r}")
+    if ":" in hostport:
+        host, _, port = hostport.partition(":")
+        if not port.isdigit():
+            die(f"{label} port must be numeric in {url!r}")
+    else:
+        host = hostport
+        port = "22"
+    if not host:
+        die(f"{label} host is empty in {url!r}")
+    return (user, host, port, path)
+
+
+def _validate_unique_git_names(bottle_name: str, git: tuple[GitEntry, ...]) -> None:
+    seen: dict[str, None] = {}
+    for g in git:
+        if g.Name in seen:
+            die(
+                f"bottle '{bottle_name}' git entries have duplicate Name '{g.Name}'; "
+                f"each entry maps to a distinct bare repo on the gate."
+            )
+        seen[g.Name] = None
+
+
+def _validate_no_shadow_route(
+    bottle_name: str,
+    ssh: tuple[SshEntry, ...],
+    git: tuple[GitEntry, ...],
+) -> None:
+    """Reject if any git entry's (host, port) matches an ssh entry's
+    (Hostname, Port). The same upstream reachable two ways — once through
+    the L4 ssh-gate, once through the gitleaks-bearing git-gate — defeats
+    the git-gate."""
+    ssh_targets: dict[tuple[str, str], str] = {}
+    for e in ssh:
+        if not e.Hostname:
+            continue
+        port = e.Port or "22"
+        ssh_targets[(e.Hostname, port)] = e.Host
+    for g in git:
+        ssh_host = ssh_targets.get((g.UpstreamHost, g.UpstreamPort))
+        if ssh_host is not None:
+            die(
+                f"bottle '{bottle_name}' has ssh entry '{ssh_host}' "
+                f"({g.UpstreamHost}:{g.UpstreamPort}) and git entry '{g.Name}' "
+                f"pointing at the same upstream. The same remote reachable two "
+                f"ways defeats the git-gate; remove one."
+            )

@@ -11,6 +11,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ...git_gate import GitGatePlan
 from ...log import info
 from ...manifest import Agent, Bottle
 from ...pipelock import PipelockProxyPlan, pipelock_effective_allowlist
@@ -27,6 +28,7 @@ class _PlanView:
     bottle: Bottle
     env_names: list[str]
     ssh_hosts: list[str]
+    git_names: list[str]
     prompt_first_line: str
 
 
@@ -51,6 +53,7 @@ class DockerBottlePlan(BottlePlan):
     prompt_file: Path
     proxy_plan: PipelockProxyPlan
     gate_plan: SSHGatePlan
+    git_gate_plan: GitGatePlan
     allowlist_summary: str
     use_runsc: bool
 
@@ -67,6 +70,7 @@ class DockerBottlePlan(BottlePlan):
             bottle=bottle,
             env_names=env_names,
             ssh_hosts=[e.Host for e in bottle.ssh],
+            git_names=[e.Name for e in bottle.git],
             prompt_first_line=agent.prompt.splitlines()[0] if agent.prompt else "",
         )
 
@@ -100,6 +104,16 @@ class DockerBottlePlan(BottlePlan):
             info(f"  ssh gate      : {'; '.join(gate_lines)}")
         else:
             info("  ssh hosts     : (none)")
+        if v.git_names:
+            info(f"  git remotes   : {', '.join(v.git_names)}")
+            git_lines = [
+                f"{u.name} -> {u.upstream_host}:{u.upstream_port} "
+                f"(gitleaks-scanned)"
+                for u in self.git_gate_plan.upstreams
+            ]
+            info(f"  git gate      : {'; '.join(git_lines)}")
+        else:
+            info("  git remotes   : (none)")
         info(f"  egress        : {self.allowlist_summary}")
         info("  tls intercept : pipelock (per-bottle ephemeral CA, generated at launch)")
         info(
@@ -130,6 +144,16 @@ class DockerBottlePlan(BottlePlan):
                     "listen_port": u.listen_port,
                 }
                 for u in self.gate_plan.upstreams
+            ],
+            "git_remotes": v.git_names,
+            "git_gate": [
+                {
+                    "name": u.name,
+                    "upstream": f"{u.upstream_host}:{u.upstream_port}",
+                    "upstream_url": u.upstream_url,
+                    "known_host_key_pinned": bool(u.known_host_key),
+                }
+                for u in self.git_gate_plan.upstreams
             ],
             "egress": {
                 "host_count": len(hosts),

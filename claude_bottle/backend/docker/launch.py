@@ -22,6 +22,7 @@ from . import network as network_mod
 from . import util as docker_mod
 from .bottle import DockerBottle
 from .bottle_plan import DockerBottlePlan
+from .git_gate import DockerGitGate
 from .pipelock import DockerPipelockProxy, pipelock_proxy_url, pipelock_tls_init
 from .provision.ca import AGENT_CA_BUNDLE, AGENT_CA_PATH
 from .ssh_gate import DockerSSHGate
@@ -37,6 +38,7 @@ def launch(
     *,
     proxy: DockerPipelockProxy,
     gate: DockerSSHGate,
+    git_gate: DockerGitGate,
     provision: Callable[[DockerBottlePlan, str], str | None],
 ) -> Generator[DockerBottle, None, None]:
     """Build, launch, and provision a Docker bottle. Teardown on exit.
@@ -101,6 +103,21 @@ def launch(
             plan = dataclasses.replace(plan, gate_plan=gate_plan)
             gate_name = gate.start(plan.gate_plan)
             stack.callback(gate.stop, gate_name)
+
+        # Git gate (PRD 0008). One sidecar per agent, only brought up
+        # when the bottle has git entries. Same internal + egress
+        # network attachment as the other sidecars; agent dials it as
+        # `git://<container-name>/<name>.git` via the pushInsteadOf
+        # rules provision_git writes into ~/.gitconfig.
+        if plan.git_gate_plan.upstreams:
+            git_gate_plan = dataclasses.replace(
+                plan.git_gate_plan,
+                internal_network=internal_network,
+                egress_network=egress_network,
+            )
+            plan = dataclasses.replace(plan, git_gate_plan=git_gate_plan)
+            git_gate_name = git_gate.start(plan.git_gate_plan)
+            stack.callback(git_gate.stop, git_gate_name)
 
         container = _run_agent_container(plan, internal_network)
         stack.callback(docker_mod.force_remove_container, container)
