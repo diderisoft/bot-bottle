@@ -129,37 +129,41 @@ class TestTokenEntryValidation(unittest.TestCase):
             ]))
 
 
-class TestTokenGitOverlap(unittest.TestCase):
-    def test_github_token_collides_with_github_git_entry(self):
-        # bottle.git already brokers github.com via the gate; declaring
-        # a github token on top would put two credential brokers on
-        # the same remote.
-        with self.assertRaises(Die):
-            Manifest.from_json_obj(_manifest(
-                tokens=[{"Kind": "github", "TokenRef": "GITHUB_TOKEN"}],
-                git=[{
-                    "Name": "myrepo",
-                    "Upstream": "ssh://git@github.com/me/myrepo.git",
-                    "IdentityFile": "/dev/null",
-                }],
-            ))
+class TestTokenGitCoexistence(unittest.TestCase):
+    """git-gate brokers SSH push/fetch via an IdentityFile; cred-proxy
+    brokers HTTPS REST API calls via a PAT. Declaring both on the same
+    host is the common dev setup (SSH key for git ops, PAT for `tea` /
+    `gh` API calls), not a configuration error."""
 
-    def test_gitea_token_collides_with_same_host_git_entry(self):
-        with self.assertRaises(Die):
-            Manifest.from_json_obj(_manifest(
-                tokens=[{
-                    "Kind": "gitea", "TokenRef": "GITEA_TOKEN",
-                    "Url": "https://gitea.dideric.is",
-                }],
-                git=[{
-                    "Name": "myrepo",
-                    "Upstream": "ssh://git@gitea.dideric.is:30009/me/myrepo.git",
-                    "IdentityFile": "/dev/null",
-                }],
-            ))
+    def test_github_token_and_github_git_entry_coexist(self):
+        m = Manifest.from_json_obj(_manifest(
+            tokens=[{"Kind": "github", "TokenRef": "GITHUB_TOKEN"}],
+            git=[{
+                "Name": "myrepo",
+                "Upstream": "ssh://git@github.com/me/myrepo.git",
+                "IdentityFile": "/dev/null",
+            }],
+        ))
+        self.assertEqual(1, len(m.bottles["dev"].tokens))
+        self.assertEqual(1, len(m.bottles["dev"].git))
 
-    def test_anthropic_token_does_not_collide_with_git(self):
-        # api.anthropic.com isn't a git host; no overlap possible.
+    def test_gitea_token_and_same_host_git_entry_coexist(self):
+        m = Manifest.from_json_obj(_manifest(
+            tokens=[{
+                "Kind": "gitea", "TokenRef": "GITEA_TOKEN",
+                "Url": "https://gitea.dideric.is",
+            }],
+            git=[{
+                "Name": "myrepo",
+                "Upstream": "ssh://git@gitea.dideric.is:30009/me/myrepo.git",
+                "IdentityFile": "/dev/null",
+            }],
+        ))
+        self.assertEqual("gitea.dideric.is", m.bottles["dev"].tokens[0].UpstreamHost)
+        self.assertEqual("gitea.dideric.is", m.bottles["dev"].git[0].UpstreamHost)
+
+    def test_anthropic_token_and_git_unrelated(self):
+        # api.anthropic.com isn't a git host; coexistence is trivial.
         m = Manifest.from_json_obj(_manifest(
             tokens=[{"Kind": "anthropic", "TokenRef": "CLAUDE_BOTTLE_OAUTH_TOKEN"}],
             git=[{

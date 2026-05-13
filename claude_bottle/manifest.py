@@ -570,11 +570,14 @@ def _validate_tokens(
 
     - At most one entry per Kind, except `gitea` which may have
       multiple entries (one per Gitea instance) with distinct Urls.
-    - No overlap with `bottle.git` hosts: a `github` or `gitea` token
-      whose host matches a `bottle.git` upstream host would put two
-      credential brokers on the same remote (git-gate's gitleaks-
-      scanning gate AND cred-proxy's bearer injection). Pick one.
+
+    A `github` or `gitea` token MAY name the same host as a
+    `bottle.git` entry: the two paths broker different protocols
+    (git-gate handles SSH push/fetch with an IdentityFile; cred-proxy
+    handles HTTPS REST API calls with a PAT), so declaring both on
+    one host is a legitimate dev setup, not a configuration error.
     """
+    del git  # cross-host overlap is intentionally not rejected.
     by_kind: dict[str, list[TokenEntry]] = {}
     for t in tokens:
         by_kind.setdefault(t.Kind, []).append(t)
@@ -593,15 +596,6 @@ def _validate_tokens(
                 f"bottle '{bottle_name}' tokens has {len(entries)} entries with "
                 f"Kind {kind!r}; at most one is allowed (gitea is the only Kind "
                 f"that may have multiple entries)."
-            )
-
-    git_hosts = {g.UpstreamHost for g in git}
-    for t in tokens:
-        if t.Kind in ("github", "gitea") and t.UpstreamHost in git_hosts:
-            die(
-                f"bottle '{bottle_name}' token ({t.Kind}, host {t.UpstreamHost!r}) "
-                f"overlaps a bottle.git upstream on the same host. git-gate already "
-                f"brokers this remote; drop the token entry or remove the git entry."
             )
 
 
