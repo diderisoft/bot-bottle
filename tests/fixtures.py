@@ -37,34 +37,6 @@ def fixture_with_egress_dict() -> dict[str, Any]:
     }
 
 
-def fixture_with_ssh_dict() -> dict[str, Any]:
-    """Bottle has both an IPv4-literal SSH host (CGNAT) and a hostname host,
-    exercising both ssrf.ip_allowlist and trusted_domains code paths. JSON shape."""
-    return {
-        "bottles": {
-            "dev": {
-                "ssh": [
-                    {
-                        "Host": "tailscale-gitea",
-                        "IdentityFile": "/dev/null",
-                        "Hostname": "192.0.2.10",
-                        "User": "git",
-                        "Port": 30009,
-                    },
-                    {
-                        "Host": "github",
-                        "IdentityFile": "/dev/null",
-                        "Hostname": "github.com",
-                        "User": "git",
-                        "Port": 22,
-                    },
-                ]
-            }
-        },
-        "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
-    }
-
-
 def fixture_with_git_dict() -> dict[str, Any]:
     """Bottle declares a git-gate upstream. JSON shape."""
     return {
@@ -96,10 +68,6 @@ def fixture_minimal() -> Manifest:
 
 def fixture_with_egress() -> Manifest:
     return Manifest.from_json_obj(fixture_with_egress_dict())
-
-
-def fixture_with_ssh() -> Manifest:
-    return Manifest.from_json_obj(fixture_with_ssh_dict())
 
 
 def fixture_with_git() -> Manifest:

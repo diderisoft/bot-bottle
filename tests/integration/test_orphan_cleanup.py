@@ -1,8 +1,8 @@
 """Integration: the cleanup primitives the start-flow trap depends on
 are idempotent. The original orphan-network bug was a trap-ordering
 issue; the fix moved the install earlier. The trap is only safe if
-network_remove, PipelockProxy.stop, and SSHGate.stop are no-ops
-against missing resources."""
+network_remove and PipelockProxy.stop are no-ops against missing
+resources."""
 
 import os
 import subprocess
@@ -16,10 +16,6 @@ from claude_bottle.backend.docker.network import (
 from claude_bottle.backend.docker.pipelock import (
     DockerPipelockProxy,
     pipelock_container_name,
-)
-from claude_bottle.backend.docker.ssh_gate import (
-    DockerSSHGate,
-    ssh_gate_container_name,
 )
 from tests._docker import skip_unless_docker
 
@@ -78,13 +74,6 @@ class TestOrphanCleanup(unittest.TestCase):
     def test_pipelock_stop_missing_sidecar(self):
         # Should not raise.
         DockerPipelockProxy().stop(pipelock_container_name(f"missing-{self.slug}"))
-
-    def test_ssh_gate_stop_missing_sidecar(self):
-        # Same trap-safety requirement for the gate (PRD 0007). The
-        # launch ExitStack calls gate.stop on every error path; if
-        # the container was never created (early failure), stop must
-        # still no-op.
-        DockerSSHGate().stop(ssh_gate_container_name(f"missing-{self.slug}"))
 
 
 if __name__ == "__main__":
