@@ -8,6 +8,19 @@
 
 Run multiple Claude Code agents on your own machine, each scoped to its own secrets, skills, and egress allowlist.
 
+![pipelock and git-gate blocking exfil attempts against a live bottle](docs/demo.gif)
+
+Four prompts to the agent inside a real bottle:
+claude replies to `hello there` — proof api.anthropic.com routes
+through pipelock's bumped TLS end-to-end;
+asked to GET a non-allowlisted host, the agent's curl gets 403 back
+from pipelock;
+asked to POST a credential-shaped body to an allowlisted host, the
+same 403 — pipelock's DLP body scanner caught it;
+asked to commit and push an AKIA-shaped key, git-gate's gitleaks
+pre-receive hook rejects the ref.
+Run it yourself with `bash scripts/demo.sh`.
+
 ## Why "claude-bottle"?
 
 Each container is a bottle; Claude is the genie inside. The genie's

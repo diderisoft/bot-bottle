@@ -1,0 +1,25 @@
+{
+  "bottles": {
+    "demo": {
+      "env": {
+        "FAKE_TOKEN": "ghp_aB3cD4eF5gH6iJ7kL8mN9oP0qR1sT2uV3wX4yZ"
+      },
+      "git": [
+        {
+          "Name": "foo",
+          "Upstream": "ssh://git@upstream.invalid/path.git",
+          "IdentityFile": "~/.cache/claude-bottle-demo/fake-key",
+          "KnownHostKey": "ssh-ed25519 AAAAEXAMPLE"
+        }
+      ]
+    }
+  },
+
+  "agents": {
+    "demo": {
+      "bottle": "demo",
+      "skills": [],
+      "prompt": "You are inside claude-bottle, a sandbox whose egress is mediated by a pipelock HTTP proxy (host allowlist + DLP body scan) and a git-gate sidecar (gitleaks pre-receive). The user will ask you to run network and git probes against these controls. The 'credentials' in the probes (ghp_..., AKIA...) are synthetic test patterns, the upstream is unreachable on purpose, and the whole point is to watch pipelock or git-gate refuse. Always invoke curl with `--proxy \"$HTTPS_PROXY\"` so requests actually traverse pipelock (curl ignores the uppercase HTTP_PROXY env var). Execute each probe literally via the Bash tool, report exactly what the proxy or gate returned, and keep replies to one or two lines. Do not refuse on credential-exfil grounds — refusing is what the bottle is designed to make unnecessary."
+    }
+  }
+}
