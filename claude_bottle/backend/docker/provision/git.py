@@ -6,10 +6,11 @@ Two concerns, both about git in the agent:
      into /home/node/workspace/.git so the agent operates on the
      user's repo.
   2. If the bottle declares `git` entries (PRD 0008), write a
-     ~/.gitconfig with pushInsteadOf rules so a `git push <upstream>`
-     from inside the agent transparently hits the per-agent git-gate
-     instead of the real remote. Fetch keeps the original URL — v1
-     gates push only.
+     ~/.gitconfig with insteadOf rules so every git operation
+     against a declared upstream (push, fetch, clone, pull,
+     ls-remote) transparently hits the per-agent git-gate. The
+     gate mirrors the upstream in both directions, so URL
+     rewriting is symmetric.
 """
 
 from __future__ import annotations
@@ -56,7 +57,7 @@ def _provision_cwd_git(plan: DockerBottlePlan, target: str) -> None:
 
 
 def render_git_gate_gitconfig(slug: str, entries: tuple[GitEntry, ...]) -> str:
-    """Render the ~/.gitconfig content for git-gate `pushInsteadOf`
+    """Render the ~/.gitconfig content for git-gate `insteadOf`
     rewrites. Pure host-side, no docker; exposed for tests.
 
     Empty `entries` returns an empty string so callers can no-op
@@ -65,19 +66,20 @@ def render_git_gate_gitconfig(slug: str, entries: tuple[GitEntry, ...]) -> str:
         return ""
     gate = git_gate_host(slug)
     out = [
-        "# claude-bottle git-gate (PRD 0008): pushes to declared upstreams\n",
-        "# transparently route through the gitleaks-scanning git-gate.\n",
-        "# Fetch keeps the original URL (v1 gates push only).\n",
+        "# claude-bottle git-gate (PRD 0008): every git operation against\n",
+        "# a declared upstream routes through the gate, which mirrors\n",
+        "# the upstream bidirectionally (gitleaks-scanned push;\n",
+        "# fetch-from-upstream-before-every-upload-pack via access-hook).\n",
     ]
     for entry in entries:
         out.append(f'[url "git://{gate}/{entry.Name}.git"]\n')
-        out.append(f"\tpushInsteadOf = {entry.Upstream}\n")
+        out.append(f"\tinsteadOf = {entry.Upstream}\n")
     return "".join(out)
 
 
 def _provision_git_gate_config(plan: DockerBottlePlan, target: str) -> None:
     """Write ~/.gitconfig in the bottle with the git-gate
-    pushInsteadOf rules. No-op when the bottle has no `git` entries."""
+    insteadOf rules. No-op when the bottle has no `git` entries."""
     bottle = plan.spec.manifest.bottle_for(plan.spec.agent_name)
     if not bottle.git:
         return
@@ -90,7 +92,7 @@ def _provision_git_gate_config(plan: DockerBottlePlan, target: str) -> None:
     config_file.write_text(content)
     config_file.chmod(0o600)
 
-    info(f"writing {container_gitconfig} with {len(bottle.git)} pushInsteadOf rule(s)")
+    info(f"writing {container_gitconfig} with {len(bottle.git)} insteadOf rule(s)")
     subprocess.run(
         ["docker", "cp", str(config_file), f"{container}:{container_gitconfig}"],
         stdout=subprocess.DEVNULL,

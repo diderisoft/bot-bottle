@@ -21,24 +21,25 @@ class TestGitGateGitconfigRender(unittest.TestCase):
             out,
         )
         self.assertIn(
-            "\tpushInsteadOf = "
+            "\tinsteadOf = "
             "ssh://git@gitea.dideric.is:30009/didericis/claude-bottle.git",
             out,
         )
         self.assertIn('[url "git://claude-bottle-git-gate-demo/foo.git"]', out)
         self.assertIn(
-            "\tpushInsteadOf = ssh://git@github.com/didericis/foo.git",
+            "\tinsteadOf = ssh://git@github.com/didericis/foo.git",
             out,
         )
 
-    def test_pushInsteadOf_not_insteadOf(self):
-        # insteadOf would route fetch through the gate too; v1 only
-        # gates push. If this assertion ever fails we've inadvertently
-        # widened the gate's scope.
+    def test_insteadOf_not_pushInsteadOf(self):
+        # The gate mirrors fetch and push, so insteadOf (which rewrites
+        # both directions) is the right knob. pushInsteadOf would only
+        # gate push and leave fetch on the original URL — exactly the
+        # v1 design we've moved past.
         bottle = fixture_with_git().bottles["dev"]
         out = render_git_gate_gitconfig("demo", bottle.git)
-        self.assertIn("pushInsteadOf", out)
-        self.assertNotIn("\tinsteadOf", out)
+        self.assertIn("\tinsteadOf", out)
+        self.assertNotIn("pushInsteadOf", out)
 
 
 if __name__ == "__main__":
