@@ -22,6 +22,7 @@ from . import network as network_mod
 from . import util as docker_mod
 from .bottle import DockerBottle
 from .bottle_plan import DockerBottlePlan
+from .cred_proxy import DockerCredProxy
 from .git_gate import DockerGitGate
 from .pipelock import DockerPipelockProxy, pipelock_proxy_url, pipelock_tls_init
 from .provision.ca import AGENT_CA_BUNDLE, AGENT_CA_PATH
@@ -37,6 +38,7 @@ def launch(
     *,
     proxy: DockerPipelockProxy,
     git_gate: DockerGitGate,
+    cred_proxy: DockerCredProxy,
     provision: Callable[[DockerBottlePlan, str], str | None],
 ) -> Generator[DockerBottle, None, None]:
     """Build, launch, and provision a Docker bottle. Teardown on exit.
@@ -101,6 +103,21 @@ def launch(
             plan = dataclasses.replace(plan, git_gate_plan=git_gate_plan)
             git_gate_name = git_gate.start(plan.git_gate_plan)
             stack.callback(git_gate.stop, git_gate_name)
+
+        # Cred-proxy (PRD 0010). One sidecar per bottle when
+        # bottle.tokens declares any kind. Must come up before the
+        # agent so DNS resolution for `cred-proxy` succeeds on the
+        # agent's first call; tokens flow from the host env into the
+        # sidecar's environ, not the agent's.
+        if plan.cred_proxy_plan.upstreams:
+            cred_proxy_plan = dataclasses.replace(
+                plan.cred_proxy_plan,
+                internal_network=internal_network,
+                egress_network=egress_network,
+            )
+            plan = dataclasses.replace(plan, cred_proxy_plan=cred_proxy_plan)
+            cred_proxy_name = cred_proxy.start(plan.cred_proxy_plan)
+            stack.callback(cred_proxy.stop, cred_proxy_name)
 
         container = _run_agent_container(plan, internal_network)
         stack.callback(docker_mod.force_remove_container, container)

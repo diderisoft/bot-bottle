@@ -19,6 +19,7 @@ from ...log import die
 from .. import BottleSpec
 from . import util as docker_mod
 from .bottle_plan import DockerBottlePlan
+from .cred_proxy import DockerCredProxy, cred_proxy_url
 from .git_gate import DockerGitGate
 from .pipelock import DockerPipelockProxy
 
@@ -29,6 +30,7 @@ def resolve_plan(
     stage_dir: Path,
     proxy: DockerPipelockProxy,
     git_gate: DockerGitGate,
+    cred_proxy: DockerCredProxy,
 ) -> DockerBottlePlan:
     """Resolve Docker-specific names and write scratch files. Trusts
     that the agent and its skills/git-gate keys are present —
@@ -81,14 +83,35 @@ def resolve_plan(
 
     proxy_plan = proxy.prepare(bottle, slug, stage_dir)
     git_gate_plan = git_gate.prepare(bottle, slug, stage_dir)
+    cred_proxy_plan = cred_proxy.prepare(bottle, slug, stage_dir)
     resolved = resolve_env(manifest, spec.agent_name)
     # Everything that should reach the bottle by-name (so its value
-    # never lands on argv or in env_file) goes into one dict. The
-    # rename from CLAUDE_BOTTLE_OAUTH_TOKEN to CLAUDE_CODE_OAUTH_TOKEN
-    # happens here; nothing mutates the host os.environ.
+    # never lands on argv or in env_file) goes into one dict. Nothing
+    # mutates the host os.environ.
     forwarded_env: dict[str, str] = dict(resolved.forwarded)
-    if spec.forward_oauth_token:
+    has_anthropic_token = any(t.Kind == "anthropic" for t in bottle.tokens)
+    if spec.forward_oauth_token and not has_anthropic_token:
+        # Pre-PRD 0010 behavior: agent reads CLAUDE_CODE_OAUTH_TOKEN
+        # directly. Still the path when bottle.tokens has no anthropic
+        # entry; the cred-proxy sidecar holds the token otherwise.
         forwarded_env["CLAUDE_CODE_OAUTH_TOKEN"] = os.environ["CLAUDE_BOTTLE_OAUTH_TOKEN"]
+    if has_anthropic_token:
+        # Point claude-code at the cred-proxy. The sidecar holds the
+        # OAuth token; the agent's environ does not.
+        forwarded_env["ANTHROPIC_BASE_URL"] = f"{cred_proxy_url()}/anthropic"
+        # claude-code refuses to start without *some* credential in
+        # its env. The proxy strips inbound Authorization on every
+        # request and injects the real one — so a non-secret
+        # placeholder is sufficient and the SC1 test still holds
+        # (the placeholder is not a `bottle.tokens[].TokenRef`
+        # value). The agent cannot exfiltrate this string because
+        # it carries no meaning to api.anthropic.com.
+        forwarded_env["CLAUDE_CODE_OAUTH_TOKEN"] = "cred-proxy-placeholder"
+        # Belt-and-braces: turn off telemetry endpoints that don't
+        # route through ANTHROPIC_BASE_URL (statsig, error reporting).
+        # PRD 0010 open question default.
+        forwarded_env.setdefault("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
+        forwarded_env.setdefault("DISABLE_ERROR_REPORTING", "1")
     _write_env_file(resolved, env_file)
     prompt_file.write_text(agent.prompt)
 
@@ -109,6 +132,7 @@ def resolve_plan(
         prompt_file=prompt_file,
         proxy_plan=proxy_plan,
         git_gate_plan=git_gate_plan,
+        cred_proxy_plan=cred_proxy_plan,
         allowlist_summary=allowlist_summary,
         use_runsc=use_runsc,
     )
