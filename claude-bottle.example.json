@@ -36,6 +36,20 @@
           "files.pythonhosted.org"
         ]
       }
+    },
+
+    "agentic": {
+      "env": {
+        "GIT_AUTHOR_NAME": "Eric Diderich",
+        "NODE_ENV":        "development"
+      },
+      "tokens": [
+        { "Kind": "anthropic", "TokenRef": "CLAUDE_BOTTLE_OAUTH_TOKEN" },
+        { "Kind": "github",    "TokenRef": "GH_PAT" },
+        { "Kind": "gitea",     "TokenRef": "GITEA_TOKEN",
+          "Url":  "https://gitea.dideric.is" },
+        { "Kind": "npm",       "TokenRef": "NPM_TOKEN" }
+      ]
     }
   },
 
@@ -50,6 +64,12 @@
       "bottle": "gitea-dev",
       "skills": ["init-prd"],
       "prompt": "You help maintain Gitea-hosted projects. Prefer small, focused commits. Follow Conventional Commits. Run tests before pushing."
+    },
+
+    "agentic-helper": {
+      "bottle": "agentic",
+      "skills": [],
+      "prompt": "You operate against APIs whose credentials live in a per-bottle cred-proxy sidecar. Your environ carries only proxy URLs."
     },
 
     "minimal": {

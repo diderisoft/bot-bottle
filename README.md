@@ -72,11 +72,13 @@ pieces of v1.
 A bottle is the agent container plus up to three per-protocol egress
 sidecars on a per-agent Docker `--internal` network. The agent has no
 default route off-box; its only way out is through the pipelock
-sidecar (for HTTP/HTTPS), the ssh-gate sidecar (for SSH), or the
-git-gate sidecar (for git operations against declared upstreams).
-Each sidecar also sits on an egress network that does have internet
-access, so the agent's traffic always passes through a container
-that enforces the manifest before it leaves the host.
+sidecar (for HTTP/HTTPS), the git-gate sidecar (for git operations
+against declared upstreams), or the cred-proxy sidecar (for API
+calls that need a manifest-declared token — Anthropic OAuth, GitHub
+PAT, Gitea PAT, npm). Each sidecar also sits on an egress network
+that does have internet access, so the agent's traffic always passes
+through a container that enforces the manifest before it leaves the
+host.
 
 ```
                             host  ( ./cli.py )
@@ -91,12 +93,17 @@ that enforces the manifest before it leaves the host.
    │   │  built locally)  │                  │ (TLS bump, DLP,│  │     hosts
    │   │                  │                  │  allowlist)    │  │
    │   │ skills, env,     │                  └────────────────┘  │
-   │   │ ~/.gitconfig     │                                      │
-   │   │                  │   git ops        ┌────────────────┐  │  SSH (push/
+   │   │ ~/.gitconfig,    │                                      │
+   │   │ ~/.npmrc, tea    │   git ops        ┌────────────────┐  │  SSH (push/
    │   │                  │ ───────────────► │ git-gate image │──┼──►  fetch) to
    │   │                  │                  │ (gitleaks +    │  │     bottle.git
-   │   │                  │                  │  git daemon)   │  │     upstreams
-   │   └──────────────────┘                  └────────────────┘  │
+   │   │ environ: URLs    │                  │  git daemon)   │  │     upstreams
+   │   │ only, no real    │                  └────────────────┘  │
+   │   │ tokens           │   bearer-auth    ┌────────────────┐  │  HTTPS to
+   │   │                  │ ───────────────► │ cred-proxy     │──┼──►  bottle.tokens
+   │   │                  │  HTTP, plain     │ (strips/injects│  │     upstreams
+   │   │                  │                  │  Authorization)│  │     (with the
+   │   └──────────────────┘                  └────────────────┘  │     real token)
    │                                                             │
    │   agent on internal network (no default route);             │
    │   sidecars also attached to an egress network.              │
@@ -129,6 +136,20 @@ that enforces the manifest before it leaves the host.
   `insteadOf` rewrite still keys off the original hostname. Brought
   up only when `bottle.git` has entries. Design in
   `docs/prds/0008-git-gate.md`.
+- **cred-proxy image** — per-bottle sidecar (`python:3.13-alpine`
+  base, stdlib-only) that holds API tokens declared in
+  `bottle.tokens`. The agent dials it as plain HTTP at
+  `http://cred-proxy:9099/<kind>/...`; the proxy strips any
+  inbound `Authorization` header, injects the configured one using
+  a token held only in its own container's environ, and forwards
+  to the real upstream over HTTPS. SSE responses stream back
+  unbuffered. `ANTHROPIC_BASE_URL`, `~/.npmrc`, `~/.gitconfig`
+  `insteadOf` rules for `https://github.com/` and any declared
+  Gitea hosts, and `~/.config/tea/config.yml` all get written to
+  point at the proxy. The agent's `printenv` shows only those
+  URLs — none of the real token values. Brought up only when
+  `bottle.tokens` has entries. Design in
+  `docs/prds/0010-cred-proxy.md`.
 
 When the agent exits, `cli.py` tears down every sidecar that was
 brought up and the two networks; nothing about a bottle persists
@@ -170,6 +191,19 @@ project entries overriding home entries on key conflict).
           "IdentityFile": "/Users/didericis/.ssh/id_ed25519_gitea",
           "KnownHostKey": "ssh-ed25519 AAAA..."
         }
+      ],
+
+      // Tokens declared here are held by a per-bottle cred-proxy
+      // sidecar, not the agent. Each entry names the host env var
+      // (`TokenRef`) the CLI reads at launch time; the value goes
+      // into the sidecar's environ via `docker create -e`, never
+      // touches argv or disk. Inside the bottle, the agent's
+      // ANTHROPIC_BASE_URL / npm registry / git insteadOf rules
+      // point at the proxy. See `docs/prds/0010-cred-proxy.md`.
+      "tokens": [
+        { "Kind": "anthropic", "TokenRef": "CLAUDE_BOTTLE_OAUTH_TOKEN" },
+        { "Kind": "github",    "TokenRef": "GITHUB_PAT" },
+        { "Kind": "npm",       "TokenRef": "NPM_TOKEN" }
       ],
 
       // Egress is forced through a per-agent
@@ -231,9 +265,13 @@ as `CLAUDE_BOTTLE_OAUTH_TOKEN`:
 export CLAUDE_BOTTLE_OAUTH_TOKEN="<token>"
 ```
 
-`cli.py` automatically forwards it to every container as
-`CLAUDE_CODE_OAUTH_TOKEN` via `docker run -e` — no manifest wiring
-required, and the value is never written to disk or placed on argv.
+By default `cli.py` forwards the token into the agent container as
+`CLAUDE_CODE_OAUTH_TOKEN`. Declare an `anthropic` entry in
+`bottle.tokens` to route via cred-proxy instead: the token then lives
+only in the cred-proxy sidecar's environ, the agent's
+`ANTHROPIC_BASE_URL` points at the proxy, and `printenv` inside the
+agent does not surface the real token. Either way the value is never
+written to disk or placed on argv on the host.
 
 Inside the container, `claude` picks up `CLAUDE_CODE_OAUTH_TOKEN` and
 authenticates against your subscription. Caveats: the token is bound
