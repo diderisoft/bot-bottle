@@ -60,10 +60,10 @@ A bottle is the agent container plus up to three per-protocol egress
 sidecars on a per-agent Docker `--internal` network. The agent has no
 default route off-box; its only way out is through the pipelock
 sidecar (for HTTP/HTTPS), the ssh-gate sidecar (for SSH), or the
-git-gate sidecar (for `git push`). Each sidecar also sits on an
-egress network that does have internet access, so the agent's traffic
-always passes through a container that enforces the manifest before
-it leaves the host.
+git-gate sidecar (for git operations against declared upstreams).
+Each sidecar also sits on an egress network that does have internet
+access, so the agent's traffic always passes through a container
+that enforces the manifest before it leaves the host.
 
 ```
                             host  ( ./cli.py )
@@ -85,10 +85,10 @@ it leaves the host.
    │   │                  │                  │  L4 forwarder) │  │
    │   │                  │                  └────────────────┘  │
    │   │                  │                                      │
-   │   │                  │   git push       ┌────────────────┐  │  SSH (push)
-   │   │                  │ ───────────────► │ git-gate image │──┼──►  to bottle.git
-   │   │                  │                  │ (gitleaks +    │  │     upstreams
-   │   │                  │                  │  git daemon)   │  │
+   │   │                  │   git ops        ┌────────────────┐  │  SSH (push/
+   │   │                  │ ───────────────► │ git-gate image │──┼──►  fetch) to
+   │   │                  │                  │ (gitleaks +    │  │     bottle.git
+   │   │                  │                  │  git daemon)   │  │     upstreams
    │   └──────────────────┘                  └────────────────┘  │
    │                                                             │
    │   agent on internal network (no default route);             │
@@ -110,11 +110,16 @@ it leaves the host.
   through pipelock. Design in `docs/prds/0007-ssh-egress-gate.md`.
 - **git-gate image** — per-agent sidecar built on `zricethezav/gitleaks`
   (alpine + gitleaks + git-daemon + openssh-client). Runs
-  `git daemon --enable=receive-pack` so the agent can push to it
-  via `git://`; a pre-receive hook gitleaks-scans each incoming ref
-  and forwards clean refs to the real upstream over SSH using a
-  credential the agent never sees. Brought up only when `bottle.git`
-  has entries. Design in `docs/prds/0008-git-gate.md`.
+  `git daemon` over `git://` as a bidirectional mirror of each
+  declared upstream. A pre-receive hook gitleaks-scans incoming
+  refs and forwards clean refs to the real upstream over SSH; an
+  access-hook runs `git fetch origin --prune` against the upstream
+  before every upload-pack so an agent fetch returns whatever the
+  upstream has *now* (fail-closed if unreachable). The agent's
+  `~/.gitconfig` rewrites the real URL to the gate via `insteadOf`,
+  so push, fetch, clone, and pull all route through. The agent
+  never sees the upstream credential. Brought up only when
+  `bottle.git` has entries. Design in `docs/prds/0008-git-gate.md`.
 
 When the agent exits, `cli.py` tears down every sidecar that was
 brought up and the two networks; nothing about a bottle persists
