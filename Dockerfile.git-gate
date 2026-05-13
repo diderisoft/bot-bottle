@@ -10,12 +10,16 @@
 # default route, so the image is fully self-contained: no apk pulls at
 # boot, no remote registry lookups during the entrypoint.
 
-FROM alpine:3.20
+# Base on the upstream gitleaks image (alpine + gitleaks v8.x);
+# alpine doesn't package gitleaks so this avoids a separate
+# install path. Pinned by digest for reproducibility.
+FROM zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
 
-# git for the daemon + push-to-upstream;
-# openssh-client for the upstream SSH transport;
-# gitleaks is the actual scanner the pre-receive hook calls.
-RUN apk add --no-cache git openssh-client gitleaks
+# openssh-client supplies the upstream SSH transport the pre-receive
+# hook uses to forward accepted refs. git-daemon is the listener the
+# agent pushes to (alpine ships `git-daemon` as a sub-package, not
+# part of `git`). The `git` core binary is already in the base image.
+RUN apk add --no-cache openssh-client git-daemon
 
 # Layout the gate uses at runtime:
 #   /git-gate-entrypoint.sh          — docker-cp'd at start time
@@ -29,4 +33,5 @@ RUN apk add --no-cache git openssh-client gitleaks
 # defensively.
 RUN mkdir -p /etc/git-gate /git-gate/creds /git
 
+# Base image's ENTRYPOINT is the gitleaks binary; override explicitly.
 ENTRYPOINT ["/bin/sh", "/git-gate-entrypoint.sh"]
