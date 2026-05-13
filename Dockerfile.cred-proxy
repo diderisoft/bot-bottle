@@ -1,0 +1,35 @@
+# Per-bottle cred-proxy sidecar image (PRD 0010).
+#
+# Holds API tokens (Anthropic OAuth, GitHub PAT, Gitea PAT, npm) in
+# this container's environ, strips inbound Authorization headers, and
+# injects the configured one before forwarding to the real upstream
+# over HTTPS. The agent's environ carries only URLs pointing at this
+# sidecar — the upstream credentials never reach the agent container.
+#
+# Stdlib-only Python; no pip install layer. The route table lands at
+# /run/cred-proxy/routes.json via `docker cp` from the backend's
+# start step.
+
+# python:3.13-alpine. Pinned by digest for reproducibility — the
+# proxy script is stdlib-only so a Python minor-version drift would
+# only affect the runtime, not API surface, but pinning makes the
+# image bytes deterministic.
+FROM python@sha256:420cd0bf0f3998275875e02ecd5808168cf0843cbb4d3c536432f729247b2acc
+
+# The proxy script ships as a single file. Tests in tests/unit/ import
+# it as `claude_bottle.cred_proxy_server`; the container runs it
+# directly as a script. No package install, no other modules pulled.
+COPY claude_bottle/cred_proxy_server.py /app/cred_proxy_server.py
+
+# Pre-create the runtime directory the backend's start step will
+# `docker cp` routes.json into. docker cp does not create
+# intermediate dirs, so the mkdir must be baked into the image.
+RUN mkdir -p /run/cred-proxy
+
+# Listening port. The agent's environ resolves the cred-proxy host
+# via Docker's embedded DNS on the per-bottle internal network and
+# dials this port. Surfaced as EXPOSE for documentation; not required
+# for the internal network to route to it.
+EXPOSE 9099
+
+ENTRYPOINT ["python3", "/app/cred_proxy_server.py"]
