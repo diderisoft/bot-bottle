@@ -23,6 +23,7 @@ from . import prepare as _prepare
 from .bottle import DockerBottle
 from .bottle_cleanup_plan import DockerBottleCleanupPlan
 from .bottle_plan import DockerBottlePlan
+from .git_gate import DockerGitGate
 from .pipelock import DockerPipelockProxy
 from .provision import ca as _ca
 from .provision import git as _git
@@ -41,16 +42,25 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
     def __init__(self) -> None:
         self._proxy = DockerPipelockProxy()
         self._gate = DockerSSHGate()
+        self._git_gate = DockerGitGate()
 
     def _resolve_plan(self, spec: BottleSpec, *, stage_dir: Path) -> DockerBottlePlan:
         return _prepare.resolve_plan(
-            spec, stage_dir=stage_dir, proxy=self._proxy, gate=self._gate
+            spec,
+            stage_dir=stage_dir,
+            proxy=self._proxy,
+            gate=self._gate,
+            git_gate=self._git_gate,
         )
 
     @contextmanager
     def launch(self, plan: DockerBottlePlan) -> Generator[DockerBottle, None, None]:
         with _launch.launch(
-            plan, proxy=self._proxy, gate=self._gate, provision=self.provision
+            plan,
+            proxy=self._proxy,
+            gate=self._gate,
+            git_gate=self._git_gate,
+            provision=self.provision,
         ) as bottle:
             yield bottle
 

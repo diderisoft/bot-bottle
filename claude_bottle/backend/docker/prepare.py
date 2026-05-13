@@ -19,6 +19,7 @@ from ...log import die
 from .. import BottleSpec
 from . import util as docker_mod
 from .bottle_plan import DockerBottlePlan
+from .git_gate import DockerGitGate
 from .pipelock import DockerPipelockProxy
 from .ssh_gate import DockerSSHGate
 
@@ -29,6 +30,7 @@ def resolve_plan(
     stage_dir: Path,
     proxy: DockerPipelockProxy,
     gate: DockerSSHGate,
+    git_gate: DockerGitGate,
 ) -> DockerBottlePlan:
     """Resolve Docker-specific names and write scratch files. Trusts
     that the agent and its skills/SSH keys are present — validation
@@ -81,6 +83,7 @@ def resolve_plan(
 
     proxy_plan = proxy.prepare(bottle, slug, stage_dir)
     gate_plan = gate.prepare(bottle, slug, stage_dir)
+    git_gate_plan = git_gate.prepare(bottle, slug, stage_dir)
     resolved = resolve_env(manifest, spec.agent_name)
     # Everything that should reach the bottle by-name (so its value
     # never lands on argv or in env_file) goes into one dict. The
@@ -109,6 +112,7 @@ def resolve_plan(
         prompt_file=prompt_file,
         proxy_plan=proxy_plan,
         gate_plan=gate_plan,
+        git_gate_plan=git_gate_plan,
         allowlist_summary=allowlist_summary,
         use_runsc=use_runsc,
     )
