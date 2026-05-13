@@ -272,6 +272,22 @@ if ! GIT_SSH_COMMAND="$ssh_cmd" git -C "$repo_dir" fetch origin --prune >&2; the
   echo "git-gate: upstream fetch failed for $repo_dir; refusing to serve stale data" >&2
   exit 1
 fi
+
+# Sync the bare repo's HEAD to upstream's HEAD on the first fetch
+# (when it still points at the `git init --bare` default of
+# refs/heads/master and upstream uses something else, the cloned
+# checkout would fail with "remote HEAD refers to nonexistent ref").
+# Costs one extra ls-remote on first fetch only; subsequent fetches
+# skip the branch. If upstream's default branch changes after the
+# gate has cached it, restart the bottle to resync.
+if ! git -C "$repo_dir" rev-parse --verify HEAD >/dev/null 2>&1; then
+  upstream_head=$(GIT_SSH_COMMAND="$ssh_cmd" git -C "$repo_dir" \
+    ls-remote --symref origin HEAD 2>/dev/null \
+    | awk '/^ref:/ {print $2; exit}')
+  if [ -n "$upstream_head" ]; then
+    git -C "$repo_dir" symbolic-ref HEAD "$upstream_head" || true
+  fi
+fi
 exit 0
 """
 
