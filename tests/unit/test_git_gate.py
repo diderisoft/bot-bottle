@@ -9,12 +9,15 @@ from claude_bottle.git_gate import (
     GitGate,
     GitGatePlan,
     GitGateUpstream,
+    git_gate_aggregate_extra_hosts,
     git_gate_known_hosts_line,
     git_gate_render_access_hook,
     git_gate_render_entrypoint,
     git_gate_render_hook,
     git_gate_upstreams_for_bottle,
 )
+from claude_bottle.log import Die
+from claude_bottle.manifest import Manifest
 from tests.fixtures import fixture_minimal, fixture_with_git
 
 
@@ -41,6 +44,84 @@ class TestUpstreamsForBottle(unittest.TestCase):
     def test_empty_bottle_yields_empty_upstreams(self):
         bottle = fixture_minimal().bottles["dev"]
         self.assertEqual((), git_gate_upstreams_for_bottle(bottle))
+
+
+class TestExtraHostsPlumbing(unittest.TestCase):
+    def test_upstream_carries_extra_hosts_from_manifest(self):
+        m = Manifest.from_json_obj({
+            "bottles": {
+                "dev": {
+                    "git": [{
+                        "Name": "claude-bottle",
+                        "Upstream": "ssh://git@gitea.dideric.is:30009/didericis/claude-bottle.git",
+                        "IdentityFile": "/dev/null",
+                        "ExtraHosts": {"gitea.dideric.is": "192.0.2.10"},
+                    }],
+                },
+            },
+            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        })
+        ups = git_gate_upstreams_for_bottle(m.bottles["dev"])
+        self.assertEqual(
+            {"gitea.dideric.is": "192.0.2.10"}, dict(ups[0].extra_hosts)
+        )
+
+    def test_aggregator_merges_distinct_hostnames(self):
+        ups = (
+            GitGateUpstream(
+                name="a", upstream_url="", upstream_host="", upstream_port="",
+                identity_file="", known_host_key="",
+                extra_hosts={"a.example": "10.0.0.1"},
+            ),
+            GitGateUpstream(
+                name="b", upstream_url="", upstream_host="", upstream_port="",
+                identity_file="", known_host_key="",
+                extra_hosts={"b.example": "10.0.0.2"},
+            ),
+        )
+        self.assertEqual(
+            {"a.example": "10.0.0.1", "b.example": "10.0.0.2"},
+            git_gate_aggregate_extra_hosts(ups),
+        )
+
+    def test_aggregator_allows_same_host_same_ip(self):
+        # Two entries listing the same host:ip is harmless duplication,
+        # not a conflict. The gate's /etc/hosts ends up with one line.
+        ups = (
+            GitGateUpstream(
+                name="a", upstream_url="", upstream_host="", upstream_port="",
+                identity_file="", known_host_key="",
+                extra_hosts={"gitea.dideric.is": "192.0.2.10"},
+            ),
+            GitGateUpstream(
+                name="b", upstream_url="", upstream_host="", upstream_port="",
+                identity_file="", known_host_key="",
+                extra_hosts={"gitea.dideric.is": "192.0.2.10"},
+            ),
+        )
+        self.assertEqual(
+            {"gitea.dideric.is": "192.0.2.10"},
+            git_gate_aggregate_extra_hosts(ups),
+        )
+
+    def test_aggregator_rejects_conflicting_ips(self):
+        ups = (
+            GitGateUpstream(
+                name="a", upstream_url="", upstream_host="", upstream_port="",
+                identity_file="", known_host_key="",
+                extra_hosts={"gitea.dideric.is": "192.0.2.10"},
+            ),
+            GitGateUpstream(
+                name="b", upstream_url="", upstream_host="", upstream_port="",
+                identity_file="", known_host_key="",
+                extra_hosts={"gitea.dideric.is": "10.0.0.99"},
+            ),
+        )
+        with self.assertRaises(Die):
+            git_gate_aggregate_extra_hosts(ups)
+
+    def test_aggregator_empty_is_empty(self):
+        self.assertEqual({}, git_gate_aggregate_extra_hosts(()))
 
 
 class TestKnownHostsLine(unittest.TestCase):
