@@ -89,6 +89,13 @@ class GitEntry:
     upstream after gitleaks passes. The agent itself never holds the
     upstream credential.
 
+    `ExtraHosts` is an optional `{hostname: ip}` map injected into the
+    gate container's `/etc/hosts` via `--add-host`. Use it when the
+    Upstream's hostname isn't resolvable from the gate (e.g. a
+    Tailscale-only host whose public DNS A record points elsewhere):
+    the agent's `insteadOf` rewrite still matches the original
+    hostname, but the gate routes to the right IP.
+
     The Upstream URL is parsed once at construction and the pieces are
     stashed in the `Upstream*` fields so the git-gate render step
     doesn't have to re-parse."""
@@ -97,6 +104,7 @@ class GitEntry:
     Upstream: str
     IdentityFile: str
     KnownHostKey: str = ""
+    ExtraHosts: Mapping[str, str] = field(default_factory=_empty_str_dict)
     UpstreamUser: str = ""
     UpstreamHost: str = ""
     UpstreamPort: str = ""
@@ -124,6 +132,9 @@ class GitEntry:
             d.get("KnownHostKey"),
             f"bottle '{bottle_name}' git '{name}' KnownHostKey",
         )
+        extra_hosts = _opt_extra_hosts(
+            d.get("ExtraHosts"), f"bottle '{bottle_name}' git '{name}' ExtraHosts"
+        )
         user, host, port, path = _parse_git_upstream(
             upstream, f"bottle '{bottle_name}' git '{name}' Upstream"
         )
@@ -132,6 +143,7 @@ class GitEntry:
             Upstream=upstream,
             IdentityFile=ident,
             KnownHostKey=khk,
+            ExtraHosts=extra_hosts,
             UpstreamUser=user,
             UpstreamHost=host,
             UpstreamPort=port,
@@ -433,6 +445,26 @@ def _opt_port(value: object, label: str) -> str:
     if isinstance(value, str):
         return value
     die(f"{label} must be a string or number (was {type(value).__name__})")
+
+
+def _opt_extra_hosts(value: object, label: str) -> dict[str, str]:
+    """Validate a `{hostname: ip}` object and return a plain dict. None
+    yields an empty dict so callers can treat ExtraHosts as always
+    present. IP format is not checked here; docker validates at
+    `--add-host` time."""
+    if value is None:
+        return {}
+    obj = _as_json_object(value, label)
+    out: dict[str, str] = {}
+    for host, ip in obj.items():
+        if not host:
+            die(f"{label} contains an empty hostname key")
+        if not isinstance(ip, str):
+            die(f"{label}['{host}'] must be a string (was {type(ip).__name__})")
+        if not ip:
+            die(f"{label}['{host}'] must be a non-empty string")
+        out[host] = ip
+    return out
 
 
 def _parse_git_upstream(url: str, label: str) -> tuple[str, str, str, str]:
