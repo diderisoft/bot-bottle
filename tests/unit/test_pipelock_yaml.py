@@ -19,7 +19,7 @@ from claude_bottle.pipelock import (
     pipelock_build_config,
     pipelock_render_yaml,
 )
-from tests.fixtures import fixture_minimal, fixture_with_ssh
+from tests.fixtures import fixture_minimal
 
 
 class TestBuildConfig(unittest.TestCase):
@@ -38,25 +38,13 @@ class TestBuildConfig(unittest.TestCase):
         # Baked defaults always present.
         self.assertIn("api.anthropic.com", cast(list[str], cfg["api_allowlist"]))
         self.assertIn("raw.githubusercontent.com", cast(list[str], cfg["api_allowlist"]))
-        # PRD 0007: pipelock has no SSH carve-outs at all — neither
-        # trusted_domains nor ssrf are ever emitted from bottle data
-        # in v1.
+        # pipelock has no SSH carve-outs at all — neither
+        # trusted_domains nor ssrf are emitted from bottle data.
         self.assertNotIn("trusted_domains", cfg)
         self.assertNotIn("ssrf", cfg)
         # Without CA paths, the tls_interception block is omitted —
         # pipelock falls back to its built-in default of `enabled: false`.
         self.assertNotIn("tls_interception", cfg)
-
-    def test_ssh_entries_do_not_leak_into_pipelock(self):
-        # PRD 0007: bottle.ssh routes through the ssh-gate sidecar,
-        # so pipelock's config must not reflect those hostnames or
-        # IPs in any of its blocks.
-        cfg = pipelock_build_config(fixture_with_ssh().bottles["dev"])
-        allow = cast(list[str], cfg["api_allowlist"])
-        self.assertNotIn("github.com", allow)
-        self.assertNotIn("192.0.2.10", allow)
-        self.assertNotIn("trusted_domains", cfg)
-        self.assertNotIn("ssrf", cfg)
 
     def test_tls_interception_block_emitted_when_paths_supplied(self):
         # PRD 0006: paths flow in via DockerPipelockProxy's in-container
@@ -102,7 +90,7 @@ class TestRenderAndWrite(unittest.TestCase):
         """One render-level smoke check: the serialized YAML is plausibly
         the shape pipelock expects. We don't grep every key here — that's
         what TestBuildConfig is for."""
-        cfg = pipelock_build_config(fixture_with_ssh().bottles["dev"])
+        cfg = pipelock_build_config(fixture_minimal().bottles["dev"])
         text = pipelock_render_yaml(cfg)
         for required in (
             "api_allowlist:",
@@ -111,7 +99,7 @@ class TestRenderAndWrite(unittest.TestCase):
             "request_body_scanning:",
         ):
             self.assertIn(required, text)
-        # PRD 0007: no ssh carve-outs in the rendered yaml.
+        # No ssh carve-outs in the rendered yaml.
         self.assertNotIn("trusted_domains:", text)
         self.assertNotIn("ssrf:", text)
 

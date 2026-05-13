@@ -168,11 +168,9 @@ class TestGitEntryCrossValidation(unittest.TestCase):
                  "IdentityFile": "/dev/null"},
             ]))
 
-    def test_shadow_route_with_ssh_entry_dies(self):
-        # An ssh entry pointing at gitea.dideric.is:30009 AND a git
-        # entry pointing at ssh://git@gitea.dideric.is:30009/... is a
-        # bypass: agents could route around the gate by using the
-        # ssh-gate. Manifest construction must reject.
+    def test_legacy_ssh_field_dies_with_hint(self):
+        # PRD 0009: bottle.ssh is removed; manifests carrying it must
+        # fail loudly with a hint pointing at bottle.git.
         with self.assertRaises(Die):
             Manifest.from_json_obj({
                 "bottles": {
@@ -184,39 +182,10 @@ class TestGitEntryCrossValidation(unittest.TestCase):
                             "User": "git",
                             "Port": 30009,
                         }],
-                        "git": [{
-                            "Name": "claude-bottle",
-                            "Upstream": "ssh://git@gitea.dideric.is:30009/didericis/claude-bottle.git",
-                            "IdentityFile": "/dev/null",
-                        }],
                     },
                 },
                 "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
             })
-
-    def test_independent_ssh_and_git_targets_allowed(self):
-        # Same hostname but different ports are independent targets.
-        m = Manifest.from_json_obj({
-            "bottles": {
-                "dev": {
-                    "ssh": [{
-                        "Host": "gitea-ssh",
-                        "IdentityFile": "/dev/null",
-                        "Hostname": "gitea.dideric.is",
-                        "User": "git",
-                        "Port": 22,
-                    }],
-                    "git": [{
-                        "Name": "claude-bottle",
-                        "Upstream": "ssh://git@gitea.dideric.is:30009/didericis/claude-bottle.git",
-                        "IdentityFile": "/dev/null",
-                    }],
-                },
-            },
-            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
-        })
-        self.assertEqual(1, len(m.bottles["dev"].ssh))
-        self.assertEqual(1, len(m.bottles["dev"].git))
 
 
 class TestEmptyGitField(unittest.TestCase):

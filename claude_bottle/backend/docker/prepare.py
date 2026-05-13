@@ -21,7 +21,6 @@ from . import util as docker_mod
 from .bottle_plan import DockerBottlePlan
 from .git_gate import DockerGitGate
 from .pipelock import DockerPipelockProxy
-from .ssh_gate import DockerSSHGate
 
 
 def resolve_plan(
@@ -29,12 +28,11 @@ def resolve_plan(
     *,
     stage_dir: Path,
     proxy: DockerPipelockProxy,
-    gate: DockerSSHGate,
     git_gate: DockerGitGate,
 ) -> DockerBottlePlan:
     """Resolve Docker-specific names and write scratch files. Trusts
-    that the agent and its skills/SSH keys are present — validation
-    already ran in the base class."""
+    that the agent and its skills/git-gate keys are present —
+    validation already ran in the base class."""
     docker_mod.require_docker()
 
     manifest = spec.manifest
@@ -82,7 +80,6 @@ def resolve_plan(
     prompt_file.chmod(0o600)
 
     proxy_plan = proxy.prepare(bottle, slug, stage_dir)
-    gate_plan = gate.prepare(bottle, slug, stage_dir)
     git_gate_plan = git_gate.prepare(bottle, slug, stage_dir)
     resolved = resolve_env(manifest, spec.agent_name)
     # Everything that should reach the bottle by-name (so its value
@@ -111,7 +108,6 @@ def resolve_plan(
         forwarded_env=forwarded_env,
         prompt_file=prompt_file,
         proxy_plan=proxy_plan,
-        gate_plan=gate_plan,
         git_gate_plan=git_gate_plan,
         allowlist_summary=allowlist_summary,
         use_runsc=use_runsc,

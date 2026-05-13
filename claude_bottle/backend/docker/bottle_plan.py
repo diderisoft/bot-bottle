@@ -15,7 +15,6 @@ from ...git_gate import GitGatePlan
 from ...log import info
 from ...manifest import Agent, Bottle
 from ...pipelock import PipelockProxyPlan, pipelock_effective_allowlist
-from ...ssh_gate import SSHGatePlan
 from .. import BottlePlan
 
 
@@ -27,7 +26,6 @@ class _PlanView:
     agent: Agent
     bottle: Bottle
     env_names: list[str]
-    ssh_hosts: list[str]
     git_names: list[str]
     prompt_first_line: str
 
@@ -52,7 +50,6 @@ class DockerBottlePlan(BottlePlan):
     forwarded_env: dict[str, str] = field(repr=False)
     prompt_file: Path
     proxy_plan: PipelockProxyPlan
-    gate_plan: SSHGatePlan
     git_gate_plan: GitGatePlan
     allowlist_summary: str
     use_runsc: bool
@@ -69,7 +66,6 @@ class DockerBottlePlan(BottlePlan):
             agent=agent,
             bottle=bottle,
             env_names=env_names,
-            ssh_hosts=[e.Host for e in bottle.ssh],
             git_names=[e.Name for e in bottle.git],
             prompt_first_line=agent.prompt.splitlines()[0] if agent.prompt else "",
         )
@@ -94,16 +90,6 @@ class DockerBottlePlan(BottlePlan):
         info("skills          : " + (" ".join(v.agent.skills) if v.agent.skills else "(none)"))
         info(f"docker runtime  : {runtime_label}")
         info(f"bottle             : {v.agent.bottle}")
-        if v.ssh_hosts:
-            info(f"  ssh hosts     : {', '.join(v.ssh_hosts)}")
-            gate_lines = [
-                f"{u.bottle_host_alias} -> {u.upstream_host}:{u.upstream_port} "
-                f"(listen {u.listen_port})"
-                for u in self.gate_plan.upstreams
-            ]
-            info(f"  ssh gate      : {'; '.join(gate_lines)}")
-        else:
-            info("  ssh hosts     : (none)")
         if v.git_names:
             info(f"  git remotes   : {', '.join(v.git_names)}")
             git_lines = [
@@ -136,15 +122,6 @@ class DockerBottlePlan(BottlePlan):
             "runtime": "runsc" if self.use_runsc else "runc",
             "env_names": v.env_names,
             "skills": list(v.agent.skills),
-            "ssh_hosts": v.ssh_hosts,
-            "ssh_gate": [
-                {
-                    "host": u.bottle_host_alias,
-                    "upstream": f"{u.upstream_host}:{u.upstream_port}",
-                    "listen_port": u.listen_port,
-                }
-                for u in self.gate_plan.upstreams
-            ],
             "git_remotes": v.git_names,
             "git_gate": [
                 {

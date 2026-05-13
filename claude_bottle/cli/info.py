@@ -31,16 +31,15 @@ def cmd_info(argv: list[str]) -> int:
         f"first line: {prompt_first_line or '(empty)'}"
     )
     info(f"bottle             : {agent.bottle}")
-    if bottle.ssh:
-        for e in bottle.ssh:
+    if bottle.git:
+        for e in bottle.git:
             info(
-                f"  ssh host      : {e.Host} "
-                f"(Hostname={e.Hostname}, User={e.User}, "
-                f"Port={e.Port}, IdentityFile={e.IdentityFile})"
+                f"  git remote    : {e.Name} -> {e.Upstream} "
+                f"(IdentityFile={e.IdentityFile})"
             )
             if e.KnownHostKey:
                 info(f"    KnownHostKey: {e.KnownHostKey}")
     else:
-        info("  ssh hosts     : (none)")
+        info("  git remotes   : (none)")
     print()
     return 0

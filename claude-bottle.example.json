@@ -2,7 +2,6 @@
   "bottles": {
     "default": {
       "env": {},
-      "ssh": [],
       "egress": {
         "allowlist": [
           "github.com",
