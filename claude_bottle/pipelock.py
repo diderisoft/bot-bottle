@@ -100,16 +100,28 @@ def pipelock_effective_allowlist(bottle: Bottle) -> list[str]:
 
 def pipelock_effective_tls_passthrough(bottle: Bottle) -> list[str]:
     """Hostnames pipelock should pass through (no TLS MITM, no body
-    scan). Default carries the LLM API endpoint (its request bodies
-    legitimately trip DLP); cred-proxy upstream hosts are added so
-    cred-proxy's HTTPS client (which trusts only the real CA bundle)
-    can complete the upstream handshake."""
-    seen: dict[str, None] = {}
-    for h in DEFAULT_TLS_PASSTHROUGH:
-        seen.setdefault(h, None)
-    for h in pipelock_token_hosts(bottle):
-        seen.setdefault(h, None)
-    return sorted(seen.keys())
+    scan). Default carries the LLM API endpoint — its request bodies
+    are user-authored conversation text that legitimately trips DLP
+    scanners (notably pipelock's BIP-39 seed-phrase detector). Every
+    other allowlisted host is MITM'd by pipelock's per-bottle CA so
+    its body scanner sees the cleartext.
+
+    cred-proxy upstream hosts (github, gitea, npm) are deliberately
+    NOT auto-added here. cred-proxy's HTTPS client trusts pipelock's
+    CA at runtime (folded into its trust store via docker cp +
+    update-ca-certificates), so pipelock can MITM the cred-proxy →
+    upstream leg and body-scan it the same way it body-scans the
+    agent's direct HTTPS traffic. Without this, an agent that pushed
+    a secret via cred-proxy's /gh-git/ path would have no body
+    scanner in front of it. The PRD's earlier reasoning that
+    cred-proxy hosts needed passthrough was a workaround for the
+    cert-trust gap that no longer exists.
+
+    `bottle` is kept on the signature for forward-compat (a future
+    knob might let a manifest opt a host into passthrough); today
+    the returned list is independent of the bottle."""
+    del bottle  # not consulted; see docstring.
+    return sorted(DEFAULT_TLS_PASSTHROUGH)
 
 
 def pipelock_allowlist_summary(bottle: Bottle) -> str:

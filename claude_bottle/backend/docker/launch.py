@@ -105,15 +105,21 @@ def launch(
             stack.callback(git_gate.stop, git_gate_name)
 
         # Cred-proxy (PRD 0010). One sidecar per bottle when
-        # bottle.tokens declares any kind. Must come up before the
-        # agent so DNS resolution for `cred-proxy` succeeds on the
-        # agent's first call; tokens flow from the host env into the
-        # sidecar's environ, not the agent's.
+        # bottle.tokens declares any kind. Must come up AFTER pipelock
+        # — cred-proxy routes its outbound HTTPS through pipelock
+        # (HTTPS_PROXY in environ + the per-bottle CA in its trust
+        # store) so the egress allowlist + body scanner sit in the
+        # cred-proxy path too. Must come up BEFORE the agent so DNS
+        # resolution for `cred-proxy` succeeds on the agent's first
+        # call; tokens flow from the host env into the sidecar's
+        # environ, not the agent's.
         if plan.cred_proxy_plan.upstreams:
             cred_proxy_plan = dataclasses.replace(
                 plan.cred_proxy_plan,
                 internal_network=internal_network,
                 egress_network=egress_network,
+                pipelock_ca_host_path=ca_cert_host,
+                pipelock_proxy_url=pipelock_proxy_url(plan.slug),
             )
             plan = dataclasses.replace(plan, cred_proxy_plan=cred_proxy_plan)
             cred_proxy_name = cred_proxy.start(plan.cred_proxy_plan)

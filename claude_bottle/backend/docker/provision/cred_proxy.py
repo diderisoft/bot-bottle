@@ -35,8 +35,10 @@ def provision_cred_proxy(plan: DockerBottlePlan, target: str) -> None:
     upstreams = plan.cred_proxy_plan.upstreams
     if not upstreams:
         return
+    bottle = plan.spec.manifest.bottle_for(plan.spec.agent_name)
+    git_gate_hosts = {g.UpstreamHost for g in bottle.git}
     _provision_npmrc(plan, target, upstreams)
-    _provision_gitconfig(plan, target, upstreams)
+    _provision_gitconfig(plan, target, upstreams, git_gate_hosts)
     _provision_tea_config(plan, target, upstreams)
 
 
@@ -82,29 +84,41 @@ def _provision_npmrc(
 # --- git config -------------------------------------------------------------
 
 
-def render_cred_proxy_gitconfig(upstreams: tuple[CredProxyUpstream, ...]) -> str:
+def render_cred_proxy_gitconfig(
+    upstreams: tuple[CredProxyUpstream, ...],
+    git_gate_hosts: set[str] = frozenset(),  # type: ignore[assignment]
+) -> str:
     """Render the `~/.gitconfig` fragment for cred-proxy insteadOf
     rewrites. Empty string when no github / gitea routes are declared.
 
-    github expands to two rewrites: https://github.com/... → /gh-git/...
-    (the git transport endpoint), and the agent's git client reaches
-    api.github.com over the same proxy via the /gh-api/ route, but
-    that's used by tools that call the GitHub API directly (gh, tea,
-    octokit) rather than `git` itself.
+    The rewrite is suppressed for any host that's also declared in
+    `bottle.git`. git-gate is the canonical git path on those hosts —
+    its pre-receive runs gitleaks before forwarding the push. A
+    cred-proxy https://<host>/ rewrite would route HTTPS git ops
+    around the gate. cred-proxy still refuses smart-HTTP push at
+    runtime (defense in depth), but suppressing the rewrite means
+    `git clone https://<host>/...` doesn't have a tempting shortcut
+    that just confuses on push.
 
-    Gitea entries get one rewrite per declared host, pointing at
-    /gitea/<host>/. The path component scopes the credential
-    so multiple gitea instances coexist on one proxy."""
+    github expands to one rewrite (https://github.com/... → /gh-git/...,
+    the git transport endpoint); /gh-api/ stays unmapped here because
+    tools call api.github.com directly rather than through git.
+    Gitea entries get one rewrite per declared host."""
     rules: list[str] = []
     for u in upstreams:
         if u.kind == "github" and u.path == "/gh-git/":
+            if "github.com" in git_gate_hosts:
+                continue
             rules.append(
                 f'[url "{cred_proxy_url()}/gh-git/"]\n'
                 f"\tinsteadOf = https://github.com/\n"
             )
         elif u.kind == "gitea":
-            # u.upstream is the configured gitea URL (e.g.
-            # https://gitea.dideric.is) and u.path is /gitea/<host>/.
+            # u.path is /gitea/<host>/; derive the host the same way
+            # the route table did so we match git_gate's UpstreamHost.
+            host = u.path[len("/gitea/"):].rstrip("/")
+            if host in git_gate_hosts:
+                continue
             rules.append(
                 f'[url "{cred_proxy_url()}{u.path}"]\n'
                 f"\tinsteadOf = {u.upstream}/\n"
@@ -123,11 +137,13 @@ def _provision_gitconfig(
     plan: DockerBottlePlan,
     target: str,
     upstreams: tuple[CredProxyUpstream, ...],
+    git_gate_hosts: set[str],
 ) -> None:
     """Append the cred-proxy insteadOf rules to ~/.gitconfig. Runs
     after `provision_git`, so any git-gate rules already live in the
-    file; we append rather than overwrite."""
-    content = render_cred_proxy_gitconfig(upstreams)
+    file; we append rather than overwrite. Hosts already brokered by
+    git-gate are skipped — git-gate is the canonical git path there."""
+    content = render_cred_proxy_gitconfig(upstreams, git_gate_hosts)
     if not content:
         return
     container_home = os.environ.get("CLAUDE_BOTTLE_CONTAINER_HOME", "/home/node")

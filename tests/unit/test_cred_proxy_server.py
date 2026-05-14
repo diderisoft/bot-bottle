@@ -7,6 +7,7 @@ from claude_bottle.cred_proxy_server import (
     Route,
     build_forward_headers,
     filter_response_headers,
+    is_git_push_request,
     load_tokens,
     parse_routes,
     select_route,
@@ -181,6 +182,49 @@ class TestFilterResponseHeaders(unittest.TestCase):
         self.assertIn("cache-control", names)
         self.assertNotIn("connection", names)
         self.assertNotIn("transfer-encoding", names)
+
+
+class TestIsGitPushRequest(unittest.TestCase):
+    """git push over HTTPS goes through /info/refs?service=git-receive-pack
+    (capabilities probe) then POST /git-receive-pack (the push body).
+    Fetches use /git-upload-pack and are not blocked — the bypass we're
+    closing is push, since git-gate's gitleaks pre-receive is the scanner
+    for outbound git data."""
+
+    def test_push_capabilities_probe_blocked(self):
+        self.assertTrue(is_git_push_request(
+            "/gh-git/owner/repo.git/info/refs",
+            "service=git-receive-pack",
+        ))
+
+    def test_push_body_blocked(self):
+        self.assertTrue(is_git_push_request(
+            "/gh-git/owner/repo.git/git-receive-pack", "",
+        ))
+
+    def test_fetch_capabilities_allowed(self):
+        self.assertFalse(is_git_push_request(
+            "/gh-git/owner/repo.git/info/refs",
+            "service=git-upload-pack",
+        ))
+
+    def test_fetch_body_allowed(self):
+        self.assertFalse(is_git_push_request(
+            "/gh-git/owner/repo.git/git-upload-pack", "",
+        ))
+
+    def test_rest_api_allowed(self):
+        # tea/gh-style REST calls hit /api/v1/... — unrelated.
+        self.assertFalse(is_git_push_request(
+            "/gitea/gitea.dideric.is/api/v1/repos/x/y", "",
+        ))
+
+    def test_push_with_extra_query_params(self):
+        # `service` may appear with other params in any order.
+        self.assertTrue(is_git_push_request(
+            "/gh-git/owner/repo.git/info/refs",
+            "trace=1&service=git-receive-pack",
+        ))
 
 
 class TestLoadTokens(unittest.TestCase):

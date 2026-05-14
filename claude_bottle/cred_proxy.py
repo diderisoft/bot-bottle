@@ -64,16 +64,24 @@ class CredProxyPlan:
 
     The slug + routes_path + upstreams + token_env_map fields are
     filled at prepare time (host-side, side-effect-free on docker).
-    The network fields are populated by the backend's launch step
-    via `dataclasses.replace` once those networks exist. Empty
-    defaults are sentinels meaning "not yet set"; `.start` validates
-    that they are populated.
+    The network + pipelock fields are populated by the backend's
+    launch step via `dataclasses.replace` once those resources
+    exist. Empty defaults are sentinels meaning "not yet set";
+    `.start` validates that they are populated.
 
     `token_env_map` is `{<token_env in container>: <TokenRef on host>}`.
     The backend's start step reads `os.environ[TokenRef]` and forwards
     the value into the cred-proxy container's environ under
     `token_env`. The plan itself never holds token values — secrets
-    never land in a dataclass that might be logged."""
+    never land in a dataclass that might be logged.
+
+    `pipelock_ca_host_path` is the host path of the per-bottle CA
+    pipelock will present on bumped TLS handshakes; the cred-proxy
+    image's entrypoint runs `update-ca-certificates` over it so the
+    proxy's HTTPS client trusts pipelock's CA. `pipelock_proxy_url`
+    is the URL cred-proxy sets as `HTTPS_PROXY` in its environ so
+    outbound HTTPS traverses pipelock — making pipelock's body
+    scanner part of the cred-proxy egress path."""
 
     slug: str
     routes_path: Path
@@ -81,6 +89,8 @@ class CredProxyPlan:
     token_env_map: dict[str, str]
     internal_network: str = ""
     egress_network: str = ""
+    pipelock_ca_host_path: Path = Path()
+    pipelock_proxy_url: str = ""
 
 
 # Hardcoded upstream URLs for the non-gitea Kinds. Gitea's URL is per-

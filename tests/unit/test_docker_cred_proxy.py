@@ -4,6 +4,7 @@ The full docker lifecycle is exercised by integration tests; here we
 cover the pure helpers and the validation checks `.start` runs
 before touching docker."""
 
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -26,6 +27,8 @@ def _empty_plan(**overrides):
         "token_env_map": {},
         "internal_network": "",
         "egress_network": "",
+        "pipelock_ca_host_path": Path(),
+        "pipelock_proxy_url": "",
     }
     base.update(overrides)
     return CredProxyPlan(**base)
@@ -76,6 +79,26 @@ class TestStartGuards(unittest.TestCase):
                 egress_network="egress-x",
                 routes_path=Path("/tmp/cred-proxy-test-does-not-exist.json"),
             ))
+
+    def test_pipelock_url_without_ca_dies(self):
+        # URL set + CA path empty/missing is a wiring bug: either both
+        # populated (production) or both empty (test escape hatch).
+        upstream = CredProxyUpstream(
+            kind="anthropic", path="/anthropic/",
+            upstream="https://api.anthropic.com",
+            auth_scheme="Bearer", token_env="CRED_PROXY_TOKEN_0",
+            token_ref="T",
+        )
+        with tempfile.NamedTemporaryFile() as routes:
+            with self.assertRaises(Die):
+                self.proxy.start(_empty_plan(
+                    upstreams=(upstream,),
+                    internal_network="net-x",
+                    egress_network="egress-x",
+                    routes_path=Path(routes.name),
+                    pipelock_proxy_url="http://pipelock:8888",
+                    pipelock_ca_host_path=Path("/tmp/cred-proxy-no-ca.pem"),
+                ))
 
 
 if __name__ == "__main__":

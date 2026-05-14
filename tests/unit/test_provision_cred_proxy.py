@@ -83,6 +83,40 @@ class TestRenderGitconfig(unittest.TestCase):
         self.assertIn("gitea.dideric.is/", out)
         self.assertIn("gitea.example.com/", out)
 
+    def test_github_suppressed_when_git_gate_covers_host(self):
+        # When bottle.git brokers github.com over SSH, git-gate is the
+        # canonical git path. The cred-proxy https://github.com/
+        # rewrite would let the agent push over HTTPS — bypassing
+        # gitleaks. Suppress it.
+        out = render_cred_proxy_gitconfig(
+            _upstreams([{"Kind": "github", "TokenRef": "GH"}]),
+            {"github.com"},
+        )
+        self.assertEqual("", out)
+
+    def test_gitea_suppressed_when_git_gate_covers_host(self):
+        out = render_cred_proxy_gitconfig(
+            _upstreams([{"Kind": "gitea", "TokenRef": "T",
+                         "Url": "https://gitea.dideric.is"}]),
+            {"gitea.dideric.is"},
+        )
+        self.assertEqual("", out)
+
+    def test_partial_suppression_keeps_other_giteas(self):
+        # Two gitea instances; git-gate brokers one. The other still
+        # gets the cred-proxy rewrite.
+        out = render_cred_proxy_gitconfig(
+            _upstreams([
+                {"Kind": "gitea", "TokenRef": "T1",
+                 "Url": "https://gitea.dideric.is"},
+                {"Kind": "gitea", "TokenRef": "T2",
+                 "Url": "https://gitea.example.com"},
+            ]),
+            {"gitea.dideric.is"},
+        )
+        self.assertNotIn("gitea.dideric.is/", out)
+        self.assertIn("gitea.example.com/", out)
+
 
 class TestRenderTeaConfig(unittest.TestCase):
     def test_empty_when_no_gitea(self):

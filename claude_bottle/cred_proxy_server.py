@@ -114,6 +114,31 @@ def select_route(routes: typing.Sequence[Route], request_path: str) -> Route | N
     return None
 
 
+def is_git_push_request(path: str, query: str) -> bool:
+    """Return True if the request is a git smart-HTTP push.
+
+    git push over HTTPS hits two endpoints:
+      GET <repo>/info/refs?service=git-receive-pack   (capabilities)
+      POST <repo>/git-receive-pack                    (the push)
+
+    Fetches use `service=git-upload-pack` / `/git-upload-pack` and are
+    not blocked. cred-proxy refuses push because git-gate's pre-receive
+    gitleaks scan is the gate for outbound git data; routing push
+    through cred-proxy would bypass that. Use the bottle.git SSH path
+    if you need to push.
+    """
+    if path.endswith("/git-receive-pack"):
+        return True
+    if path.endswith("/info/refs"):
+        # Query string is parsed leniently — `service=git-receive-pack`
+        # may appear with other params in any order.
+        for pair in query.split("&"):
+            k, _, v = pair.partition("=")
+            if k == "service" and v == "git-receive-pack":
+                return True
+    return False
+
+
 # --- Header handling --------------------------------------------------------
 
 
@@ -223,6 +248,14 @@ class CredProxyHandler(http.server.BaseHTTPRequestHandler):
     def _proxy(self) -> None:
         server = typing.cast("CredProxyServer", self.server)
         path, _, query = self.path.partition("?")
+        if is_git_push_request(path, query):
+            self.send_error(
+                403,
+                "cred-proxy: git push over HTTPS is not supported; "
+                "use the bottle.git SSH path (gitleaks-scanned by "
+                "git-gate's pre-receive hook)",
+            )
+            return
         route = select_route(server.routes, path)
         if route is None:
             self.send_error(404, f"no route for {path!r}")

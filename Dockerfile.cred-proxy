@@ -16,6 +16,14 @@
 # image bytes deterministic.
 FROM python@sha256:420cd0bf0f3998275875e02ecd5808168cf0843cbb4d3c536432f729247b2acc
 
+# `ca-certificates` ships /usr/sbin/update-ca-certificates and the
+# system trust store. The backend's start step `docker cp`s the
+# per-bottle pipelock CA into /usr/local/share/ca-certificates/ so
+# the entrypoint's update-ca-certificates picks it up — cred-proxy's
+# outbound HTTPS then trusts pipelock's bumped certs and outbound
+# traffic routes through pipelock (HTTPS_PROXY in the environ).
+RUN apk add --no-cache ca-certificates
+
 # The proxy script ships as a single file. Tests in tests/unit/ import
 # it as `claude_bottle.cred_proxy_server`; the container runs it
 # directly as a script. No package install, no other modules pulled.
@@ -32,4 +40,11 @@ RUN mkdir -p /run/cred-proxy
 # for the internal network to route to it.
 EXPOSE 9099
 
-ENTRYPOINT ["python3", "/app/cred_proxy_server.py"]
+# Entry runs update-ca-certificates so the per-bottle pipelock CA
+# docker-cp'd by the backend's start step is folded into
+# /etc/ssl/certs/ca-certificates.crt before python comes up. Then
+# exec into the server so PID 1 is python (clean signal handling
+# and exit codes). Output of update-ca-certificates is silenced —
+# the entry script prints one line per cert under normal operation,
+# which the test suite would otherwise treat as a log smell.
+ENTRYPOINT ["sh", "-c", "update-ca-certificates >/dev/null 2>&1 && exec python3 /app/cred_proxy_server.py"]

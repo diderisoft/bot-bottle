@@ -92,9 +92,13 @@ class TestTlsPassthrough(unittest.TestCase):
         passthrough = pipelock_effective_tls_passthrough(_bottle({}))
         self.assertEqual(["api.anthropic.com"], passthrough)
 
-    def test_token_hosts_added_to_passthrough(self):
-        # cred-proxy validates upstream certs with the real CA bundle;
-        # pipelock must not MITM these or the handshake fails.
+    def test_token_hosts_NOT_added_to_passthrough(self):
+        # cred-proxy now trusts pipelock's per-bottle CA (loaded into
+        # its container's trust store via docker cp + update-ca-
+        # certificates at start time), so pipelock can MITM the
+        # cred-proxy -> upstream leg and body-scan it. Auto-adding
+        # cred-proxy hosts to passthrough would silently disable that
+        # second scanner for github / gitea / npm.
         passthrough = pipelock_effective_tls_passthrough(_bottle({
             "tokens": [
                 {"Kind": "github", "TokenRef": "G"},
@@ -103,10 +107,7 @@ class TestTlsPassthrough(unittest.TestCase):
                  "Url": "https://gitea.dideric.is"},
             ],
         }))
-        for host in ("api.anthropic.com", "api.github.com", "github.com",
-                     "registry.npmjs.org", "gitea.dideric.is"):
-            self.assertIn(host, passthrough)
-        self.assertEqual(passthrough, sorted(passthrough), "sorted")
+        self.assertEqual(["api.anthropic.com"], passthrough)
 
 
 if __name__ == "__main__":

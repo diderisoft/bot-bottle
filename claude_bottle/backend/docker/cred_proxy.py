@@ -42,6 +42,13 @@ CRED_PROXY_HOSTNAME = "cred-proxy"
 # file directly.
 CRED_PROXY_ROUTES_IN_CONTAINER = "/run/cred-proxy/routes.json"
 
+# In-container path for the per-bottle pipelock CA. Alpine's
+# update-ca-certificates picks anything ending in `.crt` under
+# /usr/local/share/ca-certificates/ and folds it into the system
+# trust store at boot — so cred-proxy's HTTPS client trusts
+# pipelock's bumped certs when pipelock MITMs the outbound leg.
+CRED_PROXY_PIPELOCK_CA_IN_CONTAINER = "/usr/local/share/ca-certificates/pipelock.crt"
+
 # Repo root, for `docker build` context. Resolved from this file's
 # location: claude_bottle/backend/docker/cred_proxy.py → repo root.
 _REPO_DIR = str(Path(__file__).resolve().parent.parent.parent.parent)
@@ -96,6 +103,23 @@ class DockerCredProxy(CredProxy):
                 f"cred-proxy routes file missing at {plan.routes_path}; "
                 f"CredProxy.prepare must run first"
             )
+        # pipelock fields are populated by launch.py in production; both
+        # must be present (URL + CA) or both absent. Mixing is a wiring
+        # bug. Both-absent is supported only as a test escape hatch:
+        # the integration tests in tests/integration/ exercise header
+        # injection in isolation and do not bring pipelock up.
+        route_via_pipelock = bool(plan.pipelock_proxy_url) or plan.pipelock_ca_host_path != Path()
+        if route_via_pipelock:
+            if not plan.pipelock_proxy_url:
+                die(
+                    "DockerCredProxy.start: pipelock_ca_host_path is set but "
+                    "pipelock_proxy_url is empty; populate both or neither."
+                )
+            if not plan.pipelock_ca_host_path.is_file():
+                die(
+                    f"DockerCredProxy.start: pipelock CA missing at "
+                    f"{plan.pipelock_ca_host_path}; pipelock_tls_init must run first"
+                )
 
         # Resolve host env vars into concrete values. This must
         # happen at start time (not prepare) — the values flow into
@@ -114,6 +138,16 @@ class DockerCredProxy(CredProxy):
             "--network", plan.internal_network,
             "--network-alias", CRED_PROXY_HOSTNAME,
         ]
+        if route_via_pipelock:
+            # Route cred-proxy's outbound HTTPS through pipelock so
+            # the egress allowlist + DLP body scanner apply to its
+            # traffic. Pipelock MITMs each handshake with the
+            # per-bottle CA we docker cp in below.
+            create_args.extend([
+                "-e", f"HTTPS_PROXY={plan.pipelock_proxy_url}",
+                "-e", f"HTTP_PROXY={plan.pipelock_proxy_url}",
+                "-e", "NO_PROXY=localhost,127.0.0.1",
+            ])
         # One -e flag per token slot; values arrive via subprocess env.
         # docker create with `-e NAME` (no =VALUE) reads NAME from the
         # current process env at create time. We pass `env=child_env`
@@ -136,24 +170,37 @@ class DockerCredProxy(CredProxy):
         ).returncode != 0:
             die(f"failed to create cred-proxy sidecar {name}")
 
-        cp_result = subprocess.run(
-            ["docker", "cp", str(plan.routes_path),
-             f"{name}:{CRED_PROXY_ROUTES_IN_CONTAINER}"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if cp_result.returncode != 0:
-            subprocess.run(
-                ["docker", "rm", "-f", name],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+        cps: list[tuple[str, str, str]] = [
+            (str(plan.routes_path), CRED_PROXY_ROUTES_IN_CONTAINER, "routes.json"),
+        ]
+        if route_via_pipelock:
+            # CA must land BEFORE `docker start` so the entrypoint's
+            # update-ca-certificates picks it up. Docker cp's the
+            # file in even on the stopped container — that's the
+            # whole reason this works without a custom build step.
+            cps.append((
+                str(plan.pipelock_ca_host_path),
+                CRED_PROXY_PIPELOCK_CA_IN_CONTAINER,
+                "pipelock CA",
+            ))
+        for src, dst, label in cps:
+            cp_result = subprocess.run(
+                ["docker", "cp", src, f"{name}:{dst}"],
+                capture_output=True,
+                text=True,
                 check=False,
             )
-            die(
-                f"failed to copy routes.json into {name}: "
-                f"{cp_result.stderr.strip()}"
-            )
+            if cp_result.returncode != 0:
+                subprocess.run(
+                    ["docker", "rm", "-f", name],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
+                die(
+                    f"failed to copy {label} into {name}: "
+                    f"{cp_result.stderr.strip()}"
+                )
 
         if subprocess.run(
             ["docker", "network", "connect", plan.egress_network, name],
