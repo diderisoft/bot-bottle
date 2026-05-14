@@ -46,14 +46,17 @@ def provision_cred_proxy(plan: DockerBottlePlan, target: str) -> None:
 
 
 def render_npmrc(upstreams: tuple[CredProxyUpstream, ...]) -> str:
-    """Render `~/.npmrc` content. No-op (empty string) when no npm
-    route is declared, so callers can branch on emptiness.
+    """Render `~/.npmrc` content. Driven by the `npm-registry` role:
+    finds the (single) route that claims it and writes a registry=
+    line at the proxy. Empty string when no such route exists, so
+    callers can branch on emptiness.
 
     The proxy strips inbound Authorization and injects its own — the
     npmrc deliberately carries no `_authToken`. The registry alone
-    is enough."""
+    is enough. Manifest validation enforces that the role is a
+    singleton, so the first match is the only match."""
     for u in upstreams:
-        if u.kind == "npm":
+        if "npm-registry" in u.roles:
             return f"registry={cred_proxy_url()}{u.path}\n"
     return ""
 
@@ -89,40 +92,37 @@ def render_cred_proxy_gitconfig(
     git_gate_hosts: set[str] = frozenset(),  # type: ignore[assignment]
 ) -> str:
     """Render the `~/.gitconfig` fragment for cred-proxy insteadOf
-    rewrites. Empty string when no github / gitea routes are declared.
+    rewrites. Driven by the `git-insteadof` role: each route that
+    claims it produces a `[url "<proxy><path>"] insteadOf =
+    <upstream>/` block. Empty string when no such route exists.
 
-    The rewrite is suppressed for any host that's also declared in
-    `bottle.git`. git-gate is the canonical git path on those hosts —
-    its pre-receive runs gitleaks before forwarding the push. A
-    cred-proxy https://<host>/ rewrite would route HTTPS git ops
-    around the gate. cred-proxy still refuses smart-HTTP push at
-    runtime (defense in depth), but suppressing the rewrite means
-    `git clone https://<host>/...` doesn't have a tempting shortcut
-    that just confuses on push.
+    The rewrite is suppressed for any route whose upstream host is
+    also declared in `bottle.git`. git-gate is the canonical git
+    path on those hosts — its pre-receive runs gitleaks before
+    forwarding the push. A cred-proxy `https://<host>/` rewrite
+    would route HTTPS git ops around the gate. cred-proxy still
+    refuses smart-HTTP push at runtime (defense in depth), but
+    suppressing the rewrite means `git clone https://<host>/...`
+    doesn't have a tempting shortcut that just confuses on push.
 
-    github expands to one rewrite (https://github.com/... → /gh-git/...,
-    the git transport endpoint); /gh-api/ stays unmapped here because
-    tools call api.github.com directly rather than through git.
-    Gitea entries get one rewrite per declared host."""
+    The insteadOf left-hand side comes from `upstream` (with a
+    trailing `/` so insteadOf matches at the directory boundary),
+    so the same renderer handles github.com, gitea.dideric.is, and
+    any future host the user wires up."""
     rules: list[str] = []
     for u in upstreams:
-        if u.kind == "github" and u.path == "/gh-git/":
-            if "github.com" in git_gate_hosts:
-                continue
-            rules.append(
-                f'[url "{cred_proxy_url()}/gh-git/"]\n'
-                f"\tinsteadOf = https://github.com/\n"
-            )
-        elif u.kind == "gitea":
-            # u.path is /gitea/<host>/; derive the host the same way
-            # the route table did so we match git_gate's UpstreamHost.
-            host = u.path[len("/gitea/"):].rstrip("/")
-            if host in git_gate_hosts:
-                continue
-            rules.append(
-                f'[url "{cred_proxy_url()}{u.path}"]\n'
-                f"\tinsteadOf = {u.upstream}/\n"
-            )
+        if "git-insteadof" not in u.roles:
+            continue
+        # Strip scheme to derive the host for the git-gate overlap
+        # check. urllib.parse-free parse: same shape we accept in
+        # manifest validation.
+        host = u.upstream.removeprefix("https://").partition("/")[0].partition(":")[0]
+        if host in git_gate_hosts:
+            continue
+        rules.append(
+            f'[url "{cred_proxy_url()}{u.path}"]\n'
+            f"\tinsteadOf = {u.upstream}/\n"
+        )
     if not rules:
         return ""
     return (
@@ -180,19 +180,21 @@ def _provision_gitconfig(
 
 
 def render_tea_config(upstreams: tuple[CredProxyUpstream, ...]) -> str:
-    """Render `~/.config/tea/config.yml`. One `logins:` entry per
-    gitea route, pointing at the cred-proxy. The proxy substitutes
-    the real token; the value in `token:` here is a placeholder and
-    is replaced by the proxy on every request, but `tea` won't make
-    calls without a non-empty token field."""
-    giteas = [u for u in upstreams if u.kind == "gitea"]
-    if not giteas:
+    """Render `~/.config/tea/config.yml`. Driven by the `tea-login`
+    role: each route that claims it produces one `logins:` entry
+    pointing at the cred-proxy. The proxy substitutes the real
+    token at request time; the value in `token:` here is a
+    placeholder. `tea` refuses to make calls without a non-empty
+    token field, so the placeholder is necessary."""
+    tea_routes = [u for u in upstreams if "tea-login" in u.roles]
+    if not tea_routes:
         return ""
     lines = ["logins:"]
-    for u in giteas:
-        # Derive a stable login name from the host (the part of the
-        # path between /gitea/ and the trailing /).
-        host = u.path[len("/gitea/"):].rstrip("/")
+    for u in tea_routes:
+        # Derive a stable login name from the upstream host. The
+        # path may not encode the host (e.g. `/gitea/dideric/` vs
+        # upstream gitea.dideric.is), so we read it off `upstream`.
+        host = u.upstream.removeprefix("https://").partition("/")[0].partition(":")[0]
         lines.extend([
             f"- name: {host}",
             f"  url: {cred_proxy_url()}{u.path}",

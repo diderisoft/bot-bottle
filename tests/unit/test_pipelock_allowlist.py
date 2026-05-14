@@ -37,54 +37,43 @@ class TestEffectiveAllowlist(unittest.TestCase):
         self.assertEqual(eff, sorted(eff), "sorted")
 
 
+def _routes(routes):
+    return {"cred_proxy": {"routes": routes}}
+
+
 class TestTokenHosts(unittest.TestCase):
-    def test_github_yields_both_hosts(self):
-        hosts = pipelock_token_hosts(_bottle({
-            "tokens": [{"Kind": "github", "TokenRef": "GH"}],
-        }))
+    def test_each_route_contributes_its_upstream_host(self):
+        hosts = pipelock_token_hosts(_bottle(_routes([
+            {"path": "/gh-api/", "upstream": "https://api.github.com",
+             "auth_scheme": "Bearer", "token_ref": "GH"},
+            {"path": "/gh-git/", "upstream": "https://github.com",
+             "auth_scheme": "Bearer", "token_ref": "GH"},
+        ])))
         self.assertEqual(["api.github.com", "github.com"], hosts)
 
-    def test_gitea_yields_configured_host(self):
-        hosts = pipelock_token_hosts(_bottle({
-            "tokens": [{"Kind": "gitea", "TokenRef": "T",
-                        "Url": "https://gitea.dideric.is"}],
-        }))
-        self.assertEqual(["gitea.dideric.is"], hosts)
+    def test_dedupe_across_routes(self):
+        hosts = pipelock_token_hosts(_bottle(_routes([
+            {"path": "/a/", "upstream": "https://x.example",
+             "auth_scheme": "Bearer", "token_ref": "T1"},
+            {"path": "/b/", "upstream": "https://x.example",
+             "auth_scheme": "Bearer", "token_ref": "T2"},
+        ])))
+        self.assertEqual(["x.example"], hosts)
 
-    def test_npm_yields_registry(self):
-        hosts = pipelock_token_hosts(_bottle({
-            "tokens": [{"Kind": "npm", "TokenRef": "N"}],
-        }))
-        self.assertEqual(["registry.npmjs.org"], hosts)
-
-    def test_anthropic_yields_api_host(self):
-        hosts = pipelock_token_hosts(_bottle({
-            "tokens": [{"Kind": "anthropic", "TokenRef": "A"}],
-        }))
-        self.assertEqual(["api.anthropic.com"], hosts)
-
-    def test_no_tokens_empty(self):
+    def test_no_routes_empty(self):
         self.assertEqual([], pipelock_token_hosts(_bottle({})))
 
 
 class TestAllowlistWithTokens(unittest.TestCase):
-    def test_token_hosts_added_to_allowlist(self):
-        eff = pipelock_effective_allowlist(_bottle({
-            "tokens": [
-                {"Kind": "npm", "TokenRef": "N"},
-                {"Kind": "github", "TokenRef": "G"},
-            ],
-        }))
+    def test_route_hosts_added_to_allowlist(self):
+        eff = pipelock_effective_allowlist(_bottle(_routes([
+            {"path": "/npm/", "upstream": "https://registry.npmjs.org",
+             "auth_scheme": "Bearer", "token_ref": "N"},
+            {"path": "/gh-api/", "upstream": "https://api.github.com",
+             "auth_scheme": "Bearer", "token_ref": "G"},
+        ])))
         self.assertIn("registry.npmjs.org", eff)
         self.assertIn("api.github.com", eff)
-        self.assertIn("github.com", eff)
-
-    def test_gitea_host_added(self):
-        eff = pipelock_effective_allowlist(_bottle({
-            "tokens": [{"Kind": "gitea", "TokenRef": "T",
-                        "Url": "https://gitea.dideric.is"}],
-        }))
-        self.assertIn("gitea.dideric.is", eff)
 
 
 class TestTlsPassthrough(unittest.TestCase):
@@ -92,21 +81,17 @@ class TestTlsPassthrough(unittest.TestCase):
         passthrough = pipelock_effective_tls_passthrough(_bottle({}))
         self.assertEqual(["api.anthropic.com"], passthrough)
 
-    def test_token_hosts_NOT_added_to_passthrough(self):
-        # cred-proxy now trusts pipelock's per-bottle CA (loaded into
-        # its container's trust store via docker cp + update-ca-
-        # certificates at start time), so pipelock can MITM the
-        # cred-proxy -> upstream leg and body-scan it. Auto-adding
-        # cred-proxy hosts to passthrough would silently disable that
-        # second scanner for github / gitea / npm.
-        passthrough = pipelock_effective_tls_passthrough(_bottle({
-            "tokens": [
-                {"Kind": "github", "TokenRef": "G"},
-                {"Kind": "npm", "TokenRef": "N"},
-                {"Kind": "gitea", "TokenRef": "T",
-                 "Url": "https://gitea.dideric.is"},
-            ],
-        }))
+    def test_route_hosts_NOT_added_to_passthrough(self):
+        # cred-proxy now trusts pipelock's per-bottle CA, so pipelock
+        # can MITM the cred-proxy -> upstream leg and body-scan it.
+        # Auto-adding cred-proxy hosts to passthrough would silently
+        # disable that second scanner.
+        passthrough = pipelock_effective_tls_passthrough(_bottle(_routes([
+            {"path": "/gh-api/", "upstream": "https://api.github.com",
+             "auth_scheme": "Bearer", "token_ref": "G"},
+            {"path": "/npm/", "upstream": "https://registry.npmjs.org",
+             "auth_scheme": "Bearer", "token_ref": "N"},
+        ])))
         self.assertEqual(["api.anthropic.com"], passthrough)
 
 

@@ -138,17 +138,23 @@ host.
   `docs/prds/0008-git-gate.md`.
 - **cred-proxy image** — per-bottle sidecar (`python:3.13-alpine`
   base, stdlib-only) that holds API tokens declared in
-  `bottle.tokens`. The agent dials it as plain HTTP at
-  `http://cred-proxy:9099/<kind>/...`; the proxy strips any
-  inbound `Authorization` header, injects the configured one using
-  a token held only in its own container's environ, and forwards
-  to the real upstream over HTTPS. SSE responses stream back
-  unbuffered. `ANTHROPIC_BASE_URL`, `~/.npmrc`, `~/.gitconfig`
-  `insteadOf` rules for `https://github.com/` and any declared
-  Gitea hosts, and `~/.config/tea/config.yml` all get written to
-  point at the proxy. The agent's `printenv` shows only those
-  URLs — none of the real token values. Brought up only when
-  `bottle.tokens` has entries. Design in
+  `bottle.cred_proxy.routes`. Each route names a `path`,
+  `upstream`, `auth_scheme`, and `token_ref` (host env var); the
+  agent dials `http://cred-proxy:9099<path>...` over plain HTTP
+  and the proxy strips any inbound `Authorization`, injects
+  `<auth_scheme> <token>` using the value held only in its own
+  container's environ, and forwards to the real upstream over
+  HTTPS. SSE responses stream back unbuffered. The cred-proxy's
+  outbound HTTPS routes through pipelock (it trusts pipelock's
+  per-bottle CA), so pipelock's egress allowlist + body scanner
+  apply to cred-proxy traffic the same way they apply to direct
+  agent traffic. Smart-HTTP push paths (`/git-receive-pack`,
+  `/info/refs?service=git-receive-pack`) are refused at the
+  proxy — push must go through `bottle.git` / git-gate where
+  gitleaks runs. Optional per-route `role` tags drive agent-side
+  rewrites: `anthropic-base-url`, `npm-registry`, `git-insteadof`,
+  `tea-login`. The agent's `printenv` shows only proxy URLs —
+  none of the real token values. Design in
   `docs/prds/0010-cred-proxy.md`.
 
 When the agent exits, `cli.py` tears down every sidecar that was
@@ -193,18 +199,31 @@ project entries overriding home entries on key conflict).
         }
       ],
 
-      // Tokens declared here are held by a per-bottle cred-proxy
-      // sidecar, not the agent. Each entry names the host env var
-      // (`TokenRef`) the CLI reads at launch time; the value goes
-      // into the sidecar's environ via `docker create -e`, never
-      // touches argv or disk. Inside the bottle, the agent's
-      // ANTHROPIC_BASE_URL / npm registry / git insteadOf rules
-      // point at the proxy. See `docs/prds/0010-cred-proxy.md`.
-      "tokens": [
-        { "Kind": "anthropic", "TokenRef": "CLAUDE_BOTTLE_OAUTH_TOKEN" },
-        { "Kind": "github",    "TokenRef": "GITHUB_PAT" },
-        { "Kind": "npm",       "TokenRef": "NPM_TOKEN" }
-      ],
+      // Routes declared here are held by a per-bottle cred-proxy
+      // sidecar, not the agent. Each route names a path the agent
+      // dials, the upstream the proxy forwards to, an auth_scheme,
+      // and a token_ref (host env var). The value goes into the
+      // sidecar's environ via `docker create -e`, never touches
+      // argv or disk. Optional `role` tags drive agent-side
+      // rewrites: `anthropic-base-url` (sets ANTHROPIC_BASE_URL),
+      // `npm-registry` (writes ~/.npmrc), `git-insteadof` (writes
+      // ~/.gitconfig), `tea-login` (writes ~/.config/tea/config.yml).
+      // See `docs/prds/0010-cred-proxy.md`.
+      "cred_proxy": {
+        "routes": [
+          { "path": "/anthropic/", "upstream": "https://api.anthropic.com",
+            "auth_scheme": "Bearer", "token_ref": "CLAUDE_BOTTLE_OAUTH_TOKEN",
+            "role": "anthropic-base-url" },
+          { "path": "/gh-api/", "upstream": "https://api.github.com",
+            "auth_scheme": "Bearer", "token_ref": "GITHUB_PAT" },
+          { "path": "/gh-git/", "upstream": "https://github.com",
+            "auth_scheme": "Bearer", "token_ref": "GITHUB_PAT",
+            "role": "git-insteadof" },
+          { "path": "/npm/", "upstream": "https://registry.npmjs.org",
+            "auth_scheme": "Bearer", "token_ref": "NPM_TOKEN",
+            "role": "npm-registry" }
+        ]
+      },
 
       // Egress is forced through a per-agent
       // [pipelock](https://github.com/luckyPipewrench/pipelock) sidecar
@@ -266,9 +285,10 @@ export CLAUDE_BOTTLE_OAUTH_TOKEN="<token>"
 ```
 
 By default `cli.py` forwards the token into the agent container as
-`CLAUDE_CODE_OAUTH_TOKEN`. Declare an `anthropic` entry in
-`bottle.tokens` to route via cred-proxy instead: the token then lives
-only in the cred-proxy sidecar's environ, the agent's
+`CLAUDE_CODE_OAUTH_TOKEN`. Declare a `bottle.cred_proxy.routes` entry
+with `role: "anthropic-base-url"` and `token_ref:
+"CLAUDE_BOTTLE_OAUTH_TOKEN"` to route via cred-proxy instead: the
+token then lives only in the cred-proxy sidecar's environ, the agent's
 `ANTHROPIC_BASE_URL` points at the proxy, and `printenv` inside the
 agent does not surface the real token. Either way the value is never
 written to disk or placed on argv on the host.

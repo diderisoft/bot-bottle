@@ -1,4 +1,4 @@
-"""Unit: Bottle.tokens manifest parsing + validation (PRD 0010)."""
+"""Unit: bottle.cred_proxy.routes manifest parsing + validation (PRD 0010)."""
 
 import unittest
 
@@ -6,8 +6,8 @@ from claude_bottle.log import Die
 from claude_bottle.manifest import Manifest
 
 
-def _manifest(tokens, git=None):
-    bottle: dict[str, object] = {"tokens": tokens}
+def _manifest(routes, git=None):
+    bottle: dict[str, object] = {"cred_proxy": {"routes": routes}}
     if git is not None:
         bottle["git"] = git
     return {
@@ -16,177 +16,156 @@ def _manifest(tokens, git=None):
     }
 
 
-class TestTokenEntryParsing(unittest.TestCase):
-    def test_parses_anthropic_entry(self):
+class TestCredProxyRouteParsing(unittest.TestCase):
+    def test_parses_minimal_route(self):
         m = Manifest.from_json_obj(_manifest([
-            {"Kind": "anthropic", "TokenRef": "CLAUDE_BOTTLE_OAUTH_TOKEN"},
+            {"path": "/anthropic/",
+             "upstream": "https://api.anthropic.com",
+             "auth_scheme": "Bearer",
+             "token_ref": "CLAUDE_BOTTLE_OAUTH_TOKEN"},
         ]))
-        entries = m.bottles["dev"].tokens
-        self.assertEqual(1, len(entries))
-        e = entries[0]
-        self.assertEqual("anthropic", e.Kind)
-        self.assertEqual("CLAUDE_BOTTLE_OAUTH_TOKEN", e.TokenRef)
-        self.assertEqual("", e.Url)
-        self.assertEqual("api.anthropic.com", e.UpstreamHost)
+        routes = m.bottles["dev"].cred_proxy.routes
+        self.assertEqual(1, len(routes))
+        r = routes[0]
+        self.assertEqual("/anthropic/", r.Path)
+        self.assertEqual("https://api.anthropic.com", r.Upstream)
+        self.assertEqual("Bearer", r.AuthScheme)
+        self.assertEqual("CLAUDE_BOTTLE_OAUTH_TOKEN", r.TokenRef)
+        self.assertEqual((), r.Role)
+        self.assertEqual("api.anthropic.com", r.UpstreamHost)
 
-    def test_parses_github_entry(self):
+    def test_role_string_normalizes_to_tuple(self):
         m = Manifest.from_json_obj(_manifest([
-            {"Kind": "github", "TokenRef": "GITHUB_TOKEN"},
+            {"path": "/anthropic/", "upstream": "https://api.anthropic.com",
+             "auth_scheme": "Bearer", "token_ref": "T",
+             "role": "anthropic-base-url"},
         ]))
-        e = m.bottles["dev"].tokens[0]
-        self.assertEqual("github", e.Kind)
-        self.assertEqual("github.com", e.UpstreamHost)
+        self.assertEqual(("anthropic-base-url",),
+                         m.bottles["dev"].cred_proxy.routes[0].Role)
 
-    def test_parses_npm_entry(self):
+    def test_role_list_supported(self):
         m = Manifest.from_json_obj(_manifest([
-            {"Kind": "npm", "TokenRef": "NPM_TOKEN"},
+            {"path": "/gitea/x/", "upstream": "https://gitea.example.com",
+             "auth_scheme": "token", "token_ref": "T",
+             "role": ["git-insteadof", "tea-login"]},
         ]))
-        e = m.bottles["dev"].tokens[0]
-        self.assertEqual("registry.npmjs.org", e.UpstreamHost)
+        self.assertEqual(("git-insteadof", "tea-login"),
+                         m.bottles["dev"].cred_proxy.routes[0].Role)
 
-    def test_parses_gitea_entry_with_url(self):
+    def test_upstream_host_extracted(self):
         m = Manifest.from_json_obj(_manifest([
-            {"Kind": "gitea", "TokenRef": "GITEA_TOKEN",
-             "Url": "https://gitea.dideric.is"},
+            {"path": "/gitea/x/", "upstream": "https://gitea.dideric.is:30443",
+             "auth_scheme": "token", "token_ref": "T"},
         ]))
-        e = m.bottles["dev"].tokens[0]
-        self.assertEqual("gitea", e.Kind)
-        self.assertEqual("https://gitea.dideric.is", e.Url)
-        self.assertEqual("gitea.dideric.is", e.UpstreamHost)
-
-    def test_gitea_url_with_port_strips_port_from_host(self):
-        m = Manifest.from_json_obj(_manifest([
-            {"Kind": "gitea", "TokenRef": "GITEA_TOKEN",
-             "Url": "https://gitea.dideric.is:30009"},
-        ]))
-        self.assertEqual("gitea.dideric.is", m.bottles["dev"].tokens[0].UpstreamHost)
+        self.assertEqual("gitea.dideric.is",
+                         m.bottles["dev"].cred_proxy.routes[0].UpstreamHost)
 
 
-class TestTokenEntryValidation(unittest.TestCase):
-    def test_unknown_kind_dies(self):
+class TestCredProxyRouteValidation(unittest.TestCase):
+    def _route(self, **overrides):
+        base = {
+            "path": "/x/",
+            "upstream": "https://example.com",
+            "auth_scheme": "Bearer",
+            "token_ref": "TOK",
+        }
+        base.update(overrides)
+        return base
+
+    def test_missing_path_dies(self):
         with self.assertRaises(Die):
-            Manifest.from_json_obj(_manifest([
-                {"Kind": "aws", "TokenRef": "AWS_TOKEN"},
-            ]))
+            Manifest.from_json_obj(_manifest([self._route(path=None)]))
 
-    def test_missing_kind_dies(self):
+    def test_path_without_trailing_slash_dies(self):
         with self.assertRaises(Die):
-            Manifest.from_json_obj(_manifest([
-                {"TokenRef": "GITHUB_TOKEN"},
-            ]))
+            Manifest.from_json_obj(_manifest([self._route(path="/no-slash")]))
+
+    def test_path_without_leading_slash_dies(self):
+        with self.assertRaises(Die):
+            Manifest.from_json_obj(_manifest([self._route(path="no-slash/")]))
+
+    def test_missing_upstream_dies(self):
+        with self.assertRaises(Die):
+            Manifest.from_json_obj(_manifest([self._route(upstream=None)]))
+
+    def test_non_https_upstream_dies(self):
+        with self.assertRaises(Die):
+            Manifest.from_json_obj(_manifest([self._route(upstream="http://x.example")]))
+
+    def test_unknown_auth_scheme_dies(self):
+        with self.assertRaises(Die):
+            Manifest.from_json_obj(_manifest([self._route(auth_scheme="Basic")]))
 
     def test_missing_token_ref_dies(self):
         with self.assertRaises(Die):
-            Manifest.from_json_obj(_manifest([
-                {"Kind": "github"},
-            ]))
+            Manifest.from_json_obj(_manifest([self._route(token_ref=None)]))
 
-    def test_gitea_without_url_dies(self):
+    def test_unknown_role_dies(self):
+        with self.assertRaises(Die):
+            Manifest.from_json_obj(_manifest([self._route(role="something-made-up")]))
+
+
+class TestCredProxyCrossValidation(unittest.TestCase):
+    def test_duplicate_path_dies(self):
         with self.assertRaises(Die):
             Manifest.from_json_obj(_manifest([
-                {"Kind": "gitea", "TokenRef": "GITEA_TOKEN"},
+                {"path": "/x/", "upstream": "https://a.example",
+                 "auth_scheme": "Bearer", "token_ref": "T1"},
+                {"path": "/x/", "upstream": "https://b.example",
+                 "auth_scheme": "Bearer", "token_ref": "T2"},
             ]))
 
-    def test_gitea_with_non_https_url_dies(self):
+    def test_two_routes_same_anthropic_role_dies(self):
         with self.assertRaises(Die):
             Manifest.from_json_obj(_manifest([
-                {"Kind": "gitea", "TokenRef": "GITEA_TOKEN",
-                 "Url": "http://gitea.dideric.is"},
+                {"path": "/anthropic/", "upstream": "https://api.anthropic.com",
+                 "auth_scheme": "Bearer", "token_ref": "A1",
+                 "role": "anthropic-base-url"},
+                {"path": "/anthropic-2/", "upstream": "https://api.anthropic.com",
+                 "auth_scheme": "Bearer", "token_ref": "A2",
+                 "role": "anthropic-base-url"},
             ]))
 
-    def test_non_gitea_kind_with_url_dies(self):
-        # Url is fixed for anthropic / github / npm — passing one is a
-        # configuration smell, not an override knob.
-        with self.assertRaises(Die):
-            Manifest.from_json_obj(_manifest([
-                {"Kind": "github", "TokenRef": "GITHUB_TOKEN",
-                 "Url": "https://api.example.com"},
-            ]))
-
-    def test_duplicate_non_gitea_kind_dies(self):
-        with self.assertRaises(Die):
-            Manifest.from_json_obj(_manifest([
-                {"Kind": "github", "TokenRef": "A"},
-                {"Kind": "github", "TokenRef": "B"},
-            ]))
-
-    def test_two_gitea_with_distinct_urls_ok(self):
+    def test_multiple_git_insteadof_ok(self):
+        # git-insteadof is not a singleton role — each route can
+        # independently rewrite its own host.
         m = Manifest.from_json_obj(_manifest([
-            {"Kind": "gitea", "TokenRef": "T1",
-             "Url": "https://gitea.dideric.is"},
-            {"Kind": "gitea", "TokenRef": "T2",
-             "Url": "https://gitea.example.com"},
+            {"path": "/gh-git/", "upstream": "https://github.com",
+             "auth_scheme": "Bearer", "token_ref": "GH",
+             "role": "git-insteadof"},
+            {"path": "/gitea/x/", "upstream": "https://gitea.example.com",
+             "auth_scheme": "token", "token_ref": "GT",
+             "role": "git-insteadof"},
         ]))
-        self.assertEqual(2, len(m.bottles["dev"].tokens))
+        self.assertEqual(2, len(m.bottles["dev"].cred_proxy.routes))
 
-    def test_two_gitea_with_same_url_dies(self):
+
+class TestLegacyTokensField(unittest.TestCase):
+    def test_legacy_tokens_field_dies_with_hint(self):
+        # The PRD-iteration shape ({"tokens": [{Kind: ...}]}) was
+        # replaced by cred_proxy.routes; old manifests must fail
+        # loudly with a pointer.
         with self.assertRaises(Die):
-            Manifest.from_json_obj(_manifest([
-                {"Kind": "gitea", "TokenRef": "T1",
-                 "Url": "https://gitea.dideric.is"},
-                {"Kind": "gitea", "TokenRef": "T2",
-                 "Url": "https://gitea.dideric.is"},
-            ]))
+            Manifest.from_json_obj({
+                "bottles": {"dev": {"tokens": [
+                    {"Kind": "anthropic", "TokenRef": "T"},
+                ]}},
+                "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+            })
 
 
-class TestTokenGitCoexistence(unittest.TestCase):
-    """git-gate brokers SSH push/fetch via an IdentityFile; cred-proxy
-    brokers HTTPS REST API calls via a PAT. Declaring both on the same
-    host is the common dev setup (SSH key for git ops, PAT for `tea` /
-    `gh` API calls), not a configuration error."""
-
-    def test_github_token_and_github_git_entry_coexist(self):
-        m = Manifest.from_json_obj(_manifest(
-            tokens=[{"Kind": "github", "TokenRef": "GITHUB_TOKEN"}],
-            git=[{
-                "Name": "myrepo",
-                "Upstream": "ssh://git@github.com/me/myrepo.git",
-                "IdentityFile": "/dev/null",
-            }],
-        ))
-        self.assertEqual(1, len(m.bottles["dev"].tokens))
-        self.assertEqual(1, len(m.bottles["dev"].git))
-
-    def test_gitea_token_and_same_host_git_entry_coexist(self):
-        m = Manifest.from_json_obj(_manifest(
-            tokens=[{
-                "Kind": "gitea", "TokenRef": "GITEA_TOKEN",
-                "Url": "https://gitea.dideric.is",
-            }],
-            git=[{
-                "Name": "myrepo",
-                "Upstream": "ssh://git@gitea.dideric.is:30009/me/myrepo.git",
-                "IdentityFile": "/dev/null",
-            }],
-        ))
-        self.assertEqual("gitea.dideric.is", m.bottles["dev"].tokens[0].UpstreamHost)
-        self.assertEqual("gitea.dideric.is", m.bottles["dev"].git[0].UpstreamHost)
-
-    def test_anthropic_token_and_git_unrelated(self):
-        # api.anthropic.com isn't a git host; coexistence is trivial.
-        m = Manifest.from_json_obj(_manifest(
-            tokens=[{"Kind": "anthropic", "TokenRef": "CLAUDE_BOTTLE_OAUTH_TOKEN"}],
-            git=[{
-                "Name": "myrepo",
-                "Upstream": "ssh://git@gitea.dideric.is:30009/me/myrepo.git",
-                "IdentityFile": "/dev/null",
-            }],
-        ))
-        self.assertEqual(1, len(m.bottles["dev"].tokens))
-
-
-class TestEmptyTokensField(unittest.TestCase):
-    def test_no_tokens_field_yields_empty_tuple(self):
+class TestEmptyCredProxy(unittest.TestCase):
+    def test_no_cred_proxy_field_yields_empty_routes(self):
         m = Manifest.from_json_obj({
             "bottles": {"dev": {}},
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
         })
-        self.assertEqual((), m.bottles["dev"].tokens)
+        self.assertEqual((), m.bottles["dev"].cred_proxy.routes)
 
-    def test_tokens_array_type_required(self):
+    def test_routes_array_type_required(self):
         with self.assertRaises(Die):
             Manifest.from_json_obj({
-                "bottles": {"dev": {"tokens": "not-a-list"}},
+                "bottles": {"dev": {"cred_proxy": {"routes": "not-a-list"}}},
                 "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
             })
 

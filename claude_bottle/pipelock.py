@@ -57,27 +57,18 @@ def pipelock_bottle_allowlist(bottle: Bottle) -> list[str]:
 
 def pipelock_token_hosts(bottle: Bottle) -> list[str]:
     """Hostnames the cred-proxy sidecar (PRD 0010) talks to upstream
-    on the agent's behalf. Derived from `bottle.tokens[]`. Returned
+    on the agent's behalf. Derived from each route's
+    `upstream.UpstreamHost` in `bottle.cred_proxy.routes`. Returned
     sorted+deduped.
 
     These hosts must be on pipelock's allowlist so cred-proxy's
-    outbound HTTPS traffic can leave the egress network, and on
-    pipelock's TLS-passthrough list so pipelock does not MITM them —
-    cred-proxy validates real upstream certs with the system CA store,
-    so a pipelock-bumped cert would fail trust."""
-    hosts: set[str] = set()
-    for t in bottle.tokens:
-        if t.Kind == "github":
-            hosts.add("api.github.com")
-            hosts.add("github.com")
-        elif t.Kind == "gitea":
-            if t.UpstreamHost:
-                hosts.add(t.UpstreamHost)
-        elif t.Kind == "npm":
-            hosts.add("registry.npmjs.org")
-        elif t.Kind == "anthropic":
-            # Already on DEFAULT_ALLOWLIST + DEFAULT_TLS_PASSTHROUGH.
-            hosts.add("api.anthropic.com")
+    outbound HTTPS traffic can leave the egress network. They are
+    NOT auto-added to passthrough_domains: cred-proxy's HTTPS client
+    trusts pipelock's per-bottle CA at runtime (installed via
+    docker cp + update-ca-certificates in the cred-proxy image),
+    so pipelock MITMs and body-scans the cred-proxy → upstream leg
+    the same way it does direct agent traffic."""
+    hosts = {r.UpstreamHost for r in bottle.cred_proxy.routes if r.UpstreamHost}
     return sorted(hosts)
 
 

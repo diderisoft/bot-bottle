@@ -5,10 +5,10 @@ Schema (see CLAUDE.md "Intended design"):
   {
     "bottles": {
       "<bottle-name>": {
-        "env":     { "<NAME>": <env-entry>, ... },
-        "git":     [ <git-entry>, ... ],
-        "tokens":  [ <token-entry>, ... ],
-        "egress":  { "allowlist": [ "<hostname>", ... ] }
+        "env":        { "<NAME>": <env-entry>, ... },
+        "git":        [ <git-entry>, ... ],
+        "cred_proxy": { "routes": [ <route>, ... ] },
+        "egress":     { "allowlist": [ "<hostname>", ... ] }
       }
     },
     "agents": {
@@ -114,92 +114,152 @@ class GitEntry:
         )
 
 
-TOKEN_KINDS = ("anthropic", "github", "gitea", "npm")
+CRED_PROXY_AUTH_SCHEMES = ("Bearer", "token")
+
+# Provisioner role tags a route may carry. Each tag drives one
+# agent-side rewrite when the cred-proxy sidecar comes up.
+#   anthropic-base-url: set ANTHROPIC_BASE_URL=<proxy><path>
+#   npm-registry:       write ~/.npmrc registry= <proxy><path>
+#   git-insteadof:      write ~/.gitconfig [url "<proxy><path>"]
+#                       insteadOf = <route.upstream>/
+#   tea-login:          add an entry to ~/.config/tea/config.yml
+#                       (login url = <proxy><path>)
+# Routes without a `role` are pure proxy entries with no agent-side
+# rewrite — useful for upstreams whose tools the user wires up by
+# hand.
+CRED_PROXY_ROLES = frozenset({
+    "anthropic-base-url",
+    "npm-registry",
+    "git-insteadof",
+    "tea-login",
+})
+
+# Roles whose semantics imply a single route can carry them. A second
+# route claiming the same role would make the provisioner's choice
+# ambiguous (which path goes into ANTHROPIC_BASE_URL?).
+CRED_PROXY_SINGLETON_ROLES = frozenset({
+    "anthropic-base-url",
+    "npm-registry",
+})
 
 
 @dataclass(frozen=True)
-class TokenEntry:
-    """One credential the per-bottle cred-proxy sidecar (PRD 0010)
-    holds and injects on the agent's behalf.
+class CredProxyRoute:
+    """One route on the per-bottle cred-proxy sidecar (PRD 0010).
 
-    `Kind` selects the route handler: `anthropic` / `github` / `npm`
-    have fixed upstream URLs; `gitea` requires an explicit `Url`
-    because the upstream is per-instance.
+    The agent dials `http://cred-proxy:<port><Path>...`; the sidecar
+    strips any inbound `Authorization` header, injects
+    `<AuthScheme> <token>` using the value of the host env var named
+    by `TokenRef`, and forwards the rest of the request to `Upstream`.
 
-    `TokenRef` is the name of the host env var the CLI resolves at
-    launch time. The value is forwarded into the cred-proxy
-    container's environ via `docker run -e NAME` — never onto argv,
-    never into a file. The value does NOT land in the agent's
-    environ.
+    `Path` is the agent-facing prefix (must start and end with `/`).
+    `Upstream` is the upstream base URL (https only) — the request
+    path after `Path` is appended to it. `AuthScheme` is the literal
+    word that precedes the token in the injected header (`Bearer` for
+    most upstreams, `token` for Gitea — sidesteps go-gitea/gitea#16734).
+    `TokenRef` names the host env var holding the credential value;
+    the CLI reads it at launch and forwards into the sidecar's environ.
+    `Role` carries optional provisioner tags (see CRED_PROXY_ROLES).
 
-    `UpstreamHost` is parsed from `Url` for `gitea` entries (or the
-    documented default for the other kinds). It exists so the
-    cross-validator can spot collisions with `bottle.git` upstreams
-    without re-parsing URLs at every call site."""
+    `UpstreamHost` is parsed from `Upstream` for the pipelock allowlist
+    + the git-insteadof suppression check."""
 
-    Kind: str
+    Path: str
+    Upstream: str
+    AuthScheme: str
     TokenRef: str
-    Url: str = ""
+    Role: tuple[str, ...] = ()
     UpstreamHost: str = ""
 
     @classmethod
-    def from_dict(cls, bottle_name: str, idx: int, raw: object) -> "TokenEntry":
-        d = _as_json_object(raw, f"bottle '{bottle_name}' tokens[{idx}]")
-        kind = d.get("Kind")
-        if not isinstance(kind, str) or not kind:
+    def from_dict(cls, bottle_name: str, idx: int, raw: object) -> "CredProxyRoute":
+        label = f"bottle '{bottle_name}' cred_proxy.routes[{idx}]"
+        d = _as_json_object(raw, label)
+        path = d.get("path")
+        if not isinstance(path, str) or not path:
+            die(f"{label} missing required string field 'path'")
+        if not (path.startswith("/") and path.endswith("/")):
+            die(f"{label} path {path!r} must start and end with '/'")
+        upstream = d.get("upstream")
+        if not isinstance(upstream, str) or not upstream:
+            die(f"{label} missing required string field 'upstream'")
+        host = _parse_https_host(upstream, f"{label} upstream")
+        auth_scheme = d.get("auth_scheme")
+        if not isinstance(auth_scheme, str) or not auth_scheme:
+            die(f"{label} missing required string field 'auth_scheme'")
+        if auth_scheme not in CRED_PROXY_AUTH_SCHEMES:
             die(
-                f"bottle '{bottle_name}' tokens[{idx}] missing required string field "
-                f"'Kind'"
+                f"{label} auth_scheme {auth_scheme!r} is not one of "
+                f"{', '.join(CRED_PROXY_AUTH_SCHEMES)}"
             )
-        if kind not in TOKEN_KINDS:
-            die(
-                f"bottle '{bottle_name}' tokens[{idx}] Kind {kind!r} is not one of "
-                f"{', '.join(TOKEN_KINDS)}"
-            )
-        token_ref = d.get("TokenRef")
+        token_ref = d.get("token_ref")
         if not isinstance(token_ref, str) or not token_ref:
             die(
-                f"bottle '{bottle_name}' tokens[{idx}] ({kind}) missing required "
-                f"string field 'TokenRef' (name of the host env var to forward)"
+                f"{label} missing required string field 'token_ref' "
+                f"(name of the host env var holding the token value)"
             )
-        url_raw = d.get("Url")
-        if url_raw is None:
-            url = ""
-        elif isinstance(url_raw, str):
-            url = url_raw
+        role_raw = d.get("role")
+        roles: tuple[str, ...] = ()
+        if role_raw is None:
+            roles = ()
+        elif isinstance(role_raw, str):
+            roles = (role_raw,)
+        elif isinstance(role_raw, list):
+            role_list = cast(list[object], role_raw)
+            collected: list[str] = []
+            for r in role_list:
+                if not isinstance(r, str):
+                    die(f"{label} role items must be strings (got {type(r).__name__})")
+                collected.append(r)
+            roles = tuple(collected)
         else:
             die(
-                f"bottle '{bottle_name}' tokens[{idx}] ({kind}) Url must be a string "
-                f"(was {type(url_raw).__name__})"
+                f"{label} role must be a string or a list of strings "
+                f"(was {type(role_raw).__name__})"
             )
-        if kind == "gitea":
-            if not url:
+        for r in roles:
+            if r not in CRED_PROXY_ROLES:
                 die(
-                    f"bottle '{bottle_name}' tokens[{idx}] (gitea) requires a Url "
-                    f"(the Gitea instance, e.g. https://gitea.dideric.is)"
+                    f"{label} role {r!r} is not one of "
+                    f"{', '.join(sorted(CRED_PROXY_ROLES))}"
                 )
-            host = _parse_https_host(
-                url, f"bottle '{bottle_name}' tokens[{idx}] (gitea) Url"
-            )
-        else:
-            if url:
-                die(
-                    f"bottle '{bottle_name}' tokens[{idx}] ({kind}) cannot set Url; "
-                    f"the upstream for this Kind is fixed by cred-proxy. Drop the "
-                    f"'Url' field."
-                )
-            host = _TOKEN_DEFAULT_HOST[kind]
-        return cls(Kind=kind, TokenRef=token_ref, Url=url, UpstreamHost=host)
+        return cls(
+            Path=path,
+            Upstream=upstream,
+            AuthScheme=auth_scheme,
+            TokenRef=token_ref,
+            Role=roles,
+            UpstreamHost=host,
+        )
 
 
-# Hostnames the cred-proxy talks to upstream for the non-gitea kinds.
-# Used both for the proxy's route table and for the manifest cross-
-# validator that rejects overlap with `bottle.git`.
-_TOKEN_DEFAULT_HOST: dict[str, str] = {
-    "anthropic": "api.anthropic.com",
-    "github": "github.com",
-    "npm": "registry.npmjs.org",
-}
+@dataclass(frozen=True)
+class CredProxyConfig:
+    """Per-bottle cred-proxy configuration. Today this is just the
+    route table; the nesting under `cred_proxy:` leaves room for
+    per-bottle proxy settings (port override, log level, etc.) in
+    follow-ups."""
+
+    routes: tuple[CredProxyRoute, ...] = ()
+
+    @classmethod
+    def from_dict(cls, bottle_name: str, raw: object) -> "CredProxyConfig":
+        d = _as_json_object(raw, f"bottle '{bottle_name}' cred_proxy")
+        routes_raw = d.get("routes")
+        routes: tuple[CredProxyRoute, ...] = ()
+        if routes_raw is not None:
+            if not isinstance(routes_raw, list):
+                die(
+                    f"bottle '{bottle_name}' cred_proxy.routes must be an array "
+                    f"(was {type(routes_raw).__name__})"
+                )
+            routes_list = cast(list[object], routes_raw)
+            routes = tuple(
+                CredProxyRoute.from_dict(bottle_name, i, entry)
+                for i, entry in enumerate(routes_list)
+            )
+            _validate_cred_proxy_routes(bottle_name, routes)
+        return cls(routes=routes)
 
 
 DLP_ACTIONS = ("block", "warn")
@@ -257,7 +317,7 @@ class BottleEgress:
 class Bottle:
     env: Mapping[str, str] = field(default_factory=_empty_str_dict)
     git: tuple[GitEntry, ...] = ()
-    tokens: tuple[TokenEntry, ...] = ()
+    cred_proxy: CredProxyConfig = field(default_factory=CredProxyConfig)
     egress: BottleEgress = field(default_factory=BottleEgress)
 
     @classmethod
@@ -305,20 +365,19 @@ class Bottle:
             )
             _validate_unique_git_names(name, git)
 
-        tokens: tuple[TokenEntry, ...] = ()
-        tokens_raw = d.get("tokens")
-        if tokens_raw is not None:
-            if not isinstance(tokens_raw, list):
-                die(
-                    f"bottle '{name}' tokens must be an array "
-                    f"(was {type(tokens_raw).__name__})"
-                )
-            tokens_list = cast(list[object], tokens_raw)
-            tokens = tuple(
-                TokenEntry.from_dict(name, i, entry)
-                for i, entry in enumerate(tokens_list)
+        if "tokens" in d:
+            die(
+                f"bottle '{name}' has a 'tokens' field. The shape was reworked: "
+                f"each route now lives under 'cred_proxy.routes' with explicit "
+                f"path / upstream / auth_scheme / token_ref / role[]. See "
+                f"docs/prds/0010-cred-proxy.md."
             )
-            _validate_tokens(name, tokens, git)
+
+        cred_proxy = (
+            CredProxyConfig.from_dict(name, d["cred_proxy"])
+            if "cred_proxy" in d
+            else CredProxyConfig()
+        )
 
         egress_raw = d.get("egress")
         egress = (
@@ -327,7 +386,7 @@ class Bottle:
             else BottleEgress()
         )
 
-        return cls(env=env, git=git, tokens=tokens, egress=egress)
+        return cls(env=env, git=git, cred_proxy=cred_proxy, egress=egress)
 
 
 @dataclass(frozen=True)
@@ -561,41 +620,41 @@ def _parse_https_host(url: str, label: str) -> str:
     return host
 
 
-def _validate_tokens(
+def _validate_cred_proxy_routes(
     bottle_name: str,
-    tokens: tuple[TokenEntry, ...],
-    git: tuple[GitEntry, ...],
+    routes: tuple[CredProxyRoute, ...],
 ) -> None:
-    """Cross-validation for `bottle.tokens`:
+    """Cross-validation for `bottle.cred_proxy.routes`:
 
-    - At most one entry per Kind, except `gitea` which may have
-      multiple entries (one per Gitea instance) with distinct Urls.
+    - Paths must be unique within the bottle (the proxy routes by
+      longest-prefix match; duplicate paths leave the choice
+      undefined).
+    - Singleton roles (`anthropic-base-url`, `npm-registry`) may
+      appear on at most one route — the provisioner uses them to
+      write a single dotfile entry, so two routes claiming the role
+      would make the choice ambiguous.
 
-    A `github` or `gitea` token MAY name the same host as a
-    `bottle.git` entry: the two paths broker different protocols
-    (git-gate handles SSH push/fetch with an IdentityFile; cred-proxy
-    handles HTTPS REST API calls with a PAT), so declaring both on
-    one host is a legitimate dev setup, not a configuration error.
+    No cross-validation against `bottle.git` is performed. git-gate
+    (SSH push/fetch) and cred-proxy (HTTPS REST + git smart-HTTP
+    fetch) broker different protocols; declaring both on the same
+    host is a legitimate dev setup.
     """
-    del git  # cross-host overlap is intentionally not rejected.
-    by_kind: dict[str, list[TokenEntry]] = {}
-    for t in tokens:
-        by_kind.setdefault(t.Kind, []).append(t)
-    for kind, entries in by_kind.items():
-        if kind == "gitea":
-            seen: dict[str, None] = {}
-            for e in entries:
-                if e.Url in seen:
-                    die(
-                        f"bottle '{bottle_name}' tokens has duplicate gitea Url "
-                        f"{e.Url!r}; one entry per Gitea instance."
-                    )
-                seen[e.Url] = None
-        elif len(entries) > 1:
+    seen_paths: dict[str, None] = {}
+    for r in routes:
+        if r.Path in seen_paths:
             die(
-                f"bottle '{bottle_name}' tokens has {len(entries)} entries with "
-                f"Kind {kind!r}; at most one is allowed (gitea is the only Kind "
-                f"that may have multiple entries)."
+                f"bottle '{bottle_name}' cred_proxy.routes has duplicate path "
+                f"{r.Path!r}; each path must be unique on the proxy."
+            )
+        seen_paths[r.Path] = None
+    for role in CRED_PROXY_SINGLETON_ROLES:
+        with_role = [r for r in routes if role in r.Role]
+        if len(with_role) > 1:
+            paths = ", ".join(r.Path for r in with_role)
+            die(
+                f"bottle '{bottle_name}' cred_proxy.routes has {len(with_role)} "
+                f"routes with role {role!r} (paths: {paths}); this role drives a "
+                f"single agent-side rewrite — pick one."
             )
 
 

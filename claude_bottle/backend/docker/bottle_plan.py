@@ -107,16 +107,11 @@ class DockerBottlePlan(BottlePlan):
         else:
             info("  git remotes   : (none)")
         if self.cred_proxy_plan.upstreams:
-            kinds: list[str] = []
-            seen: set[str] = set()
-            for u in self.cred_proxy_plan.upstreams:
-                key = u.kind if u.kind != "gitea" else f"gitea ({u.upstream})"
-                if key in seen:
-                    continue
-                seen.add(key)
-                kinds.append(key)
+            routes = [f"{u.path}→{u.upstream}" for u in self.cred_proxy_plan.upstreams]
             refs = sorted({u.token_ref for u in self.cred_proxy_plan.upstreams})
-            info(f"  cred-proxy    : {', '.join(kinds)}; tokens: {', '.join(refs)}")
+            info(f"  cred-proxy    : {len(routes)} route(s); tokens: {', '.join(refs)}")
+            for line in routes:
+                info(f"                  {line}")
         else:
             info("  cred-proxy    : (none)")
         info(f"  egress        : {self.allowlist_summary}")
@@ -153,11 +148,11 @@ class DockerBottlePlan(BottlePlan):
             ],
             "cred_proxy": [
                 {
-                    "kind": u.kind,
                     "path": u.path,
                     "upstream": u.upstream,
                     "auth_scheme": u.auth_scheme,
                     "token_ref": u.token_ref,
+                    "roles": list(u.roles),
                 }
                 for u in self.cred_proxy_plan.upstreams
             ],

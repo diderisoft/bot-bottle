@@ -57,7 +57,7 @@ class TestStartGuards(unittest.TestCase):
 
     def test_missing_internal_network_dies(self):
         upstream = CredProxyUpstream(
-            kind="anthropic", path="/anthropic/",
+            path="/anthropic/",
             upstream="https://api.anthropic.com",
             auth_scheme="Bearer", token_env="CRED_PROXY_TOKEN_0",
             token_ref="T",
@@ -67,7 +67,7 @@ class TestStartGuards(unittest.TestCase):
 
     def test_missing_routes_file_dies(self):
         upstream = CredProxyUpstream(
-            kind="anthropic", path="/anthropic/",
+            path="/anthropic/",
             upstream="https://api.anthropic.com",
             auth_scheme="Bearer", token_env="CRED_PROXY_TOKEN_0",
             token_ref="T",
@@ -84,7 +84,7 @@ class TestStartGuards(unittest.TestCase):
         # URL set + CA path empty/missing is a wiring bug: either both
         # populated (production) or both empty (test escape hatch).
         upstream = CredProxyUpstream(
-            kind="anthropic", path="/anthropic/",
+            path="/anthropic/",
             upstream="https://api.anthropic.com",
             auth_scheme="Bearer", token_env="CRED_PROXY_TOKEN_0",
             token_ref="T",

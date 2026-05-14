@@ -154,7 +154,6 @@ class TestCredProxySidecar(unittest.TestCase):
             slug=self.slug,
             routes_path=routes_path,
             upstreams=(CredProxyUpstream(
-                kind="fake",
                 path="/fake/",
                 upstream=f"http://{FAKE_UPSTREAM_HOST}:{FAKE_UPSTREAM_PORT}",
                 auth_scheme="Bearer",

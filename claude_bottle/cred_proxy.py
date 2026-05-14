@@ -28,34 +28,37 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .log import die
-from .manifest import Bottle, TokenEntry
+from .manifest import Bottle
 
 
 @dataclass(frozen=True)
 class CredProxyUpstream:
     """One route on the cred-proxy sidecar. Maps a path under the
-    proxy to a real upstream, an auth scheme, and the env-var slot
-    that holds the token inside the proxy container.
+    proxy to a real upstream, an auth scheme, an in-container env-var
+    slot, and optional provisioner roles.
 
-    `kind` is the originating `TokenEntry.Kind`; `path` is the agent-
-    facing prefix (e.g. `/anthropic/`); `upstream` is the upstream
-    base URL with scheme; `auth_scheme` is the literal word that
-    precedes the token in the injected header (`Bearer` for all kinds
-    except `gitea`, which uses `token` to sidestep go-gitea/gitea#16734).
+    `path` is the agent-facing prefix (e.g. `/anthropic/`).
+    `upstream` is the upstream base URL with scheme. `auth_scheme`
+    is the literal word that precedes the token in the injected
+    header (`Bearer` for most upstreams; `token` for Gitea —
+    sidesteps go-gitea/gitea#16734).
 
     `token_env` is the env-var name inside the cred-proxy container
     (e.g. `CRED_PROXY_TOKEN_0`); `token_ref` is the host env var the
     CLI reads at launch and forwards into the container's environ
-    under `token_env`. Two routes that share a TokenRef (the github
-    Kind expands into two routes — gh-api and gh-git) carry the same
-    `token_env`."""
+    under `token_env`. Routes that share a TokenRef coalesce to one
+    `token_env` slot.
 
-    kind: str
+    `roles` are the provisioner tags from the manifest route (see
+    `manifest.CRED_PROXY_ROLES`). Each tag drives one agent-side
+    rewrite when this upstream's dotfile family is written."""
+
     path: str
     upstream: str
     auth_scheme: str
     token_env: str
     token_ref: str
+    roles: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -93,64 +96,35 @@ class CredProxyPlan:
     pipelock_proxy_url: str = ""
 
 
-# Hardcoded upstream URLs for the non-gitea Kinds. Gitea's URL is per-
-# entry (`TokenEntry.Url`).
-_KIND_ROUTES: dict[str, tuple[tuple[str, str], ...]] = {
-    # kind -> ((path, upstream), ...) — a Kind can produce multiple
-    # routes; today only `github` does (api + git endpoints).
-    "anthropic": (("/anthropic/", "https://api.anthropic.com"),),
-    "github": (
-        ("/gh-api/", "https://api.github.com"),
-        ("/gh-git/", "https://github.com"),
-    ),
-    "npm": (("/npm/", "https://registry.npmjs.org"),),
-}
-
-# Per-Kind auth header value prefix. Gitea uses `token` (not Bearer);
-# everyone else uses Bearer.
-_KIND_AUTH_SCHEME: dict[str, str] = {
-    "anthropic": "Bearer",
-    "github": "Bearer",
-    "gitea": "token",
-    "npm": "Bearer",
-}
-
-
-def cred_proxy_route_path_for_gitea(host: str) -> str:
-    """Agent-facing path for a single Gitea instance. The host segment
-    disambiguates routes when multiple gitea entries are declared."""
-    return f"/gitea/{host}/"
-
-
 def cred_proxy_upstreams_for_bottle(
     bottle: Bottle,
 ) -> tuple[CredProxyUpstream, ...]:
-    """Lift every `bottle.tokens[]` entry into one or more
-    CredProxyUpstreams. Order is preserved so route lookup is stable.
-    Manifest validation already enforced uniqueness rules."""
+    """Lift each `bottle.cred_proxy.routes[]` entry into a
+    CredProxyUpstream. Order is preserved so route lookup is stable.
+
+    Token-env slots are assigned per distinct TokenRef: the first
+    route with TokenRef "GH_PAT" gets `CRED_PROXY_TOKEN_0`; a second
+    route with the same TokenRef shares slot 0. The launch step
+    forwards each TokenRef's value from the host environ into the
+    sidecar's environ under the matching slot name once.
+
+    Manifest validation already enforced uniqueness rules (no
+    duplicate paths, singleton-role enforcement)."""
     out: list[CredProxyUpstream] = []
-    for i, t in enumerate(bottle.tokens):
-        token_env = f"CRED_PROXY_TOKEN_{i}"
-        scheme = _KIND_AUTH_SCHEME[t.Kind]
-        if t.Kind == "gitea":
-            out.append(CredProxyUpstream(
-                kind="gitea",
-                path=cred_proxy_route_path_for_gitea(t.UpstreamHost),
-                upstream=t.Url.rstrip("/"),
-                auth_scheme=scheme,
-                token_env=token_env,
-                token_ref=t.TokenRef,
-            ))
-        else:
-            for path, upstream in _KIND_ROUTES[t.Kind]:
-                out.append(CredProxyUpstream(
-                    kind=t.Kind,
-                    path=path,
-                    upstream=upstream,
-                    auth_scheme=scheme,
-                    token_env=token_env,
-                    token_ref=t.TokenRef,
-                ))
+    slot_for_token: dict[str, str] = {}
+    for r in bottle.cred_proxy.routes:
+        token_env = slot_for_token.get(r.TokenRef)
+        if token_env is None:
+            token_env = f"CRED_PROXY_TOKEN_{len(slot_for_token)}"
+            slot_for_token[r.TokenRef] = token_env
+        out.append(CredProxyUpstream(
+            path=r.Path,
+            upstream=r.Upstream.rstrip("/"),
+            auth_scheme=r.AuthScheme,
+            token_env=token_env,
+            token_ref=r.TokenRef,
+            roles=r.Role,
+        ))
     return tuple(out)
 
 
@@ -212,14 +186,14 @@ def cred_proxy_resolve_token_values(
         if value is None:
             die(
                 f"cred-proxy: host env var '{token_ref}' is unset. Set it "
-                f"before launching, or remove the corresponding token entry "
-                f"from bottle.tokens."
+                f"before launching, or remove the corresponding route from "
+                f"bottle.cred_proxy.routes."
             )
         if not value:
             die(
                 f"cred-proxy: host env var '{token_ref}' is empty. The "
                 f"cred-proxy will not inject an empty token; set it to the "
-                f"real value or remove the token entry."
+                f"real value or remove the route."
             )
         out[token_env] = value
     return out
@@ -269,10 +243,8 @@ __all__ = [
     "CredProxy",
     "CredProxyPlan",
     "CredProxyUpstream",
-    "TokenEntry",
     "cred_proxy_render_routes",
     "cred_proxy_resolve_token_values",
-    "cred_proxy_route_path_for_gitea",
     "cred_proxy_token_env_map",
     "cred_proxy_upstreams_for_bottle",
 ]

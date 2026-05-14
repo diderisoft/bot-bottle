@@ -89,21 +89,32 @@ def resolve_plan(
     # never lands on argv or in env_file) goes into one dict. Nothing
     # mutates the host os.environ.
     forwarded_env: dict[str, str] = dict(resolved.forwarded)
-    has_anthropic_token = any(t.Kind == "anthropic" for t in bottle.tokens)
-    if spec.forward_oauth_token and not has_anthropic_token:
+    # Find the (at most one) cred-proxy route claiming the
+    # anthropic-base-url role. Manifest validation enforces the
+    # singleton constraint.
+    anthropic_route = next(
+        (u for u in cred_proxy_plan.upstreams if "anthropic-base-url" in u.roles),
+        None,
+    )
+    if spec.forward_oauth_token and anthropic_route is None:
         # Pre-PRD 0010 behavior: agent reads CLAUDE_CODE_OAUTH_TOKEN
-        # directly. Still the path when bottle.tokens has no anthropic
-        # entry; the cred-proxy sidecar holds the token otherwise.
+        # directly. Still the path when no cred_proxy.routes entry
+        # is tagged anthropic-base-url; otherwise the sidecar holds
+        # the token.
         forwarded_env["CLAUDE_CODE_OAUTH_TOKEN"] = os.environ["CLAUDE_BOTTLE_OAUTH_TOKEN"]
-    if has_anthropic_token:
+    if anthropic_route is not None:
         # Point claude-code at the cred-proxy. The sidecar holds the
-        # OAuth token; the agent's environ does not.
-        forwarded_env["ANTHROPIC_BASE_URL"] = f"{cred_proxy_url()}/anthropic"
+        # OAuth token; the agent's environ does not. Strip the
+        # trailing slash so claude-code's path-join produces e.g.
+        # http://cred-proxy:9099/anthropic/v1/messages.
+        forwarded_env["ANTHROPIC_BASE_URL"] = (
+            f"{cred_proxy_url()}{anthropic_route.path}".rstrip("/")
+        )
         # claude-code refuses to start without *some* credential in
         # its env. The proxy strips inbound Authorization on every
         # request and injects the real one — so a non-secret
         # placeholder is sufficient and the SC1 test still holds
-        # (the placeholder is not a `bottle.tokens[].TokenRef`
+        # (the placeholder is not a `cred_proxy.routes[].TokenRef`
         # value). The agent cannot exfiltrate this string because
         # it carries no meaning to api.anthropic.com.
         forwarded_env["CLAUDE_CODE_OAUTH_TOKEN"] = "cred-proxy-placeholder"
