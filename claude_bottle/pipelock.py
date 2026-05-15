@@ -74,7 +74,7 @@ def pipelock_token_hosts(bottle: Bottle) -> list[str]:
 
 def pipelock_effective_allowlist(bottle: Bottle) -> list[str]:
     """Deduplicated union of: baked-in defaults, bottle.egress.allowlist,
-    and the cred-proxy upstream hosts derived from bottle.tokens.
+    and the cred-proxy upstream hosts derived from bottle.cred_proxy.routes.
     Sorted for stability. Git upstreams declared in `bottle.git` do NOT
     contribute here — git traffic flows through the per-agent git-gate
     sidecar (PRD 0008), not pipelock."""

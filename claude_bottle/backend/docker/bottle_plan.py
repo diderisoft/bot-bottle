@@ -106,11 +106,11 @@ class DockerBottlePlan(BottlePlan):
             info(f"  git gate      : {'; '.join(git_lines)}")
         else:
             info("  git remotes   : (none)")
-        if self.cred_proxy_plan.upstreams:
-            routes = [f"{u.path}→{u.upstream}" for u in self.cred_proxy_plan.upstreams]
-            refs = sorted({u.token_ref for u in self.cred_proxy_plan.upstreams})
-            info(f"  cred-proxy    : {len(routes)} route(s); tokens: {', '.join(refs)}")
-            for line in routes:
+        if self.cred_proxy_plan.routes:
+            lines = [f"{r.path}→{r.upstream}" for r in self.cred_proxy_plan.routes]
+            refs = sorted({r.token_ref for r in self.cred_proxy_plan.routes})
+            info(f"  cred-proxy    : {len(lines)} route(s); tokens: {', '.join(refs)}")
+            for line in lines:
                 info(f"                  {line}")
         else:
             info("  cred-proxy    : (none)")
@@ -148,13 +148,13 @@ class DockerBottlePlan(BottlePlan):
             ],
             "cred_proxy": [
                 {
-                    "path": u.path,
-                    "upstream": u.upstream,
-                    "auth_scheme": u.auth_scheme,
-                    "token_ref": u.token_ref,
-                    "roles": list(u.roles),
+                    "path": r.path,
+                    "upstream": r.upstream,
+                    "auth_scheme": r.auth_scheme,
+                    "token_ref": r.token_ref,
+                    "roles": list(r.roles),
                 }
-                for u in self.cred_proxy_plan.upstreams
+                for r in self.cred_proxy_plan.routes
             ],
             "egress": {
                 "host_count": len(hosts),

@@ -14,8 +14,8 @@ escaping the agent container, the same threshold pipelock and
 git-gate already rely on.
 
 This module defines the abstract proxy (`CredProxy`), its plan
-dataclass (`CredProxyPlan`), and the per-route shape
-(`CredProxyUpstream`). The sidecar's start/stop lifecycle is backend-
+dataclass (`CredProxyPlan`), and the resolved per-route shape
+(`CredProxyRoute`). The sidecar's start/stop lifecycle is backend-
 specific and lives on concrete subclasses (see
 `claude_bottle/backend/docker/cred_proxy.py`).
 """
@@ -32,10 +32,15 @@ from .manifest import Bottle
 
 
 @dataclass(frozen=True)
-class CredProxyUpstream:
-    """One route on the cred-proxy sidecar. Maps a path under the
-    proxy to a real upstream, an auth scheme, an in-container env-var
-    slot, and optional provisioner roles.
+class CredProxyRoute:
+    """One resolved route on the cred-proxy sidecar. Maps a path
+    under the proxy to a real upstream, an auth scheme, an
+    in-container env-var slot, and optional provisioner roles.
+
+    Distinct from `manifest.CredProxyRoute` (the declaration shape
+    with Capitalize fields): this is the runtime view after the
+    abstract `CredProxy.prepare` step assigns token slots and
+    normalizes URLs. Modules that need both alias one on import.
 
     `path` is the agent-facing prefix (e.g. `/anthropic/`).
     `upstream` is the upstream base URL with scheme. `auth_scheme`
@@ -46,12 +51,12 @@ class CredProxyUpstream:
     `token_env` is the env-var name inside the cred-proxy container
     (e.g. `CRED_PROXY_TOKEN_0`); `token_ref` is the host env var the
     CLI reads at launch and forwards into the container's environ
-    under `token_env`. Routes that share a TokenRef coalesce to one
-    `token_env` slot.
+    under `token_env`. Routes that share a `token_ref` coalesce to
+    one `token_env` slot.
 
     `roles` are the provisioner tags from the manifest route (see
     `manifest.CRED_PROXY_ROLES`). Each tag drives one agent-side
-    rewrite when this upstream's dotfile family is written."""
+    rewrite when this route's dotfile family is written."""
 
     path: str
     upstream: str
@@ -65,16 +70,16 @@ class CredProxyUpstream:
 class CredProxyPlan:
     """Output of CredProxy.prepare; consumed by .start.
 
-    The slug + routes_path + upstreams + token_env_map fields are
+    The slug + routes_path + routes + token_env_map fields are
     filled at prepare time (host-side, side-effect-free on docker).
     The network + pipelock fields are populated by the backend's
     launch step via `dataclasses.replace` once those resources
     exist. Empty defaults are sentinels meaning "not yet set";
     `.start` validates that they are populated.
 
-    `token_env_map` is `{<token_env in container>: <TokenRef on host>}`.
-    The backend's start step reads `os.environ[TokenRef]` and forwards
-    the value into the cred-proxy container's environ under
+    `token_env_map` is `{<token_env in container>: <token_ref on host>}`.
+    The backend's start step reads `os.environ[token_ref]` and
+    forwards the value into the cred-proxy container's environ under
     `token_env`. The plan itself never holds token values — secrets
     never land in a dataclass that might be logged.
 
@@ -88,7 +93,7 @@ class CredProxyPlan:
 
     slug: str
     routes_path: Path
-    upstreams: tuple[CredProxyUpstream, ...]
+    routes: tuple[CredProxyRoute, ...]
     token_env_map: dict[str, str]
     internal_network: str = ""
     egress_network: str = ""
@@ -96,28 +101,29 @@ class CredProxyPlan:
     pipelock_proxy_url: str = ""
 
 
-def cred_proxy_upstreams_for_bottle(
+def cred_proxy_routes_for_bottle(
     bottle: Bottle,
-) -> tuple[CredProxyUpstream, ...]:
-    """Lift each `bottle.cred_proxy.routes[]` entry into a
-    CredProxyUpstream. Order is preserved so route lookup is stable.
+) -> tuple[CredProxyRoute, ...]:
+    """Lift each `bottle.cred_proxy.routes[]` manifest entry into a
+    resolved CredProxyRoute. Order is preserved so route lookup at
+    the proxy is stable.
 
-    Token-env slots are assigned per distinct TokenRef: the first
-    route with TokenRef "GH_PAT" gets `CRED_PROXY_TOKEN_0`; a second
-    route with the same TokenRef shares slot 0. The launch step
-    forwards each TokenRef's value from the host environ into the
-    sidecar's environ under the matching slot name once.
+    Token-env slots are assigned per distinct `token_ref`: the first
+    route with `token_ref` "GH_PAT" gets `CRED_PROXY_TOKEN_0`; a
+    second route with the same `token_ref` shares slot 0. The launch
+    step forwards each `token_ref`'s value from the host environ into
+    the sidecar's environ under the matching slot name once.
 
     Manifest validation already enforced uniqueness rules (no
     duplicate paths, singleton-role enforcement)."""
-    out: list[CredProxyUpstream] = []
+    out: list[CredProxyRoute] = []
     slot_for_token: dict[str, str] = {}
     for r in bottle.cred_proxy.routes:
         token_env = slot_for_token.get(r.TokenRef)
         if token_env is None:
             token_env = f"CRED_PROXY_TOKEN_{len(slot_for_token)}"
             slot_for_token[r.TokenRef] = token_env
-        out.append(CredProxyUpstream(
+        out.append(CredProxyRoute(
             path=r.Path,
             upstream=r.Upstream.rstrip("/"),
             auth_scheme=r.AuthScheme,
@@ -129,27 +135,27 @@ def cred_proxy_upstreams_for_bottle(
 
 
 def cred_proxy_token_env_map(
-    upstreams: tuple[CredProxyUpstream, ...],
+    routes: tuple[CredProxyRoute, ...],
 ) -> dict[str, str]:
-    """Collapse the upstream list into `{token_env: TokenRef}`. Two
+    """Collapse the route list into `{token_env: token_ref}`. Two
     routes that share a token (gh-api + gh-git) coalesce; the result
     is the set of env vars the backend's start step must forward into
     the sidecar's environ."""
     out: dict[str, str] = {}
-    for u in upstreams:
-        existing = out.get(u.token_env)
-        if existing is not None and existing != u.token_ref:
+    for r in routes:
+        existing = out.get(r.token_env)
+        if existing is not None and existing != r.token_ref:
             die(
-                f"cred-proxy plan conflict: {u.token_env} maps to both "
-                f"{existing!r} and {u.token_ref!r}. Two routes sharing a "
+                f"cred-proxy plan conflict: {r.token_env} maps to both "
+                f"{existing!r} and {r.token_ref!r}. Two routes sharing a "
                 f"token slot must reference the same host env var."
             )
-        out[u.token_env] = u.token_ref
+        out[r.token_env] = r.token_ref
     return out
 
 
 def cred_proxy_render_routes(
-    upstreams: tuple[CredProxyUpstream, ...],
+    routes: tuple[CredProxyRoute, ...],
 ) -> str:
     """Serialize the route table for the cred-proxy server to read.
     JSON, no token values, no host env-var names — the only thing
@@ -159,12 +165,12 @@ def cred_proxy_render_routes(
     payload = {
         "routes": [
             {
-                "path": u.path,
-                "upstream": u.upstream,
-                "auth_scheme": u.auth_scheme,
-                "token_env": u.token_env,
+                "path": r.path,
+                "upstream": r.upstream,
+                "auth_scheme": r.auth_scheme,
+                "token_env": r.token_env,
             }
-            for u in upstreams
+            for r in routes
         ],
     }
     return json.dumps(payload, indent=2, sort_keys=False) + "\n"
@@ -201,29 +207,30 @@ def cred_proxy_resolve_token_values(
 
 class CredProxy(ABC):
     """The per-bottle credential proxy. Encapsulates the host-side
-    prepare (upstream lift + routes.json render + token-env-map
+    prepare (route lift + routes.json render + token-env-map
     derivation); the sidecar's start/stop lifecycle is backend-
     specific and lives on concrete subclasses."""
 
     def prepare(self, bottle: Bottle, slug: str, stage_dir: Path) -> CredProxyPlan:
-        """Lift `bottle.tokens` into the upstream table, render the
-        routes.json (mode 600) under `stage_dir`, and return the plan.
-        Pure host-side, no docker subprocess. The token-env map records
-        the mapping the launch step uses to forward values from the
-        host's environ into the sidecar's environ.
+        """Lift `bottle.cred_proxy.routes` into resolved routes,
+        render the routes.json (mode 600) under `stage_dir`, and
+        return the plan. Pure host-side, no docker subprocess. The
+        token-env map records the mapping the launch step uses to
+        forward values from the host's environ into the sidecar's
+        environ.
 
         Returned plan is incomplete: the launch step must fill
         `internal_network` / `egress_network` via `dataclasses.replace`
         before passing it to `.start`."""
-        upstreams = cred_proxy_upstreams_for_bottle(bottle)
+        routes = cred_proxy_routes_for_bottle(bottle)
         routes_path = stage_dir / "cred_proxy_routes.json"
-        routes_path.write_text(cred_proxy_render_routes(upstreams))
+        routes_path.write_text(cred_proxy_render_routes(routes))
         routes_path.chmod(0o600)
         return CredProxyPlan(
             slug=slug,
             routes_path=routes_path,
-            upstreams=upstreams,
-            token_env_map=cred_proxy_token_env_map(upstreams),
+            routes=routes,
+            token_env_map=cred_proxy_token_env_map(routes),
         )
 
     @abstractmethod
@@ -242,9 +249,9 @@ class CredProxy(ABC):
 __all__ = [
     "CredProxy",
     "CredProxyPlan",
-    "CredProxyUpstream",
+    "CredProxyRoute",
     "cred_proxy_render_routes",
     "cred_proxy_resolve_token_values",
+    "cred_proxy_routes_for_bottle",
     "cred_proxy_token_env_map",
-    "cred_proxy_upstreams_for_bottle",
 ]

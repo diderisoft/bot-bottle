@@ -1,7 +1,7 @@
 """Unit: pipelock_effective_allowlist — the union of baked-in defaults,
 bottle.egress.allowlist, and cred-proxy upstream hosts derived from
-bottle.tokens (PRD 0010). Git upstreams declared in bottle.git do not
-contribute here; they flow through the per-agent git-gate (PRD 0008)."""
+bottle.cred_proxy.routes (PRD 0010). Git upstreams declared in bottle.git
+do not contribute here; they flow through the per-agent git-gate (PRD 0008)."""
 
 import unittest
 

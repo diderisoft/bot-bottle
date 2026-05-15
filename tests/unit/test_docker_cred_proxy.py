@@ -15,7 +15,7 @@ from claude_bottle.backend.docker.cred_proxy import (
     cred_proxy_container_name,
     cred_proxy_url,
 )
-from claude_bottle.cred_proxy import CredProxyPlan, CredProxyUpstream
+from claude_bottle.cred_proxy import CredProxyPlan, CredProxyRoute
 from claude_bottle.log import Die
 
 
@@ -23,7 +23,7 @@ def _empty_plan(**overrides):
     base = {
         "slug": "demo",
         "routes_path": Path("/nonexistent"),
-        "upstreams": (),
+        "routes": (),
         "token_env_map": {},
         "internal_network": "",
         "egress_network": "",
@@ -56,17 +56,17 @@ class TestStartGuards(unittest.TestCase):
             self.proxy.start(_empty_plan())
 
     def test_missing_internal_network_dies(self):
-        upstream = CredProxyUpstream(
+        upstream = CredProxyRoute(
             path="/anthropic/",
             upstream="https://api.anthropic.com",
             auth_scheme="Bearer", token_env="CRED_PROXY_TOKEN_0",
             token_ref="T",
         )
         with self.assertRaises(Die):
-            self.proxy.start(_empty_plan(upstreams=(upstream,)))
+            self.proxy.start(_empty_plan(routes=(upstream,)))
 
     def test_missing_routes_file_dies(self):
-        upstream = CredProxyUpstream(
+        upstream = CredProxyRoute(
             path="/anthropic/",
             upstream="https://api.anthropic.com",
             auth_scheme="Bearer", token_env="CRED_PROXY_TOKEN_0",
@@ -74,7 +74,7 @@ class TestStartGuards(unittest.TestCase):
         )
         with self.assertRaises(Die):
             self.proxy.start(_empty_plan(
-                upstreams=(upstream,),
+                routes=(upstream,),
                 internal_network="net-x",
                 egress_network="egress-x",
                 routes_path=Path("/tmp/cred-proxy-test-does-not-exist.json"),
@@ -83,7 +83,7 @@ class TestStartGuards(unittest.TestCase):
     def test_pipelock_url_without_ca_dies(self):
         # URL set + CA path empty/missing is a wiring bug: either both
         # populated (production) or both empty (test escape hatch).
-        upstream = CredProxyUpstream(
+        upstream = CredProxyRoute(
             path="/anthropic/",
             upstream="https://api.anthropic.com",
             auth_scheme="Bearer", token_env="CRED_PROXY_TOKEN_0",
@@ -92,7 +92,7 @@ class TestStartGuards(unittest.TestCase):
         with tempfile.NamedTemporaryFile() as routes:
             with self.assertRaises(Die):
                 self.proxy.start(_empty_plan(
-                    upstreams=(upstream,),
+                    routes=(upstream,),
                     internal_network="net-x",
                     egress_network="egress-x",
                     routes_path=Path(routes.name),

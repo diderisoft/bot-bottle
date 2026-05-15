@@ -608,8 +608,9 @@ def _parse_git_upstream(url: str, label: str) -> tuple[str, str, str, str]:
 def _parse_https_host(url: str, label: str) -> str:
     """Extract the host from an `https://host[:port][/path]` URL.
     Dies if `url` is not an https:// URL or the host segment is empty.
-    Used to derive `TokenEntry.UpstreamHost` from a gitea Url so the
-    cross-validator can spot collisions with `bottle.git` hosts."""
+    Used to derive `CredProxyRoute.UpstreamHost` from a route's
+    `upstream` so pipelock's allowlist (and the provisioner's git-gate
+    overlap check) can match on host alone."""
     if not url.startswith("https://"):
         die(f"{label} must be an https:// URL (was {url!r})")
     rest = url[len("https://"):]

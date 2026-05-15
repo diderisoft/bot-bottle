@@ -93,7 +93,7 @@ def resolve_plan(
     # anthropic-base-url role. Manifest validation enforces the
     # singleton constraint.
     anthropic_route = next(
-        (u for u in cred_proxy_plan.upstreams if "anthropic-base-url" in u.roles),
+        (r for r in cred_proxy_plan.routes if "anthropic-base-url" in r.roles),
         None,
     )
     if spec.forward_oauth_token and anthropic_route is None:

@@ -1,6 +1,6 @@
 """DockerCredProxy — the Docker-specific lifecycle for the per-bottle
 cred-proxy sidecar (PRD 0010). Inherits the platform-agnostic prepare
-step (upstream lift + routes.json render + token-env-map derivation)
+step (route lift + routes.json render + token-env-map derivation)
 from `CredProxy`."""
 
 from __future__ import annotations
@@ -91,8 +91,8 @@ class DockerCredProxy(CredProxy):
              reach the real upstream over HTTPS.
           6. `docker start`.
         Returns the container name (the target passed to `.stop`)."""
-        if not plan.upstreams:
-            die("DockerCredProxy.start called with no upstreams; caller should skip")
+        if not plan.routes:
+            die("DockerCredProxy.start called with no routes; caller should skip")
         if not plan.internal_network or not plan.egress_network:
             die(
                 "DockerCredProxy.start: internal_network / egress_network must be "

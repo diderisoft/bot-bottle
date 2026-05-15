@@ -1,4 +1,4 @@
-"""Unit: CredProxy upstream lift + routes.json render + token resolution
+"""Unit: CredProxy route lift + routes.json render + token resolution
 (PRD 0010)."""
 
 import json
@@ -8,7 +8,7 @@ from claude_bottle.cred_proxy import (
     cred_proxy_render_routes,
     cred_proxy_resolve_token_values,
     cred_proxy_token_env_map,
-    cred_proxy_upstreams_for_bottle,
+    cred_proxy_routes_for_bottle,
 )
 from claude_bottle.log import Die
 from claude_bottle.manifest import Manifest
@@ -28,7 +28,7 @@ class TestUpstreamLift(unittest.TestCase):
              "auth_scheme": "Bearer", "token_ref": "CLAUDE_BOTTLE_OAUTH_TOKEN",
              "role": "anthropic-base-url"},
         ])
-        upstreams = cred_proxy_upstreams_for_bottle(b)
+        upstreams = cred_proxy_routes_for_bottle(b)
         self.assertEqual(1, len(upstreams))
         u = upstreams[0]
         self.assertEqual("/anthropic/", u.path)
@@ -47,7 +47,7 @@ class TestUpstreamLift(unittest.TestCase):
              "auth_scheme": "Bearer", "token_ref": "GH_PAT",
              "role": "git-insteadof"},
         ])
-        upstreams = cred_proxy_upstreams_for_bottle(b)
+        upstreams = cred_proxy_routes_for_bottle(b)
         self.assertEqual(2, len(upstreams))
         self.assertEqual({"CRED_PROXY_TOKEN_0"},
                          {u.token_env for u in upstreams})
@@ -61,7 +61,7 @@ class TestUpstreamLift(unittest.TestCase):
             {"path": "/c/", "upstream": "https://c.example",
              "auth_scheme": "Bearer", "token_ref": "T1"},
         ])
-        upstreams = cred_proxy_upstreams_for_bottle(b)
+        upstreams = cred_proxy_routes_for_bottle(b)
         # T1 -> slot 0, T2 -> slot 1, T1 reuses slot 0.
         self.assertEqual("CRED_PROXY_TOKEN_0", upstreams[0].token_env)
         self.assertEqual("CRED_PROXY_TOKEN_1", upstreams[1].token_env)
@@ -73,7 +73,7 @@ class TestUpstreamLift(unittest.TestCase):
              "auth_scheme": "token", "token_ref": "T"},
         ])
         self.assertEqual("https://gitea.dideric.is",
-                         cred_proxy_upstreams_for_bottle(b)[0].upstream)
+                         cred_proxy_routes_for_bottle(b)[0].upstream)
 
     def test_roles_list_passes_through(self):
         b = _bottle([
@@ -82,11 +82,11 @@ class TestUpstreamLift(unittest.TestCase):
              "role": ["git-insteadof", "tea-login"]},
         ])
         self.assertEqual(("git-insteadof", "tea-login"),
-                         cred_proxy_upstreams_for_bottle(b)[0].roles)
+                         cred_proxy_routes_for_bottle(b)[0].roles)
 
     def test_empty_routes_yields_empty_upstreams(self):
         b = _bottle([])
-        self.assertEqual((), cred_proxy_upstreams_for_bottle(b))
+        self.assertEqual((), cred_proxy_routes_for_bottle(b))
 
 
 class TestTokenEnvMap(unittest.TestCase):
@@ -97,7 +97,7 @@ class TestTokenEnvMap(unittest.TestCase):
             {"path": "/b/", "upstream": "https://b.example",
              "auth_scheme": "Bearer", "token_ref": "B"},
         ])
-        m = cred_proxy_token_env_map(cred_proxy_upstreams_for_bottle(b))
+        m = cred_proxy_token_env_map(cred_proxy_routes_for_bottle(b))
         self.assertEqual({"CRED_PROXY_TOKEN_0": "A",
                           "CRED_PROXY_TOKEN_1": "B"}, m)
 
@@ -108,7 +108,7 @@ class TestTokenEnvMap(unittest.TestCase):
             {"path": "/gh-git/", "upstream": "https://github.com",
              "auth_scheme": "Bearer", "token_ref": "GH"},
         ])
-        m = cred_proxy_token_env_map(cred_proxy_upstreams_for_bottle(b))
+        m = cred_proxy_token_env_map(cred_proxy_routes_for_bottle(b))
         self.assertEqual({"CRED_PROXY_TOKEN_0": "GH"}, m)
 
 
@@ -120,7 +120,7 @@ class TestRoutesRender(unittest.TestCase):
             {"path": "/gitea/x/", "upstream": "https://gitea.dideric.is",
              "auth_scheme": "token", "token_ref": "GITEA_TOKEN"},
         ])
-        rendered = cred_proxy_render_routes(cred_proxy_upstreams_for_bottle(b))
+        rendered = cred_proxy_render_routes(cred_proxy_routes_for_bottle(b))
         payload = json.loads(rendered)
         self.assertEqual(["routes"], list(payload.keys()))
         self.assertEqual(2, len(payload["routes"]))
@@ -134,7 +134,7 @@ class TestRoutesRender(unittest.TestCase):
         # or the host-side TokenRef name.
         b = _bottle([{"path": "/x/", "upstream": "https://x.example",
                       "auth_scheme": "Bearer", "token_ref": "GITHUB_TOKEN"}])
-        rendered = cred_proxy_render_routes(cred_proxy_upstreams_for_bottle(b))
+        rendered = cred_proxy_render_routes(cred_proxy_routes_for_bottle(b))
         self.assertNotIn("GITHUB_TOKEN", rendered)
 
     def test_empty_upstreams_renders_empty_routes_array(self):

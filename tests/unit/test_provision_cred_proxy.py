@@ -10,7 +10,7 @@ from claude_bottle.backend.docker.provision.cred_proxy import (
     render_npmrc,
     render_tea_config,
 )
-from claude_bottle.cred_proxy import cred_proxy_upstreams_for_bottle
+from claude_bottle.cred_proxy import cred_proxy_routes_for_bottle
 from claude_bottle.manifest import Manifest
 
 
@@ -22,7 +22,7 @@ def _bottle(routes):
 
 
 def _upstreams(routes):
-    return cred_proxy_upstreams_for_bottle(_bottle(routes))
+    return cred_proxy_routes_for_bottle(_bottle(routes))
 
 
 class TestRenderNpmrc(unittest.TestCase):

@@ -22,7 +22,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from ....cred_proxy import CredProxyUpstream
+from ....cred_proxy import CredProxyRoute
 from ....log import info
 from .. import util as docker_mod
 from ..bottle_plan import DockerBottlePlan
@@ -31,21 +31,21 @@ from ..cred_proxy import cred_proxy_url
 
 def provision_cred_proxy(plan: DockerBottlePlan, target: str) -> None:
     """Drop the agent-side dotfiles for each declared cred-proxy
-    route. No-op when the bottle has no tokens."""
-    upstreams = plan.cred_proxy_plan.upstreams
-    if not upstreams:
+    route. No-op when the bottle has no routes."""
+    routes = plan.cred_proxy_plan.routes
+    if not routes:
         return
     bottle = plan.spec.manifest.bottle_for(plan.spec.agent_name)
     git_gate_hosts = {g.UpstreamHost for g in bottle.git}
-    _provision_npmrc(plan, target, upstreams)
-    _provision_gitconfig(plan, target, upstreams, git_gate_hosts)
-    _provision_tea_config(plan, target, upstreams)
+    _provision_npmrc(plan, target, routes)
+    _provision_gitconfig(plan, target, routes, git_gate_hosts)
+    _provision_tea_config(plan, target, routes)
 
 
 # --- npm --------------------------------------------------------------------
 
 
-def render_npmrc(upstreams: tuple[CredProxyUpstream, ...]) -> str:
+def render_npmrc(routes: tuple[CredProxyRoute, ...]) -> str:
     """Render `~/.npmrc` content. Driven by the `npm-registry` role:
     finds the (single) route that claims it and writes a registry=
     line at the proxy. Empty string when no such route exists, so
@@ -55,18 +55,18 @@ def render_npmrc(upstreams: tuple[CredProxyUpstream, ...]) -> str:
     npmrc deliberately carries no `_authToken`. The registry alone
     is enough. Manifest validation enforces that the role is a
     singleton, so the first match is the only match."""
-    for u in upstreams:
-        if "npm-registry" in u.roles:
-            return f"registry={cred_proxy_url()}{u.path}\n"
+    for r in routes:
+        if "npm-registry" in r.roles:
+            return f"registry={cred_proxy_url()}{r.path}\n"
     return ""
 
 
 def _provision_npmrc(
     plan: DockerBottlePlan,
     target: str,
-    upstreams: tuple[CredProxyUpstream, ...],
+    routes: tuple[CredProxyRoute, ...],
 ) -> None:
-    content = render_npmrc(upstreams)
+    content = render_npmrc(routes)
     if not content:
         return
     container_home = os.environ.get("CLAUDE_BOTTLE_CONTAINER_HOME", "/home/node")
@@ -88,7 +88,7 @@ def _provision_npmrc(
 
 
 def render_cred_proxy_gitconfig(
-    upstreams: tuple[CredProxyUpstream, ...],
+    routes: tuple[CredProxyRoute, ...],
     git_gate_hosts: set[str] = frozenset(),  # type: ignore[assignment]
 ) -> str:
     """Render the `~/.gitconfig` fragment for cred-proxy insteadOf
@@ -105,23 +105,23 @@ def render_cred_proxy_gitconfig(
     suppressing the rewrite means `git clone https://<host>/...`
     doesn't have a tempting shortcut that just confuses on push.
 
-    The insteadOf left-hand side comes from `upstream` (with a
+    The insteadOf left-hand side comes from `route.upstream` (with a
     trailing `/` so insteadOf matches at the directory boundary),
     so the same renderer handles github.com, gitea.dideric.is, and
     any future host the user wires up."""
     rules: list[str] = []
-    for u in upstreams:
-        if "git-insteadof" not in u.roles:
+    for r in routes:
+        if "git-insteadof" not in r.roles:
             continue
         # Strip scheme to derive the host for the git-gate overlap
         # check. urllib.parse-free parse: same shape we accept in
         # manifest validation.
-        host = u.upstream.removeprefix("https://").partition("/")[0].partition(":")[0]
+        host = r.upstream.removeprefix("https://").partition("/")[0].partition(":")[0]
         if host in git_gate_hosts:
             continue
         rules.append(
-            f'[url "{cred_proxy_url()}{u.path}"]\n'
-            f"\tinsteadOf = {u.upstream}/\n"
+            f'[url "{cred_proxy_url()}{r.path}"]\n'
+            f"\tinsteadOf = {r.upstream}/\n"
         )
     if not rules:
         return ""
@@ -136,14 +136,14 @@ def render_cred_proxy_gitconfig(
 def _provision_gitconfig(
     plan: DockerBottlePlan,
     target: str,
-    upstreams: tuple[CredProxyUpstream, ...],
+    routes: tuple[CredProxyRoute, ...],
     git_gate_hosts: set[str],
 ) -> None:
     """Append the cred-proxy insteadOf rules to ~/.gitconfig. Runs
     after `provision_git`, so any git-gate rules already live in the
     file; we append rather than overwrite. Hosts already brokered by
     git-gate are skipped — git-gate is the canonical git path there."""
-    content = render_cred_proxy_gitconfig(upstreams, git_gate_hosts)
+    content = render_cred_proxy_gitconfig(routes, git_gate_hosts)
     if not content:
         return
     container_home = os.environ.get("CLAUDE_BOTTLE_CONTAINER_HOME", "/home/node")
@@ -179,25 +179,25 @@ def _provision_gitconfig(
 # --- tea --------------------------------------------------------------------
 
 
-def render_tea_config(upstreams: tuple[CredProxyUpstream, ...]) -> str:
+def render_tea_config(routes: tuple[CredProxyRoute, ...]) -> str:
     """Render `~/.config/tea/config.yml`. Driven by the `tea-login`
     role: each route that claims it produces one `logins:` entry
     pointing at the cred-proxy. The proxy substitutes the real
     token at request time; the value in `token:` here is a
     placeholder. `tea` refuses to make calls without a non-empty
     token field, so the placeholder is necessary."""
-    tea_routes = [u for u in upstreams if "tea-login" in u.roles]
+    tea_routes = [r for r in routes if "tea-login" in r.roles]
     if not tea_routes:
         return ""
     lines = ["logins:"]
-    for u in tea_routes:
+    for r in tea_routes:
         # Derive a stable login name from the upstream host. The
         # path may not encode the host (e.g. `/gitea/dideric/` vs
         # upstream gitea.dideric.is), so we read it off `upstream`.
-        host = u.upstream.removeprefix("https://").partition("/")[0].partition(":")[0]
+        host = r.upstream.removeprefix("https://").partition("/")[0].partition(":")[0]
         lines.extend([
             f"- name: {host}",
-            f"  url: {cred_proxy_url()}{u.path}",
+            f"  url: {cred_proxy_url()}{r.path}",
             "  token: cred-proxy-placeholder",
             "  default: false",
             "  ssh_host: \"\"",
@@ -210,9 +210,9 @@ def render_tea_config(upstreams: tuple[CredProxyUpstream, ...]) -> str:
 def _provision_tea_config(
     plan: DockerBottlePlan,
     target: str,
-    upstreams: tuple[CredProxyUpstream, ...],
+    routes: tuple[CredProxyRoute, ...],
 ) -> None:
-    content = render_tea_config(upstreams)
+    content = render_tea_config(routes)
     if not content:
         return
     container_home = os.environ.get("CLAUDE_BOTTLE_CONTAINER_HOME", "/home/node")
@@ -220,7 +220,10 @@ def _provision_tea_config(
     cfg = plan.stage_dir / "agent_tea_config.yml"
     cfg.write_text(content)
     cfg.chmod(0o600)
-    info(f"writing {container_tea} ({len([u for u in upstreams if u.kind == 'gitea'])} gitea login(s))")
+    info(
+        f"writing {container_tea} "
+        f"({len([r for r in routes if 'tea-login' in r.roles])} tea login(s))"
+    )
     docker_mod.docker_exec_root(
         target, ["mkdir", "-p", str(Path(container_tea).parent)]
     )

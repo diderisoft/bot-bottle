@@ -11,7 +11,6 @@ egress net. cred-proxy straddles both.
 
 from __future__ import annotations
 
-import dataclasses
 import json
 import os
 import shutil
@@ -32,8 +31,6 @@ from claude_bottle.backend.docker.network import (
     network_create_internal,
     network_remove,
 )
-from claude_bottle.cred_proxy import CredProxy
-from claude_bottle.manifest import Manifest
 from tests._docker import skip_unless_docker
 
 
@@ -41,24 +38,6 @@ CURL_IMAGE = "curlimages/curl:latest"
 FAKE_UPSTREAM_IMAGE = "python:3.13-alpine"
 FAKE_UPSTREAM_HOST = "fake-upstream"
 FAKE_UPSTREAM_PORT = "8080"
-
-
-def _bottle(tokens):
-    return Manifest.from_json_obj({
-        "bottles": {"dev": {"tokens": tokens}},
-        "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
-    }).bottles["dev"]
-
-
-class _StubCredProxy(CredProxy):
-    """CredProxy.prepare's render uses the Kind defaults, but the
-    integration test needs the cred-proxy to forward to the fake
-    upstream — not api.anthropic.com / github.com / npmjs.org. We
-    pass a one-route plan in directly via DockerCredProxy.start
-    rather than going through the manifest path."""
-
-    def start(self, plan): raise NotImplementedError
-    def stop(self, target): return None
 
 
 def _make_routes_json(upstream_host: str, upstream_port: str) -> str:
@@ -140,12 +119,12 @@ class TestCredProxySidecar(unittest.TestCase):
 
     def _start_cred_proxy_via_production_code(self) -> str:
         """Run DockerCredProxy.start with a plan that points at the
-        fake upstream. We bypass the manifest path (which fixes
-        upstreams by Kind) by handing .start an already-rendered
-        routes.json."""
+        fake upstream. We bypass the manifest path so we can route
+        the proxy at a test-only upstream (the fake-upstream
+        container) without going through the parser."""
         from claude_bottle.cred_proxy import (
             CredProxyPlan,
-            CredProxyUpstream,
+            CredProxyRoute,
         )
         routes_path = self.work_dir / "routes.json"
         routes_path.write_text(_make_routes_json(FAKE_UPSTREAM_HOST, FAKE_UPSTREAM_PORT))
@@ -153,7 +132,7 @@ class TestCredProxySidecar(unittest.TestCase):
         plan = CredProxyPlan(
             slug=self.slug,
             routes_path=routes_path,
-            upstreams=(CredProxyUpstream(
+            routes=(CredProxyRoute(
                 path="/fake/",
                 upstream=f"http://{FAKE_UPSTREAM_HOST}:{FAKE_UPSTREAM_PORT}",
                 auth_scheme="Bearer",
