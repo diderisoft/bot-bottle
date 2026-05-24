@@ -60,7 +60,6 @@ class TestPipelockLlmPassthrough(unittest.TestCase):
                 agent_name="demo",
                 copy_cwd=False,
                 user_cwd=str(stage_dir),
-                forward_oauth_token=False,
             )
             plan = backend.prepare(spec, stage_dir=stage_dir)
             with backend.launch(plan) as bottle:

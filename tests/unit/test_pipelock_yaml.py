@@ -77,6 +77,49 @@ class TestBuildConfig(unittest.TestCase):
                 ca_cert_path="/etc/pipelock-ca.pem",
             )
 
+    def test_ssrf_block_omitted_when_no_allowlist(self):
+        cfg = pipelock_build_config(fixture_minimal().bottles["dev"])
+        self.assertNotIn("ssrf", cfg)
+
+    def test_ssrf_block_emitted_when_allowlist_supplied(self):
+        # The bottle's internal Docker subnet lands here at launch
+        # time so cred-proxy:9099 (172.x.x.x) doesn't trip pipelock's
+        # RFC1918 SSRF guard.
+        cfg = pipelock_build_config(
+            fixture_minimal().bottles["dev"],
+            ssrf_ip_allowlist=("172.20.0.0/16",),
+        )
+        self.assertIn("ssrf", cfg)
+        self.assertEqual({"ip_allowlist": ["172.20.0.0/16"]}, cfg["ssrf"])
+
+    def test_seed_phrase_detection_left_at_default_when_no_anthropic_route(self):
+        # No override emitted -> pipelock keeps its built-in default
+        # (BIP-39 detection enabled). Bottles that don't carry an
+        # Anthropic route don't need the false-positive workaround.
+        cfg = pipelock_build_config(fixture_minimal().bottles["dev"])
+        self.assertNotIn("seed_phrase_detection", cfg)
+
+    def test_seed_phrase_detection_disabled_for_anthropic_route(self):
+        # claude-code's chat bodies trip pipelock's BIP-39 detector
+        # (12+ English words that pass the checksum). pipelock 2.3.0
+        # has no per-path knob for this detector, and both `suppress`
+        # and `rules.disabled` only silence alerts — the block still
+        # fires. The only knob that actually skips the block is the
+        # global on/off, so we flip it off whenever the bottle is set
+        # up to route claude through pipelock.
+        from claude_bottle.manifest import Manifest
+        bottle = Manifest.from_json_obj({
+            "bottles": {"dev": {"cred_proxy": {"routes": [
+                {"path": "/anthropic/",
+                 "upstream": "https://api.anthropic.com",
+                 "auth_scheme": "Bearer", "token_ref": "T",
+                 "role": "anthropic-base-url"},
+            ]}}},
+            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        }).bottles["dev"]
+        cfg = pipelock_build_config(bottle)
+        self.assertEqual({"enabled": False}, cfg["seed_phrase_detection"])
+
 
 class TestRenderAndWrite(unittest.TestCase):
     def setUp(self):
@@ -147,6 +190,33 @@ class TestRenderAndWrite(unittest.TestCase):
         self.assertIn('ca_key: "/etc/pipelock-ca-key.pem"', content)
         self.assertIn("passthrough_domains:", content)
         self.assertIn('- "api.anthropic.com"', content)
+
+    def test_render_emits_ssrf_block_when_allowlist_given(self):
+        cfg = pipelock_build_config(
+            fixture_minimal().bottles["dev"],
+            ca_cert_path="/etc/pipelock-ca.pem",
+            ca_key_path="/etc/pipelock-ca-key.pem",
+            ssrf_ip_allowlist=("172.20.0.0/16",),
+        )
+        text = pipelock_render_yaml(cfg)
+        self.assertIn("ssrf:", text)
+        self.assertIn("ip_allowlist:", text)
+        self.assertIn('- "172.20.0.0/16"', text)
+
+    def test_render_emits_seed_phrase_off_for_anthropic_route(self):
+        from claude_bottle.manifest import Manifest
+        bottle = Manifest.from_json_obj({
+            "bottles": {"dev": {"cred_proxy": {"routes": [
+                {"path": "/anthropic/",
+                 "upstream": "https://api.anthropic.com",
+                 "auth_scheme": "Bearer", "token_ref": "T",
+                 "role": "anthropic-base-url"},
+            ]}}},
+            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        }).bottles["dev"]
+        text = pipelock_render_yaml(pipelock_build_config(bottle))
+        self.assertIn("seed_phrase_detection:", text)
+        self.assertIn("enabled: false", text)
 
 
 if __name__ == "__main__":

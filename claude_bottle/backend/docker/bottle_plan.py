@@ -11,6 +11,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ...cred_proxy import CredProxyPlan
 from ...git_gate import GitGatePlan
 from ...log import info
 from ...manifest import Agent, Bottle
@@ -51,6 +52,7 @@ class DockerBottlePlan(BottlePlan):
     prompt_file: Path
     proxy_plan: PipelockProxyPlan
     git_gate_plan: GitGatePlan
+    cred_proxy_plan: CredProxyPlan
     allowlist_summary: str
     use_runsc: bool
 
@@ -59,9 +61,13 @@ class DockerBottlePlan(BottlePlan):
         manifest = spec.manifest
         agent = manifest.agents[spec.agent_name]
         bottle = manifest.bottle_for(spec.agent_name)
-        env_names = list(bottle.env.keys())
-        if spec.forward_oauth_token:
-            env_names.append("CLAUDE_CODE_OAUTH_TOKEN")
+        # The agent sees the union of literal env names (rendered into
+        # --env-file) and forwarded env names (`-e NAME` with the value
+        # arriving via subprocess env). The forwarded set already
+        # reflects PRD 0010's switch — when cred-proxy holds the
+        # anthropic token, CLAUDE_CODE_OAUTH_TOKEN is absent and
+        # ANTHROPIC_BASE_URL is present.
+        env_names = sorted(set(bottle.env.keys()) | set(self.forwarded_env.keys()))
         return _PlanView(
             agent=agent,
             bottle=bottle,
@@ -100,6 +106,14 @@ class DockerBottlePlan(BottlePlan):
             info(f"  git gate      : {'; '.join(git_lines)}")
         else:
             info("  git remotes   : (none)")
+        if self.cred_proxy_plan.routes:
+            lines = [f"{r.path}→{r.upstream}" for r in self.cred_proxy_plan.routes]
+            refs = sorted({r.token_ref for r in self.cred_proxy_plan.routes})
+            info(f"  cred-proxy    : {len(lines)} route(s); tokens: {', '.join(refs)}")
+            for line in lines:
+                info(f"                  {line}")
+        else:
+            info("  cred-proxy    : (none)")
         info(f"  egress        : {self.allowlist_summary}")
         info("  tls intercept : pipelock (per-bottle ephemeral CA, generated at launch)")
         info(
@@ -131,6 +145,16 @@ class DockerBottlePlan(BottlePlan):
                     "known_host_key_pinned": bool(u.known_host_key),
                 }
                 for u in self.git_gate_plan.upstreams
+            ],
+            "cred_proxy": [
+                {
+                    "path": r.path,
+                    "upstream": r.upstream,
+                    "auth_scheme": r.auth_scheme,
+                    "token_ref": r.token_ref,
+                    "roles": list(r.roles),
+                }
+                for r in self.cred_proxy_plan.routes
             ],
             "egress": {
                 "host_count": len(hosts),

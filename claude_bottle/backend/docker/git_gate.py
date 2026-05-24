@@ -110,13 +110,14 @@ class DockerGitGate(GitGate):
         for host, ip in git_gate_aggregate_extra_hosts(plan.upstreams).items():
             create_args.extend(["--add-host", f"{host}:{ip}"])
         create_args.append(GIT_GATE_IMAGE)
-        if subprocess.run(
-            create_args,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        ).returncode != 0:
-            die(f"failed to create git-gate sidecar {name}")
+        create_result = subprocess.run(
+            create_args, capture_output=True, text=True, check=False,
+        )
+        if create_result.returncode != 0:
+            die(
+                f"failed to create git-gate sidecar {name}: "
+                f"{create_result.stderr.strip()}"
+            )
 
         # Order matters: entrypoint + hook first so they're present
         # when docker start fires. Per-upstream creds afterwards.
@@ -166,12 +167,11 @@ class DockerGitGate(GitGate):
                     f"{cp_result.stderr.strip()}"
                 )
 
-        if subprocess.run(
+        connect_result = subprocess.run(
             ["docker", "network", "connect", plan.egress_network, name],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        ).returncode != 0:
+            capture_output=True, text=True, check=False,
+        )
+        if connect_result.returncode != 0:
             subprocess.run(
                 ["docker", "rm", "-f", name],
                 stdout=subprocess.DEVNULL,
@@ -180,22 +180,23 @@ class DockerGitGate(GitGate):
             )
             die(
                 f"failed to attach git-gate sidecar {name} to egress network "
-                f"{plan.egress_network}"
+                f"{plan.egress_network}: {connect_result.stderr.strip()}"
             )
 
-        if subprocess.run(
-            ["docker", "start", name],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        ).returncode != 0:
+        start_result = subprocess.run(
+            ["docker", "start", name], capture_output=True, text=True, check=False,
+        )
+        if start_result.returncode != 0:
             subprocess.run(
                 ["docker", "rm", "-f", name],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 check=False,
             )
-            die(f"failed to start git-gate sidecar {name}")
+            die(
+                f"failed to start git-gate sidecar {name}: "
+                f"{start_result.stderr.strip()}"
+            )
 
         return name
 

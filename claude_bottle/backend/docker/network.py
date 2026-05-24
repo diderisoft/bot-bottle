@@ -81,6 +81,29 @@ def network_create_egress(slug: str) -> str:
     return _network_create_with_prefix(network_egress_name_for_slug(slug), internal=False)
 
 
+def network_inspect_cidr(name: str) -> str:
+    """Return the IPv4 CIDR Docker assigned to a user-defined network.
+
+    Used by pipelock's SSRF guard exception: the bottle's internal
+    network sits in RFC1918 space, so pipelock's `internal:` list
+    would block any agent request whose destination resolves there
+    — including the cred-proxy sidecar's address. Adding the
+    network's CIDR to pipelock's `ssrf.ip_allowlist` lets traffic
+    targeted at the bottle's own sidecars through while pipelock
+    still body-scans and api_allowlist-gates as usual."""
+    result = subprocess.run(
+        ["docker", "network", "inspect",
+         "--format", "{{range .IPAM.Config}}{{.Subnet}}{{end}}", name],
+        capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        die(f"docker network inspect {name} failed: {result.stderr.strip()}")
+    cidr = result.stdout.strip()
+    if not cidr:
+        die(f"network {name!r} has no IPAM subnet configured")
+    return cidr
+
+
 def network_attach(network: str, container: str) -> None:
     result = subprocess.run(
         ["docker", "network", "connect", network, container],

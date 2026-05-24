@@ -53,7 +53,6 @@ class BottleSpec:
     agent_name: str
     copy_cwd: bool
     user_cwd: str
-    forward_oauth_token: bool
 
 
 @dataclass(frozen=True)
@@ -214,15 +213,17 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         decide whether to add --append-system-prompt-file to claude's
         argv.
 
-        Default orchestration: ca → prompt → skills → git. CA install
-        runs first so the agent's trust store is rebuilt before
-        anything inside the agent makes a TLS call. Subclasses
-        typically don't override this; they implement the sub-methods
-        below."""
+        Default orchestration: ca → prompt → skills → git →
+        cred_proxy. CA install runs first so the agent's trust store
+        is rebuilt before anything inside the agent makes a TLS call.
+        cred_proxy runs last because it appends to ~/.gitconfig (which
+        provision_git writes). Subclasses typically don't override
+        this; they implement the sub-methods below."""
         self.provision_ca(plan, target)
         prompt_path = self.provision_prompt(plan, target)
         self.provision_skills(plan, target)
         self.provision_git(plan, target)
+        self.provision_cred_proxy(plan, target)
         return prompt_path
 
     def provision_ca(self, plan: PlanT, target: str) -> None:
@@ -250,6 +251,12 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
     def provision_git(self, plan: PlanT, target: str) -> None:
         """Copy the host's cwd `.git` directory into the running
         bottle if the user requested --cwd. No-op otherwise."""
+
+    def provision_cred_proxy(self, plan: PlanT, target: str) -> None:
+        """Drop the cred-proxy agent-side dotfiles (.npmrc,
+        .gitconfig insteadOf, ~/.config/tea/config.yml) per PRD 0010.
+        Default impl is a no-op for backends that don't yet support
+        the cred-proxy sidecar; the Docker backend overrides."""
 
     @abstractmethod
     def prepare_cleanup(self) -> CleanupT:

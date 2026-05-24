@@ -19,8 +19,13 @@ from ...log import die
 from .. import BottleSpec
 from . import util as docker_mod
 from .bottle_plan import DockerBottlePlan
-from .git_gate import DockerGitGate
-from .pipelock import DockerPipelockProxy
+from .cred_proxy import (
+    DockerCredProxy,
+    cred_proxy_container_name,
+    cred_proxy_url,
+)
+from .git_gate import DockerGitGate, git_gate_container_name
+from .pipelock import DockerPipelockProxy, pipelock_container_name
 
 
 def resolve_plan(
@@ -29,6 +34,7 @@ def resolve_plan(
     stage_dir: Path,
     proxy: DockerPipelockProxy,
     git_gate: DockerGitGate,
+    cred_proxy: DockerCredProxy,
 ) -> DockerBottlePlan:
     """Resolve Docker-specific names and write scratch files. Trusts
     that the agent and its skills/git-gate keys are present —
@@ -74,6 +80,29 @@ def resolve_plan(
                 f"clean up old containers with 'docker rm -f <name>'"
             )
 
+    # Probe sidecar container names for orphans from a previous run.
+    # Sidecar names are deterministic from the slug; an orphan would
+    # surface as a docker-create conflict deep inside launch() with no
+    # actionable hint. Fail fast here with a cleanup pointer instead.
+    # Only probe sidecars this launch will actually try to create:
+    # pipelock always; git-gate when bottle.git is non-empty; cred-proxy
+    # when bottle.cred_proxy.routes is non-empty.
+    sidecar_probes: list[tuple[str, str]] = [
+        ("pipelock", pipelock_container_name(slug)),
+    ]
+    if bottle.git:
+        sidecar_probes.append(("git-gate", git_gate_container_name(slug)))
+    if bottle.cred_proxy.routes:
+        sidecar_probes.append(("cred-proxy", cred_proxy_container_name(slug)))
+    for label, sidecar_name in sidecar_probes:
+        if docker_mod.container_exists(sidecar_name):
+            die(
+                f"{label} sidecar container '{sidecar_name}' already exists. "
+                f"This is an orphan from a previous run; clean it up with "
+                f"'./cli.py cleanup' (or 'docker rm -f {sidecar_name}') and "
+                f"retry."
+            )
+
     env_file = stage_dir / "agent.env"
     prompt_file = stage_dir / "prompt.txt"
     prompt_file.write_text("")
@@ -81,14 +110,44 @@ def resolve_plan(
 
     proxy_plan = proxy.prepare(bottle, slug, stage_dir)
     git_gate_plan = git_gate.prepare(bottle, slug, stage_dir)
+    cred_proxy_plan = cred_proxy.prepare(bottle, slug, stage_dir)
     resolved = resolve_env(manifest, spec.agent_name)
     # Everything that should reach the bottle by-name (so its value
-    # never lands on argv or in env_file) goes into one dict. The
-    # rename from CLAUDE_BOTTLE_OAUTH_TOKEN to CLAUDE_CODE_OAUTH_TOKEN
-    # happens here; nothing mutates the host os.environ.
+    # never lands on argv or in env_file) goes into one dict. Nothing
+    # mutates the host os.environ.
     forwarded_env: dict[str, str] = dict(resolved.forwarded)
-    if spec.forward_oauth_token:
-        forwarded_env["CLAUDE_CODE_OAUTH_TOKEN"] = os.environ["CLAUDE_BOTTLE_OAUTH_TOKEN"]
+    # Find the (at most one) cred-proxy route claiming the
+    # anthropic-base-url role. Manifest validation enforces the
+    # singleton constraint. cred-proxy is the only path the Anthropic
+    # OAuth token reaches the bottle — there is no fallback that
+    # forwards it into the agent's environ directly. Bottles that
+    # need claude-code to authenticate must declare an
+    # anthropic-base-url route.
+    anthropic_route = next(
+        (r for r in cred_proxy_plan.routes if "anthropic-base-url" in r.roles),
+        None,
+    )
+    if anthropic_route is not None:
+        # Point claude-code at the cred-proxy. The sidecar holds the
+        # OAuth token; the agent's environ does not. Strip the
+        # trailing slash so claude-code's path-join produces e.g.
+        # http://cred-proxy:9099/anthropic/v1/messages.
+        forwarded_env["ANTHROPIC_BASE_URL"] = (
+            f"{cred_proxy_url()}{anthropic_route.path}".rstrip("/")
+        )
+        # claude-code refuses to start without *some* credential in
+        # its env. The proxy strips inbound Authorization on every
+        # request and injects the real one — so a non-secret
+        # placeholder is sufficient and the SC1 test still holds
+        # (the placeholder is not a `cred_proxy.routes[].TokenRef`
+        # value). The agent cannot exfiltrate this string because
+        # it carries no meaning to api.anthropic.com.
+        forwarded_env["CLAUDE_CODE_OAUTH_TOKEN"] = "cred-proxy-placeholder"
+        # Belt-and-braces: turn off telemetry endpoints that don't
+        # route through ANTHROPIC_BASE_URL (statsig, error reporting).
+        # PRD 0010 open question default.
+        forwarded_env.setdefault("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
+        forwarded_env.setdefault("DISABLE_ERROR_REPORTING", "1")
     _write_env_file(resolved, env_file)
     prompt_file.write_text(agent.prompt)
 
@@ -109,6 +168,7 @@ def resolve_plan(
         prompt_file=prompt_file,
         proxy_plan=proxy_plan,
         git_gate_plan=git_gate_plan,
+        cred_proxy_plan=cred_proxy_plan,
         allowlist_summary=allowlist_summary,
         use_runsc=use_runsc,
     )

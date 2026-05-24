@@ -71,36 +71,53 @@ pieces of v1.
 
 A bottle is the agent container plus up to three per-protocol egress
 sidecars on a per-agent Docker `--internal` network. The agent has no
-default route off-box; its only way out is through the pipelock
-sidecar (for HTTP/HTTPS), the ssh-gate sidecar (for SSH), or the
-git-gate sidecar (for git operations against declared upstreams).
-Each sidecar also sits on an egress network that does have internet
-access, so the agent's traffic always passes through a container
-that enforces the manifest before it leaves the host.
+default route off-box. All HTTP and HTTPS egress — from the agent
+*and* from cred-proxy when it dials an upstream — funnels through
+pipelock, where the egress allowlist, TLS interception, and
+request-body DLP scanner enforce the manifest before any byte leaves
+the host. The only egress that doesn't traverse pipelock is git-gate's
+SSH push/fetch to `bottle.git` upstreams — pipelock can't proxy SSH,
+so git-gate is its own L4-style egress path with gitleaks doing the
+pre-receive scan.
 
 ```
                             host  ( ./cli.py )
                                   │
                           starts  │  stops
                                   ▼
-   ┌─────────────────────────── bottle ──────────────────────────┐
-   │                                                             │
-   │   ┌──────────────────┐                                      │
-   │   │ agent image      │   HTTPS_PROXY    ┌────────────────┐  │  HTTPS to
-   │   │ (claude-code,    │ ───────────────► │ pipelock image │──┼──►  allowlisted
-   │   │  built locally)  │                  │ (TLS bump, DLP,│  │     hosts
-   │   │                  │                  │  allowlist)    │  │
-   │   │ skills, env,     │                  └────────────────┘  │
-   │   │ ~/.gitconfig     │                                      │
-   │   │                  │   git ops        ┌────────────────┐  │  SSH (push/
-   │   │                  │ ───────────────► │ git-gate image │──┼──►  fetch) to
-   │   │                  │                  │ (gitleaks +    │  │     bottle.git
-   │   │                  │                  │  git daemon)   │  │     upstreams
-   │   └──────────────────┘                  └────────────────┘  │
-   │                                                             │
-   │   agent on internal network (no default route);             │
-   │   sidecars also attached to an egress network.              │
-   └─────────────────────────────────────────────────────────────┘
+   ┌─────────────────────────── bottle ──────────────────────────────────┐
+   │                                                                     │
+   │   ┌──────────────────┐                                              │
+   │   │ agent image      │  HTTPS_PROXY                                 │
+   │   │ (claude-code,    │ ────────────────────────┐                    │
+   │   │  built locally)  │                         │                    │
+   │   │                  │   plain HTTP            │                    │
+   │   │ skills, env,     │  (token injection) ┌────▼─────────┐          │
+   │   │ ~/.gitconfig,    │ ──────────────────►│ cred-proxy   │          │
+   │   │ ~/.npmrc, tea    │                    │ (strips/inj  │          │
+   │   │                  │                    │  Authoriz.)  │          │
+   │   │ environ: URLs    │                    └─────┬────────┘          │
+   │   │ only, no real    │     HTTPS_PROXY          │                   │
+   │   │ tokens           │                          ▼                   │
+   │   │                  │                  ┌────────────────┐          │  HTTPS to
+   │   │                  │                  │ pipelock image │──────────┼──►  allowlisted
+   │   │                  │                  │ (TLS bump, DLP │          │     hosts (incl.
+   │   │                  │                  │  body scan,    │          │      cred-proxy
+   │   │                  │                  │  allowlist)    │          │      upstreams)
+   │   │                  │                  └────────────────┘          │
+   │   │                  │                                              │
+   │   │                  │   git://         ┌────────────────┐          │  SSH push/fetch
+   │   │                  │ ────────────────►│ git-gate image │──────────┼──►  to bottle.git
+   │   │                  │                  │ (gitleaks +    │          │      upstreams
+   │   └──────────────────┘                  │  git daemon)   │          │     (direct — not
+   │                                         └────────────────┘          │      via pipelock)
+   │                                                                     │
+   │   agent on internal network (no default route); pipelock,           │
+   │   cred-proxy, and git-gate straddle internal + egress networks.     │
+   │   pipelock is the single HTTP/HTTPS chokepoint — cred-proxy's       │
+   │   outbound traverses it too. git-gate's SSH egress is direct        │
+   │   because pipelock is HTTP-only.                                    │
+   └─────────────────────────────────────────────────────────────────────┘
 ```
 
 - **agent image** — built from the repo `Dockerfile` (`node:22-slim`
@@ -129,6 +146,26 @@ that enforces the manifest before it leaves the host.
   `insteadOf` rewrite still keys off the original hostname. Brought
   up only when `bottle.git` has entries. Design in
   `docs/prds/0008-git-gate.md`.
+- **cred-proxy image** — per-bottle sidecar (`python:3.13-alpine`
+  base, stdlib-only) that holds API tokens declared in
+  `bottle.cred_proxy.routes`. Each route names a `path`,
+  `upstream`, `auth_scheme`, and `token_ref` (host env var); the
+  agent dials `http://cred-proxy:9099<path>...` over plain HTTP
+  and the proxy strips any inbound `Authorization`, injects
+  `<auth_scheme> <token>` using the value held only in its own
+  container's environ, and forwards to the real upstream over
+  HTTPS. SSE responses stream back unbuffered. The cred-proxy's
+  outbound HTTPS routes through pipelock (it trusts pipelock's
+  per-bottle CA), so pipelock's egress allowlist + body scanner
+  apply to cred-proxy traffic the same way they apply to direct
+  agent traffic. Smart-HTTP push paths (`/git-receive-pack`,
+  `/info/refs?service=git-receive-pack`) are refused at the
+  proxy — push must go through `bottle.git` / git-gate where
+  gitleaks runs. Optional per-route `role` tags drive agent-side
+  rewrites: `anthropic-base-url`, `npm-registry`, `git-insteadof`,
+  `tea-login`. The agent's `printenv` shows only proxy URLs —
+  none of the real token values. Design in
+  `docs/prds/0010-cred-proxy.md`.
 
 When the agent exits, `cli.py` tears down every sidecar that was
 brought up and the two networks; nothing about a bottle persists
@@ -171,6 +208,32 @@ project entries overriding home entries on key conflict).
           "KnownHostKey": "ssh-ed25519 AAAA..."
         }
       ],
+
+      // Routes declared here are held by a per-bottle cred-proxy
+      // sidecar, not the agent. Each route names a path the agent
+      // dials, the upstream the proxy forwards to, an auth_scheme,
+      // and a token_ref (host env var). The value goes into the
+      // sidecar's environ via `docker create -e`, never touches
+      // argv or disk. Optional `role` tags drive agent-side
+      // rewrites: `anthropic-base-url` (sets ANTHROPIC_BASE_URL),
+      // `npm-registry` (writes ~/.npmrc), `git-insteadof` (writes
+      // ~/.gitconfig), `tea-login` (writes ~/.config/tea/config.yml).
+      // See `docs/prds/0010-cred-proxy.md`.
+      "cred_proxy": {
+        "routes": [
+          { "path": "/anthropic/", "upstream": "https://api.anthropic.com",
+            "auth_scheme": "Bearer", "token_ref": "CLAUDE_BOTTLE_OAUTH_TOKEN",
+            "role": "anthropic-base-url" },
+          { "path": "/gh-api/", "upstream": "https://api.github.com",
+            "auth_scheme": "Bearer", "token_ref": "GITHUB_PAT" },
+          { "path": "/gh-git/", "upstream": "https://github.com",
+            "auth_scheme": "Bearer", "token_ref": "GITHUB_PAT",
+            "role": "git-insteadof" },
+          { "path": "/npm/", "upstream": "https://registry.npmjs.org",
+            "auth_scheme": "Bearer", "token_ref": "NPM_TOKEN",
+            "role": "npm-registry" }
+        ]
+      },
 
       // Egress is forced through a per-agent
       // [pipelock](https://github.com/luckyPipewrench/pipelock) sidecar
@@ -231,15 +294,36 @@ as `CLAUDE_BOTTLE_OAUTH_TOKEN`:
 export CLAUDE_BOTTLE_OAUTH_TOKEN="<token>"
 ```
 
-`cli.py` automatically forwards it to every container as
-`CLAUDE_CODE_OAUTH_TOKEN` via `docker run -e` — no manifest wiring
-required, and the value is never written to disk or placed on argv.
+The bottle reaches the Anthropic API only through the cred-proxy
+sidecar. To let `claude` authenticate, declare a route in
+`bottle.cred_proxy.routes` with `role: "anthropic-base-url"` and
+`token_ref: "CLAUDE_BOTTLE_OAUTH_TOKEN"`:
 
-Inside the container, `claude` picks up `CLAUDE_CODE_OAUTH_TOKEN` and
-authenticates against your subscription. Caveats: the token is bound
-to your subscription tier (Pro/Max/Team/Enterprise), it does not work
-with `claude --bare` (which only reads `ANTHROPIC_API_KEY`), and if it
-leaks, regenerate via `claude setup-token` again. Reference:
+```jsonc
+{
+  "path":        "/anthropic/",
+  "upstream":    "https://api.anthropic.com",
+  "auth_scheme": "Bearer",
+  "token_ref":   "CLAUDE_BOTTLE_OAUTH_TOKEN",
+  "role":        "anthropic-base-url"
+}
+```
+
+At launch, `cli.py` reads `CLAUDE_BOTTLE_OAUTH_TOKEN` from the host
+env and forwards it into the cred-proxy container's environ — never
+into the agent's. The agent receives `ANTHROPIC_BASE_URL` pointing at
+`http://cred-proxy:9099/anthropic` and a non-secret placeholder for
+`CLAUDE_CODE_OAUTH_TOKEN` (claude-code refuses to start without one;
+the proxy strips and replaces the header on every request). `printenv`
+inside the agent does not surface the real token, and the value is
+never written to disk or placed on argv on the host.
+
+A bottle without an `anthropic-base-url` route has no path to the
+Anthropic API — there is no fallback that forwards the token directly
+to the agent. Caveats: the token is bound to your subscription tier
+(Pro/Max/Team/Enterprise), it does not work with `claude --bare`
+(which only reads `ANTHROPIC_API_KEY`), and if it leaks, regenerate
+via `claude setup-token` again. Reference:
 <https://code.claude.com/docs/en/authentication>.
 
 ## Trademarks
