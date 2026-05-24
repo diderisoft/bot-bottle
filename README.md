@@ -71,43 +71,53 @@ pieces of v1.
 
 A bottle is the agent container plus up to three per-protocol egress
 sidecars on a per-agent Docker `--internal` network. The agent has no
-default route off-box; its only way out is through the pipelock
-sidecar (for HTTP/HTTPS), the git-gate sidecar (for git operations
-against declared upstreams), or the cred-proxy sidecar (for API
-calls that need a manifest-declared token — Anthropic OAuth, GitHub
-PAT, Gitea PAT, npm). Each sidecar also sits on an egress network
-that does have internet access, so the agent's traffic always passes
-through a container that enforces the manifest before it leaves the
-host.
+default route off-box. All HTTP and HTTPS egress — from the agent
+*and* from cred-proxy when it dials an upstream — funnels through
+pipelock, where the egress allowlist, TLS interception, and
+request-body DLP scanner enforce the manifest before any byte leaves
+the host. The only egress that doesn't traverse pipelock is git-gate's
+SSH push/fetch to `bottle.git` upstreams — pipelock can't proxy SSH,
+so git-gate is its own L4-style egress path with gitleaks doing the
+pre-receive scan.
 
 ```
                             host  ( ./cli.py )
                                   │
                           starts  │  stops
                                   ▼
-   ┌─────────────────────────── bottle ──────────────────────────┐
-   │                                                             │
-   │   ┌──────────────────┐                                      │
-   │   │ agent image      │   HTTPS_PROXY    ┌────────────────┐  │  HTTPS to
-   │   │ (claude-code,    │ ───────────────► │ pipelock image │──┼──►  allowlisted
-   │   │  built locally)  │                  │ (TLS bump, DLP,│  │     hosts
-   │   │                  │                  │  allowlist)    │  │
-   │   │ skills, env,     │                  └────────────────┘  │
-   │   │ ~/.gitconfig,    │                                      │
-   │   │ ~/.npmrc, tea    │   git ops        ┌────────────────┐  │  SSH (push/
-   │   │                  │ ───────────────► │ git-gate image │──┼──►  fetch) to
-   │   │                  │                  │ (gitleaks +    │  │     bottle.git
-   │   │ environ: URLs    │                  │  git daemon)   │  │     upstreams
-   │   │ only, no real    │                  └────────────────┘  │
-   │   │ tokens           │   bearer-auth    ┌────────────────┐  │  HTTPS to
-   │   │                  │ ───────────────► │ cred-proxy     │──┼──►  bottle.tokens
-   │   │                  │  HTTP, plain     │ (strips/injects│  │     upstreams
-   │   │                  │                  │  Authorization)│  │     (with the
-   │   └──────────────────┘                  └────────────────┘  │     real token)
-   │                                                             │
-   │   agent on internal network (no default route);             │
-   │   sidecars also attached to an egress network.              │
-   └─────────────────────────────────────────────────────────────┘
+   ┌─────────────────────────── bottle ──────────────────────────────────┐
+   │                                                                     │
+   │   ┌──────────────────┐                                              │
+   │   │ agent image      │  HTTPS_PROXY                                 │
+   │   │ (claude-code,    │ ────────────────────────┐                    │
+   │   │  built locally)  │                         │                    │
+   │   │                  │   plain HTTP            │                    │
+   │   │ skills, env,     │  (token injection) ┌────▼─────────┐          │
+   │   │ ~/.gitconfig,    │ ──────────────────►│ cred-proxy   │          │
+   │   │ ~/.npmrc, tea    │                    │ (strips/inj  │          │
+   │   │                  │                    │  Authoriz.)  │          │
+   │   │ environ: URLs    │                    └─────┬────────┘          │
+   │   │ only, no real    │     HTTPS_PROXY          │                   │
+   │   │ tokens           │                          ▼                   │
+   │   │                  │                  ┌────────────────┐          │  HTTPS to
+   │   │                  │                  │ pipelock image │──────────┼──►  allowlisted
+   │   │                  │                  │ (TLS bump, DLP │          │     hosts (incl.
+   │   │                  │                  │  body scan,    │          │      cred-proxy
+   │   │                  │                  │  allowlist)    │          │      upstreams)
+   │   │                  │                  └────────────────┘          │
+   │   │                  │                                              │
+   │   │                  │   git://         ┌────────────────┐          │  SSH push/fetch
+   │   │                  │ ────────────────►│ git-gate image │──────────┼──►  to bottle.git
+   │   │                  │                  │ (gitleaks +    │          │      upstreams
+   │   └──────────────────┘                  │  git daemon)   │          │     (direct — not
+   │                                         └────────────────┘          │      via pipelock)
+   │                                                                     │
+   │   agent on internal network (no default route); pipelock,           │
+   │   cred-proxy, and git-gate straddle internal + egress networks.     │
+   │   pipelock is the single HTTP/HTTPS chokepoint — cred-proxy's       │
+   │   outbound traverses it too. git-gate's SSH egress is direct        │
+   │   because pipelock is HTTP-only.                                    │
+   └─────────────────────────────────────────────────────────────────────┘
 ```
 
 - **agent image** — built from the repo `Dockerfile` (`node:22-slim`
