@@ -157,7 +157,16 @@ _HOP_BY_HOP = frozenset({
     "upgrade",
 })
 
-_STRIPPED = _HOP_BY_HOP | frozenset({"host", "authorization", "content-length"})
+# Strip the agent's Accept-Encoding on the upstream leg and force
+# `identity` instead. The response then flows back uncompressed,
+# which lets pipelock's response scanner read the body — pipelock
+# 2.3.0 has no decompression path and otherwise blocks with
+# "compressed sse_stream response cannot be scanned". The cost is
+# bandwidth from upstream; for LLM SSE streams this is negligible
+# and the DLP coverage on the agent leg is the win.
+_STRIPPED = _HOP_BY_HOP | frozenset({
+    "host", "authorization", "content-length", "accept-encoding",
+})
 
 
 def build_forward_headers(
@@ -177,6 +186,9 @@ def build_forward_headers(
       every listed header name.
     - Inject `Authorization: <auth_scheme> <token>` and a Host header
       pointing at the upstream.
+    - Force `Accept-Encoding: identity` so the upstream returns
+      uncompressed bytes — pipelock's response scanner can't read
+      gzip/br/deflate and would otherwise 403 the response.
     """
     incoming_list = list(incoming)
     # Headers listed in `Connection:` are also hop-by-hop for this hop.
@@ -193,6 +205,7 @@ def build_forward_headers(
         forwarded.append((name, value))
     forwarded.append(("Host", upstream_host))
     forwarded.append(("Authorization", f"{auth_scheme} {token}"))
+    forwarded.append(("Accept-Encoding", "identity"))
     return forwarded
 
 

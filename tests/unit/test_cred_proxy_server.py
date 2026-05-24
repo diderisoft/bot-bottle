@@ -141,6 +141,19 @@ class TestBuildForwardHeaders(unittest.TestCase):
         self.assertNotIn("x-custom", names)  # listed in Connection: -> hop-by-hop
         self.assertIn("x-real", names)
 
+    def test_forces_identity_accept_encoding(self):
+        # The agent's gzip/br Accept-Encoding gets replaced with
+        # `identity` so the upstream returns uncompressed bytes —
+        # pipelock's response scanner can't read compressed bodies
+        # and would 403 with "compressed sse_stream response cannot
+        # be scanned".
+        headers = build_forward_headers(
+            [("Accept-Encoding", "gzip, deflate, br")],
+            auth_scheme="Bearer", token="t", upstream_host="x.example",
+        )
+        ae = [v for n, v in headers if n.lower() == "accept-encoding"]
+        self.assertEqual(["identity"], ae)
+
     def test_strips_content_length(self):
         # http.client recomputes Content-Length; passing it through
         # double-counts and breaks the upstream.
