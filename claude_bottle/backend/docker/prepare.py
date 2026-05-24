@@ -19,9 +19,13 @@ from ...log import die
 from .. import BottleSpec
 from . import util as docker_mod
 from .bottle_plan import DockerBottlePlan
-from .cred_proxy import DockerCredProxy, cred_proxy_url
-from .git_gate import DockerGitGate
-from .pipelock import DockerPipelockProxy
+from .cred_proxy import (
+    DockerCredProxy,
+    cred_proxy_container_name,
+    cred_proxy_url,
+)
+from .git_gate import DockerGitGate, git_gate_container_name
+from .pipelock import DockerPipelockProxy, pipelock_container_name
 
 
 def resolve_plan(
@@ -74,6 +78,29 @@ def resolve_plan(
                 f"could not find a free container name after "
                 f"{default_container}-{docker_mod.MAX_CONTAINER_SUFFIX}; "
                 f"clean up old containers with 'docker rm -f <name>'"
+            )
+
+    # Probe sidecar container names for orphans from a previous run.
+    # Sidecar names are deterministic from the slug; an orphan would
+    # surface as a docker-create conflict deep inside launch() with no
+    # actionable hint. Fail fast here with a cleanup pointer instead.
+    # Only probe sidecars this launch will actually try to create:
+    # pipelock always; git-gate when bottle.git is non-empty; cred-proxy
+    # when bottle.cred_proxy.routes is non-empty.
+    sidecar_probes: list[tuple[str, str]] = [
+        ("pipelock", pipelock_container_name(slug)),
+    ]
+    if bottle.git:
+        sidecar_probes.append(("git-gate", git_gate_container_name(slug)))
+    if bottle.cred_proxy.routes:
+        sidecar_probes.append(("cred-proxy", cred_proxy_container_name(slug)))
+    for label, sidecar_name in sidecar_probes:
+        if docker_mod.container_exists(sidecar_name):
+            die(
+                f"{label} sidecar container '{sidecar_name}' already exists. "
+                f"This is an orphan from a previous run; clean it up with "
+                f"'./cli.py cleanup' (or 'docker rm -f {sidecar_name}') and "
+                f"retry."
             )
 
     env_file = stage_dir / "agent.env"

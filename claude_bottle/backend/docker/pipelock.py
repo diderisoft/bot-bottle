@@ -110,8 +110,14 @@ class DockerPipelockProxy(PipelockProxy):
             "run", "--config", "/etc/pipelock.yaml",
             "--listen", f"0.0.0.0:{PIPELOCK_PORT}",
         ]
-        if subprocess.run(create_args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False).returncode != 0:
-            die(f"failed to create pipelock sidecar {name}")
+        create_result = subprocess.run(
+            create_args, capture_output=True, text=True, check=False,
+        )
+        if create_result.returncode != 0:
+            die(
+                f"failed to create pipelock sidecar {name}: "
+                f"{create_result.stderr.strip()}"
+            )
 
         for src, dst, label in (
             (plan.yaml_path, "/etc/pipelock.yaml", "yaml"),
@@ -131,23 +137,32 @@ class DockerPipelockProxy(PipelockProxy):
                 )
                 die(f"failed to copy pipelock {label} into {name}: {cp_result.stderr.strip()}")
 
-        if subprocess.run(
+        connect_result = subprocess.run(
             ["docker", "network", "connect", plan.egress_network, name],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        ).returncode != 0:
-            subprocess.run(["docker", "rm", "-f", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-            die(f"failed to attach pipelock sidecar {name} to egress network {plan.egress_network}")
+            capture_output=True, text=True, check=False,
+        )
+        if connect_result.returncode != 0:
+            subprocess.run(
+                ["docker", "rm", "-f", name],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+            )
+            die(
+                f"failed to attach pipelock sidecar {name} to egress network "
+                f"{plan.egress_network}: {connect_result.stderr.strip()}"
+            )
 
-        if subprocess.run(
-            ["docker", "start", name],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        ).returncode != 0:
-            subprocess.run(["docker", "rm", "-f", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-            die(f"failed to start pipelock sidecar {name}")
+        start_result = subprocess.run(
+            ["docker", "start", name], capture_output=True, text=True, check=False,
+        )
+        if start_result.returncode != 0:
+            subprocess.run(
+                ["docker", "rm", "-f", name],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+            )
+            die(
+                f"failed to start pipelock sidecar {name}: "
+                f"{start_result.stderr.strip()}"
+            )
 
         return name
 

@@ -161,14 +161,14 @@ class DockerCredProxy(CredProxy):
 
         child_env: dict[str, str] = {**os.environ, **token_values}
 
-        if subprocess.run(
-            create_args,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            env=child_env,
-            check=False,
-        ).returncode != 0:
-            die(f"failed to create cred-proxy sidecar {name}")
+        create_result = subprocess.run(
+            create_args, capture_output=True, text=True, env=child_env, check=False,
+        )
+        if create_result.returncode != 0:
+            die(
+                f"failed to create cred-proxy sidecar {name}: "
+                f"{create_result.stderr.strip()}"
+            )
 
         cps: list[tuple[str, str, str]] = [
             (str(plan.routes_path), CRED_PROXY_ROUTES_IN_CONTAINER, "routes.json"),
@@ -202,12 +202,11 @@ class DockerCredProxy(CredProxy):
                     f"{cp_result.stderr.strip()}"
                 )
 
-        if subprocess.run(
+        connect_result = subprocess.run(
             ["docker", "network", "connect", plan.egress_network, name],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        ).returncode != 0:
+            capture_output=True, text=True, check=False,
+        )
+        if connect_result.returncode != 0:
             subprocess.run(
                 ["docker", "rm", "-f", name],
                 stdout=subprocess.DEVNULL,
@@ -216,22 +215,23 @@ class DockerCredProxy(CredProxy):
             )
             die(
                 f"failed to attach cred-proxy sidecar {name} to egress network "
-                f"{plan.egress_network}"
+                f"{plan.egress_network}: {connect_result.stderr.strip()}"
             )
 
-        if subprocess.run(
-            ["docker", "start", name],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        ).returncode != 0:
+        start_result = subprocess.run(
+            ["docker", "start", name], capture_output=True, text=True, check=False,
+        )
+        if start_result.returncode != 0:
             subprocess.run(
                 ["docker", "rm", "-f", name],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 check=False,
             )
-            die(f"failed to start cred-proxy sidecar {name}")
+            die(
+                f"failed to start cred-proxy sidecar {name}: "
+                f"{start_result.stderr.strip()}"
+            )
 
         return name
 
