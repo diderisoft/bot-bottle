@@ -152,6 +152,7 @@ def pipelock_build_config(
     *,
     ca_cert_path: str = "",
     ca_key_path: str = "",
+    ssrf_ip_allowlist: tuple[str, ...] = (),
 ) -> dict[str, object]:
     """Build the structured pipelock config dict the sidecar will load.
 
@@ -166,7 +167,17 @@ def pipelock_build_config(
     Pass both or neither: both → emit `tls_interception` block with
     `enabled: true`; neither → omit the block entirely (pipelock
     falls back to its built-in default of `enabled: false`). Used
-    by PRD 0006 to turn on pipelock's native TLS interception."""
+    by PRD 0006 to turn on pipelock's native TLS interception.
+
+    `ssrf_ip_allowlist` is the list of IPs / CIDRs that bypass
+    pipelock's SSRF guard. Pipelock blocks RFC1918-resolved
+    destinations by default, which would catch the agent's
+    cred-proxy traffic (cred-proxy sits on the bottle's internal
+    Docker network in 172.x space). Pass the bottle's internal
+    network CIDR here so `cred-proxy:9099` requests get through
+    pipelock while api_allowlist + body-scanning still apply. Empty
+    by default; omitted from the rendered yaml when empty so
+    pipelock keeps its built-in SSRF defaults."""
     cfg: dict[str, object] = {
         "version": 1,
         "mode": "strict",
@@ -193,6 +204,8 @@ def pipelock_build_config(
             "ca_key": ca_key_path,
             "passthrough_domains": pipelock_effective_tls_passthrough(bottle),
         }
+    if ssrf_ip_allowlist:
+        cfg["ssrf"] = {"ip_allowlist": list(ssrf_ip_allowlist)}
     return cfg
 
 
@@ -236,6 +249,13 @@ def pipelock_render_yaml(cfg: dict[str, object]) -> str:
             lines.append("  passthrough_domains:")
             for d in passthrough:
                 lines.append(f'    - "{d}"')
+    if "ssrf" in cfg:
+        lines.append("")
+        lines.append("ssrf:")
+        ssrf = cast(dict[str, object], cfg["ssrf"])
+        lines.append("  ip_allowlist:")
+        for ip in cast(list[str], ssrf["ip_allowlist"]):
+            lines.append(f'    - "{ip}"')
     return "\n".join(lines) + "\n"
 
 
@@ -252,14 +272,21 @@ class PipelockProxyPlan:
     already so it doesn't need the host paths to be valid). The
     remaining fields are populated by the backend's launch step
     via `dataclasses.replace`: internal/egress networks once
-    those networks exist, and the CA host paths once the
-    one-shot `pipelock tls init` has run. Empty defaults are
-    sentinels meaning "not yet set"; `.start` validates that
-    they are populated."""
+    those networks exist, the CA host paths once the one-shot
+    `pipelock tls init` has run, and `internal_network_cidr` once
+    Docker has assigned a subnet to the internal network. Empty
+    defaults are sentinels meaning "not yet set"; `.start` validates
+    that they are populated.
+
+    `internal_network_cidr` ends up on pipelock's `ssrf.ip_allowlist`
+    so the agent's requests at `cred-proxy:9099` (or any other
+    bottle-internal sidecar) bypass pipelock's RFC1918 SSRF guard
+    while api_allowlist and body-scanning still apply."""
 
     yaml_path: Path
     slug: str
     internal_network: str = ""
+    internal_network_cidr: str = ""
     egress_network: str = ""
     ca_cert_host_path: Path = Path()
     ca_key_host_path: Path = Path()

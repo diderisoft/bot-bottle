@@ -18,13 +18,20 @@ from pathlib import Path
 from typing import Callable, Generator
 
 from ...log import die, info
+from ...pipelock import pipelock_build_config, pipelock_render_yaml
 from . import network as network_mod
 from . import util as docker_mod
 from .bottle import DockerBottle
 from .bottle_plan import DockerBottlePlan
 from .cred_proxy import DockerCredProxy
 from .git_gate import DockerGitGate
-from .pipelock import DockerPipelockProxy, pipelock_proxy_url, pipelock_tls_init
+from .pipelock import (
+    PIPELOCK_CA_CERT_IN_CONTAINER,
+    PIPELOCK_CA_KEY_IN_CONTAINER,
+    DockerPipelockProxy,
+    pipelock_proxy_url,
+    pipelock_tls_init,
+)
 from .provision.ca import AGENT_CA_BUNDLE, AGENT_CA_PATH
 
 
@@ -68,6 +75,14 @@ def launch(
         egress_network = network_mod.network_create_egress(plan.slug)
         stack.callback(network_mod.network_remove, egress_network)
 
+        # Docker assigns a CIDR to the new internal network. Pipelock's
+        # SSRF guard otherwise rejects any destination resolving into
+        # RFC1918 space — which includes the cred-proxy / git-gate /
+        # pipelock sidecars themselves. Allowlist the bottle's own
+        # internal subnet so the agent can reach its sidecars via
+        # pipelock; api_allowlist + body-scanning still apply.
+        internal_cidr = network_mod.network_inspect_cidr(internal_network)
+
         # Per-bottle ephemeral CA for pipelock's TLS interception
         # (PRD 0006). One-shot pipelock container writes ca.pem +
         # ca-key.pem under plan.stage_dir; .start docker-cp's them
@@ -75,9 +90,25 @@ def launch(
         # stage dir, which start.py's outer finally `shutil.rmtree`s
         # after the sidecar is torn down.
         ca_cert_host, ca_key_host = pipelock_tls_init(plan.stage_dir)
+
+        # Re-render the pipelock yaml with the SSRF allowlist now that
+        # we know the internal CIDR. Prepare wrote the yaml without
+        # the ssrf block (CIDR wasn't known yet); overwrite the same
+        # path so .start docker-cp's the updated content.
+        bottle = plan.spec.manifest.bottle_for(plan.spec.agent_name)
+        cfg = pipelock_build_config(
+            bottle,
+            ca_cert_path=PIPELOCK_CA_CERT_IN_CONTAINER,
+            ca_key_path=PIPELOCK_CA_KEY_IN_CONTAINER,
+            ssrf_ip_allowlist=(internal_cidr,),
+        )
+        plan.proxy_plan.yaml_path.write_text(pipelock_render_yaml(cfg))
+        plan.proxy_plan.yaml_path.chmod(0o600)
+
         proxy_plan = dataclasses.replace(
             plan.proxy_plan,
             internal_network=internal_network,
+            internal_network_cidr=internal_cidr,
             egress_network=egress_network,
             ca_cert_host_path=ca_cert_host,
             ca_key_host_path=ca_key_host,
