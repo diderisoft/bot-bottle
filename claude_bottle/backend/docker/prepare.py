@@ -118,17 +118,15 @@ def resolve_plan(
     forwarded_env: dict[str, str] = dict(resolved.forwarded)
     # Find the (at most one) cred-proxy route claiming the
     # anthropic-base-url role. Manifest validation enforces the
-    # singleton constraint.
+    # singleton constraint. cred-proxy is the only path the Anthropic
+    # OAuth token reaches the bottle — there is no fallback that
+    # forwards it into the agent's environ directly. Bottles that
+    # need claude-code to authenticate must declare an
+    # anthropic-base-url route.
     anthropic_route = next(
         (r for r in cred_proxy_plan.routes if "anthropic-base-url" in r.roles),
         None,
     )
-    if spec.forward_oauth_token and anthropic_route is None:
-        # Pre-PRD 0010 behavior: agent reads CLAUDE_CODE_OAUTH_TOKEN
-        # directly. Still the path when no cred_proxy.routes entry
-        # is tagged anthropic-base-url; otherwise the sidecar holds
-        # the token.
-        forwarded_env["CLAUDE_CODE_OAUTH_TOKEN"] = os.environ["CLAUDE_BOTTLE_OAUTH_TOKEN"]
     if anthropic_route is not None:
         # Point claude-code at the cred-proxy. The sidecar holds the
         # OAuth token; the agent's environ does not. Strip the

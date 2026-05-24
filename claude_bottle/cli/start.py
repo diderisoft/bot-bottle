@@ -42,7 +42,6 @@ def cmd_start(argv: list[str]) -> int:
         agent_name=args.name,
         copy_cwd=args.cwd,
         user_cwd=USER_CWD,
-        forward_oauth_token=bool(os.environ.get("CLAUDE_BOTTLE_OAUTH_TOKEN")),
     )
 
     stage_dir = Path(tempfile.mkdtemp(prefix="claude-bottle-stage."))

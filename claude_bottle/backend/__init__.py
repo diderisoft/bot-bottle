@@ -53,7 +53,6 @@ class BottleSpec:
     agent_name: str
     copy_cwd: bool
     user_cwd: str
-    forward_oauth_token: bool
 
 
 @dataclass(frozen=True)

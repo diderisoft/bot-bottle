@@ -284,20 +284,36 @@ as `CLAUDE_BOTTLE_OAUTH_TOKEN`:
 export CLAUDE_BOTTLE_OAUTH_TOKEN="<token>"
 ```
 
-By default `cli.py` forwards the token into the agent container as
-`CLAUDE_CODE_OAUTH_TOKEN`. Declare a `bottle.cred_proxy.routes` entry
-with `role: "anthropic-base-url"` and `token_ref:
-"CLAUDE_BOTTLE_OAUTH_TOKEN"` to route via cred-proxy instead: the
-token then lives only in the cred-proxy sidecar's environ, the agent's
-`ANTHROPIC_BASE_URL` points at the proxy, and `printenv` inside the
-agent does not surface the real token. Either way the value is never
-written to disk or placed on argv on the host.
+The bottle reaches the Anthropic API only through the cred-proxy
+sidecar. To let `claude` authenticate, declare a route in
+`bottle.cred_proxy.routes` with `role: "anthropic-base-url"` and
+`token_ref: "CLAUDE_BOTTLE_OAUTH_TOKEN"`:
 
-Inside the container, `claude` picks up `CLAUDE_CODE_OAUTH_TOKEN` and
-authenticates against your subscription. Caveats: the token is bound
-to your subscription tier (Pro/Max/Team/Enterprise), it does not work
-with `claude --bare` (which only reads `ANTHROPIC_API_KEY`), and if it
-leaks, regenerate via `claude setup-token` again. Reference:
+```jsonc
+{
+  "path":        "/anthropic/",
+  "upstream":    "https://api.anthropic.com",
+  "auth_scheme": "Bearer",
+  "token_ref":   "CLAUDE_BOTTLE_OAUTH_TOKEN",
+  "role":        "anthropic-base-url"
+}
+```
+
+At launch, `cli.py` reads `CLAUDE_BOTTLE_OAUTH_TOKEN` from the host
+env and forwards it into the cred-proxy container's environ — never
+into the agent's. The agent receives `ANTHROPIC_BASE_URL` pointing at
+`http://cred-proxy:9099/anthropic` and a non-secret placeholder for
+`CLAUDE_CODE_OAUTH_TOKEN` (claude-code refuses to start without one;
+the proxy strips and replaces the header on every request). `printenv`
+inside the agent does not surface the real token, and the value is
+never written to disk or placed on argv on the host.
+
+A bottle without an `anthropic-base-url` route has no path to the
+Anthropic API — there is no fallback that forwards the token directly
+to the agent. Caveats: the token is bound to your subscription tier
+(Pro/Max/Team/Enterprise), it does not work with `claude --bare`
+(which only reads `ANTHROPIC_API_KEY`), and if it leaks, regenerate
+via `claude setup-token` again. Reference:
 <https://code.claude.com/docs/en/authentication>.
 
 ## Trademarks
