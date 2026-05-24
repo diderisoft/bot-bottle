@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+from .cred_proxy import CRED_PROXY_HOSTNAME
 from .manifest import Bottle
 
 # Baked-in default allowlist for hosts Claude Code itself needs.
@@ -74,10 +75,17 @@ def pipelock_token_hosts(bottle: Bottle) -> list[str]:
 
 def pipelock_effective_allowlist(bottle: Bottle) -> list[str]:
     """Deduplicated union of: baked-in defaults, bottle.egress.allowlist,
-    and the cred-proxy upstream hosts derived from bottle.cred_proxy.routes.
-    Sorted for stability. Git upstreams declared in `bottle.git` do NOT
-    contribute here — git traffic flows through the per-agent git-gate
-    sidecar (PRD 0008), not pipelock."""
+    the cred-proxy upstream hosts derived from bottle.cred_proxy.routes,
+    and the cred-proxy sidecar's own hostname when any cred_proxy route
+    is declared. Sorted for stability. Git upstreams declared in
+    `bottle.git` do NOT contribute here — git traffic flows through the
+    per-agent git-gate sidecar (PRD 0008), not pipelock.
+
+    The cred-proxy hostname is auto-added because the agent's
+    HTTP_PROXY points at pipelock, so a manifest-driven URL like
+    `http://cred-proxy:9099/anthropic/...` arrives at pipelock as a
+    request for hostname `cred-proxy`. Without this auto-allow,
+    pipelock would 403 the request before it reached the sidecar."""
     seen: dict[str, None] = {}
     for h in DEFAULT_ALLOWLIST:
         seen.setdefault(h, None)
@@ -86,6 +94,8 @@ def pipelock_effective_allowlist(bottle: Bottle) -> list[str]:
             seen.setdefault(h, None)
     for h in pipelock_token_hosts(bottle):
         seen.setdefault(h, None)
+    if bottle.cred_proxy.routes:
+        seen.setdefault(CRED_PROXY_HOSTNAME, None)
     return sorted(seen.keys())
 
 

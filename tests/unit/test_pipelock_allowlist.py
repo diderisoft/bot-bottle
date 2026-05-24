@@ -75,6 +75,22 @@ class TestAllowlistWithTokens(unittest.TestCase):
         self.assertIn("registry.npmjs.org", eff)
         self.assertIn("api.github.com", eff)
 
+    def test_cred_proxy_hostname_auto_added_when_routes_exist(self):
+        # The agent's HTTP_PROXY points at pipelock, so a request for
+        # http://cred-proxy:9099/... arrives at pipelock as a request
+        # for hostname `cred-proxy`. pipelock must allow it or the
+        # agent can't reach its own sidecar.
+        eff = pipelock_effective_allowlist(_bottle(_routes([
+            {"path": "/x/", "upstream": "https://x.example",
+             "auth_scheme": "Bearer", "token_ref": "T"},
+        ])))
+        self.assertIn("cred-proxy", eff)
+
+    def test_cred_proxy_hostname_NOT_added_when_no_routes(self):
+        # No cred-proxy sidecar, no auto-allow.
+        eff = pipelock_effective_allowlist(_bottle({}))
+        self.assertNotIn("cred-proxy", eff)
+
 
 class TestTlsPassthrough(unittest.TestCase):
     def test_default_includes_api_anthropic(self):

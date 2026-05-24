@@ -10,6 +10,7 @@ import subprocess
 from pathlib import Path
 
 from ...cred_proxy import (
+    CRED_PROXY_HOSTNAME,
     CredProxy,
     CredProxyPlan,
     cred_proxy_resolve_token_values,
@@ -29,13 +30,6 @@ CRED_PROXY_DOCKERFILE = "Dockerfile.cred-proxy"
 # this port; surfaced as a constant so the provisioner and tests can
 # both reference it.
 CRED_PROXY_PORT = int(os.environ.get("CLAUDE_BOTTLE_CRED_PROXY_PORT", "9099"))
-
-# DNS name agents use to reach the sidecar. Attached as a
-# --network-alias on the internal docker network so the URL the
-# provisioner writes into the agent's environ is stable across
-# bottles (the container name carries the per-bottle slug; the alias
-# does not).
-CRED_PROXY_HOSTNAME = "cred-proxy"
 
 # In-container path the proxy server reads its route table from.
 # Pre-created in Dockerfile.cred-proxy so `docker cp` can drop the

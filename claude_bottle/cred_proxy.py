@@ -31,6 +31,16 @@ from .log import die
 from .manifest import Bottle
 
 
+# DNS name agents use to reach the per-bottle cred-proxy sidecar.
+# Backend-agnostic by contract: every concrete backend (Docker today,
+# others later) attaches this name to its sidecar on the bottle's
+# internal network so the agent's manifest-driven URLs (`http://
+# cred-proxy:9099/...`) work without a backend-specific hostname.
+# pipelock's allowlist also references this when adding the
+# auto-allow entry for cred-proxy traffic from the agent.
+CRED_PROXY_HOSTNAME = "cred-proxy"
+
+
 @dataclass(frozen=True)
 class CredProxyRoute:
     """One resolved route on the cred-proxy sidecar. Maps a path
@@ -247,6 +257,7 @@ class CredProxy(ABC):
 
 
 __all__ = [
+    "CRED_PROXY_HOSTNAME",
     "CredProxy",
     "CredProxyPlan",
     "CredProxyRoute",
