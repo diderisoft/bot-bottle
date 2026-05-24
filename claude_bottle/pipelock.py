@@ -99,6 +99,31 @@ def pipelock_effective_allowlist(bottle: Bottle) -> list[str]:
     return sorted(seen.keys())
 
 
+def pipelock_effective_suppress(bottle: Bottle) -> list[dict[str, str]]:
+    """Per-bottle pipelock detector suppressions.
+
+    Pipelock's `suppress:` block silences a named rule on a path glob.
+    LLM conversation bodies legitimately trip detectors that look for
+    natural-language token shapes — most famously the BIP-39 seed-
+    phrase detector, which fires on any 12+ English words that pass
+    the BIP-39 checksum. The direct path to `api.anthropic.com` is
+    already on tls_interception.passthrough_domains so no body scan
+    runs there, but the cred-proxy hop (where the agent dials
+    `http://cred-proxy:9099/anthropic/...`) is plain HTTP through
+    pipelock — body scanning fires.
+
+    For each route with the `anthropic-base-url` role, suppress
+    BIP-39 on `<path>**` so claude-code's chat bodies make it
+    through. All other detectors (credit-card, IBAN, token regexes,
+    etc.) keep firing — those are unambiguous credential shapes
+    that have no legitimate reason to appear in a chat completion."""
+    out: list[dict[str, str]] = []
+    for r in bottle.cred_proxy.routes:
+        if "anthropic-base-url" in r.Role:
+            out.append({"rule": "BIP-39 Seed Phrase", "path": f"{r.Path}**"})
+    return out
+
+
 def pipelock_effective_tls_passthrough(bottle: Bottle) -> list[str]:
     """Hostnames pipelock should pass through (no TLS MITM, no body
     scan). Default carries the LLM API endpoint — its request bodies
@@ -185,6 +210,9 @@ def pipelock_build_config(
         "api_allowlist": pipelock_effective_allowlist(bottle),
         "forward_proxy": {"enabled": True},
     }
+    suppress = pipelock_effective_suppress(bottle)
+    if suppress:
+        cfg["suppress"] = suppress
     cfg["dlp"] = {"include_defaults": True, "scan_env": True}
     # Body-scan enforcement is a separate pipelock section (each DLP
     # "surface" — body, MCP, response — has its own action). Pipelock's
@@ -225,6 +253,12 @@ def pipelock_render_yaml(cfg: dict[str, object]) -> str:
     for h in cast(list[str], cfg["api_allowlist"]):
         lines.append(f'  - "{h}"')
     lines.append("")
+    if "suppress" in cfg:
+        lines.append("suppress:")
+        for entry in cast(list[dict[str, str]], cfg["suppress"]):
+            lines.append(f'  - rule: "{entry["rule"]}"')
+            lines.append(f'    path: "{entry["path"]}"')
+        lines.append("")
     lines.append("forward_proxy:")
     fp = cast(dict[str, object], cfg["forward_proxy"])
     lines.append(f"  enabled: {_bool(fp['enabled'])}")

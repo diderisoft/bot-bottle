@@ -92,6 +92,31 @@ class TestBuildConfig(unittest.TestCase):
         self.assertIn("ssrf", cfg)
         self.assertEqual({"ip_allowlist": ["172.20.0.0/16"]}, cfg["ssrf"])
 
+    def test_suppress_absent_when_no_anthropic_route(self):
+        cfg = pipelock_build_config(fixture_minimal().bottles["dev"])
+        self.assertNotIn("suppress", cfg)
+
+    def test_suppress_emits_bip39_for_anthropic_route(self):
+        # claude-code's chat bodies trip pipelock's BIP-39 detector
+        # (12+ English words). Suppress just that detector on the
+        # cred-proxy's anthropic path — all the other DLP patterns
+        # keep firing.
+        from claude_bottle.manifest import Manifest
+        bottle = Manifest.from_json_obj({
+            "bottles": {"dev": {"cred_proxy": {"routes": [
+                {"path": "/anthropic/",
+                 "upstream": "https://api.anthropic.com",
+                 "auth_scheme": "Bearer", "token_ref": "T",
+                 "role": "anthropic-base-url"},
+            ]}}},
+            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        }).bottles["dev"]
+        cfg = pipelock_build_config(bottle)
+        self.assertEqual(
+            [{"rule": "BIP-39 Seed Phrase", "path": "/anthropic/**"}],
+            cfg["suppress"],
+        )
+
 
 class TestRenderAndWrite(unittest.TestCase):
     def setUp(self):
@@ -174,6 +199,22 @@ class TestRenderAndWrite(unittest.TestCase):
         self.assertIn("ssrf:", text)
         self.assertIn("ip_allowlist:", text)
         self.assertIn('- "172.20.0.0/16"', text)
+
+    def test_render_emits_suppress_block_for_anthropic_route(self):
+        from claude_bottle.manifest import Manifest
+        bottle = Manifest.from_json_obj({
+            "bottles": {"dev": {"cred_proxy": {"routes": [
+                {"path": "/anthropic/",
+                 "upstream": "https://api.anthropic.com",
+                 "auth_scheme": "Bearer", "token_ref": "T",
+                 "role": "anthropic-base-url"},
+            ]}}},
+            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        }).bottles["dev"]
+        text = pipelock_render_yaml(pipelock_build_config(bottle))
+        self.assertIn("suppress:", text)
+        self.assertIn('rule: "BIP-39 Seed Phrase"', text)
+        self.assertIn('path: "/anthropic/**"', text)
 
 
 if __name__ == "__main__":
