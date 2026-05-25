@@ -36,6 +36,8 @@ from ..backend.docker.pipelock_apply import (
     PipelockApplyError,
     apply_allowlist_change,
     fetch_current_allowlist,
+    parse_allowlist_content,
+    render_allowlist_content,
 )
 from ..log import info
 from ..supervise import (
@@ -168,7 +170,7 @@ def approve(
             qp.proposal.bottle_slug, file_to_apply,
         )
     elif qp.proposal.tool == TOOL_PIPELOCK_BLOCK:
-        diff_before, diff_after = apply_allowlist_change(
+        diff_before, diff_after = _apply_pipelock_url(
             qp.proposal.bottle_slug, file_to_apply,
         )
     elif qp.proposal.tool == TOOL_CAPABILITY_BLOCK:
@@ -228,6 +230,27 @@ def operator_edit_routes(slug: str, new_content: str) -> tuple[str, str]:
         diff=render_diff(before, after, label="cred-proxy"),
     ))
     return before, after
+
+
+def _apply_pipelock_url(slug: str, failed_url: str) -> tuple[str, str]:
+    """pipelock-block proposals carry a single failed URL, not a
+    full allowlist. Extract the host, merge into the running
+    allowlist, and hand the merged content to apply_allowlist_change.
+    The full URL (with path) is preserved on the proposal for the
+    operator's read; only the host ends up in pipelock's allowlist
+    (pipelock can't enforce path-level rules)."""
+    import urllib.parse
+    parsed = urllib.parse.urlsplit(failed_url.strip())
+    host = parsed.hostname or ""
+    if not host:
+        raise PipelockApplyError(
+            f"proposed failed_url has no extractable host: {failed_url!r}"
+        )
+    current = fetch_current_allowlist(slug)
+    hosts = parse_allowlist_content(current)
+    if host not in hosts:
+        hosts.append(host)
+    return apply_allowlist_change(slug, render_allowlist_content(hosts))
 
 
 def operator_edit_allowlist(slug: str, new_content: str) -> tuple[str, str]:
@@ -580,10 +603,20 @@ def _detail_lines(qp: QueuedProposal) -> list[str]:
     out.extend("  " + line for line in p.justification.splitlines() or [""])
     out.extend([
         "",
-        "proposed file:",
+        _proposed_payload_label(p.tool) + ":",
     ])
     out.extend(p.proposed_file.splitlines() or [""])
     return out
+
+
+def _proposed_payload_label(tool: str) -> str:
+    """The detail-view section heading for the proposal's payload —
+    `proposed_file` is what the dataclass calls it, but for
+    pipelock-block the payload is a single URL not a file. Render
+    the label per tool so the operator's eye matches."""
+    if tool == TOOL_PIPELOCK_BLOCK:
+        return "failed URL"
+    return "proposed file"
 
 
 def _modify(stdscr: "curses._CursesWindow", qp: QueuedProposal) -> str | None:

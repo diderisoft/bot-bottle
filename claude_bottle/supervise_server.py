@@ -36,6 +36,7 @@ import os
 import socketserver
 import sys
 import typing
+import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -160,27 +161,34 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
         "name": _sv.TOOL_PIPELOCK_BLOCK,
         "description": (
             "Call when pipelock refused your outbound request — host "
-            "not in the allowlist, protocol blocked, connection "
-            "refused at the egress layer. Read the current allowlist "
-            "from /etc/claude-bottle/current-config/allowlist, compose "
-            "a modified version, and pass the full new file plus a "
-            "justification. On approval the supervisor writes the new "
-            "allowlist and restarts pipelock (wired in PRD 0015; v1 "
-            "acknowledges only)."
+            "not in the allowlist, connection refused at the egress "
+            "layer. Pass the full URL you tried to hit (scheme + "
+            "host + path) plus a justification. The supervisor "
+            "extracts the hostname and merges it into the bottle's "
+            "current pipelock allowlist; the path is captured as "
+            "context for the operator to review (pipelock's allowlist "
+            "is hostname-only — it can't enforce path-level rules). "
+            "On approval the supervisor restarts pipelock with the "
+            "merged allowlist."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "allowlist": {
+                "failed_url": {
                     "type": "string",
-                    "description": "Full proposed pipelock allowlist (one hostname per line).",
+                    "description": (
+                        "The full URL pipelock blocked, e.g. "
+                        "https://api.github.com/repos/foo/bar. Scheme "
+                        "and hostname are required; path is recorded "
+                        "as operator context."
+                    ),
                 },
                 "justification": {
                     "type": "string",
-                    "description": "Why the new host(s) should be allowed.",
+                    "description": "Why the new host should be allowed.",
                 },
             },
-            "required": ["allowlist", "justification"],
+            "required": ["failed_url", "justification"],
         },
     },
     {
@@ -214,10 +222,20 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
 ]
 
 
-# Map each tool to the input field that carries the proposed file.
+# Map each tool to the input field that carries the agent's
+# tool-specific payload (stored in Proposal.proposed_file as
+# free-form text the apply path interprets per tool).
+#
+#   cred-proxy-block: full proposed routes.json
+#   pipelock-block:   the full failed URL (scheme + host + path) —
+#                     supervisor extracts the host, merges into the
+#                     bottle's current allowlist; the path is shown
+#                     to the operator for context (pipelock doesn't
+#                     do path-level matching).
+#   capability-block: full proposed Dockerfile
 PROPOSED_FILE_FIELD: dict[str, str] = {
     _sv.TOOL_CRED_PROXY_BLOCK: "routes",
-    _sv.TOOL_PIPELOCK_BLOCK: "allowlist",
+    _sv.TOOL_PIPELOCK_BLOCK: "failed_url",
     _sv.TOOL_CAPABILITY_BLOCK: "dockerfile",
 }
 
@@ -245,17 +263,21 @@ def validate_proposed_file(tool: str, content: str) -> None:
                 f"{tool}: proposed routes.json must be an object with a 'routes' array",
             )
     elif tool == _sv.TOOL_PIPELOCK_BLOCK:
-        for i, line in enumerate(content.splitlines()):
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
-                continue
-            # Hostnames are conservative: letters/digits/dots/dashes only.
-            for ch in stripped:
-                if not (ch.isalnum() or ch in ".-_"):
-                    raise _RpcError(
-                        ERR_INVALID_PARAMS,
-                        f"{tool}: allowlist line {i + 1} has invalid character {ch!r}",
-                    )
+        # `content` is the full failed URL. Require scheme + host so
+        # the supervisor can extract a hostname for the allowlist
+        # merge; the path is preserved for operator context.
+        parsed = urllib.parse.urlsplit(content.strip())
+        if parsed.scheme not in ("http", "https"):
+            raise _RpcError(
+                ERR_INVALID_PARAMS,
+                f"{tool}: failed_url must start with http:// or https:// "
+                f"(got {content!r})",
+            )
+        if not parsed.hostname:
+            raise _RpcError(
+                ERR_INVALID_PARAMS,
+                f"{tool}: failed_url is missing a hostname (got {content!r})",
+            )
     elif tool == _sv.TOOL_CAPABILITY_BLOCK:
         # Dockerfiles are too varied to validate syntactically beyond
         # non-empty. The operator reads the diff in the TUI.

@@ -61,15 +61,27 @@ class TestValidation(unittest.TestCase):
             '{"routes": [{"path": "/x/", "upstream": "https://example.com"}]}',
         )
 
-    def test_pipelock_block_accepts_clean_hostnames(self):
+    def test_pipelock_block_accepts_https_url(self):
         validate_proposed_file(
             _sv.TOOL_PIPELOCK_BLOCK,
-            "api.example.com\n# comment\nfoo.bar.baz\n",
+            "https://api.github.com/repos/foo/bar",
         )
 
-    def test_pipelock_block_rejects_invalid_char(self):
-        with self.assertRaises(_RpcError):
-            validate_proposed_file(_sv.TOOL_PIPELOCK_BLOCK, "host with space.com\n")
+    def test_pipelock_block_accepts_http_url(self):
+        validate_proposed_file(
+            _sv.TOOL_PIPELOCK_BLOCK,
+            "http://internal.example/path/to/thing",
+        )
+
+    def test_pipelock_block_rejects_missing_scheme(self):
+        with self.assertRaises(_RpcError) as cm:
+            validate_proposed_file(_sv.TOOL_PIPELOCK_BLOCK, "api.github.com/foo")
+        self.assertIn("http://", str(cm.exception.message))
+
+    def test_pipelock_block_rejects_missing_host(self):
+        with self.assertRaises(_RpcError) as cm:
+            validate_proposed_file(_sv.TOOL_PIPELOCK_BLOCK, "https:///just-a-path")
+        self.assertIn("hostname", str(cm.exception.message))
 
     def test_capability_block_accepts_anything_nonempty(self):
         validate_proposed_file(
@@ -235,7 +247,7 @@ class TestHandleToolsCall(unittest.TestCase):
                 {
                     "name": _sv.TOOL_PIPELOCK_BLOCK,
                     "arguments": {
-                        "allowlist": "example.com\n",
+                        "failed_url": "https://example.com/path",
                         "justification": "needed for tests",
                     },
                 },
