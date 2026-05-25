@@ -91,21 +91,33 @@ def _hosts_in_routes(content: str) -> list[str]:
 
 # Pipelock's allowlist parser accepts only literal hostnames:
 # `[A-Za-z0-9_.-]+`. Wildcard hosts (e.g. `*.example.com`) that
-# egress-proxy's route table accepts MUST be stripped here or the
-# whole pipelock apply fails parse before the new allowlist is
-# even written. Egress-proxy still has the wildcard route on its
-# side; pipelock's allowlist just won't pin a hostname for the
-# wildcard-matched traffic (the user accepts that pipelock-side
-# enforcement is hostname-only for those routes).
+# egress-proxy's route table accepts get normalised here by
+# stripping the leading `*.` (so `*.example.com` → `example.com`)
+# — egress-proxy retains the wildcard for its own host matching,
+# and pipelock's allowlist gets the suffix, which still permits
+# the wildcard-matched upstream connections without expanding to
+# arbitrary subdomains. Hosts that still don't fit the pipelock
+# charset after normalisation (bare `*`, IPv6 literals, weird
+# chars) are silently skipped.
 _PIPELOCK_HOST_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 def _pipelock_safe_hosts(hosts: list[str]) -> list[str]:
-    """Drop any host pipelock's allowlist parser would reject —
-    today that means anything with characters outside
-    `[A-Za-z0-9_.-]` (wildcards, IPv6 literals, etc.). Order
-    preserved."""
-    return [h for h in hosts if _PIPELOCK_HOST_RE.match(h)]
+    """Normalise hosts for pipelock's allowlist: strip leading
+    `*.` from wildcards, drop anything that still doesn't match
+    pipelock's allowed charset. Order preserved; duplicates that
+    arise from normalisation are de-duped (first-seen wins)."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for h in hosts:
+        candidate = h[2:] if h.startswith("*.") else h
+        if not candidate or not _PIPELOCK_HOST_RE.match(candidate):
+            continue
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        out.append(candidate)
+    return out
 
 
 def _mirror_hosts_to_pipelock(slug: str, hosts: list[str]) -> None:

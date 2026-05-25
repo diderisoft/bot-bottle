@@ -197,15 +197,25 @@ class TestPipelockSafeHosts(unittest.TestCase):
             _pipelock_safe_hosts(["api.github.com", "registry.npmjs.org"]),
         )
 
-    def test_strips_wildcards(self):
-        # Pipelock's allowlist parser rejects `*` — egress-proxy can
-        # accept wildcard routes on its side, but the pipelock mirror
-        # has to skip them or apply fails before the new yaml is even
-        # written.
+    def test_strips_wildcard_prefix(self):
+        # `*.example.com` becomes `example.com` — pipelock pins the
+        # suffix, egress-proxy keeps the wildcard on its side.
         self.assertEqual(
-            ["api.github.com"],
+            ["example.com", "api.github.com"],
             _pipelock_safe_hosts(["*.example.com", "api.github.com"]),
         )
+
+    def test_wildcard_strips_one_label_not_recursive(self):
+        # `*.foo.bar.com` → `foo.bar.com` (one strip of `*.`).
+        self.assertEqual(
+            ["foo.bar.com"],
+            _pipelock_safe_hosts(["*.foo.bar.com"]),
+        )
+
+    def test_drops_bare_wildcard(self):
+        # `*` alone would normalise to empty; nothing useful to send
+        # to pipelock.
+        self.assertEqual([], _pipelock_safe_hosts(["*"]))
 
     def test_strips_ipv6_literals(self):
         # Brackets aren't in pipelock's allowed charset either.
@@ -214,11 +224,18 @@ class TestPipelockSafeHosts(unittest.TestCase):
             _pipelock_safe_hosts(["[::1]", "api.example.com"]),
         )
 
+    def test_dedupes_after_normalisation(self):
+        # `*.example.com` + `example.com` both yield `example.com`.
+        self.assertEqual(
+            ["example.com"],
+            _pipelock_safe_hosts(["*.example.com", "example.com"]),
+        )
+
     def test_preserves_order(self):
         self.assertEqual(
             ["a.example", "b.example", "c.example"],
             _pipelock_safe_hosts([
-                "a.example", "*.junk", "b.example", "weird host", "c.example",
+                "a.example", "weird host", "b.example", "*", "c.example",
             ]),
         )
 
