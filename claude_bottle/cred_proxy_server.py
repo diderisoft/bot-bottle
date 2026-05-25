@@ -30,6 +30,7 @@ import http.client
 import http.server
 import json
 import os
+import signal
 import socketserver
 import sys
 import typing
@@ -398,6 +399,56 @@ def load_tokens(routes: tuple[Route, ...], environ: typing.Mapping[str, str]) ->
     return out
 
 
+def reload_routes(
+    server: "CredProxyServer",
+    routes_path: str,
+    *,
+    environ: typing.Mapping[str, str] | None = None,
+) -> tuple[bool, str]:
+    """Re-read routes.json + tokens and swap them onto `server`. Used
+    by the SIGHUP handler (PRD 0014) so the operator can update the
+    routes file in-place and have cred-proxy pick up the change
+    without dropping in-flight connections.
+
+    Returns (ok, message). On failure the server's existing routes
+    stay in place — better to keep serving the old config than to
+    leave the proxy with no routes after a typo.
+
+    Atomic swap: Python attribute reassignment is atomic, and the
+    request handler reads `server.routes`/`server.tokens` once at
+    the top of `_proxy()` so an in-flight request keeps the version
+    it captured. New requests see the new routes."""
+    env = environ if environ is not None else os.environ
+    try:
+        new_routes = load_routes(routes_path)
+        new_tokens = load_tokens(new_routes, env)
+    except (OSError, ValueError, json.JSONDecodeError) as e:
+        return False, f"reload failed: {e}"
+    server.routes = new_routes
+    server.tokens = new_tokens
+    return True, (
+        f"reloaded {len(new_routes)} route(s): "
+        f"{', '.join(r.path for r in new_routes)}"
+    )
+
+
+def install_sighup_handler(server: "CredProxyServer", routes_path: str) -> None:
+    """Wire SIGHUP to reload_routes. No-op on platforms without
+    SIGHUP (Windows). The handler swallows exceptions so a bad
+    reload doesn't crash the long-lived sidecar."""
+    if not hasattr(signal, "SIGHUP"):
+        return
+
+    def handler(signum: int, frame: object) -> None:
+        del signum, frame
+        ok, message = reload_routes(server, routes_path)
+        prefix = "cred-proxy: SIGHUP " + ("ok: " if ok else "failed: ")
+        sys.stderr.write(prefix + message + "\n")
+        sys.stderr.flush()
+
+    signal.signal(signal.SIGHUP, handler)
+
+
 def serve(
     *,
     routes_path: str = DEFAULT_ROUTES_PATH,
@@ -414,6 +465,7 @@ def serve(
     server = CredProxyServer((bind, port), CredProxyHandler)
     server.routes = routes
     server.tokens = tokens
+    install_sighup_handler(server, routes_path)
     sys.stderr.write(
         f"cred-proxy listening on {bind}:{port}; "
         f"{len(routes)} route(s): "
