@@ -17,6 +17,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,6 +36,8 @@ from ..backend.docker.pipelock_apply import (
     PipelockApplyError,
     apply_allowlist_change,
     fetch_current_allowlist,
+    parse_allowlist_content,
+    render_allowlist_content,
 )
 from ..log import info
 from ..supervise import (
@@ -167,7 +170,7 @@ def approve(
             qp.proposal.bottle_slug, file_to_apply,
         )
     elif qp.proposal.tool == TOOL_PIPELOCK_BLOCK:
-        diff_before, diff_after = apply_allowlist_change(
+        diff_before, diff_after = _apply_pipelock_url(
             qp.proposal.bottle_slug, file_to_apply,
         )
     elif qp.proposal.tool == TOOL_CAPABILITY_BLOCK:
@@ -227,6 +230,41 @@ def operator_edit_routes(slug: str, new_content: str) -> tuple[str, str]:
         diff=render_diff(before, after, label="cred-proxy"),
     ))
     return before, after
+
+
+def _apply_pipelock_url(slug: str, failed_url: str) -> tuple[str, str]:
+    """pipelock-block proposals carry a single failed URL, not a
+    full allowlist. Extract the host, merge into the running
+    allowlist, and hand the merged content to apply_allowlist_change.
+    The full URL (with path) is preserved on the proposal for the
+    operator's read; only the host ends up in pipelock's allowlist.
+
+    FOLLOW-UP — path-aware filtering. Pipelock 2.3.0's api_allowlist
+    is hostname-only (verified by inspecting the binary's strict
+    preset; the only "path" fields in pipelock's schema are about
+    local filesystem paths under sandbox / file_sentry / taint). So
+    approving pipelock-block opens the entire host, not the URL's
+    path. If/when per-path enforcement becomes load-bearing, the
+    follow-up is most likely adding an `auth_scheme: none` mode +
+    `path_allowlist` field to cred-proxy (which already does
+    path-prefix routing) and rewiring pipelock-block to propose
+    cred-proxy routes instead of pipelock hostnames. That's a
+    multi-touch change deserving its own PRD — out of scope for the
+    supervise-loop work that introduced this function. See PR
+    discussion on https://gitea.dideric.is/didericis/claude-bottle/pulls/25
+    for the design conversation."""
+    import urllib.parse
+    parsed = urllib.parse.urlsplit(failed_url.strip())
+    host = parsed.hostname or ""
+    if not host:
+        raise PipelockApplyError(
+            f"proposed failed_url has no extractable host: {failed_url!r}"
+        )
+    current = fetch_current_allowlist(slug)
+    hosts = parse_allowlist_content(current)
+    if host not in hosts:
+        hosts.append(host)
+    return apply_allowlist_change(slug, render_allowlist_content(hosts))
 
 
 def operator_edit_allowlist(slug: str, new_content: str) -> tuple[str, str]:
@@ -342,9 +380,57 @@ def _list_once() -> int:
     return 0
 
 
+_REFRESH_INTERVAL_MS = 1000
+
+# How long a newly-arrived proposal stays highlighted (green) in the
+# list. Long enough for the operator to notice in their peripheral
+# vision, short enough to fade before the queue feels permanently
+# noisy.
+_NEW_PROPOSAL_HIGHLIGHT_SEC = 5.0
+
+
+def _is_recent(
+    proposal_id: str,
+    first_seen: dict[str, float] | None,
+    now: float | None,
+) -> bool:
+    """True if `proposal_id` was first seen within the highlight
+    window. Both `first_seen` and `now` may be None (rendered as
+    not-recent) so the helper is safe in cold-start paths."""
+    if first_seen is None or now is None:
+        return False
+    started = first_seen.get(proposal_id)
+    if started is None:
+        return False
+    return (now - started) < _NEW_PROPOSAL_HIGHLIGHT_SEC
+
+
+def _try_init_green() -> int:
+    """Initialise a green color pair and return its attr, or 0 if the
+    terminal doesn't support color. Caller ORs the returned value
+    into addnstr's attr argument; OR 0 is a no-op."""
+    try:
+        curses.start_color()
+        curses.use_default_colors()
+        curses.init_pair(1, curses.COLOR_GREEN, -1)
+        return curses.color_pair(1)
+    except curses.error:
+        return 0
+
+
 def _main_loop(stdscr: "curses._CursesWindow") -> None:
     curses.curs_set(0)
-    stdscr.nodelay(False)
+    # Auto-refresh: getch() returns -1 after the timeout if no key
+    # was pressed, so the loop re-renders with any newly-arrived
+    # proposals every ~1s. Without this the screen only updates
+    # when the operator hits a key — a tool call landing while the
+    # operator is just watching wouldn't appear.
+    stdscr.timeout(_REFRESH_INTERVAL_MS)
+    green_attr = _try_init_green()
+    # Per-proposal first-seen timestamps drive the "new" highlight.
+    # We add entries as proposals show up and prune ones that are
+    # gone (approved / rejected / archived) so the dict stays small.
+    first_seen: dict[str, float] = {}
     selected = 0
     status_line = ""
     while True:
@@ -352,13 +438,29 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
         if selected >= len(pending):
             selected = max(0, len(pending) - 1)
 
-        _render(stdscr, pending, selected, status_line)
-        status_line = ""
+        now = time.monotonic()
+        live_ids = {qp.proposal.id for qp in pending}
+        for proposal_id in live_ids:
+            first_seen.setdefault(proposal_id, now)
+        for stale_id in list(first_seen.keys() - live_ids):
+            del first_seen[stale_id]
+
+        _render(stdscr, pending, selected, status_line, first_seen, now, green_attr)
 
         try:
             key = stdscr.getch()
         except KeyboardInterrupt:
             return
+
+        if key == -1:
+            # Timeout fired — re-render with fresh queue. Status_line
+            # is left intact so messages from a prior keystroke stay
+            # readable until the operator actually does something else.
+            continue
+
+        # Real keystroke: clear any stale status before dispatching
+        # so the next render reflects what just happened.
+        status_line = ""
 
         if key in (ord("q"), 27):  # q or ESC
             return
@@ -377,7 +479,7 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
         elif key in (curses.KEY_UP, ord("k")):
             selected = max(selected - 1, 0)
         elif key in (curses.KEY_ENTER, 10, 13, ord("v")):
-            _detail_view(stdscr, qp)
+            _detail_view(stdscr, qp, green_attr=green_attr)
         elif key == ord("a"):
             try:
                 approve(qp)
@@ -408,6 +510,9 @@ def _render(
     pending: list[QueuedProposal],
     selected: int,
     status_line: str,
+    first_seen: dict[str, float] | None = None,
+    now: float | None = None,
+    green_attr: int = 0,
 ) -> None:
     stdscr.erase()
     h, w = stdscr.getmaxyx()
@@ -435,6 +540,8 @@ def _render(
                 f"{p.justification[:60]}"
             )
             attr = curses.A_REVERSE if i == selected else curses.A_NORMAL
+            if _is_recent(p.id, first_seen, now):
+                attr |= green_attr
             stdscr.addnstr(row, 0, line, w - 1, attr)
 
     footer = (
@@ -448,16 +555,21 @@ def _render(
     stdscr.refresh()
 
 
-def _detail_view(stdscr: "curses._CursesWindow", qp: QueuedProposal) -> None:
+def _detail_view(
+    stdscr: "curses._CursesWindow",
+    qp: QueuedProposal,
+    *,
+    green_attr: int = 0,
+) -> None:
     """Render the full proposal: header, justification, proposed file
     contents. Scrollable. Press q to return."""
-    lines = _detail_lines(qp)
+    lines = _detail_lines(qp, green_attr=green_attr)
     offset = 0
     while True:
         stdscr.erase()
         h, w = stdscr.getmaxyx()
-        for i, line in enumerate(lines[offset:offset + h - 1]):
-            stdscr.addnstr(i, 0, line, w - 1)
+        for i, (text, attr) in enumerate(lines[offset:offset + h - 1]):
+            stdscr.addnstr(i, 0, text, w - 1, attr)
         stdscr.addnstr(
             h - 1, 0,
             "[j/k] scroll  [g/G] top/bottom  [a] approve  [m] modify  [r] reject  [q] back",
@@ -496,24 +608,64 @@ def _detail_view(stdscr: "curses._CursesWindow", qp: QueuedProposal) -> None:
             return
 
 
-def _detail_lines(qp: QueuedProposal) -> list[str]:
+def _detail_lines(
+    qp: QueuedProposal,
+    *,
+    green_attr: int = 0,
+) -> list[tuple[str, int]]:
+    """Return the detail-view body as (text, curses-attr) tuples.
+    Most lines are plain (attr=0); pipelock-block proposals append
+    a green "→ would allow host: ..." line so the operator sees at
+    a glance which hostname will land in pipelock's allowlist if
+    they hit approve. The URL itself is shown above for context."""
     p = qp.proposal
-    out = [
-        f"bottle: {p.bottle_slug}",
-        f"tool: {p.tool}",
-        f"id: {p.id}",
-        f"arrived: {p.arrival_timestamp}",
-        f"queue: {qp.queue_dir}",
-        "",
-        "justification:",
+    out: list[tuple[str, int]] = [
+        (f"bottle: {p.bottle_slug}", 0),
+        (f"tool: {p.tool}", 0),
+        (f"id: {p.id}", 0),
+        (f"arrived: {p.arrival_timestamp}", 0),
+        (f"queue: {qp.queue_dir}", 0),
+        ("", 0),
+        ("justification:", 0),
     ]
-    out.extend("  " + line for line in p.justification.splitlines() or [""])
+    out.extend(("  " + line, 0) for line in p.justification.splitlines() or [""])
     out.extend([
-        "",
-        "proposed file:",
+        ("", 0),
+        (_proposed_payload_label(p.tool) + ":", 0),
     ])
-    out.extend(p.proposed_file.splitlines() or [""])
+    out.extend((line, 0) for line in p.proposed_file.splitlines() or [""])
+    if p.tool == TOOL_PIPELOCK_BLOCK:
+        host = _failed_url_host(p.proposed_file)
+        if host:
+            # Show the literal line that will be appended to the
+            # bottle's pipelock allowlist on approve. Green so it
+            # reads as "what changes"; the URL above carries the
+            # path context (which pipelock can't enforce — see the
+            # follow-up note on _apply_pipelock_url).
+            out.append(("", 0))
+            out.append((host, green_attr))
     return out
+
+
+def _failed_url_host(url: str) -> str:
+    """Best-effort hostname extraction from a pipelock-block proposal's
+    failed_url payload. Returns empty string on unparseable input —
+    callers handle empty as "nothing to highlight"."""
+    import urllib.parse
+    try:
+        return urllib.parse.urlsplit(url.strip()).hostname or ""
+    except ValueError:
+        return ""
+
+
+def _proposed_payload_label(tool: str) -> str:
+    """The detail-view section heading for the proposal's payload —
+    `proposed_file` is what the dataclass calls it, but for
+    pipelock-block the payload is a single URL not a file. Render
+    the label per tool so the operator's eye matches."""
+    if tool == TOOL_PIPELOCK_BLOCK:
+        return "failed URL"
+    return "proposed file"
 
 
 def _modify(stdscr: "curses._CursesWindow", qp: QueuedProposal) -> str | None:

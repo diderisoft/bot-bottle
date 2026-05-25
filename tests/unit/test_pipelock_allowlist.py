@@ -91,6 +91,21 @@ class TestAllowlistWithTokens(unittest.TestCase):
         eff = pipelock_effective_allowlist(_bottle({}))
         self.assertNotIn("cred-proxy", eff)
 
+    def test_supervise_hostname_auto_added_when_supervise_enabled(self):
+        # Same reasoning as cred-proxy: the agent's HTTP_PROXY points
+        # at pipelock, so http://supervise:9100/ (the MCP endpoint)
+        # arrives at pipelock as hostname `supervise`. Without this
+        # auto-allow, claude-code's MCP client gets a 403 and the
+        # supervise server shows up as "failed" in /mcp.
+        eff = pipelock_effective_allowlist(_bottle({"supervise": True}))
+        self.assertIn("supervise", eff)
+
+    def test_supervise_hostname_NOT_added_when_disabled(self):
+        eff = pipelock_effective_allowlist(_bottle({}))
+        self.assertNotIn("supervise", eff)
+        eff_explicit = pipelock_effective_allowlist(_bottle({"supervise": False}))
+        self.assertNotIn("supervise", eff_explicit)
+
 
 class TestTlsPassthrough(unittest.TestCase):
     def test_default_includes_api_anthropic(self):

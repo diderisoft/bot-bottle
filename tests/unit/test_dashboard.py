@@ -38,11 +38,21 @@ FIXED = datetime(2026, 5, 25, 12, 0, 0, tzinfo=timezone.utc)
 
 
 def _proposal(slug: str = "dev", tool: str = TOOL_CRED_PROXY_BLOCK) -> Proposal:
+    # Per-tool payload shape: cred-proxy gets routes.json, pipelock
+    # gets a failed URL (PR #25 follow-up), capability gets a
+    # Dockerfile-ish blob. Match the production dispatch in
+    # PROPOSED_FILE_FIELD.
+    payloads = {
+        TOOL_CRED_PROXY_BLOCK: '{"routes": []}\n',
+        TOOL_PIPELOCK_BLOCK: "https://example.com/path",
+        TOOL_CAPABILITY_BLOCK: "FROM python:3.13\n",
+    }
+    payload = payloads.get(tool, "")
     return Proposal.new(
         bottle_slug=slug, tool=tool,
-        proposed_file='{"routes": []}\n',
+        proposed_file=payload,
         justification=f"needed for {slug}",
-        current_file_hash=sha256_hex("{}"),
+        current_file_hash=sha256_hex(payload),
         now=FIXED,
     )
 
@@ -119,6 +129,7 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
         self._setup_fake_home()
         self._original_apply_routes = dashboard.apply_routes_change
         self._original_apply_allowlist = dashboard.apply_allowlist_change
+        self._original_fetch_allowlist = dashboard.fetch_current_allowlist
         self._original_apply_capability = dashboard.apply_capability_change
         # Default stubs: succeed with deterministic before/after so the
         # audit log shows a non-empty diff.
@@ -128,6 +139,7 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
         dashboard.apply_allowlist_change = lambda slug, content: (
             "old.example\n", content,
         )
+        dashboard.fetch_current_allowlist = lambda slug: "old.example\n"
         dashboard.apply_capability_change = lambda slug, content: (
             "FROM old\n", content,
         )
@@ -135,6 +147,7 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
     def tearDown(self):
         dashboard.apply_routes_change = self._original_apply_routes
         dashboard.apply_allowlist_change = self._original_apply_allowlist
+        dashboard.fetch_current_allowlist = self._original_fetch_allowlist
         dashboard.apply_capability_change = self._original_apply_capability
         self._teardown_fake_home()
 
@@ -281,23 +294,27 @@ class TestCredProxyApplyWiring(_FakeHomeMixin, unittest.TestCase):
 
 
 class TestPipelockApplyWiring(_FakeHomeMixin, unittest.TestCase):
-    """PRD 0015 Phase 2: approve() on a pipelock-block proposal
-    must call apply_allowlist_change and surface its failures."""
+    """PRD 0015 Phase 2 + PR #25 follow-up: approve() on a
+    pipelock-block proposal carries the failed URL; the dashboard
+    extracts the host, merges it into the running allowlist, and
+    calls apply_allowlist_change with the merged content."""
 
     def setUp(self):
         self._setup_fake_home()
-        self._original = dashboard.apply_allowlist_change
+        self._original_apply = dashboard.apply_allowlist_change
+        self._original_fetch = dashboard.fetch_current_allowlist
 
     def tearDown(self):
-        dashboard.apply_allowlist_change = self._original
+        dashboard.apply_allowlist_change = self._original_apply
+        dashboard.fetch_current_allowlist = self._original_fetch
         self._teardown_fake_home()
 
-    def _enqueue_pipelock(self, proposed: str = "host.example\n"):
+    def _enqueue_pipelock(self, failed_url: str = "https://api.github.com/repos/foo/bar"):
         p = Proposal.new(
             bottle_slug="dev", tool=TOOL_PIPELOCK_BLOCK,
-            proposed_file=proposed,
-            justification="need new host",
-            current_file_hash=sha256_hex(proposed),
+            proposed_file=failed_url,
+            justification="need to read PR metadata",
+            current_file_hash=sha256_hex(failed_url),
             now=FIXED,
         )
         qdir = supervise.queue_dir_for_slug("dev")
@@ -305,16 +322,41 @@ class TestPipelockApplyWiring(_FakeHomeMixin, unittest.TestCase):
         supervise.write_proposal(qdir, p)
         return dashboard.QueuedProposal(proposal=p, queue_dir=qdir)
 
-    def test_pipelock_block_calls_apply_with_proposed_file(self):
-        calls = []
+    def test_url_host_merged_into_current_allowlist(self):
+        dashboard.fetch_current_allowlist = lambda slug: "existing.example\n"
+        applied = []
         dashboard.apply_allowlist_change = lambda slug, content: (
-            calls.append((slug, content)) or ("before", content)
+            applied.append((slug, content))
+            or ("existing.example\n", content)
         )
-        qp = self._enqueue_pipelock("new.example\n")
+        qp = self._enqueue_pipelock("https://api.github.com/repos/foo/bar")
         dashboard.approve(qp)
-        self.assertEqual([("dev", "new.example\n")], calls)
+        # apply_allowlist_change was called with the merged content:
+        # existing host + the URL's host (no path, since pipelock is
+        # hostname-only).
+        self.assertEqual(1, len(applied))
+        slug, content = applied[0]
+        self.assertEqual("dev", slug)
+        self.assertIn("existing.example", content)
+        self.assertIn("api.github.com", content)
+        self.assertNotIn("/repos/foo/bar", content)  # path stripped
+
+    def test_host_already_in_allowlist_is_idempotent(self):
+        dashboard.fetch_current_allowlist = lambda slug: "api.github.com\n"
+        applied = []
+        dashboard.apply_allowlist_change = lambda slug, content: (
+            applied.append(content)
+            or ("api.github.com\n", content)
+        )
+        qp = self._enqueue_pipelock("https://api.github.com/some/path")
+        dashboard.approve(qp)
+        # Still applied, but the content is unchanged from current —
+        # before/after diff is empty.
+        self.assertEqual(1, len(applied))
+        self.assertEqual("api.github.com\n", applied[0])
 
     def test_apply_failure_blocks_response_and_audit(self):
+        dashboard.fetch_current_allowlist = lambda slug: "existing.example\n"
         dashboard.apply_allowlist_change = lambda slug, content: (_ for _ in ()).throw(
             PipelockApplyError("docker exec failed")
         )
@@ -327,16 +369,13 @@ class TestPipelockApplyWiring(_FakeHomeMixin, unittest.TestCase):
         )
         self.assertEqual([], read_audit_entries("pipelock", "dev"))
 
-    def test_real_diff_lands_in_audit(self):
-        dashboard.apply_allowlist_change = lambda slug, content: (
-            "old.example\n",
-            "old.example\nnew.example\n",
-        )
-        qp = self._enqueue_pipelock("old.example\nnew.example\n")
-        dashboard.approve(qp)
-        entries = read_audit_entries("pipelock", "dev")
-        self.assertEqual(1, len(entries))
-        self.assertIn("+new.example", entries[0].diff)
+    def test_url_without_host_raises(self):
+        dashboard.fetch_current_allowlist = lambda slug: ""
+        # supervise_server's validator would catch this; if a broken
+        # URL ever makes it through, the dashboard surfaces it too.
+        qp = self._enqueue_pipelock("https:///nohost")
+        with self.assertRaises(PipelockApplyError):
+            dashboard.approve(qp)
 
 
 class TestCapabilityApplyWiring(_FakeHomeMixin, unittest.TestCase):
