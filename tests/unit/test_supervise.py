@@ -314,7 +314,12 @@ class TestDiffAndHash(unittest.TestCase):
 class TestToolConstants(unittest.TestCase):
     def test_tools_tuple_matches_individual_constants(self):
         self.assertEqual(
-            (TOOL_EGRESS_PROXY_BLOCK, TOOL_PIPELOCK_BLOCK, TOOL_CAPABILITY_BLOCK),
+            (
+                TOOL_EGRESS_PROXY_BLOCK,
+                TOOL_PIPELOCK_BLOCK,
+                TOOL_CAPABILITY_BLOCK,
+                supervise.TOOL_LIST_EGRESS_PROXY_ROUTES,
+            ),
             supervise.TOOLS,
         )
 
@@ -357,20 +362,10 @@ class TestSupervisePrepare(unittest.TestCase):
     def test_prepare_creates_queue_and_current_config(self):
         plan = _StubSupervise().prepare(
             "dev", self.stage_dir,
-            routes_content='{"routes": [{"path": "/x/"}]}\n',
-            allowlist_content="example.com\n",
             dockerfile_content="FROM python:3.13\n",
         )
         self.assertTrue(plan.queue_dir.is_dir())
         self.assertTrue(plan.current_config_dir.is_dir())
-        self.assertEqual(
-            '{"routes": [{"path": "/x/"}]}\n',
-            (plan.current_config_dir / "routes.yaml").read_text(),
-        )
-        self.assertEqual(
-            "example.com\n",
-            (plan.current_config_dir / "allowlist").read_text(),
-        )
         self.assertEqual(
             "FROM python:3.13\n",
             (plan.current_config_dir / "Dockerfile").read_text(),
@@ -378,12 +373,12 @@ class TestSupervisePrepare(unittest.TestCase):
         self.assertEqual("dev", plan.slug)
         self.assertEqual("", plan.internal_network)
 
-    def test_prepare_defaults_routes_to_empty_when_absent(self):
+    def test_prepare_only_writes_dockerfile_to_current_config(self):
+        # routes.yaml + allowlist live behind the
+        # `list-egress-proxy-routes` MCP tool now (PRD 0017 chunk 3).
         plan = _StubSupervise().prepare("dev", self.stage_dir)
-        self.assertEqual(
-            '{"routes": []}\n',
-            (plan.current_config_dir / "routes.yaml").read_text(),
-        )
+        files = sorted(p.name for p in plan.current_config_dir.iterdir())
+        self.assertEqual(["Dockerfile"], files)
 
 
 if __name__ == "__main__":

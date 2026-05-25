@@ -199,6 +199,7 @@ class TestSuperviseSidecar(unittest.TestCase):
                 _sv.TOOL_EGRESS_PROXY_BLOCK,
                 _sv.TOOL_PIPELOCK_BLOCK,
                 _sv.TOOL_CAPABILITY_BLOCK,
+                _sv.TOOL_LIST_EGRESS_PROXY_ROUTES,
             },
             names,
         )

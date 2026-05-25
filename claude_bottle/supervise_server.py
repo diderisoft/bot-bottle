@@ -36,7 +36,9 @@ import os
 import socketserver
 import sys
 import typing
+import urllib.error
 import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -132,16 +134,17 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
         "description": (
             "Call when egress-proxy refused your HTTPS request — host "
             "without a matching route, or a path outside the route's "
-            "path_allowlist (typically a 403 from the proxy). Read "
-            "the current routes.yaml from "
-            "/etc/claude-bottle/current-config/routes.yaml, compose "
-            "a modified version that adds or relaxes the route you "
-            "need, and pass the full new file plus a justification. "
-            "The operator approves or rejects in the supervise TUI. "
-            "On approval the supervisor writes the new routes.yaml "
-            "on the host and SIGHUPs egress-proxy (the addon's reload "
-            "swaps the route table atomically without dropping "
-            "in-flight connections)."
+            "path_allowlist (typically a 403 from the proxy). First "
+            "call `list-egress-proxy-routes` to see the current route "
+            "table; compose a modified version that adds or relaxes "
+            "the route you need, and pass the full new file plus a "
+            "justification. The operator approves or rejects in the "
+            "supervise TUI. On approval the supervisor writes the "
+            "new routes.yaml on the host, SIGHUPs egress-proxy (the "
+            "addon's reload swaps the route table atomically without "
+            "dropping in-flight connections), and mirrors the route "
+            "hosts onto pipelock's allowlist so the downstream gate "
+            "lets them through too."
         ),
         "inputSchema": {
             "type": "object",
@@ -159,18 +162,40 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
         },
     },
     {
+        "name": _sv.TOOL_LIST_EGRESS_PROXY_ROUTES,
+        "description": (
+            "List the current egress-proxy route table — the bottle's "
+            "primary egress allowlist. Returns JSON with one entry "
+            "per allowed host, each carrying its path_allowlist (if "
+            "any) and whether the proxy injects Authorization for "
+            "the route. Use this before composing an "
+            "`egress-proxy-block` proposal so the new routes file "
+            "extends the live one rather than replacing it. "
+            "Pipelock's allowlist is a mirror of this set — every "
+            "host listed here is also reachable through pipelock's "
+            "downstream hostname gate."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": _sv.TOOL_PIPELOCK_BLOCK,
         "description": (
-            "Call when pipelock refused your outbound request — host "
-            "not in the allowlist, connection refused at the egress "
-            "layer. Pass the full URL you tried to hit (scheme + "
-            "host + path) plus a justification. The supervisor "
-            "extracts the hostname and merges it into the bottle's "
-            "current pipelock allowlist; the path is captured as "
-            "context for the operator to review (pipelock's allowlist "
-            "is hostname-only — it can't enforce path-level rules). "
-            "On approval the supervisor restarts pipelock with the "
-            "merged allowlist."
+            "Call when pipelock refused your outbound request and "
+            "the failing host is genuinely missing from the bottle's "
+            "allowlist (vs. blocked for DLP reasons — those need a "
+            "different remediation). In practice pipelock's allowlist "
+            "is now a mirror of the egress-proxy routes set by "
+            "`egress-proxy-block`, so prefer that tool when you want "
+            "to add a host. This tool stays available for the rare "
+            "case where pipelock and egress-proxy have diverged. "
+            "Pass the full URL you tried to hit (scheme + host + "
+            "path); the supervisor extracts the hostname and merges "
+            "it into pipelock's allowlist. On approval the "
+            "supervisor restarts pipelock."
         ),
         "inputSchema": {
             "type": "object",
@@ -308,15 +333,57 @@ def handle_tools_list(_params: dict[str, object]) -> dict[str, object]:
     return {"tools": TOOL_DEFINITIONS}
 
 
+def handle_list_egress_proxy_routes(
+    _params: dict[str, object],
+    _config: ServerConfig,
+) -> dict[str, object]:
+    """Fetch the live egress-proxy route table via its
+    `_egress-proxy.local/allowlist` introspection endpoint. The
+    request goes through egress-proxy as a forward proxy; the
+    addon recognises the magic host and synthesizes a response —
+    no real upstream connection, no allowlist enforcement
+    against the magic host. Returns the JSON payload as the
+    tool's text content."""
+    proxy_handler = urllib.request.ProxyHandler({
+        "http": _sv.EGRESS_PROXY_FORWARD_PROXY,
+    })
+    opener = urllib.request.build_opener(proxy_handler)
+    try:
+        with opener.open(_sv.EGRESS_PROXY_INTROSPECT_URL, timeout=5) as resp:
+            body = resp.read().decode("utf-8")
+    except (urllib.error.URLError, OSError) as e:
+        return {
+            "content": [{
+                "type": "text",
+                "text": (
+                    f"list-egress-proxy-routes: could not reach "
+                    f"{_sv.EGRESS_PROXY_INTROSPECT_URL!r} via "
+                    f"{_sv.EGRESS_PROXY_FORWARD_PROXY!r}: {e}"
+                ),
+            }],
+            "isError": True,
+        }
+    return {
+        "content": [{"type": "text", "text": body}],
+        "isError": False,
+    }
+
+
 def handle_tools_call(
     params: dict[str, object],
     config: ServerConfig,
 ) -> dict[str, object]:
     """Validates the proposal, writes it to the queue, blocks waiting
-    for a Response, returns the result wrapped in MCP `content`."""
+    for a Response, returns the result wrapped in MCP `content`.
+
+    Side-effect-free `list-*` tools short-circuit before the queue/
+    blocking machinery — they're read-only introspection that
+    doesn't need operator approval."""
     name = params.get("name")
     if not isinstance(name, str):
         raise _RpcError(ERR_INVALID_PARAMS, "tools/call missing 'name'")
+    if name == _sv.TOOL_LIST_EGRESS_PROXY_ROUTES:
+        return handle_list_egress_proxy_routes(params.get("arguments", {}), config)
     if name not in PROPOSED_FILE_FIELD:
         raise _RpcError(ERR_INVALID_PARAMS, f"unknown tool {name!r}")
     args_raw = params.get("arguments", {})

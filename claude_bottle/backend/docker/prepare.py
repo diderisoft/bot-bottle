@@ -15,7 +15,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ... import pipelock
-from ...egress_proxy import egress_proxy_render_routes
 from ...env import ResolvedEnv, resolve_env
 from ...log import die
 from .. import BottleSpec
@@ -153,21 +152,18 @@ def resolve_plan(
     egress_proxy_plan = egress_proxy.prepare(bottle, slug, stage_dir)
     supervise_plan = None
     if bottle.supervise:
-        routes_content = (
-            egress_proxy_render_routes(egress_proxy_plan.routes)
-            if egress_proxy_plan.routes else ""
-        )
-        allowlist_content = "\n".join(pipelock.pipelock_effective_allowlist(bottle)) + "\n"
         # Current Dockerfile for the agent image. Read from the repo
         # root; for `--cwd` derived images the base Dockerfile is what
         # the agent should propose changes against (the derived layer
         # is just a workspace copy).
+        # (routes.yaml + pipelock allowlist used to land here too but
+        # PRD 0017 chunk 3 moved them behind the
+        # `list-egress-proxy-routes` MCP tool so the agent gets live
+        # state rather than a launch-time snapshot.)
         dockerfile_path = Path(__file__).resolve().parent.parent.parent.parent / "Dockerfile"
         dockerfile_content = dockerfile_path.read_text() if dockerfile_path.is_file() else ""
         supervise_plan = supervise.prepare(
             slug, stage_dir,
-            routes_content=routes_content,
-            allowlist_content=allowlist_content,
             dockerfile_content=dockerfile_content,
         )
     resolved = resolve_env(manifest, spec.agent_name)

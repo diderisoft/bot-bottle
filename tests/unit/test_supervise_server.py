@@ -170,7 +170,7 @@ class TestHandleInitialize(unittest.TestCase):
 
 
 class TestHandleToolsList(unittest.TestCase):
-    def test_returns_three_tools(self):
+    def test_returns_all_tools(self):
         result = handle_tools_list({})
         names = [t["name"] for t in result["tools"]]  # type: ignore[index]
         self.assertEqual(
@@ -178,19 +178,35 @@ class TestHandleToolsList(unittest.TestCase):
                 _sv.TOOL_EGRESS_PROXY_BLOCK,
                 _sv.TOOL_PIPELOCK_BLOCK,
                 _sv.TOOL_CAPABILITY_BLOCK,
+                _sv.TOOL_LIST_EGRESS_PROXY_ROUTES,
             ]),
             sorted(names),
         )
 
-    def test_each_tool_has_inputSchema_with_two_required_fields(self):
+    def test_remediation_tools_have_inputSchema_with_two_required_fields(self):
+        # Only the proposal/remediation tools have required input
+        # fields. The list-* introspection tools take no input.
         for tool in TOOL_DEFINITIONS:
-            with self.subTest(name=tool["name"]):
+            name = tool["name"]
+            if name not in PROPOSED_FILE_FIELD:
+                continue
+            with self.subTest(name=name):
                 schema = tool["inputSchema"]
                 self.assertEqual("object", schema["type"])  # type: ignore[index]
                 required = schema["required"]  # type: ignore[index]
                 self.assertEqual(2, len(required))
                 self.assertIn("justification", required)
-                self.assertIn(PROPOSED_FILE_FIELD[tool["name"]], required)  # type: ignore[index]
+                self.assertIn(PROPOSED_FILE_FIELD[name], required)  # type: ignore[index]
+
+    def test_list_egress_proxy_routes_takes_no_input(self):
+        tool = next(
+            t for t in TOOL_DEFINITIONS
+            if t["name"] == _sv.TOOL_LIST_EGRESS_PROXY_ROUTES
+        )
+        schema = tool["inputSchema"]
+        self.assertEqual({}, schema.get("properties"))  # type: ignore[union-attr]
+        # No `required` array because no inputs are required.
+        self.assertNotIn("required", schema)  # type: ignore[operator]
 
 
 class TestHandleToolsCall(unittest.TestCase):

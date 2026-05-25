@@ -127,7 +127,24 @@ class EgressProxyPlan:
     pipelock_proxy_url: str = ""
 
 
-def egress_proxy_routes_for_bottle(
+# Hosts the agent needs by default for claude-code itself. Folded
+# into every bottle's egress-proxy routes table as bare-pass entries
+# (no auth, no path filter) so the agent reaches them without each
+# bottle having to opt in. Pipelock used to own this list; PRD 0017
+# moves it to egress-proxy because egress-proxy is the primary gate
+# now and pipelock's allowlist is mirrored from egress-proxy.
+DEFAULT_ALLOWLIST: tuple[str, ...] = (
+    "api.anthropic.com",
+    "statsig.anthropic.com",
+    "sentry.io",
+    "claude.ai",
+    "platform.claude.com",
+    "downloads.claude.ai",
+    "raw.githubusercontent.com",
+)
+
+
+def egress_proxy_manifest_routes(
     bottle: Bottle,
 ) -> tuple[EgressProxyRoute, ...]:
     """Lift each `bottle.egress_proxy.routes[]` manifest entry into a
@@ -138,7 +155,12 @@ def egress_proxy_routes_for_bottle(
     authenticated route with `token_ref` "GH_PAT" gets
     `EGRESS_PROXY_TOKEN_0`; a second route with the same `token_ref`
     shares slot 0. Unauthenticated routes (`auth` omitted) contribute
-    no slot."""
+    no slot.
+
+    Does NOT include the folded-in DEFAULT_ALLOWLIST /
+    bottle.egress.allowlist bare-pass entries — see
+    `egress_proxy_routes_for_bottle` for the effective set the
+    addon enforces."""
     out: list[EgressProxyRoute] = []
     slot_for_token: dict[str, str] = {}
     for r in bottle.egress_proxy.routes:
@@ -161,6 +183,30 @@ def egress_proxy_routes_for_bottle(
                 path_allowlist=r.PathAllowlist,
                 roles=r.Role,
             ))
+    return tuple(out)
+
+
+def egress_proxy_routes_for_bottle(
+    bottle: Bottle,
+) -> tuple[EgressProxyRoute, ...]:
+    """Effective egress-proxy routes: manifest routes followed by
+    bare-pass entries for DEFAULT_ALLOWLIST hosts and
+    `bottle.egress.allowlist` hosts. This is what gets rendered into
+    routes.yaml + what the addon enforces.
+
+    Manifest routes win over defaults on host collision (manifest
+    routes carry more specific config — auth, path filter, role
+    markers). Hostname comparison is case-insensitive."""
+    out: list[EgressProxyRoute] = list(egress_proxy_manifest_routes(bottle))
+    claimed: set[str] = {r.host.lower() for r in out}
+    for host in DEFAULT_ALLOWLIST:
+        if host.lower() not in claimed:
+            out.append(EgressProxyRoute(host=host))
+            claimed.add(host.lower())
+    for host in bottle.egress.allowlist:
+        if host and host.lower() not in claimed:
+            out.append(EgressProxyRoute(host=host))
+            claimed.add(host.lower())
     return tuple(out)
 
 
@@ -286,11 +332,13 @@ class EgressProxy(ABC):
 
 
 __all__ = [
+    "DEFAULT_ALLOWLIST",
     "EGRESS_PROXY_HOSTNAME",
     "EGRESS_PROXY_ROUTES_IN_CONTAINER",
     "EgressProxy",
     "EgressProxyPlan",
     "EgressProxyRoute",
+    "egress_proxy_manifest_routes",
     "egress_proxy_render_routes",
     "egress_proxy_resolve_token_values",
     "egress_proxy_routes_for_bottle",

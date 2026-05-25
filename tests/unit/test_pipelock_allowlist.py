@@ -67,19 +67,28 @@ class TestAllowlistWithRoutes(unittest.TestCase):
         self.assertIn("registry.npmjs.org", eff)
         self.assertIn("api.github.com", eff)
 
-    def test_egress_proxy_hostname_auto_added_when_routes_exist(self):
-        # Egress-proxy's outbound leg uses HTTPS_PROXY=pipelock, so
-        # any request that flows through egress-proxy → pipelock
-        # would otherwise be rejected by pipelock's hostname gate.
+    def test_egress_proxy_hostname_NOT_in_pipelock_allowlist(self):
+        # The agent never dials egress-proxy via the proxy mechanism
+        # — it IS the proxy. Pipelock receives upstream hostnames
+        # from egress-proxy's CONNECT requests, not the
+        # `egress-proxy` hostname itself.
         eff = pipelock_effective_allowlist(_bottle(_routes([
             {"host": "x.example",
              "auth": {"scheme": "Bearer", "token_ref": "T"}},
         ])))
-        self.assertIn("egress-proxy", eff)
-
-    def test_egress_proxy_hostname_NOT_added_when_no_routes(self):
-        eff = pipelock_effective_allowlist(_bottle({}))
         self.assertNotIn("egress-proxy", eff)
+
+    def test_pipelock_mirrors_egress_proxy_defaults_when_routes_present(self):
+        # When egress_proxy is in use, pipelock's allowlist mirrors
+        # the egress-proxy effective routes — which fold in
+        # DEFAULT_ALLOWLIST + bottle.egress.allowlist.
+        eff = pipelock_effective_allowlist(_bottle(_routes([
+            {"host": "x.example",
+             "auth": {"scheme": "Bearer", "token_ref": "T"}},
+        ])))
+        for default in ("api.anthropic.com", "sentry.io"):
+            self.assertIn(default, eff)
+        self.assertIn("x.example", eff)
 
     def test_supervise_hostname_auto_added_when_supervise_enabled(self):
         # The agent's MCP client opens long-polled requests to

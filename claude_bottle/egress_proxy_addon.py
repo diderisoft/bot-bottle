@@ -26,6 +26,8 @@ build input — not a module the host imports."""
 
 from __future__ import annotations
 
+import dataclasses
+import json
 import os
 import signal
 import sys
@@ -40,6 +42,16 @@ from egress_proxy_addon_core import Route, decide, is_git_push_request, load_rou
 
 
 DEFAULT_ROUTES_PATH = "/etc/egress-proxy/routes.yaml"
+
+# Magic hostname the addon recognises as an introspection target.
+# Requests through the proxy for `_egress-proxy.local/<path>` are
+# intercepted and answered with synthetic responses (the addon's
+# `request` hook sets `flow.response` before any upstream connection).
+# The hostname is not in DNS — only clients dialing through this
+# specific egress-proxy can reach it, and only via HTTP (no TLS).
+# Used by the supervise sidecar's `list-egress-proxy-routes` MCP
+# tool to surface the live route table to the agent.
+INTROSPECT_HOST = "_egress-proxy.local"
 
 
 class EgressProxyAddon:
@@ -84,16 +96,48 @@ class EgressProxyAddon:
 
         signal.signal(signal.SIGHUP, handler)
 
+    def _serve_introspection(self, flow: http.HTTPFlow, path: str) -> None:
+        """Synthesize a response for `_egress-proxy.local` requests.
+        Currently supports `/allowlist` which returns the in-memory
+        route table as JSON (host, path_allowlist, auth_scheme,
+        token_env per route — no token VALUES, those live in the
+        container's environ)."""
+        if path == "/allowlist":
+            payload = json.dumps(
+                {"routes": [dataclasses.asdict(r) for r in self.routes]},
+                indent=2,
+            ).encode("utf-8")
+            flow.response = http.Response.make(
+                200, payload,
+                {"Content-Type": "application/json"},
+            )
+            return
+        flow.response = http.Response.make(
+            404,
+            f"egress-proxy introspection: no such endpoint {path!r}".encode(),
+            {"Content-Type": "text/plain; charset=utf-8"},
+        )
+
     # mitmproxy's addon API: this method name + signature is how
     # mitmdump discovers the request hook.
     def request(self, flow: http.HTTPFlow) -> None:
+        request_path, _, query = flow.request.path.partition("?")
+
+        # Introspection: requests to the magic `_egress-proxy.local`
+        # host are answered locally with a synthetic response. Check
+        # before the strip-auth + route logic — these requests aren't
+        # real upstream traffic, the agent isn't injecting auth, and
+        # the addon's own decide() would 403 the magic host (it's
+        # never in the routes table).
+        if flow.request.pretty_host == INTROSPECT_HOST:
+            self._serve_introspection(flow, request_path)
+            return
+
         # Inbound Authorization is always stripped — the agent cannot
         # smuggle a stolen token through the proxy. If the matched
         # route declares an auth pair, a fresh header is injected
         # below.
         flow.request.headers.pop("authorization", None)
-
-        request_path, _, query = flow.request.path.partition("?")
 
         # Universal HTTPS git-push block. Defense-in-depth: git-gate
         # (PRD 0008) is the only sanctioned outbound path for git

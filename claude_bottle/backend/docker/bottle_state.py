@@ -45,6 +45,13 @@ _STATE_SUBDIR = "state"
 _PER_BOTTLE_DOCKERFILE_NAME = "Dockerfile"
 _TRANSCRIPT_SUBDIR = "transcript"
 _METADATA_NAME = "metadata.json"
+# Live-config dir bind-mounted into the supervise sidecar (read-only).
+# Host's apply paths keep these files fresh so supervise's
+# `list-pipelock-allowlist` / `list-egress-proxy-routes` MCP tools
+# return the current state — not a snapshot from launch time.
+_LIVE_CONFIG_SUBDIR = "live-config"
+LIVE_CONFIG_ROUTES_NAME = "routes.yaml"
+LIVE_CONFIG_ALLOWLIST_NAME = "allowlist"
 # Empty marker file. capability_apply writes it before teardown so
 # cli.py's session-end cleanup knows to preserve the state dir for
 # `cli.py resume <identity>`. Absent = clean up.
@@ -150,6 +157,41 @@ def per_bottle_image_tag(identity: str) -> str:
     claude-bottle:latest so per-bottle rebuilds don't collide in
     the docker image cache."""
     return f"claude-bottle-rebuilt-{identity}:latest"
+
+
+def live_config_dir(identity: str) -> Path:
+    """Per-bottle live-config dir. Bind-mounted read-only into the
+    supervise sidecar; the host's apply paths refresh the files on
+    every operator approval so the agent's `list-*` MCP tools always
+    return current state."""
+    return bottle_state_dir(identity) / _LIVE_CONFIG_SUBDIR
+
+
+def live_routes_path(identity: str) -> Path:
+    return live_config_dir(identity) / LIVE_CONFIG_ROUTES_NAME
+
+
+def live_allowlist_path(identity: str) -> Path:
+    return live_config_dir(identity) / LIVE_CONFIG_ALLOWLIST_NAME
+
+
+def write_live_config(
+    identity: str, *, routes: str = "", allowlist: str = "",
+) -> Path:
+    """Initialise (or refresh) the live-config dir. Empty-string args
+    leave the existing file alone (caller passes only what it knows).
+    Returns the live-config dir path."""
+    d = live_config_dir(identity)
+    d.mkdir(parents=True, exist_ok=True)
+    if routes:
+        p = live_routes_path(identity)
+        p.write_text(routes)
+        p.chmod(0o644)
+    if allowlist:
+        p = live_allowlist_path(identity)
+        p.write_text(allowlist)
+        p.chmod(0o644)
+    return d
 
 
 def transcript_snapshot_dir(identity: str) -> Path:

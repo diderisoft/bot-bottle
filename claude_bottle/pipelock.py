@@ -22,20 +22,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from .egress_proxy import EGRESS_PROXY_HOSTNAME
+from .egress_proxy import (
+    DEFAULT_ALLOWLIST,
+    EGRESS_PROXY_HOSTNAME,
+    egress_proxy_routes_for_bottle,
+)
 from .supervise import SUPERVISE_HOSTNAME
 from .manifest import Bottle
-
-# Baked-in default allowlist for hosts Claude Code itself needs.
-DEFAULT_ALLOWLIST: tuple[str, ...] = (
-    "api.anthropic.com",
-    "statsig.anthropic.com",
-    "sentry.io",
-    "claude.ai",
-    "platform.claude.com",
-    "downloads.claude.ai",
-    "raw.githubusercontent.com",
-)
 
 # Hosts pipelock should NOT TLS-MITM, even when tls_interception is
 # enabled. The Claude API endpoint is an LLM provider — its request
@@ -64,43 +57,51 @@ def pipelock_bottle_allowlist(bottle: Bottle) -> list[str]:
 
 def pipelock_route_hosts(bottle: Bottle) -> list[str]:
     """Hostnames declared in `bottle.egress_proxy.routes`. Returned
-    sorted + deduped.
-
-    Post-cutover topology (PRD 0017): the agent's HTTPS_PROXY points
-    at egress-proxy, not pipelock; egress-proxy's outbound leg sets
-    `HTTPS_PROXY=pipelock`. So pipelock no longer terminates the
-    agent's connections — it sees the egress-proxy → upstream leg
-    only. Each declared route's host still needs to be on pipelock's
-    allowlist so that leg can leave the egress network."""
+    sorted + deduped. Used by the no-egress-proxy fallback path
+    below; bottles that DO use egress-proxy include the same hosts
+    via `egress_proxy_routes_for_bottle`."""
     hosts = {r.Host for r in bottle.egress_proxy.routes if r.Host}
     return sorted(hosts)
 
 
 def pipelock_effective_allowlist(bottle: Bottle) -> list[str]:
-    """Deduplicated union of: baked-in defaults, bottle.egress.allowlist,
-    the egress-proxy route hosts (from bottle.egress_proxy.routes), the
-    egress-proxy sidecar's own hostname when any route is declared, and
-    the supervise sidecar's hostname when bottle.supervise is enabled.
-    Sorted for stability. Git upstreams declared in `bottle.git` do NOT
-    contribute here — git traffic flows through the per-agent git-gate
-    sidecar (PRD 0008), not pipelock.
+    """Hostnames pipelock allows. Sorted for stability.
 
-    The egress-proxy + supervise hostnames are auto-added because the
-    sidecars sit on the bottle's internal network alongside the agent;
-    requests that pass through pipelock for `egress-proxy:9099` or
-    `supervise:9100` (e.g. when egress-proxy uses HTTPS_PROXY=pipelock
-    on its upstream leg) would otherwise be 403'd by pipelock's
-    hostname gate."""
+    Two paths, depending on whether the bottle uses egress-proxy:
+
+    - Bottle declares `egress_proxy.routes[]` → agent's HTTPS_PROXY
+      points at egress-proxy. Egress-proxy is the bottle's primary
+      allowlist gate (DEFAULT_ALLOWLIST + bottle.egress.allowlist +
+      manifest routes all live there as bare-pass or full routes,
+      folded in by `egress_proxy_routes_for_bottle`). Pipelock's
+      allowlist is then a MIRROR of egress-proxy's hosts — same
+      set, just serving as the defense-in-depth hostname gate +
+      DLP scanner on the upstream leg.
+
+    - Bottle has no `egress_proxy.routes[]` → agent talks straight
+      to pipelock. Pipelock keeps its previous behavior: bake in
+      DEFAULT_ALLOWLIST + bottle.egress.allowlist for claude-code
+      defaults.
+
+    The supervise sidecar's hostname is auto-added when supervise
+    is enabled (sibling-sidecar traffic that flows through pipelock
+    would otherwise be 403'd). Git upstreams declared in
+    `bottle.git` do NOT contribute here — git traffic flows
+    through git-gate (PRD 0008), not pipelock."""
     seen: dict[str, None] = {}
-    for h in DEFAULT_ALLOWLIST:
-        seen.setdefault(h, None)
-    for h in pipelock_bottle_allowlist(bottle):
-        if h:
-            seen.setdefault(h, None)
-    for h in pipelock_route_hosts(bottle):
-        seen.setdefault(h, None)
     if bottle.egress_proxy.routes:
-        seen.setdefault(EGRESS_PROXY_HOSTNAME, None)
+        # Mirror egress-proxy's effective host set — same defaults
+        # and bottle.egress.allowlist entries are already folded in
+        # at the egress-proxy layer; we don't add them twice.
+        for r in egress_proxy_routes_for_bottle(bottle):
+            if r.host:
+                seen.setdefault(r.host, None)
+    else:
+        for h in DEFAULT_ALLOWLIST:
+            seen.setdefault(h, None)
+        for h in pipelock_bottle_allowlist(bottle):
+            if h:
+                seen.setdefault(h, None)
     if bottle.supervise:
         seen.setdefault(SUPERVISE_HOSTNAME, None)
     return sorted(seen.keys())

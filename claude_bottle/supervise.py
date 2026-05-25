@@ -52,11 +52,23 @@ SUPERVISE_PORT = 9100
 TOOL_EGRESS_PROXY_BLOCK = "egress-proxy-block"
 TOOL_PIPELOCK_BLOCK = "pipelock-block"
 TOOL_CAPABILITY_BLOCK = "capability-block"
+TOOL_LIST_EGRESS_PROXY_ROUTES = "list-egress-proxy-routes"
 TOOLS: tuple[str, ...] = (
     TOOL_EGRESS_PROXY_BLOCK,
     TOOL_PIPELOCK_BLOCK,
     TOOL_CAPABILITY_BLOCK,
+    TOOL_LIST_EGRESS_PROXY_ROUTES,
 )
+
+# The supervise sidecar uses these to query egress-proxy's
+# introspection endpoint for the `list-egress-proxy-routes` MCP
+# tool. The hostname + port match egress-proxy's docker network
+# alias + listen port (see claude_bottle.egress_proxy.EGRESS_PROXY_HOSTNAME
+# and backend.docker.egress_proxy.EGRESS_PROXY_PORT — the values
+# are inlined here so the in-container supervise_server doesn't
+# need to import the egress-proxy package).
+EGRESS_PROXY_FORWARD_PROXY = "http://egress-proxy:9099"
+EGRESS_PROXY_INTROSPECT_URL = "http://_egress-proxy.local/allowlist"
 
 # capability-block has no on-disk config the operator edits in place
 # (the Dockerfile is rebuilt, not patched), so it has no audit log
@@ -422,17 +434,15 @@ def sha256_hex(content: str) -> str:
 # --- Sidecar plan + abstract lifecycle -------------------------------------
 
 
-# Filenames inside the per-bottle current-config dir. The agent reads
-# these (read-only) from CURRENT_CONFIG_DIR_IN_AGENT and proposes
-# modified versions back via the three MCP tools.
-# Filename of the staged egress-proxy routes file inside the agent's
-# read-only current-config mount. JSON content under a `.yaml`
-# extension to match the live file the egress-proxy sidecar reads
-# (`/etc/egress-proxy/routes.yaml`) — the egress-proxy-block tool
-# description points at this exact path, and the apply step writes
-# the new content to the matching live path.
-CURRENT_CONFIG_ROUTES = "routes.yaml"
-CURRENT_CONFIG_ALLOWLIST = "allowlist"
+# Filename of the staged Dockerfile inside the agent's read-only
+# current-config mount. The capability-block tool's description
+# points the agent at this exact path so it can read the current
+# Dockerfile and propose modifications.
+#
+# routes.yaml + allowlist used to live here too; PRD 0017 chunk 3
+# moved them behind the `list-egress-proxy-routes` MCP tool (live
+# state from egress-proxy's introspection endpoint) so the agent
+# always sees current data rather than a launch-time snapshot.
 CURRENT_CONFIG_DOCKERFILE = "Dockerfile"
 
 
@@ -442,12 +452,12 @@ class SupervisePlan:
 
     `queue_dir` is the host directory bind-mounted into the sidecar
     at /run/supervise/queue. `current_config_dir` is the host
-    directory bind-mounted (read-only) into the *agent* container at
-    /etc/claude-bottle/current-config, holding routes.yaml + allowlist
-    + Dockerfile so the agent can read them before composing a
-    proposal. `internal_network` is empty at prepare time; the
-    backend's launch step fills it via dataclasses.replace before
-    calling .start."""
+    directory bind-mounted (read-only) into the *agent* container
+    at /etc/claude-bottle/current-config — currently holds only the
+    Dockerfile snapshot (routes.yaml + allowlist moved to the
+    `list-egress-proxy-routes` MCP tool). `internal_network` is
+    empty at prepare time; the backend's launch step fills it via
+    dataclasses.replace before calling .start."""
 
     slug: str
     queue_dir: Path
@@ -465,8 +475,6 @@ class Supervise(ABC):
         slug: str,
         stage_dir: Path,
         *,
-        routes_content: str = "",
-        allowlist_content: str = "",
         dockerfile_content: str = "",
     ) -> SupervisePlan:
         """Stage the per-bottle queue dir on the host and the
@@ -477,17 +485,9 @@ class Supervise(ABC):
         queue_dir.mkdir(parents=True, exist_ok=True)
         current_config_dir = stage_dir / "current-config"
         current_config_dir.mkdir(parents=True, exist_ok=True)
-        (current_config_dir / CURRENT_CONFIG_ROUTES).write_text(
-            routes_content or '{"routes": []}\n'
-        )
-        (current_config_dir / CURRENT_CONFIG_ALLOWLIST).write_text(allowlist_content)
-        (current_config_dir / CURRENT_CONFIG_DOCKERFILE).write_text(dockerfile_content)
-        for name in (
-            CURRENT_CONFIG_ROUTES,
-            CURRENT_CONFIG_ALLOWLIST,
-            CURRENT_CONFIG_DOCKERFILE,
-        ):
-            (current_config_dir / name).chmod(0o644)
+        dockerfile_path = current_config_dir / CURRENT_CONFIG_DOCKERFILE
+        dockerfile_path.write_text(dockerfile_content)
+        dockerfile_path.chmod(0o644)
         return SupervisePlan(
             slug=slug,
             queue_dir=queue_dir,
@@ -554,10 +554,8 @@ __all__ = [
     "ACTION_OPERATOR_EDIT",
     "AuditEntry",
     "COMPONENT_FOR_TOOL",
-    "CURRENT_CONFIG_ALLOWLIST",
     "CURRENT_CONFIG_DIR_IN_AGENT",
     "CURRENT_CONFIG_DOCKERFILE",
-    "CURRENT_CONFIG_ROUTES",
     "DEFAULT_POLL_INTERVAL_SEC",
     "Proposal",
     "QUEUE_DIR_IN_CONTAINER",
@@ -571,8 +569,11 @@ __all__ = [
     "Supervise",
     "SupervisePlan",
     "TOOLS",
+    "EGRESS_PROXY_FORWARD_PROXY",
+    "EGRESS_PROXY_INTROSPECT_URL",
     "TOOL_CAPABILITY_BLOCK",
     "TOOL_EGRESS_PROXY_BLOCK",
+    "TOOL_LIST_EGRESS_PROXY_ROUTES",
     "TOOL_PIPELOCK_BLOCK",
     "archive_proposal",
     "audit_dir",
