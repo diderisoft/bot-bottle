@@ -63,7 +63,7 @@ class TestApplyCapabilityChange(_FakeHomeMixin, unittest.TestCase):
         # job is to sequence write + snapshot + push + teardown; we
         # validate that sequence here, not the docker primitives.
         self._calls: list[str] = []
-        self._orig_snapshot = capability_apply._snapshot_transcript
+        self._orig_snapshot = capability_apply.snapshot_transcript
         self._orig_push = capability_apply._push_working_tree
         self._orig_teardown = capability_apply._teardown_bottle
 
@@ -76,12 +76,12 @@ class TestApplyCapabilityChange(_FakeHomeMixin, unittest.TestCase):
         def stub_teardown(slug):
             self._calls.append(f"teardown:{slug}")
 
-        capability_apply._snapshot_transcript = stub_snapshot  # type: ignore[assignment]
+        capability_apply.snapshot_transcript = stub_snapshot  # type: ignore[assignment]
         capability_apply._push_working_tree = stub_push  # type: ignore[assignment]
         capability_apply._teardown_bottle = stub_teardown  # type: ignore[assignment]
 
     def tearDown(self):
-        capability_apply._snapshot_transcript = self._orig_snapshot  # type: ignore[assignment]
+        capability_apply.snapshot_transcript = self._orig_snapshot  # type: ignore[assignment]
         capability_apply._push_working_tree = self._orig_push  # type: ignore[assignment]
         capability_apply._teardown_bottle = self._orig_teardown  # type: ignore[assignment]
         self._teardown_fake_home()

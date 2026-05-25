@@ -115,7 +115,7 @@ def apply_capability_change(slug: str, new_dockerfile: str) -> tuple[str, str]:
         raise CapabilityApplyError("proposed Dockerfile is empty")
     before = fetch_current_dockerfile(slug)
 
-    _snapshot_transcript(slug)
+    snapshot_transcript(slug)
     _push_working_tree(slug)
     write_per_bottle_dockerfile(slug, new_dockerfile)
     # Set the preserve marker BEFORE teardown so cli.py's session-end
@@ -139,12 +139,19 @@ def _repo_dockerfile_path() -> Path:
     return Path(__file__).resolve().parent.parent.parent.parent / "Dockerfile"
 
 
-def _snapshot_transcript(slug: str) -> None:
+def snapshot_transcript(slug: str) -> None:
     """`docker cp` /home/node/.claude out of the agent container into
     ~/.claude-bottle/state/<slug>/transcript/. Best-effort: missing
     container, missing dir, or cp error all log a warning and return.
     The transcript is what `claude --resume` reads to pick up where
-    the agent left off."""
+    the agent left off.
+
+    Called from two places:
+      - capability-apply, before tearing the bottle down.
+      - cli.py's session-end path, before the launch context closes,
+        so a crash or normal exit also leaves a transcript on disk
+        (deleted along with the state dir on clean exit, kept on
+        crash or capability-block per the preserve marker)."""
     container = _agent_container_name(slug)
     dest = transcript_snapshot_dir(slug)
     if dest.exists():
@@ -157,11 +164,11 @@ def _snapshot_transcript(slug: str) -> None:
     )
     if r.returncode != 0:
         warn(
-            f"capability-apply: transcript snapshot skipped "
+            f"transcript snapshot skipped "
             f"({(r.stderr or '').strip() or 'no transcript dir in container?'})"
         )
         return
-    info(f"capability-apply: transcript snapshotted to {dest}")
+    info(f"transcript snapshotted to {dest}")
 
 
 def _push_working_tree(slug: str) -> None:
@@ -213,4 +220,5 @@ __all__ = [
     "CapabilityApplyError",
     "apply_capability_change",
     "fetch_current_dockerfile",
+    "snapshot_transcript",
 ]

@@ -17,7 +17,12 @@ import tempfile
 from pathlib import Path
 
 from ..backend import BottleSpec, get_bottle_backend
-from ..backend.docker.bottle_state import cleanup_state, is_preserved
+from ..backend.docker.bottle_state import (
+    cleanup_state,
+    is_preserved,
+    mark_preserved,
+)
+from ..backend.docker.capability_apply import snapshot_transcript
 from ..log import die, info
 from ..manifest import Manifest
 from ._common import PROG, USER_CWD, read_tty_line
@@ -98,20 +103,40 @@ def _launch_bottle(
             claude_args = ["--dangerously-skip-permissions"]
             if remote_control:
                 claude_args.append("--remote-control")
-            bottle.exec_claude(claude_args, tty=True)
-            info(f"session ended; container {bottle.name} will be removed")
+            exit_code = bottle.exec_claude(claude_args, tty=True)
+            info(
+                f"session ended (exit {exit_code}); "
+                f"container {bottle.name} will be removed"
+            )
+            # While the container is still alive: always snapshot the
+            # transcript and — if the agent exited non-zero — mark
+            # the state for preservation. Capability-block already
+            # did both before triggering teardown from the dashboard;
+            # this picks up crashes / Ctrl-Cs / OOM kills the same
+            # way. snapshot_transcript is best-effort so the
+            # capability-block path's prior snapshot isn't clobbered
+            # when the container is already gone.
+            _capture_session_state(identity, exit_code)
         # Context exited → containers + networks gone. Now decide
-        # what to do with the per-bottle state dir on the host:
-        # capability-block apply sets the preserve marker before it
-        # tears the bottle down, so the operator can resume from the
-        # new Dockerfile + transcript snapshot. Any other session
-        # end (normal exit, agent crash, Ctrl-C) leaves no marker,
-        # and the state dir gets cleaned up so ~/.claude-bottle/state/
-        # doesn't accumulate per-launch debris.
+        # what to do with the per-bottle state dir on the host: any
+        # preserve marker (capability-block OR crash) keeps it; a
+        # clean exit cleans it up so ~/.claude-bottle/state/ doesn't
+        # accumulate per-launch debris.
         _settle_state(identity)
         return 0
     finally:
         shutil.rmtree(stage_dir, ignore_errors=True)
+
+
+def _capture_session_state(identity: str, exit_code: int) -> None:
+    """Inside the launch context, while the container is still
+    alive: snapshot the transcript and mark for preservation if
+    claude crashed. Pure-function-ish; tests stub the helpers."""
+    if not identity:
+        return
+    snapshot_transcript(identity)
+    if exit_code != 0:
+        mark_preserved(identity)
 
 
 def _settle_state(identity: str) -> None:
