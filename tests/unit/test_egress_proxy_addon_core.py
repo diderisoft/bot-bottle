@@ -152,13 +152,15 @@ class TestMatchRoute(unittest.TestCase):
 
 
 class TestDecide(unittest.TestCase):
-    def test_no_matching_route_forwards(self):
-        # Hostnames the operator didn't declare are not the
-        # egress-proxy's concern; pipelock's hostname allowlist gates
-        # them downstream.
+    def test_no_matching_route_blocks(self):
+        # Defense-in-depth: egress-proxy gates the bottle's allowlist
+        # too, not just pipelock. Any host the operator didn't declare
+        # in egress_proxy.routes is 403'd at egress-proxy before it
+        # ever reaches pipelock.
         d = decide((), "elsewhere.example", "/anything", {})
-        self.assertEqual("forward", d.action)
-        self.assertIsNone(d.inject_authorization)
+        self.assertEqual("block", d.action)
+        self.assertIn("allowlist", d.reason)
+        self.assertIn("'elsewhere.example'", d.reason)
 
     def test_path_allowlist_match_forwards(self):
         d = decide(

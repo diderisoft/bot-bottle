@@ -190,20 +190,30 @@ def decide(
     """Pure decision: given a route table + request host + path + env,
     return what the addon should do with the request.
 
-    - No matching route → forward unchanged. Pipelock will
-      hostname-gate it downstream; egress-proxy does not need to
-      decide on hosts it doesn't recognise.
+    - No matching route → BLOCK. The route table is the bottle's
+      egress allowlist; defense-in-depth complements pipelock's
+      hostname gate on the downstream leg. A bottle that wants a
+      host reachable from the agent must declare a route for it
+      (bare-pass route — no `auth`, no `path_allowlist` — is fine
+      for hosts that just need passthrough).
     - Matching route with `path_allowlist` set, request path doesn't
       start with any of the allowed prefixes → block with a clear
       reason.
     - Matching route with an auth pair → forward + inject
       Authorization. Token comes from `environ[route.token_env]`;
-      missing/empty values 500 (route declared auth but the secret
+      missing/empty values block (route declared auth but the secret
       isn't here — operator misconfig).
     """
     route = match_route(routes, request_host)
     if route is None:
-        return Decision(action="forward")
+        return Decision(
+            action="block",
+            reason=(
+                f"egress-proxy: host {request_host!r} is not in the "
+                f"bottle's egress_proxy.routes allowlist. Declare a "
+                f"route for it or remove the request."
+            ),
+        )
 
     if route.path_allowlist:
         if not any(request_path.startswith(p) for p in route.path_allowlist):

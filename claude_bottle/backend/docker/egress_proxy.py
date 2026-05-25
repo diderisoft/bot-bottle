@@ -229,14 +229,25 @@ class DockerEgressProxy(EgressProxy):
             "--network-alias", EGRESS_PROXY_HOSTNAME,
         ]
         if route_via_pipelock:
-            # Route egress-proxy's outbound HTTPS through pipelock so
-            # the egress allowlist + DLP body scanner apply to its
-            # traffic on the egress-proxy → upstream leg. Pipelock
-            # MITMs each handshake with its per-bottle CA, which is
-            # docker-cp'd in below and pointed to via the
-            # EGRESS_PROXY_UPSTREAM_CA env (entrypoint conditionally
-            # adds the matching --set flag).
+            # Route egress-proxy's outbound traffic through pipelock
+            # so the egress allowlist + DLP body scanner apply to
+            # the egress-proxy → upstream leg. Pipelock MITMs each
+            # handshake with its per-bottle CA, which is docker-cp'd
+            # in below and pointed to via the EGRESS_PROXY_UPSTREAM_CA
+            # env (entrypoint conditionally adds the matching --set
+            # flag).
+            #
+            # EGRESS_PROXY_UPSTREAM_PROXY is the mechanism: mitmproxy
+            # does NOT honor HTTPS_PROXY env vars on its outbound
+            # side (it's a proxy server, not a client). The
+            # entrypoint reads this env and switches mitmdump to
+            # `--mode upstream:<URL>` so all post-MITM traffic
+            # CONNECTs to pipelock instead of going direct. The
+            # HTTPS/HTTP_PROXY env vars below are kept for any
+            # bundled client libraries (mitmproxy plugin requests,
+            # etc.) that might honor them — harmless if ignored.
             create_args.extend([
+                "-e", f"EGRESS_PROXY_UPSTREAM_PROXY={plan.pipelock_proxy_url}",
                 "-e", f"HTTPS_PROXY={plan.pipelock_proxy_url}",
                 "-e", f"HTTP_PROXY={plan.pipelock_proxy_url}",
                 "-e", "NO_PROXY=localhost,127.0.0.1",
