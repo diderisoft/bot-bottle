@@ -1,8 +1,12 @@
-"""Unit: dashboard headless paths (PRD 0013 phase 4).
+"""Unit: dashboard headless paths (PRD 0013 phase 4, PRD 0014).
 
 The curses TUI itself isn't exercised here — these tests cover the
 discovery + approve/reject + audit-write paths that the TUI's key
 handlers call into.
+
+apply_routes_change is stubbed at the dashboard module level so the
+tests don't need a running cred-proxy sidecar; the real docker
+exec/cp/SIGHUP plumbing is covered by the integration test.
 """
 
 import os
@@ -12,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from claude_bottle import supervise
+from claude_bottle.backend.docker.cred_proxy_apply import CredProxyApplyError
 from claude_bottle.cli import dashboard
 from claude_bottle.supervise import (
     Proposal,
@@ -110,8 +115,15 @@ class TestDiscoverPending(_FakeHomeMixin, unittest.TestCase):
 class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
     def setUp(self):
         self._setup_fake_home()
+        self._original_apply = dashboard.apply_routes_change
+        # Default stub: succeed with deterministic before/after so the
+        # audit log shows a non-empty diff.
+        dashboard.apply_routes_change = lambda slug, content: (
+            '{"routes": []}\n', content,
+        )
 
     def tearDown(self):
+        dashboard.apply_routes_change = self._original_apply
         self._teardown_fake_home()
 
     def _enqueue(self, tool: str = TOOL_CRED_PROXY_BLOCK):
@@ -164,6 +176,96 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
         dashboard.approve(qp)
         self.assertEqual(1, len(read_audit_entries("pipelock", "dev")))
         self.assertEqual(0, len(read_audit_entries("cred-proxy", "dev")))
+
+
+class TestCredProxyApplyWiring(_FakeHomeMixin, unittest.TestCase):
+    """PRD 0014 Phase 3: approve() on a cred-proxy-block proposal
+    must call apply_routes_change with the right args and surface
+    its failures."""
+
+    def setUp(self):
+        self._setup_fake_home()
+        self._original_apply = dashboard.apply_routes_change
+
+    def tearDown(self):
+        dashboard.apply_routes_change = self._original_apply
+        self._teardown_fake_home()
+
+    def _enqueue_cred_proxy(self, proposed: str = '{"routes": []}\n'):
+        p = Proposal.new(
+            bottle_slug="dev", tool=TOOL_CRED_PROXY_BLOCK,
+            proposed_file=proposed,
+            justification="need a route",
+            current_file_hash=sha256_hex(proposed),
+            now=FIXED,
+        )
+        qdir = supervise.queue_dir_for_slug("dev")
+        qdir.mkdir(parents=True, exist_ok=True)
+        supervise.write_proposal(qdir, p)
+        return dashboard.QueuedProposal(proposal=p, queue_dir=qdir)
+
+    def test_cred_proxy_block_calls_apply_with_proposed_file(self):
+        calls = []
+        dashboard.apply_routes_change = lambda slug, content: (
+            calls.append((slug, content)) or ("before", content)
+        )
+        qp = self._enqueue_cred_proxy(proposed='{"routes": [{"path": "/new/"}]}\n')
+        dashboard.approve(qp)
+        self.assertEqual(1, len(calls))
+        slug, content = calls[0]
+        self.assertEqual("dev", slug)
+        self.assertEqual('{"routes": [{"path": "/new/"}]}\n', content)
+
+    def test_modify_passes_final_file_to_apply(self):
+        calls = []
+        dashboard.apply_routes_change = lambda slug, content: (
+            calls.append(content) or ("before", content)
+        )
+        qp = self._enqueue_cred_proxy()
+        dashboard.approve(qp, final_file='{"routes": [{"path": "/edited/"}]}\n', notes="tweaked")
+        self.assertEqual(['{"routes": [{"path": "/edited/"}]}\n'], calls)
+
+    def test_apply_failure_blocks_response_and_audit(self):
+        dashboard.apply_routes_change = lambda slug, content: (_ for _ in ()).throw(
+            CredProxyApplyError("docker exec failed")
+        )
+        qp = self._enqueue_cred_proxy()
+        with self.assertRaises(CredProxyApplyError):
+            dashboard.approve(qp)
+        # No response file (proposal stays pending).
+        self.assertEqual(
+            [qp.proposal.id],
+            [p.id for p in supervise.list_pending_proposals(qp.queue_dir)],
+        )
+        # No audit entry.
+        self.assertEqual([], read_audit_entries("cred-proxy", "dev"))
+
+    def test_real_diff_lands_in_audit(self):
+        dashboard.apply_routes_change = lambda slug, content: (
+            '{"routes": []}\n',  # before
+            '{"routes": [{"path": "/new/"}]}\n',  # after
+        )
+        qp = self._enqueue_cred_proxy(proposed='{"routes": [{"path": "/new/"}]}\n')
+        dashboard.approve(qp)
+        entries = read_audit_entries("cred-proxy", "dev")
+        self.assertEqual(1, len(entries))
+        self.assertIn('+{"routes": [{"path": "/new/"}]}', entries[0].diff)
+        self.assertIn('-{"routes": []}', entries[0].diff)
+
+    def test_reject_does_not_call_apply(self):
+        called = []
+        dashboard.apply_routes_change = lambda slug, content: (
+            called.append(True) or ("", content)
+        )
+        qp = self._enqueue_cred_proxy()
+        dashboard.reject(qp, reason="no thanks")
+        self.assertEqual([], called)
+        # Reject still writes a response + audit entry with empty diff.
+        resp = read_response(qp.queue_dir, qp.proposal.id)
+        self.assertEqual(STATUS_REJECTED, resp.status)
+        entries = read_audit_entries("cred-proxy", "dev")
+        self.assertEqual(1, len(entries))
+        self.assertEqual("", entries[0].diff)
 
 
 class TestEditInEditor(unittest.TestCase):

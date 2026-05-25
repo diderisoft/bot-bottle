@@ -22,6 +22,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import supervise as _supervise
+from ..backend.docker.cred_proxy_apply import (
+    CredProxyApplyError,
+    apply_routes_change,
+)
 from ..log import info
 from ..supervise import (
     ACTION_OPERATOR_EDIT,
@@ -33,6 +37,7 @@ from ..supervise import (
     STATUS_MODIFIED,
     STATUS_REJECTED,
     TOOL_CAPABILITY_BLOCK,
+    TOOL_CRED_PROXY_BLOCK,
     list_pending_proposals,
     render_diff,
     write_audit_entry,
@@ -78,9 +83,28 @@ def approve(
     notes: str = "",
     final_file: str | None = None,
 ) -> None:
-    """Write an approval response and an audit entry. If `final_file`
-    is provided the status is `modified`; otherwise `approved`."""
+    """Apply the proposal to the running sidecar, write the response
+    file the agent's tool call is waiting on, and append an audit
+    entry. If `final_file` is provided the status is `modified`;
+    otherwise `approved`.
+
+    Raises CredProxyApplyError if the cred-proxy-block apply fails
+    (sidecar down, invalid JSON survived the operator's modify).
+    On failure no response is written and no audit entry is
+    appended — the proposal stays pending so the operator can fix
+    the input and retry."""
     status = STATUS_MODIFIED if final_file is not None else STATUS_APPROVED
+    file_to_apply = final_file if final_file is not None else qp.proposal.proposed_file
+
+    diff_before, diff_after = "", ""
+    if qp.proposal.tool == TOOL_CRED_PROXY_BLOCK:
+        diff_before, diff_after = apply_routes_change(
+            qp.proposal.bottle_slug, file_to_apply,
+        )
+    # pipelock-block + capability-block remediation lands in PRDs
+    # 0015 + 0016; for 0014 they remain no-op approvals and the
+    # audit diff stays empty.
+
     response = Response(
         proposal_id=qp.proposal.id,
         status=status,
@@ -88,11 +112,16 @@ def approve(
         final_file=final_file,
     )
     write_response(qp.queue_dir, response)
-    _write_audit(qp, action=status, notes=notes, final_file=final_file)
+    _write_audit(
+        qp, action=status, notes=notes,
+        diff_before=diff_before, diff_after=diff_after,
+    )
 
 
 def reject(qp: QueuedProposal, *, reason: str) -> None:
-    """Write a rejection response and an audit entry."""
+    """Write a rejection response and an audit entry. No remediation
+    apply happens on reject — the agent sees the rejection and
+    decides whether to retry / give up."""
     response = Response(
         proposal_id=qp.proposal.id,
         status=STATUS_REJECTED,
@@ -100,7 +129,7 @@ def reject(qp: QueuedProposal, *, reason: str) -> None:
         final_file=None,
     )
     write_response(qp.queue_dir, response)
-    _write_audit(qp, action=STATUS_REJECTED, notes=reason, final_file=None)
+    _write_audit(qp, action=STATUS_REJECTED, notes=reason, diff_before="", diff_after="")
 
 
 def _write_audit(
@@ -108,19 +137,21 @@ def _write_audit(
     *,
     action: str,
     notes: str,
-    final_file: str | None,
+    diff_before: str,
+    diff_after: str,
 ) -> None:
     """Audit log for cred-proxy / pipelock tools. capability-block has
     no audit log (its changes are captured by the bottle's rebuild
-    record + git history per PRD 0016)."""
+    record + git history per PRD 0016).
+
+    For cred-proxy-block approvals the (before, after) come from the
+    apply_routes_change return — a real fetched-from-sidecar diff.
+    For rejections, or for tools whose remediation hasn't landed yet
+    (pipelock in 0014, capability anywhere), both are empty strings
+    and the audit diff renders as empty."""
     component = COMPONENT_FOR_TOOL.get(qp.proposal.tool)
     if component is None:
-        # capability-block: skip audit log; 0016 records via rebuild.
         return
-    # v1 audit diff is empty: 0013's no-op handler doesn't have the
-    # actual current-on-disk file to diff against, only the agent's
-    # proposed file. 0014 / 0015 fill in the real diff against the
-    # live routes.json / allowlist after writing the change.
     write_audit_entry(AuditEntry(
         timestamp=datetime.now(timezone.utc).isoformat(),
         bottle_slug=qp.proposal.bottle_slug,
@@ -128,11 +159,7 @@ def _write_audit(
         operator_action=action,
         operator_notes=notes,
         justification=qp.proposal.justification,
-        diff=render_diff(
-            "",
-            final_file if final_file is not None else qp.proposal.proposed_file,
-            label=component,
-        ),
+        diff=render_diff(diff_before, diff_after, label=component),
     ))
 
 
@@ -228,15 +255,21 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
         elif key in (curses.KEY_ENTER, 10, 13, ord("v")):
             _detail_view(stdscr, qp)
         elif key == ord("a"):
-            approve(qp)
-            status_line = f"approved {qp.proposal.tool} for [{qp.proposal.bottle_slug}]"
+            try:
+                approve(qp)
+                status_line = f"approved {qp.proposal.tool} for [{qp.proposal.bottle_slug}]"
+            except CredProxyApplyError as e:
+                status_line = f"apply failed: {e}"
         elif key == ord("m"):
             edited = _modify(stdscr, qp)
             if edited is None:
                 status_line = "modify aborted (no change)"
             else:
-                approve(qp, final_file=edited, notes="operator modified before approving")
-                status_line = f"modified+approved {qp.proposal.tool} for [{qp.proposal.bottle_slug}]"
+                try:
+                    approve(qp, final_file=edited, notes="operator modified before approving")
+                    status_line = f"modified+approved {qp.proposal.tool} for [{qp.proposal.bottle_slug}]"
+                except CredProxyApplyError as e:
+                    status_line = f"apply failed: {e}"
         elif key == ord("r"):
             reason = _prompt(stdscr, "reject reason: ")
             if reason:
@@ -316,12 +349,18 @@ def _detail_view(stdscr: "curses._CursesWindow", qp: QueuedProposal) -> None:
         elif key == ord("G"):
             offset = max(0, len(lines) - 1)
         elif key == ord("a"):
-            approve(qp)
+            try:
+                approve(qp)
+            except CredProxyApplyError:
+                pass  # Status surfaces back in the list view's render.
             return
         elif key == ord("m"):
             edited = _modify(stdscr, qp)
             if edited is not None:
-                approve(qp, final_file=edited, notes="operator modified before approving")
+                try:
+                    approve(qp, final_file=edited, notes="operator modified before approving")
+                except CredProxyApplyError:
+                    pass
             return
         elif key == ord("r"):
             reason = _prompt(stdscr, "reject reason: ")
