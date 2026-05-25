@@ -237,8 +237,22 @@ def _apply_pipelock_url(slug: str, failed_url: str) -> tuple[str, str]:
     full allowlist. Extract the host, merge into the running
     allowlist, and hand the merged content to apply_allowlist_change.
     The full URL (with path) is preserved on the proposal for the
-    operator's read; only the host ends up in pipelock's allowlist
-    (pipelock can't enforce path-level rules)."""
+    operator's read; only the host ends up in pipelock's allowlist.
+
+    FOLLOW-UP — path-aware filtering. Pipelock 2.3.0's api_allowlist
+    is hostname-only (verified by inspecting the binary's strict
+    preset; the only "path" fields in pipelock's schema are about
+    local filesystem paths under sandbox / file_sentry / taint). So
+    approving pipelock-block opens the entire host, not the URL's
+    path. If/when per-path enforcement becomes load-bearing, the
+    follow-up is most likely adding an `auth_scheme: none` mode +
+    `path_allowlist` field to cred-proxy (which already does
+    path-prefix routing) and rewiring pipelock-block to propose
+    cred-proxy routes instead of pipelock hostnames. That's a
+    multi-touch change deserving its own PRD — out of scope for the
+    supervise-loop work that introduced this function. See PR
+    discussion on https://gitea.dideric.is/didericis/claude-bottle/pulls/25
+    for the design conversation."""
     import urllib.parse
     parsed = urllib.parse.urlsplit(failed_url.strip())
     host = parsed.hostname or ""
