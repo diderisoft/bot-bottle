@@ -53,6 +53,11 @@ class BottleSpec:
     agent_name: str
     copy_cwd: bool
     user_cwd: str
+    # PRD 0016 follow-up: when set, the backend's prepare step uses
+    # this identity instead of minting a fresh one — the resume path
+    # (`cli.py resume <identity>`) sets this to continue an existing
+    # bottle's state. Empty string for a fresh `start`.
+    identity: str = ""
 
 
 @dataclass(frozen=True)

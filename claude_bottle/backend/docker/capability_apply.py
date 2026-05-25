@@ -1,0 +1,210 @@
+"""capability_apply — host-side orchestrator for capability-block
+remediation (PRD 0016).
+
+On approval of a capability-block proposal, the dashboard calls
+apply_capability_change(slug, new_dockerfile) which:
+
+  1. Snapshots the agent's transcript dir to
+     ~/.claude-bottle/state/<slug>/transcript/ (best-effort).
+  2. Pushes the agent's working tree via `git push` (best-effort —
+     no upstream / no commits / no git repo all skip with a log).
+  3. Writes the new Dockerfile to
+     ~/.claude-bottle/state/<slug>/Dockerfile (PRD 0016 Phase 1
+     state). The next `cli.py start <agent>` picks it up.
+  4. Force-removes the agent container + all sidecars + the
+     per-bottle networks. Idempotent — missing resources are not
+     errors.
+
+Returns (before, after) Dockerfile contents so the dashboard can
+record / render the diff. (capability-block has no audit log per
+PRD 0013 — the per-bottle Dockerfile state is its own record.)
+
+This is "fire-and-forget" from the agent's perspective: by the time
+the dashboard writes the response file the supervise sidecar is
+gone, so the agent's tool call connection drops without ever
+receiving the response. The replacement agent (next manual
+`cli.py start`) sees the new Dockerfile and starts from there.
+v1 does not auto-relaunch — see PRD 0016's capability-block return
+semantics open question.
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
+from ...log import info, warn
+from .bottle_state import (
+    per_bottle_dockerfile,
+    per_bottle_dockerfile_path,
+    transcript_snapshot_dir,
+    write_per_bottle_dockerfile,
+)
+
+
+# Agent home inside the container (per the repo Dockerfile's
+# `USER node` + `WORKDIR /home/node`). Used to locate the transcript
+# dir + the workspace dir for git push.
+_AGENT_HOME_IN_CONTAINER = "/home/node"
+_AGENT_TRANSCRIPT_IN_CONTAINER = f"{_AGENT_HOME_IN_CONTAINER}/.claude"
+_AGENT_WORKSPACE_IN_CONTAINER = f"{_AGENT_HOME_IN_CONTAINER}/workspace"
+
+# Per-bottle resource name patterns (mirroring prepare.py /
+# the various sidecar modules). The agent container's name is the
+# slug with no infix; sidecars carry an infix like cred-proxy.
+def _agent_container_name(slug: str) -> str:
+    return f"claude-bottle-{slug}"
+
+
+def _per_bottle_container_names(slug: str) -> list[str]:
+    """All container names that belong to this bottle. Missing
+    containers are silently skipped by the teardown helper, so it's
+    fine to include names that don't exist for a given bottle."""
+    return [
+        _agent_container_name(slug),
+        f"claude-bottle-cred-proxy-{slug}",
+        f"claude-bottle-pipelock-{slug}",
+        f"claude-bottle-git-gate-{slug}",
+        f"claude-bottle-supervise-{slug}",
+    ]
+
+
+def _per_bottle_network_names(slug: str) -> list[str]:
+    return [
+        f"claude-bottle-net-{slug}",
+        f"claude-bottle-egress-{slug}",
+    ]
+
+
+class CapabilityApplyError(RuntimeError):
+    """Raised when the apply fails in a way that should keep the
+    proposal pending (so the operator can retry). Best-effort
+    failures (transcript snapshot, git push) do not raise — they
+    just log and proceed."""
+
+
+# --- Public helpers --------------------------------------------------------
+
+
+def fetch_current_dockerfile(slug: str) -> str:
+    """Return the Dockerfile content the next `cli.py start <agent>`
+    would use for this bottle. If a per-bottle override exists, that
+    one; otherwise the repo's Dockerfile.
+
+    Used by the operator-edit verb to show the current source of
+    truth, and by apply_capability_change for the before-diff."""
+    override = per_bottle_dockerfile(slug)
+    if override is not None:
+        return override
+    repo_dockerfile = _repo_dockerfile_path()
+    if repo_dockerfile.is_file():
+        return repo_dockerfile.read_text()
+    raise CapabilityApplyError(
+        f"no per-bottle Dockerfile for {slug} and no repo Dockerfile at "
+        f"{repo_dockerfile}"
+    )
+
+
+def apply_capability_change(slug: str, new_dockerfile: str) -> tuple[str, str]:
+    """End-to-end capability-block remediation. See module docstring
+    for the sequence. Returns (before, after) Dockerfile content."""
+    if not new_dockerfile.strip():
+        raise CapabilityApplyError("proposed Dockerfile is empty")
+    before = fetch_current_dockerfile(slug)
+
+    _snapshot_transcript(slug)
+    _push_working_tree(slug)
+    write_per_bottle_dockerfile(slug, new_dockerfile)
+    _teardown_bottle(slug)
+
+    return before, new_dockerfile
+
+
+# --- Internals -------------------------------------------------------------
+
+
+def _repo_dockerfile_path() -> Path:
+    """Path to the repo's Dockerfile (one dir above this module's
+    package root). Resolved at call time so the path is correct
+    regardless of where this module is imported from."""
+    # claude_bottle/backend/docker/capability_apply.py -> repo root
+    return Path(__file__).resolve().parent.parent.parent.parent / "Dockerfile"
+
+
+def _snapshot_transcript(slug: str) -> None:
+    """`docker cp` /home/node/.claude out of the agent container into
+    ~/.claude-bottle/state/<slug>/transcript/. Best-effort: missing
+    container, missing dir, or cp error all log a warning and return.
+    The transcript is what `claude --resume` reads to pick up where
+    the agent left off."""
+    container = _agent_container_name(slug)
+    dest = transcript_snapshot_dir(slug)
+    if dest.exists():
+        # Remove any prior snapshot so the new one is a clean copy.
+        shutil.rmtree(dest, ignore_errors=True)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    r = subprocess.run(
+        ["docker", "cp", f"{container}:{_AGENT_TRANSCRIPT_IN_CONTAINER}", str(dest)],
+        capture_output=True, text=True, check=False,
+    )
+    if r.returncode != 0:
+        warn(
+            f"capability-apply: transcript snapshot skipped "
+            f"({(r.stderr or '').strip() or 'no transcript dir in container?'})"
+        )
+        return
+    info(f"capability-apply: transcript snapshotted to {dest}")
+
+
+def _push_working_tree(slug: str) -> None:
+    """`docker exec <agent> git push` from /home/node/workspace.
+    Best-effort: not-a-git-repo, no upstream, nothing-to-push, no
+    network all log a warning and return. The replacement bottle
+    will pick up whatever's actually upstream."""
+    container = _agent_container_name(slug)
+    r = subprocess.run(
+        [
+            "docker", "exec", container, "sh", "-c",
+            f"cd {_AGENT_WORKSPACE_IN_CONTAINER} && "
+            f"git rev-parse --is-inside-work-tree >/dev/null 2>&1 && "
+            f"git push origin HEAD 2>&1 || true",
+        ],
+        capture_output=True, text=True, check=False,
+    )
+    if r.returncode != 0:
+        warn(
+            f"capability-apply: git push skipped "
+            f"({(r.stderr or '').strip() or 'docker exec failed'})"
+        )
+        return
+    output = (r.stdout or "").strip()
+    if output:
+        info(f"capability-apply: git push: {output}")
+    else:
+        info("capability-apply: git push ran (no output — likely not a git workspace)")
+
+
+def _teardown_bottle(slug: str) -> None:
+    """Force-remove all per-bottle docker resources. Idempotent —
+    `docker rm -f` / `docker network rm` silently ignore missing
+    names, so this can be called even mid-rebuild."""
+    info(f"capability-apply: tearing down bottle {slug}")
+    for name in _per_bottle_container_names(slug):
+        subprocess.run(
+            ["docker", "rm", "-f", name],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+        )
+    for net in _per_bottle_network_names(slug):
+        subprocess.run(
+            ["docker", "network", "rm", net],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+        )
+
+
+__all__ = [
+    "CapabilityApplyError",
+    "apply_capability_change",
+    "fetch_current_dockerfile",
+]

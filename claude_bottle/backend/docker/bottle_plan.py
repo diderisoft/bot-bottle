@@ -44,6 +44,11 @@ class DockerBottlePlan(BottlePlan):
     image: str
     derived_image: str           # "" -> no derived image
     runtime_image: str           # image actually launched (derived or base)
+    # Absolute path to the Dockerfile that builds `image`. Empty means
+    # use the repo's default Dockerfile. Populated to a per-bottle
+    # state file (~/.claude-bottle/state/<slug>/Dockerfile) after a
+    # capability-block remediation (PRD 0016).
+    dockerfile_path: str
     env_file: Path               # docker --env-file: NAME=VALUE literals
     # name -> value for vars forwarded into the docker-run child process
     # via subprocess env (so values never land on argv or in a file).
@@ -89,6 +94,11 @@ class DockerBottlePlan(BottlePlan):
         print(file=sys.stderr)
         info(f"agent           : {spec.agent_name}")
         info(f"image           : {self.image}")
+        if self.dockerfile_path:
+            info(
+                f"dockerfile      : {self.dockerfile_path} "
+                f"(per-bottle override from PRD 0016 capability rebuild)"
+            )
         if self.derived_image:
             info(
                 f"cwd             : {spec.user_cwd} -> /home/node/workspace "

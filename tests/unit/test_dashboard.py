@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from claude_bottle import supervise
+from claude_bottle.backend.docker.capability_apply import CapabilityApplyError
 from claude_bottle.backend.docker.cred_proxy_apply import CredProxyApplyError
 from claude_bottle.backend.docker.pipelock_apply import PipelockApplyError
 from claude_bottle.cli import dashboard
@@ -118,6 +119,7 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
         self._setup_fake_home()
         self._original_apply_routes = dashboard.apply_routes_change
         self._original_apply_allowlist = dashboard.apply_allowlist_change
+        self._original_apply_capability = dashboard.apply_capability_change
         # Default stubs: succeed with deterministic before/after so the
         # audit log shows a non-empty diff.
         dashboard.apply_routes_change = lambda slug, content: (
@@ -126,10 +128,14 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
         dashboard.apply_allowlist_change = lambda slug, content: (
             "old.example\n", content,
         )
+        dashboard.apply_capability_change = lambda slug, content: (
+            "FROM old\n", content,
+        )
 
     def tearDown(self):
         dashboard.apply_routes_change = self._original_apply_routes
         dashboard.apply_allowlist_change = self._original_apply_allowlist
+        dashboard.apply_capability_change = self._original_apply_capability
         self._teardown_fake_home()
 
     def _enqueue(self, tool: str = TOOL_CRED_PROXY_BLOCK):
@@ -331,6 +337,75 @@ class TestPipelockApplyWiring(_FakeHomeMixin, unittest.TestCase):
         entries = read_audit_entries("pipelock", "dev")
         self.assertEqual(1, len(entries))
         self.assertIn("+new.example", entries[0].diff)
+
+
+class TestCapabilityApplyWiring(_FakeHomeMixin, unittest.TestCase):
+    """PRD 0016 Phase 3: approve() on a capability-block proposal
+    calls apply_capability_change, archives the proposal afterward
+    (sidecar is gone so it can't archive itself), and writes no
+    audit entry (capability-block has none per PRD 0013)."""
+
+    def setUp(self):
+        self._setup_fake_home()
+        self._original = dashboard.apply_capability_change
+
+    def tearDown(self):
+        dashboard.apply_capability_change = self._original
+        self._teardown_fake_home()
+
+    def _enqueue_capability(self, proposed: str = "FROM python:3.13\nRUN apk add ripgrep\n"):
+        p = Proposal.new(
+            bottle_slug="dev", tool=TOOL_CAPABILITY_BLOCK,
+            proposed_file=proposed,
+            justification="need ripgrep",
+            current_file_hash=sha256_hex(proposed),
+            now=FIXED,
+        )
+        qdir = supervise.queue_dir_for_slug("dev")
+        qdir.mkdir(parents=True, exist_ok=True)
+        supervise.write_proposal(qdir, p)
+        return dashboard.QueuedProposal(proposal=p, queue_dir=qdir)
+
+    def test_capability_block_calls_apply_with_proposed_file(self):
+        calls = []
+        dashboard.apply_capability_change = lambda slug, content: (
+            calls.append((slug, content)) or ("FROM old\n", content)
+        )
+        qp = self._enqueue_capability("FROM bookworm\n")
+        dashboard.approve(qp)
+        self.assertEqual([("dev", "FROM bookworm\n")], calls)
+
+    def test_apply_failure_blocks_response_and_keeps_pending(self):
+        dashboard.apply_capability_change = lambda slug, content: (_ for _ in ()).throw(
+            CapabilityApplyError("teardown failed")
+        )
+        qp = self._enqueue_capability()
+        with self.assertRaises(CapabilityApplyError):
+            dashboard.approve(qp)
+        self.assertEqual(
+            [qp.proposal.id],
+            [p.id for p in supervise.list_pending_proposals(qp.queue_dir)],
+        )
+
+    def test_no_audit_log_for_capability(self):
+        dashboard.apply_capability_change = lambda slug, content: ("FROM old\n", content)
+        qp = self._enqueue_capability()
+        dashboard.approve(qp)
+        # capability-block has no audit log per PRD 0013 — its record
+        # lives in the per-bottle Dockerfile + transcript state.
+        self.assertEqual([], read_audit_entries("cred-proxy", "dev"))
+        self.assertEqual([], read_audit_entries("pipelock", "dev"))
+
+    def test_proposal_archived_after_apply(self):
+        dashboard.apply_capability_change = lambda slug, content: ("FROM old\n", content)
+        qp = self._enqueue_capability()
+        dashboard.approve(qp)
+        # Sidecar would normally archive after delivering the response,
+        # but it's gone by then. The dashboard archives so
+        # discover_pending stops surfacing the resolved proposal.
+        self.assertEqual([], supervise.list_pending_proposals(qp.queue_dir))
+        processed = list((qp.queue_dir / "processed").glob("*.json"))
+        self.assertEqual(2, len(processed))
 
 
 class TestOperatorEditRoutes(_FakeHomeMixin, unittest.TestCase):

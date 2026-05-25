@@ -22,6 +22,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import supervise as _supervise
+from ..backend.docker.capability_apply import (
+    CapabilityApplyError,
+    apply_capability_change,
+)
 from ..backend.docker.cred_proxy_apply import (
     CredProxyApplyError,
     apply_routes_change,
@@ -45,6 +49,7 @@ from ..supervise import (
     TOOL_CAPABILITY_BLOCK,
     TOOL_CRED_PROXY_BLOCK,
     TOOL_PIPELOCK_BLOCK,
+    archive_proposal,
     list_pending_proposals,
     render_diff,
     write_audit_entry,
@@ -56,7 +61,7 @@ from ._common import PROG
 # Errors any remediation engine may raise. Caught by the TUI key
 # handlers and surfaced in the status line so a failed apply keeps
 # the proposal pending rather than crashing curses.
-ApplyError = (CredProxyApplyError, PipelockApplyError)
+ApplyError = (CredProxyApplyError, PipelockApplyError, CapabilityApplyError)
 
 
 # --- Discovery -------------------------------------------------------------
@@ -107,6 +112,16 @@ def discover_pipelock_slugs() -> list[str]:
     return _discover_sidecar_slugs("claude-bottle-pipelock-")
 
 
+def _approval_status(qp: QueuedProposal, verb: str) -> str:
+    """Status-line text after a successful approval. For capability-
+    block, append the `resume <identity>` hint so the operator can
+    bring the rebuilt bottle back up with one copy-paste."""
+    base = f"{verb} {qp.proposal.tool} for [{qp.proposal.bottle_slug}]"
+    if qp.proposal.tool == TOOL_CAPABILITY_BLOCK:
+        return f"{base}; resume: ./cli.py resume {qp.proposal.bottle_slug}"
+    return base
+
+
 def discover_pending() -> list[QueuedProposal]:
     """Walk ~/.claude-bottle/queue/* and collect pending proposals
     from every bottle's queue. Sorted by arrival time across the
@@ -155,9 +170,10 @@ def approve(
         diff_before, diff_after = apply_allowlist_change(
             qp.proposal.bottle_slug, file_to_apply,
         )
-    # capability-block remediation lands in PRD 0016; until then
-    # it stays a no-op approval and the audit (none for capability)
-    # is skipped.
+    elif qp.proposal.tool == TOOL_CAPABILITY_BLOCK:
+        diff_before, diff_after = apply_capability_change(
+            qp.proposal.bottle_slug, file_to_apply,
+        )
 
     response = Response(
         proposal_id=qp.proposal.id,
@@ -170,6 +186,12 @@ def approve(
         qp, action=status, notes=notes,
         diff_before=diff_before, diff_after=diff_after,
     )
+    if qp.proposal.tool == TOOL_CAPABILITY_BLOCK:
+        # The supervise sidecar was torn down by apply_capability_change,
+        # so it can't archive its own proposal+response. Archive here so
+        # dashboard.discover_pending stops surfacing the resolved
+        # proposal forever.
+        archive_proposal(qp.queue_dir, qp.proposal.id)
 
 
 def reject(qp: QueuedProposal, *, reason: str) -> None:
@@ -359,7 +381,7 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
         elif key == ord("a"):
             try:
                 approve(qp)
-                status_line = f"approved {qp.proposal.tool} for [{qp.proposal.bottle_slug}]"
+                status_line = _approval_status(qp, "approved")
             except ApplyError as e:
                 status_line = f"apply failed: {e}"
         elif key == ord("m"):
@@ -369,7 +391,7 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
             else:
                 try:
                     approve(qp, final_file=edited, notes="operator modified before approving")
-                    status_line = f"modified+approved {qp.proposal.tool} for [{qp.proposal.bottle_slug}]"
+                    status_line = _approval_status(qp, "modified+approved")
                 except ApplyError as e:
                     status_line = f"apply failed: {e}"
         elif key == ord("r"):

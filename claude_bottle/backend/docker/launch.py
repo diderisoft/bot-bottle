@@ -66,7 +66,10 @@ def launch(
             pass
 
     try:
-        docker_mod.build_image(plan.image, _REPO_DIR)
+        docker_mod.build_image(
+            plan.image, _REPO_DIR,
+            dockerfile=plan.dockerfile_path,
+        )
         if plan.derived_image:
             docker_mod.build_image_with_cwd(
                 plan.derived_image, plan.image, plan.spec.user_cwd
