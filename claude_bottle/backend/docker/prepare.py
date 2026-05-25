@@ -175,15 +175,16 @@ def resolve_plan(
     # never lands on argv or in env_file) goes into one dict. Nothing
     # mutates the host os.environ.
     forwarded_env: dict[str, str] = dict(resolved.forwarded)
-    # When the bottle declares an egress-proxy route for the Anthropic
-    # OAuth flow, claude-code's outbound Authorization gets stripped +
-    # re-injected by egress-proxy. The agent's environ still needs
-    # *something* claude-code recognises as a credential or it refuses
-    # to start; ship a non-secret placeholder. The placeholder is not
-    # any real `auth.token_ref` value, so leaking it would tell an
-    # attacker only that egress-proxy is in front.
+    # When the bottle declares an egress-proxy route with the
+    # `claude_code_oauth` role marker, claude-code's outbound
+    # Authorization gets stripped + re-injected by egress-proxy. The
+    # agent's environ still needs *something* claude-code recognises
+    # as a credential or it refuses to start; ship a non-secret
+    # placeholder. The placeholder isn't any real token value, so
+    # leaking it would tell an attacker only that egress-proxy is in
+    # front. Manifest validation enforces singleton on this role.
     has_anthropic_auth = any(
-        r.token_ref == "CLAUDE_CODE_OAUTH_TOKEN"
+        "claude_code_oauth" in r.roles
         for r in egress_proxy_plan.routes
     )
     if has_anthropic_auth:

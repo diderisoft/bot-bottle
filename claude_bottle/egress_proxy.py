@@ -62,13 +62,18 @@ class EgressProxyRoute:
     (e.g. `EGRESS_PROXY_TOKEN_0`); `token_ref` is the host env var
     the CLI reads at launch and forwards into the container's environ
     under `token_env`. Routes that share a `token_ref` coalesce to
-    one `token_env` slot."""
+    one `token_env` slot.
+
+    `roles` carries the manifest route's optional role markers (see
+    `manifest.EGRESS_PROXY_ROLES`). The launch step reads these for
+    side effects like the claude-code OAuth placeholder env."""
 
     host: str
     path_allowlist: tuple[str, ...] = ()
     auth_scheme: str = ""
     token_env: str = ""
     token_ref: str = ""
+    roles: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -148,11 +153,13 @@ def egress_proxy_routes_for_bottle(
                 auth_scheme=r.AuthScheme,
                 token_env=token_env,
                 token_ref=r.TokenRef,
+                roles=r.Role,
             ))
         else:
             out.append(EgressProxyRoute(
                 host=r.Host,
                 path_allowlist=r.PathAllowlist,
+                roles=r.Role,
             ))
     return tuple(out)
 

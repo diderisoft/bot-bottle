@@ -128,6 +128,57 @@ class TestAuth(unittest.TestCase):
             }])
 
 
+class TestRole(unittest.TestCase):
+    def test_omitted_means_no_roles(self):
+        b = _bottle([{"host": "x.example"}])
+        self.assertEqual((), b.egress_proxy.routes[0].Role)
+
+    def test_string_normalizes_to_tuple(self):
+        b = _bottle([{
+            "host": "api.anthropic.com",
+            "role": "claude_code_oauth",
+            "auth": {"scheme": "Bearer", "token_ref": "T"},
+        }])
+        self.assertEqual(("claude_code_oauth",),
+                         b.egress_proxy.routes[0].Role)
+
+    def test_list_supported(self):
+        b = _bottle([{
+            "host": "api.anthropic.com",
+            "role": ["claude_code_oauth"],
+            "auth": {"scheme": "Bearer", "token_ref": "T"},
+        }])
+        self.assertEqual(("claude_code_oauth",),
+                         b.egress_proxy.routes[0].Role)
+
+    def test_unknown_role_rejected(self):
+        # The role enum is locked down — typos shouldn't silently
+        # become no-op markers.
+        with self.assertRaises(Die):
+            _bottle([{"host": "x.example", "role": "totally-made-up"}])
+
+    def test_non_string_role_rejected(self):
+        with self.assertRaises(Die):
+            _bottle([{"host": "x.example", "role": 42}])
+
+    def test_list_with_non_string_item_rejected(self):
+        with self.assertRaises(Die):
+            _bottle([{"host": "x.example",
+                      "role": ["claude_code_oauth", 42]}])
+
+    def test_singleton_claude_code_oauth_enforced(self):
+        # Two routes both claiming the role would make "which one
+        # drives the placeholder env?" ambiguous.
+        with self.assertRaises(Die):
+            _bottle([
+                {"host": "api.anthropic.com", "role": "claude_code_oauth",
+                 "auth": {"scheme": "Bearer", "token_ref": "T1"}},
+                {"host": "api2.anthropic.example",
+                 "role": "claude_code_oauth",
+                 "auth": {"scheme": "Bearer", "token_ref": "T2"}},
+            ])
+
+
 class TestRouteValidation(unittest.TestCase):
     def test_duplicate_hosts_rejected(self):
         # Routes match by exact host; duplicates leave the choice
