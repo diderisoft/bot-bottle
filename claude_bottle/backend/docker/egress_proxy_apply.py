@@ -80,6 +80,17 @@ def apply_routes_change(slug: str, new_content: str) -> tuple[str, str]:
     try:
         with os.fdopen(fd, "w") as f:
             f.write(new_content)
+        # mkstemp creates the file with mode 0600. `docker cp`
+        # preserves mode + host uid into the container, so without
+        # chmod the file lands as 0600 owned by the host user's uid,
+        # which inside the container is not mitmproxy (uid 1000) —
+        # the addon's reload then fails with PermissionError on the
+        # SIGHUP-triggered re-read and the old routes table stays in
+        # memory. Bump to 0644 so mitmproxy can read it post-cp;
+        # the host stage_dir doesn't apply to this tmp file but the
+        # content isn't secret (no tokens — those live in the
+        # container's environ), so 0644 in /tmp is fine.
+        os.chmod(tmp_path, 0o644)
         cp = subprocess.run(
             ["docker", "cp", tmp_path,
              f"{container}:{EGRESS_PROXY_ROUTES_IN_CONTAINER}"],
