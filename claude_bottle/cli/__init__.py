@@ -1,6 +1,6 @@
 """Main CLI dispatcher.
 
-Commands: cleanup, edit, info, init, list, start
+Commands: cleanup, dashboard, edit, info, init, list, start
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from ..log import Die, die
 from ._common import PROG
 from . import list as _list_mod
 from .cleanup import cmd_cleanup
+from .dashboard import cmd_dashboard
 from .edit import cmd_edit
 from .info import cmd_info
 from .init import cmd_init
@@ -20,6 +21,7 @@ cmd_list = _list_mod.cmd_list
 
 COMMANDS = {
     "cleanup": cmd_cleanup,
+    "dashboard": cmd_dashboard,
     "edit": cmd_edit,
     "info": cmd_info,
     "init": cmd_init,
@@ -32,6 +34,7 @@ def usage() -> None:
     sys.stderr.write(f"usage: {PROG} <command> [args...]\n\n")
     sys.stderr.write("Commands:\n")
     sys.stderr.write("  cleanup   stop and remove all active claude-bottle containers\n")
+    sys.stderr.write("  dashboard view + approve/modify/reject pending supervise proposals (PRD 0013)\n")
     sys.stderr.write("  edit      open an agent in vim for editing\n")
     sys.stderr.write("  info      print env, skills, and prompt details for a named agent\n")
     sys.stderr.write("  init      interactively create a new agent and add it to claude-bottle.json\n")

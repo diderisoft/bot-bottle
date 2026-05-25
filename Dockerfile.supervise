@@ -1,0 +1,32 @@
+# Per-bottle supervise sidecar image (PRD 0013).
+#
+# Exposes three MCP tools (cred-proxy-block, pipelock-block,
+# capability-block) the agent calls to propose config changes when
+# stuck. Each tool call writes a Proposal to a host-mounted queue
+# dir and blocks waiting for the operator's Response.
+#
+# Stdlib-only Python. The bottle slug arrives via
+# SUPERVISE_BOTTLE_SLUG; the host's ~/.claude-bottle/queue/<slug>/
+# is bind-mounted at /run/supervise/queue.
+
+# python:3.13-alpine, pinned by digest (same image cred-proxy uses,
+# so docker pulls / caches once for both sidecars).
+FROM python@sha256:420cd0bf0f3998275875e02ecd5808168cf0843cbb4d3c536432f729247b2acc
+
+# Both files ship as single files into /app; supervise_server.py
+# imports supervise via same-directory resolution.
+COPY claude_bottle/supervise.py /app/supervise.py
+COPY claude_bottle/supervise_server.py /app/supervise_server.py
+
+# Pre-create the queue mount point so docker's bind-mount has a
+# parent dir. Matches Dockerfile.cred-proxy's pattern.
+RUN mkdir -p /run/supervise/queue
+
+EXPOSE 9100
+
+# WORKDIR makes the in-app same-dir import deterministic regardless
+# of how the container is launched.
+WORKDIR /app
+
+# PID 1 is python for clean signal handling and exit codes.
+ENTRYPOINT ["python3", "/app/supervise_server.py"]

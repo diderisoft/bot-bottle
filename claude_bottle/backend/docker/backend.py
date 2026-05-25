@@ -31,6 +31,7 @@ from .provision import cred_proxy as _cred_proxy
 from .provision import git as _git
 from .provision import prompt as _prompt
 from .provision import skills as _skills
+from .supervise import DockerSupervise
 
 
 class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanupPlan"]):
@@ -43,6 +44,7 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
         self._proxy = DockerPipelockProxy()
         self._git_gate = DockerGitGate()
         self._cred_proxy = DockerCredProxy()
+        self._supervise = DockerSupervise()
 
     def _resolve_plan(self, spec: BottleSpec, *, stage_dir: Path) -> DockerBottlePlan:
         return _prepare.resolve_plan(
@@ -51,6 +53,7 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
             proxy=self._proxy,
             git_gate=self._git_gate,
             cred_proxy=self._cred_proxy,
+            supervise=self._supervise,
         )
 
     @contextmanager
@@ -60,6 +63,7 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
             proxy=self._proxy,
             git_gate=self._git_gate,
             cred_proxy=self._cred_proxy,
+            supervise=self._supervise,
             provision=self.provision,
         ) as bottle:
             yield bottle
