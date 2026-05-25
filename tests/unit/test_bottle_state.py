@@ -1,5 +1,6 @@
-"""Unit: per-bottle state helpers (PRD 0016 Phase 1)."""
+"""Unit: per-bottle state helpers (PRD 0016 Phase 1) + identity."""
 
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -66,6 +67,49 @@ class TestPerBottleDockerfile(_FakeHomeMixin, unittest.TestCase):
     def test_transcript_dir_under_state_dir(self):
         path = bottle_state.transcript_snapshot_dir("dev")
         self.assertTrue(str(path).endswith("/.claude-bottle/state/dev/transcript"))
+
+
+class TestBottleIdentity(unittest.TestCase):
+    """bottle_identity(agent_name, cwd) — PRD 0016 follow-up.
+
+    Without --cwd, identity == slugify(agent_name) so existing
+    no-cwd bottles look unchanged. With --cwd, identity has a
+    cwd-hash suffix so the same agent against different projects
+    gets distinct container / queue / audit / state dirs."""
+
+    def test_no_cwd_returns_slug(self):
+        self.assertEqual("dev", bottle_state.bottle_identity("dev", None))
+        self.assertEqual("api-foo", bottle_state.bottle_identity("Api Foo", None))
+
+    def test_cwd_appends_hash_suffix(self):
+        identity = bottle_state.bottle_identity("dev", Path("/proj/A"))
+        self.assertTrue(identity.startswith("dev-"))
+        suffix = identity[len("dev-"):]
+        self.assertEqual(12, len(suffix))
+        self.assertTrue(re.fullmatch(r"[0-9a-f]+", suffix), suffix)
+
+    def test_same_cwd_same_identity(self):
+        a = bottle_state.bottle_identity("dev", Path("/proj/A"))
+        b = bottle_state.bottle_identity("dev", Path("/proj/A"))
+        self.assertEqual(a, b)
+
+    def test_different_cwds_differ(self):
+        a = bottle_state.bottle_identity("dev", Path("/proj/A"))
+        b = bottle_state.bottle_identity("dev", Path("/proj/B"))
+        self.assertNotEqual(a, b)
+
+    def test_different_agents_same_cwd_differ(self):
+        a = bottle_state.bottle_identity("dev", Path("/proj/A"))
+        b = bottle_state.bottle_identity("api", Path("/proj/A"))
+        self.assertNotEqual(a, b)
+
+    def test_agent_name_slugified(self):
+        # Identity's agent-name prefix is slugify(name), not the raw
+        # name — same rule the rest of the codebase has always used.
+        self.assertEqual(
+            "my-agent",
+            bottle_state.bottle_identity("My Agent", None),
+        )
 
 
 if __name__ == "__main__":

@@ -27,6 +27,7 @@ from .cred_proxy import (
 )
 from .git_gate import DockerGitGate, git_gate_container_name
 from .bottle_state import (
+    bottle_identity,
     per_bottle_dockerfile,
     per_bottle_dockerfile_path,
     per_bottle_image_tag,
@@ -53,7 +54,16 @@ def resolve_plan(
     agent = manifest.agents[spec.agent_name]
     bottle = manifest.bottle_for(spec.agent_name)
 
-    slug = docker_mod.slugify(spec.agent_name)
+    # PRD 0016 follow-up: identity, not bare slug. With --cwd, the
+    # identity carries a sha256(cwd) suffix so the same agent against
+    # different projects gets distinct container names, networks,
+    # queue + audit + state dirs. Without --cwd, identity ==
+    # slugify(agent_name) — same value the old `slug` produced — so
+    # no-cwd bottles look unchanged. We keep the variable named `slug`
+    # because every downstream module already threads it under that
+    # name; the value is now the bottle's full identity.
+    cwd_for_identity = Path(spec.user_cwd).resolve() if spec.copy_cwd else None
+    slug = bottle_identity(spec.agent_name, cwd_for_identity)
 
     # PRD 0016 capability-block: if a per-bottle Dockerfile has been
     # written (via apply_capability_change), the base image becomes
