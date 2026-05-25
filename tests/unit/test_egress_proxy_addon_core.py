@@ -162,9 +162,13 @@ class TestMatchRouteWildcards(unittest.TestCase):
         routes = (Route(host="*.example.com"),)
         self.assertIsNotNone(match_route(routes, "a.b.example.com"))
 
-    def test_wildcard_does_not_match_apex(self):
+    def test_wildcard_matches_apex(self):
+        # Allowlist semantics: `*.example.com` covers
+        # `example.com` itself + every subdomain. Matches what
+        # the pipelock mirror does (strips `*.example.com` →
+        # `example.com`) so the two layers agree.
         routes = (Route(host="*.example.com"),)
-        self.assertIsNone(match_route(routes, "example.com"))
+        self.assertIsNotNone(match_route(routes, "example.com"))
 
     def test_wildcard_does_not_match_overlapping_suffix(self):
         # `*.example.com` shouldn't match `barexample.com` — the

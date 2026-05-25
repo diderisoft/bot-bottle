@@ -174,10 +174,15 @@ def match_route(
     Match precedence:
       1. Exact (case-insensitive) match on the literal hostname.
       2. Wildcard match: a route whose host starts with `*.` is a
-         suffix pattern. `*.example.com` matches any host that
-         ends with `.example.com` (so `foo.example.com` and
-         `a.b.example.com`, but NOT the apex `example.com` or
-         `barexample.com`).
+         suffix pattern that covers the apex AND every subdomain.
+         `*.example.com` matches `example.com`, `foo.example.com`,
+         and `a.b.example.com`, but NOT `barexample.com` (the
+         label boundary `.` is required when matching a
+         subdomain). This is intentionally more permissive than
+         RFC 6125 TLS-wildcard semantics — an allowlist's natural
+         reading of `*.example.com` is "all of example.com",
+         apex included, and matches what the pipelock mirror does
+         (strips `*.example.com` → `example.com`).
 
     Exact match wins over wildcard so an operator can declare a
     specific route on top of a broader wildcard (e.g. a
@@ -189,12 +194,12 @@ def match_route(
         host = r.host.lower()
         if not host.startswith("*.") and host == target:
             return r
-    # Pass 2: wildcard suffix match (`*.foo.com` → `.foo.com`).
+    # Pass 2: wildcard match — apex + every subdomain.
     for r in routes:
         host = r.host.lower()
         if host.startswith("*."):
-            suffix = host[1:]  # keeps the leading `.`
-            if target.endswith(suffix) and target != suffix[1:]:
+            suffix = host[2:]  # strip the `*.`
+            if target == suffix or target.endswith("." + suffix):
                 return r
     return None
 
