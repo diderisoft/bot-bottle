@@ -169,15 +169,33 @@ def match_route(
     routes: typing.Sequence[Route],
     request_host: str,
 ) -> Route | None:
-    """Return the first route whose `host` matches `request_host`.
+    """Return the route whose `host` matches `request_host`.
 
-    Exact match in v1 — globs / wildcards are a follow-up (per PRD
-    0017 open questions). Hostname comparison is case-insensitive
-    because DNS names are case-insensitive."""
+    Match precedence:
+      1. Exact (case-insensitive) match on the literal hostname.
+      2. Wildcard match: a route whose host starts with `*.` is a
+         suffix pattern. `*.example.com` matches any host that
+         ends with `.example.com` (so `foo.example.com` and
+         `a.b.example.com`, but NOT the apex `example.com` or
+         `barexample.com`).
+
+    Exact match wins over wildcard so an operator can declare a
+    specific route on top of a broader wildcard (e.g. a
+    `*.github.com` bare-pass + an `api.github.com` route with
+    auth). DNS names are case-insensitive."""
     target = request_host.lower()
+    # Pass 1: exact, literal hostname match.
     for r in routes:
-        if r.host.lower() == target:
+        host = r.host.lower()
+        if not host.startswith("*.") and host == target:
             return r
+    # Pass 2: wildcard suffix match (`*.foo.com` → `.foo.com`).
+    for r in routes:
+        host = r.host.lower()
+        if host.startswith("*."):
+            suffix = host[1:]  # keeps the leading `.`
+            if target.endswith(suffix) and target != suffix[1:]:
+                return r
     return None
 
 

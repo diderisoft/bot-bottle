@@ -148,6 +148,64 @@ class TestMatchRoute(unittest.TestCase):
         self.assertIsNone(match_route(self.ROUTES, "evil.api.github.com"))
 
 
+class TestMatchRouteWildcards(unittest.TestCase):
+    """Wildcard host patterns: `*.foo.com` matches any host that
+    ends with `.foo.com` (subdomains, one level or more)."""
+
+    def test_wildcard_matches_direct_subdomain(self):
+        routes = (Route(host="*.example.com"),)
+        r = match_route(routes, "foo.example.com")
+        self.assertIsNotNone(r)
+        self.assertEqual("*.example.com", r.host)
+
+    def test_wildcard_matches_nested_subdomain(self):
+        routes = (Route(host="*.example.com"),)
+        self.assertIsNotNone(match_route(routes, "a.b.example.com"))
+
+    def test_wildcard_does_not_match_apex(self):
+        routes = (Route(host="*.example.com"),)
+        self.assertIsNone(match_route(routes, "example.com"))
+
+    def test_wildcard_does_not_match_overlapping_suffix(self):
+        # `*.example.com` shouldn't match `barexample.com` — the
+        # match requires `.` before the suffix.
+        routes = (Route(host="*.example.com"),)
+        self.assertIsNone(match_route(routes, "barexample.com"))
+
+    def test_wildcard_case_insensitive(self):
+        routes = (Route(host="*.example.com"),)
+        self.assertIsNotNone(match_route(routes, "FOO.Example.COM"))
+
+    def test_exact_match_wins_over_wildcard(self):
+        # A specific route declared alongside a broader wildcard
+        # should take precedence — operators stack a per-host
+        # config on top of a permissive wildcard this way.
+        routes = (
+            Route(host="*.github.com"),
+            Route(host="api.github.com", auth_scheme="Bearer",
+                  token_env="EGRESS_PROXY_TOKEN_0"),
+        )
+        r = match_route(routes, "api.github.com")
+        self.assertIsNotNone(r)
+        self.assertEqual("api.github.com", r.host)
+        self.assertEqual("Bearer", r.auth_scheme)
+
+    def test_exact_wins_regardless_of_route_order(self):
+        # Same as above but with wildcard declared AFTER exact —
+        # exact wins because pass 1 finds it before pass 2 runs.
+        routes = (
+            Route(host="api.github.com", auth_scheme="Bearer",
+                  token_env="EGRESS_PROXY_TOKEN_0"),
+            Route(host="*.github.com"),
+        )
+        r = match_route(routes, "api.github.com")
+        self.assertEqual("api.github.com", r.host)
+
+    def test_no_match_falls_through(self):
+        routes = (Route(host="*.example.com"),)
+        self.assertIsNone(match_route(routes, "elsewhere.org"))
+
+
 # --- decide --------------------------------------------------------------
 
 
