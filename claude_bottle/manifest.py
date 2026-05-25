@@ -1,42 +1,52 @@
-"""Manifest dataclasses. Read claude-bottle.json (cwd + $HOME, deep-merged)
-into a frozen, validated Manifest tree.
+"""Manifest dataclasses (PRD 0011 layout).
 
-Schema (see CLAUDE.md "Intended design"):
-  {
-    "bottles": {
-      "<bottle-name>": {
-        "env":        { "<NAME>": <env-entry>, ... },
-        "git":        [ <git-entry>, ... ],
-        "cred_proxy": { "routes": [ <route>, ... ] },
-        "egress":     { "allowlist": [ "<hostname>", ... ] }
-      }
-    },
-    "agents": {
-      "<agent-name>": {
-        "skills":  [ "<skill-name>", ... ],
-        "prompt":  "<string>",
-        "bottle":  "<bottle-name>"
-      }
-    }
-  }
+Reads the per-file manifest tree:
 
-Bottles group shared infrastructure (git upstreams + their gate credentials,
-egress allowlist) that multiple agents can reference. Every agent must
-reference a bottle.
+  $HOME/.claude-bottle/bottles/<name>.md   — one bottle per file
+  $HOME/.claude-bottle/agents/<name>.md    — home-resident agents
+  $CWD/.claude-bottle/agents/<name>.md     — cwd-supplied agents
 
-Validation runs once at construction (Manifest.from_json_obj) so getters
-can trust the shape.
+Each file is Markdown with YAML frontmatter. The frontmatter holds
+the structured config (see schema below); for agents the body is
+the system prompt, for bottles the body is human documentation
+(ignored by the parser).
+
+Bottle schema (frontmatter):
+  env:        { <NAME>: <env-entry>, ... }
+  git:        [ <git-entry>, ... ]
+  cred_proxy: { routes: [ <route>, ... ] }
+  egress:     { allowlist: [ <hostname>, ... ] }
+
+Agent schema (frontmatter):
+  bottle:        <bottle-name>          # required
+  skills:        [ <skill-name>, ... ]   # optional
+  # Claude Code subagent passthrough fields — accepted, ignored:
+  name, description, model, color, memory
+
+The agent file's Markdown body is the system prompt (stripped).
+Unknown top-level frontmatter keys die with a hint.
+
+Bottles can ONLY live under $HOME. A bottles/ dir under $CWD is a
+warn at load time and contributes nothing. The trust boundary is
+expressed as filesystem layout rather than resolver logic.
+
+Validation runs once at load. Manifest.from_json_obj is preserved
+as a programmatic entry point (used by tests) that takes a dict
+with the same field names — useful for building manifests without
+on-disk files.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping, cast
 
-from .log import die
+from .log import die, warn
+from .yaml_subset import parse_frontmatter
 
 
 def _empty_str_dict() -> dict[str, str]:
@@ -443,31 +453,85 @@ class Manifest:
 
     @classmethod
     def resolve(cls, cwd: str) -> "Manifest":
-        """Look for claude-bottle.json in <cwd> and in $HOME, deep-merge
-        them (cwd entries override home entries on key conflict for both
-        bottles and agents), then validate. Dies if neither file is
-        found, either is invalid JSON, or the merged shape violates the
-        schema."""
-        cwd_file = Path(cwd) / "claude-bottle.json"
-        home_file = Path(os.environ["HOME"]) / "claude-bottle.json"
+        """Walk the per-file manifest tree and build a Manifest.
 
-        cwd_doc = _load_json_or_die(cwd_file) if cwd_file.is_file() else None
-        home_doc = _load_json_or_die(home_file) if home_file.is_file() else None
+        Layout (PRD 0011):
+          $HOME/.claude-bottle/bottles/<name>.md  — bottles (home-only)
+          $HOME/.claude-bottle/agents/<name>.md   — home agents
+          $CWD/.claude-bottle/agents/<name>.md    — cwd agents
 
-        if cwd_doc is None and home_doc is None:
-            die(f"no claude-bottle.json found in {cwd} or {os.environ['HOME']}")
+        Cwd agents merge into the home agents on the same name
+        (cwd wins). A bottles/ subdir under $CWD is logged as a
+        warning and ignored — the filesystem layout IS the trust
+        boundary.
 
-        h: dict[str, object] = home_doc if home_doc is not None else {}
-        c: dict[str, object] = cwd_doc if cwd_doc is not None else {}
-        h_bottles = _section_dict(h.get("bottles"), "bottles")
-        c_bottles = _section_dict(c.get("bottles"), "bottles")
-        h_agents = _section_dict(h.get("agents"), "agents")
-        c_agents = _section_dict(c.get("agents"), "agents")
-        merged: dict[str, object] = {
-            "bottles": {**h_bottles, **c_bottles},
-            "agents": {**h_agents, **c_agents},
-        }
-        return cls.from_json_obj(merged)
+        If `claude-bottle.json` exists alongside a missing
+        `.claude-bottle/` directory at either side, dies with a
+        clear pointer at the README's manifest section — the
+        manifest format changed in PRD 0011 and we don't silently
+        fall back."""
+        home_dir = Path(os.environ["HOME"])
+        cwd_dir = Path(cwd)
+        home_md = home_dir / ".claude-bottle"
+        cwd_md = cwd_dir / ".claude-bottle"
+
+        _check_stale_json(home_dir, home_md, "$HOME")
+        if cwd_dir.resolve() != home_dir.resolve():
+            _check_stale_json(cwd_dir, cwd_md, "$CWD")
+
+        if not home_md.is_dir():
+            die(
+                f"no manifest found: {home_md} does not exist. "
+                f"See README.md for the per-file Markdown layout "
+                f"(PRD 0011)."
+            )
+
+        # When CWD == HOME (running from $HOME directly), pass the
+        # same dir for both — _load_md_dirs will dedupe.
+        cwd_md_arg = cwd_md if cwd_md.is_dir() and cwd_dir.resolve() != home_dir.resolve() else None
+        return cls.from_md_dirs(home_md, cwd_md_arg)
+
+    @classmethod
+    def from_md_dirs(
+        cls,
+        home_dir: Path,
+        cwd_dir: Path | None,
+    ) -> "Manifest":
+        """Programmatic entry point. Loads bottles from
+        `<home_dir>/bottles/`, home agents from `<home_dir>/agents/`,
+        and (if `cwd_dir` is passed) cwd agents from
+        `<cwd_dir>/agents/`. Cwd agents override home agents on
+        name collision. A `bottles/` subdir under `cwd_dir` is
+        logged as a warning and ignored.
+
+        Used by tests to build a Manifest from fixture directories
+        without touching `os.environ`."""
+        bottles_dir = home_dir / "bottles"
+        bottles = _load_bottles_from_dir(bottles_dir)
+
+        bottle_names = set(bottles.keys())
+        agents_dir = home_dir / "agents"
+        agents = _load_agents_from_dir(agents_dir, bottle_names, source="$HOME")
+
+        if cwd_dir is not None:
+            stale_bottles = cwd_dir / "bottles"
+            if stale_bottles.is_dir():
+                files = sorted(stale_bottles.glob("*.md"))
+                if files:
+                    names = ", ".join(p.name for p in files)
+                    warn(
+                        f"ignoring bottle file(s) under "
+                        f"{stale_bottles}: {names}. Bottles can only "
+                        f"live under $HOME/.claude-bottle/bottles/ "
+                        f"(PRD 0011). Move them or delete."
+                    )
+            cwd_agents_dir = cwd_dir / "agents"
+            cwd_agents = _load_agents_from_dir(
+                cwd_agents_dir, bottle_names, source="$CWD"
+            )
+            agents = {**agents, **cwd_agents}
+
+        return cls(bottles=bottles, agents=agents)
 
     @classmethod
     def from_json_obj(cls, obj: object) -> "Manifest":
@@ -670,3 +734,127 @@ def _validate_unique_git_names(bottle_name: str, git: tuple[GitEntry, ...]) -> N
         seen[g.Name] = None
 
 
+
+
+# --- Per-file MD loader (PRD 0011) ----------------------------------------
+
+# Filename-as-key uses kebab-case ASCII. The first character is a
+# letter so we don't conflict with hidden files / Markdown special
+# names (`.md`, `_template.md`, etc.). Filenames that fail this
+# pattern are skipped with a warning rather than crashing the load.
+_FILENAME_RX = re.compile(r"^[a-z][a-z0-9-]*$")
+
+# Frontmatter keys we accept on each entity. Anything not in these
+# sets dies with a "did you mean" pointer — typos shouldn't silently
+# ghost into an empty config.
+_BOTTLE_KEYS = frozenset({"env", "git", "cred_proxy", "egress"})
+_AGENT_KEYS_REQUIRED = frozenset({"bottle"})
+_AGENT_KEYS_OPTIONAL = frozenset({"skills"})
+# Claude Code subagent fields claude-bottle ignores at launch but
+# doesn't reject — lets the same file double as `~/.claude/agents/*.md`.
+_AGENT_KEYS_CC_PASSTHROUGH = frozenset({
+    "name", "description", "model", "color", "memory",
+})
+_AGENT_KEYS = (
+    _AGENT_KEYS_REQUIRED | _AGENT_KEYS_OPTIONAL | _AGENT_KEYS_CC_PASSTHROUGH
+)
+
+
+def _check_stale_json(dir_path: Path, md_dir: Path, label: str) -> None:
+    """Die if `<dir_path>/claude-bottle.json` exists but `md_dir` does
+    not — the manifest format changed in PRD 0011 and we don't want
+    to silently leave the JSON content unused."""
+    legacy = dir_path / "claude-bottle.json"
+    if legacy.is_file() and not md_dir.exists():
+        die(
+            f"found {legacy} but {md_dir} does not exist. The manifest "
+            f"format changed in PRD 0011 — rewrite the JSON content "
+            f"as per-file Markdown under {md_dir}/bottles/ and "
+            f"{md_dir}/agents/. See README.md for the schema. "
+            f"({label})"
+        )
+
+
+def _entity_name_from_path(path: Path) -> str | None:
+    """Return the entity name implied by the filename, or None if
+    the filename doesn't fit the [a-z][a-z0-9-]* convention. None
+    triggers a skip-with-warning at the caller."""
+    if path.suffix != ".md":
+        return None
+    stem = path.stem
+    if not _FILENAME_RX.match(stem):
+        return None
+    return stem
+
+
+def _load_bottles_from_dir(bottles_dir: Path) -> dict[str, Bottle]:
+    """Walk `<bottles_dir>/*.md`, parse each as a bottle, return
+    `{name: Bottle}`. Missing dir → empty dict (the user simply
+    hasn't declared any bottles yet)."""
+    out: dict[str, Bottle] = {}
+    if not bottles_dir.is_dir():
+        return out
+    for path in sorted(bottles_dir.glob("*.md")):
+        name = _entity_name_from_path(path)
+        if name is None:
+            warn(
+                f"skipping {path}: filename must match "
+                f"[a-z][a-z0-9-]*.md (got {path.name!r})"
+            )
+            continue
+        try:
+            fm, _body = parse_frontmatter(path.read_text())
+        except OSError as e:
+            die(f"could not read {path}: {e}")
+        unknown = set(fm.keys()) - _BOTTLE_KEYS
+        if unknown:
+            allowed = ", ".join(sorted(_BOTTLE_KEYS))
+            die(
+                f"bottle file {path}: unknown frontmatter key(s) "
+                f"{sorted(unknown)}; allowed keys are {allowed}."
+            )
+        out[name] = Bottle.from_dict(name, fm)
+    return out
+
+
+def _load_agents_from_dir(
+    agents_dir: Path,
+    bottle_names: set[str],
+    *,
+    source: str,
+) -> dict[str, Agent]:
+    """Walk `<agents_dir>/*.md`, parse each as an agent, return
+    `{name: Agent}`. The Markdown body becomes the agent's
+    `prompt`. Missing dir → empty dict."""
+    out: dict[str, Agent] = {}
+    if not agents_dir.is_dir():
+        return out
+    for path in sorted(agents_dir.glob("*.md")):
+        name = _entity_name_from_path(path)
+        if name is None:
+            warn(
+                f"skipping {path}: filename must match "
+                f"[a-z][a-z0-9-]*.md (got {path.name!r})"
+            )
+            continue
+        try:
+            fm, body = parse_frontmatter(path.read_text())
+        except OSError as e:
+            die(f"could not read {path}: {e}")
+        unknown = set(fm.keys()) - _AGENT_KEYS
+        if unknown:
+            allowed = ", ".join(sorted(_AGENT_KEYS))
+            die(
+                f"agent file {path}: unknown frontmatter key(s) "
+                f"{sorted(unknown)}; allowed keys are {allowed}."
+            )
+        # Build the dict Agent.from_dict expects. The body becomes
+        # prompt; CC passthrough fields stay in fm and get ignored
+        # by from_dict (which only reads bottle/skills/prompt).
+        agent_dict: dict[str, object] = {
+            "bottle": fm.get("bottle"),
+            "skills": fm.get("skills", []),
+            "prompt": body.strip(),
+        }
+        out[name] = Agent.from_dict(name, agent_dict, bottle_names)
+    return out
