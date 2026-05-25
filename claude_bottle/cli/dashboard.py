@@ -342,9 +342,17 @@ def _list_once() -> int:
     return 0
 
 
+_REFRESH_INTERVAL_MS = 1000
+
+
 def _main_loop(stdscr: "curses._CursesWindow") -> None:
     curses.curs_set(0)
-    stdscr.nodelay(False)
+    # Auto-refresh: getch() returns -1 after the timeout if no key
+    # was pressed, so the loop re-renders with any newly-arrived
+    # proposals every ~1s. Without this the screen only updates
+    # when the operator hits a key — a tool call landing while the
+    # operator is just watching wouldn't appear.
+    stdscr.timeout(_REFRESH_INTERVAL_MS)
     selected = 0
     status_line = ""
     while True:
@@ -353,12 +361,21 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
             selected = max(0, len(pending) - 1)
 
         _render(stdscr, pending, selected, status_line)
-        status_line = ""
 
         try:
             key = stdscr.getch()
         except KeyboardInterrupt:
             return
+
+        if key == -1:
+            # Timeout fired — re-render with fresh queue. Status_line
+            # is left intact so messages from a prior keystroke stay
+            # readable until the operator actually does something else.
+            continue
+
+        # Real keystroke: clear any stale status before dispatching
+        # so the next render reflects what just happened.
+        status_line = ""
 
         if key in (ord("q"), 27):  # q or ESC
             return
