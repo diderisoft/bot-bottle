@@ -30,6 +30,7 @@ from .git_gate import DockerGitGate, git_gate_container_name
 from .bottle_state import (
     BottleMetadata,
     bottle_identity,
+    clear_preserve_marker,
     per_bottle_dockerfile,
     per_bottle_dockerfile_path,
     per_bottle_image_tag,
@@ -73,6 +74,10 @@ def resolve_plan(
         copy_cwd=spec.copy_cwd,
         started_at=datetime.now(timezone.utc).isoformat(),
     ))
+    # Clear any leftover preserve marker from a prior capability-block
+    # so this fresh launch can be cleaned up at session-end unless
+    # the agent triggers another capability-block.
+    clear_preserve_marker(slug)
 
     # PRD 0016 capability-block: if a per-bottle Dockerfile has been
     # written (via apply_capability_change), the base image becomes

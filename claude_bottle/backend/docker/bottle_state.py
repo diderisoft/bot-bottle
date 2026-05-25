@@ -45,6 +45,10 @@ _STATE_SUBDIR = "state"
 _PER_BOTTLE_DOCKERFILE_NAME = "Dockerfile"
 _TRANSCRIPT_SUBDIR = "transcript"
 _METADATA_NAME = "metadata.json"
+# Empty marker file. capability_apply writes it before teardown so
+# cli.py's session-end cleanup knows to preserve the state dir for
+# `cli.py resume <identity>`. Absent = clean up.
+_PRESERVE_MARKER = ".preserve"
 
 # 5 chars of base36 alphabet ≈ 60M combinations. Plenty for human
 # operators starting bottles by hand; collision-free in practice.
@@ -155,14 +159,61 @@ def transcript_snapshot_dir(identity: str) -> Path:
     return bottle_state_dir(identity) / _TRANSCRIPT_SUBDIR
 
 
+# --- Preserve-on-close marker ----------------------------------------------
+
+
+def preserve_marker_path(identity: str) -> Path:
+    return bottle_state_dir(identity) / _PRESERVE_MARKER
+
+
+def mark_preserved(identity: str) -> Path:
+    """Mark this bottle's state for preservation across session
+    teardown. Written by capability_apply.apply_capability_change so
+    cli.py's session-end cleanup leaves the state dir intact for a
+    subsequent `cli.py resume`."""
+    path = preserve_marker_path(identity)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.touch()
+    return path
+
+
+def is_preserved(identity: str) -> bool:
+    return preserve_marker_path(identity).exists()
+
+
+def clear_preserve_marker(identity: str) -> None:
+    """Idempotent removal. Called at fresh launch (start or resume)
+    so a marker left from a prior capability-block doesn't keep
+    state alive past the next normal session-end."""
+    try:
+        preserve_marker_path(identity).unlink()
+    except FileNotFoundError:
+        pass
+
+
+def cleanup_state(identity: str) -> None:
+    """Remove the per-bottle state dir entirely. Called by cli.py
+    when a bottle session ends and is_preserved(identity) is False.
+    Idempotent — missing dir is success."""
+    import shutil
+    state_dir = bottle_state_dir(identity)
+    if state_dir.is_dir():
+        shutil.rmtree(state_dir, ignore_errors=True)
+
+
 __all__ = [
     "BottleMetadata",
     "bottle_identity",
     "bottle_state_dir",
+    "cleanup_state",
+    "clear_preserve_marker",
+    "is_preserved",
+    "mark_preserved",
     "metadata_path",
     "per_bottle_dockerfile",
     "per_bottle_dockerfile_path",
     "per_bottle_image_tag",
+    "preserve_marker_path",
     "read_metadata",
     "transcript_snapshot_dir",
     "write_metadata",

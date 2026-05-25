@@ -114,6 +114,60 @@ class TestBottleIdentity(unittest.TestCase):
         self.assertTrue(identity.startswith("my-agent-"))
 
 
+class TestPreserveMarker(_FakeHomeMixin, unittest.TestCase):
+    """The .preserve marker is how capability_apply tells cli.py's
+    session-end cleanup to keep the state dir instead of removing it."""
+
+    def setUp(self):
+        self._setup_fake_home()
+
+    def tearDown(self):
+        self._teardown_fake_home()
+
+    def test_default_is_unpreserved(self):
+        self.assertFalse(bottle_state.is_preserved("dev-x"))
+
+    def test_mark_then_is_preserved(self):
+        bottle_state.mark_preserved("dev-x")
+        self.assertTrue(bottle_state.is_preserved("dev-x"))
+
+    def test_clear_removes_marker(self):
+        bottle_state.mark_preserved("dev-x")
+        bottle_state.clear_preserve_marker("dev-x")
+        self.assertFalse(bottle_state.is_preserved("dev-x"))
+
+    def test_clear_is_idempotent(self):
+        # No marker present — should not raise.
+        bottle_state.clear_preserve_marker("never-existed")
+        self.assertFalse(bottle_state.is_preserved("never-existed"))
+
+    def test_marker_path_under_state_dir(self):
+        path = bottle_state.preserve_marker_path("dev-x")
+        self.assertTrue(str(path).endswith("/.claude-bottle/state/dev-x/.preserve"))
+
+
+class TestCleanupState(_FakeHomeMixin, unittest.TestCase):
+    """cleanup_state removes the entire per-bottle state dir.
+    Called by cli.py when a session ends without the preserve marker."""
+
+    def setUp(self):
+        self._setup_fake_home()
+
+    def tearDown(self):
+        self._teardown_fake_home()
+
+    def test_removes_state_dir_and_contents(self):
+        bottle_state.write_per_bottle_dockerfile("dev-x", "FROM x\n")
+        d = bottle_state.bottle_state_dir("dev-x")
+        self.assertTrue(d.is_dir())
+        bottle_state.cleanup_state("dev-x")
+        self.assertFalse(d.exists())
+
+    def test_idempotent_when_dir_missing(self):
+        # Never created — should not raise.
+        bottle_state.cleanup_state("never-existed")
+
+
 class TestBottleMetadata(_FakeHomeMixin, unittest.TestCase):
     def setUp(self):
         self._setup_fake_home()
