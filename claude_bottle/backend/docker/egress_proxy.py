@@ -115,11 +115,17 @@ def egress_proxy_tls_init(stage_dir: Path) -> tuple[Path, Path]:
     key = work / "ca-key.pem"
     if not cert.is_file() or not key.is_file():
         die(f"egress-proxy tls init did not produce ca files in {work}")
-    cert.chmod(0o600)
+    # Mode 644 (not 600) so `docker cp` preserves world-readability
+    # inside the container — the mitmproxy user (uid 1000) needs to
+    # read the file, and the host uid `docker cp` propagates from the
+    # source doesn't match. The host stage_dir is mode 700 so other
+    # host users still can't traverse in; the private key isn't
+    # exposed despite the file mode.
+    cert.chmod(0o644)
     # mitmproxy reads cert + key from a single concatenated PEM file.
     mitm = work / "mitmproxy-ca.pem"
     mitm.write_bytes(cert.read_bytes() + key.read_bytes())
-    mitm.chmod(0o600)
+    mitm.chmod(0o644)
     return (mitm, cert)
 
 
@@ -232,6 +238,17 @@ class DockerEgressProxy(EgressProxy):
                 f"{create_result.stderr.strip()}"
             )
 
+        # routes.yaml also lands inside the container; bump to 644
+        # for the same reason as the CAs — mitmproxy user (uid 1000)
+        # has to read it. Host stage_dir is mode 700 so the file
+        # isn't actually exposed to other host users.
+        plan.routes_path.chmod(0o644)
+        # Pipelock CA: pipelock itself runs as root so its in-pipelock
+        # copy doesn't care about mode, but egress-proxy's mitmproxy
+        # user does. Bump on the host so docker cp into egress-proxy
+        # carries world-readable.
+        if route_via_pipelock:
+            plan.pipelock_ca_host_path.chmod(0o644)
         cps: list[tuple[Path, str, str]] = [
             (plan.routes_path, EGRESS_PROXY_ROUTES_IN_CONTAINER, "routes.yaml"),
             (plan.mitmproxy_ca_host_path, EGRESS_PROXY_CA_IN_CONTAINER, "mitmproxy CA"),
