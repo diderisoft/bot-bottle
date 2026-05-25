@@ -65,19 +65,36 @@ def render_allowlist_content(hosts: list[str]) -> str:
 
 
 def fetch_current_yaml(slug: str) -> str:
-    """Read the live /etc/pipelock.yaml from the running pipelock
-    sidecar. Raises PipelockApplyError if the read fails."""
+    """Read the live /etc/pipelock.yaml from the pipelock sidecar.
+
+    Uses `docker cp` (not `docker exec cat`) because the pipelock
+    image is distroless and has no shell utilities. `docker cp` is a
+    daemon-API tarball copy — works on stopped containers too, and
+    doesn't need anything in the container's PATH.
+
+    Raises PipelockApplyError if the read fails."""
     container = pipelock_container_name(slug)
-    r = subprocess.run(
-        ["docker", "exec", container, "cat", PIPELOCK_YAML_IN_CONTAINER],
-        capture_output=True, text=True, check=False,
-    )
-    if r.returncode != 0:
-        raise PipelockApplyError(
-            f"could not read pipelock.yaml from {container}: "
-            f"{(r.stderr or '').strip() or 'container not running?'}"
+    fd, tmp_path = tempfile.mkstemp(prefix="cb-pipelock-fetch.", suffix=".yaml")
+    os.close(fd)
+    try:
+        r = subprocess.run(
+            [
+                "docker", "cp",
+                f"{container}:{PIPELOCK_YAML_IN_CONTAINER}", tmp_path,
+            ],
+            capture_output=True, text=True, check=False,
         )
-    return r.stdout
+        if r.returncode != 0:
+            raise PipelockApplyError(
+                f"could not fetch pipelock.yaml from {container}: "
+                f"{(r.stderr or '').strip() or 'container not running?'}"
+            )
+        return Path(tmp_path).read_text()
+    finally:
+        try:
+            Path(tmp_path).unlink()
+        except OSError:
+            pass
 
 
 def fetch_current_allowlist(slug: str) -> str:
