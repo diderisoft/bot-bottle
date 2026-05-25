@@ -175,31 +175,21 @@ def resolve_plan(
     # never lands on argv or in env_file) goes into one dict. Nothing
     # mutates the host os.environ.
     forwarded_env: dict[str, str] = dict(resolved.forwarded)
-    # Find the (at most one) egress-proxy route claiming the
-    # anthropic-base-url role. Manifest validation enforces the
-    # singleton constraint. The role flips on claude-code's
-    # placeholder OAuth token + telemetry-off env vars and pins
-    # ANTHROPIC_BASE_URL at the route's host. Egress-proxy then
-    # strips inbound Authorization on every request and injects
-    # the real one from the route's `auth.token_ref` env var.
-    anthropic_route = next(
-        (r for r in egress_proxy_plan.routes if "anthropic-base-url" in r.roles),
-        None,
+    # When the bottle declares an egress-proxy route for the Anthropic
+    # OAuth flow, claude-code's outbound Authorization gets stripped +
+    # re-injected by egress-proxy. The agent's environ still needs
+    # *something* claude-code recognises as a credential or it refuses
+    # to start; ship a non-secret placeholder. The placeholder is not
+    # any real `auth.token_ref` value, so leaking it would tell an
+    # attacker only that egress-proxy is in front.
+    has_anthropic_auth = any(
+        r.token_ref == "CLAUDE_CODE_OAUTH_TOKEN"
+        for r in egress_proxy_plan.routes
     )
-    if anthropic_route is not None:
-        # Point claude-code at the canonical Anthropic URL. HTTPS_PROXY
-        # routes the request through egress-proxy, which injects the
-        # real OAuth header from the host env named by the route's
-        # auth.token_ref.
-        forwarded_env["ANTHROPIC_BASE_URL"] = f"https://{anthropic_route.host}"
-        # claude-code refuses to start without *some* credential in
-        # its env. The proxy strips inbound Authorization on every
-        # request and injects the real one — so a non-secret
-        # placeholder is sufficient. The agent cannot exfiltrate
-        # this string because it carries no meaning to upstream.
+    if has_anthropic_auth:
         forwarded_env["CLAUDE_CODE_OAUTH_TOKEN"] = "egress-proxy-placeholder"
         # Belt-and-braces: turn off telemetry endpoints (statsig,
-        # error reporting) that don't route through ANTHROPIC_BASE_URL.
+        # error reporting) that egress-proxy can't gate by auth.
         forwarded_env.setdefault("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
         forwarded_env.setdefault("DISABLE_ERROR_REPORTING", "1")
     _write_env_file(resolved, env_file)

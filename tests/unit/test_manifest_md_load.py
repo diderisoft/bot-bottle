@@ -25,7 +25,6 @@ _BOTTLE_DEV = """
     egress_proxy:
       routes:
         - host: api.anthropic.com
-          role: anthropic-base-url
           auth:
             scheme: Bearer
             token_ref: CLAUDE_CODE_OAUTH_TOKEN
@@ -93,7 +92,6 @@ class TestBottleFileParses(_ResolveCase):
         self.assertEqual("api.anthropic.com", routes[0].Host)
         self.assertEqual("Bearer", routes[0].AuthScheme)
         self.assertEqual("CLAUDE_CODE_OAUTH_TOKEN", routes[0].TokenRef)
-        self.assertEqual(("anthropic-base-url",), routes[0].Role)
         self.assertEqual(["example.com"], list(m.bottles["dev"].egress.allowlist))
 
 

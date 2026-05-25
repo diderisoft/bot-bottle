@@ -129,44 +129,6 @@ class GitEntry:
 # token-not-Bearer quirk (go-gitea/gitea#16734).
 EGRESS_PROXY_AUTH_SCHEMES = ("Bearer", "token")
 
-# Agent-side provisioner role tags a route may carry. Each tag drives
-# one dotfile / env rewrite at bottle bring-up so tools that need an
-# explicit URL config (rather than just respecting HTTPS_PROXY) point
-# at the canonical upstream. Egress-proxy is on the agent's HTTP_PROXY
-# path, so the canonical URL routes through the proxy automatically —
-# the dotfile values are upstream URLs, not proxy URLs.
-#
-#   anthropic-base-url: set ANTHROPIC_BASE_URL=https://<host> in the
-#                       agent's environ (signals claude-code to use
-#                       a non-default Anthropic endpoint; in practice
-#                       the host is api.anthropic.com, so the value
-#                       matches claude-code's default — the marker
-#                       is what drives the placeholder-token +
-#                       telemetry-off env vars).
-#   npm-registry:       write ~/.npmrc `registry=https://<host>/`.
-#   tea-login:          add an entry to ~/.config/tea/config.yml
-#                       (url = https://<host>) so `tea` knows which
-#                       Gitea host to talk to.
-#
-# Routes without a `role` are pure proxy entries: egress-proxy
-# enforces path_allowlist + injects auth, but no agent-side dotfile
-# is written. (`git-insteadof` is intentionally absent — egress-proxy
-# already 403s HTTPS git push universally; PRD 0017's git story is
-# `bottle.git` + git-gate for SSH push.)
-EGRESS_PROXY_ROLES = frozenset({
-    "anthropic-base-url",
-    "npm-registry",
-    "tea-login",
-})
-
-# Roles whose semantics imply a single route can carry them. A second
-# route claiming the same role would make the provisioner's choice
-# ambiguous (which host goes into ANTHROPIC_BASE_URL?).
-EGRESS_PROXY_SINGLETON_ROLES = frozenset({
-    "anthropic-base-url",
-    "npm-registry",
-})
-
 
 @dataclass(frozen=True)
 class EgressProxyRoute:
@@ -181,10 +143,6 @@ class EgressProxyRoute:
     manifest's `auth` block is omitted both fields are empty strings —
     no Authorization is written, no token forwarded.
 
-    `Role` carries optional provisioner tags (see EGRESS_PROXY_ROLES).
-    Each tag drives one agent-side dotfile / env rewrite when the
-    sidecar comes up.
-
     Validation rules (enforced in `from_dict`):
       - `host` required, non-empty.
       - `path_allowlist` optional, list of absolute path prefixes.
@@ -192,17 +150,12 @@ class EgressProxyRoute:
         `token_ref` as non-empty strings; an empty `auth: {}` is an
         error rather than a synonym for "no auth" (omit `auth` for
         that case).
-      - `role` optional. String or list of strings drawn from
-        EGRESS_PROXY_ROLES. Singleton roles (see
-        EGRESS_PROXY_SINGLETON_ROLES) may appear on at most one
-        route per bottle.
     """
 
     Host: str
     PathAllowlist: tuple[str, ...] = ()
     AuthScheme: str = ""
     TokenRef: str = ""
-    Role: tuple[str, ...] = ()
 
     @classmethod
     def from_dict(cls, bottle_name: str, idx: int, raw: object) -> "EgressProxyRoute":
@@ -273,37 +226,11 @@ class EgressProxyRoute:
             auth_scheme = auth_scheme_raw
             token_ref = token_ref_raw
 
-        role_raw = d.get("role")
-        roles: tuple[str, ...] = ()
-        if role_raw is None:
-            roles = ()
-        elif isinstance(role_raw, str):
-            roles = (role_raw,)
-        elif isinstance(role_raw, list):
-            role_list = cast(list[object], role_raw)
-            collected_roles: list[str] = []
-            for r in role_list:
-                if not isinstance(r, str):
-                    die(f"{label} role items must be strings (got {type(r).__name__})")
-                collected_roles.append(r)
-            roles = tuple(collected_roles)
-        else:
-            die(
-                f"{label} role must be a string or a list of strings "
-                f"(was {type(role_raw).__name__})"
-            )
-        for r in roles:
-            if r not in EGRESS_PROXY_ROLES:
-                die(
-                    f"{label} role {r!r} is not one of "
-                    f"{', '.join(sorted(EGRESS_PROXY_ROLES))}"
-                )
-
         for k in d:
-            if k not in ("host", "path_allowlist", "auth", "role"):
+            if k not in ("host", "path_allowlist", "auth"):
                 die(
                     f"{label} has unknown key {k!r}; accepted keys are "
-                    f"'host', 'path_allowlist', 'auth', 'role'"
+                    f"'host', 'path_allowlist', 'auth'"
                 )
 
         return cls(
@@ -311,7 +238,6 @@ class EgressProxyRoute:
             PathAllowlist=prefixes,
             AuthScheme=auth_scheme,
             TokenRef=token_ref,
-            Role=roles,
         )
 
 
@@ -789,10 +715,6 @@ def _validate_egress_proxy_routes(
     - Hosts must be unique within the bottle. The proxy matches by
       exact-host (v1, prefix matching is on path_allowlist only);
       duplicate hosts leave the route choice ambiguous.
-    - Singleton roles (`anthropic-base-url`, `npm-registry`) may
-      appear on at most one route — each drives a single agent-side
-      dotfile/env entry, so two routes claiming the role would make
-      the choice ambiguous.
 
     No cross-validation against `bottle.git` is performed. git-gate
     (SSH push/fetch) and egress-proxy (HTTPS) broker different
@@ -807,15 +729,6 @@ def _validate_egress_proxy_routes(
                 f"{r.Host!r}; each host must be unique on the proxy."
             )
         seen_hosts[key] = None
-    for role in EGRESS_PROXY_SINGLETON_ROLES:
-        with_role = [r for r in routes if role in r.Role]
-        if len(with_role) > 1:
-            hosts = ", ".join(r.Host for r in with_role)
-            die(
-                f"bottle '{bottle_name}' egress_proxy.routes has {len(with_role)} "
-                f"routes with role {role!r} (hosts: {hosts}); this role drives a "
-                f"single agent-side rewrite — pick one."
-            )
 
 
 def _validate_unique_git_names(bottle_name: str, git: tuple[GitEntry, ...]) -> None:

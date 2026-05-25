@@ -62,19 +62,13 @@ class EgressProxyRoute:
     (e.g. `EGRESS_PROXY_TOKEN_0`); `token_ref` is the host env var
     the CLI reads at launch and forwards into the container's environ
     under `token_env`. Routes that share a `token_ref` coalesce to
-    one `token_env` slot.
-
-    `roles` are the provisioner tags from the manifest route (see
-    `manifest.EGRESS_PROXY_ROLES`). Each tag drives one agent-side
-    dotfile / env rewrite at bottle bring-up. The addon never reads
-    these — they flow through the plan to the host-side provisioner."""
+    one `token_env` slot."""
 
     host: str
     path_allowlist: tuple[str, ...] = ()
     auth_scheme: str = ""
     token_env: str = ""
     token_ref: str = ""
-    roles: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -154,13 +148,11 @@ def egress_proxy_routes_for_bottle(
                 auth_scheme=r.AuthScheme,
                 token_env=token_env,
                 token_ref=r.TokenRef,
-                roles=r.Role,
             ))
         else:
             out.append(EgressProxyRoute(
                 host=r.Host,
                 path_allowlist=r.PathAllowlist,
-                roles=r.Role,
             ))
     return tuple(out)
 
