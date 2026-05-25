@@ -16,6 +16,7 @@ from ...git_gate import GitGatePlan
 from ...log import info
 from ...manifest import Agent, Bottle
 from ...pipelock import PipelockProxyPlan, pipelock_effective_allowlist
+from ...supervise import SupervisePlan
 from .. import BottlePlan
 
 
@@ -53,6 +54,9 @@ class DockerBottlePlan(BottlePlan):
     proxy_plan: PipelockProxyPlan
     git_gate_plan: GitGatePlan
     cred_proxy_plan: CredProxyPlan
+    # None when bottle.supervise is False. PRD 0013 supervise sidecar
+    # is opt-in via the manifest's bottle.supervise field.
+    supervise_plan: SupervisePlan | None
     allowlist_summary: str
     use_runsc: bool
 
@@ -116,6 +120,12 @@ class DockerBottlePlan(BottlePlan):
             info("  cred-proxy    : (none)")
         info(f"  egress        : {self.allowlist_summary}")
         info("  tls intercept : pipelock (per-bottle ephemeral CA, generated at launch)")
+        if self.supervise_plan is not None:
+            info(
+                f"  supervise     : enabled; queue at {self.supervise_plan.queue_dir}"
+            )
+        else:
+            info("  supervise     : disabled (set bottle.supervise=true to enable)")
         info(
             f"prompt          : {len(v.agent.prompt)} chars; "
             f"first line: {v.prompt_first_line or '(empty)'}"
@@ -168,6 +178,14 @@ class DockerBottlePlan(BottlePlan):
                     "enabled": True,
                     "ca_fingerprint": None,
                 },
+            },
+            "supervise": {
+                "enabled": self.supervise_plan is not None,
+                "queue_dir": (
+                    str(self.supervise_plan.queue_dir)
+                    if self.supervise_plan is not None
+                    else None
+                ),
             },
             "prompt": {
                 "length": len(v.agent.prompt),

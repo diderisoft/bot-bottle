@@ -40,6 +40,7 @@ import json
 import os
 import time
 import uuid
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -418,6 +419,87 @@ def sha256_hex(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
+# --- Sidecar plan + abstract lifecycle -------------------------------------
+
+
+# Filenames inside the per-bottle current-config dir. The agent reads
+# these (read-only) from CURRENT_CONFIG_DIR_IN_AGENT and proposes
+# modified versions back via the three MCP tools.
+CURRENT_CONFIG_ROUTES = "routes.json"
+CURRENT_CONFIG_ALLOWLIST = "allowlist"
+CURRENT_CONFIG_DOCKERFILE = "Dockerfile"
+
+
+@dataclass(frozen=True)
+class SupervisePlan:
+    """Output of Supervise.prepare; consumed by .start.
+
+    `queue_dir` is the host directory bind-mounted into the sidecar
+    at /run/supervise/queue. `current_config_dir` is the host
+    directory bind-mounted (read-only) into the *agent* container at
+    /etc/claude-bottle/current-config, holding routes.json + allowlist
+    + Dockerfile so the agent can read them before composing a
+    proposal. `internal_network` is empty at prepare time; the
+    backend's launch step fills it via dataclasses.replace before
+    calling .start."""
+
+    slug: str
+    queue_dir: Path
+    current_config_dir: Path
+    internal_network: str = ""
+
+
+class Supervise(ABC):
+    """Per-bottle supervise sidecar. Encapsulates the host-side
+    prepare (queue dir + current-config staging); the sidecar's
+    start/stop lifecycle is backend-specific."""
+
+    def prepare(
+        self,
+        slug: str,
+        stage_dir: Path,
+        *,
+        routes_content: str = "",
+        allowlist_content: str = "",
+        dockerfile_content: str = "",
+    ) -> SupervisePlan:
+        """Stage the per-bottle queue dir on the host and the
+        current-config dir under `stage_dir`. Returns the plan;
+        `internal_network` must be set by the launch step before
+        .start runs."""
+        queue_dir = queue_dir_for_slug(slug)
+        queue_dir.mkdir(parents=True, exist_ok=True)
+        current_config_dir = stage_dir / "current-config"
+        current_config_dir.mkdir(parents=True, exist_ok=True)
+        (current_config_dir / CURRENT_CONFIG_ROUTES).write_text(
+            routes_content or '{"routes": []}\n'
+        )
+        (current_config_dir / CURRENT_CONFIG_ALLOWLIST).write_text(allowlist_content)
+        (current_config_dir / CURRENT_CONFIG_DOCKERFILE).write_text(dockerfile_content)
+        for name in (
+            CURRENT_CONFIG_ROUTES,
+            CURRENT_CONFIG_ALLOWLIST,
+            CURRENT_CONFIG_DOCKERFILE,
+        ):
+            (current_config_dir / name).chmod(0o644)
+        return SupervisePlan(
+            slug=slug,
+            queue_dir=queue_dir,
+            current_config_dir=current_config_dir,
+        )
+
+    @abstractmethod
+    def start(self, plan: SupervisePlan) -> str:
+        """Bring up the supervise sidecar according to `plan`. Returns
+        the target string identifying the running instance — the same
+        value to pass to `.stop`. Backend-specific."""
+
+    @abstractmethod
+    def stop(self, target: str) -> None:
+        """Tear down the supervise sidecar identified by `target`.
+        Idempotent: a missing target is success."""
+
+
 # --- Helpers ---------------------------------------------------------------
 
 
@@ -466,7 +548,10 @@ __all__ = [
     "ACTION_OPERATOR_EDIT",
     "AuditEntry",
     "COMPONENT_FOR_TOOL",
+    "CURRENT_CONFIG_ALLOWLIST",
     "CURRENT_CONFIG_DIR_IN_AGENT",
+    "CURRENT_CONFIG_DOCKERFILE",
+    "CURRENT_CONFIG_ROUTES",
     "DEFAULT_POLL_INTERVAL_SEC",
     "Proposal",
     "QUEUE_DIR_IN_CONTAINER",
@@ -477,6 +562,8 @@ __all__ = [
     "STATUS_REJECTED",
     "SUPERVISE_HOSTNAME",
     "SUPERVISE_PORT",
+    "Supervise",
+    "SupervisePlan",
     "TOOLS",
     "TOOL_CAPABILITY_BLOCK",
     "TOOL_CRED_PROXY_BLOCK",

@@ -324,5 +324,67 @@ class TestToolConstants(unittest.TestCase):
         self.assertNotIn(TOOL_CAPABILITY_BLOCK, supervise.COMPONENT_FOR_TOOL)
 
 
+class _StubSupervise(supervise.Supervise):
+    """Concrete Supervise subclass for testing the prepare template."""
+
+    def start(self, plan):
+        return f"stub-{plan.slug}"
+
+    def stop(self, target):
+        return None
+
+
+class TestSupervisePrepare(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory(prefix="supervise-prepare-test.")
+        self._home_patch = self._patch_home(Path(self._tmp.name))
+        self.stage_dir = Path(self._tmp.name) / "stage"
+        self.stage_dir.mkdir()
+
+    def tearDown(self):
+        self._home_patch()
+        self._tmp.cleanup()
+
+    def _patch_home(self, fake_home: Path):
+        original = supervise.claude_bottle_root
+
+        def fake_root() -> Path:
+            return fake_home / ".claude-bottle"
+
+        supervise.claude_bottle_root = fake_root  # type: ignore[assignment]
+        return lambda: setattr(supervise, "claude_bottle_root", original)
+
+    def test_prepare_creates_queue_and_current_config(self):
+        plan = _StubSupervise().prepare(
+            "dev", self.stage_dir,
+            routes_content='{"routes": [{"path": "/x/"}]}\n',
+            allowlist_content="example.com\n",
+            dockerfile_content="FROM python:3.13\n",
+        )
+        self.assertTrue(plan.queue_dir.is_dir())
+        self.assertTrue(plan.current_config_dir.is_dir())
+        self.assertEqual(
+            '{"routes": [{"path": "/x/"}]}\n',
+            (plan.current_config_dir / "routes.json").read_text(),
+        )
+        self.assertEqual(
+            "example.com\n",
+            (plan.current_config_dir / "allowlist").read_text(),
+        )
+        self.assertEqual(
+            "FROM python:3.13\n",
+            (plan.current_config_dir / "Dockerfile").read_text(),
+        )
+        self.assertEqual("dev", plan.slug)
+        self.assertEqual("", plan.internal_network)
+
+    def test_prepare_defaults_routes_to_empty_when_absent(self):
+        plan = _StubSupervise().prepare("dev", self.stage_dir)
+        self.assertEqual(
+            '{"routes": []}\n',
+            (plan.current_config_dir / "routes.json").read_text(),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

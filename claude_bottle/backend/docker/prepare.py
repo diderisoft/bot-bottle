@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 
 from ... import pipelock
+from ...cred_proxy import cred_proxy_render_routes
 from ...env import ResolvedEnv, resolve_env
 from ...log import die
 from .. import BottleSpec
@@ -26,6 +27,7 @@ from .cred_proxy import (
 )
 from .git_gate import DockerGitGate, git_gate_container_name
 from .pipelock import DockerPipelockProxy, pipelock_container_name
+from .supervise import DockerSupervise, supervise_container_name
 
 
 def resolve_plan(
@@ -35,6 +37,7 @@ def resolve_plan(
     proxy: DockerPipelockProxy,
     git_gate: DockerGitGate,
     cred_proxy: DockerCredProxy,
+    supervise: DockerSupervise,
 ) -> DockerBottlePlan:
     """Resolve Docker-specific names and write scratch files. Trusts
     that the agent and its skills/git-gate keys are present —
@@ -94,6 +97,8 @@ def resolve_plan(
         sidecar_probes.append(("git-gate", git_gate_container_name(slug)))
     if bottle.cred_proxy.routes:
         sidecar_probes.append(("cred-proxy", cred_proxy_container_name(slug)))
+    if bottle.supervise:
+        sidecar_probes.append(("supervise", supervise_container_name(slug)))
     for label, sidecar_name in sidecar_probes:
         if docker_mod.container_exists(sidecar_name):
             die(
@@ -111,6 +116,22 @@ def resolve_plan(
     proxy_plan = proxy.prepare(bottle, slug, stage_dir)
     git_gate_plan = git_gate.prepare(bottle, slug, stage_dir)
     cred_proxy_plan = cred_proxy.prepare(bottle, slug, stage_dir)
+    supervise_plan = None
+    if bottle.supervise:
+        routes_content = cred_proxy_render_routes(cred_proxy_plan.routes) if cred_proxy_plan.routes else ""
+        allowlist_content = "\n".join(pipelock.pipelock_effective_allowlist(bottle)) + "\n"
+        # Current Dockerfile for the agent image. Read from the repo
+        # root; for `--cwd` derived images the base Dockerfile is what
+        # the agent should propose changes against (the derived layer
+        # is just a workspace copy).
+        dockerfile_path = Path(__file__).resolve().parent.parent.parent.parent / "Dockerfile"
+        dockerfile_content = dockerfile_path.read_text() if dockerfile_path.is_file() else ""
+        supervise_plan = supervise.prepare(
+            slug, stage_dir,
+            routes_content=routes_content,
+            allowlist_content=allowlist_content,
+            dockerfile_content=dockerfile_content,
+        )
     resolved = resolve_env(manifest, spec.agent_name)
     # Everything that should reach the bottle by-name (so its value
     # never lands on argv or in env_file) goes into one dict. Nothing
@@ -169,6 +190,7 @@ def resolve_plan(
         proxy_plan=proxy_plan,
         git_gate_plan=git_gate_plan,
         cred_proxy_plan=cred_proxy_plan,
+        supervise_plan=supervise_plan,
         allowlist_summary=allowlist_summary,
         use_runsc=use_runsc,
     )

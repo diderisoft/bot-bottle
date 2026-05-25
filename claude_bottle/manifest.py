@@ -329,6 +329,13 @@ class Bottle:
     git: tuple[GitEntry, ...] = ()
     cred_proxy: CredProxyConfig = field(default_factory=CredProxyConfig)
     egress: BottleEgress = field(default_factory=BottleEgress)
+    # Opt-in per-bottle stuck-recovery sidecar (PRD 0013). When true,
+    # the launch step brings up a supervise sidecar that exposes three
+    # MCP tools to the agent (cred-proxy-block, pipelock-block,
+    # capability-block) plus mounts the current-config dir read-only
+    # into the agent at /etc/claude-bottle/current-config. False (the
+    # default) skips the sidecar and the mount.
+    supervise: bool = False
 
     @classmethod
     def from_dict(cls, name: str, raw: object) -> "Bottle":
@@ -396,7 +403,17 @@ class Bottle:
             else BottleEgress()
         )
 
-        return cls(env=env, git=git, cred_proxy=cred_proxy, egress=egress)
+        supervise_raw = d.get("supervise", False)
+        if not isinstance(supervise_raw, bool):
+            die(
+                f"bottle '{name}' supervise must be a boolean "
+                f"(was {type(supervise_raw).__name__})"
+            )
+
+        return cls(
+            env=env, git=git, cred_proxy=cred_proxy, egress=egress,
+            supervise=supervise_raw,
+        )
 
 
 @dataclass(frozen=True)
@@ -747,7 +764,7 @@ _FILENAME_RX = re.compile(r"^[a-z][a-z0-9-]*$")
 # Frontmatter keys we accept on each entity. Anything not in these
 # sets dies with a "did you mean" pointer — typos shouldn't silently
 # ghost into an empty config.
-_BOTTLE_KEYS = frozenset({"env", "git", "cred_proxy", "egress"})
+_BOTTLE_KEYS = frozenset({"env", "git", "cred_proxy", "egress", "supervise"})
 _AGENT_KEYS_REQUIRED = frozenset({"bottle"})
 _AGENT_KEYS_OPTIONAL = frozenset({"skills"})
 # Claude Code subagent fields claude-bottle ignores at launch but

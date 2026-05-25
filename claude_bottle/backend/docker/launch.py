@@ -19,6 +19,7 @@ from typing import Callable, Generator
 
 from ...log import die, info
 from ...pipelock import pipelock_build_config, pipelock_render_yaml
+from ...supervise import CURRENT_CONFIG_DIR_IN_AGENT
 from . import network as network_mod
 from . import util as docker_mod
 from .bottle import DockerBottle
@@ -33,6 +34,7 @@ from .pipelock import (
     pipelock_tls_init,
 )
 from .provision.ca import AGENT_CA_BUNDLE, AGENT_CA_PATH
+from .supervise import DockerSupervise
 
 
 # Where the repo root lives, for `docker build` context. Computed once.
@@ -46,6 +48,7 @@ def launch(
     proxy: DockerPipelockProxy,
     git_gate: DockerGitGate,
     cred_proxy: DockerCredProxy,
+    supervise: DockerSupervise,
     provision: Callable[[DockerBottlePlan, str], str | None],
 ) -> Generator[DockerBottle, None, None]:
     """Build, launch, and provision a Docker bottle. Teardown on exit.
@@ -156,6 +159,19 @@ def launch(
             cred_proxy_name = cred_proxy.start(plan.cred_proxy_plan)
             stack.callback(cred_proxy.stop, cred_proxy_name)
 
+        # Supervise sidecar (PRD 0013). Opt-in via bottle.supervise.
+        # Internal-network only — the sidecar makes no outbound calls.
+        # Must come up BEFORE the agent so DNS resolution for
+        # `supervise` succeeds on the agent's first tool call.
+        if plan.supervise_plan is not None:
+            supervise_plan = dataclasses.replace(
+                plan.supervise_plan,
+                internal_network=internal_network,
+            )
+            plan = dataclasses.replace(plan, supervise_plan=supervise_plan)
+            supervise_name = supervise.start(plan.supervise_plan)
+            stack.callback(supervise.stop, supervise_name)
+
         container = _run_agent_container(plan, internal_network)
         stack.callback(docker_mod.force_remove_container, container)
 
@@ -195,6 +211,16 @@ def _run_agent_container(plan: DockerBottlePlan, internal_network: str) -> str:
         docker_args.extend(["--env-file", str(plan.env_file)])
     for name in plan.forwarded_env:
         docker_args.extend(["-e", name])
+
+    # PRD 0013: read-only current-config mount so the agent can read
+    # routes.json / allowlist / Dockerfile before composing a
+    # supervise tool-call proposal. Mounted from the per-bottle
+    # stage_dir/current-config/ populated at prepare time.
+    if plan.supervise_plan is not None:
+        docker_args.extend([
+            "-v",
+            f"{plan.supervise_plan.current_config_dir}:{CURRENT_CONFIG_DIR_IN_AGENT}:ro",
+        ])
 
     docker_args.extend([plan.runtime_image, "sleep", "infinity"])
 
