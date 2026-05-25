@@ -425,7 +425,13 @@ def sha256_hex(content: str) -> str:
 # Filenames inside the per-bottle current-config dir. The agent reads
 # these (read-only) from CURRENT_CONFIG_DIR_IN_AGENT and proposes
 # modified versions back via the three MCP tools.
-CURRENT_CONFIG_ROUTES = "routes.json"
+# Filename of the staged egress-proxy routes file inside the agent's
+# read-only current-config mount. JSON content under a `.yaml`
+# extension to match the live file the egress-proxy sidecar reads
+# (`/etc/egress-proxy/routes.yaml`) — the egress-proxy-block tool
+# description points at this exact path, and the apply step writes
+# the new content to the matching live path.
+CURRENT_CONFIG_ROUTES = "routes.yaml"
 CURRENT_CONFIG_ALLOWLIST = "allowlist"
 CURRENT_CONFIG_DOCKERFILE = "Dockerfile"
 
@@ -437,7 +443,7 @@ class SupervisePlan:
     `queue_dir` is the host directory bind-mounted into the sidecar
     at /run/supervise/queue. `current_config_dir` is the host
     directory bind-mounted (read-only) into the *agent* container at
-    /etc/claude-bottle/current-config, holding routes.json + allowlist
+    /etc/claude-bottle/current-config, holding routes.yaml + allowlist
     + Dockerfile so the agent can read them before composing a
     proposal. `internal_network` is empty at prepare time; the
     backend's launch step fills it via dataclasses.replace before

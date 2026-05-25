@@ -38,7 +38,7 @@ FIXED = datetime(2026, 5, 25, 12, 0, 0, tzinfo=timezone.utc)
 
 
 def _proposal(slug: str = "dev", tool: str = TOOL_EGRESS_PROXY_BLOCK) -> Proposal:
-    # Per-tool payload shape: cred-proxy gets routes.json, pipelock
+    # Per-tool payload shape: cred-proxy gets routes.yaml, pipelock
     # gets a failed URL (PR #25 follow-up), capability gets a
     # Dockerfile-ish blob. Match the production dispatch in
     # PROPOSED_FILE_FIELD.

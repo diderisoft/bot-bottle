@@ -297,9 +297,9 @@ class TestDiffAndHash(unittest.TestCase):
         self.assertEqual("", render_diff("a\nb\n", "a\nb\n"))
 
     def test_render_diff_shows_changes(self):
-        diff = render_diff("a\nb\nc\n", "a\nB\nc\n", label="routes.json")
-        self.assertIn("routes.json (current)", diff)
-        self.assertIn("routes.json (proposed)", diff)
+        diff = render_diff("a\nb\nc\n", "a\nB\nc\n", label="routes.yaml")
+        self.assertIn("routes.yaml (current)", diff)
+        self.assertIn("routes.yaml (proposed)", diff)
         self.assertIn("-b", diff)
         self.assertIn("+B", diff)
 
@@ -365,7 +365,7 @@ class TestSupervisePrepare(unittest.TestCase):
         self.assertTrue(plan.current_config_dir.is_dir())
         self.assertEqual(
             '{"routes": [{"path": "/x/"}]}\n',
-            (plan.current_config_dir / "routes.json").read_text(),
+            (plan.current_config_dir / "routes.yaml").read_text(),
         )
         self.assertEqual(
             "example.com\n",
@@ -382,7 +382,7 @@ class TestSupervisePrepare(unittest.TestCase):
         plan = _StubSupervise().prepare("dev", self.stage_dir)
         self.assertEqual(
             '{"routes": []}\n',
-            (plan.current_config_dir / "routes.json").read_text(),
+            (plan.current_config_dir / "routes.yaml").read_text(),
         )
 
 

@@ -278,7 +278,7 @@ def _run_agent_container(plan: DockerBottlePlan, internal_network: str) -> str:
         docker_args.extend(["-e", name])
 
     # PRD 0013: read-only current-config mount so the agent can read
-    # routes.json / allowlist / Dockerfile before composing a
+    # routes.yaml / allowlist / Dockerfile before composing a
     # supervise tool-call proposal. Mounted from the per-bottle
     # stage_dir/current-config/ populated at prepare time.
     if plan.supervise_plan is not None:
