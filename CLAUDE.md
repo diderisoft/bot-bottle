@@ -5,8 +5,8 @@
 claude-bottle spins up an isolated container for running Claude Code with a
 curated set of skills and env vars. The point is to run Claude with broad
 permissions inside a sandbox, so a misbehaving agent cannot reach the host.
-Bash scripts orchestrate the container lifecycle and the copying of skills
-and env vars into it.
+A Python CLI (entry point `cli.py`, package `claude_bottle/`) orchestrates
+the container lifecycle and the copying of skills and env vars into it.
 
 ## Goals
 
@@ -36,8 +36,10 @@ and env vars into it.
 
 - Product requirement docs live in `docs/prds/`.
 - Research notes live in `docs/research/`.
-- Low dependencies by default. The project is bash-first; ask before adding new
-  tools, runtimes, or package managers.
+- Low dependencies by default. The project is Python, stdlib-first (no
+  runtime pip dependencies in the package itself; the only language
+  runtime is the Python 3.13 used by the CLI + sidecars). Ask before
+  adding new tools, runtimes, or package managers.
 - Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/):
   `<type>[(scope)][!]: <description>`, where `<type>` is one of `feat`, `fix`,
   `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`.
