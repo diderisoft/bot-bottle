@@ -44,14 +44,20 @@ USER mitmproxy
 EXPOSE 9099
 
 # Entrypoint:
-#   --mode regular@9099   standard HTTP/HTTPS forward proxy on :9099.
-#   --set ssl_verify_upstream_trusted_ca=...  only when
-#     EGRESS_PROXY_UPSTREAM_CA env is set (the backend's start step
-#     sets it to the in-container pipelock-CA path when pipelock is
-#     present, so the upstream leg trusts pipelock's MITM). The
-#     ${VAR:+expansion} form omits the flag when the var is unset
-#     or empty — useful for standalone runs of the image (e.g. unit
-#     tests) where no upstream CA is mounted.
-#   -s /app/egress_proxy_addon.py   loads our addon, which reads the
-#     route table from /etc/egress-proxy/routes.yaml.
-ENTRYPOINT ["sh", "-c", "exec mitmdump --mode regular@9099 ${EGRESS_PROXY_UPSTREAM_CA:+--set ssl_verify_upstream_trusted_ca=$EGRESS_PROXY_UPSTREAM_CA} -s /app/egress_proxy_addon.py"]
+#   - Build a combined upstream-trust bundle when
+#     EGRESS_PROXY_UPSTREAM_CA is set (the backend's start step
+#     sets it to the in-container pipelock-CA path).
+#     `--set ssl_verify_upstream_trusted_ca` REPLACES mitmproxy's
+#     default trust store with the file we point it at; if we just
+#     pointed it at pipelock's CA, mitmproxy would refuse any host
+#     pipelock passes through (api.anthropic.com etc.) because
+#     pipelock's CA doesn't sign the real upstream certs. So
+#     concatenate the system bundle + pipelock CA into one PEM and
+#     point mitmproxy at that — covers both pipelock-MITM'd and
+#     pipelock-passthrough hosts.
+#   - --mode regular@9099 → standard HTTP/HTTPS forward proxy.
+#   - -s /app/egress_proxy_addon.py → loads our addon, reads
+#     /etc/egress-proxy/routes.yaml.
+# Standalone runs (no EGRESS_PROXY_UPSTREAM_CA) skip the bundle
+# build and use mitmproxy's default trust store.
+ENTRYPOINT ["sh", "-c", "if [ -n \"$EGRESS_PROXY_UPSTREAM_CA\" ] && [ -f \"$EGRESS_PROXY_UPSTREAM_CA\" ]; then COMBINED=/home/mitmproxy/.mitmproxy/combined-trust.pem; cat /etc/ssl/certs/ca-certificates.crt \"$EGRESS_PROXY_UPSTREAM_CA\" > \"$COMBINED\"; exec mitmdump --mode regular@9099 --set ssl_verify_upstream_trusted_ca=\"$COMBINED\" -s /app/egress_proxy_addon.py; else exec mitmdump --mode regular@9099 -s /app/egress_proxy_addon.py; fi"]
