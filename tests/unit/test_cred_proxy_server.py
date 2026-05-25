@@ -1,15 +1,20 @@
 """Unit: cred-proxy server pure functions — route parsing, route
-selection, header injection (PRD 0010)."""
+selection, header injection (PRD 0010); SIGHUP reload (PRD 0014)."""
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from claude_bottle.cred_proxy_server import (
+    CredProxyServer,
     Route,
     build_forward_headers,
     filter_response_headers,
     is_git_push_request,
     load_tokens,
     parse_routes,
+    reload_routes,
     select_route,
 )
 
@@ -256,6 +261,78 @@ class TestLoadTokens(unittest.TestCase):
         routes = (Route("/a/", "https", "x", 443, "", "Bearer", "T_0"),)
         out = load_tokens(routes, {})
         self.assertEqual({"T_0": ""}, out)
+
+
+class TestReloadRoutes(unittest.TestCase):
+    """SIGHUP reload helper (PRD 0014).
+
+    Drives the same code path the signal handler invokes, but
+    without actually sending a signal — keeps the test
+    deterministic. The signal binding is just `signal.signal(SIGHUP,
+    handler)`; install_sighup_handler is exercised by the
+    integration test."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory(prefix="cp-reload-test.")
+        self.routes_path = Path(self._tmp.name) / "routes.json"
+        self.routes_path.write_text(json.dumps({"routes": [
+            {"path": "/a/", "upstream": "https://a.example",
+             "auth_scheme": "Bearer", "token_env": "T0"},
+        ]}))
+        # Bind to :0 so the test doesn't need a fixed port.
+        self.server = CredProxyServer(("127.0.0.1", 0), _NullHandler)
+        self.server.routes = parse_routes(json.loads(self.routes_path.read_text()))
+        self.server.tokens = {"T0": "old"}
+
+    def tearDown(self):
+        self.server.server_close()
+        self._tmp.cleanup()
+
+    def test_reload_swaps_routes_and_tokens(self):
+        self.routes_path.write_text(json.dumps({"routes": [
+            {"path": "/a/", "upstream": "https://a.example",
+             "auth_scheme": "Bearer", "token_env": "T0"},
+            {"path": "/b/", "upstream": "https://b.example",
+             "auth_scheme": "Bearer", "token_env": "T1"},
+        ]}))
+        ok, msg = reload_routes(
+            self.server, str(self.routes_path),
+            environ={"T0": "new0", "T1": "new1"},
+        )
+        self.assertTrue(ok, msg)
+        self.assertEqual(2, len(self.server.routes))
+        self.assertEqual({"T0": "new0", "T1": "new1"}, self.server.tokens)
+        self.assertIn("reloaded 2 route(s)", msg)
+
+    def test_failed_reload_keeps_old_routes(self):
+        original_routes = self.server.routes
+        original_tokens = self.server.tokens
+        self.routes_path.write_text("not valid json {")
+        ok, msg = reload_routes(
+            self.server, str(self.routes_path),
+            environ={"T0": "ignored"},
+        )
+        self.assertFalse(ok)
+        self.assertIn("reload failed", msg)
+        self.assertIs(original_routes, self.server.routes)
+        self.assertIs(original_tokens, self.server.tokens)
+
+    def test_failed_reload_on_missing_file_keeps_old_routes(self):
+        original_routes = self.server.routes
+        self.routes_path.unlink()
+        ok, _ = reload_routes(
+            self.server, str(self.routes_path), environ={},
+        )
+        self.assertFalse(ok)
+        self.assertIs(original_routes, self.server.routes)
+
+
+class _NullHandler:  # noqa: D401 — test helper, not a real handler
+    """Dummy handler class; the reload tests never actually serve a
+    request, so the handler is never instantiated."""
+
+    def __init__(self, *args, **kwargs):
+        raise RuntimeError("should not be called in reload tests")
 
 
 if __name__ == "__main__":

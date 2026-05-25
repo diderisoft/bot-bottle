@@ -22,6 +22,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import supervise as _supervise
+from ..backend.docker.cred_proxy_apply import (
+    CredProxyApplyError,
+    apply_routes_change,
+    fetch_current_routes,
+)
 from ..log import info
 from ..supervise import (
     ACTION_OPERATOR_EDIT,
@@ -33,6 +38,7 @@ from ..supervise import (
     STATUS_MODIFIED,
     STATUS_REJECTED,
     TOOL_CAPABILITY_BLOCK,
+    TOOL_CRED_PROXY_BLOCK,
     list_pending_proposals,
     render_diff,
     write_audit_entry,
@@ -50,6 +56,33 @@ class QueuedProposal:
 
     proposal: Proposal
     queue_dir: Path
+
+
+def discover_cred_proxy_slugs() -> list[str]:
+    """Slugs of bottles with a running cred-proxy sidecar. Used by
+    the operator-initiated `routes edit` verb to know which bottles
+    are editable. Empty list if docker isn't reachable or not
+    installed."""
+    try:
+        r = subprocess.run(
+            [
+                "docker", "ps",
+                "--filter", "name=^claude-bottle-cred-proxy-",
+                "--format", "{{.Names}}",
+            ],
+            capture_output=True, text=True, check=False,
+        )
+    except FileNotFoundError:
+        return []
+    if r.returncode != 0:
+        return []
+    prefix = "claude-bottle-cred-proxy-"
+    out: list[str] = []
+    for line in (r.stdout or "").splitlines():
+        line = line.strip()
+        if line.startswith(prefix):
+            out.append(line[len(prefix):])
+    return sorted(out)
 
 
 def discover_pending() -> list[QueuedProposal]:
@@ -78,9 +111,28 @@ def approve(
     notes: str = "",
     final_file: str | None = None,
 ) -> None:
-    """Write an approval response and an audit entry. If `final_file`
-    is provided the status is `modified`; otherwise `approved`."""
+    """Apply the proposal to the running sidecar, write the response
+    file the agent's tool call is waiting on, and append an audit
+    entry. If `final_file` is provided the status is `modified`;
+    otherwise `approved`.
+
+    Raises CredProxyApplyError if the cred-proxy-block apply fails
+    (sidecar down, invalid JSON survived the operator's modify).
+    On failure no response is written and no audit entry is
+    appended — the proposal stays pending so the operator can fix
+    the input and retry."""
     status = STATUS_MODIFIED if final_file is not None else STATUS_APPROVED
+    file_to_apply = final_file if final_file is not None else qp.proposal.proposed_file
+
+    diff_before, diff_after = "", ""
+    if qp.proposal.tool == TOOL_CRED_PROXY_BLOCK:
+        diff_before, diff_after = apply_routes_change(
+            qp.proposal.bottle_slug, file_to_apply,
+        )
+    # pipelock-block + capability-block remediation lands in PRDs
+    # 0015 + 0016; for 0014 they remain no-op approvals and the
+    # audit diff stays empty.
+
     response = Response(
         proposal_id=qp.proposal.id,
         status=status,
@@ -88,11 +140,16 @@ def approve(
         final_file=final_file,
     )
     write_response(qp.queue_dir, response)
-    _write_audit(qp, action=status, notes=notes, final_file=final_file)
+    _write_audit(
+        qp, action=status, notes=notes,
+        diff_before=diff_before, diff_after=diff_after,
+    )
 
 
 def reject(qp: QueuedProposal, *, reason: str) -> None:
-    """Write a rejection response and an audit entry."""
+    """Write a rejection response and an audit entry. No remediation
+    apply happens on reject — the agent sees the rejection and
+    decides whether to retry / give up."""
     response = Response(
         proposal_id=qp.proposal.id,
         status=STATUS_REJECTED,
@@ -100,7 +157,28 @@ def reject(qp: QueuedProposal, *, reason: str) -> None:
         final_file=None,
     )
     write_response(qp.queue_dir, response)
-    _write_audit(qp, action=STATUS_REJECTED, notes=reason, final_file=None)
+    _write_audit(qp, action=STATUS_REJECTED, notes=reason, diff_before="", diff_after="")
+
+
+def operator_edit_routes(slug: str, new_content: str) -> tuple[str, str]:
+    """Apply an operator-initiated routes.json change (no agent
+    proposal). Used by the `routes edit <bottle>` TUI verb and
+    available for scripted use. Returns (before, after) like
+    apply_routes_change. Writes an audit entry tagged
+    ACTION_OPERATOR_EDIT to distinguish from tool-call approvals.
+
+    Raises CredProxyApplyError on failure."""
+    before, after = apply_routes_change(slug, new_content)
+    write_audit_entry(AuditEntry(
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        bottle_slug=slug,
+        component="cred-proxy",
+        operator_action=ACTION_OPERATOR_EDIT,
+        operator_notes="",
+        justification="",
+        diff=render_diff(before, after, label="cred-proxy"),
+    ))
+    return before, after
 
 
 def _write_audit(
@@ -108,19 +186,21 @@ def _write_audit(
     *,
     action: str,
     notes: str,
-    final_file: str | None,
+    diff_before: str,
+    diff_after: str,
 ) -> None:
     """Audit log for cred-proxy / pipelock tools. capability-block has
     no audit log (its changes are captured by the bottle's rebuild
-    record + git history per PRD 0016)."""
+    record + git history per PRD 0016).
+
+    For cred-proxy-block approvals the (before, after) come from the
+    apply_routes_change return — a real fetched-from-sidecar diff.
+    For rejections, or for tools whose remediation hasn't landed yet
+    (pipelock in 0014, capability anywhere), both are empty strings
+    and the audit diff renders as empty."""
     component = COMPONENT_FOR_TOOL.get(qp.proposal.tool)
     if component is None:
-        # capability-block: skip audit log; 0016 records via rebuild.
         return
-    # v1 audit diff is empty: 0013's no-op handler doesn't have the
-    # actual current-on-disk file to diff against, only the agent's
-    # proposed file. 0014 / 0015 fill in the real diff against the
-    # live routes.json / allowlist after writing the change.
     write_audit_entry(AuditEntry(
         timestamp=datetime.now(timezone.utc).isoformat(),
         bottle_slug=qp.proposal.bottle_slug,
@@ -128,11 +208,7 @@ def _write_audit(
         operator_action=action,
         operator_notes=notes,
         justification=qp.proposal.justification,
-        diff=render_diff(
-            "",
-            final_file if final_file is not None else qp.proposal.proposed_file,
-            label=component,
-        ),
+        diff=render_diff(diff_before, diff_after, label=component),
     ))
 
 
@@ -217,6 +293,9 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
 
         if key in (ord("q"), 27):  # q or ESC
             return
+        if key == ord("e"):
+            status_line = _operator_edit_routes_flow(stdscr)
+            continue
         if not pending:
             continue
         qp = pending[selected]
@@ -228,15 +307,21 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
         elif key in (curses.KEY_ENTER, 10, 13, ord("v")):
             _detail_view(stdscr, qp)
         elif key == ord("a"):
-            approve(qp)
-            status_line = f"approved {qp.proposal.tool} for [{qp.proposal.bottle_slug}]"
+            try:
+                approve(qp)
+                status_line = f"approved {qp.proposal.tool} for [{qp.proposal.bottle_slug}]"
+            except CredProxyApplyError as e:
+                status_line = f"apply failed: {e}"
         elif key == ord("m"):
             edited = _modify(stdscr, qp)
             if edited is None:
                 status_line = "modify aborted (no change)"
             else:
-                approve(qp, final_file=edited, notes="operator modified before approving")
-                status_line = f"modified+approved {qp.proposal.tool} for [{qp.proposal.bottle_slug}]"
+                try:
+                    approve(qp, final_file=edited, notes="operator modified before approving")
+                    status_line = f"modified+approved {qp.proposal.tool} for [{qp.proposal.bottle_slug}]"
+                except CredProxyApplyError as e:
+                    status_line = f"apply failed: {e}"
         elif key == ord("r"):
             reason = _prompt(stdscr, "reject reason: ")
             if reason:
@@ -280,7 +365,7 @@ def _render(
             attr = curses.A_REVERSE if i == selected else curses.A_NORMAL
             stdscr.addnstr(row, 0, line, w - 1, attr)
 
-    footer = "[Enter] view  [a] approve  [m] modify  [r] reject  [j/k] move  [q] quit"
+    footer = "[Enter] view  [a] approve  [m] modify  [r] reject  [e] routes edit  [j/k] move  [q] quit"
     stdscr.hline(h - 2, 0, curses.ACS_HLINE, w)
     stdscr.addnstr(h - 1, 0, footer, w - 1, curses.A_DIM)
     if status_line:
@@ -316,12 +401,18 @@ def _detail_view(stdscr: "curses._CursesWindow", qp: QueuedProposal) -> None:
         elif key == ord("G"):
             offset = max(0, len(lines) - 1)
         elif key == ord("a"):
-            approve(qp)
+            try:
+                approve(qp)
+            except CredProxyApplyError:
+                pass  # Status surfaces back in the list view's render.
             return
         elif key == ord("m"):
             edited = _modify(stdscr, qp)
             if edited is not None:
-                approve(qp, final_file=edited, notes="operator modified before approving")
+                try:
+                    approve(qp, final_file=edited, notes="operator modified before approving")
+                except CredProxyApplyError:
+                    pass
             return
         elif key == ord("r"):
             reason = _prompt(stdscr, "reject reason: ")
@@ -367,6 +458,40 @@ def _suffix_for_tool(tool: str) -> str:
         return ".dockerfile"
     # cred-proxy-block / pipelock-block: JSON-ish + plain.
     return ".txt"
+
+
+def _operator_edit_routes_flow(stdscr: "curses._CursesWindow") -> str:
+    """Operator-initiated routes.json edit. Discover running
+    cred-proxy sidecars, pick one (single → use directly; multi →
+    prompt), fetch the current routes, open in $EDITOR, apply on
+    save. Returns a status-line message."""
+    slugs = discover_cred_proxy_slugs()
+    if not slugs:
+        return "no running cred-proxy sidecars to edit"
+    if len(slugs) == 1:
+        slug = slugs[0]
+    else:
+        slug = _prompt(stdscr, f"bottle ({', '.join(slugs)}): ")
+        if not slug:
+            return "routes edit aborted"
+        if slug not in slugs:
+            return f"unknown bottle {slug!r}"
+    try:
+        current = fetch_current_routes(slug)
+    except CredProxyApplyError as e:
+        return f"fetch failed: {e}"
+    curses.endwin()
+    try:
+        edited = edit_in_editor(current, suffix=".json")
+    finally:
+        stdscr.refresh()
+    if edited is None:
+        return f"routes for [{slug}] unchanged"
+    try:
+        operator_edit_routes(slug, edited)
+    except CredProxyApplyError as e:
+        return f"apply failed: {e}"
+    return f"updated routes for [{slug}]"
 
 
 def _prompt(stdscr: "curses._CursesWindow", label: str) -> str:
