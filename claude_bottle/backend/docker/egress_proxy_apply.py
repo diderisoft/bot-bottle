@@ -102,11 +102,14 @@ def _mirror_hosts_to_pipelock(slug: str, hosts: list[str]) -> None:
             return  # nothing to add
         apply_allowlist_change(slug, render_allowlist_content(merged))
     except PipelockApplyError as e:
+        # Mirror runs BEFORE the egress-proxy write, so egress-proxy
+        # is unchanged on this failure path. Report it as a
+        # pipelock-side problem so the operator looks in the right
+        # place; their `pipelock edit` flow can repair manually.
         raise EgressProxyApplyError(
-            f"egress-proxy routes updated but pipelock allowlist "
-            f"mirror failed: {e}. The request will 403 at pipelock "
-            f"until pipelock's allowlist is refreshed; retry the "
-            f"proposal or edit pipelock's allowlist by hand."
+            f"pipelock allowlist mirror failed (egress-proxy NOT "
+            f"updated): {e}. Fix pipelock's allowlist manually with "
+            f"`pipelock edit <bottle>` then retry the proposal."
         ) from e
 
 
