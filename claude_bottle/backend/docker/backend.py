@@ -31,6 +31,7 @@ from .provision import cred_proxy as _cred_proxy
 from .provision import git as _git
 from .provision import prompt as _prompt
 from .provision import skills as _skills
+from .provision import supervise as _supervise_prov
 from .supervise import DockerSupervise
 
 
@@ -82,6 +83,9 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
 
     def provision_cred_proxy(self, plan: DockerBottlePlan, target: str) -> None:
         _cred_proxy.provision_cred_proxy(plan, target)
+
+    def provision_supervise(self, plan: DockerBottlePlan, target: str) -> None:
+        _supervise_prov.provision_supervise(plan, target)
 
     def prepare_cleanup(self) -> DockerBottleCleanupPlan:
         return _cleanup.prepare_cleanup()

@@ -229,6 +229,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         self.provision_skills(plan, target)
         self.provision_git(plan, target)
         self.provision_cred_proxy(plan, target)
+        self.provision_supervise(plan, target)
         return prompt_path
 
     def provision_ca(self, plan: PlanT, target: str) -> None:
@@ -262,6 +263,13 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         .gitconfig insteadOf, ~/.config/tea/config.yml) per PRD 0010.
         Default impl is a no-op for backends that don't yet support
         the cred-proxy sidecar; the Docker backend overrides."""
+
+    def provision_supervise(self, plan: PlanT, target: str) -> None:
+        """Write the in-bottle Claude Code MCP config so the agent
+        discovers the per-bottle supervise sidecar (PRD 0013).
+        No-op when bottle.supervise is False or the backend doesn't
+        support the supervise sidecar yet. The Docker backend
+        overrides."""
 
     @abstractmethod
     def prepare_cleanup(self) -> CleanupT:
