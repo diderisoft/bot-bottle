@@ -378,8 +378,39 @@ class TestDiscoverCredProxySlugs(unittest.TestCase):
         os.environ["PATH"] = "/nonexistent-no-docker-here"
         try:
             self.assertEqual([], dashboard.discover_cred_proxy_slugs())
+            self.assertEqual([], dashboard.discover_pipelock_slugs())
         finally:
             os.environ["PATH"] = original
+
+
+class TestOperatorEditAllowlist(_FakeHomeMixin, unittest.TestCase):
+    """PRD 0015 Phase 3: operator-initiated pipelock allowlist edit."""
+
+    def setUp(self):
+        self._setup_fake_home()
+        self._original = dashboard.apply_allowlist_change
+
+    def tearDown(self):
+        dashboard.apply_allowlist_change = self._original
+        self._teardown_fake_home()
+
+    def test_writes_audit_with_operator_edit_action(self):
+        dashboard.apply_allowlist_change = lambda slug, content: (
+            "old.example\n", content,
+        )
+        dashboard.operator_edit_allowlist("dev", "old.example\nnew.example\n")
+        entries = read_audit_entries("pipelock", "dev")
+        self.assertEqual(1, len(entries))
+        self.assertEqual(supervise.ACTION_OPERATOR_EDIT, entries[0].operator_action)
+        self.assertIn("+new.example", entries[0].diff)
+
+    def test_failure_does_not_write_audit(self):
+        dashboard.apply_allowlist_change = lambda slug, content: (_ for _ in ()).throw(
+            PipelockApplyError("nope")
+        )
+        with self.assertRaises(PipelockApplyError):
+            dashboard.operator_edit_allowlist("dev", "x.example\n")
+        self.assertEqual([], read_audit_entries("pipelock", "dev"))
 
 
 class TestEditInEditor(unittest.TestCase):
