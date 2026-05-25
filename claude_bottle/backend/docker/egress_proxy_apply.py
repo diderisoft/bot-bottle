@@ -90,34 +90,20 @@ def _hosts_in_routes(content: str) -> list[str]:
 
 
 # Pipelock's allowlist parser accepts only literal hostnames:
-# `[A-Za-z0-9_.-]+`. Wildcard hosts (e.g. `*.example.com`) that
-# egress-proxy's route table accepts get normalised here by
-# stripping the leading `*.` (so `*.example.com` → `example.com`)
-# — egress-proxy retains the wildcard for its own host matching,
-# and pipelock's allowlist gets the suffix, which still permits
-# the wildcard-matched upstream connections without expanding to
-# arbitrary subdomains. Hosts that still don't fit the pipelock
-# charset after normalisation (bare `*`, IPv6 literals, weird
-# chars) are silently skipped.
+# `[A-Za-z0-9_.-]+`. Anything else (wildcards, IPv6 literals,
+# stray characters) is silently dropped from the mirror so the
+# pipelock apply doesn't fail parse before the new yaml is even
+# written. The dropped hosts stay on egress-proxy's route table —
+# but the addon does exact-host match only, so they'll never
+# match anything either. (Wildcard host matching was removed —
+# see `match_route` in egress_proxy_addon_core for the rationale.)
 _PIPELOCK_HOST_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 def _pipelock_safe_hosts(hosts: list[str]) -> list[str]:
-    """Normalise hosts for pipelock's allowlist: strip leading
-    `*.` from wildcards, drop anything that still doesn't match
-    pipelock's allowed charset. Order preserved; duplicates that
-    arise from normalisation are de-duped (first-seen wins)."""
-    out: list[str] = []
-    seen: set[str] = set()
-    for h in hosts:
-        candidate = h[2:] if h.startswith("*.") else h
-        if not candidate or not _PIPELOCK_HOST_RE.match(candidate):
-            continue
-        if candidate in seen:
-            continue
-        seen.add(candidate)
-        out.append(candidate)
-    return out
+    """Drop any host pipelock's allowlist parser would reject.
+    Order preserved."""
+    return [h for h in hosts if _PIPELOCK_HOST_RE.match(h)]
 
 
 def _mirror_hosts_to_pipelock(slug: str, hosts: list[str]) -> None:

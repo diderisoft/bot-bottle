@@ -169,38 +169,18 @@ def match_route(
     routes: typing.Sequence[Route],
     request_host: str,
 ) -> Route | None:
-    """Return the route whose `host` matches `request_host`.
+    """Return the first route whose `host` matches `request_host`
+    exactly (case-insensitive). DNS names are case-insensitive.
 
-    Match precedence:
-      1. Exact (case-insensitive) match on the literal hostname.
-      2. Wildcard match: a route whose host starts with `*.` is a
-         suffix pattern that covers the apex AND every subdomain.
-         `*.example.com` matches `example.com`, `foo.example.com`,
-         and `a.b.example.com`, but NOT `barexample.com` (the
-         label boundary `.` is required when matching a
-         subdomain). This is intentionally more permissive than
-         RFC 6125 TLS-wildcard semantics — an allowlist's natural
-         reading of `*.example.com` is "all of example.com",
-         apex included, and matches what the pipelock mirror does
-         (strips `*.example.com` → `example.com`).
-
-    Exact match wins over wildcard so an operator can declare a
-    specific route on top of a broader wildcard (e.g. a
-    `*.github.com` bare-pass + an `api.github.com` route with
-    auth). DNS names are case-insensitive."""
+    Wildcard hosts (`*.foo.com`) are NOT supported — they caused
+    too many edge cases (apex match? cert validation? pipelock
+    mirror mismatch?) for too little payoff. Operators that need
+    multiple subdomains declare them individually (or one common
+    parent host as a bare-pass route)."""
     target = request_host.lower()
-    # Pass 1: exact, literal hostname match.
     for r in routes:
-        host = r.host.lower()
-        if not host.startswith("*.") and host == target:
+        if r.host.lower() == target:
             return r
-    # Pass 2: wildcard match — apex + every subdomain.
-    for r in routes:
-        host = r.host.lower()
-        if host.startswith("*."):
-            suffix = host[2:]  # strip the `*.`
-            if target == suffix or target.endswith("." + suffix):
-                return r
     return None
 
 
