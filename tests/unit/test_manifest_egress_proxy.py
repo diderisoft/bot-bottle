@@ -1,0 +1,173 @@
+"""Unit: manifest parsing for `bottle.egress_proxy.routes[]` (PRD 0017).
+
+The route shape is new: `host` (required), optional `path_allowlist`,
+optional nested `auth: { scheme, token_ref }`. Validation rules per
+the PRD: empty `auth: {}` is an error, partial `auth` is an error,
+auth omission means unauthenticated."""
+
+import unittest
+
+from claude_bottle.log import Die
+from claude_bottle.manifest import EgressProxyRoute, Manifest
+
+
+def _bottle(routes):
+    return Manifest.from_json_obj({
+        "bottles": {"dev": {"egress_proxy": {"routes": routes}}},
+        "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+    }).bottles["dev"]
+
+
+class TestMinimalRoute(unittest.TestCase):
+    def test_host_only(self):
+        b = _bottle([{"host": "api.example.com"}])
+        self.assertEqual(1, len(b.egress_proxy.routes))
+        r = b.egress_proxy.routes[0]
+        self.assertEqual("api.example.com", r.Host)
+        self.assertEqual((), r.PathAllowlist)
+        self.assertEqual("", r.AuthScheme)
+        self.assertEqual("", r.TokenRef)
+
+    def test_host_required(self):
+        with self.assertRaises(Die):
+            _bottle([{}])
+
+    def test_host_must_be_non_empty(self):
+        with self.assertRaises(Die):
+            _bottle([{"host": ""}])
+
+    def test_unknown_top_level_key_dies(self):
+        with self.assertRaises(Die):
+            _bottle([{"host": "x.example", "wat": "yes"}])
+
+
+class TestPathAllowlist(unittest.TestCase):
+    def test_optional(self):
+        b = _bottle([{"host": "x.example"}])
+        self.assertEqual((), b.egress_proxy.routes[0].PathAllowlist)
+
+    def test_must_be_array(self):
+        with self.assertRaises(Die):
+            _bottle([{"host": "x.example", "path_allowlist": "/x/"}])
+
+    def test_items_must_be_strings(self):
+        with self.assertRaises(Die):
+            _bottle([{"host": "x.example", "path_allowlist": [42]}])
+
+    def test_items_must_be_absolute_paths(self):
+        with self.assertRaises(Die):
+            _bottle([{"host": "x.example", "path_allowlist": ["nope/"]}])
+
+    def test_full_list(self):
+        b = _bottle([{
+            "host": "github.com",
+            "path_allowlist": ["/didericis/", "/users/didericis"],
+        }])
+        self.assertEqual(
+            ("/didericis/", "/users/didericis"),
+            b.egress_proxy.routes[0].PathAllowlist,
+        )
+
+
+class TestAuth(unittest.TestCase):
+    def test_omitted_means_no_auth(self):
+        b = _bottle([{"host": "github.com"}])
+        r = b.egress_proxy.routes[0]
+        self.assertEqual("", r.AuthScheme)
+        self.assertEqual("", r.TokenRef)
+
+    def test_full_auth(self):
+        b = _bottle([{
+            "host": "api.github.com",
+            "auth": {"scheme": "Bearer", "token_ref": "GH_PAT"},
+        }])
+        r = b.egress_proxy.routes[0]
+        self.assertEqual("Bearer", r.AuthScheme)
+        self.assertEqual("GH_PAT", r.TokenRef)
+
+    def test_empty_auth_block_rejected(self):
+        # Per PRD 0017: `auth: {}` is an error, not a synonym for
+        # "no auth" — that's what omission is for.
+        with self.assertRaises(Die):
+            _bottle([{"host": "x.example", "auth": {}}])
+
+    def test_missing_scheme_rejected(self):
+        with self.assertRaises(Die):
+            _bottle([{
+                "host": "x.example",
+                "auth": {"token_ref": "T"},
+            }])
+
+    def test_missing_token_ref_rejected(self):
+        with self.assertRaises(Die):
+            _bottle([{
+                "host": "x.example",
+                "auth": {"scheme": "Bearer"},
+            }])
+
+    def test_unknown_scheme_rejected(self):
+        with self.assertRaises(Die):
+            _bottle([{
+                "host": "x.example",
+                "auth": {"scheme": "Basic", "token_ref": "T"},
+            }])
+
+    def test_token_scheme_allowed(self):
+        # Gitea quirk: `Authorization: token <pat>` (not Bearer).
+        b = _bottle([{
+            "host": "git.example",
+            "auth": {"scheme": "token", "token_ref": "GITEA_PAT"},
+        }])
+        self.assertEqual("token", b.egress_proxy.routes[0].AuthScheme)
+
+    def test_unknown_auth_key_rejected(self):
+        with self.assertRaises(Die):
+            _bottle([{
+                "host": "x.example",
+                "auth": {"scheme": "Bearer", "token_ref": "T", "extra": "no"},
+            }])
+
+
+class TestRouteValidation(unittest.TestCase):
+    def test_duplicate_hosts_rejected(self):
+        # Routes match by exact host; duplicates leave the choice
+        # ambiguous, so we reject them up front rather than picking
+        # the first/last silently.
+        with self.assertRaises(Die):
+            _bottle([
+                {"host": "github.com"},
+                {"host": "github.com", "path_allowlist": ["/x/"]},
+            ])
+
+    def test_duplicate_host_case_insensitive(self):
+        with self.assertRaises(Die):
+            _bottle([
+                {"host": "GitHub.com"},
+                {"host": "github.com"},
+            ])
+
+    def test_empty_routes_allowed(self):
+        b = _bottle([])
+        self.assertEqual((), b.egress_proxy.routes)
+
+    def test_no_egress_proxy_block_means_empty(self):
+        # The bottle dataclass defaults to an empty EgressProxyConfig.
+        b = Manifest.from_json_obj({
+            "bottles": {"dev": {}},
+            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        }).bottles["dev"]
+        self.assertEqual((), b.egress_proxy.routes)
+
+
+class TestConfigShape(unittest.TestCase):
+    def test_unknown_egress_proxy_key_rejected(self):
+        with self.assertRaises(Die):
+            Manifest.from_json_obj({
+                "bottles": {"dev": {"egress_proxy": {"wat": []}}},
+                "agents": {"demo": {"skills": [], "prompt": "",
+                                     "bottle": "dev"}},
+            })
+
+
+if __name__ == "__main__":
+    unittest.main()

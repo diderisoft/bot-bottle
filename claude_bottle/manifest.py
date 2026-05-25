@@ -12,10 +12,11 @@ the system prompt, for bottles the body is human documentation
 (ignored by the parser).
 
 Bottle schema (frontmatter):
-  env:        { <NAME>: <env-entry>, ... }
-  git:        [ <git-entry>, ... ]
-  cred_proxy: { routes: [ <route>, ... ] }
-  egress:     { allowlist: [ <hostname>, ... ] }
+  env:          { <NAME>: <env-entry>, ... }
+  git:          [ <git-entry>, ... ]
+  cred_proxy:   { routes: [ <route>, ... ] }                # superseded by egress_proxy (PRD 0017)
+  egress_proxy: { routes: [ <egress-route>, ... ] }
+  egress:       { allowlist: [ <hostname>, ... ] }
 
 Agent schema (frontmatter):
   bottle:        <bottle-name>          # required
@@ -272,6 +273,158 @@ class CredProxyConfig:
         return cls(routes=routes)
 
 
+# Auth schemes for the egress-proxy route's optional `auth` block.
+# Same values cred-proxy accepts today; `token` sidesteps the Gitea
+# token-not-Bearer quirk (go-gitea/gitea#16734).
+EGRESS_PROXY_AUTH_SCHEMES = ("Bearer", "token")
+
+
+@dataclass(frozen=True)
+class EgressProxyRoute:
+    """One route on the per-bottle egress-proxy sidecar (PRD 0017).
+
+    `Host` matches the request's hostname (case-insensitive). The
+    optional `PathAllowlist` constrains the URL path to a set of
+    prefixes; empty tuple means no path-level filtering. The optional
+    `AuthScheme` / `TokenRef` pair drives credential injection:
+    when set, the proxy strips any inbound Authorization and injects
+    `<AuthScheme> <value-of-host-env-named-by-TokenRef>`. When the
+    manifest's `auth` block is omitted both fields are empty strings —
+    no Authorization is written, no token forwarded.
+
+    Validation rules (enforced in `from_dict`):
+      - `host` required, non-empty.
+      - `path_allowlist` optional, list of absolute path prefixes.
+      - `auth` optional. If present, MUST carry both `scheme` and
+        `token_ref` as non-empty strings; an empty `auth: {}` is an
+        error rather than a synonym for "no auth" (omit `auth` for
+        that case).
+    """
+
+    Host: str
+    PathAllowlist: tuple[str, ...] = ()
+    AuthScheme: str = ""
+    TokenRef: str = ""
+
+    @classmethod
+    def from_dict(cls, bottle_name: str, idx: int, raw: object) -> "EgressProxyRoute":
+        label = f"bottle '{bottle_name}' egress_proxy.routes[{idx}]"
+        d = _as_json_object(raw, label)
+        host = d.get("host")
+        if not isinstance(host, str) or not host:
+            die(f"{label} missing required string field 'host'")
+
+        path_allow_raw = d.get("path_allowlist")
+        prefixes: tuple[str, ...] = ()
+        if path_allow_raw is not None:
+            if not isinstance(path_allow_raw, list):
+                die(
+                    f"{label} path_allowlist must be an array "
+                    f"(was {type(path_allow_raw).__name__})"
+                )
+            path_list = cast(list[object], path_allow_raw)
+            collected: list[str] = []
+            for j, p in enumerate(path_list):
+                if not isinstance(p, str):
+                    die(
+                        f"{label} path_allowlist[{j}] must be a string "
+                        f"(was {type(p).__name__})"
+                    )
+                if not p.startswith("/"):
+                    die(
+                        f"{label} path_allowlist[{j}] {p!r} must be an "
+                        f"absolute path prefix starting with '/'"
+                    )
+                collected.append(p)
+            prefixes = tuple(collected)
+
+        auth_scheme = ""
+        token_ref = ""
+        if "auth" in d:
+            auth_raw = d.get("auth")
+            auth_d = _as_json_object(auth_raw, f"{label} auth")
+            if not auth_d:
+                die(
+                    f"{label} auth is empty ({{}}); omit the 'auth' key "
+                    f"entirely if this route is unauthenticated. Otherwise "
+                    f"both 'scheme' and 'token_ref' are required."
+                )
+            auth_scheme_raw = auth_d.get("scheme")
+            if not isinstance(auth_scheme_raw, str) or not auth_scheme_raw:
+                die(
+                    f"{label} auth.scheme is required when 'auth' is set "
+                    f"(non-empty string)"
+                )
+            if auth_scheme_raw not in EGRESS_PROXY_AUTH_SCHEMES:
+                die(
+                    f"{label} auth.scheme {auth_scheme_raw!r} is not one of "
+                    f"{', '.join(EGRESS_PROXY_AUTH_SCHEMES)}"
+                )
+            token_ref_raw = auth_d.get("token_ref")
+            if not isinstance(token_ref_raw, str) or not token_ref_raw:
+                die(
+                    f"{label} auth.token_ref is required when 'auth' is set "
+                    f"(name of the host env var holding the token value)"
+                )
+            for k in auth_d:
+                if k not in ("scheme", "token_ref"):
+                    die(
+                        f"{label} auth has unknown key {k!r}; "
+                        f"only 'scheme' and 'token_ref' are accepted"
+                    )
+            auth_scheme = auth_scheme_raw
+            token_ref = token_ref_raw
+
+        for k in d:
+            if k not in ("host", "path_allowlist", "auth"):
+                die(
+                    f"{label} has unknown key {k!r}; accepted keys are "
+                    f"'host', 'path_allowlist', 'auth'"
+                )
+
+        return cls(
+            Host=host,
+            PathAllowlist=prefixes,
+            AuthScheme=auth_scheme,
+            TokenRef=token_ref,
+        )
+
+
+@dataclass(frozen=True)
+class EgressProxyConfig:
+    """Per-bottle egress-proxy configuration. Today this is just the
+    route table; the nesting under `egress_proxy:` leaves room for
+    per-bottle proxy settings (port override, log level, etc.) in
+    follow-ups."""
+
+    routes: tuple[EgressProxyRoute, ...] = ()
+
+    @classmethod
+    def from_dict(cls, bottle_name: str, raw: object) -> "EgressProxyConfig":
+        d = _as_json_object(raw, f"bottle '{bottle_name}' egress_proxy")
+        routes_raw = d.get("routes")
+        routes: tuple[EgressProxyRoute, ...] = ()
+        if routes_raw is not None:
+            if not isinstance(routes_raw, list):
+                die(
+                    f"bottle '{bottle_name}' egress_proxy.routes must be an array "
+                    f"(was {type(routes_raw).__name__})"
+                )
+            routes_list = cast(list[object], routes_raw)
+            routes = tuple(
+                EgressProxyRoute.from_dict(bottle_name, i, entry)
+                for i, entry in enumerate(routes_list)
+            )
+            _validate_egress_proxy_routes(bottle_name, routes)
+        for k in d:
+            if k != "routes":
+                die(
+                    f"bottle '{bottle_name}' egress_proxy has unknown key {k!r}; "
+                    f"only 'routes' is accepted"
+                )
+        return cls(routes=routes)
+
+
 DLP_ACTIONS = ("block", "warn")
 
 
@@ -328,6 +481,7 @@ class Bottle:
     env: Mapping[str, str] = field(default_factory=_empty_str_dict)
     git: tuple[GitEntry, ...] = ()
     cred_proxy: CredProxyConfig = field(default_factory=CredProxyConfig)
+    egress_proxy: EgressProxyConfig = field(default_factory=EgressProxyConfig)
     egress: BottleEgress = field(default_factory=BottleEgress)
     # Opt-in per-bottle stuck-recovery sidecar (PRD 0013). When true,
     # the launch step brings up a supervise sidecar that exposes three
@@ -396,6 +550,12 @@ class Bottle:
             else CredProxyConfig()
         )
 
+        egress_proxy = (
+            EgressProxyConfig.from_dict(name, d["egress_proxy"])
+            if "egress_proxy" in d
+            else EgressProxyConfig()
+        )
+
         egress_raw = d.get("egress")
         egress = (
             BottleEgress.from_dict(name, egress_raw)
@@ -411,8 +571,8 @@ class Bottle:
             )
 
         return cls(
-            env=env, git=git, cred_proxy=cred_proxy, egress=egress,
-            supervise=supervise_raw,
+            env=env, git=git, cred_proxy=cred_proxy, egress_proxy=egress_proxy,
+            egress=egress, supervise=supervise_raw,
         )
 
 
@@ -740,6 +900,31 @@ def _validate_cred_proxy_routes(
             )
 
 
+def _validate_egress_proxy_routes(
+    bottle_name: str,
+    routes: tuple[EgressProxyRoute, ...],
+) -> None:
+    """Cross-validation for `bottle.egress_proxy.routes`:
+
+    - Hosts must be unique within the bottle. The proxy matches by
+      exact-host (v1, prefix matching is on path_allowlist only);
+      duplicate hosts leave the route choice ambiguous.
+
+    No cross-validation against `bottle.git` is performed. git-gate
+    (SSH push/fetch) and egress-proxy (HTTPS) broker different
+    protocols; declaring both for the same host is a legitimate
+    dev setup."""
+    seen_hosts: dict[str, None] = {}
+    for r in routes:
+        key = r.Host.lower()
+        if key in seen_hosts:
+            die(
+                f"bottle '{bottle_name}' egress_proxy.routes has duplicate host "
+                f"{r.Host!r}; each host must be unique on the proxy."
+            )
+        seen_hosts[key] = None
+
+
 def _validate_unique_git_names(bottle_name: str, git: tuple[GitEntry, ...]) -> None:
     seen: dict[str, None] = {}
     for g in git:
@@ -764,7 +949,9 @@ _FILENAME_RX = re.compile(r"^[a-z][a-z0-9-]*$")
 # Frontmatter keys we accept on each entity. Anything not in these
 # sets dies with a "did you mean" pointer — typos shouldn't silently
 # ghost into an empty config.
-_BOTTLE_KEYS = frozenset({"env", "git", "cred_proxy", "egress", "supervise"})
+_BOTTLE_KEYS = frozenset(
+    {"env", "git", "cred_proxy", "egress_proxy", "egress", "supervise"}
+)
 _AGENT_KEYS_REQUIRED = frozenset({"bottle"})
 _AGENT_KEYS_OPTIONAL = frozenset({"skills"})
 # Claude Code subagent fields claude-bottle ignores at launch but
