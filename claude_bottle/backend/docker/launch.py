@@ -19,7 +19,7 @@ from typing import Callable, Generator
 
 from ...log import die, info
 from ...pipelock import pipelock_build_config, pipelock_render_yaml
-from ...supervise import CURRENT_CONFIG_DIR_IN_AGENT
+from ...supervise import CURRENT_CONFIG_DIR_IN_AGENT, SUPERVISE_HOSTNAME
 from . import network as network_mod
 from . import util as docker_mod
 from .bottle import DockerBottle
@@ -185,6 +185,29 @@ def launch(
         teardown()
 
 
+def _agent_no_proxy(plan: DockerBottlePlan) -> str:
+    """NO_PROXY value for the agent container. Standard loopback +
+    `supervise` when the supervise sidecar is enabled.
+
+    Supervise needs to bypass pipelock because the MCP tool-call
+    pattern is long-poll: claude-code opens an HTTPS-style request to
+    http://supervise:9100/, the sidecar holds it open until the
+    operator approves (potentially minutes), then returns the
+    response. Pipelock is a forward proxy with idle timeouts;
+    pipelock cuts the long-polled connection well before the operator
+    can act, and claude-code reports the tool as ✘ failed even
+    though /mcp shows ✔ connected.
+
+    The supervise sidecar is on the bottle's internal network with
+    the `supervise` network-alias, so the agent can dial it
+    directly via docker DNS. Body-scanning the supervise traffic
+    isn't critical — the operator reviews every proposal in the TUI."""
+    hosts = ["localhost", "127.0.0.1"]
+    if plan.supervise_plan is not None:
+        hosts.append(SUPERVISE_HOSTNAME)
+    return ",".join(hosts)
+
+
 def _run_agent_container(plan: DockerBottlePlan, internal_network: str) -> str:
     """Build the `docker run` argv and execute it, handling name-
     conflict races by incrementing the suffix (unless the name was
@@ -196,7 +219,7 @@ def _run_agent_container(plan: DockerBottlePlan, internal_network: str) -> str:
         "--network", internal_network,
         "-e", f"HTTPS_PROXY={proxy_url}",
         "-e", f"HTTP_PROXY={proxy_url}",
-        "-e", "NO_PROXY=localhost,127.0.0.1",
+        "-e", f"NO_PROXY={_agent_no_proxy(plan)}",
         # CA trust trio for the agent process. Docker propagates
         # run-time env into `docker exec`, so `claude` sees these
         # without per-exec threading. NODE_EXTRA_CA_CERTS points at
