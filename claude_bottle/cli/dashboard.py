@@ -112,6 +112,16 @@ def discover_pipelock_slugs() -> list[str]:
     return _discover_sidecar_slugs("claude-bottle-pipelock-")
 
 
+def _approval_status(qp: QueuedProposal, verb: str) -> str:
+    """Status-line text after a successful approval. For capability-
+    block, append the `resume <identity>` hint so the operator can
+    bring the rebuilt bottle back up with one copy-paste."""
+    base = f"{verb} {qp.proposal.tool} for [{qp.proposal.bottle_slug}]"
+    if qp.proposal.tool == TOOL_CAPABILITY_BLOCK:
+        return f"{base}; resume: ./cli.py resume {qp.proposal.bottle_slug}"
+    return base
+
+
 def discover_pending() -> list[QueuedProposal]:
     """Walk ~/.claude-bottle/queue/* and collect pending proposals
     from every bottle's queue. Sorted by arrival time across the
@@ -371,7 +381,7 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
         elif key == ord("a"):
             try:
                 approve(qp)
-                status_line = f"approved {qp.proposal.tool} for [{qp.proposal.bottle_slug}]"
+                status_line = _approval_status(qp, "approved")
             except ApplyError as e:
                 status_line = f"apply failed: {e}"
         elif key == ord("m"):
@@ -381,7 +391,7 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
             else:
                 try:
                     approve(qp, final_file=edited, notes="operator modified before approving")
-                    status_line = f"modified+approved {qp.proposal.tool} for [{qp.proposal.bottle_slug}]"
+                    status_line = _approval_status(qp, "modified+approved")
                 except ApplyError as e:
                     status_line = f"apply failed: {e}"
         elif key == ord("r"):

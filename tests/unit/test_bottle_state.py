@@ -1,4 +1,5 @@
-"""Unit: per-bottle state helpers (PRD 0016 Phase 1) + identity."""
+"""Unit: per-bottle state helpers (PRD 0016 Phase 1) + identity +
+launch metadata."""
 
 import re
 import tempfile
@@ -7,6 +8,11 @@ from pathlib import Path
 
 from claude_bottle import supervise
 from claude_bottle.backend.docker import bottle_state
+from claude_bottle.backend.docker.bottle_state import (
+    BottleMetadata,
+    read_metadata,
+    write_metadata,
+)
 
 
 class _FakeHomeMixin:
@@ -70,46 +76,90 @@ class TestPerBottleDockerfile(_FakeHomeMixin, unittest.TestCase):
 
 
 class TestBottleIdentity(unittest.TestCase):
-    """bottle_identity(agent_name, cwd) — PRD 0016 follow-up.
+    """bottle_identity(agent_name) — PRD 0016 follow-up.
 
-    Without --cwd, identity == slugify(agent_name) so existing
-    no-cwd bottles look unchanged. With --cwd, identity has a
-    cwd-hash suffix so the same agent against different projects
-    gets distinct container / queue / audit / state dirs."""
+    Every call mints a fresh identity with a random 5-char suffix
+    so multiple instances of the same agent can run in parallel
+    without container name collisions. The slug-prefix is for
+    readability; the suffix is for uniqueness. To continue an
+    existing bottle, use the recorded identity via
+    `cli.py resume <identity>`, not this function."""
 
-    def test_no_cwd_returns_slug(self):
-        self.assertEqual("dev", bottle_state.bottle_identity("dev", None))
-        self.assertEqual("api-foo", bottle_state.bottle_identity("Api Foo", None))
-
-    def test_cwd_appends_hash_suffix(self):
-        identity = bottle_state.bottle_identity("dev", Path("/proj/A"))
+    def test_format_is_slug_dash_5_alnum(self):
+        identity = bottle_state.bottle_identity("dev")
         self.assertTrue(identity.startswith("dev-"))
         suffix = identity[len("dev-"):]
-        self.assertEqual(12, len(suffix))
-        self.assertTrue(re.fullmatch(r"[0-9a-f]+", suffix), suffix)
+        self.assertEqual(5, len(suffix))
+        self.assertTrue(
+            re.fullmatch(r"[a-z0-9]+", suffix),
+            f"suffix {suffix!r} must be lowercase base36",
+        )
 
-    def test_same_cwd_same_identity(self):
-        a = bottle_state.bottle_identity("dev", Path("/proj/A"))
-        b = bottle_state.bottle_identity("dev", Path("/proj/A"))
-        self.assertEqual(a, b)
-
-    def test_different_cwds_differ(self):
-        a = bottle_state.bottle_identity("dev", Path("/proj/A"))
-        b = bottle_state.bottle_identity("dev", Path("/proj/B"))
+    def test_two_calls_yield_different_identities(self):
+        # 5-char base36 gives ~60M combinations; collision in two
+        # calls is astronomically unlikely. If this ever flakes it's
+        # almost certainly a regression, not a bad-luck collision.
+        a = bottle_state.bottle_identity("dev")
+        b = bottle_state.bottle_identity("dev")
         self.assertNotEqual(a, b)
 
-    def test_different_agents_same_cwd_differ(self):
-        a = bottle_state.bottle_identity("dev", Path("/proj/A"))
-        b = bottle_state.bottle_identity("api", Path("/proj/A"))
-        self.assertNotEqual(a, b)
+    def test_different_agents_get_different_prefixes(self):
+        a = bottle_state.bottle_identity("dev")
+        b = bottle_state.bottle_identity("api")
+        self.assertTrue(a.startswith("dev-"))
+        self.assertTrue(b.startswith("api-"))
 
     def test_agent_name_slugified(self):
-        # Identity's agent-name prefix is slugify(name), not the raw
-        # name — same rule the rest of the codebase has always used.
-        self.assertEqual(
-            "my-agent",
-            bottle_state.bottle_identity("My Agent", None),
+        identity = bottle_state.bottle_identity("My Agent")
+        self.assertTrue(identity.startswith("my-agent-"))
+
+
+class TestBottleMetadata(_FakeHomeMixin, unittest.TestCase):
+    def setUp(self):
+        self._setup_fake_home()
+
+    def tearDown(self):
+        self._teardown_fake_home()
+
+    def test_read_missing_returns_none(self):
+        self.assertIsNone(read_metadata("does-not-exist"))
+
+    def test_write_then_read_roundtrip(self):
+        meta = BottleMetadata(
+            identity="dev-a4f8c",
+            agent_name="dev",
+            cwd="/proj/A",
+            copy_cwd=True,
+            started_at="2026-05-25T12:00:00+00:00",
         )
+        write_metadata(meta)
+        loaded = read_metadata("dev-a4f8c")
+        self.assertEqual(meta, loaded)
+
+    def test_metadata_lives_under_state_dir(self):
+        meta = BottleMetadata(
+            identity="dev-x", agent_name="dev",
+            cwd="", copy_cwd=False, started_at="t",
+        )
+        path = write_metadata(meta)
+        self.assertTrue(
+            str(path).endswith("/.claude-bottle/state/dev-x/metadata.json"),
+        )
+
+    def test_overwriting_metadata_updates_timestamp(self):
+        # `resume` re-writes metadata with a fresh started_at;
+        # everything else stays the same.
+        write_metadata(BottleMetadata(
+            identity="dev-y", agent_name="dev",
+            cwd="/proj/A", copy_cwd=True, started_at="t1",
+        ))
+        write_metadata(BottleMetadata(
+            identity="dev-y", agent_name="dev",
+            cwd="/proj/A", copy_cwd=True, started_at="t2",
+        ))
+        loaded = read_metadata("dev-y")
+        assert loaded is not None
+        self.assertEqual("t2", loaded.started_at)
 
 
 if __name__ == "__main__":

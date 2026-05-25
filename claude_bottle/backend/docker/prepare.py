@@ -11,6 +11,7 @@ via the base class's `prepare` template before this is called.
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 from ... import pipelock
@@ -27,10 +28,12 @@ from .cred_proxy import (
 )
 from .git_gate import DockerGitGate, git_gate_container_name
 from .bottle_state import (
+    BottleMetadata,
     bottle_identity,
     per_bottle_dockerfile,
     per_bottle_dockerfile_path,
     per_bottle_image_tag,
+    write_metadata,
 )
 from .pipelock import DockerPipelockProxy, pipelock_container_name
 from .supervise import DockerSupervise, supervise_container_name
@@ -54,16 +57,22 @@ def resolve_plan(
     agent = manifest.agents[spec.agent_name]
     bottle = manifest.bottle_for(spec.agent_name)
 
-    # PRD 0016 follow-up: identity, not bare slug. With --cwd, the
-    # identity carries a sha256(cwd) suffix so the same agent against
-    # different projects gets distinct container names, networks,
-    # queue + audit + state dirs. Without --cwd, identity ==
-    # slugify(agent_name) — same value the old `slug` produced — so
-    # no-cwd bottles look unchanged. We keep the variable named `slug`
-    # because every downstream module already threads it under that
-    # name; the value is now the bottle's full identity.
-    cwd_for_identity = Path(spec.user_cwd).resolve() if spec.copy_cwd else None
-    slug = bottle_identity(spec.agent_name, cwd_for_identity)
+    # PRD 0016 follow-up: identity, not bare slug. A fresh `start`
+    # mints a random-suffixed identity (so parallel runs of the same
+    # agent in the same cwd don't collide on container/network
+    # names); a `resume` passes the recorded identity in via
+    # spec.identity to continue an existing bottle's state.
+    slug = spec.identity or bottle_identity(spec.agent_name)
+    # Record the launch metadata so `cli.py resume <identity>` can
+    # reconstruct the spec. Idempotent — re-writes on resume with a
+    # refreshed started_at.
+    write_metadata(BottleMetadata(
+        identity=slug,
+        agent_name=spec.agent_name,
+        cwd=spec.user_cwd if spec.copy_cwd else "",
+        copy_cwd=spec.copy_cwd,
+        started_at=datetime.now(timezone.utc).isoformat(),
+    ))
 
     # PRD 0016 capability-block: if a per-bottle Dockerfile has been
     # written (via apply_capability_change), the base image becomes
