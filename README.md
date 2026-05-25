@@ -186,87 +186,130 @@ left running; remove it with `docker rm -f <container-name>`.
 
 ## Manifest
 
-Agents and the bottles they run in are declared in `claude-bottle.json`
-in your project root or `$HOME` (both files merge if present, with
-project entries overriding home entries on key conflict).
+Bottles and agents live as Markdown files with YAML frontmatter under
+`~/.claude-bottle/`. Each bottle is one file in `bottles/`, each agent
+is one file in `agents/`:
 
-```jsonc
-{
-  "bottles": {
-    "gitea-dev": {
-      "env": {
-        "GITEA_TOKEN":     "?paste your Gitea API token",
-        "GITHUB_TOKEN":    "${GH_PAT}",
-        "GIT_AUTHOR_NAME": "didericis"
-      },
-
-      "git": [
-        {
-          "Name":         "claude-bottle",
-          "Upstream":     "ssh://git@gitea.dideric.is:30009/didericis/claude-bottle.git",
-          "IdentityFile": "/Users/didericis/.ssh/id_ed25519_gitea",
-          "KnownHostKey": "ssh-ed25519 AAAA..."
-        }
-      ],
-
-      // Routes declared here are held by a per-bottle cred-proxy
-      // sidecar, not the agent. Each route names a path the agent
-      // dials, the upstream the proxy forwards to, an auth_scheme,
-      // and a token_ref (host env var). The value goes into the
-      // sidecar's environ via `docker create -e`, never touches
-      // argv or disk. Optional `role` tags drive agent-side
-      // rewrites: `anthropic-base-url` (sets ANTHROPIC_BASE_URL),
-      // `npm-registry` (writes ~/.npmrc), `git-insteadof` (writes
-      // ~/.gitconfig), `tea-login` (writes ~/.config/tea/config.yml).
-      // See `docs/prds/0010-cred-proxy.md`.
-      "cred_proxy": {
-        "routes": [
-          { "path": "/anthropic/", "upstream": "https://api.anthropic.com",
-            "auth_scheme": "Bearer", "token_ref": "CLAUDE_BOTTLE_OAUTH_TOKEN",
-            "role": "anthropic-base-url" },
-          { "path": "/gh-api/", "upstream": "https://api.github.com",
-            "auth_scheme": "Bearer", "token_ref": "GITHUB_PAT" },
-          { "path": "/gh-git/", "upstream": "https://github.com",
-            "auth_scheme": "Bearer", "token_ref": "GITHUB_PAT",
-            "role": "git-insteadof" },
-          { "path": "/npm/", "upstream": "https://registry.npmjs.org",
-            "auth_scheme": "Bearer", "token_ref": "NPM_TOKEN",
-            "role": "npm-registry" }
-        ]
-      },
-
-      // Egress is forced through a per-agent
-      // [pipelock](https://github.com/luckyPipewrench/pipelock) sidecar
-      // on a Docker `--internal` network — without the proxy the agent
-      // has no route off-box. The effective allowlist is the union of
-      // baked-in defaults (api.anthropic.com, claude.ai, ...) and the
-      // hostnames listed here. Pipelock also runs DLP scanning and
-      // detects URL-embedded high-entropy secrets. The resolved
-      // allowlist is shown in the y/N preflight before launch.
-      "egress": {
-        "allowlist": [
-          "github.com",
-          "registry.npmjs.org",
-          "pypi.org"
-        ]
-      }
-    }
-  },
-
-  "agents": {
-    "gitea-helper": {
-      "bottle": "gitea-dev",
-      "skills": ["init-prd"],
-      "prompt": "You help maintain Gitea-hosted projects."
-    }
-  }
-}
+```
+~/.claude-bottle/
+├── bottles/
+│   ├── dev.md
+│   └── gitea-dev.md
+└── agents/
+    ├── implementer.md
+    └── researcher.md
 ```
 
-Comments are illustrative; the file itself must be valid JSON. See
-`claude-bottle.example.json` for a working starting point. Pipelock's
-design lives in `docs/prds/0001-per-agent-egress-proxy-via-pipelock.md`
-and the rationale in `docs/research/pipelock-assessment.md`.
+The filename (without `.md`) is the entity's name. Filenames must
+match `[a-z][a-z0-9-]*`; files that don't are skipped with a warning.
+
+A repo can ship its own agent files alongside its code at
+`<repo>/.claude-bottle/agents/<name>.md`. Those agents reference
+bottles defined in `~/.claude-bottle/bottles/` (the only place
+bottles can come from); a `bottles/` subdir in a repo is ignored
+with a warning. **This is the trust boundary**: bottle infrastructure
+— credentials, egress allowlists, git remotes — comes from your home
+directory only. A cloned repo cannot redirect a host env var to an
+attacker-named upstream because it has no way to declare a bottle.
+
+### Example bottle (`~/.claude-bottle/bottles/gitea-dev.md`)
+
+````markdown
+---
+env:
+  GIT_AUTHOR_NAME: didericis
+
+git:
+  - Name: claude-bottle
+    Upstream: ssh://git@gitea.dideric.is:30009/didericis/claude-bottle.git
+    IdentityFile: /Users/didericis/.ssh/id_ed25519_gitea
+    KnownHostKey: ssh-ed25519 AAAA...
+
+# Routes declared here are held by a per-bottle cred-proxy sidecar,
+# not the agent. Each route names a path the agent dials, the
+# upstream the proxy forwards to, an auth_scheme, and a token_ref
+# (host env var). The value goes into the sidecar's environ via
+# `docker create -e`, never touches argv or disk. Optional `role`
+# tags drive agent-side rewrites: anthropic-base-url (sets
+# ANTHROPIC_BASE_URL), npm-registry (writes ~/.npmrc), git-insteadof
+# (writes ~/.gitconfig), tea-login (writes ~/.config/tea/config.yml).
+# See docs/prds/0010-cred-proxy.md.
+cred_proxy:
+  routes:
+    - path: /anthropic/
+      upstream: https://api.anthropic.com
+      auth_scheme: Bearer
+      token_ref: CLAUDE_BOTTLE_OAUTH_TOKEN
+      role: anthropic-base-url
+    - path: /gh-api/
+      upstream: https://api.github.com
+      auth_scheme: Bearer
+      token_ref: GH_PAT
+    - path: /gh-git/
+      upstream: https://github.com
+      auth_scheme: Bearer
+      token_ref: GH_PAT
+      role: git-insteadof
+    - path: /npm/
+      upstream: https://registry.npmjs.org
+      auth_scheme: Bearer
+      token_ref: NPM_TOKEN
+      role: npm-registry
+
+# Egress is forced through a per-agent pipelock sidecar on a Docker
+# `--internal` network — without the proxy the agent has no route
+# off-box. The effective allowlist is the union of baked-in defaults
+# (api.anthropic.com, claude.ai, ...) and the hostnames listed here.
+# Pipelock also runs DLP scanning and detects URL-embedded
+# high-entropy secrets. The resolved allowlist is shown in the y/N
+# preflight before launch.
+egress:
+  allowlist:
+    - github.com
+    - registry.npmjs.org
+    - pypi.org
+---
+
+The `gitea-dev` bottle. Backs my work on personal projects: Anthropic
+OAuth via cred-proxy, gitea.dideric.is over SSH (with PAT for tea
+API), and npm for publishing scoped packages.
+````
+
+### Example agent (`~/.claude-bottle/agents/gitea-helper.md`)
+
+````markdown
+---
+bottle: gitea-dev
+skills:
+  - init-prd
+---
+
+You help maintain Gitea-hosted projects.
+````
+
+The agent's Markdown body is its system prompt (whitespace
+stripped). The frontmatter declares the bottle to launch in and any
+skills to mount. You can also include Claude Code subagent fields
+(`name`, `description`, `model`, `color`, `memory`) in the
+frontmatter — claude-bottle ignores them at launch but doesn't
+reject them, so the same file can drop into `~/.claude/agents/` as a
+Claude Code subagent.
+
+Unknown top-level frontmatter keys die at load with a "did you mean"
+pointer; typos don't silently ghost into an empty config.
+
+The YAML subset the frontmatter accepts is bounded (flat keys,
+strings / ints / true-or-false bools / null / lists / one-level
+nested dicts). Anchors, multi-line block scalars, tags, and
+ambiguous bare strings (`yes` / `NO` / `2026-05-24` /
+`0x...`) all die with a clear pointer at the spec — quote your
+strings when in doubt. The full schema lives in
+`claude_bottle/yaml_subset.py` (~450 lines, stdlib-only, no PyYAML).
+
+Working examples live under `examples/`. Pipelock's design lives in
+`docs/prds/0001-per-agent-egress-proxy-via-pipelock.md` and the
+rationale in `docs/research/pipelock-assessment.md`. The trust
+boundary rationale lives in `docs/prds/0011-per-file-md-manifest.md`.
 
 ## Auth: OAuth token, not API key
 

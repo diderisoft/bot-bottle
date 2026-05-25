@@ -20,13 +20,23 @@ class TestDryRunPlan(unittest.TestCase):
     def test_dry_run_emits_structured_plan(self):
         work_dir = Path(tempfile.mkdtemp())
         try:
-            manifest = work_dir / "claude-bottle.json"
-            manifest.write_text(json.dumps({
-                "bottles": {"dev": {"egress": {"allowlist": ["example.org"]}}},
-                "agents": {
-                    "demo": {"skills": [], "prompt": "", "bottle": "dev"},
-                },
-            }))
+            # PRD 0011 layout: per-file MD under .claude-bottle/.
+            # work_dir doubles as $HOME and as cwd for this test.
+            cb = work_dir / ".claude-bottle"
+            (cb / "bottles").mkdir(parents=True)
+            (cb / "agents").mkdir(parents=True)
+            (cb / "bottles" / "dev.md").write_text(
+                "---\n"
+                "egress:\n"
+                "  allowlist:\n"
+                "    - example.org\n"
+                "---\n"
+            )
+            (cb / "agents" / "demo.md").write_text(
+                "---\n"
+                "bottle: dev\n"
+                "---\n"
+            )
 
             # Under act_runner with a host-mounted docker socket, the
             # `docker network ls` / `docker ps -a` calls from inside the
