@@ -10,6 +10,7 @@ from claude_bottle.backend.docker.egress_proxy_apply import (
     EgressProxyApplyError,
     _hosts_in_routes,
     _merge_single_route,
+    _pipelock_safe_hosts,
     validate_routes_content,
 )
 
@@ -187,6 +188,39 @@ class TestMergeSingleRoute(unittest.TestCase):
     def test_invalid_current_yaml_raises(self):
         with self.assertRaises(EgressProxyApplyError):
             _merge_single_route("{not json", {"host": "x.example"})
+
+
+class TestPipelockSafeHosts(unittest.TestCase):
+    def test_passes_normal_hostnames_through(self):
+        self.assertEqual(
+            ["api.github.com", "registry.npmjs.org"],
+            _pipelock_safe_hosts(["api.github.com", "registry.npmjs.org"]),
+        )
+
+    def test_strips_wildcards(self):
+        # Pipelock's allowlist parser rejects `*` — egress-proxy can
+        # accept wildcard routes on its side, but the pipelock mirror
+        # has to skip them or apply fails before the new yaml is even
+        # written.
+        self.assertEqual(
+            ["api.github.com"],
+            _pipelock_safe_hosts(["*.example.com", "api.github.com"]),
+        )
+
+    def test_strips_ipv6_literals(self):
+        # Brackets aren't in pipelock's allowed charset either.
+        self.assertEqual(
+            ["api.example.com"],
+            _pipelock_safe_hosts(["[::1]", "api.example.com"]),
+        )
+
+    def test_preserves_order(self):
+        self.assertEqual(
+            ["a.example", "b.example", "c.example"],
+            _pipelock_safe_hosts([
+                "a.example", "*.junk", "b.example", "weird host", "c.example",
+            ]),
+        )
 
 
 if __name__ == "__main__":
