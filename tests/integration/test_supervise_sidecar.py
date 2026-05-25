@@ -79,6 +79,52 @@ class TestSuperviseSidecar(unittest.TestCase):
             network_remove(self.internal_net)
         shutil.rmtree(self.work_dir, ignore_errors=True)
 
+    def _require_bind_mount_sharing(self) -> None:
+        """Skip if `docker run -v <host-path>:<container-path>` doesn't
+        share the filesystem between the test process and the spawned
+        container. In docker-in-docker CI (Gitea Actions runner with
+        host socket forwarded), bind-mount paths are resolved against
+        the outer host's fs, not the runner container's — so the
+        sidecar writes proposals to a dir the test process can't see.
+
+        Cached on the class so the probe runs once per test session."""
+        cached = getattr(type(self), "_bind_mount_ok", None)
+        if cached is True:
+            return
+        if cached is False:
+            self.skipTest(
+                "docker bind mounts don't share fs with this test process "
+                "(likely docker-in-docker); the supervise queue round-trip "
+                "requires real host fs sharing"
+            )
+        probe_dir = Path(tempfile.mkdtemp(prefix="supervise-bind-probe."))
+        try:
+            (probe_dir / "from-host").write_text("x")
+            r = subprocess.run(
+                [
+                    "docker", "run", "--rm",
+                    "-v", f"{probe_dir}:/probe",
+                    "--entrypoint", "sh",
+                    CURL_IMAGE,
+                    "-c", "test -f /probe/from-host && touch /probe/from-container",
+                ],
+                capture_output=True,
+                check=False,
+            )
+            ok = (
+                r.returncode == 0
+                and (probe_dir / "from-container").exists()
+            )
+        finally:
+            shutil.rmtree(probe_dir, ignore_errors=True)
+        type(self)._bind_mount_ok = ok
+        if not ok:
+            self.skipTest(
+                "docker bind mounts don't share fs with this test process "
+                "(likely docker-in-docker); the supervise queue round-trip "
+                "requires real host fs sharing"
+            )
+
     def _bring_up_sidecar(self) -> None:
         self.internal_net = network_create_internal(self.slug)
         plan = SupervisePlan(
@@ -161,6 +207,7 @@ class TestSuperviseSidecar(unittest.TestCase):
         """End-to-end: agent in the bottle calls cred-proxy-block;
         the call blocks on the queue; the host approves via the
         dashboard helpers; the agent receives the approval."""
+        self._require_bind_mount_sharing()
         self._bring_up_sidecar()
 
         captured: dict[str, object] = {}
