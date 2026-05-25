@@ -479,7 +479,7 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
         elif key in (curses.KEY_UP, ord("k")):
             selected = max(selected - 1, 0)
         elif key in (curses.KEY_ENTER, 10, 13, ord("v")):
-            _detail_view(stdscr, qp)
+            _detail_view(stdscr, qp, green_attr=green_attr)
         elif key == ord("a"):
             try:
                 approve(qp)
@@ -555,16 +555,21 @@ def _render(
     stdscr.refresh()
 
 
-def _detail_view(stdscr: "curses._CursesWindow", qp: QueuedProposal) -> None:
+def _detail_view(
+    stdscr: "curses._CursesWindow",
+    qp: QueuedProposal,
+    *,
+    green_attr: int = 0,
+) -> None:
     """Render the full proposal: header, justification, proposed file
     contents. Scrollable. Press q to return."""
-    lines = _detail_lines(qp)
+    lines = _detail_lines(qp, green_attr=green_attr)
     offset = 0
     while True:
         stdscr.erase()
         h, w = stdscr.getmaxyx()
-        for i, line in enumerate(lines[offset:offset + h - 1]):
-            stdscr.addnstr(i, 0, line, w - 1)
+        for i, (text, attr) in enumerate(lines[offset:offset + h - 1]):
+            stdscr.addnstr(i, 0, text, w - 1, attr)
         stdscr.addnstr(
             h - 1, 0,
             "[j/k] scroll  [g/G] top/bottom  [a] approve  [m] modify  [r] reject  [q] back",
@@ -603,24 +608,49 @@ def _detail_view(stdscr: "curses._CursesWindow", qp: QueuedProposal) -> None:
             return
 
 
-def _detail_lines(qp: QueuedProposal) -> list[str]:
+def _detail_lines(
+    qp: QueuedProposal,
+    *,
+    green_attr: int = 0,
+) -> list[tuple[str, int]]:
+    """Return the detail-view body as (text, curses-attr) tuples.
+    Most lines are plain (attr=0); pipelock-block proposals append
+    a green "→ would allow host: ..." line so the operator sees at
+    a glance which hostname will land in pipelock's allowlist if
+    they hit approve. The URL itself is shown above for context."""
     p = qp.proposal
-    out = [
-        f"bottle: {p.bottle_slug}",
-        f"tool: {p.tool}",
-        f"id: {p.id}",
-        f"arrived: {p.arrival_timestamp}",
-        f"queue: {qp.queue_dir}",
-        "",
-        "justification:",
+    out: list[tuple[str, int]] = [
+        (f"bottle: {p.bottle_slug}", 0),
+        (f"tool: {p.tool}", 0),
+        (f"id: {p.id}", 0),
+        (f"arrived: {p.arrival_timestamp}", 0),
+        (f"queue: {qp.queue_dir}", 0),
+        ("", 0),
+        ("justification:", 0),
     ]
-    out.extend("  " + line for line in p.justification.splitlines() or [""])
+    out.extend(("  " + line, 0) for line in p.justification.splitlines() or [""])
     out.extend([
-        "",
-        _proposed_payload_label(p.tool) + ":",
+        ("", 0),
+        (_proposed_payload_label(p.tool) + ":", 0),
     ])
-    out.extend(p.proposed_file.splitlines() or [""])
+    out.extend((line, 0) for line in p.proposed_file.splitlines() or [""])
+    if p.tool == TOOL_PIPELOCK_BLOCK:
+        host = _failed_url_host(p.proposed_file)
+        if host:
+            out.append(("", 0))
+            out.append((f"→ would allow host: {host}", green_attr))
     return out
+
+
+def _failed_url_host(url: str) -> str:
+    """Best-effort hostname extraction from a pipelock-block proposal's
+    failed_url payload. Returns empty string on unparseable input —
+    callers handle empty as "nothing to highlight"."""
+    import urllib.parse
+    try:
+        return urllib.parse.urlsplit(url.strip()).hostname or ""
+    except ValueError:
+        return ""
 
 
 def _proposed_payload_label(tool: str) -> str:
