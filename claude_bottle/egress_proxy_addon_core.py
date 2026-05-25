@@ -135,6 +135,36 @@ def load_routes(text: str) -> tuple[Route, ...]:
     return parse_routes(payload)
 
 
+def is_git_push_request(path: str, query: str) -> bool:
+    """Return True if the request is a git smart-HTTP push.
+
+    git push over HTTPS hits two endpoints:
+      GET <repo>/info/refs?service=git-receive-pack   (capabilities)
+      POST <repo>/git-receive-pack                    (the push)
+
+    Fetches use `service=git-upload-pack` / `/git-upload-pack` and
+    are unaffected. Egress-proxy refuses HTTPS push because git-gate's
+    pre-receive gitleaks scan is the gate for outbound git data;
+    routing push through egress-proxy would bypass that. Use the
+    bottle.git SSH path if you need to push.
+
+    Universal across routes — the block fires even when no
+    egress_proxy route matches the host. A bare-pass route (host with
+    no auth, no path_allowlist) would otherwise let push through to
+    pipelock + upstream untouched.
+    """
+    if path.endswith("/git-receive-pack"):
+        return True
+    if path.endswith("/info/refs"):
+        # Query string is parsed leniently — `service=git-receive-pack`
+        # may appear with other params in any order.
+        for pair in query.split("&"):
+            k, _, v = pair.partition("=")
+            if k == "service" and v == "git-receive-pack":
+                return True
+    return False
+
+
 def match_route(
     routes: typing.Sequence[Route],
     request_host: str,
@@ -207,6 +237,7 @@ __all__ = [
     "Decision",
     "Route",
     "decide",
+    "is_git_push_request",
     "load_routes",
     "match_route",
     "parse_routes",

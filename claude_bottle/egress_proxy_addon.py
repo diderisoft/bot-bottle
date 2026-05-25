@@ -36,7 +36,7 @@ from mitmproxy import http  # type: ignore[import-not-found]
 # Absolute import (NOT `from .egress_proxy_addon_core`) — the
 # container drops both files flat into /app/ so they are sibling
 # top-level modules to mitmdump's loader, not a package.
-from egress_proxy_addon_core import Route, decide, load_routes  # type: ignore[import-not-found]
+from egress_proxy_addon_core import Route, decide, is_git_push_request, load_routes  # type: ignore[import-not-found]
 
 
 DEFAULT_ROUTES_PATH = "/etc/egress-proxy/routes.yaml"
@@ -93,7 +93,25 @@ class EgressProxyAddon:
         # below.
         flow.request.headers.pop("authorization", None)
 
-        request_path = flow.request.path.split("?", 1)[0]
+        request_path, _, query = flow.request.path.partition("?")
+
+        # Universal HTTPS git-push block. Defense-in-depth: git-gate
+        # (PRD 0008) is the only sanctioned outbound path for git
+        # writes — its pre-receive runs gitleaks. Letting HTTPS push
+        # through egress-proxy + auth injection would route around
+        # that scan, so we 403 before any route logic.
+        if is_git_push_request(request_path, query):
+            flow.response = http.Response.make(
+                403,
+                (
+                    b"egress-proxy: git push over HTTPS is not supported; "
+                    b"use the bottle.git SSH path (gitleaks-scanned by "
+                    b"git-gate's pre-receive hook)."
+                ),
+                {"Content-Type": "text/plain; charset=utf-8"},
+            )
+            return
+
         decision = decide(
             self.routes,
             flow.request.pretty_host,

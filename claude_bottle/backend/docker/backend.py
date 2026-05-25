@@ -27,6 +27,7 @@ from .egress_proxy import DockerEgressProxy
 from .git_gate import DockerGitGate
 from .pipelock import DockerPipelockProxy
 from .provision import ca as _ca
+from .provision import egress_proxy as _egress_proxy_prov
 from .provision import git as _git
 from .provision import prompt as _prompt
 from .provision import skills as _skills
@@ -79,6 +80,9 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
 
     def provision_git(self, plan: DockerBottlePlan, target: str) -> None:
         _git.provision_git(plan, target)
+
+    def provision_egress_proxy(self, plan: DockerBottlePlan, target: str) -> None:
+        _egress_proxy_prov.provision_egress_proxy(plan, target)
 
     def provision_supervise(self, plan: DockerBottlePlan, target: str) -> None:
         _supervise_prov.provision_supervise(plan, target)

@@ -128,6 +128,64 @@ class TestAuth(unittest.TestCase):
             }])
 
 
+class TestRole(unittest.TestCase):
+    def test_omitted_means_no_roles(self):
+        b = _bottle([{"host": "x.example"}])
+        self.assertEqual((), b.egress_proxy.routes[0].Role)
+
+    def test_string_normalizes_to_tuple(self):
+        b = _bottle([{"host": "api.anthropic.com",
+                      "role": "anthropic-base-url",
+                      "auth": {"scheme": "Bearer", "token_ref": "T"}}])
+        self.assertEqual(("anthropic-base-url",),
+                         b.egress_proxy.routes[0].Role)
+
+    def test_list_supported(self):
+        b = _bottle([{"host": "registry.npmjs.org",
+                      "role": ["npm-registry"]}])
+        self.assertEqual(("npm-registry",), b.egress_proxy.routes[0].Role)
+
+    def test_unknown_role_rejected(self):
+        with self.assertRaises(Die):
+            _bottle([{"host": "x.example", "role": "git-insteadof"}])
+
+    def test_non_string_role_rejected(self):
+        with self.assertRaises(Die):
+            _bottle([{"host": "x.example", "role": 42}])
+
+    def test_list_with_non_string_item_rejected(self):
+        with self.assertRaises(Die):
+            _bottle([{"host": "x.example", "role": ["npm-registry", 42]}])
+
+    def test_singleton_anthropic_base_url_enforced(self):
+        with self.assertRaises(Die):
+            _bottle([
+                {"host": "api.anthropic.com", "role": "anthropic-base-url",
+                 "auth": {"scheme": "Bearer", "token_ref": "T1"}},
+                {"host": "api2.anthropic.example",
+                 "role": "anthropic-base-url",
+                 "auth": {"scheme": "Bearer", "token_ref": "T2"}},
+            ])
+
+    def test_singleton_npm_registry_enforced(self):
+        with self.assertRaises(Die):
+            _bottle([
+                {"host": "registry.npmjs.org", "role": "npm-registry"},
+                {"host": "npm.example", "role": "npm-registry"},
+            ])
+
+    def test_tea_login_is_not_singleton(self):
+        # Multiple Gitea instances on one bottle is a legitimate
+        # dev setup; tea-login lays one logins[] entry per route.
+        b = _bottle([
+            {"host": "gitea.example", "role": "tea-login",
+             "auth": {"scheme": "token", "token_ref": "T1"}},
+            {"host": "other-gitea.example", "role": "tea-login",
+             "auth": {"scheme": "token", "token_ref": "T2"}},
+        ])
+        self.assertEqual(2, len(b.egress_proxy.routes))
+
+
 class TestRouteValidation(unittest.TestCase):
     def test_duplicate_hosts_rejected(self):
         # Routes match by exact host; duplicates leave the choice
