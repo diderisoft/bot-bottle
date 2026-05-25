@@ -3,9 +3,14 @@
 Pipelock (https://github.com/luckyPipewrench/pipelock) is an HTTP
 forward proxy with hostname allowlisting + DLP scanning + URL-entropy
 checks. One sidecar per agent, attached to the agent's --internal
-network and a per-agent user-defined egress bridge. Combined with
-HTTPS_PROXY/HTTP_PROXY pointing at the sidecar's service name, pipelock
-is the only egress route the agent has.
+network and a per-agent user-defined egress bridge.
+
+Post-PRD-0017 topology: the agent's HTTP_PROXY points at egress-proxy
+(not pipelock); egress-proxy sets `HTTPS_PROXY=pipelock` on its
+outbound leg. So pipelock no longer sees the agent's connections
+directly — it sees the egress-proxy → upstream leg, applies the
+hostname allowlist + DLP body scan there, and forwards to the real
+upstream.
 
 Image pin: ghcr.io/luckypipewrench/pipelock@sha256:<digest> for tag 2.3.0.
 """
@@ -17,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from .cred_proxy import CRED_PROXY_HOSTNAME
+from .egress_proxy import EGRESS_PROXY_HOSTNAME
 from .supervise import SUPERVISE_HOSTNAME
 from .manifest import Bottle
 
@@ -57,48 +62,45 @@ def pipelock_bottle_allowlist(bottle: Bottle) -> list[str]:
     return list(bottle.egress.allowlist)
 
 
-def pipelock_token_hosts(bottle: Bottle) -> list[str]:
-    """Hostnames the cred-proxy sidecar (PRD 0010) talks to upstream
-    on the agent's behalf. Derived from each route's
-    `upstream.UpstreamHost` in `bottle.cred_proxy.routes`. Returned
-    sorted+deduped.
+def pipelock_route_hosts(bottle: Bottle) -> list[str]:
+    """Hostnames declared in `bottle.egress_proxy.routes`. Returned
+    sorted + deduped.
 
-    These hosts must be on pipelock's allowlist so cred-proxy's
-    outbound HTTPS traffic can leave the egress network. They are
-    NOT auto-added to passthrough_domains: cred-proxy's HTTPS client
-    trusts pipelock's per-bottle CA at runtime (installed via
-    docker cp + update-ca-certificates in the cred-proxy image),
-    so pipelock MITMs and body-scans the cred-proxy → upstream leg
-    the same way it does direct agent traffic."""
-    hosts = {r.UpstreamHost for r in bottle.cred_proxy.routes if r.UpstreamHost}
+    Post-cutover topology (PRD 0017): the agent's HTTPS_PROXY points
+    at egress-proxy, not pipelock; egress-proxy's outbound leg sets
+    `HTTPS_PROXY=pipelock`. So pipelock no longer terminates the
+    agent's connections — it sees the egress-proxy → upstream leg
+    only. Each declared route's host still needs to be on pipelock's
+    allowlist so that leg can leave the egress network."""
+    hosts = {r.Host for r in bottle.egress_proxy.routes if r.Host}
     return sorted(hosts)
 
 
 def pipelock_effective_allowlist(bottle: Bottle) -> list[str]:
     """Deduplicated union of: baked-in defaults, bottle.egress.allowlist,
-    the cred-proxy upstream hosts derived from bottle.cred_proxy.routes,
-    the cred-proxy sidecar's own hostname when any cred_proxy route is
-    declared, and the supervise sidecar's hostname when bottle.supervise
-    is enabled. Sorted for stability. Git upstreams declared in
-    `bottle.git` do NOT contribute here — git traffic flows through the
-    per-agent git-gate sidecar (PRD 0008), not pipelock.
+    the egress-proxy route hosts (from bottle.egress_proxy.routes), the
+    egress-proxy sidecar's own hostname when any route is declared, and
+    the supervise sidecar's hostname when bottle.supervise is enabled.
+    Sorted for stability. Git upstreams declared in `bottle.git` do NOT
+    contribute here — git traffic flows through the per-agent git-gate
+    sidecar (PRD 0008), not pipelock.
 
-    The cred-proxy + supervise hostnames are auto-added because the
-    agent's HTTP_PROXY points at pipelock, so a manifest-driven URL
-    like `http://cred-proxy:9099/anthropic/...` or
-    `http://supervise:9100/` arrives at pipelock as a request for the
-    sidecar hostname. Without this auto-allow, pipelock would 403 the
-    request before it reached the sidecar."""
+    The egress-proxy + supervise hostnames are auto-added because the
+    sidecars sit on the bottle's internal network alongside the agent;
+    requests that pass through pipelock for `egress-proxy:9099` or
+    `supervise:9100` (e.g. when egress-proxy uses HTTPS_PROXY=pipelock
+    on its upstream leg) would otherwise be 403'd by pipelock's
+    hostname gate."""
     seen: dict[str, None] = {}
     for h in DEFAULT_ALLOWLIST:
         seen.setdefault(h, None)
     for h in pipelock_bottle_allowlist(bottle):
         if h:
             seen.setdefault(h, None)
-    for h in pipelock_token_hosts(bottle):
+    for h in pipelock_route_hosts(bottle):
         seen.setdefault(h, None)
-    if bottle.cred_proxy.routes:
-        seen.setdefault(CRED_PROXY_HOSTNAME, None)
+    if bottle.egress_proxy.routes:
+        seen.setdefault(EGRESS_PROXY_HOSTNAME, None)
     if bottle.supervise:
         seen.setdefault(SUPERVISE_HOSTNAME, None)
     return sorted(seen.keys())
@@ -122,16 +124,16 @@ def pipelock_seed_phrase_detection_enabled(bottle: Bottle) -> bool:
 
     Empirically only `seed_phrase_detection.enabled: false`
     actually stops the block (verified by sending a 12-word BIP-39
-    body through three pipelock instances). It is a global toggle
-    — there is no per-path / per-host knob in pipelock 2.3.0 — so
-    we turn the detector off for the entire bottle when an
-    `anthropic-base-url` route is declared. The trade-off is
+    body through three pipelock instances). It is a global toggle —
+    no per-path / per-host knob in pipelock 2.3.0 — so we turn the
+    detector off for the entire bottle when the bottle declares an
+    egress-proxy route to `api.anthropic.com`. The trade-off is
     accepted: BIP-39 detection has little value in claude-bottle's
-    threat model (the agent has no access to a user's crypto
-    wallet seeds; the patterns that matter — gh*_, sk-ant-, AKIA,
-    etc. — keep firing)."""
+    threat model (the agent has no access to a user's crypto wallet
+    seeds; the patterns that matter — gh*_, sk-ant-, AKIA, etc. —
+    keep firing)."""
     return not any(
-        "anthropic-base-url" in r.Role for r in bottle.cred_proxy.routes
+        r.Host == "api.anthropic.com" for r in bottle.egress_proxy.routes
     )
 
 
@@ -143,16 +145,12 @@ def pipelock_effective_tls_passthrough(bottle: Bottle) -> list[str]:
     other allowlisted host is MITM'd by pipelock's per-bottle CA so
     its body scanner sees the cleartext.
 
-    cred-proxy upstream hosts (github, gitea, npm) are deliberately
-    NOT auto-added here. cred-proxy's HTTPS client trusts pipelock's
-    CA at runtime (folded into its trust store via docker cp +
-    update-ca-certificates), so pipelock can MITM the cred-proxy →
-    upstream leg and body-scan it the same way it body-scans the
-    agent's direct HTTPS traffic. Without this, an agent that pushed
-    a secret via cred-proxy's /gh-git/ path would have no body
-    scanner in front of it. The PRD's earlier reasoning that
-    cred-proxy hosts needed passthrough was a workaround for the
-    cert-trust gap that no longer exists.
+    egress-proxy route hosts (github, gitea, npm) are deliberately
+    NOT auto-added here. egress-proxy's HTTPS client trusts pipelock's
+    CA at runtime (folded into its trust store via docker cp), so
+    pipelock MITMs and body-scans the egress-proxy → upstream leg the
+    same way it body-scanned the agent's direct HTTPS traffic before
+    the PRD 0017 cutover.
 
     `bottle` is kept on the signature for forward-compat (a future
     knob might let a manifest opt a host into passthrough); today
@@ -207,13 +205,13 @@ def pipelock_build_config(
 
     `ssrf_ip_allowlist` is the list of IPs / CIDRs that bypass
     pipelock's SSRF guard. Pipelock blocks RFC1918-resolved
-    destinations by default, which would catch the agent's
-    cred-proxy traffic (cred-proxy sits on the bottle's internal
-    Docker network in 172.x space). Pass the bottle's internal
-    network CIDR here so `cred-proxy:9099` requests get through
-    pipelock while api_allowlist + body-scanning still apply. Empty
-    by default; omitted from the rendered yaml when empty so
-    pipelock keeps its built-in SSRF defaults."""
+    destinations by default, which would catch sibling-sidecar
+    traffic on the bottle's internal Docker network in 172.x space
+    (e.g. egress-proxy → pipelock on the upstream leg). Pass the
+    bottle's internal network CIDR here so internal-network requests
+    pass through pipelock while api_allowlist + body-scanning still
+    apply. Empty by default; omitted from the rendered yaml when
+    empty so pipelock keeps its built-in SSRF defaults."""
     cfg: dict[str, object] = {
         "version": 1,
         "mode": "strict",
@@ -322,9 +320,9 @@ class PipelockProxyPlan:
     that they are populated.
 
     `internal_network_cidr` ends up on pipelock's `ssrf.ip_allowlist`
-    so the agent's requests at `cred-proxy:9099` (or any other
-    bottle-internal sidecar) bypass pipelock's RFC1918 SSRF guard
-    while api_allowlist and body-scanning still apply."""
+    so traffic from sibling sidecars (egress-proxy → pipelock on the
+    upstream leg, etc.) bypasses pipelock's RFC1918 SSRF guard while
+    api_allowlist and body-scanning still apply."""
 
     yaml_path: Path
     slug: str

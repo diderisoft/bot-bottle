@@ -10,6 +10,7 @@ from claude_bottle.egress_proxy_addon_core import (
     Decision,
     Route,
     decide,
+    is_git_push_request,
     load_routes,
     match_route,
     parse_routes,
@@ -243,6 +244,53 @@ class TestDecisionDefaults(unittest.TestCase):
         d = Decision(action="forward")
         self.assertEqual("", d.reason)
         self.assertIsNone(d.inject_authorization)
+
+
+# --- is_git_push_request ------------------------------------------------
+
+
+class TestIsGitPushRequest(unittest.TestCase):
+    def test_post_git_receive_pack_endpoint(self):
+        # The POST that carries the actual push payload.
+        self.assertTrue(is_git_push_request("/owner/repo.git/git-receive-pack", ""))
+
+    def test_info_refs_with_receive_pack_service(self):
+        # The capability advertisement GET that precedes a push.
+        self.assertTrue(is_git_push_request(
+            "/owner/repo.git/info/refs",
+            "service=git-receive-pack",
+        ))
+
+    def test_info_refs_with_extra_query_params(self):
+        # service= may appear with other params in any order.
+        self.assertTrue(is_git_push_request(
+            "/owner/repo.git/info/refs",
+            "foo=bar&service=git-receive-pack&z=1",
+        ))
+        self.assertTrue(is_git_push_request(
+            "/owner/repo.git/info/refs",
+            "service=git-receive-pack&foo=bar",
+        ))
+
+    def test_fetch_endpoints_not_blocked(self):
+        # `service=git-upload-pack` is fetch; never blocked.
+        self.assertFalse(is_git_push_request(
+            "/owner/repo.git/info/refs",
+            "service=git-upload-pack",
+        ))
+        self.assertFalse(is_git_push_request(
+            "/owner/repo.git/git-upload-pack", "",
+        ))
+
+    def test_info_refs_without_service_not_blocked(self):
+        # Bare info/refs (no query) defaults to git-upload-pack on
+        # the server side; not push.
+        self.assertFalse(is_git_push_request("/x/info/refs", ""))
+
+    def test_unrelated_paths_not_blocked(self):
+        self.assertFalse(is_git_push_request("/repos/owner/repo", ""))
+        self.assertFalse(is_git_push_request("/v1/messages", ""))
+        self.assertFalse(is_git_push_request("/", ""))
 
 
 if __name__ == "__main__":

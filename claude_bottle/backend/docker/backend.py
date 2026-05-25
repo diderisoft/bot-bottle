@@ -23,11 +23,10 @@ from . import prepare as _prepare
 from .bottle import DockerBottle
 from .bottle_cleanup_plan import DockerBottleCleanupPlan
 from .bottle_plan import DockerBottlePlan
-from .cred_proxy import DockerCredProxy
+from .egress_proxy import DockerEgressProxy
 from .git_gate import DockerGitGate
 from .pipelock import DockerPipelockProxy
 from .provision import ca as _ca
-from .provision import cred_proxy as _cred_proxy
 from .provision import git as _git
 from .provision import prompt as _prompt
 from .provision import skills as _skills
@@ -44,7 +43,7 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
     def __init__(self) -> None:
         self._proxy = DockerPipelockProxy()
         self._git_gate = DockerGitGate()
-        self._cred_proxy = DockerCredProxy()
+        self._egress_proxy = DockerEgressProxy()
         self._supervise = DockerSupervise()
 
     def _resolve_plan(self, spec: BottleSpec, *, stage_dir: Path) -> DockerBottlePlan:
@@ -53,7 +52,7 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
             stage_dir=stage_dir,
             proxy=self._proxy,
             git_gate=self._git_gate,
-            cred_proxy=self._cred_proxy,
+            egress_proxy=self._egress_proxy,
             supervise=self._supervise,
         )
 
@@ -63,7 +62,7 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
             plan,
             proxy=self._proxy,
             git_gate=self._git_gate,
-            cred_proxy=self._cred_proxy,
+            egress_proxy=self._egress_proxy,
             supervise=self._supervise,
             provision=self.provision,
         ) as bottle:
@@ -80,9 +79,6 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
 
     def provision_git(self, plan: DockerBottlePlan, target: str) -> None:
         _git.provision_git(plan, target)
-
-    def provision_cred_proxy(self, plan: DockerBottlePlan, target: str) -> None:
-        _cred_proxy.provision_cred_proxy(plan, target)
 
     def provision_supervise(self, plan: DockerBottlePlan, target: str) -> None:
         _supervise_prov.provision_supervise(plan, target)

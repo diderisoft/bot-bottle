@@ -16,9 +16,10 @@ dataclass (`EgressProxyPlan`), and the resolved per-route shape
 specific and lives on concrete subclasses (see
 `claude_bottle/backend/docker/egress_proxy.py`).
 
-Chunk 1 of the PRD: this module + the mitmproxy addon + the Docker
-lifecycle land alongside the existing cred-proxy code. Chunk 2 wires
-the agent's `HTTP_PROXY` over to egress-proxy and removes cred-proxy.
+Chunks 1+2 of the PRD: this module + the mitmproxy addon + the Docker
+lifecycle are wired into the agent's `HTTP_PROXY` path; cred-proxy
+has been removed. Chunk 3 retargets the cred-proxy-block remediation
+flow (PRD 0014) at egress-proxy and renames the MCP tool.
 """
 
 from __future__ import annotations
@@ -76,7 +77,7 @@ class EgressProxyPlan:
 
     The slug + routes_path + routes + token_env_map fields are
     filled at prepare time (host-side, side-effect-free on docker).
-    The network + pipelock fields are populated by the backend's
+    The network + CA + pipelock fields are populated by the backend's
     launch step via `dataclasses.replace` once those resources
     exist. Empty defaults are sentinels meaning "not yet set";
     `.start` validates that they are populated.
@@ -86,6 +87,22 @@ class EgressProxyPlan:
     forwards the value into the egress-proxy container's environ
     under `token_env`. The plan itself never holds token values —
     secrets never land in a dataclass that might be logged.
+
+    `mitmproxy_ca_host_path` is the host path of the per-bottle
+    egress-proxy CA (single PEM with cert+key concatenated) minted
+    by `egress_proxy_tls_init`. `.start` docker-cps it into the
+    sidecar at `~/.mitmproxy/mitmproxy-ca.pem` — mitmproxy reads
+    that file at boot to mint per-host leaf certs.
+
+    `mitmproxy_ca_cert_only_host_path` is the cert-only PEM (no
+    key) for installing into the agent's trust store via
+    `provision_ca`. Separate file rather than re-parsing the
+    concat so secrets and trust artefacts stay on distinct paths.
+
+    `pipelock_ca_host_path` is the host path of the pipelock CA
+    (cert only). `.start` docker-cps it into the sidecar so the
+    proxy's outbound HTTPS client trusts pipelock's MITM on the
+    egress-proxy → upstream leg.
 
     `pipelock_proxy_url` is the URL egress-proxy sets as `HTTPS_PROXY`
     in its environ so outbound HTTPS traverses pipelock — keeping
@@ -99,6 +116,9 @@ class EgressProxyPlan:
     token_env_map: dict[str, str]
     internal_network: str = ""
     egress_network: str = ""
+    mitmproxy_ca_host_path: Path = Path()
+    mitmproxy_ca_cert_only_host_path: Path = Path()
+    pipelock_ca_host_path: Path = Path()
     pipelock_proxy_url: str = ""
 
 

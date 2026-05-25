@@ -3,9 +3,9 @@ per-bottle egress-proxy sidecar (PRD 0017). Inherits the platform-
 agnostic prepare step (route lift + routes.yaml render + token-env
 map derivation) from `EgressProxy`.
 
-Chunk 1 of the PRD: the lifecycle is implemented but not yet called
-from `launch.py`. Tests build the image and exercise start/stop
-directly. Chunk 2 wires this in alongside the cred-proxy removal."""
+Chunks 1+2 of the PRD: the lifecycle is implemented and wired into
+launch.py — cred-proxy is gone. Chunk 3 retargets the cred-proxy-
+block remediation flow (PRD 0014)."""
 
 from __future__ import annotations
 
@@ -24,6 +24,8 @@ from ...log import die, info, warn
 from . import util as docker_mod
 
 
+
+
 EGRESS_PROXY_IMAGE = os.environ.get(
     "CLAUDE_BOTTLE_EGRESS_PROXY_IMAGE",
     "claude-bottle-egress-proxy:latest",
@@ -32,8 +34,18 @@ EGRESS_PROXY_IMAGE = os.environ.get(
 EGRESS_PROXY_DOCKERFILE = "Dockerfile.egress-proxy"
 
 # Listening port inside the sidecar. The agent's HTTP_PROXY env var
-# (chunk 2) will resolve to `http://egress-proxy:<port>`.
+# resolves to `http://egress-proxy:<port>`.
 EGRESS_PROXY_PORT = int(os.environ.get("CLAUDE_BOTTLE_EGRESS_PROXY_PORT", "9099"))
+
+# In-container path for mitmproxy's CA. The format is a single PEM
+# file holding BOTH the cert and the private key, concatenated. The
+# upstream-trust CA (pipelock's, so egress-proxy trusts the upstream
+# leg) is a separate file because pipelock keeps a different CA on
+# its end.
+EGRESS_PROXY_CA_IN_CONTAINER = "/home/mitmproxy/.mitmproxy/mitmproxy-ca.pem"
+EGRESS_PROXY_PIPELOCK_CA_IN_CONTAINER = (
+    "/home/mitmproxy/.mitmproxy/pipelock-ca.pem"
+)
 
 # Repo root, for `docker build` context. Resolved from this file's
 # location: claude_bottle/backend/docker/egress_proxy.py → repo root.
@@ -62,6 +74,55 @@ def build_egress_proxy_image() -> None:
     )
 
 
+def egress_proxy_tls_init(stage_dir: Path) -> tuple[Path, Path]:
+    """Mint the per-bottle egress-proxy MITM CA. Reuses the pipelock
+    binary's `tls init` subcommand — a known-good RSA CA minter we
+    already pin and run on this host.
+
+    Returns `(mitmproxy_pem, cert_only_pem)`:
+      - `mitmproxy_pem` is the single-PEM concat (cert + key)
+        mitmproxy reads from `~/.mitmproxy/mitmproxy-ca.pem`.
+      - `cert_only_pem` is the cert alone — installed into the agent's
+        trust store by `provision_ca` so the agent trusts the bumped
+        CONNECT cert egress-proxy presents.
+
+    Both files live under `<stage_dir>/egress-proxy-ca/` (mode 600).
+    Private keys never leave the host stage dir until
+    `DockerEgressProxy.start` docker-cps the concat file into the
+    sidecar; start.py's outer finally `shutil.rmtree`s the stage dir
+    after teardown.
+
+    Imported lazily inside the function so test patchers in
+    pipelock-land don't need to know about us."""
+    # Local import keeps the module-import graph free of a hard
+    # pipelock-image dependency at top of file (we don't actually
+    # need pipelock's *runtime* here, just its tls-init subcommand).
+    from .pipelock import PIPELOCK_IMAGE
+    work = stage_dir / "egress-proxy-ca"
+    work.mkdir(exist_ok=True)
+    result = subprocess.run(
+        ["docker", "run", "--rm",
+         "-v", f"{work}:/h",
+         "-e", "PIPELOCK_HOME=/h",
+         PIPELOCK_IMAGE, "tls", "init"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        die(f"egress-proxy tls init failed: {result.stderr.strip()}")
+    cert = work / "ca.pem"
+    key = work / "ca-key.pem"
+    if not cert.is_file() or not key.is_file():
+        die(f"egress-proxy tls init did not produce ca files in {work}")
+    cert.chmod(0o600)
+    # mitmproxy reads cert + key from a single concatenated PEM file.
+    mitm = work / "mitmproxy-ca.pem"
+    mitm.write_bytes(cert.read_bytes() + key.read_bytes())
+    mitm.chmod(0o600)
+    return (mitm, cert)
+
+
 class DockerEgressProxy(EgressProxy):
     """Brings the egress-proxy sidecar up and down via Docker."""
 
@@ -71,13 +132,16 @@ class DockerEgressProxy(EgressProxy):
              value. Fails early if any are unset.
           2. Build the egress-proxy image (no-op when cache is hot).
           3. `docker create` on the internal network with
-             `--network-alias egress-proxy` and one `-e EGRESS_PROXY_TOKEN_N`
-             flag per token slot. The values arrive via subprocess env, so
-             they never land on argv.
-          4. `docker cp` the routes.yaml into the container.
+             `--network-alias egress-proxy`, the `HTTPS_PROXY=pipelock`
+             env (so the upstream leg traverses pipelock), the
+             `EGRESS_PROXY_UPSTREAM_CA` env pointing at the in-container
+             pipelock-CA path (so mitmproxy trusts pipelock's MITM),
+             and one `-e EGRESS_PROXY_TOKEN_N` flag per token slot.
+             Secret values arrive via subprocess env, never argv.
+          4. `docker cp` the routes.yaml, mitmproxy CA (cert+key
+             concat), and pipelock CA (cert only) into the container.
           5. Attach to the per-agent egress network so the proxy can
-             reach pipelock (chunk 2 turns this into the pipelock leg
-             via HTTPS_PROXY).
+             reach pipelock.
           6. `docker start`.
         Returns the container name (the target passed to `.stop`)."""
         if not plan.routes:
@@ -92,6 +156,27 @@ class DockerEgressProxy(EgressProxy):
                 f"egress-proxy routes file missing at {plan.routes_path}; "
                 f"EgressProxy.prepare must run first"
             )
+        if plan.mitmproxy_ca_host_path == Path() or not plan.mitmproxy_ca_host_path.is_file():
+            die(
+                f"DockerEgressProxy.start: mitmproxy CA missing at "
+                f"{plan.mitmproxy_ca_host_path}; egress_proxy_tls_init must run first"
+            )
+        # pipelock CA + upstream proxy URL: both must be present (we
+        # use HTTPS_PROXY=pipelock with pipelock's own MITM CA on the
+        # upstream leg) or both absent (egress-proxy goes direct, for
+        # standalone integration tests that don't bring pipelock up).
+        route_via_pipelock = bool(plan.pipelock_proxy_url) or plan.pipelock_ca_host_path != Path()
+        if route_via_pipelock:
+            if not plan.pipelock_proxy_url:
+                die(
+                    "DockerEgressProxy.start: pipelock_ca_host_path is set but "
+                    "pipelock_proxy_url is empty; populate both or neither."
+                )
+            if not plan.pipelock_ca_host_path.is_file():
+                die(
+                    f"DockerEgressProxy.start: pipelock CA missing at "
+                    f"{plan.pipelock_ca_host_path}; pipelock_tls_init must run first"
+                )
 
         # Resolve host env vars into concrete values. Must happen at
         # start time (not prepare) — the values flow into the sidecar's
@@ -111,15 +196,19 @@ class DockerEgressProxy(EgressProxy):
             "--network", plan.internal_network,
             "--network-alias", EGRESS_PROXY_HOSTNAME,
         ]
-        if plan.pipelock_proxy_url:
+        if route_via_pipelock:
             # Route egress-proxy's outbound HTTPS through pipelock so
             # the egress allowlist + DLP body scanner apply to its
-            # traffic on the egress-proxy → upstream leg. Wiring lands
-            # in chunk 2.
+            # traffic on the egress-proxy → upstream leg. Pipelock
+            # MITMs each handshake with its per-bottle CA, which is
+            # docker-cp'd in below and pointed to via the
+            # EGRESS_PROXY_UPSTREAM_CA env (entrypoint conditionally
+            # adds the matching --set flag).
             create_args.extend([
                 "-e", f"HTTPS_PROXY={plan.pipelock_proxy_url}",
                 "-e", f"HTTP_PROXY={plan.pipelock_proxy_url}",
                 "-e", "NO_PROXY=localhost,127.0.0.1",
+                "-e", f"EGRESS_PROXY_UPSTREAM_CA={EGRESS_PROXY_PIPELOCK_CA_IN_CONTAINER}",
             ])
         # One -e flag per token slot; values arrive via subprocess env.
         # docker create with `-e NAME` (no =VALUE) reads NAME from the
@@ -143,24 +232,34 @@ class DockerEgressProxy(EgressProxy):
                 f"{create_result.stderr.strip()}"
             )
 
-        cp_result = subprocess.run(
-            ["docker", "cp", str(plan.routes_path),
-             f"{name}:{EGRESS_PROXY_ROUTES_IN_CONTAINER}"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if cp_result.returncode != 0:
-            subprocess.run(
-                ["docker", "rm", "-f", name],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+        cps: list[tuple[Path, str, str]] = [
+            (plan.routes_path, EGRESS_PROXY_ROUTES_IN_CONTAINER, "routes.yaml"),
+            (plan.mitmproxy_ca_host_path, EGRESS_PROXY_CA_IN_CONTAINER, "mitmproxy CA"),
+        ]
+        if route_via_pipelock:
+            cps.append((
+                plan.pipelock_ca_host_path,
+                EGRESS_PROXY_PIPELOCK_CA_IN_CONTAINER,
+                "pipelock CA",
+            ))
+        for src, dst, label in cps:
+            cp_result = subprocess.run(
+                ["docker", "cp", str(src), f"{name}:{dst}"],
+                capture_output=True,
+                text=True,
                 check=False,
             )
-            die(
-                f"failed to copy routes.yaml into {name}: "
-                f"{cp_result.stderr.strip()}"
-            )
+            if cp_result.returncode != 0:
+                subprocess.run(
+                    ["docker", "rm", "-f", name],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
+                die(
+                    f"failed to copy {label} into {name}: "
+                    f"{cp_result.stderr.strip()}"
+                )
 
         connect_result = subprocess.run(
             ["docker", "network", "connect", plan.egress_network, name],

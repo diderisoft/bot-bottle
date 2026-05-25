@@ -252,18 +252,18 @@ class TestRealisticBottleFile(unittest.TestCase):
 
     def test_dev_bottle(self):
         out = _y("""
-            cred_proxy:
+            egress_proxy:
               routes:
-                - path: /anthropic/
-                  upstream: https://api.anthropic.com
-                  auth_scheme: Bearer
-                  token_ref: CLAUDE_BOTTLE_OAUTH_TOKEN
-                  role: anthropic-base-url
-                - path: /gitea/dideric/
-                  upstream: https://gitea.dideric.is
-                  auth_scheme: token
-                  token_ref: GITEA_TOKEN
-                  role: [git-insteadof, tea-login]
+                - host: api.anthropic.com
+                  auth:
+                    scheme: Bearer
+                    token_ref: CLAUDE_CODE_OAUTH_TOKEN
+                - host: gitea.dideric.is
+                  auth:
+                    scheme: token
+                    token_ref: GITEA_TOKEN
+                  path_allowlist:
+                    - /didericis/
             git:
               - Name: claude-bottle
                 Upstream: ssh://git@gitea.dideric.is:30009/x/y.git
@@ -275,10 +275,14 @@ class TestRealisticBottleFile(unittest.TestCase):
                 - example.com
         """)
         # Spot-check the deep parts; the structure is large.
-        self.assertEqual(2, len(out["cred_proxy"]["routes"]))
+        self.assertEqual(2, len(out["egress_proxy"]["routes"]))
         self.assertEqual(
-            ["git-insteadof", "tea-login"],
-            out["cred_proxy"]["routes"][1]["role"],
+            ["/didericis/"],
+            out["egress_proxy"]["routes"][1]["path_allowlist"],
+        )
+        self.assertEqual(
+            "Bearer",
+            out["egress_proxy"]["routes"][0]["auth"]["scheme"],
         )
         self.assertEqual(
             "192.0.2.10",
