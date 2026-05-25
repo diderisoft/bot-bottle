@@ -13,7 +13,7 @@
 # upstream proxy) is chunk 2.
 
 # mitmproxy base image. mitmdump + addon API are already there; we
-# only need to drop our addon in. TODO(chunk-2): pin by digest.
+# only need to drop our addon in. TODO: pin by digest.
 FROM mitmproxy/mitmproxy:11.1.3
 
 USER root
@@ -25,23 +25,33 @@ USER root
 COPY claude_bottle/egress_proxy_addon_core.py /app/egress_proxy_addon_core.py
 COPY claude_bottle/egress_proxy_addon.py /app/egress_proxy_addon.py
 
-# Pre-create the runtime directory the backend's start step will
-# `docker cp` routes.yaml into. docker cp does not create
-# intermediate dirs, so the mkdir must be baked into the image.
-# Ownership lets the unprivileged mitmproxy user read the file.
-RUN mkdir -p /etc/egress-proxy \
- && chown -R mitmproxy:mitmproxy /etc/egress-proxy /app
+# Pre-create the runtime directories the backend's start step will
+# `docker cp` into. docker cp does not create intermediate dirs, so
+# the mkdir must be baked into the image.
+#   /etc/egress-proxy        routes.yaml lands here
+#   ~/.mitmproxy             mitmproxy CA (cert+key concat) + the
+#                            pipelock CA (cert only, for upstream
+#                            trust on the HTTPS_PROXY=pipelock leg)
+# Ownership lets the unprivileged mitmproxy user read the files.
+RUN mkdir -p /etc/egress-proxy /home/mitmproxy/.mitmproxy \
+ && chown -R mitmproxy:mitmproxy /etc/egress-proxy /home/mitmproxy/.mitmproxy /app
 
 USER mitmproxy
 
-# Listening port. Agents will dial egress-proxy on this port via
-# their HTTP_PROXY env (chunk 2). Surfaced as EXPOSE for
-# documentation; not required for the internal network to route to it.
+# Listening port. Agents dial egress-proxy on this port via their
+# HTTP_PROXY env. Surfaced as EXPOSE for documentation; not required
+# for the internal network to route to it.
 EXPOSE 9099
 
-# --mode regular@9099: standard HTTP/HTTPS forward proxy on :9099.
-# -s /app/egress_proxy_addon.py: loads our addon, which reads the
-#   route table from /etc/egress-proxy/routes.yaml.
-# (Upstream-trust + CA-cert hooks land in chunk 2 when the per-bottle
-# pipelock CA wiring moves over from cred-proxy.)
-ENTRYPOINT ["mitmdump", "--mode", "regular@9099", "-s", "/app/egress_proxy_addon.py"]
+# Entrypoint:
+#   --mode regular@9099   standard HTTP/HTTPS forward proxy on :9099.
+#   --set ssl_verify_upstream_trusted_ca=...  only when
+#     EGRESS_PROXY_UPSTREAM_CA env is set (the backend's start step
+#     sets it to the in-container pipelock-CA path when pipelock is
+#     present, so the upstream leg trusts pipelock's MITM). The
+#     ${VAR:+expansion} form omits the flag when the var is unset
+#     or empty — useful for standalone runs of the image (e.g. unit
+#     tests) where no upstream CA is mounted.
+#   -s /app/egress_proxy_addon.py   loads our addon, which reads the
+#     route table from /etc/egress-proxy/routes.yaml.
+ENTRYPOINT ["sh", "-c", "exec mitmdump --mode regular@9099 ${EGRESS_PROXY_UPSTREAM_CA:+--set ssl_verify_upstream_trusted_ca=$EGRESS_PROXY_UPSTREAM_CA} -s /app/egress_proxy_addon.py"]

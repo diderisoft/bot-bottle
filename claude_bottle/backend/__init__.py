@@ -219,26 +219,30 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         argv.
 
         Default orchestration: ca → prompt → skills → git →
-        cred_proxy. CA install runs first so the agent's trust store
+        supervise. CA install runs first so the agent's trust store
         is rebuilt before anything inside the agent makes a TLS call.
-        cred_proxy runs last because it appends to ~/.gitconfig (which
-        provision_git writes). Subclasses typically don't override
-        this; they implement the sub-methods below."""
+        Subclasses typically don't override this; they implement the
+        sub-methods below.
+
+        PRD 0017: cred-proxy's agent-side dotfile rewrites (~/.npmrc,
+        ~/.gitconfig insteadOf, tea config) are gone. Egress-proxy is
+        on the agent's HTTP_PROXY path so every tool that respects
+        HTTPS_PROXY (claude-code, git over HTTPS, npm, curl) is
+        intercepted without per-tool reconfiguration."""
         self.provision_ca(plan, target)
         prompt_path = self.provision_prompt(plan, target)
         self.provision_skills(plan, target)
         self.provision_git(plan, target)
-        self.provision_cred_proxy(plan, target)
         self.provision_supervise(plan, target)
         return prompt_path
 
     def provision_ca(self, plan: PlanT, target: str) -> None:
-        """Install pipelock's per-bottle CA into the agent's trust
-        store so the agent trusts the bumped CONNECT cert pipelock
-        presents. Default impl is a no-op so backends that don't
-        yet support TLS interception (every backend except Docker
-        today) aren't forced to implement it. The Docker backend
-        overrides to docker-cp the cert in and run
+        """Install the per-bottle CA into the agent's trust store so
+        the agent trusts the bumped CONNECT cert egress-proxy (was
+        pipelock, pre-PRD-0017) presents. Default impl is a no-op so
+        backends that don't yet support TLS interception (every backend
+        except Docker today) aren't forced to implement it. The Docker
+        backend overrides to docker-cp the cert in and run
         `update-ca-certificates`."""
 
     @abstractmethod
@@ -257,12 +261,6 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
     def provision_git(self, plan: PlanT, target: str) -> None:
         """Copy the host's cwd `.git` directory into the running
         bottle if the user requested --cwd. No-op otherwise."""
-
-    def provision_cred_proxy(self, plan: PlanT, target: str) -> None:
-        """Drop the cred-proxy agent-side dotfiles (.npmrc,
-        .gitconfig insteadOf, ~/.config/tea/config.yml) per PRD 0010.
-        Default impl is a no-op for backends that don't yet support
-        the cred-proxy sidecar; the Docker backend overrides."""
 
     def provision_supervise(self, plan: PlanT, target: str) -> None:
         """Write the in-bottle Claude Code MCP config so the agent

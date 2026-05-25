@@ -11,7 +11,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ...cred_proxy import CredProxyPlan
+from ...egress_proxy import EgressProxyPlan
 from ...git_gate import GitGatePlan
 from ...log import info
 from ...manifest import Agent, Bottle
@@ -58,7 +58,7 @@ class DockerBottlePlan(BottlePlan):
     prompt_file: Path
     proxy_plan: PipelockProxyPlan
     git_gate_plan: GitGatePlan
-    cred_proxy_plan: CredProxyPlan
+    egress_proxy_plan: EgressProxyPlan
     # None when bottle.supervise is False. PRD 0013 supervise sidecar
     # is opt-in via the manifest's bottle.supervise field.
     supervise_plan: SupervisePlan | None
@@ -72,10 +72,11 @@ class DockerBottlePlan(BottlePlan):
         bottle = manifest.bottle_for(spec.agent_name)
         # The agent sees the union of literal env names (rendered into
         # --env-file) and forwarded env names (`-e NAME` with the value
-        # arriving via subprocess env). The forwarded set already
-        # reflects PRD 0010's switch — when cred-proxy holds the
-        # anthropic token, CLAUDE_CODE_OAUTH_TOKEN is absent and
-        # ANTHROPIC_BASE_URL is present.
+        # arriving via subprocess env). The forwarded set holds the
+        # OAuth token (CLAUDE_CODE_OAUTH_TOKEN) and any host-env
+        # interpolations from the manifest; egress-proxy holds upstream
+        # tokens in its own environ, so no token forwarding from the
+        # agent to the proxy is needed.
         env_names = sorted(set(bottle.env.keys()) | set(self.forwarded_env.keys()))
         return _PlanView(
             agent=agent,
@@ -120,16 +121,25 @@ class DockerBottlePlan(BottlePlan):
             info(f"  git gate      : {'; '.join(git_lines)}")
         else:
             info("  git remotes   : (none)")
-        if self.cred_proxy_plan.routes:
-            lines = [f"{r.path}→{r.upstream}" for r in self.cred_proxy_plan.routes]
-            refs = sorted({r.token_ref for r in self.cred_proxy_plan.routes})
-            info(f"  cred-proxy    : {len(lines)} route(s); tokens: {', '.join(refs)}")
+        if self.egress_proxy_plan.routes:
+            lines = []
+            for r in self.egress_proxy_plan.routes:
+                paths = (
+                    " " + ",".join(r.path_allowlist) if r.path_allowlist else ""
+                )
+                auth = f" [auth:{r.auth_scheme}]" if r.auth_scheme else ""
+                lines.append(f"{r.host}{auth}{paths}")
+            refs = sorted({r.token_ref for r in self.egress_proxy_plan.routes if r.token_ref})
+            tokens_part = (
+                f"; tokens: {', '.join(refs)}" if refs else ""
+            )
+            info(f"  egress-proxy  : {len(lines)} route(s){tokens_part}")
             for line in lines:
                 info(f"                  {line}")
         else:
-            info("  cred-proxy    : (none)")
+            info("  egress-proxy  : (none)")
         info(f"  egress        : {self.allowlist_summary}")
-        info("  tls intercept : pipelock (per-bottle ephemeral CA, generated at launch)")
+        info("  tls intercept : egress-proxy (per-bottle ephemeral CA, generated at launch)")
         if self.supervise_plan is not None:
             info(
                 f"  supervise     : enabled; queue at {self.supervise_plan.queue_dir}"
@@ -166,23 +176,22 @@ class DockerBottlePlan(BottlePlan):
                 }
                 for u in self.git_gate_plan.upstreams
             ],
-            "cred_proxy": [
+            "egress_proxy": [
                 {
-                    "path": r.path,
-                    "upstream": r.upstream,
+                    "host": r.host,
+                    "path_allowlist": list(r.path_allowlist),
                     "auth_scheme": r.auth_scheme,
                     "token_ref": r.token_ref,
-                    "roles": list(r.roles),
                 }
-                for r in self.cred_proxy_plan.routes
+                for r in self.egress_proxy_plan.routes
             ],
             "egress": {
                 "host_count": len(hosts),
                 "hosts": hosts,
-                # PRD 0006: pipelock's `tls_interception` block is on
-                # for every launched bottle. ca_fingerprint is always
-                # null at dry-run because the CA doesn't exist yet —
-                # real launches print the fingerprint to stderr from
+                # PRD 0017: TLS interception moved from pipelock to
+                # egress-proxy. ca_fingerprint is always null at
+                # dry-run because the CA doesn't exist yet — real
+                # launches print the fingerprint to stderr from
                 # provision_ca. Reserved field for forward-compat.
                 "tls_interception": {
                     "enabled": True,

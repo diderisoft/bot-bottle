@@ -83,8 +83,8 @@ class TestBuildConfig(unittest.TestCase):
 
     def test_ssrf_block_emitted_when_allowlist_supplied(self):
         # The bottle's internal Docker subnet lands here at launch
-        # time so cred-proxy:9099 (172.x.x.x) doesn't trip pipelock's
-        # RFC1918 SSRF guard.
+        # time so sibling-sidecar traffic (172.x.x.x) doesn't trip
+        # pipelock's RFC1918 SSRF guard.
         cfg = pipelock_build_config(
             fixture_minimal().bottles["dev"],
             ssrf_ip_allowlist=("172.20.0.0/16",),
@@ -109,11 +109,9 @@ class TestBuildConfig(unittest.TestCase):
         # up to route claude through pipelock.
         from claude_bottle.manifest import Manifest
         bottle = Manifest.from_json_obj({
-            "bottles": {"dev": {"cred_proxy": {"routes": [
-                {"path": "/anthropic/",
-                 "upstream": "https://api.anthropic.com",
-                 "auth_scheme": "Bearer", "token_ref": "T",
-                 "role": "anthropic-base-url"},
+            "bottles": {"dev": {"egress_proxy": {"routes": [
+                {"host": "api.anthropic.com",
+                 "auth": {"scheme": "Bearer", "token_ref": "T"}},
             ]}}},
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
         }).bottles["dev"]
@@ -206,11 +204,9 @@ class TestRenderAndWrite(unittest.TestCase):
     def test_render_emits_seed_phrase_off_for_anthropic_route(self):
         from claude_bottle.manifest import Manifest
         bottle = Manifest.from_json_obj({
-            "bottles": {"dev": {"cred_proxy": {"routes": [
-                {"path": "/anthropic/",
-                 "upstream": "https://api.anthropic.com",
-                 "auth_scheme": "Bearer", "token_ref": "T",
-                 "role": "anthropic-base-url"},
+            "bottles": {"dev": {"egress_proxy": {"routes": [
+                {"host": "api.anthropic.com",
+                 "auth": {"scheme": "Bearer", "token_ref": "T"}},
             ]}}},
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
         }).bottles["dev"]

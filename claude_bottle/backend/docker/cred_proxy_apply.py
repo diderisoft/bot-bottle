@@ -22,15 +22,25 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from .cred_proxy import (
-    CRED_PROXY_ROUTES_IN_CONTAINER,
-    cred_proxy_container_name,
-)
+# Constants inlined from the deleted `claude_bottle.backend.docker.
+# cred_proxy` module (PRD 0017 chunk 2 cutover). Chunk 3 retargets
+# this file at egress-proxy and gets rid of these.
+CRED_PROXY_ROUTES_IN_CONTAINER = "/run/cred-proxy/routes.json"
+
+
+def _cred_proxy_container_name(slug: str) -> str:
+    return f"claude-bottle-cred-proxy-{slug}"
 
 
 class CredProxyApplyError(RuntimeError):
     """Raised when fetch / apply fails. Caller renders to the
-    operator; does not crash the dashboard."""
+    operator; does not crash the dashboard.
+
+    PRD 0017 chunk 2 deletes the cred-proxy sidecar; this module's
+    docker-exec calls now hit a non-existent container and raise
+    CredProxyApplyError with a "container not running" message,
+    which the dashboard surfaces to the operator. Chunk 3 retargets
+    everything at egress-proxy."""
 
 
 def fetch_current_routes(slug: str) -> str:
@@ -38,7 +48,7 @@ def fetch_current_routes(slug: str) -> str:
     for `slug`. Returns the file content as a string. Raises
     CredProxyApplyError if the sidecar isn't reachable or the read
     fails."""
-    container = cred_proxy_container_name(slug)
+    container = _cred_proxy_container_name(slug)
     r = subprocess.run(
         ["docker", "exec", container, "cat", CRED_PROXY_ROUTES_IN_CONTAINER],
         capture_output=True, text=True, check=False,
@@ -80,7 +90,7 @@ def apply_routes_change(slug: str, new_content: str) -> tuple[str, str]:
     sidecar are unchanged if the failure is before docker cp, and
     are reverted in spirit if SIGHUP fails (cp landed but reload
     didn't fire — caller's next attempt will SIGHUP again)."""
-    container = cred_proxy_container_name(slug)
+    container = _cred_proxy_container_name(slug)
     before = fetch_current_routes(slug)
     validate_routes_json(new_content)
 

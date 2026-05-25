@@ -1,7 +1,8 @@
 """Unit: pipelock_effective_allowlist — the union of baked-in defaults,
-bottle.egress.allowlist, and cred-proxy upstream hosts derived from
-bottle.cred_proxy.routes (PRD 0010). Git upstreams declared in bottle.git
-do not contribute here; they flow through the per-agent git-gate (PRD 0008)."""
+bottle.egress.allowlist, and egress-proxy route hosts derived from
+bottle.egress_proxy.routes (PRD 0017). Git upstreams declared in
+bottle.git do not contribute here; they flow through the per-agent
+git-gate (PRD 0008)."""
 
 import unittest
 
@@ -9,7 +10,7 @@ from claude_bottle.manifest import Manifest
 from claude_bottle.pipelock import (
     pipelock_effective_allowlist,
     pipelock_effective_tls_passthrough,
-    pipelock_token_hosts,
+    pipelock_route_hosts,
 )
 
 
@@ -18,6 +19,10 @@ def _bottle(spec):
         "bottles": {"dev": spec},
         "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
     }).bottles["dev"]
+
+
+def _routes(routes):
+    return {"egress_proxy": {"routes": routes}}
 
 
 class TestEffectiveAllowlist(unittest.TestCase):
@@ -37,66 +42,52 @@ class TestEffectiveAllowlist(unittest.TestCase):
         self.assertEqual(eff, sorted(eff), "sorted")
 
 
-def _routes(routes):
-    return {"cred_proxy": {"routes": routes}}
-
-
-class TestTokenHosts(unittest.TestCase):
-    def test_each_route_contributes_its_upstream_host(self):
-        hosts = pipelock_token_hosts(_bottle(_routes([
-            {"path": "/gh-api/", "upstream": "https://api.github.com",
-             "auth_scheme": "Bearer", "token_ref": "GH"},
-            {"path": "/gh-git/", "upstream": "https://github.com",
-             "auth_scheme": "Bearer", "token_ref": "GH"},
+class TestRouteHosts(unittest.TestCase):
+    def test_each_route_contributes_its_host(self):
+        hosts = pipelock_route_hosts(_bottle(_routes([
+            {"host": "api.github.com",
+             "auth": {"scheme": "Bearer", "token_ref": "GH"}},
+            {"host": "github.com",
+             "auth": {"scheme": "Bearer", "token_ref": "GH"}},
         ])))
         self.assertEqual(["api.github.com", "github.com"], hosts)
 
-    def test_dedupe_across_routes(self):
-        hosts = pipelock_token_hosts(_bottle(_routes([
-            {"path": "/a/", "upstream": "https://x.example",
-             "auth_scheme": "Bearer", "token_ref": "T1"},
-            {"path": "/b/", "upstream": "https://x.example",
-             "auth_scheme": "Bearer", "token_ref": "T2"},
-        ])))
-        self.assertEqual(["x.example"], hosts)
-
     def test_no_routes_empty(self):
-        self.assertEqual([], pipelock_token_hosts(_bottle({})))
+        self.assertEqual([], pipelock_route_hosts(_bottle({})))
 
 
-class TestAllowlistWithTokens(unittest.TestCase):
+class TestAllowlistWithRoutes(unittest.TestCase):
     def test_route_hosts_added_to_allowlist(self):
         eff = pipelock_effective_allowlist(_bottle(_routes([
-            {"path": "/npm/", "upstream": "https://registry.npmjs.org",
-             "auth_scheme": "Bearer", "token_ref": "N"},
-            {"path": "/gh-api/", "upstream": "https://api.github.com",
-             "auth_scheme": "Bearer", "token_ref": "G"},
+            {"host": "registry.npmjs.org",
+             "auth": {"scheme": "Bearer", "token_ref": "N"}},
+            {"host": "api.github.com",
+             "auth": {"scheme": "Bearer", "token_ref": "G"}},
         ])))
         self.assertIn("registry.npmjs.org", eff)
         self.assertIn("api.github.com", eff)
 
-    def test_cred_proxy_hostname_auto_added_when_routes_exist(self):
-        # The agent's HTTP_PROXY points at pipelock, so a request for
-        # http://cred-proxy:9099/... arrives at pipelock as a request
-        # for hostname `cred-proxy`. pipelock must allow it or the
-        # agent can't reach its own sidecar.
+    def test_egress_proxy_hostname_auto_added_when_routes_exist(self):
+        # Egress-proxy's outbound leg uses HTTPS_PROXY=pipelock, so
+        # any request that flows through egress-proxy → pipelock
+        # would otherwise be rejected by pipelock's hostname gate.
         eff = pipelock_effective_allowlist(_bottle(_routes([
-            {"path": "/x/", "upstream": "https://x.example",
-             "auth_scheme": "Bearer", "token_ref": "T"},
+            {"host": "x.example",
+             "auth": {"scheme": "Bearer", "token_ref": "T"}},
         ])))
-        self.assertIn("cred-proxy", eff)
+        self.assertIn("egress-proxy", eff)
 
-    def test_cred_proxy_hostname_NOT_added_when_no_routes(self):
-        # No cred-proxy sidecar, no auto-allow.
+    def test_egress_proxy_hostname_NOT_added_when_no_routes(self):
         eff = pipelock_effective_allowlist(_bottle({}))
-        self.assertNotIn("cred-proxy", eff)
+        self.assertNotIn("egress-proxy", eff)
 
     def test_supervise_hostname_auto_added_when_supervise_enabled(self):
-        # Same reasoning as cred-proxy: the agent's HTTP_PROXY points
-        # at pipelock, so http://supervise:9100/ (the MCP endpoint)
-        # arrives at pipelock as hostname `supervise`. Without this
-        # auto-allow, claude-code's MCP client gets a 403 and the
-        # supervise server shows up as "failed" in /mcp.
+        # The agent's MCP client opens long-polled requests to
+        # http://supervise:9100/. They bypass the agent's HTTP_PROXY
+        # (via NO_PROXY=supervise) and shouldn't traverse pipelock;
+        # but for the launch path where supervise traffic does flow
+        # through pipelock (egress-proxy → ... → supervise edge
+        # cases), the hostname needs to be on the allowlist anyway.
         eff = pipelock_effective_allowlist(_bottle({"supervise": True}))
         self.assertIn("supervise", eff)
 
@@ -106,6 +97,18 @@ class TestAllowlistWithTokens(unittest.TestCase):
         eff_explicit = pipelock_effective_allowlist(_bottle({"supervise": False}))
         self.assertNotIn("supervise", eff_explicit)
 
+    def test_path_allowlist_does_not_affect_pipelock_allowlist(self):
+        # path_allowlist is enforced by egress-proxy, not pipelock.
+        # Pipelock only sees the upstream hostname; the path filter
+        # has already passed (or 403'd) at egress-proxy.
+        eff = pipelock_effective_allowlist(_bottle(_routes([
+            {"host": "github.com", "path_allowlist": ["/x/", "/y/"]},
+        ])))
+        self.assertIn("github.com", eff)
+        # The path strings don't leak into the allowlist.
+        for entry in eff:
+            self.assertFalse(entry.startswith("/"))
+
 
 class TestTlsPassthrough(unittest.TestCase):
     def test_default_includes_api_anthropic(self):
@@ -113,15 +116,15 @@ class TestTlsPassthrough(unittest.TestCase):
         self.assertEqual(["api.anthropic.com"], passthrough)
 
     def test_route_hosts_NOT_added_to_passthrough(self):
-        # cred-proxy now trusts pipelock's per-bottle CA, so pipelock
-        # can MITM the cred-proxy -> upstream leg and body-scan it.
-        # Auto-adding cred-proxy hosts to passthrough would silently
-        # disable that second scanner.
+        # egress-proxy trusts pipelock's per-bottle CA, so pipelock
+        # MITMs and body-scans the egress-proxy → upstream leg the
+        # same way it scanned direct agent traffic before. Auto-adding
+        # route hosts to passthrough would silently disable that.
         passthrough = pipelock_effective_tls_passthrough(_bottle(_routes([
-            {"path": "/gh-api/", "upstream": "https://api.github.com",
-             "auth_scheme": "Bearer", "token_ref": "G"},
-            {"path": "/npm/", "upstream": "https://registry.npmjs.org",
-             "auth_scheme": "Bearer", "token_ref": "N"},
+            {"host": "api.github.com",
+             "auth": {"scheme": "Bearer", "token_ref": "G"}},
+            {"host": "registry.npmjs.org",
+             "auth": {"scheme": "Bearer", "token_ref": "N"}},
         ])))
         self.assertEqual(["api.anthropic.com"], passthrough)
 
