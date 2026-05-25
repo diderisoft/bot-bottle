@@ -5,7 +5,7 @@ queue/audit support. The sidecar (claude_bottle.supervise_server)
 sits on the bottle's internal network and exposes three MCP tools the
 agent calls when it hits a stuck-recovery category:
 
-  * cred-proxy-block   — agent proposes a new routes.json
+  * egress-proxy-block — agent proposes a new routes.yaml
   * pipelock-block     — agent proposes a new pipelock allowlist
   * capability-block   — agent proposes a new agent Dockerfile
 
@@ -49,11 +49,11 @@ from pathlib import Path
 SUPERVISE_HOSTNAME = "supervise"
 SUPERVISE_PORT = 9100
 
-TOOL_CRED_PROXY_BLOCK = "cred-proxy-block"
+TOOL_EGRESS_PROXY_BLOCK = "egress-proxy-block"
 TOOL_PIPELOCK_BLOCK = "pipelock-block"
 TOOL_CAPABILITY_BLOCK = "capability-block"
 TOOLS: tuple[str, ...] = (
-    TOOL_CRED_PROXY_BLOCK,
+    TOOL_EGRESS_PROXY_BLOCK,
     TOOL_PIPELOCK_BLOCK,
     TOOL_CAPABILITY_BLOCK,
 )
@@ -63,7 +63,7 @@ TOOLS: tuple[str, ...] = (
 # here — those changes are captured by git history + the rebuild
 # record laid down in PRD 0016.
 COMPONENT_FOR_TOOL: dict[str, str] = {
-    TOOL_CRED_PROXY_BLOCK: "cred-proxy",
+    TOOL_EGRESS_PROXY_BLOCK: "egress-proxy",
     TOOL_PIPELOCK_BLOCK: "pipelock",
 }
 
@@ -566,7 +566,7 @@ __all__ = [
     "SupervisePlan",
     "TOOLS",
     "TOOL_CAPABILITY_BLOCK",
-    "TOOL_CRED_PROXY_BLOCK",
+    "TOOL_EGRESS_PROXY_BLOCK",
     "TOOL_PIPELOCK_BLOCK",
     "archive_proposal",
     "audit_dir",

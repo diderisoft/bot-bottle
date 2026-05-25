@@ -1,6 +1,6 @@
 """Supervise sidecar HTTP server (PRD 0013).
 
-Per-bottle MCP server exposing three tools — `cred-proxy-block`,
+Per-bottle MCP server exposing three tools — `egress-proxy-block`,
 `pipelock-block`, `capability-block` — that the agent calls to
 propose config changes when stuck. Each tool call:
 
@@ -128,26 +128,27 @@ def jsonrpc_error(request_id: object, code: int, message: str) -> bytes:
 
 TOOL_DEFINITIONS: list[dict[str, object]] = [
     {
-        "name": _sv.TOOL_CRED_PROXY_BLOCK,
+        "name": _sv.TOOL_EGRESS_PROXY_BLOCK,
         "description": (
-            "Call when cred-proxy refused your HTTPS request — missing "
-            "route, expired token, wrong scope (typically a 403 or a "
-            "404 from `http://cred-proxy:<port>/<path>/`). Read the "
-            "current routes.json from "
-            "/etc/claude-bottle/current-config/routes.json, compose a "
-            "modified version with the route you need, and pass the "
-            "full new file plus a justification. The operator approves "
-            "or rejects in the supervise TUI. On approval the supervisor "
-            "writes the new routes.json on the host and SIGHUPs cred-proxy "
-            "(wired in PRD 0014; in the v1 supervise foundation the "
-            "approval is acknowledged but no config change runs)."
+            "Call when egress-proxy refused your HTTPS request — host "
+            "without a matching route, or a path outside the route's "
+            "path_allowlist (typically a 403 from the proxy). Read "
+            "the current routes.yaml from "
+            "/etc/claude-bottle/current-config/routes.yaml, compose "
+            "a modified version that adds or relaxes the route you "
+            "need, and pass the full new file plus a justification. "
+            "The operator approves or rejects in the supervise TUI. "
+            "On approval the supervisor writes the new routes.yaml "
+            "on the host and SIGHUPs egress-proxy (the addon's reload "
+            "swaps the route table atomically without dropping "
+            "in-flight connections)."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "routes": {
                     "type": "string",
-                    "description": "Full proposed routes.json file content (JSON text).",
+                    "description": "Full proposed routes.yaml file content (JSON text — every JSON document is valid YAML).",
                 },
                 "justification": {
                     "type": "string",
@@ -226,15 +227,15 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
 # tool-specific payload (stored in Proposal.proposed_file as
 # free-form text the apply path interprets per tool).
 #
-#   cred-proxy-block: full proposed routes.json
-#   pipelock-block:   the full failed URL (scheme + host + path) —
-#                     supervisor extracts the host, merges into the
-#                     bottle's current allowlist; the path is shown
-#                     to the operator for context (pipelock doesn't
-#                     do path-level matching).
-#   capability-block: full proposed Dockerfile
+#   egress-proxy-block: full proposed routes.yaml
+#   pipelock-block:     the full failed URL (scheme + host + path) —
+#                       supervisor extracts the host, merges into the
+#                       bottle's current allowlist; the path is shown
+#                       to the operator for context (pipelock doesn't
+#                       do path-level matching).
+#   capability-block:   full proposed Dockerfile
 PROPOSED_FILE_FIELD: dict[str, str] = {
-    _sv.TOOL_CRED_PROXY_BLOCK: "routes",
+    _sv.TOOL_EGRESS_PROXY_BLOCK: "routes",
     _sv.TOOL_PIPELOCK_BLOCK: "failed_url",
     _sv.TOOL_CAPABILITY_BLOCK: "dockerfile",
 }
@@ -249,18 +250,18 @@ def validate_proposed_file(tool: str, content: str) -> None:
     enter the queue."""
     if not content.strip():
         raise _RpcError(ERR_INVALID_PARAMS, f"{tool}: proposed file is empty")
-    if tool == _sv.TOOL_CRED_PROXY_BLOCK:
+    if tool == _sv.TOOL_EGRESS_PROXY_BLOCK:
         try:
             parsed = json.loads(content)
         except json.JSONDecodeError as e:
             raise _RpcError(
                 ERR_INVALID_PARAMS,
-                f"{tool}: proposed routes.json is not valid JSON: {e}",
+                f"{tool}: proposed routes.yaml is not valid JSON: {e}",
             ) from e
         if not isinstance(parsed, dict) or not isinstance(parsed.get("routes"), list):
             raise _RpcError(
                 ERR_INVALID_PARAMS,
-                f"{tool}: proposed routes.json must be an object with a 'routes' array",
+                f"{tool}: proposed routes.yaml must be an object with a 'routes' array",
             )
     elif tool == _sv.TOOL_PIPELOCK_BLOCK:
         # `content` is the full failed URL. Require scheme + host so
@@ -505,7 +506,7 @@ def serve(
 
 
 def main(argv: list[str]) -> int:
-    del argv  # config is env-only, matches cred_proxy_server pattern
+    del argv  # config is env-only, no CLI flags
     bottle_slug = os.environ.get("SUPERVISE_BOTTLE_SLUG", "")
     if not bottle_slug:
         sys.stderr.write("supervise: SUPERVISE_BOTTLE_SLUG env is unset\n")

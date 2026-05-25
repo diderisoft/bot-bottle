@@ -17,7 +17,7 @@ from pathlib import Path
 
 from claude_bottle import supervise
 from claude_bottle.backend.docker.capability_apply import CapabilityApplyError
-from claude_bottle.backend.docker.cred_proxy_apply import CredProxyApplyError
+from claude_bottle.backend.docker.egress_proxy_apply import EgressProxyApplyError
 from claude_bottle.backend.docker.pipelock_apply import PipelockApplyError
 from claude_bottle.cli import dashboard
 from claude_bottle.supervise import (
@@ -26,7 +26,7 @@ from claude_bottle.supervise import (
     STATUS_MODIFIED,
     STATUS_REJECTED,
     TOOL_CAPABILITY_BLOCK,
-    TOOL_CRED_PROXY_BLOCK,
+    TOOL_EGRESS_PROXY_BLOCK,
     TOOL_PIPELOCK_BLOCK,
     read_audit_entries,
     read_response,
@@ -37,13 +37,13 @@ from claude_bottle.supervise import (
 FIXED = datetime(2026, 5, 25, 12, 0, 0, tzinfo=timezone.utc)
 
 
-def _proposal(slug: str = "dev", tool: str = TOOL_CRED_PROXY_BLOCK) -> Proposal:
+def _proposal(slug: str = "dev", tool: str = TOOL_EGRESS_PROXY_BLOCK) -> Proposal:
     # Per-tool payload shape: cred-proxy gets routes.json, pipelock
     # gets a failed URL (PR #25 follow-up), capability gets a
     # Dockerfile-ish blob. Match the production dispatch in
     # PROPOSED_FILE_FIELD.
     payloads = {
-        TOOL_CRED_PROXY_BLOCK: '{"routes": []}\n',
+        TOOL_EGRESS_PROXY_BLOCK: '{"routes": []}\n',
         TOOL_PIPELOCK_BLOCK: "https://example.com/path",
         TOOL_CAPABILITY_BLOCK: "FROM python:3.13\n",
     }
@@ -95,13 +95,13 @@ class TestDiscoverPending(_FakeHomeMixin, unittest.TestCase):
 
     def test_sorted_by_arrival_across_bottles(self):
         early = Proposal.new(
-            bottle_slug="api", tool=TOOL_CRED_PROXY_BLOCK,
+            bottle_slug="api", tool=TOOL_EGRESS_PROXY_BLOCK,
             proposed_file="{}", justification="early",
             current_file_hash="h",
             now=datetime(2026, 5, 25, 10, 0, 0, tzinfo=timezone.utc),
         )
         late = Proposal.new(
-            bottle_slug="dev", tool=TOOL_CRED_PROXY_BLOCK,
+            bottle_slug="dev", tool=TOOL_EGRESS_PROXY_BLOCK,
             proposed_file="{}", justification="late",
             current_file_hash="h",
             now=datetime(2026, 5, 25, 14, 0, 0, tzinfo=timezone.utc),
@@ -151,7 +151,7 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
         dashboard.apply_capability_change = self._original_apply_capability
         self._teardown_fake_home()
 
-    def _enqueue(self, tool: str = TOOL_CRED_PROXY_BLOCK):
+    def _enqueue(self, tool: str = TOOL_EGRESS_PROXY_BLOCK):
         p = _proposal(tool=tool)
         qdir = supervise.queue_dir_for_slug("dev")
         qdir.mkdir(parents=True, exist_ok=True)
@@ -164,7 +164,7 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
         resp = read_response(qp.queue_dir, qp.proposal.id)
         self.assertEqual(STATUS_APPROVED, resp.status)
         self.assertIsNone(resp.final_file)
-        entries = read_audit_entries("cred-proxy", "dev")
+        entries = read_audit_entries("egress-proxy", "dev")
         self.assertEqual(1, len(entries))
         self.assertEqual("approved", entries[0].operator_action)
 
@@ -175,7 +175,7 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
         self.assertEqual(STATUS_MODIFIED, resp.status)
         self.assertEqual('{"routes": [{"path": "/x/"}]}\n', resp.final_file)
         self.assertEqual("tweaked", resp.notes)
-        entries = read_audit_entries("cred-proxy", "dev")
+        entries = read_audit_entries("egress-proxy", "dev")
         self.assertEqual("modified", entries[0].operator_action)
 
     def test_reject_writes_rejection(self):
@@ -184,7 +184,7 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
         resp = read_response(qp.queue_dir, qp.proposal.id)
         self.assertEqual(STATUS_REJECTED, resp.status)
         self.assertEqual("nope", resp.notes)
-        entries = read_audit_entries("cred-proxy", "dev")
+        entries = read_audit_entries("egress-proxy", "dev")
         self.assertEqual("rejected", entries[0].operator_action)
         self.assertEqual("nope", entries[0].operator_notes)
 
@@ -193,18 +193,18 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
         dashboard.approve(qp)
         # No audit log for capability-block (per PRD 0013 / 0016).
         # cred-proxy and pipelock logs both empty.
-        self.assertEqual([], read_audit_entries("cred-proxy", "dev"))
+        self.assertEqual([], read_audit_entries("egress-proxy", "dev"))
         self.assertEqual([], read_audit_entries("pipelock", "dev"))
 
-    def test_pipelock_audit_distinct_from_cred_proxy(self):
+    def test_pipelock_audit_distinct_from_egress_proxy(self):
         qp = self._enqueue(tool=TOOL_PIPELOCK_BLOCK)
         dashboard.approve(qp)
         self.assertEqual(1, len(read_audit_entries("pipelock", "dev")))
-        self.assertEqual(0, len(read_audit_entries("cred-proxy", "dev")))
+        self.assertEqual(0, len(read_audit_entries("egress-proxy", "dev")))
 
 
-class TestCredProxyApplyWiring(_FakeHomeMixin, unittest.TestCase):
-    """PRD 0014 Phase 3: approve() on a cred-proxy-block proposal
+class TestEgressProxyApplyWiring(_FakeHomeMixin, unittest.TestCase):
+    """PRD 0014 Phase 3: approve() on a egress-proxy-block proposal
     must call apply_routes_change with the right args and surface
     its failures."""
 
@@ -216,9 +216,9 @@ class TestCredProxyApplyWiring(_FakeHomeMixin, unittest.TestCase):
         dashboard.apply_routes_change = self._original_apply
         self._teardown_fake_home()
 
-    def _enqueue_cred_proxy(self, proposed: str = '{"routes": []}\n'):
+    def _enqueue_egress_proxy(self, proposed: str = '{"routes": []}\n'):
         p = Proposal.new(
-            bottle_slug="dev", tool=TOOL_CRED_PROXY_BLOCK,
+            bottle_slug="dev", tool=TOOL_EGRESS_PROXY_BLOCK,
             proposed_file=proposed,
             justification="need a route",
             current_file_hash=sha256_hex(proposed),
@@ -229,12 +229,12 @@ class TestCredProxyApplyWiring(_FakeHomeMixin, unittest.TestCase):
         supervise.write_proposal(qdir, p)
         return dashboard.QueuedProposal(proposal=p, queue_dir=qdir)
 
-    def test_cred_proxy_block_calls_apply_with_proposed_file(self):
+    def test_egress_proxy_block_calls_apply_with_proposed_file(self):
         calls = []
         dashboard.apply_routes_change = lambda slug, content: (
             calls.append((slug, content)) or ("before", content)
         )
-        qp = self._enqueue_cred_proxy(proposed='{"routes": [{"path": "/new/"}]}\n')
+        qp = self._enqueue_egress_proxy(proposed='{"routes": [{"path": "/new/"}]}\n')
         dashboard.approve(qp)
         self.assertEqual(1, len(calls))
         slug, content = calls[0]
@@ -246,16 +246,16 @@ class TestCredProxyApplyWiring(_FakeHomeMixin, unittest.TestCase):
         dashboard.apply_routes_change = lambda slug, content: (
             calls.append(content) or ("before", content)
         )
-        qp = self._enqueue_cred_proxy()
+        qp = self._enqueue_egress_proxy()
         dashboard.approve(qp, final_file='{"routes": [{"path": "/edited/"}]}\n', notes="tweaked")
         self.assertEqual(['{"routes": [{"path": "/edited/"}]}\n'], calls)
 
     def test_apply_failure_blocks_response_and_audit(self):
         dashboard.apply_routes_change = lambda slug, content: (_ for _ in ()).throw(
-            CredProxyApplyError("docker exec failed")
+            EgressProxyApplyError("docker exec failed")
         )
-        qp = self._enqueue_cred_proxy()
-        with self.assertRaises(CredProxyApplyError):
+        qp = self._enqueue_egress_proxy()
+        with self.assertRaises(EgressProxyApplyError):
             dashboard.approve(qp)
         # No response file (proposal stays pending).
         self.assertEqual(
@@ -263,16 +263,16 @@ class TestCredProxyApplyWiring(_FakeHomeMixin, unittest.TestCase):
             [p.id for p in supervise.list_pending_proposals(qp.queue_dir)],
         )
         # No audit entry.
-        self.assertEqual([], read_audit_entries("cred-proxy", "dev"))
+        self.assertEqual([], read_audit_entries("egress-proxy", "dev"))
 
     def test_real_diff_lands_in_audit(self):
         dashboard.apply_routes_change = lambda slug, content: (
             '{"routes": []}\n',  # before
             '{"routes": [{"path": "/new/"}]}\n',  # after
         )
-        qp = self._enqueue_cred_proxy(proposed='{"routes": [{"path": "/new/"}]}\n')
+        qp = self._enqueue_egress_proxy(proposed='{"routes": [{"path": "/new/"}]}\n')
         dashboard.approve(qp)
-        entries = read_audit_entries("cred-proxy", "dev")
+        entries = read_audit_entries("egress-proxy", "dev")
         self.assertEqual(1, len(entries))
         self.assertIn('+{"routes": [{"path": "/new/"}]}', entries[0].diff)
         self.assertIn('-{"routes": []}', entries[0].diff)
@@ -282,13 +282,13 @@ class TestCredProxyApplyWiring(_FakeHomeMixin, unittest.TestCase):
         dashboard.apply_routes_change = lambda slug, content: (
             called.append(True) or ("", content)
         )
-        qp = self._enqueue_cred_proxy()
+        qp = self._enqueue_egress_proxy()
         dashboard.reject(qp, reason="no thanks")
         self.assertEqual([], called)
         # Reject still writes a response + audit entry with empty diff.
         resp = read_response(qp.queue_dir, qp.proposal.id)
         self.assertEqual(STATUS_REJECTED, resp.status)
-        entries = read_audit_entries("cred-proxy", "dev")
+        entries = read_audit_entries("egress-proxy", "dev")
         self.assertEqual(1, len(entries))
         self.assertEqual("", entries[0].diff)
 
@@ -432,7 +432,7 @@ class TestCapabilityApplyWiring(_FakeHomeMixin, unittest.TestCase):
         dashboard.approve(qp)
         # capability-block has no audit log per PRD 0013 — its record
         # lives in the per-bottle Dockerfile + transcript state.
-        self.assertEqual([], read_audit_entries("cred-proxy", "dev"))
+        self.assertEqual([], read_audit_entries("egress-proxy", "dev"))
         self.assertEqual([], read_audit_entries("pipelock", "dev"))
 
     def test_proposal_archived_after_apply(self):
@@ -464,7 +464,7 @@ class TestOperatorEditRoutes(_FakeHomeMixin, unittest.TestCase):
             '{"routes": []}\n', content,
         )
         dashboard.operator_edit_routes("dev", '{"routes": [{"path": "/x/"}]}\n')
-        entries = read_audit_entries("cred-proxy", "dev")
+        entries = read_audit_entries("egress-proxy", "dev")
         self.assertEqual(1, len(entries))
         self.assertEqual(supervise.ACTION_OPERATOR_EDIT, entries[0].operator_action)
         self.assertEqual("", entries[0].justification)
@@ -472,14 +472,14 @@ class TestOperatorEditRoutes(_FakeHomeMixin, unittest.TestCase):
 
     def test_failure_does_not_write_audit(self):
         dashboard.apply_routes_change = lambda slug, content: (_ for _ in ()).throw(
-            CredProxyApplyError("nope")
+            EgressProxyApplyError("nope")
         )
-        with self.assertRaises(CredProxyApplyError):
+        with self.assertRaises(EgressProxyApplyError):
             dashboard.operator_edit_routes("dev", '{"routes": []}\n')
-        self.assertEqual([], read_audit_entries("cred-proxy", "dev"))
+        self.assertEqual([], read_audit_entries("egress-proxy", "dev"))
 
 
-class TestDiscoverCredProxySlugs(unittest.TestCase):
+class TestDiscoverEgressProxySlugs(unittest.TestCase):
     """Slug-extraction parsing — exercises only the parsing path; the
     docker ps invocation itself is environment-dependent (and tested
     implicitly by the integration test)."""
@@ -491,7 +491,7 @@ class TestDiscoverCredProxySlugs(unittest.TestCase):
         original = os.environ.get("PATH", "")
         os.environ["PATH"] = "/nonexistent-no-docker-here"
         try:
-            self.assertEqual([], dashboard.discover_cred_proxy_slugs())
+            self.assertEqual([], dashboard.discover_egress_proxy_slugs())
             self.assertEqual([], dashboard.discover_pipelock_slugs())
         finally:
             os.environ["PATH"] = original

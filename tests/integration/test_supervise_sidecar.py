@@ -196,7 +196,7 @@ class TestSuperviseSidecar(unittest.TestCase):
         names = {t["name"] for t in result["result"]["tools"]}
         self.assertEqual(
             {
-                _sv.TOOL_CRED_PROXY_BLOCK,
+                _sv.TOOL_EGRESS_PROXY_BLOCK,
                 _sv.TOOL_PIPELOCK_BLOCK,
                 _sv.TOOL_CAPABILITY_BLOCK,
             },
@@ -204,18 +204,28 @@ class TestSuperviseSidecar(unittest.TestCase):
         )
 
     def test_tools_call_round_trips_through_queue(self):
-        """End-to-end: agent in the bottle calls cred-proxy-block;
-        the call blocks on the queue; the host rejects via the
-        dashboard helpers; the agent receives the rejection.
+        """End-to-end: agent in the bottle calls egress-proxy-block;
+        the call blocks on the queue; the host approves via the
+        dashboard helpers; the agent receives the approval.
 
-        PRD 0017 chunk 2 deleted the cred-proxy sidecar, so the
-        approval-apply path on cred-proxy-block is broken in this
-        intermediate state (chunk 3 retargets it at egress-proxy and
-        restores the round-trip approval test). For now this verifies
-        only the queue + response leg by exercising the reject path
-        — no docker-exec into a sidecar needed."""
+        This test focuses on the supervise sidecar's queue + response
+        plumbing, not the egress-proxy apply path itself. The apply
+        function is stubbed so we don't need to bring up a real
+        egress-proxy sidecar (its docker lifecycle has its own
+        integration coverage)."""
         self._require_bind_mount_sharing()
         self._bring_up_sidecar()
+
+        # Stub the apply step. The dashboard's approve() calls
+        # apply_routes_change to docker-exec into the egress-proxy
+        # sidecar; this test isn't exercising the real sidecar, so
+        # patch it to a no-op that returns plausible before/after
+        # strings the audit-log writer can render.
+        from claude_bottle.cli import dashboard as _dash
+        original_apply = _dash.apply_routes_change
+        _dash.apply_routes_change = (
+            lambda slug, new: ("(stubbed before)", new)
+        )
 
         captured: dict[str, object] = {}
 
@@ -223,9 +233,9 @@ class TestSuperviseSidecar(unittest.TestCase):
             captured["response"] = self._curl_jsonrpc({
                 "jsonrpc": "2.0", "id": 7, "method": "tools/call",
                 "params": {
-                    "name": _sv.TOOL_CRED_PROXY_BLOCK,
+                    "name": _sv.TOOL_EGRESS_PROXY_BLOCK,
                     "arguments": {
-                        "routes": '{"routes": [{"path": "/x/"}]}',
+                        "routes": '{"routes": [{"host": "api.example.com"}]}',
                         "justification": "integration test",
                     },
                 },
@@ -249,16 +259,17 @@ class TestSuperviseSidecar(unittest.TestCase):
             self.assertIsNotNone(qp, "proposal never appeared in queue")
             assert qp is not None  # type-narrowing
             self.assertEqual(
-                _sv.TOOL_CRED_PROXY_BLOCK, qp.proposal.tool,
+                _sv.TOOL_EGRESS_PROXY_BLOCK, qp.proposal.tool,
             )
             self.assertEqual("integration test", qp.proposal.justification)
 
-            # Reject via the dashboard helper. The reject path skips
-            # the sidecar-apply step, so it works without a real
-            # cred-proxy sidecar (which doesn't exist in chunk 2's
-            # transitional state).
-            dashboard.reject(qp, reason="no real cred-proxy in chunk 2")
+            # Approve via the dashboard helper. The apply step (now
+            # stubbed) would docker-exec into the egress-proxy sidecar
+            # and SIGHUP it. The supervise sidecar sees the response
+            # file and returns to the curl caller.
+            dashboard.approve(qp, notes="lgtm from integration test")
         finally:
+            _dash.apply_routes_change = original_apply
             t.join(timeout=20)
 
         response = captured.get("response")
@@ -267,12 +278,10 @@ class TestSuperviseSidecar(unittest.TestCase):
         self.assertEqual(7, response["id"])
         result = response["result"]
         assert isinstance(result, dict)
-        # Rejected tool calls surface as MCP errors so the agent
-        # treats them as failures (not silent successes).
-        self.assertTrue(result.get("isError"))
+        self.assertFalse(result.get("isError"))
         text = result["content"][0]["text"]
-        self.assertIn("rejected", text)
-        self.assertIn("no real cred-proxy", text)
+        self.assertIn("status: approved", text)
+        self.assertIn("notes: lgtm from integration test", text)
 
     def test_orphan_sidecar_name_collision_recovered(self):
         """An orphan supervise sidecar from a previous run blocks

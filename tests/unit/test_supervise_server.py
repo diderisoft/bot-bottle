@@ -45,19 +45,19 @@ from claude_bottle.supervise_server import (
 
 
 class TestValidation(unittest.TestCase):
-    def test_cred_proxy_block_requires_valid_json(self):
+    def test_egress_proxy_block_requires_valid_json(self):
         with self.assertRaises(_RpcError) as cm:
-            validate_proposed_file(_sv.TOOL_CRED_PROXY_BLOCK, "{not json")
+            validate_proposed_file(_sv.TOOL_EGRESS_PROXY_BLOCK, "{not json")
         self.assertEqual(ERR_INVALID_PARAMS, cm.exception.code)
         self.assertIn("not valid JSON", cm.exception.message)
 
-    def test_cred_proxy_block_requires_routes_array(self):
+    def test_egress_proxy_block_requires_routes_array(self):
         with self.assertRaises(_RpcError):
-            validate_proposed_file(_sv.TOOL_CRED_PROXY_BLOCK, '{"other": []}')
+            validate_proposed_file(_sv.TOOL_EGRESS_PROXY_BLOCK, '{"other": []}')
 
-    def test_cred_proxy_block_accepts_valid_routes(self):
+    def test_egress_proxy_block_accepts_valid_routes(self):
         validate_proposed_file(
-            _sv.TOOL_CRED_PROXY_BLOCK,
+            _sv.TOOL_EGRESS_PROXY_BLOCK,
             '{"routes": [{"path": "/x/", "upstream": "https://example.com"}]}',
         )
 
@@ -175,7 +175,7 @@ class TestHandleToolsList(unittest.TestCase):
         names = [t["name"] for t in result["tools"]]  # type: ignore[index]
         self.assertEqual(
             sorted([
-                _sv.TOOL_CRED_PROXY_BLOCK,
+                _sv.TOOL_EGRESS_PROXY_BLOCK,
                 _sv.TOOL_PIPELOCK_BLOCK,
                 _sv.TOOL_CAPABILITY_BLOCK,
             ]),
@@ -225,7 +225,7 @@ class TestHandleToolsCall(unittest.TestCase):
         try:
             result = handle_tools_call(
                 {
-                    "name": _sv.TOOL_CRED_PROXY_BLOCK,
+                    "name": _sv.TOOL_EGRESS_PROXY_BLOCK,
                     "arguments": {
                         "routes": '{"routes": []}',
                         "justification": "need a route",
@@ -269,7 +269,7 @@ class TestHandleToolsCall(unittest.TestCase):
         with self.assertRaises(_RpcError):
             handle_tools_call(
                 {
-                    "name": _sv.TOOL_CRED_PROXY_BLOCK,
+                    "name": _sv.TOOL_EGRESS_PROXY_BLOCK,
                     "arguments": {"routes": '{"routes": []}'},
                 },
                 self.config,
@@ -280,7 +280,7 @@ class TestHandleToolsCall(unittest.TestCase):
         try:
             handle_tools_call(
                 {
-                    "name": _sv.TOOL_CRED_PROXY_BLOCK,
+                    "name": _sv.TOOL_EGRESS_PROXY_BLOCK,
                     "arguments": {
                         "routes": '{"routes": []}',
                         "justification": "x",
@@ -367,7 +367,7 @@ class TestHttpEndToEnd(unittest.TestCase):
         self.assertEqual("2.0", result["jsonrpc"])
         self.assertEqual(1, result["id"])
         names = [t["name"] for t in result["result"]["tools"]]  # type: ignore[index]
-        self.assertIn(_sv.TOOL_CRED_PROXY_BLOCK, names)
+        self.assertIn(_sv.TOOL_EGRESS_PROXY_BLOCK, names)
 
     def test_unknown_method_returns_jsonrpc_error(self):
         result = self._post_jsonrpc(
