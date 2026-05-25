@@ -40,38 +40,35 @@ class TestPipelockHostHighlight(unittest.TestCase):
             _qp(TOOL_PIPELOCK_BLOCK, "https://api.github.com/repos/foo/bar"),
             green_attr=self.GREEN,
         )
-        host_lines = [
-            (text, attr) for text, attr in lines
-            if text.startswith("→ would allow host:")
-        ]
-        self.assertEqual(1, len(host_lines))
-        text, attr = host_lines[0]
-        self.assertEqual("→ would allow host: api.github.com", text)
-        self.assertEqual(self.GREEN, attr)
+        # The host appears as its own green-tagged line — literal
+        # text of what gets appended to pipelock's allowlist on
+        # approve.
+        green_lines = [text for text, attr in lines if attr == self.GREEN]
+        self.assertEqual(["api.github.com"], green_lines)
 
-    def test_no_host_line_for_cred_proxy_block(self):
+    def test_no_green_lines_for_cred_proxy_block(self):
         lines = dashboard._detail_lines(
             _qp(TOOL_CRED_PROXY_BLOCK, '{"routes": []}'),
             green_attr=self.GREEN,
         )
-        self.assertFalse(any("would allow host" in t for t, _ in lines))
+        self.assertEqual([], [t for t, a in lines if a == self.GREEN])
 
-    def test_no_host_line_for_capability_block(self):
+    def test_no_green_lines_for_capability_block(self):
         lines = dashboard._detail_lines(
             _qp(TOOL_CAPABILITY_BLOCK, "FROM python:3.13\n"),
             green_attr=self.GREEN,
         )
-        self.assertFalse(any("would allow host" in t for t, _ in lines))
+        self.assertEqual([], [t for t, a in lines if a == self.GREEN])
 
     def test_skips_host_line_when_url_unparseable(self):
         # Shouldn't happen in production — supervise_server validates
         # the URL before queuing — but if a malformed payload ever
-        # reaches the dashboard, don't add a misleading host line.
+        # reaches the dashboard, don't render a misleading host line.
         lines = dashboard._detail_lines(
             _qp(TOOL_PIPELOCK_BLOCK, "garbage-not-a-url"),
             green_attr=self.GREEN,
         )
-        self.assertFalse(any("would allow host" in t for t, _ in lines))
+        self.assertEqual([], [t for t, a in lines if a == self.GREEN])
 
     def test_no_green_attr_passed_still_renders_host(self):
         # Even without color support (green_attr=0), the host line
@@ -80,8 +77,9 @@ class TestPipelockHostHighlight(unittest.TestCase):
             _qp(TOOL_PIPELOCK_BLOCK, "https://api.github.com/x"),
             green_attr=0,
         )
-        host_lines = [t for t, _ in lines if t.startswith("→ would allow host:")]
-        self.assertEqual(["→ would allow host: api.github.com"], host_lines)
+        # Last non-empty line should be the host.
+        non_empty = [t for t, _ in lines if t]
+        self.assertEqual("api.github.com", non_empty[-1])
 
 
 class TestFailedUrlHost(unittest.TestCase):

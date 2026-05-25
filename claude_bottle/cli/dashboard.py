@@ -637,8 +637,13 @@ def _detail_lines(
     if p.tool == TOOL_PIPELOCK_BLOCK:
         host = _failed_url_host(p.proposed_file)
         if host:
+            # Show the literal line that will be appended to the
+            # bottle's pipelock allowlist on approve. Green so it
+            # reads as "what changes"; the URL above carries the
+            # path context (which pipelock can't enforce — see the
+            # follow-up note on _apply_pipelock_url).
             out.append(("", 0))
-            out.append((f"→ would allow host: {host}", green_attr))
+            out.append((host, green_attr))
     return out
 
 
