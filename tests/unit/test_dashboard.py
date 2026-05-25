@@ -17,6 +17,7 @@ from pathlib import Path
 
 from claude_bottle import supervise
 from claude_bottle.backend.docker.cred_proxy_apply import CredProxyApplyError
+from claude_bottle.backend.docker.pipelock_apply import PipelockApplyError
 from claude_bottle.cli import dashboard
 from claude_bottle.supervise import (
     Proposal,
@@ -115,15 +116,20 @@ class TestDiscoverPending(_FakeHomeMixin, unittest.TestCase):
 class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
     def setUp(self):
         self._setup_fake_home()
-        self._original_apply = dashboard.apply_routes_change
-        # Default stub: succeed with deterministic before/after so the
+        self._original_apply_routes = dashboard.apply_routes_change
+        self._original_apply_allowlist = dashboard.apply_allowlist_change
+        # Default stubs: succeed with deterministic before/after so the
         # audit log shows a non-empty diff.
         dashboard.apply_routes_change = lambda slug, content: (
             '{"routes": []}\n', content,
         )
+        dashboard.apply_allowlist_change = lambda slug, content: (
+            "old.example\n", content,
+        )
 
     def tearDown(self):
-        dashboard.apply_routes_change = self._original_apply
+        dashboard.apply_routes_change = self._original_apply_routes
+        dashboard.apply_allowlist_change = self._original_apply_allowlist
         self._teardown_fake_home()
 
     def _enqueue(self, tool: str = TOOL_CRED_PROXY_BLOCK):
@@ -266,6 +272,65 @@ class TestCredProxyApplyWiring(_FakeHomeMixin, unittest.TestCase):
         entries = read_audit_entries("cred-proxy", "dev")
         self.assertEqual(1, len(entries))
         self.assertEqual("", entries[0].diff)
+
+
+class TestPipelockApplyWiring(_FakeHomeMixin, unittest.TestCase):
+    """PRD 0015 Phase 2: approve() on a pipelock-block proposal
+    must call apply_allowlist_change and surface its failures."""
+
+    def setUp(self):
+        self._setup_fake_home()
+        self._original = dashboard.apply_allowlist_change
+
+    def tearDown(self):
+        dashboard.apply_allowlist_change = self._original
+        self._teardown_fake_home()
+
+    def _enqueue_pipelock(self, proposed: str = "host.example\n"):
+        p = Proposal.new(
+            bottle_slug="dev", tool=TOOL_PIPELOCK_BLOCK,
+            proposed_file=proposed,
+            justification="need new host",
+            current_file_hash=sha256_hex(proposed),
+            now=FIXED,
+        )
+        qdir = supervise.queue_dir_for_slug("dev")
+        qdir.mkdir(parents=True, exist_ok=True)
+        supervise.write_proposal(qdir, p)
+        return dashboard.QueuedProposal(proposal=p, queue_dir=qdir)
+
+    def test_pipelock_block_calls_apply_with_proposed_file(self):
+        calls = []
+        dashboard.apply_allowlist_change = lambda slug, content: (
+            calls.append((slug, content)) or ("before", content)
+        )
+        qp = self._enqueue_pipelock("new.example\n")
+        dashboard.approve(qp)
+        self.assertEqual([("dev", "new.example\n")], calls)
+
+    def test_apply_failure_blocks_response_and_audit(self):
+        dashboard.apply_allowlist_change = lambda slug, content: (_ for _ in ()).throw(
+            PipelockApplyError("docker exec failed")
+        )
+        qp = self._enqueue_pipelock()
+        with self.assertRaises(PipelockApplyError):
+            dashboard.approve(qp)
+        self.assertEqual(
+            [qp.proposal.id],
+            [p.id for p in supervise.list_pending_proposals(qp.queue_dir)],
+        )
+        self.assertEqual([], read_audit_entries("pipelock", "dev"))
+
+    def test_real_diff_lands_in_audit(self):
+        dashboard.apply_allowlist_change = lambda slug, content: (
+            "old.example\n",
+            "old.example\nnew.example\n",
+        )
+        qp = self._enqueue_pipelock("old.example\nnew.example\n")
+        dashboard.approve(qp)
+        entries = read_audit_entries("pipelock", "dev")
+        self.assertEqual(1, len(entries))
+        self.assertIn("+new.example", entries[0].diff)
 
 
 class TestOperatorEditRoutes(_FakeHomeMixin, unittest.TestCase):

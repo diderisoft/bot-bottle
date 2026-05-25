@@ -27,6 +27,11 @@ from ..backend.docker.cred_proxy_apply import (
     apply_routes_change,
     fetch_current_routes,
 )
+from ..backend.docker.pipelock_apply import (
+    PipelockApplyError,
+    apply_allowlist_change,
+    fetch_current_allowlist,
+)
 from ..log import info
 from ..supervise import (
     ACTION_OPERATOR_EDIT,
@@ -39,12 +44,19 @@ from ..supervise import (
     STATUS_REJECTED,
     TOOL_CAPABILITY_BLOCK,
     TOOL_CRED_PROXY_BLOCK,
+    TOOL_PIPELOCK_BLOCK,
     list_pending_proposals,
     render_diff,
     write_audit_entry,
     write_response,
 )
 from ._common import PROG
+
+
+# Errors any remediation engine may raise. Caught by the TUI key
+# handlers and surfaced in the status line so a failed apply keeps
+# the proposal pending rather than crashing curses.
+ApplyError = (CredProxyApplyError, PipelockApplyError)
 
 
 # --- Discovery -------------------------------------------------------------
@@ -129,9 +141,13 @@ def approve(
         diff_before, diff_after = apply_routes_change(
             qp.proposal.bottle_slug, file_to_apply,
         )
-    # pipelock-block + capability-block remediation lands in PRDs
-    # 0015 + 0016; for 0014 they remain no-op approvals and the
-    # audit diff stays empty.
+    elif qp.proposal.tool == TOOL_PIPELOCK_BLOCK:
+        diff_before, diff_after = apply_allowlist_change(
+            qp.proposal.bottle_slug, file_to_apply,
+        )
+    # capability-block remediation lands in PRD 0016; until then
+    # it stays a no-op approval and the audit (none for capability)
+    # is skipped.
 
     response = Response(
         proposal_id=qp.proposal.id,
@@ -310,7 +326,7 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
             try:
                 approve(qp)
                 status_line = f"approved {qp.proposal.tool} for [{qp.proposal.bottle_slug}]"
-            except CredProxyApplyError as e:
+            except ApplyError as e:
                 status_line = f"apply failed: {e}"
         elif key == ord("m"):
             edited = _modify(stdscr, qp)
@@ -320,7 +336,7 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
                 try:
                     approve(qp, final_file=edited, notes="operator modified before approving")
                     status_line = f"modified+approved {qp.proposal.tool} for [{qp.proposal.bottle_slug}]"
-                except CredProxyApplyError as e:
+                except ApplyError as e:
                     status_line = f"apply failed: {e}"
         elif key == ord("r"):
             reason = _prompt(stdscr, "reject reason: ")
@@ -403,7 +419,7 @@ def _detail_view(stdscr: "curses._CursesWindow", qp: QueuedProposal) -> None:
         elif key == ord("a"):
             try:
                 approve(qp)
-            except CredProxyApplyError:
+            except ApplyError:
                 pass  # Status surfaces back in the list view's render.
             return
         elif key == ord("m"):
@@ -411,7 +427,7 @@ def _detail_view(stdscr: "curses._CursesWindow", qp: QueuedProposal) -> None:
             if edited is not None:
                 try:
                     approve(qp, final_file=edited, notes="operator modified before approving")
-                except CredProxyApplyError:
+                except ApplyError:
                     pass
             return
         elif key == ord("r"):
