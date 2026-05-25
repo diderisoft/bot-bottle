@@ -25,6 +25,7 @@ from .. import supervise as _supervise
 from ..backend.docker.cred_proxy_apply import (
     CredProxyApplyError,
     apply_routes_change,
+    fetch_current_routes,
 )
 from ..log import info
 from ..supervise import (
@@ -55,6 +56,33 @@ class QueuedProposal:
 
     proposal: Proposal
     queue_dir: Path
+
+
+def discover_cred_proxy_slugs() -> list[str]:
+    """Slugs of bottles with a running cred-proxy sidecar. Used by
+    the operator-initiated `routes edit` verb to know which bottles
+    are editable. Empty list if docker isn't reachable or not
+    installed."""
+    try:
+        r = subprocess.run(
+            [
+                "docker", "ps",
+                "--filter", "name=^claude-bottle-cred-proxy-",
+                "--format", "{{.Names}}",
+            ],
+            capture_output=True, text=True, check=False,
+        )
+    except FileNotFoundError:
+        return []
+    if r.returncode != 0:
+        return []
+    prefix = "claude-bottle-cred-proxy-"
+    out: list[str] = []
+    for line in (r.stdout or "").splitlines():
+        line = line.strip()
+        if line.startswith(prefix):
+            out.append(line[len(prefix):])
+    return sorted(out)
 
 
 def discover_pending() -> list[QueuedProposal]:
@@ -130,6 +158,27 @@ def reject(qp: QueuedProposal, *, reason: str) -> None:
     )
     write_response(qp.queue_dir, response)
     _write_audit(qp, action=STATUS_REJECTED, notes=reason, diff_before="", diff_after="")
+
+
+def operator_edit_routes(slug: str, new_content: str) -> tuple[str, str]:
+    """Apply an operator-initiated routes.json change (no agent
+    proposal). Used by the `routes edit <bottle>` TUI verb and
+    available for scripted use. Returns (before, after) like
+    apply_routes_change. Writes an audit entry tagged
+    ACTION_OPERATOR_EDIT to distinguish from tool-call approvals.
+
+    Raises CredProxyApplyError on failure."""
+    before, after = apply_routes_change(slug, new_content)
+    write_audit_entry(AuditEntry(
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        bottle_slug=slug,
+        component="cred-proxy",
+        operator_action=ACTION_OPERATOR_EDIT,
+        operator_notes="",
+        justification="",
+        diff=render_diff(before, after, label="cred-proxy"),
+    ))
+    return before, after
 
 
 def _write_audit(
@@ -244,6 +293,9 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
 
         if key in (ord("q"), 27):  # q or ESC
             return
+        if key == ord("e"):
+            status_line = _operator_edit_routes_flow(stdscr)
+            continue
         if not pending:
             continue
         qp = pending[selected]
@@ -313,7 +365,7 @@ def _render(
             attr = curses.A_REVERSE if i == selected else curses.A_NORMAL
             stdscr.addnstr(row, 0, line, w - 1, attr)
 
-    footer = "[Enter] view  [a] approve  [m] modify  [r] reject  [j/k] move  [q] quit"
+    footer = "[Enter] view  [a] approve  [m] modify  [r] reject  [e] routes edit  [j/k] move  [q] quit"
     stdscr.hline(h - 2, 0, curses.ACS_HLINE, w)
     stdscr.addnstr(h - 1, 0, footer, w - 1, curses.A_DIM)
     if status_line:
@@ -406,6 +458,40 @@ def _suffix_for_tool(tool: str) -> str:
         return ".dockerfile"
     # cred-proxy-block / pipelock-block: JSON-ish + plain.
     return ".txt"
+
+
+def _operator_edit_routes_flow(stdscr: "curses._CursesWindow") -> str:
+    """Operator-initiated routes.json edit. Discover running
+    cred-proxy sidecars, pick one (single → use directly; multi →
+    prompt), fetch the current routes, open in $EDITOR, apply on
+    save. Returns a status-line message."""
+    slugs = discover_cred_proxy_slugs()
+    if not slugs:
+        return "no running cred-proxy sidecars to edit"
+    if len(slugs) == 1:
+        slug = slugs[0]
+    else:
+        slug = _prompt(stdscr, f"bottle ({', '.join(slugs)}): ")
+        if not slug:
+            return "routes edit aborted"
+        if slug not in slugs:
+            return f"unknown bottle {slug!r}"
+    try:
+        current = fetch_current_routes(slug)
+    except CredProxyApplyError as e:
+        return f"fetch failed: {e}"
+    curses.endwin()
+    try:
+        edited = edit_in_editor(current, suffix=".json")
+    finally:
+        stdscr.refresh()
+    if edited is None:
+        return f"routes for [{slug}] unchanged"
+    try:
+        operator_edit_routes(slug, edited)
+    except CredProxyApplyError as e:
+        return f"apply failed: {e}"
+    return f"updated routes for [{slug}]"
 
 
 def _prompt(stdscr: "curses._CursesWindow", label: str) -> str:

@@ -268,6 +268,55 @@ class TestCredProxyApplyWiring(_FakeHomeMixin, unittest.TestCase):
         self.assertEqual("", entries[0].diff)
 
 
+class TestOperatorEditRoutes(_FakeHomeMixin, unittest.TestCase):
+    """PRD 0014 Phase 4: operator-initiated routes edit (not gated
+    on a pending proposal)."""
+
+    def setUp(self):
+        self._setup_fake_home()
+        self._original_apply = dashboard.apply_routes_change
+
+    def tearDown(self):
+        dashboard.apply_routes_change = self._original_apply
+        self._teardown_fake_home()
+
+    def test_writes_audit_with_operator_edit_action(self):
+        dashboard.apply_routes_change = lambda slug, content: (
+            '{"routes": []}\n', content,
+        )
+        dashboard.operator_edit_routes("dev", '{"routes": [{"path": "/x/"}]}\n')
+        entries = read_audit_entries("cred-proxy", "dev")
+        self.assertEqual(1, len(entries))
+        self.assertEqual(supervise.ACTION_OPERATOR_EDIT, entries[0].operator_action)
+        self.assertEqual("", entries[0].justification)
+        self.assertIn("+", entries[0].diff)
+
+    def test_failure_does_not_write_audit(self):
+        dashboard.apply_routes_change = lambda slug, content: (_ for _ in ()).throw(
+            CredProxyApplyError("nope")
+        )
+        with self.assertRaises(CredProxyApplyError):
+            dashboard.operator_edit_routes("dev", '{"routes": []}\n')
+        self.assertEqual([], read_audit_entries("cred-proxy", "dev"))
+
+
+class TestDiscoverCredProxySlugs(unittest.TestCase):
+    """Slug-extraction parsing — exercises only the parsing path; the
+    docker ps invocation itself is environment-dependent (and tested
+    implicitly by the integration test)."""
+
+    def test_returns_empty_when_docker_unavailable(self):
+        # Force a failure by setting PATH to a dir with no docker
+        # binary. The discover helper swallows the non-zero rc.
+        import os
+        original = os.environ.get("PATH", "")
+        os.environ["PATH"] = "/nonexistent-no-docker-here"
+        try:
+            self.assertEqual([], dashboard.discover_cred_proxy_slugs())
+        finally:
+            os.environ["PATH"] = original
+
+
 class TestEditInEditor(unittest.TestCase):
     def test_runs_editor_returns_edited_content(self):
         # Fake "editor" is /bin/sh -c 'cat <<EOF > $1 ... EOF'
