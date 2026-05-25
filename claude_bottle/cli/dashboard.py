@@ -27,6 +27,11 @@ from ..backend.docker.cred_proxy_apply import (
     apply_routes_change,
     fetch_current_routes,
 )
+from ..backend.docker.pipelock_apply import (
+    PipelockApplyError,
+    apply_allowlist_change,
+    fetch_current_allowlist,
+)
 from ..log import info
 from ..supervise import (
     ACTION_OPERATOR_EDIT,
@@ -39,12 +44,19 @@ from ..supervise import (
     STATUS_REJECTED,
     TOOL_CAPABILITY_BLOCK,
     TOOL_CRED_PROXY_BLOCK,
+    TOOL_PIPELOCK_BLOCK,
     list_pending_proposals,
     render_diff,
     write_audit_entry,
     write_response,
 )
 from ._common import PROG
+
+
+# Errors any remediation engine may raise. Caught by the TUI key
+# handlers and surfaced in the status line so a failed apply keeps
+# the proposal pending rather than crashing curses.
+ApplyError = (CredProxyApplyError, PipelockApplyError)
 
 
 # --- Discovery -------------------------------------------------------------
@@ -58,16 +70,15 @@ class QueuedProposal:
     queue_dir: Path
 
 
-def discover_cred_proxy_slugs() -> list[str]:
-    """Slugs of bottles with a running cred-proxy sidecar. Used by
-    the operator-initiated `routes edit` verb to know which bottles
-    are editable. Empty list if docker isn't reachable or not
+def _discover_sidecar_slugs(name_prefix: str) -> list[str]:
+    """Slugs of bottles whose sidecar container names start with
+    `name_prefix`. Empty list if docker isn't reachable or not
     installed."""
     try:
         r = subprocess.run(
             [
                 "docker", "ps",
-                "--filter", "name=^claude-bottle-cred-proxy-",
+                "--filter", f"name=^{name_prefix}",
                 "--format", "{{.Names}}",
             ],
             capture_output=True, text=True, check=False,
@@ -76,13 +87,24 @@ def discover_cred_proxy_slugs() -> list[str]:
         return []
     if r.returncode != 0:
         return []
-    prefix = "claude-bottle-cred-proxy-"
     out: list[str] = []
     for line in (r.stdout or "").splitlines():
         line = line.strip()
-        if line.startswith(prefix):
-            out.append(line[len(prefix):])
+        if line.startswith(name_prefix):
+            out.append(line[len(name_prefix):])
     return sorted(out)
+
+
+def discover_cred_proxy_slugs() -> list[str]:
+    """Slugs of bottles with a running cred-proxy sidecar. Used by
+    the operator-initiated `routes edit` verb."""
+    return _discover_sidecar_slugs("claude-bottle-cred-proxy-")
+
+
+def discover_pipelock_slugs() -> list[str]:
+    """Slugs of bottles with a running pipelock sidecar. Used by
+    the operator-initiated `pipelock edit` verb."""
+    return _discover_sidecar_slugs("claude-bottle-pipelock-")
 
 
 def discover_pending() -> list[QueuedProposal]:
@@ -129,9 +151,13 @@ def approve(
         diff_before, diff_after = apply_routes_change(
             qp.proposal.bottle_slug, file_to_apply,
         )
-    # pipelock-block + capability-block remediation lands in PRDs
-    # 0015 + 0016; for 0014 they remain no-op approvals and the
-    # audit diff stays empty.
+    elif qp.proposal.tool == TOOL_PIPELOCK_BLOCK:
+        diff_before, diff_after = apply_allowlist_change(
+            qp.proposal.bottle_slug, file_to_apply,
+        )
+    # capability-block remediation lands in PRD 0016; until then
+    # it stays a no-op approval and the audit (none for capability)
+    # is skipped.
 
     response = Response(
         proposal_id=qp.proposal.id,
@@ -177,6 +203,27 @@ def operator_edit_routes(slug: str, new_content: str) -> tuple[str, str]:
         operator_notes="",
         justification="",
         diff=render_diff(before, after, label="cred-proxy"),
+    ))
+    return before, after
+
+
+def operator_edit_allowlist(slug: str, new_content: str) -> tuple[str, str]:
+    """Apply an operator-initiated pipelock allowlist change (no
+    agent proposal). Used by the `pipelock edit <bottle>` TUI verb
+    and available for scripted use. Returns (before, after) like
+    apply_allowlist_change. Writes an audit entry tagged
+    ACTION_OPERATOR_EDIT to distinguish from tool-call approvals.
+
+    Raises PipelockApplyError on failure."""
+    before, after = apply_allowlist_change(slug, new_content)
+    write_audit_entry(AuditEntry(
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        bottle_slug=slug,
+        component="pipelock",
+        operator_action=ACTION_OPERATOR_EDIT,
+        operator_notes="",
+        justification="",
+        diff=render_diff(before, after, label="pipelock"),
     ))
     return before, after
 
@@ -296,6 +343,9 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
         if key == ord("e"):
             status_line = _operator_edit_routes_flow(stdscr)
             continue
+        if key == ord("p"):
+            status_line = _operator_edit_allowlist_flow(stdscr)
+            continue
         if not pending:
             continue
         qp = pending[selected]
@@ -310,7 +360,7 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
             try:
                 approve(qp)
                 status_line = f"approved {qp.proposal.tool} for [{qp.proposal.bottle_slug}]"
-            except CredProxyApplyError as e:
+            except ApplyError as e:
                 status_line = f"apply failed: {e}"
         elif key == ord("m"):
             edited = _modify(stdscr, qp)
@@ -320,7 +370,7 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
                 try:
                     approve(qp, final_file=edited, notes="operator modified before approving")
                     status_line = f"modified+approved {qp.proposal.tool} for [{qp.proposal.bottle_slug}]"
-                except CredProxyApplyError as e:
+                except ApplyError as e:
                     status_line = f"apply failed: {e}"
         elif key == ord("r"):
             reason = _prompt(stdscr, "reject reason: ")
@@ -365,7 +415,10 @@ def _render(
             attr = curses.A_REVERSE if i == selected else curses.A_NORMAL
             stdscr.addnstr(row, 0, line, w - 1, attr)
 
-    footer = "[Enter] view  [a] approve  [m] modify  [r] reject  [e] routes edit  [j/k] move  [q] quit"
+    footer = (
+        "[Enter] view  [a] approve  [m] modify  [r] reject  "
+        "[e] routes edit  [p] pipelock edit  [j/k] move  [q] quit"
+    )
     stdscr.hline(h - 2, 0, curses.ACS_HLINE, w)
     stdscr.addnstr(h - 1, 0, footer, w - 1, curses.A_DIM)
     if status_line:
@@ -403,7 +456,7 @@ def _detail_view(stdscr: "curses._CursesWindow", qp: QueuedProposal) -> None:
         elif key == ord("a"):
             try:
                 approve(qp)
-            except CredProxyApplyError:
+            except ApplyError:
                 pass  # Status surfaces back in the list view's render.
             return
         elif key == ord("m"):
@@ -411,7 +464,7 @@ def _detail_view(stdscr: "curses._CursesWindow", qp: QueuedProposal) -> None:
             if edited is not None:
                 try:
                     approve(qp, final_file=edited, notes="operator modified before approving")
-                except CredProxyApplyError:
+                except ApplyError:
                     pass
             return
         elif key == ord("r"):
@@ -465,33 +518,68 @@ def _operator_edit_routes_flow(stdscr: "curses._CursesWindow") -> str:
     cred-proxy sidecars, pick one (single → use directly; multi →
     prompt), fetch the current routes, open in $EDITOR, apply on
     save. Returns a status-line message."""
-    slugs = discover_cred_proxy_slugs()
+    return _operator_edit_flow(
+        stdscr,
+        label="routes",
+        discover=discover_cred_proxy_slugs,
+        fetch=fetch_current_routes,
+        apply=operator_edit_routes,
+        suffix=".json",
+    )
+
+
+def _operator_edit_allowlist_flow(stdscr: "curses._CursesWindow") -> str:
+    """Operator-initiated pipelock allowlist edit."""
+    return _operator_edit_flow(
+        stdscr,
+        label="pipelock",
+        discover=discover_pipelock_slugs,
+        fetch=fetch_current_allowlist,
+        apply=operator_edit_allowlist,
+        suffix=".txt",
+    )
+
+
+def _operator_edit_flow(
+    stdscr: "curses._CursesWindow",
+    *,
+    label: str,
+    discover,
+    fetch,
+    apply,
+    suffix: str,
+) -> str:
+    """Shared scaffolding for the routes-edit + pipelock-edit verbs.
+    `discover` returns running-sidecar slugs; `fetch(slug)` returns
+    the current operator-facing config; `apply(slug, new)` does the
+    write + restart/SIGHUP and writes the audit entry."""
+    slugs = discover()
     if not slugs:
-        return "no running cred-proxy sidecars to edit"
+        return f"no running {label} sidecars to edit"
     if len(slugs) == 1:
         slug = slugs[0]
     else:
         slug = _prompt(stdscr, f"bottle ({', '.join(slugs)}): ")
         if not slug:
-            return "routes edit aborted"
+            return f"{label} edit aborted"
         if slug not in slugs:
             return f"unknown bottle {slug!r}"
     try:
-        current = fetch_current_routes(slug)
-    except CredProxyApplyError as e:
+        current = fetch(slug)
+    except ApplyError as e:
         return f"fetch failed: {e}"
     curses.endwin()
     try:
-        edited = edit_in_editor(current, suffix=".json")
+        edited = edit_in_editor(current, suffix=suffix)
     finally:
         stdscr.refresh()
     if edited is None:
-        return f"routes for [{slug}] unchanged"
+        return f"{label} for [{slug}] unchanged"
     try:
-        operator_edit_routes(slug, edited)
-    except CredProxyApplyError as e:
+        apply(slug, edited)
+    except ApplyError as e:
         return f"apply failed: {e}"
-    return f"updated routes for [{slug}]"
+    return f"updated {label} for [{slug}]"
 
 
 def _prompt(stdscr: "curses._CursesWindow", label: str) -> str:
