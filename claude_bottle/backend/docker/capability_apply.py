@@ -37,6 +37,7 @@ from pathlib import Path
 
 from ...log import info, warn
 from .bottle_state import (
+    mark_preserved,
     per_bottle_dockerfile,
     per_bottle_dockerfile_path,
     transcript_snapshot_dir,
@@ -117,6 +118,11 @@ def apply_capability_change(slug: str, new_dockerfile: str) -> tuple[str, str]:
     _snapshot_transcript(slug)
     _push_working_tree(slug)
     write_per_bottle_dockerfile(slug, new_dockerfile)
+    # Set the preserve marker BEFORE teardown so cli.py's session-end
+    # cleanup sees it and keeps the state dir intact for the
+    # operator's `cli.py resume <identity>`. Without the marker the
+    # state dir would be deleted as part of normal session end.
+    mark_preserved(slug)
     _teardown_bottle(slug)
 
     return before, new_dockerfile

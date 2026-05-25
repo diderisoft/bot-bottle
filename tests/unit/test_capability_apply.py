@@ -107,6 +107,14 @@ class TestApplyCapabilityChange(_FakeHomeMixin, unittest.TestCase):
             self._calls,
         )
 
+    def test_marks_preserved_before_teardown(self):
+        # cli.py's session-end cleanup reads the marker after the
+        # bottle is torn down. The marker must therefore be written
+        # before teardown — otherwise the cleanup would see no
+        # marker and rm the state dir we just populated.
+        apply_capability_change("dev", "FROM new\n")
+        self.assertTrue(bottle_state.is_preserved("dev"))
+
     def test_first_change_falls_back_to_repo_dockerfile_for_before(self):
         # No per-bottle override yet — before-diff comes from the
         # repo's Dockerfile.

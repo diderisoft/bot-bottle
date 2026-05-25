@@ -17,6 +17,7 @@ import tempfile
 from pathlib import Path
 
 from ..backend import BottleSpec, get_bottle_backend
+from ..backend.docker.bottle_state import cleanup_state, is_preserved
 from ..log import die, info
 from ..manifest import Manifest
 from ._common import PROG, USER_CWD, read_tty_line
@@ -99,11 +100,27 @@ def _launch_bottle(
                 claude_args.append("--remote-control")
             bottle.exec_claude(claude_args, tty=True)
             info(f"session ended; container {bottle.name} will be removed")
-            if identity:
-                info(f"to resume this bottle: ./cli.py resume {identity}")
-            return 0
+        # Context exited → containers + networks gone. Now decide
+        # what to do with the per-bottle state dir on the host:
+        # capability-block apply sets the preserve marker before it
+        # tears the bottle down, so the operator can resume from the
+        # new Dockerfile + transcript snapshot. Any other session
+        # end (normal exit, agent crash, Ctrl-C) leaves no marker,
+        # and the state dir gets cleaned up so ~/.claude-bottle/state/
+        # doesn't accumulate per-launch debris.
+        _settle_state(identity)
+        return 0
     finally:
         shutil.rmtree(stage_dir, ignore_errors=True)
+
+
+def _settle_state(identity: str) -> None:
+    if not identity:
+        return
+    if is_preserved(identity):
+        info(f"to resume this bottle: ./cli.py resume {identity}")
+        return
+    cleanup_state(identity)
 
 
 def _identity_from_plan(plan: object) -> str:
