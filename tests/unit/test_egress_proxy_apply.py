@@ -6,6 +6,7 @@ import unittest
 
 from claude_bottle.backend.docker.egress_proxy_apply import (
     EgressProxyApplyError,
+    _hosts_in_routes,
     validate_routes_content,
 )
 
@@ -50,6 +51,36 @@ class TestValidateRoutesContent(unittest.TestCase):
                 '{"routes": [{"host": "x.example",'
                 ' "auth_scheme": "Bearer"}]}'
             )
+
+
+class TestHostsInRoutes(unittest.TestCase):
+    def test_extracts_each_unique_host(self):
+        hosts = _hosts_in_routes(
+            '{"routes": [{"host": "api.github.com"},'
+            ' {"host": "github.com"},'
+            ' {"host": "api.anthropic.com"}]}'
+        )
+        # Sorted+deduped.
+        self.assertEqual(
+            ["api.anthropic.com", "api.github.com", "github.com"],
+            hosts,
+        )
+
+    def test_dedupes_same_host(self):
+        hosts = _hosts_in_routes(
+            '{"routes": [{"host": "x.example", "path_allowlist": ["/a/"]},'
+            ' {"host": "x.example", "path_allowlist": ["/b/"]}]}'
+        )
+        self.assertEqual(["x.example"], hosts)
+
+    def test_empty_routes_returns_empty(self):
+        self.assertEqual([], _hosts_in_routes('{"routes": []}'))
+
+    def test_invalid_routes_raises(self):
+        # The mirror helper relies on parsing succeeding; bad input
+        # should error before pipelock is touched.
+        with self.assertRaises(EgressProxyApplyError):
+            _hosts_in_routes('{"routes": [{"path": "/no-host/"}]}')
 
 
 if __name__ == "__main__":

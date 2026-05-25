@@ -8,6 +8,13 @@ egress-proxy-block proposal (or runs the operator-initiated
 sidecar via `docker cp`, then `docker kill --signal HUP` to make
 the addon reload without dropping connections.
 
+Also mirrors the new route hosts into pipelock's hostname allowlist
+so the downstream leg lets them through — egress-proxy enforces
+the path-aware allowlist on the agent leg, pipelock enforces the
+hostname allowlist + DLP body scan on the upstream leg, and a
+host added to one must be in the other or the request 403s
+somewhere along the chain.
+
 Raises EgressProxyApplyError on any failure — the dashboard
 surfaces the message and keeps the proposal pending so the
 operator can retry.
@@ -23,6 +30,13 @@ from pathlib import Path
 from ...egress_proxy import EGRESS_PROXY_ROUTES_IN_CONTAINER
 from ...egress_proxy_addon_core import load_routes
 from .egress_proxy import egress_proxy_container_name
+from .pipelock_apply import (
+    PipelockApplyError,
+    apply_allowlist_change,
+    fetch_current_allowlist,
+    parse_allowlist_content,
+    render_allowlist_content,
+)
 
 
 class EgressProxyApplyError(RuntimeError):
@@ -60,21 +74,68 @@ def validate_routes_content(content: str) -> None:
         ) from e
 
 
+def _hosts_in_routes(content: str) -> list[str]:
+    """Extract the host list from a routes.yaml content string.
+    Uses the addon's own parser so any host the addon will match on
+    also lands in pipelock's allowlist. Returns sorted+deduped."""
+    try:
+        routes = load_routes(content)
+    except ValueError as e:
+        raise EgressProxyApplyError(
+            f"proposed routes.yaml is not valid: {e}"
+        ) from e
+    return sorted({r.host for r in routes if r.host})
+
+
+def _mirror_hosts_to_pipelock(slug: str, hosts: list[str]) -> None:
+    """Ensure every `hosts` entry is on pipelock's allowlist. Fetches
+    pipelock's current allowlist, merges, re-applies. No-op if every
+    host is already present (apply still restarts pipelock if any
+    host is new). Raises EgressProxyApplyError on pipelock failures
+    so the caller's diff/audit reflects the half-state."""
+    try:
+        current = fetch_current_allowlist(slug)
+        existing = parse_allowlist_content(current)
+        merged = sorted(set(existing) | set(hosts))
+        if merged == sorted(existing):
+            return  # nothing to add
+        apply_allowlist_change(slug, render_allowlist_content(merged))
+    except PipelockApplyError as e:
+        raise EgressProxyApplyError(
+            f"egress-proxy routes updated but pipelock allowlist "
+            f"mirror failed: {e}. The request will 403 at pipelock "
+            f"until pipelock's allowlist is refreshed; retry the "
+            f"proposal or edit pipelock's allowlist by hand."
+        ) from e
+
+
 def apply_routes_change(slug: str, new_content: str) -> tuple[str, str]:
     """Apply `new_content` to the egress-proxy sidecar for `slug`:
       1. Fetch current routes.yaml (for the before-diff).
       2. Validate the new content via the addon's own parser.
-      3. Write to a temp file, `docker cp` into the sidecar.
-      4. `docker kill --signal HUP` so the addon reloads.
+      3. Mirror the route hosts onto pipelock's allowlist (so the
+         downstream hostname gate lets them through).
+      4. Write to a temp file, `docker cp` into the egress-proxy
+         sidecar.
+      5. `docker kill --signal HUP` so the addon reloads.
+
+    Order matters: pipelock first, then egress-proxy. If the
+    pipelock step fails, egress-proxy hasn't been touched and the
+    old routes stay live. If the egress-proxy step fails after
+    pipelock succeeded, pipelock has the host in its allowlist but
+    egress-proxy doesn't enforce it yet — harmless extra-permissive
+    state at pipelock, and a re-approval will land the egress-proxy
+    side.
 
     Returns (before, after) where `after` == `new_content`. Raises
-    EgressProxyApplyError on any step; the existing routes in the
-    sidecar are unchanged if the failure is before docker cp, and
-    are reverted in spirit if SIGHUP fails (cp landed but reload
-    didn't fire — caller's next attempt will SIGHUP again)."""
+    EgressProxyApplyError on any step."""
     container = egress_proxy_container_name(slug)
     before = fetch_current_routes(slug)
     validate_routes_content(new_content)
+
+    # Pipelock mirror first — if it fails, egress-proxy stays intact
+    # and the operator gets a clear error about the half-state.
+    _mirror_hosts_to_pipelock(slug, _hosts_in_routes(new_content))
 
     fd, tmp_path = tempfile.mkstemp(prefix="cb-routes.", suffix=".yaml")
     try:
