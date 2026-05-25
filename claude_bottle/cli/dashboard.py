@@ -17,6 +17,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -344,6 +345,41 @@ def _list_once() -> int:
 
 _REFRESH_INTERVAL_MS = 1000
 
+# How long a newly-arrived proposal stays highlighted (green) in the
+# list. Long enough for the operator to notice in their peripheral
+# vision, short enough to fade before the queue feels permanently
+# noisy.
+_NEW_PROPOSAL_HIGHLIGHT_SEC = 5.0
+
+
+def _is_recent(
+    proposal_id: str,
+    first_seen: dict[str, float] | None,
+    now: float | None,
+) -> bool:
+    """True if `proposal_id` was first seen within the highlight
+    window. Both `first_seen` and `now` may be None (rendered as
+    not-recent) so the helper is safe in cold-start paths."""
+    if first_seen is None or now is None:
+        return False
+    started = first_seen.get(proposal_id)
+    if started is None:
+        return False
+    return (now - started) < _NEW_PROPOSAL_HIGHLIGHT_SEC
+
+
+def _try_init_green() -> int:
+    """Initialise a green color pair and return its attr, or 0 if the
+    terminal doesn't support color. Caller ORs the returned value
+    into addnstr's attr argument; OR 0 is a no-op."""
+    try:
+        curses.start_color()
+        curses.use_default_colors()
+        curses.init_pair(1, curses.COLOR_GREEN, -1)
+        return curses.color_pair(1)
+    except curses.error:
+        return 0
+
 
 def _main_loop(stdscr: "curses._CursesWindow") -> None:
     curses.curs_set(0)
@@ -353,6 +389,11 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
     # when the operator hits a key — a tool call landing while the
     # operator is just watching wouldn't appear.
     stdscr.timeout(_REFRESH_INTERVAL_MS)
+    green_attr = _try_init_green()
+    # Per-proposal first-seen timestamps drive the "new" highlight.
+    # We add entries as proposals show up and prune ones that are
+    # gone (approved / rejected / archived) so the dict stays small.
+    first_seen: dict[str, float] = {}
     selected = 0
     status_line = ""
     while True:
@@ -360,7 +401,14 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
         if selected >= len(pending):
             selected = max(0, len(pending) - 1)
 
-        _render(stdscr, pending, selected, status_line)
+        now = time.monotonic()
+        live_ids = {qp.proposal.id for qp in pending}
+        for proposal_id in live_ids:
+            first_seen.setdefault(proposal_id, now)
+        for stale_id in list(first_seen.keys() - live_ids):
+            del first_seen[stale_id]
+
+        _render(stdscr, pending, selected, status_line, first_seen, now, green_attr)
 
         try:
             key = stdscr.getch()
@@ -425,6 +473,9 @@ def _render(
     pending: list[QueuedProposal],
     selected: int,
     status_line: str,
+    first_seen: dict[str, float] | None = None,
+    now: float | None = None,
+    green_attr: int = 0,
 ) -> None:
     stdscr.erase()
     h, w = stdscr.getmaxyx()
@@ -452,6 +503,8 @@ def _render(
                 f"{p.justification[:60]}"
             )
             attr = curses.A_REVERSE if i == selected else curses.A_NORMAL
+            if _is_recent(p.id, first_seen, now):
+                attr |= green_attr
             stdscr.addnstr(row, 0, line, w - 1, attr)
 
     footer = (
