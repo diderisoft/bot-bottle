@@ -75,9 +75,7 @@ def build_egress_proxy_image() -> None:
 
 
 def egress_proxy_tls_init(stage_dir: Path) -> tuple[Path, Path]:
-    """Mint the per-bottle egress-proxy MITM CA. Reuses the pipelock
-    binary's `tls init` subcommand — a known-good RSA CA minter we
-    already pin and run on this host.
+    """Mint the per-bottle egress-proxy MITM CA via host `openssl req`.
 
     Returns `(mitmproxy_pem, cert_only_pem)`:
       - `mitmproxy_pem` is the single-PEM concat (cert + key)
@@ -86,47 +84,75 @@ def egress_proxy_tls_init(stage_dir: Path) -> tuple[Path, Path]:
         trust store by `provision_ca` so the agent trusts the bumped
         CONNECT cert egress-proxy presents.
 
-    Both files live under `<stage_dir>/egress-proxy-ca/` (mode 600).
-    Private keys never leave the host stage dir until
-    `DockerEgressProxy.start` docker-cps the concat file into the
-    sidecar; start.py's outer finally `shutil.rmtree`s the stage dir
-    after teardown.
+    Why openssl req (not the pipelock binary's `tls init`):
+    pipelock's CA generator stamps a non-standard `Subject Key
+    Identifier` on the CA (random rather than SHA-1 of the pubkey).
+    mitmproxy computes the `Authority Key Identifier` on each leaf
+    it mints as SHA-1(issuer's pubkey). openssl's chain validator
+    uses the leaf's AKI to find the issuer cert by SKI; pipelock's
+    SKI doesn't match → openssl reports "unable to get local issuer
+    certificate" even though the CA is right there in the trust
+    store. openssl req's `subjectKeyIdentifier=hash` extension uses
+    SHA-1(pubkey), matching mitmproxy's computation.
 
-    Imported lazily inside the function so test patchers in
-    pipelock-land don't need to know about us."""
-    # Local import keeps the module-import graph free of a hard
-    # pipelock-image dependency at top of file (we don't actually
-    # need pipelock's *runtime* here, just its tls-init subcommand).
-    from .pipelock import PIPELOCK_IMAGE
+    Both files live under `<stage_dir>/egress-proxy-ca/` (mode 644 —
+    `docker cp` preserves the mode into the container, where the
+    mitmproxy user (uid 1000) reads them; the host stage_dir is
+    mode 700 so the private key isn't world-exposed)."""
     work = stage_dir / "egress-proxy-ca"
     work.mkdir(exist_ok=True)
-    result = subprocess.run(
-        ["docker", "run", "--rm",
-         "-v", f"{work}:/h",
-         "-e", "PIPELOCK_HOME=/h",
-         PIPELOCK_IMAGE, "tls", "init"],
-        capture_output=True,
-        text=True,
-        check=False,
+    key_path = work / "ca-key.pem"
+    cert_path = work / "ca.pem"
+    cnf_path = work / "ca.cnf"
+
+    # RSA-2048 — broad mitmproxy compatibility (its default leaf-cert
+    # config matches RSA CAs without surprise), and openssl req's
+    # default behavior here is exactly what we want.
+    keygen = subprocess.run(
+        ["openssl", "genrsa", "-out", str(key_path), "2048"],
+        capture_output=True, text=True, check=False,
     )
-    if result.returncode != 0:
-        die(f"egress-proxy tls init failed: {result.stderr.strip()}")
-    cert = work / "ca.pem"
-    key = work / "ca-key.pem"
-    if not cert.is_file() or not key.is_file():
-        die(f"egress-proxy tls init did not produce ca files in {work}")
-    # Mode 644 (not 600) so `docker cp` preserves world-readability
-    # inside the container — the mitmproxy user (uid 1000) needs to
-    # read the file, and the host uid `docker cp` propagates from the
-    # source doesn't match. The host stage_dir is mode 700 so other
-    # host users still can't traverse in; the private key isn't
-    # exposed despite the file mode.
-    cert.chmod(0o644)
+    if keygen.returncode != 0:
+        die(f"egress-proxy ca keygen failed: {keygen.stderr.strip()}")
+
+    # `subjectKeyIdentifier=hash` makes openssl compute the SKI as
+    # SHA-1(pubkey), matching how mitmproxy computes the AKI on the
+    # leaves it later mints. Without this, chain validation breaks
+    # despite the CA being present in the trust store.
+    cnf_path.write_text(
+        "[req]\n"
+        "distinguished_name = req_dn\n"
+        "prompt = no\n"
+        "x509_extensions = v3_ca\n"
+        "\n"
+        "[req_dn]\n"
+        "O = claude-bottle\n"
+        "CN = claude-bottle egress-proxy CA\n"
+        "\n"
+        "[v3_ca]\n"
+        "basicConstraints = critical, CA:TRUE\n"
+        "keyUsage = critical, keyCertSign, cRLSign\n"
+        "subjectKeyIdentifier = hash\n"
+    )
+    cnf_path.chmod(0o644)
+
+    req = subprocess.run(
+        ["openssl", "req", "-x509", "-new", "-nodes",
+         "-key", str(key_path),
+         "-sha256", "-days", "365",
+         "-config", str(cnf_path),
+         "-out", str(cert_path)],
+        capture_output=True, text=True, check=False,
+    )
+    if req.returncode != 0:
+        die(f"egress-proxy ca cert generation failed: {req.stderr.strip()}")
+
+    cert_path.chmod(0o644)
     # mitmproxy reads cert + key from a single concatenated PEM file.
     mitm = work / "mitmproxy-ca.pem"
-    mitm.write_bytes(cert.read_bytes() + key.read_bytes())
+    mitm.write_bytes(cert_path.read_bytes() + key_path.read_bytes())
     mitm.chmod(0o644)
-    return (mitm, cert)
+    return (mitm, cert_path)
 
 
 class DockerEgressProxy(EgressProxy):
