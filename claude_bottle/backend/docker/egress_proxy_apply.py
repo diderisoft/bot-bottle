@@ -22,6 +22,7 @@ operator can retry.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import tempfile
@@ -180,8 +181,117 @@ def apply_routes_change(slug: str, new_content: str) -> tuple[str, str]:
     return before, new_content
 
 
+def _merge_single_route(
+    current_yaml: str, new_route: dict[str, object],
+) -> str:
+    """Merge a single proposed route into the current routes.yaml
+    content, returning the merged JSON-as-yaml string.
+
+    Behavior:
+      - If `new_route['host']` is NOT in the current routes →
+        append the route.
+      - If the host IS already present → union the path_allowlist
+        entries (proposed ∪ existing). The existing `auth_scheme`
+        and `token_env` are preserved — agent-proposed auth changes
+        on an existing host are ignored, matching the tool's
+        documented semantics.
+
+    The supervisor renders the merged routes.yaml with the same
+    JSON layout the addon expects (host + path_allowlist +
+    auth_scheme + token_env). Token VALUES never appear here; the
+    routes file carries only env-var slot NAMES."""
+    try:
+        cfg = json.loads(current_yaml)
+    except json.JSONDecodeError as e:
+        raise EgressProxyApplyError(
+            f"current routes.yaml is not valid JSON: {e}"
+        ) from e
+    routes = cfg.get("routes")
+    if not isinstance(routes, list):
+        raise EgressProxyApplyError(
+            "current routes.yaml: 'routes' is not a list"
+        )
+
+    new_host = str(new_route.get("host", "")).lower()
+    if not new_host:
+        raise EgressProxyApplyError(
+            "proposed route is missing 'host'"
+        )
+
+    proposed_paths = list(new_route.get("path_allowlist") or [])
+
+    # Look for an existing entry with the same host (case-insensitive).
+    for entry in routes:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("host", "")).lower() == new_host:
+            # Merge path_allowlist: union proposed + existing, ordered
+            # by first-seen so existing paths stay in original order.
+            existing_paths: list[str] = list(entry.get("path_allowlist") or [])
+            seen = {p: None for p in existing_paths}
+            for p in proposed_paths:
+                seen.setdefault(p, None)
+            merged_paths = list(seen.keys())
+            if merged_paths:
+                entry["path_allowlist"] = merged_paths
+            # Preserve existing auth — tool description says agent-
+            # proposed auth on an existing host is ignored.
+            break
+    else:
+        # Host not present; build a new route entry from the
+        # proposed fields. Need to assign a token_env slot if
+        # `auth` was proposed (otherwise the addon's parser rejects
+        # a half-set auth pair). Slots: count existing slots, pick
+        # the next free index.
+        entry = {"host": new_route["host"]}
+        if proposed_paths:
+            entry["path_allowlist"] = proposed_paths
+        auth = new_route.get("auth")
+        if isinstance(auth, dict) and auth.get("scheme") and auth.get("token_ref"):
+            existing_slots = sorted({
+                str(r.get("token_env"))
+                for r in routes
+                if isinstance(r, dict) and r.get("token_env")
+            })
+            next_idx = len(existing_slots)
+            entry["auth_scheme"] = str(auth["scheme"])
+            entry["token_env"] = f"EGRESS_PROXY_TOKEN_{next_idx}"
+            # NOTE: the addon reads token VALUES from its container's
+            # environ keyed by token_env. A newly-added auth route at
+            # runtime points at a slot that has no env value → the
+            # addon will 403 with "token env unset" until the operator
+            # arranges for the value to land in the container's env.
+            # Recording this here so the operator-facing diff carries
+            # the slot name they'll need to provision.
+        routes.append(entry)
+
+    cfg["routes"] = routes
+    return json.dumps(cfg, indent=2) + "\n"
+
+
+def add_route(slug: str, proposed_route_json: str) -> tuple[str, str]:
+    """Apply a single-route addition to the egress-proxy. Parses the
+    agent's proposed route, fetches the current routes file, merges,
+    and applies via `apply_routes_change`. Returns (before, after)
+    full-file content for the audit log."""
+    try:
+        proposed = json.loads(proposed_route_json)
+    except json.JSONDecodeError as e:
+        raise EgressProxyApplyError(
+            f"proposed route is not valid JSON: {e}"
+        ) from e
+    if not isinstance(proposed, dict):
+        raise EgressProxyApplyError(
+            "proposed route must be a JSON object"
+        )
+    current = fetch_current_routes(slug)
+    merged = _merge_single_route(current, proposed)
+    return apply_routes_change(slug, merged)
+
+
 __all__ = [
     "EgressProxyApplyError",
+    "add_route",
     "apply_routes_change",
     "fetch_current_routes",
     "validate_routes_content",

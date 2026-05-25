@@ -127,14 +127,14 @@ class TestDiscoverPending(_FakeHomeMixin, unittest.TestCase):
 class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
     def setUp(self):
         self._setup_fake_home()
-        self._original_apply_routes = dashboard.apply_routes_change
+        self._original_add_route = dashboard.add_route
         self._original_apply_allowlist = dashboard.apply_allowlist_change
         self._original_fetch_allowlist = dashboard.fetch_current_allowlist
         self._original_apply_capability = dashboard.apply_capability_change
         # Default stubs: succeed with deterministic before/after so the
         # audit log shows a non-empty diff.
-        dashboard.apply_routes_change = lambda slug, content: (
-            '{"routes": []}\n', content,
+        dashboard.add_route = lambda slug, content: (
+            '{"routes": []}\n', '{"routes": [{"host": "x"}]}\n',
         )
         dashboard.apply_allowlist_change = lambda slug, content: (
             "old.example\n", content,
@@ -145,7 +145,7 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
         )
 
     def tearDown(self):
-        dashboard.apply_routes_change = self._original_apply_routes
+        dashboard.add_route = self._original_add_route
         dashboard.apply_allowlist_change = self._original_apply_allowlist
         dashboard.fetch_current_allowlist = self._original_fetch_allowlist
         dashboard.apply_capability_change = self._original_apply_capability
@@ -204,19 +204,19 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
 
 
 class TestEgressProxyApplyWiring(_FakeHomeMixin, unittest.TestCase):
-    """PRD 0014 Phase 3: approve() on a egress-proxy-block proposal
-    must call apply_routes_change with the right args and surface
-    its failures."""
+    """PRD 0017 chunk 3: approve() on an egress-proxy-block proposal
+    must call add_route (single-route merge) with the right args
+    and surface its failures."""
 
     def setUp(self):
         self._setup_fake_home()
-        self._original_apply = dashboard.apply_routes_change
+        self._original_add_route = dashboard.add_route
 
     def tearDown(self):
-        dashboard.apply_routes_change = self._original_apply
+        dashboard.add_route = self._original_add_route
         self._teardown_fake_home()
 
-    def _enqueue_egress_proxy(self, proposed: str = '{"routes": []}\n'):
+    def _enqueue_egress_proxy(self, proposed: str = '{"host": "x.example"}\n'):
         p = Proposal.new(
             bottle_slug="dev", tool=TOOL_EGRESS_PROXY_BLOCK,
             proposed_file=proposed,
@@ -229,29 +229,40 @@ class TestEgressProxyApplyWiring(_FakeHomeMixin, unittest.TestCase):
         supervise.write_proposal(qdir, p)
         return dashboard.QueuedProposal(proposal=p, queue_dir=qdir)
 
-    def test_egress_proxy_block_calls_apply_with_proposed_file(self):
+    def test_egress_proxy_block_calls_add_route_with_proposed_json(self):
         calls = []
-        dashboard.apply_routes_change = lambda slug, content: (
-            calls.append((slug, content)) or ("before", content)
+        dashboard.add_route = lambda slug, content: (
+            calls.append((slug, content)) or ("before", "after")
         )
-        qp = self._enqueue_egress_proxy(proposed='{"routes": [{"path": "/new/"}]}\n')
+        qp = self._enqueue_egress_proxy(
+            proposed='{"host": "new.example", "path_allowlist": ["/x/"]}\n'
+        )
         dashboard.approve(qp)
         self.assertEqual(1, len(calls))
         slug, content = calls[0]
         self.assertEqual("dev", slug)
-        self.assertEqual('{"routes": [{"path": "/new/"}]}\n', content)
+        # The single-route JSON the agent proposed reaches add_route
+        # unchanged — add_route fetches current state + merges.
+        self.assertEqual(
+            '{"host": "new.example", "path_allowlist": ["/x/"]}\n',
+            content,
+        )
 
-    def test_modify_passes_final_file_to_apply(self):
+    def test_modify_passes_final_file_to_add_route(self):
         calls = []
-        dashboard.apply_routes_change = lambda slug, content: (
-            calls.append(content) or ("before", content)
+        dashboard.add_route = lambda slug, content: (
+            calls.append(content) or ("before", "after")
         )
         qp = self._enqueue_egress_proxy()
-        dashboard.approve(qp, final_file='{"routes": [{"path": "/edited/"}]}\n', notes="tweaked")
-        self.assertEqual(['{"routes": [{"path": "/edited/"}]}\n'], calls)
+        dashboard.approve(
+            qp,
+            final_file='{"host": "edited.example"}\n',
+            notes="tweaked",
+        )
+        self.assertEqual(['{"host": "edited.example"}\n'], calls)
 
     def test_apply_failure_blocks_response_and_audit(self):
-        dashboard.apply_routes_change = lambda slug, content: (_ for _ in ()).throw(
+        dashboard.add_route = lambda slug, content: (_ for _ in ()).throw(
             EgressProxyApplyError("docker exec failed")
         )
         qp = self._enqueue_egress_proxy()
@@ -266,15 +277,15 @@ class TestEgressProxyApplyWiring(_FakeHomeMixin, unittest.TestCase):
         self.assertEqual([], read_audit_entries("egress-proxy", "dev"))
 
     def test_real_diff_lands_in_audit(self):
-        dashboard.apply_routes_change = lambda slug, content: (
+        dashboard.add_route = lambda slug, content: (
             '{"routes": []}\n',  # before
-            '{"routes": [{"path": "/new/"}]}\n',  # after
+            '{"routes": [{"host": "new.example"}]}\n',  # after
         )
-        qp = self._enqueue_egress_proxy(proposed='{"routes": [{"path": "/new/"}]}\n')
+        qp = self._enqueue_egress_proxy(proposed='{"host": "new.example"}\n')
         dashboard.approve(qp)
         entries = read_audit_entries("egress-proxy", "dev")
         self.assertEqual(1, len(entries))
-        self.assertIn('+{"routes": [{"path": "/new/"}]}', entries[0].diff)
+        self.assertIn('+{"routes": [{"host": "new.example"}]}', entries[0].diff)
         self.assertIn('-{"routes": []}', entries[0].diff)
 
     def test_reject_does_not_call_apply(self):

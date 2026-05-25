@@ -29,6 +29,7 @@ from ..backend.docker.capability_apply import (
 )
 from ..backend.docker.egress_proxy_apply import (
     EgressProxyApplyError,
+    add_route,
     apply_routes_change,
     fetch_current_routes,
 )
@@ -166,7 +167,13 @@ def approve(
 
     diff_before, diff_after = "", ""
     if qp.proposal.tool == TOOL_EGRESS_PROXY_BLOCK:
-        diff_before, diff_after = apply_routes_change(
+        # The proposal is a single-route JSON; add_route fetches the
+        # current routes from the running egress-proxy, merges the
+        # new route in, and applies the full merged file. The
+        # audit log gets the BEFORE/AFTER of the full file so the
+        # diff renders cleanly even though the agent only proposed
+        # one entry.
+        diff_before, diff_after = add_route(
             qp.proposal.bottle_slug, file_to_apply,
         )
     elif qp.proposal.tool == TOOL_PIPELOCK_BLOCK:

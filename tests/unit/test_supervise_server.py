@@ -45,22 +45,6 @@ from claude_bottle.supervise_server import (
 
 
 class TestValidation(unittest.TestCase):
-    def test_egress_proxy_block_requires_valid_json(self):
-        with self.assertRaises(_RpcError) as cm:
-            validate_proposed_file(_sv.TOOL_EGRESS_PROXY_BLOCK, "{not json")
-        self.assertEqual(ERR_INVALID_PARAMS, cm.exception.code)
-        self.assertIn("not valid JSON", cm.exception.message)
-
-    def test_egress_proxy_block_requires_routes_array(self):
-        with self.assertRaises(_RpcError):
-            validate_proposed_file(_sv.TOOL_EGRESS_PROXY_BLOCK, '{"other": []}')
-
-    def test_egress_proxy_block_accepts_valid_routes(self):
-        validate_proposed_file(
-            _sv.TOOL_EGRESS_PROXY_BLOCK,
-            '{"routes": [{"path": "/x/", "upstream": "https://example.com"}]}',
-        )
-
     def test_pipelock_block_accepts_https_url(self):
         validate_proposed_file(
             _sv.TOOL_PIPELOCK_BLOCK,
@@ -89,8 +73,12 @@ class TestValidation(unittest.TestCase):
             "FROM python:3.13\nRUN apk add git\n",
         )
 
-    def test_empty_proposed_file_rejected_for_all_tools(self):
-        for tool in _sv.TOOLS:
+    def test_empty_proposed_file_rejected_for_tools_with_file_field(self):
+        # egress-proxy-block has structured input (validated in
+        # _validate_and_bundle_egress_route, not here) and
+        # list-egress-proxy-routes takes no input. Only the other
+        # two go through `validate_proposed_file`.
+        for tool in (_sv.TOOL_PIPELOCK_BLOCK, _sv.TOOL_CAPABILITY_BLOCK):
             with self.subTest(tool=tool):
                 with self.assertRaises(_RpcError):
                     validate_proposed_file(tool, "   \n\t")
@@ -243,7 +231,7 @@ class TestHandleToolsCall(unittest.TestCase):
                 {
                     "name": _sv.TOOL_EGRESS_PROXY_BLOCK,
                     "arguments": {
-                        "routes": '{"routes": []}',
+                        "host": "example.com",
                         "justification": "need a route",
                     },
                 },
@@ -286,7 +274,7 @@ class TestHandleToolsCall(unittest.TestCase):
             handle_tools_call(
                 {
                     "name": _sv.TOOL_EGRESS_PROXY_BLOCK,
-                    "arguments": {"routes": '{"routes": []}'},
+                    "arguments": {"host": "example.com"},
                 },
                 self.config,
             )
@@ -298,7 +286,7 @@ class TestHandleToolsCall(unittest.TestCase):
                 {
                     "name": _sv.TOOL_EGRESS_PROXY_BLOCK,
                     "arguments": {
-                        "routes": '{"routes": []}',
+                        "host": "example.com",
                         "justification": "x",
                     },
                 },

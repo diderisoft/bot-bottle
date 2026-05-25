@@ -218,13 +218,13 @@ class TestSuperviseSidecar(unittest.TestCase):
         self._bring_up_sidecar()
 
         # Stub the apply step. The dashboard's approve() calls
-        # apply_routes_change to docker-exec into the egress-proxy
-        # sidecar; this test isn't exercising the real sidecar, so
-        # patch it to a no-op that returns plausible before/after
-        # strings the audit-log writer can render.
+        # add_route to docker-exec into the egress-proxy sidecar;
+        # this test isn't exercising the real sidecar, so patch it
+        # to a no-op that returns plausible before/after strings
+        # the audit-log writer can render.
         from claude_bottle.cli import dashboard as _dash
-        original_apply = _dash.apply_routes_change
-        _dash.apply_routes_change = (
+        original_apply = _dash.add_route
+        _dash.add_route = (
             lambda slug, new: ("(stubbed before)", new)
         )
 
@@ -236,7 +236,7 @@ class TestSuperviseSidecar(unittest.TestCase):
                 "params": {
                     "name": _sv.TOOL_EGRESS_PROXY_BLOCK,
                     "arguments": {
-                        "routes": '{"routes": [{"host": "api.example.com"}]}',
+                        "host": "api.example.com",
                         "justification": "integration test",
                     },
                 },
@@ -270,7 +270,7 @@ class TestSuperviseSidecar(unittest.TestCase):
             # file and returns to the curl caller.
             dashboard.approve(qp, notes="lgtm from integration test")
         finally:
-            _dash.apply_routes_change = original_apply
+            _dash.add_route = original_apply
             t.join(timeout=20)
 
         response = captured.get("response")
