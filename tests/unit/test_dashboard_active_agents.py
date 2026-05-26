@@ -224,5 +224,37 @@ class TestFormatAgentRow(unittest.TestCase):
         self.assertTrue(s.endswith("…"))
 
 
+class TestSelectionStatus(unittest.TestCase):
+    """Idle-state status-line text for the agents-pane focus
+    (PRD 0019 chunk 3). Empty when the proposals pane is focused;
+    surfaces the selected agent (or a clear placeholder) when the
+    agents pane is focused."""
+
+    def _agent(self, slug: str) -> dashboard.ActiveAgent:
+        return dashboard.ActiveAgent(
+            slug=slug, agent_name="x", started_at="", services=(),
+        )
+
+    def test_empty_when_proposals_focused(self):
+        s = dashboard._selection_status(
+            dashboard.PANE_PROPOSALS, [self._agent("a-1")], 0,
+        )
+        self.assertEqual("", s)
+
+    def test_no_agents_message_when_agents_pane_empty(self):
+        s = dashboard._selection_status(dashboard.PANE_AGENTS, [], 0)
+        self.assertEqual("[no active agents]", s)
+
+    def test_shows_selected_slug(self):
+        agents = [self._agent("a-1"), self._agent("b-2"), self._agent("c-3")]
+        s = dashboard._selection_status(dashboard.PANE_AGENTS, agents, 1)
+        self.assertEqual("[selected: b-2]", s)
+
+    def test_out_of_bounds_falls_back_to_no_selection(self):
+        agents = [self._agent("only")]
+        s = dashboard._selection_status(dashboard.PANE_AGENTS, agents, 99)
+        self.assertEqual("[no agent selected]", s)
+
+
 if __name__ == "__main__":
     unittest.main()
