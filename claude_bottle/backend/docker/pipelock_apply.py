@@ -155,41 +155,28 @@ def apply_allowlist_change(
     cfg["api_allowlist"] = new_hosts
     rendered = pipelock_render_yaml(cfg)
 
-    # PRD 0018 chunk 3 + security item (c): pipelock.yaml is
-    # bind-mounted into the container, so the write target is the
-    # host path the sidecar reads. POSIX rename is atomic on the
-    # same filesystem, which matters less here than for the
-    # SIGHUP-reload egress case (pipelock fully restarts and
-    # re-reads on boot), but the pattern is uniform across both
-    # apply paths.
+    # pipelock.yaml is bind-mounted into the container as a SINGLE
+    # FILE — same Docker single-file inode issue as egress_apply:
+    # write-temp-then-rename swaps the host inode and leaves the
+    # container's mount pointing at the orphaned old one. Write
+    # in-place. `docker restart` below picks up the new content
+    # (and pipelock has no in-process reload anyway, so the
+    # restart is what makes it live regardless of write atomicity).
     target = _pipelock_yaml_host_path(slug)
     target.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_path_str = tempfile.mkstemp(
-        prefix=".pipelock.", suffix=".yaml.tmp", dir=str(target.parent),
+    target.write_text(rendered)
+    # pipelock runs as root in its distroless image — any mode is
+    # fine — but 0o600 matches what prepare wrote.
+    target.chmod(0o600)
+    restart = subprocess.run(
+        ["docker", "restart", container],
+        capture_output=True, text=True, check=False,
     )
-    tmp_path = Path(tmp_path_str)
-    try:
-        with os.fdopen(fd, "w") as f:
-            f.write(rendered)
-        # pipelock runs as root in its distroless image — any mode
-        # is fine — but 0o600 matches what prepare wrote.
-        os.chmod(tmp_path, 0o600)
-        os.replace(tmp_path, target)
-        restart = subprocess.run(
-            ["docker", "restart", container],
-            capture_output=True, text=True, check=False,
+    if restart.returncode != 0:
+        raise PipelockApplyError(
+            f"failed to restart {container}: "
+            f"{(restart.stderr or '').strip()}"
         )
-        if restart.returncode != 0:
-            raise PipelockApplyError(
-                f"failed to restart {container}: "
-                f"{(restart.stderr or '').strip()}"
-            )
-    except BaseException:
-        try:
-            tmp_path.unlink()
-        except OSError:
-            pass
-        raise
 
     return before, after
 
