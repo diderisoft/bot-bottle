@@ -163,9 +163,15 @@ def git_gate_render_entrypoint(upstreams: tuple[GitGateUpstream, ...]) -> str:
         "  keyfile=/git-gate/creds/${name}-key",
         "  hostsfile=/git-gate/creds/${name}-known_hosts",
         "",
-        "  chmod 600 \"$keyfile\"",
+        # `|| true`: PRD 0018 chunk 3+ bind-mounts these RO from the
+        # host, so chmod-syscalls fail with EROFS. The files already
+        # have the right perms on the host (SSH requires 0600 to load
+        # the key in the first place), so the chmod is best-effort
+        # cleanup for the legacy docker-cp path where the file
+        # landed at the host's umask perms.
+        "  chmod 600 \"$keyfile\" 2>/dev/null || true",
         "  if [ -f \"$hostsfile\" ]; then",
-        "    chmod 600 \"$hostsfile\"",
+        "    chmod 600 \"$hostsfile\" 2>/dev/null || true",
         "  fi",
         "",
         "  repo=/git/${name}.git",

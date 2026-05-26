@@ -31,6 +31,7 @@ from pathlib import Path
 
 from ...egress import EGRESS_ROUTES_IN_CONTAINER
 from ...egress_addon_core import load_routes
+from .bottle_state import egress_state_dir
 from .egress import egress_container_name
 from .pipelock_apply import (
     PipelockApplyError,
@@ -39,6 +40,12 @@ from .pipelock_apply import (
     parse_allowlist_content,
     render_allowlist_content,
 )
+
+
+def _egress_routes_host_path(slug: str) -> Path:
+    """The bind-mount source for the egress sidecar's routes.yaml.
+    Must match what egress.prepare wrote at chunk-2 paths."""
+    return egress_state_dir(slug) / "egress_routes.yaml"
 
 
 class EgressApplyError(RuntimeError):
@@ -163,31 +170,29 @@ def apply_routes_change(slug: str, new_content: str) -> tuple[str, str]:
     # and the operator gets a clear error about the half-state.
     _mirror_hosts_to_pipelock(slug, _hosts_in_routes(new_content))
 
-    fd, tmp_path = tempfile.mkstemp(prefix="cb-routes.", suffix=".yaml")
+    # PRD 0018 chunk 3 + security item (c): routes.yaml is bind-
+    # mounted into the egress container, so the write target is the
+    # host path the sidecar reads through the mount. POSIX
+    # rename-onto-self is atomic on the same filesystem, so a sidecar
+    # SIGHUP racing the apply can never observe a half-written file —
+    # it sees either the old bytes or the new ones.
+    target = _egress_routes_host_path(slug)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path_str = tempfile.mkstemp(
+        prefix=".egress_routes.", suffix=".yaml.tmp", dir=str(target.parent),
+    )
+    tmp_path = Path(tmp_path_str)
     try:
         with os.fdopen(fd, "w") as f:
             f.write(new_content)
-        # mkstemp creates the file with mode 0600. `docker cp`
-        # preserves mode + host uid into the container, so without
-        # chmod the file lands as 0600 owned by the host user's uid,
-        # which inside the container is not mitmproxy (uid 1000) —
-        # the addon's reload then fails with PermissionError on the
-        # SIGHUP-triggered re-read and the old routes table stays in
-        # memory. Bump to 0644 so mitmproxy can read it post-cp;
-        # the host stage_dir doesn't apply to this tmp file but the
-        # content isn't secret (no tokens — those live in the
-        # container's environ), so 0644 in /tmp is fine.
+        # mitmproxy in the container reads through the bind mount as
+        # uid 1000; the host file has to be world-readable for that
+        # read to succeed (parent dir at 0o700 still restricts who
+        # can reach the file on the host). Routes content is not
+        # secret — tokens live in the container's environ — so 0o644
+        # is the right trade-off.
         os.chmod(tmp_path, 0o644)
-        cp = subprocess.run(
-            ["docker", "cp", tmp_path,
-             f"{container}:{EGRESS_ROUTES_IN_CONTAINER}"],
-            capture_output=True, text=True, check=False,
-        )
-        if cp.returncode != 0:
-            raise EgressApplyError(
-                f"failed to copy routes.yaml into {container}: "
-                f"{(cp.stderr or '').strip()}"
-            )
+        os.replace(tmp_path, target)
         sig = subprocess.run(
             ["docker", "kill", "--signal", "HUP", container],
             capture_output=True, text=True, check=False,
@@ -197,11 +202,15 @@ def apply_routes_change(slug: str, new_content: str) -> tuple[str, str]:
                 f"failed to SIGHUP {container}: "
                 f"{(sig.stderr or '').strip()}"
             )
-    finally:
+    except BaseException:
+        # On any failure pre-rename, drop the tmp file. Post-rename
+        # there's nothing to clean up — `os.replace` is atomic so
+        # either the new file is in place or the old one still is.
         try:
-            Path(tmp_path).unlink()
+            tmp_path.unlink()
         except OSError:
             pass
+        raise
 
     return before, new_content
 
