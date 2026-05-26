@@ -693,10 +693,8 @@ def _stop_bottle_flow(
             f"[{slug}] not dashboard-owned — use ./cli.py cleanup"
         )
     cm, _bottle, identity = bottles.pop(slug)
-    # compose-down writes to stderr; drop curses so the lines
-    # render cleanly. Same pattern as the attach handoff.
-    curses.endwin()
-    try:
+
+    def _do_teardown() -> None:
         # Best-effort snapshot before teardown so the operator
         # can still inspect the agent's last state via the
         # preserved transcript dir even after explicit stop.
@@ -711,6 +709,41 @@ def _stop_bottle_flow(
             cm.__exit__(None, None, None)
         except BaseException:
             pass
+
+    if _in_tmux() and tmux_state is not None:
+        # Mirror the bringup path: route compose-down + state-
+        # settle output into the right pane via `tail -F` + fd-2
+        # redirect. Reuses any existing right pane (which is
+        # probably the agent's own claude session) via
+        # _ensure_right_pane → respawn-pane. Tail-F handles the
+        # state-dir-being-removed-mid-tail case gracefully.
+        log_path = bottle_state_dir(slug) / "teardown.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("")
+        pane_id = _ensure_right_pane(
+            tmux_state, ["tail", "-F", str(log_path)],
+        )
+        if pane_id is not None:
+            tmux_state["slug"] = slug
+            try:
+                with _redirect_stderr_to_file(log_path):
+                    _do_teardown()
+            except BaseException:
+                pass
+            settle_state(identity)
+            # Right pane keeps tailing the (now-removed) log — its
+            # final buffered output stays visible until the next
+            # attach respawns it.
+            tmux_state["slug"] = None
+            return f"[{slug}] stopped"
+        # tmux failed; fall through to the curses-endwin path.
+
+    # Non-tmux: compose-down output writes to the dashboard's
+    # terminal directly. Drop curses so the lines render cleanly,
+    # restore after.
+    curses.endwin()
+    try:
+        _do_teardown()
     finally:
         stdscr.refresh()
     settle_state(identity)
