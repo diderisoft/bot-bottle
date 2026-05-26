@@ -860,6 +860,30 @@ def _try_init_green() -> int:
         return 0
 
 
+def _quit_without_teardown(bottles: dict) -> None:
+    """Exit the dashboard process WITHOUT triggering Python's normal
+    cleanup of the `bottles` dict's context managers.
+
+    The dict holds `@contextmanager`-decorated objects whose
+    underlying generators have implicit close-on-GC behavior:
+    when Python's interpreter shutdown collects them, each
+    generator's `finally` block runs, which invokes that bottle's
+    teardown (`docker compose down`). PRD 0020 explicitly DOESN'T
+    want that — quitting the dashboard should leave running
+    bottles running. `os._exit` skips all Python-level cleanup
+    (GC, atexit, stdio flush, etc.), so the docker compose
+    projects survive the dashboard exit untouched.
+
+    The `bottles` arg is accepted for the explicit
+    documentation-of-intent — we're choosing not to close
+    these. Curses gets its terminal restored via the explicit
+    `endwin` below since `os._exit` doesn't run
+    curses.wrapper's finally."""
+    del bottles  # nothing to do with it; the os._exit is the point
+    curses.endwin()
+    os._exit(0)
+
+
 # PRD 0019 chunk 3: which pane the j/k/arrow keys move through.
 # Tab toggles. The proposals pane is the default focus — proposal
 # action keys (a/m/r/Enter) require it; agent-scoped keys (e/p,
@@ -940,7 +964,8 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
         status_line = ""
 
         if key in (ord("q"), 27):  # q or ESC
-            return
+            _quit_without_teardown(bottles)
+            return  # unreachable; _quit_without_teardown os._exit's
         if key == 9:  # Tab
             focus = PANE_AGENTS if focus == PANE_PROPOSALS else PANE_PROPOSALS
             continue
