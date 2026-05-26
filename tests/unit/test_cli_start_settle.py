@@ -45,25 +45,25 @@ class TestCaptureSessionState(_FakeHomeMixin, unittest.TestCase):
         self._teardown_fake_home()
 
     def test_clean_exit_snapshots_but_does_not_mark(self):
-        start_mod._capture_session_state("dev-abc", exit_code=0)
+        start_mod.capture_session_state("dev-abc", exit_code=0)
         self.assertEqual(["dev-abc"], self._snap_calls)
         self.assertFalse(bottle_state.is_preserved("dev-abc"))
 
     def test_crash_snapshots_and_marks(self):
-        start_mod._capture_session_state("dev-abc", exit_code=137)
+        start_mod.capture_session_state("dev-abc", exit_code=137)
         self.assertEqual(["dev-abc"], self._snap_calls)
         self.assertTrue(bottle_state.is_preserved("dev-abc"))
 
     def test_ctrl_c_treated_as_crash(self):
         # SIGINT delivers exit 130; the operator may have Ctrl-C'd
         # because something went wrong, so we preserve.
-        start_mod._capture_session_state("dev-abc", exit_code=130)
+        start_mod.capture_session_state("dev-abc", exit_code=130)
         self.assertTrue(bottle_state.is_preserved("dev-abc"))
 
     def test_empty_identity_is_noop(self):
         # Backends without an identity field shouldn't crash this
         # path (the _identity_from_plan helper falls back to "").
-        start_mod._capture_session_state("", exit_code=137)
+        start_mod.capture_session_state("", exit_code=137)
         self.assertEqual([], self._snap_calls)
 
 
@@ -77,16 +77,16 @@ class TestSettleState(_FakeHomeMixin, unittest.TestCase):
     def test_preserved_state_survives(self):
         bottle_state.write_per_bottle_dockerfile("dev-abc", "FROM x\n")
         bottle_state.mark_preserved("dev-abc")
-        start_mod._settle_state("dev-abc")
+        start_mod.settle_state("dev-abc")
         self.assertTrue(bottle_state.bottle_state_dir("dev-abc").is_dir())
 
     def test_unpreserved_state_is_cleaned(self):
         bottle_state.write_per_bottle_dockerfile("dev-abc", "FROM x\n")
-        start_mod._settle_state("dev-abc")
+        start_mod.settle_state("dev-abc")
         self.assertFalse(bottle_state.bottle_state_dir("dev-abc").exists())
 
     def test_empty_identity_is_noop(self):
-        start_mod._settle_state("")  # should not raise
+        start_mod.settle_state("")  # should not raise
 
 
 if __name__ == "__main__":
