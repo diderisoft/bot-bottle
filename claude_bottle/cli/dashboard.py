@@ -12,6 +12,7 @@ chunk 3) writes routes.yaml + SIGHUPs egress; PRD 0015
 from __future__ import annotations
 
 import argparse
+import contextlib
 import curses
 import os
 import shutil
@@ -29,7 +30,7 @@ from ..backend.docker.capability_apply import (
     CapabilityApplyError,
     apply_capability_change,
 )
-from ..backend.docker.bottle_state import read_metadata
+from ..backend.docker.bottle_state import bottle_state_dir, read_metadata
 from ..backend.docker.compose import (
     compose_project_name,
     list_active_slugs,
@@ -749,6 +750,52 @@ def _build_respawn_pane_argv(pane_id: str, docker_argv: list[str]) -> list[str]:
     return ["tmux", "respawn-pane", "-k", "-t", pane_id, *docker_argv]
 
 
+@contextlib.contextmanager
+def _redirect_stderr_to_file(path):
+    """Redirect file descriptor 2 (stderr) to `path` for the
+    duration of the with-block.
+
+    Both Python sys.stderr writes AND subprocess inheritors'
+    stderr land in the file because fd 2 is what they share.
+    Used by `_new_agent_flow` (PRD 0021 follow-up) to route
+    `backend.launch`'s compose-up + provision output into a
+    log file the right tmux pane is tailing — so the dashboard
+    pane stays uncluttered."""
+    log_fd = os.open(
+        str(path), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644,
+    )
+    saved_fd = os.dup(2)
+    try:
+        sys.stderr.flush()
+        os.dup2(log_fd, 2)
+        try:
+            yield
+        finally:
+            sys.stderr.flush()
+            os.dup2(saved_fd, 2)
+    finally:
+        os.close(saved_fd)
+        os.close(log_fd)
+
+
+def _tmux_split_pane_tail(log_path) -> str | None:
+    """Pre-create the right pane tailing `log_path` so the
+    `_new_agent_flow` launch step's redirected stderr streams
+    into it. Returns the new pane's id or None on failure.
+    The pane is later respawned with the claude session via
+    `_tmux_respawn_pane`."""
+    argv = _build_split_pane_argv(["tail", "-F", str(log_path)])
+    try:
+        result = subprocess.run(
+            argv, capture_output=True, text=True, check=False,
+        )
+    except FileNotFoundError:
+        return None
+    if result.returncode != 0:
+        return None
+    return (result.stdout or "").strip() or None
+
+
 def _tmux_split_pane_create(bottle, *, resume: bool) -> str | None:
     """Open a right pane via `tmux split-window -h`. Returns the
     new pane's id on success, None on any failure (tmux missing,
@@ -925,12 +972,42 @@ def _new_agent_flow(
             return f"start of {picked!r} aborted at preflight"
 
         backend = get_bottle_backend()
+
+        if _in_tmux() and tmux_state is not None:
+            # PRD 0021 follow-up: pre-create the right pane tailing
+            # state/<slug>/bringup.log, redirect fd 2 to that log
+            # during launch, then respawn the pane with claude.
+            # Net effect: compose-up + provision output streams into
+            # the right pane (where claude will live), the dashboard
+            # pane stays uncluttered, and curses doesn't need to be
+            # taken down at all.
+            log_path = bottle_state_dir(plan.slug) / "bringup.log"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.write_text("")  # empty so tail starts clean
+            pane_id = _tmux_split_pane_tail(log_path)
+            if pane_id is not None:
+                tmux_state["pane_id"] = pane_id
+                tmux_state["slug"] = plan.slug
+                try:
+                    with _redirect_stderr_to_file(log_path):
+                        cm = backend.launch(plan)
+                        bottle = cm.__enter__()
+                except BaseException:
+                    settle_state(identity)
+                    raise
+                bottles[plan.slug] = (cm, bottle, identity)
+                # Respawn the right pane: tail → claude session.
+                return _attach_in_tmux(
+                    stdscr, bottle, plan.slug,
+                    resume=False, tmux_state=tmux_state,
+                )
+            # pane creation failed (no tmux binary, server died) →
+            # fall through to the curses-endwin handoff so the
+            # operator still gets a session.
+
         # Launch step writes to stderr (image build, network create,
         # compose up). Get out of curses' way for the duration so
-        # the lines render cleanly; restore curses immediately
-        # after — the attach itself may stay out of curses (in-tmux
-        # spawns into the right pane and returns) or take over
-        # the terminal (foreground handoff).
+        # the lines render cleanly; restore curses immediately after.
         curses.endwin()
         try:
             cm = backend.launch(plan)
@@ -940,16 +1017,6 @@ def _new_agent_flow(
             settle_state(identity)
             raise
         bottles[plan.slug] = (cm, bottle, identity)
-
-        if _in_tmux() and tmux_state is not None:
-            # Refresh curses BEFORE spawning into the right pane so
-            # the dashboard re-renders alongside the new claude
-            # session.
-            stdscr.refresh()
-            return _attach_in_tmux(
-                stdscr, bottle, plan.slug,
-                resume=False, tmux_state=tmux_state,
-            )
 
         # Foreground handoff: claude owns the terminal until exit,
         # then we restore curses.
