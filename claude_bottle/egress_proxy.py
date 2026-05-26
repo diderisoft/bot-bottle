@@ -147,7 +147,7 @@ DEFAULT_ALLOWLIST: tuple[str, ...] = (
 def egress_proxy_manifest_routes(
     bottle: Bottle,
 ) -> tuple[EgressProxyRoute, ...]:
-    """Lift each `bottle.egress_proxy.routes[]` manifest entry into a
+    """Lift each `bottle.egress.routes[]` manifest entry into a
     resolved EgressProxyRoute. Order is preserved so route lookup at
     the proxy is stable.
 
@@ -163,7 +163,7 @@ def egress_proxy_manifest_routes(
     addon enforces."""
     out: list[EgressProxyRoute] = []
     slot_for_token: dict[str, str] = {}
-    for r in bottle.egress_proxy.routes:
+    for r in bottle.egress.routes:
         if r.AuthScheme and r.TokenRef:
             token_env = slot_for_token.get(r.TokenRef)
             if token_env is None:
@@ -199,7 +199,7 @@ def egress_proxy_routes_for_bottle(
 
     Operators that want to allow an arbitrary host that isn't in
     DEFAULT_ALLOWLIST declare it directly in
-    `bottle.egress_proxy.routes` as a bare-pass entry
+    `bottle.egress.routes` as a bare-pass entry
     (`- host: <name>`). The legacy `bottle.egress.allowlist`
     folding is gone — egress_proxy is the single allowlist surface."""
     out: list[EgressProxyRoute] = list(egress_proxy_manifest_routes(bottle))
@@ -279,7 +279,7 @@ def egress_proxy_resolve_token_values(
             die(
                 f"egress-proxy: host env var '{token_ref}' is unset. Set it "
                 f"before launching, or remove the corresponding auth block "
-                f"from bottle.egress_proxy.routes."
+                f"from bottle.egress.routes."
             )
         if not value:
             die(
@@ -298,7 +298,7 @@ class EgressProxy(ABC):
     concrete subclasses."""
 
     def prepare(self, bottle: Bottle, slug: str, stage_dir: Path) -> EgressProxyPlan:
-        """Lift `bottle.egress_proxy.routes` into resolved routes,
+        """Lift `bottle.egress.routes` into resolved routes,
         render the routes file (mode 600) under `stage_dir`, and
         return the plan. Pure host-side, no docker subprocess. The
         token-env map records the mapping the launch step uses to

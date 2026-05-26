@@ -101,7 +101,7 @@ def pipelock_seed_phrase_detection_enabled(bottle: Bottle) -> bool:
     seeds; the patterns that matter — gh*_, sk-ant-, AKIA, etc. —
     keep firing)."""
     return not any(
-        r.Host == "api.anthropic.com" for r in bottle.egress_proxy.routes
+        r.Host == "api.anthropic.com" for r in bottle.egress.routes
     )
 
 

@@ -155,7 +155,7 @@ def launch(
             stack.callback(git_gate.stop, git_gate_name)
 
         # Egress-proxy (PRD 0017). One sidecar per bottle when
-        # bottle.egress_proxy.routes is non-empty. Must come up AFTER
+        # bottle.egress.routes is non-empty. Must come up AFTER
         # pipelock — egress-proxy routes its outbound HTTPS through
         # pipelock (HTTPS_PROXY in environ + the pipelock CA in its
         # trust store) so the egress allowlist + body scanner sit on

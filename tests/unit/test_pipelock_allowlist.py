@@ -20,7 +20,7 @@ def _bottle(spec):
 
 
 def _routes(routes):
-    return {"egress_proxy": {"routes": routes}}
+    return {"egress": {"routes": routes}}
 
 
 class TestEffectiveAllowlist(unittest.TestCase):

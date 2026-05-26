@@ -1,4 +1,4 @@
-"""Unit: manifest parsing for `bottle.egress_proxy.routes[]` (PRD 0017).
+"""Unit: manifest parsing for `bottle.egress.routes[]` (PRD 0017).
 
 The route shape is new: `host` (required), optional `path_allowlist`,
 optional nested `auth: { scheme, token_ref }`. Validation rules per
@@ -13,7 +13,7 @@ from claude_bottle.manifest import EgressProxyRoute, Manifest
 
 def _bottle(routes):
     return Manifest.from_json_obj({
-        "bottles": {"dev": {"egress_proxy": {"routes": routes}}},
+        "bottles": {"dev": {"egress": {"routes": routes}}},
         "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
     }).bottles["dev"]
 
@@ -21,8 +21,8 @@ def _bottle(routes):
 class TestMinimalRoute(unittest.TestCase):
     def test_host_only(self):
         b = _bottle([{"host": "api.example.com"}])
-        self.assertEqual(1, len(b.egress_proxy.routes))
-        r = b.egress_proxy.routes[0]
+        self.assertEqual(1, len(b.egress.routes))
+        r = b.egress.routes[0]
         self.assertEqual("api.example.com", r.Host)
         self.assertEqual((), r.PathAllowlist)
         self.assertEqual("", r.AuthScheme)
@@ -44,7 +44,7 @@ class TestMinimalRoute(unittest.TestCase):
 class TestPathAllowlist(unittest.TestCase):
     def test_optional(self):
         b = _bottle([{"host": "x.example"}])
-        self.assertEqual((), b.egress_proxy.routes[0].PathAllowlist)
+        self.assertEqual((), b.egress.routes[0].PathAllowlist)
 
     def test_must_be_array(self):
         with self.assertRaises(Die):
@@ -65,14 +65,14 @@ class TestPathAllowlist(unittest.TestCase):
         }])
         self.assertEqual(
             ("/didericis/", "/users/didericis"),
-            b.egress_proxy.routes[0].PathAllowlist,
+            b.egress.routes[0].PathAllowlist,
         )
 
 
 class TestAuth(unittest.TestCase):
     def test_omitted_means_no_auth(self):
         b = _bottle([{"host": "github.com"}])
-        r = b.egress_proxy.routes[0]
+        r = b.egress.routes[0]
         self.assertEqual("", r.AuthScheme)
         self.assertEqual("", r.TokenRef)
 
@@ -81,7 +81,7 @@ class TestAuth(unittest.TestCase):
             "host": "api.github.com",
             "auth": {"scheme": "Bearer", "token_ref": "GH_PAT"},
         }])
-        r = b.egress_proxy.routes[0]
+        r = b.egress.routes[0]
         self.assertEqual("Bearer", r.AuthScheme)
         self.assertEqual("GH_PAT", r.TokenRef)
 
@@ -118,7 +118,7 @@ class TestAuth(unittest.TestCase):
             "host": "git.example",
             "auth": {"scheme": "token", "token_ref": "GITEA_PAT"},
         }])
-        self.assertEqual("token", b.egress_proxy.routes[0].AuthScheme)
+        self.assertEqual("token", b.egress.routes[0].AuthScheme)
 
     def test_unknown_auth_key_rejected(self):
         with self.assertRaises(Die):
@@ -131,7 +131,7 @@ class TestAuth(unittest.TestCase):
 class TestRole(unittest.TestCase):
     def test_omitted_means_no_roles(self):
         b = _bottle([{"host": "x.example"}])
-        self.assertEqual((), b.egress_proxy.routes[0].Role)
+        self.assertEqual((), b.egress.routes[0].Role)
 
     def test_string_normalizes_to_tuple(self):
         b = _bottle([{
@@ -140,7 +140,7 @@ class TestRole(unittest.TestCase):
             "auth": {"scheme": "Bearer", "token_ref": "T"},
         }])
         self.assertEqual(("claude_code_oauth",),
-                         b.egress_proxy.routes[0].Role)
+                         b.egress.routes[0].Role)
 
     def test_list_supported(self):
         b = _bottle([{
@@ -149,7 +149,7 @@ class TestRole(unittest.TestCase):
             "auth": {"scheme": "Bearer", "token_ref": "T"},
         }])
         self.assertEqual(("claude_code_oauth",),
-                         b.egress_proxy.routes[0].Role)
+                         b.egress.routes[0].Role)
 
     def test_unknown_role_rejected(self):
         # The role enum is locked down — typos shouldn't silently
@@ -199,7 +199,7 @@ class TestRouteValidation(unittest.TestCase):
 
     def test_empty_routes_allowed(self):
         b = _bottle([])
-        self.assertEqual((), b.egress_proxy.routes)
+        self.assertEqual((), b.egress.routes)
 
     def test_no_egress_proxy_block_means_empty(self):
         # The bottle dataclass defaults to an empty EgressProxyConfig.
@@ -207,14 +207,14 @@ class TestRouteValidation(unittest.TestCase):
             "bottles": {"dev": {}},
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
         }).bottles["dev"]
-        self.assertEqual((), b.egress_proxy.routes)
+        self.assertEqual((), b.egress.routes)
 
 
 class TestConfigShape(unittest.TestCase):
     def test_unknown_egress_proxy_key_rejected(self):
         with self.assertRaises(Die):
             Manifest.from_json_obj({
-                "bottles": {"dev": {"egress_proxy": {"wat": []}}},
+                "bottles": {"dev": {"egress": {"wat": []}}},
                 "agents": {"demo": {"skills": [], "prompt": "",
                                      "bottle": "dev"}},
             })

@@ -18,7 +18,7 @@ from claude_bottle.manifest import Manifest
 
 def _bottle(routes):
     return Manifest.from_json_obj({
-        "bottles": {"dev": {"egress_proxy": {"routes": routes}}},
+        "bottles": {"dev": {"egress": {"routes": routes}}},
         "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
     }).bottles["dev"]
 

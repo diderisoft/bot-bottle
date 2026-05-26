@@ -122,13 +122,13 @@ def resolve_plan(
     # actionable hint. Fail fast here with a cleanup pointer instead.
     # Only probe sidecars this launch will actually try to create:
     # pipelock always; git-gate when bottle.git is non-empty;
-    # egress-proxy when bottle.egress_proxy.routes is non-empty.
+    # egress-proxy when bottle.egress.routes is non-empty.
     sidecar_probes: list[tuple[str, str]] = [
         ("pipelock", pipelock_container_name(slug)),
     ]
     if bottle.git:
         sidecar_probes.append(("git-gate", git_gate_container_name(slug)))
-    if bottle.egress_proxy.routes:
+    if bottle.egress.routes:
         sidecar_probes.append(("egress-proxy", egress_proxy_container_name(slug)))
     if bottle.supervise:
         sidecar_probes.append(("supervise", supervise_container_name(slug)))

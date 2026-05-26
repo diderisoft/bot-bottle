@@ -14,7 +14,7 @@ the system prompt, for bottles the body is human documentation
 Bottle schema (frontmatter):
   env:          { <NAME>: <env-entry>, ... }
   git:          [ <git-entry>, ... ]
-  egress_proxy: { routes: [ <egress-route>, ... ] }
+  egress: { routes: [ <egress-route>, ... ] }
 
 Agent schema (frontmatter):
   bottle:        <bottle-name>          # required
@@ -196,7 +196,7 @@ class EgressProxyRoute:
 
     @classmethod
     def from_dict(cls, bottle_name: str, idx: int, raw: object) -> "EgressProxyRoute":
-        label = f"bottle '{bottle_name}' egress_proxy.routes[{idx}]"
+        label = f"bottle '{bottle_name}' egress.routes[{idx}]"
         d = _as_json_object(raw, label)
         host = d.get("host")
         if not isinstance(host, str) or not host:
@@ -308,7 +308,7 @@ class EgressProxyRoute:
 @dataclass(frozen=True)
 class EgressProxyConfig:
     """Per-bottle egress-proxy configuration. Today this is just the
-    route table; the nesting under `egress_proxy:` leaves room for
+    route table; the nesting under `egress:` leaves room for
     per-bottle proxy settings (port override, log level, etc.) in
     follow-ups."""
 
@@ -316,13 +316,13 @@ class EgressProxyConfig:
 
     @classmethod
     def from_dict(cls, bottle_name: str, raw: object) -> "EgressProxyConfig":
-        d = _as_json_object(raw, f"bottle '{bottle_name}' egress_proxy")
+        d = _as_json_object(raw, f"bottle '{bottle_name}' egress")
         routes_raw = d.get("routes")
         routes: tuple[EgressProxyRoute, ...] = ()
         if routes_raw is not None:
             if not isinstance(routes_raw, list):
                 die(
-                    f"bottle '{bottle_name}' egress_proxy.routes must be an array "
+                    f"bottle '{bottle_name}' egress.routes must be an array "
                     f"(was {type(routes_raw).__name__})"
                 )
             routes_list = cast(list[object], routes_raw)
@@ -334,7 +334,7 @@ class EgressProxyConfig:
         for k in d:
             if k != "routes":
                 die(
-                    f"bottle '{bottle_name}' egress_proxy has unknown key {k!r}; "
+                    f"bottle '{bottle_name}' egress has unknown key {k!r}; "
                     f"only 'routes' is accepted"
                 )
         return cls(routes=routes)
@@ -344,7 +344,7 @@ class EgressProxyConfig:
 class Bottle:
     env: Mapping[str, str] = field(default_factory=_empty_str_dict)
     git: tuple[GitEntry, ...] = ()
-    egress_proxy: EgressProxyConfig = field(default_factory=EgressProxyConfig)
+    egress: EgressProxyConfig = field(default_factory=EgressProxyConfig)
     # Opt-in per-bottle stuck-recovery sidecar (PRD 0013). When true,
     # the launch step brings up a supervise sidecar that exposes three
     # MCP tools to the agent (cred-proxy-block, pipelock-block,
@@ -402,14 +402,14 @@ class Bottle:
         if "tokens" in d:
             die(
                 f"bottle '{name}' has a 'tokens' field. The shape was reworked: "
-                f"each route now lives under 'egress_proxy.routes' with explicit "
+                f"each route now lives under 'egress.routes' with explicit "
                 f"host / path_allowlist / auth. See docs/prds/0017-egress-proxy-via-mitmproxy.md."
             )
 
         if "cred_proxy" in d:
             die(
                 f"bottle '{name}' has a 'cred_proxy' field, which has been removed "
-                f"(PRD 0017). Rename to 'egress_proxy' and migrate each route:\n"
+                f"(PRD 0017). Rename to 'egress' and migrate each route:\n"
                 f"  - 'path' + 'upstream' (cred-proxy URL prefix + upstream URL)\n"
                 f"    → 'host' (just the upstream hostname)\n"
                 f"  - 'auth_scheme' + 'token_ref' (flat)\n"
@@ -422,9 +422,9 @@ class Bottle:
                 f"See docs/prds/0017-egress-proxy-via-mitmproxy.md."
             )
 
-        egress_proxy = (
-            EgressProxyConfig.from_dict(name, d["egress_proxy"])
-            if "egress_proxy" in d
+        egress = (
+            EgressProxyConfig.from_dict(name, d["egress"])
+            if "egress" in d
             else EgressProxyConfig()
         )
 
@@ -436,7 +436,7 @@ class Bottle:
             )
 
         return cls(
-            env=env, git=git, egress_proxy=egress_proxy,
+            env=env, git=git, egress=egress,
             supervise=supervise_raw,
         )
 
@@ -715,7 +715,7 @@ def _validate_egress_proxy_routes(
     bottle_name: str,
     routes: tuple[EgressProxyRoute, ...],
 ) -> None:
-    """Cross-validation for `bottle.egress_proxy.routes`:
+    """Cross-validation for `bottle.egress.routes`:
 
     - Hosts must be unique within the bottle. The proxy matches by
       exact-host (v1, prefix matching is on path_allowlist only);
@@ -732,7 +732,7 @@ def _validate_egress_proxy_routes(
         key = r.Host.lower()
         if key in seen_hosts:
             die(
-                f"bottle '{bottle_name}' egress_proxy.routes has duplicate host "
+                f"bottle '{bottle_name}' egress.routes has duplicate host "
                 f"{r.Host!r}; each host must be unique on the proxy."
             )
         seen_hosts[key] = None
@@ -741,7 +741,7 @@ def _validate_egress_proxy_routes(
         if len(with_role) > 1:
             hosts = ", ".join(r.Host for r in with_role)
             die(
-                f"bottle '{bottle_name}' egress_proxy.routes has {len(with_role)} "
+                f"bottle '{bottle_name}' egress.routes has {len(with_role)} "
                 f"routes with role {role!r} (hosts: {hosts}); this role drives a "
                 f"single launch-step side effect — pick one."
             )
@@ -772,7 +772,7 @@ _FILENAME_RX = re.compile(r"^[a-z][a-z0-9-]*$")
 # sets dies with a "did you mean" pointer — typos shouldn't silently
 # ghost into an empty config.
 _BOTTLE_KEYS = frozenset(
-    {"env", "git", "egress_proxy", "supervise"}
+    {"env", "git", "egress", "supervise"}
 )
 _AGENT_KEYS_REQUIRED = frozenset({"bottle"})
 _AGENT_KEYS_OPTIONAL = frozenset({"skills"})

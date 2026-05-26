@@ -109,7 +109,7 @@ class TestBuildConfig(unittest.TestCase):
         # up to route claude through pipelock.
         from claude_bottle.manifest import Manifest
         bottle = Manifest.from_json_obj({
-            "bottles": {"dev": {"egress_proxy": {"routes": [
+            "bottles": {"dev": {"egress": {"routes": [
                 {"host": "api.anthropic.com",
                  "auth": {"scheme": "Bearer", "token_ref": "T"}},
             ]}}},
@@ -158,7 +158,7 @@ class TestRenderAndWrite(unittest.TestCase):
                         "MY_SECRET": "literal-value-should-not-appear",
                         "ANOTHER": "?prompt-message",
                     },
-                    "egress_proxy": {"routes": [{"host": "github.com"}]},
+                    "egress": {"routes": [{"host": "github.com"}]},
                 }
             },
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
@@ -204,7 +204,7 @@ class TestRenderAndWrite(unittest.TestCase):
     def test_render_emits_seed_phrase_off_for_anthropic_route(self):
         from claude_bottle.manifest import Manifest
         bottle = Manifest.from_json_obj({
-            "bottles": {"dev": {"egress_proxy": {"routes": [
+            "bottles": {"dev": {"egress": {"routes": [
                 {"host": "api.anthropic.com",
                  "auth": {"scheme": "Bearer", "token_ref": "T"}},
             ]}}},
