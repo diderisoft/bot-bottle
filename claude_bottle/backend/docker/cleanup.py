@@ -24,52 +24,22 @@ each project's services for ad-hoc inspection.
 
 from __future__ import annotations
 
-import json
 import shutil
 import subprocess
-from pathlib import Path
 
 from ... import supervise as _supervise
 from ...log import info, warn
 from . import util as docker_mod
 from .bottle_cleanup_plan import DockerBottleCleanupPlan
 from .bottle_state import bottle_state_dir, is_preserved
-
-
-_PROJECT_PREFIX = "claude-bottle-"
-
-
-def _list_compose_projects() -> list[str]:
-    """Return the names of all currently-known compose projects
-    (running OR stopped) whose name starts with `claude-bottle-`.
-    `docker compose ls --all` reports both up + exited states."""
-    result = subprocess.run(
-        ["docker", "compose", "ls", "--all", "--format", "json"],
-        capture_output=True, text=True, check=False,
-    )
-    if result.returncode != 0:
-        warn(f"docker compose ls failed: {result.stderr.strip()}")
-        return []
-    try:
-        projects = json.loads(result.stdout or "[]")
-    except json.JSONDecodeError as e:
-        warn(f"docker compose ls returned malformed JSON: {e}")
-        return []
-    names: list[str] = []
-    for p in projects:
-        if not isinstance(p, dict):
-            continue
-        name = str(p.get("Name", ""))
-        if name.startswith(_PROJECT_PREFIX):
-            names.append(name)
-    return sorted(set(names))
+from .compose import COMPOSE_PROJECT_PREFIX, list_compose_projects
 
 
 def _list_prefixed_containers() -> list[str]:
     """All claude-bottle-prefixed containers, running or stopped."""
     result = subprocess.run(
         ["docker", "ps", "-a",
-         "--filter", f"name=^{_PROJECT_PREFIX}",
+         "--filter", f"name=^{COMPOSE_PROJECT_PREFIX}",
          "--format", "{{.Names}}\t{{.Label \"com.docker.compose.project\"}}"],
         capture_output=True, text=True, check=False,
     )
@@ -96,7 +66,7 @@ def _list_prefixed_networks() -> list[str]:
     code paths) don't."""
     result = subprocess.run(
         ["docker", "network", "ls",
-         "--filter", f"name={_PROJECT_PREFIX}",
+         "--filter", f"name={COMPOSE_PROJECT_PREFIX}",
          "--format", "{{.Name}}\t{{.Label \"com.docker.compose.project\"}}"],
         capture_output=True, text=True, check=False,
     )
@@ -126,7 +96,7 @@ def _list_orphan_state_dirs(live_projects: set[str]) -> list[str]:
         if not child.is_dir():
             continue
         identity = child.name
-        project = f"{_PROJECT_PREFIX}{identity}"
+        project = f"{COMPOSE_PROJECT_PREFIX}{identity}"
         if project in live_projects:
             continue
         if is_preserved(identity):
@@ -138,7 +108,7 @@ def _list_orphan_state_dirs(live_projects: set[str]) -> list[str]:
 def prepare_cleanup() -> DockerBottleCleanupPlan:
     """Enumerate everything cleanup will touch. No removals."""
     docker_mod.require_docker()
-    projects = _list_compose_projects()
+    projects = list_compose_projects()
     project_set = set(projects)
     return DockerBottleCleanupPlan(
         projects=tuple(projects),
@@ -195,24 +165,7 @@ def list_active() -> None:
     """Print every active claude-bottle compose project + its
     services. Empty banner when there are none."""
     docker_mod.require_docker()
-    projects = _list_compose_projects()
-    # Filter to projects with at least one running container — `compose ls`
-    # already filters by default to active projects unless `--all` was
-    # set; double-check by querying status.
-    result = subprocess.run(
-        ["docker", "compose", "ls", "--format", "json"],
-        capture_output=True, text=True, check=False,
-    )
-    running_names: set[str] = set()
-    if result.returncode == 0:
-        try:
-            data = json.loads(result.stdout or "[]")
-            running_names = {
-                str(p.get("Name", "")) for p in data if isinstance(p, dict)
-            }
-        except json.JSONDecodeError:
-            pass
-    active = [p for p in projects if p in running_names]
+    active = list_compose_projects(include_stopped=False)
     if not active:
         info("no active claude-bottle compose projects")
         return
