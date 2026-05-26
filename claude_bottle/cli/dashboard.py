@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import curses
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -23,6 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import supervise as _supervise
+from ..backend import BottleSpec, get_bottle_backend
 from ..backend.docker.capability_apply import (
     CapabilityApplyError,
     apply_capability_change,
@@ -46,6 +48,7 @@ from ..backend.docker.pipelock_apply import (
     render_allowlist_content,
 )
 from ..log import info
+from ..manifest import Manifest
 from ..supervise import (
     ACTION_OPERATOR_EDIT,
     COMPONENT_FOR_TOOL,
@@ -64,7 +67,13 @@ from ..supervise import (
     write_audit_entry,
     write_response,
 )
-from ._common import PROG
+from ._common import PROG, USER_CWD
+from .start import (
+    attach_claude,
+    capture_session_state,
+    prepare_with_preflight,
+    settle_state,
+)
 
 
 # Errors any remediation engine may raise. Caught by the TUI key
@@ -392,6 +401,288 @@ def edit_in_editor(content: str, *, suffix: str = ".tmp") -> str | None:
             pass
 
 
+# --- New-agent flow (PRD 0020 chunks 1+2) ----------------------------------
+#
+# `n` opens a picker modal listing the manifest's agents (with a
+# running-count next to each). Selecting one runs prepare → preflight
+# (modal) → backend.launch().__enter__() → handoff (curses.endwin →
+# claude → refresh). The returned (cm, bottle) lives in the main
+# loop's `bottles` dict; chunks 3/4 wire Enter / `x` to act on it.
+
+
+def _filter_agents(query: str, names: list[str]) -> list[str]:
+    """Case-insensitive substring filter for the picker. Pure
+    function — no curses, easy to unit-test."""
+    if not query:
+        return list(names)
+    q = query.lower()
+    return [n for n in names if q in n.lower()]
+
+
+def _picker_modal(
+    stdscr: "curses._CursesWindow",
+    names: list[str],
+    running_counts: dict[str, int],
+) -> str | None:
+    """Modal agent picker. Type to filter; j/k or arrows to
+    navigate; Enter to confirm; Esc to abort (first press clears
+    filter if any, second press exits)."""
+    if not names:
+        return None
+    selected = 0
+    query = ""
+    while True:
+        filtered = _filter_agents(query, names)
+        if not filtered:
+            selected = 0
+        elif selected >= len(filtered):
+            selected = len(filtered) - 1
+        elif selected < 0:
+            selected = 0
+
+        _draw_picker_modal(stdscr, names, filtered, selected, query, running_counts)
+        try:
+            key = stdscr.getch()
+        except KeyboardInterrupt:
+            return None
+
+        if key == 27:  # Esc
+            if query:
+                query = ""
+                selected = 0
+                continue
+            return None
+        if key in (curses.KEY_ENTER, 10, 13):
+            if filtered:
+                return filtered[selected]
+            continue
+        if key in (curses.KEY_DOWN, ord("\x0e")):  # KEY_DOWN, Ctrl-N
+            if filtered:
+                selected = min(selected + 1, len(filtered) - 1)
+            continue
+        if key in (curses.KEY_UP, ord("\x10")):  # KEY_UP, Ctrl-P
+            if filtered:
+                selected = max(selected - 1, 0)
+            continue
+        if key in (curses.KEY_BACKSPACE, 127, 8):
+            query = query[:-1]
+            continue
+        # Printable character → append to filter
+        if 32 <= key < 127:
+            query += chr(key)
+            continue
+        # Anything else: ignore
+
+
+def _draw_picker_modal(
+    stdscr: "curses._CursesWindow",
+    all_names: list[str],
+    filtered: list[str],
+    selected: int,
+    query: str,
+    running_counts: dict[str, int],
+) -> None:
+    """Render the picker modal. Width fits the longest name plus
+    the `(N running)` suffix; height fits all filtered items plus
+    a header line, filter line, and border — capped at 80% of
+    screen height with a scrollable inner list if necessary."""
+    h, w = stdscr.getmaxyx()
+    label_width = max(
+        (len(n) for n in all_names), default=10,
+    )
+    suffix_width = len(" (99 running)")
+    inner_width = max(label_width + suffix_width, len("filter: ") + 20, 40)
+    box_w = min(inner_width + 4, max(20, w - 4))
+    max_list_rows = max(3, int(h * 0.6))
+    list_rows = min(len(filtered) if filtered else 1, max_list_rows)
+    box_h = list_rows + 5  # border (2) + title (1) + filter (1) + spacer (1)
+    box_h = min(box_h, max(7, h - 4))
+    top = max(0, (h - box_h) // 2)
+    left = max(0, (w - box_w) // 2)
+
+    win = curses.newwin(box_h, box_w, top, left)
+    win.erase()
+    win.box()
+    win.addnstr(0, 2, " start agent ", box_w - 4, curses.A_BOLD)
+
+    win.addnstr(1, 2, f"filter: {query}", box_w - 4)
+    win.hline(2, 1, curses.ACS_HLINE, box_w - 2)
+
+    list_start_row = 3
+    visible_rows = box_h - list_start_row - 1
+    if not filtered:
+        win.addnstr(
+            list_start_row, 2,
+            "(no agents match filter)",
+            box_w - 4, curses.A_DIM,
+        )
+    else:
+        # Simple windowing around `selected`.
+        first = max(0, selected - visible_rows + 1)
+        if selected < first:
+            first = selected
+        for i, name in enumerate(filtered[first:first + visible_rows]):
+            row = list_start_row + i
+            count = running_counts.get(name, 0)
+            suffix = f"  ({count} running)" if count else ""
+            line = f"  {name}{suffix}"
+            attr = curses.A_REVERSE if (first + i) == selected else curses.A_NORMAL
+            win.addnstr(row, 1, line, box_w - 2, attr)
+
+    win.addnstr(
+        box_h - 1, 2,
+        " Enter: start  Esc: cancel  type: filter ",
+        box_w - 4, curses.A_DIM,
+    )
+    win.refresh()
+
+
+def _preflight_modal(
+    stdscr: "curses._CursesWindow",
+    plan_text: str,
+) -> bool:
+    """Modal preflight confirmation. `plan_text` is the multi-line
+    summary the renderer produced; we draw it in a centered box
+    with `[y/N]` at the bottom and capture the next keypress."""
+    lines = plan_text.splitlines() or [""]
+    h, w = stdscr.getmaxyx()
+    inner_width = max(
+        max((len(line) for line in lines), default=10),
+        len("launch this agent? [y/N]"),
+    )
+    box_w = min(inner_width + 4, max(20, w - 4))
+    box_h = min(len(lines) + 5, max(7, h - 4))
+    top = max(0, (h - box_h) // 2)
+    left = max(0, (w - box_w) // 2)
+
+    win = curses.newwin(box_h, box_w, top, left)
+    win.erase()
+    win.box()
+    win.addnstr(0, 2, " launch agent ", box_w - 4, curses.A_BOLD)
+    for i, line in enumerate(lines[: box_h - 4]):
+        win.addnstr(1 + i, 2, line, box_w - 4)
+    win.addnstr(
+        box_h - 2, 2,
+        "launch this agent? [y/N]",
+        box_w - 4, curses.A_BOLD,
+    )
+    win.addnstr(
+        box_h - 1, 2,
+        " y: launch  N / Esc: abort ",
+        box_w - 4, curses.A_DIM,
+    )
+    win.refresh()
+
+    while True:
+        try:
+            key = stdscr.getch()
+        except KeyboardInterrupt:
+            return False
+        if key in (ord("y"), ord("Y")):
+            return True
+        if key in (ord("n"), ord("N"), 27, curses.KEY_ENTER, 10, 13):
+            return False
+
+
+def _capture_preflight_text(plan) -> str:
+    """Capture `plan.print` output by temporarily redirecting
+    stderr. Plan rendering is stderr-bound (existing behavior the
+    CLI relies on); for the modal we want it as a string."""
+    import io
+    import contextlib
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        plan.print(remote_control=False)
+    return buf.getvalue().strip("\n")
+
+
+def _running_counts(
+    bottles: dict, agents_now: list[ActiveAgent],
+) -> dict[str, int]:
+    """Per-agent running count: dashboard-owned + externally-
+    discovered, summed by agent_name. The picker shows this so the
+    operator knows whether picking an agent starts a fresh bottle
+    or a Nth one."""
+    counts: dict[str, int] = {}
+    for a in agents_now:
+        counts[a.agent_name] = counts.get(a.agent_name, 0) + 1
+    return counts
+
+
+def _new_agent_flow(
+    stdscr: "curses._CursesWindow",
+    manifest: Manifest,
+    bottles: dict,
+    agents_now: list[ActiveAgent],
+) -> str:
+    """Open the picker, prepare + preflight (modal), launch
+    (enter the context manager but DON'T close it), handoff to
+    claude. Returns a status-line message for the dashboard footer.
+    The (cm, bottle) tuple lands in `bottles` keyed by slug; chunks
+    3/4 use it for re-attach and explicit stop."""
+    names = sorted(manifest.agents.keys())
+    picked = _picker_modal(stdscr, names, _running_counts(bottles, agents_now))
+    if picked is None:
+        return "agent start aborted"
+
+    spec = BottleSpec(
+        manifest=manifest,
+        agent_name=picked,
+        copy_cwd=False,
+        user_cwd=USER_CWD,
+    )
+    # Modal preflight + prompt. `prepare_with_preflight` calls
+    # render_preflight(plan) once, then prompt_yes() to decide. We
+    # split the two: render captures the text into a closure, the
+    # prompt draws the modal + reads y/N.
+    captured: dict[str, str] = {}
+
+    def _render(plan) -> None:
+        captured["text"] = _capture_preflight_text(plan)
+
+    def _prompt() -> bool:
+        return _preflight_modal(stdscr, captured.get("text", ""))
+
+    stage_dir = Path(tempfile.mkdtemp(prefix="claude-bottle-stage."))
+    try:
+        plan, identity = prepare_with_preflight(
+            spec,
+            stage_dir=stage_dir,
+            render_preflight=_render,
+            prompt_yes=_prompt,
+        )
+        if plan is None:
+            settle_state(identity)
+            return f"start of {picked!r} aborted at preflight"
+
+        backend = get_bottle_backend()
+        # Launch step writes to stderr (image build, network create,
+        # compose up). Get out of curses' way for the duration so
+        # the lines render cleanly. The handoff stays endwin'd until
+        # claude exits, then we refresh.
+        curses.endwin()
+        try:
+            cm = backend.launch(plan)
+            bottle = cm.__enter__()
+        except BaseException:
+            stdscr.refresh()
+            settle_state(identity)
+            raise
+        bottles[plan.slug] = (cm, bottle, identity)
+
+        try:
+            exit_code = attach_claude(bottle, remote_control=False)
+            capture_session_state(identity, exit_code)
+        finally:
+            stdscr.refresh()
+        return f"[{plan.slug}] claude session ended (exit {exit_code})"
+    finally:
+        # stage_dir was the prepare scratch dir; after PRD 0018
+        # chunk 2 it holds nothing the running bottle needs. Reap
+        # immediately regardless of which branch above ran.
+        shutil.rmtree(stage_dir, ignore_errors=True)
+
+
 # --- TUI -------------------------------------------------------------------
 
 
@@ -491,6 +782,21 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
     selected_agent = 0
     focus = PANE_PROPOSALS
     status_line = ""
+    # PRD 0020: bottles spun up from inside this dashboard session.
+    # Each entry: slug -> (context-manager, Bottle handle, identity).
+    # We hold the context manager so chunk 4's `x` can call __exit__
+    # on it; chunk 5 quit-cleanup intentionally does NOT iterate this
+    # dict (the user wants quit to leave bottles running).
+    bottles: dict[str, tuple] = {}
+    # Manifest is loaded lazily on first `n` so the dashboard
+    # doesn't fail to start in a directory with no manifest (e.g.,
+    # when the operator is purely watching pre-existing bottles).
+    manifest_cache: list[Manifest | None] = [None]
+
+    def _get_manifest() -> Manifest:
+        if manifest_cache[0] is None:
+            manifest_cache[0] = Manifest.resolve(USER_CWD)
+        return manifest_cache[0]
     while True:
         pending = discover_pending()
         if selected >= len(pending):
@@ -534,6 +840,17 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
             return
         if key == 9:  # Tab
             focus = PANE_AGENTS if focus == PANE_PROPOSALS else PANE_PROPOSALS
+            continue
+        if key == ord("n"):
+            # PRD 0020 chunk 2: open the picker, start + attach to
+            # the chosen agent, return to the dashboard with the
+            # bottle running.
+            try:
+                manifest = _get_manifest()
+            except Exception as e:
+                status_line = f"manifest load failed: {e}"
+                continue
+            status_line = _new_agent_flow(stdscr, manifest, bottles, agents)
             continue
         if key in (ord("e"), ord("p")):
             # PRD 0019 chunk 4: agent-scoped edits. Only fire when
@@ -697,7 +1014,7 @@ def _render(
             row += 1
 
     footer = (
-        "[Tab] switch pane  [j/k] move  [Enter] view  "
+        "[n] new agent  [Tab] switch pane  [j/k] move  [Enter] view  "
         "[a/m/r] proposal  [e/p] edit selected agent  [q] quit"
     )
     stdscr.hline(h - 2, 0, curses.ACS_HLINE, w)

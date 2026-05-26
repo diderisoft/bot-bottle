@@ -256,6 +256,73 @@ class TestSelectionStatus(unittest.TestCase):
         self.assertEqual("[no agent selected]", s)
 
 
+class TestFilterAgents(unittest.TestCase):
+    """Pure-function picker filter (PRD 0020 chunk 2). Curses-free
+    so we can exercise the substring + case-insensitivity rules
+    directly."""
+
+    NAMES = ["implementer", "researcher", "triage-bot", "ImplDeluxe"]
+
+    def test_empty_query_returns_all(self):
+        self.assertEqual(self.NAMES, dashboard._filter_agents("", self.NAMES))
+
+    def test_substring_match(self):
+        self.assertEqual(
+            ["implementer", "ImplDeluxe"],
+            dashboard._filter_agents("impl", self.NAMES),
+        )
+
+    def test_case_insensitive(self):
+        self.assertEqual(
+            ["implementer", "ImplDeluxe"],
+            dashboard._filter_agents("IMPL", self.NAMES),
+        )
+
+    def test_no_match_returns_empty(self):
+        self.assertEqual([], dashboard._filter_agents("zzz", self.NAMES))
+
+    def test_preserves_input_order(self):
+        # Filtering should never re-sort; the picker draws in the
+        # order the manifest exposed.
+        out = dashboard._filter_agents("e", ["beta", "alpha", "echo"])
+        self.assertEqual(["beta", "echo"], out)
+
+
+class TestRunningCounts(unittest.TestCase):
+    """Per-agent running-count surfaced in the picker so the
+    operator sees `(N running)` before picking. Counts come from
+    the dashboard's current `discover_active_agents` snapshot."""
+
+    def _agent(self, agent_name: str) -> dashboard.ActiveAgent:
+        return dashboard.ActiveAgent(
+            slug=f"{agent_name}-abc",
+            agent_name=agent_name,
+            started_at="",
+            services=(),
+        )
+
+    def test_empty_when_no_active_agents(self):
+        self.assertEqual({}, dashboard._running_counts({}, []))
+
+    def test_one_per_unique_agent_name(self):
+        agents = [self._agent("a"), self._agent("b"), self._agent("c")]
+        self.assertEqual(
+            {"a": 1, "b": 1, "c": 1},
+            dashboard._running_counts({}, agents),
+        )
+
+    def test_counts_collisions(self):
+        agents = [
+            self._agent("implementer"),
+            self._agent("implementer"),
+            self._agent("researcher"),
+        ]
+        self.assertEqual(
+            {"implementer": 2, "researcher": 1},
+            dashboard._running_counts({}, agents),
+        )
+
+
 class TestSelectedAgent(unittest.TestCase):
     """`_selected_agent` is what chunk 4's e/p key handlers use to
     decide whether to fire and which agent to target."""
