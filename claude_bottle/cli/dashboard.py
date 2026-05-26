@@ -27,8 +27,10 @@ from ..backend.docker.capability_apply import (
     CapabilityApplyError,
     apply_capability_change,
 )
+from ..backend.docker.bottle_state import read_metadata
 from ..backend.docker.compose import (
     COMPOSE_PROJECT_PREFIX,
+    compose_project_name,
     list_active_slugs,
 )
 from ..backend.docker.egress_apply import (
@@ -117,6 +119,79 @@ def _discover_active_with_service(service: str) -> list[str]:
             if slug in slugs:
                 out.append(slug)
     return sorted(set(out))
+
+
+@dataclass(frozen=True)
+class ActiveAgent:
+    """One running bottle, as the agents pane displays it (PRD
+    0019). `services` is the set of sidecar service names
+    currently up for this bottle, used to gate which edit verbs
+    apply (no `egress` → `routes edit` is meaningless)."""
+
+    slug: str
+    agent_name: str           # from metadata.json; "?" if missing
+    started_at: str           # ISO 8601 from metadata.json; "" if missing
+    services: tuple[str, ...]  # alphabetical, e.g. ("egress", "pipelock", "supervise")
+
+
+def _parse_services_by_project(stdout: str) -> dict[str, set[str]]:
+    """Parse `docker ps` output formatted as
+    `<project-label>\\t<service-label>` (one line per container)
+    into a `{project: {service, ...}}` mapping. Pure function for
+    testing — the docker invocation is in the caller."""
+    out: dict[str, set[str]] = {}
+    for line in stdout.splitlines():
+        project, _, service = line.partition("\t")
+        if not project or not service:
+            continue
+        out.setdefault(project, set()).add(service)
+    return out
+
+
+def _query_services_by_project() -> dict[str, set[str]]:
+    """One `docker ps` call → `{project: {service, ...}}`. PRD
+    0019 open question #1 picked this shape over per-bottle
+    `compose ps` calls — for hosts with N bottles, this is one
+    subprocess instead of N per refresh tick."""
+    try:
+        r = subprocess.run(
+            [
+                "docker", "ps",
+                "--filter", "label=com.docker.compose.project",
+                "--format",
+                '{{.Label "com.docker.compose.project"}}'
+                "\t"
+                '{{.Label "com.docker.compose.service"}}',
+            ],
+            capture_output=True, text=True, check=False,
+        )
+    except FileNotFoundError:
+        return {}
+    if r.returncode != 0:
+        return {}
+    return _parse_services_by_project(r.stdout or "")
+
+
+def discover_active_agents() -> list[ActiveAgent]:
+    """All currently-running claude-bottle compose projects with
+    their metadata + service set. Returns [] when docker isn't
+    reachable. PRD 0019."""
+    slugs = list_active_slugs()
+    if not slugs:
+        return []
+    services_by_project = _query_services_by_project()
+    out: list[ActiveAgent] = []
+    for slug in slugs:
+        project = compose_project_name(slug)
+        services = services_by_project.get(project, set())
+        metadata = read_metadata(slug)
+        out.append(ActiveAgent(
+            slug=slug,
+            agent_name=metadata.agent_name if metadata else "?",
+            started_at=metadata.started_at if metadata else "",
+            services=tuple(sorted(services)),
+        ))
+    return out
 
 
 def discover_egress_slugs() -> list[str]:
