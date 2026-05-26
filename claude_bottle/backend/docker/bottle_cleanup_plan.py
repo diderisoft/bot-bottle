@@ -1,8 +1,21 @@
 """DockerBottleCleanupPlan — concrete subclass of BottleCleanupPlan.
 
-Holds the tuples of container and network names that
-DockerBottleBackend.cleanup will remove. The y/N preflight reads
-these via `print`; the CLI short-circuits via `empty`.
+PRD 0018 chunk 4: cleanup is centered on compose projects. `docker
+compose ls` is the source of truth for what's running; the plan
+carries the projects to `compose down`, plus three fallback buckets
+for legacy / orphan resources:
+
+  - stray_containers: pre-compose `claude-bottle-*` containers not
+    attached to any compose project. Cleared via `docker rm -f`.
+  - stray_networks: same idea for networks. Cleared via
+    `docker network rm`.
+  - orphan_state_dirs: per-bottle state dirs under
+    ~/.claude-bottle/state/ that have no live compose project AND
+    no `.preserve` marker. Reaped via `shutil.rmtree`.
+
+Compose-managed networks are removed by `compose down --volumes`,
+so they don't appear in stray_networks for a normal project — only
+truly leftover ones.
 """
 
 from __future__ import annotations
@@ -17,20 +30,30 @@ from .. import BottleCleanupPlan
 @dataclass(frozen=True)
 class DockerBottleCleanupPlan(BottleCleanupPlan):
     """Resources DockerBottleBackend.cleanup will remove. Produced by
-    `prepare_cleanup` from a snapshot of `docker ps -a` + `docker
-    network ls`; sorted so the y/N output is stable."""
+    `prepare_cleanup`; sorted so the y/N output is stable."""
 
-    containers: tuple[str, ...]
-    networks: tuple[str, ...]
+    projects: tuple[str, ...]
+    stray_containers: tuple[str, ...]
+    stray_networks: tuple[str, ...]
+    orphan_state_dirs: tuple[str, ...]
 
     @property
     def empty(self) -> bool:
-        return not self.containers and not self.networks
+        return (
+            not self.projects
+            and not self.stray_containers
+            and not self.stray_networks
+            and not self.orphan_state_dirs
+        )
 
     def print(self) -> None:
         print(file=sys.stderr)
-        for name in self.containers:
-            info(f"container: {name}")
-        for name in self.networks:
-            info(f"network:   {name}")
+        for name in self.projects:
+            info(f"compose project: {name}")
+        for name in self.stray_containers:
+            info(f"stray container: {name}")
+        for name in self.stray_networks:
+            info(f"stray network:   {name}")
+        for name in self.orphan_state_dirs:
+            info(f"orphan state:    {name}")
         print(file=sys.stderr)
