@@ -690,26 +690,180 @@ def _stop_bottle_flow(
     return f"[{slug}] stopped"
 
 
-def _attach_to_bottle(
+# --- tmux split-pane integration (PRD 0021) --------------------------------
+#
+# When `$TMUX` is set the dashboard lays itself out as the left
+# pane of a two-pane window with the operator's currently-selected
+# agent in the right pane. First attach creates the right pane via
+# `tmux split-window`; subsequent attaches respawn that pane with
+# the new agent's claude session. The dashboard remembers the
+# pane id + occupant slug in `tmux_state` so the same pane is
+# reused across attaches.
+
+
+def _in_tmux() -> bool:
+    """True when the dashboard is running inside a tmux session.
+    Tmux sets `$TMUX` to the path of its server socket."""
+    return bool(os.environ.get("TMUX"))
+
+
+def _claude_runtime_args(*, resume: bool, remote_control: bool = False) -> list[str]:
+    """The argv the dashboard hands to `bottle.claude_docker_argv`
+    on every attach — matches what `attach_claude` builds for the
+    foreground handoff so both surfaces produce the same claude
+    invocation."""
+    args = ["--dangerously-skip-permissions"]
+    if remote_control:
+        args.append("--remote-control")
+    if resume:
+        args.append("--continue")
+    return args
+
+
+def _build_split_pane_argv(docker_argv: list[str]) -> list[str]:
+    """Pure helper: wrap a docker-exec argv with `tmux split-window
+    -h -P -F '#{pane_id}'`. The `-P -F` combo tells tmux to print
+    the new pane's id on stdout so we can track it for later
+    `respawn-pane` calls."""
+    return [
+        "tmux", "split-window", "-h",
+        "-P", "-F", "#{pane_id}",
+        *docker_argv,
+    ]
+
+
+def _build_respawn_pane_argv(pane_id: str, docker_argv: list[str]) -> list[str]:
+    """Pure helper: wrap a docker-exec argv with `tmux respawn-pane
+    -k -t <pane_id>`. `-k` kills the existing process in the pane
+    before respawning."""
+    return ["tmux", "respawn-pane", "-k", "-t", pane_id, *docker_argv]
+
+
+def _tmux_split_pane_create(bottle, *, resume: bool) -> str | None:
+    """Open a right pane via `tmux split-window -h`. Returns the
+    new pane's id on success, None on any failure (tmux missing,
+    nonzero exit, empty stdout)."""
+    docker_argv = bottle.claude_docker_argv(
+        _claude_runtime_args(resume=resume),
+    )
+    try:
+        result = subprocess.run(
+            _build_split_pane_argv(docker_argv),
+            capture_output=True, text=True, check=False,
+        )
+    except FileNotFoundError:
+        return None
+    if result.returncode != 0:
+        return None
+    pane_id = (result.stdout or "").strip()
+    return pane_id or None
+
+
+def _tmux_respawn_pane(pane_id: str, bottle, *, resume: bool) -> bool:
+    """Replace the content of `pane_id` with a fresh claude
+    session via `tmux respawn-pane -k`. Returns True on success."""
+    docker_argv = bottle.claude_docker_argv(
+        _claude_runtime_args(resume=resume),
+    )
+    try:
+        result = subprocess.run(
+            _build_respawn_pane_argv(pane_id, docker_argv),
+            capture_output=True, text=True, check=False,
+        )
+    except FileNotFoundError:
+        return False
+    return result.returncode == 0
+
+
+def _tmux_pane_exists(pane_id: str) -> bool:
+    """True when `pane_id` appears in `tmux list-panes -F
+    '#{pane_id}'`. Used before respawn-pane to detect a pane the
+    operator manually closed via `C-b x`; an absent pane id means
+    we need to create a fresh split."""
+    try:
+        result = subprocess.run(
+            ["tmux", "list-panes", "-F", "#{pane_id}"],
+            capture_output=True, text=True, check=False,
+        )
+    except FileNotFoundError:
+        return False
+    if result.returncode != 0:
+        return False
+    return pane_id in (result.stdout or "").splitlines()
+
+
+def _attach_via_handoff(
     stdscr: "curses._CursesWindow",
     bottle,
     slug: str,
+    *,
+    resume: bool,
 ) -> str:
-    """Handoff: curses.endwin → attach claude → curses refresh.
-    Re-entry into a running bottle from the dashboard always
-    passes `--resume` so claude picks up its prior conversation
-    rather than starting a fresh transcript — the first attach
-    happens via `_new_agent_flow` which sets up the transcript
-    in the first place. Returns the post-attach status-line
-    message."""
+    """Foreground handoff: curses.endwin → attach claude → curses
+    refresh. The non-tmux path (and the failover from
+    `_attach_in_tmux` when tmux misbehaves)."""
     curses.endwin()
     try:
-        exit_code = attach_claude(bottle, remote_control=False, resume=True)
+        exit_code = attach_claude(
+            bottle, remote_control=False, resume=resume,
+        )
     except BaseException:
         stdscr.refresh()
         raise
     stdscr.refresh()
     return f"[{slug}] claude session ended (exit {exit_code})"
+
+
+def _attach_in_tmux(
+    stdscr: "curses._CursesWindow",
+    bottle,
+    slug: str,
+    *,
+    resume: bool,
+    tmux_state: dict,
+) -> str:
+    """Spawn / respawn the right pane with `bottle`'s claude
+    session. Mutates `tmux_state` ({'pane_id': str|None,
+    'slug': str|None}) so the main loop can track which slug is
+    in the right pane (used by the agents-pane indicator + the
+    explicit-stop hook in chunk 4)."""
+    pane_id = tmux_state.get("pane_id")
+    if pane_id and _tmux_pane_exists(pane_id):
+        if _tmux_respawn_pane(pane_id, bottle, resume=resume):
+            tmux_state["slug"] = slug
+            return f"[{slug}] in right pane"
+        # respawn failed — fall through to create a fresh split.
+        tmux_state["pane_id"] = None
+
+    new_pane_id = _tmux_split_pane_create(bottle, resume=resume)
+    if new_pane_id is None:
+        # tmux failed (missing binary, server died, size error).
+        # One status-line failover to the curses handoff so the
+        # operator still gets a session.
+        return _attach_via_handoff(stdscr, bottle, slug, resume=resume)
+    tmux_state["pane_id"] = new_pane_id
+    tmux_state["slug"] = slug
+    return f"[{slug}] in right pane"
+
+
+def _attach_to_bottle(
+    stdscr: "curses._CursesWindow",
+    bottle,
+    slug: str,
+    *,
+    tmux_state: dict | None = None,
+) -> str:
+    """Re-attach to a running bottle. Inside tmux (`$TMUX` set +
+    `tmux_state` provided) the claude session opens in the
+    right pane (created on first attach, respawned on
+    subsequent). Outside tmux it's a curses-endwin handoff that
+    blocks until the operator exits claude. Re-attach always uses
+    `--continue` — first attach happens via `_new_agent_flow`."""
+    if _in_tmux() and tmux_state is not None:
+        return _attach_in_tmux(
+            stdscr, bottle, slug, resume=True, tmux_state=tmux_state,
+        )
+    return _attach_via_handoff(stdscr, bottle, slug, resume=True)
 
 
 def _new_agent_flow(
@@ -912,9 +1066,14 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
     # PRD 0020: bottles spun up from inside this dashboard session.
     # Each entry: slug -> (context-manager, Bottle handle, identity).
     # We hold the context manager so chunk 4's `x` can call __exit__
-    # on it; chunk 5 quit-cleanup intentionally does NOT iterate this
-    # dict (the user wants quit to leave bottles running).
+    # on it; quit (`q`) intentionally does NOT iterate this dict
+    # (the user wants quit to leave bottles running).
     bottles: dict[str, tuple] = {}
+    # PRD 0021: tmux split-pane state. Empty when not in tmux or
+    # before the first attach. Mutated by `_attach_in_tmux` /
+    # `_stop_bottle_flow` to track which bottle's session is in
+    # the right pane right now.
+    tmux_state: dict = {"pane_id": None, "slug": None}
     # Manifest is loaded lazily on first `n` so the dashboard
     # doesn't fail to start in a directory with no manifest (e.g.,
     # when the operator is purely watching pre-existing bottles).
@@ -1010,7 +1169,9 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
                 else:
                     manifest = manifest_cache[0]  # may be None; that's ok
                     bottle, _hint = _bottle_for_slug(target.slug, bottles, manifest)
-                    status_line = _attach_to_bottle(stdscr, bottle, target.slug)
+                    status_line = _attach_to_bottle(
+                        stdscr, bottle, target.slug, tmux_state=tmux_state,
+                    )
             elif key == ord("x"):
                 target = _selected_agent(focus, agents, selected_agent)
                 if target is None:

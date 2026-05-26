@@ -379,6 +379,65 @@ class TestBottleForSlug(unittest.TestCase):
         self.assertEqual("", hint)
 
 
+class TestTmuxPaneArgvBuilders(unittest.TestCase):
+    """Pure argv builders for the tmux split-pane integration
+    (PRD 0021 chunk 2). The subprocess invocation itself is
+    environment-dependent; here we lock the wrapping shape so
+    a regression surfaces in CI without needing a real tmux."""
+
+    DOCKER_ARGV = [
+        "docker", "exec", "-it",
+        "claude-bottle-dev-abc",
+        "claude", "--dangerously-skip-permissions", "--continue",
+    ]
+
+    def test_split_pane_argv_horizontal_with_pane_id_capture(self):
+        argv = dashboard._build_split_pane_argv(self.DOCKER_ARGV)
+        self.assertEqual(
+            ["tmux", "split-window", "-h",
+             "-P", "-F", "#{pane_id}",
+             *self.DOCKER_ARGV],
+            argv,
+        )
+
+    def test_respawn_pane_argv_kills_existing_process(self):
+        argv = dashboard._build_respawn_pane_argv("%12", self.DOCKER_ARGV)
+        self.assertEqual(
+            ["tmux", "respawn-pane", "-k", "-t", "%12", *self.DOCKER_ARGV],
+            argv,
+        )
+
+    def test_respawn_pane_argv_threads_pane_id_unmodified(self):
+        # Pane ids contain `%`; make sure we pass them straight
+        # through to `-t` without quoting or substitution surprises.
+        argv = dashboard._build_respawn_pane_argv("%abc.123", ["sh"])
+        self.assertIn("%abc.123", argv)
+
+
+class TestClaudeRuntimeArgs(unittest.TestCase):
+    """The argv passed to `bottle.claude_docker_argv` on each
+    attach. Locked here so the tmux + foreground paths build
+    identical claude invocations."""
+
+    def test_default_skip_permissions_only(self):
+        self.assertEqual(
+            ["--dangerously-skip-permissions"],
+            dashboard._claude_runtime_args(resume=False),
+        )
+
+    def test_resume_appends_continue(self):
+        self.assertEqual(
+            ["--dangerously-skip-permissions", "--continue"],
+            dashboard._claude_runtime_args(resume=True),
+        )
+
+    def test_remote_control(self):
+        args = dashboard._claude_runtime_args(
+            resume=False, remote_control=True,
+        )
+        self.assertIn("--remote-control", args)
+
+
 class TestStopBottleFlow(unittest.TestCase):
     """Explicit per-bottle stop (PRD 0020 chunk 4). The non-owned
     path is the one safe to test without curses + docker — the
