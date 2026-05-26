@@ -357,6 +357,28 @@ class TestSelectedAgent(unittest.TestCase):
         )
 
 
+class TestBottleForSlug(unittest.TestCase):
+    """Re-attach target resolution (PRD 0020 chunk 3). Dashboard-
+    owned bottles return the stored handle as-is; non-owned bottles
+    get a synthesized DockerBottle backed by the slug-derived
+    container name."""
+
+    def test_owned_bottle_returns_held_handle(self):
+        sentinel = object()
+        bottles = {"dev-abc": (None, sentinel, "dev-abc")}
+        bottle, _ = dashboard._bottle_for_slug("dev-abc", bottles, None)
+        self.assertIs(sentinel, bottle)
+
+    def test_unowned_synthesizes_docker_bottle(self):
+        bottle, _ = dashboard._bottle_for_slug("dev-xyz", {}, None)
+        # The synth wraps the slug-derived container name.
+        self.assertEqual("claude-bottle-dev-xyz", bottle.name)
+
+    def test_unowned_without_manifest_omits_prompt_path(self):
+        bottle, hint = dashboard._bottle_for_slug("dev-xyz", {}, None)
+        self.assertEqual("", hint)
+
+
 class TestOperatorEditFlowGuards(_FakeHomeMixin, unittest.TestCase):
     """Chunk-4 contract: the edit flow refuses when the selected
     agent doesn't have the required sidecar running. The discover-
