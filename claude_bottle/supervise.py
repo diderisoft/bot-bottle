@@ -5,7 +5,7 @@ queue/audit support. The sidecar (claude_bottle.supervise_server)
 sits on the bottle's internal network and exposes three MCP tools the
 agent calls when it hits a stuck-recovery category:
 
-  * egress-proxy-block — agent proposes a new routes.yaml
+  * egress-block — agent proposes a new routes.yaml
   * pipelock-block     — agent proposes a new pipelock allowlist
   * capability-block   — agent proposes a new agent Dockerfile
 
@@ -49,33 +49,33 @@ from pathlib import Path
 SUPERVISE_HOSTNAME = "supervise"
 SUPERVISE_PORT = 9100
 
-TOOL_EGRESS_PROXY_BLOCK = "egress-proxy-block"
+TOOL_EGRESS_BLOCK = "egress-block"
 TOOL_PIPELOCK_BLOCK = "pipelock-block"
 TOOL_CAPABILITY_BLOCK = "capability-block"
-TOOL_LIST_EGRESS_PROXY_ROUTES = "list-egress-proxy-routes"
+TOOL_LIST_EGRESS_ROUTES = "list-egress-routes"
 TOOLS: tuple[str, ...] = (
-    TOOL_EGRESS_PROXY_BLOCK,
+    TOOL_EGRESS_BLOCK,
     TOOL_PIPELOCK_BLOCK,
     TOOL_CAPABILITY_BLOCK,
-    TOOL_LIST_EGRESS_PROXY_ROUTES,
+    TOOL_LIST_EGRESS_ROUTES,
 )
 
-# The supervise sidecar uses these to query egress-proxy's
-# introspection endpoint for the `list-egress-proxy-routes` MCP
-# tool. The hostname + port match egress-proxy's docker network
-# alias + listen port (see claude_bottle.egress_proxy.EGRESS_PROXY_HOSTNAME
-# and backend.docker.egress_proxy.EGRESS_PROXY_PORT — the values
+# The supervise sidecar uses these to query egress's
+# introspection endpoint for the `list-egress-routes` MCP
+# tool. The hostname + port match egress's docker network
+# alias + listen port (see claude_bottle.egress.EGRESS_HOSTNAME
+# and backend.docker.egress.EGRESS_PORT — the values
 # are inlined here so the in-container supervise_server doesn't
-# need to import the egress-proxy package).
-EGRESS_PROXY_FORWARD_PROXY = "http://egress-proxy:9099"
-EGRESS_PROXY_INTROSPECT_URL = "http://_egress-proxy.local/allowlist"
+# need to import the egress package).
+EGRESS_FORWARD_PROXY = "http://egress:9099"
+EGRESS_INTROSPECT_URL = "http://_egress.local/allowlist"
 
 # capability-block has no on-disk config the operator edits in place
 # (the Dockerfile is rebuilt, not patched), so it has no audit log
 # here — those changes are captured by git history + the rebuild
 # record laid down in PRD 0016.
 COMPONENT_FOR_TOOL: dict[str, str] = {
-    TOOL_EGRESS_PROXY_BLOCK: "egress-proxy",
+    TOOL_EGRESS_BLOCK: "egress",
     TOOL_PIPELOCK_BLOCK: "pipelock",
 }
 
@@ -440,8 +440,8 @@ def sha256_hex(content: str) -> str:
 # Dockerfile and propose modifications.
 #
 # routes.yaml + allowlist used to live here too; PRD 0017 chunk 3
-# moved them behind the `list-egress-proxy-routes` MCP tool (live
-# state from egress-proxy's introspection endpoint) so the agent
+# moved them behind the `list-egress-routes` MCP tool (live
+# state from egress's introspection endpoint) so the agent
 # always sees current data rather than a launch-time snapshot.
 CURRENT_CONFIG_DOCKERFILE = "Dockerfile"
 
@@ -455,7 +455,7 @@ class SupervisePlan:
     directory bind-mounted (read-only) into the *agent* container
     at /etc/claude-bottle/current-config — currently holds only the
     Dockerfile snapshot (routes.yaml + allowlist moved to the
-    `list-egress-proxy-routes` MCP tool). `internal_network` is
+    `list-egress-routes` MCP tool). `internal_network` is
     empty at prepare time; the backend's launch step fills it via
     dataclasses.replace before calling .start."""
 
@@ -569,11 +569,11 @@ __all__ = [
     "Supervise",
     "SupervisePlan",
     "TOOLS",
-    "EGRESS_PROXY_FORWARD_PROXY",
-    "EGRESS_PROXY_INTROSPECT_URL",
+    "EGRESS_FORWARD_PROXY",
+    "EGRESS_INTROSPECT_URL",
     "TOOL_CAPABILITY_BLOCK",
-    "TOOL_EGRESS_PROXY_BLOCK",
-    "TOOL_LIST_EGRESS_PROXY_ROUTES",
+    "TOOL_EGRESS_BLOCK",
+    "TOOL_LIST_EGRESS_ROUTES",
     "TOOL_PIPELOCK_BLOCK",
     "archive_proposal",
     "audit_dir",

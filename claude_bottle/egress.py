@@ -10,16 +10,16 @@ owns three jobs:
   3. Inject `Authorization` headers for routes that declare an
      `auth` block, the same way cred-proxy does today.
 
-This module defines the abstract proxy (`EgressProxy`), its plan
-dataclass (`EgressProxyPlan`), and the resolved per-route shape
-(`EgressProxyRoute`). The sidecar's start/stop lifecycle is backend-
+This module defines the abstract proxy (`Egress`), its plan
+dataclass (`EgressPlan`), and the resolved per-route shape
+(`EgressRoute`). The sidecar's start/stop lifecycle is backend-
 specific and lives on concrete subclasses (see
-`claude_bottle/backend/docker/egress_proxy.py`).
+`claude_bottle/backend/docker/egress.py`).
 
 Chunks 1+2 of the PRD: this module + the mitmproxy addon + the Docker
 lifecycle are wired into the agent's `HTTP_PROXY` path; cred-proxy
 has been removed. Chunk 3 retargets the cred-proxy-block remediation
-flow (PRD 0014) at egress-proxy and renames the MCP tool.
+flow (PRD 0014) at egress and renames the MCP tool.
 """
 
 from __future__ import annotations
@@ -33,23 +33,23 @@ from .log import die
 from .manifest import Bottle
 
 
-# DNS name agents will dial for the per-bottle egress-proxy sidecar.
+# DNS name agents will dial for the per-bottle egress sidecar.
 # Backend-agnostic by contract: every concrete backend (Docker today,
 # others later) attaches this name to its sidecar on the bottle's
 # internal network. The agent's `HTTP_PROXY` env var resolves to
-# `http://egress-proxy:<port>` once chunk 2 cuts over.
-EGRESS_PROXY_HOSTNAME = "egress-proxy"
+# `http://egress:<port>` once chunk 2 cuts over.
+EGRESS_HOSTNAME = "egress"
 
 # In-container path the addon reads. Pre-created in
-# `Dockerfile.egress-proxy` so `docker cp` can drop the file directly.
+# `Dockerfile.egress` so `docker cp` can drop the file directly.
 # `.yaml` extension per PRD 0017 — content is JSON (valid YAML) so
 # both sides can use stdlib `json`.
-EGRESS_PROXY_ROUTES_IN_CONTAINER = "/etc/egress-proxy/routes.yaml"
+EGRESS_ROUTES_IN_CONTAINER = "/etc/egress/routes.yaml"
 
 
 @dataclass(frozen=True)
-class EgressProxyRoute:
-    """One resolved route on the egress-proxy sidecar.
+class EgressRoute:
+    """One resolved route on the egress sidecar.
 
     `host` matches the request's hostname (case-insensitive). The
     optional `path_allowlist` constrains the URL path; empty tuple
@@ -58,14 +58,14 @@ class EgressProxyRoute:
     strings mean "no auth injection" (the manifest's nested `auth`
     block was omitted).
 
-    `token_env` is the env-var slot inside the egress-proxy container
-    (e.g. `EGRESS_PROXY_TOKEN_0`); `token_ref` is the host env var
+    `token_env` is the env-var slot inside the egress container
+    (e.g. `EGRESS_TOKEN_0`); `token_ref` is the host env var
     the CLI reads at launch and forwards into the container's environ
     under `token_env`. Routes that share a `token_ref` coalesce to
     one `token_env` slot.
 
     `roles` carries the manifest route's optional role markers (see
-    `manifest.EGRESS_PROXY_ROLES`). The launch step reads these for
+    `manifest.EGRESS_ROLES`). The launch step reads these for
     side effects like the claude-code OAuth placeholder env."""
 
     host: str
@@ -77,8 +77,8 @@ class EgressProxyRoute:
 
 
 @dataclass(frozen=True)
-class EgressProxyPlan:
-    """Output of EgressProxy.prepare; consumed by .start.
+class EgressPlan:
+    """Output of Egress.prepare; consumed by .start.
 
     The slug + routes_path + routes + token_env_map fields are
     filled at prepare time (host-side, side-effect-free on docker).
@@ -89,13 +89,13 @@ class EgressProxyPlan:
 
     `token_env_map` is `{<token_env in container>: <token_ref on host>}`.
     The backend's start step reads `os.environ[token_ref]` and
-    forwards the value into the egress-proxy container's environ
+    forwards the value into the egress container's environ
     under `token_env`. The plan itself never holds token values —
     secrets never land in a dataclass that might be logged.
 
     `mitmproxy_ca_host_path` is the host path of the per-bottle
-    egress-proxy CA (single PEM with cert+key concatenated) minted
-    by `egress_proxy_tls_init`. `.start` docker-cps it into the
+    egress CA (single PEM with cert+key concatenated) minted
+    by `egress_tls_init`. `.start` docker-cps it into the
     sidecar at `~/.mitmproxy/mitmproxy-ca.pem` — mitmproxy reads
     that file at boot to mint per-host leaf certs.
 
@@ -107,17 +107,17 @@ class EgressProxyPlan:
     `pipelock_ca_host_path` is the host path of the pipelock CA
     (cert only). `.start` docker-cps it into the sidecar so the
     proxy's outbound HTTPS client trusts pipelock's MITM on the
-    egress-proxy → upstream leg.
+    egress → upstream leg.
 
-    `pipelock_proxy_url` is the URL egress-proxy sets as `HTTPS_PROXY`
+    `pipelock_proxy_url` is the URL egress sets as `HTTPS_PROXY`
     in its environ so outbound HTTPS traverses pipelock — keeping
     pipelock's hostname allowlist + DLP body scanner on the
-    egress-proxy → upstream leg.
+    egress → upstream leg.
     """
 
     slug: str
     routes_path: Path
-    routes: tuple[EgressProxyRoute, ...]
+    routes: tuple[EgressRoute, ...]
     token_env_map: dict[str, str]
     internal_network: str = ""
     egress_network: str = ""
@@ -128,11 +128,11 @@ class EgressProxyPlan:
 
 
 # Hosts the agent needs by default for claude-code itself. Folded
-# into every bottle's egress-proxy routes table as bare-pass entries
+# into every bottle's egress routes table as bare-pass entries
 # (no auth, no path filter) so the agent reaches them without each
 # bottle having to opt in. Pipelock used to own this list; PRD 0017
-# moves it to egress-proxy because egress-proxy is the primary gate
-# now and pipelock's allowlist is mirrored from egress-proxy.
+# moves it to egress because egress is the primary gate
+# now and pipelock's allowlist is mirrored from egress.
 DEFAULT_ALLOWLIST: tuple[str, ...] = (
     "api.anthropic.com",
     "statsig.anthropic.com",
@@ -144,32 +144,32 @@ DEFAULT_ALLOWLIST: tuple[str, ...] = (
 )
 
 
-def egress_proxy_manifest_routes(
+def egress_manifest_routes(
     bottle: Bottle,
-) -> tuple[EgressProxyRoute, ...]:
+) -> tuple[EgressRoute, ...]:
     """Lift each `bottle.egress.routes[]` manifest entry into a
-    resolved EgressProxyRoute. Order is preserved so route lookup at
+    resolved EgressRoute. Order is preserved so route lookup at
     the proxy is stable.
 
     Token-env slots are assigned per distinct `token_ref`: the first
     authenticated route with `token_ref` "GH_PAT" gets
-    `EGRESS_PROXY_TOKEN_0`; a second route with the same `token_ref`
+    `EGRESS_TOKEN_0`; a second route with the same `token_ref`
     shares slot 0. Unauthenticated routes (`auth` omitted) contribute
     no slot.
 
     Does NOT include the folded-in DEFAULT_ALLOWLIST /
     bottle.egress.allowlist bare-pass entries — see
-    `egress_proxy_routes_for_bottle` for the effective set the
+    `egress_routes_for_bottle` for the effective set the
     addon enforces."""
-    out: list[EgressProxyRoute] = []
+    out: list[EgressRoute] = []
     slot_for_token: dict[str, str] = {}
     for r in bottle.egress.routes:
         if r.AuthScheme and r.TokenRef:
             token_env = slot_for_token.get(r.TokenRef)
             if token_env is None:
-                token_env = f"EGRESS_PROXY_TOKEN_{len(slot_for_token)}"
+                token_env = f"EGRESS_TOKEN_{len(slot_for_token)}"
                 slot_for_token[r.TokenRef] = token_env
-            out.append(EgressProxyRoute(
+            out.append(EgressRoute(
                 host=r.Host,
                 path_allowlist=r.PathAllowlist,
                 auth_scheme=r.AuthScheme,
@@ -178,7 +178,7 @@ def egress_proxy_manifest_routes(
                 roles=r.Role,
             ))
         else:
-            out.append(EgressProxyRoute(
+            out.append(EgressRoute(
                 host=r.Host,
                 path_allowlist=r.PathAllowlist,
                 roles=r.Role,
@@ -186,10 +186,10 @@ def egress_proxy_manifest_routes(
     return tuple(out)
 
 
-def egress_proxy_routes_for_bottle(
+def egress_routes_for_bottle(
     bottle: Bottle,
-) -> tuple[EgressProxyRoute, ...]:
-    """Effective egress-proxy routes: manifest routes followed by
+) -> tuple[EgressRoute, ...]:
+    """Effective egress routes: manifest routes followed by
     bare-pass entries for DEFAULT_ALLOWLIST hosts. This is what
     gets rendered into routes.yaml + what the addon enforces.
 
@@ -201,25 +201,25 @@ def egress_proxy_routes_for_bottle(
     DEFAULT_ALLOWLIST declare it directly in
     `bottle.egress.routes` as a bare-pass entry
     (`- host: <name>`). The legacy `bottle.egress.allowlist`
-    folding is gone — egress_proxy is the single allowlist surface."""
-    out: list[EgressProxyRoute] = list(egress_proxy_manifest_routes(bottle))
+    folding is gone — egress is the single allowlist surface."""
+    out: list[EgressRoute] = list(egress_manifest_routes(bottle))
     claimed: set[str] = {r.host.lower() for r in out}
     for host in DEFAULT_ALLOWLIST:
         if host.lower() not in claimed:
-            out.append(EgressProxyRoute(host=host))
+            out.append(EgressRoute(host=host))
             claimed.add(host.lower())
     return tuple(out)
 
 
-def egress_proxy_token_env_map(
-    routes: tuple[EgressProxyRoute, ...],
+def egress_token_env_map(
+    routes: tuple[EgressRoute, ...],
 ) -> dict[str, str]:
     """Collapse the route list into `{token_env: token_ref}` for the
     authenticated routes. Routes without `auth` contribute no entry.
 
     Conflict detection: two routes that share a `token_env` slot but
     name different `token_ref` host vars is a programming error in
-    `egress_proxy_routes_for_bottle`; surface it as a die rather than
+    `egress_routes_for_bottle`; surface it as a die rather than
     silently picking one."""
     out: dict[str, str] = {}
     for r in routes:
@@ -228,7 +228,7 @@ def egress_proxy_token_env_map(
         existing = out.get(r.token_env)
         if existing is not None and existing != r.token_ref:
             die(
-                f"egress-proxy plan conflict: {r.token_env} maps to both "
+                f"egress plan conflict: {r.token_env} maps to both "
                 f"{existing!r} and {r.token_ref!r}. Two routes sharing a "
                 f"token slot must reference the same host env var."
             )
@@ -236,8 +236,8 @@ def egress_proxy_token_env_map(
     return out
 
 
-def egress_proxy_render_routes(
-    routes: tuple[EgressProxyRoute, ...],
+def egress_render_routes(
+    routes: tuple[EgressRoute, ...],
 ) -> str:
     """Serialize the route table for the addon to read.
 
@@ -262,7 +262,7 @@ def egress_proxy_render_routes(
     return json.dumps(payload, indent=2, sort_keys=False) + "\n"
 
 
-def egress_proxy_resolve_token_values(
+def egress_resolve_token_values(
     token_env_map: dict[str, str],
     host_env: dict[str, str],
 ) -> dict[str, str]:
@@ -277,27 +277,27 @@ def egress_proxy_resolve_token_values(
         value = host_env.get(token_ref)
         if value is None:
             die(
-                f"egress-proxy: host env var '{token_ref}' is unset. Set it "
+                f"egress: host env var '{token_ref}' is unset. Set it "
                 f"before launching, or remove the corresponding auth block "
                 f"from bottle.egress.routes."
             )
         if not value:
             die(
-                f"egress-proxy: host env var '{token_ref}' is empty. The "
-                f"egress-proxy will not inject an empty token; set it to "
+                f"egress: host env var '{token_ref}' is empty. The "
+                f"egress will not inject an empty token; set it to "
                 f"the real value or remove the route's auth block."
             )
         out[token_env] = value
     return out
 
 
-class EgressProxy(ABC):
+class Egress(ABC):
     """The per-bottle egress proxy. Encapsulates the host-side prepare
     (route lift + routes.yaml render + token-env-map derivation); the
     sidecar's start/stop lifecycle is backend-specific and lives on
     concrete subclasses."""
 
-    def prepare(self, bottle: Bottle, slug: str, stage_dir: Path) -> EgressProxyPlan:
+    def prepare(self, bottle: Bottle, slug: str, stage_dir: Path) -> EgressPlan:
         """Lift `bottle.egress.routes` into resolved routes,
         render the routes file (mode 600) under `stage_dir`, and
         return the plan. Pure host-side, no docker subprocess. The
@@ -308,40 +308,40 @@ class EgressProxy(ABC):
         Returned plan is incomplete: the launch step must fill
         `internal_network` / `egress_network` / `pipelock_proxy_url`
         via `dataclasses.replace` before passing it to `.start`."""
-        routes = egress_proxy_routes_for_bottle(bottle)
-        routes_path = stage_dir / "egress_proxy_routes.yaml"
-        routes_path.write_text(egress_proxy_render_routes(routes))
+        routes = egress_routes_for_bottle(bottle)
+        routes_path = stage_dir / "egress_routes.yaml"
+        routes_path.write_text(egress_render_routes(routes))
         routes_path.chmod(0o600)
-        return EgressProxyPlan(
+        return EgressPlan(
             slug=slug,
             routes_path=routes_path,
             routes=routes,
-            token_env_map=egress_proxy_token_env_map(routes),
+            token_env_map=egress_token_env_map(routes),
         )
 
     @abstractmethod
-    def start(self, plan: EgressProxyPlan) -> str:
-        """Bring up the egress-proxy sidecar according to `plan`.
+    def start(self, plan: EgressPlan) -> str:
+        """Bring up the egress sidecar according to `plan`.
         Returns the target string identifying the running instance —
         the same value to pass to `.stop`. Backend-specific."""
 
     @abstractmethod
     def stop(self, target: str) -> None:
-        """Tear down the egress-proxy sidecar identified by `target`
+        """Tear down the egress sidecar identified by `target`
         (the value `.start` returned). Idempotent: a missing target
         is success. Backend-specific."""
 
 
 __all__ = [
     "DEFAULT_ALLOWLIST",
-    "EGRESS_PROXY_HOSTNAME",
-    "EGRESS_PROXY_ROUTES_IN_CONTAINER",
-    "EgressProxy",
-    "EgressProxyPlan",
-    "EgressProxyRoute",
-    "egress_proxy_manifest_routes",
-    "egress_proxy_render_routes",
-    "egress_proxy_resolve_token_values",
-    "egress_proxy_routes_for_bottle",
-    "egress_proxy_token_env_map",
+    "EGRESS_HOSTNAME",
+    "EGRESS_ROUTES_IN_CONTAINER",
+    "Egress",
+    "EgressPlan",
+    "EgressRoute",
+    "egress_manifest_routes",
+    "egress_render_routes",
+    "egress_resolve_token_values",
+    "egress_routes_for_bottle",
+    "egress_token_env_map",
 ]

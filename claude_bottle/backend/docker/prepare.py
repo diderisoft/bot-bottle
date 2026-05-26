@@ -19,7 +19,7 @@ from ...log import die
 from .. import BottleSpec
 from . import util as docker_mod
 from .bottle_plan import DockerBottlePlan
-from .egress_proxy import DockerEgressProxy, egress_proxy_container_name
+from .egress import DockerEgress, egress_container_name
 from .git_gate import DockerGitGate, git_gate_container_name
 from .bottle_state import (
     BottleMetadata,
@@ -40,7 +40,7 @@ def resolve_plan(
     stage_dir: Path,
     proxy: DockerPipelockProxy,
     git_gate: DockerGitGate,
-    egress_proxy: DockerEgressProxy,
+    egress: DockerEgress,
     supervise: DockerSupervise,
 ) -> DockerBottlePlan:
     """Resolve Docker-specific names and write scratch files. Trusts
@@ -122,14 +122,14 @@ def resolve_plan(
     # actionable hint. Fail fast here with a cleanup pointer instead.
     # Only probe sidecars this launch will actually try to create:
     # pipelock always; git-gate when bottle.git is non-empty;
-    # egress-proxy when bottle.egress.routes is non-empty.
+    # egress when bottle.egress.routes is non-empty.
     sidecar_probes: list[tuple[str, str]] = [
         ("pipelock", pipelock_container_name(slug)),
     ]
     if bottle.git:
         sidecar_probes.append(("git-gate", git_gate_container_name(slug)))
     if bottle.egress.routes:
-        sidecar_probes.append(("egress-proxy", egress_proxy_container_name(slug)))
+        sidecar_probes.append(("egress", egress_container_name(slug)))
     if bottle.supervise:
         sidecar_probes.append(("supervise", supervise_container_name(slug)))
     for label, sidecar_name in sidecar_probes:
@@ -148,7 +148,7 @@ def resolve_plan(
 
     proxy_plan = proxy.prepare(bottle, slug, stage_dir)
     git_gate_plan = git_gate.prepare(bottle, slug, stage_dir)
-    egress_proxy_plan = egress_proxy.prepare(bottle, slug, stage_dir)
+    egress_plan = egress.prepare(bottle, slug, stage_dir)
     supervise_plan = None
     if bottle.supervise:
         # Current Dockerfile for the agent image. Read from the repo
@@ -157,7 +157,7 @@ def resolve_plan(
         # is just a workspace copy).
         # (routes.yaml + pipelock allowlist used to land here too but
         # PRD 0017 chunk 3 moved them behind the
-        # `list-egress-proxy-routes` MCP tool so the agent gets live
+        # `list-egress-routes` MCP tool so the agent gets live
         # state rather than a launch-time snapshot.)
         dockerfile_path = Path(__file__).resolve().parent.parent.parent.parent / "Dockerfile"
         dockerfile_content = dockerfile_path.read_text() if dockerfile_path.is_file() else ""
@@ -170,22 +170,22 @@ def resolve_plan(
     # never lands on argv or in env_file) goes into one dict. Nothing
     # mutates the host os.environ.
     forwarded_env: dict[str, str] = dict(resolved.forwarded)
-    # When the bottle declares an egress-proxy route with the
+    # When the bottle declares an egress route with the
     # `claude_code_oauth` role marker, claude-code's outbound
-    # Authorization gets stripped + re-injected by egress-proxy. The
+    # Authorization gets stripped + re-injected by egress. The
     # agent's environ still needs *something* claude-code recognises
     # as a credential or it refuses to start; ship a non-secret
     # placeholder. The placeholder isn't any real token value, so
-    # leaking it would tell an attacker only that egress-proxy is in
+    # leaking it would tell an attacker only that egress is in
     # front. Manifest validation enforces singleton on this role.
     has_anthropic_auth = any(
         "claude_code_oauth" in r.roles
-        for r in egress_proxy_plan.routes
+        for r in egress_plan.routes
     )
     if has_anthropic_auth:
-        forwarded_env["CLAUDE_CODE_OAUTH_TOKEN"] = "egress-proxy-placeholder"
+        forwarded_env["CLAUDE_CODE_OAUTH_TOKEN"] = "egress-placeholder"
         # Belt-and-braces: turn off telemetry endpoints (statsig,
-        # error reporting) that egress-proxy can't gate by auth.
+        # error reporting) that egress can't gate by auth.
         forwarded_env.setdefault("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
         forwarded_env.setdefault("DISABLE_ERROR_REPORTING", "1")
     _write_env_file(resolved, env_file)
@@ -208,7 +208,7 @@ def resolve_plan(
         prompt_file=prompt_file,
         proxy_plan=proxy_plan,
         git_gate_plan=git_gate_plan,
-        egress_proxy_plan=egress_proxy_plan,
+        egress_plan=egress_plan,
         supervise_plan=supervise_plan,
         use_runsc=use_runsc,
     )

@@ -1,21 +1,21 @@
 """Host-side helper to apply a routes.yaml change to a running
-egress-proxy sidecar (PRD 0014 retargeted by PRD 0017 chunk 3).
+egress sidecar (PRD 0014 retargeted by PRD 0017 chunk 3).
 
 Used by the supervise dashboard when the operator approves an
-egress-proxy-block proposal (or runs the operator-initiated
+egress-block proposal (or runs the operator-initiated
 `routes edit <bottle>` verb). Fetches the current routes.yaml via
 `docker exec cat`, validates the new content, writes it into the
 sidecar via `docker cp`, then `docker kill --signal HUP` to make
 the addon reload without dropping connections.
 
 Also mirrors the new route hosts into pipelock's hostname allowlist
-so the downstream leg lets them through — egress-proxy enforces
+so the downstream leg lets them through — egress enforces
 the path-aware allowlist on the agent leg, pipelock enforces the
 hostname allowlist + DLP body scan on the upstream leg, and a
 host added to one must be in the other or the request 403s
 somewhere along the chain.
 
-Raises EgressProxyApplyError on any failure — the dashboard
+Raises EgressApplyError on any failure — the dashboard
 surfaces the message and keeps the proposal pending so the
 operator can retry.
 """
@@ -29,9 +29,9 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from ...egress_proxy import EGRESS_PROXY_ROUTES_IN_CONTAINER
-from ...egress_proxy_addon_core import load_routes
-from .egress_proxy import egress_proxy_container_name
+from ...egress import EGRESS_ROUTES_IN_CONTAINER
+from ...egress_addon_core import load_routes
+from .egress import egress_container_name
 from .pipelock_apply import (
     PipelockApplyError,
     apply_allowlist_change,
@@ -41,23 +41,23 @@ from .pipelock_apply import (
 )
 
 
-class EgressProxyApplyError(RuntimeError):
+class EgressApplyError(RuntimeError):
     """Raised when fetch / apply fails. Caller renders to the
     operator; does not crash the dashboard."""
 
 
 def fetch_current_routes(slug: str) -> str:
-    """Read the live routes.yaml from the running egress-proxy sidecar
+    """Read the live routes.yaml from the running egress sidecar
     for `slug`. Returns the file content as a string. Raises
-    EgressProxyApplyError if the sidecar isn't reachable or the read
+    EgressApplyError if the sidecar isn't reachable or the read
     fails."""
-    container = egress_proxy_container_name(slug)
+    container = egress_container_name(slug)
     r = subprocess.run(
-        ["docker", "exec", container, "cat", EGRESS_PROXY_ROUTES_IN_CONTAINER],
+        ["docker", "exec", container, "cat", EGRESS_ROUTES_IN_CONTAINER],
         capture_output=True, text=True, check=False,
     )
     if r.returncode != 0:
-        raise EgressProxyApplyError(
+        raise EgressApplyError(
             f"could not read routes.yaml from {container}: "
             f"{(r.stderr or '').strip() or 'container not running?'}"
         )
@@ -71,7 +71,7 @@ def validate_routes_content(content: str) -> None:
     try:
         load_routes(content)
     except ValueError as e:
-        raise EgressProxyApplyError(
+        raise EgressApplyError(
             f"proposed routes.yaml is not valid: {e}"
         ) from e
 
@@ -83,7 +83,7 @@ def _hosts_in_routes(content: str) -> list[str]:
     try:
         routes = load_routes(content)
     except ValueError as e:
-        raise EgressProxyApplyError(
+        raise EgressApplyError(
             f"proposed routes.yaml is not valid: {e}"
         ) from e
     return sorted({r.host for r in routes if r.host})
@@ -93,10 +93,10 @@ def _hosts_in_routes(content: str) -> list[str]:
 # `[A-Za-z0-9_.-]+`. Anything else (wildcards, IPv6 literals,
 # stray characters) is silently dropped from the mirror so the
 # pipelock apply doesn't fail parse before the new yaml is even
-# written. The dropped hosts stay on egress-proxy's route table —
+# written. The dropped hosts stay on egress's route table —
 # but the addon does exact-host match only, so they'll never
 # match anything either. (Wildcard host matching was removed —
-# see `match_route` in egress_proxy_addon_core for the rationale.)
+# see `match_route` in egress_addon_core for the rationale.)
 _PIPELOCK_HOST_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
@@ -110,10 +110,10 @@ def _mirror_hosts_to_pipelock(slug: str, hosts: list[str]) -> None:
     """Ensure every pipelock-compatible `hosts` entry is on
     pipelock's allowlist. Fetches pipelock's current allowlist,
     merges, re-applies. Hosts pipelock can't represent (wildcards,
-    etc.) are silently skipped — they stay live on egress-proxy
+    etc.) are silently skipped — they stay live on egress
     but aren't enforced at pipelock. No-op if every host is already
     present (apply still restarts pipelock if any host is new).
-    Raises EgressProxyApplyError on pipelock failures so the
+    Raises EgressApplyError on pipelock failures so the
     caller's diff/audit reflects the half-state."""
     safe_hosts = _pipelock_safe_hosts(hosts)
     try:
@@ -124,42 +124,42 @@ def _mirror_hosts_to_pipelock(slug: str, hosts: list[str]) -> None:
             return  # nothing to add
         apply_allowlist_change(slug, render_allowlist_content(merged))
     except PipelockApplyError as e:
-        # Mirror runs BEFORE the egress-proxy write, so egress-proxy
+        # Mirror runs BEFORE the egress write, so egress
         # is unchanged on this failure path. Report it as a
         # pipelock-side problem so the operator looks in the right
         # place; their `pipelock edit` flow can repair manually.
-        raise EgressProxyApplyError(
-            f"pipelock allowlist mirror failed (egress-proxy NOT "
+        raise EgressApplyError(
+            f"pipelock allowlist mirror failed (egress NOT "
             f"updated): {e}. Fix pipelock's allowlist manually with "
             f"`pipelock edit <bottle>` then retry the proposal."
         ) from e
 
 
 def apply_routes_change(slug: str, new_content: str) -> tuple[str, str]:
-    """Apply `new_content` to the egress-proxy sidecar for `slug`:
+    """Apply `new_content` to the egress sidecar for `slug`:
       1. Fetch current routes.yaml (for the before-diff).
       2. Validate the new content via the addon's own parser.
       3. Mirror the route hosts onto pipelock's allowlist (so the
          downstream hostname gate lets them through).
-      4. Write to a temp file, `docker cp` into the egress-proxy
+      4. Write to a temp file, `docker cp` into the egress
          sidecar.
       5. `docker kill --signal HUP` so the addon reloads.
 
-    Order matters: pipelock first, then egress-proxy. If the
-    pipelock step fails, egress-proxy hasn't been touched and the
-    old routes stay live. If the egress-proxy step fails after
+    Order matters: pipelock first, then egress. If the
+    pipelock step fails, egress hasn't been touched and the
+    old routes stay live. If the egress step fails after
     pipelock succeeded, pipelock has the host in its allowlist but
-    egress-proxy doesn't enforce it yet — harmless extra-permissive
-    state at pipelock, and a re-approval will land the egress-proxy
+    egress doesn't enforce it yet — harmless extra-permissive
+    state at pipelock, and a re-approval will land the egress
     side.
 
     Returns (before, after) where `after` == `new_content`. Raises
-    EgressProxyApplyError on any step."""
-    container = egress_proxy_container_name(slug)
+    EgressApplyError on any step."""
+    container = egress_container_name(slug)
     before = fetch_current_routes(slug)
     validate_routes_content(new_content)
 
-    # Pipelock mirror first — if it fails, egress-proxy stays intact
+    # Pipelock mirror first — if it fails, egress stays intact
     # and the operator gets a clear error about the half-state.
     _mirror_hosts_to_pipelock(slug, _hosts_in_routes(new_content))
 
@@ -180,11 +180,11 @@ def apply_routes_change(slug: str, new_content: str) -> tuple[str, str]:
         os.chmod(tmp_path, 0o644)
         cp = subprocess.run(
             ["docker", "cp", tmp_path,
-             f"{container}:{EGRESS_PROXY_ROUTES_IN_CONTAINER}"],
+             f"{container}:{EGRESS_ROUTES_IN_CONTAINER}"],
             capture_output=True, text=True, check=False,
         )
         if cp.returncode != 0:
-            raise EgressProxyApplyError(
+            raise EgressApplyError(
                 f"failed to copy routes.yaml into {container}: "
                 f"{(cp.stderr or '').strip()}"
             )
@@ -193,7 +193,7 @@ def apply_routes_change(slug: str, new_content: str) -> tuple[str, str]:
             capture_output=True, text=True, check=False,
         )
         if sig.returncode != 0:
-            raise EgressProxyApplyError(
+            raise EgressApplyError(
                 f"failed to SIGHUP {container}: "
                 f"{(sig.stderr or '').strip()}"
             )
@@ -228,18 +228,18 @@ def _merge_single_route(
     try:
         cfg = json.loads(current_yaml)
     except json.JSONDecodeError as e:
-        raise EgressProxyApplyError(
+        raise EgressApplyError(
             f"current routes.yaml is not valid JSON: {e}"
         ) from e
     routes = cfg.get("routes")
     if not isinstance(routes, list):
-        raise EgressProxyApplyError(
+        raise EgressApplyError(
             "current routes.yaml: 'routes' is not a list"
         )
 
     new_host = str(new_route.get("host", "")).lower()
     if not new_host:
-        raise EgressProxyApplyError(
+        raise EgressApplyError(
             "proposed route is missing 'host'"
         )
 
@@ -280,7 +280,7 @@ def _merge_single_route(
             })
             next_idx = len(existing_slots)
             entry["auth_scheme"] = str(auth["scheme"])
-            entry["token_env"] = f"EGRESS_PROXY_TOKEN_{next_idx}"
+            entry["token_env"] = f"EGRESS_TOKEN_{next_idx}"
             # NOTE: the addon reads token VALUES from its container's
             # environ keyed by token_env. A newly-added auth route at
             # runtime points at a slot that has no env value → the
@@ -295,18 +295,18 @@ def _merge_single_route(
 
 
 def add_route(slug: str, proposed_route_json: str) -> tuple[str, str]:
-    """Apply a single-route addition to the egress-proxy. Parses the
+    """Apply a single-route addition to the egress. Parses the
     agent's proposed route, fetches the current routes file, merges,
     and applies via `apply_routes_change`. Returns (before, after)
     full-file content for the audit log."""
     try:
         proposed = json.loads(proposed_route_json)
     except json.JSONDecodeError as e:
-        raise EgressProxyApplyError(
+        raise EgressApplyError(
             f"proposed route is not valid JSON: {e}"
         ) from e
     if not isinstance(proposed, dict):
-        raise EgressProxyApplyError(
+        raise EgressApplyError(
             "proposed route must be a JSON object"
         )
     current = fetch_current_routes(slug)
@@ -315,7 +315,7 @@ def add_route(slug: str, proposed_route_json: str) -> tuple[str, str]:
 
 
 __all__ = [
-    "EgressProxyApplyError",
+    "EgressApplyError",
     "add_route",
     "apply_routes_change",
     "fetch_current_routes",

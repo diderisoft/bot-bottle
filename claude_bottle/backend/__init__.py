@@ -231,7 +231,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
 
     def provision_ca(self, plan: PlanT, target: str) -> None:
         """Install the per-bottle CA into the agent's trust store so
-        the agent trusts the bumped CONNECT cert egress-proxy (was
+        the agent trusts the bumped CONNECT cert egress (was
         pipelock, pre-PRD-0017) presents. Default impl is a no-op so
         backends that don't yet support TLS interception (every backend
         except Docker today) aren't forced to implement it. The Docker

@@ -23,7 +23,7 @@ from . import prepare as _prepare
 from .bottle import DockerBottle
 from .bottle_cleanup_plan import DockerBottleCleanupPlan
 from .bottle_plan import DockerBottlePlan
-from .egress_proxy import DockerEgressProxy
+from .egress import DockerEgress
 from .git_gate import DockerGitGate
 from .pipelock import DockerPipelockProxy
 from .provision import ca as _ca
@@ -43,7 +43,7 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
     def __init__(self) -> None:
         self._proxy = DockerPipelockProxy()
         self._git_gate = DockerGitGate()
-        self._egress_proxy = DockerEgressProxy()
+        self._egress = DockerEgress()
         self._supervise = DockerSupervise()
 
     def _resolve_plan(self, spec: BottleSpec, *, stage_dir: Path) -> DockerBottlePlan:
@@ -52,7 +52,7 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
             stage_dir=stage_dir,
             proxy=self._proxy,
             git_gate=self._git_gate,
-            egress_proxy=self._egress_proxy,
+            egress=self._egress,
             supervise=self._supervise,
         )
 
@@ -62,7 +62,7 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
             plan,
             proxy=self._proxy,
             git_gate=self._git_gate,
-            egress_proxy=self._egress_proxy,
+            egress=self._egress,
             supervise=self._supervise,
             provision=self.provision,
         ) as bottle:

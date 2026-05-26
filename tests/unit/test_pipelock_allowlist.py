@@ -1,5 +1,5 @@
 """Unit: pipelock_effective_allowlist — pipelock's allowlist
-mirrors `egress_proxy_routes_for_bottle` (which folds in
+mirrors `egress_routes_for_bottle` (which folds in
 DEFAULT_ALLOWLIST). Git upstreams declared in `bottle.git` don't
 contribute; they flow through the per-agent git-gate (PRD 0008)."""
 
@@ -25,9 +25,9 @@ def _routes(routes):
 
 class TestEffectiveAllowlist(unittest.TestCase):
     def test_default_allowlist_present_without_any_manifest_routes(self):
-        # No egress_proxy routes declared → pipelock allowlist is
+        # No egress routes declared → pipelock allowlist is
         # just the baked DEFAULT_ALLOWLIST (folded in by
-        # egress_proxy_routes_for_bottle).
+        # egress_routes_for_bottle).
         eff = pipelock_effective_allowlist(_bottle({}))
         self.assertIn("api.anthropic.com", eff)
         self.assertIn("sentry.io", eff)
@@ -62,16 +62,16 @@ class TestAllowlistWithRoutes(unittest.TestCase):
             self.assertIn(default, eff)
         self.assertIn("x.example", eff)
 
-    def test_egress_proxy_hostname_NOT_in_pipelock_allowlist(self):
-        # The agent never dials egress-proxy via the proxy mechanism
+    def test_egress_hostname_NOT_in_pipelock_allowlist(self):
+        # The agent never dials egress via the proxy mechanism
         # — it IS the proxy. Pipelock receives upstream hostnames
-        # from egress-proxy's CONNECT requests, not the
-        # `egress-proxy` hostname itself.
+        # from egress's CONNECT requests, not the
+        # `egress` hostname itself.
         eff = pipelock_effective_allowlist(_bottle(_routes([
             {"host": "x.example",
              "auth": {"scheme": "Bearer", "token_ref": "T"}},
         ])))
-        self.assertNotIn("egress-proxy", eff)
+        self.assertNotIn("egress", eff)
 
     def test_supervise_hostname_auto_added_when_supervise_enabled(self):
         eff = pipelock_effective_allowlist(_bottle({"supervise": True}))
@@ -84,9 +84,9 @@ class TestAllowlistWithRoutes(unittest.TestCase):
         self.assertNotIn("supervise", eff_explicit)
 
     def test_path_allowlist_does_not_affect_pipelock_allowlist(self):
-        # path_allowlist is enforced by egress-proxy, not pipelock.
+        # path_allowlist is enforced by egress, not pipelock.
         # Pipelock only sees the upstream hostname; the path filter
-        # has already passed (or 403'd) at egress-proxy.
+        # has already passed (or 403'd) at egress.
         eff = pipelock_effective_allowlist(_bottle(_routes([
             {"host": "github.com", "path_allowlist": ["/x/", "/y/"]},
         ])))

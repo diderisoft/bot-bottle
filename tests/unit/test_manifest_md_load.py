@@ -31,7 +31,7 @@ _BOTTLE_DEV = """
         - host: example.com
     ---
 
-    The dev bottle. Anthropic OAuth via egress-proxy.
+    The dev bottle. Anthropic OAuth via egress.
 """
 
 _AGENT_IMPL = """

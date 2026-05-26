@@ -8,7 +8,7 @@ auth omission means unauthenticated."""
 import unittest
 
 from claude_bottle.log import Die
-from claude_bottle.manifest import EgressProxyRoute, Manifest
+from claude_bottle.manifest import EgressRoute, Manifest
 
 
 def _bottle(routes):
@@ -201,8 +201,8 @@ class TestRouteValidation(unittest.TestCase):
         b = _bottle([])
         self.assertEqual((), b.egress.routes)
 
-    def test_no_egress_proxy_block_means_empty(self):
-        # The bottle dataclass defaults to an empty EgressProxyConfig.
+    def test_no_egress_block_means_empty(self):
+        # The bottle dataclass defaults to an empty EgressConfig.
         b = Manifest.from_json_obj({
             "bottles": {"dev": {}},
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
@@ -211,7 +211,7 @@ class TestRouteValidation(unittest.TestCase):
 
 
 class TestConfigShape(unittest.TestCase):
-    def test_unknown_egress_proxy_key_rejected(self):
+    def test_unknown_egress_key_rejected(self):
         with self.assertRaises(Die):
             Manifest.from_json_obj({
                 "bottles": {"dev": {"egress": {"wat": []}}},

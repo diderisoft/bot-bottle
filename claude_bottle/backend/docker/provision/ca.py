@@ -3,16 +3,16 @@ store.
 
 Post-PRD-0017 the CA depends on the agent's HTTP_PROXY target:
 
-  - Bottle declares `egress_proxy.routes[]` → agent's HTTP_PROXY
-    points at egress-proxy; the cert the agent must trust is the
-    one egress-proxy mints leaf certs with (the egress-proxy CA).
-  - No egress_proxy routes → agent's HTTP_PROXY points straight at
+  - Bottle declares `egress.routes[]` → agent's HTTP_PROXY
+    points at egress; the cert the agent must trust is the
+    one egress mints leaf certs with (the egress CA).
+  - No egress routes → agent's HTTP_PROXY points straight at
     pipelock; the cert the agent must trust is pipelock's CA (the
     pre-cutover behavior).
 
 By the time this provisioner runs, the corresponding `tls_init`
 helper has generated the chosen CA under `plan.stage_dir`, and the
-sidecar (pipelock or egress-proxy) is up referencing the
+sidecar (pipelock or egress) is up referencing the
 in-container CA paths.
 
 Cert lands on Debian's standard source path
@@ -52,16 +52,16 @@ def _select_ca_cert(plan: DockerBottlePlan) -> tuple[Path, str]:
     matches the proxy the agent's HTTP_PROXY points at. Egress-proxy
     wins when the bottle declares any routes (it sits in front of
     pipelock); else pipelock."""
-    if plan.egress_proxy_plan.routes:
-        cert = plan.egress_proxy_plan.mitmproxy_ca_cert_only_host_path
+    if plan.egress_plan.routes:
+        cert = plan.egress_plan.mitmproxy_ca_cert_only_host_path
         if cert == Path() or not cert.is_file():
             from ....log import die
             die(
-                f"egress-proxy CA cert missing at {cert or '(empty)'}; "
-                f"launch must have called egress_proxy_tls_init and "
+                f"egress CA cert missing at {cert or '(empty)'}; "
+                f"launch must have called egress_tls_init and "
                 f"re-bound the plan before provision"
             )
-        return cert, "egress-proxy"
+        return cert, "egress"
     cert = plan.proxy_plan.ca_cert_host_path
     if not cert or not cert.is_file():
         from ....log import die

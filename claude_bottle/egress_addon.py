@@ -1,11 +1,11 @@
-"""mitmproxy addon entrypoint for the egress-proxy sidecar (PRD 0017).
+"""mitmproxy addon entrypoint for the egress sidecar (PRD 0017).
 
-Loaded by `mitmdump -s /app/egress_proxy_addon.py` inside the
-egress-proxy container. Wraps the pure logic from
-`egress_proxy_addon_core` with mitmproxy's HTTPFlow API:
+Loaded by `mitmdump -s /app/egress_addon.py` inside the
+egress container. Wraps the pure logic from
+`egress_addon_core` with mitmproxy's HTTPFlow API:
 
-  - At startup, read `EGRESS_PROXY_ROUTES` (default
-    `/etc/egress-proxy/routes.yaml`, JSON content) → routes table.
+  - At startup, read `EGRESS_ROUTES` (default
+    `/etc/egress/routes.yaml`, JSON content) → routes table.
   - SIGHUP re-reads the file and atomically swaps the in-memory
     table. A parse error keeps the old table in place — better to
     keep serving the old config than to leave the proxy with no
@@ -16,10 +16,10 @@ egress-proxy container. Wraps the pure logic from
 
 This file imports `mitmproxy` and is never imported on the host —
 mitmproxy is a container-only dependency. The host's tests target
-`egress_proxy_addon_core`.
+`egress_addon_core`.
 
-Dockerfile.egress-proxy copies both this file and
-`egress_proxy_addon_core.py` flat into `/app/`; the absolute import
+Dockerfile.egress copies both this file and
+`egress_addon_core.py` flat into `/app/`; the absolute import
 below works because mitmdump runs with `/app` on its sys.path. The
 parallel file in the package source tree (claude_bottle/) is the
 build input — not a module the host imports."""
@@ -35,32 +35,32 @@ from pathlib import Path
 
 from mitmproxy import http  # type: ignore[import-not-found]
 
-# Absolute import (NOT `from .egress_proxy_addon_core`) — the
+# Absolute import (NOT `from .egress_addon_core`) — the
 # container drops both files flat into /app/ so they are sibling
 # top-level modules to mitmdump's loader, not a package.
-from egress_proxy_addon_core import Route, decide, is_git_push_request, load_routes  # type: ignore[import-not-found]
+from egress_addon_core import Route, decide, is_git_push_request, load_routes  # type: ignore[import-not-found]
 
 
-DEFAULT_ROUTES_PATH = "/etc/egress-proxy/routes.yaml"
+DEFAULT_ROUTES_PATH = "/etc/egress/routes.yaml"
 
 # Magic hostname the addon recognises as an introspection target.
-# Requests through the proxy for `_egress-proxy.local/<path>` are
+# Requests through the proxy for `_egress.local/<path>` are
 # intercepted and answered with synthetic responses (the addon's
 # `request` hook sets `flow.response` before any upstream connection).
 # The hostname is not in DNS — only clients dialing through this
-# specific egress-proxy can reach it, and only via HTTP (no TLS).
-# Used by the supervise sidecar's `list-egress-proxy-routes` MCP
+# specific egress can reach it, and only via HTTP (no TLS).
+# Used by the supervise sidecar's `list-egress-routes` MCP
 # tool to surface the live route table to the agent.
-INTROSPECT_HOST = "_egress-proxy.local"
+INTROSPECT_HOST = "_egress.local"
 
 
-class EgressProxyAddon:
+class EgressAddon:
     """The mitmproxy addon. One instance per `mitmdump` process; the
     request hook is invoked on every CONNECT-decapsulated HTTP/HTTPS
     request the agent makes."""
 
     def __init__(self) -> None:
-        self.routes_path = os.environ.get("EGRESS_PROXY_ROUTES", DEFAULT_ROUTES_PATH)
+        self.routes_path = os.environ.get("EGRESS_ROUTES", DEFAULT_ROUTES_PATH)
         self.routes: tuple[Route, ...] = ()
         self._reload(initial=True)
         self._install_sighup()
@@ -72,7 +72,7 @@ class EgressProxyAddon:
         except (OSError, ValueError) as e:
             tag = "boot" if initial else "SIGHUP"
             sys.stderr.write(
-                f"egress-proxy: {tag} load failed: {e}\n"
+                f"egress: {tag} load failed: {e}\n"
             )
             if initial:
                 # No baseline to fall back on; serve nothing rather
@@ -82,7 +82,7 @@ class EgressProxyAddon:
             return
         self.routes = new_routes
         sys.stderr.write(
-            f"egress-proxy: loaded {len(self.routes)} route(s): "
+            f"egress: loaded {len(self.routes)} route(s): "
             f"{', '.join(r.host for r in self.routes)}\n"
         )
 
@@ -97,7 +97,7 @@ class EgressProxyAddon:
         signal.signal(signal.SIGHUP, handler)
 
     def _serve_introspection(self, flow: http.HTTPFlow, path: str) -> None:
-        """Synthesize a response for `_egress-proxy.local` requests.
+        """Synthesize a response for `_egress.local` requests.
         Currently supports `/allowlist` which returns the in-memory
         route table as JSON (host, path_allowlist, auth_scheme,
         token_env per route — no token VALUES, those live in the
@@ -114,7 +114,7 @@ class EgressProxyAddon:
             return
         flow.response = http.Response.make(
             404,
-            f"egress-proxy introspection: no such endpoint {path!r}".encode(),
+            f"egress introspection: no such endpoint {path!r}".encode(),
             {"Content-Type": "text/plain; charset=utf-8"},
         )
 
@@ -123,7 +123,7 @@ class EgressProxyAddon:
     def request(self, flow: http.HTTPFlow) -> None:
         request_path, _, query = flow.request.path.partition("?")
 
-        # Introspection: requests to the magic `_egress-proxy.local`
+        # Introspection: requests to the magic `_egress.local`
         # host are answered locally with a synthetic response. Check
         # before the strip-auth + route logic — these requests aren't
         # real upstream traffic, the agent isn't injecting auth, and
@@ -142,13 +142,13 @@ class EgressProxyAddon:
         # Universal HTTPS git-push block. Defense-in-depth: git-gate
         # (PRD 0008) is the only sanctioned outbound path for git
         # writes — its pre-receive runs gitleaks. Letting HTTPS push
-        # through egress-proxy + auth injection would route around
+        # through egress + auth injection would route around
         # that scan, so we 403 before any route logic.
         if is_git_push_request(request_path, query):
             flow.response = http.Response.make(
                 403,
                 (
-                    b"egress-proxy: git push over HTTPS is not supported; "
+                    b"egress: git push over HTTPS is not supported; "
                     b"use the bottle.git SSH path (gitleaks-scanned by "
                     b"git-gate's pre-receive hook)."
                 ),
@@ -175,4 +175,4 @@ class EgressProxyAddon:
             flow.request.headers["authorization"] = decision.inject_authorization
 
 
-addons = [EgressProxyAddon()]
+addons = [EgressAddon()]

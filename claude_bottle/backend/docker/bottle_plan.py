@@ -11,7 +11,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ...egress_proxy import EgressProxyPlan
+from ...egress import EgressPlan
 from ...git_gate import GitGatePlan
 from ...log import info
 from ...pipelock import PipelockProxyPlan
@@ -45,7 +45,7 @@ class DockerBottlePlan(BottlePlan):
     prompt_file: Path
     proxy_plan: PipelockProxyPlan
     git_gate_plan: GitGatePlan
-    egress_proxy_plan: EgressProxyPlan
+    egress_plan: EgressPlan
     # None when bottle.supervise is False. PRD 0013 supervise sidecar
     # is opt-in via the manifest's bottle.supervise field.
     supervise_plan: SupervisePlan | None
@@ -65,14 +65,14 @@ class DockerBottlePlan(BottlePlan):
         # --env-file) and forwarded env names (`-e NAME` with the
         # value arriving via subprocess env). The forwarded set holds
         # the OAuth token (CLAUDE_CODE_OAUTH_TOKEN) and any host-env
-        # interpolations from the manifest; egress-proxy holds
+        # interpolations from the manifest; egress holds
         # upstream tokens in its own environ, so no token forwarding
         # from the agent to the proxy is needed.
         env_names = sorted(set(bottle.env.keys()) | set(self.forwarded_env.keys()))
 
         def _multi(label: str, values: list[str]) -> None:
             """Print a label with N continuation-indented values. Used
-            for env / skills / git-gate / egress-proxy where one item
+            for env / skills / git-gate / egress where one item
             per line keeps the summary scannable."""
             if not values:
                 info(f"{label}: (none)")
@@ -95,11 +95,11 @@ class DockerBottlePlan(BottlePlan):
         if git_lines:
             _multi("  git gate      ", git_lines)
 
-        if self.egress_proxy_plan.routes:
+        if self.egress_plan.routes:
             egress_lines = []
-            for r in self.egress_proxy_plan.routes:
+            for r in self.egress_plan.routes:
                 auth = f" [auth:{r.auth_scheme}]" if r.auth_scheme else ""
                 egress_lines.append(f"{r.host}{auth}")
-            _multi("  egress-proxy  ", egress_lines)
+            _multi("  egress        ", egress_lines)
         print(file=sys.stderr)
 

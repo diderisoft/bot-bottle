@@ -1,6 +1,6 @@
 """Supervise sidecar HTTP server (PRD 0013).
 
-Per-bottle MCP server exposing three tools — `egress-proxy-block`,
+Per-bottle MCP server exposing three tools — `egress-block`,
 `pipelock-block`, `capability-block` — that the agent calls to
 propose config changes when stuck. Each tool call:
 
@@ -130,9 +130,9 @@ def jsonrpc_error(request_id: object, code: int, message: str) -> bytes:
 
 TOOL_DEFINITIONS: list[dict[str, object]] = [
     {
-        "name": _sv.TOOL_EGRESS_PROXY_BLOCK,
+        "name": _sv.TOOL_EGRESS_BLOCK,
         "description": (
-            "Call when egress-proxy refused your HTTPS request — host "
+            "Call when egress refused your HTTPS request — host "
             "without a matching route, or a path outside the route's "
             "path_allowlist (typically a 403 from the proxy). Propose "
             "a SINGLE route to add: the host you need + (optionally) "
@@ -145,7 +145,7 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
             "ones (host stays single-route). The operator approves "
             "or rejects in the supervise TUI. On approval the "
             "supervisor writes the merged routes.yaml, SIGHUPs "
-            "egress-proxy (atomic swap, no dropped connections), and "
+            "egress (atomic swap, no dropped connections), and "
             "mirrors the host onto pipelock's allowlist for the "
             "downstream gate."
         ),
@@ -192,14 +192,14 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
         },
     },
     {
-        "name": _sv.TOOL_LIST_EGRESS_PROXY_ROUTES,
+        "name": _sv.TOOL_LIST_EGRESS_ROUTES,
         "description": (
-            "List the current egress-proxy route table — the bottle's "
+            "List the current egress route table — the bottle's "
             "primary egress allowlist. Returns JSON with one entry "
             "per allowed host, each carrying its path_allowlist (if "
             "any) and whether the proxy injects Authorization for "
             "the route. Use this before composing an "
-            "`egress-proxy-block` proposal so the new routes file "
+            "`egress-block` proposal so the new routes file "
             "extends the live one rather than replacing it. "
             "Pipelock's allowlist is a mirror of this set — every "
             "host listed here is also reachable through pipelock's "
@@ -218,10 +218,10 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
             "the failing host is genuinely missing from the bottle's "
             "allowlist (vs. blocked for DLP reasons — those need a "
             "different remediation). In practice pipelock's allowlist "
-            "is now a mirror of the egress-proxy routes set by "
-            "`egress-proxy-block`, so prefer that tool when you want "
+            "is now a mirror of the egress routes set by "
+            "`egress-block`, so prefer that tool when you want "
             "to add a host. This tool stays available for the rare "
-            "case where pipelock and egress-proxy have diverged. "
+            "case where pipelock and egress have diverged. "
             "Pass the full URL you tried to hit (scheme + host + "
             "path); the supervisor extracts the hostname and merges "
             "it into pipelock's allowlist. On approval the "
@@ -282,7 +282,7 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
 # tool-specific payload (stored in Proposal.proposed_file as
 # free-form text the apply path interprets per tool).
 #
-#   egress-proxy-block: JSON object describing a SINGLE route to
+#   egress-block: JSON object describing a SINGLE route to
 #                       add — `{host, path_allowlist?, auth?}`. The
 #                       supervisor merges this into the live routes
 #                       file at approval time.
@@ -295,7 +295,7 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
 #
 # Egress-proxy-block doesn't use a single "field name" → the JSON
 # payload is constructed from multiple structured input fields in
-# `handle_egress_proxy_block`. The mapping stays one-entry-per-tool
+# `handle_egress_block`. The mapping stays one-entry-per-tool
 # so the generic dispatch keeps working for the other two.
 PROPOSED_FILE_FIELD: dict[str, str] = {
     _sv.TOOL_PIPELOCK_BLOCK: "failed_url",
@@ -306,8 +306,8 @@ PROPOSED_FILE_FIELD: dict[str, str] = {
 # --- Validation ------------------------------------------------------------
 
 
-# Auth schemes accepted on egress-proxy-block proposals — match the
-# manifest-side EGRESS_PROXY_AUTH_SCHEMES.
+# Auth schemes accepted on egress-block proposals — match the
+# manifest-side EGRESS_AUTH_SCHEMES.
 _AUTH_SCHEMES = ("Bearer", "token")
 
 
@@ -344,10 +344,10 @@ def validate_proposed_file(tool: str, content: str) -> None:
 def _validate_and_bundle_egress_route(
     args: dict[str, object],
 ) -> str:
-    """Validate egress-proxy-block input fields and bundle them into
+    """Validate egress-block input fields and bundle them into
     a JSON string that becomes the Proposal.proposed_file. Raises
     _RpcError on bad input — the agent retries with a fixed shape."""
-    tool = _sv.TOOL_EGRESS_PROXY_BLOCK
+    tool = _sv.TOOL_EGRESS_BLOCK
     host = args.get("host")
     if not isinstance(host, str) or not host.strip():
         raise _RpcError(
@@ -426,32 +426,32 @@ def handle_tools_list(_params: dict[str, object]) -> dict[str, object]:
     return {"tools": TOOL_DEFINITIONS}
 
 
-def handle_list_egress_proxy_routes(
+def handle_list_egress_routes(
     _params: dict[str, object],
     _config: ServerConfig,
 ) -> dict[str, object]:
-    """Fetch the live egress-proxy route table via its
-    `_egress-proxy.local/allowlist` introspection endpoint. The
-    request goes through egress-proxy as a forward proxy; the
+    """Fetch the live egress route table via its
+    `_egress.local/allowlist` introspection endpoint. The
+    request goes through egress as a forward proxy; the
     addon recognises the magic host and synthesizes a response —
     no real upstream connection, no allowlist enforcement
     against the magic host. Returns the JSON payload as the
     tool's text content."""
     proxy_handler = urllib.request.ProxyHandler({
-        "http": _sv.EGRESS_PROXY_FORWARD_PROXY,
+        "http": _sv.EGRESS_FORWARD_PROXY,
     })
     opener = urllib.request.build_opener(proxy_handler)
     try:
-        with opener.open(_sv.EGRESS_PROXY_INTROSPECT_URL, timeout=5) as resp:
+        with opener.open(_sv.EGRESS_INTROSPECT_URL, timeout=5) as resp:
             body = resp.read().decode("utf-8")
     except (urllib.error.URLError, OSError) as e:
         return {
             "content": [{
                 "type": "text",
                 "text": (
-                    f"list-egress-proxy-routes: could not reach "
-                    f"{_sv.EGRESS_PROXY_INTROSPECT_URL!r} via "
-                    f"{_sv.EGRESS_PROXY_FORWARD_PROXY!r}: {e}"
+                    f"list-egress-routes: could not reach "
+                    f"{_sv.EGRESS_INTROSPECT_URL!r} via "
+                    f"{_sv.EGRESS_FORWARD_PROXY!r}: {e}"
                 ),
             }],
             "isError": True,
@@ -475,8 +475,8 @@ def handle_tools_call(
     name = params.get("name")
     if not isinstance(name, str):
         raise _RpcError(ERR_INVALID_PARAMS, "tools/call missing 'name'")
-    if name == _sv.TOOL_LIST_EGRESS_PROXY_ROUTES:
-        return handle_list_egress_proxy_routes(params.get("arguments", {}), config)
+    if name == _sv.TOOL_LIST_EGRESS_ROUTES:
+        return handle_list_egress_routes(params.get("arguments", {}), config)
 
     args_raw = params.get("arguments", {})
     if not isinstance(args_raw, dict):
@@ -489,9 +489,9 @@ def handle_tools_call(
             f"{name}: 'justification' is required and must be a non-empty string",
         )
 
-    if name == _sv.TOOL_EGRESS_PROXY_BLOCK:
+    if name == _sv.TOOL_EGRESS_BLOCK:
         # Structured input → JSON bundle on Proposal.proposed_file.
-        # The dashboard's apply step (egress_proxy_apply.add_route)
+        # The dashboard's apply step (egress_apply.add_route)
         # parses this JSON, fetches the current routes, merges in
         # the new one, and writes the merged file.
         proposed_file = _validate_and_bundle_egress_route(args_raw)
