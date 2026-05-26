@@ -29,7 +29,6 @@ from ..backend.docker.capability_apply import (
 )
 from ..backend.docker.bottle_state import read_metadata
 from ..backend.docker.compose import (
-    COMPOSE_PROJECT_PREFIX,
     compose_project_name,
     list_active_slugs,
 )
@@ -83,42 +82,6 @@ class QueuedProposal:
 
     proposal: Proposal
     queue_dir: Path
-
-
-def _discover_active_with_service(service: str) -> list[str]:
-    """Slugs of bottles whose compose project is up AND has the
-    named service container running. PRD 0018 chunk 5 grounded the
-    discovery on `docker compose ls` so all the dashboard verbs
-    agree with the cleanup CLI about what's running. A second
-    `docker ps` filter narrows by service label — a bottle without
-    egress routes has no egress service, and the operator-edit
-    flow shouldn't offer it for routes editing."""
-    slugs = list_active_slugs()
-    if not slugs:
-        return []
-    try:
-        r = subprocess.run(
-            [
-                "docker", "ps",
-                "--filter", f"label=com.docker.compose.service={service}",
-                "--filter", f"name=^{COMPOSE_PROJECT_PREFIX}{service}-",
-                "--format", "{{.Names}}",
-            ],
-            capture_output=True, text=True, check=False,
-        )
-    except FileNotFoundError:
-        return []
-    if r.returncode != 0:
-        return []
-    prefix = f"{COMPOSE_PROJECT_PREFIX}{service}-"
-    out: list[str] = []
-    for line in (r.stdout or "").splitlines():
-        line = line.strip()
-        if line.startswith(prefix):
-            slug = line[len(prefix):]
-            if slug in slugs:
-                out.append(slug)
-    return sorted(set(out))
 
 
 @dataclass(frozen=True)
@@ -194,16 +157,6 @@ def discover_active_agents() -> list[ActiveAgent]:
     return out
 
 
-def discover_egress_slugs() -> list[str]:
-    """Slugs of bottles with a running egress sidecar. Used by
-    the operator-initiated `routes edit` verb."""
-    return _discover_active_with_service("egress")
-
-
-def discover_pipelock_slugs() -> list[str]:
-    """Slugs of bottles with a running pipelock sidecar. Used by
-    the operator-initiated `pipelock edit` verb."""
-    return _discover_active_with_service("pipelock")
 
 
 def _approval_status(qp: QueuedProposal, verb: str) -> str:
@@ -582,11 +535,19 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
         if key == 9:  # Tab
             focus = PANE_AGENTS if focus == PANE_PROPOSALS else PANE_PROPOSALS
             continue
-        if key == ord("e"):
-            status_line = _operator_edit_routes_flow(stdscr)
-            continue
-        if key == ord("p"):
-            status_line = _operator_edit_allowlist_flow(stdscr)
+        if key in (ord("e"), ord("p")):
+            # PRD 0019 chunk 4: agent-scoped edits. Only fire when
+            # the agents pane is focused on a real selection;
+            # otherwise no-op with a status hint. The pre-PRD
+            # discover-and-prompt scaffolding is gone.
+            selected_obj = _selected_agent(focus, agents, selected_agent)
+            if selected_obj is None:
+                status_line = "no agent selected; Tab into the agents pane first"
+                continue
+            if key == ord("e"):
+                status_line = _operator_edit_routes_flow(stdscr, selected_obj)
+            else:
+                status_line = _operator_edit_allowlist_flow(stdscr, selected_obj)
             continue
 
         if focus == PANE_AGENTS:
@@ -737,7 +698,7 @@ def _render(
 
     footer = (
         "[Tab] switch pane  [j/k] move  [Enter] view  "
-        "[a/m/r] proposal  [e/p] edit  [q] quit"
+        "[a/m/r] proposal  [e/p] edit selected agent  [q] quit"
     )
     stdscr.hline(h - 2, 0, curses.ACS_HLINE, w)
     stdscr.addnstr(h - 1, 0, footer, w - 1, curses.A_DIM)
@@ -758,7 +719,7 @@ def _selection_status(
 ) -> str:
     """Status-line text for the idle state. Surfaces the agents-
     pane selection so the operator can tell what an agent-scoped
-    edit verb (chunk 4) would target."""
+    edit verb would target."""
     if focus != PANE_AGENTS:
         return ""
     if not agents:
@@ -766,6 +727,21 @@ def _selection_status(
     if 0 <= selected_agent < len(agents):
         return f"[selected: {agents[selected_agent].slug}]"
     return "[no agent selected]"
+
+
+def _selected_agent(
+    focus: str, agents: list[ActiveAgent], selected_agent: int,
+) -> ActiveAgent | None:
+    """The selected agent to scope `e` / `p` to, or None if no
+    selection is valid (proposals pane focused, no active agents,
+    or selection out of bounds)."""
+    if focus != PANE_AGENTS:
+        return None
+    if not agents:
+        return None
+    if 0 <= selected_agent < len(agents):
+        return agents[selected_agent]
+    return None
 
 
 def _format_agent_row(a: ActiveAgent, maxw: int) -> str:
@@ -923,27 +899,37 @@ def _suffix_for_tool(tool: str) -> str:
     return ".txt"
 
 
-def _operator_edit_routes_flow(stdscr: "curses._CursesWindow") -> str:
-    """Operator-initiated routes.yaml edit. Discover running
-    egress sidecars, pick one (single → use directly; multi →
-    prompt), fetch the current routes, open in $EDITOR, apply on
-    save. Returns a status-line message."""
+def _operator_edit_routes_flow(
+    stdscr: "curses._CursesWindow", agent: ActiveAgent,
+) -> str:
+    """Operator-initiated routes.yaml edit, scoped to `agent`.
+    PRD 0019: selection in the agents pane is the only way to
+    invoke this — the discover-and-prompt scaffolding is gone.
+    Refuses if the agent has no running egress sidecar."""
     return _operator_edit_flow(
         stdscr,
+        agent=agent,
+        required_service="egress",
         label="routes",
-        discover=discover_egress_slugs,
         fetch=fetch_current_routes,
         apply=operator_edit_routes,
         suffix=".yaml",
     )
 
 
-def _operator_edit_allowlist_flow(stdscr: "curses._CursesWindow") -> str:
-    """Operator-initiated pipelock allowlist edit."""
+def _operator_edit_allowlist_flow(
+    stdscr: "curses._CursesWindow", agent: ActiveAgent,
+) -> str:
+    """Operator-initiated pipelock allowlist edit, scoped to `agent`.
+    Pipelock is always present on an active bottle (no toggle in the
+    manifest) so the required-service check is belt-and-braces but
+    surfaces a clear error in the race-window case where compose up
+    is mid-flight."""
     return _operator_edit_flow(
         stdscr,
+        agent=agent,
+        required_service="pipelock",
         label="pipelock",
-        discover=discover_pipelock_slugs,
         fetch=fetch_current_allowlist,
         apply=operator_edit_allowlist,
         suffix=".txt",
@@ -953,27 +939,23 @@ def _operator_edit_allowlist_flow(stdscr: "curses._CursesWindow") -> str:
 def _operator_edit_flow(
     stdscr: "curses._CursesWindow",
     *,
+    agent: ActiveAgent,
+    required_service: str,
     label: str,
-    discover,
     fetch,
     apply,
     suffix: str,
 ) -> str:
     """Shared scaffolding for the routes-edit + pipelock-edit verbs.
-    `discover` returns running-sidecar slugs; `fetch(slug)` returns
-    the current operator-facing config; `apply(slug, new)` does the
-    write + restart/SIGHUP and writes the audit entry."""
-    slugs = discover()
-    if not slugs:
-        return f"no running {label} sidecars to edit"
-    if len(slugs) == 1:
-        slug = slugs[0]
-    else:
-        slug = _prompt(stdscr, f"bottle ({', '.join(slugs)}): ")
-        if not slug:
-            return f"{label} edit aborted"
-        if slug not in slugs:
-            return f"unknown bottle {slug!r}"
+    `fetch(slug)` returns the current operator-facing config;
+    `apply(slug, new)` does the write + restart/SIGHUP and writes
+    the audit entry."""
+    if required_service not in agent.services:
+        return (
+            f"[{agent.slug}] has no running {required_service} sidecar; "
+            f"nothing to edit"
+        )
+    slug = agent.slug
     try:
         current = fetch(slug)
     except ApplyError as e:
