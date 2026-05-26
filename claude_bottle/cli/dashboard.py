@@ -871,12 +871,14 @@ def _new_agent_flow(
     manifest: Manifest,
     bottles: dict,
     agents_now: list[ActiveAgent],
+    tmux_state: dict | None = None,
 ) -> str:
     """Open the picker, prepare + preflight (modal), launch
-    (enter the context manager but DON'T close it), handoff to
-    claude. Returns a status-line message for the dashboard footer.
-    The (cm, bottle) tuple lands in `bottles` keyed by slug; chunks
-    3/4 use it for re-attach and explicit stop."""
+    (enter the context manager but DON'T close it), then route
+    the first claude session into the right pane (in-tmux) or
+    foreground handoff (otherwise). Returns a status-line message
+    for the dashboard footer. The (cm, bottle) tuple lands in
+    `bottles` keyed by slug; chunk 4 uses it for explicit stop."""
     names = sorted(manifest.agents.keys())
     picked = _picker_modal(stdscr, names, _running_counts(bottles, agents_now))
     if picked is None:
@@ -915,8 +917,10 @@ def _new_agent_flow(
         backend = get_bottle_backend()
         # Launch step writes to stderr (image build, network create,
         # compose up). Get out of curses' way for the duration so
-        # the lines render cleanly. The handoff stays endwin'd until
-        # claude exits, then we refresh.
+        # the lines render cleanly; restore curses immediately
+        # after — the attach itself may stay out of curses (in-tmux
+        # spawns into the right pane and returns) or take over
+        # the terminal (foreground handoff).
         curses.endwin()
         try:
             cm = backend.launch(plan)
@@ -927,6 +931,18 @@ def _new_agent_flow(
             raise
         bottles[plan.slug] = (cm, bottle, identity)
 
+        if _in_tmux() and tmux_state is not None:
+            # Refresh curses BEFORE spawning into the right pane so
+            # the dashboard re-renders alongside the new claude
+            # session.
+            stdscr.refresh()
+            return _attach_in_tmux(
+                stdscr, bottle, plan.slug,
+                resume=False, tmux_state=tmux_state,
+            )
+
+        # Foreground handoff: claude owns the terminal until exit,
+        # then we restore curses.
         try:
             exit_code = attach_claude(bottle, remote_control=False)
             capture_session_state(identity, exit_code)
@@ -1137,7 +1153,9 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
             except Exception as e:
                 status_line = f"manifest load failed: {e}"
                 continue
-            status_line = _new_agent_flow(stdscr, manifest, bottles, agents)
+            status_line = _new_agent_flow(
+                stdscr, manifest, bottles, agents, tmux_state=tmux_state,
+            )
             continue
         if key in (ord("e"), ord("p")):
             # PRD 0019 chunk 4: agent-scoped edits. Only fire when
