@@ -24,6 +24,7 @@ from . import network as network_mod
 from . import util as docker_mod
 from .bottle import DockerBottle
 from .bottle_plan import DockerBottlePlan
+from .bottle_state import egress_state_dir, pipelock_state_dir
 from .egress import (
     DockerEgress,
     egress_tls_init,
@@ -105,9 +106,13 @@ def launch(
         # the .start steps docker-cp the files in. Private keys never
         # leave the host stage dir, which start.py's outer finally
         # `shutil.rmtree`s after the sidecars are torn down.
-        ca_cert_host, ca_key_host = pipelock_tls_init(plan.stage_dir)
+        # PRD 0018 chunk 2: CAs live under the bottle's state subdirs
+        # so chunk 3's compose bind-mounts have stable sources. The
+        # subdirs were created by prepare; tls_init makes the
+        # `pipelock-ca/` and `egress-ca/` children under them.
+        ca_cert_host, ca_key_host = pipelock_tls_init(pipelock_state_dir(plan.slug))
         egress_ca_host, egress_ca_cert_only = egress_tls_init(
-            plan.stage_dir,
+            egress_state_dir(plan.slug),
         )
 
         # Re-render the pipelock yaml with the SSRF allowlist now that

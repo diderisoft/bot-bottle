@@ -23,11 +23,16 @@ from .egress import DockerEgress, egress_container_name
 from .git_gate import DockerGitGate, git_gate_container_name
 from .bottle_state import (
     BottleMetadata,
+    agent_state_dir,
     bottle_identity,
     clear_preserve_marker,
+    egress_state_dir,
+    git_gate_state_dir,
     per_bottle_dockerfile,
     per_bottle_dockerfile_path,
     per_bottle_image_tag,
+    pipelock_state_dir,
+    supervise_state_dir,
     write_metadata,
 )
 from .pipelock import DockerPipelockProxy, pipelock_container_name
@@ -141,14 +146,30 @@ def resolve_plan(
                 f"retry."
             )
 
-    env_file = stage_dir / "agent.env"
-    prompt_file = stage_dir / "prompt.txt"
+    # PRD 0018 chunk 2: prepare-time scratch files live under
+    # ~/.claude-bottle/state/<slug>/<service>/ so chunk 3's compose
+    # bind-mounts can point at stable paths. The state subdirs are
+    # cleaned up by start.py's session-end teardown unless something
+    # explicitly preserves the state dir (capability-block, crash).
+    agent_dir = agent_state_dir(slug)
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    env_file = agent_dir / "agent.env"
+    prompt_file = agent_dir / "prompt.txt"
     prompt_file.write_text("")
     prompt_file.chmod(0o600)
 
-    proxy_plan = proxy.prepare(bottle, slug, stage_dir)
-    git_gate_plan = git_gate.prepare(bottle, slug, stage_dir)
-    egress_plan = egress.prepare(bottle, slug, stage_dir)
+    pipelock_dir = pipelock_state_dir(slug)
+    pipelock_dir.mkdir(parents=True, exist_ok=True)
+    proxy_plan = proxy.prepare(bottle, slug, pipelock_dir)
+
+    git_gate_dir = git_gate_state_dir(slug)
+    git_gate_dir.mkdir(parents=True, exist_ok=True)
+    git_gate_plan = git_gate.prepare(bottle, slug, git_gate_dir)
+
+    egress_dir = egress_state_dir(slug)
+    egress_dir.mkdir(parents=True, exist_ok=True)
+    egress_plan = egress.prepare(bottle, slug, egress_dir)
+
     supervise_plan = None
     if bottle.supervise:
         # Current Dockerfile for the agent image. Read from the repo
@@ -161,8 +182,10 @@ def resolve_plan(
         # state rather than a launch-time snapshot.)
         dockerfile_path = Path(__file__).resolve().parent.parent.parent.parent / "Dockerfile"
         dockerfile_content = dockerfile_path.read_text() if dockerfile_path.is_file() else ""
+        supervise_dir = supervise_state_dir(slug)
+        supervise_dir.mkdir(parents=True, exist_ok=True)
         supervise_plan = supervise.prepare(
-            slug, stage_dir,
+            slug, supervise_dir,
             dockerfile_content=dockerfile_content,
         )
     resolved = resolve_env(manifest, spec.agent_name)
