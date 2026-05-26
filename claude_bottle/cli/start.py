@@ -61,9 +61,11 @@ def _launch_bottle(
     prints / dry-runs / prompts as appropriate, brings the bottle up,
     attaches claude, and prints the resume hint on session end."""
     stage_dir = Path(tempfile.mkdtemp(prefix="claude-bottle-stage."))
+    identity = ""
     try:
         backend = get_bottle_backend()
         plan = backend.prepare(spec, stage_dir=stage_dir)
+        identity = _identity_from_plan(plan)
 
         plan.print(remote_control=remote_control)
 
@@ -78,7 +80,6 @@ def _launch_bottle(
             info("aborted by user")
             return 0
 
-        identity = _identity_from_plan(plan)
         with backend.launch(plan) as bottle:
             info(
                 "attaching interactive claude session "
@@ -101,14 +102,15 @@ def _launch_bottle(
             # capability-block path's prior snapshot isn't clobbered
             # when the container is already gone.
             _capture_session_state(identity, exit_code)
-        # Context exited → containers + networks gone. Now decide
-        # what to do with the per-bottle state dir on the host: any
-        # preserve marker (capability-block OR crash) keeps it; a
-        # clean exit cleans it up so ~/.claude-bottle/state/ doesn't
-        # accumulate per-launch debris.
-        _settle_state(identity)
         return 0
     finally:
+        # PRD 0018 chunk 2: prepare now writes the bottle's bind-mount
+        # sources under state/<slug>/. If we never reached the
+        # launch context (dry-run, preflight-N, prepare exception), or
+        # we did but nothing requested preservation, reap them along
+        # with everything else. _settle_state subsumes the prior
+        # post-launch settlement and the new pre-launch cleanup.
+        _settle_state(identity)
         shutil.rmtree(stage_dir, ignore_errors=True)
 
 

@@ -44,6 +44,15 @@ from . import util as docker_mod
 _STATE_SUBDIR = "state"
 _PER_BOTTLE_DOCKERFILE_NAME = "Dockerfile"
 _TRANSCRIPT_SUBDIR = "transcript"
+# Per-sidecar scratch subdirs. PRD 0018 chunk 2: bind-mount sources
+# live here so chunk 3's `docker compose up` can find them at stable
+# paths. Each sidecar's `prepare()` writes config + CAs into its own
+# subdir; the launch step is unchanged today (still `docker cp`).
+_PIPELOCK_SUBDIR = "pipelock"
+_EGRESS_SUBDIR = "egress"
+_GIT_GATE_SUBDIR = "git-gate"
+_SUPERVISE_SUBDIR = "supervise"
+_AGENT_SUBDIR = "agent"
 _METADATA_NAME = "metadata.json"
 # Live-config dir bind-mounted into the supervise sidecar (read-only).
 # Host's apply paths keep these files fresh so supervise's
@@ -201,6 +210,49 @@ def transcript_snapshot_dir(identity: str) -> Path:
     return bottle_state_dir(identity) / _TRANSCRIPT_SUBDIR
 
 
+# --- Per-sidecar scratch subdirs (PRD 0018 chunk 2) ------------------------
+#
+# Each sidecar gets its own subdir under the bottle's state dir for
+# bind-mount sources (config, CAs, hooks, etc.). Prepare-time writes
+# land here; the state dir's normal cleanup (`cleanup_state`) reaps
+# them along with everything else when the bottle session ends and
+# nothing requested preservation.
+
+
+def pipelock_state_dir(identity: str) -> Path:
+    """State subdir for the pipelock sidecar: pipelock.yaml + the
+    per-bottle CA cert/key. Bind-mount source from chunk 3 onward."""
+    return bottle_state_dir(identity) / _PIPELOCK_SUBDIR
+
+
+def egress_state_dir(identity: str) -> Path:
+    """State subdir for the egress sidecar: routes.yaml + the
+    per-bottle mitmproxy CA. Bind-mount source from chunk 3 onward."""
+    return bottle_state_dir(identity) / _EGRESS_SUBDIR
+
+
+def git_gate_state_dir(identity: str) -> Path:
+    """State subdir for the git-gate sidecar: entrypoint + hooks +
+    per-upstream known_hosts. Bind-mount source from chunk 3
+    onward."""
+    return bottle_state_dir(identity) / _GIT_GATE_SUBDIR
+
+
+def supervise_state_dir(identity: str) -> Path:
+    """State subdir for the supervise sidecar's current-config dir
+    (bind-mounted into the agent at /etc/claude-bottle/current-config).
+    The queue dir is intentionally NOT under here — it lives at
+    ~/.claude-bottle/queue/<slug>/ alongside the audit logs, so it
+    survives state-dir cleanup."""
+    return bottle_state_dir(identity) / _SUPERVISE_SUBDIR
+
+
+def agent_state_dir(identity: str) -> Path:
+    """State subdir for the agent's prepare-time scratch files: the
+    env file (docker --env-file source) and the prompt file."""
+    return bottle_state_dir(identity) / _AGENT_SUBDIR
+
+
 # --- Preserve-on-close marker ----------------------------------------------
 
 
@@ -245,18 +297,23 @@ def cleanup_state(identity: str) -> None:
 
 __all__ = [
     "BottleMetadata",
+    "agent_state_dir",
     "bottle_identity",
     "bottle_state_dir",
     "cleanup_state",
     "clear_preserve_marker",
+    "egress_state_dir",
+    "git_gate_state_dir",
     "is_preserved",
     "mark_preserved",
     "metadata_path",
     "per_bottle_dockerfile",
     "per_bottle_dockerfile_path",
     "per_bottle_image_tag",
+    "pipelock_state_dir",
     "preserve_marker_path",
     "read_metadata",
+    "supervise_state_dir",
     "transcript_snapshot_dir",
     "write_metadata",
     "write_per_bottle_dockerfile",
