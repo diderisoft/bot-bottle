@@ -9,7 +9,6 @@ _launch_bottle below.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import shutil
 import sys
@@ -23,7 +22,7 @@ from ..backend.docker.bottle_state import (
     mark_preserved,
 )
 from ..backend.docker.capability_apply import snapshot_transcript
-from ..log import die, info
+from ..log import info
 from ..manifest import Manifest
 from ._common import PROG, USER_CWD, read_tty_line
 
@@ -33,18 +32,10 @@ def cmd_start(argv: list[str]) -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--cwd", action="store_true", help="copy host cwd into a derived image")
     parser.add_argument("--remote-control", action="store_true")
-    parser.add_argument(
-        "--format",
-        choices=("text", "json"),
-        default="text",
-        help="preflight output format; --format=json requires --dry-run",
-    )
     parser.add_argument("name", help="agent name defined in claude-bottle.json")
     args = parser.parse_args(argv)
 
     dry_run = args.dry_run or os.environ.get("CLAUDE_BOTTLE_DRY_RUN") == "1"
-    if args.format == "json" and not dry_run:
-        die("--format=json requires --dry-run")
 
     manifest = Manifest.resolve(USER_CWD)
     spec = BottleSpec(
@@ -56,7 +47,6 @@ def cmd_start(argv: list[str]) -> int:
     return _launch_bottle(
         spec,
         dry_run=dry_run,
-        output_format=args.format,
         remote_control=args.remote_control,
     )
 
@@ -65,7 +55,6 @@ def _launch_bottle(
     spec: BottleSpec,
     *,
     dry_run: bool,
-    output_format: str,
     remote_control: bool,
 ) -> int:
     """Shared launch core for `start` and `resume`. Builds the plan,
@@ -75,11 +64,6 @@ def _launch_bottle(
     try:
         backend = get_bottle_backend()
         plan = backend.prepare(spec, stage_dir=stage_dir)
-
-        if output_format == "json":
-            json.dump(plan.to_dict(remote_control=remote_control), sys.stdout, indent=2)
-            sys.stdout.write("\n")
-            return 0
 
         plan.print(remote_control=remote_control)
 
