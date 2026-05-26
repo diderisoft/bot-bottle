@@ -379,6 +379,24 @@ class TestBottleForSlug(unittest.TestCase):
         self.assertEqual("", hint)
 
 
+class TestStopBottleFlow(unittest.TestCase):
+    """Explicit per-bottle stop (PRD 0020 chunk 4). The non-owned
+    path is the one safe to test without curses + docker — the
+    owned path drives `cm.__exit__` against a real launch context
+    and belongs in integration tests."""
+
+    def test_non_owned_returns_cleanup_hint(self):
+        # stdscr is None here on purpose — the non-owned branch
+        # returns before any curses call.
+        msg = dashboard._stop_bottle_flow(
+            stdscr=None,  # type: ignore[arg-type]
+            bottles={},
+            slug="ghost-zzz",
+        )
+        self.assertIn("not dashboard-owned", msg)
+        self.assertIn("./cli.py cleanup", msg)
+
+
 class TestOperatorEditFlowGuards(_FakeHomeMixin, unittest.TestCase):
     """Chunk-4 contract: the edit flow refuses when the selected
     agent doesn't have the required sidecar running. The discover-

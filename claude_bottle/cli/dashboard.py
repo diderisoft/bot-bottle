@@ -650,6 +650,46 @@ def _bottle_for_slug(
     return synth, (prompt_path or "")
 
 
+def _stop_bottle_flow(
+    stdscr: "curses._CursesWindow",
+    bottles: dict,
+    slug: str,
+) -> str:
+    """Explicit per-bottle teardown (PRD 0020 chunk 4). Pops the
+    (cm, bottle, identity) tuple from the dashboard's bottles
+    map, snapshots the transcript best-effort, drives the launch
+    context's __exit__ (compose down + network remove), and
+    settles the state dir. A non-owned slug is a no-op with a
+    hint pointing at `./cli.py cleanup`."""
+    if slug not in bottles:
+        return (
+            f"[{slug}] not dashboard-owned — use ./cli.py cleanup"
+        )
+    cm, _bottle, identity = bottles.pop(slug)
+    # compose-down writes to stderr; drop curses so the lines
+    # render cleanly. Same pattern as the attach handoff.
+    curses.endwin()
+    try:
+        # Best-effort snapshot before teardown so the operator
+        # can still inspect the agent's last state via the
+        # preserved transcript dir even after explicit stop.
+        # exit_code=0 → no auto-preserve; the operator's
+        # existing preserve marker (if any) is honored by
+        # settle_state below.
+        try:
+            capture_session_state(identity, exit_code=0)
+        except BaseException:
+            pass
+        try:
+            cm.__exit__(None, None, None)
+        except BaseException:
+            pass
+    finally:
+        stdscr.refresh()
+    settle_state(identity)
+    return f"[{slug}] stopped"
+
+
 def _attach_to_bottle(
     stdscr: "curses._CursesWindow",
     bottle,
@@ -927,10 +967,8 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
 
         if focus == PANE_AGENTS:
             # j/k/arrow navigate the agents list. Enter re-attaches
-            # to the focused bottle (PRD 0020 chunk 3) — works for
-            # both dashboard-owned bottles and bottles discovered
-            # via `list_active_slugs` (the synth path resolves the
-            # in-container claude target from the slug).
+            # (PRD 0020 chunk 3); `x` explicitly stops a
+            # dashboard-owned bottle (chunk 4).
             if key in (curses.KEY_DOWN, ord("j")):
                 selected_agent = min(selected_agent + 1, max(0, len(agents) - 1))
             elif key in (curses.KEY_UP, ord("k")):
@@ -943,6 +981,14 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
                     manifest = manifest_cache[0]  # may be None; that's ok
                     bottle, _hint = _bottle_for_slug(target.slug, bottles, manifest)
                     status_line = _attach_to_bottle(stdscr, bottle, target.slug)
+            elif key == ord("x"):
+                target = _selected_agent(focus, agents, selected_agent)
+                if target is None:
+                    status_line = "no agent selected"
+                else:
+                    status_line = _stop_bottle_flow(
+                        stdscr, bottles, target.slug,
+                    )
             continue
 
         if not pending:
@@ -1082,7 +1128,7 @@ def _render(
 
     footer = (
         "[n] new  [Tab] switch  [j/k] move  "
-        "[Enter] view/attach  [a/m/r] proposal  [e/p] edit  [q] quit"
+        "[Enter] view/attach  [x] stop  [a/m/r] proposal  [e/p] edit  [q] quit"
     )
     stdscr.hline(h - 2, 0, curses.ACS_HLINE, w)
     stdscr.addnstr(h - 1, 0, footer, w - 1, curses.A_DIM)
