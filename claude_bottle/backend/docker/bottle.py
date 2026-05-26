@@ -28,7 +28,15 @@ class DockerBottle(Bottle):
         self._prompt_path = prompt_path_in_container
         self._closed = False
 
-    def exec_claude(self, argv: list[str], *, tty: bool = True) -> int:
+    def claude_docker_argv(
+        self, argv: list[str], *, tty: bool = True,
+    ) -> list[str]:
+        """Return the full `docker exec` argv for running claude in
+        this bottle. Public so callers that want to spawn claude
+        somewhere other than the dashboard's foreground (e.g.,
+        `tmux split-window` / `tmux respawn-pane` from the dashboard
+        when `$TMUX` is set) can build on the same command without
+        duplicating the `--append-system-prompt-file` plumbing."""
         full_argv = list(argv)
         if self._prompt_path:
             full_argv.extend(["--append-system-prompt-file", self._prompt_path])
@@ -36,7 +44,12 @@ class DockerBottle(Bottle):
         if tty:
             cmd.append("-it")
         cmd.extend([self.name, "claude", *full_argv])
-        return subprocess.run(cmd, check=False).returncode
+        return cmd
+
+    def exec_claude(self, argv: list[str], *, tty: bool = True) -> int:
+        return subprocess.run(
+            self.claude_docker_argv(argv, tty=tty), check=False,
+        ).returncode
 
     def exec(self, script: str) -> ExecResult:
         # Pipe via stdin to `sh -s` so the caller never has to worry
