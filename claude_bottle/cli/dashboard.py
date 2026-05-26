@@ -1169,9 +1169,12 @@ def _new_agent_flow(
             raise
         if routed:
             bottles[plan.slug] = (cm, bottle, identity)
+            # Move tmux focus to the right pane — the operator
+            # just spun this agent up, they want to type at it.
             return _attach_in_tmux(
                 stdscr, bottle, plan.slug,
                 resume=False, tmux_state=tmux_state,
+                focus_right_pane=True,
             )
 
         # Launch step writes to stderr (image build, network create,
