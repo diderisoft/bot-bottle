@@ -609,6 +609,64 @@ def _running_counts(
     return counts
 
 
+def _bottle_for_slug(
+    slug: str,
+    bottles: dict,
+    manifest: Manifest | None,
+) -> tuple["object", str]:
+    """Return `(bottle_handle, prompt_path_hint)` for a re-attach.
+    If the slug is in `bottles` (dashboard-owned), return the stored
+    handle directly. Otherwise synthesize a `DockerBottle` from the
+    container name `claude-bottle-<slug>`. For synthesized bottles
+    the prompt-file path comes from the manifest's agent if we can
+    resolve it via metadata.json + the loaded manifest; otherwise
+    the re-attach runs without `--append-system-prompt-file`.
+
+    Returns the empty string for prompt_path_hint when we omit the
+    flag — the caller passes None to DockerBottle in that case."""
+    from ..backend.docker.bottle import DockerBottle
+    from ..backend.docker.bottle_state import read_metadata
+    if slug in bottles:
+        _cm, bottle, _identity = bottles[slug]
+        return bottle, ""
+    # The container hosting the agent's claude process is named
+    # `claude-bottle-<slug>` — set by the compose renderer
+    # (no service suffix on the agent service, by design).
+    container_name = f"claude-bottle-{slug}"
+    prompt_path: str | None = None
+    metadata = read_metadata(slug)
+    if metadata is not None and manifest is not None:
+        agent = manifest.agents.get(metadata.agent_name)
+        if agent is not None and agent.prompt:
+            container_home = os.environ.get(
+                "CLAUDE_BOTTLE_CONTAINER_HOME", "/home/node",
+            )
+            prompt_path = f"{container_home}/.claude-bottle-prompt.txt"
+    synth = DockerBottle(
+        container=container_name,
+        teardown=lambda: None,
+        prompt_path_in_container=prompt_path,
+    )
+    return synth, (prompt_path or "")
+
+
+def _attach_to_bottle(
+    stdscr: "curses._CursesWindow",
+    bottle,
+    slug: str,
+) -> str:
+    """Handoff: curses.endwin → attach claude → curses refresh.
+    Returns the post-attach status-line message."""
+    curses.endwin()
+    try:
+        exit_code = attach_claude(bottle, remote_control=False)
+    except BaseException:
+        stdscr.refresh()
+        raise
+    stdscr.refresh()
+    return f"[{slug}] claude session ended (exit {exit_code})"
+
+
 def _new_agent_flow(
     stdscr: "curses._CursesWindow",
     manifest: Manifest,
@@ -868,14 +926,23 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
             continue
 
         if focus == PANE_AGENTS:
-            # j/k/arrow navigate the agents list. All other keys
-            # are ignored (Tab back to proposals to act on
-            # proposals). Chunk 4 will wire `e` / `p` to use
-            # the agents-pane selection.
+            # j/k/arrow navigate the agents list. Enter re-attaches
+            # to the focused bottle (PRD 0020 chunk 3) — works for
+            # both dashboard-owned bottles and bottles discovered
+            # via `list_active_slugs` (the synth path resolves the
+            # in-container claude target from the slug).
             if key in (curses.KEY_DOWN, ord("j")):
                 selected_agent = min(selected_agent + 1, max(0, len(agents) - 1))
             elif key in (curses.KEY_UP, ord("k")):
                 selected_agent = max(selected_agent - 1, 0)
+            elif key in (curses.KEY_ENTER, 10, 13):
+                target = _selected_agent(focus, agents, selected_agent)
+                if target is None:
+                    status_line = "no agent selected"
+                else:
+                    manifest = manifest_cache[0]  # may be None; that's ok
+                    bottle, _hint = _bottle_for_slug(target.slug, bottles, manifest)
+                    status_line = _attach_to_bottle(stdscr, bottle, target.slug)
             continue
 
         if not pending:
@@ -1014,8 +1081,8 @@ def _render(
             row += 1
 
     footer = (
-        "[n] new agent  [Tab] switch pane  [j/k] move  [Enter] view  "
-        "[a/m/r] proposal  [e/p] edit selected agent  [q] quit"
+        "[n] new  [Tab] switch  [j/k] move  "
+        "[Enter] view/attach  [a/m/r] proposal  [e/p] edit  [q] quit"
     )
     stdscr.hline(h - 2, 0, curses.ACS_HLINE, w)
     stdscr.addnstr(h - 1, 0, footer, w - 1, curses.A_DIM)
