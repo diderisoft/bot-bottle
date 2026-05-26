@@ -44,7 +44,6 @@ from typing import Callable, Generator
 
 from ...egress import egress_resolve_token_values
 from ...log import info
-from ...pipelock import pipelock_build_config, pipelock_render_yaml
 from . import network as network_mod
 from . import util as docker_mod
 from .bottle import DockerBottle
@@ -64,14 +63,9 @@ from .compose import (
     compose_up,
     write_compose_file,
 )
-from .egress import (
-    DockerEgress,
-    egress_tls_init,
-)
+from .egress import DockerEgress, egress_tls_init
 from .git_gate import DockerGitGate
 from .pipelock import (
-    PIPELOCK_CA_CERT_IN_CONTAINER,
-    PIPELOCK_CA_KEY_IN_CONTAINER,
     DockerPipelockProxy,
     pipelock_proxy_url,
     pipelock_tls_init,
@@ -124,44 +118,31 @@ def launch(
                 plan.derived_image, plan.image, plan.spec.user_cwd
             )
 
-        # Step 2: pre-create networks so we know the internal CIDR
-        # before pipelock yaml renders.
-        internal_network = network_mod.network_create_internal(plan.slug)
-        stack.callback(network_mod.network_remove, internal_network)
+        # Networks: compose-managed. The names are derived
+        # deterministically from the slug so the renderer can put
+        # them on the services and `compose up` creates them with
+        # those names. The empirical spike confirmed pipelock's
+        # SSRF guard only checks proxied-request destinations, not
+        # source IPs — so the bottle's own internal CIDR doesn't
+        # need to be in `ssrf.ip_allowlist`. Pre-create + CIDR
+        # introspection are gone; compose owns the network
+        # lifecycle.
+        internal_network = network_mod.network_name_for_slug(plan.slug)
+        egress_network = network_mod.network_egress_name_for_slug(plan.slug)
 
-        egress_network = network_mod.network_create_egress(plan.slug)
-        stack.callback(network_mod.network_remove, egress_network)
-
-        internal_cidr = network_mod.network_inspect_cidr(internal_network)
-
-        # Step 3: mint per-bottle CAs into state/<slug>/{pipelock,egress}/.
+        # Mint per-bottle CAs into state/<slug>/{pipelock,egress}/.
         ca_cert_host, ca_key_host = pipelock_tls_init(pipelock_state_dir(plan.slug))
         egress_ca_host, egress_ca_cert_only = egress_tls_init(
             egress_state_dir(plan.slug),
         )
 
-        # Step 4: re-render pipelock yaml with the SSRF allowlist now
-        # that we know the internal CIDR. Prepare wrote the yaml
-        # without the ssrf block; overwrite the same path so the
-        # bind-mount picks up the updated content.
-        bottle = plan.spec.manifest.bottle_for(plan.spec.agent_name)
-        cfg = pipelock_build_config(
-            bottle,
-            ca_cert_path=PIPELOCK_CA_CERT_IN_CONTAINER,
-            ca_key_path=PIPELOCK_CA_KEY_IN_CONTAINER,
-            ssrf_ip_allowlist=(internal_cidr,),
-        )
-        plan.proxy_plan.yaml_path.write_text(pipelock_render_yaml(cfg))
-        plan.proxy_plan.yaml_path.chmod(0o600)
-
-        # Step 5: populate launch-time fields on every inner plan so
-        # the renderer reads concrete network names, CA paths, and
-        # pipelock URL. Match the field-by-field replacement the
-        # pre-compose launch did, just rolled into one pass.
+        # Populate launch-time fields on every inner plan so the
+        # renderer reads concrete network names, CA paths, and
+        # pipelock URL.
         proxy_plan = dataclasses.replace(
             plan.proxy_plan,
             internal_network=internal_network,
-            internal_network_cidr=internal_cidr,
+            internal_network_cidr="",
             egress_network=egress_network,
             ca_cert_host_path=ca_cert_host,
             ca_key_host_path=ca_key_host,

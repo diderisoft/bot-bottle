@@ -130,21 +130,18 @@ def bottle_plan_to_compose(plan: DockerBottlePlan) -> dict[str, Any]:
 
 
 def _networks(plan: DockerBottlePlan) -> dict[str, Any]:
-    """Both networks are `external: true` — chunk 3 pre-creates them
-    via `docker network create` so pipelock's yaml can embed the
-    internal-network CIDR in its SSRF allowlist before compose-up.
-    Compose just references the pre-existing networks by name.
-    Network lifecycle (create / remove) is owned by the compose-
-    lifecycle helpers, not compose itself; `docker compose down`
-    leaves external networks alone."""
+    """Compose-managed networks with explicit `name:` matching the
+    existing slug-suffixed convention. Compose creates them on `up`
+    and destroys them on `down`. The internal one is `--internal`
+    (no default gateway); the egress one is a normal user-defined
+    bridge."""
     return {
         "internal": {
             "name": plan.proxy_plan.internal_network,
-            "external": True,
+            "internal": True,
         },
         "egress": {
             "name": plan.proxy_plan.egress_network,
-            "external": True,
         },
     }
 
