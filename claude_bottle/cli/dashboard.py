@@ -12,8 +12,10 @@ chunk 3) writes routes.yaml + SIGHUPs egress; PRD 0015
 from __future__ import annotations
 
 import argparse
+import contextlib
 import curses
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -29,7 +31,7 @@ from ..backend.docker.capability_apply import (
     CapabilityApplyError,
     apply_capability_change,
 )
-from ..backend.docker.bottle_state import read_metadata
+from ..backend.docker.bottle_state import bottle_state_dir, read_metadata
 from ..backend.docker.compose import (
     compose_project_name,
     list_active_slugs,
@@ -444,6 +446,7 @@ def _picker_modal(
         try:
             key = stdscr.getch()
         except KeyboardInterrupt:
+            _erase_modal(stdscr)
             return None
 
         if key == 27:  # Esc
@@ -451,9 +454,11 @@ def _picker_modal(
                 query = ""
                 selected = 0
                 continue
+            _erase_modal(stdscr)
             return None
         if key in (curses.KEY_ENTER, 10, 13):
             if filtered:
+                _erase_modal(stdscr)
                 return filtered[selected]
             continue
         if key in (curses.KEY_DOWN, ord("\x0e")):  # KEY_DOWN, Ctrl-N
@@ -577,11 +582,26 @@ def _preflight_modal(
         try:
             key = stdscr.getch()
         except KeyboardInterrupt:
+            _erase_modal(stdscr)
             return False
         if key in (ord("y"), ord("Y")):
+            _erase_modal(stdscr)
             return True
         if key in (ord("n"), ord("N"), 27, curses.KEY_ENTER, 10, 13):
+            _erase_modal(stdscr)
             return False
+
+
+def _erase_modal(stdscr: "curses._CursesWindow") -> None:
+    """Force-redraw the dashboard's pre-modal frame so a modal
+    sub-window's content stops showing. Curses tracks the modal
+    via the newwin sub-window we created; touchwin + refresh
+    on stdscr repaints stdscr's last buffered frame over the
+    sub-window's area. Without this, the modal stays on screen
+    until the dashboard's main loop ticks again — which during
+    a long-running launch is several seconds away."""
+    stdscr.touchwin()
+    stdscr.refresh()
 
 
 def _capture_preflight_text(plan) -> str:
@@ -654,22 +674,28 @@ def _stop_bottle_flow(
     stdscr: "curses._CursesWindow",
     bottles: dict,
     slug: str,
+    *,
+    tmux_state: dict | None = None,
 ) -> str:
     """Explicit per-bottle teardown (PRD 0020 chunk 4). Pops the
     (cm, bottle, identity) tuple from the dashboard's bottles
     map, snapshots the transcript best-effort, drives the launch
     context's __exit__ (compose down + network remove), and
     settles the state dir. A non-owned slug is a no-op with a
-    hint pointing at `./cli.py cleanup`."""
+    hint pointing at `./cli.py cleanup`.
+
+    PRD 0021: clears `tmux_state['slug']` when the stopped
+    bottle was the right-pane occupant. The pane itself is
+    left in place — the operator presses Enter on a different
+    agent to repurpose it (respawn-pane replaces the broken
+    state)."""
     if slug not in bottles:
         return (
             f"[{slug}] not dashboard-owned — use ./cli.py cleanup"
         )
     cm, _bottle, identity = bottles.pop(slug)
-    # compose-down writes to stderr; drop curses so the lines
-    # render cleanly. Same pattern as the attach handoff.
-    curses.endwin()
-    try:
+
+    def _do_teardown() -> None:
         # Best-effort snapshot before teardown so the operator
         # can still inspect the agent's last state via the
         # preserved transcript dir even after explicit stop.
@@ -684,27 +710,310 @@ def _stop_bottle_flow(
             cm.__exit__(None, None, None)
         except BaseException:
             pass
+
+    # Mirror the bringup path's stderr → right-pane routing.
+    # Reuses any existing right pane (which is probably the
+    # agent's own claude session) via `_ensure_right_pane`; the
+    # final buffered output stays visible after settle_state
+    # removes the state dir (tail-F handles file removal).
+    try:
+        with _route_op_to_right_pane(
+            tmux_state, slug, "teardown.log",
+        ) as routed:
+            if routed:
+                _do_teardown()
+    except BaseException:
+        pass
+    if routed:
+        settle_state(identity)
+        if tmux_state is not None:
+            tmux_state["slug"] = None
+        return f"[{slug}] stopped"
+
+    # Non-tmux: compose-down output writes to the dashboard's
+    # terminal directly. Drop curses so the lines render cleanly,
+    # restore after.
+    curses.endwin()
+    try:
+        _do_teardown()
     finally:
         stdscr.refresh()
     settle_state(identity)
+    if tmux_state is not None and tmux_state.get("slug") == slug:
+        tmux_state["slug"] = None
     return f"[{slug}] stopped"
 
 
-def _attach_to_bottle(
+# --- tmux split-pane integration (PRD 0021) --------------------------------
+#
+# When `$TMUX` is set the dashboard lays itself out as the left
+# pane of a two-pane window with the operator's currently-selected
+# agent in the right pane. First attach creates the right pane via
+# `tmux split-window`; subsequent attaches respawn that pane with
+# the new agent's claude session. The dashboard remembers the
+# pane id + occupant slug in `tmux_state` so the same pane is
+# reused across attaches.
+
+
+def _in_tmux() -> bool:
+    """True when the dashboard is running inside a tmux session.
+    Tmux sets `$TMUX` to the path of its server socket."""
+    return bool(os.environ.get("TMUX"))
+
+
+def _claude_runtime_args(*, resume: bool, remote_control: bool = False) -> list[str]:
+    """The argv the dashboard hands to `bottle.claude_docker_argv`
+    on every attach — matches what `attach_claude` builds for the
+    foreground handoff so both surfaces produce the same claude
+    invocation."""
+    args = ["--dangerously-skip-permissions"]
+    if remote_control:
+        args.append("--remote-control")
+    if resume:
+        args.append("--continue")
+    return args
+
+
+def _build_resume_argv_with_fallback(
+    bottle, *, remote_control: bool = False,
+) -> list[str]:
+    """Build a docker-exec argv that runs `claude --continue` and
+    falls back to plain `claude` if no prior session exists.
+
+    `--continue` exits non-zero when an agent has been spun up
+    but never typed at — there's no transcript to resume. The
+    shell-level `||` wrapper makes that case start a fresh
+    session instead of crashing the pane. The trade-off: we
+    invoke `sh -c` inside the container, so the command is two
+    `claude` invocations behind a tiny shell rather than one
+    direct exec. Acceptable; the shell adds microseconds and
+    the fallback only kicks in when --continue would have
+    failed anyway."""
+    base_args = ["--dangerously-skip-permissions"]
+    if remote_control:
+        base_args.append("--remote-control")
+    base_docker = bottle.claude_docker_argv(base_args)
+    # Split docker-prefix from the claude-and-args tail so we
+    # can compose `<claude…> --continue || <claude…>` inside
+    # `sh -c`. The `claude` token is the marker.
+    claude_idx = base_docker.index("claude")
+    prefix = base_docker[:claude_idx]
+    claude_cmd = " ".join(shlex.quote(a) for a in base_docker[claude_idx:])
+    return [
+        *prefix,
+        "sh", "-c",
+        f"{claude_cmd} --continue || {claude_cmd}",
+    ]
+
+
+def _build_split_pane_argv(docker_argv: list[str]) -> list[str]:
+    """Pure helper: wrap a docker-exec argv with `tmux split-window
+    -h -P -F '#{pane_id}'`. The `-P -F` combo tells tmux to print
+    the new pane's id on stdout so we can track it for later
+    `respawn-pane` calls."""
+    return [
+        "tmux", "split-window", "-h",
+        "-P", "-F", "#{pane_id}",
+        *docker_argv,
+    ]
+
+
+def _build_respawn_pane_argv(pane_id: str, docker_argv: list[str]) -> list[str]:
+    """Pure helper: wrap a docker-exec argv with `tmux respawn-pane
+    -k -t <pane_id>`. `-k` kills the existing process in the pane
+    before respawning."""
+    return ["tmux", "respawn-pane", "-k", "-t", pane_id, *docker_argv]
+
+
+@contextlib.contextmanager
+def _redirect_stderr_to_file(path):
+    """Redirect file descriptor 2 (stderr) to `path` for the
+    duration of the with-block.
+
+    Both Python sys.stderr writes AND subprocess inheritors'
+    stderr land in the file because fd 2 is what they share.
+    Used by `_new_agent_flow` (PRD 0021 follow-up) to route
+    `backend.launch`'s compose-up + provision output into a
+    log file the right tmux pane is tailing — so the dashboard
+    pane stays uncluttered."""
+    log_fd = os.open(
+        str(path), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644,
+    )
+    saved_fd = os.dup(2)
+    try:
+        sys.stderr.flush()
+        os.dup2(log_fd, 2)
+        try:
+            yield
+        finally:
+            sys.stderr.flush()
+            os.dup2(saved_fd, 2)
+    finally:
+        os.close(saved_fd)
+        os.close(log_fd)
+
+
+def _tmux_split_pane_create(argv: list[str]) -> str | None:
+    """Open a right pane running `argv` via `tmux split-window
+    -h`. Returns the new pane's id on success, None on any
+    failure (tmux missing, nonzero exit, empty stdout). Generic
+    over `argv` so both the tail-during-bringup path and the
+    claude-attach path can build on it."""
+    try:
+        result = subprocess.run(
+            _build_split_pane_argv(argv),
+            capture_output=True, text=True, check=False,
+        )
+    except FileNotFoundError:
+        return None
+    if result.returncode != 0:
+        return None
+    pane_id = (result.stdout or "").strip()
+    return pane_id or None
+
+
+def _tmux_respawn_pane(pane_id: str, argv: list[str]) -> bool:
+    """Replace the content of `pane_id` with `argv` via `tmux
+    respawn-pane -k`. Returns True on success. Generic over
+    `argv` so the same helper handles tail→claude transitions
+    and slug→slug claude transitions."""
+    try:
+        result = subprocess.run(
+            _build_respawn_pane_argv(pane_id, argv),
+            capture_output=True, text=True, check=False,
+        )
+    except FileNotFoundError:
+        return False
+    return result.returncode == 0
+
+
+@contextlib.contextmanager
+def _route_op_to_right_pane(
+    tmux_state: dict | None,
+    slug: str,
+    log_name: str,
+):
+    """Run an operation with its stderr routed into the right
+    tmux pane via `tail -F`.
+
+    Yields True when routing succeeded — the with-block runs
+    with fd 2 redirected to `state/<slug>/<log_name>` and the
+    right pane is tailing the same file. Yields False otherwise
+    (not in tmux, no tmux_state, or tmux failed to spawn the
+    pane) — the caller decides how to fall back.
+
+    Used identically by the bringup flow (log_name='bringup.log')
+    and the teardown flow ('teardown.log'). The fallback paths
+    differ between callers — bringup follows up with
+    `_attach_in_tmux`, teardown does the curses-endwin direct
+    compose-down — so the helper stops at "stderr is now routed
+    or it isn't" and lets callers branch from there."""
+    if not _in_tmux() or tmux_state is None:
+        yield False
+        return
+    log_path = bottle_state_dir(slug) / log_name
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text("")  # empty so tail starts clean
+    pane_id = _ensure_right_pane(tmux_state, ["tail", "-F", str(log_path)])
+    if pane_id is None:
+        yield False
+        return
+    tmux_state["slug"] = slug
+    with _redirect_stderr_to_file(log_path):
+        yield True
+
+
+def _tmux_close_right_pane(tmux_state: dict) -> None:
+    """Close the tracked right pane via `tmux kill-pane`. Clears
+    both pane_id and slug in `tmux_state`. Used after the last
+    dashboard-owned agent is stopped — no claude session left
+    to host, so the pane shouldn't linger."""
+    pane_id = tmux_state.get("pane_id")
+    if pane_id and _tmux_pane_exists(pane_id):
+        try:
+            subprocess.run(
+                ["tmux", "kill-pane", "-t", pane_id],
+                capture_output=True, text=True, check=False,
+            )
+        except FileNotFoundError:
+            pass
+    tmux_state["pane_id"] = None
+    tmux_state["slug"] = None
+
+
+def _pick_next_after_stop(
+    agents_before: list[ActiveAgent],
+    selected_index: int,
+    stopped_slug: str,
+) -> tuple[int, ActiveAgent] | None:
+    """After stopping `stopped_slug` from the agents list, choose
+    the agent that should take focus next. The agent below the
+    stopped row (which slides up to fill its index) is the
+    natural pick; if the stopped agent was last, the row above
+    instead. Returns (new_index, agent) or None if no agents
+    remain. Pure — easy to unit-test."""
+    new_agents = [a for a in agents_before if a.slug != stopped_slug]
+    if not new_agents:
+        return None
+    new_index = min(max(selected_index, 0), len(new_agents) - 1)
+    return new_index, new_agents[new_index]
+
+
+def _ensure_right_pane(tmux_state: dict, argv: list[str]) -> str | None:
+    """Run `argv` in the dashboard's right pane — respawn an
+    existing tracked pane if one is alive, split-window to
+    create one otherwise. Updates `tmux_state['pane_id']` and
+    returns the pane id on success, None on failure.
+
+    This is the single place where "respawn or create" lives —
+    used by `_attach_in_tmux` for claude sessions AND by
+    `_new_agent_flow` for the bringup-log tail. Without this,
+    every new-agent start would pile up a fresh right pane
+    instead of reusing the one already next to the dashboard."""
+    pane_id = tmux_state.get("pane_id")
+    if pane_id and _tmux_pane_exists(pane_id):
+        if _tmux_respawn_pane(pane_id, argv):
+            return pane_id
+        # respawn failed — fall through to create a fresh split.
+        tmux_state["pane_id"] = None
+    new_pane_id = _tmux_split_pane_create(argv)
+    if new_pane_id is not None:
+        tmux_state["pane_id"] = new_pane_id
+    return new_pane_id
+
+
+def _tmux_pane_exists(pane_id: str) -> bool:
+    """True when `pane_id` appears in `tmux list-panes -F
+    '#{pane_id}'`. Used before respawn-pane to detect a pane the
+    operator manually closed via `C-b x`; an absent pane id means
+    we need to create a fresh split."""
+    try:
+        result = subprocess.run(
+            ["tmux", "list-panes", "-F", "#{pane_id}"],
+            capture_output=True, text=True, check=False,
+        )
+    except FileNotFoundError:
+        return False
+    if result.returncode != 0:
+        return False
+    return pane_id in (result.stdout or "").splitlines()
+
+
+def _attach_via_handoff(
     stdscr: "curses._CursesWindow",
     bottle,
     slug: str,
+    *,
+    resume: bool,
 ) -> str:
-    """Handoff: curses.endwin → attach claude → curses refresh.
-    Re-entry into a running bottle from the dashboard always
-    passes `--resume` so claude picks up its prior conversation
-    rather than starting a fresh transcript — the first attach
-    happens via `_new_agent_flow` which sets up the transcript
-    in the first place. Returns the post-attach status-line
-    message."""
+    """Foreground handoff: curses.endwin → attach claude → curses
+    refresh. The non-tmux path (and the failover from
+    `_attach_in_tmux` when tmux misbehaves)."""
     curses.endwin()
     try:
-        exit_code = attach_claude(bottle, remote_control=False, resume=True)
+        exit_code = attach_claude(
+            bottle, remote_control=False, resume=resume,
+        )
     except BaseException:
         stdscr.refresh()
         raise
@@ -712,17 +1021,99 @@ def _attach_to_bottle(
     return f"[{slug}] claude session ended (exit {exit_code})"
 
 
+def _attach_in_tmux(
+    stdscr: "curses._CursesWindow",
+    bottle,
+    slug: str,
+    *,
+    resume: bool,
+    tmux_state: dict,
+    focus_right_pane: bool = False,
+) -> str:
+    """Spawn / respawn the right pane with `bottle`'s claude
+    session. Mutates `tmux_state` ({'pane_id': str|None,
+    'slug': str|None}) so the main loop can track which slug is
+    in the right pane (used by the agents-pane indicator + the
+    explicit-stop hook).
+
+    `focus_right_pane=True` runs `tmux select-pane` after the
+    respawn so the operator is dropped into claude immediately.
+    The Enter re-attach key passes this; passive paths (the
+    auto-attach after a stop) leave it False so the operator
+    stays in the dashboard pane."""
+    if resume:
+        # `--continue` exits non-zero when no prior session
+        # exists (agent spun up but never typed at). Wrap with a
+        # shell-level fallback so the pane lands in a fresh
+        # claude instead of crashing.
+        docker_argv = _build_resume_argv_with_fallback(bottle)
+    else:
+        docker_argv = bottle.claude_docker_argv(
+            _claude_runtime_args(resume=False),
+        )
+    pane_id = _ensure_right_pane(tmux_state, docker_argv)
+    if pane_id is None:
+        # tmux failed (missing binary, server died, size error).
+        # One status-line failover to the curses handoff so the
+        # operator still gets a session.
+        return _attach_via_handoff(stdscr, bottle, slug, resume=resume)
+    tmux_state["slug"] = slug
+    if focus_right_pane:
+        _tmux_select_pane(pane_id)
+    return f"[{slug}] in right pane"
+
+
+def _tmux_select_pane(pane_id: str) -> None:
+    """`tmux select-pane -t <id>` — moves tmux's keyboard focus
+    to the pane. Best-effort; failure is silent (logged only via
+    subprocess's stderr, which we suppress)."""
+    try:
+        subprocess.run(
+            ["tmux", "select-pane", "-t", pane_id],
+            capture_output=True, text=True, check=False,
+        )
+    except FileNotFoundError:
+        pass
+
+
+def _attach_to_bottle(
+    stdscr: "curses._CursesWindow",
+    bottle,
+    slug: str,
+    *,
+    tmux_state: dict | None = None,
+) -> str:
+    """Re-attach to a running bottle. Inside tmux (`$TMUX` set +
+    `tmux_state` provided) the claude session opens in the
+    right pane (created on first attach, respawned on
+    subsequent). Outside tmux it's a curses-endwin handoff that
+    blocks until the operator exits claude. Re-attach always uses
+    `--continue` — first attach happens via `_new_agent_flow`."""
+    if _in_tmux() and tmux_state is not None:
+        # Enter re-attach is an explicit "I want to interact with
+        # this agent" signal — move tmux focus to the right pane
+        # so keypresses land in claude instead of the dashboard.
+        return _attach_in_tmux(
+            stdscr, bottle, slug,
+            resume=True, tmux_state=tmux_state,
+            focus_right_pane=True,
+        )
+    return _attach_via_handoff(stdscr, bottle, slug, resume=True)
+
+
 def _new_agent_flow(
     stdscr: "curses._CursesWindow",
     manifest: Manifest,
     bottles: dict,
     agents_now: list[ActiveAgent],
+    tmux_state: dict | None = None,
 ) -> str:
     """Open the picker, prepare + preflight (modal), launch
-    (enter the context manager but DON'T close it), handoff to
-    claude. Returns a status-line message for the dashboard footer.
-    The (cm, bottle) tuple lands in `bottles` keyed by slug; chunks
-    3/4 use it for re-attach and explicit stop."""
+    (enter the context manager but DON'T close it), then route
+    the first claude session into the right pane (in-tmux) or
+    foreground handoff (otherwise). Returns a status-line message
+    for the dashboard footer. The (cm, bottle) tuple lands in
+    `bottles` keyed by slug; chunk 4 uses it for explicit stop."""
     names = sorted(manifest.agents.keys())
     picked = _picker_modal(stdscr, names, _running_counts(bottles, agents_now))
     if picked is None:
@@ -759,10 +1150,36 @@ def _new_agent_flow(
             return f"start of {picked!r} aborted at preflight"
 
         backend = get_bottle_backend()
+
+        # PRD 0021 follow-up: in tmux, route the launch step's
+        # stderr (Python info() + subprocess inheritors) into
+        # the right pane via tail. On success, fall through to
+        # `_attach_in_tmux` which respawns the same pane with
+        # claude. On failure, fall through to the curses-endwin
+        # handoff so the operator still gets a session.
+        try:
+            with _route_op_to_right_pane(
+                tmux_state, plan.slug, "bringup.log",
+            ) as routed:
+                if routed:
+                    cm = backend.launch(plan)
+                    bottle = cm.__enter__()
+        except BaseException:
+            settle_state(identity)
+            raise
+        if routed:
+            bottles[plan.slug] = (cm, bottle, identity)
+            # Move tmux focus to the right pane — the operator
+            # just spun this agent up, they want to type at it.
+            return _attach_in_tmux(
+                stdscr, bottle, plan.slug,
+                resume=False, tmux_state=tmux_state,
+                focus_right_pane=True,
+            )
+
         # Launch step writes to stderr (image build, network create,
         # compose up). Get out of curses' way for the duration so
-        # the lines render cleanly. The handoff stays endwin'd until
-        # claude exits, then we refresh.
+        # the lines render cleanly; restore curses immediately after.
         curses.endwin()
         try:
             cm = backend.launch(plan)
@@ -773,6 +1190,8 @@ def _new_agent_flow(
             raise
         bottles[plan.slug] = (cm, bottle, identity)
 
+        # Foreground handoff: claude owns the terminal until exit,
+        # then we restore curses.
         try:
             exit_code = attach_claude(bottle, remote_control=False)
             capture_session_state(identity, exit_code)
@@ -907,14 +1326,23 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
     first_seen: dict[str, float] = {}
     selected = 0
     selected_agent = 0
-    focus = PANE_PROPOSALS
+    # Default focus on agents — the dashboard is now primarily an
+    # agent-management surface (PRD 0020 + 0021). The operator can
+    # Tab to proposals when something queues; until then, j/k go
+    # through the agents list.
+    focus = PANE_AGENTS
     status_line = ""
     # PRD 0020: bottles spun up from inside this dashboard session.
     # Each entry: slug -> (context-manager, Bottle handle, identity).
     # We hold the context manager so chunk 4's `x` can call __exit__
-    # on it; chunk 5 quit-cleanup intentionally does NOT iterate this
-    # dict (the user wants quit to leave bottles running).
+    # on it; quit (`q`) intentionally does NOT iterate this dict
+    # (the user wants quit to leave bottles running).
     bottles: dict[str, tuple] = {}
+    # PRD 0021: tmux split-pane state. Empty when not in tmux or
+    # before the first attach. Mutated by `_attach_in_tmux` /
+    # `_stop_bottle_flow` to track which bottle's session is in
+    # the right pane right now.
+    tmux_state: dict = {"pane_id": None, "slug": None}
     # Manifest is loaded lazily on first `n` so the dashboard
     # doesn't fail to start in a directory with no manifest (e.g.,
     # when the operator is purely watching pre-existing bottles).
@@ -945,6 +1373,7 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
             agents=agents,
             selected_agent=selected_agent,
             focus=focus,
+            right_pane_slug=tmux_state.get("slug"),
             first_seen=first_seen, now=now, green_attr=green_attr,
         )
 
@@ -978,7 +1407,9 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
             except Exception as e:
                 status_line = f"manifest load failed: {e}"
                 continue
-            status_line = _new_agent_flow(stdscr, manifest, bottles, agents)
+            status_line = _new_agent_flow(
+                stdscr, manifest, bottles, agents, tmux_state=tmux_state,
+            )
             continue
         if key in (ord("e"), ord("p")):
             # PRD 0019 chunk 4: agent-scoped edits. Only fire when
@@ -1010,7 +1441,9 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
                 else:
                     manifest = manifest_cache[0]  # may be None; that's ok
                     bottle, _hint = _bottle_for_slug(target.slug, bottles, manifest)
-                    status_line = _attach_to_bottle(stdscr, bottle, target.slug)
+                    status_line = _attach_to_bottle(
+                        stdscr, bottle, target.slug, tmux_state=tmux_state,
+                    )
             elif key == ord("x"):
                 target = _selected_agent(focus, agents, selected_agent)
                 if target is None:
@@ -1018,7 +1451,30 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
                 else:
                     status_line = _stop_bottle_flow(
                         stdscr, bottles, target.slug,
+                        tmux_state=tmux_state,
                     )
+                    # PRD 0021 follow-up: after stop, slide focus
+                    # to the next agent in the list (the one that
+                    # filled the stopped row) and respawn the
+                    # right pane with its claude session. If
+                    # nothing's left, close the right pane.
+                    pick = _pick_next_after_stop(
+                        agents, selected_agent, target.slug,
+                    )
+                    if pick is None:
+                        _tmux_close_right_pane(tmux_state)
+                    else:
+                        new_index, next_agent = pick
+                        selected_agent = new_index
+                        if _in_tmux():
+                            manifest = manifest_cache[0]
+                            bottle, _hint = _bottle_for_slug(
+                                next_agent.slug, bottles, manifest,
+                            )
+                            _attach_in_tmux(
+                                stdscr, bottle, next_agent.slug,
+                                resume=True, tmux_state=tmux_state,
+                            )
             continue
 
         if not pending:
@@ -1065,6 +1521,7 @@ def _render(
     agents: list[ActiveAgent] | None = None,
     selected_agent: int = 0,
     focus: str = PANE_PROPOSALS,
+    right_pane_slug: str | None = None,
     first_seen: dict[str, float] | None = None,
     now: float | None = None,
     green_attr: int = 0,
@@ -1146,11 +1603,18 @@ def _render(
             if row >= h - 3:
                 break
             line = _format_agent_row(a, w - 1)
+            in_right_pane = (a.slug == right_pane_slug)
             if agents_focused and i == selected_agent:
                 # Replace the leading "  " cursor with "> " and
                 # highlight the whole row.
                 line = "> " + line[2:]
                 attr = curses.A_REVERSE
+            elif in_right_pane:
+                # PRD 0021: `*` marks the agent currently in the
+                # right tmux pane so the operator can see at a
+                # glance which session is visible to their right.
+                line = "* " + line[2:]
+                attr = curses.A_BOLD
             else:
                 attr = curses.A_NORMAL
             stdscr.addnstr(row, 0, line, w - 1, attr)

@@ -379,6 +379,160 @@ class TestBottleForSlug(unittest.TestCase):
         self.assertEqual("", hint)
 
 
+class TestPickNextAfterStop(unittest.TestCase):
+    """After `x` stops a bottle, the dashboard slides focus to
+    the next agent — the one filling the stopped row, or the
+    new last row if the stopped was last. Pure helper, easy
+    to unit-test."""
+
+    def _agent(self, slug: str) -> dashboard.ActiveAgent:
+        return dashboard.ActiveAgent(
+            slug=slug, agent_name=slug, started_at="", services=(),
+        )
+
+    def test_empty_list_returns_none(self):
+        self.assertIsNone(
+            dashboard._pick_next_after_stop([], 0, "anything"),
+        )
+
+    def test_only_agent_being_stopped_returns_none(self):
+        # Stopping the last agent → nothing to focus.
+        agents = [self._agent("only")]
+        self.assertIsNone(
+            dashboard._pick_next_after_stop(agents, 0, "only"),
+        )
+
+    def test_middle_row_slides_up_to_same_index(self):
+        agents = [self._agent("a"), self._agent("b"), self._agent("c")]
+        # Cursor was on "b" at index 1; stopping "b" → "c" now sits
+        # at index 1 and takes focus.
+        out = dashboard._pick_next_after_stop(agents, 1, "b")
+        self.assertEqual((1, self._agent("c")), out)
+
+    def test_last_row_wraps_to_new_last(self):
+        agents = [self._agent("a"), self._agent("b"), self._agent("c")]
+        # Cursor on "c" at index 2; stopping "c" leaves a 2-agent
+        # list — index 2 is out of bounds, fall back to new last (1).
+        out = dashboard._pick_next_after_stop(agents, 2, "c")
+        self.assertEqual((1, self._agent("b")), out)
+
+    def test_first_row(self):
+        agents = [self._agent("a"), self._agent("b")]
+        out = dashboard._pick_next_after_stop(agents, 0, "a")
+        self.assertEqual((0, self._agent("b")), out)
+
+    def test_clamps_negative_selection(self):
+        # Defensive: a stale negative index doesn't crash.
+        agents = [self._agent("a"), self._agent("b")]
+        out = dashboard._pick_next_after_stop(agents, -1, "a")
+        self.assertEqual((0, self._agent("b")), out)
+
+
+class TestTmuxPaneArgvBuilders(unittest.TestCase):
+    """Pure argv builders for the tmux split-pane integration
+    (PRD 0021 chunk 2). The subprocess invocation itself is
+    environment-dependent; here we lock the wrapping shape so
+    a regression surfaces in CI without needing a real tmux."""
+
+    DOCKER_ARGV = [
+        "docker", "exec", "-it",
+        "claude-bottle-dev-abc",
+        "claude", "--dangerously-skip-permissions", "--continue",
+    ]
+
+    def test_split_pane_argv_horizontal_with_pane_id_capture(self):
+        argv = dashboard._build_split_pane_argv(self.DOCKER_ARGV)
+        self.assertEqual(
+            ["tmux", "split-window", "-h",
+             "-P", "-F", "#{pane_id}",
+             *self.DOCKER_ARGV],
+            argv,
+        )
+
+    def test_respawn_pane_argv_kills_existing_process(self):
+        argv = dashboard._build_respawn_pane_argv("%12", self.DOCKER_ARGV)
+        self.assertEqual(
+            ["tmux", "respawn-pane", "-k", "-t", "%12", *self.DOCKER_ARGV],
+            argv,
+        )
+
+    def test_respawn_pane_argv_threads_pane_id_unmodified(self):
+        # Pane ids contain `%`; make sure we pass them straight
+        # through to `-t` without quoting or substitution surprises.
+        argv = dashboard._build_respawn_pane_argv("%abc.123", ["sh"])
+        self.assertIn("%abc.123", argv)
+
+
+class TestResumeArgvWithFallback(unittest.TestCase):
+    """The `claude --continue || claude` shell fallback for the
+    tmux re-attach path. Without it, an agent that's been spun
+    up but never typed at crashes the pane on Enter because
+    --continue has no session to resume."""
+
+    def _bottle(self, prompt_path: str | None = None):
+        from claude_bottle.backend.docker.bottle import DockerBottle
+        return DockerBottle(
+            container="claude-bottle-dev-abc",
+            teardown=lambda: None,
+            prompt_path_in_container=prompt_path,
+        )
+
+    def test_wraps_in_sh_c_with_or_fallback(self):
+        argv = dashboard._build_resume_argv_with_fallback(self._bottle())
+        # Must end with `sh -c '<cmd> --continue || <cmd>'`.
+        self.assertEqual(
+            ["docker", "exec", "-it", "claude-bottle-dev-abc", "sh", "-c"],
+            argv[:6],
+        )
+        inner = argv[6]
+        self.assertIn("--continue", inner)
+        self.assertIn("||", inner)
+        # Both branches mention claude.
+        self.assertEqual(2, inner.count("claude"))
+
+    def test_inner_args_quoted_safely(self):
+        # Paths with spaces would break naive concatenation.
+        bottle = self._bottle("/home/with space/.prompt")
+        argv = dashboard._build_resume_argv_with_fallback(bottle)
+        inner = argv[-1]
+        # shlex.quote should single-quote any token with a space.
+        self.assertIn("'/home/with space/.prompt'", inner)
+
+    def test_includes_skip_permissions(self):
+        argv = dashboard._build_resume_argv_with_fallback(self._bottle())
+        self.assertIn("--dangerously-skip-permissions", argv[-1])
+
+    def test_includes_prompt_file_flag_when_set(self):
+        bottle = self._bottle("/home/node/.claude-bottle-prompt.txt")
+        argv = dashboard._build_resume_argv_with_fallback(bottle)
+        self.assertIn("--append-system-prompt-file", argv[-1])
+        self.assertIn("/home/node/.claude-bottle-prompt.txt", argv[-1])
+
+
+class TestClaudeRuntimeArgs(unittest.TestCase):
+    """The argv passed to `bottle.claude_docker_argv` on each
+    attach. Locked here so the tmux + foreground paths build
+    identical claude invocations."""
+
+    def test_default_skip_permissions_only(self):
+        self.assertEqual(
+            ["--dangerously-skip-permissions"],
+            dashboard._claude_runtime_args(resume=False),
+        )
+
+    def test_resume_appends_continue(self):
+        self.assertEqual(
+            ["--dangerously-skip-permissions", "--continue"],
+            dashboard._claude_runtime_args(resume=True),
+        )
+
+    def test_remote_control(self):
+        args = dashboard._claude_runtime_args(
+            resume=False, remote_control=True,
+        )
+        self.assertIn("--remote-control", args)
+
+
 class TestStopBottleFlow(unittest.TestCase):
     """Explicit per-bottle stop (PRD 0020 chunk 4). The non-owned
     path is the one safe to test without curses + docker — the
@@ -395,6 +549,20 @@ class TestStopBottleFlow(unittest.TestCase):
         )
         self.assertIn("not dashboard-owned", msg)
         self.assertIn("./cli.py cleanup", msg)
+
+    def test_non_owned_does_not_touch_tmux_state(self):
+        # PRD 0021: a stop on an unknown slug should never clear
+        # the right-pane occupant tracking, even if the slugs
+        # happen to match (defensive — non-owned can't be in the
+        # right pane via the dashboard's normal flow anyway).
+        tmux_state = {"pane_id": "%5", "slug": "live-bbb"}
+        dashboard._stop_bottle_flow(
+            stdscr=None,  # type: ignore[arg-type]
+            bottles={},
+            slug="ghost-zzz",
+            tmux_state=tmux_state,
+        )
+        self.assertEqual({"pane_id": "%5", "slug": "live-bbb"}, tmux_state)
 
 
 class TestOperatorEditFlowGuards(_FakeHomeMixin, unittest.TestCase):
