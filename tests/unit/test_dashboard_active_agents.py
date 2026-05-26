@@ -379,6 +379,55 @@ class TestBottleForSlug(unittest.TestCase):
         self.assertEqual("", hint)
 
 
+class TestPickNextAfterStop(unittest.TestCase):
+    """After `x` stops a bottle, the dashboard slides focus to
+    the next agent — the one filling the stopped row, or the
+    new last row if the stopped was last. Pure helper, easy
+    to unit-test."""
+
+    def _agent(self, slug: str) -> dashboard.ActiveAgent:
+        return dashboard.ActiveAgent(
+            slug=slug, agent_name=slug, started_at="", services=(),
+        )
+
+    def test_empty_list_returns_none(self):
+        self.assertIsNone(
+            dashboard._pick_next_after_stop([], 0, "anything"),
+        )
+
+    def test_only_agent_being_stopped_returns_none(self):
+        # Stopping the last agent → nothing to focus.
+        agents = [self._agent("only")]
+        self.assertIsNone(
+            dashboard._pick_next_after_stop(agents, 0, "only"),
+        )
+
+    def test_middle_row_slides_up_to_same_index(self):
+        agents = [self._agent("a"), self._agent("b"), self._agent("c")]
+        # Cursor was on "b" at index 1; stopping "b" → "c" now sits
+        # at index 1 and takes focus.
+        out = dashboard._pick_next_after_stop(agents, 1, "b")
+        self.assertEqual((1, self._agent("c")), out)
+
+    def test_last_row_wraps_to_new_last(self):
+        agents = [self._agent("a"), self._agent("b"), self._agent("c")]
+        # Cursor on "c" at index 2; stopping "c" leaves a 2-agent
+        # list — index 2 is out of bounds, fall back to new last (1).
+        out = dashboard._pick_next_after_stop(agents, 2, "c")
+        self.assertEqual((1, self._agent("b")), out)
+
+    def test_first_row(self):
+        agents = [self._agent("a"), self._agent("b")]
+        out = dashboard._pick_next_after_stop(agents, 0, "a")
+        self.assertEqual((0, self._agent("b")), out)
+
+    def test_clamps_negative_selection(self):
+        # Defensive: a stale negative index doesn't crash.
+        agents = [self._agent("a"), self._agent("b")]
+        out = dashboard._pick_next_after_stop(agents, -1, "a")
+        self.assertEqual((0, self._agent("b")), out)
+
+
 class TestTmuxPaneArgvBuilders(unittest.TestCase):
     """Pure argv builders for the tmux split-pane integration
     (PRD 0021 chunk 2). The subprocess invocation itself is

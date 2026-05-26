@@ -890,6 +890,42 @@ def _route_op_to_right_pane(
         yield True
 
 
+def _tmux_close_right_pane(tmux_state: dict) -> None:
+    """Close the tracked right pane via `tmux kill-pane`. Clears
+    both pane_id and slug in `tmux_state`. Used after the last
+    dashboard-owned agent is stopped — no claude session left
+    to host, so the pane shouldn't linger."""
+    pane_id = tmux_state.get("pane_id")
+    if pane_id and _tmux_pane_exists(pane_id):
+        try:
+            subprocess.run(
+                ["tmux", "kill-pane", "-t", pane_id],
+                capture_output=True, text=True, check=False,
+            )
+        except FileNotFoundError:
+            pass
+    tmux_state["pane_id"] = None
+    tmux_state["slug"] = None
+
+
+def _pick_next_after_stop(
+    agents_before: list[ActiveAgent],
+    selected_index: int,
+    stopped_slug: str,
+) -> tuple[int, ActiveAgent] | None:
+    """After stopping `stopped_slug` from the agents list, choose
+    the agent that should take focus next. The agent below the
+    stopped row (which slides up to fill its index) is the
+    natural pick; if the stopped agent was last, the row above
+    instead. Returns (new_index, agent) or None if no agents
+    remain. Pure — easy to unit-test."""
+    new_agents = [a for a in agents_before if a.slug != stopped_slug]
+    if not new_agents:
+        return None
+    new_index = min(max(selected_index, 0), len(new_agents) - 1)
+    return new_index, new_agents[new_index]
+
+
 def _ensure_right_pane(tmux_state: dict, argv: list[str]) -> str | None:
     """Run `argv` in the dashboard's right pane — respawn an
     existing tracked pane if one is alive, split-window to
@@ -1347,6 +1383,28 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
                         stdscr, bottles, target.slug,
                         tmux_state=tmux_state,
                     )
+                    # PRD 0021 follow-up: after stop, slide focus
+                    # to the next agent in the list (the one that
+                    # filled the stopped row) and respawn the
+                    # right pane with its claude session. If
+                    # nothing's left, close the right pane.
+                    pick = _pick_next_after_stop(
+                        agents, selected_agent, target.slug,
+                    )
+                    if pick is None:
+                        _tmux_close_right_pane(tmux_state)
+                    else:
+                        new_index, next_agent = pick
+                        selected_agent = new_index
+                        if _in_tmux():
+                            manifest = manifest_cache[0]
+                            bottle, _hint = _bottle_for_slug(
+                                next_agent.slug, bottles, manifest,
+                            )
+                            _attach_in_tmux(
+                                stdscr, bottle, next_agent.slug,
+                                resume=True, tmux_state=tmux_state,
+                            )
             continue
 
         if not pending:
