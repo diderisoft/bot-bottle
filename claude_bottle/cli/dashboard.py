@@ -778,34 +778,15 @@ def _redirect_stderr_to_file(path):
         os.close(log_fd)
 
 
-def _tmux_split_pane_tail(log_path) -> str | None:
-    """Pre-create the right pane tailing `log_path` so the
-    `_new_agent_flow` launch step's redirected stderr streams
-    into it. Returns the new pane's id or None on failure.
-    The pane is later respawned with the claude session via
-    `_tmux_respawn_pane`."""
-    argv = _build_split_pane_argv(["tail", "-F", str(log_path)])
+def _tmux_split_pane_create(argv: list[str]) -> str | None:
+    """Open a right pane running `argv` via `tmux split-window
+    -h`. Returns the new pane's id on success, None on any
+    failure (tmux missing, nonzero exit, empty stdout). Generic
+    over `argv` so both the tail-during-bringup path and the
+    claude-attach path can build on it."""
     try:
         result = subprocess.run(
-            argv, capture_output=True, text=True, check=False,
-        )
-    except FileNotFoundError:
-        return None
-    if result.returncode != 0:
-        return None
-    return (result.stdout or "").strip() or None
-
-
-def _tmux_split_pane_create(bottle, *, resume: bool) -> str | None:
-    """Open a right pane via `tmux split-window -h`. Returns the
-    new pane's id on success, None on any failure (tmux missing,
-    nonzero exit, empty stdout)."""
-    docker_argv = bottle.claude_docker_argv(
-        _claude_runtime_args(resume=resume),
-    )
-    try:
-        result = subprocess.run(
-            _build_split_pane_argv(docker_argv),
+            _build_split_pane_argv(argv),
             capture_output=True, text=True, check=False,
         )
     except FileNotFoundError:
@@ -816,20 +797,42 @@ def _tmux_split_pane_create(bottle, *, resume: bool) -> str | None:
     return pane_id or None
 
 
-def _tmux_respawn_pane(pane_id: str, bottle, *, resume: bool) -> bool:
-    """Replace the content of `pane_id` with a fresh claude
-    session via `tmux respawn-pane -k`. Returns True on success."""
-    docker_argv = bottle.claude_docker_argv(
-        _claude_runtime_args(resume=resume),
-    )
+def _tmux_respawn_pane(pane_id: str, argv: list[str]) -> bool:
+    """Replace the content of `pane_id` with `argv` via `tmux
+    respawn-pane -k`. Returns True on success. Generic over
+    `argv` so the same helper handles tail→claude transitions
+    and slug→slug claude transitions."""
     try:
         result = subprocess.run(
-            _build_respawn_pane_argv(pane_id, docker_argv),
+            _build_respawn_pane_argv(pane_id, argv),
             capture_output=True, text=True, check=False,
         )
     except FileNotFoundError:
         return False
     return result.returncode == 0
+
+
+def _ensure_right_pane(tmux_state: dict, argv: list[str]) -> str | None:
+    """Run `argv` in the dashboard's right pane — respawn an
+    existing tracked pane if one is alive, split-window to
+    create one otherwise. Updates `tmux_state['pane_id']` and
+    returns the pane id on success, None on failure.
+
+    This is the single place where "respawn or create" lives —
+    used by `_attach_in_tmux` for claude sessions AND by
+    `_new_agent_flow` for the bringup-log tail. Without this,
+    every new-agent start would pile up a fresh right pane
+    instead of reusing the one already next to the dashboard."""
+    pane_id = tmux_state.get("pane_id")
+    if pane_id and _tmux_pane_exists(pane_id):
+        if _tmux_respawn_pane(pane_id, argv):
+            return pane_id
+        # respawn failed — fall through to create a fresh split.
+        tmux_state["pane_id"] = None
+    new_pane_id = _tmux_split_pane_create(argv)
+    if new_pane_id is not None:
+        tmux_state["pane_id"] = new_pane_id
+    return new_pane_id
 
 
 def _tmux_pane_exists(pane_id: str) -> bool:
@@ -883,22 +886,16 @@ def _attach_in_tmux(
     session. Mutates `tmux_state` ({'pane_id': str|None,
     'slug': str|None}) so the main loop can track which slug is
     in the right pane (used by the agents-pane indicator + the
-    explicit-stop hook in chunk 4)."""
-    pane_id = tmux_state.get("pane_id")
-    if pane_id and _tmux_pane_exists(pane_id):
-        if _tmux_respawn_pane(pane_id, bottle, resume=resume):
-            tmux_state["slug"] = slug
-            return f"[{slug}] in right pane"
-        # respawn failed — fall through to create a fresh split.
-        tmux_state["pane_id"] = None
-
-    new_pane_id = _tmux_split_pane_create(bottle, resume=resume)
-    if new_pane_id is None:
+    explicit-stop hook)."""
+    docker_argv = bottle.claude_docker_argv(
+        _claude_runtime_args(resume=resume),
+    )
+    pane_id = _ensure_right_pane(tmux_state, docker_argv)
+    if pane_id is None:
         # tmux failed (missing binary, server died, size error).
         # One status-line failover to the curses handoff so the
         # operator still gets a session.
         return _attach_via_handoff(stdscr, bottle, slug, resume=resume)
-    tmux_state["pane_id"] = new_pane_id
     tmux_state["slug"] = slug
     return f"[{slug}] in right pane"
 
@@ -974,19 +971,23 @@ def _new_agent_flow(
         backend = get_bottle_backend()
 
         if _in_tmux() and tmux_state is not None:
-            # PRD 0021 follow-up: pre-create the right pane tailing
-            # state/<slug>/bringup.log, redirect fd 2 to that log
-            # during launch, then respawn the pane with claude.
-            # Net effect: compose-up + provision output streams into
-            # the right pane (where claude will live), the dashboard
-            # pane stays uncluttered, and curses doesn't need to be
-            # taken down at all.
+            # PRD 0021 follow-up: route the bringup output into
+            # the right pane. `_ensure_right_pane` reuses any
+            # existing right pane via respawn — so a second
+            # new-agent start doesn't pile up a fresh pane — and
+            # only splits when no pane is tracked or the tracked
+            # one was closed. fd 2 is redirected to the same log
+            # the tail is following, so both Python `info()`
+            # writes AND subprocess (docker compose up, network
+            # creates, provision) stderr stream into the right
+            # pane. Curses stays up the whole time.
             log_path = bottle_state_dir(plan.slug) / "bringup.log"
             log_path.parent.mkdir(parents=True, exist_ok=True)
             log_path.write_text("")  # empty so tail starts clean
-            pane_id = _tmux_split_pane_tail(log_path)
+            pane_id = _ensure_right_pane(
+                tmux_state, ["tail", "-F", str(log_path)],
+            )
             if pane_id is not None:
-                tmux_state["pane_id"] = pane_id
                 tmux_state["slug"] = plan.slug
                 try:
                     with _redirect_stderr_to_file(log_path):
@@ -996,7 +997,7 @@ def _new_agent_flow(
                     settle_state(identity)
                     raise
                 bottles[plan.slug] = (cm, bottle, identity)
-                # Respawn the right pane: tail → claude session.
+                # Respawn the same pane: tail → claude session.
                 return _attach_in_tmux(
                     stdscr, bottle, plan.slug,
                     resume=False, tmux_state=tmux_state,
