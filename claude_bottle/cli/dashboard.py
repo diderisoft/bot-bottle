@@ -710,33 +710,24 @@ def _stop_bottle_flow(
         except BaseException:
             pass
 
-    if _in_tmux() and tmux_state is not None:
-        # Mirror the bringup path: route compose-down + state-
-        # settle output into the right pane via `tail -F` + fd-2
-        # redirect. Reuses any existing right pane (which is
-        # probably the agent's own claude session) via
-        # _ensure_right_pane → respawn-pane. Tail-F handles the
-        # state-dir-being-removed-mid-tail case gracefully.
-        log_path = bottle_state_dir(slug) / "teardown.log"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        log_path.write_text("")
-        pane_id = _ensure_right_pane(
-            tmux_state, ["tail", "-F", str(log_path)],
-        )
-        if pane_id is not None:
-            tmux_state["slug"] = slug
-            try:
-                with _redirect_stderr_to_file(log_path):
-                    _do_teardown()
-            except BaseException:
-                pass
-            settle_state(identity)
-            # Right pane keeps tailing the (now-removed) log — its
-            # final buffered output stays visible until the next
-            # attach respawns it.
+    # Mirror the bringup path's stderr → right-pane routing.
+    # Reuses any existing right pane (which is probably the
+    # agent's own claude session) via `_ensure_right_pane`; the
+    # final buffered output stays visible after settle_state
+    # removes the state dir (tail-F handles file removal).
+    try:
+        with _route_op_to_right_pane(
+            tmux_state, slug, "teardown.log",
+        ) as routed:
+            if routed:
+                _do_teardown()
+    except BaseException:
+        pass
+    if routed:
+        settle_state(identity)
+        if tmux_state is not None:
             tmux_state["slug"] = None
-            return f"[{slug}] stopped"
-        # tmux failed; fall through to the curses-endwin path.
+        return f"[{slug}] stopped"
 
     # Non-tmux: compose-down output writes to the dashboard's
     # terminal directly. Drop curses so the lines render cleanly,
@@ -861,6 +852,42 @@ def _tmux_respawn_pane(pane_id: str, argv: list[str]) -> bool:
     except FileNotFoundError:
         return False
     return result.returncode == 0
+
+
+@contextlib.contextmanager
+def _route_op_to_right_pane(
+    tmux_state: dict | None,
+    slug: str,
+    log_name: str,
+):
+    """Run an operation with its stderr routed into the right
+    tmux pane via `tail -F`.
+
+    Yields True when routing succeeded — the with-block runs
+    with fd 2 redirected to `state/<slug>/<log_name>` and the
+    right pane is tailing the same file. Yields False otherwise
+    (not in tmux, no tmux_state, or tmux failed to spawn the
+    pane) — the caller decides how to fall back.
+
+    Used identically by the bringup flow (log_name='bringup.log')
+    and the teardown flow ('teardown.log'). The fallback paths
+    differ between callers — bringup follows up with
+    `_attach_in_tmux`, teardown does the curses-endwin direct
+    compose-down — so the helper stops at "stderr is now routed
+    or it isn't" and lets callers branch from there."""
+    if not _in_tmux() or tmux_state is None:
+        yield False
+        return
+    log_path = bottle_state_dir(slug) / log_name
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text("")  # empty so tail starts clean
+    pane_id = _ensure_right_pane(tmux_state, ["tail", "-F", str(log_path)])
+    if pane_id is None:
+        yield False
+        return
+    tmux_state["slug"] = slug
+    with _redirect_stderr_to_file(log_path):
+        yield True
 
 
 def _ensure_right_pane(tmux_state: dict, argv: list[str]) -> str | None:
@@ -1021,41 +1048,28 @@ def _new_agent_flow(
 
         backend = get_bottle_backend()
 
-        if _in_tmux() and tmux_state is not None:
-            # PRD 0021 follow-up: route the bringup output into
-            # the right pane. `_ensure_right_pane` reuses any
-            # existing right pane via respawn — so a second
-            # new-agent start doesn't pile up a fresh pane — and
-            # only splits when no pane is tracked or the tracked
-            # one was closed. fd 2 is redirected to the same log
-            # the tail is following, so both Python `info()`
-            # writes AND subprocess (docker compose up, network
-            # creates, provision) stderr stream into the right
-            # pane. Curses stays up the whole time.
-            log_path = bottle_state_dir(plan.slug) / "bringup.log"
-            log_path.parent.mkdir(parents=True, exist_ok=True)
-            log_path.write_text("")  # empty so tail starts clean
-            pane_id = _ensure_right_pane(
-                tmux_state, ["tail", "-F", str(log_path)],
+        # PRD 0021 follow-up: in tmux, route the launch step's
+        # stderr (Python info() + subprocess inheritors) into
+        # the right pane via tail. On success, fall through to
+        # `_attach_in_tmux` which respawns the same pane with
+        # claude. On failure, fall through to the curses-endwin
+        # handoff so the operator still gets a session.
+        try:
+            with _route_op_to_right_pane(
+                tmux_state, plan.slug, "bringup.log",
+            ) as routed:
+                if routed:
+                    cm = backend.launch(plan)
+                    bottle = cm.__enter__()
+        except BaseException:
+            settle_state(identity)
+            raise
+        if routed:
+            bottles[plan.slug] = (cm, bottle, identity)
+            return _attach_in_tmux(
+                stdscr, bottle, plan.slug,
+                resume=False, tmux_state=tmux_state,
             )
-            if pane_id is not None:
-                tmux_state["slug"] = plan.slug
-                try:
-                    with _redirect_stderr_to_file(log_path):
-                        cm = backend.launch(plan)
-                        bottle = cm.__enter__()
-                except BaseException:
-                    settle_state(identity)
-                    raise
-                bottles[plan.slug] = (cm, bottle, identity)
-                # Respawn the same pane: tail → claude session.
-                return _attach_in_tmux(
-                    stdscr, bottle, plan.slug,
-                    resume=False, tmux_state=tmux_state,
-                )
-            # pane creation failed (no tmux binary, server died) →
-            # fall through to the curses-endwin handoff so the
-            # operator still gets a session.
 
         # Launch step writes to stderr (image build, network create,
         # compose up). Get out of curses' way for the duration so
