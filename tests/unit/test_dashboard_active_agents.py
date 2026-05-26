@@ -463,6 +463,52 @@ class TestTmuxPaneArgvBuilders(unittest.TestCase):
         self.assertIn("%abc.123", argv)
 
 
+class TestResumeArgvWithFallback(unittest.TestCase):
+    """The `claude --continue || claude` shell fallback for the
+    tmux re-attach path. Without it, an agent that's been spun
+    up but never typed at crashes the pane on Enter because
+    --continue has no session to resume."""
+
+    def _bottle(self, prompt_path: str | None = None):
+        from claude_bottle.backend.docker.bottle import DockerBottle
+        return DockerBottle(
+            container="claude-bottle-dev-abc",
+            teardown=lambda: None,
+            prompt_path_in_container=prompt_path,
+        )
+
+    def test_wraps_in_sh_c_with_or_fallback(self):
+        argv = dashboard._build_resume_argv_with_fallback(self._bottle())
+        # Must end with `sh -c '<cmd> --continue || <cmd>'`.
+        self.assertEqual(
+            ["docker", "exec", "-it", "claude-bottle-dev-abc", "sh", "-c"],
+            argv[:6],
+        )
+        inner = argv[6]
+        self.assertIn("--continue", inner)
+        self.assertIn("||", inner)
+        # Both branches mention claude.
+        self.assertEqual(2, inner.count("claude"))
+
+    def test_inner_args_quoted_safely(self):
+        # Paths with spaces would break naive concatenation.
+        bottle = self._bottle("/home/with space/.prompt")
+        argv = dashboard._build_resume_argv_with_fallback(bottle)
+        inner = argv[-1]
+        # shlex.quote should single-quote any token with a space.
+        self.assertIn("'/home/with space/.prompt'", inner)
+
+    def test_includes_skip_permissions(self):
+        argv = dashboard._build_resume_argv_with_fallback(self._bottle())
+        self.assertIn("--dangerously-skip-permissions", argv[-1])
+
+    def test_includes_prompt_file_flag_when_set(self):
+        bottle = self._bottle("/home/node/.claude-bottle-prompt.txt")
+        argv = dashboard._build_resume_argv_with_fallback(bottle)
+        self.assertIn("--append-system-prompt-file", argv[-1])
+        self.assertIn("/home/node/.claude-bottle-prompt.txt", argv[-1])
+
+
 class TestClaudeRuntimeArgs(unittest.TestCase):
     """The argv passed to `bottle.claude_docker_argv` on each
     attach. Locked here so the tmux + foreground paths build

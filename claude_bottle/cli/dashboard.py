@@ -15,6 +15,7 @@ import argparse
 import contextlib
 import curses
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -773,6 +774,38 @@ def _claude_runtime_args(*, resume: bool, remote_control: bool = False) -> list[
     return args
 
 
+def _build_resume_argv_with_fallback(
+    bottle, *, remote_control: bool = False,
+) -> list[str]:
+    """Build a docker-exec argv that runs `claude --continue` and
+    falls back to plain `claude` if no prior session exists.
+
+    `--continue` exits non-zero when an agent has been spun up
+    but never typed at — there's no transcript to resume. The
+    shell-level `||` wrapper makes that case start a fresh
+    session instead of crashing the pane. The trade-off: we
+    invoke `sh -c` inside the container, so the command is two
+    `claude` invocations behind a tiny shell rather than one
+    direct exec. Acceptable; the shell adds microseconds and
+    the fallback only kicks in when --continue would have
+    failed anyway."""
+    base_args = ["--dangerously-skip-permissions"]
+    if remote_control:
+        base_args.append("--remote-control")
+    base_docker = bottle.claude_docker_argv(base_args)
+    # Split docker-prefix from the claude-and-args tail so we
+    # can compose `<claude…> --continue || <claude…>` inside
+    # `sh -c`. The `claude` token is the marker.
+    claude_idx = base_docker.index("claude")
+    prefix = base_docker[:claude_idx]
+    claude_cmd = " ".join(shlex.quote(a) for a in base_docker[claude_idx:])
+    return [
+        *prefix,
+        "sh", "-c",
+        f"{claude_cmd} --continue || {claude_cmd}",
+    ]
+
+
 def _build_split_pane_argv(docker_argv: list[str]) -> list[str]:
     """Pure helper: wrap a docker-exec argv with `tmux split-window
     -h -P -F '#{pane_id}'`. The `-P -F` combo tells tmux to print
@@ -1008,9 +1041,16 @@ def _attach_in_tmux(
     The Enter re-attach key passes this; passive paths (the
     auto-attach after a stop) leave it False so the operator
     stays in the dashboard pane."""
-    docker_argv = bottle.claude_docker_argv(
-        _claude_runtime_args(resume=resume),
-    )
+    if resume:
+        # `--continue` exits non-zero when no prior session
+        # exists (agent spun up but never typed at). Wrap with a
+        # shell-level fallback so the pane lands in a fresh
+        # claude instead of crashing.
+        docker_argv = _build_resume_argv_with_fallback(bottle)
+    else:
+        docker_argv = bottle.claude_docker_argv(
+            _claude_runtime_args(resume=False),
+        )
     pane_id = _ensure_right_pane(tmux_state, docker_argv)
     if pane_id is None:
         # tmux failed (missing binary, server died, size error).
