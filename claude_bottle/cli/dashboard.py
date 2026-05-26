@@ -696,10 +696,15 @@ def _attach_to_bottle(
     slug: str,
 ) -> str:
     """Handoff: curses.endwin → attach claude → curses refresh.
-    Returns the post-attach status-line message."""
+    Re-entry into a running bottle from the dashboard always
+    passes `--resume` so claude picks up its prior conversation
+    rather than starting a fresh transcript — the first attach
+    happens via `_new_agent_flow` which sets up the transcript
+    in the first place. Returns the post-attach status-line
+    message."""
     curses.endwin()
     try:
-        exit_code = attach_claude(bottle, remote_control=False)
+        exit_code = attach_claude(bottle, remote_control=False, resume=True)
     except BaseException:
         stdscr.refresh()
         raise
