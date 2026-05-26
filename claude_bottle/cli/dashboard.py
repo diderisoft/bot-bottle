@@ -995,12 +995,19 @@ def _attach_in_tmux(
     *,
     resume: bool,
     tmux_state: dict,
+    focus_right_pane: bool = False,
 ) -> str:
     """Spawn / respawn the right pane with `bottle`'s claude
     session. Mutates `tmux_state` ({'pane_id': str|None,
     'slug': str|None}) so the main loop can track which slug is
     in the right pane (used by the agents-pane indicator + the
-    explicit-stop hook)."""
+    explicit-stop hook).
+
+    `focus_right_pane=True` runs `tmux select-pane` after the
+    respawn so the operator is dropped into claude immediately.
+    The Enter re-attach key passes this; passive paths (the
+    auto-attach after a stop) leave it False so the operator
+    stays in the dashboard pane."""
     docker_argv = bottle.claude_docker_argv(
         _claude_runtime_args(resume=resume),
     )
@@ -1011,7 +1018,22 @@ def _attach_in_tmux(
         # operator still gets a session.
         return _attach_via_handoff(stdscr, bottle, slug, resume=resume)
     tmux_state["slug"] = slug
+    if focus_right_pane:
+        _tmux_select_pane(pane_id)
     return f"[{slug}] in right pane"
+
+
+def _tmux_select_pane(pane_id: str) -> None:
+    """`tmux select-pane -t <id>` — moves tmux's keyboard focus
+    to the pane. Best-effort; failure is silent (logged only via
+    subprocess's stderr, which we suppress)."""
+    try:
+        subprocess.run(
+            ["tmux", "select-pane", "-t", pane_id],
+            capture_output=True, text=True, check=False,
+        )
+    except FileNotFoundError:
+        pass
 
 
 def _attach_to_bottle(
@@ -1028,8 +1050,13 @@ def _attach_to_bottle(
     blocks until the operator exits claude. Re-attach always uses
     `--continue` — first attach happens via `_new_agent_flow`."""
     if _in_tmux() and tmux_state is not None:
+        # Enter re-attach is an explicit "I want to interact with
+        # this agent" signal — move tmux focus to the right pane
+        # so keypresses land in claude instead of the dashboard.
         return _attach_in_tmux(
-            stdscr, bottle, slug, resume=True, tmux_state=tmux_state,
+            stdscr, bottle, slug,
+            resume=True, tmux_state=tmux_state,
+            focus_right_pane=True,
         )
     return _attach_via_handoff(stdscr, bottle, slug, resume=True)
 
