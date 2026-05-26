@@ -455,6 +455,20 @@ class TestStopBottleFlow(unittest.TestCase):
         self.assertIn("not dashboard-owned", msg)
         self.assertIn("./cli.py cleanup", msg)
 
+    def test_non_owned_does_not_touch_tmux_state(self):
+        # PRD 0021: a stop on an unknown slug should never clear
+        # the right-pane occupant tracking, even if the slugs
+        # happen to match (defensive — non-owned can't be in the
+        # right pane via the dashboard's normal flow anyway).
+        tmux_state = {"pane_id": "%5", "slug": "live-bbb"}
+        dashboard._stop_bottle_flow(
+            stdscr=None,  # type: ignore[arg-type]
+            bottles={},
+            slug="ghost-zzz",
+            tmux_state=tmux_state,
+        )
+        self.assertEqual({"pane_id": "%5", "slug": "live-bbb"}, tmux_state)
+
 
 class TestOperatorEditFlowGuards(_FakeHomeMixin, unittest.TestCase):
     """Chunk-4 contract: the edit flow refuses when the selected

@@ -654,13 +654,21 @@ def _stop_bottle_flow(
     stdscr: "curses._CursesWindow",
     bottles: dict,
     slug: str,
+    *,
+    tmux_state: dict | None = None,
 ) -> str:
     """Explicit per-bottle teardown (PRD 0020 chunk 4). Pops the
     (cm, bottle, identity) tuple from the dashboard's bottles
     map, snapshots the transcript best-effort, drives the launch
     context's __exit__ (compose down + network remove), and
     settles the state dir. A non-owned slug is a no-op with a
-    hint pointing at `./cli.py cleanup`."""
+    hint pointing at `./cli.py cleanup`.
+
+    PRD 0021: clears `tmux_state['slug']` when the stopped
+    bottle was the right-pane occupant. The pane itself is
+    left in place — the operator presses Enter on a different
+    agent to repurpose it (respawn-pane replaces the broken
+    state)."""
     if slug not in bottles:
         return (
             f"[{slug}] not dashboard-owned — use ./cli.py cleanup"
@@ -687,6 +695,8 @@ def _stop_bottle_flow(
     finally:
         stdscr.refresh()
     settle_state(identity)
+    if tmux_state is not None and tmux_state.get("slug") == slug:
+        tmux_state["slug"] = None
     return f"[{slug}] stopped"
 
 
@@ -1120,6 +1130,7 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
             agents=agents,
             selected_agent=selected_agent,
             focus=focus,
+            right_pane_slug=tmux_state.get("slug"),
             first_seen=first_seen, now=now, green_attr=green_attr,
         )
 
@@ -1197,6 +1208,7 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
                 else:
                     status_line = _stop_bottle_flow(
                         stdscr, bottles, target.slug,
+                        tmux_state=tmux_state,
                     )
             continue
 
@@ -1244,6 +1256,7 @@ def _render(
     agents: list[ActiveAgent] | None = None,
     selected_agent: int = 0,
     focus: str = PANE_PROPOSALS,
+    right_pane_slug: str | None = None,
     first_seen: dict[str, float] | None = None,
     now: float | None = None,
     green_attr: int = 0,
@@ -1325,11 +1338,18 @@ def _render(
             if row >= h - 3:
                 break
             line = _format_agent_row(a, w - 1)
+            in_right_pane = (a.slug == right_pane_slug)
             if agents_focused and i == selected_agent:
                 # Replace the leading "  " cursor with "> " and
                 # highlight the whole row.
                 line = "> " + line[2:]
                 attr = curses.A_REVERSE
+            elif in_right_pane:
+                # PRD 0021: `*` marks the agent currently in the
+                # right tmux pane so the operator can see at a
+                # glance which session is visible to their right.
+                line = "* " + line[2:]
+                attr = curses.A_BOLD
             else:
                 attr = curses.A_NORMAL
             stdscr.addnstr(row, 0, line, w - 1, attr)
