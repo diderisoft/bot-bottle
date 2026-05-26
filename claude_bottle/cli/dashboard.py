@@ -513,6 +513,14 @@ def _try_init_green() -> int:
         return 0
 
 
+# PRD 0019 chunk 3: which pane the j/k/arrow keys move through.
+# Tab toggles. The proposals pane is the default focus — proposal
+# action keys (a/m/r/Enter) require it; agent-scoped keys (e/p,
+# chunk 4) require the agents pane.
+PANE_PROPOSALS = "proposals"
+PANE_AGENTS = "agents"
+
+
 def _main_loop(stdscr: "curses._CursesWindow") -> None:
     curses.curs_set(0)
     # Auto-refresh: getch() returns -1 after the timeout if no key
@@ -527,16 +535,17 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
     # gone (approved / rejected / archived) so the dict stays small.
     first_seen: dict[str, float] = {}
     selected = 0
+    selected_agent = 0
+    focus = PANE_PROPOSALS
     status_line = ""
     while True:
         pending = discover_pending()
         if selected >= len(pending):
             selected = max(0, len(pending) - 1)
 
-        # PRD 0019 chunk 2: agents pane shows what's currently
-        # running on the same 1s refresh cadence. No selection
-        # model yet — that's chunk 3.
         agents = discover_active_agents()
+        if selected_agent >= len(agents):
+            selected_agent = max(0, len(agents) - 1)
 
         now = time.monotonic()
         live_ids = {qp.proposal.id for qp in pending}
@@ -548,6 +557,8 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
         _render(
             stdscr, pending, selected, status_line,
             agents=agents,
+            selected_agent=selected_agent,
+            focus=focus,
             first_seen=first_seen, now=now, green_attr=green_attr,
         )
 
@@ -568,12 +579,27 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
 
         if key in (ord("q"), 27):  # q or ESC
             return
+        if key == 9:  # Tab
+            focus = PANE_AGENTS if focus == PANE_PROPOSALS else PANE_PROPOSALS
+            continue
         if key == ord("e"):
             status_line = _operator_edit_routes_flow(stdscr)
             continue
         if key == ord("p"):
             status_line = _operator_edit_allowlist_flow(stdscr)
             continue
+
+        if focus == PANE_AGENTS:
+            # j/k/arrow navigate the agents list. All other keys
+            # are ignored (Tab back to proposals to act on
+            # proposals). Chunk 4 will wire `e` / `p` to use
+            # the agents-pane selection.
+            if key in (curses.KEY_DOWN, ord("j")):
+                selected_agent = min(selected_agent + 1, max(0, len(agents) - 1))
+            elif key in (curses.KEY_UP, ord("k")):
+                selected_agent = max(selected_agent - 1, 0)
+            continue
+
         if not pending:
             continue
         qp = pending[selected]
@@ -616,6 +642,8 @@ def _render(
     status_line: str,
     *,
     agents: list[ActiveAgent] | None = None,
+    selected_agent: int = 0,
+    focus: str = PANE_PROPOSALS,
     first_seen: dict[str, float] | None = None,
     now: float | None = None,
     green_attr: int = 0,
@@ -630,9 +658,15 @@ def _render(
     stdscr.addnstr(0, 0, header, w - 1, curses.A_BOLD)
     stdscr.hline(1, 0, curses.ACS_HLINE, w)
 
+    proposals_focused = focus == PANE_PROPOSALS
+    agents_focused = focus == PANE_AGENTS
+
     # ----- proposals pane (top) -----
     row = 2
-    stdscr.addnstr(row, 0, "proposals:", w - 1, curses.A_DIM)
+    proposals_label = "proposals:"
+    if proposals_focused:
+        proposals_label += "  (focused)"
+    stdscr.addnstr(row, 0, proposals_label, w - 1, curses.A_DIM)
     row += 1
     if not pending:
         stdscr.addnstr(
@@ -651,24 +685,33 @@ def _render(
                 p.arrival_timestamp.split("T", 1)[1][:8]
                 if "T" in p.arrival_timestamp else p.arrival_timestamp
             )
+            cursor = "> " if (proposals_focused and i == selected) else "  "
             line = (
-                f"{'> ' if i == selected else '  '}"
+                f"{cursor}"
                 f"[{p.bottle_slug}] {p.tool:<20} {ts_short}  "
                 f"{p.justification[:60]}"
             )
-            attr = curses.A_REVERSE if i == selected else curses.A_NORMAL
+            attr = (
+                curses.A_REVERSE
+                if (proposals_focused and i == selected)
+                else curses.A_NORMAL
+            )
             if _is_recent(p.id, first_seen, now):
                 attr |= green_attr
             stdscr.addnstr(row, 0, line, w - 1, attr)
             row += 1
 
     # ----- agents pane (bottom) -----
-    # One blank-line separator + a "active agents:" label, then one
-    # row per agent. No selection model yet — that's chunk 3. Stops
-    # before the status / footer area so they always stay visible.
+    # One blank-line separator + an "active agents:" label, then
+    # one row per agent. Reverse-video the selected row when this
+    # pane has focus. Stops before the status / footer area so
+    # they always stay visible.
     row += 1
+    agents_label = "active agents:"
+    if agents_focused:
+        agents_label += "  (focused)"
     if row < h - 3:
-        stdscr.addnstr(row, 0, "active agents:", w - 1, curses.A_DIM)
+        stdscr.addnstr(row, 0, agents_label, w - 1, curses.A_DIM)
         row += 1
     if not agents:
         if row < h - 3:
@@ -678,21 +721,51 @@ def _render(
                 w - 4, curses.A_DIM,
             )
     else:
-        for a in agents:
+        for i, a in enumerate(agents):
             if row >= h - 3:
                 break
-            stdscr.addnstr(row, 0, _format_agent_row(a, w - 1), w - 1)
+            line = _format_agent_row(a, w - 1)
+            if agents_focused and i == selected_agent:
+                # Replace the leading "  " cursor with "> " and
+                # highlight the whole row.
+                line = "> " + line[2:]
+                attr = curses.A_REVERSE
+            else:
+                attr = curses.A_NORMAL
+            stdscr.addnstr(row, 0, line, w - 1, attr)
             row += 1
 
     footer = (
-        "[Enter] view  [a] approve  [m] modify  [r] reject  "
-        "[e] routes edit  [p] pipelock edit  [j/k] move  [q] quit"
+        "[Tab] switch pane  [j/k] move  [Enter] view  "
+        "[a/m/r] proposal  [e/p] edit  [q] quit"
     )
     stdscr.hline(h - 2, 0, curses.ACS_HLINE, w)
     stdscr.addnstr(h - 1, 0, footer, w - 1, curses.A_DIM)
     if status_line:
         stdscr.addnstr(h - 3, 0, status_line, w - 1, curses.A_BOLD)
+    else:
+        # When idle: surface which agent is currently selected so
+        # the operator knows what `e` / `p` will target after chunk
+        # 4 wires the agent-scoped edit verbs.
+        sel = _selection_status(focus, agents, selected_agent)
+        if sel:
+            stdscr.addnstr(h - 3, 0, sel, w - 1, curses.A_DIM)
     stdscr.refresh()
+
+
+def _selection_status(
+    focus: str, agents: list[ActiveAgent], selected_agent: int,
+) -> str:
+    """Status-line text for the idle state. Surfaces the agents-
+    pane selection so the operator can tell what an agent-scoped
+    edit verb (chunk 4) would target."""
+    if focus != PANE_AGENTS:
+        return ""
+    if not agents:
+        return "[no active agents]"
+    if 0 <= selected_agent < len(agents):
+        return f"[selected: {agents[selected_agent].slug}]"
+    return "[no agent selected]"
 
 
 def _format_agent_row(a: ActiveAgent, maxw: int) -> str:
