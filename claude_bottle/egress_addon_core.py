@@ -1,12 +1,12 @@
-"""Pure logic for the egress-proxy mitmproxy addon (PRD 0017).
+"""Pure logic for the egress mitmproxy addon (PRD 0017).
 
-Split out of `egress_proxy_addon.py` so the host's unit tests can
+Split out of `egress_addon.py` so the host's unit tests can
 exercise the parse + decision functions without depending on the
 `mitmproxy` package. The companion module wraps these with the
 `mitmproxy.http.HTTPFlow` API and is loaded inside the sidecar
 container.
 
-Stdlib only: this file ships into the egress-proxy image, where the
+Stdlib only: this file ships into the egress image, where the
 container's Python is whatever mitmproxy itself runs on.
 """
 
@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Route:
-    """One row of the egress-proxy route table.
+    """One row of the egress route table.
 
     `host` is the request's `Host` header (or SNI hostname) to match
     against. `path_allowlist` is an optional tuple of absolute path
@@ -60,7 +60,7 @@ def parse_routes(payload: object) -> tuple[Route, ...]:
             "host": "api.github.com",
             "path_allowlist": ["/repos/x/", "/users/x"],   # optional
             "auth_scheme": "Bearer",                       # optional
-            "token_env": "EGRESS_PROXY_TOKEN_0"            # optional
+            "token_env": "EGRESS_TOKEN_0"            # optional
           },
           ...
         ]
@@ -145,11 +145,11 @@ def is_git_push_request(path: str, query: str) -> bool:
     Fetches use `service=git-upload-pack` / `/git-upload-pack` and
     are unaffected. Egress-proxy refuses HTTPS push because git-gate's
     pre-receive gitleaks scan is the gate for outbound git data;
-    routing push through egress-proxy would bypass that. Use the
+    routing push through egress would bypass that. Use the
     bottle.git SSH path if you need to push.
 
     Universal across routes — the block fires even when no
-    egress_proxy route matches the host. A bare-pass route (host with
+    egress route matches the host. A bare-pass route (host with
     no auth, no path_allowlist) would otherwise let push through to
     pipelock + upstream untouched.
     """
@@ -212,8 +212,8 @@ def decide(
         return Decision(
             action="block",
             reason=(
-                f"egress-proxy: host {request_host!r} is not in the "
-                f"bottle's egress_proxy.routes allowlist. Declare a "
+                f"egress: host {request_host!r} is not in the "
+                f"bottle's egress.routes allowlist. Declare a "
                 f"route for it or remove the request."
             ),
         )
@@ -223,7 +223,7 @@ def decide(
             return Decision(
                 action="block",
                 reason=(
-                    f"egress-proxy: path {request_path!r} not in "
+                    f"egress: path {request_path!r} not in "
                     f"path_allowlist for {route.host!r}"
                 ),
             )
@@ -234,7 +234,7 @@ def decide(
             return Decision(
                 action="block",
                 reason=(
-                    f"egress-proxy: route for {route.host!r} declared auth "
+                    f"egress: route for {route.host!r} declared auth "
                     f"but env var {route.token_env!r} is unset"
                 ),
             )

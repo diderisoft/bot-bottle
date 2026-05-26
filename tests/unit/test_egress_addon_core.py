@@ -1,12 +1,12 @@
-"""Unit: pure-logic core of the egress-proxy mitmproxy addon (PRD 0017).
+"""Unit: pure-logic core of the egress mitmproxy addon (PRD 0017).
 
-These tests target `egress_proxy_addon_core` — the host-importable
+These tests target `egress_addon_core` — the host-importable
 half of the addon. The mitmproxy hook wrapper in
-`egress_proxy_addon.py` is container-only and is not exercised here."""
+`egress_addon.py` is container-only and is not exercised here."""
 
 import unittest
 
-from claude_bottle.egress_proxy_addon_core import (
+from claude_bottle.egress_addon_core import (
     Decision,
     Route,
     decide,
@@ -34,12 +34,12 @@ class TestParseRoutes(unittest.TestCase):
             "host": "api.github.com",
             "path_allowlist": ["/repos/x/", "/users/x"],
             "auth_scheme": "Bearer",
-            "token_env": "EGRESS_PROXY_TOKEN_0",
+            "token_env": "EGRESS_TOKEN_0",
         }]})
         r = routes[0]
         self.assertEqual(("/repos/x/", "/users/x"), r.path_allowlist)
         self.assertEqual("Bearer", r.auth_scheme)
-        self.assertEqual("EGRESS_PROXY_TOKEN_0", r.token_env)
+        self.assertEqual("EGRESS_TOKEN_0", r.token_env)
 
     def test_order_preserved(self):
         # Host match is exact (not longest-prefix), but the file order
@@ -69,7 +69,7 @@ class TestParseRoutes(unittest.TestCase):
         with self.assertRaises(ValueError) as cm:
             parse_routes({"routes": [{
                 "host": "x.example",
-                "token_env": "EGRESS_PROXY_TOKEN_0",
+                "token_env": "EGRESS_TOKEN_0",
             }]})
         self.assertIn("both set or both empty", str(cm.exception))
 
@@ -161,9 +161,9 @@ class TestMatchRoute(unittest.TestCase):
 
 class TestDecide(unittest.TestCase):
     def test_no_matching_route_blocks(self):
-        # Defense-in-depth: egress-proxy gates the bottle's allowlist
+        # Defense-in-depth: egress gates the bottle's allowlist
         # too, not just pipelock. Any host the operator didn't declare
-        # in egress_proxy.routes is 403'd at egress-proxy before it
+        # in egress.routes is 403'd at egress before it
         # ever reaches pipelock.
         d = decide((), "elsewhere.example", "/anything", {})
         self.assertEqual("block", d.action)
@@ -197,8 +197,8 @@ class TestDecide(unittest.TestCase):
     def test_auth_injection_uses_environ_value(self):
         d = decide(
             (Route(host="api.github.com", auth_scheme="Bearer",
-                   token_env="EGRESS_PROXY_TOKEN_0"),),
-            "api.github.com", "/repos/x", {"EGRESS_PROXY_TOKEN_0": "the-token"},
+                   token_env="EGRESS_TOKEN_0"),),
+            "api.github.com", "/repos/x", {"EGRESS_TOKEN_0": "the-token"},
         )
         self.assertEqual("forward", d.action)
         self.assertEqual("Bearer the-token", d.inject_authorization)
@@ -210,11 +210,11 @@ class TestDecide(unittest.TestCase):
         # request the upstream would reject.
         d = decide(
             (Route(host="api.github.com", auth_scheme="Bearer",
-                   token_env="EGRESS_PROXY_TOKEN_0"),),
+                   token_env="EGRESS_TOKEN_0"),),
             "api.github.com", "/repos/x", {},
         )
         self.assertEqual("block", d.action)
-        self.assertIn("EGRESS_PROXY_TOKEN_0", d.reason)
+        self.assertIn("EGRESS_TOKEN_0", d.reason)
 
     def test_auth_with_empty_token_env_blocks(self):
         # Empty env var is treated the same as unset — we don't inject
@@ -222,8 +222,8 @@ class TestDecide(unittest.TestCase):
         # upstream rate limit with a 401.
         d = decide(
             (Route(host="api.github.com", auth_scheme="Bearer",
-                   token_env="EGRESS_PROXY_TOKEN_0"),),
-            "api.github.com", "/repos/x", {"EGRESS_PROXY_TOKEN_0": ""},
+                   token_env="EGRESS_TOKEN_0"),),
+            "api.github.com", "/repos/x", {"EGRESS_TOKEN_0": ""},
         )
         self.assertEqual("block", d.action)
 
@@ -240,8 +240,8 @@ class TestDecide(unittest.TestCase):
         # go-gitea/gitea#16734). The addon is scheme-agnostic.
         d = decide(
             (Route(host="git.example", auth_scheme="token",
-                   token_env="EGRESS_PROXY_TOKEN_0"),),
-            "git.example", "/api/v1/repos", {"EGRESS_PROXY_TOKEN_0": "abc"},
+                   token_env="EGRESS_TOKEN_0"),),
+            "git.example", "/api/v1/repos", {"EGRESS_TOKEN_0": "abc"},
         )
         self.assertEqual("token abc", d.inject_authorization)
 

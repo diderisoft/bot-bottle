@@ -1,4 +1,4 @@
-"""Docker network plumbing for the per-agent egress-proxy topology.
+"""Docker network plumbing for the per-agent egress topology.
 
 The agent container sits on a Docker `--internal` network (no default
 gateway). Pipelock straddles that network and a per-agent user-defined

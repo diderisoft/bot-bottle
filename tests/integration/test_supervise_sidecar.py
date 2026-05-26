@@ -196,29 +196,29 @@ class TestSuperviseSidecar(unittest.TestCase):
         names = {t["name"] for t in result["result"]["tools"]}
         self.assertEqual(
             {
-                _sv.TOOL_EGRESS_PROXY_BLOCK,
+                _sv.TOOL_EGRESS_BLOCK,
                 _sv.TOOL_PIPELOCK_BLOCK,
                 _sv.TOOL_CAPABILITY_BLOCK,
-                _sv.TOOL_LIST_EGRESS_PROXY_ROUTES,
+                _sv.TOOL_LIST_EGRESS_ROUTES,
             },
             names,
         )
 
     def test_tools_call_round_trips_through_queue(self):
-        """End-to-end: agent in the bottle calls egress-proxy-block;
+        """End-to-end: agent in the bottle calls egress-block;
         the call blocks on the queue; the host approves via the
         dashboard helpers; the agent receives the approval.
 
         This test focuses on the supervise sidecar's queue + response
-        plumbing, not the egress-proxy apply path itself. The apply
+        plumbing, not the egress apply path itself. The apply
         function is stubbed so we don't need to bring up a real
-        egress-proxy sidecar (its docker lifecycle has its own
+        egress sidecar (its docker lifecycle has its own
         integration coverage)."""
         self._require_bind_mount_sharing()
         self._bring_up_sidecar()
 
         # Stub the apply step. The dashboard's approve() calls
-        # add_route to docker-exec into the egress-proxy sidecar;
+        # add_route to docker-exec into the egress sidecar;
         # this test isn't exercising the real sidecar, so patch it
         # to a no-op that returns plausible before/after strings
         # the audit-log writer can render.
@@ -234,7 +234,7 @@ class TestSuperviseSidecar(unittest.TestCase):
             captured["response"] = self._curl_jsonrpc({
                 "jsonrpc": "2.0", "id": 7, "method": "tools/call",
                 "params": {
-                    "name": _sv.TOOL_EGRESS_PROXY_BLOCK,
+                    "name": _sv.TOOL_EGRESS_BLOCK,
                     "arguments": {
                         "host": "api.example.com",
                         "justification": "integration test",
@@ -260,12 +260,12 @@ class TestSuperviseSidecar(unittest.TestCase):
             self.assertIsNotNone(qp, "proposal never appeared in queue")
             assert qp is not None  # type-narrowing
             self.assertEqual(
-                _sv.TOOL_EGRESS_PROXY_BLOCK, qp.proposal.tool,
+                _sv.TOOL_EGRESS_BLOCK, qp.proposal.tool,
             )
             self.assertEqual("integration test", qp.proposal.justification)
 
             # Approve via the dashboard helper. The apply step (now
-            # stubbed) would docker-exec into the egress-proxy sidecar
+            # stubbed) would docker-exec into the egress sidecar
             # and SIGHUP it. The supervise sidecar sees the response
             # file and returns to the curl caller.
             dashboard.approve(qp, notes="lgtm from integration test")

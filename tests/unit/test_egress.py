@@ -1,16 +1,16 @@
-"""Unit: EgressProxy route lift + routes.yaml render + token
+"""Unit: Egress route lift + routes.yaml render + token
 resolution (PRD 0017)."""
 
 import json
 import unittest
 
-from claude_bottle.egress_proxy import (
+from claude_bottle.egress import (
     DEFAULT_ALLOWLIST,
-    egress_proxy_manifest_routes,
-    egress_proxy_render_routes,
-    egress_proxy_resolve_token_values,
-    egress_proxy_routes_for_bottle,
-    egress_proxy_token_env_map,
+    egress_manifest_routes,
+    egress_render_routes,
+    egress_resolve_token_values,
+    egress_routes_for_bottle,
+    egress_token_env_map,
 )
 from claude_bottle.log import Die
 from claude_bottle.manifest import Manifest
@@ -18,7 +18,7 @@ from claude_bottle.manifest import Manifest
 
 def _bottle(routes):
     return Manifest.from_json_obj({
-        "bottles": {"dev": {"egress_proxy": {"routes": routes}}},
+        "bottles": {"dev": {"egress": {"routes": routes}}},
         "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
     }).bottles["dev"]
 
@@ -29,18 +29,18 @@ class TestRoutesForBottle(unittest.TestCase):
             "host": "api.github.com",
             "auth": {"scheme": "Bearer", "token_ref": "GH_PAT"},
         }])
-        routes = egress_proxy_manifest_routes(b)
+        routes = egress_manifest_routes(b)
         self.assertEqual(1, len(routes))
         r = routes[0]
         self.assertEqual("api.github.com", r.host)
         self.assertEqual("Bearer", r.auth_scheme)
-        self.assertEqual("EGRESS_PROXY_TOKEN_0", r.token_env)
+        self.assertEqual("EGRESS_TOKEN_0", r.token_env)
         self.assertEqual("GH_PAT", r.token_ref)
         self.assertEqual((), r.path_allowlist)
 
     def test_unauthenticated_route_has_empty_auth_fields(self):
         b = _bottle([{"host": "github.com", "path_allowlist": ["/x/"]}])
-        routes = egress_proxy_manifest_routes(b)
+        routes = egress_manifest_routes(b)
         r = routes[0]
         self.assertEqual("", r.auth_scheme)
         self.assertEqual("", r.token_env)
@@ -54,9 +54,9 @@ class TestRoutesForBottle(unittest.TestCase):
             {"host": "github.com",
              "auth": {"scheme": "Bearer", "token_ref": "GH_PAT"}},
         ])
-        routes = egress_proxy_manifest_routes(b)
+        routes = egress_manifest_routes(b)
         slots = {r.token_env for r in routes}
-        self.assertEqual({"EGRESS_PROXY_TOKEN_0"}, slots)
+        self.assertEqual({"EGRESS_TOKEN_0"}, slots)
 
     def test_distinct_token_refs_get_distinct_slots(self):
         b = _bottle([
@@ -65,9 +65,9 @@ class TestRoutesForBottle(unittest.TestCase):
             {"host": "b.example",
              "auth": {"scheme": "Bearer", "token_ref": "T2"}},
         ])
-        routes = egress_proxy_manifest_routes(b)
+        routes = egress_manifest_routes(b)
         slots = [r.token_env for r in routes]
-        self.assertEqual(["EGRESS_PROXY_TOKEN_0", "EGRESS_PROXY_TOKEN_1"], slots)
+        self.assertEqual(["EGRESS_TOKEN_0", "EGRESS_TOKEN_1"], slots)
 
     def test_unauthenticated_routes_dont_consume_slots(self):
         # A bare-pass route between two authenticated routes mustn't
@@ -79,9 +79,9 @@ class TestRoutesForBottle(unittest.TestCase):
             {"host": "b.example",
              "auth": {"scheme": "Bearer", "token_ref": "T2"}},
         ])
-        routes = egress_proxy_manifest_routes(b)
+        routes = egress_manifest_routes(b)
         authed = [r.token_env for r in routes if r.token_env]
-        self.assertEqual(["EGRESS_PROXY_TOKEN_0", "EGRESS_PROXY_TOKEN_1"], authed)
+        self.assertEqual(["EGRESS_TOKEN_0", "EGRESS_TOKEN_1"], authed)
         self.assertEqual("", routes[1].token_env)
 
 
@@ -92,7 +92,7 @@ class TestRoutesForBottleFoldsDefaults(unittest.TestCase):
 
     def test_defaults_present_when_no_manifest_routes(self):
         b = _bottle([])
-        hosts = [r.host for r in egress_proxy_routes_for_bottle(b)]
+        hosts = [r.host for r in egress_routes_for_bottle(b)]
         for default in DEFAULT_ALLOWLIST:
             self.assertIn(default, hosts)
 
@@ -104,28 +104,17 @@ class TestRoutesForBottleFoldsDefaults(unittest.TestCase):
             "host": "api.anthropic.com",
             "auth": {"scheme": "Bearer", "token_ref": "T"},
         }])
-        routes = egress_proxy_routes_for_bottle(b)
+        routes = egress_routes_for_bottle(b)
         anthropic = [r for r in routes if r.host == "api.anthropic.com"]
         self.assertEqual(1, len(anthropic))
         self.assertEqual("Bearer", anthropic[0].auth_scheme)
 
-    def test_bottle_egress_allowlist_folded_in(self):
-        m = Manifest.from_json_obj({
-            "bottles": {"dev": {
-                "egress_proxy": {"routes": []},
-                "egress": {"allowlist": ["example.com"]},
-            }},
-            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
-        })
-        hosts = [r.host for r in egress_proxy_routes_for_bottle(m.bottles["dev"])]
-        self.assertIn("example.com", hosts)
-
     def test_manifest_only_when_no_defaults_or_allowlist(self):
-        # Sanity: egress_proxy_manifest_routes returns just the
+        # Sanity: egress_manifest_routes returns just the
         # manifest entries — defaults are added by the
         # _routes_for_bottle wrapper.
         b = _bottle([{"host": "x.example"}])
-        manifest = [r.host for r in egress_proxy_manifest_routes(b)]
+        manifest = [r.host for r in egress_manifest_routes(b)]
         self.assertEqual(["x.example"], manifest)
 
 
@@ -136,12 +125,12 @@ class TestTokenEnvMap(unittest.TestCase):
              "auth": {"scheme": "Bearer", "token_ref": "T1"}},
             {"host": "passthrough.example"},
         ])
-        routes = egress_proxy_manifest_routes(b)
-        m = egress_proxy_token_env_map(routes)
-        self.assertEqual({"EGRESS_PROXY_TOKEN_0": "T1"}, m)
+        routes = egress_manifest_routes(b)
+        m = egress_token_env_map(routes)
+        self.assertEqual({"EGRESS_TOKEN_0": "T1"}, m)
 
     def test_no_routes_empty(self):
-        self.assertEqual({}, egress_proxy_token_env_map(()))
+        self.assertEqual({}, egress_token_env_map(()))
 
 
 class TestRenderRoutes(unittest.TestCase):
@@ -151,14 +140,14 @@ class TestRenderRoutes(unittest.TestCase):
             "auth": {"scheme": "Bearer", "token_ref": "GH_PAT"},
             "path_allowlist": ["/repos/x/"],
         }])
-        routes = egress_proxy_manifest_routes(b)
-        payload = json.loads(egress_proxy_render_routes(routes))
+        routes = egress_manifest_routes(b)
+        payload = json.loads(egress_render_routes(routes))
         self.assertEqual(
             [{
                 "host": "api.github.com",
                 "path_allowlist": ["/repos/x/"],
                 "auth_scheme": "Bearer",
-                "token_env": "EGRESS_PROXY_TOKEN_0",
+                "token_env": "EGRESS_TOKEN_0",
             }],
             payload["routes"],
         )
@@ -169,8 +158,8 @@ class TestRenderRoutes(unittest.TestCase):
         # enforces both-or-neither, so emitting empty strings would
         # round-trip as a partial pair and crash.
         b = _bottle([{"host": "github.com", "path_allowlist": ["/x/"]}])
-        routes = egress_proxy_manifest_routes(b)
-        payload = json.loads(egress_proxy_render_routes(routes))
+        routes = egress_manifest_routes(b)
+        payload = json.loads(egress_render_routes(routes))
         entry = payload["routes"][0]
         self.assertNotIn("auth_scheme", entry)
         self.assertNotIn("token_env", entry)
@@ -180,14 +169,14 @@ class TestRenderRoutes(unittest.TestCase):
             "host": "api.anthropic.com",
             "auth": {"scheme": "Bearer", "token_ref": "CL"},
         }])
-        routes = egress_proxy_manifest_routes(b)
-        payload = json.loads(egress_proxy_render_routes(routes))
+        routes = egress_manifest_routes(b)
+        payload = json.loads(egress_render_routes(routes))
         self.assertNotIn("path_allowlist", payload["routes"][0])
 
     def test_round_trip_through_addon_core(self):
         # Render here → parse in the addon must succeed for every
         # combination the manifest can produce.
-        from claude_bottle.egress_proxy_addon_core import load_routes
+        from claude_bottle.egress_addon_core import load_routes
         b = _bottle([
             {"host": "api.github.com",
              "auth": {"scheme": "Bearer", "token_ref": "GH_PAT"},
@@ -195,34 +184,34 @@ class TestRenderRoutes(unittest.TestCase):
             {"host": "github.com", "path_allowlist": ["/x/"]},
             {"host": "api.anthropic.com"},
         ])
-        routes = egress_proxy_manifest_routes(b)
-        addon_routes = load_routes(egress_proxy_render_routes(routes))
+        routes = egress_manifest_routes(b)
+        addon_routes = load_routes(egress_render_routes(routes))
         self.assertEqual(3, len(addon_routes))
         self.assertEqual("Bearer", addon_routes[0].auth_scheme)
-        self.assertEqual("EGRESS_PROXY_TOKEN_0", addon_routes[0].token_env)
+        self.assertEqual("EGRESS_TOKEN_0", addon_routes[0].token_env)
         self.assertEqual("", addon_routes[1].auth_scheme)
         self.assertEqual("", addon_routes[2].auth_scheme)
 
 
 class TestResolveTokenValues(unittest.TestCase):
     def test_reads_host_env(self):
-        out = egress_proxy_resolve_token_values(
-            {"EGRESS_PROXY_TOKEN_0": "GH_PAT"},
+        out = egress_resolve_token_values(
+            {"EGRESS_TOKEN_0": "GH_PAT"},
             {"GH_PAT": "the-value"},
         )
-        self.assertEqual({"EGRESS_PROXY_TOKEN_0": "the-value"}, out)
+        self.assertEqual({"EGRESS_TOKEN_0": "the-value"}, out)
 
     def test_missing_token_ref_dies(self):
         with self.assertRaises(Die):
-            egress_proxy_resolve_token_values(
-                {"EGRESS_PROXY_TOKEN_0": "GH_PAT"},
+            egress_resolve_token_values(
+                {"EGRESS_TOKEN_0": "GH_PAT"},
                 {},
             )
 
     def test_empty_token_ref_dies(self):
         with self.assertRaises(Die):
-            egress_proxy_resolve_token_values(
-                {"EGRESS_PROXY_TOKEN_0": "GH_PAT"},
+            egress_resolve_token_values(
+                {"EGRESS_TOKEN_0": "GH_PAT"},
                 {"GH_PAT": ""},
             )
 

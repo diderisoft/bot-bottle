@@ -74,9 +74,9 @@ class TestValidation(unittest.TestCase):
         )
 
     def test_empty_proposed_file_rejected_for_tools_with_file_field(self):
-        # egress-proxy-block has structured input (validated in
+        # egress-block has structured input (validated in
         # _validate_and_bundle_egress_route, not here) and
-        # list-egress-proxy-routes takes no input. Only the other
+        # list-egress-routes takes no input. Only the other
         # two go through `validate_proposed_file`.
         for tool in (_sv.TOOL_PIPELOCK_BLOCK, _sv.TOOL_CAPABILITY_BLOCK):
             with self.subTest(tool=tool):
@@ -163,10 +163,10 @@ class TestHandleToolsList(unittest.TestCase):
         names = [t["name"] for t in result["tools"]]  # type: ignore[index]
         self.assertEqual(
             sorted([
-                _sv.TOOL_EGRESS_PROXY_BLOCK,
+                _sv.TOOL_EGRESS_BLOCK,
                 _sv.TOOL_PIPELOCK_BLOCK,
                 _sv.TOOL_CAPABILITY_BLOCK,
-                _sv.TOOL_LIST_EGRESS_PROXY_ROUTES,
+                _sv.TOOL_LIST_EGRESS_ROUTES,
             ]),
             sorted(names),
         )
@@ -186,10 +186,10 @@ class TestHandleToolsList(unittest.TestCase):
                 self.assertIn("justification", required)
                 self.assertIn(PROPOSED_FILE_FIELD[name], required)  # type: ignore[index]
 
-    def test_list_egress_proxy_routes_takes_no_input(self):
+    def test_list_egress_routes_takes_no_input(self):
         tool = next(
             t for t in TOOL_DEFINITIONS
-            if t["name"] == _sv.TOOL_LIST_EGRESS_PROXY_ROUTES
+            if t["name"] == _sv.TOOL_LIST_EGRESS_ROUTES
         )
         schema = tool["inputSchema"]
         self.assertEqual({}, schema.get("properties"))  # type: ignore[union-attr]
@@ -229,7 +229,7 @@ class TestHandleToolsCall(unittest.TestCase):
         try:
             result = handle_tools_call(
                 {
-                    "name": _sv.TOOL_EGRESS_PROXY_BLOCK,
+                    "name": _sv.TOOL_EGRESS_BLOCK,
                     "arguments": {
                         "host": "example.com",
                         "justification": "need a route",
@@ -273,7 +273,7 @@ class TestHandleToolsCall(unittest.TestCase):
         with self.assertRaises(_RpcError):
             handle_tools_call(
                 {
-                    "name": _sv.TOOL_EGRESS_PROXY_BLOCK,
+                    "name": _sv.TOOL_EGRESS_BLOCK,
                     "arguments": {"host": "example.com"},
                 },
                 self.config,
@@ -284,7 +284,7 @@ class TestHandleToolsCall(unittest.TestCase):
         try:
             handle_tools_call(
                 {
-                    "name": _sv.TOOL_EGRESS_PROXY_BLOCK,
+                    "name": _sv.TOOL_EGRESS_BLOCK,
                     "arguments": {
                         "host": "example.com",
                         "justification": "x",
@@ -371,7 +371,7 @@ class TestHttpEndToEnd(unittest.TestCase):
         self.assertEqual("2.0", result["jsonrpc"])
         self.assertEqual(1, result["id"])
         names = [t["name"] for t in result["result"]["tools"]]  # type: ignore[index]
-        self.assertIn(_sv.TOOL_EGRESS_PROXY_BLOCK, names)
+        self.assertIn(_sv.TOOL_EGRESS_BLOCK, names)
 
     def test_unknown_method_returns_jsonrpc_error(self):
         result = self._post_jsonrpc(

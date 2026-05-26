@@ -252,7 +252,7 @@ class TestRealisticBottleFile(unittest.TestCase):
 
     def test_dev_bottle(self):
         out = _y("""
-            egress_proxy:
+            egress:
               routes:
                 - host: api.anthropic.com
                   auth:
@@ -270,25 +270,21 @@ class TestRealisticBottleFile(unittest.TestCase):
                 IdentityFile: ~/.ssh/gitea.pem
                 ExtraHosts:
                   gitea.dideric.is: 192.0.2.10
-            egress:
-              allowlist:
-                - example.com
         """)
         # Spot-check the deep parts; the structure is large.
-        self.assertEqual(2, len(out["egress_proxy"]["routes"]))
+        self.assertEqual(2, len(out["egress"]["routes"]))
         self.assertEqual(
             ["/didericis/"],
-            out["egress_proxy"]["routes"][1]["path_allowlist"],
+            out["egress"]["routes"][1]["path_allowlist"],
         )
         self.assertEqual(
             "Bearer",
-            out["egress_proxy"]["routes"][0]["auth"]["scheme"],
+            out["egress"]["routes"][0]["auth"]["scheme"],
         )
         self.assertEqual(
             "192.0.2.10",
             out["git"][0]["ExtraHosts"]["gitea.dideric.is"],
         )
-        self.assertEqual(["example.com"], out["egress"]["allowlist"])
 
 
 class TestFrontmatter(unittest.TestCase):

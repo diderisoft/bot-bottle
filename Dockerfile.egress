@@ -1,4 +1,4 @@
-# Per-bottle egress-proxy sidecar image (PRD 0017).
+# Per-bottle egress sidecar image (PRD 0017).
 #
 # Replaces cred-proxy (PRD 0010). Sits on the agent's HTTP_PROXY /
 # HTTPS_PROXY path (wiring lands in chunk 2) and owns three jobs:
@@ -22,36 +22,36 @@ USER root
 # both inside the container and from the host's tests; `_addon.py` is
 # the mitmproxy hook wrapper. Both land flat in /app/ so mitmdump's
 # loader finds them as top-level sibling modules.
-COPY claude_bottle/egress_proxy_addon_core.py /app/egress_proxy_addon_core.py
-COPY claude_bottle/egress_proxy_addon.py /app/egress_proxy_addon.py
+COPY claude_bottle/egress_addon_core.py /app/egress_addon_core.py
+COPY claude_bottle/egress_addon.py /app/egress_addon.py
 
 # Pre-create the runtime directories the backend's start step will
 # `docker cp` into. docker cp does not create intermediate dirs, so
 # the mkdir must be baked into the image.
-#   /etc/egress-proxy        routes.yaml lands here
+#   /etc/egress        routes.yaml lands here
 #   ~/.mitmproxy             mitmproxy CA (cert+key concat) + the
 #                            pipelock CA (cert only, for upstream
 #                            trust on the HTTPS_PROXY=pipelock leg)
 # Ownership lets the unprivileged mitmproxy user read the files.
-RUN mkdir -p /etc/egress-proxy /home/mitmproxy/.mitmproxy \
- && chown -R mitmproxy:mitmproxy /etc/egress-proxy /home/mitmproxy/.mitmproxy /app
+RUN mkdir -p /etc/egress /home/mitmproxy/.mitmproxy \
+ && chown -R mitmproxy:mitmproxy /etc/egress /home/mitmproxy/.mitmproxy /app
 
 USER mitmproxy
 
-# Listening port. Agents dial egress-proxy on this port via their
+# Listening port. Agents dial egress on this port via their
 # HTTP_PROXY env. Surfaced as EXPOSE for documentation; not required
 # for the internal network to route to it.
 EXPOSE 9099
 
 # Entrypoint:
-#   - Upstream proxy: when EGRESS_PROXY_UPSTREAM_PROXY is set,
+#   - Upstream proxy: when EGRESS_UPSTREAM_PROXY is set,
 #     use mitmproxy's `--mode upstream:URL` to forward all
 #     post-MITM traffic through pipelock. (mitmproxy does NOT
 #     honor HTTPS_PROXY env vars on its outbound side — it's a
 #     proxy server, not a client.) Standalone runs without
-#     EGRESS_PROXY_UPSTREAM_PROXY fall back to `regular@9099`
+#     EGRESS_UPSTREAM_PROXY fall back to `regular@9099`
 #     direct-to-upstream — useful for unit tests of the image.
-#   - Upstream trust: when EGRESS_PROXY_UPSTREAM_CA is set, build
+#   - Upstream trust: when EGRESS_UPSTREAM_CA is set, build
 #     a combined trust bundle (system roots + pipelock CA) and
 #     point mitmproxy at it via
 #     `--set ssl_verify_upstream_trusted_ca`. This option REPLACES
@@ -61,6 +61,6 @@ EXPOSE 9099
 #     sees real upstream certs signed by public CAs. The combined
 #     bundle covers both pipelock-MITM'd and pipelock-passthrough
 #     hosts.
-#   - -s /app/egress_proxy_addon.py → loads our addon, reads
-#     /etc/egress-proxy/routes.yaml.
-ENTRYPOINT ["sh", "-c", "MODE=\"--mode regular@9099\"; if [ -n \"$EGRESS_PROXY_UPSTREAM_PROXY\" ]; then MODE=\"--mode upstream:$EGRESS_PROXY_UPSTREAM_PROXY --listen-port 9099\"; fi; TRUST_FLAG=\"\"; if [ -n \"$EGRESS_PROXY_UPSTREAM_CA\" ] && [ -f \"$EGRESS_PROXY_UPSTREAM_CA\" ]; then COMBINED=/home/mitmproxy/.mitmproxy/combined-trust.pem; cat /etc/ssl/certs/ca-certificates.crt \"$EGRESS_PROXY_UPSTREAM_CA\" > \"$COMBINED\"; TRUST_FLAG=\"--set ssl_verify_upstream_trusted_ca=$COMBINED\"; fi; exec mitmdump $MODE $TRUST_FLAG -s /app/egress_proxy_addon.py"]
+#   - -s /app/egress_addon.py → loads our addon, reads
+#     /etc/egress/routes.yaml.
+ENTRYPOINT ["sh", "-c", "MODE=\"--mode regular@9099\"; if [ -n \"$EGRESS_UPSTREAM_PROXY\" ]; then MODE=\"--mode upstream:$EGRESS_UPSTREAM_PROXY --listen-port 9099\"; fi; TRUST_FLAG=\"\"; if [ -n \"$EGRESS_UPSTREAM_CA\" ] && [ -f \"$EGRESS_UPSTREAM_CA\" ]; then COMBINED=/home/mitmproxy/.mitmproxy/combined-trust.pem; cat /etc/ssl/certs/ca-certificates.crt \"$EGRESS_UPSTREAM_CA\" > \"$COMBINED\"; TRUST_FLAG=\"--set ssl_verify_upstream_trusted_ca=$COMBINED\"; fi; exec mitmdump $MODE $TRUST_FLAG -s /app/egress_addon.py"]

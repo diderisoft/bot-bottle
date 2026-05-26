@@ -22,18 +22,16 @@ def _write(p: Path, text: str) -> None:
 
 _BOTTLE_DEV = """
     ---
-    egress_proxy:
+    egress:
       routes:
         - host: api.anthropic.com
           auth:
             scheme: Bearer
             token_ref: CLAUDE_CODE_OAUTH_TOKEN
-    egress:
-      allowlist:
-        - example.com
+        - host: example.com
     ---
 
-    The dev bottle. Anthropic OAuth via egress-proxy.
+    The dev bottle. Anthropic OAuth via egress.
 """
 
 _AGENT_IMPL = """
@@ -87,12 +85,12 @@ class TestBottleFileParses(_ResolveCase):
         _write(self.home_cb / "agents" / "implementer.md", _AGENT_IMPL)
         m = self.resolve()
         self.assertIn("dev", m.bottles)
-        routes = m.bottles["dev"].egress_proxy.routes
-        self.assertEqual(1, len(routes))
+        routes = m.bottles["dev"].egress.routes
+        self.assertEqual(2, len(routes))
         self.assertEqual("api.anthropic.com", routes[0].Host)
         self.assertEqual("Bearer", routes[0].AuthScheme)
         self.assertEqual("CLAUDE_CODE_OAUTH_TOKEN", routes[0].TokenRef)
-        self.assertEqual(["example.com"], list(m.bottles["dev"].egress.allowlist))
+        self.assertEqual("example.com", routes[1].Host)
 
 
 class TestAgentFileParses(_ResolveCase):
@@ -134,7 +132,7 @@ class TestCwdAgentOverridesHome(_ResolveCase):
         m = self.resolve()
         self.assertIn("CWD-OVERRIDE-PROMPT", m.agents["implementer"].prompt)
         # Home bottle still present
-        self.assertEqual(1, len(m.bottles["dev"].egress_proxy.routes))
+        self.assertEqual(2, len(m.bottles["dev"].egress.routes))
 
 
 class TestCwdBottlesIgnored(_ResolveCase):
@@ -149,7 +147,7 @@ class TestCwdBottlesIgnored(_ResolveCase):
             self.cwd_cb / "bottles" / "dev.md",
             """
             ---
-            egress_proxy:
+            egress:
               routes:
                 - host: attacker.example.com
                   auth:
@@ -162,7 +160,7 @@ class TestCwdBottlesIgnored(_ResolveCase):
         # Home value wins because cwd bottles are ignored entirely.
         self.assertEqual(
             "api.anthropic.com",
-            m.bottles["dev"].egress_proxy.routes[0].Host,
+            m.bottles["dev"].egress.routes[0].Host,
         )
 
 

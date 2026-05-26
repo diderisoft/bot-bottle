@@ -6,8 +6,8 @@ import unittest
 
 import json
 
-from claude_bottle.backend.docker.egress_proxy_apply import (
-    EgressProxyApplyError,
+from claude_bottle.backend.docker.egress_apply import (
+    EgressApplyError,
     _hosts_in_routes,
     _merge_single_route,
     _pipelock_safe_hosts,
@@ -27,30 +27,30 @@ class TestValidateRoutesContent(unittest.TestCase):
             '{"routes": [{"host": "api.github.com",'
             ' "path_allowlist": ["/repos/x/"],'
             ' "auth_scheme": "Bearer",'
-            ' "token_env": "EGRESS_PROXY_TOKEN_0"}]}'
+            ' "token_env": "EGRESS_TOKEN_0"}]}'
         )
 
     def test_rejects_bad_json(self):
-        with self.assertRaises(EgressProxyApplyError) as cm:
+        with self.assertRaises(EgressApplyError) as cm:
             validate_routes_content("{not json")
         self.assertIn("not valid", str(cm.exception))
 
     def test_rejects_non_object_top_level(self):
-        with self.assertRaises(EgressProxyApplyError):
+        with self.assertRaises(EgressApplyError):
             validate_routes_content("[]")
 
     def test_rejects_missing_routes_key(self):
-        with self.assertRaises(EgressProxyApplyError):
+        with self.assertRaises(EgressApplyError):
             validate_routes_content('{"other": []}')
 
     def test_rejects_non_list_routes(self):
-        with self.assertRaises(EgressProxyApplyError):
+        with self.assertRaises(EgressApplyError):
             validate_routes_content('{"routes": "not a list"}')
 
     def test_rejects_partial_auth_pair(self):
         # The addon-core parser enforces both-or-neither — the apply
         # path picks this up before SIGHUP'ing the sidecar.
-        with self.assertRaises(EgressProxyApplyError):
+        with self.assertRaises(EgressApplyError):
             validate_routes_content(
                 '{"routes": [{"host": "x.example",'
                 ' "auth_scheme": "Bearer"}]}'
@@ -83,7 +83,7 @@ class TestHostsInRoutes(unittest.TestCase):
     def test_invalid_routes_raises(self):
         # The mirror helper relies on parsing succeeding; bad input
         # should error before pipelock is touched.
-        with self.assertRaises(EgressProxyApplyError):
+        with self.assertRaises(EgressApplyError):
             _hosts_in_routes('{"routes": [{"path": "/no-host/"}]}')
 
 
@@ -115,20 +115,20 @@ class TestMergeSingleRoute(unittest.TestCase):
         new_route = json.loads(merged)["routes"][-1]
         self.assertEqual("Bearer", new_route["auth_scheme"])
         # First auth slot when no prior auth routes exist.
-        self.assertEqual("EGRESS_PROXY_TOKEN_0", new_route["token_env"])
+        self.assertEqual("EGRESS_TOKEN_0", new_route["token_env"])
 
     def test_auth_slot_increments_past_existing(self):
         base = json.dumps({"routes": [
             {"host": "api.anthropic.com",
              "auth_scheme": "Bearer",
-             "token_env": "EGRESS_PROXY_TOKEN_0"},
+             "token_env": "EGRESS_TOKEN_0"},
         ]})
         merged = _merge_single_route(base, {
             "host": "api.github.com",
             "auth": {"scheme": "Bearer", "token_ref": "GH"},
         })
         new_route = json.loads(merged)["routes"][-1]
-        self.assertEqual("EGRESS_PROXY_TOKEN_1", new_route["token_env"])
+        self.assertEqual("EGRESS_TOKEN_1", new_route["token_env"])
 
     def test_existing_host_merges_path_allowlist_as_union(self):
         base = json.dumps({"routes": [
@@ -161,7 +161,7 @@ class TestMergeSingleRoute(unittest.TestCase):
         base = json.dumps({"routes": [
             {"host": "api.github.com",
              "auth_scheme": "Bearer",
-             "token_env": "EGRESS_PROXY_TOKEN_0"},
+             "token_env": "EGRESS_TOKEN_0"},
         ]})
         merged = _merge_single_route(base, {
             "host": "api.github.com",
@@ -169,7 +169,7 @@ class TestMergeSingleRoute(unittest.TestCase):
         })
         route = json.loads(merged)["routes"][0]
         self.assertEqual("Bearer", route["auth_scheme"])
-        self.assertEqual("EGRESS_PROXY_TOKEN_0", route["token_env"])
+        self.assertEqual("EGRESS_TOKEN_0", route["token_env"])
 
     def test_host_match_is_case_insensitive(self):
         base = json.dumps({"routes": [{"host": "GitHub.com"}]})
@@ -182,11 +182,11 @@ class TestMergeSingleRoute(unittest.TestCase):
         self.assertEqual(["/x/"], routes[0]["path_allowlist"])
 
     def test_missing_host_raises(self):
-        with self.assertRaises(EgressProxyApplyError):
+        with self.assertRaises(EgressApplyError):
             _merge_single_route(self.BASE, {})
 
     def test_invalid_current_yaml_raises(self):
-        with self.assertRaises(EgressProxyApplyError):
+        with self.assertRaises(EgressApplyError):
             _merge_single_route("{not json", {"host": "x.example"})
 
 
@@ -198,7 +198,7 @@ class TestPipelockSafeHosts(unittest.TestCase):
         )
 
     def test_drops_wildcards(self):
-        # Wildcard host matching was removed from egress-proxy too,
+        # Wildcard host matching was removed from egress too,
         # so a `*.foo.com` route is dead weight anyway; we drop it
         # entirely from the pipelock mirror so the apply doesn't
         # fail parse.

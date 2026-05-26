@@ -24,10 +24,10 @@ from . import network as network_mod
 from . import util as docker_mod
 from .bottle import DockerBottle
 from .bottle_plan import DockerBottlePlan
-from .egress_proxy import (
-    DockerEgressProxy,
-    egress_proxy_tls_init,
-    egress_proxy_url,
+from .egress import (
+    DockerEgress,
+    egress_tls_init,
+    egress_url,
 )
 from .git_gate import DockerGitGate
 from .pipelock import (
@@ -51,7 +51,7 @@ def launch(
     *,
     proxy: DockerPipelockProxy,
     git_gate: DockerGitGate,
-    egress_proxy: DockerEgressProxy,
+    egress: DockerEgress,
     supervise: DockerSupervise,
     provision: Callable[[DockerBottlePlan, str], str | None],
 ) -> Generator[DockerBottle, None, None]:
@@ -88,7 +88,7 @@ def launch(
         # Docker assigns a CIDR to the new internal network. Pipelock's
         # SSRF guard otherwise rejects any destination resolving into
         # RFC1918 space — which includes the sibling sidecars
-        # (egress-proxy → pipelock on the upstream leg, etc.).
+        # (egress → pipelock on the upstream leg, etc.).
         # Allowlist the bottle's own internal subnet so internal
         # traffic passes through pipelock; api_allowlist + body-scanning
         # still apply.
@@ -97,16 +97,16 @@ def launch(
         # Per-bottle ephemeral CAs (PRD 0006 + PRD 0017). Two
         # separate CAs:
         #   - pipelock CA: signs MITM certs pipelock presents on the
-        #     egress-proxy → upstream leg.
-        #   - egress-proxy CA: signs MITM certs egress-proxy presents
-        #     to the agent on the agent → egress-proxy leg.
+        #     egress → upstream leg.
+        #   - egress CA: signs MITM certs egress presents
+        #     to the agent on the agent → egress leg.
         # Both are minted by one-shot pipelock containers (pipelock's
         # `tls init` is a known-good RSA CA minter) under stage_dir;
         # the .start steps docker-cp the files in. Private keys never
         # leave the host stage dir, which start.py's outer finally
         # `shutil.rmtree`s after the sidecars are torn down.
         ca_cert_host, ca_key_host = pipelock_tls_init(plan.stage_dir)
-        egress_proxy_ca_host, egress_proxy_ca_cert_only = egress_proxy_tls_init(
+        egress_ca_host, egress_ca_cert_only = egress_tls_init(
             plan.stage_dir,
         )
 
@@ -155,27 +155,27 @@ def launch(
             stack.callback(git_gate.stop, git_gate_name)
 
         # Egress-proxy (PRD 0017). One sidecar per bottle when
-        # bottle.egress_proxy.routes is non-empty. Must come up AFTER
-        # pipelock — egress-proxy routes its outbound HTTPS through
+        # bottle.egress.routes is non-empty. Must come up AFTER
+        # pipelock — egress routes its outbound HTTPS through
         # pipelock (HTTPS_PROXY in environ + the pipelock CA in its
         # trust store) so the egress allowlist + body scanner sit on
-        # the egress-proxy → upstream leg. Must come up BEFORE the
-        # agent so DNS resolution for `egress-proxy` succeeds on the
+        # the egress → upstream leg. Must come up BEFORE the
+        # agent so DNS resolution for `egress` succeeds on the
         # agent's first call; tokens flow from the host env into the
         # sidecar's environ, not the agent's.
-        if plan.egress_proxy_plan.routes:
-            egress_proxy_plan = dataclasses.replace(
-                plan.egress_proxy_plan,
+        if plan.egress_plan.routes:
+            egress_plan = dataclasses.replace(
+                plan.egress_plan,
                 internal_network=internal_network,
                 egress_network=egress_network,
-                mitmproxy_ca_host_path=egress_proxy_ca_host,
-                mitmproxy_ca_cert_only_host_path=egress_proxy_ca_cert_only,
+                mitmproxy_ca_host_path=egress_ca_host,
+                mitmproxy_ca_cert_only_host_path=egress_ca_cert_only,
                 pipelock_ca_host_path=ca_cert_host,
                 pipelock_proxy_url=pipelock_proxy_url(plan.slug),
             )
-            plan = dataclasses.replace(plan, egress_proxy_plan=egress_proxy_plan)
-            egress_proxy_name = egress_proxy.start(plan.egress_proxy_plan)
-            stack.callback(egress_proxy.stop, egress_proxy_name)
+            plan = dataclasses.replace(plan, egress_plan=egress_plan)
+            egress_name = egress.start(plan.egress_plan)
+            stack.callback(egress.stop, egress_name)
 
         # Supervise sidecar (PRD 0013). Opt-in via bottle.supervise.
         # Internal-network only — the sidecar makes no outbound calls.
@@ -225,13 +225,13 @@ def _agent_no_proxy(plan: DockerBottlePlan) -> str:
 
 def _agent_proxy_url(plan: DockerBottlePlan) -> str:
     """Pick the proxy URL the agent's HTTP_PROXY env points at. PRD
-    0017: when an egress-proxy is declared, the agent goes through
-    egress-proxy (which in turn uses HTTPS_PROXY=pipelock on its
+    0017: when an egress is declared, the agent goes through
+    egress (which in turn uses HTTPS_PROXY=pipelock on its
     outbound leg). Otherwise the agent talks straight to pipelock —
     keeps the network surface minimal for bottles that don't need
     path filtering or credential injection."""
-    if plan.egress_proxy_plan.routes:
-        return egress_proxy_url()
+    if plan.egress_plan.routes:
+        return egress_url()
     return pipelock_proxy_url(plan.slug)
 
 
@@ -245,7 +245,7 @@ def _run_agent_container(plan: DockerBottlePlan, internal_network: str) -> str:
     # httpoxy mitigation makes it ignore uppercase `HTTP_PROXY` for
     # `http://` URLs and only honor lowercase `http_proxy`. Without
     # the lowercase var, plain-HTTP requests from the agent bypass
-    # egress-proxy entirely (going direct, then failing with
+    # egress entirely (going direct, then failing with
     # "network unreachable" because the agent's bridge is
     # --internal). Lowercase HTTPS_PROXY isn't strictly needed but
     # we set it for symmetry — some tools check one or the other.

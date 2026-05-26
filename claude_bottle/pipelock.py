@@ -5,10 +5,10 @@ forward proxy with hostname allowlisting + DLP scanning + URL-entropy
 checks. One sidecar per agent, attached to the agent's --internal
 network and a per-agent user-defined egress bridge.
 
-Post-PRD-0017 topology: the agent's HTTP_PROXY points at egress-proxy
-(not pipelock); egress-proxy sets `HTTPS_PROXY=pipelock` on its
+Post-PRD-0017 topology: the agent's HTTP_PROXY points at egress
+(not pipelock); egress sets `HTTPS_PROXY=pipelock` on its
 outbound leg. So pipelock no longer sees the agent's connections
-directly — it sees the egress-proxy → upstream leg, applies the
+directly — it sees the egress → upstream leg, applies the
 hostname allowlist + DLP body scan there, and forwards to the real
 upstream.
 
@@ -22,10 +22,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from .egress_proxy import (
+from .egress import (
     DEFAULT_ALLOWLIST,
-    EGRESS_PROXY_HOSTNAME,
-    egress_proxy_routes_for_bottle,
+    EGRESS_HOSTNAME,
+    egress_routes_for_bottle,
 )
 from .supervise import SUPERVISE_HOSTNAME
 from .manifest import Bottle
@@ -50,38 +50,15 @@ DEFAULT_TLS_PASSTHROUGH: tuple[str, ...] = (
 # --- Allowlist resolution --------------------------------------------------
 
 
-def pipelock_bottle_allowlist(bottle: Bottle) -> list[str]:
-    """Hostnames in bottle.egress.allowlist."""
-    return list(bottle.egress.allowlist)
-
-
-def pipelock_route_hosts(bottle: Bottle) -> list[str]:
-    """Hostnames declared in `bottle.egress_proxy.routes`. Returned
-    sorted + deduped. Used by the no-egress-proxy fallback path
-    below; bottles that DO use egress-proxy include the same hosts
-    via `egress_proxy_routes_for_bottle`."""
-    hosts = {r.Host for r in bottle.egress_proxy.routes if r.Host}
-    return sorted(hosts)
-
-
 def pipelock_effective_allowlist(bottle: Bottle) -> list[str]:
     """Hostnames pipelock allows. Sorted for stability.
 
-    Two paths, depending on whether the bottle uses egress-proxy:
-
-    - Bottle declares `egress_proxy.routes[]` → agent's HTTPS_PROXY
-      points at egress-proxy. Egress-proxy is the bottle's primary
-      allowlist gate (DEFAULT_ALLOWLIST + bottle.egress.allowlist +
-      manifest routes all live there as bare-pass or full routes,
-      folded in by `egress_proxy_routes_for_bottle`). Pipelock's
-      allowlist is then a MIRROR of egress-proxy's hosts — same
-      set, just serving as the defense-in-depth hostname gate +
-      DLP scanner on the upstream leg.
-
-    - Bottle has no `egress_proxy.routes[]` → agent talks straight
-      to pipelock. Pipelock keeps its previous behavior: bake in
-      DEFAULT_ALLOWLIST + bottle.egress.allowlist for claude-code
-      defaults.
+    Always mirrors `egress_routes_for_bottle(bottle)` — the
+    egress is the single allowlist surface; pipelock's
+    allowlist is the downstream copy for defense-in-depth + DLP
+    body scanning. For bottles without any `egress.routes[]`
+    declared, this is just the baked DEFAULT_ALLOWLIST that
+    egress_routes_for_bottle always folds in.
 
     The supervise sidecar's hostname is auto-added when supervise
     is enabled (sibling-sidecar traffic that flows through pipelock
@@ -89,19 +66,9 @@ def pipelock_effective_allowlist(bottle: Bottle) -> list[str]:
     `bottle.git` do NOT contribute here — git traffic flows
     through git-gate (PRD 0008), not pipelock."""
     seen: dict[str, None] = {}
-    if bottle.egress_proxy.routes:
-        # Mirror egress-proxy's effective host set — same defaults
-        # and bottle.egress.allowlist entries are already folded in
-        # at the egress-proxy layer; we don't add them twice.
-        for r in egress_proxy_routes_for_bottle(bottle):
-            if r.host:
-                seen.setdefault(r.host, None)
-    else:
-        for h in DEFAULT_ALLOWLIST:
-            seen.setdefault(h, None)
-        for h in pipelock_bottle_allowlist(bottle):
-            if h:
-                seen.setdefault(h, None)
+    for r in egress_routes_for_bottle(bottle):
+        if r.host:
+            seen.setdefault(r.host, None)
     if bottle.supervise:
         seen.setdefault(SUPERVISE_HOSTNAME, None)
     return sorted(seen.keys())
@@ -128,13 +95,13 @@ def pipelock_seed_phrase_detection_enabled(bottle: Bottle) -> bool:
     body through three pipelock instances). It is a global toggle —
     no per-path / per-host knob in pipelock 2.3.0 — so we turn the
     detector off for the entire bottle when the bottle declares an
-    egress-proxy route to `api.anthropic.com`. The trade-off is
+    egress route to `api.anthropic.com`. The trade-off is
     accepted: BIP-39 detection has little value in claude-bottle's
     threat model (the agent has no access to a user's crypto wallet
     seeds; the patterns that matter — gh*_, sk-ant-, AKIA, etc. —
     keep firing)."""
     return not any(
-        r.Host == "api.anthropic.com" for r in bottle.egress_proxy.routes
+        r.Host == "api.anthropic.com" for r in bottle.egress.routes
     )
 
 
@@ -146,10 +113,10 @@ def pipelock_effective_tls_passthrough(bottle: Bottle) -> list[str]:
     other allowlisted host is MITM'd by pipelock's per-bottle CA so
     its body scanner sees the cleartext.
 
-    egress-proxy route hosts (github, gitea, npm) are deliberately
-    NOT auto-added here. egress-proxy's HTTPS client trusts pipelock's
+    egress route hosts (github, gitea, npm) are deliberately
+    NOT auto-added here. egress's HTTPS client trusts pipelock's
     CA at runtime (folded into its trust store via docker cp), so
-    pipelock MITMs and body-scans the egress-proxy → upstream leg the
+    pipelock MITMs and body-scans the egress → upstream leg the
     same way it body-scanned the agent's direct HTTPS traffic before
     the PRD 0017 cutover.
 
@@ -160,22 +127,6 @@ def pipelock_effective_tls_passthrough(bottle: Bottle) -> list[str]:
     return sorted(DEFAULT_TLS_PASSTHROUGH)
 
 
-def pipelock_allowlist_summary(bottle: Bottle) -> str:
-    """One-line summary for the y/N preflight display:
-    "<N> hosts allowed (host1, host2, host3, +M more)"."""
-    hosts = pipelock_effective_allowlist(bottle)
-    count = len(hosts)
-    if count == 0:
-        return "0 hosts allowed (none)"
-    show = count
-    more = 0
-    if count > 5:
-        show = 3
-        more = count - show
-    joined = ", ".join(hosts[:show])
-    if more > 0:
-        return f"{count} hosts allowed ({joined}, +{more} more)"
-    return f"{count} hosts allowed ({joined})"
 
 
 
@@ -208,7 +159,7 @@ def pipelock_build_config(
     pipelock's SSRF guard. Pipelock blocks RFC1918-resolved
     destinations by default, which would catch sibling-sidecar
     traffic on the bottle's internal Docker network in 172.x space
-    (e.g. egress-proxy → pipelock on the upstream leg). Pass the
+    (e.g. egress → pipelock on the upstream leg). Pass the
     bottle's internal network CIDR here so internal-network requests
     pass through pipelock while api_allowlist + body-scanning still
     apply. Empty by default; omitted from the rendered yaml when
@@ -226,9 +177,9 @@ def pipelock_build_config(
     # Body-scan enforcement is a separate pipelock section (each DLP
     # "surface" — body, MCP, response — has its own action). Pipelock's
     # built-in default for request_body_scanning is "warn" (forward
-    # with a log line); claude-bottle's default is "block" so a hit
+    # with a log line); claude-bottle hard-codes "block" so a hit
     # actually stops the request from leaving the egress network.
-    cfg["request_body_scanning"] = {"action": bottle.egress.dlp_action}
+    cfg["request_body_scanning"] = {"action": "block"}
     if ca_cert_path or ca_key_path:
         if not (ca_cert_path and ca_key_path):
             raise ValueError(
@@ -321,7 +272,7 @@ class PipelockProxyPlan:
     that they are populated.
 
     `internal_network_cidr` ends up on pipelock's `ssrf.ip_allowlist`
-    so traffic from sibling sidecars (egress-proxy → pipelock on the
+    so traffic from sibling sidecars (egress → pipelock on the
     upstream leg, etc.) bypasses pipelock's RFC1918 SSRF guard while
     api_allowlist and body-scanning still apply."""
 
