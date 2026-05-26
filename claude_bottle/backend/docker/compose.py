@@ -399,12 +399,74 @@ COMPOSE_FILE_NAME = "docker-compose.yml"
 COMPOSE_LOG_NAME = "compose.log"
 
 
+COMPOSE_PROJECT_PREFIX = "claude-bottle-"
+
+
 def compose_project_name(slug: str) -> str:
     """Stable mapping from slug → compose project. Matches the
     `name:` field the renderer emits, so `docker compose ls`
     enumeration and direct CLI invocations agree on the project
     identifier."""
-    return f"claude-bottle-{slug}"
+    return f"{COMPOSE_PROJECT_PREFIX}{slug}"
+
+
+def slug_from_compose_project(project: str) -> str:
+    """Inverse of `compose_project_name`: strip the prefix to get
+    the underlying slug. Returns empty string if the project name
+    doesn't start with the expected prefix."""
+    if not project.startswith(COMPOSE_PROJECT_PREFIX):
+        return ""
+    return project[len(COMPOSE_PROJECT_PREFIX):]
+
+
+def list_compose_projects(*, include_stopped: bool = True) -> list[str]:
+    """All compose project names starting with `claude-bottle-`.
+    `include_stopped=True` (default) runs `docker compose ls --all`
+    so exited projects appear too; pass False to get only projects
+    with at least one running container.
+
+    Returns [] on docker daemon errors or malformed output rather
+    than raising — callers should treat the empty list as "no
+    projects discoverable", not "no projects exist"."""
+    argv = ["docker", "compose", "ls", "--format", "json"]
+    if include_stopped:
+        argv.insert(3, "--all")
+    try:
+        result = subprocess.run(
+            argv, capture_output=True, text=True, check=False,
+        )
+    except FileNotFoundError:
+        # docker binary not on PATH — same shape as a daemon-down
+        # error from the caller's POV: no projects discoverable.
+        return []
+    if result.returncode != 0:
+        warn(f"docker compose ls failed: {result.stderr.strip()}")
+        return []
+    try:
+        projects = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError as e:
+        warn(f"docker compose ls returned malformed JSON: {e}")
+        return []
+    names: list[str] = []
+    for p in projects:
+        if not isinstance(p, dict):
+            continue
+        name = str(p.get("Name", ""))
+        if name.startswith(COMPOSE_PROJECT_PREFIX):
+            names.append(name)
+    return sorted(set(names))
+
+
+def list_active_slugs(*, include_stopped: bool = False) -> list[str]:
+    """Slugs (project name minus prefix) of currently-running
+    bottles. Used by the dashboard's operator-edit verbs to choose
+    a bottle to apply a config edit to."""
+    return sorted(
+        slug for slug in (
+            slug_from_compose_project(p)
+            for p in list_compose_projects(include_stopped=include_stopped)
+        ) if slug
+    )
 
 
 def compose_file_path(state_dir: Path) -> Path:
@@ -499,6 +561,7 @@ def compose_down(project: str, compose_file: Path) -> None:
 __all__ = [
     "COMPOSE_FILE_NAME",
     "COMPOSE_LOG_NAME",
+    "COMPOSE_PROJECT_PREFIX",
     "bottle_plan_to_compose",
     "compose_down",
     "compose_dump_logs",
@@ -506,5 +569,8 @@ __all__ = [
     "compose_log_path",
     "compose_project_name",
     "compose_up",
+    "list_active_slugs",
+    "list_compose_projects",
+    "slug_from_compose_project",
     "write_compose_file",
 ]

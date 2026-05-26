@@ -27,6 +27,10 @@ from ..backend.docker.capability_apply import (
     CapabilityApplyError,
     apply_capability_change,
 )
+from ..backend.docker.compose import (
+    COMPOSE_PROJECT_PREFIX,
+    list_active_slugs,
+)
 from ..backend.docker.egress_apply import (
     EgressApplyError,
     add_route,
@@ -79,15 +83,23 @@ class QueuedProposal:
     queue_dir: Path
 
 
-def _discover_sidecar_slugs(name_prefix: str) -> list[str]:
-    """Slugs of bottles whose sidecar container names start with
-    `name_prefix`. Empty list if docker isn't reachable or not
-    installed."""
+def _discover_active_with_service(service: str) -> list[str]:
+    """Slugs of bottles whose compose project is up AND has the
+    named service container running. PRD 0018 chunk 5 grounded the
+    discovery on `docker compose ls` so all the dashboard verbs
+    agree with the cleanup CLI about what's running. A second
+    `docker ps` filter narrows by service label — a bottle without
+    egress routes has no egress service, and the operator-edit
+    flow shouldn't offer it for routes editing."""
+    slugs = list_active_slugs()
+    if not slugs:
+        return []
     try:
         r = subprocess.run(
             [
                 "docker", "ps",
-                "--filter", f"name=^{name_prefix}",
+                "--filter", f"label=com.docker.compose.service={service}",
+                "--filter", f"name=^{COMPOSE_PROJECT_PREFIX}{service}-",
                 "--format", "{{.Names}}",
             ],
             capture_output=True, text=True, check=False,
@@ -96,24 +108,27 @@ def _discover_sidecar_slugs(name_prefix: str) -> list[str]:
         return []
     if r.returncode != 0:
         return []
+    prefix = f"{COMPOSE_PROJECT_PREFIX}{service}-"
     out: list[str] = []
     for line in (r.stdout or "").splitlines():
         line = line.strip()
-        if line.startswith(name_prefix):
-            out.append(line[len(name_prefix):])
-    return sorted(out)
+        if line.startswith(prefix):
+            slug = line[len(prefix):]
+            if slug in slugs:
+                out.append(slug)
+    return sorted(set(out))
 
 
 def discover_egress_slugs() -> list[str]:
     """Slugs of bottles with a running egress sidecar. Used by
     the operator-initiated `routes edit` verb."""
-    return _discover_sidecar_slugs("claude-bottle-egress-")
+    return _discover_active_with_service("egress")
 
 
 def discover_pipelock_slugs() -> list[str]:
     """Slugs of bottles with a running pipelock sidecar. Used by
     the operator-initiated `pipelock edit` verb."""
-    return _discover_sidecar_slugs("claude-bottle-pipelock-")
+    return _discover_active_with_service("pipelock")
 
 
 def _approval_status(qp: QueuedProposal, verb: str) -> str:
