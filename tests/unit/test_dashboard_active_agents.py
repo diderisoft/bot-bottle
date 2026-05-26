@@ -256,5 +256,89 @@ class TestSelectionStatus(unittest.TestCase):
         self.assertEqual("[no agent selected]", s)
 
 
+class TestSelectedAgent(unittest.TestCase):
+    """`_selected_agent` is what chunk 4's e/p key handlers use to
+    decide whether to fire and which agent to target."""
+
+    def _agent(self, slug: str, services: tuple[str, ...] = ()) -> dashboard.ActiveAgent:
+        return dashboard.ActiveAgent(
+            slug=slug, agent_name="x", started_at="", services=services,
+        )
+
+    def test_none_when_proposals_focused(self):
+        agents = [self._agent("a-1")]
+        self.assertIsNone(
+            dashboard._selected_agent(dashboard.PANE_PROPOSALS, agents, 0),
+        )
+
+    def test_none_when_no_agents(self):
+        self.assertIsNone(
+            dashboard._selected_agent(dashboard.PANE_AGENTS, [], 0),
+        )
+
+    def test_returns_indexed_agent_when_in_range(self):
+        agents = [self._agent("a-1"), self._agent("b-2")]
+        result = dashboard._selected_agent(dashboard.PANE_AGENTS, agents, 1)
+        self.assertIsNotNone(result)
+        assert result is not None  # for type checker
+        self.assertEqual("b-2", result.slug)
+
+    def test_none_when_index_out_of_range(self):
+        agents = [self._agent("only")]
+        self.assertIsNone(
+            dashboard._selected_agent(dashboard.PANE_AGENTS, agents, 99),
+        )
+
+
+class TestOperatorEditFlowGuards(_FakeHomeMixin, unittest.TestCase):
+    """Chunk-4 contract: the edit flow refuses when the selected
+    agent doesn't have the required sidecar running. The discover-
+    and-prompt scaffolding is gone, so the gating happens here
+    instead of in the key handler."""
+
+    def setUp(self) -> None:
+        self._setup_fake_home()
+
+    def tearDown(self) -> None:
+        self._teardown_fake_home()
+
+    def _agent(self, services: tuple[str, ...]) -> dashboard.ActiveAgent:
+        return dashboard.ActiveAgent(
+            slug="dev-abc12",
+            agent_name="impl",
+            started_at="",
+            services=services,
+        )
+
+    def test_routes_edit_refuses_without_egress(self):
+        # Bottle without bottle.egress.routes → no egress sidecar.
+        msg = dashboard._operator_edit_flow(
+            stdscr=None,  # type: ignore[arg-type]
+            agent=self._agent(("pipelock", "supervise")),
+            required_service="egress",
+            label="routes",
+            fetch=lambda _: "x",
+            apply=lambda _slug, _content: None,
+            suffix=".yaml",
+        )
+        self.assertIn("no running egress sidecar", msg)
+        self.assertIn("dev-abc12", msg)
+
+    def test_pipelock_edit_refuses_when_pipelock_missing(self):
+        # Belt-and-braces — pipelock should always be there, but
+        # the race window between `compose up` and `docker ps`
+        # update is real.
+        msg = dashboard._operator_edit_flow(
+            stdscr=None,  # type: ignore[arg-type]
+            agent=self._agent(()),
+            required_service="pipelock",
+            label="pipelock",
+            fetch=lambda _: "x",
+            apply=lambda _slug, _content: None,
+            suffix=".txt",
+        )
+        self.assertIn("no running pipelock sidecar", msg)
+
+
 if __name__ == "__main__":
     unittest.main()

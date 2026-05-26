@@ -490,24 +490,6 @@ class TestOperatorEditRoutes(_FakeHomeMixin, unittest.TestCase):
         self.assertEqual([], read_audit_entries("egress", "dev"))
 
 
-class TestDiscoverEgressSlugs(unittest.TestCase):
-    """Slug-extraction parsing — exercises only the parsing path; the
-    docker ps invocation itself is environment-dependent (and tested
-    implicitly by the integration test)."""
-
-    def test_returns_empty_when_docker_unavailable(self):
-        # Force a failure by setting PATH to a dir with no docker
-        # binary. The discover helper swallows the non-zero rc.
-        import os
-        original = os.environ.get("PATH", "")
-        os.environ["PATH"] = "/nonexistent-no-docker-here"
-        try:
-            self.assertEqual([], dashboard.discover_egress_slugs())
-            self.assertEqual([], dashboard.discover_pipelock_slugs())
-        finally:
-            os.environ["PATH"] = original
-
-
 class TestOperatorEditAllowlist(_FakeHomeMixin, unittest.TestCase):
     """PRD 0015 Phase 3: operator-initiated pipelock allowlist edit."""
 
