@@ -172,5 +172,57 @@ class TestDiscoverActiveAgents(_FakeHomeMixin, unittest.TestCase):
         )
 
 
+class TestFormatAgentRow(unittest.TestCase):
+    """One-line row formatting for the agents pane (PRD 0019 chunk 2)."""
+
+    def _agent(self, **overrides) -> dashboard.ActiveAgent:
+        defaults = dict(
+            slug="dev-abc12",
+            agent_name="implementer",
+            started_at="2026-05-26T02:55:01+00:00",
+            services=("egress", "git-gate", "pipelock", "supervise"),
+        )
+        defaults.update(overrides)
+        return dashboard.ActiveAgent(**defaults)
+
+    def test_renders_slug_name_time_services(self):
+        s = dashboard._format_agent_row(self._agent(), 200)
+        self.assertIn("dev-abc12", s)
+        self.assertIn("implementer", s)
+        self.assertIn("02:55:01", s)
+        self.assertIn("egress,git-gate,pipelock,supervise", s)
+
+    def test_starting_label_when_no_services(self):
+        # Race window: compose project is up but containers haven't
+        # been picked up by `docker ps` yet.
+        s = dashboard._format_agent_row(self._agent(services=()), 200)
+        self.assertIn("(starting)", s)
+
+    def test_filters_agent_service_from_display(self):
+        # The `agent` service is always present for an active bottle;
+        # listing it is noise. The row should show only the sidecars.
+        s = dashboard._format_agent_row(
+            self._agent(services=("agent", "pipelock", "supervise")), 200,
+        )
+        self.assertIn("[pipelock,supervise]", s)
+        self.assertNotIn("agent,", s)
+        self.assertNotIn(",agent", s)
+
+    def test_only_agent_service_shows_starting(self):
+        # A bottle whose only running service is `agent` (sidecars
+        # still warming up) renders as `(starting)`.
+        s = dashboard._format_agent_row(self._agent(services=("agent",)), 200)
+        self.assertIn("(starting)", s)
+
+    def test_question_mark_when_no_started_at(self):
+        s = dashboard._format_agent_row(self._agent(started_at=""), 200)
+        self.assertIn("started ?", s)
+
+    def test_truncates_to_maxw(self):
+        s = dashboard._format_agent_row(self._agent(), 30)
+        self.assertLessEqual(len(s), 30)
+        self.assertTrue(s.endswith("…"))
+
+
 if __name__ == "__main__":
     unittest.main()

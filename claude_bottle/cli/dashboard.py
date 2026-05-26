@@ -533,6 +533,11 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
         if selected >= len(pending):
             selected = max(0, len(pending) - 1)
 
+        # PRD 0019 chunk 2: agents pane shows what's currently
+        # running on the same 1s refresh cadence. No selection
+        # model yet — that's chunk 3.
+        agents = discover_active_agents()
+
         now = time.monotonic()
         live_ids = {qp.proposal.id for qp in pending}
         for proposal_id in live_ids:
@@ -540,7 +545,11 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
         for stale_id in list(first_seen.keys() - live_ids):
             del first_seen[stale_id]
 
-        _render(stdscr, pending, selected, status_line, first_seen, now, green_attr)
+        _render(
+            stdscr, pending, selected, status_line,
+            agents=agents,
+            first_seen=first_seen, now=now, green_attr=green_attr,
+        )
 
         try:
             key = stdscr.getch()
@@ -605,30 +614,43 @@ def _render(
     pending: list[QueuedProposal],
     selected: int,
     status_line: str,
+    *,
+    agents: list[ActiveAgent] | None = None,
     first_seen: dict[str, float] | None = None,
     now: float | None = None,
     green_attr: int = 0,
 ) -> None:
     stdscr.erase()
     h, w = stdscr.getmaxyx()
-    header = f"claude-bottle dashboard  ({len(pending)} pending)"
+    agents = agents or []
+    header = (
+        f"claude-bottle dashboard  "
+        f"({len(pending)} pending, {len(agents)} active)"
+    )
     stdscr.addnstr(0, 0, header, w - 1, curses.A_BOLD)
     stdscr.hline(1, 0, curses.ACS_HLINE, w)
 
+    # ----- proposals pane (top) -----
+    row = 2
+    stdscr.addnstr(row, 0, "proposals:", w - 1, curses.A_DIM)
+    row += 1
     if not pending:
         stdscr.addnstr(
-            3, 2,
+            row, 2,
             "no pending proposals; agents will queue here when they call a "
             "supervise tool",
             w - 4,
         )
+        row += 1
     else:
         for i, qp in enumerate(pending):
-            row = 2 + i
-            if row >= h - 2:
+            if row >= h - 4 - max(1, len(agents) + 2):
                 break
             p = qp.proposal
-            ts_short = p.arrival_timestamp.split("T", 1)[1][:8] if "T" in p.arrival_timestamp else p.arrival_timestamp
+            ts_short = (
+                p.arrival_timestamp.split("T", 1)[1][:8]
+                if "T" in p.arrival_timestamp else p.arrival_timestamp
+            )
             line = (
                 f"{'> ' if i == selected else '  '}"
                 f"[{p.bottle_slug}] {p.tool:<20} {ts_short}  "
@@ -638,6 +660,29 @@ def _render(
             if _is_recent(p.id, first_seen, now):
                 attr |= green_attr
             stdscr.addnstr(row, 0, line, w - 1, attr)
+            row += 1
+
+    # ----- agents pane (bottom) -----
+    # One blank-line separator + a "active agents:" label, then one
+    # row per agent. No selection model yet — that's chunk 3. Stops
+    # before the status / footer area so they always stay visible.
+    row += 1
+    if row < h - 3:
+        stdscr.addnstr(row, 0, "active agents:", w - 1, curses.A_DIM)
+        row += 1
+    if not agents:
+        if row < h - 3:
+            stdscr.addnstr(
+                row, 2,
+                "no active bottles; ./cli.py start <agent>",
+                w - 4, curses.A_DIM,
+            )
+    else:
+        for a in agents:
+            if row >= h - 3:
+                break
+            stdscr.addnstr(row, 0, _format_agent_row(a, w - 1), w - 1)
+            row += 1
 
     footer = (
         "[Enter] view  [a] approve  [m] modify  [r] reject  "
@@ -648,6 +693,29 @@ def _render(
     if status_line:
         stdscr.addnstr(h - 3, 0, status_line, w - 1, curses.A_BOLD)
     stdscr.refresh()
+
+
+def _format_agent_row(a: ActiveAgent, maxw: int) -> str:
+    """One-line agent row: `  <slug> <agent_name> started <HH:MM:SS>
+    [<sidecars>]`. The `agent` service is filtered out of the
+    displayed list — it's always present for an active bottle, so
+    listing it carries no information; the sidecars are the
+    differentiator. Truncated to `maxw` because the renderer's
+    addnstr only enforces width if we hand it a properly-sized
+    string."""
+    started = (
+        a.started_at.split("T", 1)[1][:8]
+        if "T" in a.started_at else (a.started_at or "?")
+    )
+    sidecars = tuple(s for s in a.services if s != "agent")
+    services = ",".join(sidecars) if sidecars else "(starting)"
+    line = (
+        f"  {a.slug}  {a.agent_name}  "
+        f"started {started}  [{services}]"
+    )
+    if len(line) > maxw:
+        return line[: max(0, maxw - 1)] + "…"
+    return line
 
 
 def _detail_view(
