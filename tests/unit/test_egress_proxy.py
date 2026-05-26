@@ -109,17 +109,6 @@ class TestRoutesForBottleFoldsDefaults(unittest.TestCase):
         self.assertEqual(1, len(anthropic))
         self.assertEqual("Bearer", anthropic[0].auth_scheme)
 
-    def test_bottle_egress_allowlist_folded_in(self):
-        m = Manifest.from_json_obj({
-            "bottles": {"dev": {
-                "egress_proxy": {"routes": []},
-                "egress": {"allowlist": ["example.com"]},
-            }},
-            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
-        })
-        hosts = [r.host for r in egress_proxy_routes_for_bottle(m.bottles["dev"])]
-        self.assertIn("example.com", hosts)
-
     def test_manifest_only_when_no_defaults_or_allowlist(self):
         # Sanity: egress_proxy_manifest_routes returns just the
         # manifest entries — defaults are added by the

@@ -28,9 +28,7 @@ _BOTTLE_DEV = """
           auth:
             scheme: Bearer
             token_ref: CLAUDE_CODE_OAUTH_TOKEN
-    egress:
-      allowlist:
-        - example.com
+        - host: example.com
     ---
 
     The dev bottle. Anthropic OAuth via egress-proxy.
@@ -88,11 +86,11 @@ class TestBottleFileParses(_ResolveCase):
         m = self.resolve()
         self.assertIn("dev", m.bottles)
         routes = m.bottles["dev"].egress_proxy.routes
-        self.assertEqual(1, len(routes))
+        self.assertEqual(2, len(routes))
         self.assertEqual("api.anthropic.com", routes[0].Host)
         self.assertEqual("Bearer", routes[0].AuthScheme)
         self.assertEqual("CLAUDE_CODE_OAUTH_TOKEN", routes[0].TokenRef)
-        self.assertEqual(["example.com"], list(m.bottles["dev"].egress.allowlist))
+        self.assertEqual("example.com", routes[1].Host)
 
 
 class TestAgentFileParses(_ResolveCase):
@@ -134,7 +132,7 @@ class TestCwdAgentOverridesHome(_ResolveCase):
         m = self.resolve()
         self.assertIn("CWD-OVERRIDE-PROMPT", m.agents["implementer"].prompt)
         # Home bottle still present
-        self.assertEqual(1, len(m.bottles["dev"].egress_proxy.routes))
+        self.assertEqual(2, len(m.bottles["dev"].egress_proxy.routes))
 
 
 class TestCwdBottlesIgnored(_ResolveCase):

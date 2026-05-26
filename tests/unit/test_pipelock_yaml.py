@@ -31,7 +31,7 @@ class TestBuildConfig(unittest.TestCase):
         self.assertEqual(
             {"include_defaults": True, "scan_env": True}, cfg["dlp"]
         )
-        # Default body-scan action is "block" — see BottleEgress.dlp_action.
+        # Body-scan action is hard-coded "block" in pipelock_build_config.
         self.assertEqual(
             {"action": "block"}, cfg["request_body_scanning"]
         )
@@ -158,7 +158,7 @@ class TestRenderAndWrite(unittest.TestCase):
                         "MY_SECRET": "literal-value-should-not-appear",
                         "ANOTHER": "?prompt-message",
                     },
-                    "egress": {"allowlist": ["github.com"]},
+                    "egress_proxy": {"routes": [{"host": "github.com"}]},
                 }
             },
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},

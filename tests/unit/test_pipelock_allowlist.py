@@ -1,8 +1,7 @@
-"""Unit: pipelock_effective_allowlist — the union of baked-in defaults,
-bottle.egress.allowlist, and egress-proxy route hosts derived from
-bottle.egress_proxy.routes (PRD 0017). Git upstreams declared in
-bottle.git do not contribute here; they flow through the per-agent
-git-gate (PRD 0008)."""
+"""Unit: pipelock_effective_allowlist — pipelock's allowlist
+mirrors `egress_proxy_routes_for_bottle` (which folds in
+DEFAULT_ALLOWLIST). Git upstreams declared in `bottle.git` don't
+contribute; they flow through the per-agent git-gate (PRD 0008)."""
 
 import unittest
 
@@ -10,7 +9,6 @@ from claude_bottle.manifest import Manifest
 from claude_bottle.pipelock import (
     pipelock_effective_allowlist,
     pipelock_effective_tls_passthrough,
-    pipelock_route_hosts,
 )
 
 
@@ -26,38 +24,26 @@ def _routes(routes):
 
 
 class TestEffectiveAllowlist(unittest.TestCase):
-    def test_union_and_dedup(self):
-        eff = pipelock_effective_allowlist(_bottle({
-            "egress": {
-                "allowlist": [
-                    "registry.npmjs.org",
-                    # Duplicate of a baked default; the union must dedupe.
-                    "api.anthropic.com",
-                ],
-            },
-        }))
-        self.assertIn("api.anthropic.com", eff, "baked default present")
-        self.assertIn("registry.npmjs.org", eff, "egress.allowlist present")
-        self.assertEqual(len(eff), len(set(eff)), "deduplicated")
-        self.assertEqual(eff, sorted(eff), "sorted")
+    def test_default_allowlist_present_without_any_manifest_routes(self):
+        # No egress_proxy routes declared → pipelock allowlist is
+        # just the baked DEFAULT_ALLOWLIST (folded in by
+        # egress_proxy_routes_for_bottle).
+        eff = pipelock_effective_allowlist(_bottle({}))
+        self.assertIn("api.anthropic.com", eff)
+        self.assertIn("sentry.io", eff)
 
-
-class TestRouteHosts(unittest.TestCase):
-    def test_each_route_contributes_its_host(self):
-        hosts = pipelock_route_hosts(_bottle(_routes([
-            {"host": "api.github.com",
-             "auth": {"scheme": "Bearer", "token_ref": "GH"}},
-            {"host": "github.com",
-             "auth": {"scheme": "Bearer", "token_ref": "GH"}},
+    def test_sorted_and_deduped(self):
+        # Manifest route for a default host collapses to one entry.
+        eff = pipelock_effective_allowlist(_bottle(_routes([
+            {"host": "api.anthropic.com",
+             "auth": {"scheme": "Bearer", "token_ref": "T"}},
         ])))
-        self.assertEqual(["api.github.com", "github.com"], hosts)
-
-    def test_no_routes_empty(self):
-        self.assertEqual([], pipelock_route_hosts(_bottle({})))
+        self.assertEqual(len(eff), len(set(eff)))
+        self.assertEqual(eff, sorted(eff))
 
 
 class TestAllowlistWithRoutes(unittest.TestCase):
-    def test_route_hosts_added_to_allowlist(self):
+    def test_manifest_route_hosts_present(self):
         eff = pipelock_effective_allowlist(_bottle(_routes([
             {"host": "registry.npmjs.org",
              "auth": {"scheme": "Bearer", "token_ref": "N"}},
@@ -66,6 +52,15 @@ class TestAllowlistWithRoutes(unittest.TestCase):
         ])))
         self.assertIn("registry.npmjs.org", eff)
         self.assertIn("api.github.com", eff)
+
+    def test_baked_defaults_still_present_alongside_manifest_routes(self):
+        eff = pipelock_effective_allowlist(_bottle(_routes([
+            {"host": "x.example",
+             "auth": {"scheme": "Bearer", "token_ref": "T"}},
+        ])))
+        for default in ("api.anthropic.com", "sentry.io"):
+            self.assertIn(default, eff)
+        self.assertIn("x.example", eff)
 
     def test_egress_proxy_hostname_NOT_in_pipelock_allowlist(self):
         # The agent never dials egress-proxy via the proxy mechanism
@@ -78,25 +73,7 @@ class TestAllowlistWithRoutes(unittest.TestCase):
         ])))
         self.assertNotIn("egress-proxy", eff)
 
-    def test_pipelock_mirrors_egress_proxy_defaults_when_routes_present(self):
-        # When egress_proxy is in use, pipelock's allowlist mirrors
-        # the egress-proxy effective routes — which fold in
-        # DEFAULT_ALLOWLIST + bottle.egress.allowlist.
-        eff = pipelock_effective_allowlist(_bottle(_routes([
-            {"host": "x.example",
-             "auth": {"scheme": "Bearer", "token_ref": "T"}},
-        ])))
-        for default in ("api.anthropic.com", "sentry.io"):
-            self.assertIn(default, eff)
-        self.assertIn("x.example", eff)
-
     def test_supervise_hostname_auto_added_when_supervise_enabled(self):
-        # The agent's MCP client opens long-polled requests to
-        # http://supervise:9100/. They bypass the agent's HTTP_PROXY
-        # (via NO_PROXY=supervise) and shouldn't traverse pipelock;
-        # but for the launch path where supervise traffic does flow
-        # through pipelock (egress-proxy → ... → supervise edge
-        # cases), the hostname needs to be on the allowlist anyway.
         eff = pipelock_effective_allowlist(_bottle({"supervise": True}))
         self.assertIn("supervise", eff)
 
@@ -114,7 +91,6 @@ class TestAllowlistWithRoutes(unittest.TestCase):
             {"host": "github.com", "path_allowlist": ["/x/", "/y/"]},
         ])))
         self.assertIn("github.com", eff)
-        # The path strings don't leak into the allowlist.
         for entry in eff:
             self.assertFalse(entry.startswith("/"))
 
@@ -125,10 +101,6 @@ class TestTlsPassthrough(unittest.TestCase):
         self.assertEqual(["api.anthropic.com"], passthrough)
 
     def test_route_hosts_NOT_added_to_passthrough(self):
-        # egress-proxy trusts pipelock's per-bottle CA, so pipelock
-        # MITMs and body-scans the egress-proxy → upstream leg the
-        # same way it scanned direct agent traffic before. Auto-adding
-        # route hosts to passthrough would silently disable that.
         passthrough = pipelock_effective_tls_passthrough(_bottle(_routes([
             {"host": "api.github.com",
              "auth": {"scheme": "Bearer", "token_ref": "G"}},

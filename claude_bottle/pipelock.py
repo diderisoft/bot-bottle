@@ -50,38 +50,15 @@ DEFAULT_TLS_PASSTHROUGH: tuple[str, ...] = (
 # --- Allowlist resolution --------------------------------------------------
 
 
-def pipelock_bottle_allowlist(bottle: Bottle) -> list[str]:
-    """Hostnames in bottle.egress.allowlist."""
-    return list(bottle.egress.allowlist)
-
-
-def pipelock_route_hosts(bottle: Bottle) -> list[str]:
-    """Hostnames declared in `bottle.egress_proxy.routes`. Returned
-    sorted + deduped. Used by the no-egress-proxy fallback path
-    below; bottles that DO use egress-proxy include the same hosts
-    via `egress_proxy_routes_for_bottle`."""
-    hosts = {r.Host for r in bottle.egress_proxy.routes if r.Host}
-    return sorted(hosts)
-
-
 def pipelock_effective_allowlist(bottle: Bottle) -> list[str]:
     """Hostnames pipelock allows. Sorted for stability.
 
-    Two paths, depending on whether the bottle uses egress-proxy:
-
-    - Bottle declares `egress_proxy.routes[]` → agent's HTTPS_PROXY
-      points at egress-proxy. Egress-proxy is the bottle's primary
-      allowlist gate (DEFAULT_ALLOWLIST + bottle.egress.allowlist +
-      manifest routes all live there as bare-pass or full routes,
-      folded in by `egress_proxy_routes_for_bottle`). Pipelock's
-      allowlist is then a MIRROR of egress-proxy's hosts — same
-      set, just serving as the defense-in-depth hostname gate +
-      DLP scanner on the upstream leg.
-
-    - Bottle has no `egress_proxy.routes[]` → agent talks straight
-      to pipelock. Pipelock keeps its previous behavior: bake in
-      DEFAULT_ALLOWLIST + bottle.egress.allowlist for claude-code
-      defaults.
+    Always mirrors `egress_proxy_routes_for_bottle(bottle)` — the
+    egress-proxy is the single allowlist surface; pipelock's
+    allowlist is the downstream copy for defense-in-depth + DLP
+    body scanning. For bottles without any `egress_proxy.routes[]`
+    declared, this is just the baked DEFAULT_ALLOWLIST that
+    egress_proxy_routes_for_bottle always folds in.
 
     The supervise sidecar's hostname is auto-added when supervise
     is enabled (sibling-sidecar traffic that flows through pipelock
@@ -89,19 +66,9 @@ def pipelock_effective_allowlist(bottle: Bottle) -> list[str]:
     `bottle.git` do NOT contribute here — git traffic flows
     through git-gate (PRD 0008), not pipelock."""
     seen: dict[str, None] = {}
-    if bottle.egress_proxy.routes:
-        # Mirror egress-proxy's effective host set — same defaults
-        # and bottle.egress.allowlist entries are already folded in
-        # at the egress-proxy layer; we don't add them twice.
-        for r in egress_proxy_routes_for_bottle(bottle):
-            if r.host:
-                seen.setdefault(r.host, None)
-    else:
-        for h in DEFAULT_ALLOWLIST:
-            seen.setdefault(h, None)
-        for h in pipelock_bottle_allowlist(bottle):
-            if h:
-                seen.setdefault(h, None)
+    for r in egress_proxy_routes_for_bottle(bottle):
+        if r.host:
+            seen.setdefault(r.host, None)
     if bottle.supervise:
         seen.setdefault(SUPERVISE_HOSTNAME, None)
     return sorted(seen.keys())
@@ -160,22 +127,6 @@ def pipelock_effective_tls_passthrough(bottle: Bottle) -> list[str]:
     return sorted(DEFAULT_TLS_PASSTHROUGH)
 
 
-def pipelock_allowlist_summary(bottle: Bottle) -> str:
-    """One-line summary for the y/N preflight display:
-    "<N> hosts allowed (host1, host2, host3, +M more)"."""
-    hosts = pipelock_effective_allowlist(bottle)
-    count = len(hosts)
-    if count == 0:
-        return "0 hosts allowed (none)"
-    show = count
-    more = 0
-    if count > 5:
-        show = 3
-        more = count - show
-    joined = ", ".join(hosts[:show])
-    if more > 0:
-        return f"{count} hosts allowed ({joined}, +{more} more)"
-    return f"{count} hosts allowed ({joined})"
 
 
 
@@ -226,9 +177,9 @@ def pipelock_build_config(
     # Body-scan enforcement is a separate pipelock section (each DLP
     # "surface" — body, MCP, response — has its own action). Pipelock's
     # built-in default for request_body_scanning is "warn" (forward
-    # with a log line); claude-bottle's default is "block" so a hit
+    # with a log line); claude-bottle hard-codes "block" so a hit
     # actually stops the request from leaving the egress network.
-    cfg["request_body_scanning"] = {"action": bottle.egress.dlp_action}
+    cfg["request_body_scanning"] = {"action": "block"}
     if ca_cert_path or ca_key_path:
         if not (ca_cert_path and ca_key_path):
             raise ValueError(

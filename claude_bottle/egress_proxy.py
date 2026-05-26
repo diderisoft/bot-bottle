@@ -190,21 +190,22 @@ def egress_proxy_routes_for_bottle(
     bottle: Bottle,
 ) -> tuple[EgressProxyRoute, ...]:
     """Effective egress-proxy routes: manifest routes followed by
-    bare-pass entries for DEFAULT_ALLOWLIST hosts and
-    `bottle.egress.allowlist` hosts. This is what gets rendered into
-    routes.yaml + what the addon enforces.
+    bare-pass entries for DEFAULT_ALLOWLIST hosts. This is what
+    gets rendered into routes.yaml + what the addon enforces.
 
     Manifest routes win over defaults on host collision (manifest
     routes carry more specific config — auth, path filter, role
-    markers). Hostname comparison is case-insensitive."""
+    markers). Hostname comparison is case-insensitive.
+
+    Operators that want to allow an arbitrary host that isn't in
+    DEFAULT_ALLOWLIST declare it directly in
+    `bottle.egress_proxy.routes` as a bare-pass entry
+    (`- host: <name>`). The legacy `bottle.egress.allowlist`
+    folding is gone — egress_proxy is the single allowlist surface."""
     out: list[EgressProxyRoute] = list(egress_proxy_manifest_routes(bottle))
     claimed: set[str] = {r.host.lower() for r in out}
     for host in DEFAULT_ALLOWLIST:
         if host.lower() not in claimed:
-            out.append(EgressProxyRoute(host=host))
-            claimed.add(host.lower())
-    for host in bottle.egress.allowlist:
-        if host and host.lower() not in claimed:
             out.append(EgressProxyRoute(host=host))
             claimed.add(host.lower())
     return tuple(out)

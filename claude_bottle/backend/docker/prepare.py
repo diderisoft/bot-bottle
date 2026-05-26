@@ -14,7 +14,6 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ... import pipelock
 from ...env import ResolvedEnv, resolve_env
 from ...log import die
 from .. import BottleSpec
@@ -192,7 +191,6 @@ def resolve_plan(
     _write_env_file(resolved, env_file)
     prompt_file.write_text(agent.prompt)
 
-    allowlist_summary = pipelock.pipelock_allowlist_summary(bottle)
     use_runsc = docker_mod.runsc_available()
 
     return DockerBottlePlan(
@@ -212,7 +210,6 @@ def resolve_plan(
         git_gate_plan=git_gate_plan,
         egress_proxy_plan=egress_proxy_plan,
         supervise_plan=supervise_plan,
-        allowlist_summary=allowlist_summary,
         use_runsc=use_runsc,
     )
 

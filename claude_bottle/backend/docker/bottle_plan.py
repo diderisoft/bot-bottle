@@ -49,7 +49,6 @@ class DockerBottlePlan(BottlePlan):
     # None when bottle.supervise is False. PRD 0013 supervise sidecar
     # is opt-in via the manifest's bottle.supervise field.
     supervise_plan: SupervisePlan | None
-    allowlist_summary: str
     use_runsc: bool
 
     def print(self, *, remote_control: bool) -> None:

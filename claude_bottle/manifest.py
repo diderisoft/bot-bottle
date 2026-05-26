@@ -15,7 +15,6 @@ Bottle schema (frontmatter):
   env:          { <NAME>: <env-entry>, ... }
   git:          [ <git-entry>, ... ]
   egress_proxy: { routes: [ <egress-route>, ... ] }
-  egress:       { allowlist: [ <hostname>, ... ] }
 
 Agent schema (frontmatter):
   bottle:        <bottle-name>          # required
@@ -341,63 +340,11 @@ class EgressProxyConfig:
         return cls(routes=routes)
 
 
-DLP_ACTIONS = ("block", "warn")
-
-
-@dataclass(frozen=True)
-class BottleEgress:
-    allowlist: tuple[str, ...] = ()
-    # Action pipelock takes when its DLP layer matches a credential
-    # pattern in a request body. "block" → 403 from the proxy, the
-    # request never leaves the egress network. "warn" → forward the
-    # request and emit a log line. Default is "block": detect-only
-    # would let real secrets escape under the agent's compromised
-    # tooling, which is the threat model claude-bottle was built for.
-    dlp_action: str = "block"
-
-    @classmethod
-    def from_dict(cls, bottle_name: str, raw: object) -> "BottleEgress":
-        d = _as_json_object(raw, f"bottle '{bottle_name}' egress")
-        allow = d.get("allowlist")
-        items: list[str] = []
-        if allow is not None:
-            if not isinstance(allow, list):
-                die(
-                    f"bottle '{bottle_name}' egress.allowlist must be an array "
-                    f"(was {type(allow).__name__})"
-                )
-            allow_list = cast(list[object], allow)
-            for i, host in enumerate(allow_list):
-                if not isinstance(host, str):
-                    die(
-                        f"bottle '{bottle_name}' egress.allowlist[{i}] must be a string "
-                        f"(was {type(host).__name__})"
-                    )
-                items.append(host)
-        dlp_action_raw = d.get("dlp_action")
-        if dlp_action_raw is None:
-            dlp_action = "block"
-        elif isinstance(dlp_action_raw, str):
-            if dlp_action_raw not in DLP_ACTIONS:
-                die(
-                    f"bottle '{bottle_name}' egress.dlp_action must be one of "
-                    f"{', '.join(DLP_ACTIONS)} (was {dlp_action_raw!r})"
-                )
-            dlp_action = dlp_action_raw
-        else:
-            die(
-                f"bottle '{bottle_name}' egress.dlp_action must be a string "
-                f"(was {type(dlp_action_raw).__name__})"
-            )
-        return cls(allowlist=tuple(items), dlp_action=dlp_action)
-
-
 @dataclass(frozen=True)
 class Bottle:
     env: Mapping[str, str] = field(default_factory=_empty_str_dict)
     git: tuple[GitEntry, ...] = ()
     egress_proxy: EgressProxyConfig = field(default_factory=EgressProxyConfig)
-    egress: BottleEgress = field(default_factory=BottleEgress)
     # Opt-in per-bottle stuck-recovery sidecar (PRD 0013). When true,
     # the launch step brings up a supervise sidecar that exposes three
     # MCP tools to the agent (cred-proxy-block, pipelock-block,
@@ -481,13 +428,6 @@ class Bottle:
             else EgressProxyConfig()
         )
 
-        egress_raw = d.get("egress")
-        egress = (
-            BottleEgress.from_dict(name, egress_raw)
-            if egress_raw is not None
-            else BottleEgress()
-        )
-
         supervise_raw = d.get("supervise", False)
         if not isinstance(supervise_raw, bool):
             die(
@@ -496,7 +436,7 @@ class Bottle:
             )
 
         return cls(
-            env=env, git=git, egress_proxy=egress_proxy, egress=egress,
+            env=env, git=git, egress_proxy=egress_proxy,
             supervise=supervise_raw,
         )
 
@@ -832,7 +772,7 @@ _FILENAME_RX = re.compile(r"^[a-z][a-z0-9-]*$")
 # sets dies with a "did you mean" pointer — typos shouldn't silently
 # ghost into an empty config.
 _BOTTLE_KEYS = frozenset(
-    {"env", "git", "egress_proxy", "egress", "supervise"}
+    {"env", "git", "egress_proxy", "supervise"}
 )
 _AGENT_KEYS_REQUIRED = frozenset({"bottle"})
 _AGENT_KEYS_OPTIONAL = frozenset({"skills"})
