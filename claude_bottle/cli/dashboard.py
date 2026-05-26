@@ -445,6 +445,7 @@ def _picker_modal(
         try:
             key = stdscr.getch()
         except KeyboardInterrupt:
+            _erase_modal(stdscr)
             return None
 
         if key == 27:  # Esc
@@ -452,9 +453,11 @@ def _picker_modal(
                 query = ""
                 selected = 0
                 continue
+            _erase_modal(stdscr)
             return None
         if key in (curses.KEY_ENTER, 10, 13):
             if filtered:
+                _erase_modal(stdscr)
                 return filtered[selected]
             continue
         if key in (curses.KEY_DOWN, ord("\x0e")):  # KEY_DOWN, Ctrl-N
@@ -578,11 +581,26 @@ def _preflight_modal(
         try:
             key = stdscr.getch()
         except KeyboardInterrupt:
+            _erase_modal(stdscr)
             return False
         if key in (ord("y"), ord("Y")):
+            _erase_modal(stdscr)
             return True
         if key in (ord("n"), ord("N"), 27, curses.KEY_ENTER, 10, 13):
+            _erase_modal(stdscr)
             return False
+
+
+def _erase_modal(stdscr: "curses._CursesWindow") -> None:
+    """Force-redraw the dashboard's pre-modal frame so a modal
+    sub-window's content stops showing. Curses tracks the modal
+    via the newwin sub-window we created; touchwin + refresh
+    on stdscr repaints stdscr's last buffered frame over the
+    sub-window's area. Without this, the modal stays on screen
+    until the dashboard's main loop ticks again — which during
+    a long-running launch is several seconds away."""
+    stdscr.touchwin()
+    stdscr.refresh()
 
 
 def _capture_preflight_text(plan) -> str:
