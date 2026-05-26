@@ -97,11 +97,12 @@ def attach_claude(
     """Run claude inside `bottle` as an interactive session. Blocks
     until the session ends; returns the claude process's exit code.
 
-    `resume=True` adds `--resume` so claude picks up its prior
-    conversation history rather than starting a fresh transcript —
+    `resume=True` adds `--continue` so claude picks up its most
+    recent session non-interactively (no session-picker prompt) —
     the right shape for the dashboard's Enter re-attach (PRD 0020
-    chunk 3). First-attach paths (`./cli.py start`, the dashboard's
-    new-agent flow) leave it False.
+    chunk 3), where a bottle typically has exactly one session.
+    First-attach paths (`./cli.py start`, the dashboard's new-agent
+    flow) leave it False.
 
     Used as the inner step of `./cli.py start` (one-shot) and by the
     dashboard, which calls it from inside a `curses.endwin → … →
@@ -115,7 +116,9 @@ def attach_claude(
     if remote_control:
         claude_args.append("--remote-control")
     if resume:
-        claude_args.append("--resume")
+        # `--continue` jumps straight to the most recent session
+        # without showing the picker `--resume` would surface.
+        claude_args.append("--continue")
     return bottle.exec_claude(claude_args, tty=True)
 
 
