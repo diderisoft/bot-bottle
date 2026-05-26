@@ -24,7 +24,6 @@ flow (PRD 0014) at egress and renames the MCP tool.
 
 from __future__ import annotations
 
-import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,9 +40,10 @@ from .manifest import Bottle
 EGRESS_HOSTNAME = "egress"
 
 # In-container path the addon reads. Pre-created in
-# `Dockerfile.egress` so `docker cp` can drop the file directly.
-# `.yaml` extension per PRD 0017 — content is JSON (valid YAML) so
-# both sides can use stdlib `json`.
+# `Dockerfile.egress` so the host bind-mount can drop the file
+# directly. Content is YAML (hand-rolled by `egress_render_routes`
+# in the style of `pipelock_render_yaml`, parsed by `yaml_subset`
+# inside the addon).
 EGRESS_ROUTES_IN_CONTAINER = "/etc/egress/routes.yaml"
 
 
@@ -241,25 +241,32 @@ def egress_render_routes(
 ) -> str:
     """Serialize the route table for the addon to read.
 
-    JSON content (valid YAML), no token values, no host env-var
-    names — the only thing the addon needs at runtime is the host →
-    path_allowlist + auth_scheme + in-container env-var mapping. The
-    actual token values arrive via the container's environ.
+    YAML content — no token values, no host env-var names. The only
+    thing the addon needs at runtime is the host → path_allowlist
+    + auth_scheme + in-container env-var mapping. The actual token
+    values arrive via the container's environ.
 
     Authenticated routes carry `auth_scheme` + `token_env`;
     unauthenticated routes omit both keys (the addon's parser
-    enforces both-or-neither)."""
-    payload_routes: list[dict[str, object]] = []
+    enforces both-or-neither). Hand-rolled YAML in the style of
+    `pipelock_render_yaml` so the addon's parser
+    (`yaml_subset.parse_yaml_subset`) round-trips it cleanly."""
+    lines: list[str] = ["routes:"]
+    if not routes:
+        # `routes:` with an empty list on the same line — the parser
+        # needs SOMETHING here. Empty inline list is the cleanest.
+        lines[0] = "routes: []"
+        return "\n".join(lines) + "\n"
     for r in routes:
-        entry: dict[str, object] = {"host": r.host}
-        if r.path_allowlist:
-            entry["path_allowlist"] = list(r.path_allowlist)
+        lines.append(f'  - host: "{r.host}"')
         if r.auth_scheme and r.token_env:
-            entry["auth_scheme"] = r.auth_scheme
-            entry["token_env"] = r.token_env
-        payload_routes.append(entry)
-    payload = {"routes": payload_routes}
-    return json.dumps(payload, indent=2, sort_keys=False) + "\n"
+            lines.append(f'    auth_scheme: "{r.auth_scheme}"')
+            lines.append(f'    token_env: "{r.token_env}"')
+        if r.path_allowlist:
+            lines.append("    path_allowlist:")
+            for p in r.path_allowlist:
+                lines.append(f'      - "{p}"')
+    return "\n".join(lines) + "\n"
 
 
 def egress_resolve_token_values(

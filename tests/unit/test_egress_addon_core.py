@@ -105,16 +105,39 @@ class TestParseRoutes(unittest.TestCase):
 
 
 class TestLoadRoutes(unittest.TestCase):
-    def test_json_text_round_trip(self):
-        routes = load_routes('{"routes":[{"host":"api.example"}]}')
+    def test_yaml_text_round_trip(self):
+        routes = load_routes(
+            'routes:\n'
+            '  - host: "api.example"\n'
+        )
         self.assertEqual(1, len(routes))
         self.assertEqual("api.example", routes[0].host)
 
-    def test_invalid_json_raises_value_error(self):
-        # Both decode and schema errors land as ValueError so callers
-        # have a single except clause.
+    def test_full_route_shape_parses(self):
+        routes = load_routes(
+            'routes:\n'
+            '  - host: "api.example"\n'
+            '    auth_scheme: "Bearer"\n'
+            '    token_env: "EGRESS_TOKEN_0"\n'
+            '    path_allowlist:\n'
+            '      - "/v1/"\n'
+            '      - "/messages"\n'
+        )
+        self.assertEqual(1, len(routes))
+        r = routes[0]
+        self.assertEqual("api.example", r.host)
+        self.assertEqual("Bearer", r.auth_scheme)
+        self.assertEqual("EGRESS_TOKEN_0", r.token_env)
+        self.assertEqual(("/v1/", "/messages"), r.path_allowlist)
+
+    def test_empty_routes_list(self):
+        routes = load_routes("routes: []\n")
+        self.assertEqual((), routes)
+
+    def test_invalid_yaml_raises_value_error(self):
+        # Tab indent is a YamlSubsetError; ValueError is its base.
         with self.assertRaises(ValueError):
-            load_routes("not json at all")
+            load_routes("routes:\n\t- host: x\n")
 
 
 # --- match_route ---------------------------------------------------------

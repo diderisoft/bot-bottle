@@ -45,7 +45,7 @@ from pathlib import Path
 from typing import Mapping, cast
 
 from .log import die, warn
-from .yaml_subset import parse_frontmatter
+from .yaml_subset import YamlSubsetError, parse_frontmatter
 
 
 def _empty_str_dict() -> dict[str, str]:
@@ -832,6 +832,8 @@ def _load_bottles_from_dir(bottles_dir: Path) -> dict[str, Bottle]:
             fm, _body = parse_frontmatter(path.read_text())
         except OSError as e:
             die(f"could not read {path}: {e}")
+        except YamlSubsetError as e:
+            die(f"{path}: {e}")
         unknown = set(fm.keys()) - _BOTTLE_KEYS
         if unknown:
             allowed = ", ".join(sorted(_BOTTLE_KEYS))
@@ -867,6 +869,8 @@ def _load_agents_from_dir(
             fm, body = parse_frontmatter(path.read_text())
         except OSError as e:
             die(f"could not read {path}: {e}")
+        except YamlSubsetError as e:
+            die(f"{path}: {e}")
         unknown = set(fm.keys()) - _AGENT_KEYS
         if unknown:
             allowed = ", ".join(sorted(_AGENT_KEYS))

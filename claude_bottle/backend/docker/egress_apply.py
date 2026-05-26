@@ -23,14 +23,13 @@ operator can retry.
 from __future__ import annotations
 
 import json
-import os
 import re
 import subprocess
-import tempfile
 from pathlib import Path
 
 from ...egress import EGRESS_ROUTES_IN_CONTAINER
 from ...egress_addon_core import load_routes
+from ...yaml_subset import YamlSubsetError, parse_yaml_subset
 from .bottle_state import egress_state_dir
 from .egress import egress_container_name
 from .pipelock_apply import (
@@ -40,6 +39,30 @@ from .pipelock_apply import (
     parse_allowlist_content,
     render_allowlist_content,
 )
+
+
+def _render_routes_payload(routes_list: list[dict[str, object]]) -> str:
+    """Render a list-of-dicts routes payload as YAML matching the
+    shape `egress_render_routes` produces. The apply path
+    round-trips current routes.yaml through this so the file the
+    sidecar sees stays in the YAML format the addon expects."""
+    if not routes_list:
+        return "routes: []\n"
+    lines: list[str] = ["routes:"]
+    for entry in routes_list:
+        host = str(entry.get("host", ""))
+        lines.append(f'  - host: "{host}"')
+        auth_scheme = entry.get("auth_scheme")
+        token_env = entry.get("token_env")
+        if auth_scheme and token_env:
+            lines.append(f'    auth_scheme: "{auth_scheme}"')
+            lines.append(f'    token_env: "{token_env}"')
+        paths = entry.get("path_allowlist") or []
+        if paths:
+            lines.append("    path_allowlist:")
+            for p in paths:
+                lines.append(f'      - "{p}"')
+    return "\n".join(lines) + "\n"
 
 
 def _egress_routes_host_path(slug: str) -> Path:
@@ -170,47 +193,36 @@ def apply_routes_change(slug: str, new_content: str) -> tuple[str, str]:
     # and the operator gets a clear error about the half-state.
     _mirror_hosts_to_pipelock(slug, _hosts_in_routes(new_content))
 
-    # PRD 0018 chunk 3 + security item (c): routes.yaml is bind-
-    # mounted into the egress container, so the write target is the
-    # host path the sidecar reads through the mount. POSIX
-    # rename-onto-self is atomic on the same filesystem, so a sidecar
-    # SIGHUP racing the apply can never observe a half-written file —
-    # it sees either the old bytes or the new ones.
+    # routes.yaml is bind-mounted into the egress container as a
+    # SINGLE FILE. Docker single-file bind mounts pin the source
+    # inode at mount time; write-temp-then-rename swaps the inode
+    # on the host, which leaves the container's mount pointing at
+    # the now-orphaned old inode (so the SIGHUP'd reload re-reads
+    # unchanged content). Write in-place instead. Lose file-level
+    # atomicity, but the apply path issues SIGHUP only AFTER the
+    # write returns, and the addon's `load_routes` raises
+    # `ValueError` on a partial read and keeps the previous
+    # in-memory routes — so a SIGHUP that hypothetically raced an
+    # in-flight write is non-disruptive.
     target = _egress_routes_host_path(slug)
     target.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_path_str = tempfile.mkstemp(
-        prefix=".egress_routes.", suffix=".yaml.tmp", dir=str(target.parent),
+    target.write_text(new_content)
+    # mitmproxy in the container reads through the bind mount as
+    # uid 1000; the host file has to be world-readable for that
+    # read to succeed (parent dir at 0o700 still restricts who
+    # can reach the file on the host). Routes content is not
+    # secret — tokens live in the container's environ — so 0o644
+    # is the right trade-off.
+    target.chmod(0o644)
+    sig = subprocess.run(
+        ["docker", "kill", "--signal", "HUP", container],
+        capture_output=True, text=True, check=False,
     )
-    tmp_path = Path(tmp_path_str)
-    try:
-        with os.fdopen(fd, "w") as f:
-            f.write(new_content)
-        # mitmproxy in the container reads through the bind mount as
-        # uid 1000; the host file has to be world-readable for that
-        # read to succeed (parent dir at 0o700 still restricts who
-        # can reach the file on the host). Routes content is not
-        # secret — tokens live in the container's environ — so 0o644
-        # is the right trade-off.
-        os.chmod(tmp_path, 0o644)
-        os.replace(tmp_path, target)
-        sig = subprocess.run(
-            ["docker", "kill", "--signal", "HUP", container],
-            capture_output=True, text=True, check=False,
+    if sig.returncode != 0:
+        raise EgressApplyError(
+            f"failed to SIGHUP {container}: "
+            f"{(sig.stderr or '').strip()}"
         )
-        if sig.returncode != 0:
-            raise EgressApplyError(
-                f"failed to SIGHUP {container}: "
-                f"{(sig.stderr or '').strip()}"
-            )
-    except BaseException:
-        # On any failure pre-rename, drop the tmp file. Post-rename
-        # there's nothing to clean up — `os.replace` is atomic so
-        # either the new file is in place or the old one still is.
-        try:
-            tmp_path.unlink()
-        except OSError:
-            pass
-        raise
 
     return before, new_content
 
@@ -219,7 +231,7 @@ def _merge_single_route(
     current_yaml: str, new_route: dict[str, object],
 ) -> str:
     """Merge a single proposed route into the current routes.yaml
-    content, returning the merged JSON-as-yaml string.
+    content, returning the merged YAML string.
 
     Behavior:
       - If `new_route['host']` is NOT in the current routes →
@@ -230,15 +242,15 @@ def _merge_single_route(
         on an existing host are ignored, matching the tool's
         documented semantics.
 
-    The supervisor renders the merged routes.yaml with the same
-    JSON layout the addon expects (host + path_allowlist +
-    auth_scheme + token_env). Token VALUES never appear here; the
-    routes file carries only env-var slot NAMES."""
+    Round-trips the file through `yaml_subset` (the same parser
+    the addon uses), so the merged output is in the YAML format
+    the sidecar reads. Token VALUES never appear here; the routes
+    file carries only env-var slot NAMES."""
     try:
-        cfg = json.loads(current_yaml)
-    except json.JSONDecodeError as e:
+        cfg = parse_yaml_subset(current_yaml)
+    except YamlSubsetError as e:
         raise EgressApplyError(
-            f"current routes.yaml is not valid JSON: {e}"
+            f"current routes.yaml is not valid YAML: {e}"
         ) from e
     routes = cfg.get("routes")
     if not isinstance(routes, list):
@@ -299,8 +311,7 @@ def _merge_single_route(
             # the slot name they'll need to provision.
         routes.append(entry)
 
-    cfg["routes"] = routes
-    return json.dumps(cfg, indent=2) + "\n"
+    return _render_routes_payload(routes)
 
 
 def add_route(slug: str, proposed_route_json: str) -> tuple[str, str]:

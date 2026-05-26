@@ -5,7 +5,7 @@ actually use, and every rejection case the PRD enumerates."""
 import textwrap
 import unittest
 
-from claude_bottle.log import Die
+from claude_bottle.yaml_subset import YamlSubsetError
 from claude_bottle.yaml_subset import parse_frontmatter, parse_yaml_subset
 
 
@@ -60,7 +60,7 @@ class TestForbiddenBoolLikes(unittest.TestCase):
     """Ambiguous bool-ish tokens have to be quoted explicitly."""
 
     def _expect_die(self, src: str):
-        with self.assertRaises(Die):
+        with self.assertRaises(YamlSubsetError):
             _y(src)
 
     def test_yes_dies(self):
@@ -81,7 +81,7 @@ class TestForbiddenBoolLikes(unittest.TestCase):
 
 class TestForbiddenScalarShapes(unittest.TestCase):
     def _expect_die(self, src: str):
-        with self.assertRaises(Die):
+        with self.assertRaises(YamlSubsetError):
             _y(src)
 
     def test_bare_date_dies(self):
@@ -120,14 +120,14 @@ class TestMapping(unittest.TestCase):
         self.assertEqual({"outer": {"inner": "hello", "other": 5}}, out)
 
     def test_duplicate_key_dies(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(YamlSubsetError):
             _y("""
                 a: 1
                 a: 2
             """)
 
     def test_key_must_be_bare_identifier(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(YamlSubsetError):
             _y('"weird key": 1\n')
 
 
@@ -202,20 +202,20 @@ class TestInline(unittest.TestCase):
         )
 
     def test_nested_flow_dies(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(YamlSubsetError):
             _y("l: [[1, 2], [3, 4]]\n")
 
 
 class TestForbiddenConstructs(unittest.TestCase):
     def test_anchor_dies(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(YamlSubsetError):
             _y("""
                 a: &anchor 1
                 b: *anchor
             """)
 
     def test_multiline_block_scalar_dies(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(YamlSubsetError):
             _y("""
                 k: |
                   line 1
@@ -223,11 +223,11 @@ class TestForbiddenConstructs(unittest.TestCase):
             """)
 
     def test_tag_dies(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(YamlSubsetError):
             _y("k: !!str hello\n")
 
     def test_tab_in_indent_dies(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(YamlSubsetError):
             _y("a:\n\tb: 1\n")
 
 
@@ -306,7 +306,7 @@ class TestFrontmatter(unittest.TestCase):
         self.assertEqual(text, body)
 
     def test_unclosed_frontmatter_dies(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(YamlSubsetError):
             parse_frontmatter("---\nbottle: dev\nno closing")
 
     def test_body_preserves_blank_lines(self):

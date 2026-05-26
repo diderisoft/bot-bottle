@@ -59,7 +59,20 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from .log import die
+
+class YamlSubsetError(ValueError):
+    """Raised when input violates the YAML subset's rules. Callers
+    that want fatal-exit semantics (manifest loader, pipelock-apply,
+    etc.) catch this at their own boundary and forward to `die`;
+    callers running outside the claude-bottle CLI process (the
+    egress sidecar's addon) handle it as a normal exception."""
+
+
+def die(msg: str) -> None:
+    """Module-local helper so the parser body reads cleanly. Just
+    raises YamlSubsetError — the `claude-bottle: error: ` prefix
+    is added by the boundary `die` in `claude_bottle.log`."""
+    raise YamlSubsetError(msg)
 
 
 # --- Tokenizer / line preprocessing ----------------------------------------
