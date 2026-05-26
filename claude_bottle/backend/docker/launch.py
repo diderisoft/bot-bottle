@@ -240,13 +240,25 @@ def _run_agent_container(plan: DockerBottlePlan, internal_network: str) -> str:
     conflict races by incrementing the suffix (unless the name was
     user-pinned). Returns the resolved container name."""
     proxy_url = _agent_proxy_url(plan)
+    no_proxy = _agent_no_proxy(plan)
+    # Set BOTH cases of every *_PROXY var. libcurl's CVE-2016-5388
+    # httpoxy mitigation makes it ignore uppercase `HTTP_PROXY` for
+    # `http://` URLs and only honor lowercase `http_proxy`. Without
+    # the lowercase var, plain-HTTP requests from the agent bypass
+    # egress-proxy entirely (going direct, then failing with
+    # "network unreachable" because the agent's bridge is
+    # --internal). Lowercase HTTPS_PROXY isn't strictly needed but
+    # we set it for symmetry — some tools check one or the other.
     docker_args: list[str] = [
         "--rm", "-d",
         "--name", plan.container_name,
         "--network", internal_network,
         "-e", f"HTTPS_PROXY={proxy_url}",
         "-e", f"HTTP_PROXY={proxy_url}",
-        "-e", f"NO_PROXY={_agent_no_proxy(plan)}",
+        "-e", f"https_proxy={proxy_url}",
+        "-e", f"http_proxy={proxy_url}",
+        "-e", f"NO_PROXY={no_proxy}",
+        "-e", f"no_proxy={no_proxy}",
         # CA trust trio for the agent process. Docker propagates
         # run-time env into `docker exec`, so `claude` sees these
         # without per-exec threading. NODE_EXTRA_CA_CERTS points at
@@ -266,7 +278,7 @@ def _run_agent_container(plan: DockerBottlePlan, internal_network: str) -> str:
         docker_args.extend(["-e", name])
 
     # PRD 0013: read-only current-config mount so the agent can read
-    # routes.json / allowlist / Dockerfile before composing a
+    # routes.yaml / allowlist / Dockerfile before composing a
     # supervise tool-call proposal. Mounted from the per-bottle
     # stage_dir/current-config/ populated at prepare time.
     if plan.supervise_plan is not None:

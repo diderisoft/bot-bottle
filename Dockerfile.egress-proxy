@@ -44,14 +44,23 @@ USER mitmproxy
 EXPOSE 9099
 
 # Entrypoint:
-#   --mode regular@9099   standard HTTP/HTTPS forward proxy on :9099.
-#   --set ssl_verify_upstream_trusted_ca=...  only when
-#     EGRESS_PROXY_UPSTREAM_CA env is set (the backend's start step
-#     sets it to the in-container pipelock-CA path when pipelock is
-#     present, so the upstream leg trusts pipelock's MITM). The
-#     ${VAR:+expansion} form omits the flag when the var is unset
-#     or empty — useful for standalone runs of the image (e.g. unit
-#     tests) where no upstream CA is mounted.
-#   -s /app/egress_proxy_addon.py   loads our addon, which reads the
-#     route table from /etc/egress-proxy/routes.yaml.
-ENTRYPOINT ["sh", "-c", "exec mitmdump --mode regular@9099 ${EGRESS_PROXY_UPSTREAM_CA:+--set ssl_verify_upstream_trusted_ca=$EGRESS_PROXY_UPSTREAM_CA} -s /app/egress_proxy_addon.py"]
+#   - Upstream proxy: when EGRESS_PROXY_UPSTREAM_PROXY is set,
+#     use mitmproxy's `--mode upstream:URL` to forward all
+#     post-MITM traffic through pipelock. (mitmproxy does NOT
+#     honor HTTPS_PROXY env vars on its outbound side — it's a
+#     proxy server, not a client.) Standalone runs without
+#     EGRESS_PROXY_UPSTREAM_PROXY fall back to `regular@9099`
+#     direct-to-upstream — useful for unit tests of the image.
+#   - Upstream trust: when EGRESS_PROXY_UPSTREAM_CA is set, build
+#     a combined trust bundle (system roots + pipelock CA) and
+#     point mitmproxy at it via
+#     `--set ssl_verify_upstream_trusted_ca`. This option REPLACES
+#     mitmproxy's default trust store with the file we point it
+#     at — passing just pipelock's CA would break pipelock-
+#     passthrough hosts (api.anthropic.com etc.) where mitmproxy
+#     sees real upstream certs signed by public CAs. The combined
+#     bundle covers both pipelock-MITM'd and pipelock-passthrough
+#     hosts.
+#   - -s /app/egress_proxy_addon.py → loads our addon, reads
+#     /etc/egress-proxy/routes.yaml.
+ENTRYPOINT ["sh", "-c", "MODE=\"--mode regular@9099\"; if [ -n \"$EGRESS_PROXY_UPSTREAM_PROXY\" ]; then MODE=\"--mode upstream:$EGRESS_PROXY_UPSTREAM_PROXY --listen-port 9099\"; fi; TRUST_FLAG=\"\"; if [ -n \"$EGRESS_PROXY_UPSTREAM_CA\" ] && [ -f \"$EGRESS_PROXY_UPSTREAM_CA\" ]; then COMBINED=/home/mitmproxy/.mitmproxy/combined-trust.pem; cat /etc/ssl/certs/ca-certificates.crt \"$EGRESS_PROXY_UPSTREAM_CA\" > \"$COMBINED\"; TRUST_FLAG=\"--set ssl_verify_upstream_trusted_ca=$COMBINED\"; fi; exec mitmdump $MODE $TRUST_FLAG -s /app/egress_proxy_addon.py"]

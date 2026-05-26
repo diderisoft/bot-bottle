@@ -1,12 +1,12 @@
 """dashboard: list pending supervise proposals across all bottles and
 act on them (approve / modify / reject). PRD 0013 v1.
 
-Curses-based TUI; modify-then-approve shells out to $EDITOR. For
-0013 the approval handlers are no-ops on the supervisor side: the
-response file is written (and the sidecar returns it to the agent),
-and an audit entry is appended, but no host-side config change runs.
-PRDs 0014 (cred-proxy) and 0015 (pipelock) wire in the actual
-writes.
+Curses-based TUI; modify-then-approve shells out to $EDITOR. The
+approval handlers wire to the per-tool remediation engines:
+PRD 0014 (egress-proxy, retargeted from cred-proxy in PRD 0017
+chunk 3) writes routes.yaml + SIGHUPs egress-proxy; PRD 0015
+(pipelock) writes the allowlist + restarts pipelock; PRD 0016
+(capability) rebuilds the bottle Dockerfile.
 """
 
 from __future__ import annotations
@@ -27,8 +27,9 @@ from ..backend.docker.capability_apply import (
     CapabilityApplyError,
     apply_capability_change,
 )
-from ..backend.docker.cred_proxy_apply import (
-    CredProxyApplyError,
+from ..backend.docker.egress_proxy_apply import (
+    EgressProxyApplyError,
+    add_route,
     apply_routes_change,
     fetch_current_routes,
 )
@@ -50,7 +51,7 @@ from ..supervise import (
     STATUS_MODIFIED,
     STATUS_REJECTED,
     TOOL_CAPABILITY_BLOCK,
-    TOOL_CRED_PROXY_BLOCK,
+    TOOL_EGRESS_PROXY_BLOCK,
     TOOL_PIPELOCK_BLOCK,
     archive_proposal,
     list_pending_proposals,
@@ -64,7 +65,7 @@ from ._common import PROG
 # Errors any remediation engine may raise. Caught by the TUI key
 # handlers and surfaced in the status line so a failed apply keeps
 # the proposal pending rather than crashing curses.
-ApplyError = (CredProxyApplyError, PipelockApplyError, CapabilityApplyError)
+ApplyError = (EgressProxyApplyError, PipelockApplyError, CapabilityApplyError)
 
 
 # --- Discovery -------------------------------------------------------------
@@ -103,10 +104,10 @@ def _discover_sidecar_slugs(name_prefix: str) -> list[str]:
     return sorted(out)
 
 
-def discover_cred_proxy_slugs() -> list[str]:
-    """Slugs of bottles with a running cred-proxy sidecar. Used by
+def discover_egress_proxy_slugs() -> list[str]:
+    """Slugs of bottles with a running egress-proxy sidecar. Used by
     the operator-initiated `routes edit` verb."""
-    return _discover_sidecar_slugs("claude-bottle-cred-proxy-")
+    return _discover_sidecar_slugs("claude-bottle-egress-proxy-")
 
 
 def discover_pipelock_slugs() -> list[str]:
@@ -156,17 +157,23 @@ def approve(
     entry. If `final_file` is provided the status is `modified`;
     otherwise `approved`.
 
-    Raises CredProxyApplyError if the cred-proxy-block apply fails
-    (sidecar down, invalid JSON survived the operator's modify).
-    On failure no response is written and no audit entry is
-    appended — the proposal stays pending so the operator can fix
-    the input and retry."""
+    Raises EgressProxyApplyError if the egress-proxy-block apply
+    fails (sidecar down, invalid routes content survived the
+    operator's modify). On failure no response is written and no
+    audit entry is appended — the proposal stays pending so the
+    operator can fix the input and retry."""
     status = STATUS_MODIFIED if final_file is not None else STATUS_APPROVED
     file_to_apply = final_file if final_file is not None else qp.proposal.proposed_file
 
     diff_before, diff_after = "", ""
-    if qp.proposal.tool == TOOL_CRED_PROXY_BLOCK:
-        diff_before, diff_after = apply_routes_change(
+    if qp.proposal.tool == TOOL_EGRESS_PROXY_BLOCK:
+        # The proposal is a single-route JSON; add_route fetches the
+        # current routes from the running egress-proxy, merges the
+        # new route in, and applies the full merged file. The
+        # audit log gets the BEFORE/AFTER of the full file so the
+        # diff renders cleanly even though the agent only proposed
+        # one entry.
+        diff_before, diff_after = add_route(
             qp.proposal.bottle_slug, file_to_apply,
         )
     elif qp.proposal.tool == TOOL_PIPELOCK_BLOCK:
@@ -212,22 +219,22 @@ def reject(qp: QueuedProposal, *, reason: str) -> None:
 
 
 def operator_edit_routes(slug: str, new_content: str) -> tuple[str, str]:
-    """Apply an operator-initiated routes.json change (no agent
+    """Apply an operator-initiated routes.yaml change (no agent
     proposal). Used by the `routes edit <bottle>` TUI verb and
     available for scripted use. Returns (before, after) like
     apply_routes_change. Writes an audit entry tagged
     ACTION_OPERATOR_EDIT to distinguish from tool-call approvals.
 
-    Raises CredProxyApplyError on failure."""
+    Raises EgressProxyApplyError on failure."""
     before, after = apply_routes_change(slug, new_content)
     write_audit_entry(AuditEntry(
         timestamp=datetime.now(timezone.utc).isoformat(),
         bottle_slug=slug,
-        component="cred-proxy",
+        component="egress-proxy",
         operator_action=ACTION_OPERATOR_EDIT,
         operator_notes="",
         justification="",
-        diff=render_diff(before, after, label="cred-proxy"),
+        diff=render_diff(before, after, label="egress-proxy"),
     ))
     return before, after
 
@@ -239,20 +246,19 @@ def _apply_pipelock_url(slug: str, failed_url: str) -> tuple[str, str]:
     The full URL (with path) is preserved on the proposal for the
     operator's read; only the host ends up in pipelock's allowlist.
 
-    FOLLOW-UP — path-aware filtering. Pipelock 2.3.0's api_allowlist
-    is hostname-only (verified by inspecting the binary's strict
-    preset; the only "path" fields in pipelock's schema are about
-    local filesystem paths under sandbox / file_sentry / taint). So
-    approving pipelock-block opens the entire host, not the URL's
-    path. If/when per-path enforcement becomes load-bearing, the
-    follow-up is most likely adding an `auth_scheme: none` mode +
-    `path_allowlist` field to cred-proxy (which already does
-    path-prefix routing) and rewiring pipelock-block to propose
-    cred-proxy routes instead of pipelock hostnames. That's a
-    multi-touch change deserving its own PRD — out of scope for the
-    supervise-loop work that introduced this function. See PR
-    discussion on https://gitea.dideric.is/didericis/claude-bottle/pulls/25
-    for the design conversation."""
+    Pipelock 2.3.0's api_allowlist is hostname-only (verified by
+    inspecting the binary's strict preset; the only "path" fields in
+    pipelock's schema are about local filesystem paths under sandbox
+    / file_sentry / taint). Approving pipelock-block opens the
+    entire host, not the URL's path.
+
+    Path-level enforcement was the open question this function's
+    earlier docstring flagged; PRD 0017 answered it by putting
+    egress-proxy in front of pipelock. The agent's
+    `egress-proxy-block` tool now proposes routes.yaml changes that
+    can include a `path_allowlist`. Use that tool for path-level
+    follow-ups; this one stays hostname-only because pipelock is
+    still the last hostname gate before egress."""
     import urllib.parse
     parsed = urllib.parse.urlsplit(failed_url.strip())
     host = parsed.hostname or ""
@@ -296,14 +302,13 @@ def _write_audit(
     diff_before: str,
     diff_after: str,
 ) -> None:
-    """Audit log for cred-proxy / pipelock tools. capability-block has
-    no audit log (its changes are captured by the bottle's rebuild
-    record + git history per PRD 0016).
+    """Audit log for egress-proxy / pipelock tools. capability-block
+    has no audit log (its changes are captured by the bottle's
+    rebuild record + git history per PRD 0016).
 
-    For cred-proxy-block approvals the (before, after) come from the
-    apply_routes_change return — a real fetched-from-sidecar diff.
-    For rejections, or for tools whose remediation hasn't landed yet
-    (pipelock in 0014, capability anywhere), both are empty strings
+    For egress-proxy-block + pipelock-block approvals the (before,
+    after) come from the apply_*_change return — a real
+    fetched-from-sidecar diff. For rejections both are empty strings
     and the audit diff renders as empty."""
     component = COMPONENT_FOR_TOOL.get(qp.proposal.tool)
     if component is None:
@@ -683,22 +688,22 @@ def _modify(stdscr: "curses._CursesWindow", qp: QueuedProposal) -> str | None:
 def _suffix_for_tool(tool: str) -> str:
     if tool == TOOL_CAPABILITY_BLOCK:
         return ".dockerfile"
-    # cred-proxy-block / pipelock-block: JSON-ish + plain.
+    # egress-proxy-block / pipelock-block: JSON-ish + plain.
     return ".txt"
 
 
 def _operator_edit_routes_flow(stdscr: "curses._CursesWindow") -> str:
-    """Operator-initiated routes.json edit. Discover running
-    cred-proxy sidecars, pick one (single → use directly; multi →
+    """Operator-initiated routes.yaml edit. Discover running
+    egress-proxy sidecars, pick one (single → use directly; multi →
     prompt), fetch the current routes, open in $EDITOR, apply on
     save. Returns a status-line message."""
     return _operator_edit_flow(
         stdscr,
         label="routes",
-        discover=discover_cred_proxy_slugs,
+        discover=discover_egress_proxy_slugs,
         fetch=fetch_current_routes,
         apply=operator_edit_routes,
-        suffix=".json",
+        suffix=".yaml",
     )
 
 

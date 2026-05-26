@@ -12,7 +12,7 @@ from claude_bottle.cli import dashboard
 from claude_bottle.supervise import (
     Proposal,
     TOOL_CAPABILITY_BLOCK,
-    TOOL_CRED_PROXY_BLOCK,
+    TOOL_EGRESS_PROXY_BLOCK,
     TOOL_PIPELOCK_BLOCK,
     sha256_hex,
 )
@@ -46,9 +46,9 @@ class TestPipelockHostHighlight(unittest.TestCase):
         green_lines = [text for text, attr in lines if attr == self.GREEN]
         self.assertEqual(["api.github.com"], green_lines)
 
-    def test_no_green_lines_for_cred_proxy_block(self):
+    def test_no_green_lines_for_egress_proxy_block(self):
         lines = dashboard._detail_lines(
-            _qp(TOOL_CRED_PROXY_BLOCK, '{"routes": []}'),
+            _qp(TOOL_EGRESS_PROXY_BLOCK, '{"routes": []}'),
             green_attr=self.GREEN,
         )
         self.assertEqual([], [t for t, a in lines if a == self.GREEN])

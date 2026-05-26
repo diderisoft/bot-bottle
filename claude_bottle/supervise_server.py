@@ -1,6 +1,6 @@
 """Supervise sidecar HTTP server (PRD 0013).
 
-Per-bottle MCP server exposing three tools — `cred-proxy-block`,
+Per-bottle MCP server exposing three tools — `egress-proxy-block`,
 `pipelock-block`, `capability-block` — that the agent calls to
 propose config changes when stuck. Each tool call:
 
@@ -36,7 +36,9 @@ import os
 import socketserver
 import sys
 import typing
+import urllib.error
 import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -128,48 +130,102 @@ def jsonrpc_error(request_id: object, code: int, message: str) -> bytes:
 
 TOOL_DEFINITIONS: list[dict[str, object]] = [
     {
-        "name": _sv.TOOL_CRED_PROXY_BLOCK,
+        "name": _sv.TOOL_EGRESS_PROXY_BLOCK,
         "description": (
-            "Call when cred-proxy refused your HTTPS request — missing "
-            "route, expired token, wrong scope (typically a 403 or a "
-            "404 from `http://cred-proxy:<port>/<path>/`). Read the "
-            "current routes.json from "
-            "/etc/claude-bottle/current-config/routes.json, compose a "
-            "modified version with the route you need, and pass the "
-            "full new file plus a justification. The operator approves "
-            "or rejects in the supervise TUI. On approval the supervisor "
-            "writes the new routes.json on the host and SIGHUPs cred-proxy "
-            "(wired in PRD 0014; in the v1 supervise foundation the "
-            "approval is acknowledged but no config change runs)."
+            "Call when egress-proxy refused your HTTPS request — host "
+            "without a matching route, or a path outside the route's "
+            "path_allowlist (typically a 403 from the proxy). Propose "
+            "a SINGLE route to add: the host you need + (optionally) "
+            "a path_allowlist + (optionally) an auth block. The "
+            "supervisor merges the route into the live table at "
+            "approval time — you do NOT need to see or reproduce the "
+            "existing routes, and you do not pass a full routes file. "
+            "If the host already has a route, the proposed "
+            "path_allowlist entries are unioned with the existing "
+            "ones (host stays single-route). The operator approves "
+            "or rejects in the supervise TUI. On approval the "
+            "supervisor writes the merged routes.yaml, SIGHUPs "
+            "egress-proxy (atomic swap, no dropped connections), and "
+            "mirrors the host onto pipelock's allowlist for the "
+            "downstream gate."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "routes": {
+                "host": {
                     "type": "string",
-                    "description": "Full proposed routes.json file content (JSON text).",
+                    "description": "The hostname to allow (e.g. 'api.github.com'). Case-insensitive on match.",
+                },
+                "path_allowlist": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Optional URL path prefixes the route permits. "
+                        "Each must start with '/'. Omit to allow all "
+                        "paths under this host (bare-pass route)."
+                    ),
+                },
+                "auth": {
+                    "type": "object",
+                    "description": (
+                        "Optional credential injection. {scheme, "
+                        "token_ref}: scheme is 'Bearer' or 'token'; "
+                        "token_ref names the host env var holding the "
+                        "secret value. Omit to add a host without "
+                        "credential injection. Ignored if the host "
+                        "already has a route (operator decides auth "
+                        "changes, not the agent)."
+                    ),
+                    "properties": {
+                        "scheme": {"type": "string"},
+                        "token_ref": {"type": "string"},
+                    },
+                    "required": ["scheme", "token_ref"],
+                    "additionalProperties": False,
                 },
                 "justification": {
                     "type": "string",
-                    "description": "Why this routes change is justified.",
+                    "description": "Why this host needs to be allowed.",
                 },
             },
-            "required": ["routes", "justification"],
+            "required": ["host", "justification"],
+        },
+    },
+    {
+        "name": _sv.TOOL_LIST_EGRESS_PROXY_ROUTES,
+        "description": (
+            "List the current egress-proxy route table — the bottle's "
+            "primary egress allowlist. Returns JSON with one entry "
+            "per allowed host, each carrying its path_allowlist (if "
+            "any) and whether the proxy injects Authorization for "
+            "the route. Use this before composing an "
+            "`egress-proxy-block` proposal so the new routes file "
+            "extends the live one rather than replacing it. "
+            "Pipelock's allowlist is a mirror of this set — every "
+            "host listed here is also reachable through pipelock's "
+            "downstream hostname gate."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
         },
     },
     {
         "name": _sv.TOOL_PIPELOCK_BLOCK,
         "description": (
-            "Call when pipelock refused your outbound request — host "
-            "not in the allowlist, connection refused at the egress "
-            "layer. Pass the full URL you tried to hit (scheme + "
-            "host + path) plus a justification. The supervisor "
-            "extracts the hostname and merges it into the bottle's "
-            "current pipelock allowlist; the path is captured as "
-            "context for the operator to review (pipelock's allowlist "
-            "is hostname-only — it can't enforce path-level rules). "
-            "On approval the supervisor restarts pipelock with the "
-            "merged allowlist."
+            "Call when pipelock refused your outbound request and "
+            "the failing host is genuinely missing from the bottle's "
+            "allowlist (vs. blocked for DLP reasons — those need a "
+            "different remediation). In practice pipelock's allowlist "
+            "is now a mirror of the egress-proxy routes set by "
+            "`egress-proxy-block`, so prefer that tool when you want "
+            "to add a host. This tool stays available for the rare "
+            "case where pipelock and egress-proxy have diverged. "
+            "Pass the full URL you tried to hit (scheme + host + "
+            "path); the supervisor extracts the hostname and merges "
+            "it into pipelock's allowlist. On approval the "
+            "supervisor restarts pipelock."
         ),
         "inputSchema": {
             "type": "object",
@@ -226,15 +282,22 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
 # tool-specific payload (stored in Proposal.proposed_file as
 # free-form text the apply path interprets per tool).
 #
-#   cred-proxy-block: full proposed routes.json
-#   pipelock-block:   the full failed URL (scheme + host + path) —
-#                     supervisor extracts the host, merges into the
-#                     bottle's current allowlist; the path is shown
-#                     to the operator for context (pipelock doesn't
-#                     do path-level matching).
-#   capability-block: full proposed Dockerfile
+#   egress-proxy-block: JSON object describing a SINGLE route to
+#                       add — `{host, path_allowlist?, auth?}`. The
+#                       supervisor merges this into the live routes
+#                       file at approval time.
+#   pipelock-block:     the full failed URL (scheme + host + path) —
+#                       supervisor extracts the host, merges into the
+#                       bottle's current allowlist; the path is shown
+#                       to the operator for context (pipelock doesn't
+#                       do path-level matching).
+#   capability-block:   full proposed Dockerfile
+#
+# Egress-proxy-block doesn't use a single "field name" → the JSON
+# payload is constructed from multiple structured input fields in
+# `handle_egress_proxy_block`. The mapping stays one-entry-per-tool
+# so the generic dispatch keeps working for the other two.
 PROPOSED_FILE_FIELD: dict[str, str] = {
-    _sv.TOOL_CRED_PROXY_BLOCK: "routes",
     _sv.TOOL_PIPELOCK_BLOCK: "failed_url",
     _sv.TOOL_CAPABILITY_BLOCK: "dockerfile",
 }
@@ -243,26 +306,18 @@ PROPOSED_FILE_FIELD: dict[str, str] = {
 # --- Validation ------------------------------------------------------------
 
 
+# Auth schemes accepted on egress-proxy-block proposals — match the
+# manifest-side EGRESS_PROXY_AUTH_SCHEMES.
+_AUTH_SCHEMES = ("Bearer", "token")
+
+
 def validate_proposed_file(tool: str, content: str) -> None:
     """Syntactic validation. The operator is the real gate; this just
     catches obvious paste-errors / wrong-tool selections before they
     enter the queue."""
     if not content.strip():
         raise _RpcError(ERR_INVALID_PARAMS, f"{tool}: proposed file is empty")
-    if tool == _sv.TOOL_CRED_PROXY_BLOCK:
-        try:
-            parsed = json.loads(content)
-        except json.JSONDecodeError as e:
-            raise _RpcError(
-                ERR_INVALID_PARAMS,
-                f"{tool}: proposed routes.json is not valid JSON: {e}",
-            ) from e
-        if not isinstance(parsed, dict) or not isinstance(parsed.get("routes"), list):
-            raise _RpcError(
-                ERR_INVALID_PARAMS,
-                f"{tool}: proposed routes.json must be an object with a 'routes' array",
-            )
-    elif tool == _sv.TOOL_PIPELOCK_BLOCK:
+    if tool == _sv.TOOL_PIPELOCK_BLOCK:
         # `content` is the full failed URL. Require scheme + host so
         # the supervisor can extract a hostname for the allowlist
         # merge; the path is preserved for operator context.
@@ -286,6 +341,70 @@ def validate_proposed_file(tool: str, content: str) -> None:
         raise _RpcError(ERR_INVALID_PARAMS, f"unknown tool {tool!r}")
 
 
+def _validate_and_bundle_egress_route(
+    args: dict[str, object],
+) -> str:
+    """Validate egress-proxy-block input fields and bundle them into
+    a JSON string that becomes the Proposal.proposed_file. Raises
+    _RpcError on bad input — the agent retries with a fixed shape."""
+    tool = _sv.TOOL_EGRESS_PROXY_BLOCK
+    host = args.get("host")
+    if not isinstance(host, str) or not host.strip():
+        raise _RpcError(
+            ERR_INVALID_PARAMS,
+            f"{tool}: 'host' is required and must be a non-empty string",
+        )
+    payload: dict[str, object] = {"host": host}
+
+    path_allow_raw = args.get("path_allowlist")
+    if path_allow_raw is not None:
+        if not isinstance(path_allow_raw, list):
+            raise _RpcError(
+                ERR_INVALID_PARAMS,
+                f"{tool}: 'path_allowlist' must be an array of strings",
+            )
+        prefixes: list[str] = []
+        for i, p in enumerate(path_allow_raw):
+            if not isinstance(p, str):
+                raise _RpcError(
+                    ERR_INVALID_PARAMS,
+                    f"{tool}: path_allowlist[{i}] must be a string",
+                )
+            if not p.startswith("/"):
+                raise _RpcError(
+                    ERR_INVALID_PARAMS,
+                    f"{tool}: path_allowlist[{i}] {p!r} must start with '/'",
+                )
+            prefixes.append(p)
+        if prefixes:
+            payload["path_allowlist"] = prefixes
+
+    auth_raw = args.get("auth")
+    if auth_raw is not None:
+        if not isinstance(auth_raw, dict):
+            raise _RpcError(
+                ERR_INVALID_PARAMS,
+                f"{tool}: 'auth' must be an object with 'scheme' and 'token_ref'",
+            )
+        scheme = auth_raw.get("scheme")
+        token_ref = auth_raw.get("token_ref")
+        if not isinstance(scheme, str) or scheme not in _AUTH_SCHEMES:
+            raise _RpcError(
+                ERR_INVALID_PARAMS,
+                f"{tool}: auth.scheme must be one of "
+                f"{', '.join(_AUTH_SCHEMES)} (got {scheme!r})",
+            )
+        if not isinstance(token_ref, str) or not token_ref:
+            raise _RpcError(
+                ERR_INVALID_PARAMS,
+                f"{tool}: auth.token_ref must be a non-empty string "
+                f"naming the host env var holding the token",
+            )
+        payload["auth"] = {"scheme": scheme, "token_ref": token_ref}
+
+    return json.dumps(payload, indent=2) + "\n"
+
+
 # --- MCP handlers ----------------------------------------------------------
 
 
@@ -307,36 +426,86 @@ def handle_tools_list(_params: dict[str, object]) -> dict[str, object]:
     return {"tools": TOOL_DEFINITIONS}
 
 
+def handle_list_egress_proxy_routes(
+    _params: dict[str, object],
+    _config: ServerConfig,
+) -> dict[str, object]:
+    """Fetch the live egress-proxy route table via its
+    `_egress-proxy.local/allowlist` introspection endpoint. The
+    request goes through egress-proxy as a forward proxy; the
+    addon recognises the magic host and synthesizes a response —
+    no real upstream connection, no allowlist enforcement
+    against the magic host. Returns the JSON payload as the
+    tool's text content."""
+    proxy_handler = urllib.request.ProxyHandler({
+        "http": _sv.EGRESS_PROXY_FORWARD_PROXY,
+    })
+    opener = urllib.request.build_opener(proxy_handler)
+    try:
+        with opener.open(_sv.EGRESS_PROXY_INTROSPECT_URL, timeout=5) as resp:
+            body = resp.read().decode("utf-8")
+    except (urllib.error.URLError, OSError) as e:
+        return {
+            "content": [{
+                "type": "text",
+                "text": (
+                    f"list-egress-proxy-routes: could not reach "
+                    f"{_sv.EGRESS_PROXY_INTROSPECT_URL!r} via "
+                    f"{_sv.EGRESS_PROXY_FORWARD_PROXY!r}: {e}"
+                ),
+            }],
+            "isError": True,
+        }
+    return {
+        "content": [{"type": "text", "text": body}],
+        "isError": False,
+    }
+
+
 def handle_tools_call(
     params: dict[str, object],
     config: ServerConfig,
 ) -> dict[str, object]:
     """Validates the proposal, writes it to the queue, blocks waiting
-    for a Response, returns the result wrapped in MCP `content`."""
+    for a Response, returns the result wrapped in MCP `content`.
+
+    Side-effect-free `list-*` tools short-circuit before the queue/
+    blocking machinery — they're read-only introspection that
+    doesn't need operator approval."""
     name = params.get("name")
     if not isinstance(name, str):
         raise _RpcError(ERR_INVALID_PARAMS, "tools/call missing 'name'")
-    if name not in PROPOSED_FILE_FIELD:
-        raise _RpcError(ERR_INVALID_PARAMS, f"unknown tool {name!r}")
+    if name == _sv.TOOL_LIST_EGRESS_PROXY_ROUTES:
+        return handle_list_egress_proxy_routes(params.get("arguments", {}), config)
+
     args_raw = params.get("arguments", {})
     if not isinstance(args_raw, dict):
         raise _RpcError(ERR_INVALID_PARAMS, "tools/call 'arguments' must be an object")
 
-    file_field = PROPOSED_FILE_FIELD[name]
-    proposed_file = args_raw.get(file_field)
     justification = args_raw.get("justification")
-    if not isinstance(proposed_file, str):
-        raise _RpcError(
-            ERR_INVALID_PARAMS,
-            f"{name}: '{file_field}' is required and must be a string",
-        )
     if not isinstance(justification, str) or not justification.strip():
         raise _RpcError(
             ERR_INVALID_PARAMS,
             f"{name}: 'justification' is required and must be a non-empty string",
         )
 
-    validate_proposed_file(name, proposed_file)
+    if name == _sv.TOOL_EGRESS_PROXY_BLOCK:
+        # Structured input → JSON bundle on Proposal.proposed_file.
+        # The dashboard's apply step (egress_proxy_apply.add_route)
+        # parses this JSON, fetches the current routes, merges in
+        # the new one, and writes the merged file.
+        proposed_file = _validate_and_bundle_egress_route(args_raw)
+    elif name in PROPOSED_FILE_FIELD:
+        file_field = PROPOSED_FILE_FIELD[name]
+        proposed_file = args_raw.get(file_field)
+        if not isinstance(proposed_file, str):
+            raise _RpcError(
+                ERR_INVALID_PARAMS,
+                f"{name}: '{file_field}' is required and must be a string",
+            )
+        validate_proposed_file(name, proposed_file)
+    else:
+        raise _RpcError(ERR_INVALID_PARAMS, f"unknown tool {name!r}")
 
     proposal = _sv.Proposal.new(
         bottle_slug=config.bottle_slug,
@@ -505,7 +674,7 @@ def serve(
 
 
 def main(argv: list[str]) -> int:
-    del argv  # config is env-only, matches cred_proxy_server pattern
+    del argv  # config is env-only, no CLI flags
     bottle_slug = os.environ.get("SUPERVISE_BOTTLE_SLUG", "")
     if not bottle_slug:
         sys.stderr.write("supervise: SUPERVISE_BOTTLE_SLUG env is unset\n")

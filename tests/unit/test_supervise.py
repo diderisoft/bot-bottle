@@ -17,7 +17,7 @@ from claude_bottle.supervise import (
     STATUS_MODIFIED,
     STATUS_REJECTED,
     TOOL_CAPABILITY_BLOCK,
-    TOOL_CRED_PROXY_BLOCK,
+    TOOL_EGRESS_PROXY_BLOCK,
     TOOL_PIPELOCK_BLOCK,
     archive_proposal,
     audit_log_path,
@@ -37,7 +37,7 @@ from claude_bottle.supervise import (
 FIXED_TS = datetime(2026, 5, 25, 12, 0, 0, tzinfo=timezone.utc)
 
 
-def _proposal(tool: str = TOOL_CRED_PROXY_BLOCK, proposed: str = "{}", justification: str = "need a route") -> Proposal:
+def _proposal(tool: str = TOOL_EGRESS_PROXY_BLOCK, proposed: str = "{}", justification: str = "need a route") -> Proposal:
     return Proposal.new(
         bottle_slug="dev",
         tool=tool,
@@ -54,7 +54,7 @@ class TestProposalRoundtrip(unittest.TestCase):
         self.assertTrue(p.id)
         self.assertEqual("2026-05-25T12:00:00+00:00", p.arrival_timestamp)
         self.assertEqual("dev", p.bottle_slug)
-        self.assertEqual(TOOL_CRED_PROXY_BLOCK, p.tool)
+        self.assertEqual(TOOL_EGRESS_PROXY_BLOCK, p.tool)
 
     def test_to_from_dict_roundtrip(self):
         p = _proposal()
@@ -139,13 +139,13 @@ class TestQueueIO(unittest.TestCase):
     def test_list_pending_sorted_by_arrival(self):
         # Fabricate two with explicit timestamps.
         a = Proposal.new(
-            bottle_slug="dev", tool=TOOL_CRED_PROXY_BLOCK,
+            bottle_slug="dev", tool=TOOL_EGRESS_PROXY_BLOCK,
             proposed_file="{}", justification="early",
             current_file_hash="x",
             now=datetime(2026, 5, 25, 10, 0, 0, tzinfo=timezone.utc),
         )
         b = Proposal.new(
-            bottle_slug="dev", tool=TOOL_CRED_PROXY_BLOCK,
+            bottle_slug="dev", tool=TOOL_EGRESS_PROXY_BLOCK,
             proposed_file="{}", justification="late",
             current_file_hash="x",
             now=datetime(2026, 5, 25, 14, 0, 0, tzinfo=timezone.utc),
@@ -297,9 +297,9 @@ class TestDiffAndHash(unittest.TestCase):
         self.assertEqual("", render_diff("a\nb\n", "a\nb\n"))
 
     def test_render_diff_shows_changes(self):
-        diff = render_diff("a\nb\nc\n", "a\nB\nc\n", label="routes.json")
-        self.assertIn("routes.json (current)", diff)
-        self.assertIn("routes.json (proposed)", diff)
+        diff = render_diff("a\nb\nc\n", "a\nB\nc\n", label="routes.yaml")
+        self.assertIn("routes.yaml (current)", diff)
+        self.assertIn("routes.yaml (proposed)", diff)
         self.assertIn("-b", diff)
         self.assertIn("+B", diff)
 
@@ -314,12 +314,17 @@ class TestDiffAndHash(unittest.TestCase):
 class TestToolConstants(unittest.TestCase):
     def test_tools_tuple_matches_individual_constants(self):
         self.assertEqual(
-            (TOOL_CRED_PROXY_BLOCK, TOOL_PIPELOCK_BLOCK, TOOL_CAPABILITY_BLOCK),
+            (
+                TOOL_EGRESS_PROXY_BLOCK,
+                TOOL_PIPELOCK_BLOCK,
+                TOOL_CAPABILITY_BLOCK,
+                supervise.TOOL_LIST_EGRESS_PROXY_ROUTES,
+            ),
             supervise.TOOLS,
         )
 
     def test_component_map_covers_two_remediation_tools_only(self):
-        self.assertIn(TOOL_CRED_PROXY_BLOCK, supervise.COMPONENT_FOR_TOOL)
+        self.assertIn(TOOL_EGRESS_PROXY_BLOCK, supervise.COMPONENT_FOR_TOOL)
         self.assertIn(TOOL_PIPELOCK_BLOCK, supervise.COMPONENT_FOR_TOOL)
         self.assertNotIn(TOOL_CAPABILITY_BLOCK, supervise.COMPONENT_FOR_TOOL)
 
@@ -357,20 +362,10 @@ class TestSupervisePrepare(unittest.TestCase):
     def test_prepare_creates_queue_and_current_config(self):
         plan = _StubSupervise().prepare(
             "dev", self.stage_dir,
-            routes_content='{"routes": [{"path": "/x/"}]}\n',
-            allowlist_content="example.com\n",
             dockerfile_content="FROM python:3.13\n",
         )
         self.assertTrue(plan.queue_dir.is_dir())
         self.assertTrue(plan.current_config_dir.is_dir())
-        self.assertEqual(
-            '{"routes": [{"path": "/x/"}]}\n',
-            (plan.current_config_dir / "routes.json").read_text(),
-        )
-        self.assertEqual(
-            "example.com\n",
-            (plan.current_config_dir / "allowlist").read_text(),
-        )
         self.assertEqual(
             "FROM python:3.13\n",
             (plan.current_config_dir / "Dockerfile").read_text(),
@@ -378,12 +373,12 @@ class TestSupervisePrepare(unittest.TestCase):
         self.assertEqual("dev", plan.slug)
         self.assertEqual("", plan.internal_network)
 
-    def test_prepare_defaults_routes_to_empty_when_absent(self):
+    def test_prepare_only_writes_dockerfile_to_current_config(self):
+        # routes.yaml + allowlist live behind the
+        # `list-egress-proxy-routes` MCP tool now (PRD 0017 chunk 3).
         plan = _StubSupervise().prepare("dev", self.stage_dir)
-        self.assertEqual(
-            '{"routes": []}\n',
-            (plan.current_config_dir / "routes.json").read_text(),
-        )
+        files = sorted(p.name for p in plan.current_config_dir.iterdir())
+        self.assertEqual(["Dockerfile"], files)
 
 
 if __name__ == "__main__":
