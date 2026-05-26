@@ -1220,7 +1220,11 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
     first_seen: dict[str, float] = {}
     selected = 0
     selected_agent = 0
-    focus = PANE_PROPOSALS
+    # Default focus on agents — the dashboard is now primarily an
+    # agent-management surface (PRD 0020 + 0021). The operator can
+    # Tab to proposals when something queues; until then, j/k go
+    # through the agents list.
+    focus = PANE_AGENTS
     status_line = ""
     # PRD 0020: bottles spun up from inside this dashboard session.
     # Each entry: slug -> (context-manager, Bottle handle, identity).
