@@ -87,70 +87,46 @@ class DockerBottlePlan(BottlePlan):
         )
 
     def print(self, *, remote_control: bool) -> None:
-        """Render the y/N preflight summary to stderr. Pure presentation."""
+        """Render the y/N preflight summary to stderr — compact form
+        intended to fit on screen without scrolling. The full
+        structured shape (image, container, runtime, etc.) is
+        available via `to_dict` + `--format=json` for tooling /
+        debugging."""
+        del remote_control  # not surfaced in the compact summary
         v = self._view()
         spec = self.spec
-        runtime_label = "runsc (gVisor)" if self.use_runsc else "runc (default)"
+
+        def _multi(label: str, values: list[str]) -> None:
+            """Print a label with N continuation-indented values. Used
+            for env / skills / git-gate / egress-proxy where one item
+            per line keeps the summary scannable."""
+            if not values:
+                info(f"{label}: (none)")
+                return
+            info(f"{label}: {values[0]}")
+            indent = " " * (len(label) + 2)
+            for v_ in values[1:]:
+                info(f"{indent}{v_}")
 
         print(file=sys.stderr)
         info(f"agent           : {spec.agent_name}")
-        info(f"image           : {self.image}")
-        if self.dockerfile_path:
-            info(
-                f"dockerfile      : {self.dockerfile_path} "
-                f"(per-bottle override from PRD 0016 capability rebuild)"
-            )
-        if self.derived_image:
-            info(
-                f"cwd             : {spec.user_cwd} -> /home/node/workspace "
-                f"(derived: {self.derived_image})"
-            )
-        info(f"container       : {self.container_name}")
-        info(f"stage dir       : {self.stage_dir}")
-        info("env (names only): " + (", ".join(v.env_names) if v.env_names else "(none)"))
-        info("skills          : " + (" ".join(v.agent.skills) if v.agent.skills else "(none)"))
-        info(f"docker runtime  : {runtime_label}")
-        info(f"bottle             : {v.agent.bottle}")
-        if v.git_names:
-            info(f"  git remotes   : {', '.join(v.git_names)}")
-            git_lines = [
-                f"{u.name} -> {u.upstream_host}:{u.upstream_port} "
-                f"(gitleaks-scanned)"
-                for u in self.git_gate_plan.upstreams
-            ]
-            info(f"  git gate      : {'; '.join(git_lines)}")
-        else:
-            info("  git remotes   : (none)")
+        _multi("env             ", v.env_names)
+        _multi("skills          ", list(v.agent.skills))
+        info(f"bottle          : {v.agent.bottle}")
+
+        git_lines = [
+            f"{u.upstream_host}:{u.upstream_port}"
+            for u in self.git_gate_plan.upstreams
+        ]
+        if git_lines:
+            _multi("  git gate      ", git_lines)
+
         if self.egress_proxy_plan.routes:
-            lines = []
+            egress_lines = []
             for r in self.egress_proxy_plan.routes:
-                paths = (
-                    " " + ",".join(r.path_allowlist) if r.path_allowlist else ""
-                )
                 auth = f" [auth:{r.auth_scheme}]" if r.auth_scheme else ""
-                lines.append(f"{r.host}{auth}{paths}")
-            refs = sorted({r.token_ref for r in self.egress_proxy_plan.routes if r.token_ref})
-            tokens_part = (
-                f"; tokens: {', '.join(refs)}" if refs else ""
-            )
-            info(f"  egress-proxy  : {len(lines)} route(s){tokens_part}")
-            for line in lines:
-                info(f"                  {line}")
-        else:
-            info("  egress-proxy  : (none)")
-        info(f"  egress        : {self.allowlist_summary}")
-        info("  tls intercept : egress-proxy (per-bottle ephemeral CA, generated at launch)")
-        if self.supervise_plan is not None:
-            info(
-                f"  supervise     : enabled; queue at {self.supervise_plan.queue_dir}"
-            )
-        else:
-            info("  supervise     : disabled (set bottle.supervise=true to enable)")
-        info(
-            f"prompt          : {len(v.agent.prompt)} chars; "
-            f"first line: {v.prompt_first_line or '(empty)'}"
-        )
-        info("remote-control  : " + ("enabled" if remote_control else "disabled"))
+                egress_lines.append(f"{r.host}{auth}")
+            _multi("  egress-proxy  ", egress_lines)
         print(file=sys.stderr)
 
     def to_dict(self, *, remote_control: bool) -> dict[str, object]:
