@@ -1,7 +1,6 @@
 """Unit: Egress route lift + routes.yaml render + token
 resolution (PRD 0017)."""
 
-import json
 import unittest
 
 from claude_bottle.egress import (
@@ -14,6 +13,7 @@ from claude_bottle.egress import (
 )
 from claude_bottle.log import Die
 from claude_bottle.manifest import Manifest
+from claude_bottle.yaml_subset import parse_yaml_subset
 
 
 def _bottle(routes):
@@ -134,6 +134,15 @@ class TestTokenEnvMap(unittest.TestCase):
 
 
 class TestRenderRoutes(unittest.TestCase):
+    """Render is YAML now (PRD 0017 follow-up). Tests parse the
+    output via `yaml_subset` — the same parser the addon uses —
+    so the assertions check the actual semantic shape the addon
+    will see, not the textual layout."""
+
+    @staticmethod
+    def _parsed(routes) -> list[dict]:
+        return parse_yaml_subset(egress_render_routes(routes))["routes"]
+
     def test_authenticated_route_serialised_with_auth_fields(self):
         b = _bottle([{
             "host": "api.github.com",
@@ -141,7 +150,7 @@ class TestRenderRoutes(unittest.TestCase):
             "path_allowlist": ["/repos/x/"],
         }])
         routes = egress_manifest_routes(b)
-        payload = json.loads(egress_render_routes(routes))
+        parsed = self._parsed(routes)
         self.assertEqual(
             [{
                 "host": "api.github.com",
@@ -149,7 +158,7 @@ class TestRenderRoutes(unittest.TestCase):
                 "auth_scheme": "Bearer",
                 "token_env": "EGRESS_TOKEN_0",
             }],
-            payload["routes"],
+            parsed,
         )
 
     def test_unauthenticated_route_omits_auth_fields(self):
@@ -159,8 +168,7 @@ class TestRenderRoutes(unittest.TestCase):
         # round-trip as a partial pair and crash.
         b = _bottle([{"host": "github.com", "path_allowlist": ["/x/"]}])
         routes = egress_manifest_routes(b)
-        payload = json.loads(egress_render_routes(routes))
-        entry = payload["routes"][0]
+        entry = self._parsed(routes)[0]
         self.assertNotIn("auth_scheme", entry)
         self.assertNotIn("token_env", entry)
 
@@ -170,8 +178,12 @@ class TestRenderRoutes(unittest.TestCase):
             "auth": {"scheme": "Bearer", "token_ref": "CL"},
         }])
         routes = egress_manifest_routes(b)
-        payload = json.loads(egress_render_routes(routes))
-        self.assertNotIn("path_allowlist", payload["routes"][0])
+        self.assertNotIn("path_allowlist", self._parsed(routes)[0])
+
+    def test_empty_routes_round_trips(self):
+        rendered = egress_render_routes(())
+        # Inline-empty-list form is what the parser accepts.
+        self.assertEqual([], parse_yaml_subset(rendered)["routes"])
 
     def test_round_trip_through_addon_core(self):
         # Render here → parse in the addon must succeed for every

@@ -31,6 +31,7 @@ from pathlib import Path
 
 from ...egress import EGRESS_ROUTES_IN_CONTAINER
 from ...egress_addon_core import load_routes
+from ...yaml_subset import YamlSubsetError, parse_yaml_subset
 from .bottle_state import egress_state_dir
 from .egress import egress_container_name
 from .pipelock_apply import (
@@ -40,6 +41,30 @@ from .pipelock_apply import (
     parse_allowlist_content,
     render_allowlist_content,
 )
+
+
+def _render_routes_payload(routes_list: list[dict[str, object]]) -> str:
+    """Render a list-of-dicts routes payload as YAML matching the
+    shape `egress_render_routes` produces. The apply path
+    round-trips current routes.yaml through this so the file the
+    sidecar sees stays in the YAML format the addon expects."""
+    if not routes_list:
+        return "routes: []\n"
+    lines: list[str] = ["routes:"]
+    for entry in routes_list:
+        host = str(entry.get("host", ""))
+        lines.append(f'  - host: "{host}"')
+        auth_scheme = entry.get("auth_scheme")
+        token_env = entry.get("token_env")
+        if auth_scheme and token_env:
+            lines.append(f'    auth_scheme: "{auth_scheme}"')
+            lines.append(f'    token_env: "{token_env}"')
+        paths = entry.get("path_allowlist") or []
+        if paths:
+            lines.append("    path_allowlist:")
+            for p in paths:
+                lines.append(f'      - "{p}"')
+    return "\n".join(lines) + "\n"
 
 
 def _egress_routes_host_path(slug: str) -> Path:
@@ -219,7 +244,7 @@ def _merge_single_route(
     current_yaml: str, new_route: dict[str, object],
 ) -> str:
     """Merge a single proposed route into the current routes.yaml
-    content, returning the merged JSON-as-yaml string.
+    content, returning the merged YAML string.
 
     Behavior:
       - If `new_route['host']` is NOT in the current routes →
@@ -230,15 +255,15 @@ def _merge_single_route(
         on an existing host are ignored, matching the tool's
         documented semantics.
 
-    The supervisor renders the merged routes.yaml with the same
-    JSON layout the addon expects (host + path_allowlist +
-    auth_scheme + token_env). Token VALUES never appear here; the
-    routes file carries only env-var slot NAMES."""
+    Round-trips the file through `yaml_subset` (the same parser
+    the addon uses), so the merged output is in the YAML format
+    the sidecar reads. Token VALUES never appear here; the routes
+    file carries only env-var slot NAMES."""
     try:
-        cfg = json.loads(current_yaml)
-    except json.JSONDecodeError as e:
+        cfg = parse_yaml_subset(current_yaml)
+    except YamlSubsetError as e:
         raise EgressApplyError(
-            f"current routes.yaml is not valid JSON: {e}"
+            f"current routes.yaml is not valid YAML: {e}"
         ) from e
     routes = cfg.get("routes")
     if not isinstance(routes, list):
@@ -299,8 +324,7 @@ def _merge_single_route(
             # the slot name they'll need to provision.
         routes.append(entry)
 
-    cfg["routes"] = routes
-    return json.dumps(cfg, indent=2) + "\n"
+    return _render_routes_payload(routes)
 
 
 def add_route(slug: str, proposed_route_json: str) -> tuple[str, str]:

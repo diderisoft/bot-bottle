@@ -6,15 +6,27 @@ exercise the parse + decision functions without depending on the
 `mitmproxy.http.HTTPFlow` API and is loaded inside the sidecar
 container.
 
-Stdlib only: this file ships into the egress image, where the
-container's Python is whatever mitmproxy itself runs on.
+Imports: stdlib + `yaml_subset` (which is itself stdlib-only and
+ships flat into the egress image alongside this file — see
+`Dockerfile.egress`).
 """
 
 from __future__ import annotations
 
-import json
 import typing
 from dataclasses import dataclass
+
+# Absolute import — `yaml_subset.py` is copied flat into the egress
+# image's `/app/` next to this file (via `Dockerfile.egress`). The
+# host-side unit tests run with the repo on sys.path, where the
+# bare `yaml_subset` module also resolves because
+# `claude_bottle/yaml_subset.py` shadows it at import time... actually
+# no, on host the module lives under the `claude_bottle` package.
+# The try/except shim picks whichever import works.
+try:
+    from yaml_subset import YamlSubsetError, parse_yaml_subset  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover - host-side path
+    from .yaml_subset import YamlSubsetError, parse_yaml_subset
 
 
 @dataclass(frozen=True)
@@ -126,12 +138,14 @@ def _parse_one(idx: int, raw: object) -> Route:
 
 
 def load_routes(text: str) -> tuple[Route, ...]:
-    """Convenience: parse JSON text → routes. Raises `ValueError` for
-    both decode and shape errors so callers handle them uniformly."""
+    """Parse YAML text → routes. Raises `ValueError` for both
+    decode and shape errors so callers handle them uniformly.
+    `YamlSubsetError` from the parser is a `ValueError` subclass so
+    it already satisfies the same surface; we let it propagate."""
     try:
-        payload = json.loads(text)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"routes payload: invalid JSON: {e}") from e
+        payload = parse_yaml_subset(text)
+    except YamlSubsetError as e:
+        raise ValueError(f"routes payload: invalid YAML: {e}") from e
     return parse_routes(payload)
 
 

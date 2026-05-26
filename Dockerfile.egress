@@ -18,12 +18,15 @@ FROM mitmproxy/mitmproxy:11.1.3
 
 USER root
 
-# The addon ships as two files. `_core.py` is pure-logic, importable
-# both inside the container and from the host's tests; `_addon.py` is
-# the mitmproxy hook wrapper. Both land flat in /app/ so mitmdump's
-# loader finds them as top-level sibling modules.
+# The addon ships as three files. `_core.py` is pure-logic,
+# importable both inside the container and from the host's tests;
+# `_addon.py` is the mitmproxy hook wrapper; `yaml_subset.py` is
+# the stdlib-only YAML parser the addon uses to read routes.yaml.
+# All three land flat in /app/ so mitmdump's loader resolves them
+# as top-level sibling modules (absolute imports).
 COPY claude_bottle/egress_addon_core.py /app/egress_addon_core.py
 COPY claude_bottle/egress_addon.py /app/egress_addon.py
+COPY claude_bottle/yaml_subset.py /app/yaml_subset.py
 
 # Pre-create the runtime directories the backend's start step will
 # `docker cp` into. docker cp does not create intermediate dirs, so

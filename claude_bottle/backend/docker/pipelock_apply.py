@@ -23,7 +23,7 @@ import tempfile
 from pathlib import Path
 
 from ...pipelock import pipelock_render_yaml
-from ...yaml_subset import parse_yaml_subset
+from ...yaml_subset import YamlSubsetError, parse_yaml_subset
 from .bottle_state import pipelock_state_dir
 from .pipelock import pipelock_container_name
 
@@ -110,7 +110,10 @@ def fetch_current_allowlist(slug: str) -> str:
     line — the operator-facing format for the TUI / agent's
     current-config mount."""
     yaml = fetch_current_yaml(slug)
-    cfg = parse_yaml_subset(yaml)
+    try:
+        cfg = parse_yaml_subset(yaml)
+    except YamlSubsetError as e:
+        raise PipelockApplyError(f"running pipelock yaml: {e}") from e
     hosts = cfg.get("api_allowlist", [])
     if not isinstance(hosts, list):
         raise PipelockApplyError(
@@ -136,7 +139,10 @@ def apply_allowlist_change(
     new_hosts = parse_allowlist_content(new_allowlist_content)
     container = pipelock_container_name(slug)
     current_yaml = fetch_current_yaml(slug)
-    cfg = parse_yaml_subset(current_yaml)
+    try:
+        cfg = parse_yaml_subset(current_yaml)
+    except YamlSubsetError as e:
+        raise PipelockApplyError(f"running pipelock yaml: {e}") from e
     current_hosts = cfg.get("api_allowlist", [])
     if not isinstance(current_hosts, list):
         raise PipelockApplyError(
