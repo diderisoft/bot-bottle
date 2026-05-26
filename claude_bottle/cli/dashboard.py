@@ -1352,6 +1352,15 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
         if manifest_cache[0] is None:
             manifest_cache[0] = Manifest.resolve(USER_CWD)
         return manifest_cache[0]
+    # First-tick guard: a brand-new dashboard finds any
+    # pre-existing queue entries on its first poll; those
+    # shouldn't ring the bell as if they just arrived.
+    saw_first_tick = False
+    # The dashboard's own tmux pane id (tmux sets `$TMUX_PANE`
+    # per-pane). Captured at startup so a new-proposal arrival
+    # can `tmux select-pane` back to the dashboard from
+    # whatever pane the operator is currently in.
+    dashboard_pane_id = os.environ.get("TMUX_PANE", "")
     while True:
         pending = discover_pending()
         if selected >= len(pending):
@@ -1363,10 +1372,34 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
 
         now = time.monotonic()
         live_ids = {qp.proposal.id for qp in pending}
+        # Detect proposals we've never seen before. Triggers:
+        #   - terminal bell (`curses.beep` → tmux's monitor-bell)
+        #   - tmux focus jump to the dashboard pane (so the
+        #     operator notices even if they were typing at claude)
+        #   - dashboard's internal focus flip to the proposals
+        #     pane (so j/k navigates the queued items immediately)
+        newly_arrived = live_ids - first_seen.keys()
+        if saw_first_tick and newly_arrived:
+            try:
+                curses.beep()
+            except curses.error:
+                pass
+            if dashboard_pane_id and _in_tmux():
+                _tmux_select_pane(dashboard_pane_id)
+            focus = PANE_PROPOSALS
+            # Land the cursor on the first new proposal so the
+            # operator can act immediately. Proposals are sorted
+            # by arrival_timestamp ascending; find the lowest
+            # index whose id is in `newly_arrived`.
+            for i, qp in enumerate(pending):
+                if qp.proposal.id in newly_arrived:
+                    selected = i
+                    break
         for proposal_id in live_ids:
             first_seen.setdefault(proposal_id, now)
         for stale_id in list(first_seen.keys() - live_ids):
             del first_seen[stale_id]
+        saw_first_tick = True
 
         _render(
             stdscr, pending, selected, status_line,
@@ -1541,10 +1574,22 @@ def _render(
 
     # ----- proposals pane (top) -----
     row = 2
+    # When any proposal is in the recent-arrival window (the
+    # individual rows are green-highlighted by the existing logic),
+    # also highlight the pane label so the alert is visible at a
+    # glance even when the operator is focused elsewhere.
+    proposals_have_recent = any(
+        _is_recent(qp.proposal.id, first_seen, now) for qp in pending
+    )
     proposals_label = "proposals:"
+    if proposals_have_recent:
+        proposals_label += "  (new!)"
     if proposals_focused:
         proposals_label += "  (focused)"
-    stdscr.addnstr(row, 0, proposals_label, w - 1, curses.A_DIM)
+    label_attr = curses.A_DIM
+    if proposals_have_recent:
+        label_attr = curses.A_BOLD | green_attr
+    stdscr.addnstr(row, 0, proposals_label, w - 1, label_attr)
     row += 1
     if not pending:
         stdscr.addnstr(
