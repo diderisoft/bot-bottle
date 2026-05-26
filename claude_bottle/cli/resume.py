@@ -30,12 +30,6 @@ def cmd_resume(argv: list[str]) -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--remote-control", action="store_true")
     parser.add_argument(
-        "--format",
-        choices=("text", "json"),
-        default="text",
-        help="preflight output format; --format=json requires --dry-run",
-    )
-    parser.add_argument(
         "identity",
         help="bottle identity from a prior `start` (see its session-end output)",
     )
@@ -61,6 +55,5 @@ def cmd_resume(argv: list[str]) -> int:
     return _launch_bottle(
         spec,
         dry_run=args.dry_run,
-        output_format=args.format,
         remote_control=args.remote_control,
     )

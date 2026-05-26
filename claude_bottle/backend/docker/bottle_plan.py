@@ -14,22 +14,9 @@ from pathlib import Path
 from ...egress_proxy import EgressProxyPlan
 from ...git_gate import GitGatePlan
 from ...log import info
-from ...manifest import Agent, Bottle
-from ...pipelock import PipelockProxyPlan, pipelock_effective_allowlist
+from ...pipelock import PipelockProxyPlan
 from ...supervise import SupervisePlan
 from .. import BottlePlan
-
-
-@dataclass(frozen=True)
-class _PlanView:
-    """Fields that both `print` and `to_dict` need but the plan
-    doesn't store directly. Cheap to compute; computed once per call."""
-
-    agent: Agent
-    bottle: Bottle
-    env_names: list[str]
-    git_names: list[str]
-    prompt_first_line: str
 
 
 @dataclass(frozen=True)
@@ -65,36 +52,24 @@ class DockerBottlePlan(BottlePlan):
     allowlist_summary: str
     use_runsc: bool
 
-    def _view(self) -> _PlanView:
+    def print(self, *, remote_control: bool) -> None:
+        """Render the y/N preflight summary to stderr — compact form
+        intended to fit on screen without scrolling. The full
+        structured shape (image, container, runtime, etc.) lives on
+        this dataclass for tooling that wants to introspect it."""
+        del remote_control  # not surfaced in the compact summary
         spec = self.spec
         manifest = spec.manifest
         agent = manifest.agents[spec.agent_name]
         bottle = manifest.bottle_for(spec.agent_name)
         # The agent sees the union of literal env names (rendered into
-        # --env-file) and forwarded env names (`-e NAME` with the value
-        # arriving via subprocess env). The forwarded set holds the
-        # OAuth token (CLAUDE_CODE_OAUTH_TOKEN) and any host-env
-        # interpolations from the manifest; egress-proxy holds upstream
-        # tokens in its own environ, so no token forwarding from the
-        # agent to the proxy is needed.
+        # --env-file) and forwarded env names (`-e NAME` with the
+        # value arriving via subprocess env). The forwarded set holds
+        # the OAuth token (CLAUDE_CODE_OAUTH_TOKEN) and any host-env
+        # interpolations from the manifest; egress-proxy holds
+        # upstream tokens in its own environ, so no token forwarding
+        # from the agent to the proxy is needed.
         env_names = sorted(set(bottle.env.keys()) | set(self.forwarded_env.keys()))
-        return _PlanView(
-            agent=agent,
-            bottle=bottle,
-            env_names=env_names,
-            git_names=[e.Name for e in bottle.git],
-            prompt_first_line=agent.prompt.splitlines()[0] if agent.prompt else "",
-        )
-
-    def print(self, *, remote_control: bool) -> None:
-        """Render the y/N preflight summary to stderr — compact form
-        intended to fit on screen without scrolling. The full
-        structured shape (image, container, runtime, etc.) is
-        available via `to_dict` + `--format=json` for tooling /
-        debugging."""
-        del remote_control  # not surfaced in the compact summary
-        v = self._view()
-        spec = self.spec
 
         def _multi(label: str, values: list[str]) -> None:
             """Print a label with N continuation-indented values. Used
@@ -110,9 +85,9 @@ class DockerBottlePlan(BottlePlan):
 
         print(file=sys.stderr)
         info(f"agent           : {spec.agent_name}")
-        _multi("env             ", v.env_names)
-        _multi("skills          ", list(v.agent.skills))
-        info(f"bottle          : {v.agent.bottle}")
+        _multi("env             ", env_names)
+        _multi("skills          ", list(agent.skills))
+        info(f"bottle          : {agent.bottle}")
 
         git_lines = [
             f"{u.upstream_host}:{u.upstream_port}"
@@ -129,62 +104,3 @@ class DockerBottlePlan(BottlePlan):
             _multi("  egress-proxy  ", egress_lines)
         print(file=sys.stderr)
 
-    def to_dict(self, *, remote_control: bool) -> dict[str, object]:
-        v = self._view()
-        hosts = pipelock_effective_allowlist(v.bottle)
-        return {
-            "agent": self.spec.agent_name,
-            "bottle": v.agent.bottle,
-            "container_name": self.container_name,
-            "image": self.image,
-            "derived_image": self.derived_image,
-            "stage_dir": str(self.stage_dir),
-            "runtime": "runsc" if self.use_runsc else "runc",
-            "env_names": v.env_names,
-            "skills": list(v.agent.skills),
-            "git_remotes": v.git_names,
-            "git_gate": [
-                {
-                    "name": u.name,
-                    "upstream": f"{u.upstream_host}:{u.upstream_port}",
-                    "upstream_url": u.upstream_url,
-                    "known_host_key_pinned": bool(u.known_host_key),
-                }
-                for u in self.git_gate_plan.upstreams
-            ],
-            "egress_proxy": [
-                {
-                    "host": r.host,
-                    "path_allowlist": list(r.path_allowlist),
-                    "auth_scheme": r.auth_scheme,
-                    "token_ref": r.token_ref,
-                }
-                for r in self.egress_proxy_plan.routes
-            ],
-            "egress": {
-                "host_count": len(hosts),
-                "hosts": hosts,
-                # PRD 0017: TLS interception moved from pipelock to
-                # egress-proxy. ca_fingerprint is always null at
-                # dry-run because the CA doesn't exist yet — real
-                # launches print the fingerprint to stderr from
-                # provision_ca. Reserved field for forward-compat.
-                "tls_interception": {
-                    "enabled": True,
-                    "ca_fingerprint": None,
-                },
-            },
-            "supervise": {
-                "enabled": self.supervise_plan is not None,
-                "queue_dir": (
-                    str(self.supervise_plan.queue_dir)
-                    if self.supervise_plan is not None
-                    else None
-                ),
-            },
-            "prompt": {
-                "length": len(v.agent.prompt),
-                "first_line": v.prompt_first_line,
-            },
-            "remote_control": remote_control,
-        }

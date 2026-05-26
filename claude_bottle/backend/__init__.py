@@ -73,13 +73,6 @@ class BottlePlan(ABC):
     def print(self, *, remote_control: bool) -> None:
         """Render the y/N preflight summary to stderr."""
 
-    @abstractmethod
-    def to_dict(self, *, remote_control: bool) -> dict[str, object]:
-        """Return the plan as a JSON-serializable dict for machine
-        consumption (used by `start --dry-run --format=json`). The key
-        set is part of the CLI's user-facing contract — adding fields
-        is fine, renaming or removing is a breaking change."""
-
 
 @dataclass(frozen=True)
 class BottleCleanupPlan(ABC):
