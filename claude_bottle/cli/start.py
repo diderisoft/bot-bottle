@@ -92,15 +92,22 @@ def prepare_with_preflight(
 
 
 def attach_claude(
-    bottle: Bottle, *, remote_control: bool = False,
+    bottle: Bottle, *, remote_control: bool = False, resume: bool = False,
 ) -> int:
     """Run claude inside `bottle` as an interactive session. Blocks
     until the session ends; returns the claude process's exit code.
 
+    `resume=True` adds `--continue` so claude picks up its most
+    recent session non-interactively (no session-picker prompt) —
+    the right shape for the dashboard's Enter re-attach (PRD 0020
+    chunk 3), where a bottle typically has exactly one session.
+    First-attach paths (`./cli.py start`, the dashboard's new-agent
+    flow) leave it False.
+
     Used as the inner step of `./cli.py start` (one-shot) and by the
-    dashboard (PRD 0020), which calls it from inside a `curses.endwin
-    → … → stdscr.refresh()` handoff so the curses surface gets out
-    of the terminal's way while claude has it."""
+    dashboard, which calls it from inside a `curses.endwin → … →
+    stdscr.refresh()` handoff so the curses surface gets out of the
+    terminal's way while claude has it."""
     info(
         "attaching interactive claude session "
         "(Ctrl-D or 'exit' to leave; container will be removed)"
@@ -108,6 +115,10 @@ def attach_claude(
     claude_args = ["--dangerously-skip-permissions"]
     if remote_control:
         claude_args.append("--remote-control")
+    if resume:
+        # `--continue` jumps straight to the most recent session
+        # without showing the picker `--resume` would surface.
+        claude_args.append("--continue")
     return bottle.exec_claude(claude_args, tty=True)
 
 
