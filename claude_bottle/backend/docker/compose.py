@@ -39,6 +39,9 @@ aren't rebuilt on every up.
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +49,7 @@ from ...egress import (
     EGRESS_HOSTNAME,
     EGRESS_ROUTES_IN_CONTAINER,
 )
+from ...log import die, warn
 from ...git_gate import git_gate_aggregate_extra_hosts
 from ...supervise import (
     CURRENT_CONFIG_DIR_IN_AGENT,
@@ -126,18 +130,21 @@ def bottle_plan_to_compose(plan: DockerBottlePlan) -> dict[str, Any]:
 
 
 def _networks(plan: DockerBottlePlan) -> dict[str, Any]:
-    """Two compose-managed networks with explicit `name:` matching
-    the existing slug-suffixed convention. The internal one is
-    `--internal` (no default gateway); the egress one is a normal
-    user-defined bridge so the upstream-bound sidecars can resolve
-    + reach the outside world."""
+    """Both networks are `external: true` — chunk 3 pre-creates them
+    via `docker network create` so pipelock's yaml can embed the
+    internal-network CIDR in its SSRF allowlist before compose-up.
+    Compose just references the pre-existing networks by name.
+    Network lifecycle (create / remove) is owned by the compose-
+    lifecycle helpers, not compose itself; `docker compose down`
+    leaves external networks alone."""
     return {
         "internal": {
             "name": plan.proxy_plan.internal_network,
-            "internal": True,
+            "external": True,
         },
         "egress": {
             "name": plan.proxy_plan.egress_network,
+            "external": True,
         },
     }
 
@@ -382,4 +389,125 @@ def _agent_no_proxy(plan: DockerBottlePlan) -> str:
     return ",".join(hosts)
 
 
-__all__ = ["bottle_plan_to_compose"]
+# --- Lifecycle helpers (PRD 0018 chunk 3) ----------------------------------
+#
+# The renderer above is pure. The helpers below own the I/O side:
+# serialize the spec to disk, drive `docker compose up`, dump the
+# merged log file on teardown, and `docker compose down` to clean up
+# (networks are pre-created externally so `down` leaves them alone;
+# the launch step removes them in its own teardown step).
+
+
+COMPOSE_FILE_NAME = "docker-compose.yml"
+COMPOSE_LOG_NAME = "compose.log"
+
+
+def compose_project_name(slug: str) -> str:
+    """Stable mapping from slug → compose project. Matches the
+    `name:` field the renderer emits, so `docker compose ls`
+    enumeration and direct CLI invocations agree on the project
+    identifier."""
+    return f"claude-bottle-{slug}"
+
+
+def compose_file_path(state_dir: Path) -> Path:
+    return state_dir / COMPOSE_FILE_NAME
+
+
+def compose_log_path(state_dir: Path) -> Path:
+    return state_dir / COMPOSE_LOG_NAME
+
+
+def write_compose_file(spec: dict[str, Any], path: Path) -> Path:
+    """Serialize the compose dict to disk. JSON content with a
+    `.yml` filename — JSON is a strict subset of YAML 1.2 for the
+    constructs the renderer uses (mappings, lists, strings, bools,
+    nulls), and `docker compose -f file.yml` parses it as YAML.
+    Avoids a yaml dependency while keeping the file `cat`-readable.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(spec, indent=2, sort_keys=False) + "\n")
+    path.chmod(0o644)
+    return path
+
+
+def _compose_argv(project: str, compose_file: Path, *cmd: str) -> list[str]:
+    return [
+        "docker", "compose",
+        "-p", project,
+        "-f", str(compose_file),
+        *cmd,
+    ]
+
+
+def compose_up(
+    project: str,
+    compose_file: Path,
+    *,
+    env: dict[str, str] | None = None,
+) -> None:
+    """`docker compose up -d` for the project. Env-inheritance is
+    via `env=` on the subprocess — every `environment: [NAME]` (bare
+    name) entry in the compose file resolves to whatever value
+    `NAME` has in `env` at exec time. Secrets never land on argv or
+    in the compose file."""
+    argv = _compose_argv(project, compose_file, "up", "-d")
+    result = subprocess.run(
+        argv, capture_output=True, text=True, env=env, check=False,
+    )
+    if result.returncode != 0:
+        sys.stderr.write(result.stderr)
+        die(f"docker compose up failed for project {project}")
+
+
+def compose_dump_logs(project: str, compose_file: Path, output: Path) -> None:
+    """Write the merged stdout/stderr of every service to `output`
+    using `docker compose logs --no-color --timestamps`. Best-effort
+    — failures here shouldn't block teardown. The interleaved single
+    file is what the user reads post-mortem; per-service tail still
+    works through `docker compose logs -f <service>` while the
+    project is up."""
+    output.parent.mkdir(parents=True, exist_ok=True)
+    argv = _compose_argv(project, compose_file, "logs", "--no-color", "--timestamps")
+    try:
+        with open(output, "wb") as f:
+            subprocess.run(
+                argv,
+                stdout=f,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+        output.chmod(0o644)
+    except OSError as e:
+        warn(f"failed to write compose log to {output}: {e}")
+
+
+def compose_down(project: str, compose_file: Path) -> None:
+    """`docker compose down` for the project. External networks are
+    intentionally NOT removed by compose (`external: true` on the
+    networks block); the launch step's own teardown removes them
+    via `network_remove` so the per-bottle ephemeral subnet doesn't
+    accumulate."""
+    argv = _compose_argv(project, compose_file, "down")
+    result = subprocess.run(
+        argv, capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        warn(
+            f"docker compose down failed for project {project}: "
+            f"{result.stderr.strip()}"
+        )
+
+
+__all__ = [
+    "COMPOSE_FILE_NAME",
+    "COMPOSE_LOG_NAME",
+    "bottle_plan_to_compose",
+    "compose_down",
+    "compose_dump_logs",
+    "compose_file_path",
+    "compose_log_path",
+    "compose_project_name",
+    "compose_up",
+    "write_compose_file",
+]

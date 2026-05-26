@@ -72,6 +72,7 @@ def resolve_plan(
         cwd=spec.user_cwd if spec.copy_cwd else "",
         copy_cwd=spec.copy_cwd,
         started_at=datetime.now(timezone.utc).isoformat(),
+        compose_project=f"claude-bottle-{slug}",
     ))
     # Clear any leftover preserve marker from a prior capability-block
     # so this fresh launch can be cleaned up at session-end unless

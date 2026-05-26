@@ -67,6 +67,12 @@ def pipelock_tls_init(stage_dir: Path) -> tuple[Path, Path]:
     key = work / "ca-key.pem"
     if not cert.is_file() or not key.is_file():
         die(f"pipelock tls init did not produce ca files in {work}")
+    # Explicit perms in case a future pipelock release changes
+    # defaults. Pipelock runs as root in its distroless image and
+    # bind-mounts work with 0o600 (root reads everything); the key
+    # has no reason to be readable to anyone else on the host.
+    key.chmod(0o600)
+    cert.chmod(0o644)
     return (cert, key)
 
 

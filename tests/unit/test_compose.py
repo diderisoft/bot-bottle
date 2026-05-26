@@ -176,19 +176,20 @@ class TestProjectAndNetworks(unittest.TestCase):
         spec = bottle_plan_to_compose(_plan())
         self.assertEqual(f"claude-bottle-{SLUG}", spec["name"])
 
-    def test_internal_network_is_internal(self):
+    def test_internal_network_marked_external(self):
+        # Chunk 3 pre-creates networks with `docker network create
+        # --internal` so pipelock can know the CIDR before compose-up.
+        # Compose references the network by name with `external: true`.
         spec = bottle_plan_to_compose(_plan())
         net = spec["networks"]["internal"]
         self.assertEqual(f"claude-bottle-net-{SLUG}", net["name"])
-        self.assertTrue(net["internal"])
+        self.assertTrue(net["external"])
 
-    def test_egress_network_is_external_bridge(self):
+    def test_egress_network_marked_external(self):
         spec = bottle_plan_to_compose(_plan())
         net = spec["networks"]["egress"]
         self.assertEqual(f"claude-bottle-egress-{SLUG}", net["name"])
-        # No `internal:` key on the egress network — defaults to a
-        # normal user-defined bridge.
-        self.assertNotIn("internal", net)
+        self.assertTrue(net["external"])
 
 
 class TestPipelockAlwaysPresent(unittest.TestCase):

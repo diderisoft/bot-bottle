@@ -114,6 +114,10 @@ def egress_tls_init(stage_dir: Path) -> tuple[Path, Path]:
     )
     if keygen.returncode != 0:
         die(f"egress ca keygen failed: {keygen.stderr.strip()}")
+    # Standalone private key — never docker-cp'd, never bind-mounted
+    # (mitmproxy reads the cert+key concat below). Lock to owner-
+    # only so it doesn't sit at the default umask on disk.
+    key_path.chmod(0o600)
 
     # `subjectKeyIdentifier=hash` makes openssl compute the SKI as
     # SHA-1(pubkey), matching how mitmproxy computes the AKI on the
@@ -149,6 +153,12 @@ def egress_tls_init(stage_dir: Path) -> tuple[Path, Path]:
 
     cert_path.chmod(0o644)
     # mitmproxy reads cert + key from a single concatenated PEM file.
+    # This file IS bind-mounted into the egress container (chunk 3+),
+    # where mitmproxy runs as uid 1000 — so the host file has to be
+    # world-readable for the container's user to read it through the
+    # mount. Owner-only mode on the parent dir (state/<slug>/, under
+    # ~/.claude-bottle which inherits ~'s 0o700) is what actually
+    # restricts who can reach this file on the host.
     mitm = work / "mitmproxy-ca.pem"
     mitm.write_bytes(cert_path.read_bytes() + key_path.read_bytes())
     mitm.chmod(0o644)

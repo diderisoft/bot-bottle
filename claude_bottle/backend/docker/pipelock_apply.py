@@ -24,7 +24,15 @@ from pathlib import Path
 
 from ...pipelock import pipelock_render_yaml
 from ...yaml_subset import parse_yaml_subset
+from .bottle_state import pipelock_state_dir
 from .pipelock import pipelock_container_name
+
+
+def _pipelock_yaml_host_path(slug: str) -> Path:
+    """The bind-mount source for the pipelock sidecar's
+    pipelock.yaml — matches what pipelock.prepare wrote at chunk-2
+    paths."""
+    return pipelock_state_dir(slug) / "pipelock.yaml"
 
 
 PIPELOCK_YAML_IN_CONTAINER = "/etc/pipelock.yaml"
@@ -141,19 +149,26 @@ def apply_allowlist_change(
     cfg["api_allowlist"] = new_hosts
     rendered = pipelock_render_yaml(cfg)
 
-    fd, tmp_path = tempfile.mkstemp(prefix="cb-pipelock-yaml.", suffix=".yaml")
+    # PRD 0018 chunk 3 + security item (c): pipelock.yaml is
+    # bind-mounted into the container, so the write target is the
+    # host path the sidecar reads. POSIX rename is atomic on the
+    # same filesystem, which matters less here than for the
+    # SIGHUP-reload egress case (pipelock fully restarts and
+    # re-reads on boot), but the pattern is uniform across both
+    # apply paths.
+    target = _pipelock_yaml_host_path(slug)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path_str = tempfile.mkstemp(
+        prefix=".pipelock.", suffix=".yaml.tmp", dir=str(target.parent),
+    )
+    tmp_path = Path(tmp_path_str)
     try:
         with os.fdopen(fd, "w") as f:
             f.write(rendered)
-        cp = subprocess.run(
-            ["docker", "cp", tmp_path, f"{container}:{PIPELOCK_YAML_IN_CONTAINER}"],
-            capture_output=True, text=True, check=False,
-        )
-        if cp.returncode != 0:
-            raise PipelockApplyError(
-                f"failed to copy pipelock.yaml into {container}: "
-                f"{(cp.stderr or '').strip()}"
-            )
+        # pipelock runs as root in its distroless image — any mode
+        # is fine — but 0o600 matches what prepare wrote.
+        os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, target)
         restart = subprocess.run(
             ["docker", "restart", container],
             capture_output=True, text=True, check=False,
@@ -163,11 +178,12 @@ def apply_allowlist_change(
                 f"failed to restart {container}: "
                 f"{(restart.stderr or '').strip()}"
             )
-    finally:
+    except BaseException:
         try:
-            Path(tmp_path).unlink()
+            tmp_path.unlink()
         except OSError:
             pass
+        raise
 
     return before, after
 

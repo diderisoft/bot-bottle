@@ -98,6 +98,13 @@ class BottleMetadata:
     cwd: str           # empty string when --cwd was not passed
     copy_cwd: bool
     started_at: str    # ISO 8601 UTC
+    # PRD 0018 chunk 3: derivable from identity via
+    # `compose_project_name(identity)`, but persisted explicitly so
+    # dashboard / cleanup / resume tooling can read it without
+    # importing the compose module. Empty string for state dirs
+    # written before chunk 3 (resume / inspect should fall back to
+    # deriving from identity in that case).
+    compose_project: str = ""
 
 
 def metadata_path(identity: str) -> Path:
@@ -130,6 +137,7 @@ def read_metadata(identity: str) -> BottleMetadata | None:
         cwd=str(raw.get("cwd", "")),
         copy_cwd=bool(raw.get("copy_cwd", False)),
         started_at=str(raw.get("started_at", "")),
+        compose_project=str(raw.get("compose_project", "")),
     )
 
 

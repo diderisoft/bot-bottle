@@ -1,34 +1,72 @@
 """Launch step for the Docker bottle backend.
 
-`launch` is a context manager: builds the image(s), creates the per-
-agent networks, brings up the pipelock sidecar, starts the agent
-container, then runs the provision step. Teardown is sequenced via an
-ExitStack so callbacks fire in reverse-order of registration even if
-something raises mid-bring-up.
+PRD 0018 chunk 3: each instance is one `docker compose` project.
+
+The flow is:
+
+  1. Build the agent's base + derived image (compose builds the
+     sidecar images via the `build:` directive on first up).
+  2. Pre-create the per-bottle networks. We do this outside compose
+     so we can inspect the assigned internal CIDR and embed it in
+     pipelock's yaml (compose's `external: true` lets the compose
+     file reference these pre-existing networks).
+  3. Mint the per-bottle CAs (chunk 2 writes them under
+     state/<slug>/{pipelock,egress}/).
+  4. Re-render pipelock yaml with the now-known internal CIDR so
+     the SSRF allowlist exempts the bottle's own subnet.
+  5. Populate the inner plans with launch-time fields so the
+     renderer can read network names, CA paths, pipelock URL.
+  6. Render the compose spec, write it to
+     state/<slug>/docker-compose.yml, write metadata.json.
+  7. `docker compose up -d` (token + OAuth values flow into the
+     compose subprocess env so `environment: [NAME]` bare-name
+     entries inherit without rendering values into the file).
+  8. Provision (CA install, prompt copy, skills, git, supervise
+     config) — unchanged, uses `docker exec`.
+  9. Yield a DockerBottle handle. `exec_claude` runs claude via
+     `docker exec -it` exactly like the pre-compose world.
+
+Teardown (ExitStack callbacks fire in reverse):
+  - Dump `docker compose logs --no-color --timestamps` to
+    state/<slug>/compose.log (best-effort).
+  - `docker compose down` removes the project's containers (not the
+    external networks).
+  - `network_remove` deletes the two networks we pre-created.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import os
-import subprocess
-import sys
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Callable, Generator
 
-from ...log import die, info
+from ...egress import egress_resolve_token_values
+from ...log import info
 from ...pipelock import pipelock_build_config, pipelock_render_yaml
-from ...supervise import CURRENT_CONFIG_DIR_IN_AGENT, SUPERVISE_HOSTNAME
 from . import network as network_mod
 from . import util as docker_mod
 from .bottle import DockerBottle
 from .bottle_plan import DockerBottlePlan
-from .bottle_state import egress_state_dir, pipelock_state_dir
+from .bottle_state import (
+    bottle_state_dir,
+    egress_state_dir,
+    pipelock_state_dir,
+)
+from .compose import (
+    bottle_plan_to_compose,
+    compose_down,
+    compose_dump_logs,
+    compose_file_path,
+    compose_log_path,
+    compose_project_name,
+    compose_up,
+    write_compose_file,
+)
 from .egress import (
     DockerEgress,
     egress_tls_init,
-    egress_url,
 )
 from .git_gate import DockerGitGate
 from .pipelock import (
@@ -38,7 +76,6 @@ from .pipelock import (
     pipelock_proxy_url,
     pipelock_tls_init,
 )
-from .provision.ca import AGENT_CA_BUNDLE, AGENT_CA_PATH
 from .supervise import DockerSupervise
 
 
@@ -56,10 +93,15 @@ def launch(
     supervise: DockerSupervise,
     provision: Callable[[DockerBottlePlan, str], str | None],
 ) -> Generator[DockerBottle, None, None]:
-    """Build, launch, and provision a Docker bottle. Teardown on exit.
+    """Build, launch, and provision a Docker bottle via compose.
+    Teardown on exit. The per-sidecar `proxy / git_gate / egress /
+    supervise` parameters are vestigial from the pre-compose flow —
+    kept for backwards-compat with backend.py's call site; the
+    `start()`/`stop()` methods on those classes are no longer
+    invoked (chunk 3 collapsed them into the compose service spec).
+    They'll be removed entirely in a follow-up cleanup."""
+    del proxy, git_gate, egress, supervise  # not invoked in compose flow
 
-    `provision` is the backend's provision orchestrator (passed in so
-    this module stays free of backend-class plumbing)."""
     stack = ExitStack()
 
     def teardown() -> None:
@@ -71,6 +113,8 @@ def launch(
             pass
 
     try:
+        # Step 1: agent image build. Sidecar images get built lazily by
+        # `docker compose up` via the renderer's `build:` directives.
         docker_mod.build_image(
             plan.image, _REPO_DIR,
             dockerfile=plan.dockerfile_path,
@@ -80,45 +124,26 @@ def launch(
                 plan.derived_image, plan.image, plan.spec.user_cwd
             )
 
+        # Step 2: pre-create networks so we know the internal CIDR
+        # before pipelock yaml renders.
         internal_network = network_mod.network_create_internal(plan.slug)
         stack.callback(network_mod.network_remove, internal_network)
 
         egress_network = network_mod.network_create_egress(plan.slug)
         stack.callback(network_mod.network_remove, egress_network)
 
-        # Docker assigns a CIDR to the new internal network. Pipelock's
-        # SSRF guard otherwise rejects any destination resolving into
-        # RFC1918 space — which includes the sibling sidecars
-        # (egress → pipelock on the upstream leg, etc.).
-        # Allowlist the bottle's own internal subnet so internal
-        # traffic passes through pipelock; api_allowlist + body-scanning
-        # still apply.
         internal_cidr = network_mod.network_inspect_cidr(internal_network)
 
-        # Per-bottle ephemeral CAs (PRD 0006 + PRD 0017). Two
-        # separate CAs:
-        #   - pipelock CA: signs MITM certs pipelock presents on the
-        #     egress → upstream leg.
-        #   - egress CA: signs MITM certs egress presents
-        #     to the agent on the agent → egress leg.
-        # Both are minted by one-shot pipelock containers (pipelock's
-        # `tls init` is a known-good RSA CA minter) under stage_dir;
-        # the .start steps docker-cp the files in. Private keys never
-        # leave the host stage dir, which start.py's outer finally
-        # `shutil.rmtree`s after the sidecars are torn down.
-        # PRD 0018 chunk 2: CAs live under the bottle's state subdirs
-        # so chunk 3's compose bind-mounts have stable sources. The
-        # subdirs were created by prepare; tls_init makes the
-        # `pipelock-ca/` and `egress-ca/` children under them.
+        # Step 3: mint per-bottle CAs into state/<slug>/{pipelock,egress}/.
         ca_cert_host, ca_key_host = pipelock_tls_init(pipelock_state_dir(plan.slug))
         egress_ca_host, egress_ca_cert_only = egress_tls_init(
             egress_state_dir(plan.slug),
         )
 
-        # Re-render the pipelock yaml with the SSRF allowlist now that
-        # we know the internal CIDR. Prepare wrote the yaml without
-        # the ssrf block (CIDR wasn't known yet); overwrite the same
-        # path so .start docker-cp's the updated content.
+        # Step 4: re-render pipelock yaml with the SSRF allowlist now
+        # that we know the internal CIDR. Prepare wrote the yaml
+        # without the ssrf block; overwrite the same path so the
+        # bind-mount picks up the updated content.
         bottle = plan.spec.manifest.bottle_for(plan.spec.agent_name)
         cfg = pipelock_build_config(
             bottle,
@@ -129,6 +154,10 @@ def launch(
         plan.proxy_plan.yaml_path.write_text(pipelock_render_yaml(cfg))
         plan.proxy_plan.yaml_path.chmod(0o600)
 
+        # Step 5: populate launch-time fields on every inner plan so
+        # the renderer reads concrete network names, CA paths, and
+        # pipelock URL. Match the field-by-field replacement the
+        # pre-compose launch did, just rolled into one pass.
         proxy_plan = dataclasses.replace(
             plan.proxy_plan,
             internal_network=internal_network,
@@ -137,40 +166,17 @@ def launch(
             ca_cert_host_path=ca_cert_host,
             ca_key_host_path=ca_key_host,
         )
-        # Re-bind the outer plan so provision_ca (which runs later
-        # from `provision(plan, container)`) can read the populated
-        # CA paths off plan.proxy_plan.
-        plan = dataclasses.replace(plan, proxy_plan=proxy_plan)
-        pipelock_name = proxy.start(plan.proxy_plan)
-        stack.callback(proxy.stop, pipelock_name)
-
-        # Git gate (PRD 0008). One sidecar per agent, only brought up
-        # when the bottle has git entries. Same internal + egress
-        # network attachment as the other sidecars; agent dials it as
-        # `git://<container-name>/<name>.git` via the pushInsteadOf
-        # rules provision_git writes into ~/.gitconfig.
-        if plan.git_gate_plan.upstreams:
+        git_gate_plan = plan.git_gate_plan
+        if git_gate_plan.upstreams:
             git_gate_plan = dataclasses.replace(
-                plan.git_gate_plan,
+                git_gate_plan,
                 internal_network=internal_network,
                 egress_network=egress_network,
             )
-            plan = dataclasses.replace(plan, git_gate_plan=git_gate_plan)
-            git_gate_name = git_gate.start(plan.git_gate_plan)
-            stack.callback(git_gate.stop, git_gate_name)
-
-        # Egress-proxy (PRD 0017). One sidecar per bottle when
-        # bottle.egress.routes is non-empty. Must come up AFTER
-        # pipelock — egress routes its outbound HTTPS through
-        # pipelock (HTTPS_PROXY in environ + the pipelock CA in its
-        # trust store) so the egress allowlist + body scanner sit on
-        # the egress → upstream leg. Must come up BEFORE the
-        # agent so DNS resolution for `egress` succeeds on the
-        # agent's first call; tokens flow from the host env into the
-        # sidecar's environ, not the agent's.
-        if plan.egress_plan.routes:
+        egress_plan = plan.egress_plan
+        if egress_plan.routes:
             egress_plan = dataclasses.replace(
-                plan.egress_plan,
+                egress_plan,
                 internal_network=internal_network,
                 egress_network=egress_network,
                 mitmproxy_ca_host_path=egress_ca_host,
@@ -178,151 +184,62 @@ def launch(
                 pipelock_ca_host_path=ca_cert_host,
                 pipelock_proxy_url=pipelock_proxy_url(plan.slug),
             )
-            plan = dataclasses.replace(plan, egress_plan=egress_plan)
-            egress_name = egress.start(plan.egress_plan)
-            stack.callback(egress.stop, egress_name)
-
-        # Supervise sidecar (PRD 0013). Opt-in via bottle.supervise.
-        # Internal-network only — the sidecar makes no outbound calls.
-        # Must come up BEFORE the agent so DNS resolution for
-        # `supervise` succeeds on the agent's first tool call.
-        if plan.supervise_plan is not None:
+        supervise_plan = plan.supervise_plan
+        if supervise_plan is not None:
             supervise_plan = dataclasses.replace(
-                plan.supervise_plan,
+                supervise_plan,
                 internal_network=internal_network,
             )
-            plan = dataclasses.replace(plan, supervise_plan=supervise_plan)
-            supervise_name = supervise.start(plan.supervise_plan)
-            stack.callback(supervise.stop, supervise_name)
+        plan = dataclasses.replace(
+            plan,
+            proxy_plan=proxy_plan,
+            git_gate_plan=git_gate_plan,
+            egress_plan=egress_plan,
+            supervise_plan=supervise_plan,
+        )
 
-        container = _run_agent_container(plan, internal_network)
-        stack.callback(docker_mod.force_remove_container, container)
+        # Step 6: render + write the compose file. metadata.json
+        # was written at prepare time and already carries
+        # compose_project; nothing to update here.
+        state_dir = bottle_state_dir(plan.slug)
+        spec = bottle_plan_to_compose(plan)
+        compose_file = write_compose_file(spec, compose_file_path(state_dir))
+        project = compose_project_name(plan.slug)
 
-        prompt_path = provision(plan, container)
+        # Step 7: compose up. Token values + the OAuth placeholder
+        # flow through subprocess env; the compose file holds only
+        # bare names for the secret-carrying entries.
+        token_values: dict[str, str] = {}
+        if plan.egress_plan.routes:
+            token_values = egress_resolve_token_values(
+                plan.egress_plan.token_env_map, dict(os.environ),
+            )
+        compose_env: dict[str, str] = {
+            **os.environ,
+            **plan.forwarded_env,
+            **token_values,
+        }
+        info(
+            f"docker compose up -d  (project {project}, "
+            f"{len(spec['services'])} services)"
+        )
+        compose_up(project, compose_file, env=compose_env)
 
-        yield DockerBottle(container, teardown, prompt_path)
+        # Register teardown in reverse order: log dump first, then
+        # `compose down`. Networks come down last via callbacks
+        # registered in step 2.
+        stack.callback(compose_down, project, compose_file)
+        stack.callback(
+            compose_dump_logs, project, compose_file, compose_log_path(state_dir),
+        )
+
+        # Step 8: provision. Unchanged — uses `docker exec` against
+        # the agent container by its known name.
+        prompt_path = provision(plan, plan.container_name)
+
+        # Step 9: yield. exec_claude continues to use `docker exec -it`
+        # — the agent runs `sleep infinity` per the renderer's
+        # service spec.
+        yield DockerBottle(plan.container_name, teardown, prompt_path)
     finally:
         teardown()
-
-
-def _agent_no_proxy(plan: DockerBottlePlan) -> str:
-    """NO_PROXY value for the agent container. Standard loopback +
-    `supervise` when the supervise sidecar is enabled.
-
-    Supervise needs to bypass pipelock because the MCP tool-call
-    pattern is long-poll: claude-code opens an HTTPS-style request to
-    http://supervise:9100/, the sidecar holds it open until the
-    operator approves (potentially minutes), then returns the
-    response. Pipelock is a forward proxy with idle timeouts;
-    pipelock cuts the long-polled connection well before the operator
-    can act, and claude-code reports the tool as ✘ failed even
-    though /mcp shows ✔ connected.
-
-    The supervise sidecar is on the bottle's internal network with
-    the `supervise` network-alias, so the agent can dial it
-    directly via docker DNS. Body-scanning the supervise traffic
-    isn't critical — the operator reviews every proposal in the TUI."""
-    hosts = ["localhost", "127.0.0.1"]
-    if plan.supervise_plan is not None:
-        hosts.append(SUPERVISE_HOSTNAME)
-    return ",".join(hosts)
-
-
-def _agent_proxy_url(plan: DockerBottlePlan) -> str:
-    """Pick the proxy URL the agent's HTTP_PROXY env points at. PRD
-    0017: when an egress is declared, the agent goes through
-    egress (which in turn uses HTTPS_PROXY=pipelock on its
-    outbound leg). Otherwise the agent talks straight to pipelock —
-    keeps the network surface minimal for bottles that don't need
-    path filtering or credential injection."""
-    if plan.egress_plan.routes:
-        return egress_url()
-    return pipelock_proxy_url(plan.slug)
-
-
-def _run_agent_container(plan: DockerBottlePlan, internal_network: str) -> str:
-    """Build the `docker run` argv and execute it, handling name-
-    conflict races by incrementing the suffix (unless the name was
-    user-pinned). Returns the resolved container name."""
-    proxy_url = _agent_proxy_url(plan)
-    no_proxy = _agent_no_proxy(plan)
-    # Set BOTH cases of every *_PROXY var. libcurl's CVE-2016-5388
-    # httpoxy mitigation makes it ignore uppercase `HTTP_PROXY` for
-    # `http://` URLs and only honor lowercase `http_proxy`. Without
-    # the lowercase var, plain-HTTP requests from the agent bypass
-    # egress entirely (going direct, then failing with
-    # "network unreachable" because the agent's bridge is
-    # --internal). Lowercase HTTPS_PROXY isn't strictly needed but
-    # we set it for symmetry — some tools check one or the other.
-    docker_args: list[str] = [
-        "--rm", "-d",
-        "--name", plan.container_name,
-        "--network", internal_network,
-        "-e", f"HTTPS_PROXY={proxy_url}",
-        "-e", f"HTTP_PROXY={proxy_url}",
-        "-e", f"https_proxy={proxy_url}",
-        "-e", f"http_proxy={proxy_url}",
-        "-e", f"NO_PROXY={no_proxy}",
-        "-e", f"no_proxy={no_proxy}",
-        # CA trust trio for the agent process. Docker propagates
-        # run-time env into `docker exec`, so `claude` sees these
-        # without per-exec threading. NODE_EXTRA_CA_CERTS points at
-        # the cert file (Node appends it to its bundled roots);
-        # SSL_CERT_FILE / REQUESTS_CA_BUNDLE point at the system
-        # bundle that `update-ca-certificates` rebuilds in
-        # provision_ca.
-        "-e", f"NODE_EXTRA_CA_CERTS={AGENT_CA_PATH}",
-        "-e", f"SSL_CERT_FILE={AGENT_CA_BUNDLE}",
-        "-e", f"REQUESTS_CA_BUNDLE={AGENT_CA_BUNDLE}",
-    ]
-    if plan.use_runsc:
-        docker_args.extend(["--runtime", "runsc"])
-    if plan.env_file.stat().st_size > 0:
-        docker_args.extend(["--env-file", str(plan.env_file)])
-    for name in plan.forwarded_env:
-        docker_args.extend(["-e", name])
-
-    # PRD 0013: read-only current-config mount so the agent can read
-    # routes.yaml / allowlist / Dockerfile before composing a
-    # supervise tool-call proposal. Mounted from the per-bottle
-    # stage_dir/current-config/ populated at prepare time.
-    if plan.supervise_plan is not None:
-        docker_args.extend([
-            "-v",
-            f"{plan.supervise_plan.current_config_dir}:{CURRENT_CONFIG_DIR_IN_AGENT}:ro",
-        ])
-
-    docker_args.extend([plan.runtime_image, "sleep", "infinity"])
-
-    info(f"starting container {plan.container_name} from {plan.runtime_image}")
-
-    # Inject forwarded values (secrets, interpolated host vars, the
-    # renamed OAuth token) into the docker-run child's env so the
-    # `-e NAME` flags above pick them up — without touching our own
-    # os.environ or putting values on argv.
-    child_env: dict[str, str] = {**os.environ, **plan.forwarded_env}
-
-    name_idx = docker_args.index("--name") + 1
-    for candidate in docker_mod.container_name_candidates(plan.container_name):
-        docker_args[name_idx] = candidate
-        run_result = subprocess.run(
-            ["docker", "run", *docker_args],
-            capture_output=True,
-            text=True,
-            env=child_env,
-            check=False,
-        )
-        if run_result.returncode == 0:
-            return candidate
-        err_text = run_result.stderr
-        if plan.container_name_pinned or "is already in use" not in err_text:
-            sys.stderr.write(err_text + "\n")
-            die(f"docker run failed for container '{candidate}'")
-        info(f"name conflict on {candidate}; retrying with next candidate")
-    die(
-        f"could not find a free container name after "
-        f"{plan.container_name}-{docker_mod.MAX_CONTAINER_SUFFIX} retries; "
-        f"clean up old containers"
-    )
-
-
