@@ -281,6 +281,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
 # each backend module can pull BottleSpec / BottlePlan / BottleBackend
 # via `from . import ...` without hitting a partially-initialized module.
 from .docker import DockerBottleBackend  # noqa: E402
+from .smolmachines import SmolmachinesBottleBackend  # noqa: E402
 
 
 # The dict is heterogeneous: each value is a BottleBackend specialized
@@ -289,6 +290,7 @@ from .docker import DockerBottleBackend  # noqa: E402
 # unparameterized methods (prepare → plan → launch(plan), cleanup, etc.).
 _BACKENDS: dict[str, BottleBackend[Any, Any]] = {
     "docker": DockerBottleBackend(),
+    "smolmachines": SmolmachinesBottleBackend(),
 }
 
 

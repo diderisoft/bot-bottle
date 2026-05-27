@@ -17,6 +17,7 @@ from ...log import info
 from ...pipelock import PipelockProxyPlan
 from ...supervise import SupervisePlan
 from .. import BottlePlan
+from ..print_util import print_multi
 
 
 @dataclass(frozen=True)
@@ -70,22 +71,10 @@ class DockerBottlePlan(BottlePlan):
         # from the agent to the proxy is needed.
         env_names = sorted(set(bottle.env.keys()) | set(self.forwarded_env.keys()))
 
-        def _multi(label: str, values: list[str]) -> None:
-            """Print a label with N continuation-indented values. Used
-            for env / skills / git-gate / egress where one item
-            per line keeps the summary scannable."""
-            if not values:
-                info(f"{label}: (none)")
-                return
-            info(f"{label}: {values[0]}")
-            indent = " " * (len(label) + 2)
-            for v_ in values[1:]:
-                info(f"{indent}{v_}")
-
         print(file=sys.stderr)
         info(f"agent           : {spec.agent_name}")
-        _multi("env             ", env_names)
-        _multi("skills          ", list(agent.skills))
+        print_multi("env             ", env_names)
+        print_multi("skills          ", list(agent.skills))
         info(f"bottle          : {agent.bottle}")
 
         git_lines = [
@@ -93,13 +82,13 @@ class DockerBottlePlan(BottlePlan):
             for u in self.git_gate_plan.upstreams
         ]
         if git_lines:
-            _multi("  git gate      ", git_lines)
+            print_multi("  git gate      ", git_lines)
 
         if self.egress_plan.routes:
             egress_lines = []
             for r in self.egress_plan.routes:
                 auth = f" [auth:{r.auth_scheme}]" if r.auth_scheme else ""
                 egress_lines.append(f"{r.host}{auth}")
-            _multi("  egress        ", egress_lines)
+            print_multi("  egress        ", egress_lines)
         print(file=sys.stderr)
 
