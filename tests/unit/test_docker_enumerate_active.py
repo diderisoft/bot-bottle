@@ -173,13 +173,6 @@ class TestEnumerateActive(_FakeHomeMixin, unittest.TestCase):
             [a.slug for a in active],
         )
 
-    # `noop when docker missing` lives at the cross-backend gate
-    # now (`enumerate_active_agents` skips backends whose
-    # `is_available()` reports False — see
-    # `test_backend_selection.TestEnumerateActiveAgents`). This
-    # module assumes docker is available when called, matching the
-    # smolmachines/enumerate.py contract.
-
 
 if __name__ == "__main__":
     unittest.main()

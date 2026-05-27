@@ -1,11 +1,4 @@
-"""Unit: dashboard's row-formatting + selection helpers (PRD 0019).
-
-The active-bottle enumeration tests moved to
-`test_docker_enumerate_active.py` (issue #77) — dashboard now
-delegates listing to `enumerate_active_agents` so the parser
-and assembly tests live next to the docker backend's
-implementation.
-"""
+"""Unit: dashboard's row-formatting + selection helpers (PRD 0019)."""
 
 from __future__ import annotations
 

@@ -159,8 +159,3 @@ def cleanup(plan: DockerBottleCleanupPlan) -> None:
             shutil.rmtree(path, ignore_errors=True)
         except OSError as e:
             warn(f"failed to remove {path}: {e}")
-
-
-# `enumerate_active` moved to `backend/docker/enumerate.py` to
-# mirror the smolmachines layout. Cleanup keeps the orphan
-# enumeration; enumeration of live agents is its own concern.
