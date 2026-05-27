@@ -63,14 +63,11 @@ from .compose import (
     compose_up,
     write_compose_file,
 )
-from .egress import DockerEgress, egress_tls_init
-from .git_gate import DockerGitGate
+from .egress import egress_tls_init
 from .pipelock import (
-    DockerPipelockProxy,
     pipelock_proxy_url,
     pipelock_tls_init,
 )
-from .supervise import DockerSupervise
 
 
 # Where the repo root lives, for `docker build` context. Computed once.
@@ -81,21 +78,10 @@ _REPO_DIR = str(Path(__file__).resolve().parent.parent.parent.parent)
 def launch(
     plan: DockerBottlePlan,
     *,
-    proxy: DockerPipelockProxy,
-    git_gate: DockerGitGate,
-    egress: DockerEgress,
-    supervise: DockerSupervise,
     provision: Callable[[DockerBottlePlan, str], str | None],
 ) -> Generator[DockerBottle, None, None]:
     """Build, launch, and provision a Docker bottle via compose.
-    Teardown on exit. The per-sidecar `proxy / git_gate / egress /
-    supervise` parameters are vestigial from the pre-compose flow —
-    kept for backwards-compat with backend.py's call site; the
-    `start()`/`stop()` methods on those classes are no longer
-    invoked (chunk 3 collapsed them into the compose service spec).
-    They'll be removed entirely in a follow-up cleanup."""
-    del proxy, git_gate, egress, supervise  # not invoked in compose flow
-
+    Teardown on exit."""
     stack = ExitStack()
 
     def teardown() -> None:

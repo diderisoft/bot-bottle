@@ -326,19 +326,6 @@ class Egress(ABC):
             token_env_map=egress_token_env_map(routes),
         )
 
-    @abstractmethod
-    def start(self, plan: EgressPlan) -> str:
-        """Bring up the egress sidecar according to `plan`.
-        Returns the target string identifying the running instance —
-        the same value to pass to `.stop`. Backend-specific."""
-
-    @abstractmethod
-    def stop(self, target: str) -> None:
-        """Tear down the egress sidecar identified by `target`
-        (the value `.start` returned). Idempotent: a missing target
-        is success. Backend-specific."""
-
-
 __all__ = [
     "DEFAULT_ALLOWLIST",
     "EGRESS_HOSTNAME",

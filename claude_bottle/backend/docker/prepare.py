@@ -43,15 +43,16 @@ def resolve_plan(
     spec: BottleSpec,
     *,
     stage_dir: Path,
-    proxy: DockerPipelockProxy,
-    git_gate: DockerGitGate,
-    egress: DockerEgress,
-    supervise: DockerSupervise,
 ) -> DockerBottlePlan:
     """Resolve Docker-specific names and write scratch files. Trusts
     that the agent and its skills/git-gate keys are present —
     validation already ran in the base class."""
     docker_mod.require_docker()
+
+    proxy = DockerPipelockProxy()
+    git_gate = DockerGitGate()
+    egress = DockerEgress()
+    supervise = DockerSupervise()
 
     manifest = spec.manifest
     agent = manifest.agents[spec.agent_name]

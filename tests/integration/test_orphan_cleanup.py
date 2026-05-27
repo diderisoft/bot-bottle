@@ -1,8 +1,13 @@
-"""Integration: the cleanup primitives the start-flow trap depends on
-are idempotent. The original orphan-network bug was a trap-ordering
-issue; the fix moved the install earlier. The trap is only safe if
-network_remove and PipelockProxy.stop are no-ops against missing
-resources."""
+"""Integration: the network-cleanup primitives the start-flow trap
+depends on are idempotent. The original orphan-network bug was a
+trap-ordering issue; the fix moved the install earlier. The trap
+is only safe if network_remove is a no-op against missing
+resources.
+
+The PipelockProxy.stop idempotency case that used to live here was
+removed in PRD 0024 chunk 3 when the per-container .stop method
+went away — sidecar teardown is now compose's responsibility, and
+`compose down` already no-ops on missing containers."""
 
 import os
 import subprocess
@@ -12,10 +17,6 @@ from claude_bottle.backend.docker.network import (
     network_create_egress,
     network_create_internal,
     network_remove,
-)
-from claude_bottle.backend.docker.pipelock import (
-    DockerPipelockProxy,
-    pipelock_container_name,
 )
 from tests._docker import skip_unless_docker
 
@@ -70,10 +71,6 @@ class TestOrphanCleanup(unittest.TestCase):
         # Idempotent on already-removed.
         self.assertTrue(network_remove(self.internal_name))
         self.assertTrue(network_remove(self.egress_name))
-
-    def test_pipelock_stop_missing_sidecar(self):
-        # Should not raise.
-        DockerPipelockProxy().stop(pipelock_container_name(f"missing-{self.slug}"))
 
 
 if __name__ == "__main__":

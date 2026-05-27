@@ -371,14 +371,3 @@ class GitGate(ABC):
             upstreams=upstreams,
         )
 
-    @abstractmethod
-    def start(self, plan: GitGatePlan) -> str:
-        """Bring up the gate sidecar according to `plan`. Returns the
-        target string identifying the running instance — the same
-        value to pass to `.stop`. Backend-specific."""
-
-    @abstractmethod
-    def stop(self, target: str) -> None:
-        """Tear down the gate sidecar identified by `target` (the
-        value `.start` returned). Idempotent: a missing target is
-        success. Backend-specific."""

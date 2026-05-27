@@ -23,15 +23,11 @@ from . import prepare as _prepare
 from .bottle import DockerBottle
 from .bottle_cleanup_plan import DockerBottleCleanupPlan
 from .bottle_plan import DockerBottlePlan
-from .egress import DockerEgress
-from .git_gate import DockerGitGate
-from .pipelock import DockerPipelockProxy
 from .provision import ca as _ca
 from .provision import git as _git
 from .provision import prompt as _prompt
 from .provision import skills as _skills
 from .provision import supervise as _supervise_prov
-from .supervise import DockerSupervise
 
 
 class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanupPlan"]):
@@ -40,32 +36,12 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
 
     name = "docker"
 
-    def __init__(self) -> None:
-        self._proxy = DockerPipelockProxy()
-        self._git_gate = DockerGitGate()
-        self._egress = DockerEgress()
-        self._supervise = DockerSupervise()
-
     def _resolve_plan(self, spec: BottleSpec, *, stage_dir: Path) -> DockerBottlePlan:
-        return _prepare.resolve_plan(
-            spec,
-            stage_dir=stage_dir,
-            proxy=self._proxy,
-            git_gate=self._git_gate,
-            egress=self._egress,
-            supervise=self._supervise,
-        )
+        return _prepare.resolve_plan(spec, stage_dir=stage_dir)
 
     @contextmanager
     def launch(self, plan: DockerBottlePlan) -> Generator[DockerBottle, None, None]:
-        with _launch.launch(
-            plan,
-            proxy=self._proxy,
-            git_gate=self._git_gate,
-            egress=self._egress,
-            supervise=self._supervise,
-            provision=self.provision,
-        ) as bottle:
+        with _launch.launch(plan, provision=self.provision) as bottle:
             yield bottle
 
     def provision_ca(self, plan: DockerBottlePlan, target: str) -> None:
