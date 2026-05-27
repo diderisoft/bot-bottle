@@ -98,11 +98,10 @@ class TestSupervisor(unittest.TestCase):
         return sup.exit_code()
 
     def test_all_children_succeed_returns_zero(self):
-        # `sh -c :` exits 0 immediately. With no shutdown request,
-        # the FIRST child to exit counts as "unexpected" — that's
-        # the design (children are supposed to be long-lived
-        # daemons). But all of them exit with 0, so the recorded
-        # first-unexpected rc is 0, and exit_code() returns 0.
+        # `sh -c :` exits 0 immediately. With the new failure
+        # policy a child dying doesn't trigger shutdown, so the
+        # loop only converges once BOTH have exited on their own.
+        # Both exit 0 → max(0, 0) = 0.
         specs = [
             _DaemonSpec("a", ("/bin/sh", "-c", ":")),
             _DaemonSpec("b", ("/bin/sh", "-c", ":")),
@@ -112,25 +111,75 @@ class TestSupervisor(unittest.TestCase):
         rc = self._drive(sup)
         self.assertEqual(0, rc)
 
-    def test_child_crash_propagates_exit_code(self):
-        # `sh -c "exit 1"` exits 1. /bin/sleep 60 would still be
-        # running when it exits — the supervisor must tear it down
-        # and surface the crasher's exit code.
+    def test_child_crash_does_not_initiate_shutdown(self):
+        # Failure policy (PRD 0024, interim): a child dying
+        # unexpectedly is logged but the supervisor does NOT tear
+        # down the survivors. Verified by giving the crasher
+        # ~0.3s to die, then asserting the long-runner is still
+        # up and the supervisor never set shutdown_at.
         specs = [
             _DaemonSpec("crasher", ("/bin/sh", "-c", "exit 1")),
-            _DaemonSpec("longrun", ("/bin/sleep", "60")),
+            _DaemonSpec("longrun", ("/bin/sleep", "30")),
+        ]
+        sup = _Supervisor(specs)
+        sup.start_all()
+        # Drive ticks for a while; crasher should die, longrun
+        # should survive.
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            done = sup.tick()
+            self.assertFalse(done, "loop converged with a child still alive")
+            if sup.procs[0][1].poll() is not None:
+                break
+            time.sleep(0.05)
+
+        self.assertEqual(1, sup.procs[0][1].returncode,
+                         "crasher should have exited 1")
+        self.assertIsNone(sup.procs[1][1].poll(),
+                          "longrun should still be running")
+        self.assertIsNone(sup.shutdown_at,
+                          "supervisor must not initiate shutdown on child death")
+
+        # Clean up — explicit signal-driven shutdown.
+        sup.request_shutdown(reason="test-teardown")
+        self._drive(sup)
+
+    def test_crash_then_signal_surfaces_nonzero_exit_code(self):
+        # The crasher's exit code is what reaches the container
+        # exit even though shutdown was triggered by SIGTERM.
+        # exit_code() = max(child returncodes) → 1 wins over the
+        # signal-killed longrun's negative returncode.
+        specs = [
+            _DaemonSpec("crasher", ("/bin/sh", "-c", "exit 1")),
+            _DaemonSpec("longrun", ("/bin/sleep", "30")),
+        ]
+        sup = _Supervisor(specs)
+        sup.start_all()
+        time.sleep(0.3)  # let crasher die
+        sup.request_shutdown(reason="test")
+        rc = self._drive(sup)
+        self.assertEqual(1, rc)
+
+    def test_all_children_die_unattended_loop_converges(self):
+        # If nobody sends a signal but every child eventually
+        # dies on its own, the supervisor still exits — nothing
+        # left to supervise.
+        specs = [
+            _DaemonSpec("a", ("/bin/sh", "-c", "exit 0")),
+            _DaemonSpec("b", ("/bin/sh", "-c", "exit 2")),
         ]
         sup = _Supervisor(specs)
         sup.start_all()
         rc = self._drive(sup)
-        self.assertEqual(1, rc)
-        self.assertEqual("crasher", sup.first_unexpected_name)
+        self.assertEqual(2, rc)
+        self.assertIsNone(sup.shutdown_at)
 
     def test_shutdown_after_start_terminates_children(self):
         # Two long-running children. Caller requests shutdown;
-        # both should receive SIGTERM, exit cleanly, and the
-        # supervisor reports exit 0 (graceful path, no recorded
-        # unexpected death).
+        # both should receive SIGTERM and exit. exit_code() is
+        # max of (returncodes) — both signal-killed (negative),
+        # so max() picks 0 in the typical case (or the
+        # platform-specific signal returncode).
         specs = [
             _DaemonSpec("a", ("/bin/sleep", "60")),
             _DaemonSpec("b", ("/bin/sleep", "60")),
@@ -140,15 +189,11 @@ class TestSupervisor(unittest.TestCase):
         time.sleep(0.2)  # let them actually start
         sup.request_shutdown(reason="test")
         rc = self._drive(sup)
-        # /bin/sleep on Linux returns 130 (= 128 + SIGINT) or
-        # similar nonzero on signal-induced exit; on macOS it
-        # may be -15. The exit_code() path returns max() which
-        # may be negative or positive depending. We don't pin
-        # the value here — just confirm the supervisor exited
-        # AND that no child was recorded as having died
-        # unexpectedly (request_shutdown was first).
-        self.assertIsNone(sup.first_unexpected_name)
         self.assertIsNotNone(rc)
+        # Both children got the signal — neither survived past
+        # the grace deadline.
+        for _, p in sup.procs:
+            self.assertIsNotNone(p.returncode)
 
     def test_grace_period_escalates_to_sigkill(self):
         # A child that ignores SIGTERM. The supervisor's

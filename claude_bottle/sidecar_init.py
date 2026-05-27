@@ -2,15 +2,21 @@
 
 PID 1 inside the `claude-bottle-sidecars` bundle image. Spawns
 the configured daemons (egress, pipelock, git-gate, supervise),
-forwards SIGTERM/SIGINT to each child, propagates per-daemon
-stdout+stderr to the container log with a `[name] ` prefix, and
-exits with the first unexpected child exit code. If every child
-exits 0 after a graceful shutdown was requested, exit 0.
+forwards SIGTERM/SIGINT to each child, and propagates per-daemon
+stdout+stderr to the container log with a `[name] ` prefix.
 
-Per the PRD's "init failure semantics" open question, this
-implementation goes with "any unexpected child death tears down
-the rest" — bundling means the daemons share fate. Restart-just-
-this-one logic can land later if operators hit pain.
+Failure policy (interim): when a child dies unexpectedly, the
+supervisor logs the death and leaves the surviving children
+running. The bundle stays up; whatever the dead daemon served
+will start failing, surfacing in the agent's own error path.
+The supervisor itself exits only when (a) the operator/compose
+sends SIGTERM/SIGINT, or (b) every child has died.
+
+Failure policy (eventual): on unexpected death, the supervisor
+restarts the daemon and emits a notification to the supervise
+sidecar so the operator sees the event. That lands in a later
+PR; the interim policy is "don't take the bundle down for one
+sick daemon."
 
 Daemon subset is env-driven. The compose renderer narrows it via
 `CLAUDE_BOTTLE_SIDECAR_DAEMONS=egress,pipelock` for bottles that
@@ -118,8 +124,9 @@ class _Supervisor:
         self.specs = tuple(specs)
         self.procs: list[tuple[_DaemonSpec, subprocess.Popen]] = []
         self.shutdown_at: float | None = None
-        self.first_unexpected_rc: int | None = None
-        self.first_unexpected_name: str | None = None
+        # Names of children that have been logged as having exited
+        # so we only log each death once across watch-loop ticks.
+        self._logged_dead: set[str] = set()
 
     def start_all(self) -> None:
         for spec in self.specs:
@@ -140,21 +147,24 @@ class _Supervisor:
 
     def tick(self) -> bool:
         """One iteration of the watch loop. Returns True when every
-        child has exited and the supervisor can return."""
+        child has exited and the supervisor can return.
+
+        A child dying unexpectedly is logged but does NOT initiate
+        shutdown — see the module docstring's failure-policy
+        section. Shutdown is signal-driven only."""
         for spec, p in self.procs:
             rc = p.poll()
-            if rc is None:
+            if rc is None or spec.name in self._logged_dead:
                 continue
-            if self.first_unexpected_rc is None and self.shutdown_at is None:
-                # First exit BEFORE we asked for shutdown: that's
-                # the failure signal. Record it and tear down.
-                self.first_unexpected_rc = rc
-                self.first_unexpected_name = spec.name
+            self._logged_dead.add(spec.name)
+            if self.shutdown_at is None:
                 _log(
-                    f"{spec.name} exited unexpectedly with code {rc}; "
-                    "tearing down"
+                    f"{spec.name} exited with code {rc}; leaving "
+                    f"surviving daemons running (operator-visible "
+                    f"via agent-side failure)"
                 )
-                self.request_shutdown(reason="child_exit")
+            else:
+                _log(f"{spec.name} exited with code {rc}")
 
         if self.shutdown_at is not None:
             elapsed = time.monotonic() - self.shutdown_at
@@ -177,10 +187,10 @@ class _Supervisor:
         return all(p.poll() is not None for _, p in self.procs)
 
     def exit_code(self) -> int:
-        if self.first_unexpected_rc is not None:
-            return self.first_unexpected_rc
-        # Graceful shutdown — surface the worst child code so a
-        # daemon that died nonzero during teardown is visible.
+        """Worst child returncode wins. On graceful shutdown every
+        child is signal-killed (negative returncode) and max()
+        returns 0; if some child crashed nonzero before the signal
+        the operator gets that code on container exit."""
         return max((p.returncode for _, p in self.procs), default=0)
 
 
