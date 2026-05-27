@@ -200,19 +200,25 @@ sidecar bundle still in Docker. Selected via
 The integration tests run against whichever backend the env var
 selects and skip cleanly when its prerequisites are missing.
 
-**Known limitation, v1:** smolvm's TSI uses macOS networking, and
-Docker Desktop's container IPs aren't reachable from macOS, so the
-smolmachines bottle dials the sidecar bundle through host loopback
-port-forwards (`127.0.0.1:<random>`). TSI filters by IP only, so the
-allowlist is `127.0.0.1/32` — meaning the agent VM can reach **any
-service bound to macOS's loopback**, not just the bundle's published
-ports. Practical implication: while a smolmachines bottle is running,
-host-local dev services (postgres on 5432, dev servers, etc.) are
-reachable from inside the agent even if you intended them to be
-host-private. The docker backend keeps the bottle on a `--internal`
-docker network and doesn't have this issue. A future revision will
-narrow this via a per-bottle loopback alias + host-side proxy (see
-PRD 0023's "loopback scoping" section).
+**One-time sudo on first launch (macOS):** smolmachines bottles
+each reserve a loopback alias from a pool (`127.0.0.16` ..
+`127.0.0.31`) and bind their bundle's port-forwards to it; the
+first `./cli.py start` after each reboot prompts for sudo to add
+missing aliases via `ifconfig lo0 alias`. Aliases persist until
+reboot; subsequent launches don't prompt. The agent's TSI
+allowlist is the alias's `/32`, so each bottle can only reach
+its own bundle's published ports — not other bottles' ports,
+not other host loopback services (postgres, dev servers, etc.).
+
+This enforcement requires a workaround for a smolvm 0.8.0 bug:
+the CLI's `--allow-cidr` flag is silently dropped when combined
+with `--from <smolmachine>`. The launcher patches smolvm's
+persistent state DB
+(`~/Library/Application Support/smolvm/server/smolvm.db`)
+directly between `machine create` and `machine start` to set
+the allowlist. The hack falls away automatically when smolvm
+honors the flag upstream — see the `loopback_alias` module's
+docstring for the investigation trail.
 
 ## Manifest
 

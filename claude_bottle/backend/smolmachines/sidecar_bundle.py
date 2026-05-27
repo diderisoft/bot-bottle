@@ -70,13 +70,19 @@ class BundleLaunchSpec:
     environment: Sequence[str] = field(default_factory=tuple)
     # (host_path, container_path, read_only) bind mounts.
     volumes: Sequence[tuple[str, str, bool]] = field(default_factory=tuple)
-    # Container ports to publish on the host's 127.0.0.1, random
+    # Container ports to publish on `publish_host_ip`, random
     # host-side port per entry. The smolvm guest's TSI talks via
     # macOS networking, so docker container IPs (192.168.x.x in
     # the daemon's bridge) aren't directly reachable from the
     # guest — host-loopback port-forwards are. Egress's port
     # is bundle-internal and never published.
     ports_to_publish: Sequence[int] = field(default_factory=tuple)
+    # Loopback IP to bind published ports against. Per-bottle
+    # loopback aliases (`127.0.0.16` etc., added via sudo
+    # ifconfig lo0 alias) narrow the TSI allowlist so a bottle
+    # can't reach other bottles' (or other host services') ports
+    # via 127.0.0.1.
+    publish_host_ip: str = "127.0.0.1"
 
 
 def create_bundle_network(network_name: str, subnet: str, gateway: str) -> None:
@@ -145,8 +151,10 @@ def start_bundle(spec: BundleLaunchSpec, *,
     # Loopback-only host port-forwards — the smolvm guest's TSI
     # uses macOS networking, and macOS loopback is the only host
     # surface that round-trips into Docker Desktop's daemon VM.
+    # Binds to the per-bottle alias so TSI's IP-only allowlist
+    # narrows reachability to this bottle's bundle only.
     for port in spec.ports_to_publish:
-        argv += ["-p", f"127.0.0.1::{port}"]
+        argv += ["-p", f"{spec.publish_host_ip}::{port}"]
     argv.append(spec.image)
     result = subprocess.run(
         argv, capture_output=True, text=True,
@@ -159,13 +167,15 @@ def start_bundle(spec: BundleLaunchSpec, *,
         )
 
 
-def bundle_host_port(slug: str, container_port: int) -> int:
+def bundle_host_port(
+    slug: str, container_port: int, *, host_ip: str = "127.0.0.1",
+) -> int:
     """`docker port <bundle> <container_port>/tcp` → the random
-    host-side port docker assigned. Called after `start_bundle`
-    on each container port listed in `BundleLaunchSpec
-    .ports_to_publish` so the launch step can build the agent's
-    HTTPS_PROXY / GIT_GATE / SUPERVISE URLs in
-    `127.0.0.1:<host port>` form."""
+    host-side port docker assigned for the binding on `host_ip`.
+    Called after `start_bundle` on each container port listed in
+    `BundleLaunchSpec.ports_to_publish` so the launch step can
+    build the agent's HTTPS_PROXY / GIT_GATE / SUPERVISE URLs in
+    `<host_ip>:<host port>` form."""
     container = bundle_container_name(slug)
     result = subprocess.run(
         ["docker", "port", container, f"{container_port}/tcp"],
@@ -176,14 +186,22 @@ def bundle_host_port(slug: str, container_port: int) -> int:
             f"docker port {container} {container_port}/tcp failed: "
             f"{(result.stderr or '').strip() or '<no stderr>'}"
         )
-    # `127.0.0.1:54321\n` — rpartition on last colon gives the port.
-    line = (result.stdout or "").splitlines()[0].strip()
-    _, _, port_str = line.rpartition(":")
-    try:
-        return int(port_str)
-    except ValueError:
-        die(f"unexpected `docker port` output: {line!r}")
-        return -1  # unreachable; die() never returns
+    # Each line looks like `127.0.0.16:54321` — one per address
+    # family / host IP. Match on the expected host_ip prefix so
+    # bottles bound to per-bottle aliases pick the right line.
+    for raw in (result.stdout or "").splitlines():
+        line = raw.strip()
+        if line.startswith(f"{host_ip}:"):
+            _, _, port_str = line.rpartition(":")
+            try:
+                return int(port_str)
+            except ValueError:
+                die(f"unexpected `docker port` output: {line!r}")
+    die(
+        f"no port mapping on {host_ip} for {container} "
+        f"{container_port}/tcp; got: {(result.stdout or '').strip()!r}"
+    )
+    return -1  # unreachable; die() never returns
 
 
 def stop_bundle(slug: str) -> None:
