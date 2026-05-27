@@ -9,18 +9,34 @@ context-manager contract is satisfied.
 User context: `smolvm machine exec` runs commands as root in the
 VM, but the agent image's USER is `node` and claude-code refuses
 to run as root with `--dangerously-skip-permissions`. Both
-`exec_claude` and `exec` wrap commands in `runuser -l node -c`
-so they execute as the node user (and pick up node's $HOME /
-$USER from the login shell) — matches the docker backend's
-default-USER behavior."""
+`exec_claude` and `exec` switch to the requested user (default
+`node`) via `runuser -u <user> --` and set `HOME` / `USER`
+through `smolvm -e` — avoiding `runuser -l`'s login-shell wiring
+(PAM session setup, /etc/profile sourcing) which can hang on a
+minimal Debian VM with no PAM session config."""
 
 from __future__ import annotations
 
-import shlex
 import subprocess
 
 from .. import Bottle, ExecResult
 from . import smolvm as _smolvm
+
+
+# Per-user env the agent image's USER (node) expects. claude
+# reads ~/.claude.json + writes session state under ~/.claude/;
+# bare `runuser -u` inherits root's HOME=/root, which claude
+# can't write to. Set HOME / USER explicitly through smolvm -e
+# so the child process sees them.
+_HOME_FOR = {
+    "node": "/home/node",
+    "root": "/root",
+}
+
+
+def _env_flags_for(user: str) -> list[str]:
+    home = _HOME_FOR.get(user, f"/home/{user}")
+    return ["-e", f"HOME={home}", "-e", f"USER={user}"]
 
 
 class SmolmachinesBottle(Bottle):
@@ -47,21 +63,18 @@ class SmolmachinesBottle(Bottle):
         scripted exec, wrong for an interactive shell. Drop down
         to `subprocess.run` with the TTY inherited.
 
-        `runuser -l node -c` runs the inner command under node's
-        login shell so $HOME / $USER are set. Without that switch
-        claude bails on `--dangerously-skip-permissions cannot be
-        used with root/sudo privileges`."""
+        UID switches via `runuser -u node --` (not `-l`) so we
+        avoid login-shell wiring. HOME / USER come from `smolvm
+        -e` instead, which sets them on the process env."""
         flags = ["smolvm", "machine", "exec", "--name", self.name]
         if tty:
             flags += ["-i", "-t"]
+        flags += _env_flags_for("node")
         claude_argv = ["claude"]
         if self._prompt_path:
             claude_argv += ["--append-system-prompt-file", self._prompt_path]
         claude_argv += argv
-        # shlex-quote each piece so flags / paths with shell-special
-        # chars survive the runuser -c shell parse.
-        inner = " ".join(shlex.quote(p) for p in claude_argv)
-        flags += ["--", "runuser", "-l", "node", "-c", f"exec {inner}"]
+        flags += ["--", "runuser", "-u", "node", "--", *claude_argv]
         result = subprocess.run(flags, check=False)
         return result.returncode
 
@@ -73,18 +86,23 @@ class SmolmachinesBottle(Bottle):
         on both backends. Pass `user="root"` for tests that need
         root.
 
-        `smolvm machine exec` runs commands as root in the VM, so
-        we always need to switch user (even when the caller asked
-        for root, switching to root is a cheap no-op via
-        `runuser -l root`)."""
-        r = _smolvm.machine_exec(
-            self.name,
-            ["runuser", "-l", user, "-c", script],
+        `runuser -u <user> -- /bin/sh -c <script>` switches UID
+        without invoking a login shell; HOME / USER are set via
+        `smolvm -e` (see `_env_flags_for`)."""
+        argv = (
+            _env_flags_for(user)
+            + ["--", "runuser", "-u", user, "--", "/bin/sh", "-c", script]
+        )
+        # _smolvm.machine_exec expects argv (the bit after `--`);
+        # the -e flags go before, so call smolvm directly.
+        r = subprocess.run(
+            ["smolvm", "machine", "exec", "--name", self.name] + argv,
+            capture_output=True, text=True, check=False,
         )
         return ExecResult(
             returncode=r.returncode,
-            stdout=r.stdout,
-            stderr=r.stderr,
+            stdout=r.stdout or "",
+            stderr=r.stderr or "",
         )
 
     def cp_in(self, host_path: str, container_path: str) -> None:
