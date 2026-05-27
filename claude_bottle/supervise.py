@@ -494,18 +494,6 @@ class Supervise(ABC):
             current_config_dir=current_config_dir,
         )
 
-    @abstractmethod
-    def start(self, plan: SupervisePlan) -> str:
-        """Bring up the supervise sidecar according to `plan`. Returns
-        the target string identifying the running instance — the same
-        value to pass to `.stop`. Backend-specific."""
-
-    @abstractmethod
-    def stop(self, target: str) -> None:
-        """Tear down the supervise sidecar identified by `target`.
-        Idempotent: a missing target is success."""
-
-
 # --- Helpers ---------------------------------------------------------------
 
 

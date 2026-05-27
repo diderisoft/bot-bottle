@@ -344,14 +344,3 @@ class PipelockProxy(ABC):
         yaml_path.chmod(0o600)
         return PipelockProxyPlan(yaml_path=yaml_path, slug=slug)
 
-    @abstractmethod
-    def start(self, plan: PipelockProxyPlan) -> str:
-        """Bring up the pipelock sidecar according to `plan`. Returns
-        the proxy_target string identifying the running instance — the
-        same value to pass to `.stop`. Backend-specific."""
-
-    @abstractmethod
-    def stop(self, proxy_target: str) -> None:
-        """Tear down the pipelock sidecar identified by `proxy_target`
-        (the value `.start` returned). Idempotent: a missing target is
-        success. Backend-specific."""
