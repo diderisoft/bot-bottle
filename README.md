@@ -205,21 +205,20 @@ each reserve a loopback alias from a pool (`127.0.0.16` ..
 `127.0.0.31`) and bind their bundle's port-forwards to it; the
 first `./cli.py start` after each reboot prompts for sudo to add
 missing aliases via `ifconfig lo0 alias`. Aliases persist until
-reboot; subsequent launches don't prompt.
+reboot; subsequent launches don't prompt. The agent's TSI
+allowlist is the alias's `/32`, so each bottle can only reach
+its own bundle's published ports — not other bottles' ports,
+not other host loopback services (postgres, dev servers, etc.).
 
-**Known v1 limitation — agent can reach the whole host
-loopback:** the alias-allocation infrastructure exists, but TSI
-allowlist enforcement is blocked on a smolvm 0.8.0 upstream bug:
-`smolvm machine create --from <smolmachine> --net --allow-cidr
-X/32` silently drops the allowlist (the persisted
-`agent.config.json` shows `allowed_cidrs: null`, and the running
-VM reaches `127.0.0.0/8` regardless). So while a smolmachines
-bottle is running, host-local dev services (postgres on 5432,
-dev servers, etc.) are reachable from inside the agent even
-though the launcher's `--allow-cidr` says otherwise. The docker
-backend keeps the bottle on a `--internal` docker network and
-doesn't have this issue. Tracked in gitea issue #75; will
-auto-resolve once smolvm honors the flag.
+This enforcement requires a workaround for a smolvm 0.8.0 bug:
+the CLI's `--allow-cidr` flag is silently dropped when combined
+with `--from <smolmachine>`. The launcher patches smolvm's
+persistent state DB
+(`~/Library/Application Support/smolvm/server/smolvm.db`)
+directly between `machine create` and `machine start` to set
+the allowlist. The hack falls away automatically when smolvm
+honors the flag upstream — see the `loopback_alias` module's
+docstring for the investigation trail.
 
 ## Manifest
 

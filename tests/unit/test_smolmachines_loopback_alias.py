@@ -7,8 +7,12 @@ inspecting running bundle containers' port bindings."""
 
 from __future__ import annotations
 
+import json
+import sqlite3
 import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from claude_bottle.backend.smolmachines import loopback_alias
@@ -185,6 +189,89 @@ class TestAliasInUseDetection(unittest.TestCase):
             side_effect=[_ok(stdout=ps_out), _fail("inspect failed")],
         ):
             self.assertEqual(set(), loopback_alias._aliases_in_use())
+
+
+class TestForceAllowlist(unittest.TestCase):
+    """Smolvm 0.8.0 silently drops `--allow-cidr` with `--from`,
+    so `force_allowlist` opens the state DB directly and sets
+    the row's `allowed_cidrs` field. Round-trip tests against a
+    real SQLite DB to lock down the BLOB encoding."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory(prefix="smolvm-db.")
+        self.db = Path(self._tmp.name) / "smolvm.db"
+        con = sqlite3.connect(str(self.db))
+        con.execute(
+            "CREATE TABLE vms (name TEXT PRIMARY KEY NOT NULL, data BLOB NOT NULL)"
+        )
+        # Mimic smolvm's row shape (the JSON keys that exist on
+        # creation; allowed_cidrs is the field we patch).
+        cfg = {
+            "name": "demo-vm",
+            "cpus": 4,
+            "mem": 8192,
+            "network": True,
+            "allowed_cidrs": None,
+        }
+        con.execute(
+            "INSERT INTO vms (name, data) VALUES (?, ?)",
+            ("demo-vm", sqlite3.Binary(json.dumps(cfg).encode())),
+        )
+        con.commit()
+        con.close()
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_patches_allowed_cidrs_on_row(self):
+        with patch.object(loopback_alias, "_is_macos", return_value=True), \
+             patch.object(loopback_alias, "_SMOLVM_DB_PATH", self.db):
+            loopback_alias.force_allowlist("demo-vm", ["127.0.0.16/32"])
+
+        con = sqlite3.connect(str(self.db))
+        row = con.execute(
+            "SELECT typeof(data), data FROM vms WHERE name='demo-vm'",
+        ).fetchone()
+        con.close()
+        # Must round-trip as BLOB (the column type smolvm reads).
+        self.assertEqual("blob", row[0])
+        cfg = json.loads(row[1])
+        self.assertEqual(["127.0.0.16/32"], cfg["allowed_cidrs"])
+        # Other fields preserved verbatim.
+        self.assertEqual(4, cfg["cpus"])
+        self.assertTrue(cfg["network"])
+
+    def test_noop_on_linux(self):
+        with patch.object(loopback_alias, "_is_macos", return_value=False), \
+             patch.object(loopback_alias, "_SMOLVM_DB_PATH", self.db):
+            loopback_alias.force_allowlist("demo-vm", ["127.0.0.16/32"])
+        # DB row should be untouched.
+        con = sqlite3.connect(str(self.db))
+        cfg = json.loads(con.execute(
+            "SELECT data FROM vms WHERE name='demo-vm'",
+        ).fetchone()[0])
+        con.close()
+        self.assertIsNone(cfg["allowed_cidrs"])
+
+    def test_dies_on_missing_db(self):
+        with patch.object(loopback_alias, "_is_macos", return_value=True), \
+             patch.object(
+                 loopback_alias, "_SMOLVM_DB_PATH",
+                 Path("/nonexistent/smolvm.db"),
+             ), patch.object(
+                 loopback_alias, "die", side_effect=SystemExit("die"),
+             ):
+            with self.assertRaises(SystemExit):
+                loopback_alias.force_allowlist("demo-vm", ["127.0.0.16/32"])
+
+    def test_dies_on_missing_row(self):
+        with patch.object(loopback_alias, "_is_macos", return_value=True), \
+             patch.object(loopback_alias, "_SMOLVM_DB_PATH", self.db), \
+             patch.object(
+                 loopback_alias, "die", side_effect=SystemExit("die"),
+             ):
+            with self.assertRaises(SystemExit):
+                loopback_alias.force_allowlist("not-in-db", ["127.0.0.16/32"])
 
 
 if __name__ == "__main__":

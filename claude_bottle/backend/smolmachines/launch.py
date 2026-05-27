@@ -202,6 +202,12 @@ def launch(
             env=plan.guest_env,
         )
         stack.callback(_smolvm.machine_delete, plan.machine_name)
+        # Workaround smolvm 0.8.0: `--allow-cidr` is silently
+        # dropped when combined with `--from`. Patch the persisted
+        # state DB to set the allowlist before start so the booted
+        # VM's TSI actually enforces. See loopback_alias's module
+        # docstring for the investigation that led here.
+        _loopback.force_allowlist(plan.machine_name, [f"{loopback_ip}/32"])
         _smolvm.machine_start(plan.machine_name)
         stack.callback(_smolvm.machine_stop, plan.machine_name)
 

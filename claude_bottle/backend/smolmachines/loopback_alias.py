@@ -1,30 +1,31 @@
-"""Per-bottle loopback alias allocation (PRD 0023, follow-up to
-the Docker-Desktop fix in PR #74).
+"""Per-bottle loopback alias allocation + TSI allowlist
+enforcement (PRD 0023, follow-up to PR #74).
 
 After the pivot to host-loopback port-forwards, the smolmachines
 TSI allowlist was `127.0.0.1/32` — which meant the agent VM could
 reach **any** service bound to macOS's loopback, not just the
-bundle's published ports. That's a real downgrade from the
-docker backend's `--internal` network isolation.
+bundle's published ports. Real downgrade from the docker
+backend's `--internal` network isolation.
 
-This module is the host-side half of the eventual fix: allocate
-each bottle a unique loopback alias (`127.0.0.16` .. `127.0.0.31`
-by default), bind the bundle's port-forwards to that alias, and
-pass the alias's /32 as smolvm's `--allow-cidr`. If TSI enforced
-the allowlist, the agent could only reach its own bundle.
+This module narrows the allowlist by allocating each bottle a
+unique loopback alias (`127.0.0.16` .. `127.0.0.31`). The
+bundle's port-forwards bind to that alias, and the alias's /32
+is what TSI allows.
 
-**Upstream block, smolvm 0.8.0:** verified empirically that
-`smolvm machine create --from <smolmachine> --net --allow-cidr
-X/32` silently drops the allowlist. The persisted
-`agent.config.json` shows `allowed_cidrs: null`, and the running
-VM can reach any host loopback service regardless of the
-flag. `machine update --allow-cidr` doesn't exist; stop-edit-
-start of `agent.config.json` doesn't work (the file is removed
-on stop); `--smolfile` is mutually exclusive with `--from`. So
-the alias scoping infrastructure lives here, ready, but the
-TSI enforcement is blocked on a smolvm upstream fix. Until that
-lands, the agent can still reach the whole `127.0.0.0/8`. The
-README + gitea issue #75 spell this out.
+**Smolvm 0.8.0 quirk + workaround.** `smolvm machine create
+--from <smolmachine> --net --allow-cidr X/32` silently drops the
+flag — verified empirically that the agent process's allowlist
+ends up `null` in smolvm's persistent state DB (`~/Library/
+Application Support/smolvm/server/smolvm.db`, `vms` table,
+`data` BLOB), and the booted VM reaches all of `127.0.0.0/8`
+regardless of what we passed. Workaround: after machine_create,
+open the SQLite DB and patch the row's `allowed_cidrs` field
+directly. Smolvm reads the DB at machine_start, so the patched
+value takes effect on boot. Tested: enforcement is real — the
+guest's connect to a non-allowlisted IP fails with `Permission
+denied`. Other paths we tried (machine update, stop-edit-
+agent.config.json-restart, --smolfile, --image localhost:N/...)
+were dead ends.
 
 macOS only configures `127.0.0.1` on `lo0` by default; the
 additional aliases require `sudo ifconfig lo0 alias`. We lazily
@@ -35,7 +36,7 @@ prompt.
 Linux native daemons share the host's network namespace; the
 whole `127.0.0.0/8` is reachable by default and aliases are
 unnecessary. The pool logic detects native-Linux and skips sudo
-entirely.
+entirely; the DB patch is also gated on macOS.
 
 Allocation is coordinated by inspecting running bundle
 containers' published host IPs — each bottle's bundle owns the
@@ -48,10 +49,28 @@ import json
 import os
 import platform
 import re
+import sqlite3
 import subprocess
+from pathlib import Path
 from typing import Iterable
 
 from ...log import die, info
+
+
+# smolvm's persistent VM state on macOS — a SQLite DB whose `vms`
+# table holds one JSON BLOB per machine. The Linux path is
+# different, but smolmachines is macOS-only in v1 (PRD 0023) so
+# we hard-code this. If the file moves under us we'll see a
+# clear FileNotFoundError; not worth defensive cross-platform
+# detection until the backend actually needs Linux.
+_SMOLVM_DB_PATH = (
+    Path.home()
+    / "Library"
+    / "Application Support"
+    / "smolvm"
+    / "server"
+    / "smolvm.db"
+)
 
 
 # Sixteen aliases by default. Tunable for hosts that want more
@@ -101,6 +120,52 @@ def ensure_pool() -> None:
                 f"{result.returncode}). Re-run with sudo available, "
                 f"or add manually: sudo ifconfig lo0 alias {ip}/32 up"
             )
+
+
+def force_allowlist(machine_name: str, allowed_cidrs: list[str]) -> None:
+    """Patch smolvm's persistent VM-state DB to set the machine's
+    `allowed_cidrs` to the given list. Workaround for smolvm
+    0.8.0's silent-drop of `--allow-cidr` when used with `--from`.
+
+    Must run AFTER `smolvm machine create` (the row has to
+    exist) and BEFORE `smolvm machine start` (smolvm reads the
+    row on start; in-flight VMs don't pick up changes). Once
+    smolvm honors the CLI flag upstream this whole function is
+    redundant — flag-respecting create + remove this call from
+    launch.
+
+    No-op on non-macOS — the DB path differs and the Linux
+    smolmachines code path isn't exercised in v1."""
+    if not _is_macos():
+        return
+    if not _SMOLVM_DB_PATH.is_file():
+        die(
+            f"smolvm state DB not found at {_SMOLVM_DB_PATH}. "
+            f"smolvm 0.8.0 expected? `smolvm --version` to check."
+        )
+    con = sqlite3.connect(str(_SMOLVM_DB_PATH))
+    try:
+        cur = con.cursor()
+        row = cur.execute(
+            "SELECT data FROM vms WHERE name = ?", (machine_name,),
+        ).fetchone()
+        if row is None:
+            die(
+                f"smolvm DB has no row for machine {machine_name!r} — "
+                f"machine_create must run before force_allowlist."
+            )
+        cfg = json.loads(row[0])
+        cfg["allowed_cidrs"] = list(allowed_cidrs)
+        # Write as BLOB (the column type smolvm uses) — passing a
+        # plain str makes sqlite store it as Text and smolvm then
+        # fails to read it.
+        cur.execute(
+            "UPDATE vms SET data = ? WHERE name = ?",
+            (sqlite3.Binary(json.dumps(cfg).encode()), machine_name),
+        )
+        con.commit()
+    finally:
+        con.close()
 
 
 def allocate(slug: str) -> str:
@@ -186,4 +251,4 @@ def _host_ips_for_container(name: str) -> Iterable[str]:
     return seen
 
 
-__all__ = ["allocate", "ensure_pool"]
+__all__ = ["allocate", "ensure_pool", "force_allowlist"]
