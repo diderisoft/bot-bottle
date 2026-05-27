@@ -23,7 +23,7 @@ FROM node:22-slim
 # tool (curl itself, plus anything that shells out to it) works
 # against pipelock's bumped TLS without the agent needing local DNS.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends git ca-certificates openssh-client socat curl \
+  && apt-get install -y --no-install-recommends git ca-certificates openssh-client socat curl dnsutils \
   && rm -rf /var/lib/apt/lists/*
 
 # Install claude-code globally. Pinned to the version verified in the v1
