@@ -7,11 +7,24 @@ reach **any** service bound to macOS's loopback, not just the
 bundle's published ports. That's a real downgrade from the
 docker backend's `--internal` network isolation.
 
-This module narrows the allowlist by allocating each bottle a
-unique loopback alias (`127.0.0.16` .. `127.0.0.31` by default).
-The bundle's port-forwards bind to that alias, TSI's allowlist is
-the alias /32, and other host loopback services stay invisible to
-the bottle.
+This module is the host-side half of the eventual fix: allocate
+each bottle a unique loopback alias (`127.0.0.16` .. `127.0.0.31`
+by default), bind the bundle's port-forwards to that alias, and
+pass the alias's /32 as smolvm's `--allow-cidr`. If TSI enforced
+the allowlist, the agent could only reach its own bundle.
+
+**Upstream block, smolvm 0.8.0:** verified empirically that
+`smolvm machine create --from <smolmachine> --net --allow-cidr
+X/32` silently drops the allowlist. The persisted
+`agent.config.json` shows `allowed_cidrs: null`, and the running
+VM can reach any host loopback service regardless of the
+flag. `machine update --allow-cidr` doesn't exist; stop-edit-
+start of `agent.config.json` doesn't work (the file is removed
+on stop); `--smolfile` is mutually exclusive with `--from`. So
+the alias scoping infrastructure lives here, ready, but the
+TSI enforcement is blocked on a smolvm upstream fix. Until that
+lands, the agent can still reach the whole `127.0.0.0/8`. The
+README + gitea issue #75 spell this out.
 
 macOS only configures `127.0.0.1` on `lo0` by default; the
 additional aliases require `sudo ifconfig lo0 alias`. We lazily

@@ -200,14 +200,26 @@ sidecar bundle still in Docker. Selected via
 The integration tests run against whichever backend the env var
 selects and skip cleanly when its prerequisites are missing.
 
-**One-time sudo on first launch (macOS):** smolmachines needs
-per-bottle loopback aliases (`127.0.0.16` .. `127.0.0.31`) on `lo0`
-so each bottle's TSI allowlist scopes to its own /32. The first
-`./cli.py start` after each reboot prompts for sudo to add the pool
-via `ifconfig lo0 alias`. Aliases persist until reboot; subsequent
-launches don't prompt. Without this, every bottle would share
-`127.0.0.1` and be able to reach unrelated host services on the
-loopback.
+**One-time sudo on first launch (macOS):** smolmachines bottles
+each reserve a loopback alias from a pool (`127.0.0.16` ..
+`127.0.0.31`) and bind their bundle's port-forwards to it; the
+first `./cli.py start` after each reboot prompts for sudo to add
+missing aliases via `ifconfig lo0 alias`. Aliases persist until
+reboot; subsequent launches don't prompt.
+
+**Known v1 limitation — agent can reach the whole host
+loopback:** the alias-allocation infrastructure exists, but TSI
+allowlist enforcement is blocked on a smolvm 0.8.0 upstream bug:
+`smolvm machine create --from <smolmachine> --net --allow-cidr
+X/32` silently drops the allowlist (the persisted
+`agent.config.json` shows `allowed_cidrs: null`, and the running
+VM reaches `127.0.0.0/8` regardless). So while a smolmachines
+bottle is running, host-local dev services (postgres on 5432,
+dev servers, etc.) are reachable from inside the agent even
+though the launcher's `--allow-cidr` says otherwise. The docker
+backend keeps the bottle on a `--internal` docker network and
+doesn't have this issue. Tracked in gitea issue #75; will
+auto-resolve once smolvm honors the flag.
 
 ## Manifest
 
