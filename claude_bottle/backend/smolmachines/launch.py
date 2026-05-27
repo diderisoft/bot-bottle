@@ -170,10 +170,22 @@ def launch(
         # Stamp the URLs onto the plan + guest_env. provision_git
         # and provision_supervise read the plan fields; the agent
         # reads guest_env on every exec_claude.
+        #
+        # NO_PROXY has to include the per-bottle loopback alias —
+        # otherwise claude's HTTPS_PROXY catches direct calls to
+        # the supervise URL (`http://<alias>:<port>/`) and proxies
+        # them through egress, which has no route for the alias
+        # and rejects with "Failed to connect". The git-gate URL
+        # uses git://, not affected by HTTP_PROXY, so the alias
+        # only has to be in NO_PROXY for the MCP / supervise
+        # path. Append rather than overwrite so prepare.py's
+        # `localhost,127.0.0.1` baseline stays in place.
+        existing_no_proxy = plan.guest_env.get("NO_PROXY", "localhost,127.0.0.1")
         guest_env = {
             **plan.guest_env,
             "HTTPS_PROXY": agent_proxy_url,
             "HTTP_PROXY":  agent_proxy_url,
+            "NO_PROXY":    f"{existing_no_proxy},{loopback_ip}",
         }
         if agent_git_gate_host:
             guest_env["GIT_GATE_URL"] = f"git://{agent_git_gate_host}"
