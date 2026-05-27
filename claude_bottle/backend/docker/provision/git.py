@@ -19,9 +19,8 @@ import os
 import subprocess
 from pathlib import Path
 
-from ....git_gate import GIT_GATE_HOSTNAME
+from ....git_gate import GIT_GATE_HOSTNAME, git_gate_render_gitconfig
 from ....log import info
-from ....manifest import GitEntry
 from .. import util as docker_mod
 from ..bottle_plan import DockerBottlePlan
 
@@ -56,26 +55,6 @@ def _provision_cwd_git(plan: DockerBottlePlan, target: str) -> None:
     )
 
 
-def render_git_gate_gitconfig(entries: tuple[GitEntry, ...]) -> str:
-    """Render the ~/.gitconfig content for git-gate `insteadOf`
-    rewrites. Pure host-side, no docker; exposed for tests.
-
-    Empty `entries` returns an empty string so callers can no-op
-    cleanly without conditional formatting at the call site."""
-    if not entries:
-        return ""
-    out = [
-        "# claude-bottle git-gate (PRD 0008): every git operation against\n",
-        "# a declared upstream routes through the gate, which mirrors\n",
-        "# the upstream bidirectionally (gitleaks-scanned push;\n",
-        "# fetch-from-upstream-before-every-upload-pack via access-hook).\n",
-    ]
-    for entry in entries:
-        out.append(f'[url "git://{GIT_GATE_HOSTNAME}/{entry.Name}.git"]\n')
-        out.append(f"\tinsteadOf = {entry.Upstream}\n")
-    return "".join(out)
-
-
 def _provision_git_gate_config(plan: DockerBottlePlan, target: str) -> None:
     """Write ~/.gitconfig in the bottle with the git-gate
     insteadOf rules. No-op when the bottle has no `git` entries."""
@@ -86,7 +65,7 @@ def _provision_git_gate_config(plan: DockerBottlePlan, target: str) -> None:
     container_home = os.environ.get("CLAUDE_BOTTLE_CONTAINER_HOME", "/home/node")
     container_gitconfig = f"{container_home}/.gitconfig"
 
-    content = render_git_gate_gitconfig(bottle.git)
+    content = git_gate_render_gitconfig(bottle.git, GIT_GATE_HOSTNAME)
     config_file = plan.stage_dir / "agent_gitconfig"
     config_file.write_text(content)
     config_file.chmod(0o600)

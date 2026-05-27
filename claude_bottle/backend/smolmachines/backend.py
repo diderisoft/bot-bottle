@@ -13,8 +13,11 @@ from . import prepare as _prepare
 from .bottle import SmolmachinesBottle
 from .bottle_cleanup_plan import SmolmachinesBottleCleanupPlan
 from .bottle_plan import SmolmachinesBottlePlan
+from .provision import ca as _ca
+from .provision import git as _git
 from .provision import prompt as _prompt
 from .provision import skills as _skills
+from .provision import supervise as _supervise
 
 
 class SmolmachinesBottleBackend(
@@ -37,6 +40,11 @@ class SmolmachinesBottleBackend(
         with _launch.launch(plan, provision=self.provision) as bottle:
             yield bottle
 
+    def provision_ca(
+        self, plan: SmolmachinesBottlePlan, target: str
+    ) -> None:
+        _ca.provision_ca(plan, target)
+
     def provision_prompt(
         self, plan: SmolmachinesBottlePlan, target: str
     ) -> str | None:
@@ -50,10 +58,12 @@ class SmolmachinesBottleBackend(
     def provision_git(
         self, plan: SmolmachinesBottlePlan, target: str
     ) -> None:
-        # Chunk 4 follow-on: needs the git-gate inner Plan (so the
-        # gitconfig insteadOf URL points at the gate's host) and
-        # the agent image must contain `git`. Stub for chunk 4a.
-        pass
+        _git.provision_git(plan, target)
+
+    def provision_supervise(
+        self, plan: SmolmachinesBottlePlan, target: str
+    ) -> None:
+        _supervise.provision_supervise(plan, target)
 
     def prepare_cleanup(self) -> SmolmachinesBottleCleanupPlan:
         return SmolmachinesBottleCleanupPlan()

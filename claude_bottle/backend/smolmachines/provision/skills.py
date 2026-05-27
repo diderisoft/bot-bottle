@@ -18,23 +18,26 @@ from ..bottle_plan import SmolmachinesBottlePlan
 
 
 # In-guest path mirrors the docker backend's claude-skills
-# convention (~/.claude/skills/<name>/). For smolmachines the
-# agent is root by default; chunk 5+ may swap to a node user
-# in the real claude-bottle image, at which point this path
-# follows /home/node/ — the env knob below provides the override.
-_DEFAULT_SKILLS_DIR = "/root/.claude/skills"
+# convention (~/.claude/skills/<name>/) under the node user's
+# home — same path as the real claude-bottle image's
+# /home/node/.claude/skills (pre-created in the Dockerfile).
+_DEFAULT_SKILLS_DIR = "/home/node/.claude/skills"
 
 
 def provision_skills(plan: SmolmachinesBottlePlan, target: str) -> None:
     """Copy each of the agent's named skills from the host's
     ~/.claude/skills/<name>/ into the guest's equivalent path.
-    For each skill: `mkdir -p` the destination, then
-    `smolvm machine cp` the host source dir over. No-op when the
-    agent has no skills.
+    For each skill: `mkdir -p` the destination, `smolvm machine cp`
+    the host source dir over, then chown the result to node:node so
+    the agent can read it. No-op when the agent has no skills.
 
     smolvm machine cp on a directory copies recursively (same
     semantics as `cp -r`); unlike docker cp's trailing-slash
-    convention, smolvm doesn't need the `/.` suffix dance."""
+    convention, smolvm doesn't need the `/.` suffix dance.
+
+    machine cp lands files as root inside the VM, so we chown each
+    skill tree over to node:node after the copy — same pattern as
+    the docker backend's provision_prompt."""
     agent = plan.spec.manifest.agents[plan.spec.agent_name]
     if not agent.skills:
         return
@@ -57,3 +60,4 @@ def provision_skills(plan: SmolmachinesBottlePlan, target: str) -> None:
         # Wipe any prior copy so re-runs don't accumulate.
         _smolvm.machine_exec(target, ["rm", "-rf", dst])
         _smolvm.machine_cp(src, f"{target}:{dst}")
+        _smolvm.machine_exec(target, ["chown", "-R", "node:node", dst])

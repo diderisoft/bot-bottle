@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Mapping
 
 from .log import die
-from .manifest import Bottle
+from .manifest import Bottle, GitEntry
 
 
 # Short network alias for git-gate inside the sidecar bundle. The
@@ -138,6 +138,35 @@ def git_gate_aggregate_extra_hosts(
                     f"/etc/hosts; pick one IP."
                 )
     return merged
+
+
+def git_gate_render_gitconfig(
+    entries: tuple[GitEntry, ...], gate_host: str
+) -> str:
+    """Render the agent's ~/.gitconfig content for git-gate
+    `insteadOf` rewrites. Pure host-side, no docker / smolvm;
+    exposed for tests + reuse across backends.
+
+    `gate_host` is the part of the URL between `git://` and the
+    repo path — backends differ here:
+      - docker:        `git-gate` (the short network alias)
+      - smolmachines:  `<bundle_ip>:<port>` (no DNS in the
+                       TSI-allowlisted guest)
+
+    Empty `entries` returns an empty string so callers can no-op
+    cleanly without conditional formatting at the call site."""
+    if not entries:
+        return ""
+    out = [
+        "# claude-bottle git-gate (PRD 0008): every git operation against\n",
+        "# a declared upstream routes through the gate, which mirrors\n",
+        "# the upstream bidirectionally (gitleaks-scanned push;\n",
+        "# fetch-from-upstream-before-every-upload-pack via access-hook).\n",
+    ]
+    for entry in entries:
+        out.append(f'[url "git://{gate_host}/{entry.Name}.git"]\n')
+        out.append(f"\tinsteadOf = {entry.Upstream}\n")
+    return "".join(out)
 
 
 def git_gate_known_hosts_line(host: str, port: str, key: str) -> str:

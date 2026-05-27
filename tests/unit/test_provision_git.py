@@ -1,19 +1,28 @@
-"""Unit: render of ~/.gitconfig pushInsteadOf rules (PRD 0008)."""
+"""Unit: render of ~/.gitconfig insteadOf rules (PRD 0008).
+
+The render moved to `claude_bottle.git_gate` so both backends
+share it; tests live here because docker's provision_git is the
+original consumer."""
 
 import unittest
 
-from claude_bottle.backend.docker.provision.git import render_git_gate_gitconfig
+from claude_bottle.git_gate import (
+    GIT_GATE_HOSTNAME,
+    git_gate_render_gitconfig,
+)
 from tests.fixtures import fixture_minimal, fixture_with_git
 
 
 class TestGitGateGitconfigRender(unittest.TestCase):
     def test_empty_entries_renders_nothing(self):
         bottle = fixture_minimal().bottles["dev"]
-        self.assertEqual("", render_git_gate_gitconfig(bottle.git))
+        self.assertEqual(
+            "", git_gate_render_gitconfig(bottle.git, GIT_GATE_HOSTNAME),
+        )
 
     def test_one_block_per_entry(self):
         bottle = fixture_with_git().bottles["dev"]
-        out = render_git_gate_gitconfig(bottle.git)
+        out = git_gate_render_gitconfig(bottle.git, GIT_GATE_HOSTNAME)
         # Both entries map to a [url ...] block keyed on the gate's
         # short network alias (`git-gate`) inside the sidecar bundle.
         self.assertIn(
@@ -37,9 +46,18 @@ class TestGitGateGitconfigRender(unittest.TestCase):
         # gate push and leave fetch on the original URL — exactly the
         # v1 design we've moved past.
         bottle = fixture_with_git().bottles["dev"]
-        out = render_git_gate_gitconfig(bottle.git)
+        out = git_gate_render_gitconfig(bottle.git, GIT_GATE_HOSTNAME)
         self.assertIn("\tinsteadOf", out)
         self.assertNotIn("pushInsteadOf", out)
+
+    def test_gate_host_can_be_ip_port_form(self):
+        # The smolmachines backend's TSI-allowlisted guest has no
+        # DNS, so it dials git-gate via `<bundle_ip>:<port>`.
+        bottle = fixture_with_git().bottles["dev"]
+        out = git_gate_render_gitconfig(bottle.git, "192.168.20.2:9418")
+        self.assertIn(
+            '[url "git://192.168.20.2:9418/claude-bottle.git"]', out,
+        )
 
 
 if __name__ == "__main__":
