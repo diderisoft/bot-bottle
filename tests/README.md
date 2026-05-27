@@ -40,15 +40,17 @@ Discovery is invoked with `-t .` (top-level dir = repo root) so the
 
 ## What the integration tests cover
 
-- `test_pipelock_sidecar_smoke.py` — drives `DockerPipelockProxy.prepare`
-  + `.start` (the production code path) against a real Docker daemon and
-  probes the sidecar's `/health` from an in-network curl container.
 - `test_dry_run_plan.py` — `cli.py start --dry-run --format=json` emits
   a structured plan that contains the resolved egress allowlist and
   the bottle's runtime, and creates zero Docker resources.
-- `test_orphan_cleanup.py` — `network_remove` and `PipelockProxy.stop`
-  are idempotent against missing resources, so the EXIT trap can call
-  them unconditionally.
+- `test_orphan_cleanup.py` — `network_remove` is idempotent against
+  missing resources, so the EXIT trap can call it unconditionally.
+- `test_sidecar_bundle_image.py` — builds Dockerfile.sidecars and
+  probes that pipelock / gitleaks / mitmdump / supervise are all
+  reachable inside the bundle.
+- `test_sidecar_bundle_compose.py` — end-to-end compose-up of an
+  agent + bundle pair; verifies the agent reaches the bundle via
+  the legacy network aliases.
 
 ## Canaries
 

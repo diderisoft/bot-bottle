@@ -31,7 +31,7 @@ from ...egress import EGRESS_ROUTES_IN_CONTAINER
 from ...egress_addon_core import load_routes
 from ...yaml_subset import YamlSubsetError, parse_yaml_subset
 from .bottle_state import egress_state_dir
-from .egress import egress_container_name
+from .sidecar_bundle import sidecar_bundle_container_name
 from .pipelock_apply import (
     PipelockApplyError,
     apply_allowlist_change,
@@ -81,7 +81,7 @@ def fetch_current_routes(slug: str) -> str:
     for `slug`. Returns the file content as a string. Raises
     EgressApplyError if the sidecar isn't reachable or the read
     fails."""
-    container = egress_container_name(slug)
+    container = sidecar_bundle_container_name(slug)
     r = subprocess.run(
         ["docker", "exec", container, "cat", EGRESS_ROUTES_IN_CONTAINER],
         capture_output=True, text=True, check=False,
@@ -185,7 +185,7 @@ def apply_routes_change(slug: str, new_content: str) -> tuple[str, str]:
 
     Returns (before, after) where `after` == `new_content`. Raises
     EgressApplyError on any step."""
-    container = egress_container_name(slug)
+    container = sidecar_bundle_container_name(slug)
     before = fetch_current_routes(slug)
     validate_routes_content(new_content)
 

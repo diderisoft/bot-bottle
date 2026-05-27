@@ -7,8 +7,8 @@ exercise the parse + decision functions without depending on the
 container.
 
 Imports: stdlib + `yaml_subset` (which is itself stdlib-only and
-ships flat into the egress image alongside this file — see
-`Dockerfile.egress`).
+ships flat into the sidecar bundle image alongside this file —
+see `Dockerfile.sidecars`).
 """
 
 from __future__ import annotations
@@ -16,13 +16,11 @@ from __future__ import annotations
 import typing
 from dataclasses import dataclass
 
-# Absolute import — `yaml_subset.py` is copied flat into the egress
-# image's `/app/` next to this file (via `Dockerfile.egress`). The
-# host-side unit tests run with the repo on sys.path, where the
-# bare `yaml_subset` module also resolves because
-# `claude_bottle/yaml_subset.py` shadows it at import time... actually
-# no, on host the module lives under the `claude_bottle` package.
-# The try/except shim picks whichever import works.
+# Absolute import — `yaml_subset.py` is copied flat into the bundle
+# image's `/app/` next to this file (via `Dockerfile.sidecars`).
+# The host-side unit tests run with the repo on sys.path, where the
+# import resolves under the `claude_bottle` package. The try/except
+# shim picks whichever import works.
 try:
     from yaml_subset import YamlSubsetError, parse_yaml_subset  # type: ignore[import-not-found]
 except ImportError:  # pragma: no cover - host-side path

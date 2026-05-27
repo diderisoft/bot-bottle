@@ -40,7 +40,7 @@ from .manifest import Bottle
 EGRESS_HOSTNAME = "egress"
 
 # In-container path the addon reads. Pre-created in
-# `Dockerfile.egress` so the host bind-mount can drop the file
+# `Dockerfile.sidecars` so the host bind-mount can drop the file
 # directly. Content is YAML (hand-rolled by `egress_render_routes`
 # in the style of `pipelock_render_yaml`, parsed by `yaml_subset`
 # inside the addon).

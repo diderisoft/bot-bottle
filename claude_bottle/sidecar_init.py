@@ -200,6 +200,30 @@ class _Supervisor:
         the operator gets that code on container exit."""
         return max((p.returncode for _, p in self.procs), default=0)
 
+    def forward_signal(self, sig: int, daemon_name: str) -> bool:
+        """Forward a signal to one named child. Used by the SIGHUP
+        path: egress_apply.py runs `docker kill --signal HUP
+        <bundle>`, the host kernel delivers SIGHUP to PID 1 (this
+        supervisor), and we relay it to mitmdump so it reloads
+        its addon's routes.yaml. Returns True iff a live child by
+        that name was signaled."""
+        for spec, p in self.procs:
+            if spec.name != daemon_name:
+                continue
+            if p.poll() is not None:
+                _log(
+                    f"SIGHUP for {daemon_name} dropped; daemon "
+                    f"already exited (rc={p.returncode})"
+                )
+                return False
+            try:
+                p.send_signal(sig)
+            except ProcessLookupError:
+                return False
+            _log(f"forwarded {signal.Signals(sig).name} to {daemon_name}")
+            return True
+        return False
+
 
 def main(argv: Sequence[str] | None = None) -> int:
     del argv  # no flags yet; env-driven only
@@ -213,6 +237,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     signal.signal(signal.SIGTERM, lambda *_: sup.request_shutdown("SIGTERM"))
     signal.signal(signal.SIGINT, lambda *_: sup.request_shutdown("SIGINT"))
+    # SIGHUP reload path: routes.yaml + pipelock.yaml hot-reloads
+    # in egress_apply.py / pipelock_apply.py issue `docker kill
+    # --signal HUP <bundle>`. The kernel delivers SIGHUP to PID 1
+    # (this supervisor); we forward it to the daemon that knows
+    # how to reload (egress = mitmdump-reload-addons; pipelock has
+    # no in-process reload, so the pipelock-apply path uses
+    # `docker restart` instead).
+    signal.signal(signal.SIGHUP, lambda *_: sup.forward_signal(signal.SIGHUP, "egress"))
 
     while not sup.tick():
         time.sleep(_POLL_INTERVAL)
