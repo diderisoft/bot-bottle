@@ -18,6 +18,7 @@ minimal Debian VM with no PAM session config."""
 from __future__ import annotations
 
 import subprocess
+from typing import Mapping
 
 from .. import Bottle, ExecResult
 from . import smolvm as _smolvm
@@ -39,18 +40,40 @@ def _env_flags_for(user: str) -> list[str]:
     return ["-e", f"HOME={home}", "-e", f"USER={user}"]
 
 
+def _guest_env_flags(env: Mapping[str, str]) -> list[str]:
+    """Render `{K: V}` into a flat `-e K=V` argv slice for
+    `smolvm machine exec`. `smolvm machine create -e` set env
+    on PID 1 but it doesn't propagate to fresh exec process
+    trees, so we have to re-pass them every call."""
+    out: list[str] = []
+    for k, v in env.items():
+        out += ["-e", f"{k}={v}"]
+    return out
+
+
 class SmolmachinesBottle(Bottle):
     """Handle returned by `SmolmachinesBottleBackend.launch`. The
     underlying VM lifecycle (create / start / stop / delete) lives
     on the launch ExitStack — this class only routes runtime
     operations to the right `smolvm machine ...` subcommand."""
 
-    def __init__(self, machine_name: str, *, prompt_path: str | None = None) -> None:
+    def __init__(
+        self,
+        machine_name: str,
+        *,
+        prompt_path: str | None = None,
+        guest_env: Mapping[str, str] | None = None,
+    ) -> None:
         self.name = machine_name
         # In-VM path to the agent's prompt file. None when the
         # agent declared no prompt (file still exists; we just
         # don't pass --append-system-prompt-file).
         self._prompt_path = prompt_path
+        # Env vars the agent process needs (HTTPS_PROXY,
+        # CLAUDE_CODE_OAUTH_TOKEN, manifest-declared bottle env, …).
+        # Forwarded on every `smolvm machine exec` via `-e K=V`
+        # because exec doesn't inherit from machine_create's env.
+        self._guest_env = dict(guest_env or {})
 
     def exec_claude(self, argv: list[str], *, tty: bool = True) -> int:
         """Run `claude` interactively inside the VM as the `node`
@@ -70,6 +93,7 @@ class SmolmachinesBottle(Bottle):
         if tty:
             flags += ["-i", "-t"]
         flags += _env_flags_for("node")
+        flags += _guest_env_flags(self._guest_env)
         claude_argv = ["claude"]
         if self._prompt_path:
             claude_argv += ["--append-system-prompt-file", self._prompt_path]
@@ -91,6 +115,7 @@ class SmolmachinesBottle(Bottle):
         `smolvm -e` (see `_env_flags_for`)."""
         argv = (
             _env_flags_for(user)
+            + _guest_env_flags(self._guest_env)
             + ["--", "runuser", "-u", user, "--", "/bin/sh", "-c", script]
         )
         # _smolvm.machine_exec expects argv (the bit after `--`);

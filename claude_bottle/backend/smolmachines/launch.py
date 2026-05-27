@@ -117,10 +117,26 @@ def launch(
         _smolvm.machine_start(plan.machine_name)
         stack.callback(_smolvm.machine_stop, plan.machine_name)
 
-        # 5. Provision (CA / prompt / skills / git / supervise).
+        # 5. Reclaim /home/node for the node user. smolvm's pack
+        # process remaps OCI-layer ownership to the host invoker's
+        # uid (501 on macOS) rather than preserving the image's
+        # uid 1000 — so without this chown, node can't write its
+        # own dotfiles (claude appendFileSync on
+        # ~/.claude.json bails with ENOENT/EPERM and the TUI hangs
+        # without surfacing the error).
+        _smolvm.machine_exec(
+            plan.machine_name,
+            ["chown", "-R", "node:node", "/home/node"],
+        )
+
+        # 6. Provision (CA / prompt / skills / git / supervise).
         prompt_path = provision(plan, plan.machine_name)
 
-        yield SmolmachinesBottle(plan.machine_name, prompt_path=prompt_path)
+        yield SmolmachinesBottle(
+            plan.machine_name,
+            prompt_path=prompt_path,
+            guest_env=plan.guest_env,
+        )
     finally:
         stack.close()
 

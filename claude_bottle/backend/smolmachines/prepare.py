@@ -91,11 +91,18 @@ def resolve_plan(
 
     # Agent's env. IP literals; no DNS resolution inside the guest
     # (TSI allowlist contains only `<bundle_ip>/32` — no resolver).
+    # TLS trust env trio (NODE_EXTRA_CA_CERTS / SSL_CERT_FILE /
+    # REQUESTS_CA_BUNDLE) points at Debian's
+    # update-ca-certificates output bundle — provision_ca writes
+    # the per-bottle MITM CA there at launch time.
     guest_env: dict[str, str] = {
         **bottle.env,
         "HTTPS_PROXY": f"http://{bundle_ip}:{_BUNDLE_PIPELOCK_PORT}",
         "HTTP_PROXY":  f"http://{bundle_ip}:{_BUNDLE_PIPELOCK_PORT}",
         "NO_PROXY":    "localhost,127.0.0.1",
+        "NODE_EXTRA_CA_CERTS": "/etc/ssl/certs/ca-certificates.crt",
+        "SSL_CERT_FILE":       "/etc/ssl/certs/ca-certificates.crt",
+        "REQUESTS_CA_BUNDLE":  "/etc/ssl/certs/ca-certificates.crt",
     }
     if bottle.git:
         guest_env["GIT_GATE_URL"] = (
@@ -123,6 +130,19 @@ def resolve_plan(
     egress_dir = egress_state_dir(slug)
     egress_dir.mkdir(parents=True, exist_ok=True)
     egress_plan = Egress().prepare(bottle, slug, egress_dir)
+
+    # Claude-code refuses to start without *something* it
+    # recognises as a credential. When the bottle has an egress
+    # route carrying the `claude_code_oauth` role marker, egress
+    # strips + re-injects the real Authorization header on the
+    # outbound leg using a token held in egress's own environ — so
+    # the agent gets a non-secret placeholder here (matches the
+    # docker backend's forwarded_env logic in
+    # claude_bottle/backend/docker/prepare.py).
+    if any("claude_code_oauth" in r.roles for r in egress_plan.routes):
+        guest_env["CLAUDE_CODE_OAUTH_TOKEN"] = "egress-placeholder"
+        guest_env.setdefault("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
+        guest_env.setdefault("DISABLE_ERROR_REPORTING", "1")
 
     supervise_plan = None
     if bottle.supervise:
