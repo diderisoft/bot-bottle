@@ -15,20 +15,11 @@ from pathlib import Path
 
 from ...egress import Egress
 from ...log import die
-from . import util as docker_mod
 
 
-
-
-EGRESS_IMAGE = os.environ.get(
-    "CLAUDE_BOTTLE_EGRESS_IMAGE",
-    "claude-bottle-egress:latest",
-)
-
-EGRESS_DOCKERFILE = "Dockerfile.egress"
-
-# Listening port inside the sidecar. The agent's HTTP_PROXY env var
-# resolves to `http://egress:<port>`.
+# Listening port the egress daemon binds inside the bundle. The
+# agent's HTTP_PROXY env var resolves to `http://egress:<port>`,
+# and the bundle's network aliases route `egress` to itself.
 EGRESS_PORT = int(os.environ.get("CLAUDE_BOTTLE_EGRESS_PORT", "9099"))
 
 # In-container path for mitmproxy's CA. The format is a single PEM
@@ -41,31 +32,13 @@ EGRESS_PIPELOCK_CA_IN_CONTAINER = (
     "/home/mitmproxy/.mitmproxy/pipelock-ca.pem"
 )
 
-# Repo root, for `docker build` context. Resolved from this file's
-# location: claude_bottle/backend/docker/egress.py → repo root.
-_REPO_DIR = str(Path(__file__).resolve().parent.parent.parent.parent)
-
 
 def egress_container_name(slug: str) -> str:
+    """The legacy per-sidecar container name. Kept as a function so
+    the renderer can register it as a docker-network alias on the
+    bundle — any code still referring to `claude-bottle-egress-<slug>`
+    resolves to the bundle's IP."""
     return f"claude-bottle-egress-{slug}"
-
-
-def egress_url() -> str:
-    """Base URL the agent will dial via HTTP_PROXY (chunk 2). Stable
-    across bottles because the sidecar attaches `--network-alias
-    egress` on the internal network; the container name (which
-    carries the slug) is not referenced by agent-side config."""
-    return f"http://{EGRESS_HOSTNAME}:{EGRESS_PORT}"
-
-
-def build_egress_image() -> None:
-    """Build the egress image from `Dockerfile.egress`.
-    Called by `DockerEgress.start`; exposed at module level so
-    integration tests can build it without running the full launch
-    pipeline."""
-    docker_mod.build_image(
-        EGRESS_IMAGE, _REPO_DIR, dockerfile=EGRESS_DOCKERFILE,
-    )
 
 
 def egress_tls_init(stage_dir: Path) -> tuple[Path, Path]:

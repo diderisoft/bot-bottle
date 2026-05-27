@@ -25,7 +25,7 @@ from pathlib import Path
 from ...pipelock import pipelock_render_yaml
 from ...yaml_subset import YamlSubsetError, parse_yaml_subset
 from .bottle_state import pipelock_state_dir
-from .pipelock import pipelock_container_name
+from .sidecar_bundle import sidecar_bundle_container_name
 
 
 def _pipelock_yaml_host_path(slug: str) -> Path:
@@ -73,15 +73,15 @@ def render_allowlist_content(hosts: list[str]) -> str:
 
 
 def fetch_current_yaml(slug: str) -> str:
-    """Read the live /etc/pipelock.yaml from the pipelock sidecar.
+    """Read the live /etc/pipelock.yaml from the sidecar bundle.
 
-    Uses `docker cp` (not `docker exec cat`) because the pipelock
-    image is distroless and has no shell utilities. `docker cp` is a
-    daemon-API tarball copy — works on stopped containers too, and
-    doesn't need anything in the container's PATH.
+    Uses `docker cp` because pipelock inside the bundle is the
+    distroless pipelock binary with no shell, and `docker cp` is a
+    daemon-API tarball copy that works regardless of what's
+    available inside the container.
 
     Raises PipelockApplyError if the read fails."""
-    container = pipelock_container_name(slug)
+    container = sidecar_bundle_container_name(slug)
     fd, tmp_path = tempfile.mkstemp(prefix="cb-pipelock-fetch.", suffix=".yaml")
     os.close(fd)
     try:
@@ -125,19 +125,27 @@ def fetch_current_allowlist(slug: str) -> str:
 def apply_allowlist_change(
     slug: str, new_allowlist_content: str,
 ) -> tuple[str, str]:
-    """Apply `new_allowlist_content` to the pipelock sidecar:
+    """Apply `new_allowlist_content` to the sidecar bundle:
       1. Parse the proposed hosts (one per line).
       2. Fetch + parse current pipelock.yaml.
       3. Replace api_allowlist with the proposed hosts; re-render.
-      4. docker cp the new yaml into the sidecar.
-      5. docker restart so pipelock reloads.
+      4. Write the new yaml to the bind-mount source.
+      5. `docker restart` the bundle so pipelock reloads.
+
+    The restart bounces ALL four daemons inside the bundle, not
+    just pipelock — pipelock has no in-process reload and the
+    bundle init re-spawns the four daemons on container restart.
+    Per-daemon reload would need a supervisor IPC channel (PRD
+    0024 open question 1's "eventually" path); the bundle-wide
+    restart is the v1 trade-off.
 
     Returns (before, after) where both are one-per-line allowlist
     strings (operator-facing format). Raises PipelockApplyError on
     any failure; the sidecar's existing config stays in place until
-    docker cp succeeds, and the restart is what makes it live."""
+    the host write succeeds, and the restart is what makes it
+    live."""
     new_hosts = parse_allowlist_content(new_allowlist_content)
-    container = pipelock_container_name(slug)
+    container = sidecar_bundle_container_name(slug)
     current_yaml = fetch_current_yaml(slug)
     try:
         cfg = parse_yaml_subset(current_yaml)
