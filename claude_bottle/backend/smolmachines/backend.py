@@ -5,9 +5,10 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Generator
+from typing import Generator, Sequence
 
-from .. import BottleBackend, BottleSpec
+from .. import ActiveBottle, BottleBackend, BottleSpec
+from . import enumerate as _enumerate
 from . import launch as _launch
 from . import prepare as _prepare
 from .bottle import SmolmachinesBottle
@@ -73,9 +74,5 @@ class SmolmachinesBottleBackend(
         # Nothing to clean in chunks 1-3 — see
         # SmolmachinesBottleCleanupPlan docstring.
 
-    def list_active(self) -> None:
-        from ...log import info
-        info(
-            "smolmachines list_active: not implemented (chunk 4 wires "
-            "it to `smolvm machine ls --json`)"
-        )
+    def enumerate_active(self) -> Sequence[ActiveBottle]:
+        return _enumerate.enumerate_active()

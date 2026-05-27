@@ -26,16 +26,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import supervise as _supervise
-from ..backend import BottleSpec, get_bottle_backend
+from ..backend import (
+    ActiveBottle,
+    BottleSpec,
+    enumerate_active_bottles,
+    get_bottle_backend,
+    known_backend_names,
+)
 from ..backend.docker.capability_apply import (
     CapabilityApplyError,
     apply_capability_change,
 )
 from ..backend.docker.bottle_state import bottle_state_dir, read_metadata
-from ..backend.docker.compose import (
-    compose_project_name,
-    list_active_slugs,
-)
 from ..backend.docker.egress_apply import (
     EgressApplyError,
     add_route,
@@ -95,77 +97,22 @@ class QueuedProposal:
     queue_dir: Path
 
 
-@dataclass(frozen=True)
-class ActiveAgent:
-    """One running bottle, as the agents pane displays it (PRD
-    0019). `services` is the set of sidecar service names
-    currently up for this bottle, used to gate which edit verbs
-    apply (no `egress` → `routes edit` is meaningless)."""
-
-    slug: str
-    agent_name: str           # from metadata.json; "?" if missing
-    started_at: str           # ISO 8601 from metadata.json; "" if missing
-    services: tuple[str, ...]  # alphabetical, e.g. ("egress", "pipelock", "supervise")
+# `ActiveAgent` was PRD-0019's docker-specific row type. It now
+# aliases the shared `ActiveBottle` dataclass so the dashboard
+# and the CLI `list active` both render the same source of truth.
+# Field surface stays compatible (slug / agent_name / started_at
+# / services) plus a new `backend_name` so dashboard rows can
+# show which backend a bottle came from.
+ActiveAgent = ActiveBottle
 
 
-def _parse_services_by_project(stdout: str) -> dict[str, set[str]]:
-    """Parse `docker ps` output formatted as
-    `<project-label>\\t<service-label>` (one line per container)
-    into a `{project: {service, ...}}` mapping. Pure function for
-    testing — the docker invocation is in the caller."""
-    out: dict[str, set[str]] = {}
-    for line in stdout.splitlines():
-        project, _, service = line.partition("\t")
-        if not project or not service:
-            continue
-        out.setdefault(project, set()).add(service)
-    return out
-
-
-def _query_services_by_project() -> dict[str, set[str]]:
-    """One `docker ps` call → `{project: {service, ...}}`. PRD
-    0019 open question #1 picked this shape over per-bottle
-    `compose ps` calls — for hosts with N bottles, this is one
-    subprocess instead of N per refresh tick."""
-    try:
-        r = subprocess.run(
-            [
-                "docker", "ps",
-                "--filter", "label=com.docker.compose.project",
-                "--format",
-                '{{.Label "com.docker.compose.project"}}'
-                "\t"
-                '{{.Label "com.docker.compose.service"}}',
-            ],
-            capture_output=True, text=True, check=False,
-        )
-    except FileNotFoundError:
-        return {}
-    if r.returncode != 0:
-        return {}
-    return _parse_services_by_project(r.stdout or "")
-
-
-def discover_active_agents() -> list[ActiveAgent]:
-    """All currently-running claude-bottle compose projects with
-    their metadata + service set. Returns [] when docker isn't
-    reachable. PRD 0019."""
-    slugs = list_active_slugs()
-    if not slugs:
-        return []
-    services_by_project = _query_services_by_project()
-    out: list[ActiveAgent] = []
-    for slug in slugs:
-        project = compose_project_name(slug)
-        services = services_by_project.get(project, set())
-        metadata = read_metadata(slug)
-        out.append(ActiveAgent(
-            slug=slug,
-            agent_name=metadata.agent_name if metadata else "?",
-            started_at=metadata.started_at if metadata else "",
-            services=tuple(sorted(services)),
-        ))
-    return out
+def discover_active_agents() -> list[ActiveBottle]:
+    """All currently-running bottles across every backend with
+    their metadata + service set. Returns [] when neither
+    backend is reachable. Backed by the shared
+    `enumerate_active_bottles` helper so the CLI's
+    `./cli.py list active` and this dashboard show the same data."""
+    return enumerate_active_bottles()
 
 
 
@@ -590,6 +537,68 @@ def _preflight_modal(
         if key in (ord("n"), ord("N"), 27, curses.KEY_ENTER, 10, 13):
             _erase_modal(stdscr)
             return False
+
+
+def _backend_picker_modal(
+    stdscr: "curses._CursesWindow",
+    agent_name: str,
+) -> str | None:
+    """Modal "which backend to launch this agent on?" picker. Up/
+    Down + Enter to confirm, Esc / N to abort. Returns the chosen
+    backend name or None on abort.
+
+    Defaults to the first known backend (`docker` lexicographically),
+    which keeps existing-muscle-memory flows quiet — the modal only
+    surfaces a choice; it doesn't surprise the operator by jumping
+    to smolmachines. The picker exists so operators can opt in to
+    smolmachines without setting CLAUDE_BOTTLE_BACKEND beforehand
+    (issue #77)."""
+    names = list(known_backend_names())
+    if len(names) <= 1:
+        return names[0] if names else None
+    selected = 0
+    h, w = stdscr.getmaxyx()
+    box_w = min(60, max(20, w - 4))
+    box_h = min(len(names) + 6, max(8, h - 4))
+    top = max(0, (h - box_h) // 2)
+    left = max(0, (w - box_w) // 2)
+
+    while True:
+        win = curses.newwin(box_h, box_w, top, left)
+        win.erase()
+        win.box()
+        win.addnstr(0, 2, " choose backend ", box_w - 4, curses.A_BOLD)
+        win.addnstr(
+            1, 2,
+            f"launching {agent_name!r}; pick a backend:",
+            box_w - 4,
+        )
+        for i, name in enumerate(names):
+            marker = "▶" if i == selected else " "
+            attr = curses.A_REVERSE if i == selected else 0
+            win.addnstr(3 + i, 2, f"{marker} {name}", box_w - 4, attr)
+        win.addnstr(
+            box_h - 2, 2,
+            " Enter: confirm   Esc / N: abort   ↑/↓: move ",
+            box_w - 4, curses.A_DIM,
+        )
+        win.refresh()
+
+        try:
+            key = stdscr.getch()
+        except KeyboardInterrupt:
+            _erase_modal(stdscr)
+            return None
+        if key in (curses.KEY_UP,):
+            selected = (selected - 1) % len(names)
+        elif key in (curses.KEY_DOWN,):
+            selected = (selected + 1) % len(names)
+        elif key in (curses.KEY_ENTER, 10, 13):
+            _erase_modal(stdscr)
+            return names[selected]
+        elif key in (ord("n"), ord("N"), 27):
+            _erase_modal(stdscr)
+            return None
 
 
 def _erase_modal(stdscr: "curses._CursesWindow") -> None:
@@ -1119,6 +1128,13 @@ def _new_agent_flow(
     if picked is None:
         return "agent start aborted"
 
+    # Backend picker (issue #77): operator chooses docker /
+    # smolmachines per launch. With only one backend installed
+    # the modal short-circuits (no need to ask).
+    backend_name = _backend_picker_modal(stdscr, picked)
+    if backend_name is None:
+        return f"start of {picked!r} aborted at backend select"
+
     spec = BottleSpec(
         manifest=manifest,
         agent_name=picked,
@@ -1144,12 +1160,13 @@ def _new_agent_flow(
             stage_dir=stage_dir,
             render_preflight=_render,
             prompt_yes=_prompt,
+            backend_name=backend_name,
         )
         if plan is None:
             settle_state(identity)
             return f"start of {picked!r} aborted at preflight"
 
-        backend = get_bottle_backend()
+        backend = get_bottle_backend(backend_name)
 
         # PRD 0021 follow-up: in tmux, route the launch step's
         # stderr (Python info() + subprocess inheritors) into
@@ -1714,21 +1731,25 @@ def _selected_agent(
 
 
 def _format_agent_row(a: ActiveAgent, maxw: int) -> str:
-    """One-line agent row: `  <slug> <agent_name> started <HH:MM:SS>
-    [<sidecars>]`. The `agent` service is filtered out of the
-    displayed list — it's always present for an active bottle, so
-    listing it carries no information; the sidecars are the
-    differentiator. Truncated to `maxw` because the renderer's
-    addnstr only enforces width if we hand it a properly-sized
-    string."""
+    """One-line agent row: `  [<backend>] <slug> <agent_name> started
+    <HH:MM:SS> [<sidecars>]`. The `agent` service is filtered out of
+    the displayed list — it's always present for an active bottle,
+    so listing it carries no information; the sidecars are the
+    differentiator.
+
+    The `[docker]` / `[smolmachines]` prefix lets the operator tell
+    which backend a bottle came from (issue #77). Truncated to
+    `maxw` because the renderer's addnstr only enforces width if
+    we hand it a properly-sized string."""
     started = (
         a.started_at.split("T", 1)[1][:8]
         if "T" in a.started_at else (a.started_at or "?")
     )
     sidecars = tuple(s for s in a.services if s != "agent")
     services = ",".join(sidecars) if sidecars else "(starting)"
+    backend_tag = f"[{a.backend_name}]" if a.backend_name else ""
     line = (
-        f"  {a.slug}  {a.agent_name}  "
+        f"  {backend_tag} {a.slug}  {a.agent_name}  "
         f"started {started}  [{services}]"
     )
     if len(line) > maxw:

@@ -14,9 +14,9 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Generator
+from typing import Generator, Sequence
 
-from .. import BottleBackend, BottleSpec
+from .. import ActiveBottle, BottleBackend, BottleSpec
 from . import cleanup as _cleanup
 from . import launch as _launch
 from . import prepare as _prepare
@@ -65,5 +65,5 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
     def cleanup(self, plan: DockerBottleCleanupPlan) -> None:
         _cleanup.cleanup(plan)
 
-    def list_active(self) -> None:
-        _cleanup.list_active()
+    def enumerate_active(self) -> Sequence[ActiveBottle]:
+        return _cleanup.enumerate_active()

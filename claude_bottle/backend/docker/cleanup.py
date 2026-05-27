@@ -29,10 +29,16 @@ import subprocess
 
 from ... import supervise as _supervise
 from ...log import info, warn
+from .. import ActiveBottle
 from . import util as docker_mod
 from .bottle_cleanup_plan import DockerBottleCleanupPlan
-from .bottle_state import bottle_state_dir, is_preserved
-from .compose import COMPOSE_PROJECT_PREFIX, list_compose_projects
+from .bottle_state import bottle_state_dir, is_preserved, read_metadata
+from .compose import (
+    COMPOSE_PROJECT_PREFIX,
+    compose_project_name,
+    list_active_slugs,
+    list_compose_projects,
+)
 
 
 def _list_prefixed_containers() -> list[str]:
@@ -161,24 +167,67 @@ def cleanup(plan: DockerBottleCleanupPlan) -> None:
             warn(f"failed to remove {path}: {e}")
 
 
-def list_active() -> None:
-    """Print every active claude-bottle compose project + its
-    services. Empty banner when there are none."""
-    docker_mod.require_docker()
-    active = list_compose_projects(include_stopped=False)
-    if not active:
-        info("no active claude-bottle compose projects")
-        return
-    print()
-    for project in active:
-        info(f"compose project: {project}")
-        ps = subprocess.run(
-            ["docker", "compose", "-p", project, "ps", "--format",
-             "{{.Service}}\t{{.Name}}\t{{.Status}}"],
+def enumerate_active() -> list[ActiveBottle]:
+    """All currently-running docker-backed bottles as
+    `ActiveBottle` records. Backend-agnostic shape — the CLI
+    `list active` command and the dashboard agents pane both
+    consume this. Empty list when docker is unreachable or
+    nothing's running."""
+    # docker on PATH? Defensive — `list active` shouldn't die
+    # just because the docker backend isn't usable on this host.
+    if shutil.which("docker") is None:
+        return []
+    slugs = list_active_slugs(include_stopped=False)
+    if not slugs:
+        return []
+    services_by_project = _query_services_by_project()
+    out: list[ActiveBottle] = []
+    for slug in slugs:
+        project = compose_project_name(slug)
+        services = services_by_project.get(project, set())
+        metadata = read_metadata(slug)
+        out.append(ActiveBottle(
+            backend_name="docker",
+            slug=slug,
+            agent_name=metadata.agent_name if metadata else "?",
+            started_at=metadata.started_at if metadata else "",
+            services=tuple(sorted(services)),
+        ))
+    return out
+
+
+def _parse_services_by_project(stdout: str) -> dict[str, set[str]]:
+    """Parse `docker ps` output formatted as
+    `<project-label>\\t<service-label>` (one line per container)
+    into a `{project: {service, ...}}` mapping. Pure function for
+    testing — the docker invocation is in `_query_services_by_project`."""
+    out: dict[str, set[str]] = {}
+    for line in stdout.splitlines():
+        project, _, service = line.partition("\t")
+        if not project or not service:
+            continue
+        out.setdefault(project, set()).add(service)
+    return out
+
+
+def _query_services_by_project() -> dict[str, set[str]]:
+    """One `docker ps` call → `{project: {service, ...}}`. Moved
+    here from the dashboard so the same query backs the CLI's
+    `list active` and the dashboard's agents pane."""
+    try:
+        r = subprocess.run(
+            [
+                "docker", "ps",
+                "--filter", "label=com.docker.compose.project",
+                "--format",
+                '{{.Label "com.docker.compose.project"}}'
+                "\t"
+                '{{.Label "com.docker.compose.service"}}',
+            ],
             capture_output=True, text=True, check=False,
         )
-        for line in (ps.stdout or "").splitlines():
-            service, _, rest = line.partition("\t")
-            name, _, status = rest.partition("\t")
-            info(f"  {service:12s}  {name}  ({status})")
-    print()
+    except FileNotFoundError:
+        return {}
+    if r.returncode != 0:
+        return {}
+    return _parse_services_by_project(r.stdout or "")

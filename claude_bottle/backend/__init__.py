@@ -19,12 +19,14 @@ backend exposes five methods:
   cleanup(plan) -> None
       Actually removes everything described by the cleanup plan.
 
-  list_active() -> None
-      Print every currently-running bottle on this backend to stderr.
+  enumerate_active() -> Sequence[ActiveBottle]
+      Return every currently-running bottle on this backend, with
+      enough metadata for callers (CLI `list active`, dashboard
+      agents pane) to render a row.
 
-Selection is driven by CLAUDE_BOTTLE_BACKEND (default "docker"). Per
-PRD 0003 the manifest does not carry a backend field; the host
-environment picks.
+Selection is driven by `--backend` on `start` or
+CLAUDE_BOTTLE_BACKEND (env var; default "docker"). Per PRD 0003 the
+manifest does not carry a backend field; the host picks.
 """
 
 from __future__ import annotations
@@ -101,6 +103,26 @@ class ExecResult:
     returncode: int
     stdout: str
     stderr: str
+
+
+@dataclass(frozen=True)
+class ActiveBottle:
+    """One currently-running bottle, as the CLI `list active` and
+    dashboard agents pane render it.
+
+    Fields are deliberately backend-neutral. `services` is the set
+    of sidecar daemons currently up for this bottle (`pipelock`,
+    `egress`, `git-gate`, `supervise`); the dashboard uses it to
+    gate edit verbs. `backend_name` is the matching key in
+    `_BACKENDS` (`docker` / `smolmachines`) — used by the active-
+    list rendering to disambiguate and by the dashboard's
+    re-attach path."""
+
+    backend_name: str
+    slug: str
+    agent_name: str       # from metadata.json; "?" if missing
+    started_at: str       # ISO 8601 from metadata.json; "" if missing
+    services: tuple[str, ...]  # alphabetical
 
 
 class Bottle(ABC):
@@ -280,9 +302,11 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         """Remove everything described by the cleanup plan."""
 
     @abstractmethod
-    def list_active(self) -> None:
-        """Print every currently-running bottle on this backend to
-        stderr (name + status)."""
+    def enumerate_active(self) -> Sequence[ActiveBottle]:
+        """Return every currently-running bottle on this backend.
+        Empty when none. Backend-specific: docker queries `docker
+        compose ls`; smolmachines queries `smolvm machine ls --json`
+        + cross-references its bundle container."""
 
 
 # Import concrete backend classes AFTER the base types are defined, so
@@ -302,23 +326,52 @@ _BACKENDS: dict[str, BottleBackend[Any, Any]] = {
 }
 
 
-def get_bottle_backend() -> BottleBackend[Any, Any]:
-    """Resolve the bottle backend for the active environment. Dies with
-    a pointer at the known backends if CLAUDE_BOTTLE_BACKEND names an
-    unimplemented one."""
-    name = os.environ.get("CLAUDE_BOTTLE_BACKEND", "docker")
-    if name not in _BACKENDS:
+def get_bottle_backend(
+    name: str | None = None,
+) -> BottleBackend[Any, Any]:
+    """Resolve the bottle backend.
+
+    `name` precedence:
+      1. explicit arg (CLI `--backend=<name>` passes through here)
+      2. CLAUDE_BOTTLE_BACKEND env var
+      3. default `docker`
+
+    Dies with a pointer at the known backends if the chosen name
+    isn't implemented."""
+    resolved = name or os.environ.get("CLAUDE_BOTTLE_BACKEND") or "docker"
+    if resolved not in _BACKENDS:
         known = ", ".join(sorted(_BACKENDS))
-        die(f"unknown CLAUDE_BOTTLE_BACKEND={name!r}; known backends: {known}")
-    return _BACKENDS[name]
+        die(f"unknown backend {resolved!r}; known backends: {known}")
+    return _BACKENDS[resolved]
+
+
+def known_backend_names() -> tuple[str, ...]:
+    """Sorted tuple of all backend keys in `_BACKENDS`. Used by
+    argparse (`--backend` choices) and the dashboard's backend
+    picker."""
+    return tuple(sorted(_BACKENDS))
+
+
+def enumerate_active_bottles() -> list[ActiveBottle]:
+    """All currently-running bottles, across every backend. Used by
+    CLI `list active` and the dashboard's agents pane so neither
+    has to know which backends exist. Ordered by backend name,
+    then slug."""
+    out: list[ActiveBottle] = []
+    for name in known_backend_names():
+        out.extend(_BACKENDS[name].enumerate_active())
+    return out
 
 
 __all__ = [
+    "ActiveBottle",
     "Bottle",
     "BottleBackend",
     "BottleCleanupPlan",
     "BottlePlan",
     "BottleSpec",
     "ExecResult",
+    "enumerate_active_bottles",
     "get_bottle_backend",
+    "known_backend_names",
 ]

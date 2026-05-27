@@ -18,7 +18,12 @@ import tempfile
 from pathlib import Path
 from typing import Callable
 
-from ..backend import Bottle, BottleSpec, get_bottle_backend
+from ..backend import (
+    Bottle,
+    BottleSpec,
+    get_bottle_backend,
+    known_backend_names,
+)
 from ..backend.docker.bottle_plan import DockerBottlePlan
 from ..backend.docker.bottle_state import (
     cleanup_state,
@@ -36,6 +41,15 @@ def cmd_start(argv: list[str]) -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--cwd", action="store_true", help="copy host cwd into a derived image")
     parser.add_argument("--remote-control", action="store_true")
+    parser.add_argument(
+        "--backend",
+        choices=known_backend_names(),
+        default=None,
+        help=(
+            "backend to launch the bottle on (default: $CLAUDE_BOTTLE_BACKEND "
+            "or 'docker'). Overrides the env var when set."
+        ),
+    )
     parser.add_argument("name", help="agent name defined in claude-bottle.json")
     args = parser.parse_args(argv)
 
@@ -52,6 +66,7 @@ def cmd_start(argv: list[str]) -> int:
         spec,
         dry_run=dry_run,
         remote_control=args.remote_control,
+        backend_name=args.backend,
     )
 
 
@@ -65,18 +80,24 @@ def prepare_with_preflight(
     render_preflight: Callable[[DockerBottlePlan], None],
     prompt_yes: Callable[[], bool],
     dry_run: bool = False,
+    backend_name: str | None = None,
 ) -> tuple[DockerBottlePlan | None, str]:
     """Run `backend.prepare`, render the preflight summary via the
     injected callable, prompt y/N via the injected callable. The CLI
     binds these to stderr/stdin; the dashboard binds them to a
     curses modal.
 
+    `backend_name` selects which backend prepares the plan
+    (`None` → `$CLAUDE_BOTTLE_BACKEND` → `docker`). Dashboard
+    passes the value from its new-agent backend-picker modal; the
+    CLI passes whatever `--backend` resolved to.
+
     Returns `(plan, identity)`. `plan` is None on dry-run or
     operator-N, but `identity` is set as soon as `backend.prepare`
     returns so callers can reap the prepare-time state dir via
     `settle_state(identity)` in their finally — exactly the existing
     semantics."""
-    backend = get_bottle_backend()
+    backend = get_bottle_backend(backend_name)
     plan = backend.prepare(spec, stage_dir=stage_dir)
     identity = _identity_from_plan(plan)
 
@@ -175,6 +196,7 @@ def _launch_bottle(
     *,
     dry_run: bool,
     remote_control: bool,
+    backend_name: str | None = None,
 ) -> int:
     """Shared launch core for `start` and `resume`. Builds the plan,
     prints / dry-runs / prompts as appropriate, brings the bottle up,
@@ -188,11 +210,12 @@ def _launch_bottle(
             render_preflight=_text_render_preflight(remote_control=remote_control),
             prompt_yes=_text_prompt_yes,
             dry_run=dry_run,
+            backend_name=backend_name,
         )
         if plan is None:
             return 0
 
-        backend = get_bottle_backend()
+        backend = get_bottle_backend(backend_name)
         with backend.launch(plan) as bottle:
             exit_code = attach_claude(bottle, remote_control=remote_control)
             info(
