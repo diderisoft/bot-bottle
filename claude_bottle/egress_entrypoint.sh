@@ -20,6 +20,17 @@
 
 set -e
 
+# Pin mitmproxy's config dir to the bind-mount location of its CA
+# regardless of which user mitmdump runs as. In the legacy
+# four-sidecar setup (Dockerfile.egress, USER mitmproxy) this
+# resolved naturally to `~mitmproxy/.mitmproxy`. In the PRD 0024
+# bundle (USER root) `~root/.mitmproxy` is empty, so without this
+# flag mitmdump would generate a fresh CA on the wrong path and
+# the agent's installed trust anchor would no longer match the
+# bumped leaf certs.
+CONFDIR=/home/mitmproxy/.mitmproxy
+CONFDIR_FLAG="--set confdir=$CONFDIR"
+
 MODE="--mode regular@9099"
 if [ -n "$EGRESS_UPSTREAM_PROXY" ]; then
   MODE="--mode upstream:$EGRESS_UPSTREAM_PROXY --listen-port 9099"
@@ -27,7 +38,7 @@ fi
 
 TRUST_FLAG=""
 if [ -n "$EGRESS_UPSTREAM_CA" ] && [ -f "$EGRESS_UPSTREAM_CA" ]; then
-  COMBINED=/home/mitmproxy/.mitmproxy/combined-trust.pem
+  COMBINED=$CONFDIR/combined-trust.pem
   cat /etc/ssl/certs/ca-certificates.crt "$EGRESS_UPSTREAM_CA" > "$COMBINED"
   TRUST_FLAG="--set ssl_verify_upstream_trusted_ca=$COMBINED"
 fi
@@ -46,4 +57,4 @@ if [ -n "$EGRESS_UPSTREAM_PROXY" ]; then
   export NO_PROXY="localhost,127.0.0.1"
 fi
 
-exec mitmdump $MODE $TRUST_FLAG -s /app/egress_addon.py
+exec mitmdump $CONFDIR_FLAG $MODE $TRUST_FLAG -s /app/egress_addon.py

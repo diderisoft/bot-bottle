@@ -57,11 +57,18 @@ class _DaemonSpec:
 # Order matters only for first-launch race-window reasons: egress
 # starts first so pipelock's upstream connect succeeds during
 # pipelock's own startup. git-gate and supervise are independent.
+# Pipelock binds 0.0.0.0:8888 explicitly. Without `--listen` it
+# defaults to 127.0.0.1 which would be unreachable from sibling
+# services on the docker network. The legacy four-sidecar
+# compose renderer passed the same flag; the bundle keeps the
+# explicit binding.
 _DAEMONS: tuple[_DaemonSpec, ...] = (
     _DaemonSpec("egress", ("/bin/sh", "/app/egress-entrypoint.sh")),
     _DaemonSpec(
         "pipelock",
-        ("/usr/local/bin/pipelock", "run", "--config", "/etc/pipelock.yaml"),
+        ("/usr/local/bin/pipelock", "run",
+         "--config", "/etc/pipelock.yaml",
+         "--listen", "0.0.0.0:8888"),
     ),
     _DaemonSpec("git-gate", ("/bin/sh", "/git-gate-entrypoint.sh")),
     _DaemonSpec("supervise", ("python3", "/app/supervise_server.py")),
