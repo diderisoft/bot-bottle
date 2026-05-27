@@ -227,6 +227,53 @@ class TestSupervisor(unittest.TestCase):
         sup.request_shutdown(reason="cleanup")
         self._drive(sup)
 
+    def test_restart_daemon_replaces_in_place(self):
+        # pipelock_apply.py sends SIGUSR1 to the bundle, supervisor
+        # restarts the pipelock daemon, supervise (the other
+        # daemon's MCP server in production) stays up.
+        specs = [
+            _DaemonSpec("pipelock", ("/bin/sleep", "30")),
+            _DaemonSpec("supervise", ("/bin/sleep", "30")),
+        ]
+        sup = _Supervisor(specs)
+        sup.start_all()
+        time.sleep(0.1)
+        old_pipelock_pid = sup.procs[0][1].pid
+        supervise_pid = sup.procs[1][1].pid
+
+        ok = sup.restart_daemon("pipelock", grace=2.0)
+        self.assertTrue(ok)
+
+        # Pipelock got a fresh PID — different process.
+        new_pipelock_pid = sup.procs[0][1].pid
+        self.assertNotEqual(old_pipelock_pid, new_pipelock_pid)
+        # Supervise's PID is unchanged — it was NOT restarted.
+        self.assertEqual(supervise_pid, sup.procs[1][1].pid)
+        self.assertIsNone(sup.procs[1][1].poll(),
+                          "supervise should still be running")
+
+        sup.request_shutdown(reason="cleanup")
+        self._drive(sup)
+
+    def test_restart_unknown_daemon_no_op(self):
+        specs = [_DaemonSpec("a", ("/bin/sleep", "30"))]
+        sup = _Supervisor(specs)
+        sup.start_all()
+        ok = sup.restart_daemon("ghost")
+        self.assertFalse(ok)
+        sup.request_shutdown(reason="cleanup")
+        self._drive(sup)
+
+    def test_restart_during_shutdown_is_no_op(self):
+        specs = [_DaemonSpec("pipelock", ("/bin/sleep", "30"))]
+        sup = _Supervisor(specs)
+        sup.start_all()
+        sup.request_shutdown(reason="test")
+        ok = sup.restart_daemon("pipelock")
+        self.assertFalse(ok,
+                         "must not respawn a daemon during teardown")
+        self._drive(sup)
+
     def test_shutdown_after_start_terminates_children(self):
         # Two long-running children. Caller requests shutdown;
         # both should receive SIGTERM and exit. exit_code() is

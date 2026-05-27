@@ -5,7 +5,9 @@ Used by the supervise dashboard when the operator approves a
 pipelock-block proposal (or runs the operator-initiated `pipelock
 edit <bottle>` verb). Fetches the current pipelock.yaml via `docker
 exec`, parses it, swaps the api_allowlist with the proposed hosts,
-re-renders, writes back via `docker cp`, then `docker restart` so
+re-renders, writes back via the bind-mount path, then signals the
+bundle supervisor to restart the pipelock daemon (`docker kill
+--signal USR1`) so
 pipelock picks up the new config.
 
 v1 uses restart, not SIGHUP — pipelock has no in-process reload
@@ -130,19 +132,17 @@ def apply_allowlist_change(
       2. Fetch + parse current pipelock.yaml.
       3. Replace api_allowlist with the proposed hosts; re-render.
       4. Write the new yaml to the bind-mount source.
-      5. `docker restart` the bundle so pipelock reloads.
-
-    The restart bounces ALL four daemons inside the bundle, not
-    just pipelock — pipelock has no in-process reload and the
-    bundle init re-spawns the four daemons on container restart.
-    Per-daemon reload would need a supervisor IPC channel (PRD
-    0024 open question 1's "eventually" path); the bundle-wide
-    restart is the v1 trade-off.
+      5. `docker kill --signal USR1 <bundle>` so the supervisor
+         restarts the pipelock daemon in place (leaving egress,
+         git-gate, and supervise running). Pipelock has no
+         in-process reload; the supervisor's per-daemon restart
+         keeps the agent's MCP socket alive — a whole-bundle
+         `docker restart` would bounce supervise too.
 
     Returns (before, after) where both are one-per-line allowlist
     strings (operator-facing format). Raises PipelockApplyError on
     any failure; the sidecar's existing config stays in place until
-    the host write succeeds, and the restart is what makes it
+    the host write succeeds, and the SIGUSR1 is what makes it
     live."""
     new_hosts = parse_allowlist_content(new_allowlist_content)
     container = sidecar_bundle_container_name(slug)
@@ -167,9 +167,9 @@ def apply_allowlist_change(
     # FILE — same Docker single-file inode issue as egress_apply:
     # write-temp-then-rename swaps the host inode and leaves the
     # container's mount pointing at the orphaned old one. Write
-    # in-place. `docker restart` below picks up the new content
-    # (and pipelock has no in-process reload anyway, so the
-    # restart is what makes it live regardless of write atomicity).
+    # in-place. The SIGUSR1 below makes the new content live
+    # (pipelock has no in-process reload, so the supervisor
+    # restarts the pipelock daemon in response).
     target = _pipelock_yaml_host_path(slug)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(rendered)
@@ -177,12 +177,12 @@ def apply_allowlist_change(
     # fine — but 0o600 matches what prepare wrote.
     target.chmod(0o600)
     restart = subprocess.run(
-        ["docker", "restart", container],
+        ["docker", "kill", "--signal", "USR1", container],
         capture_output=True, text=True, check=False,
     )
     if restart.returncode != 0:
         raise PipelockApplyError(
-            f"failed to restart {container}: "
+            f"failed to signal {container} for pipelock restart: "
             f"{(restart.stderr or '').strip()}"
         )
 

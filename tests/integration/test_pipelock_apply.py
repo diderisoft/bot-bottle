@@ -35,8 +35,6 @@ from claude_bottle.backend.docker.network import (
 from claude_bottle.backend.docker.pipelock import (
     PIPELOCK_CA_CERT_IN_CONTAINER,
     PIPELOCK_CA_KEY_IN_CONTAINER,
-    PIPELOCK_IMAGE,
-    PIPELOCK_PORT,
     DockerPipelockProxy,
     pipelock_tls_init,
 )
@@ -47,6 +45,7 @@ from claude_bottle.backend.docker.pipelock_apply import (
     fetch_current_yaml,
 )
 from claude_bottle.backend.docker.sidecar_bundle import (
+    SIDECAR_BUNDLE_IMAGE,
     sidecar_bundle_container_name,
 )
 from claude_bottle.yaml_subset import parse_yaml_subset
@@ -85,14 +84,12 @@ class TestPipelockApply(unittest.TestCase):
         shutil.rmtree(pipelock_state_dir(self.slug), ignore_errors=True)
 
     def _bring_up(self) -> None:
-        """Replicates the pre-chunk-3 bring-up sequence (create on
-        internal network → bind-mount yaml + CAs → attach egress
-        network → docker start) without going through the deleted
-        `DockerPipelockProxy.start` helper. The same sequence is
-        what `docker compose up` does for the pipelock service in
-        production; this test path keeps the standalone-pipelock
-        smoke alive so `apply_allowlist_change`'s host-side
-        write + docker-restart loop has integration coverage.
+        """Brings up the bundle image with only the pipelock daemon
+        selected. The bundle's Python supervisor is PID 1, which is
+        what apply_allowlist_change targets via `docker kill
+        --signal USR1` — pipelock alone as PID 1 wouldn't survive
+        SIGUSR1 (default disposition = terminate). This shape is
+        what runs in production minus the other three daemons.
 
         The yaml stages into the production-real
         `pipelock_state_dir(slug)` (not a private temp dir) so the
@@ -109,24 +106,28 @@ class TestPipelockApply(unittest.TestCase):
         self.egress_net = network_create_egress(self.slug)
         ca_cert_host, ca_key_host = pipelock_tls_init(state_dir)
 
-        # apply_allowlist_change targets sidecar_bundle_container_name
-        # (chunk 5 flipped the bundle to the only shape). Bringing the
-        # standalone pipelock up under that name keeps this test
-        # exercising the real production code path; the bundle's
-        # other three daemons aren't running here, but the
-        # apply/fetch code only touches /etc/pipelock.yaml + the
-        # pipelock binary, so the lighter setup is fine.
+        # Ensure the bundle image is built. compose normally builds
+        # this lazily; we go through `docker run` here so we have to
+        # do it ourselves. Idempotent — cached layers make repeats
+        # fast.
+        repo_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        subprocess.run(
+            ["docker", "build",
+             "-t", SIDECAR_BUNDLE_IMAGE,
+             "-f", "Dockerfile.sidecars", "."],
+            cwd=repo_root, check=True, capture_output=True,
+        )
+
         self.sidecar_name = sidecar_bundle_container_name(self.slug)
         subprocess.run(
             ["docker", "create",
              "--name", self.sidecar_name,
              "--network", self.internal_net,
+             "-e", "CLAUDE_BOTTLE_SIDECAR_DAEMONS=pipelock",
              "-v", f"{prep.yaml_path}:/etc/pipelock.yaml:ro",
              "-v", f"{ca_cert_host}:{PIPELOCK_CA_CERT_IN_CONTAINER}:ro",
              "-v", f"{ca_key_host}:{PIPELOCK_CA_KEY_IN_CONTAINER}:ro",
-             PIPELOCK_IMAGE,
-             "run", "--config", "/etc/pipelock.yaml",
-             "--listen", f"0.0.0.0:{PIPELOCK_PORT}"],
+             SIDECAR_BUNDLE_IMAGE],
             check=True, capture_output=True,
         )
         subprocess.run(
