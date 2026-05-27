@@ -1,16 +1,23 @@
-"""smolmachines `_resolve_plan` (PRD 0023 chunk 2d).
+"""smolmachines `_resolve_plan` (PRD 0023 chunks 2d + 4c).
 
-Resolves the per-bottle docker subnet + bundle IP, pre-packs the
-agent's `.smolmachine` artifact (cached under
-`~/.cache/claude-bottle/smolmachines/`), and assembles the guest
-env. No VM bringup — that's `launch.launch`'s job."""
+Resolves the per-bottle docker subnet + bundle IP, builds the
+agent's docker image from the repo Dockerfile, converts it into a
+`.smolmachine` artifact via an ephemeral local registry (smolvm's
+crane backend only reads registry refs), and assembles the guest
+env. The `.smolmachine` is cached under
+`~/.cache/claude-bottle/smolmachines/` keyed by the docker image
+ID so Dockerfile changes invalidate the cache automatically.
+
+No VM bringup — that's `launch.launch`'s job."""
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
 from ...backend import BottleSpec
+from ...backend.docker import util as docker_mod
 from ...backend.docker.bottle_state import (
     BottleMetadata,
     agent_state_dir,
@@ -27,7 +34,12 @@ from ...pipelock import PipelockProxy
 from ...supervise import Supervise
 from . import smolvm as _smolvm
 from .bottle_plan import SmolmachinesBottlePlan
+from .local_registry import ephemeral_registry
 from .util import smolmachines_bundle_subnet, smolmachines_preflight
+
+
+# Repo root, used as the `docker build` context for the agent image.
+_REPO_DIR = str(Path(__file__).resolve().parent.parent.parent.parent)
 
 
 # Per-host cache for `smolvm pack create` outputs. Keyed by the
@@ -132,11 +144,15 @@ def resolve_plan(
     prompt_file.chmod(0o600)
 
     machine_name = f"claude-bottle-{slug}"
-    # Chunk 2d placeholder until the agent-image work lands.
-    # alpine pulls cleanly from docker.io via smolvm's crane
-    # backend; the real claude-bottle image lives in the local
-    # docker daemon and isn't reachable that way.
-    agent_image_ref = "alpine:latest"
+    # Build the agent image from the repo Dockerfile (shared with
+    # the docker backend, layer-cached) and convert it into a
+    # `.smolmachine` artifact via an ephemeral local registry. The
+    # CLAUDE_BOTTLE_IMAGE env var match the docker backend's
+    # resolve_plan default so both backends use the same image when
+    # one is built.
+    agent_image_ref = os.environ.get(
+        "CLAUDE_BOTTLE_IMAGE", "claude-bottle:latest"
+    )
     agent_from_path = _ensure_smolmachine(agent_image_ref)
 
     return SmolmachinesBottlePlan(
@@ -158,21 +174,37 @@ def resolve_plan(
 
 
 def _ensure_smolmachine(image_ref: str) -> Path:
-    """Cache `smolvm pack create --image <image_ref>` output under
-    `~/.cache/claude-bottle/smolmachines/<slug>`. Returns the
-    `.smolmachine.smolmachine` sidecar path — that's the file
-    `machine create --from` consumes (pack create produces a
-    launcher binary at `.smolmachine` plus the sidecar alongside
+    """Build the agent docker image and convert it into a
+    `.smolmachine` artifact, caching the result under
+    `~/.cache/claude-bottle/smolmachines/` keyed by the docker image
+    ID (so a Dockerfile change automatically invalidates the cache).
+
+    Returns the `.smolmachine.smolmachine` sidecar path — that's
+    the file `machine create --from` consumes (pack create produces
+    a launcher binary at `.smolmachine` plus the sidecar alongside
     it; the sidecar is the actual artifact).
 
-    Re-runs of pack create against the same image hit smolvm's
-    layer cache; we still skip the call entirely when the
-    sidecar is already on disk, since each invocation costs
-    several seconds even on a hot cache."""
+    Conversion path: `docker build` (the existing layer cache makes
+    no-change rebuilds cheap) → `docker tag` with a
+    `localhost:<port>/...` ref → bring up the ephemeral registry
+    container → `docker push` into it → `smolvm pack create --image
+    <localhost ref>` → tear down the registry. Each pack-create
+    costs several seconds even on a hot cache, so we skip the whole
+    pipeline when the cached sidecar is already on disk for this
+    image ID."""
     _SMOLMACHINE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    slug = image_ref.replace(":", "_").replace("/", "_")
-    binary = _SMOLMACHINE_CACHE_DIR / f"{slug}.smolmachine"
-    sidecar = _SMOLMACHINE_CACHE_DIR / f"{slug}.smolmachine.smolmachine"
-    if not sidecar.is_file():
-        _smolvm.pack_create(image_ref, binary)
+    docker_mod.build_image(image_ref, _REPO_DIR)
+    # `sha256:abcd...` -> `abcd...` first 16 chars: short enough to
+    # keep filenames manageable, long enough to make collisions
+    # astronomically unlikely.
+    digest = docker_mod.image_id(image_ref).split(":", 1)[-1][:16]
+    binary = _SMOLMACHINE_CACHE_DIR / f"{digest}.smolmachine"
+    sidecar = _SMOLMACHINE_CACHE_DIR / f"{digest}.smolmachine.smolmachine"
+    if sidecar.is_file():
+        return sidecar
+    with ephemeral_registry() as port:
+        local_ref = f"localhost:{port}/claude-bottle:{digest}"
+        docker_mod.tag(image_ref, local_ref)
+        docker_mod.push(local_ref)
+        _smolvm.pack_create(local_ref, binary)
     return sidecar

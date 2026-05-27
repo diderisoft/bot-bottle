@@ -147,6 +147,39 @@ def build_image_with_cwd(derived: str, base: str, cwd: str) -> None:
     )
 
 
+def image_id(ref: str) -> str:
+    """Return the content-addressed image ID (e.g.
+    `sha256:abcd...`) for `ref`. The smolmachines backend keys its
+    `.smolmachine` artifact cache on this, so a Dockerfile change
+    that produces a new image automatically invalidates the cache."""
+    r = subprocess.run(
+        ["docker", "image", "inspect", "--format", "{{.Id}}", ref],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if r.returncode != 0:
+        die(
+            f"docker image inspect for {ref!r} failed: "
+            f"{(r.stderr or '').strip() or '<no stderr>'}"
+        )
+    return r.stdout.strip()
+
+
+def tag(src: str, dst: str) -> None:
+    """`docker tag SRC DST`. Idempotent. Used by smolmachines prepare
+    to retag the locally-built image into a localhost:<port>/... ref
+    that the ephemeral registry will accept."""
+    subprocess.run(["docker", "tag", src, dst], check=True)
+
+
+def push(ref: str) -> None:
+    """`docker push REF`. Used by smolmachines prepare to push the
+    agent image into the ephemeral local registry so smolvm's crane
+    backend can pull it."""
+    subprocess.run(["docker", "push", ref], check=True)
+
+
 def _silent_run(cmd: Iterable[str]) -> int:
     return subprocess.run(
         list(cmd),
