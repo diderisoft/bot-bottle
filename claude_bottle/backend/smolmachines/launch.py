@@ -48,6 +48,15 @@ def launch(
             # bringup with inner-Plan-driven env + volumes lands
             # in chunk 4 alongside provisioning.
             daemons_csv="",
+            # PRD 0023 chunk 3: pin egress to localhost INSIDE the
+            # bundle so the agent's TSI-permitted `<bundle-ip>:*`
+            # connect to :9099 refuses at the socket level. Always
+            # set in smolmachines mode — agent dials pipelock, not
+            # egress, so egress is bundle-internal regardless of
+            # whether routes are declared. The docker backend
+            # doesn't set this env (egress on 0.0.0.0 by default)
+            # since the docker agent goes via the egress alias.
+            environment=("EGRESS_LISTEN_HOST=127.0.0.1",),
         )
         _bundle.start_bundle(bundle_spec)
         stack.callback(_bundle.stop_bundle, plan.slug)

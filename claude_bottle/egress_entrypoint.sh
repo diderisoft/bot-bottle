@@ -36,6 +36,18 @@ if [ -n "$EGRESS_UPSTREAM_PROXY" ]; then
   MODE="--mode upstream:$EGRESS_UPSTREAM_PROXY --listen-port 9099"
 fi
 
+# Bind address. Docker backend wants `0.0.0.0` (agent dials egress
+# directly via the docker network alias). Smolmachines backend
+# wants `127.0.0.1` because the agent dials pipelock — not egress
+# — and egress is pipelock's localhost-only upstream inside the
+# bundle. TSI's IP-only allowlist would otherwise let the agent
+# reach `<bundle-ip>:9099` and bypass pipelock's DLP; binding
+# 127.0.0.1 inside the bundle closes that gap (PRD 0023 chunk 3).
+LISTEN_HOST_FLAG=""
+if [ -n "$EGRESS_LISTEN_HOST" ]; then
+  LISTEN_HOST_FLAG="--listen-host $EGRESS_LISTEN_HOST"
+fi
+
 TRUST_FLAG=""
 if [ -n "$EGRESS_UPSTREAM_CA" ] && [ -f "$EGRESS_UPSTREAM_CA" ]; then
   COMBINED=$CONFDIR/combined-trust.pem
@@ -57,4 +69,4 @@ if [ -n "$EGRESS_UPSTREAM_PROXY" ]; then
   export NO_PROXY="localhost,127.0.0.1"
 fi
 
-exec mitmdump $CONFDIR_FLAG $MODE $TRUST_FLAG -s /app/egress_addon.py
+exec mitmdump $CONFDIR_FLAG $MODE $LISTEN_HOST_FLAG $TRUST_FLAG -s /app/egress_addon.py
