@@ -42,8 +42,8 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-# Same-directory import inside the container; `supervise.py` is COPYed
-# alongside this file by Dockerfile.supervise.
+# Same-directory import inside the bundle container; `supervise.py`
+# is COPYed alongside this file by Dockerfile.sidecars.
 import supervise as _sv
 
 

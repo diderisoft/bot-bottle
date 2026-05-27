@@ -18,7 +18,7 @@ This file imports `mitmproxy` and is never imported on the host —
 mitmproxy is a container-only dependency. The host's tests target
 `egress_addon_core`.
 
-Dockerfile.egress copies both this file and
+Dockerfile.sidecars copies both this file and
 `egress_addon_core.py` flat into `/app/`; the absolute import
 below works because mitmdump runs with `/app` on its sys.path. The
 parallel file in the package source tree (claude_bottle/) is the

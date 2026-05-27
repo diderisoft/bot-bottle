@@ -147,12 +147,12 @@ def git_gate_known_hosts_line(host: str, port: str, key: str) -> str:
 
 
 def git_gate_render_entrypoint(upstreams: tuple[GitGateUpstream, ...]) -> str:
-    """Posix-sh entrypoint (alpine ash). One `init_repo` call per
-    upstream, then `exec git daemon`. The function reads
-    `/git-gate/creds/<name>-{key,known_hosts}` (laid down by
-    `DockerGitGate.start` via docker cp) and wires them into each
-    bare repo's config; the access-hook + pre-receive hook pick those
-    paths up at fetch / push time."""
+    """Posix-sh entrypoint. One `init_repo` call per upstream, then
+    `exec git daemon`. The function reads
+    `/git-gate/creds/<name>-{key,known_hosts}` (bind-mounted into
+    the bundle by the renderer) and wires them into each bare repo's
+    config; the access-hook + pre-receive hook pick those paths up
+    at fetch / push time."""
     lines = [
         "#!/bin/sh",
         "set -eu",

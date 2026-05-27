@@ -174,6 +174,59 @@ class TestSupervisor(unittest.TestCase):
         self.assertEqual(2, rc)
         self.assertIsNone(sup.shutdown_at)
 
+    def test_forward_signal_to_named_child(self):
+        # SIGHUP needs to reach mitmdump inside the bundle so
+        # routes.yaml reloads (egress_apply.py issues `docker kill
+        # --signal HUP <bundle>`). The supervisor forwards by daemon
+        # name.
+        #
+        # The child is Python (not a shell-with-trap) on purpose:
+        # bash on macOS defers trap execution while a foreground
+        # builtin like `sleep` is running and stdout is a pipe,
+        # which makes shell-trap test fixtures flaky. The
+        # production code path (mitmdump as the bundle child)
+        # doesn't have a shell in between — egress_entrypoint.sh
+        # `exec`s mitmdump, so SIGHUP lands directly on mitmdump.
+        sighup_marker = (
+            sys.executable, "-c",
+            "import signal, sys, time\n"
+            "def _h(*_): sys.exit(42)\n"
+            "signal.signal(signal.SIGHUP, _h)\n"
+            "while True: time.sleep(0.1)\n",
+        )
+        specs = [
+            _DaemonSpec("egress", sighup_marker),
+            _DaemonSpec("other",  ("/bin/sleep", "30")),
+        ]
+        sup = _Supervisor(specs)
+        sup.start_all()
+        time.sleep(0.3)  # let Python install the handler
+
+        delivered = sup.forward_signal(signal.SIGHUP, "egress")
+        self.assertTrue(delivered)
+
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            if sup.procs[0][1].poll() is not None:
+                break
+            time.sleep(0.05)
+        self.assertEqual(42, sup.procs[0][1].returncode,
+                         "egress did not see SIGHUP")
+        # The other daemon is untouched.
+        self.assertIsNone(sup.procs[1][1].poll())
+
+        sup.request_shutdown(reason="cleanup")
+        self._drive(sup)
+
+    def test_forward_signal_unknown_daemon_no_op(self):
+        specs = [_DaemonSpec("a", ("/bin/sleep", "30"))]
+        sup = _Supervisor(specs)
+        sup.start_all()
+        delivered = sup.forward_signal(signal.SIGHUP, "ghost")
+        self.assertFalse(delivered)
+        sup.request_shutdown(reason="cleanup")
+        self._drive(sup)
+
     def test_shutdown_after_start_terminates_children(self):
         # Two long-running children. Caller requests shutdown;
         # both should receive SIGTERM and exit. exit_code() is
