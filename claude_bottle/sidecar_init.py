@@ -224,6 +224,52 @@ class _Supervisor:
             return True
         return False
 
+    def restart_daemon(self, daemon_name: str, *, grace: float = 5.0) -> bool:
+        """Terminate one named child and spawn a fresh one, leaving
+        the other daemons running. Used by the pipelock-apply path:
+        pipelock has no in-process reload, so apply_allowlist_change
+        runs `docker kill --signal USR1 <bundle>` after writing the
+        new yaml; the supervisor catches SIGUSR1 and calls this.
+
+        Behavior: SIGTERM → wait up to `grace` seconds → SIGKILL if
+        still alive → spawn a replacement under the same DaemonSpec.
+        The `procs` slot is updated in place so subsequent
+        forward_signal / shutdown calls reach the new pid.
+
+        Returns True iff a daemon by that name was running and a
+        replacement spawned; False if no such daemon (the
+        compose-renderer subset said this bottle doesn't run it)."""
+        if self.shutdown_at is not None:
+            _log(f"restart {daemon_name} skipped; supervisor is shutting down")
+            return False
+        for idx, (spec, p) in enumerate(self.procs):
+            if spec.name != daemon_name:
+                continue
+            _log(f"restarting {daemon_name}")
+            if p.poll() is None:
+                try:
+                    p.terminate()
+                except ProcessLookupError:
+                    pass
+                try:
+                    p.wait(timeout=grace)
+                except subprocess.TimeoutExpired:
+                    _log(
+                        f"{daemon_name} did not exit within {grace:.0f}s "
+                        f"of SIGTERM; SIGKILL"
+                    )
+                    try:
+                        p.kill()
+                    except ProcessLookupError:
+                        pass
+                    p.wait()
+            self._logged_dead.discard(daemon_name)
+            new_proc = _spawn(spec)
+            self.procs[idx] = (spec, new_proc)
+            _log(f"{daemon_name} restarted (pid {new_proc.pid})")
+            return True
+        return False
+
 
 def main(argv: Sequence[str] | None = None) -> int:
     del argv  # no flags yet; env-driven only
@@ -237,14 +283,18 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     signal.signal(signal.SIGTERM, lambda *_: sup.request_shutdown("SIGTERM"))
     signal.signal(signal.SIGINT, lambda *_: sup.request_shutdown("SIGINT"))
-    # SIGHUP reload path: routes.yaml + pipelock.yaml hot-reloads
-    # in egress_apply.py / pipelock_apply.py issue `docker kill
-    # --signal HUP <bundle>`. The kernel delivers SIGHUP to PID 1
-    # (this supervisor); we forward it to the daemon that knows
-    # how to reload (egress = mitmdump-reload-addons; pipelock has
-    # no in-process reload, so the pipelock-apply path uses
-    # `docker restart` instead).
+    # SIGHUP reload path: egress_apply.py runs `docker kill
+    # --signal HUP <bundle>` after writing routes.yaml. The kernel
+    # delivers SIGHUP to PID 1 (this supervisor); forward it to
+    # mitmdump so it reloads its addon.
     signal.signal(signal.SIGHUP, lambda *_: sup.forward_signal(signal.SIGHUP, "egress"))
+    # SIGUSR1 pipelock-restart path: pipelock_apply.py runs
+    # `docker kill --signal USR1 <bundle>` after writing
+    # pipelock.yaml. Pipelock has no in-process reload, so the
+    # supervisor restarts the pipelock daemon in place (other
+    # daemons keep running — specifically supervise, whose MCP
+    # socket would drop on a whole-container `docker restart`).
+    signal.signal(signal.SIGUSR1, lambda *_: sup.restart_daemon("pipelock"))
 
     while not sup.tick():
         time.sleep(_POLL_INTERVAL)
