@@ -487,11 +487,15 @@ class TestProvisionSupervise(unittest.TestCase):
             _supervise.provision_supervise(plan, "claude-bottle-demo-abc12")
         ex.assert_called_once()
         argv = ex.call_args.args[1]
-        # claude mcp add --scope user --transport http supervise <url>
-        # — URL is the agent-side endpoint (host loopback +
-        # discovered port), not the docker bridge IP.
+        # `claude mcp add --scope user` writes to ~/.claude.json,
+        # and the agent is the `node` user — switch UID + set
+        # HOME so the config lands in /home/node/.claude.json,
+        # not root's. URL is the agent-side endpoint (host
+        # loopback + discovered port), not the docker bridge IP.
         self.assertEqual(
             [
+                "runuser", "-u", "node", "--",
+                "env", "HOME=/home/node",
                 "claude", "mcp", "add",
                 "--scope", "user",
                 "--transport", "http",

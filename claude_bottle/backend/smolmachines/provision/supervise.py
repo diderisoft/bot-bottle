@@ -38,9 +38,16 @@ def provision_supervise(plan: SmolmachinesBottlePlan, target: str) -> None:
         return
     url = plan.agent_supervise_url
     info(f"registering supervise MCP server in agent claude config → {url}")
+    # `claude mcp add --scope user` writes to ~/.claude.json. The
+    # agent is the `node` user; smolvm machine_exec runs as root
+    # by default, so we have to switch user explicitly and set
+    # HOME so the config lands in /home/node/.claude.json (where
+    # the agent's claude actually reads it from).
     r = _smolvm.machine_exec(
         target,
         [
+            "runuser", "-u", "node", "--",
+            "env", "HOME=/home/node",
             "claude", "mcp", "add",
             "--scope", "user",
             "--transport", "http",
