@@ -4,12 +4,20 @@ Routes `exec_claude` / `exec` / `cp_in` through `smolvm machine
 exec` / `smolvm machine cp`. The handle is yielded by `launch`
 and torn down via the surrounding ExitStack on context exit;
 `close` is a no-op idempotent alias so the BottleBackend ABC's
-context-manager contract is satisfied."""
+context-manager contract is satisfied.
+
+User context: `smolvm machine exec` runs commands as root in the
+VM, but the agent image's USER is `node` and claude-code refuses
+to run as root with `--dangerously-skip-permissions`. Both
+`exec_claude` and `exec` wrap commands in `runuser -l node -c`
+so they execute as the node user (and pick up node's $HOME /
+$USER from the login shell) — matches the docker backend's
+default-USER behavior."""
 
 from __future__ import annotations
 
+import shlex
 import subprocess
-import sys
 
 from .. import Bottle, ExecResult
 from . import smolvm as _smolvm
@@ -29,33 +37,43 @@ class SmolmachinesBottle(Bottle):
         self._prompt_path = prompt_path
 
     def exec_claude(self, argv: list[str], *, tty: bool = True) -> int:
-        """Run `claude` interactively inside the VM. Inherits the
-        operator's terminal (stdin / stdout / stderr) so the
-        session feels native. Blocks until claude exits; returns
-        the in-VM exit code.
+        """Run `claude` interactively inside the VM as the `node`
+        user. Inherits the operator's terminal (stdin / stdout /
+        stderr) so the session feels native. Blocks until claude
+        exits; returns the in-VM exit code.
 
         We bypass the captured-output `machine_exec` helper here
         because that one wraps stdout/stderr in pipes — fine for
         scripted exec, wrong for an interactive shell. Drop down
-        to `subprocess.run` with the TTY inherited."""
+        to `subprocess.run` with the TTY inherited.
+
+        `runuser -l node -c` runs the inner command under node's
+        login shell so $HOME / $USER are set. Without that switch
+        claude bails on `--dangerously-skip-permissions cannot be
+        used with root/sudo privileges`."""
         flags = ["smolvm", "machine", "exec", "--name", self.name]
         if tty:
             flags += ["-i", "-t"]
         claude_argv = ["claude"]
         if self._prompt_path:
             claude_argv += ["--append-system-prompt-file", self._prompt_path]
-        flags += ["--", *claude_argv, *argv]
+        claude_argv += argv
+        # shlex-quote each piece so flags / paths with shell-special
+        # chars survive the runuser -c shell parse.
+        inner = " ".join(shlex.quote(p) for p in claude_argv)
+        flags += ["--", "runuser", "-l", "node", "-c", f"exec {inner}"]
         result = subprocess.run(flags, check=False)
         return result.returncode
 
     def exec(self, script: str) -> ExecResult:
-        """Run a POSIX shell script and capture the result. The
-        script runs under `/bin/sh -c`, matching what the docker
-        backend's `exec` does — callers can write shell-y test
-        helpers without worrying about argv splitting."""
+        """Run a POSIX shell script as the `node` user and capture
+        the result. Matches the docker backend's `exec`, which
+        defaults to the image's USER (also node) — so test
+        helpers / provision shell-outs run with the same identity
+        on both backends."""
         r = _smolvm.machine_exec(
             self.name,
-            ["/bin/sh", "-c", script],
+            ["runuser", "-l", "node", "-c", script],
         )
         return ExecResult(
             returncode=r.returncode,
