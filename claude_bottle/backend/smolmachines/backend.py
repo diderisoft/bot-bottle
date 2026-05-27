@@ -53,7 +53,7 @@ class SmolmachinesBottleBackend(
         # Chunk 4 follow-on: needs the git-gate inner Plan (so the
         # gitconfig insteadOf URL points at the gate's host) and
         # the agent image must contain `git`. Stub for chunk 4a.
-        del plan, target
+        pass
 
     def prepare_cleanup(self) -> SmolmachinesBottleCleanupPlan:
         return SmolmachinesBottleCleanupPlan()
