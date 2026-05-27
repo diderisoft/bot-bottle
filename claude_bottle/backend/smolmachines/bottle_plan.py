@@ -1,10 +1,10 @@
 """SmolmachinesBottlePlan — concrete BottlePlan for the smolmachines
 backend (PRD 0023).
 
-Chunk 1 + 2a fields: slug, smolfile_path, bundle docker subnet /
-gateway / pinned IP. VM lifecycle + provisioning fields (machine
-name, `.smolmachine` artifact path, etc.) land in later chunks
-as the launch flow grows."""
+Slug + bundle docker subnet / gateway / pinned IP + smolvm
+machine name + agent `.smolmachine` artifact + per-bottle guest
+env. Provisioning fields (CA cert path, prompt path, etc.) land
+in chunk 4."""
 
 from __future__ import annotations
 
@@ -24,13 +24,34 @@ class SmolmachinesBottlePlan(BottlePlan):
     Inherits `spec` and `stage_dir` from BottlePlan."""
 
     slug: str
-    smolfile_path: Path
     # Per-bottle docker subnet for the sidecar bundle container.
     # The bundle runs at `bundle_ip` (always `.2`); the gateway is
     # at `.1`. smolvm's TSI allowlist is set to `bundle_ip/32`.
     bundle_subnet: str
     bundle_gateway: str
     bundle_ip: str
+    # smolvm machine name + agent image source. machine_create
+    # boots from a packed `.smolmachine` artifact (pre-baked at
+    # prepare time via `smolvm pack create`); using `--from`
+    # instead of `--image` avoids the registry-pull race we hit
+    # when machine_start tried to fetch on-demand and the libkrun
+    # agent's network attempt got refused by macOS.
+    #
+    # Chunk 2d ships with a public placeholder image (alpine)
+    # since claude-bottle:latest lives in the operator's local
+    # docker daemon and smolvm's crane backend can't read from
+    # there; chunk 4 resolves the agent-image-conversion gap
+    # (push to a registry first, or smolvm grows a docker-daemon
+    # transport).
+    machine_name: str
+    agent_from_path: Path
+    # In-guest env vars (HTTPS_PROXY etc) — IP-literal URLs since
+    # the guest has no DNS resolver inside the TSI allowlist.
+    # Passed to `smolvm machine create` as `-e K=V` flags.
+    # Smolfile-rendering is gone (smolvm 0.8.0's
+    # `--smolfile` is mutually exclusive with `--from`, and
+    # `--from` is the path that avoids the registry-pull race).
+    guest_env: dict[str, str]
 
     def print(self, *, remote_control: bool) -> None:
         """Compact y/N preflight. Same shape as the Docker

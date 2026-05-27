@@ -98,17 +98,36 @@ def pack_create(image: str, output: Path) -> None:
 def machine_create(
     name: str,
     *,
+    image: str | None = None,
     from_path: Path | None = None,
-    smolfile: Path | None = None,
+    allow_cidrs: Sequence[str] = (),
+    env: Mapping[str, str] | None = None,
 ) -> None:
-    """`smolvm machine create NAME [--from PATH] [--smolfile PATH]`.
-    NAME is positional (the CLI's exception to the `--name`
-    pattern other subcommands use)."""
+    """`smolvm machine create NAME [--image IMG | --from PATH]
+    [--allow-cidr CIDR ...] [-e K=V ...]`. NAME is positional
+    (the CLI's exception to the `--name` pattern other
+    subcommands use).
+
+    `image` (registry ref like `alpine:latest`) and `from_path`
+    (a `.smolmachine` artifact) are mutually exclusive — one or
+    the other tells smolvm what to boot. The wrapper doesn't
+    enforce exclusivity; smolvm errors clearly enough.
+
+    `allow_cidrs` and `env` are passed as CLI flags instead of a
+    Smolfile because `--from` and `--smolfile` are themselves
+    mutually exclusive in smolvm 0.8.0 — and we want `--from`'s
+    no-pull-at-start property. The flag form gives the same
+    result without the Smolfile complication."""
     args: list[str] = ["machine", "create"]
+    if image is not None:
+        args += ["--image", image]
     if from_path is not None:
         args += ["--from", str(from_path)]
-    if smolfile is not None:
-        args += ["--smolfile", str(smolfile)]
+    for cidr in allow_cidrs:
+        args += ["--allow-cidr", cidr]
+    if env:
+        for k, v in env.items():
+            args += ["-e", f"{k}={v}"]
     args.append(name)
     _smolvm(*args)
 

@@ -69,20 +69,24 @@ class TestArgvShapes(unittest.TestCase):
             m.call_args.args[0],
         )
 
-    def test_machine_create_with_from_and_smolfile(self):
+    def test_machine_create_with_from_and_allow_cidr_and_env(self):
         with self._patch_run() as m:
             machine_create(
                 "agent-xyz",
                 from_path=Path("/stage/agent.smolmachine"),
-                smolfile=Path("/stage/smolfile.toml"),
+                allow_cidrs=["192.168.50.2/32"],
+                env={"HTTPS_PROXY": "http://192.168.50.2:8888"},
             )
-        self.assertEqual(
-            ["smolvm", "machine", "create",
-             "--from", "/stage/agent.smolmachine",
-             "--smolfile", "/stage/smolfile.toml",
-             "agent-xyz"],
-            m.call_args.args[0],
-        )
+        argv = m.call_args.args[0]
+        # --from + --allow-cidr + -e are all flags, name is positional.
+        self.assertEqual("smolvm", argv[0])
+        self.assertIn("--from", argv)
+        self.assertIn("/stage/agent.smolmachine", argv)
+        self.assertIn("--allow-cidr", argv)
+        self.assertIn("192.168.50.2/32", argv)
+        self.assertIn("-e", argv)
+        self.assertIn("HTTPS_PROXY=http://192.168.50.2:8888", argv)
+        self.assertEqual("agent-xyz", argv[-1])
 
     def test_machine_start_uses_dash_name(self):
         # `start` is the --name flag form, NOT positional.

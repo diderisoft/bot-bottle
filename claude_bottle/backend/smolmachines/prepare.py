@@ -1,8 +1,9 @@
-"""smolmachines `_resolve_plan` (PRD 0023 chunk 2a).
+"""smolmachines `_resolve_plan` (PRD 0023 chunk 2d).
 
-Resolves the per-bottle docker subnet + bundle IP and writes the
-Smolfile to the stage dir. No VM bringup. The plan it returns is
-enough for the y/N preflight to render."""
+Resolves the per-bottle docker subnet + bundle IP, pre-packs the
+agent's `.smolmachine` artifact (cached under
+`~/.cache/claude-bottle/smolmachines/`), and assembles the guest
+env. No VM bringup — that's `launch.launch`'s job."""
 
 from __future__ import annotations
 
@@ -15,9 +16,16 @@ from ...backend.docker.bottle_state import (
     bottle_identity,
     write_metadata,
 )
+from . import smolvm as _smolvm
 from .bottle_plan import SmolmachinesBottlePlan
-from .smolfile import smolfile_build, smolfile_write
 from .util import smolmachines_bundle_subnet, smolmachines_preflight
+
+
+# Per-host cache for `smolvm pack create` outputs. Keyed by the
+# image ref so re-prepares for the same image hit the cache
+# (pack create is idempotent on the smolvm side but takes several
+# seconds even when no layer is fetched).
+_SMOLMACHINE_CACHE_DIR = Path.home() / ".cache" / "claude-bottle" / "smolmachines"
 
 
 # Gateway ports the bundle exposes inside its container — pipelock
@@ -31,10 +39,13 @@ _BUNDLE_SUPERVISE_PORT = 9100
 def resolve_plan(
     spec: BottleSpec, *, stage_dir: Path
 ) -> SmolmachinesBottlePlan:
-    """Materialize the smolmachines plan. The Smolfile lands at
-    `<stage>/smolfile.toml`; the bundle's docker subnet + pinned
-    IP are derived from the slug and carried on the plan for
-    launch to consume."""
+    """Materialize the smolmachines plan. The bundle's docker
+    subnet + pinned IP are derived from the slug; the agent's
+    `.smolmachine` artifact is built (or cache-hit) here so
+    launch's `machine create --from` boots without a registry
+    pull. Per-bottle guest env + the TSI allow_cidrs land on the
+    plan for launch to pass straight through to
+    `machine create` flags."""
     smolmachines_preflight()
 
     manifest = spec.manifest
@@ -74,18 +85,43 @@ def resolve_plan(
             f"http://{bundle_ip}:{_BUNDLE_SUPERVISE_PORT}"
         )
 
-    smolfile_path = stage_dir / "smolfile.toml"
-    smolfile_write(
-        smolfile_build(env=guest_env, bundle_ip=bundle_ip),
-        smolfile_path,
-    )
+    machine_name = f"claude-bottle-{slug}"
+    # Chunk 2d placeholder until chunk 4's agent-image work lands.
+    # alpine pulls cleanly from docker.io via smolvm's crane
+    # backend; the real claude-bottle image lives in the local
+    # docker daemon and isn't reachable that way.
+    agent_image_ref = "alpine:latest"
+    agent_from_path = _ensure_smolmachine(agent_image_ref)
 
     return SmolmachinesBottlePlan(
         spec=spec,
         stage_dir=stage_dir,
         slug=slug,
-        smolfile_path=smolfile_path,
         bundle_subnet=subnet,
         bundle_gateway=gateway,
         bundle_ip=bundle_ip,
+        machine_name=machine_name,
+        agent_from_path=agent_from_path,
+        guest_env=guest_env,
     )
+
+
+def _ensure_smolmachine(image_ref: str) -> Path:
+    """Cache `smolvm pack create --image <image_ref>` output under
+    `~/.cache/claude-bottle/smolmachines/<slug>`. Returns the
+    `.smolmachine.smolmachine` sidecar path — that's the file
+    `machine create --from` consumes (pack create produces a
+    launcher binary at `.smolmachine` plus the sidecar alongside
+    it; the sidecar is the actual artifact).
+
+    Re-runs of pack create against the same image hit smolvm's
+    layer cache; we still skip the call entirely when the
+    sidecar is already on disk, since each invocation costs
+    several seconds even on a hot cache."""
+    _SMOLMACHINE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    slug = image_ref.replace(":", "_").replace("/", "_")
+    binary = _SMOLMACHINE_CACHE_DIR / f"{slug}.smolmachine"
+    sidecar = _SMOLMACHINE_CACHE_DIR / f"{slug}.smolmachine.smolmachine"
+    if not sidecar.is_file():
+        _smolvm.pack_create(image_ref, binary)
+    return sidecar
