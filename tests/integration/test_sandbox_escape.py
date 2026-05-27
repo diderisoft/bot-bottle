@@ -50,6 +50,13 @@ _FAKE_SECRETS = {
 
 
 @skip_unless_docker()
+@unittest.skipIf(
+    os.environ.get("GITEA_ACTIONS") == "true",
+    "skipped under act_runner: pipelock_tls_init uses a host bind mount "
+    "the runner container can't see, and the network topology hides "
+    "sibling-sidecar visibility — same constraint as the other "
+    "bottle-bringup integration tests",
+)
 class TestSandboxEscape(unittest.TestCase):
     """End-to-end attacks against a real bottle. The bottle stays
     up for the whole class — bringup is ~10-30s, so per-test
