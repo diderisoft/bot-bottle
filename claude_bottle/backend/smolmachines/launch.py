@@ -50,6 +50,7 @@ from ..docker.pipelock import (
     PIPELOCK_PORT as _PIPELOCK_PORT_STR,
     pipelock_tls_init,
 )
+from . import loopback_alias as _loopback
 from . import sidecar_bundle as _bundle
 from . import smolvm as _smolvm
 from .bottle import SmolmachinesBottle
@@ -76,7 +77,16 @@ def launch(
     via the ExitStack."""
     stack = ExitStack()
     try:
-        # 1. Per-bottle docker bridge.
+        # 1. Reserve a loopback alias for this bottle. macOS only
+        # routes 127.0.0.1 by default; the per-bottle alias is
+        # what bundles the docker port-publishes and TSI allowlist
+        # against, so this bottle can't reach other bottles' (or
+        # other host services') ports on the loopback. Lazy
+        # sudo-driven on first use per boot. No-op on Linux.
+        _loopback.ensure_pool()
+        loopback_ip = _loopback.allocate(plan.slug)
+
+        # 2. Per-bottle docker bridge.
         network = _bundle.bundle_network_name(plan.slug)
         _bundle.create_bundle_network(network, plan.bundle_subnet, plan.bundle_gateway)
         stack.callback(_bundle.remove_bundle_network, network)
@@ -112,21 +122,22 @@ def launch(
         )
 
         # 3. Build the BundleLaunchSpec from the (now-resolved)
-        # inner Plans: daemon subset, env, bind-mounts. The spec's
-        # ports_to_publish list expands depending on which daemons
-        # the agent needs to reach from the smolvm guest.
-        bundle_spec = _bundle_launch_spec(plan, network)
+        # inner Plans: daemon subset, env, bind-mounts, and the
+        # loopback alias to bind published ports against. The
+        # spec's ports_to_publish list expands depending on which
+        # daemons the agent needs to reach from the smolvm guest.
+        bundle_spec = _bundle_launch_spec(plan, network, loopback_ip)
         token_env = _resolve_token_env(plan, os.environ)
         _bundle.start_bundle(bundle_spec, env={**os.environ, **token_env})
         stack.callback(_bundle.stop_bundle, plan.slug)
 
         # 4. Discover the host-side ports docker assigned for the
         # bundle's published container ports, and bind the
-        # agent's URLs to `127.0.0.1:<host port>`. Docker container
-        # IPs (192.168.x.x in the daemon's bridge) aren't
-        # reachable from the smolvm guest on macOS — TSI uses
-        # macOS networking, and macOS sees the daemon's bridge
-        # via the published-port loopback forward only.
+        # agent's URLs to `<loopback_ip>:<host port>`. Docker
+        # container IPs (192.168.x.x in the daemon's bridge)
+        # aren't reachable from the smolvm guest on macOS — TSI
+        # uses macOS networking, and macOS sees the daemon's
+        # bridge via the published-port loopback forward only.
         #
         # Proxy hop order matches the docker backend: when the
         # bottle declares egress routes, the agent's first hop is
@@ -140,21 +151,21 @@ def launch(
         else:
             agent_facing_port = _PIPELOCK_PORT
         agent_facing_host_port = _bundle.bundle_host_port(
-            plan.slug, agent_facing_port,
+            plan.slug, agent_facing_port, host_ip=loopback_ip,
         )
-        agent_proxy_url = f"http://127.0.0.1:{agent_facing_host_port}"
+        agent_proxy_url = f"http://{loopback_ip}:{agent_facing_host_port}"
         agent_git_gate_host = ""
         if plan.git_gate_plan.upstreams:
             git_gate_host_port = _bundle.bundle_host_port(
-                plan.slug, _GIT_GATE_PORT,
+                plan.slug, _GIT_GATE_PORT, host_ip=loopback_ip,
             )
-            agent_git_gate_host = f"127.0.0.1:{git_gate_host_port}"
+            agent_git_gate_host = f"{loopback_ip}:{git_gate_host_port}"
         agent_supervise_url = ""
         if plan.supervise_plan is not None:
             supervise_host_port = _bundle.bundle_host_port(
-                plan.slug, _SUPERVISE_PORT,
+                plan.slug, _SUPERVISE_PORT, host_ip=loopback_ip,
             )
-            agent_supervise_url = f"http://127.0.0.1:{supervise_host_port}/"
+            agent_supervise_url = f"http://{loopback_ip}:{supervise_host_port}/"
 
         # Stamp the URLs onto the plan + guest_env. provision_git
         # and provision_supervise read the plan fields; the agent
@@ -178,15 +189,16 @@ def launch(
 
         # 5. smolvm VM. --from carries the pre-packed .smolmachine
         # artifact (built by prepare); --allow-cidr + -e carry the
-        # per-bottle TSI allowlist + env. The allowlist is
-        # `127.0.0.1/32` because every bundle daemon the agent
-        # reaches is fronted by a host loopback port-forward.
-        # Smolfile isn't usable here — smolvm 0.8.0 makes `--from`
-        # and `--smolfile` mutually exclusive.
+        # per-bottle TSI allowlist + env. The allowlist is the
+        # per-bottle loopback alias — narrowing it to one /32 keeps
+        # the agent from reaching other host loopback services or
+        # other bottles' published ports. Smolfile isn't usable
+        # here — smolvm 0.8.0 makes `--from` and `--smolfile`
+        # mutually exclusive.
         _smolvm.machine_create(
             plan.machine_name,
             from_path=plan.agent_from_path,
-            allow_cidrs=["127.0.0.1/32"],
+            allow_cidrs=[f"{loopback_ip}/32"],
             env=plan.guest_env,
         )
         stack.callback(_smolvm.machine_delete, plan.machine_name)
@@ -240,7 +252,7 @@ def launch(
 
 
 def _bundle_launch_spec(
-    plan: SmolmachinesBottlePlan, network: str
+    plan: SmolmachinesBottlePlan, network: str, loopback_ip: str,
 ) -> _bundle.BundleLaunchSpec:
     """Build a BundleLaunchSpec from the resolved inner Plans.
 
@@ -345,6 +357,7 @@ def _bundle_launch_spec(
         environment=tuple(env),
         volumes=tuple(volumes),
         ports_to_publish=tuple(ports_to_publish),
+        publish_host_ip=loopback_ip,
     )
 
 

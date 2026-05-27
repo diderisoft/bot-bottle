@@ -200,19 +200,14 @@ sidecar bundle still in Docker. Selected via
 The integration tests run against whichever backend the env var
 selects and skip cleanly when its prerequisites are missing.
 
-**Known limitation, v1:** smolvm's TSI uses macOS networking, and
-Docker Desktop's container IPs aren't reachable from macOS, so the
-smolmachines bottle dials the sidecar bundle through host loopback
-port-forwards (`127.0.0.1:<random>`). TSI filters by IP only, so the
-allowlist is `127.0.0.1/32` — meaning the agent VM can reach **any
-service bound to macOS's loopback**, not just the bundle's published
-ports. Practical implication: while a smolmachines bottle is running,
-host-local dev services (postgres on 5432, dev servers, etc.) are
-reachable from inside the agent even if you intended them to be
-host-private. The docker backend keeps the bottle on a `--internal`
-docker network and doesn't have this issue. A future revision will
-narrow this via a per-bottle loopback alias + host-side proxy (see
-PRD 0023's "loopback scoping" section).
+**One-time sudo on first launch (macOS):** smolmachines needs
+per-bottle loopback aliases (`127.0.0.16` .. `127.0.0.31`) on `lo0`
+so each bottle's TSI allowlist scopes to its own /32. The first
+`./cli.py start` after each reboot prompts for sudo to add the pool
+via `ifconfig lo0 alias`. Aliases persist until reboot; subsequent
+launches don't prompt. Without this, every bottle would share
+`127.0.0.1` and be able to reach unrelated host services on the
+loopback.
 
 ## Manifest
 
