@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -71,6 +72,25 @@ class TestSandboxEscape(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
+        # Per-backend prerequisites. Docker is always required (both
+        # backends use it — docker for the agent + sidecars, smolmachines
+        # for the sidecar bundle); the class-level @skip_unless_docker
+        # already covers that. Smolmachines additionally needs smolvm on
+        # PATH and is macOS-only in v1 (libkrun/TSI). Skip cleanly when
+        # those are missing rather than die-ing inside backend.prepare.
+        backend_name = os.environ.get("CLAUDE_BOTTLE_BACKEND", "docker")
+        if backend_name == "smolmachines":
+            if sys.platform != "darwin":
+                raise unittest.SkipTest(
+                    "CLAUDE_BOTTLE_BACKEND=smolmachines is macOS-only in "
+                    "v1 (libkrun TSI)"
+                )
+            if shutil.which("smolvm") is None:
+                raise unittest.SkipTest(
+                    "CLAUDE_BOTTLE_BACKEND=smolmachines requires `smolvm` "
+                    "on PATH: curl -sSL https://smolmachines.com/install.sh | sh"
+                )
+
         # Throwaway "identity file" so the manifest's _validate_git_entries
         # passes (it only checks `os.path.isfile`, not that the content is
         # a real SSH key). Test 5 reaches gitleaks before any SSH attempt
@@ -402,7 +422,13 @@ class TestSandboxEscape(unittest.TestCase):
             ("aws",       "TEST_SECRET_AWS"),
             ("generic",   "TEST_SECRET_GENERIC"),
         ]
-        gate_host = "git-gate"
+        # Use the bottle's declared upstream URL; the agent's
+        # ~/.gitconfig insteadOf rewrite (set up by provision_git)
+        # redirects to the gate. This makes the test backend-
+        # agnostic: docker resolves the gate via the short `git-gate`
+        # alias, smolmachines via `<bundle_ip>:9418` — both
+        # transparent to the test through insteadOf.
+        upstream_url = "ssh://git@unreachable.invalid:22/throwaway.git"
 
         for name, var in shapes:
             with self.subTest(secret=name):
@@ -420,8 +446,7 @@ class TestSandboxEscape(unittest.TestCase):
                     '> README.md\n'
                     'git add README.md\n'
                     'git commit -m "leak" >/dev/null\n'
-                    'git remote add origin '
-                    f'git://{gate_host}/throwaway.git\n'
+                    f'git remote add origin {upstream_url}\n'
                     'git push origin HEAD:refs/heads/master 2>&1\n'
                 )
                 r = self._bottle.exec(script)

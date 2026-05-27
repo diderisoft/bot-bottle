@@ -197,6 +197,9 @@ sidecar bundle still in Docker. Selected via
 `CLAUDE_BOTTLE_BACKEND=smolmachines ./cli.py start <agent>`. Requires
 `smolvm` on PATH (`curl -sSL https://smolmachines.com/install.sh | sh`).
 
+The integration tests run against whichever backend the env var
+selects and skip cleanly when its prerequisites are missing.
+
 **Known limitation, v1:** smolvm's TSI uses macOS networking, and
 Docker Desktop's container IPs aren't reachable from macOS, so the
 smolmachines bottle dials the sidecar bundle through host loopback
