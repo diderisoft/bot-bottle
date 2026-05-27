@@ -89,7 +89,10 @@ class SmolmachinesBottlePlan(BottlePlan):
         upstreams = [
             f"{g.Name} → {g.Upstream}" for g in bottle.git
         ]
-        routes = [r.host for r in bottle.egress.routes]
+        # Use the resolved egress_plan (lowercase `host` on the
+        # plan-level EgressRoute) rather than `bottle.egress.routes`,
+        # which is the manifest's capitalized-attr form.
+        routes = [r.host for r in self.egress_plan.routes]
 
         print(file=sys.stderr)
         info(f"agent           : {spec.agent_name}")
