@@ -66,8 +66,29 @@ def provision_ca(plan: SmolmachinesBottlePlan, target: str) -> None:
     # default. The env trio (NODE_EXTRA_CA_CERTS / SSL_CERT_FILE /
     # REQUESTS_CA_BUNDLE) on the guest_env covers Node + Python
     # `requests` / libraries that don't load the system bundle.
-    _smolvm.machine_exec(target, ["chmod", "644", AGENT_CA_PATH])
-    _smolvm.machine_exec(target, ["update-ca-certificates"])
+    #
+    # chown + chmod + update-ca-certificates run in one
+    # `sh -c` so we only pay one machine_exec round trip; the
+    # `&&` chaining surfaces the first failure as the return
+    # code.
+    r = _smolvm.machine_exec(target, [
+        "sh", "-c",
+        f"chown root:root {AGENT_CA_PATH} && "
+        f"chmod 644 {AGENT_CA_PATH} && "
+        f"update-ca-certificates",
+    ])
+    if r.returncode != 0 or "1 added" not in (r.stdout or ""):
+        # update-ca-certificates not adding our cert is fatal —
+        # claude-code's TLS handshake against the egress-MITM'd
+        # api.anthropic.com would fail downstream. Bail early
+        # with what we can see (output is captured by smolvm so
+        # we can surface it).
+        die(
+            f"update-ca-certificates didn't add the agent CA "
+            f"(exit {r.returncode}): "
+            f"stdout={(r.stdout or '').strip()!r} "
+            f"stderr={(r.stderr or '').strip()!r}"
+        )
 
     # Stdlib SHA-256 of the cert's DER bytes — the standard
     # fingerprint form. Never the private key.

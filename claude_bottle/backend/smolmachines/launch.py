@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import time
 from contextlib import ExitStack, contextmanager
 from typing import Callable, Generator
 
@@ -34,6 +35,7 @@ from ...util import expand_tilde
 from ..docker.egress import (
     EGRESS_CA_IN_CONTAINER,
     EGRESS_PIPELOCK_CA_IN_CONTAINER,
+    EGRESS_PORT as _EGRESS_PORT,
     egress_tls_init,
 )
 from ..docker.git_gate import (
@@ -125,8 +127,22 @@ def launch(
         # reachable from the smolvm guest on macOS — TSI uses
         # macOS networking, and macOS sees the daemon's bridge
         # via the published-port loopback forward only.
-        pipelock_host_port = _bundle.bundle_host_port(plan.slug, _PIPELOCK_PORT)
-        agent_proxy_url = f"http://127.0.0.1:{pipelock_host_port}"
+        #
+        # Proxy hop order matches the docker backend: when the
+        # bottle declares egress routes, the agent's first hop is
+        # egress (for token injection), then pipelock. Without
+        # routes, the agent dials pipelock directly. Whichever
+        # one is "agent-facing" is the daemon whose port we
+        # publish on host loopback; the other stays bundle-
+        # internal as the upstream proxy.
+        if plan.egress_plan.routes:
+            agent_facing_port = _EGRESS_PORT
+        else:
+            agent_facing_port = _PIPELOCK_PORT
+        agent_facing_host_port = _bundle.bundle_host_port(
+            plan.slug, agent_facing_port,
+        )
+        agent_proxy_url = f"http://127.0.0.1:{agent_facing_host_port}"
         agent_git_gate_host = ""
         if plan.git_gate_plan.upstreams:
             git_gate_host_port = _bundle.bundle_host_port(
@@ -189,6 +205,14 @@ def launch(
             ["chown", "-R", "node:node", "/home/node"],
         )
 
+        # Wait briefly for the VM to settle. Back-to-back smolvm
+        # machine_exec calls immediately after machine_start
+        # occasionally SIGKILL the in-VM child at ~100ms (looks
+        # like a VM warm-up race in libkrun's exec channel).
+        # 1.5s is empirically enough to dodge it; provisioning
+        # already takes seconds so the wait is amortized.
+        time.sleep(1.5)
+
         # 7. Provision (CA / prompt / skills / git / supervise).
         prompt_path = provision(plan, plan.machine_name)
 
@@ -220,9 +244,14 @@ def _bundle_launch_spec(
     env: list[str] = []
     volumes: list[tuple[str, str, bool]] = []
 
-    # PRD 0023 chunk 3: egress binds 127.0.0.1 inside the bundle
-    # so TSI's IP-only allowlist can't bypass pipelock.
-    env.append("EGRESS_LISTEN_HOST=127.0.0.1")
+    # In this Docker-Desktop-compatible topology, whichever daemon
+    # is "agent-facing" gets its port published on the host
+    # loopback (see `_ensure_smolmachine`'s discovery loop) and the
+    # other stays bundle-internal. The bundle is NOT reachable by
+    # bridge IP from the smolvm guest, so the
+    # PRD-0023-chunk-3 EGRESS_LISTEN_HOST=127.0.0.1 mitigation
+    # isn't needed: the agent can only dial whatever daemon's
+    # host port we publish, period.
 
     # --- pipelock ---------------------------------------------
     pp = plan.proxy_plan
@@ -279,9 +308,14 @@ def _bundle_launch_spec(
 
     # Container ports the agent reaches from the smolvm guest —
     # published on host loopback so the guest can dial via TSI +
-    # macOS networking. Egress is bundle-internal and never
-    # published.
-    ports_to_publish: list[int] = [_PIPELOCK_PORT]
+    # macOS networking. The HTTP/HTTPS chokepoint is whichever
+    # daemon's port we publish: egress when routes are declared
+    # (token injection first, then forwards to bundle-internal
+    # pipelock), pipelock otherwise.
+    if ep.routes:
+        ports_to_publish: list[int] = [_EGRESS_PORT]
+    else:
+        ports_to_publish = [_PIPELOCK_PORT]
     if gp.upstreams:
         ports_to_publish.append(_GIT_GATE_PORT)
     if sp is not None:

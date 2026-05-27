@@ -307,21 +307,38 @@ class TestProvisionCA(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
+    # provision_ca dies hard if update-ca-certificates' stdout
+    # doesn't include "1 added"; supply a stock success return
+    # so the bulk of the tests below exercise the happy path.
+    _UPDATE_OK = SmolvmRunResult(
+        returncode=0,
+        stdout="Updating certificates in /etc/ssl/certs...\n1 added, 0 removed; done.\n",
+        stderr="",
+    )
+
     def test_pipelock_path_when_no_routes(self):
         plan = _plan(pipelock_ca_path=self.pipelock_ca)
         with patch(
             "claude_bottle.backend.smolmachines.provision.ca._smolvm.machine_cp"
         ) as cp, patch(
-            "claude_bottle.backend.smolmachines.provision.ca._smolvm.machine_exec"
+            "claude_bottle.backend.smolmachines.provision.ca._smolvm.machine_exec",
+            return_value=self._UPDATE_OK,
         ) as ex:
             _ca.provision_ca(plan, "claude-bottle-demo-abc12")
         cp.assert_called_once_with(
             str(self.pipelock_ca),
             "claude-bottle-demo-abc12:" + _ca.AGENT_CA_PATH,
         )
-        argvs = [c.args[1] for c in ex.call_args_list]
-        self.assertIn(["chmod", "644", _ca.AGENT_CA_PATH], argvs)
-        self.assertIn(["update-ca-certificates"], argvs)
+        # chmod + chown + update-ca-certificates are now folded
+        # into one `sh -c` invocation (working around a smolvm
+        # exec warm-up SIGKILL race), so we look at the single
+        # exec's argv rather than expecting separate calls.
+        ex.assert_called_once()
+        argv = ex.call_args.args[1]
+        self.assertEqual("sh", argv[0])
+        self.assertEqual("-c", argv[1])
+        self.assertIn("chmod 644", argv[2])
+        self.assertIn("update-ca-certificates", argv[2])
 
     def test_egress_path_when_routes_declared(self):
         plan = _plan(
@@ -332,7 +349,8 @@ class TestProvisionCA(unittest.TestCase):
         with patch(
             "claude_bottle.backend.smolmachines.provision.ca._smolvm.machine_cp"
         ) as cp, patch(
-            "claude_bottle.backend.smolmachines.provision.ca._smolvm.machine_exec"
+            "claude_bottle.backend.smolmachines.provision.ca._smolvm.machine_exec",
+            return_value=self._UPDATE_OK,
         ):
             _ca.provision_ca(plan, "claude-bottle-demo-abc12")
         # When routes are declared, egress is the agent's first hop,
