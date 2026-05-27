@@ -90,7 +90,7 @@ def _plan(
         bundle_gateway="192.168.50.1",
         bundle_ip=bundle_ip,
         machine_name="claude-bottle-demo-abc12",
-        agent_from_path=Path("/tmp/agent.smolmachine"),
+        agent_image_ref="claude-bottle:latest",
         guest_env={},
         prompt_file=Path("/tmp/state/demo-abc12/agent/prompt.txt"),
         proxy_plan=PipelockProxyPlan(

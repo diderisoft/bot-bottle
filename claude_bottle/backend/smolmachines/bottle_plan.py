@@ -48,7 +48,13 @@ class SmolmachinesBottlePlan(BottlePlan):
     # (push to a registry first, or smolvm grows a docker-daemon
     # transport).
     machine_name: str
-    agent_from_path: Path
+    # Agent image ref (docker tag). `launch` runs the
+    # build → save → registry push → smolvm pack pipeline against
+    # this and feeds the resulting `.smolmachine` artifact to
+    # `machine_create --from`. The pipeline runs at launch time
+    # (not prepare time) so the docker build output doesn't garble
+    # the dashboard's preflight modal.
+    agent_image_ref: str
     # In-guest env vars (HTTPS_PROXY etc) — IP-literal URLs since
     # the guest has no DNS resolver inside the TSI allowlist.
     # Passed to `smolvm machine create` as `-e K=V` flags.

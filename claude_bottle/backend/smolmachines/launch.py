@@ -23,6 +23,7 @@ import dataclasses
 import os
 import time
 from contextlib import ExitStack, contextmanager
+from pathlib import Path
 from typing import Callable, Generator
 
 from ...egress import EGRESS_ROUTES_IN_CONTAINER, egress_resolve_token_values
@@ -32,6 +33,7 @@ from ...pipelock import (
 )
 from ...supervise import QUEUE_DIR_IN_CONTAINER, SUPERVISE_PORT
 from ...util import expand_tilde
+from ..docker import util as docker_mod
 from ..docker.egress import (
     EGRESS_CA_IN_CONTAINER,
     EGRESS_PIPELOCK_CA_IN_CONTAINER,
@@ -55,6 +57,18 @@ from . import sidecar_bundle as _bundle
 from . import smolvm as _smolvm
 from .bottle import SmolmachinesBottle
 from .bottle_plan import SmolmachinesBottlePlan
+from .local_registry import crane_push_tarball, ephemeral_registry
+
+
+# Repo root, used as the `docker build` context for the agent image.
+_REPO_DIR = str(Path(__file__).resolve().parent.parent.parent.parent)
+
+
+# Per-host cache for `smolvm pack create` outputs. Keyed by the
+# docker image ID so a Dockerfile change automatically invalidates
+# the cache. `pack create` is idempotent on the smolvm side but
+# takes several seconds even on a no-op rebuild.
+_SMOLMACHINE_CACHE_DIR = Path.home() / ".cache" / "claude-bottle" / "smolmachines"
 
 
 # Container-internal listening ports for each bundle daemon. The
@@ -199,17 +213,25 @@ def launch(
             agent_supervise_url=agent_supervise_url,
         )
 
-        # 5. smolvm VM. --from carries the pre-packed .smolmachine
-        # artifact (built by prepare); --allow-cidr + -e carry the
-        # per-bottle TSI allowlist + env. The allowlist is the
-        # per-bottle loopback alias — narrowing it to one /32 keeps
-        # the agent from reaching other host loopback services or
+        # 5. Build the agent image and pack it into a
+        # `.smolmachine` artifact (or hit the per-Dockerfile-digest
+        # cache). Runs here, not in prepare, so the docker-build
+        # output doesn't garble the dashboard's preflight modal:
+        # both the curses-endwin path and the tmux pane-routing
+        # path redirect stderr around `launch` already.
+        agent_from_path = _ensure_smolmachine(plan.agent_image_ref)
+
+        # smolvm VM. --from carries the pre-packed .smolmachine
+        # artifact; --allow-cidr + -e carry the per-bottle TSI
+        # allowlist + env. The allowlist is the per-bottle
+        # loopback alias — narrowing it to one /32 keeps the
+        # agent from reaching other host loopback services or
         # other bottles' published ports. Smolfile isn't usable
         # here — smolvm 0.8.0 makes `--from` and `--smolfile`
         # mutually exclusive.
         _smolvm.machine_create(
             plan.machine_name,
-            from_path=plan.agent_from_path,
+            from_path=agent_from_path,
             allow_cidrs=[f"{loopback_ip}/32"],
             env=plan.guest_env,
         )
@@ -389,3 +411,53 @@ def _resolve_token_env(
     if not ep.routes:
         return {}
     return egress_resolve_token_values(ep.token_env_map, dict(host_env))
+
+
+def _ensure_smolmachine(image_ref: str) -> Path:
+    """Build the agent docker image and convert it into a
+    `.smolmachine` artifact, caching the result under
+    `~/.cache/claude-bottle/smolmachines/` keyed by the docker image
+    ID (so a Dockerfile change automatically invalidates the cache).
+
+    Returns the `.smolmachine.smolmachine` sidecar path — that's
+    the file `machine create --from` consumes (pack create produces
+    a launcher binary at `.smolmachine` plus the sidecar alongside
+    it; the sidecar is the actual artifact).
+
+    Conversion path: `docker build` (the existing layer cache
+    makes no-change rebuilds cheap) → `docker save` to a tarball
+    → spin up an ephemeral registry on a private docker network →
+    `crane push --insecure` from a one-shot container on the same
+    network → `smolvm pack create --image localhost:<host port>/...`
+    → tear down the registry + network. The crane push detour
+    sidesteps the Docker-Desktop daemon's HTTPS preference for
+    non-loopback registries — see the `local_registry` module
+    docstring for the gory details.
+
+    Each pack-create costs several seconds even on a hot cache,
+    so we skip the whole pipeline when the cached sidecar is
+    already on disk for this image ID."""
+    _SMOLMACHINE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    docker_mod.build_image(image_ref, _REPO_DIR)
+    # `sha256:abcd...` -> `abcd...` first 16 chars: short enough to
+    # keep filenames manageable, long enough to make collisions
+    # astronomically unlikely.
+    digest = docker_mod.image_id(image_ref).split(":", 1)[-1][:16]
+    binary = _SMOLMACHINE_CACHE_DIR / f"{digest}.smolmachine"
+    sidecar = _SMOLMACHINE_CACHE_DIR / f"{digest}.smolmachine.smolmachine"
+    if sidecar.is_file():
+        return sidecar
+    tarball = _SMOLMACHINE_CACHE_DIR / f"{digest}.image.tar"
+    docker_mod.save(image_ref, str(tarball))
+    try:
+        with ephemeral_registry() as handle:
+            push_ref = f"{handle.push_endpoint}/claude-bottle:{digest}"
+            pack_ref = f"{handle.pull_endpoint}/claude-bottle:{digest}"
+            crane_push_tarball(handle, str(tarball), push_ref)
+            _smolvm.pack_create(pack_ref, binary)
+    finally:
+        # Tarball is ~500MB-1GB for the agent image; reclaim once
+        # the smolmachine artifact exists. The artifact itself is
+        # the long-lived cache entry.
+        tarball.unlink(missing_ok=True)
+    return sidecar

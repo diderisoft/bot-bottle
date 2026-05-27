@@ -4,7 +4,12 @@
 Asserts that the cache-hit path returns without touching the
 registry / pack pipeline, and that the cache-miss path runs
 build → tag → push → pack in order against a registry port the
-helper yields."""
+helper yields.
+
+The pipeline lives in `launch.py` (moved from `prepare.py` so the
+docker build doesn't run before the dashboard's preflight modal;
+the curses-endwin / tmux pane-routing handoff happens around
+`launch`)."""
 
 from __future__ import annotations
 
@@ -13,14 +18,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from claude_bottle.backend.smolmachines import prepare as _prepare
+from claude_bottle.backend.smolmachines import launch as _launch_mod
 
 
 class TestEnsureSmolmachine(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory(prefix="cb-cache.")
         self._cache_patch = patch.object(
-            _prepare, "_SMOLMACHINE_CACHE_DIR", Path(self._tmp.name),
+            _launch_mod, "_SMOLMACHINE_CACHE_DIR", Path(self._tmp.name),
         )
         self._cache_patch.start()
 
@@ -35,20 +40,20 @@ class TestEnsureSmolmachine(unittest.TestCase):
         sidecar.write_text("")
 
         with patch.object(
-            _prepare.docker_mod, "build_image",
+            _launch_mod.docker_mod, "build_image",
         ) as build, patch.object(
-            _prepare.docker_mod, "image_id",
+            _launch_mod.docker_mod, "image_id",
             return_value=f"sha256:{digest}fffffffffffffffff",
         ), patch.object(
-            _prepare.docker_mod, "save",
+            _launch_mod.docker_mod, "save",
         ) as save, patch.object(
-            _prepare, "ephemeral_registry",
+            _launch_mod, "ephemeral_registry",
         ) as registry, patch.object(
-            _prepare, "crane_push_tarball",
+            _launch_mod, "crane_push_tarball",
         ) as push, patch.object(
-            _prepare._smolvm, "pack_create",
+            _launch_mod._smolvm, "pack_create",
         ) as pack:
-            result = _prepare._ensure_smolmachine("claude-bottle:latest")
+            result = _launch_mod._ensure_smolmachine("claude-bottle:latest")
 
         self.assertEqual(sidecar, result)
         # build still runs (Dockerfile edits land without manual rmi).
@@ -88,25 +93,25 @@ class TestEnsureSmolmachine(unittest.TestCase):
             return _f
 
         with patch.object(
-            _prepare.docker_mod, "build_image",
+            _launch_mod.docker_mod, "build_image",
             side_effect=record("build"),
         ), patch.object(
-            _prepare.docker_mod, "image_id",
+            _launch_mod.docker_mod, "image_id",
             return_value=f"sha256:{digest}fffffffffffffffff",
         ), patch.object(
-            _prepare.docker_mod, "save",
+            _launch_mod.docker_mod, "save",
             side_effect=record("save"),
         ) as save, patch.object(
-            _prepare, "ephemeral_registry",
+            _launch_mod, "ephemeral_registry",
             return_value=_Reg(),
         ), patch.object(
-            _prepare, "crane_push_tarball",
+            _launch_mod, "crane_push_tarball",
             side_effect=record("push"),
         ) as push, patch.object(
-            _prepare._smolvm, "pack_create",
+            _launch_mod._smolvm, "pack_create",
             side_effect=record("pack"),
         ) as pack:
-            _prepare._ensure_smolmachine("claude-bottle:latest")
+            _launch_mod._ensure_smolmachine("claude-bottle:latest")
 
         # Build → save → push → pack in that order. No `docker
         # push` (the daemon's HTTPS-by-default path is what we're
