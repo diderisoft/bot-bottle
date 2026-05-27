@@ -455,6 +455,214 @@ class TestFullMatrix(unittest.TestCase):
                 self.assertEqual(expected, set(s.keys()))
 
 
+class TestSidecarBundleShape(unittest.TestCase):
+    """PRD 0024 chunk 2: with CLAUDE_BOTTLE_SIDECAR_BUNDLE=1 set,
+    the renderer emits a `sidecars` service in place of the four
+    per-sidecar services. The legacy four-sidecar tests above
+    cover the flag-off shape; these lock down the flag-on shape."""
+
+    def _render(self, **plan_kwargs):
+        from unittest.mock import patch
+        with patch.dict("os.environ", {"CLAUDE_BOTTLE_SIDECAR_BUNDLE": "1"}):
+            return bottle_plan_to_compose(_plan(**plan_kwargs))
+
+    def test_emits_two_services_minimal(self):
+        spec = self._render()
+        self.assertEqual({"sidecars", "agent"}, set(spec["services"].keys()))
+
+    def test_emits_two_services_full_matrix(self):
+        spec = self._render(with_git=True, with_egress=True, supervise=True)
+        # Still two services — the bundle absorbs git-gate/egress/supervise.
+        self.assertEqual({"sidecars", "agent"}, set(spec["services"].keys()))
+
+    def test_bundle_uses_bundle_image_and_dockerfile(self):
+        sc = self._render()["services"]["sidecars"]
+        self.assertEqual("claude-bottle-sidecars:latest", sc["image"])
+        self.assertEqual("Dockerfile.sidecars", sc["build"]["dockerfile"])
+
+    def test_bundle_container_name_uses_sidecars_prefix(self):
+        sc = self._render()["services"]["sidecars"]
+        self.assertEqual(f"claude-bottle-sidecars-{SLUG}", sc["container_name"])
+
+    def test_bundle_joins_both_networks(self):
+        sc = self._render()["services"]["sidecars"]
+        self.assertEqual({"internal", "egress"}, set(sc["networks"].keys()))
+
+    def test_internal_aliases_cover_pipelock_and_egress_shortnames(self):
+        # The agent's HTTPS_PROXY url references either `egress` or
+        # `pipelock` (long form). Both must resolve to the bundle.
+        sc = self._render()["services"]["sidecars"]
+        aliases = set(sc["networks"]["internal"]["aliases"])
+        self.assertIn("egress", aliases)
+        self.assertIn(f"claude-bottle-pipelock-{SLUG}", aliases)
+        self.assertIn(f"claude-bottle-egress-{SLUG}", aliases)
+
+    def test_internal_aliases_omit_inactive_sidecars(self):
+        # With no git-gate / supervise, those names are NOT aliased
+        # — keeps the alias list honest about what's actually
+        # listening inside the bundle.
+        sc = self._render()["services"]["sidecars"]
+        aliases = set(sc["networks"]["internal"]["aliases"])
+        self.assertNotIn(f"claude-bottle-git-gate-{SLUG}", aliases)
+        self.assertNotIn("supervise", aliases)
+
+    def test_internal_aliases_include_active_sidecars(self):
+        sc = self._render(with_git=True, supervise=True)["services"]["sidecars"]
+        aliases = set(sc["networks"]["internal"]["aliases"])
+        self.assertIn(f"claude-bottle-git-gate-{SLUG}", aliases)
+        self.assertIn("supervise", aliases)
+        self.assertIn(f"claude-bottle-supervise-{SLUG}", aliases)
+
+    def test_daemons_csv_lists_only_active(self):
+        # Egress + pipelock are always in the daemon set even when
+        # the bottle has no routes (egress falls back to regular@9099
+        # and is just unused; cheaper than special-casing).
+        sc = self._render()["services"]["sidecars"]
+        daemons = {
+            line.split("=", 1)[1]
+            for line in sc["environment"]
+            if line.startswith("CLAUDE_BOTTLE_SIDECAR_DAEMONS=")
+        }
+        self.assertEqual({"egress,pipelock"}, daemons)
+
+    def test_daemons_csv_expands_with_optional_sidecars(self):
+        sc = self._render(with_git=True, supervise=True)["services"]["sidecars"]
+        for line in sc["environment"]:
+            if line.startswith("CLAUDE_BOTTLE_SIDECAR_DAEMONS="):
+                csv = line.split("=", 1)[1]
+                break
+        else:
+            self.fail("CLAUDE_BOTTLE_SIDECAR_DAEMONS not in env")
+        self.assertEqual(
+            ["egress", "pipelock", "git-gate", "supervise"],
+            csv.split(","),
+        )
+
+    def test_bundle_env_does_not_set_https_proxy(self):
+        # HTTPS_PROXY at the container level would route git-gate's
+        # git fetches through pipelock. Scoping it to mitmdump is
+        # the job of egress_entrypoint.sh; the bundle env must not
+        # leak it.
+        sc = self._render(with_egress=True)["services"]["sidecars"]
+        for line in sc["environment"]:
+            self.assertFalse(
+                line.startswith("HTTPS_PROXY=")
+                or line.startswith("HTTP_PROXY=")
+                or line.startswith("NO_PROXY="),
+                f"bundle env must not set {line!r}",
+            )
+
+    def test_egress_env_present_when_routes_declared(self):
+        sc = self._render(with_egress=True)["services"]["sidecars"]
+        env_strings = sc["environment"]
+        self.assertTrue(any(
+            e.startswith("EGRESS_UPSTREAM_PROXY=") for e in env_strings))
+        self.assertTrue(any(
+            e.startswith("EGRESS_UPSTREAM_CA=") for e in env_strings))
+        # Token env name is forwarded as a bare entry.
+        self.assertIn("EGRESS_TOKEN_0", env_strings)
+
+    def test_egress_env_omitted_when_no_routes(self):
+        sc = self._render()["services"]["sidecars"]
+        env_strings = sc["environment"]
+        for e in env_strings:
+            self.assertFalse(e.startswith("EGRESS_UPSTREAM_PROXY="))
+            self.assertFalse(e.startswith("EGRESS_UPSTREAM_CA="))
+
+    def test_supervise_env_present_when_active(self):
+        sc = self._render(supervise=True)["services"]["sidecars"]
+        env_strings = sc["environment"]
+        self.assertIn(f"SUPERVISE_BOTTLE_SLUG={SLUG}", env_strings)
+        self.assertTrue(any(e.startswith("SUPERVISE_QUEUE_DIR=") for e in env_strings))
+        self.assertTrue(any(e.startswith("SUPERVISE_PORT=") for e in env_strings))
+
+    def test_volumes_union_minimal_includes_pipelock(self):
+        sc = self._render()["services"]["sidecars"]
+        targets = {v["target"] for v in sc["volumes"]}
+        self.assertIn("/etc/pipelock.yaml", targets)
+
+    def test_volumes_union_full_matrix(self):
+        sc = self._render(with_git=True, with_egress=True, supervise=True)[
+            "services"]["sidecars"]
+        targets = {v["target"] for v in sc["volumes"]}
+        # Pipelock + egress + git-gate + supervise paths all
+        # present.
+        self.assertIn("/etc/pipelock.yaml", targets)
+        self.assertIn("/etc/egress/routes.yaml", targets)
+        self.assertIn("/git-gate-entrypoint.sh", targets)
+        # supervise queue dir target = QUEUE_DIR_IN_CONTAINER
+        self.assertTrue(any("supervise/queue" in t or t.startswith("/run/supervise")
+                            for t in targets))
+
+    def test_extra_hosts_emitted_for_git_upstreams(self):
+        sc = self._render(with_git=True)["services"]["sidecars"]
+        self.assertIn("example.com:10.0.0.1", sc.get("extra_hosts", []))
+
+    def test_extra_hosts_omitted_when_no_git(self):
+        sc = self._render()["services"]["sidecars"]
+        self.assertNotIn("extra_hosts", sc)
+
+    def test_agent_depends_on_bundle_only(self):
+        sc = self._render(with_git=True, with_egress=True, supervise=True)[
+            "services"]["agent"]
+        self.assertEqual(["sidecars"], sc["depends_on"])
+
+    def test_agent_proxy_url_resolves_via_bundle_alias(self):
+        # With egress active, the agent's HTTPS_PROXY points at
+        # `egress` shortname; bundle aliases `egress` to itself so
+        # the URL keeps working without an agent-side change.
+        spec = self._render(with_egress=True)
+        sc = spec["services"]["agent"]
+        proxy = next(e for e in sc["environment"] if e.startswith("HTTPS_PROXY="))
+        self.assertIn("egress", proxy)
+        self.assertIn("egress",
+                      spec["services"]["sidecars"]["networks"]["internal"]["aliases"])
+
+
+class TestSidecarBundleFlag(unittest.TestCase):
+    """The flag's parser: covers the cases sidecar_bundle_enabled
+    has to interpret correctly so an operator-supplied value lands
+    in the expected shape."""
+
+    def _enabled(self, value: str | None) -> bool:
+        from claude_bottle.backend.docker.sidecar_bundle import (
+            sidecar_bundle_enabled,
+        )
+        env: dict[str, str] = {}
+        if value is not None:
+            env["CLAUDE_BOTTLE_SIDECAR_BUNDLE"] = value
+        return sidecar_bundle_enabled(env)
+
+    def test_unset_disabled(self):
+        self.assertFalse(self._enabled(None))
+
+    def test_empty_disabled(self):
+        self.assertFalse(self._enabled(""))
+
+    def test_zero_disabled(self):
+        self.assertFalse(self._enabled("0"))
+
+    def test_false_disabled(self):
+        self.assertFalse(self._enabled("false"))
+        self.assertFalse(self._enabled("FALSE"))
+
+    def test_no_disabled(self):
+        self.assertFalse(self._enabled("no"))
+        self.assertFalse(self._enabled("off"))
+
+    def test_one_enabled(self):
+        self.assertTrue(self._enabled("1"))
+
+    def test_true_enabled(self):
+        self.assertTrue(self._enabled("true"))
+
+    def test_arbitrary_truthy_enabled(self):
+        # The flag treats anything other than the known falsy
+        # values as truthy — operator typos default to "enabled"
+        # which is the safer interpretation for an opt-in flag.
+        self.assertTrue(self._enabled("yes"))
+
+
 class TestProjectNaming(unittest.TestCase):
     """The slug ↔ compose-project mapping is the contract dashboard,
     cleanup, and launch all rely on. Lock it down."""
