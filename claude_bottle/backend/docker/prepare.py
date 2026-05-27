@@ -40,7 +40,6 @@ from .bottle_state import (
     write_metadata,
 )
 from .pipelock import pipelock_container_name
-from .supervise import supervise_container_name
 
 
 def resolve_plan(
@@ -141,8 +140,6 @@ def resolve_plan(
         sidecar_probes.append(("git-gate", git_gate_container_name(slug)))
     if bottle.egress.routes:
         sidecar_probes.append(("egress", egress_container_name(slug)))
-    if bottle.supervise:
-        sidecar_probes.append(("supervise", supervise_container_name(slug)))
     for label, sidecar_name in sidecar_probes:
         if docker_mod.container_exists(sidecar_name):
             die(

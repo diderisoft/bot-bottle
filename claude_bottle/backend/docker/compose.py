@@ -83,7 +83,6 @@ from .sidecar_bundle import (
     SIDECAR_BUNDLE_IMAGE,
     sidecar_bundle_container_name,
 )
-from .supervise import supervise_container_name
 
 
 # Repo root, used as the build context for the bundle Dockerfile.
@@ -246,7 +245,6 @@ def _sidecar_bundle_service(plan: DockerBottlePlan) -> dict[str, Any]:
         internal_aliases.append(git_gate_container_name(plan.slug))
     if sp is not None:
         internal_aliases.append(SUPERVISE_HOSTNAME)
-        internal_aliases.append(supervise_container_name(plan.slug))
 
     service: dict[str, Any] = {
         "image": SIDECAR_BUNDLE_IMAGE,

@@ -325,7 +325,6 @@ class TestSidecarBundleShape(unittest.TestCase):
         aliases = set(sc["networks"]["internal"]["aliases"])
         self.assertIn(f"claude-bottle-git-gate-{SLUG}", aliases)
         self.assertIn("supervise", aliases)
-        self.assertIn(f"claude-bottle-supervise-{SLUG}", aliases)
 
     def test_daemons_csv_lists_only_active(self):
         # Egress + pipelock are always in the daemon set even when
