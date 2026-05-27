@@ -65,15 +65,21 @@ class SmolmachinesBottle(Bottle):
         result = subprocess.run(flags, check=False)
         return result.returncode
 
-    def exec(self, script: str) -> ExecResult:
-        """Run a POSIX shell script as the `node` user and capture
-        the result. Matches the docker backend's `exec`, which
-        defaults to the image's USER (also node) — so test
+    def exec(self, script: str, *, user: str = "node") -> ExecResult:
+        """Run a POSIX shell script as `user` (default `node`) and
+        capture the result. Matches the docker backend's `exec`,
+        which defaults to the image's USER (also node) — so test
         helpers / provision shell-outs run with the same identity
-        on both backends."""
+        on both backends. Pass `user="root"` for tests that need
+        root.
+
+        `smolvm machine exec` runs commands as root in the VM, so
+        we always need to switch user (even when the caller asked
+        for root, switching to root is a cheap no-op via
+        `runuser -l root`)."""
         r = _smolvm.machine_exec(
             self.name,
-            ["runuser", "-l", "node", "-c", script],
+            ["runuser", "-l", user, "-c", script],
         )
         return ExecResult(
             returncode=r.returncode,
