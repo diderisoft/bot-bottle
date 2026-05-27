@@ -82,11 +82,19 @@ class TestArgvShapes(unittest.TestCase):
         self.assertEqual("smolvm", argv[0])
         self.assertIn("--from", argv)
         self.assertIn("/stage/agent.smolmachine", argv)
+        # `--net` is explicit because smolvm 0.8.0's implied-net
+        # from --allow-cidr doesn't fire when --from is set.
+        self.assertIn("--net", argv)
         self.assertIn("--allow-cidr", argv)
         self.assertIn("192.168.50.2/32", argv)
         self.assertIn("-e", argv)
         self.assertIn("HTTPS_PROXY=http://192.168.50.2:8888", argv)
         self.assertEqual("agent-xyz", argv[-1])
+
+    def test_machine_create_omits_net_when_no_allow_cidrs(self):
+        with self._patch_run() as m:
+            machine_create("agent-xyz", from_path=Path("/x.smolmachine"))
+        self.assertNotIn("--net", m.call_args.args[0])
 
     def test_machine_start_uses_dash_name(self):
         # `start` is the --name flag form, NOT positional.
