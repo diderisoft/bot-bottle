@@ -1,10 +1,10 @@
 """SmolmachinesBottlePlan — concrete BottlePlan for the smolmachines
 backend (PRD 0023).
 
-Chunk 1 fields: slug, smolfile_path, gvproxy_config_path, gvproxy
-subnet + socket, and the per-bottle port map. VM lifecycle fields
-(machine name, OCI archive path, etc.) land in later chunks as the
-launch flow grows."""
+Chunk 1 + 2a fields: slug, smolfile_path, bundle docker subnet /
+gateway / pinned IP. VM lifecycle + provisioning fields (machine
+name, `.smolmachine` artifact path, etc.) land in later chunks
+as the launch flow grows."""
 
 from __future__ import annotations
 
@@ -25,14 +25,12 @@ class SmolmachinesBottlePlan(BottlePlan):
 
     slug: str
     smolfile_path: Path
-    gvproxy_config_path: Path
-    gvproxy_socket: Path
-    gvproxy_subnet: str
-    gvproxy_gateway: str
-    # Daemon name → host-side loopback port the bundle binds.
-    # Always includes "pipelock"; "git-gate" and "supervise"
-    # conditional on the bottle's manifest.
-    host_port_map: dict[str, int]
+    # Per-bottle docker subnet for the sidecar bundle container.
+    # The bundle runs at `bundle_ip` (always `.2`); the gateway is
+    # at `.1`. smolvm's TSI allowlist is set to `bundle_ip/32`.
+    bundle_subnet: str
+    bundle_gateway: str
+    bundle_ip: str
 
     def print(self, *, remote_control: bool) -> None:
         """Compact y/N preflight. Same shape as the Docker
