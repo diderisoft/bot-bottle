@@ -95,10 +95,6 @@ RUN mkdir -p \
       /run/supervise/queue \
       /home/mitmproxy/.mitmproxy
 
-# Documentation only — the compose renderer publishes whichever
-# subset the bottle uses.
-EXPOSE 8888 9099 9418 9100
-
 # WORKDIR matches Dockerfile.supervise's prior layout so the
 # in-app same-dir import in supervise_server.py stays deterministic.
 WORKDIR /app
