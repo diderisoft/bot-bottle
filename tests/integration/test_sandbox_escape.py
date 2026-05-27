@@ -228,10 +228,13 @@ class TestSandboxEscape(unittest.TestCase):
     # ---- attack 3: HTTP exfil shapes ---------------------------------
 
     # Sandbox-block signature: pipelock / egress return HTTP 403 on
-    # policy reject; the response body carries `"egress:"` (egress
-    # sidecar) or `"pipelock"` (pipelock sidecar). Both are
-    # observable from inside the agent via curl.
-    _SANDBOX_BLOCK_MARKERS = ("egress:", "pipelock")
+    # policy reject; the response body carries a recognizable
+    # marker. Egress's reject message starts `"egress: host '...'
+    # is not in the bottle's egress.routes allowlist"`; pipelock's
+    # DLP rejects start `"blocked: "` (e.g.
+    # `"blocked: DLP match: Anthropic API Key (critical)"`,
+    # `"blocked: request body contains secret"`).
+    _SANDBOX_BLOCK_MARKERS = ("egress:", "pipelock", "blocked:")
 
     def _assert_sandbox_block(self, label: str, r) -> None:
         """A real sandbox block produces an HTTP 403 with a
@@ -276,10 +279,20 @@ class TestSandboxEscape(unittest.TestCase):
         PRD 0022 Q1 resolution: this assertion is AUTHORITATIVE.
         If a shape fails here, the leak is real and the
         remediation lands as its own PRD before this test merges.
-        DON'T mark expectedFailure to silence it."""
+        DON'T mark expectedFailure to silence it.
+
+        Destination note: we use `raw.githubusercontent.com` (one
+        of the DEFAULT_ALLOWLIST hosts) rather than
+        api.anthropic.com because pipelock passthrough's the
+        Anthropic API endpoint specifically — its DLP scanners
+        false-positive on real LLM conversation bodies (BIP-39
+        seed phrases, etc.). That trade-off is documented in
+        `pipelock.DEFAULT_TLS_PASSTHROUGH`. For non-passthrough
+        hosts pipelock MITMs and the DLP scan applies, which is
+        what this attack exercises."""
         # Capture HTTP code via curl's -w; don't use --fail so
         # we get the response body even on 4xx.
-        url_base = "https://api.anthropic.com"
+        url_base = "https://raw.githubusercontent.com"
         wfmt = '\\nHTTP_CODE:%{http_code}'
         shapes = [
             (

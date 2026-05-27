@@ -32,8 +32,15 @@ class TestBuildConfig(unittest.TestCase):
             {"include_defaults": True, "scan_env": True}, cfg["dlp"]
         )
         # Body-scan action is hard-coded "block" in pipelock_build_config.
+        # `scan_headers: True` + `header_mode: "all"` close the
+        # header-shape exfil gap surfaced by PRD 0022 attack 3.
         self.assertEqual(
-            {"action": "block"}, cfg["request_body_scanning"]
+            {
+                "action": "block",
+                "scan_headers": True,
+                "header_mode": "all",
+            },
+            cfg["request_body_scanning"],
         )
         # Baked defaults always present.
         self.assertIn("api.anthropic.com", cast(list[str], cfg["api_allowlist"]))
