@@ -35,9 +35,9 @@ from claude_bottle.backend.docker.network import (
 from claude_bottle.backend.docker.pipelock import (
     PIPELOCK_CA_CERT_IN_CONTAINER,
     PIPELOCK_CA_KEY_IN_CONTAINER,
-    DockerPipelockProxy,
     pipelock_tls_init,
 )
+from claude_bottle.pipelock import PipelockProxy
 from claude_bottle.backend.docker.pipelock_apply import (
     PipelockApplyError,
     apply_allowlist_change,
@@ -99,7 +99,7 @@ class TestPipelockApply(unittest.TestCase):
         the updated config."""
         state_dir = pipelock_state_dir(self.slug)
         state_dir.mkdir(parents=True, exist_ok=True)
-        prep = DockerPipelockProxy().prepare(
+        prep = PipelockProxy().prepare(
             fixture_minimal().bottles["dev"], self.slug, state_dir,
         )
         self.internal_net = network_create_internal(self.slug)

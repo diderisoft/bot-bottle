@@ -1,11 +1,11 @@
-"""DockerEgress — the Docker-specific lifecycle for the
-per-bottle egress sidecar (PRD 0017). Inherits the platform-
-agnostic prepare step (route lift + routes.yaml render + token-env
-map derivation) from `Egress`.
+"""Docker-side egress helpers: port pin, in-container CA paths,
+container naming, and the host-side mitmproxy CA mint. The
+prepare-time routes-yaml rendering itself lives on the
+platform-neutral `Egress` ABC — backends instantiate it directly.
 
-Chunks 1+2 of the PRD: the lifecycle is implemented and wired into
-launch.py — cred-proxy is gone. Chunk 3 retargets the cred-proxy-
-block remediation flow (PRD 0014)."""
+The per-container `.start()` / `.stop()` lifecycle was removed in
+PRD 0024 chunk 3; the sidecar bundle (PRD 0024) runs egress
+under its python init supervisor."""
 
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ import os
 import subprocess
 from pathlib import Path
 
-from ...egress import Egress
 from ...log import die
 
 
@@ -31,14 +30,6 @@ EGRESS_CA_IN_CONTAINER = "/home/mitmproxy/.mitmproxy/mitmproxy-ca.pem"
 EGRESS_PIPELOCK_CA_IN_CONTAINER = (
     "/home/mitmproxy/.mitmproxy/pipelock-ca.pem"
 )
-
-
-def egress_container_name(slug: str) -> str:
-    """The legacy per-sidecar container name. Kept as a function so
-    the renderer can register it as a docker-network alias on the
-    bundle — any code still referring to `claude-bottle-egress-<slug>`
-    resolves to the bundle's IP."""
-    return f"claude-bottle-egress-{slug}"
 
 
 def egress_tls_init(stage_dir: Path) -> tuple[Path, Path]:
@@ -130,9 +121,3 @@ def egress_tls_init(stage_dir: Path) -> tuple[Path, Path]:
     mitm.write_bytes(cert_path.read_bytes() + key_path.read_bytes())
     mitm.chmod(0o644)
     return (mitm, cert_path)
-
-
-class DockerEgress(Egress):
-    """Docker-flavored Egress: inherits `.prepare()` from the base.
-    Container lifecycle is owned by compose; per-container
-    `.start()` / `.stop()` were removed in PRD 0024 chunk 3."""

@@ -49,8 +49,9 @@ from ...egress import (
     EGRESS_HOSTNAME,
     EGRESS_ROUTES_IN_CONTAINER,
 )
+from ...git_gate import GIT_GATE_HOSTNAME, git_gate_aggregate_extra_hosts
 from ...log import die, warn
-from ...git_gate import git_gate_aggregate_extra_hosts
+from ...pipelock import PIPELOCK_HOSTNAME
 from ...supervise import (
     CURRENT_CONFIG_DIR_IN_AGENT,
     QUEUE_DIR_IN_CONTAINER,
@@ -62,20 +63,17 @@ from .bottle_plan import DockerBottlePlan
 from .egress import (
     EGRESS_CA_IN_CONTAINER,
     EGRESS_PIPELOCK_CA_IN_CONTAINER,
-    egress_container_name,
 )
 from .git_gate import (
     GIT_GATE_ACCESS_HOOK_IN_CONTAINER,
     GIT_GATE_CREDS_DIR_IN_CONTAINER,
     GIT_GATE_ENTRYPOINT_IN_CONTAINER,
     GIT_GATE_HOOK_IN_CONTAINER,
-    git_gate_container_name,
 )
 from .pipelock import (
     PIPELOCK_CA_CERT_IN_CONTAINER,
     PIPELOCK_CA_KEY_IN_CONTAINER,
     PIPELOCK_PORT,
-    pipelock_container_name,
 )
 from .provision.ca import AGENT_CA_BUNDLE, AGENT_CA_PATH
 from .sidecar_bundle import (
@@ -83,7 +81,6 @@ from .sidecar_bundle import (
     SIDECAR_BUNDLE_IMAGE,
     sidecar_bundle_container_name,
 )
-from .supervise import supervise_container_name
 
 
 # Repo root, used as the build context for the bundle Dockerfile.
@@ -233,20 +230,17 @@ def _sidecar_bundle_service(plan: DockerBottlePlan) -> dict[str, Any]:
             "read_only": False,
         })
 
-    # Internal-network aliases: every shortname + long-form legacy
-    # name routes to the bundle so the agent's HTTPS_PROXY URL
-    # (which references either `pipelock` or `egress`) keeps
-    # resolving without an agent-side change.
+    # Internal-network aliases: the agent reaches each daemon through
+    # its short name (pipelock / egress / git-gate / supervise) which
+    # the bundle answers as if it were the daemon itself.
     internal_aliases = [
-        pipelock_container_name(plan.slug),
+        PIPELOCK_HOSTNAME,
         EGRESS_HOSTNAME,
-        egress_container_name(plan.slug),
     ]
     if gp.upstreams:
-        internal_aliases.append(git_gate_container_name(plan.slug))
+        internal_aliases.append(GIT_GATE_HOSTNAME)
     if sp is not None:
         internal_aliases.append(SUPERVISE_HOSTNAME)
-        internal_aliases.append(supervise_container_name(plan.slug))
 
     service: dict[str, Any] = {
         "image": SIDECAR_BUNDLE_IMAGE,
@@ -330,7 +324,7 @@ def _agent_proxy_url(plan: DockerBottlePlan) -> str:
     if plan.egress_plan.routes:
         from .egress import EGRESS_PORT
         return f"http://{EGRESS_HOSTNAME}:{EGRESS_PORT}"
-    return f"http://{pipelock_container_name(plan.slug)}:{PIPELOCK_PORT}"
+    return f"http://{PIPELOCK_HOSTNAME}:{PIPELOCK_PORT}"
 
 
 def _agent_no_proxy(plan: DockerBottlePlan) -> str:

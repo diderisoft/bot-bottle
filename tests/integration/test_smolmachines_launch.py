@@ -124,6 +124,32 @@ class TestSmolmachinesLaunch(unittest.TestCase):
             f"expected a connect-refusal message; got: {r.stdout!r}",
         )
 
+    def test_pipelock_answers_on_bundle_ip(self):
+        # Chunk 4b: the bundle's pipelock daemon is now actually
+        # running (was daemons_csv="" in chunks 2d/3). From inside
+        # the guest, a TCP connect to <bundle-ip>:8888 must succeed
+        # — distinct from the egress-port-bypass probe below where
+        # the connect must FAIL.
+        #
+        # We don't try to speak proxy protocol here — pipelock will
+        # 4xx a bare GET — we just verify the socket answers.
+        r = self.bottle.exec(
+            f"wget -T 5 -t 1 -O - http://{self.plan.bundle_ip}:8888/ "
+            "2>&1 || true"
+        )
+        # Any HTTP response (even a 4xx) proves pipelock is up.
+        # "connection refused" / "unable to connect" / "timed out"
+        # would mean it isn't.
+        msg = r.stdout.lower()
+        self.assertNotIn(
+            "connection refused", msg,
+            f"pipelock connect refused — daemon not listening? {r.stdout!r}",
+        )
+        self.assertNotIn(
+            "timed out", msg,
+            f"pipelock connect timed out: {r.stdout!r}",
+        )
+
     def test_prompt_file_lands_in_guest(self):
         # provision_prompt copies the host-side prompt.txt into the
         # guest at /root/.claude-bottle-prompt.txt. The content

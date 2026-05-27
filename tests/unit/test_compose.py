@@ -112,7 +112,7 @@ def _egress_plan(routes: tuple[EgressRoute, ...] = ()) -> EgressPlan:
         mitmproxy_ca_host_path=STATE / "egress-ca" / "mitmproxy-ca.pem",
         mitmproxy_ca_cert_only_host_path=STATE / "egress-ca" / "ca.pem",
         pipelock_ca_host_path=STATE / "pipelock-ca" / "ca.pem",
-        pipelock_proxy_url=f"http://claude-bottle-pipelock-{SLUG}:8888",
+        pipelock_proxy_url="http://127.0.0.1:8888",
     )
 
 
@@ -221,7 +221,7 @@ class TestAgentAlwaysPresent(unittest.TestCase):
         proxy_lines = [e for e in env if e.startswith("HTTPS_PROXY=")]
         self.assertEqual(1, len(proxy_lines))
         self.assertEqual(
-            f"HTTPS_PROXY=http://claude-bottle-pipelock-{SLUG}:8888",
+            "HTTPS_PROXY=http://pipelock:8888",
             proxy_lines[0],
         )
 
@@ -304,12 +304,11 @@ class TestSidecarBundleShape(unittest.TestCase):
 
     def test_internal_aliases_cover_pipelock_and_egress_shortnames(self):
         # The agent's HTTPS_PROXY url references either `egress` or
-        # `pipelock` (long form). Both must resolve to the bundle.
+        # `pipelock`. Both must resolve to the bundle.
         sc = self._render()["services"]["sidecars"]
         aliases = set(sc["networks"]["internal"]["aliases"])
         self.assertIn("egress", aliases)
-        self.assertIn(f"claude-bottle-pipelock-{SLUG}", aliases)
-        self.assertIn(f"claude-bottle-egress-{SLUG}", aliases)
+        self.assertIn("pipelock", aliases)
 
     def test_internal_aliases_omit_inactive_sidecars(self):
         # With no git-gate / supervise, those names are NOT aliased
@@ -317,15 +316,14 @@ class TestSidecarBundleShape(unittest.TestCase):
         # listening inside the bundle.
         sc = self._render()["services"]["sidecars"]
         aliases = set(sc["networks"]["internal"]["aliases"])
-        self.assertNotIn(f"claude-bottle-git-gate-{SLUG}", aliases)
+        self.assertNotIn("git-gate", aliases)
         self.assertNotIn("supervise", aliases)
 
     def test_internal_aliases_include_active_sidecars(self):
         sc = self._render(with_git=True, supervise=True)["services"]["sidecars"]
         aliases = set(sc["networks"]["internal"]["aliases"])
-        self.assertIn(f"claude-bottle-git-gate-{SLUG}", aliases)
+        self.assertIn("git-gate", aliases)
         self.assertIn("supervise", aliases)
-        self.assertIn(f"claude-bottle-supervise-{SLUG}", aliases)
 
     def test_daemons_csv_lists_only_active(self):
         # Egress + pipelock are always in the daemon set even when

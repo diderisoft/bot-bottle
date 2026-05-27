@@ -402,7 +402,7 @@ class TestSandboxEscape(unittest.TestCase):
             ("aws",       "TEST_SECRET_AWS"),
             ("generic",   "TEST_SECRET_GENERIC"),
         ]
-        gate_host = f"claude-bottle-git-gate-{self._identity}"
+        gate_host = "git-gate"
 
         for name, var in shapes:
             with self.subTest(secret=name):

@@ -14,13 +14,15 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ...egress import Egress
 from ...env import ResolvedEnv, resolve_env
+from ...git_gate import GitGate
 from ...log import die
+from ...pipelock import PipelockProxy
+from ...supervise import Supervise
 from .. import BottleSpec
 from . import util as docker_mod
 from .bottle_plan import DockerBottlePlan
-from .egress import DockerEgress, egress_container_name
-from .git_gate import DockerGitGate, git_gate_container_name
 from .bottle_state import (
     BottleMetadata,
     agent_state_dir,
@@ -35,8 +37,7 @@ from .bottle_state import (
     supervise_state_dir,
     write_metadata,
 )
-from .pipelock import DockerPipelockProxy, pipelock_container_name
-from .supervise import DockerSupervise, supervise_container_name
+from .sidecar_bundle import sidecar_bundle_container_name
 
 
 def resolve_plan(
@@ -49,10 +50,10 @@ def resolve_plan(
     validation already ran in the base class."""
     docker_mod.require_docker()
 
-    proxy = DockerPipelockProxy()
-    git_gate = DockerGitGate()
-    egress = DockerEgress()
-    supervise = DockerSupervise()
+    proxy = PipelockProxy()
+    git_gate = GitGate()
+    egress = Egress()
+    supervise = Supervise()
 
     manifest = spec.manifest
     agent = manifest.agents[spec.agent_name]
@@ -123,30 +124,18 @@ def resolve_plan(
                 f"clean up old containers with 'docker rm -f <name>'"
             )
 
-    # Probe sidecar container names for orphans from a previous run.
-    # Sidecar names are deterministic from the slug; an orphan would
-    # surface as a docker-create conflict deep inside launch() with no
-    # actionable hint. Fail fast here with a cleanup pointer instead.
-    # Only probe sidecars this launch will actually try to create:
-    # pipelock always; git-gate when bottle.git is non-empty;
-    # egress when bottle.egress.routes is non-empty.
-    sidecar_probes: list[tuple[str, str]] = [
-        ("pipelock", pipelock_container_name(slug)),
-    ]
-    if bottle.git:
-        sidecar_probes.append(("git-gate", git_gate_container_name(slug)))
-    if bottle.egress.routes:
-        sidecar_probes.append(("egress", egress_container_name(slug)))
-    if bottle.supervise:
-        sidecar_probes.append(("supervise", supervise_container_name(slug)))
-    for label, sidecar_name in sidecar_probes:
-        if docker_mod.container_exists(sidecar_name):
-            die(
-                f"{label} sidecar container '{sidecar_name}' already exists. "
-                f"This is an orphan from a previous run; clean it up with "
-                f"'./cli.py cleanup' (or 'docker rm -f {sidecar_name}') and "
-                f"retry."
-            )
+    # Probe the sidecar-bundle container name for an orphan from a
+    # previous run. Otherwise a stale bundle surfaces as a
+    # docker-create conflict deep inside launch() with no actionable
+    # hint; failing fast here points at the cleanup command.
+    bundle_name = sidecar_bundle_container_name(slug)
+    if docker_mod.container_exists(bundle_name):
+        die(
+            f"sidecar bundle container '{bundle_name}' already exists. "
+            f"This is an orphan from a previous run; clean it up with "
+            f"'./cli.py cleanup' (or 'docker rm -f {bundle_name}') and "
+            f"retry."
+        )
 
     # PRD 0018 chunk 2: prepare-time scratch files live under
     # ~/.claude-bottle/state/<slug>/<service>/ so chunk 3's compose

@@ -15,8 +15,16 @@ from ...backend.docker.bottle_state import (
     BottleMetadata,
     agent_state_dir,
     bottle_identity,
+    egress_state_dir,
+    git_gate_state_dir,
+    pipelock_state_dir,
+    supervise_state_dir,
     write_metadata,
 )
+from ...egress import Egress
+from ...git_gate import GitGate
+from ...pipelock import PipelockProxy
+from ...supervise import Supervise
 from . import smolvm as _smolvm
 from .bottle_plan import SmolmachinesBottlePlan
 from .util import smolmachines_bundle_subnet, smolmachines_preflight
@@ -86,6 +94,30 @@ def resolve_plan(
             f"http://{bundle_ip}:{_BUNDLE_SUPERVISE_PORT}"
         )
 
+    # Inner Plans for the four bundle daemons. The ABCs are
+    # platform-neutral — `.prepare()` writes config files + returns
+    # a Plan dataclass with no backend-specific assumptions. State
+    # dirs are still keyed by slug under the docker backend's
+    # bottle_state layout (shared on-host convention; not a docker
+    # dependency).
+    pipelock_dir = pipelock_state_dir(slug)
+    pipelock_dir.mkdir(parents=True, exist_ok=True)
+    proxy_plan = PipelockProxy().prepare(bottle, slug, pipelock_dir)
+
+    git_gate_dir = git_gate_state_dir(slug)
+    git_gate_dir.mkdir(parents=True, exist_ok=True)
+    git_gate_plan = GitGate().prepare(bottle, slug, git_gate_dir)
+
+    egress_dir = egress_state_dir(slug)
+    egress_dir.mkdir(parents=True, exist_ok=True)
+    egress_plan = Egress().prepare(bottle, slug, egress_dir)
+
+    supervise_plan = None
+    if bottle.supervise:
+        supervise_dir = supervise_state_dir(slug)
+        supervise_dir.mkdir(parents=True, exist_ok=True)
+        supervise_plan = Supervise().prepare(slug, supervise_dir)
+
     # Prompt file is always written (mode 0o600) so the in-VM
     # path always exists. Content is the agent's `prompt`
     # field (markdown body) — empty for agents with no prompt.
@@ -118,6 +150,10 @@ def resolve_plan(
         agent_from_path=agent_from_path,
         guest_env=guest_env,
         prompt_file=prompt_file,
+        proxy_plan=proxy_plan,
+        git_gate_plan=git_gate_plan,
+        egress_plan=egress_plan,
+        supervise_plan=supervise_plan,
     )
 
 

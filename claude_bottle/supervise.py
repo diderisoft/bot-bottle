@@ -21,8 +21,8 @@ to the agent.
 This module defines the host-side library: dataclasses for the queue
 file shapes, queue read/write helpers, the audit log writer, and the
 diff renderer. The in-container sidecar lives in
-claude_bottle/supervise_server.py; the Docker lifecycle in
-claude_bottle/backend/docker/supervise.py.
+claude_bottle/supervise_server.py; the supervise daemon's container
+lifecycle is owned by the sidecar bundle (PRD 0024).
 
 For 0013 the supervisor's approval handlers are deliberately no-ops:
 on approval the audit log is written and the response file is
