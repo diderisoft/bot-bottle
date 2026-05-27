@@ -8,11 +8,13 @@ launch flow grows."""
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 from ...log import info
 from .. import BottlePlan
+from ..print_util import print_multi
 
 
 @dataclass(frozen=True)
@@ -33,32 +35,27 @@ class SmolmachinesBottlePlan(BottlePlan):
     host_port_map: dict[str, int]
 
     def print(self, *, remote_control: bool) -> None:
-        """Compact y/N preflight for the smolmachines path. Mirrors
-        the docker preflight's layout so operators don't have to
-        learn two formats."""
+        """Compact y/N preflight. Same shape as the Docker
+        backend's so operators see one format across backends."""
         del remote_control  # not surfaced in the compact summary
         spec = self.spec
         manifest = spec.manifest
         agent = manifest.agents[spec.agent_name]
         bottle = manifest.bottle_for(spec.agent_name)
 
-        info(f"backend: smolmachines")
-        info(f"agent:   {spec.agent_name}")
-        info(f"bottle:  {agent.bottle}")
-        info(f"slug:    {self.slug}")
-        info(f"gvproxy: {self.gvproxy_gateway} on {self.gvproxy_subnet}")
-
         env_names = sorted(bottle.env.keys())
-        skills = list(agent.skills)
-        upstreams = [g.Name for g in bottle.git]
+        upstreams = [
+            f"{g.Name} → {g.Upstream}" for g in bottle.git
+        ]
         routes = [r.host for r in bottle.egress.routes]
-        info(f"env:     {', '.join(env_names) if env_names else '(none)'}")
-        info(f"skills:  {', '.join(skills) if skills else '(none)'}")
-        info(f"git:     {', '.join(upstreams) if upstreams else '(none)'}")
-        info(f"routes:  {', '.join(routes) if routes else '(none)'}")
-        info(f"smolfile:       {self.smolfile_path}")
-        info(f"gvproxy config: {self.gvproxy_config_path}")
-        info(
-            "(chunk 1 of PRD 0023: prepare-only — launch is "
-            "not yet implemented)"
-        )
+
+        print(file=sys.stderr)
+        info(f"agent           : {spec.agent_name}")
+        print_multi("env             ", env_names)
+        print_multi("skills          ", list(agent.skills))
+        info(f"bottle          : {agent.bottle}")
+        if upstreams:
+            print_multi("  git gate      ", upstreams)
+        if routes:
+            print_multi("  egress        ", routes)
+        print(file=sys.stderr)
