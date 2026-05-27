@@ -43,6 +43,7 @@ from .bottle_state import (
     transcript_snapshot_dir,
     write_per_bottle_dockerfile,
 )
+from .sidecar_bundle import sidecar_bundle_container_name
 
 
 # Agent home inside the container (per the repo Dockerfile's
@@ -52,9 +53,7 @@ _AGENT_HOME_IN_CONTAINER = "/home/node"
 _AGENT_TRANSCRIPT_IN_CONTAINER = f"{_AGENT_HOME_IN_CONTAINER}/.claude"
 _AGENT_WORKSPACE_IN_CONTAINER = f"{_AGENT_HOME_IN_CONTAINER}/workspace"
 
-# Per-bottle resource name patterns (mirroring prepare.py /
-# the various sidecar modules). The agent container's name is the
-# slug with no infix; sidecars carry an infix like cred-proxy.
+# Per-bottle resource name patterns (mirroring prepare.py).
 def _agent_container_name(slug: str) -> str:
     return f"claude-bottle-{slug}"
 
@@ -65,10 +64,7 @@ def _per_bottle_container_names(slug: str) -> list[str]:
     fine to include names that don't exist for a given bottle."""
     return [
         _agent_container_name(slug),
-        f"claude-bottle-cred-proxy-{slug}",
-        f"claude-bottle-pipelock-{slug}",
-        f"claude-bottle-git-gate-{slug}",
-        f"claude-bottle-supervise-{slug}",
+        sidecar_bundle_container_name(slug),
     ]
 
 

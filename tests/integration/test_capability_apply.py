@@ -39,6 +39,9 @@ from claude_bottle.backend.docker.network import (
     network_create_internal,
     network_remove,
 )
+from claude_bottle.backend.docker.sidecar_bundle import (
+    sidecar_bundle_container_name,
+)
 from tests._docker import skip_unless_docker
 
 
@@ -101,9 +104,9 @@ class TestCapabilityApply(unittest.TestCase):
             capture_output=True, text=True, check=False,
         )
         self.assertEqual(0, r.returncode, r.stderr)
-        # Also start a fake supervise sidecar so teardown has something
+        # Also start a fake sidecar bundle so teardown has something
         # extra to clean up (mirrors a real bottle's container set).
-        sidecar = f"claude-bottle-supervise-{self.slug}"
+        sidecar = sidecar_bundle_container_name(self.slug)
         subprocess.run(
             [
                 "docker", "run", "-d",
