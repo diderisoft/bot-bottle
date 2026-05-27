@@ -38,6 +38,11 @@ from .log import die
 from .manifest import Bottle
 
 
+# Short network alias for git-gate inside the sidecar bundle. The
+# agent's `.gitconfig` insteadOf rewrites resolve through this name.
+GIT_GATE_HOSTNAME = "git-gate"
+
+
 def _empty_str_map() -> dict[str, str]:
     return {}
 

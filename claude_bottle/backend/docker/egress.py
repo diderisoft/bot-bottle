@@ -32,14 +32,6 @@ EGRESS_PIPELOCK_CA_IN_CONTAINER = (
 )
 
 
-def egress_container_name(slug: str) -> str:
-    """The legacy per-sidecar container name. Kept as a function so
-    the renderer can register it as a docker-network alias on the
-    bundle — any code still referring to `claude-bottle-egress-<slug>`
-    resolves to the bundle's IP."""
-    return f"claude-bottle-egress-{slug}"
-
-
 def egress_tls_init(stage_dir: Path) -> tuple[Path, Path]:
     """Mint the per-bottle egress MITM CA via host `openssl req`.
 

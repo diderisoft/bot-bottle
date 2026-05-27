@@ -19,11 +19,11 @@ import os
 import subprocess
 from pathlib import Path
 
+from ....git_gate import GIT_GATE_HOSTNAME
 from ....log import info
 from ....manifest import GitEntry
 from .. import util as docker_mod
 from ..bottle_plan import DockerBottlePlan
-from ..git_gate import git_gate_host
 
 
 def provision_git(plan: DockerBottlePlan, target: str) -> None:
@@ -56,7 +56,7 @@ def _provision_cwd_git(plan: DockerBottlePlan, target: str) -> None:
     )
 
 
-def render_git_gate_gitconfig(slug: str, entries: tuple[GitEntry, ...]) -> str:
+def render_git_gate_gitconfig(entries: tuple[GitEntry, ...]) -> str:
     """Render the ~/.gitconfig content for git-gate `insteadOf`
     rewrites. Pure host-side, no docker; exposed for tests.
 
@@ -64,7 +64,6 @@ def render_git_gate_gitconfig(slug: str, entries: tuple[GitEntry, ...]) -> str:
     cleanly without conditional formatting at the call site."""
     if not entries:
         return ""
-    gate = git_gate_host(slug)
     out = [
         "# claude-bottle git-gate (PRD 0008): every git operation against\n",
         "# a declared upstream routes through the gate, which mirrors\n",
@@ -72,7 +71,7 @@ def render_git_gate_gitconfig(slug: str, entries: tuple[GitEntry, ...]) -> str:
         "# fetch-from-upstream-before-every-upload-pack via access-hook).\n",
     ]
     for entry in entries:
-        out.append(f'[url "git://{gate}/{entry.Name}.git"]\n')
+        out.append(f'[url "git://{GIT_GATE_HOSTNAME}/{entry.Name}.git"]\n')
         out.append(f"\tinsteadOf = {entry.Upstream}\n")
     return "".join(out)
 
@@ -87,7 +86,7 @@ def _provision_git_gate_config(plan: DockerBottlePlan, target: str) -> None:
     container_home = os.environ.get("CLAUDE_BOTTLE_CONTAINER_HOME", "/home/node")
     container_gitconfig = f"{container_home}/.gitconfig"
 
-    content = render_git_gate_gitconfig(plan.slug, bottle.git)
+    content = render_git_gate_gitconfig(bottle.git)
     config_file = plan.stage_dir / "agent_gitconfig"
     config_file.write_text(content)
     config_file.chmod(0o600)

@@ -42,17 +42,11 @@ from ..docker.git_gate import (
     GIT_GATE_ENTRYPOINT_IN_CONTAINER,
     GIT_GATE_HOOK_IN_CONTAINER,
 )
-from ..docker.pipelock import pipelock_tls_init
+from ..docker.pipelock import BUNDLE_LOCAL_PIPELOCK_URL, pipelock_tls_init
 from . import sidecar_bundle as _bundle
 from . import smolvm as _smolvm
 from .bottle import SmolmachinesBottle
 from .bottle_plan import SmolmachinesBottlePlan
-
-
-# Pipelock's upstream when egress is in the bundle: localhost on
-# the bundle's own loopback. No docker DNS aliases involved —
-# pipelock + egress share the same container's network namespace.
-_BUNDLE_LOCAL_PIPELOCK_URL = "http://127.0.0.1:8888"
 
 
 @contextmanager
@@ -95,7 +89,7 @@ def launch(
                 # On smolmachines, egress's upstream is pipelock
                 # on the bundle's localhost — they're in the same
                 # container's network namespace.
-                pipelock_proxy_url=_BUNDLE_LOCAL_PIPELOCK_URL,
+                pipelock_proxy_url=BUNDLE_LOCAL_PIPELOCK_URL,
             )
         plan = dataclasses.replace(
             plan, proxy_plan=proxy_plan, egress_plan=egress_plan,

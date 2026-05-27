@@ -65,7 +65,7 @@ from .compose import (
 )
 from .egress import egress_tls_init
 from .pipelock import (
-    pipelock_proxy_url,
+    BUNDLE_LOCAL_PIPELOCK_URL,
     pipelock_tls_init,
 )
 
@@ -149,7 +149,7 @@ def launch(
                 mitmproxy_ca_host_path=egress_ca_host,
                 mitmproxy_ca_cert_only_host_path=egress_ca_cert_only,
                 pipelock_ca_host_path=ca_cert_host,
-                pipelock_proxy_url=pipelock_proxy_url(plan.slug),
+                pipelock_proxy_url=BUNDLE_LOCAL_PIPELOCK_URL,
             )
         supervise_plan = plan.supervise_plan
         if supervise_plan is not None:

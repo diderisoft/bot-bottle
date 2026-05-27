@@ -55,6 +55,12 @@ PIPELOCK_CA_CERT_IN_CONTAINER = "/etc/pipelock-ca.pem"
 PIPELOCK_CA_KEY_IN_CONTAINER = "/etc/pipelock-ca-key.pem"
 
 
+# Short network alias for pipelock inside the sidecar bundle. The
+# agent's HTTP_PROXY (when no egress is declared) and any in-bundle
+# consumer's URL both reference this name.
+PIPELOCK_HOSTNAME = "pipelock"
+
+
 # --- Allowlist resolution --------------------------------------------------
 
 
@@ -329,10 +335,10 @@ class PipelockProxy:
 
         `slug` is the agent-derived identifier (lowercased,
         hyphen-normalized) used as the suffix in every per-agent
-        resource name — the agent container, the pipelock container
-        (`claude-bottle-pipelock-<slug>`), the internal/egress
-        networks. It's stored on the returned plan so the backend's
-        launch step can derive the sidecar's container name.
+        resource name — the agent container, the sidecar bundle
+        container, the internal/egress networks. It's stored on the
+        returned plan so the backend's launch step can derive those
+        names.
 
         The CA paths the YAML references are the module-level
         in-container constants. The host-side counterparts are

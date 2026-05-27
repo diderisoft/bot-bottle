@@ -35,12 +35,11 @@ PIPELOCK_IMAGE = os.environ.get(
 PIPELOCK_PORT = os.environ.get("CLAUDE_BOTTLE_PIPELOCK_PORT", "8888")
 
 
-def pipelock_container_name(slug: str) -> str:
-    return f"claude-bottle-pipelock-{slug}"
-
-
-def pipelock_proxy_url(slug: str) -> str:
-    return f"http://{pipelock_container_name(slug)}:{PIPELOCK_PORT}"
+# The URL egress dials for its upstream HTTPS_PROXY. egress and
+# pipelock share the same container's network namespace inside the
+# sidecar bundle, so loopback reaches pipelock directly — no docker
+# DNS aliases involved.
+BUNDLE_LOCAL_PIPELOCK_URL = f"http://127.0.0.1:{PIPELOCK_PORT}"
 
 
 def pipelock_tls_init(stage_dir: Path) -> tuple[Path, Path]:
