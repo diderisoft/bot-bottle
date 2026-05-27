@@ -1,15 +1,15 @@
 """Unit: ephemeral local-registry helper (PRD 0023 chunk 4c).
 
 The helper brings up a `registry:2.8.3` container on a random
-loopback port, yields the port, and tears the container down on
-exit. Tests mock `subprocess.run` + `socket.create_connection` so
-they run without docker."""
+host port, yields a `(daemon_endpoint, host_endpoint)` pair, and
+tears the container down on exit. Tests mock `subprocess.run` +
+`socket.create_connection` so they run without docker."""
 
 from __future__ import annotations
 
 import subprocess
 import unittest
-from unittest.mock import call, patch
+from unittest.mock import patch
 
 from claude_bottle.backend.smolmachines import local_registry
 
@@ -20,38 +20,93 @@ def _ok(stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess:
     )
 
 
+# `docker info` always runs once per ephemeral_registry() to pick
+# the daemon-side hostname; the run sequence is therefore
+# (docker run, docker port, docker info, docker rm). Helpers below
+# build a stock side_effect that covers all four.
+def _stock_run_sequence(
+    *,
+    port: str = "0.0.0.0:54321\n",
+    operating_system: str = "Docker Desktop\n",
+):
+    return [
+        _ok(stdout="<container-id>\n"),  # docker run
+        _ok(stdout=port),                # docker port
+        _ok(stdout=operating_system),    # docker info
+        _ok(),                           # docker rm -f
+    ]
+
+
 class TestEphemeralRegistry(unittest.TestCase):
-    def test_yields_host_port_parsed_from_docker_port(self):
-        # docker run + docker port + docker rm in that order; the
-        # port command returns `127.0.0.1:54321` for the loopback
-        # binding.
+    def test_yields_endpoints_with_docker_desktop_routing(self):
+        # On Docker Desktop the daemon runs in its own VM, so the
+        # registry has to be addressed by host.docker.internal for
+        # docker push to work; smolvm (host process) still uses
+        # localhost.
         with patch.object(
             local_registry.subprocess, "run",
-            side_effect=[
-                _ok(stdout="<container-id>\n"),
-                _ok(stdout="127.0.0.1:54321\n"),
-                _ok(),
-            ],
+            side_effect=_stock_run_sequence(operating_system="Docker Desktop\n"),
+        ), patch.object(
+            local_registry.socket, "create_connection",
+            return_value=_FakeSocket(),
+        ):
+            with local_registry.ephemeral_registry() as endpoints:
+                self.assertEqual(
+                    "host.docker.internal:54321", endpoints.daemon_endpoint,
+                )
+                self.assertEqual(
+                    "localhost:54321", endpoints.host_endpoint,
+                )
+
+    def test_yields_endpoints_with_native_linux_routing(self):
+        # On a native Linux daemon the daemon shares the host's
+        # network namespace, so localhost reaches the registry from
+        # both sides.
+        with patch.object(
+            local_registry.subprocess, "run",
+            side_effect=_stock_run_sequence(
+                operating_system="Debian GNU/Linux 12 (bookworm)\n",
+            ),
+        ), patch.object(
+            local_registry.socket, "create_connection",
+            return_value=_FakeSocket(),
+        ):
+            with local_registry.ephemeral_registry() as endpoints:
+                self.assertEqual(
+                    "localhost:54321", endpoints.daemon_endpoint,
+                )
+                self.assertEqual(
+                    "localhost:54321", endpoints.host_endpoint,
+                )
+
+    def test_runs_docker_with_all_interface_bind(self):
+        # `-p 5000` (no IP prefix) binds the container's port 5000
+        # on a random host port across all interfaces — needed so
+        # Docker Desktop's daemon can reach the registry via
+        # host.docker.internal. The 127.0.0.1-only bind we used
+        # previously was invisible to the daemon's VM.
+        with patch.object(
+            local_registry.subprocess, "run",
+            side_effect=_stock_run_sequence(),
         ) as run, patch.object(
             local_registry.socket, "create_connection",
             return_value=_FakeSocket(),
         ):
-            with local_registry.ephemeral_registry() as port:
-                self.assertEqual(54321, port)
+            with local_registry.ephemeral_registry():
+                pass
 
-        # docker run, docker port, docker rm -f
-        self.assertEqual(3, run.call_count)
         run_argv = run.call_args_list[0].args[0]
         self.assertEqual(["docker", "run"], run_argv[:2])
         self.assertIn("--rm", run_argv)
-        # Loopback-only port binding so the registry isn't exposed
-        # on the LAN even briefly.
-        self.assertIn("127.0.0.1::5000", run_argv)
+        self.assertIn("5000", run_argv)
+        # Explicitly NOT the loopback-only form — that one's broken
+        # under Docker Desktop.
+        self.assertNotIn("127.0.0.1::5000", run_argv)
 
     def test_force_removes_container_on_clean_exit(self):
         with patch.object(
             local_registry.subprocess, "run",
-            side_effect=[_ok(stdout="cid\n"), _ok(stdout="127.0.0.1:1234\n"), _ok()],
+            side_effect=_stock_run_sequence(),
         ) as run, patch.object(
             local_registry.socket, "create_connection",
             return_value=_FakeSocket(),
@@ -66,7 +121,7 @@ class TestEphemeralRegistry(unittest.TestCase):
     def test_force_removes_container_on_exception_inside_with(self):
         with patch.object(
             local_registry.subprocess, "run",
-            side_effect=[_ok(stdout="cid\n"), _ok(stdout="127.0.0.1:1234\n"), _ok()],
+            side_effect=_stock_run_sequence(),
         ) as run, patch.object(
             local_registry.socket, "create_connection",
             return_value=_FakeSocket(),
@@ -83,7 +138,7 @@ class TestEphemeralRegistry(unittest.TestCase):
         # Drop the timeout to a value that fits the test budget.
         with patch.object(local_registry, "_READY_TIMEOUT_S", 0.1), patch.object(
             local_registry.subprocess, "run",
-            side_effect=[_ok(stdout="cid\n"), _ok(stdout="127.0.0.1:1234\n"), _ok()],
+            side_effect=_stock_run_sequence(),
         ) as run, patch.object(
             local_registry.socket, "create_connection",
             side_effect=OSError("conn refused"),
@@ -105,8 +160,12 @@ class TestEphemeralRegistry(unittest.TestCase):
         def capture(argv, *a, **kw):
             if argv[:2] == ["docker", "run"]:
                 names.append(argv[argv.index("--name") + 1])
-            return _ok(stdout="cid\n" if argv[:2] == ["docker", "run"]
-                       else "127.0.0.1:1\n")
+                return _ok(stdout="cid\n")
+            if argv[:2] == ["docker", "port"]:
+                return _ok(stdout="0.0.0.0:1\n")
+            if argv[:2] == ["docker", "info"]:
+                return _ok(stdout="Docker Desktop\n")
+            return _ok()
 
         with patch.object(
             local_registry.subprocess, "run", side_effect=capture,

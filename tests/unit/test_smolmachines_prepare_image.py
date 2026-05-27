@@ -62,10 +62,19 @@ class TestEnsureSmolmachine(unittest.TestCase):
     def test_cache_miss_runs_build_tag_push_pack_in_order(self):
         digest = "0123456789abcdef"
 
-        # ephemeral_registry is a context manager yielding the port.
+        # ephemeral_registry yields a RegistryEndpoints with two
+        # routing hostnames — daemon-side for docker push,
+        # host-side for smolvm pack create.
+        from claude_bottle.backend.smolmachines.local_registry import (
+            RegistryEndpoints,
+        )
+
         class _Reg:
             def __enter__(self_inner):
-                return 54321
+                return RegistryEndpoints(
+                    daemon_endpoint="host.docker.internal:54321",
+                    host_endpoint="localhost:54321",
+                )
             def __exit__(self_inner, *exc):
                 return False
 
@@ -98,22 +107,29 @@ class TestEnsureSmolmachine(unittest.TestCase):
             _prepare._ensure_smolmachine("claude-bottle:latest")
 
         # build first (no point pushing if the build fails), then
-        # tag → push → pack against the registry port.
+        # tag → push → pack against the registry endpoints.
         self.assertEqual(["build", "tag", "push", "pack"], calls)
 
-        # tag goes from the source ref to a localhost:<port> ref
-        # with the digest as the tag suffix (so different builds
-        # land on different tags in the registry).
+        # tag + push target the daemon-side endpoint (host.docker
+        # .internal on Docker Desktop, since the daemon's
+        # localhost is its own VM's loopback).
         tag_args = tag.call_args.args
         self.assertEqual("claude-bottle:latest", tag_args[0])
-        self.assertEqual(f"localhost:54321/claude-bottle:{digest}", tag_args[1])
-        # push targets the same localhost ref tag picks.
+        self.assertEqual(
+            f"host.docker.internal:54321/claude-bottle:{digest}", tag_args[1],
+        )
         push_args = push.call_args.args
-        self.assertEqual(f"localhost:54321/claude-bottle:{digest}", push_args[0])
-        # pack_create reads from the registry ref, writes the
-        # binary alongside the cached sidecar.
+        self.assertEqual(
+            f"host.docker.internal:54321/claude-bottle:{digest}", push_args[0],
+        )
+        # pack_create reads from the host-side endpoint (smolvm is
+        # a host process and can only resolve localhost). The
+        # registry stores images by repo+tag, so both endpoints
+        # hit the same blob.
         pack_args = pack.call_args.args
-        self.assertEqual(f"localhost:54321/claude-bottle:{digest}", pack_args[0])
+        self.assertEqual(
+            f"localhost:54321/claude-bottle:{digest}", pack_args[0],
+        )
         self.assertTrue(str(pack_args[1]).endswith(f"{digest}.smolmachine"))
 
 

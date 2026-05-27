@@ -184,14 +184,20 @@ def _ensure_smolmachine(image_ref: str) -> Path:
     a launcher binary at `.smolmachine` plus the sidecar alongside
     it; the sidecar is the actual artifact).
 
-    Conversion path: `docker build` (the existing layer cache makes
-    no-change rebuilds cheap) → `docker tag` with a
-    `localhost:<port>/...` ref → bring up the ephemeral registry
-    container → `docker push` into it → `smolvm pack create --image
-    <localhost ref>` → tear down the registry. Each pack-create
-    costs several seconds even on a hot cache, so we skip the whole
-    pipeline when the cached sidecar is already on disk for this
-    image ID."""
+    Conversion path: `docker build` (the existing layer cache
+    makes no-change rebuilds cheap) → `docker tag` + `docker push`
+    using the daemon-side endpoint (`host.docker.internal:<port>`
+    on Docker Desktop, `localhost:<port>` on native Linux) →
+    `smolvm pack create --image <host endpoint>` using the
+    host-side endpoint (always `localhost:<port>` — smolvm is a
+    host process) → tear down the registry. The two endpoints
+    route to the same registry container; only the hostname
+    differs because the docker daemon (on Docker Desktop) doesn't
+    share the host's loopback.
+
+    Each pack-create costs several seconds even on a hot cache,
+    so we skip the whole pipeline when the cached sidecar is
+    already on disk for this image ID."""
     _SMOLMACHINE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     docker_mod.build_image(image_ref, _REPO_DIR)
     # `sha256:abcd...` -> `abcd...` first 16 chars: short enough to
@@ -202,9 +208,10 @@ def _ensure_smolmachine(image_ref: str) -> Path:
     sidecar = _SMOLMACHINE_CACHE_DIR / f"{digest}.smolmachine.smolmachine"
     if sidecar.is_file():
         return sidecar
-    with ephemeral_registry() as port:
-        local_ref = f"localhost:{port}/claude-bottle:{digest}"
-        docker_mod.tag(image_ref, local_ref)
-        docker_mod.push(local_ref)
-        _smolvm.pack_create(local_ref, binary)
+    with ephemeral_registry() as endpoints:
+        push_ref = f"{endpoints.daemon_endpoint}/claude-bottle:{digest}"
+        pack_ref = f"{endpoints.host_endpoint}/claude-bottle:{digest}"
+        docker_mod.tag(image_ref, push_ref)
+        docker_mod.push(push_ref)
+        _smolvm.pack_create(pack_ref, binary)
     return sidecar
