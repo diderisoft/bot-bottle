@@ -83,11 +83,18 @@ def _list_prefixed_networks() -> list[str]:
     return sorted(set(out))
 
 
-def _list_orphan_state_dirs(live_projects: set[str]) -> list[str]:
+def _list_orphan_state_dirs(
+    live_projects: set[str], protected_identities: set[str],
+) -> list[str]:
     """State identities whose compose project isn't running and
     that don't have a `.preserve` marker. `.preserve` means the
     user (or an auto-preserve-on-crash) wants the state kept for
-    `resume`."""
+    `resume`.
+
+    `protected_identities` is the set of slugs that are live in
+    ANY backend — used so this docker-side check doesn't reap a
+    running smolmachines bottle's state dir (the layout is shared
+    across both backends)."""
     state_root = _supervise.claude_bottle_root() / "state"
     if not state_root.is_dir():
         return []
@@ -99,6 +106,8 @@ def _list_orphan_state_dirs(live_projects: set[str]) -> list[str]:
         project = f"{COMPOSE_PROJECT_PREFIX}{identity}"
         if project in live_projects:
             continue
+        if identity in protected_identities:
+            continue
         if is_preserved(identity):
             continue
         orphans.append(identity)
@@ -106,15 +115,25 @@ def _list_orphan_state_dirs(live_projects: set[str]) -> list[str]:
 
 
 def prepare_cleanup() -> DockerBottleCleanupPlan:
-    """Enumerate everything cleanup will touch. No removals."""
+    """Enumerate everything cleanup will touch. No removals.
+
+    Pulls the union of live identities across backends via
+    `enumerate_active_agents()` so the orphan-state-dir bucket
+    doesn't include slugs whose smolmachines VM is still up."""
     docker_mod.require_docker()
     projects = list_compose_projects()
     project_set = set(projects)
+    # Late import to avoid a circular at module-load time —
+    # the backend package's __init__ imports this module.
+    from .. import enumerate_active_agents
+    protected = {a.slug for a in enumerate_active_agents()}
     return DockerBottleCleanupPlan(
         projects=tuple(projects),
         stray_containers=tuple(_list_prefixed_containers()),
         stray_networks=tuple(_list_prefixed_networks()),
-        orphan_state_dirs=tuple(_list_orphan_state_dirs(project_set)),
+        orphan_state_dirs=tuple(
+            _list_orphan_state_dirs(project_set, protected),
+        ),
     )
 
 

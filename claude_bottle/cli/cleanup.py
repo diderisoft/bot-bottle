@@ -1,11 +1,16 @@
 """cleanup: stop and remove all orphaned claude-bottle resources.
 
-PRD 0018 chunk 4: backend's prepare_cleanup carries everything in
-one plan — live compose projects (whose `compose down` removes
-containers + networks atomically), legacy stray containers/networks
-that aren't in any project, and orphan state dirs (per-bottle
-state with no live project AND no `.preserve` marker). One prompt,
-one cleanup call.
+Walks every registered backend (docker + smolmachines) so a single
+`./cli.py cleanup` reaps both backends' leftovers — orphaned
+smolvm machines won't survive a docker-only cleanup pass (issue
+addressed alongside #77).
+
+Each backend's `prepare_cleanup` enumerates its own resources;
+docker's `_list_orphan_state_dirs` consults
+`enumerate_active_agents()` for the union of live identities so
+state dirs of running smolmachines bottles aren't reaped. State
+dirs are shared layout, so docker is the single owner of that
+bucket.
 
 State dirs with `.preserve` are intentionally never touched — they
 hold capability-block rebuilds or crash snapshots the operator may
@@ -17,25 +22,37 @@ from __future__ import annotations
 
 import sys
 
-from ..backend import get_bottle_backend
+from ..backend import get_bottle_backend, known_backend_names
 from ..log import info
 from ._common import read_tty_line
 
 
 def cmd_cleanup(_argv: list[str]) -> int:
-    backend = get_bottle_backend()
-    plan = backend.prepare_cleanup()
+    # Order: stable backend iteration so the y/N output is
+    # deterministic across runs.
+    plans = [
+        (name, get_bottle_backend(name)) for name in known_backend_names()
+    ]
+    prepared = [(name, b, b.prepare_cleanup()) for name, b in plans]
 
-    if plan.empty:
+    if all(p.empty for _, _, p in prepared):
         info("no claude-bottle resources to clean up")
         return 0
 
-    plan.print()
+    for name, _, plan in prepared:
+        if plan.empty:
+            continue
+        info(f"--- {name} backend ---")
+        plan.print()
+
     if not _prompt_yes("remove all of the above?"):
         info("cleanup: skipped")
         return 0
 
-    backend.cleanup(plan)
+    for name, backend, plan in prepared:
+        if plan.empty:
+            continue
+        backend.cleanup(plan)
     info("cleanup: done")
     return 0
 

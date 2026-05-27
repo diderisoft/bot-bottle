@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Generator, Sequence
 
 from .. import ActiveAgent, BottleBackend, BottleSpec
+from . import cleanup as _cleanup
 from . import enumerate as _enumerate
 from . import launch as _launch
 from . import prepare as _prepare
@@ -76,12 +77,10 @@ class SmolmachinesBottleBackend(
         _supervise.provision_supervise(plan, target)
 
     def prepare_cleanup(self) -> SmolmachinesBottleCleanupPlan:
-        return SmolmachinesBottleCleanupPlan()
+        return _cleanup.prepare_cleanup()
 
     def cleanup(self, plan: SmolmachinesBottleCleanupPlan) -> None:
-        del plan
-        # Nothing to clean in chunks 1-3 — see
-        # SmolmachinesBottleCleanupPlan docstring.
+        _cleanup.cleanup(plan)
 
     def enumerate_active(self) -> Sequence[ActiveAgent]:
         return _enumerate.enumerate_active()

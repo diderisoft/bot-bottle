@@ -44,7 +44,7 @@ class TestOrphanStateDirs(_FakeHomeMixin, unittest.TestCase):
         self._teardown_fake_home()
 
     def test_no_state_root_returns_empty(self):
-        self.assertEqual([], _list_orphan_state_dirs(set()))
+        self.assertEqual([], _list_orphan_state_dirs(set(), set()))
 
     def test_state_dir_with_no_live_no_preserve_is_orphan(self):
         # Just touch the dir; no metadata, no preserve marker — the
@@ -52,7 +52,7 @@ class TestOrphanStateDirs(_FakeHomeMixin, unittest.TestCase):
         bottle_state.write_per_bottle_dockerfile("solo-aaa", "FROM x\n")
         self.assertEqual(
             ["solo-aaa"],
-            _list_orphan_state_dirs(set()),
+            _list_orphan_state_dirs(set(), set()),
         )
 
     def test_live_project_skips_dir(self):
@@ -61,7 +61,7 @@ class TestOrphanStateDirs(_FakeHomeMixin, unittest.TestCase):
         bottle_state.write_per_bottle_dockerfile("live-bbb", "FROM x\n")
         self.assertEqual(
             [],
-            _list_orphan_state_dirs({"claude-bottle-live-bbb"}),
+            _list_orphan_state_dirs({"claude-bottle-live-bbb"}, set()),
         )
 
     def test_preserve_marker_skips_dir(self):
@@ -71,14 +71,14 @@ class TestOrphanStateDirs(_FakeHomeMixin, unittest.TestCase):
         bottle_state.mark_preserved("kept-ccc")
         self.assertEqual(
             [],
-            _list_orphan_state_dirs(set()),
+            _list_orphan_state_dirs(set(), set()),
         )
 
     def test_preserve_overrides_no_live_project(self):
         # Even without a live project, a preserve marker keeps it.
         bottle_state.write_per_bottle_dockerfile("kept-ddd", "FROM x\n")
         bottle_state.mark_preserved("kept-ddd")
-        self.assertEqual([], _list_orphan_state_dirs(set()))
+        self.assertEqual([], _list_orphan_state_dirs(set(), set()))
 
     def test_mixed_set_categorized_correctly(self):
         bottle_state.write_per_bottle_dockerfile("orphan-eee", "FROM x\n")
@@ -86,7 +86,7 @@ class TestOrphanStateDirs(_FakeHomeMixin, unittest.TestCase):
         bottle_state.write_per_bottle_dockerfile("kept-ggg", "FROM z\n")
         bottle_state.mark_preserved("kept-ggg")
 
-        result = _list_orphan_state_dirs({"claude-bottle-live-fff"})
+        result = _list_orphan_state_dirs({"claude-bottle-live-fff"}, set())
         self.assertEqual(["orphan-eee"], result)
 
     def test_sorted_output(self):
@@ -94,7 +94,31 @@ class TestOrphanStateDirs(_FakeHomeMixin, unittest.TestCase):
             bottle_state.write_per_bottle_dockerfile(name, "FROM x\n")
         self.assertEqual(
             ["aaa-1", "mmm-1", "zzz-1"],
-            _list_orphan_state_dirs(set()),
+            _list_orphan_state_dirs(set(), set()),
+        )
+
+    def test_protected_identity_skips_dir(self):
+        # `protected_identities` carries slugs that are live in
+        # any backend (smolmachines included). docker's orphan
+        # detection respects them so a running smolmachines
+        # bottle's state dir isn't reaped while the VM is up.
+        bottle_state.write_per_bottle_dockerfile("smol-hhh", "FROM x\n")
+        self.assertEqual(
+            [],
+            _list_orphan_state_dirs(set(), {"smol-hhh"}),
+        )
+
+    def test_protected_overrides_no_live_project(self):
+        # A smolmachines bottle has no docker compose project but
+        # IS in the protected set; the absence of a project
+        # shouldn't cause a reap.
+        bottle_state.write_per_bottle_dockerfile("smol-iii", "FROM x\n")
+        self.assertEqual(
+            [],
+            _list_orphan_state_dirs(
+                {"claude-bottle-something-else"},  # different project up
+                {"smol-iii"},                       # but smol-iii is live
+            ),
         )
 
 
