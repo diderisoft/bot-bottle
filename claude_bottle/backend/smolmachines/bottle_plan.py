@@ -52,6 +52,11 @@ class SmolmachinesBottlePlan(BottlePlan):
     # `--smolfile` is mutually exclusive with `--from`, and
     # `--from` is the path that avoids the registry-pull race).
     guest_env: dict[str, str]
+    # Path to the agent's prompt file on the host. Always written
+    # (mode 0o600) so the in-VM path always exists; the file is
+    # empty when the agent has no prompt — claude-code reads it
+    # via --append-system-prompt-file only when non-empty.
+    prompt_file: Path
 
     def print(self, *, remote_control: bool) -> None:
         """Compact y/N preflight. Same shape as the Docker

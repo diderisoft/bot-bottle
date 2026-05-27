@@ -15,7 +15,7 @@ install + the inner Plan plumbing land in chunk 4."""
 from __future__ import annotations
 
 from contextlib import ExitStack, contextmanager
-from typing import Generator
+from typing import Callable, Generator
 
 from . import smolvm as _smolvm
 from . import sidecar_bundle as _bundle
@@ -26,6 +26,8 @@ from .bottle_plan import SmolmachinesBottlePlan
 @contextmanager
 def launch(
     plan: SmolmachinesBottlePlan,
+    *,
+    provision: Callable[[SmolmachinesBottlePlan, str], str | None],
 ) -> Generator[SmolmachinesBottle, None, None]:
     """Build + run the bottle and yield a handle; tear everything
     down on exit. Errors during bringup unwind any partial state
@@ -76,7 +78,14 @@ def launch(
         _smolvm.machine_start(plan.machine_name)
         stack.callback(_smolvm.machine_stop, plan.machine_name)
 
-        # 3. Yield the handle.
-        yield SmolmachinesBottle(plan.machine_name)
+        # 3. Provision (CA / prompt / skills / git / supervise).
+        # The orchestrator runs each one in order; provision_*
+        # methods left as stubs (chunk 4 follow-ons) are no-ops.
+        prompt_path = provision(plan, plan.machine_name)
+
+        # 4. Yield the handle. The prompt_path drives whether
+        # exec_claude adds --append-system-prompt-file to claude's
+        # argv (None → no flag).
+        yield SmolmachinesBottle(plan.machine_name, prompt_path=prompt_path)
     finally:
         stack.close()

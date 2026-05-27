@@ -21,8 +21,12 @@ class SmolmachinesBottle(Bottle):
     on the launch ExitStack — this class only routes runtime
     operations to the right `smolvm machine ...` subcommand."""
 
-    def __init__(self, machine_name: str) -> None:
+    def __init__(self, machine_name: str, *, prompt_path: str | None = None) -> None:
         self.name = machine_name
+        # In-VM path to the agent's prompt file. None when the
+        # agent declared no prompt (file still exists; we just
+        # don't pass --append-system-prompt-file).
+        self._prompt_path = prompt_path
 
     def exec_claude(self, argv: list[str], *, tty: bool = True) -> int:
         """Run `claude` interactively inside the VM. Inherits the
@@ -37,7 +41,10 @@ class SmolmachinesBottle(Bottle):
         flags = ["smolvm", "machine", "exec", "--name", self.name]
         if tty:
             flags += ["-i", "-t"]
-        flags += ["--", "claude", *argv]
+        claude_argv = ["claude"]
+        if self._prompt_path:
+            claude_argv += ["--append-system-prompt-file", self._prompt_path]
+        flags += ["--", *claude_argv, *argv]
         result = subprocess.run(flags, check=False)
         return result.returncode
 

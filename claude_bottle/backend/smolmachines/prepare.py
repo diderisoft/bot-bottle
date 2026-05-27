@@ -13,6 +13,7 @@ from pathlib import Path
 from ...backend import BottleSpec
 from ...backend.docker.bottle_state import (
     BottleMetadata,
+    agent_state_dir,
     bottle_identity,
     write_metadata,
 )
@@ -85,8 +86,21 @@ def resolve_plan(
             f"http://{bundle_ip}:{_BUNDLE_SUPERVISE_PORT}"
         )
 
+    # Prompt file is always written (mode 0o600) so the in-VM
+    # path always exists. Content is the agent's `prompt`
+    # field (markdown body) — empty for agents with no prompt.
+    # claude-code reads it via --append-system-prompt-file only
+    # when non-empty, but the file must exist either way to
+    # match the docker backend's contract.
+    agent_dir = agent_state_dir(slug)
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    prompt_file = agent_dir / "prompt.txt"
+    agent = manifest.agents[spec.agent_name]
+    prompt_file.write_text(agent.prompt or "")
+    prompt_file.chmod(0o600)
+
     machine_name = f"claude-bottle-{slug}"
-    # Chunk 2d placeholder until chunk 4's agent-image work lands.
+    # Chunk 2d placeholder until the agent-image work lands.
     # alpine pulls cleanly from docker.io via smolvm's crane
     # backend; the real claude-bottle image lives in the local
     # docker daemon and isn't reachable that way.
@@ -103,6 +117,7 @@ def resolve_plan(
         machine_name=machine_name,
         agent_from_path=agent_from_path,
         guest_env=guest_env,
+        prompt_file=prompt_file,
     )
 
 

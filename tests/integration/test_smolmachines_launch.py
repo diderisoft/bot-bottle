@@ -38,11 +38,18 @@ from claude_bottle.manifest import Manifest
 from tests._docker import skip_unless_docker
 
 
+_AGENT_PROMPT = "You are demo. Be brief."
+
+
 def _minimal_manifest() -> Manifest:
     return Manifest.from_json_obj({
         "bottles": {"dev": {}},
         "agents": {
-            "demo": {"skills": [], "prompt": "", "bottle": "dev"},
+            "demo": {
+                "skills": [],
+                "prompt": _AGENT_PROMPT,
+                "bottle": "dev",
+            },
         },
     })
 
@@ -116,6 +123,15 @@ class TestSmolmachinesLaunch(unittest.TestCase):
             or "failed" in r.stdout.lower(),
             f"expected a connect-refusal message; got: {r.stdout!r}",
         )
+
+    def test_prompt_file_lands_in_guest(self):
+        # provision_prompt copies the host-side prompt.txt into the
+        # guest at /root/.claude-bottle-prompt.txt. The content
+        # must match what the manifest declared so claude-code's
+        # --append-system-prompt-file reads the right text.
+        r = self.bottle.exec("cat /root/.claude-bottle-prompt.txt")
+        self.assertEqual(0, r.returncode, msg=r.stderr)
+        self.assertEqual(_AGENT_PROMPT, r.stdout.rstrip("\n"))
 
     def test_egress_port_bypass_probe(self):
         # Agent dials <bundle-ip>:9099 (egress's port). TSI

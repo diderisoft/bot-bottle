@@ -13,6 +13,8 @@ from . import prepare as _prepare
 from .bottle import SmolmachinesBottle
 from .bottle_cleanup_plan import SmolmachinesBottleCleanupPlan
 from .bottle_plan import SmolmachinesBottlePlan
+from .provision import prompt as _prompt
+from .provision import skills as _skills
 
 
 class SmolmachinesBottleBackend(
@@ -32,26 +34,26 @@ class SmolmachinesBottleBackend(
     def launch(
         self, plan: SmolmachinesBottlePlan
     ) -> Generator[SmolmachinesBottle, None, None]:
-        with _launch.launch(plan) as bottle:
+        with _launch.launch(plan, provision=self.provision) as bottle:
             yield bottle
 
-    # The four `provision_*` methods land in chunk 4 alongside the
-    # `smolvm machine cp`-based copy-in flow. Stubs raise so any
-    # caller that reaches them before chunk 4 gets a clear pointer.
     def provision_prompt(
         self, plan: SmolmachinesBottlePlan, target: str
     ) -> str | None:
-        raise NotImplementedError("smolmachines provision_prompt → chunk 4")
+        return _prompt.provision_prompt(plan, target)
 
     def provision_skills(
         self, plan: SmolmachinesBottlePlan, target: str
     ) -> None:
-        raise NotImplementedError("smolmachines provision_skills → chunk 4")
+        _skills.provision_skills(plan, target)
 
     def provision_git(
         self, plan: SmolmachinesBottlePlan, target: str
     ) -> None:
-        raise NotImplementedError("smolmachines provision_git → chunk 4")
+        # Chunk 4 follow-on: needs the git-gate inner Plan (so the
+        # gitconfig insteadOf URL points at the gate's host) and
+        # the agent image must contain `git`. Stub for chunk 4a.
+        del plan, target
 
     def prepare_cleanup(self) -> SmolmachinesBottleCleanupPlan:
         return SmolmachinesBottleCleanupPlan()
