@@ -54,25 +54,17 @@ class TestImageId(unittest.TestCase):
             self.assertIn("missing:tag", die.call_args.args[0])
 
 
-class TestTagPush(unittest.TestCase):
-    def test_tag_runs_docker_tag(self):
+class TestSave(unittest.TestCase):
+    def test_save_runs_docker_save(self):
         with patch.object(
             docker_mod.subprocess, "run", return_value=_ok(),
         ) as run:
-            docker_mod.tag("claude-bottle:latest", "localhost:5000/cb:abc")
+            docker_mod.save("claude-bottle:latest", "/tmp/img.tar")
         argv = run.call_args.args[0]
         self.assertEqual(
-            ["docker", "tag", "claude-bottle:latest", "localhost:5000/cb:abc"],
+            ["docker", "save", "claude-bottle:latest", "-o", "/tmp/img.tar"],
             argv,
         )
-
-    def test_push_runs_docker_push(self):
-        with patch.object(
-            docker_mod.subprocess, "run", return_value=_ok(),
-        ) as run:
-            docker_mod.push("localhost:5000/cb:abc")
-        argv = run.call_args.args[0]
-        self.assertEqual(["docker", "push", "localhost:5000/cb:abc"], argv)
 
 
 if __name__ == "__main__":

@@ -1,40 +1,37 @@
 """Ephemeral local OCI registry for the smolmachines agent-image
 conversion path (PRD 0023 chunk 4c).
 
-`smolvm pack create --image <ref>` only accepts registry refs — it
-can't read the local docker daemon's image cache, an OCI layout
-directory, or a `docker save` tarball. To convert the agent's
-Dockerfile-built image into a `.smolmachine` artifact we run a
-short-lived `registry:2.8.3` container, push the locally-tagged
-image into it, and let smolvm pull from there. The registry
-container is torn down as soon as the pack completes.
+`smolvm pack create --image <ref>` only accepts OCI registry refs
+— it can't read the local docker daemon's image cache, an OCI
+layout directory, or a `docker save` tarball. To convert the
+agent's Dockerfile-built image into a `.smolmachine` artifact we
+spin up a short-lived `registry:2.8.3` container alongside a
+`crane` helper container on a private docker network, push via
+`crane push --insecure <tarball> <registry-container>:5000/...`,
+and let smolvm pull from the registry's published host port. The
+network + both containers are torn down after the pack completes.
 
-Two routing hostnames, one registry container. On Docker Desktop
-(macOS/Windows) the docker daemon runs inside its own Linux VM,
-so its `localhost` is *not* the host's loopback — a registry
-bound to `127.0.0.1::<port>` on the host is unreachable from the
-daemon side, and `docker push` fails with `context deadline
-exceeded`. The fix: bind to all interfaces so both routes work,
-and yield two refs:
+Why this two-container dance instead of plain `docker push`:
+- Docker Desktop's daemon runs in its own Linux VM, so its
+  `localhost` is not the host's loopback. A registry bound to
+  the host's 127.0.0.1 is unreachable from the daemon side.
+- `host.docker.internal` is reachable from the daemon but isn't
+  in Docker's default insecure-registries CIDRs (only `::1/128`
+  and `127.0.0.0/8` are), so `docker push` to it tries HTTPS,
+  hits a plain-HTTP registry, and dies with
+  `http: server gave HTTP response to HTTPS client`. Adding
+  `host.docker.internal` to daemon.json works but is a one-time
+  manual step the user has to do in Docker Desktop's UI.
+- Going through a docker network sidesteps the host-vs-daemon
+  loopback mismatch (crane and registry containers see each
+  other on the network) AND the HTTPS preference (crane has an
+  `--insecure` flag that forces plain HTTP).
 
-  - `daemon_endpoint`: how the docker CLI/daemon dials the
-    registry (`host.docker.internal:<port>` on Docker Desktop,
-    `localhost:<port>` on a native Linux daemon that shares the
-    host's network namespace).
-  - `host_endpoint`: how `smolvm pack create` (a host process)
-    dials the registry. Always `localhost:<port>` — the port
-    binding includes loopback either way.
-
-The registry stores images by repo+tag; the hostname in the ref
-is just routing, so a push to `host.docker.internal:<port>/cb:abc`
-and a pull of `localhost:<port>/cb:abc` hit the same stored
-blob.
-
-Trade-off: binding to all interfaces puts the registry on every
-network interface briefly (~5-10s during prepare). The agent
-image we push is built from the repo's public Dockerfile — no
-secrets in it — and the user is on their own machine; the LAN
-exposure window is short and the contents non-sensitive."""
+The registry is also published on a random host port so smolvm
+— a host process — can pull from `localhost:<port>` via Docker's
+port-forward. smolvm's bundled crane auto-falls-back to HTTP for
+localhost addresses, so no insecure-registries config is needed
+on that side either."""
 
 from __future__ import annotations
 
@@ -58,106 +55,150 @@ REGISTRY_IMAGE = os.environ.get(
 )
 
 
+# gcr.io/go-containerregistry/crane:latest, pinned by digest. ~10MB,
+# stable upstream from Google; we only invoke `crane push --insecure`
+# against a localhost-equivalent registry, so the trust surface is
+# narrow.
+CRANE_IMAGE = os.environ.get(
+    "CLAUDE_BOTTLE_CRANE_IMAGE",
+    "gcr.io/go-containerregistry/crane@sha256:0ae17ecb34315aa7cbff28f6eddee3b7adae0b2f90101260d990804db1eb0084",
+)
+
+
+# Internal port the registry binds to inside its container — fixed
+# by the registry:2 image. The host-side mapping is random.
+_REGISTRY_CONTAINER_PORT = "5000"
+
+
 # How long to wait for the registry's HTTP layer to bind before
-# giving up. Two seconds is empirically enough; bumping to 10s leaves
-# headroom for slow CI runners without making the failure mode chatty.
+# giving up. Two seconds is empirically enough; 10s leaves headroom
+# for slow CI runners without making the failure mode chatty.
 _READY_TIMEOUT_S = 10.0
 
 
 @dataclass(frozen=True)
-class RegistryEndpoints:
-    """The two `<host>:<port>` strings to embed in image refs. They
-    point at the same registry container; only the routing
-    hostname differs."""
+class RegistryHandle:
+    """Everything callers need to push to + pull from the ephemeral
+    registry.
 
-    daemon_endpoint: str
-    host_endpoint: str
+    `network` is the per-session docker network — a `crane push`
+    container has to join it to reach the registry by name.
+    `push_endpoint` is the `<host>:<port>` form to embed in image
+    refs given to the crane push container (resolves via docker
+    network DNS). `pull_endpoint` is the `<host>:<port>` form a
+    host process (smolvm) uses; the registry's host port mapping
+    backs this."""
+
+    network: str
+    push_endpoint: str
+    pull_endpoint: str
 
 
 @contextmanager
-def ephemeral_registry() -> Iterator[RegistryEndpoints]:
-    """Bring up a `registry:2.8.3` container on a random host port,
-    yield the daemon-side + host-side endpoints, force-remove the
-    container on exit.
+def ephemeral_registry() -> Iterator[RegistryHandle]:
+    """Bring up a per-session docker network + a `registry:2.8.3`
+    container on it (published on a random host port), yield a
+    `RegistryHandle`, force-remove both on exit.
 
     The container is started with `--rm` so a clean exit cleans up
     on its own; the `finally` block force-removes on abnormal exit
     (the calling process crashes between yield and close)."""
-    name = f"claude-bottle-registry-{uuid.uuid4().hex[:12]}"
+    session_id = uuid.uuid4().hex[:12]
+    network = f"claude-bottle-registry-net-{session_id}"
+    registry_name = f"claude-bottle-registry-{session_id}"
+
     subprocess.run(
-        [
-            "docker", "run", "-d", "--rm",
-            "--name", name,
-            # `-p :5000` (no IP prefix) binds the container's port
-            # 5000 on a random host port across all interfaces. The
-            # registry container itself listens on 0.0.0.0:5000
-            # internally; binding to all interfaces is necessary for
-            # Docker Desktop's daemon to reach it via
-            # host.docker.internal — a 127.0.0.1-only host binding
-            # is invisible to a daemon running in its own VM.
-            "-p", "5000",
-            REGISTRY_IMAGE,
-        ],
+        ["docker", "network", "create", network],
         check=True,
         capture_output=True,
     )
     try:
-        port = _host_port(name)
-        _wait_ready(port)
-        daemon_host = _daemon_side_hostname()
-        yield RegistryEndpoints(
-            daemon_endpoint=f"{daemon_host}:{port}",
-            host_endpoint=f"localhost:{port}",
+        subprocess.run(
+            [
+                "docker", "run", "-d", "--rm",
+                "--name", registry_name,
+                "--network", network,
+                # `-p :5000` (no IP prefix) binds the container's
+                # port 5000 on a random host port across all
+                # interfaces. The host side reaches the registry
+                # via this port — smolvm's `pack create` pulls from
+                # `localhost:<port>` and the docker port-forward
+                # routes there.
+                "-p", _REGISTRY_CONTAINER_PORT,
+                REGISTRY_IMAGE,
+            ],
+            check=True,
+            capture_output=True,
         )
+        try:
+            port = _host_port(registry_name)
+            _wait_ready(port)
+            yield RegistryHandle(
+                network=network,
+                push_endpoint=f"{registry_name}:{_REGISTRY_CONTAINER_PORT}",
+                pull_endpoint=f"localhost:{port}",
+            )
+        finally:
+            subprocess.run(
+                ["docker", "rm", "-f", registry_name],
+                check=False,
+                capture_output=True,
+            )
     finally:
         subprocess.run(
-            ["docker", "rm", "-f", name],
+            ["docker", "network", "rm", network],
             check=False,
             capture_output=True,
         )
 
 
-def _daemon_side_hostname() -> str:
-    """Pick the hostname the docker daemon should use to dial the
-    registry. On Docker Desktop the daemon runs in its own Linux
-    VM and only sees the host via `host.docker.internal`; on
-    native Linux the daemon shares the host's network namespace
-    and `localhost` works.
+def crane_push_tarball(handle: RegistryHandle, tarball_path: str, ref: str) -> None:
+    """Run `crane push --insecure <tarball> <ref>` inside a one-shot
+    container on the registry's docker network. `ref` should
+    reference the registry by `handle.push_endpoint` so the crane
+    container resolves it via docker network DNS.
 
-    `docker info --format '{{.OperatingSystem}}'` returns
-    `"Docker Desktop"` on macOS / Windows Desktop installs (and on
-    Linux Desktop, which also uses a VM). Anything else (e.g.
-    `"Debian GNU/Linux 12 (bookworm)"`) is a native daemon."""
+    Doesn't go through `docker push` to avoid the Docker-Desktop
+    daemon's HTTPS preference for non-loopback hostnames — crane's
+    `--insecure` flag forces plain HTTP, which is what the
+    registry container speaks."""
     r = subprocess.run(
-        ["docker", "info", "--format", "{{.OperatingSystem}}"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    operating_system = (r.stdout or "").strip()
-    if operating_system == "Docker Desktop":
-        return "host.docker.internal"
-    return "localhost"
-
-
-def _host_port(name: str) -> int:
-    """Resolve the host-side port docker mapped to the registry's
-    container port 5000. `docker port <name> 5000/tcp` returns one
-    or more `host:port` lines (one per address family) — we take
-    the first IPv4 line."""
-    r = subprocess.run(
-        ["docker", "port", name, "5000/tcp"],
+        [
+            "docker", "run", "--rm",
+            "--network", handle.network,
+            "-v", f"{tarball_path}:/img.tar:ro",
+            CRANE_IMAGE,
+            "push", "--insecure", "/img.tar", ref,
+        ],
         capture_output=True,
         text=True,
         check=False,
     )
     if r.returncode != 0:
         die(
-            f"docker port {name} 5000/tcp failed: "
+            f"crane push of {tarball_path!r} to {ref!r} failed: "
+            f"{(r.stderr or r.stdout or '').strip() or '<no output>'}"
+        )
+
+
+def _host_port(name: str) -> int:
+    """Resolve the host-side port docker mapped to the registry's
+    container port. `docker port <name> 5000/tcp` returns one or
+    more `host:port` lines (one per address family) — we take the
+    first."""
+    r = subprocess.run(
+        ["docker", "port", name, f"{_REGISTRY_CONTAINER_PORT}/tcp"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if r.returncode != 0:
+        die(
+            f"docker port {name} {_REGISTRY_CONTAINER_PORT}/tcp failed: "
             f"{(r.stderr or '').strip() or '<no stderr>'}"
         )
-    # `0.0.0.0:54321\n[::]:54321\n` — take the first line, split
-    # on the last colon to handle either IPv4 or IPv6 host syntax.
+    # `0.0.0.0:54321\n[::]:54321\n` — split on the last colon to
+    # handle either IPv4 or IPv6 host syntax.
     line = (r.stdout or "").splitlines()[0].strip()
     _, _, port_str = line.rpartition(":")
     try:
@@ -168,15 +209,15 @@ def _host_port(name: str) -> int:
 
 
 def _wait_ready(port: int) -> None:
-    """Block until the registry's HTTP layer accepts a TCP connection
-    on `127.0.0.1:<port>`, or `_READY_TIMEOUT_S` elapses.
+    """Block until the registry's HTTP layer accepts a TCP
+    connection on `127.0.0.1:<port>`, or `_READY_TIMEOUT_S`
+    elapses.
 
     A successful TCP connect is sufficient — registry:2.8.3 binds
     after it's ready to serve `/v2/` requests, so the push that
     follows will land on a working server. We probe loopback
-    specifically (not host.docker.internal) because this helper
-    runs on the host, and 0.0.0.0-bound ports are reachable via
-    127.0.0.1 too."""
+    specifically (not via the docker network) because this helper
+    runs on the host."""
     deadline = time.monotonic() + _READY_TIMEOUT_S
     last_err: Exception | None = None
     while time.monotonic() < deadline:

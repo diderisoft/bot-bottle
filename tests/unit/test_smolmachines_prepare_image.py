@@ -40,40 +40,42 @@ class TestEnsureSmolmachine(unittest.TestCase):
             _prepare.docker_mod, "image_id",
             return_value=f"sha256:{digest}fffffffffffffffff",
         ), patch.object(
+            _prepare.docker_mod, "save",
+        ) as save, patch.object(
             _prepare, "ephemeral_registry",
         ) as registry, patch.object(
-            _prepare.docker_mod, "tag",
-        ) as tag, patch.object(
-            _prepare.docker_mod, "push",
+            _prepare, "crane_push_tarball",
         ) as push, patch.object(
             _prepare._smolvm, "pack_create",
         ) as pack:
             result = _prepare._ensure_smolmachine("claude-bottle:latest")
 
         self.assertEqual(sidecar, result)
-        # build still runs (Dockerfile edits land without manual rmi)
+        # build still runs (Dockerfile edits land without manual rmi).
         build.assert_called_once()
-        # No registry, no tag, no push, no pack on cache hit.
+        # No save (500MB tarball), no registry, no push, no pack on
+        # cache hit.
+        save.assert_not_called()
         registry.assert_not_called()
-        tag.assert_not_called()
         push.assert_not_called()
         pack.assert_not_called()
 
-    def test_cache_miss_runs_build_tag_push_pack_in_order(self):
+    def test_cache_miss_runs_build_save_push_pack_in_order(self):
         digest = "0123456789abcdef"
 
-        # ephemeral_registry yields a RegistryEndpoints with two
-        # routing hostnames — daemon-side for docker push,
-        # host-side for smolvm pack create.
+        # ephemeral_registry yields a RegistryHandle with the
+        # docker network + a push endpoint (container DNS) and
+        # pull endpoint (host port-forward).
         from claude_bottle.backend.smolmachines.local_registry import (
-            RegistryEndpoints,
+            RegistryHandle,
         )
 
         class _Reg:
             def __enter__(self_inner):
-                return RegistryEndpoints(
-                    daemon_endpoint="host.docker.internal:54321",
-                    host_endpoint="localhost:54321",
+                return RegistryHandle(
+                    network="cb-net-xyz",
+                    push_endpoint="cb-registry-xyz:5000",
+                    pull_endpoint="localhost:54321",
                 )
             def __exit__(self_inner, *exc):
                 return False
@@ -92,13 +94,13 @@ class TestEnsureSmolmachine(unittest.TestCase):
             _prepare.docker_mod, "image_id",
             return_value=f"sha256:{digest}fffffffffffffffff",
         ), patch.object(
+            _prepare.docker_mod, "save",
+            side_effect=record("save"),
+        ) as save, patch.object(
             _prepare, "ephemeral_registry",
             return_value=_Reg(),
         ), patch.object(
-            _prepare.docker_mod, "tag",
-            side_effect=record("tag"),
-        ) as tag, patch.object(
-            _prepare.docker_mod, "push",
+            _prepare, "crane_push_tarball",
             side_effect=record("push"),
         ) as push, patch.object(
             _prepare._smolvm, "pack_create",
@@ -106,26 +108,27 @@ class TestEnsureSmolmachine(unittest.TestCase):
         ) as pack:
             _prepare._ensure_smolmachine("claude-bottle:latest")
 
-        # build first (no point pushing if the build fails), then
-        # tag → push → pack against the registry endpoints.
-        self.assertEqual(["build", "tag", "push", "pack"], calls)
+        # Build → save → push → pack in that order. No `docker
+        # push` (the daemon's HTTPS-by-default path is what we're
+        # sidestepping).
+        self.assertEqual(["build", "save", "push", "pack"], calls)
 
-        # tag + push target the daemon-side endpoint (host.docker
-        # .internal on Docker Desktop, since the daemon's
-        # localhost is its own VM's loopback).
-        tag_args = tag.call_args.args
-        self.assertEqual("claude-bottle:latest", tag_args[0])
-        self.assertEqual(
-            f"host.docker.internal:54321/claude-bottle:{digest}", tag_args[1],
-        )
+        # docker save targets a per-digest tarball alongside the
+        # cached sidecar.
+        save_args = save.call_args.args
+        self.assertEqual("claude-bottle:latest", save_args[0])
+        self.assertTrue(save_args[1].endswith(f"{digest}.image.tar"))
+
+        # crane push runs against the push_endpoint (container DNS
+        # on the registry network) with the digest as the tag.
         push_args = push.call_args.args
         self.assertEqual(
-            f"host.docker.internal:54321/claude-bottle:{digest}", push_args[0],
+            f"cb-registry-xyz:5000/claude-bottle:{digest}", push_args[2],
         )
-        # pack_create reads from the host-side endpoint (smolvm is
-        # a host process and can only resolve localhost). The
-        # registry stores images by repo+tag, so both endpoints
-        # hit the same blob.
+
+        # pack_create reads from the pull_endpoint (host port-
+        # forward, smolvm is on the host). Same repo+tag, just a
+        # different routing hostname — the registry stores one blob.
         pack_args = pack.call_args.args
         self.assertEqual(
             f"localhost:54321/claude-bottle:{digest}", pack_args[0],

@@ -166,18 +166,15 @@ def image_id(ref: str) -> str:
     return r.stdout.strip()
 
 
-def tag(src: str, dst: str) -> None:
-    """`docker tag SRC DST`. Idempotent. Used by smolmachines prepare
-    to retag the locally-built image into a localhost:<port>/... ref
-    that the ephemeral registry will accept."""
-    subprocess.run(["docker", "tag", src, dst], check=True)
-
-
-def push(ref: str) -> None:
-    """`docker push REF`. Used by smolmachines prepare to push the
-    agent image into the ephemeral local registry so smolvm's crane
-    backend can pull it."""
-    subprocess.run(["docker", "push", ref], check=True)
+def save(ref: str, output: str) -> None:
+    """`docker save REF -o OUTPUT`. Writes a tarball of the image
+    layers + manifest to the host path. Used by smolmachines
+    prepare to hand the agent image to a containerized crane that
+    pushes it to the ephemeral registry — bypassing the docker
+    daemon's `docker push` (which on Docker Desktop can't reach a
+    host-loopback registry and refuses plain-HTTP pushes to
+    non-loopback hosts)."""
+    subprocess.run(["docker", "save", ref, "-o", output], check=True)
 
 
 def _silent_run(cmd: Iterable[str]) -> int:

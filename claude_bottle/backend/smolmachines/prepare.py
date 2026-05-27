@@ -34,7 +34,7 @@ from ...pipelock import PipelockProxy
 from ...supervise import Supervise
 from . import smolvm as _smolvm
 from .bottle_plan import SmolmachinesBottlePlan
-from .local_registry import ephemeral_registry
+from .local_registry import crane_push_tarball, ephemeral_registry
 from .util import smolmachines_bundle_subnet, smolmachines_preflight
 
 
@@ -185,15 +185,14 @@ def _ensure_smolmachine(image_ref: str) -> Path:
     it; the sidecar is the actual artifact).
 
     Conversion path: `docker build` (the existing layer cache
-    makes no-change rebuilds cheap) → `docker tag` + `docker push`
-    using the daemon-side endpoint (`host.docker.internal:<port>`
-    on Docker Desktop, `localhost:<port>` on native Linux) →
-    `smolvm pack create --image <host endpoint>` using the
-    host-side endpoint (always `localhost:<port>` — smolvm is a
-    host process) → tear down the registry. The two endpoints
-    route to the same registry container; only the hostname
-    differs because the docker daemon (on Docker Desktop) doesn't
-    share the host's loopback.
+    makes no-change rebuilds cheap) → `docker save` to a tarball
+    → spin up an ephemeral registry on a private docker network →
+    `crane push --insecure` from a one-shot container on the same
+    network → `smolvm pack create --image localhost:<host port>/...`
+    → tear down the registry + network. The crane push detour
+    sidesteps the Docker-Desktop daemon's HTTPS preference for
+    non-loopback registries — see the `local_registry` module
+    docstring for the gory details.
 
     Each pack-create costs several seconds even on a hot cache,
     so we skip the whole pipeline when the cached sidecar is
@@ -208,10 +207,17 @@ def _ensure_smolmachine(image_ref: str) -> Path:
     sidecar = _SMOLMACHINE_CACHE_DIR / f"{digest}.smolmachine.smolmachine"
     if sidecar.is_file():
         return sidecar
-    with ephemeral_registry() as endpoints:
-        push_ref = f"{endpoints.daemon_endpoint}/claude-bottle:{digest}"
-        pack_ref = f"{endpoints.host_endpoint}/claude-bottle:{digest}"
-        docker_mod.tag(image_ref, push_ref)
-        docker_mod.push(push_ref)
-        _smolvm.pack_create(pack_ref, binary)
+    tarball = _SMOLMACHINE_CACHE_DIR / f"{digest}.image.tar"
+    docker_mod.save(image_ref, str(tarball))
+    try:
+        with ephemeral_registry() as handle:
+            push_ref = f"{handle.push_endpoint}/claude-bottle:{digest}"
+            pack_ref = f"{handle.pull_endpoint}/claude-bottle:{digest}"
+            crane_push_tarball(handle, str(tarball), push_ref)
+            _smolvm.pack_create(pack_ref, binary)
+    finally:
+        # Tarball is ~500MB-1GB for the agent image; reclaim once
+        # the smolmachine artifact exists. The artifact itself is
+        # the long-lived cache entry.
+        tarball.unlink(missing_ok=True)
     return sidecar
