@@ -190,6 +190,27 @@ The container is removed automatically when the session ends. If the script
 is killed with SIGKILL the exit trap won't fire and the container may be
 left running; remove it with `docker rm -f <container-name>`.
 
+### Smolmachines backend (experimental, macOS-only)
+
+A second backend runs the agent in a smolvm micro-VM (libkrun) with the
+sidecar bundle still in Docker. Selected via
+`CLAUDE_BOTTLE_BACKEND=smolmachines ./cli.py start <agent>`. Requires
+`smolvm` on PATH (`curl -sSL https://smolmachines.com/install.sh | sh`).
+
+**Known limitation, v1:** smolvm's TSI uses macOS networking, and
+Docker Desktop's container IPs aren't reachable from macOS, so the
+smolmachines bottle dials the sidecar bundle through host loopback
+port-forwards (`127.0.0.1:<random>`). TSI filters by IP only, so the
+allowlist is `127.0.0.1/32` — meaning the agent VM can reach **any
+service bound to macOS's loopback**, not just the bundle's published
+ports. Practical implication: while a smolmachines bottle is running,
+host-local dev services (postgres on 5432, dev servers, etc.) are
+reachable from inside the agent even if you intended them to be
+host-private. The docker backend keeps the bottle on a `--internal`
+docker network and doesn't have this issue. A future revision will
+narrow this via a per-bottle loopback alias + host-side proxy (see
+PRD 0023's "loopback scoping" section).
+
 ## Manifest
 
 Bottles and agents live as Markdown files with YAML frontmatter under
