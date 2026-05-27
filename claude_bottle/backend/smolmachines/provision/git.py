@@ -28,7 +28,6 @@ from pathlib import Path
 
 from ....git_gate import git_gate_render_gitconfig
 from ....log import info
-from ...docker.git_gate import GIT_GATE_PORT
 from .. import smolvm as _smolvm
 from ..bottle_plan import SmolmachinesBottlePlan
 
@@ -79,10 +78,12 @@ def _provision_git_gate_config(plan: SmolmachinesBottlePlan, target: str) -> Non
     if not bottle.git:
         return
 
-    # IP-literal form: the TSI allowlist passes <bundle_ip>/32 and
-    # nothing else, so the agent has to dial the gate by IP+port.
-    gate_host = f"{plan.bundle_ip}:{GIT_GATE_PORT}"
-    content = git_gate_render_gitconfig(bottle.git, gate_host)
+    # `127.0.0.1:<host port>` form: the bundle's git-gate port
+    # is published on host loopback at launch time so the
+    # smolvm guest (which can only reach macOS networking via
+    # TSI, not the docker bridge IP) can dial it. launch.py
+    # populates `plan.agent_git_gate_host` after bundle bringup.
+    content = git_gate_render_gitconfig(bottle.git, plan.agent_git_gate_host)
 
     guest_gitconfig = f"{_guest_home()}/.gitconfig"
     # Stage the file under the plan's stage_dir so `machine cp`

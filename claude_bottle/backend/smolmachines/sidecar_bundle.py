@@ -70,6 +70,13 @@ class BundleLaunchSpec:
     environment: Sequence[str] = field(default_factory=tuple)
     # (host_path, container_path, read_only) bind mounts.
     volumes: Sequence[tuple[str, str, bool]] = field(default_factory=tuple)
+    # Container ports to publish on the host's 127.0.0.1, random
+    # host-side port per entry. The smolvm guest's TSI talks via
+    # macOS networking, so docker container IPs (192.168.x.x in
+    # the daemon's bridge) aren't directly reachable from the
+    # guest — host-loopback port-forwards are. Egress's port
+    # is bundle-internal and never published.
+    ports_to_publish: Sequence[int] = field(default_factory=tuple)
 
 
 def create_bundle_network(network_name: str, subnet: str, gateway: str) -> None:
@@ -135,6 +142,11 @@ def start_bundle(spec: BundleLaunchSpec, *,
     for host_path, container_path, read_only in spec.volumes:
         suffix = ":ro" if read_only else ""
         argv += ["-v", f"{host_path}:{container_path}{suffix}"]
+    # Loopback-only host port-forwards — the smolvm guest's TSI
+    # uses macOS networking, and macOS loopback is the only host
+    # surface that round-trips into Docker Desktop's daemon VM.
+    for port in spec.ports_to_publish:
+        argv += ["-p", f"127.0.0.1::{port}"]
     argv.append(spec.image)
     result = subprocess.run(
         argv, capture_output=True, text=True,
@@ -145,6 +157,33 @@ def start_bundle(spec: BundleLaunchSpec, *,
             f"docker run for bundle {container} failed: "
             f"{(result.stderr or '').strip()}"
         )
+
+
+def bundle_host_port(slug: str, container_port: int) -> int:
+    """`docker port <bundle> <container_port>/tcp` → the random
+    host-side port docker assigned. Called after `start_bundle`
+    on each container port listed in `BundleLaunchSpec
+    .ports_to_publish` so the launch step can build the agent's
+    HTTPS_PROXY / GIT_GATE / SUPERVISE URLs in
+    `127.0.0.1:<host port>` form."""
+    container = bundle_container_name(slug)
+    result = subprocess.run(
+        ["docker", "port", container, f"{container_port}/tcp"],
+        capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        die(
+            f"docker port {container} {container_port}/tcp failed: "
+            f"{(result.stderr or '').strip() or '<no stderr>'}"
+        )
+    # `127.0.0.1:54321\n` — rpartition on last colon gives the port.
+    line = (result.stdout or "").splitlines()[0].strip()
+    _, _, port_str = line.rpartition(":")
+    try:
+        return int(port_str)
+    except ValueError:
+        die(f"unexpected `docker port` output: {line!r}")
+        return -1  # unreachable; die() never returns
 
 
 def stop_bundle(slug: str) -> None:

@@ -89,29 +89,23 @@ def resolve_plan(
 
     subnet, gateway, bundle_ip = smolmachines_bundle_subnet(slug)
 
-    # Agent's env. IP literals; no DNS resolution inside the guest
-    # (TSI allowlist contains only `<bundle_ip>/32` — no resolver).
-    # TLS trust env trio (NODE_EXTRA_CA_CERTS / SSL_CERT_FILE /
-    # REQUESTS_CA_BUNDLE) points at Debian's
-    # update-ca-certificates output bundle — provision_ca writes
-    # the per-bottle MITM CA there at launch time.
+    # Agent's env: the prepare-time view doesn't yet know the
+    # host loopback ports the bundle's daemons get published on
+    # (those come from docker AFTER `docker run` returns), so
+    # HTTPS_PROXY / GIT_GATE_URL / MCP_SUPERVISE_URL are
+    # populated in launch.py and stamped onto guest_env there.
+    # What we set here is the part that doesn't depend on
+    # bundle bringup — bottle.env literals, the empty-NO_PROXY
+    # safe default, and the TLS trust env trio
+    # (NODE_EXTRA_CA_CERTS / SSL_CERT_FILE / REQUESTS_CA_BUNDLE)
+    # pointing at Debian's update-ca-certificates output bundle.
     guest_env: dict[str, str] = {
         **bottle.env,
-        "HTTPS_PROXY": f"http://{bundle_ip}:{_BUNDLE_PIPELOCK_PORT}",
-        "HTTP_PROXY":  f"http://{bundle_ip}:{_BUNDLE_PIPELOCK_PORT}",
         "NO_PROXY":    "localhost,127.0.0.1",
         "NODE_EXTRA_CA_CERTS": "/etc/ssl/certs/ca-certificates.crt",
         "SSL_CERT_FILE":       "/etc/ssl/certs/ca-certificates.crt",
         "REQUESTS_CA_BUNDLE":  "/etc/ssl/certs/ca-certificates.crt",
     }
-    if bottle.git:
-        guest_env["GIT_GATE_URL"] = (
-            f"git://{bundle_ip}:{_BUNDLE_GIT_GATE_PORT}"
-        )
-    if bottle.supervise:
-        guest_env["MCP_SUPERVISE_URL"] = (
-            f"http://{bundle_ip}:{_BUNDLE_SUPERVISE_PORT}"
-        )
 
     # Inner Plans for the four bundle daemons. The ABCs are
     # platform-neutral — `.prepare()` writes config files + returns

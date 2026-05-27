@@ -44,6 +44,8 @@ def _plan(
     pipelock_ca_path: Path = Path(),
     supervise: bool = False,
     bundle_ip: str = "192.168.50.2",
+    agent_git_gate_host: str = "127.0.0.1:55555",
+    agent_supervise_url: str = "http://127.0.0.1:55556/",
 ) -> SmolmachinesBottlePlan:
     bottle_json: dict = {}
     if git:
@@ -111,6 +113,8 @@ def _plan(
             mitmproxy_ca_cert_only_host_path=egress_ca_path,
         ),
         supervise_plan=supervise_plan,
+        agent_git_gate_host=agent_git_gate_host,
+        agent_supervise_url=agent_supervise_url,
     )
 
 
@@ -412,9 +416,10 @@ class TestProvisionGit(unittest.TestCase):
         cp.assert_not_called()
 
     def test_writes_gitconfig_with_ip_port_form_for_smolmachines(self):
-        # Smolmachines's TSI-allowlisted guest has no DNS resolver,
-        # so the insteadOf URL has to be IP+port rather than the
-        # docker backend's `git-gate` short alias.
+        # Smolmachines's TSI-allowlisted guest dials git-gate via
+        # `127.0.0.1:<host port>` — the bundle's git-gate port is
+        # published on host loopback at launch time, and the plan
+        # carries the discovered host port (here mocked to 9418).
         plan = _plan(
             git=[GitEntry(
                 Name="claude-bottle",
@@ -422,7 +427,7 @@ class TestProvisionGit(unittest.TestCase):
                 IdentityFile="~/.ssh/id_ed25519",
             )],
             stage_dir=self.stage,
-            bundle_ip="192.168.99.2",
+            agent_git_gate_host="127.0.0.1:9418",
         )
         with patch(
             "claude_bottle.backend.smolmachines.provision.git._smolvm.machine_cp"
@@ -437,7 +442,7 @@ class TestProvisionGit(unittest.TestCase):
         self.assertEqual(self.stage, staged_path.parent)
         content = staged_path.read_text()
         self.assertIn(
-            '[url "git://192.168.99.2:9418/claude-bottle.git"]', content,
+            '[url "git://127.0.0.1:9418/claude-bottle.git"]', content,
         )
         self.assertIn(
             "\tinsteadOf = ssh://git@host/repo.git", content,
@@ -453,7 +458,10 @@ class TestProvisionSupervise(unittest.TestCase):
         ex.assert_not_called()
 
     def test_calls_claude_mcp_add_when_supervise_enabled(self):
-        plan = _plan(supervise=True, bundle_ip="192.168.50.2")
+        plan = _plan(
+            supervise=True,
+            agent_supervise_url="http://127.0.0.1:9100/",
+        )
         with patch(
             "claude_bottle.backend.smolmachines.provision.supervise._smolvm.machine_exec",
             return_value=SmolvmRunResult(returncode=0, stdout="", stderr=""),
@@ -462,13 +470,15 @@ class TestProvisionSupervise(unittest.TestCase):
         ex.assert_called_once()
         argv = ex.call_args.args[1]
         # claude mcp add --scope user --transport http supervise <url>
+        # — URL is the agent-side endpoint (host loopback +
+        # discovered port), not the docker bridge IP.
         self.assertEqual(
             [
                 "claude", "mcp", "add",
                 "--scope", "user",
                 "--transport", "http",
                 "supervise",
-                "http://192.168.50.2:9100/",
+                "http://127.0.0.1:9100/",
             ],
             argv,
         )
