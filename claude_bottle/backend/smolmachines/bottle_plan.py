@@ -12,7 +12,11 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from ...egress import EgressPlan
+from ...git_gate import GitGatePlan
 from ...log import info
+from ...pipelock import PipelockProxyPlan
+from ...supervise import SupervisePlan
 from .. import BottlePlan
 from ..print_util import print_multi
 
@@ -57,6 +61,20 @@ class SmolmachinesBottlePlan(BottlePlan):
     # empty when the agent has no prompt — claude-code reads it
     # via --append-system-prompt-file only when non-empty.
     prompt_file: Path
+    # Inner Plans for the four bundle daemons. The same shape the
+    # docker backend uses — same `.prepare()` calls produced
+    # them — but our launch step doesn't populate the
+    # docker-specific network fields (internal_network,
+    # egress_network) because the smolmachines bundle isn't on
+    # docker's `--internal` + egress bridge topology; it's on a
+    # per-bottle bridge with a pinned IP. The unused fields stay
+    # at their dataclass defaults.
+    proxy_plan: PipelockProxyPlan
+    git_gate_plan: GitGatePlan
+    egress_plan: EgressPlan
+    # None when bottle.supervise is False, matching the docker
+    # backend's convention.
+    supervise_plan: SupervisePlan | None
 
     def print(self, *, remote_control: bool) -> None:
         """Compact y/N preflight. Same shape as the Docker

@@ -18,7 +18,10 @@ from claude_bottle.backend.smolmachines.provision import (
     prompt as _prompt,
     skills as _skills,
 )
+from claude_bottle.egress import EgressPlan
+from claude_bottle.git_gate import GitGatePlan
 from claude_bottle.manifest import Manifest
+from claude_bottle.pipelock import PipelockProxyPlan
 
 
 def _plan(
@@ -53,6 +56,24 @@ def _plan(
         agent_from_path=Path("/tmp/agent.smolmachine"),
         guest_env={},
         prompt_file=Path("/tmp/state/demo-abc12/agent/prompt.txt"),
+        proxy_plan=PipelockProxyPlan(
+            yaml_path=Path("/tmp/pipelock.yaml"),
+            slug="demo-abc12",
+        ),
+        git_gate_plan=GitGatePlan(
+            slug="demo-abc12",
+            entrypoint_script=Path("/tmp/git-gate-entrypoint.sh"),
+            hook_script=Path("/tmp/git-gate-hook"),
+            access_hook_script=Path("/tmp/git-gate-access-hook"),
+            upstreams=(),
+        ),
+        egress_plan=EgressPlan(
+            slug="demo-abc12",
+            routes_path=Path("/tmp/routes.yaml"),
+            routes=(),
+            token_env_map={},
+        ),
+        supervise_plan=None,
     )
 
 
