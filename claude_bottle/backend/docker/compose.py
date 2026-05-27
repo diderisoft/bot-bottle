@@ -61,24 +61,19 @@ from ...util import expand_tilde
 from .bottle_plan import DockerBottlePlan
 from .egress import (
     EGRESS_CA_IN_CONTAINER,
-    EGRESS_DOCKERFILE,
-    EGRESS_IMAGE,
     EGRESS_PIPELOCK_CA_IN_CONTAINER,
     egress_container_name,
 )
 from .git_gate import (
     GIT_GATE_ACCESS_HOOK_IN_CONTAINER,
     GIT_GATE_CREDS_DIR_IN_CONTAINER,
-    GIT_GATE_DOCKERFILE,
     GIT_GATE_ENTRYPOINT_IN_CONTAINER,
     GIT_GATE_HOOK_IN_CONTAINER,
-    GIT_GATE_IMAGE,
     git_gate_container_name,
 )
 from .pipelock import (
     PIPELOCK_CA_CERT_IN_CONTAINER,
     PIPELOCK_CA_KEY_IN_CONTAINER,
-    PIPELOCK_IMAGE,
     PIPELOCK_PORT,
     pipelock_container_name,
 )
@@ -87,17 +82,11 @@ from .sidecar_bundle import (
     SIDECAR_BUNDLE_DOCKERFILE,
     SIDECAR_BUNDLE_IMAGE,
     sidecar_bundle_container_name,
-    sidecar_bundle_enabled,
 )
-from .supervise import (
-    SUPERVISE_DOCKERFILE,
-    SUPERVISE_IMAGE,
-    supervise_container_name,
-)
+from .supervise import supervise_container_name
 
 
-# Repo root, used as the build context for sidecar Dockerfiles.
-# Same derivation as the per-sidecar lifecycle modules.
+# Repo root, used as the build context for the bundle Dockerfile.
 _REPO_DIR = str(Path(__file__).resolve().parent.parent.parent.parent)
 
 
@@ -113,29 +102,10 @@ def bottle_plan_to_compose(plan: DockerBottlePlan) -> dict[str, Any]:
     spec back.
     """
     project = f"claude-bottle-{plan.slug}"
-    services: dict[str, Any] = {}
-
-    if sidecar_bundle_enabled():
-        # PRD 0024 bundle shape: one `sidecars` service running all
-        # four daemons under the bundle image's init supervisor.
-        services["sidecars"] = _sidecar_bundle_service(plan)
-    else:
-        # Legacy four-sidecar shape. Kept side-by-side behind the
-        # flag through chunks 2-4 so existing operators don't have
-        # to migrate atomically.
-        services["pipelock"] = _pipelock_service(plan)
-
-        if plan.git_gate_plan.upstreams:
-            services["git-gate"] = _git_gate_service(plan)
-
-        if plan.egress_plan.routes:
-            services["egress"] = _egress_service(plan)
-
-        if plan.supervise_plan is not None:
-            services["supervise"] = _supervise_service(plan)
-
-    services["agent"] = _agent_service(plan)
-
+    services: dict[str, Any] = {
+        "sidecars": _sidecar_bundle_service(plan),
+        "agent": _agent_service(plan),
+    }
     return {
         "name": project,
         "services": services,
@@ -173,47 +143,18 @@ def _bind(host: str | Path, target: str, *, read_only: bool = True) -> dict[str,
     }
 
 
-def _pipelock_service(plan: DockerBottlePlan) -> dict[str, Any]:
-    """Pipelock sidecar. Pinned-digest image (no build). The
-    rendered YAML config + CA cert + key bind-mount in from the
-    paths the prepare step laid down on plan.proxy_plan."""
-    pp = plan.proxy_plan
-    name = pipelock_container_name(plan.slug)
-    return {
-        "image": PIPELOCK_IMAGE,
-        "container_name": name,
-        "command": [
-            "run",
-            "--config", "/etc/pipelock.yaml",
-            "--listen", f"0.0.0.0:{PIPELOCK_PORT}",
-        ],
-        "networks": {
-            "internal": {"aliases": [name]},
-            "egress": None,
-        },
-        "volumes": [
-            _bind(pp.yaml_path, "/etc/pipelock.yaml"),
-            _bind(pp.ca_cert_host_path, PIPELOCK_CA_CERT_IN_CONTAINER),
-            _bind(pp.ca_key_host_path, PIPELOCK_CA_KEY_IN_CONTAINER),
-        ],
-    }
-
-
 def _sidecar_bundle_service(plan: DockerBottlePlan) -> dict[str, Any]:
-    """The single `sidecars` service that replaces the four
-    per-sidecar containers (PRD 0024). One container per bottle,
-    bundle image, all four daemons under a Python init supervisor.
+    """The `sidecars` service: one container per bottle, bundle
+    image, all four daemons under a Python init supervisor.
 
     Mechanics:
 
       - Daemon subset narrows via `CLAUDE_BOTTLE_SIDECAR_DAEMONS`
         env. pipelock is always present; egress / git-gate /
-        supervise are conditional on the plan, identical to the
-        legacy branching.
-      - Volumes are the UNION of what the four prior services
-        bind-mounted, preserving the same in-container paths so
-        every daemon finds its config / hooks / CA where it
-        expects.
+        supervise are conditional on the plan.
+      - Volumes are the union of the four daemons' bind-mounts,
+        preserving the same in-container paths so each daemon
+        finds its config / hooks / CA where it expects.
       - Environment is the union of *daemon-private* env vars
         (EGRESS_UPSTREAM_PROXY, SUPERVISE_BOTTLE_SLUG, etc).
         HTTPS_PROXY is NOT propagated here — see the comment in
@@ -223,9 +164,8 @@ def _sidecar_bundle_service(plan: DockerBottlePlan) -> dict[str, Any]:
       - Network aliases register every legacy short/long
         hostname (pipelock, egress, git-gate, supervise plus
         their `claude-bottle-<service>-<slug>` long forms) so
-        any existing inter-service reference (notably the
-        agent's HTTPS_PROXY and depends_on lookups) resolves to
-        the bundle.
+        the agent's HTTPS_PROXY URL and any other inter-service
+        reference resolves to the bundle.
     """
     daemons: list[str] = ["egress", "pipelock"]
     if plan.git_gate_plan.upstreams:
@@ -327,126 +267,6 @@ def _sidecar_bundle_service(plan: DockerBottlePlan) -> dict[str, Any]:
     return service
 
 
-def _git_gate_service(plan: DockerBottlePlan) -> dict[str, Any]:
-    """Git-gate sidecar. Built from Dockerfile.git-gate. Entrypoint
-    + pre-receive hook + access-hook bind-mount from the stage
-    paths the prepare step wrote. Per-upstream identity files
-    bind-mount from the user's ssh-key location after `~`
-    expansion. Per-upstream known_hosts files come in via chunk 2 —
-    the GitGatePlan doesn't carry those host paths yet (they're
-    currently materialized at start time by DockerGitGate.start).
-    """
-    gp = plan.git_gate_plan
-    name = git_gate_container_name(plan.slug)
-
-    volumes: list[dict[str, Any]] = [
-        _bind(gp.entrypoint_script, GIT_GATE_ENTRYPOINT_IN_CONTAINER),
-        _bind(gp.hook_script, GIT_GATE_HOOK_IN_CONTAINER),
-        _bind(gp.access_hook_script, GIT_GATE_ACCESS_HOOK_IN_CONTAINER),
-    ]
-    for u in gp.upstreams:
-        keypath = expand_tilde(u.identity_file)
-        volumes.append(_bind(
-            keypath,
-            f"{GIT_GATE_CREDS_DIR_IN_CONTAINER}/{u.name}-key",
-        ))
-
-    service: dict[str, Any] = {
-        "image": GIT_GATE_IMAGE,
-        "build": {
-            "context": _REPO_DIR,
-            "dockerfile": GIT_GATE_DOCKERFILE,
-        },
-        "container_name": name,
-        "networks": {
-            "internal": {"aliases": [name]},
-            "egress": None,
-        },
-        "volumes": volumes,
-    }
-    extra_hosts = git_gate_aggregate_extra_hosts(gp.upstreams)
-    if extra_hosts:
-        service["extra_hosts"] = [
-            f"{host}:{ip}" for host, ip in sorted(extra_hosts.items())
-        ]
-    return service
-
-
-def _egress_service(plan: DockerBottlePlan) -> dict[str, Any]:
-    """Egress sidecar. Built from Dockerfile.egress. Routes
-    through pipelock on its upstream leg via `EGRESS_UPSTREAM_PROXY` +
-    `EGRESS_UPSTREAM_CA`. One env-list entry per upstream-token slot
-    (bare NAME inherits from the compose-up process env, so secret
-    values stay off argv and out of the compose file). routes.yaml +
-    mitmproxy CA + pipelock CA bind-mount from the stage paths."""
-    ep = plan.egress_plan
-    name = egress_container_name(plan.slug)
-
-    env: list[str] = [
-        f"EGRESS_UPSTREAM_PROXY={ep.pipelock_proxy_url}",
-        f"HTTPS_PROXY={ep.pipelock_proxy_url}",
-        f"HTTP_PROXY={ep.pipelock_proxy_url}",
-        "NO_PROXY=localhost,127.0.0.1",
-        f"EGRESS_UPSTREAM_CA={EGRESS_PIPELOCK_CA_IN_CONTAINER}",
-    ]
-    for token_env in sorted(ep.token_env_map.keys()):
-        env.append(token_env)
-
-    return {
-        "image": EGRESS_IMAGE,
-        "build": {
-            "context": _REPO_DIR,
-            "dockerfile": EGRESS_DOCKERFILE,
-        },
-        "container_name": name,
-        "networks": {
-            "internal": {"aliases": [EGRESS_HOSTNAME]},
-            "egress": None,
-        },
-        "environment": env,
-        "volumes": [
-            _bind(ep.routes_path, EGRESS_ROUTES_IN_CONTAINER),
-            _bind(ep.mitmproxy_ca_host_path, EGRESS_CA_IN_CONTAINER),
-            _bind(ep.pipelock_ca_host_path, EGRESS_PIPELOCK_CA_IN_CONTAINER),
-        ],
-        "depends_on": ["pipelock"],
-    }
-
-
-def _supervise_service(plan: DockerBottlePlan) -> dict[str, Any]:
-    """Supervise sidecar. Internal network only — no upstream calls.
-    Queue dir bind-mounts read-write so the sidecar can append audit
-    events and the host-side capability handlers can drop new
-    proposals into it."""
-    sp = plan.supervise_plan
-    assert sp is not None
-    name = supervise_container_name(plan.slug)
-    return {
-        "image": SUPERVISE_IMAGE,
-        "build": {
-            "context": _REPO_DIR,
-            "dockerfile": SUPERVISE_DOCKERFILE,
-        },
-        "container_name": name,
-        "networks": {
-            "internal": {"aliases": [SUPERVISE_HOSTNAME]},
-        },
-        "environment": [
-            f"SUPERVISE_BOTTLE_SLUG={plan.slug}",
-            f"SUPERVISE_QUEUE_DIR={QUEUE_DIR_IN_CONTAINER}",
-            f"SUPERVISE_PORT={SUPERVISE_PORT}",
-        ],
-        "volumes": [
-            {
-                "type": "bind",
-                "source": str(sp.queue_dir),
-                "target": QUEUE_DIR_IN_CONTAINER,
-                "read_only": False,
-            },
-        ],
-    }
-
-
 def _agent_service(plan: DockerBottlePlan) -> dict[str, Any]:
     """Agent container. Runs `sleep infinity`; claude is `docker
     exec -it`'d into it later. No TTY at the container level —
@@ -494,20 +314,10 @@ def _agent_service(plan: DockerBottlePlan) -> dict[str, Any]:
     if volumes:
         service["volumes"] = volumes
 
-    if sidecar_bundle_enabled():
-        # Bundle shape: a single dependency. The init supervisor
-        # owns intra-bundle daemon ordering, so the agent only
-        # waits for the bundle container itself.
-        service["depends_on"] = ["sidecars"]
-    else:
-        depends_on = ["pipelock"]
-        if plan.git_gate_plan.upstreams:
-            depends_on.append("git-gate")
-        if plan.egress_plan.routes:
-            depends_on.append("egress")
-        if plan.supervise_plan is not None:
-            depends_on.append("supervise")
-        service["depends_on"] = depends_on
+    # The init supervisor inside the bundle owns intra-bundle
+    # daemon ordering, so the agent only waits for the bundle
+    # container itself.
+    service["depends_on"] = ["sidecars"]
 
     return service
 

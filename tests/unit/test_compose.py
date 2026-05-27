@@ -196,55 +196,6 @@ class TestProjectAndNetworks(unittest.TestCase):
         self.assertNotIn("internal", net)
 
 
-class TestPipelockAlwaysPresent(unittest.TestCase):
-    """Pipelock is unconditional — every bottle has the SSRF guard +
-    body scanner sitting on its upstream leg."""
-
-    def test_minimal_plan_has_pipelock(self):
-        spec = bottle_plan_to_compose(_plan())
-        self.assertIn("pipelock", spec["services"])
-
-    def test_pipelock_pinned_image_no_build(self):
-        s = bottle_plan_to_compose(_plan())["services"]["pipelock"]
-        self.assertTrue(s["image"].startswith("ghcr.io/luckypipewrench/pipelock"))
-        self.assertNotIn("build", s)
-
-    def test_pipelock_container_name(self):
-        s = bottle_plan_to_compose(_plan())["services"]["pipelock"]
-        self.assertEqual(f"claude-bottle-pipelock-{SLUG}", s["container_name"])
-
-    def test_pipelock_on_both_networks(self):
-        s = bottle_plan_to_compose(_plan())["services"]["pipelock"]
-        self.assertIn("internal", s["networks"])
-        self.assertIn("egress", s["networks"])
-
-    def test_pipelock_long_name_alias_on_internal(self):
-        # Backward compat: anything still dialing pipelock by
-        # `claude-bottle-pipelock-<slug>` resolves on the internal
-        # network.
-        s = bottle_plan_to_compose(_plan())["services"]["pipelock"]
-        aliases = s["networks"]["internal"]["aliases"]
-        self.assertIn(f"claude-bottle-pipelock-{SLUG}", aliases)
-
-    def test_pipelock_bind_mounts(self):
-        s = bottle_plan_to_compose(_plan())["services"]["pipelock"]
-        targets = {v["target"] for v in s["volumes"]}
-        self.assertEqual(
-            {"/etc/pipelock.yaml", "/etc/pipelock-ca.pem", "/etc/pipelock-ca-key.pem"},
-            targets,
-        )
-        for v in s["volumes"]:
-            self.assertEqual("bind", v["type"])
-            self.assertTrue(v["read_only"])
-
-    def test_pipelock_command(self):
-        s = bottle_plan_to_compose(_plan())["services"]["pipelock"]
-        self.assertEqual(
-            ["run", "--config", "/etc/pipelock.yaml", "--listen", "0.0.0.0:8888"],
-            s["command"],
-        )
-
-
 class TestAgentAlwaysPresent(unittest.TestCase):
     def test_agent_in_services(self):
         s = bottle_plan_to_compose(_plan())["services"]
@@ -298,18 +249,13 @@ class TestAgentAlwaysPresent(unittest.TestCase):
         s = bottle_plan_to_compose(plan)["services"]["agent"]
         self.assertEqual("runsc", s["runtime"])
 
-    def test_agent_depends_on_pipelock(self):
-        s = bottle_plan_to_compose(_plan())["services"]["agent"]
-        self.assertIn("pipelock", s["depends_on"])
-
-    def test_agent_depends_on_every_present_sidecar(self):
-        s = bottle_plan_to_compose(
-            _plan(with_git=True, with_egress=True, supervise=True)
-        )["services"]["agent"]
-        self.assertEqual(
-            {"pipelock", "git-gate", "egress", "supervise"},
-            set(s["depends_on"]),
-        )
+    def test_agent_depends_only_on_sidecars(self):
+        # Bundle shape: the init supervisor owns intra-bundle daemon
+        # ordering, so the agent waits on the bundle container alone.
+        for kwargs in [{}, {"with_git": True, "with_egress": True, "supervise": True}]:
+            with self.subTest(**kwargs):
+                s = bottle_plan_to_compose(_plan(**kwargs))["services"]["agent"]
+                self.assertEqual(["sidecars"], s["depends_on"])
 
     def test_agent_current_config_mount_only_with_supervise(self):
         with_sv = bottle_plan_to_compose(_plan(supervise=True))["services"]["agent"]
@@ -325,146 +271,14 @@ class TestAgentAlwaysPresent(unittest.TestCase):
         ))
 
 
-class TestConditionalGitGate(unittest.TestCase):
-    def test_absent_when_no_upstreams(self):
-        s = bottle_plan_to_compose(_plan(with_git=False))["services"]
-        self.assertNotIn("git-gate", s)
-
-    def test_present_when_upstreams(self):
-        s = bottle_plan_to_compose(_plan(with_git=True))["services"]
-        self.assertIn("git-gate", s)
-
-    def test_git_gate_built_from_dockerfile(self):
-        s = bottle_plan_to_compose(_plan(with_git=True))["services"]["git-gate"]
-        self.assertEqual("Dockerfile.git-gate", s["build"]["dockerfile"])
-        self.assertEqual("claude-bottle-git-gate:latest", s["image"])
-
-    def test_git_gate_extra_hosts(self):
-        s = bottle_plan_to_compose(_plan(with_git=True))["services"]["git-gate"]
-        self.assertIn("example.com:10.0.0.1", s["extra_hosts"])
-
-    def test_git_gate_identity_file_bind_mount(self):
-        s = bottle_plan_to_compose(_plan(with_git=True))["services"]["git-gate"]
-        # Per-upstream identity file is mounted at /git-gate/creds/<name>-key.
-        self.assertTrue(any(
-            v["target"] == "/git-gate/creds/upstream-key"
-            for v in s["volumes"]
-        ))
-
-
-class TestConditionalEgress(unittest.TestCase):
-    def test_absent_when_no_routes(self):
-        s = bottle_plan_to_compose(_plan(with_egress=False))["services"]
-        self.assertNotIn("egress", s)
-
-    def test_present_when_routes(self):
-        s = bottle_plan_to_compose(_plan(with_egress=True))["services"]
-        self.assertIn("egress", s)
-
-    def test_egress_alias_on_internal(self):
-        s = bottle_plan_to_compose(_plan(with_egress=True))["services"]["egress"]
-        self.assertIn("egress", s["networks"]["internal"]["aliases"])
-
-    def test_egress_upstream_envs(self):
-        s = bottle_plan_to_compose(_plan(with_egress=True))["services"]["egress"]
-        env = s["environment"]
-        self.assertIn(
-            f"EGRESS_UPSTREAM_PROXY=http://claude-bottle-pipelock-{SLUG}:8888",
-            env,
-        )
-        self.assertIn(
-            "EGRESS_UPSTREAM_CA=/home/mitmproxy/.mitmproxy/pipelock-ca.pem",
-            env,
-        )
-
-    def test_egress_token_slot_bare_name(self):
-        # Bare NAME entry in environment list → value inherits from
-        # compose process env, never lands in the rendered file.
-        s = bottle_plan_to_compose(_plan(with_egress=True))["services"]["egress"]
-        self.assertIn("EGRESS_TOKEN_0", s["environment"])
-
-    def test_egress_depends_on_pipelock(self):
-        s = bottle_plan_to_compose(_plan(with_egress=True))["services"]["egress"]
-        self.assertIn("pipelock", s["depends_on"])
-
-    def test_egress_bind_mounts(self):
-        s = bottle_plan_to_compose(_plan(with_egress=True))["services"]["egress"]
-        targets = {v["target"] for v in s["volumes"]}
-        self.assertEqual(
-            {
-                "/etc/egress/routes.yaml",
-                "/home/mitmproxy/.mitmproxy/mitmproxy-ca.pem",
-                "/home/mitmproxy/.mitmproxy/pipelock-ca.pem",
-            },
-            targets,
-        )
-
-
-class TestConditionalSupervise(unittest.TestCase):
-    def test_absent_when_off(self):
-        s = bottle_plan_to_compose(_plan(supervise=False))["services"]
-        self.assertNotIn("supervise", s)
-
-    def test_present_when_on(self):
-        s = bottle_plan_to_compose(_plan(supervise=True))["services"]
-        self.assertIn("supervise", s)
-
-    def test_supervise_internal_only(self):
-        s = bottle_plan_to_compose(_plan(supervise=True))["services"]["supervise"]
-        self.assertEqual({"internal"}, set(s["networks"].keys()))
-
-    def test_supervise_alias_on_internal(self):
-        s = bottle_plan_to_compose(_plan(supervise=True))["services"]["supervise"]
-        self.assertIn("supervise", s["networks"]["internal"]["aliases"])
-
-    def test_supervise_queue_dir_mounted_rw(self):
-        s = bottle_plan_to_compose(_plan(supervise=True))["services"]["supervise"]
-        queue_mount = [v for v in s["volumes"] if v["target"] == "/run/supervise/queue"]
-        self.assertEqual(1, len(queue_mount))
-        self.assertFalse(queue_mount[0]["read_only"])
-
-    def test_supervise_env_vars(self):
-        s = bottle_plan_to_compose(_plan(supervise=True))["services"]["supervise"]
-        self.assertIn(f"SUPERVISE_BOTTLE_SLUG={SLUG}", s["environment"])
-
-
-class TestFullMatrix(unittest.TestCase):
-    """The eight combinations of git/egress/supervise toggles. Just
-    asserts which services appear — content correctness is covered
-    per-service above."""
-
-    def test_matrix(self):
-        cases: list[tuple[bool, bool, bool, set[str]]] = []
-        for g in (False, True):
-            for e in (False, True):
-                for sv in (False, True):
-                    expected = {"pipelock", "agent"}
-                    if g:
-                        expected.add("git-gate")
-                    if e:
-                        expected.add("egress")
-                    if sv:
-                        expected.add("supervise")
-                    cases.append((g, e, sv, expected))
-
-        for g, e, sv, expected in cases:
-            with self.subTest(git=g, egress=e, supervise=sv):
-                s = bottle_plan_to_compose(
-                    _plan(with_git=g, with_egress=e, supervise=sv)
-                )["services"]
-                self.assertEqual(expected, set(s.keys()))
-
-
 class TestSidecarBundleShape(unittest.TestCase):
-    """PRD 0024 chunk 2: with CLAUDE_BOTTLE_SIDECAR_BUNDLE=1 set,
-    the renderer emits a `sidecars` service in place of the four
-    per-sidecar services. The legacy four-sidecar tests above
-    cover the flag-off shape; these lock down the flag-on shape."""
+    """The compose renderer emits exactly one `sidecars` service in
+    place of the four daemons it owns (pipelock + egress + git-gate
+    + supervise). PRD 0024 chunk 5 dropped the legacy four-sidecar
+    shape entirely, so the bundle is the only thing exercised here."""
 
     def _render(self, **plan_kwargs):
-        from unittest.mock import patch
-        with patch.dict("os.environ", {"CLAUDE_BOTTLE_SIDECAR_BUNDLE": "1"}):
-            return bottle_plan_to_compose(_plan(**plan_kwargs))
+        return bottle_plan_to_compose(_plan(**plan_kwargs))
 
     def test_emits_two_services_minimal(self):
         spec = self._render()
@@ -617,50 +431,6 @@ class TestSidecarBundleShape(unittest.TestCase):
         self.assertIn("egress", proxy)
         self.assertIn("egress",
                       spec["services"]["sidecars"]["networks"]["internal"]["aliases"])
-
-
-class TestSidecarBundleFlag(unittest.TestCase):
-    """The flag's parser: covers the cases sidecar_bundle_enabled
-    has to interpret correctly so an operator-supplied value lands
-    in the expected shape."""
-
-    def _enabled(self, value: str | None) -> bool:
-        from claude_bottle.backend.docker.sidecar_bundle import (
-            sidecar_bundle_enabled,
-        )
-        env: dict[str, str] = {}
-        if value is not None:
-            env["CLAUDE_BOTTLE_SIDECAR_BUNDLE"] = value
-        return sidecar_bundle_enabled(env)
-
-    def test_unset_disabled(self):
-        self.assertFalse(self._enabled(None))
-
-    def test_empty_disabled(self):
-        self.assertFalse(self._enabled(""))
-
-    def test_zero_disabled(self):
-        self.assertFalse(self._enabled("0"))
-
-    def test_false_disabled(self):
-        self.assertFalse(self._enabled("false"))
-        self.assertFalse(self._enabled("FALSE"))
-
-    def test_no_disabled(self):
-        self.assertFalse(self._enabled("no"))
-        self.assertFalse(self._enabled("off"))
-
-    def test_one_enabled(self):
-        self.assertTrue(self._enabled("1"))
-
-    def test_true_enabled(self):
-        self.assertTrue(self._enabled("true"))
-
-    def test_arbitrary_truthy_enabled(self):
-        # The flag treats anything other than the known falsy
-        # values as truthy — operator typos default to "enabled"
-        # which is the safer interpretation for an opt-in flag.
-        self.assertTrue(self._enabled("yes"))
 
 
 class TestProjectNaming(unittest.TestCase):

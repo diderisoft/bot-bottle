@@ -1,18 +1,11 @@
 """Sidecar bundle constants + helpers for the Docker backend
-(PRD 0024 chunk 2).
+(PRD 0024).
 
-The bundle image (built by Dockerfile.sidecars, see PRD 0024
-chunk 1) collapses pipelock + egress + git-gate + supervise into
-one container per bottle. Whether the renderer emits the bundle
-shape (one `sidecars` service) or the legacy four-sidecar shape
-is controlled by `CLAUDE_BOTTLE_SIDECAR_BUNDLE`; chunk 2 ships
-both shapes side by side behind the flag so existing operators
-keep working unchanged while the bundle path soaks.
-
-This module is intentionally tiny — just the constants + the
-flag + the container-name helper. The compose-renderer branch
-that consumes it lives in `compose.py`.
-"""
+The bundle image (built by Dockerfile.sidecars, PRD 0024 chunk 1)
+runs pipelock + egress + git-gate + supervise as one container
+per bottle under a small Python init supervisor. As of chunk 5
+the bundle is the only shape — the legacy four-sidecar topology
+and its `CLAUDE_BOTTLE_SIDECAR_BUNDLE` feature flag are gone."""
 
 from __future__ import annotations
 
@@ -36,17 +29,3 @@ def sidecar_bundle_container_name(slug: str) -> str:
     per-sidecar containers it replaces, so the dashboard's
     discovery-by-prefix logic keeps working."""
     return f"claude-bottle-sidecars-{slug}"
-
-
-def sidecar_bundle_enabled(env: dict[str, str] | None = None) -> bool:
-    """Feature-flag check. The flag is opt-in for chunk 2:
-    unset / "" / "0" / "false" → legacy four-sidecar shape;
-    anything else → bundle shape. Chunks 4-5 flip the default and
-    then delete the flag.
-
-    `env` defaults to `os.environ` at call time so tests can
-    monkey-patch the environment without re-importing the module."""
-    if env is None:
-        env = dict(os.environ)
-    raw = env.get("CLAUDE_BOTTLE_SIDECAR_BUNDLE", "").strip().lower()
-    return raw not in ("", "0", "false", "no", "off")

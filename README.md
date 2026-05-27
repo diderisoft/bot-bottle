@@ -69,16 +69,22 @@ pieces of v1.
 
 ## Architecture
 
-A bottle is the agent container plus up to three per-protocol egress
-sidecars on a per-agent Docker `--internal` network. The agent has no
-default route off-box. All HTTP and HTTPS egress — from the agent
-*and* from cred-proxy when it dials an upstream — funnels through
-pipelock, where the egress allowlist, TLS interception, and
-request-body DLP scanner enforce the manifest before any byte leaves
-the host. The only egress that doesn't traverse pipelock is git-gate's
-SSH push/fetch to `bottle.git` upstreams — pipelock can't proxy SSH,
-so git-gate is its own L4-style egress path with gitleaks doing the
-pre-receive scan.
+A bottle is two containers per agent: an `agent` container, and a
+`sidecars` container that bundles pipelock + egress + git-gate +
+supervise behind a Python init supervisor (PRD 0024). They share a
+per-agent Docker `--internal` network; the agent has no default
+route off-box. All HTTP and HTTPS egress funnels through pipelock,
+where the egress allowlist, TLS interception, and request-body DLP
+scanner enforce the manifest before any byte leaves the host. The
+only egress that doesn't traverse pipelock is git-gate's SSH
+push/fetch to `bottle.git` upstreams — pipelock can't proxy SSH,
+so git-gate is its own L4-style egress path with gitleaks doing
+the pre-receive scan.
+
+The agent dials the bundle by the legacy short names (`pipelock`,
+`egress`, `git-gate`, `supervise`); the renderer registers those as
+docker-network aliases on the bundle so existing HTTPS_PROXY URLs
+and MCP endpoints resolve without an agent-side change.
 
 ```
                             host  ( ./cli.py )

@@ -38,7 +38,6 @@ from claude_bottle.backend.docker.pipelock import (
     PIPELOCK_IMAGE,
     PIPELOCK_PORT,
     DockerPipelockProxy,
-    pipelock_container_name,
     pipelock_tls_init,
 )
 from claude_bottle.backend.docker.pipelock_apply import (
@@ -46,6 +45,9 @@ from claude_bottle.backend.docker.pipelock_apply import (
     apply_allowlist_change,
     fetch_current_allowlist,
     fetch_current_yaml,
+)
+from claude_bottle.backend.docker.sidecar_bundle import (
+    sidecar_bundle_container_name,
 )
 from claude_bottle.yaml_subset import parse_yaml_subset
 from tests._docker import skip_unless_docker
@@ -107,7 +109,14 @@ class TestPipelockApply(unittest.TestCase):
         self.egress_net = network_create_egress(self.slug)
         ca_cert_host, ca_key_host = pipelock_tls_init(state_dir)
 
-        self.sidecar_name = pipelock_container_name(self.slug)
+        # apply_allowlist_change targets sidecar_bundle_container_name
+        # (chunk 5 flipped the bundle to the only shape). Bringing the
+        # standalone pipelock up under that name keeps this test
+        # exercising the real production code path; the bundle's
+        # other three daemons aren't running here, but the
+        # apply/fetch code only touches /etc/pipelock.yaml + the
+        # pipelock binary, so the lighter setup is fine.
+        self.sidecar_name = sidecar_bundle_container_name(self.slug)
         subprocess.run(
             ["docker", "create",
              "--name", self.sidecar_name,
