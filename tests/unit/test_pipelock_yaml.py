@@ -12,10 +12,10 @@ import unittest
 from pathlib import Path
 from typing import Any, cast
 
-from claude_bottle.backend.docker.pipelock import DockerPipelockProxy
 from claude_bottle.manifest import Manifest
 from claude_bottle.pipelock import (
     DEFAULT_TLS_PASSTHROUGH,
+    PipelockProxy,
     pipelock_build_config,
     pipelock_render_yaml,
 )
@@ -54,7 +54,7 @@ class TestBuildConfig(unittest.TestCase):
         self.assertNotIn("tls_interception", cfg)
 
     def test_tls_interception_block_emitted_when_paths_supplied(self):
-        # PRD 0006: paths flow in via DockerPipelockProxy's in-container
+        # PRD 0006: paths flow in via the platform-neutral in-container
         # constants; this directly pins the dict shape. passthrough_domains
         # is baked in so LLM provider endpoints (api.anthropic.com) skip
         # MITM — pipelock's docs explicitly recommend this for LLM hosts,
@@ -152,7 +152,7 @@ class TestRenderAndWrite(unittest.TestCase):
         self.assertNotIn("ssrf:", text)
 
     def test_prepare_writes_file_at_mode_600(self):
-        plan = DockerPipelockProxy().prepare(
+        plan = PipelockProxy().prepare(
             fixture_minimal().bottles["dev"], "demo", self.out_dir
         )
         self.assertEqual(0o600, os.stat(plan.yaml_path).st_mode & 0o777)
@@ -170,7 +170,7 @@ class TestRenderAndWrite(unittest.TestCase):
             },
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
         })
-        plan = DockerPipelockProxy().prepare(
+        plan = PipelockProxy().prepare(
             manifest.bottles["dev"], "demo", self.out_dir
         )
         content = plan.yaml_path.read_text()
@@ -179,13 +179,13 @@ class TestRenderAndWrite(unittest.TestCase):
         self.assertNotIn("prompt-message", content)
 
     def test_render_emits_tls_interception_via_prepare(self):
-        """`DockerPipelockProxy.prepare` plumbs its in-container CA
-        constants through to the YAML. The block should land in the
+        """`PipelockProxy.prepare` plumbs the module-level in-container
+        CA constants through to the YAML. The block should land in the
         rendered output with `enabled: true`, the configured paths,
         and the baked LLM-provider passthrough list. The actual
         host-side CA generation happens in launch (not prepare), so
         this test exercises only the YAML rendering."""
-        plan = DockerPipelockProxy().prepare(
+        plan = PipelockProxy().prepare(
             fixture_minimal().bottles["dev"], "demo", self.out_dir
         )
         content = plan.yaml_path.read_text()

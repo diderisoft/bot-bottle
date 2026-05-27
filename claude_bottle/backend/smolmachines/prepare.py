@@ -21,10 +21,10 @@ from ...backend.docker.bottle_state import (
     supervise_state_dir,
     write_metadata,
 )
-from ...backend.docker.egress import DockerEgress
-from ...backend.docker.git_gate import DockerGitGate
-from ...backend.docker.pipelock import DockerPipelockProxy
-from ...backend.docker.supervise import DockerSupervise
+from ...egress import Egress
+from ...git_gate import GitGate
+from ...pipelock import PipelockProxy
+from ...supervise import Supervise
 from . import smolvm as _smolvm
 from .bottle_plan import SmolmachinesBottlePlan
 from .util import smolmachines_bundle_subnet, smolmachines_preflight
@@ -94,31 +94,29 @@ def resolve_plan(
             f"http://{bundle_ip}:{_BUNDLE_SUPERVISE_PORT}"
         )
 
-    # Inner Plans for the four bundle daemons. Use the docker
-    # backend's concrete subclasses — the `.prepare()` method
-    # they inherit is platform-neutral (writes config files +
-    # returns a Plan dataclass); the docker-specific subclasses
-    # exist only to satisfy ABC instantiation. Future: factor
-    # the prepare logic out of the docker subpackage so
-    # smolmachines doesn't have to reach across the backend
-    # boundary.
+    # Inner Plans for the four bundle daemons. The ABCs are
+    # platform-neutral — `.prepare()` writes config files + returns
+    # a Plan dataclass with no backend-specific assumptions. State
+    # dirs are still keyed by slug under the docker backend's
+    # bottle_state layout (shared on-host convention; not a docker
+    # dependency).
     pipelock_dir = pipelock_state_dir(slug)
     pipelock_dir.mkdir(parents=True, exist_ok=True)
-    proxy_plan = DockerPipelockProxy().prepare(bottle, slug, pipelock_dir)
+    proxy_plan = PipelockProxy().prepare(bottle, slug, pipelock_dir)
 
     git_gate_dir = git_gate_state_dir(slug)
     git_gate_dir.mkdir(parents=True, exist_ok=True)
-    git_gate_plan = DockerGitGate().prepare(bottle, slug, git_gate_dir)
+    git_gate_plan = GitGate().prepare(bottle, slug, git_gate_dir)
 
     egress_dir = egress_state_dir(slug)
     egress_dir.mkdir(parents=True, exist_ok=True)
-    egress_plan = DockerEgress().prepare(bottle, slug, egress_dir)
+    egress_plan = Egress().prepare(bottle, slug, egress_dir)
 
     supervise_plan = None
     if bottle.supervise:
         supervise_dir = supervise_state_dir(slug)
         supervise_dir.mkdir(parents=True, exist_ok=True)
-        supervise_plan = DockerSupervise().prepare(slug, supervise_dir)
+        supervise_plan = Supervise().prepare(slug, supervise_dir)
 
     # Prompt file is always written (mode 0o600) so the in-VM
     # path always exists. Content is the agent's `prompt`

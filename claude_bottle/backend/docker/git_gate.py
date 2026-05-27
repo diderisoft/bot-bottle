@@ -1,12 +1,11 @@
-"""DockerGitGate — Docker-flavored git-gate config (PRD 0008).
-Inherits the platform-agnostic prepare step (upstream lift +
-entrypoint/hook render) from `GitGate`. The git-gate daemon runs
-inside the sidecar bundle (PRD 0024); this module just holds the
-in-container paths the renderer's bind-mounts target."""
+"""Docker-side git-gate helpers: in-container paths the renderer's
+bind-mounts target, port pin, and container naming. The
+prepare-time entrypoint/hook render lives on the platform-neutral
+`GitGate` ABC — backends instantiate it directly. The git-gate
+daemon's container lifecycle is owned by the sidecar bundle
+(PRD 0024)."""
 
 from __future__ import annotations
-
-from ...git_gate import GitGate
 
 
 GIT_GATE_ENTRYPOINT_IN_CONTAINER = "/git-gate-entrypoint.sh"
@@ -31,9 +30,3 @@ def git_gate_host(slug: str) -> str:
     the bundle's network alias to the bundle container, where the
     git-gate daemon listens on GIT_GATE_PORT."""
     return git_gate_container_name(slug)
-
-
-class DockerGitGate(GitGate):
-    """Docker-flavored GitGate: inherits `.prepare()` from the base.
-    The git-gate daemon's container lifecycle is owned by the
-    sidecar bundle (PRD 0024)."""

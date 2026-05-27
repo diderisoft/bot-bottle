@@ -1,12 +1,12 @@
-"""DockerSupervise — Docker-flavored supervise config (PRD 0013).
-Inherits the platform-agnostic prepare step (queue dir +
-current-config staging) from `Supervise`. The supervise daemon
-runs inside the sidecar bundle (PRD 0024); this module just holds
-the container-name helper the renderer's network alias targets."""
+"""Docker-side supervise helpers: container naming for the legacy
+per-sidecar topology (kept so the bundle's docker-network alias
+resolves the old name to the bundle IP). The prepare-time
+queue-dir + current-config staging lives on the platform-neutral
+`Supervise` ABC — backends instantiate it directly. The
+supervise daemon's container lifecycle is owned by the sidecar
+bundle (PRD 0024)."""
 
 from __future__ import annotations
-
-from ...supervise import Supervise
 
 
 def supervise_container_name(slug: str) -> str:
@@ -15,9 +15,3 @@ def supervise_container_name(slug: str) -> str:
     bundle — any code still referring to
     `claude-bottle-supervise-<slug>` resolves to the bundle's IP."""
     return f"claude-bottle-supervise-{slug}"
-
-
-class DockerSupervise(Supervise):
-    """Docker-flavored Supervise: inherits `.prepare()` from the base.
-    The supervise daemon's container lifecycle is owned by the
-    sidecar bundle (PRD 0024)."""

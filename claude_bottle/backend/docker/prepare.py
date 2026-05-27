@@ -14,13 +14,17 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ...egress import Egress
 from ...env import ResolvedEnv, resolve_env
+from ...git_gate import GitGate
 from ...log import die
+from ...pipelock import PipelockProxy
+from ...supervise import Supervise
 from .. import BottleSpec
 from . import util as docker_mod
 from .bottle_plan import DockerBottlePlan
-from .egress import DockerEgress, egress_container_name
-from .git_gate import DockerGitGate, git_gate_container_name
+from .egress import egress_container_name
+from .git_gate import git_gate_container_name
 from .bottle_state import (
     BottleMetadata,
     agent_state_dir,
@@ -35,8 +39,8 @@ from .bottle_state import (
     supervise_state_dir,
     write_metadata,
 )
-from .pipelock import DockerPipelockProxy, pipelock_container_name
-from .supervise import DockerSupervise, supervise_container_name
+from .pipelock import pipelock_container_name
+from .supervise import supervise_container_name
 
 
 def resolve_plan(
@@ -49,10 +53,10 @@ def resolve_plan(
     validation already ran in the base class."""
     docker_mod.require_docker()
 
-    proxy = DockerPipelockProxy()
-    git_gate = DockerGitGate()
-    egress = DockerEgress()
-    supervise = DockerSupervise()
+    proxy = PipelockProxy()
+    git_gate = GitGate()
+    egress = Egress()
+    supervise = Supervise()
 
     manifest = spec.manifest
     agent = manifest.agents[spec.agent_name]

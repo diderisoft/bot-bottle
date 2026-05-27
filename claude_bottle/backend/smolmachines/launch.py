@@ -25,6 +25,10 @@ from contextlib import ExitStack, contextmanager
 from typing import Callable, Generator
 
 from ...egress import EGRESS_ROUTES_IN_CONTAINER, egress_resolve_token_values
+from ...pipelock import (
+    PIPELOCK_CA_CERT_IN_CONTAINER,
+    PIPELOCK_CA_KEY_IN_CONTAINER,
+)
 from ...supervise import QUEUE_DIR_IN_CONTAINER, SUPERVISE_PORT
 from ...util import expand_tilde
 from ..docker.egress import (
@@ -38,11 +42,7 @@ from ..docker.git_gate import (
     GIT_GATE_ENTRYPOINT_IN_CONTAINER,
     GIT_GATE_HOOK_IN_CONTAINER,
 )
-from ..docker.pipelock import (
-    PIPELOCK_CA_CERT_IN_CONTAINER,
-    PIPELOCK_CA_KEY_IN_CONTAINER,
-    pipelock_tls_init,
-)
+from ..docker.pipelock import pipelock_tls_init
 from . import sidecar_bundle as _bundle
 from . import smolvm as _smolvm
 from .bottle import SmolmachinesBottle
