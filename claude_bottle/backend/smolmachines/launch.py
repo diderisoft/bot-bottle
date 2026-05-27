@@ -193,17 +193,31 @@ def launch(
         _smolvm.machine_start(plan.machine_name)
         stack.callback(_smolvm.machine_stop, plan.machine_name)
 
-        # 6. Reclaim /home/node for the node user. smolvm's pack
-        # process remaps OCI-layer ownership to the host invoker's
-        # uid (501 on macOS) rather than preserving the image's
-        # uid 1000 — so without this chown, node can't write its
-        # own dotfiles (claude appendFileSync on
-        # ~/.claude.json bails with ENOENT/EPERM and the TUI hangs
-        # without surfacing the error).
-        _smolvm.machine_exec(
-            plan.machine_name,
-            ["chown", "-R", "node:node", "/home/node"],
-        )
+        # 6. Repair filesystem ownership + perms that smolvm's
+        # pack process remapped to the host invoker's uid (501
+        # on macOS) rather than preserving the image's expected
+        # ownership.
+        #
+        #  - /home/node → node:node so the node user can write
+        #    its own dotfiles (claude appendFileSync on
+        #    ~/.claude.json otherwise bails with ENOENT/EPERM
+        #    and the TUI hangs without surfacing the error).
+        #  - /tmp + /var/tmp → root:root mode 1777 so non-root
+        #    processes can create their per-uid scratch dirs
+        #    (claude-code creates /tmp/claude-<uid>/ as soon as
+        #    it spawns a Bash tool call).
+        #
+        # All folded into one sh -c so we only pay one
+        # machine_exec round trip — back-to-back exec calls
+        # right after machine_start hit a SIGKILL race in
+        # libkrun's exec channel (see provision_ca for the
+        # other half of this same workaround).
+        _smolvm.machine_exec(plan.machine_name, [
+            "sh", "-c",
+            "chown -R node:node /home/node && "
+            "chown root:root /tmp /var/tmp && "
+            "chmod 1777 /tmp /var/tmp",
+        ])
 
         # Wait briefly for the VM to settle. Back-to-back smolvm
         # machine_exec calls immediately after machine_start
