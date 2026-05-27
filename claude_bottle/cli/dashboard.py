@@ -762,7 +762,7 @@ def _in_tmux() -> bool:
 
 
 def _claude_runtime_args(*, resume: bool, remote_control: bool = False) -> list[str]:
-    """The argv the dashboard hands to `bottle.claude_docker_argv`
+    """The argv the dashboard hands to `bottle.claude_argv`
     on every attach — matches what `attach_claude` builds for the
     foreground handoff so both surfaces produce the same claude
     invocation."""
@@ -777,28 +777,35 @@ def _claude_runtime_args(*, resume: bool, remote_control: bool = False) -> list[
 def _build_resume_argv_with_fallback(
     bottle, *, remote_control: bool = False,
 ) -> list[str]:
-    """Build a docker-exec argv that runs `claude --continue` and
+    """Build a backend-exec argv that runs `claude --continue` and
     falls back to plain `claude` if no prior session exists.
 
     `--continue` exits non-zero when an agent has been spun up
     but never typed at — there's no transcript to resume. The
     shell-level `||` wrapper makes that case start a fresh
     session instead of crashing the pane. The trade-off: we
-    invoke `sh -c` inside the container, so the command is two
+    invoke `sh -c` inside the bottle, so the command is two
     `claude` invocations behind a tiny shell rather than one
     direct exec. Acceptable; the shell adds microseconds and
     the fallback only kicks in when --continue would have
-    failed anyway."""
+    failed anyway.
+
+    Works across backends because `bottle.claude_argv` always
+    surfaces the `claude` token preceded by the backend's exec
+    framing (docker: `docker exec -it <c>`; smolmachines:
+    `smolvm machine exec --name <m> -- runuser -u node --`).
+    Splitting at `claude` keeps the framing as the prefix and
+    wraps just the claude tail in `sh -c`."""
     base_args = ["--dangerously-skip-permissions"]
     if remote_control:
         base_args.append("--remote-control")
-    base_docker = bottle.claude_docker_argv(base_args)
-    # Split docker-prefix from the claude-and-args tail so we
-    # can compose `<claude…> --continue || <claude…>` inside
+    base_exec = bottle.claude_argv(base_args)
+    # Split exec-framing prefix from the claude-and-args tail so
+    # we can compose `<claude…> --continue || <claude…>` inside
     # `sh -c`. The `claude` token is the marker.
-    claude_idx = base_docker.index("claude")
-    prefix = base_docker[:claude_idx]
-    claude_cmd = " ".join(shlex.quote(a) for a in base_docker[claude_idx:])
+    claude_idx = base_exec.index("claude")
+    prefix = base_exec[:claude_idx]
+    claude_cmd = " ".join(shlex.quote(a) for a in base_exec[claude_idx:])
     return [
         *prefix,
         "sh", "-c",
@@ -806,23 +813,23 @@ def _build_resume_argv_with_fallback(
     ]
 
 
-def _build_split_pane_argv(docker_argv: list[str]) -> list[str]:
-    """Pure helper: wrap a docker-exec argv with `tmux split-window
+def _build_split_pane_argv(claude_argv: list[str]) -> list[str]:
+    """Pure helper: wrap a backend-exec argv with `tmux split-window
     -h -P -F '#{pane_id}'`. The `-P -F` combo tells tmux to print
     the new pane's id on stdout so we can track it for later
     `respawn-pane` calls."""
     return [
         "tmux", "split-window", "-h",
         "-P", "-F", "#{pane_id}",
-        *docker_argv,
+        *claude_argv,
     ]
 
 
-def _build_respawn_pane_argv(pane_id: str, docker_argv: list[str]) -> list[str]:
-    """Pure helper: wrap a docker-exec argv with `tmux respawn-pane
+def _build_respawn_pane_argv(pane_id: str, claude_argv: list[str]) -> list[str]:
+    """Pure helper: wrap a backend-exec argv with `tmux respawn-pane
     -k -t <pane_id>`. `-k` kills the existing process in the pane
     before respawning."""
-    return ["tmux", "respawn-pane", "-k", "-t", pane_id, *docker_argv]
+    return ["tmux", "respawn-pane", "-k", "-t", pane_id, *claude_argv]
 
 
 @contextlib.contextmanager
@@ -1046,12 +1053,12 @@ def _attach_in_tmux(
         # exists (agent spun up but never typed at). Wrap with a
         # shell-level fallback so the pane lands in a fresh
         # claude instead of crashing.
-        docker_argv = _build_resume_argv_with_fallback(bottle)
+        claude_argv = _build_resume_argv_with_fallback(bottle)
     else:
-        docker_argv = bottle.claude_docker_argv(
+        claude_argv = bottle.claude_argv(
             _claude_runtime_args(resume=False),
         )
-    pane_id = _ensure_right_pane(tmux_state, docker_argv)
+    pane_id = _ensure_right_pane(tmux_state, claude_argv)
     if pane_id is None:
         # tmux failed (missing binary, server died, size error).
         # One status-line failover to the curses handoff so the

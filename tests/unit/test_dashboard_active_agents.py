@@ -369,7 +369,7 @@ class TestResumeArgvWithFallback(unittest.TestCase):
 
 
 class TestClaudeRuntimeArgs(unittest.TestCase):
-    """The argv passed to `bottle.claude_docker_argv` on each
+    """The argv passed to `bottle.claude_argv` on each
     attach. Locked here so the tmux + foreground paths build
     identical claude invocations."""
 

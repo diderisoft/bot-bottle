@@ -75,6 +75,21 @@ class SmolmachinesBottle(Bottle):
         # because exec doesn't inherit from machine_create's env.
         self._guest_env = dict(guest_env or {})
 
+    def claude_argv(
+        self, argv: list[str], *, tty: bool = True,
+    ) -> list[str]:
+        flags = ["smolvm", "machine", "exec", "--name", self.name]
+        if tty:
+            flags += ["-i", "-t"]
+        flags += _env_flags_for("node")
+        flags += _guest_env_flags(self._guest_env)
+        claude_tail = ["claude"]
+        if self._prompt_path:
+            claude_tail += ["--append-system-prompt-file", self._prompt_path]
+        claude_tail += argv
+        flags += ["--", "runuser", "-u", "node", "--", *claude_tail]
+        return flags
+
     def exec_claude(self, argv: list[str], *, tty: bool = True) -> int:
         """Run `claude` interactively inside the VM as the `node`
         user. Inherits the operator's terminal (stdin / stdout /
@@ -89,18 +104,9 @@ class SmolmachinesBottle(Bottle):
         UID switches via `runuser -u node --` (not `-l`) so we
         avoid login-shell wiring. HOME / USER come from `smolvm
         -e` instead, which sets them on the process env."""
-        flags = ["smolvm", "machine", "exec", "--name", self.name]
-        if tty:
-            flags += ["-i", "-t"]
-        flags += _env_flags_for("node")
-        flags += _guest_env_flags(self._guest_env)
-        claude_argv = ["claude"]
-        if self._prompt_path:
-            claude_argv += ["--append-system-prompt-file", self._prompt_path]
-        claude_argv += argv
-        flags += ["--", "runuser", "-u", "node", "--", *claude_argv]
-        result = subprocess.run(flags, check=False)
-        return result.returncode
+        return subprocess.run(
+            self.claude_argv(argv, tty=tty), check=False,
+        ).returncode
 
     def exec(self, script: str, *, user: str = "node") -> ExecResult:
         """Run a POSIX shell script as `user` (default `node`) and

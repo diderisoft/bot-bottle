@@ -140,6 +140,21 @@ class Bottle(ABC):
     name: str
 
     @abstractmethod
+    def claude_argv(
+        self, argv: list[str], *, tty: bool = True,
+    ) -> list[str]:
+        """Return the host-side argv that runs `claude <argv>`
+        inside the bottle. Used by `exec_claude` for foreground
+        handoffs and by the dashboard's tmux `respawn-pane` flow,
+        which needs the argv up front (it spawns claude in a tmux
+        pane rather than as a child of the current process).
+
+        Implementations transparently inject
+        `--append-system-prompt-file` when the bottle was launched
+        with a provisioned prompt path."""
+        ...
+
+    @abstractmethod
     def exec_claude(self, argv: list[str], *, tty: bool = True) -> int: ...
 
     @abstractmethod
