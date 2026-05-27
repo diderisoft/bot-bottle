@@ -179,7 +179,19 @@ def pipelock_build_config(
     # built-in default for request_body_scanning is "warn" (forward
     # with a log line); claude-bottle hard-codes "block" so a hit
     # actually stops the request from leaving the egress network.
-    cfg["request_body_scanning"] = {"action": "block"}
+    #
+    # `scan_headers: true` + `header_mode: all` extends the scan to
+    # every request header — pipelock's default `header_mode:
+    # sensitive` only checks Authorization / Cookie / X-Api-Key /
+    # X-Token / Proxy-Authorization / X-Goog-Api-Key, which an
+    # agent attempting to exfil could trivially avoid by picking
+    # a non-sensitive header name. "all" closes the gap; pipelock
+    # caps it at the same max_body_bytes the body scan uses.
+    cfg["request_body_scanning"] = {
+        "action": "block",
+        "scan_headers": True,
+        "header_mode": "all",
+    }
     if ca_cert_path or ca_key_path:
         if not (ca_cert_path and ca_key_path):
             raise ValueError(
@@ -230,6 +242,10 @@ def pipelock_render_yaml(cfg: dict[str, object]) -> str:
     lines.append("request_body_scanning:")
     rbs = cast(dict[str, object], cfg["request_body_scanning"])
     lines.append(f'  action: "{rbs["action"]}"')
+    if "scan_headers" in rbs:
+        lines.append(f"  scan_headers: {_bool(rbs['scan_headers'])}")
+    if "header_mode" in rbs:
+        lines.append(f'  header_mode: "{rbs["header_mode"]}"')
     if "tls_interception" in cfg:
         lines.append("")
         lines.append("tls_interception:")
