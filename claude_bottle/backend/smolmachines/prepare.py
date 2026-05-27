@@ -34,7 +34,7 @@ from ...pipelock import PipelockProxy
 from ...supervise import Supervise
 from . import smolvm as _smolvm
 from .bottle_plan import SmolmachinesBottlePlan
-from .local_registry import ephemeral_registry
+from .local_registry import crane_push_tarball, ephemeral_registry
 from .util import smolmachines_bundle_subnet, smolmachines_preflight
 
 
@@ -89,22 +89,23 @@ def resolve_plan(
 
     subnet, gateway, bundle_ip = smolmachines_bundle_subnet(slug)
 
-    # Agent's env. IP literals; no DNS resolution inside the guest
-    # (TSI allowlist contains only `<bundle_ip>/32` — no resolver).
+    # Agent's env: the prepare-time view doesn't yet know the
+    # host loopback ports the bundle's daemons get published on
+    # (those come from docker AFTER `docker run` returns), so
+    # HTTPS_PROXY / GIT_GATE_URL / MCP_SUPERVISE_URL are
+    # populated in launch.py and stamped onto guest_env there.
+    # What we set here is the part that doesn't depend on
+    # bundle bringup — bottle.env literals, the empty-NO_PROXY
+    # safe default, and the TLS trust env trio
+    # (NODE_EXTRA_CA_CERTS / SSL_CERT_FILE / REQUESTS_CA_BUNDLE)
+    # pointing at Debian's update-ca-certificates output bundle.
     guest_env: dict[str, str] = {
         **bottle.env,
-        "HTTPS_PROXY": f"http://{bundle_ip}:{_BUNDLE_PIPELOCK_PORT}",
-        "HTTP_PROXY":  f"http://{bundle_ip}:{_BUNDLE_PIPELOCK_PORT}",
         "NO_PROXY":    "localhost,127.0.0.1",
+        "NODE_EXTRA_CA_CERTS": "/etc/ssl/certs/ca-certificates.crt",
+        "SSL_CERT_FILE":       "/etc/ssl/certs/ca-certificates.crt",
+        "REQUESTS_CA_BUNDLE":  "/etc/ssl/certs/ca-certificates.crt",
     }
-    if bottle.git:
-        guest_env["GIT_GATE_URL"] = (
-            f"git://{bundle_ip}:{_BUNDLE_GIT_GATE_PORT}"
-        )
-    if bottle.supervise:
-        guest_env["MCP_SUPERVISE_URL"] = (
-            f"http://{bundle_ip}:{_BUNDLE_SUPERVISE_PORT}"
-        )
 
     # Inner Plans for the four bundle daemons. The ABCs are
     # platform-neutral — `.prepare()` writes config files + returns
@@ -123,6 +124,19 @@ def resolve_plan(
     egress_dir = egress_state_dir(slug)
     egress_dir.mkdir(parents=True, exist_ok=True)
     egress_plan = Egress().prepare(bottle, slug, egress_dir)
+
+    # Claude-code refuses to start without *something* it
+    # recognises as a credential. When the bottle has an egress
+    # route carrying the `claude_code_oauth` role marker, egress
+    # strips + re-injects the real Authorization header on the
+    # outbound leg using a token held in egress's own environ — so
+    # the agent gets a non-secret placeholder here (matches the
+    # docker backend's forwarded_env logic in
+    # claude_bottle/backend/docker/prepare.py).
+    if any("claude_code_oauth" in r.roles for r in egress_plan.routes):
+        guest_env["CLAUDE_CODE_OAUTH_TOKEN"] = "egress-placeholder"
+        guest_env.setdefault("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
+        guest_env.setdefault("DISABLE_ERROR_REPORTING", "1")
 
     supervise_plan = None
     if bottle.supervise:
@@ -184,14 +198,19 @@ def _ensure_smolmachine(image_ref: str) -> Path:
     a launcher binary at `.smolmachine` plus the sidecar alongside
     it; the sidecar is the actual artifact).
 
-    Conversion path: `docker build` (the existing layer cache makes
-    no-change rebuilds cheap) → `docker tag` with a
-    `localhost:<port>/...` ref → bring up the ephemeral registry
-    container → `docker push` into it → `smolvm pack create --image
-    <localhost ref>` → tear down the registry. Each pack-create
-    costs several seconds even on a hot cache, so we skip the whole
-    pipeline when the cached sidecar is already on disk for this
-    image ID."""
+    Conversion path: `docker build` (the existing layer cache
+    makes no-change rebuilds cheap) → `docker save` to a tarball
+    → spin up an ephemeral registry on a private docker network →
+    `crane push --insecure` from a one-shot container on the same
+    network → `smolvm pack create --image localhost:<host port>/...`
+    → tear down the registry + network. The crane push detour
+    sidesteps the Docker-Desktop daemon's HTTPS preference for
+    non-loopback registries — see the `local_registry` module
+    docstring for the gory details.
+
+    Each pack-create costs several seconds even on a hot cache,
+    so we skip the whole pipeline when the cached sidecar is
+    already on disk for this image ID."""
     _SMOLMACHINE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     docker_mod.build_image(image_ref, _REPO_DIR)
     # `sha256:abcd...` -> `abcd...` first 16 chars: short enough to
@@ -202,9 +221,17 @@ def _ensure_smolmachine(image_ref: str) -> Path:
     sidecar = _SMOLMACHINE_CACHE_DIR / f"{digest}.smolmachine.smolmachine"
     if sidecar.is_file():
         return sidecar
-    with ephemeral_registry() as port:
-        local_ref = f"localhost:{port}/claude-bottle:{digest}"
-        docker_mod.tag(image_ref, local_ref)
-        docker_mod.push(local_ref)
-        _smolvm.pack_create(local_ref, binary)
+    tarball = _SMOLMACHINE_CACHE_DIR / f"{digest}.image.tar"
+    docker_mod.save(image_ref, str(tarball))
+    try:
+        with ephemeral_registry() as handle:
+            push_ref = f"{handle.push_endpoint}/claude-bottle:{digest}"
+            pack_ref = f"{handle.pull_endpoint}/claude-bottle:{digest}"
+            crane_push_tarball(handle, str(tarball), push_ref)
+            _smolvm.pack_create(pack_ref, binary)
+    finally:
+        # Tarball is ~500MB-1GB for the agent image; reclaim once
+        # the smolmachine artifact exists. The artifact itself is
+        # the long-lived cache entry.
+        tarball.unlink(missing_ok=True)
     return sidecar

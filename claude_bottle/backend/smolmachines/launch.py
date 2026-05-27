@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import time
 from contextlib import ExitStack, contextmanager
 from typing import Callable, Generator
 
@@ -34,6 +35,7 @@ from ...util import expand_tilde
 from ..docker.egress import (
     EGRESS_CA_IN_CONTAINER,
     EGRESS_PIPELOCK_CA_IN_CONTAINER,
+    EGRESS_PORT as _EGRESS_PORT,
     egress_tls_init,
 )
 from ..docker.git_gate import (
@@ -41,12 +43,26 @@ from ..docker.git_gate import (
     GIT_GATE_CREDS_DIR_IN_CONTAINER,
     GIT_GATE_ENTRYPOINT_IN_CONTAINER,
     GIT_GATE_HOOK_IN_CONTAINER,
+    GIT_GATE_PORT as _GIT_GATE_PORT,
 )
-from ..docker.pipelock import BUNDLE_LOCAL_PIPELOCK_URL, pipelock_tls_init
+from ..docker.pipelock import (
+    BUNDLE_LOCAL_PIPELOCK_URL,
+    PIPELOCK_PORT as _PIPELOCK_PORT_STR,
+    pipelock_tls_init,
+)
 from . import sidecar_bundle as _bundle
 from . import smolvm as _smolvm
 from .bottle import SmolmachinesBottle
 from .bottle_plan import SmolmachinesBottlePlan
+
+
+# Container-internal listening ports for each bundle daemon. The
+# bundle publishes each one on a random host loopback port (see
+# `_bundle.start_bundle`), and `_bundle.bundle_host_port` looks
+# them up post-start. Pipelock's port is an env-overridable string
+# in docker.pipelock; coerce to int here.
+_PIPELOCK_PORT = int(_PIPELOCK_PORT_STR)
+_SUPERVISE_PORT = SUPERVISE_PORT
 
 
 @contextmanager
@@ -96,31 +112,129 @@ def launch(
         )
 
         # 3. Build the BundleLaunchSpec from the (now-resolved)
-        # inner Plans: daemon subset, env, bind-mounts.
+        # inner Plans: daemon subset, env, bind-mounts. The spec's
+        # ports_to_publish list expands depending on which daemons
+        # the agent needs to reach from the smolvm guest.
         bundle_spec = _bundle_launch_spec(plan, network)
         token_env = _resolve_token_env(plan, os.environ)
         _bundle.start_bundle(bundle_spec, env={**os.environ, **token_env})
         stack.callback(_bundle.stop_bundle, plan.slug)
 
-        # 4. smolvm VM. --from carries the pre-packed .smolmachine
+        # 4. Discover the host-side ports docker assigned for the
+        # bundle's published container ports, and bind the
+        # agent's URLs to `127.0.0.1:<host port>`. Docker container
+        # IPs (192.168.x.x in the daemon's bridge) aren't
+        # reachable from the smolvm guest on macOS — TSI uses
+        # macOS networking, and macOS sees the daemon's bridge
+        # via the published-port loopback forward only.
+        #
+        # Proxy hop order matches the docker backend: when the
+        # bottle declares egress routes, the agent's first hop is
+        # egress (for token injection), then pipelock. Without
+        # routes, the agent dials pipelock directly. Whichever
+        # one is "agent-facing" is the daemon whose port we
+        # publish on host loopback; the other stays bundle-
+        # internal as the upstream proxy.
+        if plan.egress_plan.routes:
+            agent_facing_port = _EGRESS_PORT
+        else:
+            agent_facing_port = _PIPELOCK_PORT
+        agent_facing_host_port = _bundle.bundle_host_port(
+            plan.slug, agent_facing_port,
+        )
+        agent_proxy_url = f"http://127.0.0.1:{agent_facing_host_port}"
+        agent_git_gate_host = ""
+        if plan.git_gate_plan.upstreams:
+            git_gate_host_port = _bundle.bundle_host_port(
+                plan.slug, _GIT_GATE_PORT,
+            )
+            agent_git_gate_host = f"127.0.0.1:{git_gate_host_port}"
+        agent_supervise_url = ""
+        if plan.supervise_plan is not None:
+            supervise_host_port = _bundle.bundle_host_port(
+                plan.slug, _SUPERVISE_PORT,
+            )
+            agent_supervise_url = f"http://127.0.0.1:{supervise_host_port}/"
+
+        # Stamp the URLs onto the plan + guest_env. provision_git
+        # and provision_supervise read the plan fields; the agent
+        # reads guest_env on every exec_claude.
+        guest_env = {
+            **plan.guest_env,
+            "HTTPS_PROXY": agent_proxy_url,
+            "HTTP_PROXY":  agent_proxy_url,
+        }
+        if agent_git_gate_host:
+            guest_env["GIT_GATE_URL"] = f"git://{agent_git_gate_host}"
+        if agent_supervise_url:
+            guest_env["MCP_SUPERVISE_URL"] = agent_supervise_url
+        plan = dataclasses.replace(
+            plan,
+            guest_env=guest_env,
+            agent_proxy_url=agent_proxy_url,
+            agent_git_gate_host=agent_git_gate_host,
+            agent_supervise_url=agent_supervise_url,
+        )
+
+        # 5. smolvm VM. --from carries the pre-packed .smolmachine
         # artifact (built by prepare); --allow-cidr + -e carry the
-        # per-bottle TSI allowlist + env. Smolfile isn't usable
-        # here — smolvm 0.8.0 makes `--from` and `--smolfile`
-        # mutually exclusive.
+        # per-bottle TSI allowlist + env. The allowlist is
+        # `127.0.0.1/32` because every bundle daemon the agent
+        # reaches is fronted by a host loopback port-forward.
+        # Smolfile isn't usable here — smolvm 0.8.0 makes `--from`
+        # and `--smolfile` mutually exclusive.
         _smolvm.machine_create(
             plan.machine_name,
             from_path=plan.agent_from_path,
-            allow_cidrs=[f"{plan.bundle_ip}/32"],
+            allow_cidrs=["127.0.0.1/32"],
             env=plan.guest_env,
         )
         stack.callback(_smolvm.machine_delete, plan.machine_name)
         _smolvm.machine_start(plan.machine_name)
         stack.callback(_smolvm.machine_stop, plan.machine_name)
 
-        # 5. Provision (CA / prompt / skills / git / supervise).
+        # 6. Repair filesystem ownership + perms that smolvm's
+        # pack process remapped to the host invoker's uid (501
+        # on macOS) rather than preserving the image's expected
+        # ownership.
+        #
+        #  - /home/node → node:node so the node user can write
+        #    its own dotfiles (claude appendFileSync on
+        #    ~/.claude.json otherwise bails with ENOENT/EPERM
+        #    and the TUI hangs without surfacing the error).
+        #  - /tmp + /var/tmp → root:root mode 1777 so non-root
+        #    processes can create their per-uid scratch dirs
+        #    (claude-code creates /tmp/claude-<uid>/ as soon as
+        #    it spawns a Bash tool call).
+        #
+        # All folded into one sh -c so we only pay one
+        # machine_exec round trip — back-to-back exec calls
+        # right after machine_start hit a SIGKILL race in
+        # libkrun's exec channel (see provision_ca for the
+        # other half of this same workaround).
+        _smolvm.machine_exec(plan.machine_name, [
+            "sh", "-c",
+            "chown -R node:node /home/node && "
+            "chown root:root /tmp /var/tmp && "
+            "chmod 1777 /tmp /var/tmp",
+        ])
+
+        # Wait briefly for the VM to settle. Back-to-back smolvm
+        # machine_exec calls immediately after machine_start
+        # occasionally SIGKILL the in-VM child at ~100ms (looks
+        # like a VM warm-up race in libkrun's exec channel).
+        # 1.5s is empirically enough to dodge it; provisioning
+        # already takes seconds so the wait is amortized.
+        time.sleep(1.5)
+
+        # 7. Provision (CA / prompt / skills / git / supervise).
         prompt_path = provision(plan, plan.machine_name)
 
-        yield SmolmachinesBottle(plan.machine_name, prompt_path=prompt_path)
+        yield SmolmachinesBottle(
+            plan.machine_name,
+            prompt_path=prompt_path,
+            guest_env=plan.guest_env,
+        )
     finally:
         stack.close()
 
@@ -144,9 +258,14 @@ def _bundle_launch_spec(
     env: list[str] = []
     volumes: list[tuple[str, str, bool]] = []
 
-    # PRD 0023 chunk 3: egress binds 127.0.0.1 inside the bundle
-    # so TSI's IP-only allowlist can't bypass pipelock.
-    env.append("EGRESS_LISTEN_HOST=127.0.0.1")
+    # In this Docker-Desktop-compatible topology, whichever daemon
+    # is "agent-facing" gets its port published on the host
+    # loopback (see `_ensure_smolmachine`'s discovery loop) and the
+    # other stays bundle-internal. The bundle is NOT reachable by
+    # bridge IP from the smolvm guest, so the
+    # PRD-0023-chunk-3 EGRESS_LISTEN_HOST=127.0.0.1 mitigation
+    # isn't needed: the agent can only dial whatever daemon's
+    # host port we publish, period.
 
     # --- pipelock ---------------------------------------------
     pp = plan.proxy_plan
@@ -201,6 +320,21 @@ def _bundle_launch_spec(
         ]
         volumes.append((str(sp.queue_dir), QUEUE_DIR_IN_CONTAINER, False))
 
+    # Container ports the agent reaches from the smolvm guest —
+    # published on host loopback so the guest can dial via TSI +
+    # macOS networking. The HTTP/HTTPS chokepoint is whichever
+    # daemon's port we publish: egress when routes are declared
+    # (token injection first, then forwards to bundle-internal
+    # pipelock), pipelock otherwise.
+    if ep.routes:
+        ports_to_publish: list[int] = [_EGRESS_PORT]
+    else:
+        ports_to_publish = [_PIPELOCK_PORT]
+    if gp.upstreams:
+        ports_to_publish.append(_GIT_GATE_PORT)
+    if sp is not None:
+        ports_to_publish.append(_SUPERVISE_PORT)
+
     return _bundle.BundleLaunchSpec(
         slug=plan.slug,
         network_name=network,
@@ -210,6 +344,7 @@ def _bundle_launch_spec(
         daemons_csv=",".join(daemons),
         environment=tuple(env),
         volumes=tuple(volumes),
+        ports_to_publish=tuple(ports_to_publish),
     )
 
 

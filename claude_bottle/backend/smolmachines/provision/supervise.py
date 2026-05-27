@@ -14,7 +14,6 @@ short `supervise` alias (no DNS in the TSI-allowlisted guest)."""
 from __future__ import annotations
 
 from ....log import info, warn
-from ....supervise import SUPERVISE_PORT
 from .. import smolvm as _smolvm
 from ..bottle_plan import SmolmachinesBottlePlan
 
@@ -22,25 +21,33 @@ from ..bottle_plan import SmolmachinesBottlePlan
 _SUPERVISE_MCP_NAME = "supervise"
 
 
-def supervise_mcp_url(bundle_ip: str) -> str:
-    return f"http://{bundle_ip}:{SUPERVISE_PORT}/"
-
-
 def provision_supervise(plan: SmolmachinesBottlePlan, target: str) -> None:
     """Run `claude mcp add` inside the guest to register the
     supervise sidecar in claude-code's user config. No-op when
     bottle.supervise is False.
+
+    The URL is the agent-side endpoint launch.py populated after
+    bundle bringup — `http://127.0.0.1:<host port>/` rather than
+    the bundle's docker bridge IP, because that bridge isn't
+    reachable from the smolvm guest on macOS.
 
     Failure is logged but not fatal: the bottle still works (you
     just can't call supervise tools from the agent until the entry
     is added manually). The operator sees the warning at launch."""
     if plan.supervise_plan is None:
         return
-    url = supervise_mcp_url(plan.bundle_ip)
+    url = plan.agent_supervise_url
     info(f"registering supervise MCP server in agent claude config → {url}")
+    # `claude mcp add --scope user` writes to ~/.claude.json. The
+    # agent is the `node` user; smolvm machine_exec runs as root
+    # by default, so we have to switch user explicitly and set
+    # HOME so the config lands in /home/node/.claude.json (where
+    # the agent's claude actually reads it from).
     r = _smolvm.machine_exec(
         target,
         [
+            "runuser", "-u", "node", "--",
+            "env", "HOME=/home/node",
             "claude", "mcp", "add",
             "--scope", "user",
             "--transport", "http",
@@ -57,4 +64,4 @@ def provision_supervise(plan: SmolmachinesBottlePlan, target: str) -> None:
         )
 
 
-__all__ = ["provision_supervise", "supervise_mcp_url"]
+__all__ = ["provision_supervise"]

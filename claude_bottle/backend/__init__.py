@@ -119,12 +119,20 @@ class Bottle(ABC):
     def exec_claude(self, argv: list[str], *, tty: bool = True) -> int: ...
 
     @abstractmethod
-    def exec(self, script: str) -> ExecResult:
-        """Run `script` as a POSIX shell script inside the bottle and
-        return the captured stdout/stderr/returncode. The bottle's
-        environment (including HTTPS_PROXY pointing at the pipelock
-        sidecar) is inherited by the child. Non-zero exit does not
-        raise — callers inspect `returncode` themselves."""
+    def exec(self, script: str, *, user: str = "node") -> ExecResult:
+        """Run `script` as a POSIX shell script inside the bottle as
+        `user` (default `node`, matching the agent image's USER
+        directive) and return the captured stdout/stderr/returncode.
+        The bottle's environment (including HTTPS_PROXY pointing at
+        the pipelock sidecar) is inherited by the child. Non-zero
+        exit does not raise — callers inspect `returncode`
+        themselves.
+
+        Pass `user="root"` for shell-outs that need privileged file
+        writes / package install — provisioning calls that need root
+        bypass `Bottle.exec` and use the backend-specific raw
+        machine-exec helper, but the tests have a legitimate use
+        case for arbitrary-user runs."""
 
     @abstractmethod
     def cp_in(self, host_path: str, container_path: str) -> None: ...

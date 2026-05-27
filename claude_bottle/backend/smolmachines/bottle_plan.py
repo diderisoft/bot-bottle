@@ -75,6 +75,17 @@ class SmolmachinesBottlePlan(BottlePlan):
     # None when bottle.supervise is False, matching the docker
     # backend's convention.
     supervise_plan: SupervisePlan | None
+    # Agent-side endpoints. On Docker Desktop the docker bridge
+    # IPs aren't reachable from the smolvm guest (TSI uses macOS
+    # networking; docker container IPs live in the daemon's VM),
+    # so the agent dials the bundle via host loopback +
+    # docker-published random ports. Empty at prepare time;
+    # launch populates these after bundle bringup via
+    # `dataclasses.replace`. Format: a `host:port` for git-gate
+    # (insteadOf URL prefix) + full URLs for proxy / supervise.
+    agent_proxy_url: str = ""
+    agent_git_gate_host: str = ""
+    agent_supervise_url: str = ""
 
     def print(self, *, remote_control: bool) -> None:
         """Compact y/N preflight. Same shape as the Docker
@@ -89,7 +100,10 @@ class SmolmachinesBottlePlan(BottlePlan):
         upstreams = [
             f"{g.Name} → {g.Upstream}" for g in bottle.git
         ]
-        routes = [r.host for r in bottle.egress.routes]
+        # Use the resolved egress_plan (lowercase `host` on the
+        # plan-level EgressRoute) rather than `bottle.egress.routes`,
+        # which is the manifest's capitalized-attr form.
+        routes = [r.host for r in self.egress_plan.routes]
 
         print(file=sys.stderr)
         info(f"agent           : {spec.agent_name}")

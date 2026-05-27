@@ -44,6 +44,8 @@ def _plan(
     pipelock_ca_path: Path = Path(),
     supervise: bool = False,
     bundle_ip: str = "192.168.50.2",
+    agent_git_gate_host: str = "127.0.0.1:55555",
+    agent_supervise_url: str = "http://127.0.0.1:55556/",
 ) -> SmolmachinesBottlePlan:
     bottle_json: dict = {}
     if git:
@@ -111,6 +113,8 @@ def _plan(
             mitmproxy_ca_cert_only_host_path=egress_ca_path,
         ),
         supervise_plan=supervise_plan,
+        agent_git_gate_host=agent_git_gate_host,
+        agent_supervise_url=agent_supervise_url,
     )
 
 
@@ -303,21 +307,38 @@ class TestProvisionCA(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
+    # provision_ca dies hard if update-ca-certificates' stdout
+    # doesn't include "1 added"; supply a stock success return
+    # so the bulk of the tests below exercise the happy path.
+    _UPDATE_OK = SmolvmRunResult(
+        returncode=0,
+        stdout="Updating certificates in /etc/ssl/certs...\n1 added, 0 removed; done.\n",
+        stderr="",
+    )
+
     def test_pipelock_path_when_no_routes(self):
         plan = _plan(pipelock_ca_path=self.pipelock_ca)
         with patch(
             "claude_bottle.backend.smolmachines.provision.ca._smolvm.machine_cp"
         ) as cp, patch(
-            "claude_bottle.backend.smolmachines.provision.ca._smolvm.machine_exec"
+            "claude_bottle.backend.smolmachines.provision.ca._smolvm.machine_exec",
+            return_value=self._UPDATE_OK,
         ) as ex:
             _ca.provision_ca(plan, "claude-bottle-demo-abc12")
         cp.assert_called_once_with(
             str(self.pipelock_ca),
             "claude-bottle-demo-abc12:" + _ca.AGENT_CA_PATH,
         )
-        argvs = [c.args[1] for c in ex.call_args_list]
-        self.assertIn(["chmod", "644", _ca.AGENT_CA_PATH], argvs)
-        self.assertIn(["update-ca-certificates"], argvs)
+        # chmod + chown + update-ca-certificates are now folded
+        # into one `sh -c` invocation (working around a smolvm
+        # exec warm-up SIGKILL race), so we look at the single
+        # exec's argv rather than expecting separate calls.
+        ex.assert_called_once()
+        argv = ex.call_args.args[1]
+        self.assertEqual("sh", argv[0])
+        self.assertEqual("-c", argv[1])
+        self.assertIn("chmod 644", argv[2])
+        self.assertIn("update-ca-certificates", argv[2])
 
     def test_egress_path_when_routes_declared(self):
         plan = _plan(
@@ -328,7 +349,8 @@ class TestProvisionCA(unittest.TestCase):
         with patch(
             "claude_bottle.backend.smolmachines.provision.ca._smolvm.machine_cp"
         ) as cp, patch(
-            "claude_bottle.backend.smolmachines.provision.ca._smolvm.machine_exec"
+            "claude_bottle.backend.smolmachines.provision.ca._smolvm.machine_exec",
+            return_value=self._UPDATE_OK,
         ):
             _ca.provision_ca(plan, "claude-bottle-demo-abc12")
         # When routes are declared, egress is the agent's first hop,
@@ -412,9 +434,10 @@ class TestProvisionGit(unittest.TestCase):
         cp.assert_not_called()
 
     def test_writes_gitconfig_with_ip_port_form_for_smolmachines(self):
-        # Smolmachines's TSI-allowlisted guest has no DNS resolver,
-        # so the insteadOf URL has to be IP+port rather than the
-        # docker backend's `git-gate` short alias.
+        # Smolmachines's TSI-allowlisted guest dials git-gate via
+        # `127.0.0.1:<host port>` — the bundle's git-gate port is
+        # published on host loopback at launch time, and the plan
+        # carries the discovered host port (here mocked to 9418).
         plan = _plan(
             git=[GitEntry(
                 Name="claude-bottle",
@@ -422,7 +445,7 @@ class TestProvisionGit(unittest.TestCase):
                 IdentityFile="~/.ssh/id_ed25519",
             )],
             stage_dir=self.stage,
-            bundle_ip="192.168.99.2",
+            agent_git_gate_host="127.0.0.1:9418",
         )
         with patch(
             "claude_bottle.backend.smolmachines.provision.git._smolvm.machine_cp"
@@ -437,7 +460,7 @@ class TestProvisionGit(unittest.TestCase):
         self.assertEqual(self.stage, staged_path.parent)
         content = staged_path.read_text()
         self.assertIn(
-            '[url "git://192.168.99.2:9418/claude-bottle.git"]', content,
+            '[url "git://127.0.0.1:9418/claude-bottle.git"]', content,
         )
         self.assertIn(
             "\tinsteadOf = ssh://git@host/repo.git", content,
@@ -453,7 +476,10 @@ class TestProvisionSupervise(unittest.TestCase):
         ex.assert_not_called()
 
     def test_calls_claude_mcp_add_when_supervise_enabled(self):
-        plan = _plan(supervise=True, bundle_ip="192.168.50.2")
+        plan = _plan(
+            supervise=True,
+            agent_supervise_url="http://127.0.0.1:9100/",
+        )
         with patch(
             "claude_bottle.backend.smolmachines.provision.supervise._smolvm.machine_exec",
             return_value=SmolvmRunResult(returncode=0, stdout="", stderr=""),
@@ -461,14 +487,20 @@ class TestProvisionSupervise(unittest.TestCase):
             _supervise.provision_supervise(plan, "claude-bottle-demo-abc12")
         ex.assert_called_once()
         argv = ex.call_args.args[1]
-        # claude mcp add --scope user --transport http supervise <url>
+        # `claude mcp add --scope user` writes to ~/.claude.json,
+        # and the agent is the `node` user — switch UID + set
+        # HOME so the config lands in /home/node/.claude.json,
+        # not root's. URL is the agent-side endpoint (host
+        # loopback + discovered port), not the docker bridge IP.
         self.assertEqual(
             [
+                "runuser", "-u", "node", "--",
+                "env", "HOME=/home/node",
                 "claude", "mcp", "add",
                 "--scope", "user",
                 "--transport", "http",
                 "supervise",
-                "http://192.168.50.2:9100/",
+                "http://127.0.0.1:9100/",
             ],
             argv,
         )

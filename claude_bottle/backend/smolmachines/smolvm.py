@@ -117,12 +117,21 @@ def machine_create(
     Smolfile because `--from` and `--smolfile` are themselves
     mutually exclusive in smolvm 0.8.0 — and we want `--from`'s
     no-pull-at-start property. The flag form gives the same
-    result without the Smolfile complication."""
+    result without the Smolfile complication.
+
+    `--net` is sent explicitly when `allow_cidrs` is non-empty.
+    smolvm 0.8.0's docs say `--allow-cidr` implies `--net`, but
+    empirically the implication only fires when no `--from` is
+    set — `--from PATH --allow-cidr X/32` silently produces a
+    machine with `network: false` and no routes in the guest, so
+    the agent can't reach the bundle's pinned IP."""
     args: list[str] = ["machine", "create"]
     if image is not None:
         args += ["--image", image]
     if from_path is not None:
         args += ["--from", str(from_path)]
+    if allow_cidrs:
+        args.append("--net")
     for cidr in allow_cidrs:
         args += ["--allow-cidr", cidr]
     if env:

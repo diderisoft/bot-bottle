@@ -51,12 +51,15 @@ class DockerBottle(Bottle):
             self.claude_docker_argv(argv, tty=tty), check=False,
         ).returncode
 
-    def exec(self, script: str) -> ExecResult:
+    def exec(self, script: str, *, user: str = "node") -> ExecResult:
         # Pipe via stdin to `sh -s` so the caller never has to worry
         # about quoting; the script source lands inside the container
-        # without crossing argv.
+        # without crossing argv. `-u <user>` overrides the image's
+        # default USER — defaults to `node` which is already the
+        # image's USER, so the explicit flag is a no-op there but
+        # keeps the cross-backend contract uniform.
         result = subprocess.run(
-            ["docker", "exec", "-i", self.name, "sh", "-s"],
+            ["docker", "exec", "-u", user, "-i", self.name, "sh", "-s"],
             input=script,
             capture_output=True,
             text=True,
