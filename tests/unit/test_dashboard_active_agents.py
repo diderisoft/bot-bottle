@@ -2,7 +2,7 @@
 
 The active-bottle enumeration tests moved to
 `test_docker_enumerate_active.py` (issue #77) — dashboard now
-delegates listing to `enumerate_active_bottles` so the parser
+delegates listing to `enumerate_active_agents` so the parser
 and assembly tests live next to the docker backend's
 implementation.
 """

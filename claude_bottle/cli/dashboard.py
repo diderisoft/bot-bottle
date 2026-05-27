@@ -27,9 +27,9 @@ from pathlib import Path
 
 from .. import supervise as _supervise
 from ..backend import (
-    ActiveBottle,
+    ActiveAgent,
     BottleSpec,
-    enumerate_active_bottles,
+    enumerate_active_agents,
     get_bottle_backend,
     known_backend_names,
 )
@@ -97,22 +97,13 @@ class QueuedProposal:
     queue_dir: Path
 
 
-# `ActiveAgent` was PRD-0019's docker-specific row type. It now
-# aliases the shared `ActiveBottle` dataclass so the dashboard
-# and the CLI `list active` both render the same source of truth.
-# Field surface stays compatible (slug / agent_name / started_at
-# / services) plus a new `backend_name` so dashboard rows can
-# show which backend a bottle came from.
-ActiveAgent = ActiveBottle
-
-
-def discover_active_agents() -> list[ActiveBottle]:
-    """All currently-running bottles across every backend with
+def discover_active_agents() -> list[ActiveAgent]:
+    """All currently-running agents across every backend with
     their metadata + service set. Returns [] when neither
     backend is reachable. Backed by the shared
-    `enumerate_active_bottles` helper so the CLI's
+    `enumerate_active_agents` helper so the CLI's
     `./cli.py list active` and this dashboard show the same data."""
-    return enumerate_active_bottles()
+    return enumerate_active_agents()
 
 
 

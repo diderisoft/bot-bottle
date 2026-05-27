@@ -8,7 +8,7 @@ unit test. Tests split into:
     no I/O, deterministic on its input string.
   - Integration-shaped tests that monkeypatch the slug list +
     services map and read metadata from a fake home, then assert
-    the assembled `ActiveBottle` shape.
+    the assembled `ActiveAgent` shape.
 
 The actual `docker ps` invocation is exercised by manual probing
 during development and the (real-docker) integration tests; here
@@ -24,21 +24,21 @@ import unittest
 from pathlib import Path
 
 from claude_bottle import supervise
-from claude_bottle.backend.docker import bottle_state, cleanup
+from claude_bottle.backend.docker import bottle_state, enumerate as _enumerate
 
 
 class TestParseServicesByProject(unittest.TestCase):
     def test_empty_input(self):
-        self.assertEqual({}, cleanup._parse_services_by_project(""))
+        self.assertEqual({}, _enumerate._parse_services_by_project(""))
 
     def test_one_container(self):
-        out = cleanup._parse_services_by_project(
+        out = _enumerate._parse_services_by_project(
             "claude-bottle-dev-abc\tegress\n"
         )
         self.assertEqual({"claude-bottle-dev-abc": {"egress"}}, out)
 
     def test_multiple_services_per_project(self):
-        out = cleanup._parse_services_by_project(
+        out = _enumerate._parse_services_by_project(
             "claude-bottle-dev-abc\tegress\n"
             "claude-bottle-dev-abc\tpipelock\n"
             "claude-bottle-dev-abc\tsupervise\n"
@@ -49,7 +49,7 @@ class TestParseServicesByProject(unittest.TestCase):
         )
 
     def test_multiple_projects(self):
-        out = cleanup._parse_services_by_project(
+        out = _enumerate._parse_services_by_project(
             "proj-a\tegress\n"
             "proj-b\tpipelock\n"
             "proj-a\tsupervise\n"
@@ -62,7 +62,7 @@ class TestParseServicesByProject(unittest.TestCase):
     def test_skips_lines_missing_either_field(self):
         # Defends against unlabeled containers slipping into the
         # output (the filter should prevent it, but be robust).
-        out = cleanup._parse_services_by_project(
+        out = _enumerate._parse_services_by_project(
             "claude-bottle-dev-abc\tegress\n"
             "no-tab-here\n"
             "\tmissing-project\n"
@@ -90,28 +90,21 @@ class _FakeHomeMixin:
 class TestEnumerateActive(_FakeHomeMixin, unittest.TestCase):
     def setUp(self) -> None:
         self._setup_fake_home()
-        self._orig_slugs = cleanup.list_active_slugs
-        self._orig_services = cleanup._query_services_by_project
-        # Skip the docker-availability gate so tests don't need a
-        # real docker on PATH.
-        import shutil
-        self._orig_which = shutil.which
-        shutil.which = lambda name: "/usr/bin/" + name if name == "docker" else None
+        self._orig_slugs = _enumerate.list_active_slugs
+        self._orig_services = _enumerate._query_services_by_project
 
     def tearDown(self) -> None:
-        cleanup.list_active_slugs = self._orig_slugs
-        cleanup._query_services_by_project = self._orig_services
-        import shutil
-        shutil.which = self._orig_which
+        _enumerate.list_active_slugs = self._orig_slugs
+        _enumerate._query_services_by_project = self._orig_services
         self._teardown_fake_home()
 
     def _stub(self, slugs: list[str], services_by_project: dict[str, set[str]]) -> None:
-        cleanup.list_active_slugs = lambda **_: slugs
-        cleanup._query_services_by_project = lambda: services_by_project
+        _enumerate.list_active_slugs = lambda **_: slugs
+        _enumerate._query_services_by_project = lambda: services_by_project
 
     def test_no_active_slugs_returns_empty(self):
         self._stub([], {})
-        self.assertEqual([], cleanup.enumerate_active())
+        self.assertEqual([], _enumerate.enumerate_active())
 
     def test_assembles_from_metadata_and_services(self):
         bottle_state.write_metadata(bottle_state.BottleMetadata(
@@ -126,7 +119,7 @@ class TestEnumerateActive(_FakeHomeMixin, unittest.TestCase):
             ["dev-abc"],
             {"claude-bottle-dev-abc": {"pipelock", "egress", "supervise"}},
         )
-        active = cleanup.enumerate_active()
+        active = _enumerate.enumerate_active()
         self.assertEqual(1, len(active))
         a = active[0]
         self.assertEqual("docker", a.backend_name)
@@ -139,7 +132,7 @@ class TestEnumerateActive(_FakeHomeMixin, unittest.TestCase):
         # State dir doesn't exist for this slug — agent_name falls
         # back to "?" rather than dropping the row.
         self._stub(["mystery-zzz"], {"claude-bottle-mystery-zzz": {"pipelock"}})
-        active = cleanup.enumerate_active()
+        active = _enumerate.enumerate_active()
         self.assertEqual(1, len(active))
         self.assertEqual("?", active[0].agent_name)
         self.assertEqual("", active[0].started_at)
@@ -158,7 +151,7 @@ class TestEnumerateActive(_FakeHomeMixin, unittest.TestCase):
             compose_project="claude-bottle-warming-up",
         ))
         self._stub(["warming-up"], {})
-        active = cleanup.enumerate_active()
+        active = _enumerate.enumerate_active()
         self.assertEqual((), active[0].services)
 
     def test_preserves_slug_order(self):
@@ -174,20 +167,18 @@ class TestEnumerateActive(_FakeHomeMixin, unittest.TestCase):
         # list_active_slugs returns sorted; preserve that order in
         # the output.
         self._stub(["a-1", "m-1", "z-1"], {})
-        active = cleanup.enumerate_active()
+        active = _enumerate.enumerate_active()
         self.assertEqual(
             ["a-1", "m-1", "z-1"],
             [a.slug for a in active],
         )
 
-    def test_noop_when_docker_missing(self):
-        # Defensive: list active shouldn't die just because docker
-        # isn't on PATH (smolmachines bottles are still discoverable
-        # via the other backend's enumerate).
-        import shutil
-        shutil.which = lambda _name: None
-        self._stub(["some-slug"], {})
-        self.assertEqual([], cleanup.enumerate_active())
+    # `noop when docker missing` lives at the cross-backend gate
+    # now (`enumerate_active_agents` skips backends whose
+    # `is_available()` reports False — see
+    # `test_backend_selection.TestEnumerateActiveAgents`). This
+    # module assumes docker is available when called, matching the
+    # smolmachines/enumerate.py contract.
 
 
 if __name__ == "__main__":

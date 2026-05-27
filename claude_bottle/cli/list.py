@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from ..backend import enumerate_active_bottles
+from ..backend import enumerate_active_agents
 from ..manifest import Manifest
 from ._common import PROG, USER_CWD
 
@@ -23,7 +23,7 @@ def cmd_list(argv: list[str]) -> int:
 
     # `active` enumerates every backend (docker + smolmachines)
     # so smolmachines bottles aren't hidden behind the env var.
-    active = enumerate_active_bottles()
+    active = enumerate_active_agents()
     if not active:
         print("no active claude-bottle bottles", file=sys.stderr)
         return 0

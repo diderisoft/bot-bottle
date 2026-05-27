@@ -19,7 +19,7 @@ backend exposes five methods:
   cleanup(plan) -> None
       Actually removes everything described by the cleanup plan.
 
-  enumerate_active() -> Sequence[ActiveBottle]
+  enumerate_active() -> Sequence[ActiveAgent]
       Return every currently-running bottle on this backend, with
       enough metadata for callers (CLI `list active`, dashboard
       agents pane) to render a row.
@@ -106,9 +106,11 @@ class ExecResult:
 
 
 @dataclass(frozen=True)
-class ActiveBottle:
-    """One currently-running bottle, as the CLI `list active` and
-    dashboard agents pane render it.
+class ActiveAgent:
+    """One currently-running agent, as the CLI `list active` and
+    dashboard agents pane render it. ("Agent" is the project's
+    consistent name for the thing running inside a bottle — the
+    bottle is the container, the agent is what runs in it.)
 
     Fields are deliberately backend-neutral. `services` is the set
     of sidecar daemons currently up for this bottle (`pipelock`,
@@ -302,11 +304,22 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         """Remove everything described by the cleanup plan."""
 
     @abstractmethod
-    def enumerate_active(self) -> Sequence[ActiveBottle]:
-        """Return every currently-running bottle on this backend.
+    def enumerate_active(self) -> Sequence[ActiveAgent]:
+        """Return every currently-running agent on this backend.
         Empty when none. Backend-specific: docker queries `docker
         compose ls`; smolmachines queries `smolvm machine ls --json`
         + cross-references its bundle container."""
+
+    @classmethod
+    @abstractmethod
+    def is_available(cls) -> bool:
+        """Whether this backend's runtime prerequisites are satisfied
+        on the current host. Docker → `docker` on PATH; smolmachines
+        → `smolvm` on PATH. Used by the cross-backend
+        `enumerate_active_agents` / `cmd_cleanup` to skip backends
+        the operator hasn't installed, so a docker-only host
+        doesn't fail when `cli.py list active` walks past
+        smolmachines."""
 
 
 # Import concrete backend classes AFTER the base types are defined, so
@@ -352,26 +365,45 @@ def known_backend_names() -> tuple[str, ...]:
     return tuple(sorted(_BACKENDS))
 
 
-def enumerate_active_bottles() -> list[ActiveBottle]:
-    """All currently-running bottles, across every backend. Used by
-    CLI `list active` and the dashboard's agents pane so neither
-    has to know which backends exist. Ordered by backend name,
-    then slug."""
-    out: list[ActiveBottle] = []
+def has_backend(name: str) -> bool:
+    """Whether the named backend's runtime prerequisites are
+    available on the current host. Cross-backend callers (list,
+    cleanup) skip unavailable backends so a docker-only host
+    doesn't fail when the smolmachines backend isn't installed,
+    and vice versa.
+
+    Returns False for unknown names so callers can pass
+    arbitrary input without separate validation."""
+    if name not in _BACKENDS:
+        return False
+    return _BACKENDS[name].is_available()
+
+
+def enumerate_active_agents() -> list[ActiveAgent]:
+    """All currently-running agents, across every available
+    backend. Used by CLI `list active` and the dashboard's agents
+    pane so neither has to know which backends exist. Skips
+    backends whose `is_available()` reports False. Ordered by
+    backend name, then by whatever each backend's
+    `enumerate_active` returns."""
+    out: list[ActiveAgent] = []
     for name in known_backend_names():
+        if not has_backend(name):
+            continue
         out.extend(_BACKENDS[name].enumerate_active())
     return out
 
 
 __all__ = [
-    "ActiveBottle",
+    "ActiveAgent",
     "Bottle",
     "BottleBackend",
     "BottleCleanupPlan",
     "BottlePlan",
     "BottleSpec",
     "ExecResult",
-    "enumerate_active_bottles",
+    "enumerate_active_agents",
     "get_bottle_backend",
+    "has_backend",
     "known_backend_names",
 ]

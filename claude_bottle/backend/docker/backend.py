@@ -1,10 +1,11 @@
 """DockerBottleBackend — the Docker implementation of BottleBackend.
 
-This module is a thin façade. The real work lives in three siblings:
+This module is a thin façade. The real work lives in four siblings:
 
-  - prepare.py  — host-side resolution into a DockerBottlePlan
-  - launch.py   — bring-up + teardown context manager
-  - cleanup.py  — orphan enumeration, removal, and active listing
+  - prepare.py    — host-side resolution into a DockerBottlePlan
+  - launch.py     — bring-up + teardown context manager
+  - cleanup.py    — orphan enumeration + removal
+  - enumerate.py  — active-agent listing
 
 The base class's `prepare` template runs cross-backend host-side
 validation before calling `_resolve_plan` here.
@@ -12,12 +13,14 @@ validation before calling `_resolve_plan` here.
 
 from __future__ import annotations
 
+import shutil
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator, Sequence
 
-from .. import ActiveBottle, BottleBackend, BottleSpec
+from .. import ActiveAgent, BottleBackend, BottleSpec
 from . import cleanup as _cleanup
+from . import enumerate as _enumerate
 from . import launch as _launch
 from . import prepare as _prepare
 from .bottle import DockerBottle
@@ -35,6 +38,15 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
     (default)."""
 
     name = "docker"
+
+    @classmethod
+    def is_available(cls) -> bool:
+        """`docker` on PATH is sufficient; we don't probe `docker info`
+        eagerly because the cross-backend enumerator runs this on
+        every `list active` and we'd pay a subprocess per call. A
+        broken daemon will surface its own error during prepare /
+        launch."""
+        return shutil.which("docker") is not None
 
     def _resolve_plan(self, spec: BottleSpec, *, stage_dir: Path) -> DockerBottlePlan:
         return _prepare.resolve_plan(spec, stage_dir=stage_dir)
@@ -65,5 +77,5 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
     def cleanup(self, plan: DockerBottleCleanupPlan) -> None:
         _cleanup.cleanup(plan)
 
-    def enumerate_active(self) -> Sequence[ActiveBottle]:
-        return _cleanup.enumerate_active()
+    def enumerate_active(self) -> Sequence[ActiveAgent]:
+        return _enumerate.enumerate_active()
