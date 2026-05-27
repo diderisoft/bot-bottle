@@ -32,4 +32,18 @@ if [ -n "$EGRESS_UPSTREAM_CA" ] && [ -f "$EGRESS_UPSTREAM_CA" ]; then
   TRUST_FLAG="--set ssl_verify_upstream_trusted_ca=$COMBINED"
 fi
 
+# Scope the proxy env to this process tree only. In the bundle
+# image (PRD 0024) the four daemons share one container — setting
+# HTTPS_PROXY at the container level would route git-gate's git
+# pushes through pipelock, which is wrong (pipelock doesn't proxy
+# SSH and would block public git repos). Setting them here means
+# only mitmdump's subprocess inherits them. In the legacy
+# four-sidecar setup these env vars are also set in compose; here
+# they're additionally defensive.
+if [ -n "$EGRESS_UPSTREAM_PROXY" ]; then
+  export HTTPS_PROXY="$EGRESS_UPSTREAM_PROXY"
+  export HTTP_PROXY="$EGRESS_UPSTREAM_PROXY"
+  export NO_PROXY="localhost,127.0.0.1"
+fi
+
 exec mitmdump $MODE $TRUST_FLAG -s /app/egress_addon.py

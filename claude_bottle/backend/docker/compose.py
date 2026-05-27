@@ -83,6 +83,12 @@ from .pipelock import (
     pipelock_container_name,
 )
 from .provision.ca import AGENT_CA_BUNDLE, AGENT_CA_PATH
+from .sidecar_bundle import (
+    SIDECAR_BUNDLE_DOCKERFILE,
+    SIDECAR_BUNDLE_IMAGE,
+    sidecar_bundle_container_name,
+    sidecar_bundle_enabled,
+)
 from .supervise import (
     SUPERVISE_DOCKERFILE,
     SUPERVISE_IMAGE,
@@ -109,16 +115,24 @@ def bottle_plan_to_compose(plan: DockerBottlePlan) -> dict[str, Any]:
     project = f"claude-bottle-{plan.slug}"
     services: dict[str, Any] = {}
 
-    services["pipelock"] = _pipelock_service(plan)
+    if sidecar_bundle_enabled():
+        # PRD 0024 bundle shape: one `sidecars` service running all
+        # four daemons under the bundle image's init supervisor.
+        services["sidecars"] = _sidecar_bundle_service(plan)
+    else:
+        # Legacy four-sidecar shape. Kept side-by-side behind the
+        # flag through chunks 2-4 so existing operators don't have
+        # to migrate atomically.
+        services["pipelock"] = _pipelock_service(plan)
 
-    if plan.git_gate_plan.upstreams:
-        services["git-gate"] = _git_gate_service(plan)
+        if plan.git_gate_plan.upstreams:
+            services["git-gate"] = _git_gate_service(plan)
 
-    if plan.egress_plan.routes:
-        services["egress"] = _egress_service(plan)
+        if plan.egress_plan.routes:
+            services["egress"] = _egress_service(plan)
 
-    if plan.supervise_plan is not None:
-        services["supervise"] = _supervise_service(plan)
+        if plan.supervise_plan is not None:
+            services["supervise"] = _supervise_service(plan)
 
     services["agent"] = _agent_service(plan)
 
@@ -183,6 +197,134 @@ def _pipelock_service(plan: DockerBottlePlan) -> dict[str, Any]:
             _bind(pp.ca_key_host_path, PIPELOCK_CA_KEY_IN_CONTAINER),
         ],
     }
+
+
+def _sidecar_bundle_service(plan: DockerBottlePlan) -> dict[str, Any]:
+    """The single `sidecars` service that replaces the four
+    per-sidecar containers (PRD 0024). One container per bottle,
+    bundle image, all four daemons under a Python init supervisor.
+
+    Mechanics:
+
+      - Daemon subset narrows via `CLAUDE_BOTTLE_SIDECAR_DAEMONS`
+        env. pipelock is always present; egress / git-gate /
+        supervise are conditional on the plan, identical to the
+        legacy branching.
+      - Volumes are the UNION of what the four prior services
+        bind-mounted, preserving the same in-container paths so
+        every daemon finds its config / hooks / CA where it
+        expects.
+      - Environment is the union of *daemon-private* env vars
+        (EGRESS_UPSTREAM_PROXY, SUPERVISE_BOTTLE_SLUG, etc).
+        HTTPS_PROXY is NOT propagated here — see the comment in
+        egress_entrypoint.sh; setting it at the container level
+        would route git-gate's git fetches through pipelock,
+        which is wrong.
+      - Network aliases register every legacy short/long
+        hostname (pipelock, egress, git-gate, supervise plus
+        their `claude-bottle-<service>-<slug>` long forms) so
+        any existing inter-service reference (notably the
+        agent's HTTPS_PROXY and depends_on lookups) resolves to
+        the bundle.
+    """
+    daemons: list[str] = ["egress", "pipelock"]
+    if plan.git_gate_plan.upstreams:
+        daemons.append("git-gate")
+    if plan.supervise_plan is not None:
+        daemons.append("supervise")
+
+    env: list[str] = [f"CLAUDE_BOTTLE_SIDECAR_DAEMONS={','.join(daemons)}"]
+    volumes: list[dict[str, Any]] = []
+
+    # --- pipelock ----------------------------------------------------
+    pp = plan.proxy_plan
+    volumes += [
+        _bind(pp.yaml_path, "/etc/pipelock.yaml"),
+        _bind(pp.ca_cert_host_path, PIPELOCK_CA_CERT_IN_CONTAINER),
+        _bind(pp.ca_key_host_path, PIPELOCK_CA_KEY_IN_CONTAINER),
+    ]
+
+    # --- egress (always part of the bundle; the EGRESS_UPSTREAM_*
+    # env vars + ca bind-mounts are needed iff routes exist; when
+    # the bottle has no routes the egress daemon falls back to its
+    # `regular@9099` mode and is unused) -----------------------------
+    ep = plan.egress_plan
+    if ep.routes:
+        env.append(f"EGRESS_UPSTREAM_PROXY={ep.pipelock_proxy_url}")
+        env.append(f"EGRESS_UPSTREAM_CA={EGRESS_PIPELOCK_CA_IN_CONTAINER}")
+        volumes += [
+            _bind(ep.routes_path, EGRESS_ROUTES_IN_CONTAINER),
+            _bind(ep.mitmproxy_ca_host_path, EGRESS_CA_IN_CONTAINER),
+            _bind(ep.pipelock_ca_host_path, EGRESS_PIPELOCK_CA_IN_CONTAINER),
+        ]
+        for token_env in sorted(ep.token_env_map.keys()):
+            env.append(token_env)
+
+    # --- git-gate ----------------------------------------------------
+    extra_hosts: list[str] = []
+    gp = plan.git_gate_plan
+    if gp.upstreams:
+        volumes += [
+            _bind(gp.entrypoint_script, GIT_GATE_ENTRYPOINT_IN_CONTAINER),
+            _bind(gp.hook_script, GIT_GATE_HOOK_IN_CONTAINER),
+            _bind(gp.access_hook_script, GIT_GATE_ACCESS_HOOK_IN_CONTAINER),
+        ]
+        for u in gp.upstreams:
+            keypath = expand_tilde(u.identity_file)
+            volumes.append(_bind(
+                keypath,
+                f"{GIT_GATE_CREDS_DIR_IN_CONTAINER}/{u.name}-key",
+            ))
+        extra_map = git_gate_aggregate_extra_hosts(gp.upstreams)
+        extra_hosts = [f"{host}:{ip}" for host, ip in sorted(extra_map.items())]
+
+    # --- supervise ---------------------------------------------------
+    sp = plan.supervise_plan
+    if sp is not None:
+        env += [
+            f"SUPERVISE_BOTTLE_SLUG={plan.slug}",
+            f"SUPERVISE_QUEUE_DIR={QUEUE_DIR_IN_CONTAINER}",
+            f"SUPERVISE_PORT={SUPERVISE_PORT}",
+        ]
+        volumes.append({
+            "type": "bind",
+            "source": str(sp.queue_dir),
+            "target": QUEUE_DIR_IN_CONTAINER,
+            "read_only": False,
+        })
+
+    # Internal-network aliases: every shortname + long-form legacy
+    # name routes to the bundle so the agent's HTTPS_PROXY URL
+    # (which references either `pipelock` or `egress`) keeps
+    # resolving without an agent-side change.
+    internal_aliases = [
+        pipelock_container_name(plan.slug),
+        EGRESS_HOSTNAME,
+        egress_container_name(plan.slug),
+    ]
+    if gp.upstreams:
+        internal_aliases.append(git_gate_container_name(plan.slug))
+    if sp is not None:
+        internal_aliases.append(SUPERVISE_HOSTNAME)
+        internal_aliases.append(supervise_container_name(plan.slug))
+
+    service: dict[str, Any] = {
+        "image": SIDECAR_BUNDLE_IMAGE,
+        "build": {
+            "context": _REPO_DIR,
+            "dockerfile": SIDECAR_BUNDLE_DOCKERFILE,
+        },
+        "container_name": sidecar_bundle_container_name(plan.slug),
+        "networks": {
+            "internal": {"aliases": internal_aliases},
+            "egress": None,
+        },
+        "environment": env,
+        "volumes": volumes,
+    }
+    if extra_hosts:
+        service["extra_hosts"] = extra_hosts
+    return service
 
 
 def _git_gate_service(plan: DockerBottlePlan) -> dict[str, Any]:
@@ -352,14 +494,20 @@ def _agent_service(plan: DockerBottlePlan) -> dict[str, Any]:
     if volumes:
         service["volumes"] = volumes
 
-    depends_on = ["pipelock"]
-    if plan.git_gate_plan.upstreams:
-        depends_on.append("git-gate")
-    if plan.egress_plan.routes:
-        depends_on.append("egress")
-    if plan.supervise_plan is not None:
-        depends_on.append("supervise")
-    service["depends_on"] = depends_on
+    if sidecar_bundle_enabled():
+        # Bundle shape: a single dependency. The init supervisor
+        # owns intra-bundle daemon ordering, so the agent only
+        # waits for the bundle container itself.
+        service["depends_on"] = ["sidecars"]
+    else:
+        depends_on = ["pipelock"]
+        if plan.git_gate_plan.upstreams:
+            depends_on.append("git-gate")
+        if plan.egress_plan.routes:
+            depends_on.append("egress")
+        if plan.supervise_plan is not None:
+            depends_on.append("supervise")
+        service["depends_on"] = depends_on
 
     return service
 
