@@ -18,7 +18,7 @@ from ...log import info
 from ...pipelock import PipelockProxyPlan
 from ...supervise import SupervisePlan
 from .. import BottlePlan
-from ..print_util import print_multi
+from ..print_util import print_multi, visible_agent_env_names
 
 
 @dataclass(frozen=True)
@@ -73,7 +73,10 @@ class DockerBottlePlan(BottlePlan):
         # interpolations from the manifest; egress holds
         # upstream tokens in its own environ, so no token forwarding
         # from the agent to the proxy is needed.
-        env_names = sorted(set(bottle.env.keys()) | set(self.forwarded_env.keys()))
+        env_names = visible_agent_env_names(
+            sorted(set(bottle.env.keys()) | set(self.forwarded_env.keys())),
+            agent_provider_template=self.agent_provider_template,
+        )
 
         print(file=sys.stderr)
         info(f"agent           : {spec.agent_name}")

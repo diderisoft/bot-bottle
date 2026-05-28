@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Sequence
 
+from ..agent_provider import runtime_for
 from ..log import info
 
 
@@ -26,3 +27,19 @@ def print_multi(label: str, values: Sequence[str]) -> None:
     indent = " " * (len(label) + 2)
     for v in values[1:]:
         info(f"{indent}{v}")
+
+
+def visible_agent_env_names(
+    env_names: Sequence[str], *, agent_provider_template: str,
+) -> list[str]:
+    """Env names worth showing in launch summaries.
+
+    Provider auth placeholders (`OPENAI_API_KEY`,
+    `CLAUDE_CODE_OAUTH_TOKEN`) are implementation details: they are
+    non-secret dummy values that satisfy the provider CLI while egress
+    injects the real upstream Authorization header. Showing them in
+    preflight makes the operator think a real key is entering the
+    agent, so hide only that provider-owned placeholder.
+    """
+    hidden = {runtime_for(agent_provider_template).placeholder_env}
+    return sorted({name for name in env_names if name not in hidden})

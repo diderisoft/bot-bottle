@@ -19,7 +19,7 @@ from ...log import info
 from ...pipelock import PipelockProxyPlan
 from ...supervise import SupervisePlan
 from .. import BottlePlan
-from ..print_util import print_multi
+from ..print_util import print_multi, visible_agent_env_names
 
 
 @dataclass(frozen=True)
@@ -107,7 +107,10 @@ class SmolmachinesBottlePlan(BottlePlan):
         agent = manifest.agents[spec.agent_name]
         bottle = manifest.bottle_for(spec.agent_name)
 
-        env_names = sorted(bottle.env.keys())
+        env_names = visible_agent_env_names(
+            sorted(bottle.env.keys()),
+            agent_provider_template=self.agent_provider_template,
+        )
         upstreams = [
             f"{g.Name} → {g.Upstream}" for g in bottle.git
         ]
