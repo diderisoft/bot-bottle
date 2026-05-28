@@ -3,7 +3,7 @@ container that mimics the agent's name + filesystem layout (PRD 0016).
 
 The real `cli.py start <agent>` flow is too heavy for an integration
 test (it builds the agent image, brings up all the sidecars, attaches
-an interactive claude session). Instead, this test stages the
+an interactive agent session). Instead, this test stages the
 minimum the orchestrator interacts with:
 
   - A lightweight `alpine:latest sleep infinity` container named

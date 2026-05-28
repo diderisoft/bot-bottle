@@ -183,7 +183,7 @@ def launch(
 
         # Stamp the URLs onto the plan + guest_env. provision_git
         # and provision_supervise read the plan fields; the agent
-        # reads guest_env on every exec_claude.
+        # reads guest_env on every exec_agent.
         #
         # NO_PROXY has to include the per-bottle loopback alias —
         # otherwise claude's HTTPS_PROXY catches direct calls to

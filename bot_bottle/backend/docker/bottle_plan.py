@@ -11,6 +11,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ...agent_provider import PromptMode
 from ...egress import EgressPlan
 from ...git_gate import GitGatePlan
 from ...log import info
@@ -52,7 +53,7 @@ class DockerBottlePlan(BottlePlan):
     supervise_plan: SupervisePlan | None
     use_runsc: bool
     agent_command: str = "claude"
-    agent_prompt_mode: str = "claude_append_file"
+    agent_prompt_mode: PromptMode = "append_file"
     agent_provider_template: str = "claude"
 
     def print(self, *, remote_control: bool) -> None:

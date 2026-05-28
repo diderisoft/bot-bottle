@@ -24,7 +24,7 @@ process that:
      extra signalling.
   3. Waits on the child and exits with its returncode.
 
-The dashboard's tmux pane respawn calls `bottle.claude_argv`
+The dashboard's tmux pane respawn calls `bottle.agent_argv`
 which now prepends `[sys.executable, -m, ..., <machine>, --, ...]`
 to the smolvm argv. Foreground handoff (curses endwin →
 subprocess.run) goes through the same path so behavior is

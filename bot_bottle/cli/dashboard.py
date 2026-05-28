@@ -74,8 +74,8 @@ from ..supervise import (
 )
 from ._common import PROG, USER_CWD
 from .start import (
-    attach_claude,
-    capture_session_state,
+    attach_agent,
+    capture_claude_session_state,
     prepare_with_preflight,
     settle_state,
 )
@@ -650,7 +650,7 @@ def _bottle_for_slug(
     if slug in bottles:
         _cm, bottle, _identity = bottles[slug]
         return bottle, ""
-    # The container hosting the agent's claude process is named
+    # The container hosting the agent's agent process is named
     # `bot-bottle-<slug>` — set by the compose renderer
     # (no service suffix on the agent service, by design).
     container_name = f"bot-bottle-{slug}"
@@ -705,7 +705,7 @@ def _stop_bottle_flow(
         # settle_state below.
         try:
             if getattr(bottle, "agent_provider_template", "claude") == "claude":
-                capture_session_state(identity, exit_code=0)
+                capture_claude_session_state(identity, exit_code=0)
         except BaseException:
             pass
         try:
@@ -715,7 +715,7 @@ def _stop_bottle_flow(
 
     # Mirror the bringup path's stderr → right-pane routing.
     # Reuses any existing right pane (which is probably the
-    # agent's own claude session) via `_ensure_right_pane`; the
+    # agent's own agent session) via `_ensure_right_pane`; the
     # final buffered output stays visible after settle_state
     # removes the state dir (tail-F handles file removal).
     try:
@@ -752,7 +752,7 @@ def _stop_bottle_flow(
 # pane of a two-pane window with the operator's currently-selected
 # agent in the right pane. First attach creates the right pane via
 # `tmux split-window`; subsequent attaches respawn that pane with
-# the new agent's claude session. The dashboard remembers the
+# the new agent's agent session. The dashboard remembers the
 # pane id + occupant slug in `tmux_state` so the same pane is
 # reused across attaches.
 
@@ -763,14 +763,14 @@ def _in_tmux() -> bool:
     return bool(os.environ.get("TMUX"))
 
 
-def _claude_runtime_args(
-    *, resume: bool, remote_control: bool = False, provider_template: str = "claude",
+def _agent_runtime_args(
+    *, resume: bool, remote_control: bool = False, agent_provider_template: str = "claude",
 ) -> list[str]:
-    """The argv the dashboard hands to `bottle.claude_argv`
-    on every attach — matches what `attach_claude` builds for the
+    """The argv the dashboard hands to `bottle.agent_argv`
+    on every attach — matches what `attach_agent` builds for the
     foreground handoff so both surfaces produce the same claude
     invocation."""
-    runtime = runtime_for(provider_template)
+    runtime = runtime_for(agent_provider_template)
     args = list(runtime.bypass_args)
     if remote_control:
         args.extend(runtime.remote_control_args)
@@ -780,7 +780,7 @@ def _claude_runtime_args(
 
 
 def _build_resume_argv_with_fallback(
-    bottle, *, remote_control: bool = False, provider_template: str = "claude",
+    bottle, *, remote_control: bool = False, agent_provider_template: str = "claude",
 ) -> list[str]:
     """Build a backend-exec argv that runs `claude --continue` and
     falls back to plain `claude` if no prior session exists.
@@ -795,44 +795,44 @@ def _build_resume_argv_with_fallback(
     the fallback only kicks in when --continue would have
     failed anyway.
 
-    Works across backends because `bottle.claude_argv` always
+    Works across backends because `bottle.agent_argv` always
     surfaces the `claude` token preceded by the backend's exec
     framing (docker: `docker exec -it <c>`; smolmachines:
     `smolvm machine exec --name <m> -- runuser -u node --`).
     Splitting at `claude` keeps the framing as the prefix and
-    wraps just the claude tail in `sh -c`."""
-    if provider_template != "claude":
-        return bottle.claude_argv(
-            _claude_runtime_args(
+    wraps just the agent tail in `sh -c`."""
+    if agent_provider_template != "claude":
+        return bottle.agent_argv(
+            _agent_runtime_args(
                 resume=True,
                 remote_control=remote_control,
-                provider_template=provider_template,
+                agent_provider_template=agent_provider_template,
             )
         )
-    base_args = _claude_runtime_args(
+    base_args = _agent_runtime_args(
         resume=False,
         remote_control=remote_control,
-        provider_template=provider_template,
+        agent_provider_template=agent_provider_template,
     )
-    base_exec = bottle.claude_argv(base_args)
-    # Split exec-framing prefix from the claude-and-args tail so
+    base_exec = bottle.agent_argv(base_args)
+    # Split exec-framing prefix from the agent-and-args tail so
     # we can compose `<claude…> --continue || <claude…>` inside
     # `sh -c`. The provider command token is the marker.
-    command = getattr(bottle, "agent_command", runtime_for(provider_template).command)
-    claude_idx = base_exec.index(command)
-    prefix = base_exec[:claude_idx]
-    claude_cmd = " ".join(shlex.quote(a) for a in base_exec[claude_idx:])
+    command = getattr(bottle, "agent_command", runtime_for(agent_provider_template).command)
+    agent_idx = base_exec.index(command)
+    prefix = base_exec[:agent_idx]
+    agent_cmd = " ".join(shlex.quote(a) for a in base_exec[agent_idx:])
     resume_args = " ".join(
-        shlex.quote(a) for a in runtime_for(provider_template).resume_args
+        shlex.quote(a) for a in runtime_for(agent_provider_template).resume_args
     )
     return [
         *prefix,
         "sh", "-c",
-        f"{claude_cmd} {resume_args} || {claude_cmd}",
+        f"{agent_cmd} {resume_args} || {agent_cmd}",
     ]
 
 
-def _build_split_pane_argv(claude_argv: list[str]) -> list[str]:
+def _build_split_pane_argv(agent_argv: list[str]) -> list[str]:
     """Pure helper: wrap a backend-exec argv with `tmux split-window
     -h -P -F '#{pane_id}'`. The `-P -F` combo tells tmux to print
     the new pane's id on stdout so we can track it for later
@@ -840,15 +840,15 @@ def _build_split_pane_argv(claude_argv: list[str]) -> list[str]:
     return [
         "tmux", "split-window", "-h",
         "-P", "-F", "#{pane_id}",
-        *claude_argv,
+        *agent_argv,
     ]
 
 
-def _build_respawn_pane_argv(pane_id: str, claude_argv: list[str]) -> list[str]:
+def _build_respawn_pane_argv(pane_id: str, agent_argv: list[str]) -> list[str]:
     """Pure helper: wrap a backend-exec argv with `tmux respawn-pane
     -k -t <pane_id>`. `-k` kills the existing process in the pane
     before respawning."""
-    return ["tmux", "respawn-pane", "-k", "-t", pane_id, *claude_argv]
+    return ["tmux", "respawn-pane", "-k", "-t", pane_id, *agent_argv]
 
 
 @contextlib.contextmanager
@@ -952,7 +952,7 @@ def _route_op_to_right_pane(
 def _tmux_close_right_pane(tmux_state: dict) -> None:
     """Close the tracked right pane via `tmux kill-pane`. Clears
     both pane_id and slug in `tmux_state`. Used after the last
-    dashboard-owned agent is stopped — no claude session left
+    dashboard-owned agent is stopped — no agent session left
     to host, so the pane shouldn't linger."""
     pane_id = tmux_state.get("pane_id")
     if pane_id and _tmux_pane_exists(pane_id):
@@ -992,7 +992,7 @@ def _ensure_right_pane(tmux_state: dict, argv: list[str]) -> str | None:
     returns the pane id on success, None on failure.
 
     This is the single place where "respawn or create" lives —
-    used by `_attach_in_tmux` for claude sessions AND by
+    used by `_attach_in_tmux` for agent sessions AND by
     `_new_agent_flow` for the bringup-log tail. Without this,
     every new-agent start would pile up a fresh right pane
     instead of reusing the one already next to the dashboard."""
@@ -1037,18 +1037,18 @@ def _attach_via_handoff(
     `_attach_in_tmux` when tmux misbehaves)."""
     curses.endwin()
     try:
-        provider_template = getattr(bottle, "agent_provider_template", "claude")
-        exit_code = attach_claude(
+        agent_provider_template = getattr(bottle, "agent_provider_template", "claude")
+        exit_code = attach_agent(
             bottle,
             remote_control=False,
             resume=resume,
-            provider_template=provider_template,
+            agent_provider_template=agent_provider_template,
         )
     except BaseException:
         stdscr.refresh()
         raise
     stdscr.refresh()
-    return f"[{slug}] claude session ended (exit {exit_code})"
+    return f"[{slug}] agent session ended (exit {exit_code})"
 
 
 def _attach_in_tmux(
@@ -1067,28 +1067,28 @@ def _attach_in_tmux(
     explicit-stop hook).
 
     `focus_right_pane=True` runs `tmux select-pane` after the
-    respawn so the operator is dropped into claude immediately.
+    respawn so the operator is dropped into agent immediately.
     The Enter re-attach key passes this; passive paths (the
     auto-attach after a stop) leave it False so the operator
     stays in the dashboard pane."""
     if resume:
-        provider_template = getattr(bottle, "agent_provider_template", "claude")
+        agent_provider_template = getattr(bottle, "agent_provider_template", "claude")
         # `--continue` exits non-zero when no prior session
         # exists (agent spun up but never typed at). Wrap with a
         # shell-level fallback so the pane lands in a fresh
-        # claude instead of crashing.
-        claude_argv = _build_resume_argv_with_fallback(
-            bottle, provider_template=provider_template,
+        # agent instead of crashing.
+        agent_argv = _build_resume_argv_with_fallback(
+            bottle, agent_provider_template=agent_provider_template,
         )
     else:
-        provider_template = getattr(bottle, "agent_provider_template", "claude")
-        claude_argv = bottle.claude_argv(
-            _claude_runtime_args(
+        agent_provider_template = getattr(bottle, "agent_provider_template", "claude")
+        agent_argv = bottle.agent_argv(
+            _agent_runtime_args(
                 resume=False,
-                provider_template=provider_template,
+                agent_provider_template=agent_provider_template,
             ),
         )
-    pane_id = _ensure_right_pane(tmux_state, claude_argv)
+    pane_id = _ensure_right_pane(tmux_state, agent_argv)
     if pane_id is None:
         # tmux failed (missing binary, server died, size error).
         # One status-line failover to the curses handoff so the
@@ -1121,7 +1121,7 @@ def _attach_to_bottle(
     tmux_state: dict | None = None,
 ) -> str:
     """Re-attach to a running bottle. Inside tmux (`$TMUX` set +
-    `tmux_state` provided) the claude session opens in the
+    `tmux_state` provided) the agent session opens in the
     right pane (created on first attach, respawned on
     subsequent). Outside tmux it's a curses-endwin handoff that
     blocks until the operator exits claude. Re-attach always uses
@@ -1129,7 +1129,7 @@ def _attach_to_bottle(
     if _in_tmux() and tmux_state is not None:
         # Enter re-attach is an explicit "I want to interact with
         # this agent" signal — move tmux focus to the right pane
-        # so keypresses land in claude instead of the dashboard.
+        # so keypresses land in agent instead of the dashboard.
         return _attach_in_tmux(
             stdscr, bottle, slug,
             resume=True, tmux_state=tmux_state,
@@ -1147,7 +1147,7 @@ def _new_agent_flow(
 ) -> str:
     """Open the picker, prepare + preflight (modal), launch
     (enter the context manager but DON'T close it), then route
-    the first claude session into the right pane (in-tmux) or
+    the first agent session into the right pane (in-tmux) or
     foreground handoff (otherwise). Returns a status-line message
     for the dashboard footer. The (cm, bottle) tuple lands in
     `bottles` keyed by slug; chunk 4 uses it for explicit stop."""
@@ -1235,20 +1235,20 @@ def _new_agent_flow(
             raise
         bottles[plan.slug] = (cm, bottle, identity)
 
-        # Foreground handoff: claude owns the terminal until exit,
+        # Foreground handoff: the agent owns the terminal until exit,
         # then we restore curses.
         try:
-            provider_template = getattr(plan, "agent_provider_template", "claude")
-            exit_code = attach_claude(
+            agent_provider_template = getattr(plan, "agent_provider_template", "claude")
+            exit_code = attach_agent(
                 bottle,
                 remote_control=False,
-                provider_template=provider_template,
+                agent_provider_template=agent_provider_template,
             )
-            if provider_template == "claude":
-                capture_session_state(identity, exit_code)
+            if agent_provider_template == "claude":
+                capture_claude_session_state(identity, exit_code)
         finally:
             stdscr.refresh()
-        return f"[{plan.slug}] claude session ended (exit {exit_code})"
+        return f"[{plan.slug}] agent session ended (exit {exit_code})"
     finally:
         # stage_dir was the prepare scratch dir; after PRD 0018
         # chunk 2 it holds nothing the running bottle needs. Reap
@@ -1540,7 +1540,7 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
                     # PRD 0021 follow-up: after stop, slide focus
                     # to the next agent in the list (the one that
                     # filled the stopped row) and respawn the
-                    # right pane with its claude session. If
+                    # right pane with its agent session. If
                     # nothing's left, close the right pane.
                     pick = _pick_next_after_stop(
                         agents, selected_agent, target.slug,

@@ -369,24 +369,24 @@ class TestResumeArgvWithFallback(unittest.TestCase):
 
 
 class TestClaudeRuntimeArgs(unittest.TestCase):
-    """The argv passed to `bottle.claude_argv` on each
+    """The argv passed to `bottle.agent_argv` on each
     attach. Locked here so the tmux + foreground paths build
-    identical claude invocations."""
+    identical agent invocations."""
 
     def test_default_skip_permissions_only(self):
         self.assertEqual(
             ["--dangerously-skip-permissions"],
-            dashboard._claude_runtime_args(resume=False),
+            dashboard._agent_runtime_args(resume=False),
         )
 
     def test_resume_appends_continue(self):
         self.assertEqual(
             ["--dangerously-skip-permissions", "--continue"],
-            dashboard._claude_runtime_args(resume=True),
+            dashboard._agent_runtime_args(resume=True),
         )
 
     def test_remote_control(self):
-        args = dashboard._claude_runtime_args(
+        args = dashboard._agent_runtime_args(
             resume=False, remote_control=True,
         )
         self.assertIn("--remote-control", args)

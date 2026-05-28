@@ -130,8 +130,8 @@ class ActiveAgent:
 class Bottle(ABC):
     """Handle to a running bottle. Yielded by a backend's launch step.
 
-    `exec_claude` runs `claude` inside the bottle and blocks until the
-    session ends. `exec` runs a POSIX shell script inside the bottle
+    `exec_agent` runs the selected agent CLI inside the bottle and
+    blocks until the session ends. `exec` runs a POSIX shell script inside the bottle
     and returns the captured result. `cp_in` copies a host path into
     the bottle. `close` is an idempotent alias for context-manager
     teardown.
@@ -140,11 +140,11 @@ class Bottle(ABC):
     name: str
 
     @abstractmethod
-    def claude_argv(
+    def agent_argv(
         self, argv: list[str], *, tty: bool = True,
     ) -> list[str]:
-        """Return the host-side argv that runs `claude <argv>`
-        inside the bottle. Used by `exec_claude` for foreground
+        """Return the host-side argv that runs the selected agent
+        inside the bottle. Used by `exec_agent` for foreground
         handoffs and by the dashboard's tmux `respawn-pane` flow,
         which needs the argv up front (it spawns claude in a tmux
         pane rather than as a child of the current process).
@@ -155,7 +155,7 @@ class Bottle(ABC):
         ...
 
     @abstractmethod
-    def exec_claude(self, argv: list[str], *, tty: bool = True) -> int: ...
+    def exec_agent(self, argv: list[str], *, tty: bool = True) -> int: ...
 
     @abstractmethod
     def exec(self, script: str, *, user: str = "node") -> ExecResult:
@@ -270,7 +270,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         backend-specific terms (Docker: resolved container name; fly:
         machine id). Returns the in-container prompt path if a prompt
         was provisioned, else None — the Bottle handle uses it to
-        decide whether to add --append-system-prompt-file to claude's
+        decide whether to add provider-specific prompt args to the agent's
         argv.
 
         Default orchestration: ca → prompt → skills → git →
@@ -305,7 +305,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         """Copy the prompt file into the running bottle. Returns the
         in-container path iff the agent has a non-empty prompt;
         callers use the return value to decide whether to add
-        --append-system-prompt-file to claude's argv."""
+        provider-specific prompt args to the agent's argv."""
 
     @abstractmethod
     def provision_skills(self, plan: PlanT, target: str) -> None:

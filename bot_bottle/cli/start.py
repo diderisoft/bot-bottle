@@ -4,7 +4,7 @@ session ends.
 
 The launch core is shared with `cli.py resume <identity>` and (PRD
 0020 chunk 1+) the dashboard's in-process start flow: see the
-public helpers `prepare_with_preflight`, `attach_claude`, and the
+public helpers `prepare_with_preflight`, `attach_agent`, and the
 private orchestrator `_launch_bottle`.
 """
 
@@ -113,12 +113,13 @@ def prepare_with_preflight(
     return plan, identity
 
 
-def attach_claude(
+def attach_agent(
     bottle: Bottle, *, remote_control: bool = False, resume: bool = False,
-    provider_template: str = "claude",
+    agent_provider_template: str = "claude",
 ) -> int:
-    """Run claude inside `bottle` as an interactive session. Blocks
-    until the session ends; returns the claude process's exit code.
+    """Run the selected provider CLI inside `bottle` as an
+    interactive session. Blocks until the session ends; returns the
+    agent process's exit code.
 
     `resume=True` adds `--continue` so claude picks up its most
     recent session non-interactively (no session-picker prompt) —
@@ -130,25 +131,28 @@ def attach_claude(
     Used as the inner step of `./cli.py start` (one-shot) and by the
     dashboard, which calls it from inside a `curses.endwin → … →
     stdscr.refresh()` handoff so the curses surface gets out of the
-    terminal's way while claude has it."""
-    runtime = runtime_for(provider_template)
+    terminal's way while the agent has it."""
+    runtime = runtime_for(agent_provider_template)
     info(
-        f"attaching interactive {provider_template} session "
+        f"attaching interactive {agent_provider_template} session "
         "(Ctrl-D or 'exit' to leave; container will be removed)"
     )
-    claude_args = list(runtime.bypass_args)
+    agent_args = list(runtime.bypass_args)
     if remote_control:
-        claude_args.extend(runtime.remote_control_args)
+        agent_args.extend(runtime.remote_control_args)
     if resume:
-        claude_args.extend(runtime.resume_args)
-    return bottle.exec_claude(claude_args, tty=True)
+        agent_args.extend(runtime.resume_args)
+    return bottle.exec_agent(agent_args, tty=True)
 
 
-def capture_session_state(identity: str, exit_code: int) -> None:
+def capture_claude_session_state(identity: str, exit_code: int) -> None:
     """Inside the launch context, while the container is still
     alive: snapshot the transcript and mark for preservation if
     claude crashed. Public for the dashboard's death-handling path
     (PRD 0020 open question 3)."""
+    # FIXME: this captures Claude-specific session state. A follow-up
+    # spike should explore freezing provider-neutral container state
+    # instead of relying on each agent's transcript layout.
     if not identity:
         return
     snapshot_transcript(identity)
@@ -218,11 +222,11 @@ def _launch_bottle(
 
         backend = get_bottle_backend(backend_name)
         with backend.launch(plan) as bottle:
-            provider_template = getattr(plan, "agent_provider_template", "claude")
-            exit_code = attach_claude(
+            agent_provider_template = getattr(plan, "agent_provider_template", "claude")
+            exit_code = attach_agent(
                 bottle,
                 remote_control=remote_control,
-                provider_template=provider_template,
+                agent_provider_template=agent_provider_template,
             )
             info(
                 f"session ended (exit {exit_code}); "
@@ -236,8 +240,8 @@ def _launch_bottle(
             # way. snapshot_transcript is best-effort so the
             # capability-block path's prior snapshot isn't clobbered
             # when the container is already gone.
-            if provider_template == "claude":
-                capture_session_state(identity, exit_code)
+            if agent_provider_template == "claude":
+                capture_claude_session_state(identity, exit_code)
         return 0
     finally:
         # PRD 0018 chunk 2: prepare now writes the bottle's bind-mount

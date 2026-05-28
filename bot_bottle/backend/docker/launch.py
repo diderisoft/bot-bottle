@@ -23,7 +23,7 @@ The flow is:
      entries inherit without rendering values into the file).
   8. Provision (CA install, prompt copy, skills, git, supervise
      config) — unchanged, uses `docker exec`.
-  9. Yield a DockerBottle handle. `exec_claude` runs claude via
+  9. Yield a DockerBottle handle. `exec_agent` runs claude via
      `docker exec -it` exactly like the pre-compose world.
 
 Teardown (ExitStack callbacks fire in reverse):
@@ -204,7 +204,7 @@ def launch(
         # the agent container by its known name.
         prompt_path = provision(plan, plan.container_name)
 
-        # Step 9: yield. exec_claude continues to use `docker exec -it`
+        # Step 9: yield. exec_agent continues to use `docker exec -it`
         # — the agent runs `sleep infinity` per the renderer's
         # service spec.
         yield DockerBottle(

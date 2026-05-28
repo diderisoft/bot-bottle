@@ -478,7 +478,7 @@ class EgressConfig:
 
     @classmethod
     def from_dict(
-        cls, bottle_name: str, raw: object, *, provider_template: str = "claude",
+        cls, bottle_name: str, raw: object, *, agent_provider_template: str = "claude",
     ) -> "EgressConfig":
         d = _as_json_object(raw, f"bottle '{bottle_name}' egress")
         routes_raw = d.get("routes")
@@ -495,7 +495,7 @@ class EgressConfig:
                 for i, entry in enumerate(routes_list)
             )
             _validate_egress_routes(
-                bottle_name, routes, provider_template=provider_template,
+                bottle_name, routes, agent_provider_template=agent_provider_template,
             )
         for k in d:
             if k != "routes":
@@ -589,7 +589,7 @@ class Bottle:
         egress = (
             EgressConfig.from_dict(
                 name, d["egress"],
-                provider_template=agent_provider.template,
+                agent_provider_template=agent_provider.template,
             )
             if "egress" in d
             else EgressConfig()
@@ -887,7 +887,7 @@ def _validate_egress_routes(
     bottle_name: str,
     routes: tuple[EgressRoute, ...],
     *,
-    provider_template: str = "claude",
+    agent_provider_template: str = "claude",
 ) -> None:
     """Cross-validation for `bottle.egress.routes`:
 
@@ -919,14 +919,14 @@ def _validate_egress_routes(
                 f"routes with role {role!r} (hosts: {hosts}); this role drives a "
                 f"single launch-step side effect — pick one."
             )
-    allowed_roles = PROVIDER_EGRESS_ROLES[provider_template]
+    allowed_roles = PROVIDER_EGRESS_ROLES[agent_provider_template]
     for route in routes:
         for role in route.Role:
             if role not in allowed_roles:
                 die(
                     f"bottle '{bottle_name}' egress route for host "
                     f"{route.Host!r} has role {role!r}, but provider "
-                    f"{provider_template!r} only accepts roles "
+                    f"{agent_provider_template!r} only accepts roles "
                     f"{', '.join(sorted(allowed_roles)) or '(none)'}"
                 )
 
@@ -1141,7 +1141,7 @@ def _merge_bottles(
     )
     _validate_egress_routes(
         name, merged_egress.routes,
-        provider_template=merged_agent_provider.template,
+        agent_provider_template=merged_agent_provider.template,
     )
 
     return Bottle(

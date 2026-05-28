@@ -1,15 +1,15 @@
 """SmolmachinesBottle — running-instance handle (PRD 0023 chunk 2d).
 
-Routes `exec_claude` / `exec` / `cp_in` through `smolvm machine
+Routes `exec_agent` / `exec` / `cp_in` through `smolvm machine
 exec` / `smolvm machine cp`. The handle is yielded by `launch`
 and torn down via the surrounding ExitStack on context exit;
 `close` is a no-op idempotent alias so the BottleBackend ABC's
 context-manager contract is satisfied.
 
 User context: `smolvm machine exec` runs commands as root in the
-VM, but the agent image's USER is `node` and claude-code refuses
-to run as root with `--dangerously-skip-permissions`. Both
-`exec_claude` and `exec` switch to the requested user (default
+VM, but the agent image's USER is `node` and agent CLIs may refuse
+to run as root in bypass modes. Both
+`exec_agent` and `exec` switch to the requested user (default
 `node`) via `runuser -u <user> --` and set `HOME` / `USER`
 through `smolvm -e` — avoiding `runuser -l`'s login-shell wiring
 (PAM session setup, /etc/profile sourcing) which can hang on a
@@ -21,7 +21,7 @@ import subprocess
 import sys
 from typing import Mapping
 
-from ...agent_provider import prompt_args
+from ...agent_provider import PromptMode, prompt_args
 from .. import Bottle, ExecResult
 from . import pty_resize as _pty_resize
 from . import smolvm as _smolvm
@@ -34,8 +34,8 @@ from . import smolvm as _smolvm
 _PTY_RESIZE_SCRIPT = _pty_resize.__file__
 
 
-# Per-user env the agent image's USER (node) expects. claude
-# reads ~/.claude.json + writes session state under ~/.claude/;
+# Per-user env the agent image's USER (node) expects. Some providers
+# write session state under the user's home directory;
 # bare `runuser -u` inherits root's HOME=/root, which claude
 # can't write to. Set HOME / USER explicitly through smolvm -e
 # so the child process sees them.
@@ -74,7 +74,7 @@ class SmolmachinesBottle(Bottle):
         prompt_path: str | None = None,
         guest_env: Mapping[str, str] | None = None,
         agent_command: str = "claude",
-        agent_prompt_mode: str = "claude_append_file",
+        agent_prompt_mode: PromptMode = "append_file",
     ) -> None:
         self.name = machine_name
         # In-VM path to the agent's prompt file. None when the
@@ -86,14 +86,13 @@ class SmolmachinesBottle(Bottle):
         # Forwarded on every `smolvm machine exec` via `-e K=V`
         # because exec doesn't inherit from machine_create's env.
         self._guest_env = dict(guest_env or {})
-        self._agent_command = agent_command
         self._agent_prompt_mode = agent_prompt_mode
         self.agent_command = agent_command
         self.agent_provider_template = (
             "codex" if agent_command == "codex" else "claude"
         )
 
-    def claude_argv(
+    def agent_argv(
         self, argv: list[str], *, tty: bool = True,
     ) -> list[str]:
         flags = ["smolvm", "machine", "exec", "--name", self.name]
@@ -101,17 +100,17 @@ class SmolmachinesBottle(Bottle):
             flags += ["-i", "-t"]
         flags += _env_flags_for("node")
         flags += _guest_env_flags(self._guest_env)
-        claude_tail = [self._agent_command]
+        agent_tail = [self.agent_command]
         provider_prompt_args = prompt_args(
             self._agent_prompt_mode, self._prompt_path, argv=argv,
         )
-        if self._agent_prompt_mode == "codex_read_prompt_file":
-            claude_tail += argv
-            claude_tail += provider_prompt_args
+        if self._agent_prompt_mode == "read_prompt_file":
+            agent_tail += argv
+            agent_tail += provider_prompt_args
         else:
-            claude_tail += provider_prompt_args
-            claude_tail += argv
-        flags += ["--", "runuser", "-u", "node", "--", *claude_tail]
+            agent_tail += provider_prompt_args
+            agent_tail += argv
+        flags += ["--", "runuser", "-u", "node", "--", *agent_tail]
         if not tty:
             # No PTY allocated — no SIGWINCH to forward, no resize
             # bridge needed. Skip the wrapper so non-interactive
@@ -123,10 +122,10 @@ class SmolmachinesBottle(Bottle):
             self.name, "--", *flags,
         ]
 
-    def exec_claude(self, argv: list[str], *, tty: bool = True) -> int:
-        """Run `claude` interactively inside the VM as the `node`
+    def exec_agent(self, argv: list[str], *, tty: bool = True) -> int:
+        """Run the selected agent interactively inside the VM as the `node`
         user. Inherits the operator's terminal (stdin / stdout /
-        stderr) so the session feels native. Blocks until claude
+        stderr) so the session feels native. Blocks until the agent
         exits; returns the in-VM exit code.
 
         We bypass the captured-output `machine_exec` helper here
@@ -138,7 +137,7 @@ class SmolmachinesBottle(Bottle):
         avoid login-shell wiring. HOME / USER come from `smolvm
         -e` instead, which sets them on the process env."""
         return subprocess.run(
-            self.claude_argv(argv, tty=tty), check=False,
+            self.agent_argv(argv, tty=tty), check=False,
         ).returncode
 
     def exec(self, script: str, *, user: str = "node") -> ExecResult:

@@ -12,6 +12,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from ...agent_provider import PromptMode
 from ...egress import EgressPlan
 from ...git_gate import GitGatePlan
 from ...log import info
@@ -93,7 +94,7 @@ class SmolmachinesBottlePlan(BottlePlan):
     agent_git_gate_host: str = ""
     agent_supervise_url: str = ""
     agent_command: str = "claude"
-    agent_prompt_mode: str = "claude_append_file"
+    agent_prompt_mode: PromptMode = "append_file"
     agent_provider_template: str = "claude"
     agent_dockerfile_path: str = ""
 

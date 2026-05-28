@@ -5,7 +5,7 @@ from __future__ import annotations
 import subprocess
 from typing import Callable
 
-from ...agent_provider import prompt_args
+from ...agent_provider import PromptMode, prompt_args
 from .. import Bottle, ExecResult
 
 
@@ -19,12 +19,11 @@ class DockerBottle(Bottle):
         prompt_path_in_container: str | None,
         *,
         agent_command: str = "claude",
-        agent_prompt_mode: str = "claude_append_file",
+        agent_prompt_mode: PromptMode = "append_file",
     ):
         self.name = container
         self._teardown = teardown
         self._prompt_path = prompt_path_in_container
-        self._agent_command = agent_command
         self._agent_prompt_mode = agent_prompt_mode
         self.agent_command = agent_command
         self.agent_provider_template = (
@@ -32,7 +31,7 @@ class DockerBottle(Bottle):
         )
         self._closed = False
 
-    def claude_argv(
+    def agent_argv(
         self, argv: list[str], *, tty: bool = True,
     ) -> list[str]:
         full_argv = list(argv)
@@ -42,12 +41,12 @@ class DockerBottle(Bottle):
         cmd = ["docker", "exec"]
         if tty:
             cmd.append("-it")
-        cmd.extend([self.name, self._agent_command, *full_argv])
+        cmd.extend([self.name, self.agent_command, *full_argv])
         return cmd
 
-    def exec_claude(self, argv: list[str], *, tty: bool = True) -> int:
+    def exec_agent(self, argv: list[str], *, tty: bool = True) -> int:
         return subprocess.run(
-            self.claude_argv(argv, tty=tty), check=False,
+            self.agent_argv(argv, tty=tty), check=False,
         ).returncode
 
     def exec(self, script: str, *, user: str = "node") -> ExecResult:

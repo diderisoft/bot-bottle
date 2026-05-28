@@ -1,7 +1,7 @@
 """Unit: cli/start.py session-end state capture (crash preservation).
 
 The launch-context machinery is covered by integration; this isolates
-the post-exec_claude decision: snapshot transcript + mark for
+the post-exec_agent decision: snapshot transcript + mark for
 preservation if non-zero exit, no-op for clean exit."""
 
 import tempfile
@@ -45,25 +45,25 @@ class TestCaptureSessionState(_FakeHomeMixin, unittest.TestCase):
         self._teardown_fake_home()
 
     def test_clean_exit_snapshots_but_does_not_mark(self):
-        start_mod.capture_session_state("dev-abc", exit_code=0)
+        start_mod.capture_claude_session_state("dev-abc", exit_code=0)
         self.assertEqual(["dev-abc"], self._snap_calls)
         self.assertFalse(bottle_state.is_preserved("dev-abc"))
 
     def test_crash_snapshots_and_marks(self):
-        start_mod.capture_session_state("dev-abc", exit_code=137)
+        start_mod.capture_claude_session_state("dev-abc", exit_code=137)
         self.assertEqual(["dev-abc"], self._snap_calls)
         self.assertTrue(bottle_state.is_preserved("dev-abc"))
 
     def test_ctrl_c_treated_as_crash(self):
         # SIGINT delivers exit 130; the operator may have Ctrl-C'd
         # because something went wrong, so we preserve.
-        start_mod.capture_session_state("dev-abc", exit_code=130)
+        start_mod.capture_claude_session_state("dev-abc", exit_code=130)
         self.assertTrue(bottle_state.is_preserved("dev-abc"))
 
     def test_empty_identity_is_noop(self):
         # Backends without an identity field shouldn't crash this
         # path (the _identity_from_plan helper falls back to "").
-        start_mod.capture_session_state("", exit_code=137)
+        start_mod.capture_claude_session_state("", exit_code=137)
         self.assertEqual([], self._snap_calls)
 
 
