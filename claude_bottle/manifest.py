@@ -526,29 +526,6 @@ class Bottle:
         if git_raw is not None:
             git, git_user = _parse_git_config(name, git_raw)
 
-        if "tokens" in d:
-            die(
-                f"bottle '{name}' has a 'tokens' field. The shape was reworked: "
-                f"each route now lives under 'egress.routes' with explicit "
-                f"host / path_allowlist / auth. See docs/prds/0017-egress-via-mitmproxy.md."
-            )
-
-        if "cred_proxy" in d:
-            die(
-                f"bottle '{name}' has a 'cred_proxy' field, which has been removed "
-                f"(PRD 0017). Rename to 'egress' and migrate each route:\n"
-                f"  - 'path' + 'upstream' (cred-proxy URL prefix + upstream URL)\n"
-                f"    → 'host' (just the upstream hostname)\n"
-                f"  - 'auth_scheme' + 'token_ref' (flat)\n"
-                f"    → 'auth: {{ scheme, token_ref }}' (nested, optional)\n"
-                f"  - 'role' (provisioner dotfile rewrites): drop — egress "
-                f"is on the agent's HTTP_PROXY path, so dotfile rewrites are no "
-                f"longer needed.\n"
-                f"  - 'path_allowlist' (new): optional URL prefix gate for the "
-                f"host.\n"
-                f"See docs/prds/0017-egress-via-mitmproxy.md."
-            )
-
         egress = (
             EgressConfig.from_dict(name, d["egress"])
             if "egress" in d
