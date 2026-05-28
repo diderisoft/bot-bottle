@@ -148,6 +148,7 @@ def _plan(
             upstream_port="22",
             identity_file="/etc/hostname",
             known_host_key="",
+            known_hosts_file=STATE / "git-gate" / "upstream-known_hosts",
             extra_hosts={"example.com": "10.0.0.1"},
         ),)
     routes: tuple[EgressRoute, ...] = ()
@@ -408,6 +409,7 @@ class TestSidecarBundleShape(unittest.TestCase):
         self.assertIn("/etc/pipelock.yaml", targets)
         self.assertIn("/etc/egress/routes.yaml", targets)
         self.assertIn("/git-gate-entrypoint.sh", targets)
+        self.assertIn("/git-gate/creds/upstream-known_hosts", targets)
         # supervise queue dir target = QUEUE_DIR_IN_CONTAINER
         self.assertTrue(any("supervise/queue" in t or t.startswith("/run/supervise")
                             for t in targets))

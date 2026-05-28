@@ -71,6 +71,7 @@ class GitGateUpstream:
     upstream_port: str
     identity_file: str
     known_host_key: str
+    known_hosts_file: Path = Path()
     extra_hosts: Mapping[str, str] = field(default_factory=_empty_str_map)
 
 
@@ -408,10 +409,33 @@ class GitGate(ABC):
         # not via `sh`, so the script needs the x bit. docker cp
         # preserves source mode into the container.
         access_hook.chmod(0o700)
+        upstreams_with_files: list[GitGateUpstream] = []
+        for u in upstreams:
+            known_hosts_file = Path()
+            if u.known_host_key:
+                known_hosts_file = stage_dir / f"{u.name}-known_hosts"
+                known_hosts_file.write_text(
+                    git_gate_known_hosts_line(
+                        u.upstream_host, u.upstream_port, u.known_host_key,
+                    )
+                )
+                known_hosts_file.chmod(0o600)
+            upstreams_with_files.append(
+                GitGateUpstream(
+                    name=u.name,
+                    upstream_url=u.upstream_url,
+                    upstream_host=u.upstream_host,
+                    upstream_port=u.upstream_port,
+                    identity_file=u.identity_file,
+                    known_host_key=u.known_host_key,
+                    known_hosts_file=known_hosts_file,
+                    extra_hosts=dict(u.extra_hosts),
+                )
+            )
         return GitGatePlan(
             slug=slug,
             entrypoint_script=entrypoint,
             hook_script=hook,
             access_hook_script=access_hook,
-            upstreams=upstreams,
+            upstreams=tuple(upstreams_with_files),
         )

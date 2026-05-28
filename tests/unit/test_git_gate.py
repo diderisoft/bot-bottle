@@ -257,6 +257,35 @@ class TestPrepare(unittest.TestCase):
         self.assertEqual("", plan.internal_network)
         self.assertEqual("", plan.egress_network)
 
+    def test_prepare_writes_known_hosts_file(self):
+        plan = _StubGate().prepare(
+            fixture_with_git().bottles["dev"], "demo", self.stage
+        )
+        upstream = plan.upstreams[0]
+        self.assertEqual(self.stage / "bot-bottle-known_hosts",
+                         upstream.known_hosts_file)
+        self.assertEqual(
+            "[gitea.dideric.is]:30009 ssh-ed25519 AAAA...\n",
+            upstream.known_hosts_file.read_text(),
+        )
+        self.assertEqual(0o600, os.stat(upstream.known_hosts_file).st_mode & 0o777)
+
+    def test_prepare_skips_known_hosts_file_when_key_missing(self):
+        manifest = Manifest.from_json_obj({
+            "bottles": {"dev": {"git": {"remotes": {
+                "github.com": {
+                    "Name": "foo",
+                    "Upstream": "ssh://git@github.com/didericis/foo.git",
+                    "IdentityFile": "/dev/null",
+                },
+            }}}},
+            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        })
+        plan = _StubGate().prepare(
+            manifest.bottles["dev"], "demo", self.stage
+        )
+        self.assertEqual(Path(), plan.upstreams[0].known_hosts_file)
+
     def test_prepare_with_no_git_writes_minimal_script(self):
         plan = _StubGate().prepare(
             fixture_minimal().bottles["dev"], "demo", self.stage

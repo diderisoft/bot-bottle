@@ -366,6 +366,12 @@ def _bundle_launch_spec(
                 f"{GIT_GATE_CREDS_DIR_IN_CONTAINER}/{u.name}-key",
                 True,
             ))
+            if u.known_hosts_file:
+                volumes.append((
+                    str(u.known_hosts_file),
+                    f"{GIT_GATE_CREDS_DIR_IN_CONTAINER}/{u.name}-known_hosts",
+                    True,
+                ))
 
     # --- supervise --------------------------------------------
     sp = plan.supervise_plan

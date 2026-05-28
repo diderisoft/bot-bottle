@@ -212,6 +212,11 @@ def _sidecar_bundle_service(plan: DockerBottlePlan) -> dict[str, Any]:
                 keypath,
                 f"{GIT_GATE_CREDS_DIR_IN_CONTAINER}/{u.name}-key",
             ))
+            if u.known_hosts_file:
+                volumes.append(_bind(
+                    u.known_hosts_file,
+                    f"{GIT_GATE_CREDS_DIR_IN_CONTAINER}/{u.name}-known_hosts",
+                ))
         extra_map = git_gate_aggregate_extra_hosts(gp.upstreams)
         extra_hosts = [f"{host}:{ip}" for host, ip in sorted(extra_map.items())]
 
