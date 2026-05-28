@@ -1,7 +1,7 @@
 """Git provisioning inside a running smolmachines bottle
 (PRD 0023 chunk 4d).
 
-Two concerns, both about git in the agent:
+Three concerns, all about git in the agent:
 
   1. If --cwd was passed AND the host cwd has a .git, copy that
      .git into /home/node/workspace/.git so the agent operates on
@@ -11,6 +11,9 @@ Two concerns, both about git in the agent:
      against a declared upstream transparently hits the per-bottle
      git-gate. The gate mirrors the upstream in both directions,
      so URL rewriting is symmetric.
+  3. If the bottle declares `git_user` (issue #86), set
+     `git config --global user.{name,email}` inside the guest so
+     the agent's commits are attributed to that identity.
 
 Differs from `backend.docker.provision.git` in one address detail:
 the TSI-allowlisted guest can only reach the bundle's pinned IP
@@ -44,10 +47,11 @@ def _guest_home() -> str:
 
 
 def provision_git(plan: SmolmachinesBottlePlan, target: str) -> None:
-    """Set up git inside the guest. Runs both subcases; each
+    """Set up git inside the guest. Runs all three subcases; each
     no-ops when its condition isn't met."""
     _provision_cwd_git(plan, target)
     _provision_git_gate_config(plan, target)
+    _provision_git_user(plan, target)
 
 
 def _provision_cwd_git(plan: SmolmachinesBottlePlan, target: str) -> None:
@@ -101,3 +105,37 @@ def _provision_git_gate_config(plan: SmolmachinesBottlePlan, target: str) -> Non
     _smolvm.machine_cp(str(config_file), f"{target}:{guest_gitconfig}")
     _smolvm.machine_exec(target, ["chown", "node:node", guest_gitconfig])
     _smolvm.machine_exec(target, ["chmod", "644", guest_gitconfig])
+
+
+def _provision_git_user(
+    plan: SmolmachinesBottlePlan, target: str,
+) -> None:
+    """Apply `git config --global user.{name,email}` inside the
+    guest as the node user so --global lands in the same
+    `/home/node/.gitconfig` that `_provision_git_gate_config`
+    writes to. No-op when the bottle didn't declare `git_user`.
+
+    Runs via `runuser -u node --`; HOME is forced via smolvm's
+    `-e` flag because runuser (without -l) inherits root's
+    HOME=/root, which would put --global in the wrong file."""
+    bottle = plan.spec.manifest.bottle_for(plan.spec.agent_name)
+    gu = bottle.git_user
+    if gu.is_empty():
+        return
+    env = {"HOME": _guest_home(), "USER": "node"}
+    if gu.name:
+        info(f"git config --global user.name = {gu.name!r}")
+        _smolvm.machine_exec(
+            target,
+            ["runuser", "-u", "node", "--",
+             "git", "config", "--global", "user.name", gu.name],
+            env=env,
+        )
+    if gu.email:
+        info(f"git config --global user.email = {gu.email!r}")
+        _smolvm.machine_exec(
+            target,
+            ["runuser", "-u", "node", "--",
+             "git", "config", "--global", "user.email", gu.email],
+            env=env,
+        )

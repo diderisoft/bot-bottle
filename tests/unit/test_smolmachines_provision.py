@@ -36,6 +36,7 @@ def _plan(
     agent_prompt: str = "",
     skills: list[str] | None = None,
     git: list[GitEntry] = (),
+    git_user: dict | None = None,
     copy_cwd: bool = False,
     user_cwd: str = "/tmp/x",
     stage_dir: Path | None = None,
@@ -57,6 +58,8 @@ def _plan(
             }
             for g in git
         ]
+    if git_user is not None:
+        bottle_json["git_user"] = git_user
     if supervise:
         bottle_json["supervise"] = True
     manifest = Manifest.from_json_obj({
@@ -465,6 +468,75 @@ class TestProvisionGit(unittest.TestCase):
         self.assertIn(
             "\tinsteadOf = ssh://git@host/repo.git", content,
         )
+
+
+class TestProvisionGitUser(unittest.TestCase):
+    """`_provision_git_user` runs `git config --global` inside the
+    guest as the node user with HOME forced via `smolvm -e`
+    (otherwise --global lands in /root/.gitconfig). No-op when the
+    bottle didn't declare git_user (issue #86)."""
+
+    def _git_config_calls(self, mock_exec):
+        """Filter machine_exec calls down to git-config invocations,
+        return list of (argv, env-dict) tuples."""
+        out = []
+        for c in mock_exec.call_args_list:
+            argv = c.args[1] if len(c.args) > 1 else c.kwargs.get("argv", [])
+            if "git" in argv and "config" in argv:
+                out.append((argv, c.kwargs.get("env") or {}))
+        return out
+
+    def test_noop_when_no_git_user(self):
+        with patch(
+            "claude_bottle.backend.smolmachines.provision.git._smolvm.machine_exec"
+        ) as ex:
+            _git._provision_git_user(_plan(), "claude-bottle-demo-abc12")
+        self.assertEqual([], self._git_config_calls(ex))
+
+    def test_sets_name_and_email_as_node(self):
+        plan = _plan(git_user={
+            "name": "Eric Bauerfeld",
+            "email": "eric@dideric.is",
+        })
+        with patch(
+            "claude_bottle.backend.smolmachines.provision.git._smolvm.machine_exec"
+        ) as ex:
+            _git._provision_git_user(plan, "claude-bottle-demo-abc12")
+        calls = self._git_config_calls(ex)
+        self.assertEqual(2, len(calls))
+        # Both go through `runuser -u node --` so they run as node;
+        # HOME is forced via smolvm -e so --global writes to
+        # /home/node/.gitconfig and not /root/.gitconfig.
+        for argv, env in calls:
+            self.assertEqual(
+                ["runuser", "-u", "node", "--",
+                 "git", "config", "--global"],
+                argv[:7],
+            )
+            self.assertEqual("/home/node", env.get("HOME"))
+            self.assertEqual("node", env.get("USER"))
+        self.assertEqual(["user.name", "Eric Bauerfeld"], calls[0][0][7:])
+        self.assertEqual(["user.email", "eric@dideric.is"], calls[1][0][7:])
+
+    def test_name_only(self):
+        plan = _plan(git_user={"name": "Bot"})
+        with patch(
+            "claude_bottle.backend.smolmachines.provision.git._smolvm.machine_exec"
+        ) as ex:
+            _git._provision_git_user(plan, "claude-bottle-demo-abc12")
+        calls = self._git_config_calls(ex)
+        self.assertEqual(1, len(calls))
+        self.assertEqual(["user.name", "Bot"], calls[0][0][7:])
+
+    def test_email_only(self):
+        plan = _plan(git_user={"email": "bot@example.com"})
+        with patch(
+            "claude_bottle.backend.smolmachines.provision.git._smolvm.machine_exec"
+        ) as ex:
+            _git._provision_git_user(plan, "claude-bottle-demo-abc12")
+        calls = self._git_config_calls(ex)
+        self.assertEqual(1, len(calls))
+        self.assertEqual(["user.email", "bot@example.com"], calls[0][0][7:])
 
 
 class TestProvisionSupervise(unittest.TestCase):
