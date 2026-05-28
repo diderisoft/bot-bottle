@@ -2,8 +2,8 @@
 
 import unittest
 
-from claude_bottle.log import Die
-from claude_bottle.manifest import Manifest
+from bot_bottle.log import Die
+from bot_bottle.manifest import Manifest
 
 
 def _manifest(git_entries):
@@ -31,18 +31,18 @@ def _host_for(entry):
 class TestGitEntryParsing(unittest.TestCase):
     def test_parses_minimal_entry(self):
         m = Manifest.from_json_obj(_manifest([{
-            "Name": "claude-bottle",
-            "Upstream": "ssh://git@gitea.dideric.is:30009/didericis/claude-bottle.git",
+            "Name": "bot-bottle",
+            "Upstream": "ssh://git@gitea.dideric.is:30009/didericis/bot-bottle.git",
             "IdentityFile": "/dev/null",
         }]))
         entries = m.bottles["dev"].git
         self.assertEqual(1, len(entries))
         e = entries[0]
-        self.assertEqual("claude-bottle", e.Name)
+        self.assertEqual("bot-bottle", e.Name)
         self.assertEqual("git", e.UpstreamUser)
         self.assertEqual("gitea.dideric.is", e.UpstreamHost)
         self.assertEqual("30009", e.UpstreamPort)
-        self.assertEqual("didericis/claude-bottle.git", e.UpstreamPath)
+        self.assertEqual("didericis/bot-bottle.git", e.UpstreamPath)
 
     def test_default_port_is_22(self):
         m = Manifest.from_json_obj(_manifest([{
@@ -137,8 +137,8 @@ class TestGitEntryExtraHosts(unittest.TestCase):
 
     def test_extra_hosts_parses_host_to_ip_map(self):
         m = Manifest.from_json_obj(_manifest([{
-            "Name": "claude-bottle",
-            "Upstream": "ssh://git@gitea.dideric.is:30009/didericis/claude-bottle.git",
+            "Name": "bot-bottle",
+            "Upstream": "ssh://git@gitea.dideric.is:30009/didericis/bot-bottle.git",
             "IdentityFile": "/dev/null",
             "ExtraHosts": {"gitea.dideric.is": "192.0.2.10"},
         }]))

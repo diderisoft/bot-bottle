@@ -12,23 +12,23 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from claude_bottle.backend import BottleSpec
-from claude_bottle.backend.smolmachines.bottle_plan import (
+from bot_bottle.backend import BottleSpec
+from bot_bottle.backend.smolmachines.bottle_plan import (
     SmolmachinesBottlePlan,
 )
-from claude_bottle.backend.smolmachines.provision import (
+from bot_bottle.backend.smolmachines.provision import (
     ca as _ca,
     git as _git,
     prompt as _prompt,
     skills as _skills,
     supervise as _supervise,
 )
-from claude_bottle.backend.smolmachines.smolvm import SmolvmRunResult
-from claude_bottle.egress import EgressPlan, EgressRoute
-from claude_bottle.git_gate import GitGatePlan
-from claude_bottle.manifest import GitEntry, Manifest
-from claude_bottle.pipelock import PipelockProxyPlan
-from claude_bottle.supervise import SupervisePlan
+from bot_bottle.backend.smolmachines.smolvm import SmolvmRunResult
+from bot_bottle.egress import EgressPlan, EgressRoute
+from bot_bottle.git_gate import GitGatePlan
+from bot_bottle.manifest import GitEntry, Manifest
+from bot_bottle.pipelock import PipelockProxyPlan
+from bot_bottle.supervise import SupervisePlan
 
 
 def _remote_host(g: GitEntry) -> str:
@@ -101,8 +101,8 @@ def _plan(
         bundle_subnet="192.168.50.0/24",
         bundle_gateway="192.168.50.1",
         bundle_ip=bundle_ip,
-        machine_name="claude-bottle-demo-abc12",
-        agent_image_ref="claude-bottle:latest",
+        machine_name="bot-bottle-demo-abc12",
+        agent_image_ref="bot-bottle-claude:latest",
         guest_env={},
         prompt_file=Path("/tmp/state/demo-abc12/agent/prompt.txt"),
         proxy_plan=PipelockProxyPlan(
@@ -133,37 +133,37 @@ def _plan(
 class TestProvisionPrompt(unittest.TestCase):
     def test_cp_uses_smolvm_machine_cp_with_machine_path_syntax(self):
         with patch(
-            "claude_bottle.backend.smolmachines.provision.prompt._smolvm.machine_cp"
+            "bot_bottle.backend.smolmachines.provision.prompt._smolvm.machine_cp"
         ) as cp, patch(
-            "claude_bottle.backend.smolmachines.provision.prompt._smolvm.machine_exec"
+            "bot_bottle.backend.smolmachines.provision.prompt._smolvm.machine_exec"
         ):
-            _prompt.provision_prompt(_plan(), "claude-bottle-demo-abc12")
+            _prompt.provision_prompt(_plan(), "bot-bottle-demo-abc12")
         cp.assert_called_once_with(
             "/tmp/state/demo-abc12/agent/prompt.txt",
-            "claude-bottle-demo-abc12:/home/node/.claude-bottle-prompt.txt",
+            "bot-bottle-demo-abc12:/home/node/.bot-bottle-prompt.txt",
         )
 
     def test_returns_path_when_agent_has_prompt(self):
         with patch(
-            "claude_bottle.backend.smolmachines.provision.prompt._smolvm.machine_cp"
+            "bot_bottle.backend.smolmachines.provision.prompt._smolvm.machine_cp"
         ), patch(
-            "claude_bottle.backend.smolmachines.provision.prompt._smolvm.machine_exec"
+            "bot_bottle.backend.smolmachines.provision.prompt._smolvm.machine_exec"
         ):
             r = _prompt.provision_prompt(
                 _plan(agent_prompt="You are a helpful assistant."),
-                "claude-bottle-demo-abc12",
+                "bot-bottle-demo-abc12",
             )
-        self.assertEqual("/home/node/.claude-bottle-prompt.txt", r)
+        self.assertEqual("/home/node/.bot-bottle-prompt.txt", r)
 
     def test_returns_none_when_agent_has_no_prompt(self):
         # The file is still copied (path-must-exist contract);
         # only the return value differs.
         with patch(
-            "claude_bottle.backend.smolmachines.provision.prompt._smolvm.machine_cp"
+            "bot_bottle.backend.smolmachines.provision.prompt._smolvm.machine_cp"
         ) as cp, patch(
-            "claude_bottle.backend.smolmachines.provision.prompt._smolvm.machine_exec"
+            "bot_bottle.backend.smolmachines.provision.prompt._smolvm.machine_exec"
         ):
-            r = _prompt.provision_prompt(_plan(agent_prompt=""), "claude-bottle-demo-abc12")
+            r = _prompt.provision_prompt(_plan(agent_prompt=""), "bot-bottle-demo-abc12")
         self.assertIsNone(r)
         cp.assert_called_once()
 
@@ -171,18 +171,18 @@ class TestProvisionPrompt(unittest.TestCase):
         # machine cp lands as root; without the chown, the node user
         # can't read its own mode-600 prompt.
         with patch(
-            "claude_bottle.backend.smolmachines.provision.prompt._smolvm.machine_cp"
+            "bot_bottle.backend.smolmachines.provision.prompt._smolvm.machine_cp"
         ), patch(
-            "claude_bottle.backend.smolmachines.provision.prompt._smolvm.machine_exec"
+            "bot_bottle.backend.smolmachines.provision.prompt._smolvm.machine_exec"
         ) as ex:
-            _prompt.provision_prompt(_plan(), "claude-bottle-demo-abc12")
+            _prompt.provision_prompt(_plan(), "bot-bottle-demo-abc12")
         argv_seen = [call.args[1] for call in ex.call_args_list]
         self.assertIn(
-            ["chown", "node:node", "/home/node/.claude-bottle-prompt.txt"],
+            ["chown", "node:node", "/home/node/.bot-bottle-prompt.txt"],
             argv_seen,
         )
         self.assertIn(
-            ["chmod", "600", "/home/node/.claude-bottle-prompt.txt"],
+            ["chmod", "600", "/home/node/.bot-bottle-prompt.txt"],
             argv_seen,
         )
 
@@ -190,17 +190,17 @@ class TestProvisionPrompt(unittest.TestCase):
 class TestProvisionSkills(unittest.TestCase):
     def _patch_host_skill_dir(self, returns: dict[str, str]):
         return patch(
-            "claude_bottle.backend.smolmachines.provision.skills.host_skill_dir",
+            "bot_bottle.backend.smolmachines.provision.skills.host_skill_dir",
             side_effect=lambda n: returns.get(n, f"/nope/{n}"),
         )
 
     def test_no_op_when_agent_has_no_skills(self):
         with patch(
-            "claude_bottle.backend.smolmachines.provision.skills._smolvm.machine_cp"
+            "bot_bottle.backend.smolmachines.provision.skills._smolvm.machine_cp"
         ) as cp, patch(
-            "claude_bottle.backend.smolmachines.provision.skills._smolvm.machine_exec"
+            "bot_bottle.backend.smolmachines.provision.skills._smolvm.machine_exec"
         ) as ex:
-            _skills.provision_skills(_plan(skills=[]), "claude-bottle-demo-abc12")
+            _skills.provision_skills(_plan(skills=[]), "bot-bottle-demo-abc12")
         self.assertEqual(0, cp.call_count)
         self.assertEqual(0, ex.call_count)
 
@@ -209,23 +209,23 @@ class TestProvisionSkills(unittest.TestCase):
             "init-prd": "/host/skills/init-prd",
             "verify": "/host/skills/verify",
         }), patch(
-            "claude_bottle.backend.smolmachines.provision.skills.os.path.isdir",
+            "bot_bottle.backend.smolmachines.provision.skills.os.path.isdir",
             return_value=True,
         ), patch(
-            "claude_bottle.backend.smolmachines.provision.skills._smolvm.machine_cp"
+            "bot_bottle.backend.smolmachines.provision.skills._smolvm.machine_cp"
         ) as cp, patch(
-            "claude_bottle.backend.smolmachines.provision.skills._smolvm.machine_exec"
+            "bot_bottle.backend.smolmachines.provision.skills._smolvm.machine_exec"
         ) as ex:
             _skills.provision_skills(
                 _plan(skills=["init-prd", "verify"]),
-                "claude-bottle-demo-abc12",
+                "bot-bottle-demo-abc12",
             )
 
         # mkdir -p once + (rm -rf + chown) per skill = 5 exec calls.
         self.assertEqual(5, ex.call_count)
         mkdir_call = ex.call_args_list[0]
         self.assertEqual(
-            ("claude-bottle-demo-abc12", ["mkdir", "-p", "/home/node/.claude/skills"]),
+            ("bot-bottle-demo-abc12", ["mkdir", "-p", "/home/node/.claude/skills"]),
             mkdir_call.args,
         )
         # Two cp calls, one per skill, into the per-skill subdir.
@@ -233,8 +233,8 @@ class TestProvisionSkills(unittest.TestCase):
         cp_targets = {call.args[1] for call in cp.call_args_list}
         self.assertEqual(
             {
-                "claude-bottle-demo-abc12:/home/node/.claude/skills/init-prd",
-                "claude-bottle-demo-abc12:/home/node/.claude/skills/verify",
+                "bot-bottle-demo-abc12:/home/node/.claude/skills/init-prd",
+                "bot-bottle-demo-abc12:/home/node/.claude/skills/verify",
             },
             cp_targets,
         )
@@ -257,36 +257,36 @@ class TestProvisionSkills(unittest.TestCase):
         import os
         with self._patch_host_skill_dir({"init-prd": "/host/skills/init-prd"}), \
              patch(
-                 "claude_bottle.backend.smolmachines.provision.skills.os.path.isdir",
+                 "bot_bottle.backend.smolmachines.provision.skills.os.path.isdir",
                  return_value=True,
              ), \
-             patch.dict(os.environ, {"CLAUDE_BOTTLE_GUEST_SKILLS_DIR": "/home/node/.claude/skills"}), \
+             patch.dict(os.environ, {"BOT_BOTTLE_GUEST_SKILLS_DIR": "/home/node/.claude/skills"}), \
              patch(
-                 "claude_bottle.backend.smolmachines.provision.skills._smolvm.machine_cp"
+                 "bot_bottle.backend.smolmachines.provision.skills._smolvm.machine_cp"
              ) as cp, \
              patch(
-                 "claude_bottle.backend.smolmachines.provision.skills._smolvm.machine_exec"
+                 "bot_bottle.backend.smolmachines.provision.skills._smolvm.machine_exec"
              ):
-            _skills.provision_skills(_plan(skills=["init-prd"]), "claude-bottle-demo-abc12")
+            _skills.provision_skills(_plan(skills=["init-prd"]), "bot-bottle-demo-abc12")
         self.assertEqual(
-            "claude-bottle-demo-abc12:/home/node/.claude/skills/init-prd",
+            "bot-bottle-demo-abc12:/home/node/.claude/skills/init-prd",
             cp.call_args.args[1],
         )
 
     def test_missing_skill_dies(self):
         with self._patch_host_skill_dir({"init-prd": "/host/skills/init-prd"}), \
              patch(
-                 "claude_bottle.backend.smolmachines.provision.skills.os.path.isdir",
+                 "bot_bottle.backend.smolmachines.provision.skills.os.path.isdir",
                  return_value=False,
              ), \
              patch(
-                 "claude_bottle.backend.smolmachines.provision.skills._smolvm.machine_cp"
+                 "bot_bottle.backend.smolmachines.provision.skills._smolvm.machine_cp"
              ), \
              patch(
-                 "claude_bottle.backend.smolmachines.provision.skills._smolvm.machine_exec"
+                 "bot_bottle.backend.smolmachines.provision.skills._smolvm.machine_exec"
              ):
             with self.assertRaises(SystemExit):
-                _skills.provision_skills(_plan(skills=["init-prd"]), "claude-bottle-demo-abc12")
+                _skills.provision_skills(_plan(skills=["init-prd"]), "bot-bottle-demo-abc12")
 
 
 def _write_self_signed_cert(path: Path) -> None:
@@ -331,15 +331,15 @@ class TestProvisionCA(unittest.TestCase):
     def test_pipelock_path_when_no_routes(self):
         plan = _plan(pipelock_ca_path=self.pipelock_ca)
         with patch(
-            "claude_bottle.backend.smolmachines.provision.ca._smolvm.machine_cp"
+            "bot_bottle.backend.smolmachines.provision.ca._smolvm.machine_cp"
         ) as cp, patch(
-            "claude_bottle.backend.smolmachines.provision.ca._smolvm.machine_exec",
+            "bot_bottle.backend.smolmachines.provision.ca._smolvm.machine_exec",
             return_value=self._UPDATE_OK,
         ) as ex:
-            _ca.provision_ca(plan, "claude-bottle-demo-abc12")
+            _ca.provision_ca(plan, "bot-bottle-demo-abc12")
         cp.assert_called_once_with(
             str(self.pipelock_ca),
-            "claude-bottle-demo-abc12:" + _ca.AGENT_CA_PATH,
+            "bot-bottle-demo-abc12:" + _ca.AGENT_CA_PATH,
         )
         # chmod + chown + update-ca-certificates are now folded
         # into one `sh -c` invocation (working around a smolvm
@@ -359,17 +359,17 @@ class TestProvisionCA(unittest.TestCase):
             pipelock_ca_path=self.pipelock_ca,
         )
         with patch(
-            "claude_bottle.backend.smolmachines.provision.ca._smolvm.machine_cp"
+            "bot_bottle.backend.smolmachines.provision.ca._smolvm.machine_cp"
         ) as cp, patch(
-            "claude_bottle.backend.smolmachines.provision.ca._smolvm.machine_exec",
+            "bot_bottle.backend.smolmachines.provision.ca._smolvm.machine_exec",
             return_value=self._UPDATE_OK,
         ):
-            _ca.provision_ca(plan, "claude-bottle-demo-abc12")
+            _ca.provision_ca(plan, "bot-bottle-demo-abc12")
         # When routes are declared, egress is the agent's first hop,
         # so egress's CA is the one that gets installed.
         cp.assert_called_once_with(
             str(self.egress_ca),
-            "claude-bottle-demo-abc12:" + _ca.AGENT_CA_PATH,
+            "bot-bottle-demo-abc12:" + _ca.AGENT_CA_PATH,
         )
 
     def test_dies_when_selected_cert_missing(self):
@@ -377,12 +377,12 @@ class TestProvisionCA(unittest.TestCase):
         # something went wrong in launch's pipelock_tls_init.
         plan = _plan(pipelock_ca_path=self.tmp / "does-not-exist.pem")
         with patch(
-            "claude_bottle.backend.smolmachines.provision.ca._smolvm.machine_cp"
+            "bot_bottle.backend.smolmachines.provision.ca._smolvm.machine_cp"
         ), patch(
-            "claude_bottle.backend.smolmachines.provision.ca._smolvm.machine_exec"
+            "bot_bottle.backend.smolmachines.provision.ca._smolvm.machine_exec"
         ):
             with self.assertRaises(SystemExit):
-                _ca.provision_ca(plan, "claude-bottle-demo-abc12")
+                _ca.provision_ca(plan, "bot-bottle-demo-abc12")
 
 
 class TestProvisionGit(unittest.TestCase):
@@ -399,12 +399,12 @@ class TestProvisionGit(unittest.TestCase):
 
     def test_noop_when_no_cwd_and_no_git_entries(self):
         with patch(
-            "claude_bottle.backend.smolmachines.provision.git._smolvm.machine_cp"
+            "bot_bottle.backend.smolmachines.provision.git._smolvm.machine_cp"
         ) as cp, patch(
-            "claude_bottle.backend.smolmachines.provision.git._smolvm.machine_exec"
+            "bot_bottle.backend.smolmachines.provision.git._smolvm.machine_exec"
         ) as ex:
             _git.provision_git(
-                _plan(stage_dir=self.stage), "claude-bottle-demo-abc12",
+                _plan(stage_dir=self.stage), "bot-bottle-demo-abc12",
             )
         cp.assert_not_called()
         ex.assert_not_called()
@@ -418,14 +418,14 @@ class TestProvisionGit(unittest.TestCase):
             copy_cwd=True, user_cwd=str(cwd), stage_dir=self.stage,
         )
         with patch(
-            "claude_bottle.backend.smolmachines.provision.git._smolvm.machine_cp"
+            "bot_bottle.backend.smolmachines.provision.git._smolvm.machine_cp"
         ) as cp, patch(
-            "claude_bottle.backend.smolmachines.provision.git._smolvm.machine_exec"
+            "bot_bottle.backend.smolmachines.provision.git._smolvm.machine_exec"
         ) as ex:
-            _git.provision_git(plan, "claude-bottle-demo-abc12")
+            _git.provision_git(plan, "bot-bottle-demo-abc12")
         cp.assert_called_once_with(
             f"{cwd}/.git",
-            "claude-bottle-demo-abc12:/home/node/workspace/.git",
+            "bot-bottle-demo-abc12:/home/node/workspace/.git",
         )
         argvs = [c.args[1] for c in ex.call_args_list]
         self.assertIn(["mkdir", "-p", "/home/node/workspace"], argvs)
@@ -438,11 +438,11 @@ class TestProvisionGit(unittest.TestCase):
     def test_skips_cwd_when_copy_cwd_false(self):
         plan = _plan(copy_cwd=False, stage_dir=self.stage)
         with patch(
-            "claude_bottle.backend.smolmachines.provision.git._smolvm.machine_cp"
+            "bot_bottle.backend.smolmachines.provision.git._smolvm.machine_cp"
         ) as cp, patch(
-            "claude_bottle.backend.smolmachines.provision.git._smolvm.machine_exec"
+            "bot_bottle.backend.smolmachines.provision.git._smolvm.machine_exec"
         ):
-            _git.provision_git(plan, "claude-bottle-demo-abc12")
+            _git.provision_git(plan, "bot-bottle-demo-abc12")
         cp.assert_not_called()
 
     def test_writes_gitconfig_with_ip_port_form_for_smolmachines(self):
@@ -452,7 +452,7 @@ class TestProvisionGit(unittest.TestCase):
         # carries the discovered host port (here mocked to 9418).
         plan = _plan(
             git=[GitEntry(
-                Name="claude-bottle",
+                Name="bot-bottle",
                 Upstream="ssh://git@host/repo.git",
                 IdentityFile="~/.ssh/id_ed25519",
             )],
@@ -460,11 +460,11 @@ class TestProvisionGit(unittest.TestCase):
             agent_git_gate_host="127.0.0.1:9418",
         )
         with patch(
-            "claude_bottle.backend.smolmachines.provision.git._smolvm.machine_cp"
+            "bot_bottle.backend.smolmachines.provision.git._smolvm.machine_cp"
         ) as cp, patch(
-            "claude_bottle.backend.smolmachines.provision.git._smolvm.machine_exec"
+            "bot_bottle.backend.smolmachines.provision.git._smolvm.machine_exec"
         ):
-            _git.provision_git(plan, "claude-bottle-demo-abc12")
+            _git.provision_git(plan, "bot-bottle-demo-abc12")
         # The staged gitconfig path is whatever NamedTemporaryFile
         # picked; we read its contents.
         cp_call = cp.call_args
@@ -472,7 +472,7 @@ class TestProvisionGit(unittest.TestCase):
         self.assertEqual(self.stage, staged_path.parent)
         content = staged_path.read_text()
         self.assertIn(
-            '[url "git://127.0.0.1:9418/claude-bottle.git"]', content,
+            '[url "git://127.0.0.1:9418/bot-bottle.git"]', content,
         )
         self.assertIn(
             "\tinsteadOf = ssh://git@host/repo.git", content,
@@ -497,9 +497,9 @@ class TestProvisionGitUser(unittest.TestCase):
 
     def test_noop_when_no_git_user(self):
         with patch(
-            "claude_bottle.backend.smolmachines.provision.git._smolvm.machine_exec"
+            "bot_bottle.backend.smolmachines.provision.git._smolvm.machine_exec"
         ) as ex:
-            _git._provision_git_user(_plan(), "claude-bottle-demo-abc12")
+            _git._provision_git_user(_plan(), "bot-bottle-demo-abc12")
         self.assertEqual([], self._git_config_calls(ex))
 
     def test_sets_name_and_email_as_node(self):
@@ -508,9 +508,9 @@ class TestProvisionGitUser(unittest.TestCase):
             "email": "eric@dideric.is",
         })
         with patch(
-            "claude_bottle.backend.smolmachines.provision.git._smolvm.machine_exec"
+            "bot_bottle.backend.smolmachines.provision.git._smolvm.machine_exec"
         ) as ex:
-            _git._provision_git_user(plan, "claude-bottle-demo-abc12")
+            _git._provision_git_user(plan, "bot-bottle-demo-abc12")
         calls = self._git_config_calls(ex)
         self.assertEqual(2, len(calls))
         # Both go through `runuser -u node --` so they run as node;
@@ -530,9 +530,9 @@ class TestProvisionGitUser(unittest.TestCase):
     def test_name_only(self):
         plan = _plan(git_user={"name": "Bot"})
         with patch(
-            "claude_bottle.backend.smolmachines.provision.git._smolvm.machine_exec"
+            "bot_bottle.backend.smolmachines.provision.git._smolvm.machine_exec"
         ) as ex:
-            _git._provision_git_user(plan, "claude-bottle-demo-abc12")
+            _git._provision_git_user(plan, "bot-bottle-demo-abc12")
         calls = self._git_config_calls(ex)
         self.assertEqual(1, len(calls))
         self.assertEqual(["user.name", "Bot"], calls[0][0][7:])
@@ -540,9 +540,9 @@ class TestProvisionGitUser(unittest.TestCase):
     def test_email_only(self):
         plan = _plan(git_user={"email": "bot@example.com"})
         with patch(
-            "claude_bottle.backend.smolmachines.provision.git._smolvm.machine_exec"
+            "bot_bottle.backend.smolmachines.provision.git._smolvm.machine_exec"
         ) as ex:
-            _git._provision_git_user(plan, "claude-bottle-demo-abc12")
+            _git._provision_git_user(plan, "bot-bottle-demo-abc12")
         calls = self._git_config_calls(ex)
         self.assertEqual(1, len(calls))
         self.assertEqual(["user.email", "bot@example.com"], calls[0][0][7:])
@@ -551,9 +551,9 @@ class TestProvisionGitUser(unittest.TestCase):
 class TestProvisionSupervise(unittest.TestCase):
     def test_noop_when_supervise_not_enabled(self):
         with patch(
-            "claude_bottle.backend.smolmachines.provision.supervise._smolvm.machine_exec"
+            "bot_bottle.backend.smolmachines.provision.supervise._smolvm.machine_exec"
         ) as ex:
-            _supervise.provision_supervise(_plan(), "claude-bottle-demo-abc12")
+            _supervise.provision_supervise(_plan(), "bot-bottle-demo-abc12")
         ex.assert_not_called()
 
     def test_calls_claude_mcp_add_when_supervise_enabled(self):
@@ -562,10 +562,10 @@ class TestProvisionSupervise(unittest.TestCase):
             agent_supervise_url="http://127.0.0.1:9100/",
         )
         with patch(
-            "claude_bottle.backend.smolmachines.provision.supervise._smolvm.machine_exec",
+            "bot_bottle.backend.smolmachines.provision.supervise._smolvm.machine_exec",
             return_value=SmolvmRunResult(returncode=0, stdout="", stderr=""),
         ) as ex:
-            _supervise.provision_supervise(plan, "claude-bottle-demo-abc12")
+            _supervise.provision_supervise(plan, "bot-bottle-demo-abc12")
         ex.assert_called_once()
         argv = ex.call_args.args[1]
         # `claude mcp add --scope user` writes to ~/.claude.json,
@@ -589,14 +589,14 @@ class TestProvisionSupervise(unittest.TestCase):
     def test_non_zero_exit_logs_warning_but_does_not_raise(self):
         plan = _plan(supervise=True)
         with patch(
-            "claude_bottle.backend.smolmachines.provision.supervise._smolvm.machine_exec",
+            "bot_bottle.backend.smolmachines.provision.supervise._smolvm.machine_exec",
             return_value=SmolvmRunResult(
                 returncode=1, stdout="", stderr="boom",
             ),
         ):
             # No raise — the bottle still works without the MCP
             # entry, so we log and move on.
-            _supervise.provision_supervise(plan, "claude-bottle-demo-abc12")
+            _supervise.provision_supervise(plan, "bot-bottle-demo-abc12")
 
 
 if __name__ == "__main__":

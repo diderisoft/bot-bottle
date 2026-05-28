@@ -12,13 +12,13 @@ from pathlib import Path
 
 # The server module loads `supervise` via same-directory import inside
 # the container (Dockerfile.supervise WORKDIRs into /app). For tests
-# we mirror that by injecting claude_bottle/ onto sys.path under the
+# we mirror that by injecting bot_bottle/ onto sys.path under the
 # bare name `supervise`.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "claude_bottle"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "bot_bottle"))
 import supervise as _sv  # noqa: E402
 
-from claude_bottle import supervise_server  # noqa: E402
-from claude_bottle.supervise_server import (
+from bot_bottle import supervise_server  # noqa: E402
+from bot_bottle.supervise_server import (
     ERR_INVALID_PARAMS,
     ERR_INVALID_REQUEST,
     ERR_METHOD_NOT_FOUND,
@@ -152,7 +152,7 @@ class TestHandleInitialize(unittest.TestCase):
         self.assertEqual("2024-11-05", result["protocolVersion"])
         self.assertIn("tools", result["capabilities"])  # type: ignore[index]
         self.assertEqual(
-            "claude-bottle-supervise",
+            "bot-bottle-supervise",
             result["serverInfo"]["name"],  # type: ignore[index]
         )
 

@@ -13,13 +13,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from claude_bottle.backend import BottleSpec
-from claude_bottle.backend.docker.bottle_plan import DockerBottlePlan
-from claude_bottle.backend.docker.provision import git as _git
-from claude_bottle.egress import EgressPlan
-from claude_bottle.git_gate import GitGatePlan
-from claude_bottle.manifest import Manifest
-from claude_bottle.pipelock import PipelockProxyPlan
+from bot_bottle.backend import BottleSpec
+from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
+from bot_bottle.backend.docker.provision import git as _git
+from bot_bottle.egress import EgressPlan
+from bot_bottle.git_gate import GitGatePlan
+from bot_bottle.manifest import Manifest
+from bot_bottle.pipelock import PipelockProxyPlan
 
 
 def _plan(*, git_user: dict | None = None,
@@ -39,11 +39,11 @@ def _plan(*, git_user: dict | None = None,
         spec=spec,
         stage_dir=stage_dir or Path("/tmp/stage"),
         slug="demo-abc12",
-        container_name="claude-bottle-demo-abc12",
+        container_name="bot-bottle-demo-abc12",
         container_name_pinned=False,
-        image="claude-bottle:latest",
+        image="bot-bottle-claude:latest",
         derived_image="",
-        runtime_image="claude-bottle:latest",
+        runtime_image="bot-bottle-claude:latest",
         dockerfile_path="",
         env_file=Path("/tmp/agent.env"),
         forwarded_env={},
@@ -93,7 +93,7 @@ class TestProvisionGitUser(unittest.TestCase):
     def test_noop_when_no_git_user(self):
         with patch.object(_git.subprocess, "run") as run:
             _git._provision_git_user(
-                _plan(stage_dir=self.stage), "claude-bottle-demo-abc12",
+                _plan(stage_dir=self.stage), "bot-bottle-demo-abc12",
             )
         self.assertEqual([], _git_config_calls(run))
 
@@ -103,14 +103,14 @@ class TestProvisionGitUser(unittest.TestCase):
             stage_dir=self.stage,
         )
         with patch.object(_git.subprocess, "run") as run:
-            _git._provision_git_user(plan, "claude-bottle-demo-abc12")
+            _git._provision_git_user(plan, "bot-bottle-demo-abc12")
         calls = _git_config_calls(run)
         self.assertEqual(2, len(calls))
         # All `docker exec` invocations run as `-u node` so the
         # --global config lands in /home/node/.gitconfig.
         for argv in calls:
             self.assertEqual(
-                ["docker", "exec", "-u", "node", "claude-bottle-demo-abc12",
+                ["docker", "exec", "-u", "node", "bot-bottle-demo-abc12",
                  "git", "config", "--global"],
                 argv[:8],
             )
@@ -120,7 +120,7 @@ class TestProvisionGitUser(unittest.TestCase):
     def test_name_only_sets_only_name(self):
         plan = _plan(git_user={"name": "Bot"}, stage_dir=self.stage)
         with patch.object(_git.subprocess, "run") as run:
-            _git._provision_git_user(plan, "claude-bottle-demo-abc12")
+            _git._provision_git_user(plan, "bot-bottle-demo-abc12")
         calls = _git_config_calls(run)
         self.assertEqual(1, len(calls))
         self.assertEqual(["user.name", "Bot"], calls[0][8:])
@@ -130,7 +130,7 @@ class TestProvisionGitUser(unittest.TestCase):
             git_user={"email": "bot@example.com"}, stage_dir=self.stage,
         )
         with patch.object(_git.subprocess, "run") as run:
-            _git._provision_git_user(plan, "claude-bottle-demo-abc12")
+            _git._provision_git_user(plan, "bot-bottle-demo-abc12")
         calls = _git_config_calls(run)
         self.assertEqual(1, len(calls))
         self.assertEqual(["user.email", "bot@example.com"], calls[0][8:])

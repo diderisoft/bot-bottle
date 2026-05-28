@@ -1,6 +1,6 @@
 """Integration: end-to-end smoke for the PRD 0024 bundle shape.
 
-Verifies that flipping `CLAUDE_BOTTLE_SIDECAR_BUNDLE=1` produces a
+Verifies that flipping `BOT_BOTTLE_SIDECAR_BUNDLE=1` produces a
 working bottle: `docker compose up` brings the agent + bundle pair
 online, the four daemons inside the bundle bind their ports, and
 the agent can reach pipelock + supervise via the bundle's network
@@ -21,8 +21,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from claude_bottle.backend import BottleSpec, get_bottle_backend
-from claude_bottle.manifest import Manifest
+from bot_bottle.backend import BottleSpec, get_bottle_backend
+from bot_bottle.manifest import Manifest
 from tests._docker import skip_unless_docker
 
 
@@ -57,7 +57,7 @@ class TestSidecarBundleCompose(unittest.TestCase):
     def test_bottle_up_with_bundle_flag_on(self):
         stage_dir = Path(tempfile.mkdtemp(prefix="cb-bundle-smoke."))
         try:
-            with patch.dict(os.environ, {"CLAUDE_BOTTLE_SIDECAR_BUNDLE": "1"}):
+            with patch.dict(os.environ, {"BOT_BOTTLE_SIDECAR_BUNDLE": "1"}):
                 backend = get_bottle_backend()
                 spec = BottleSpec(
                     manifest=_manifest(),

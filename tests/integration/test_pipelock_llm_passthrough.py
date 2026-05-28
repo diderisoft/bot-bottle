@@ -22,8 +22,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from claude_bottle.backend import BottleSpec, get_bottle_backend
-from claude_bottle.manifest import Manifest
+from bot_bottle.backend import BottleSpec, get_bottle_backend
+from bot_bottle.manifest import Manifest
 from tests._docker import skip_unless_docker
 
 

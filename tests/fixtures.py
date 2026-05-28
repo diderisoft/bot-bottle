@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
-from claude_bottle.manifest import Manifest
+from bot_bottle.manifest import Manifest
 
 
 def fixture_minimal_dict() -> dict[str, Any]:
@@ -45,8 +45,8 @@ def fixture_with_git_dict() -> dict[str, Any]:
                 "git": {
                     "remotes": {
                         "gitea.dideric.is": {
-                            "Name": "claude-bottle",
-                            "Upstream": "ssh://git@gitea.dideric.is:30009/didericis/claude-bottle.git",
+                            "Name": "bot-bottle",
+                            "Upstream": "ssh://git@gitea.dideric.is:30009/didericis/bot-bottle.git",
                             "IdentityFile": "/dev/null",
                             "KnownHostKey": "ssh-ed25519 AAAA...",
                         },

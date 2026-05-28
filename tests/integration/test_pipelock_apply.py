@@ -26,29 +26,29 @@ import time
 import unittest
 from pathlib import Path
 
-from claude_bottle.backend.docker.bottle_state import pipelock_state_dir
-from claude_bottle.backend.docker.network import (
+from bot_bottle.backend.docker.bottle_state import pipelock_state_dir
+from bot_bottle.backend.docker.network import (
     network_create_egress,
     network_create_internal,
     network_remove,
 )
-from claude_bottle.backend.docker.pipelock import (
+from bot_bottle.backend.docker.pipelock import (
     PIPELOCK_CA_CERT_IN_CONTAINER,
     PIPELOCK_CA_KEY_IN_CONTAINER,
     pipelock_tls_init,
 )
-from claude_bottle.pipelock import PipelockProxy
-from claude_bottle.backend.docker.pipelock_apply import (
+from bot_bottle.pipelock import PipelockProxy
+from bot_bottle.backend.docker.pipelock_apply import (
     PipelockApplyError,
     apply_allowlist_change,
     fetch_current_allowlist,
     fetch_current_yaml,
 )
-from claude_bottle.backend.docker.sidecar_bundle import (
+from bot_bottle.backend.docker.sidecar_bundle import (
     SIDECAR_BUNDLE_IMAGE,
     sidecar_bundle_container_name,
 )
-from claude_bottle.yaml_subset import parse_yaml_subset
+from bot_bottle.yaml_subset import parse_yaml_subset
 from tests._docker import skip_unless_docker
 from tests.fixtures import fixture_minimal
 
@@ -77,7 +77,7 @@ class TestPipelockApply(unittest.TestCase):
             if n:
                 network_remove(n)
         shutil.rmtree(self.work_dir, ignore_errors=True)
-        # Clean up the per-slug state dir under ~/.claude-bottle/state/
+        # Clean up the per-slug state dir under ~/.bot-bottle/state/
         # (apply_allowlist_change writes there; _bring_up calls
         # proxy.prepare with the same path so the bind-mount and the
         # hot-reload write target stay coherent).
@@ -123,7 +123,7 @@ class TestPipelockApply(unittest.TestCase):
             ["docker", "create",
              "--name", self.sidecar_name,
              "--network", self.internal_net,
-             "-e", "CLAUDE_BOTTLE_SIDECAR_DAEMONS=pipelock",
+             "-e", "BOT_BOTTLE_SIDECAR_DAEMONS=pipelock",
              "-v", f"{prep.yaml_path}:/etc/pipelock.yaml:ro",
              "-v", f"{ca_cert_host}:{PIPELOCK_CA_CERT_IN_CONTAINER}:ro",
              "-v", f"{ca_key_host}:{PIPELOCK_CA_KEY_IN_CONTAINER}:ro",

@@ -13,7 +13,7 @@ import unittest
 from unittest.mock import patch
 
 
-from claude_bottle.backend import known_backend_names
+from bot_bottle.backend import known_backend_names
 
 
 class TestStartBackendFlag(unittest.TestCase):
@@ -51,9 +51,9 @@ class TestStartBackendFlag(unittest.TestCase):
     def test_resolution_priority_explicit_over_env(self):
         # Independent assertion that get_bottle_backend (where
         # `--backend` ultimately threads to) prefers the explicit
-        # name over CLAUDE_BOTTLE_BACKEND.
-        from claude_bottle.backend import get_bottle_backend
-        with patch.dict(os.environ, {"CLAUDE_BOTTLE_BACKEND": "smolmachines"}):
+        # name over BOT_BOTTLE_BACKEND.
+        from bot_bottle.backend import get_bottle_backend
+        with patch.dict(os.environ, {"BOT_BOTTLE_BACKEND": "smolmachines"}):
             self.assertEqual("docker", get_bottle_backend("docker").name)
 
 

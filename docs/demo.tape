@@ -24,7 +24,7 @@ Type "clear"
 Enter
 Show
 
-# Real cli.py invocation — what a user with claude-bottle.json in cwd
+# Real cli.py invocation — what a user with bot-bottle.json in cwd
 # would type. The bottle declares one allowlist (only baked-in
 # defaults), one git upstream (unreachable on purpose so gitleaks runs
 # before the gate would forward), and a FAKE_TOKEN env var shaped like

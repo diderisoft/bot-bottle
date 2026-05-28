@@ -7,8 +7,8 @@ silently ignoring."""
 import unittest
 from typing import Any
 
-from claude_bottle.log import Die
-from claude_bottle.manifest import Bottle, Manifest
+from bot_bottle.log import Die
+from bot_bottle.manifest import Bottle, Manifest
 
 
 def _manifest_with_runtime(value: object) -> dict[str, Any]:

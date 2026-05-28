@@ -13,7 +13,7 @@ import unittest
 import unittest.mock
 from unittest.mock import patch
 
-from claude_bottle.backend.smolmachines import pty_resize
+from bot_bottle.backend.smolmachines import pty_resize
 
 
 class TestPushSize(unittest.TestCase):
@@ -23,11 +23,11 @@ class TestPushSize(unittest.TestCase):
         # Per-PTY `stty -F ... 2>/dev/null` swallows EBADF when a
         # session has already exited.
         with patch.object(pty_resize.subprocess, "run") as run:
-            pty_resize._push_size("claude-bottle-m", 50, 200)
+            pty_resize._push_size("bot-bottle-m", 50, 200)
         argv = run.call_args.args[0]
         self.assertEqual(
             ["smolvm", "machine", "exec", "--name",
-             "claude-bottle-m", "--", "sh", "-c"],
+             "bot-bottle-m", "--", "sh", "-c"],
             argv[:8],
         )
         # cols / rows land in the order stty wants them.
@@ -42,7 +42,7 @@ class TestPushSize(unittest.TestCase):
         # PTY's FG-PG / input plumbing). DEVNULL stdin sidesteps
         # the interaction.
         with patch.object(pty_resize.subprocess, "run") as run:
-            pty_resize._push_size("claude-bottle-m", 24, 80)
+            pty_resize._push_size("bot-bottle-m", 24, 80)
         self.assertEqual(
             pty_resize.subprocess.DEVNULL,
             run.call_args.kwargs.get("stdin"),
@@ -116,7 +116,7 @@ class TestMainArgvParsing(unittest.TestCase):
     def test_missing_separator_returns_error_exit_code(self):
         # No `--` between machine name and inner argv.
         with patch.object(pty_resize.sys, "stderr", new=io.StringIO()) as err:
-            rc = pty_resize.main(["claude-bottle-m", "smolvm", "machine"])
+            rc = pty_resize.main(["bot-bottle-m", "smolvm", "machine"])
         self.assertEqual(2, rc)
         self.assertIn("usage:", err.getvalue())
 

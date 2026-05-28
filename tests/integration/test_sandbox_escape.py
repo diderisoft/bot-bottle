@@ -12,7 +12,7 @@ asserts each one is blocked:
 
 The suite is backend-agnostic — it goes through `get_bottle_backend()`
 so a future smolmachines backend can be tested by setting
-`CLAUDE_BOTTLE_BACKEND=smolmachines` without touching this file.
+`BOT_BOTTLE_BACKEND=smolmachines` without touching this file.
 
 PRD 0022 chunk 1 (this commit): fixture + setUpClass +
 tearDownClass + preflight tool check. Attack tests land in
@@ -28,9 +28,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from claude_bottle.backend import BottleSpec, get_bottle_backend
-from claude_bottle.backend.docker.bottle_state import cleanup_state
-from claude_bottle.manifest import Manifest
+from bot_bottle.backend import BottleSpec, get_bottle_backend
+from bot_bottle.backend.docker.bottle_state import cleanup_state
+from bot_bottle.manifest import Manifest
 from tests._docker import skip_unless_docker
 
 
@@ -78,16 +78,16 @@ class TestSandboxEscape(unittest.TestCase):
         # already covers that. Smolmachines additionally needs smolvm on
         # PATH and is macOS-only in v1 (libkrun/TSI). Skip cleanly when
         # those are missing rather than die-ing inside backend.prepare.
-        backend_name = os.environ.get("CLAUDE_BOTTLE_BACKEND", "docker")
+        backend_name = os.environ.get("BOT_BOTTLE_BACKEND", "docker")
         if backend_name == "smolmachines":
             if sys.platform != "darwin":
                 raise unittest.SkipTest(
-                    "CLAUDE_BOTTLE_BACKEND=smolmachines is macOS-only in "
+                    "BOT_BOTTLE_BACKEND=smolmachines is macOS-only in "
                     "v1 (libkrun TSI)"
                 )
             if shutil.which("smolvm") is None:
                 raise unittest.SkipTest(
-                    "CLAUDE_BOTTLE_BACKEND=smolmachines requires `smolvm` "
+                    "BOT_BOTTLE_BACKEND=smolmachines requires `smolvm` "
                     "on PATH: curl -sSL https://smolmachines.com/install.sh | sh"
                 )
 

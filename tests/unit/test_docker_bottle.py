@@ -11,12 +11,12 @@ from __future__ import annotations
 
 import unittest
 
-from claude_bottle.backend.docker.bottle import DockerBottle
+from bot_bottle.backend.docker.bottle import DockerBottle
 
 
 def _bottle(prompt_path: str | None = None) -> DockerBottle:
     return DockerBottle(
-        container="claude-bottle-dev-abc",
+        container="bot-bottle-dev-abc",
         teardown=lambda: None,
         prompt_path_in_container=prompt_path,
     )
@@ -24,7 +24,7 @@ def _bottle(prompt_path: str | None = None) -> DockerBottle:
 
 def _codex_bottle(prompt_path: str | None = None) -> DockerBottle:
     return DockerBottle(
-        container="claude-bottle-dev-abc",
+        container="bot-bottle-dev-abc",
         teardown=lambda: None,
         prompt_path_in_container=prompt_path,
         agent_command="codex",
@@ -36,7 +36,7 @@ class TestClaudeArgv(unittest.TestCase):
     def test_minimal_argv_no_prompt(self):
         argv = _bottle().claude_argv([])
         self.assertEqual(
-            ["docker", "exec", "-it", "claude-bottle-dev-abc", "claude"],
+            ["docker", "exec", "-it", "bot-bottle-dev-abc", "claude"],
             argv,
         )
 
@@ -45,20 +45,20 @@ class TestClaudeArgv(unittest.TestCase):
             ["--dangerously-skip-permissions", "--continue"],
         )
         self.assertEqual(
-            ["docker", "exec", "-it", "claude-bottle-dev-abc", "claude",
+            ["docker", "exec", "-it", "bot-bottle-dev-abc", "claude",
              "--dangerously-skip-permissions", "--continue"],
             argv,
         )
 
     def test_appends_prompt_file_flag_when_set(self):
-        argv = _bottle("/home/node/.claude-bottle-prompt.txt").claude_argv(
+        argv = _bottle("/home/node/.bot-bottle-prompt.txt").claude_argv(
             ["--dangerously-skip-permissions"],
         )
         self.assertEqual(
-            ["docker", "exec", "-it", "claude-bottle-dev-abc", "claude",
+            ["docker", "exec", "-it", "bot-bottle-dev-abc", "claude",
              "--dangerously-skip-permissions",
              "--append-system-prompt-file",
-             "/home/node/.claude-bottle-prompt.txt"],
+             "/home/node/.bot-bottle-prompt.txt"],
             argv,
         )
 
@@ -76,7 +76,7 @@ class TestClaudeArgv(unittest.TestCase):
     def test_tty_false_drops_it_flag(self):
         argv = _bottle().claude_argv([], tty=False)
         self.assertEqual(
-            ["docker", "exec", "claude-bottle-dev-abc", "claude"],
+            ["docker", "exec", "bot-bottle-dev-abc", "claude"],
             argv,
         )
 
@@ -94,26 +94,26 @@ class TestClaudeArgv(unittest.TestCase):
             ["--dangerously-bypass-approvals-and-sandbox"],
         )
         self.assertEqual(
-            ["docker", "exec", "-it", "claude-bottle-dev-abc", "codex",
+            ["docker", "exec", "-it", "bot-bottle-dev-abc", "codex",
              "--dangerously-bypass-approvals-and-sandbox"],
             argv,
         )
 
     def test_codex_provider_passes_prompt_reference_as_initial_prompt(self):
-        argv = _codex_bottle("/home/node/.claude-bottle-prompt.txt").claude_argv([])
+        argv = _codex_bottle("/home/node/.bot-bottle-prompt.txt").claude_argv([])
         self.assertEqual(
-            ["docker", "exec", "-it", "claude-bottle-dev-abc", "codex",
+            ["docker", "exec", "-it", "bot-bottle-dev-abc", "codex",
              "Read and follow the instructions in "
-             "/home/node/.claude-bottle-prompt.txt."],
+             "/home/node/.bot-bottle-prompt.txt."],
             argv,
         )
 
     def test_codex_resume_does_not_append_initial_prompt(self):
-        argv = _codex_bottle("/home/node/.claude-bottle-prompt.txt").claude_argv(
+        argv = _codex_bottle("/home/node/.bot-bottle-prompt.txt").claude_argv(
             ["--dangerously-bypass-approvals-and-sandbox", "resume", "--last"],
         )
         self.assertEqual(
-            ["docker", "exec", "-it", "claude-bottle-dev-abc", "codex",
+            ["docker", "exec", "-it", "bot-bottle-dev-abc", "codex",
              "--dangerously-bypass-approvals-and-sandbox", "resume", "--last"],
             argv,
         )

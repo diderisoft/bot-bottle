@@ -11,7 +11,7 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-from claude_bottle.backend.smolmachines.sidecar_bundle import (
+from bot_bottle.backend.smolmachines.sidecar_bundle import (
     BundleLaunchSpec,
     bundle_container_name,
     bundle_network_name,
@@ -37,7 +37,7 @@ def _fail(stderr: str = "boom") -> subprocess.CompletedProcess:
 def _spec(**kwargs) -> BundleLaunchSpec:
     defaults = dict(
         slug="demo-abc12",
-        network_name="claude-bottle-bundle-demo-abc12",
+        network_name="bot-bottle-bundle-demo-abc12",
         subnet="192.168.50.0/24",
         gateway="192.168.50.1",
         bundle_ip="192.168.50.2",
@@ -49,10 +49,10 @@ def _spec(**kwargs) -> BundleLaunchSpec:
 class TestNamingHelpers(unittest.TestCase):
     def test_network_name_uses_bundle_prefix(self):
         # Distinct from the docker backend's
-        # `claude-bottle-net-<slug>` so two backends running the
+        # `bot-bottle-net-<slug>` so two backends running the
         # same agent slug don't collide.
         self.assertEqual(
-            "claude-bottle-bundle-myagent-xyz",
+            "bot-bottle-bundle-myagent-xyz",
             bundle_network_name("myagent-xyz"),
         )
 
@@ -61,7 +61,7 @@ class TestNamingHelpers(unittest.TestCase):
         # bundle container — dashboard prefix-discovery covers
         # both backends with one filter.
         self.assertEqual(
-            "claude-bottle-sidecars-myagent-xyz",
+            "bot-bottle-sidecars-myagent-xyz",
             bundle_container_name("myagent-xyz"),
         )
 
@@ -69,7 +69,7 @@ class TestNamingHelpers(unittest.TestCase):
 class TestNetworkLifecycle(unittest.TestCase):
     def _patch_run(self, **kwargs):
         return patch(
-            "claude_bottle.backend.smolmachines.sidecar_bundle.subprocess.run",
+            "bot_bottle.backend.smolmachines.sidecar_bundle.subprocess.run",
             **kwargs,
         )
 
@@ -108,7 +108,7 @@ class TestNetworkLifecycle(unittest.TestCase):
 class TestStartBundle(unittest.TestCase):
     def _patch_run(self):
         return patch(
-            "claude_bottle.backend.smolmachines.sidecar_bundle.subprocess.run",
+            "bot_bottle.backend.smolmachines.sidecar_bundle.subprocess.run",
             return_value=_ok(),
         )
 
@@ -118,7 +118,7 @@ class TestStartBundle(unittest.TestCase):
         argv = m.call_args.args[0]
         # --network NETNAME --ip <bundle-ip> on the docker run.
         self.assertIn("--network", argv)
-        self.assertIn("claude-bottle-bundle-demo-abc12", argv)
+        self.assertIn("bot-bottle-bundle-demo-abc12", argv)
         self.assertIn("--ip", argv)
         self.assertIn("192.168.50.2", argv)
         # Detached and auto-removed.
@@ -126,9 +126,9 @@ class TestStartBundle(unittest.TestCase):
         self.assertIn("--rm", argv)
         # Container name uses the per-slug bundle prefix.
         i = argv.index("--name")
-        self.assertEqual("claude-bottle-sidecars-demo-abc12", argv[i + 1])
+        self.assertEqual("bot-bottle-sidecars-demo-abc12", argv[i + 1])
         # Image at the end.
-        self.assertEqual("claude-bottle-sidecars:latest", argv[-1])
+        self.assertEqual("bot-bottle-sidecars:latest", argv[-1])
 
     def test_daemons_env_passed_in(self):
         with self._patch_run() as m:
@@ -136,7 +136,7 @@ class TestStartBundle(unittest.TestCase):
         argv = m.call_args.args[0]
         self.assertIn("-e", argv)
         self.assertIn(
-            "CLAUDE_BOTTLE_SIDECAR_DAEMONS=egress,pipelock,supervise",
+            "BOT_BOTTLE_SIDECAR_DAEMONS=egress,pipelock,supervise",
             argv,
         )
 
@@ -164,7 +164,7 @@ class TestStartBundle(unittest.TestCase):
 
     def test_failure_dies(self):
         with patch(
-            "claude_bottle.backend.smolmachines.sidecar_bundle.subprocess.run",
+            "bot_bottle.backend.smolmachines.sidecar_bundle.subprocess.run",
             return_value=_fail("invalid mount"),
         ):
             with self.assertRaises(SystemExit):
@@ -175,7 +175,7 @@ class TestStartBundle(unittest.TestCase):
         # subprocess being run with the host env. Confirm `env=`
         # threads through.
         with patch(
-            "claude_bottle.backend.smolmachines.sidecar_bundle.subprocess.run",
+            "bot_bottle.backend.smolmachines.sidecar_bundle.subprocess.run",
             return_value=_ok(),
         ) as m:
             start_bundle(_spec(), env={"FOO": "bar"})
@@ -185,7 +185,7 @@ class TestStartBundle(unittest.TestCase):
 class TestStopBundle(unittest.TestCase):
     def _patch_run(self, **kwargs):
         return patch(
-            "claude_bottle.backend.smolmachines.sidecar_bundle.subprocess.run",
+            "bot_bottle.backend.smolmachines.sidecar_bundle.subprocess.run",
             **kwargs,
         )
 
@@ -193,13 +193,13 @@ class TestStopBundle(unittest.TestCase):
         with self._patch_run(return_value=_ok()) as m:
             stop_bundle("demo-abc12")
         self.assertEqual(
-            ["docker", "rm", "-f", "claude-bottle-sidecars-demo-abc12"],
+            ["docker", "rm", "-f", "bot-bottle-sidecars-demo-abc12"],
             m.call_args.args[0],
         )
 
     def test_missing_container_is_idempotent(self):
         with self._patch_run(return_value=_fail(
-            "Error: No such container: claude-bottle-sidecars-demo-abc12"
+            "Error: No such container: bot-bottle-sidecars-demo-abc12"
         )):
             stop_bundle("demo-abc12")  # no raise
 

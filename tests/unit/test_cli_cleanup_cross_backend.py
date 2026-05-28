@@ -10,7 +10,7 @@ import sys
 import unittest
 from unittest.mock import patch, MagicMock
 
-from claude_bottle.cli import cleanup as cmd
+from bot_bottle.cli import cleanup as cmd
 
 
 def _make_backend(empty: bool = True):

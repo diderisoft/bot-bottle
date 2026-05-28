@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from claude_bottle.backend.smolmachines.smolvm import (
+from bot_bottle.backend.smolmachines.smolvm import (
     SmolvmError,
     SmolvmRunResult,
     is_available,
@@ -46,17 +46,17 @@ class TestArgvShapes(unittest.TestCase):
 
     def _patch_run(self):
         return patch(
-            "claude_bottle.backend.smolmachines.smolvm.subprocess.run",
+            "bot_bottle.backend.smolmachines.smolvm.subprocess.run",
             return_value=_ok(),
         )
 
     def test_pack_create_argv(self):
         with self._patch_run() as m:
-            pack_create("claude-bottle:latest", Path("/tmp/agent.smolmachine"))
+            pack_create("bot-bottle-claude:latest", Path("/tmp/agent.smolmachine"))
         argv = m.call_args.args[0]
         self.assertEqual(
             ["smolvm", "pack", "create",
-             "--image", "claude-bottle:latest",
+             "--image", "bot-bottle-claude:latest",
              "-o", "/tmp/agent.smolmachine"],
             argv,
         )
@@ -175,7 +175,7 @@ class TestErrorPath(unittest.TestCase):
 
     def test_create_failure_raises(self):
         with patch(
-            "claude_bottle.backend.smolmachines.smolvm.subprocess.run",
+            "bot_bottle.backend.smolmachines.smolvm.subprocess.run",
             return_value=_fail("no such image"),
         ):
             with self.assertRaises(SmolvmError) as cm:
@@ -185,7 +185,7 @@ class TestErrorPath(unittest.TestCase):
 
     def test_pack_create_failure_raises(self):
         with patch(
-            "claude_bottle.backend.smolmachines.smolvm.subprocess.run",
+            "bot_bottle.backend.smolmachines.smolvm.subprocess.run",
             return_value=_fail("pack failed"),
         ):
             with self.assertRaises(SmolvmError):
@@ -195,7 +195,7 @@ class TestErrorPath(unittest.TestCase):
         # The in-VM command's exit code is what Bottle.exec sees;
         # `false` exiting non-zero is not a smolvm failure.
         with patch(
-            "claude_bottle.backend.smolmachines.smolvm.subprocess.run",
+            "bot_bottle.backend.smolmachines.smolvm.subprocess.run",
             return_value=subprocess.CompletedProcess(
                 args=[], returncode=42, stdout="", stderr="nope",
             ),
@@ -207,14 +207,14 @@ class TestErrorPath(unittest.TestCase):
 class TestIsAvailable(unittest.TestCase):
     def test_true_when_on_path(self):
         with patch(
-            "claude_bottle.backend.smolmachines.smolvm.shutil.which",
+            "bot_bottle.backend.smolmachines.smolvm.shutil.which",
             return_value="/usr/local/bin/smolvm",
         ):
             self.assertTrue(is_available())
 
     def test_false_when_missing(self):
         with patch(
-            "claude_bottle.backend.smolmachines.smolvm.shutil.which",
+            "bot_bottle.backend.smolmachines.smolvm.shutil.which",
             return_value=None,
         ):
             self.assertFalse(is_available())

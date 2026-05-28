@@ -1,12 +1,12 @@
 """Unit: render of ~/.gitconfig insteadOf rules (PRD 0008).
 
-The render moved to `claude_bottle.git_gate` so both backends
+The render moved to `bot_bottle.git_gate` so both backends
 share it; tests live here because docker's provision_git is the
 original consumer."""
 
 import unittest
 
-from claude_bottle.git_gate import (
+from bot_bottle.git_gate import (
     GIT_GATE_HOSTNAME,
     git_gate_render_gitconfig,
 )
@@ -26,12 +26,12 @@ class TestGitGateGitconfigRender(unittest.TestCase):
         # Both entries map to a [url ...] block keyed on the gate's
         # short network alias (`git-gate`) inside the sidecar bundle.
         self.assertIn(
-            '[url "git://git-gate/claude-bottle.git"]',
+            '[url "git://git-gate/bot-bottle.git"]',
             out,
         )
         self.assertIn(
             "\tinsteadOf = "
-            "ssh://git@gitea.dideric.is:30009/didericis/claude-bottle.git",
+            "ssh://git@gitea.dideric.is:30009/didericis/bot-bottle.git",
             out,
         )
         self.assertIn('[url "git://git-gate/foo.git"]', out)
@@ -56,7 +56,7 @@ class TestGitGateGitconfigRender(unittest.TestCase):
         bottle = fixture_with_git().bottles["dev"]
         out = git_gate_render_gitconfig(bottle.git, "192.168.20.2:9418")
         self.assertIn(
-            '[url "git://192.168.20.2:9418/claude-bottle.git"]', out,
+            '[url "git://192.168.20.2:9418/bot-bottle.git"]', out,
         )
 
 

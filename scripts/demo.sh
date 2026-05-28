@@ -14,9 +14,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-if [ -z "${CLAUDE_BOTTLE_OAUTH_TOKEN:-}" ]; then
+if [ -z "${BOT_BOTTLE_OAUTH_TOKEN:-}" ]; then
   cat <<'EOF' >&2
-demo: CLAUDE_BOTTLE_OAUTH_TOKEN is unset. The bottle launches claude,
+demo: BOT_BOTTLE_OAUTH_TOKEN is unset. The bottle launches claude,
 which needs the token to authenticate. Set it in your shell env (e.g.
 ~/.zshrc) — see README §Auth — then re-run.
 EOF

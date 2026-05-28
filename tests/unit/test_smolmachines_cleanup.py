@@ -11,9 +11,9 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-from claude_bottle import backend as backend_mod
-from claude_bottle.backend.smolmachines import cleanup
-from claude_bottle.backend.smolmachines.bottle_cleanup_plan import (
+from bot_bottle import backend as backend_mod
+from bot_bottle.backend.smolmachines import cleanup
+from bot_bottle.backend.smolmachines.bottle_cleanup_plan import (
     SmolmachinesBottleCleanupPlan,
 )
 
@@ -38,19 +38,19 @@ class TestPrepareCleanup(unittest.TestCase):
         def fake_run(argv, *a, **kw):
             if argv[:3] == ["smolvm", "machine", "ls"]:
                 return _ok(stdout=(
-                    '[{"name":"claude-bottle-a-1","state":"running"},'
-                    ' {"name":"claude-bottle-b-2","state":"created"},'
+                    '[{"name":"bot-bottle-a-1","state":"running"},'
+                    ' {"name":"bot-bottle-b-2","state":"created"},'
                     ' {"name":"unrelated","state":"running"}]'
                 ))
             if argv[:2] == ["docker", "ps"]:
                 return _ok(stdout=(
-                    "claude-bottle-sidecars-a-1\n"
-                    "claude-bottle-sidecars-b-2\n"
+                    "bot-bottle-sidecars-a-1\n"
+                    "bot-bottle-sidecars-b-2\n"
                 ))
             if argv[:3] == ["docker", "network", "ls"]:
                 return _ok(stdout=(
-                    "claude-bottle-bundle-a-1\n"
-                    "claude-bottle-bundle-b-2\n"
+                    "bot-bottle-bundle-a-1\n"
+                    "bot-bottle-bundle-b-2\n"
                 ))
             return _ok()
 
@@ -60,17 +60,17 @@ class TestPrepareCleanup(unittest.TestCase):
             smolvm.is_available.return_value = True
             plan = cleanup.prepare_cleanup()
 
-        # `unrelated` filtered out (no claude-bottle- prefix).
+        # `unrelated` filtered out (no bot-bottle- prefix).
         self.assertEqual(
-            ("claude-bottle-a-1", "claude-bottle-b-2"),
+            ("bot-bottle-a-1", "bot-bottle-b-2"),
             plan.machines,
         )
         self.assertEqual(
-            ("claude-bottle-sidecars-a-1", "claude-bottle-sidecars-b-2"),
+            ("bot-bottle-sidecars-a-1", "bot-bottle-sidecars-b-2"),
             plan.bundles,
         )
         self.assertEqual(
-            ("claude-bottle-bundle-a-1", "claude-bottle-bundle-b-2"),
+            ("bot-bottle-bundle-a-1", "bot-bottle-bundle-b-2"),
             plan.networks,
         )
 
@@ -86,9 +86,9 @@ class TestPrepareCleanup(unittest.TestCase):
 class TestCleanup(unittest.TestCase):
     def test_machines_stopped_then_deleted_then_bundles_then_networks(self):
         plan = SmolmachinesBottleCleanupPlan(
-            machines=("claude-bottle-a-1",),
-            bundles=("claude-bottle-sidecars-a-1",),
-            networks=("claude-bottle-bundle-a-1",),
+            machines=("bot-bottle-a-1",),
+            bundles=("bot-bottle-sidecars-a-1",),
+            networks=("bot-bottle-bundle-a-1",),
         )
         calls: list[list[str]] = []
 
@@ -107,10 +107,10 @@ class TestCleanup(unittest.TestCase):
             ["smolvm", "machine", "delete", "-f"], calls[1],
         )
         self.assertEqual(
-            ["docker", "rm", "-f", "claude-bottle-sidecars-a-1"], calls[2],
+            ["docker", "rm", "-f", "bot-bottle-sidecars-a-1"], calls[2],
         )
         self.assertEqual(
-            ["docker", "network", "rm", "claude-bottle-bundle-a-1"], calls[3],
+            ["docker", "network", "rm", "bot-bottle-bundle-a-1"], calls[3],
         )
 
     def test_failures_are_warnings_not_fatal(self):
@@ -118,8 +118,8 @@ class TestCleanup(unittest.TestCase):
         # but continue with bundles + networks. The cleanup is
         # idempotent on success and tries to remove every resource.
         plan = SmolmachinesBottleCleanupPlan(
-            machines=("claude-bottle-a-1",),
-            bundles=("claude-bottle-sidecars-a-1",),
+            machines=("bot-bottle-a-1",),
+            bundles=("bot-bottle-sidecars-a-1",),
             networks=(),
         )
         results = iter([

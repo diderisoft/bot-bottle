@@ -1,7 +1,7 @@
 {
   "include": [
     "cli.py",
-    "claude_bottle",
+    "bot_bottle",
     "tests"
   ],
   "exclude": [

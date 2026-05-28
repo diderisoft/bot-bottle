@@ -12,7 +12,7 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-from claude_bottle.backend.smolmachines import local_registry
+from bot_bottle.backend.smolmachines import local_registry
 
 
 def _ok(stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess:
@@ -57,7 +57,7 @@ class TestEphemeralRegistry(unittest.TestCase):
                 # its docker-network name on its container port.
                 self.assertTrue(
                     handle.push_endpoint.startswith(
-                        "claude-bottle-registry-"
+                        "bot-bottle-registry-"
                     )
                 )
                 self.assertTrue(handle.push_endpoint.endswith(":5000"))
@@ -65,7 +65,7 @@ class TestEphemeralRegistry(unittest.TestCase):
                 self.assertEqual("localhost:54321", handle.pull_endpoint)
                 # network name is the per-session bridge crane joins.
                 self.assertTrue(
-                    handle.network.startswith("claude-bottle-registry-net-")
+                    handle.network.startswith("bot-bottle-registry-net-")
                 )
         # docker network create + docker run + docker port + rm -f + network rm
         self.assertEqual(5, run.call_count)

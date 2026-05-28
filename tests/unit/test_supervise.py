@@ -8,8 +8,8 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from claude_bottle import supervise
-from claude_bottle.supervise import (
+from bot_bottle import supervise
+from bot_bottle.supervise import (
     AuditEntry,
     Proposal,
     Response,
@@ -108,7 +108,7 @@ class TestResponseRoundtrip(unittest.TestCase):
 
 class TestQueueIO(unittest.TestCase):
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory(prefix="claude-bottle-supervise-test.")
+        self._tmp = tempfile.TemporaryDirectory(prefix="bot-bottle-supervise-test.")
         self.queue_dir = Path(self._tmp.name)
 
     def tearDown(self):
@@ -207,7 +207,7 @@ class TestQueueIO(unittest.TestCase):
 
 class TestAuditLog(unittest.TestCase):
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory(prefix="claude-bottle-supervise-audit.")
+        self._tmp = tempfile.TemporaryDirectory(prefix="bot-bottle-supervise-audit.")
         self._home_patch = self._patch_home(Path(self._tmp.name))
 
     def tearDown(self):
@@ -215,13 +215,13 @@ class TestAuditLog(unittest.TestCase):
         self._tmp.cleanup()
 
     def _patch_home(self, fake_home: Path):
-        original = supervise.claude_bottle_root
+        original = supervise.bot_bottle_root
 
         def fake_root() -> Path:
-            return fake_home / ".claude-bottle"
+            return fake_home / ".bot-bottle"
 
-        supervise.claude_bottle_root = fake_root  # type: ignore[assignment]
-        return lambda: setattr(supervise, "claude_bottle_root", original)
+        supervise.bot_bottle_root = fake_root  # type: ignore[assignment]
+        return lambda: setattr(supervise, "bot_bottle_root", original)
 
     def test_write_then_read_single_entry(self):
         e = AuditEntry(
@@ -351,13 +351,13 @@ class TestSupervisePrepare(unittest.TestCase):
         self._tmp.cleanup()
 
     def _patch_home(self, fake_home: Path):
-        original = supervise.claude_bottle_root
+        original = supervise.bot_bottle_root
 
         def fake_root() -> Path:
-            return fake_home / ".claude-bottle"
+            return fake_home / ".bot-bottle"
 
-        supervise.claude_bottle_root = fake_root  # type: ignore[assignment]
-        return lambda: setattr(supervise, "claude_bottle_root", original)
+        supervise.bot_bottle_root = fake_root  # type: ignore[assignment]
+        return lambda: setattr(supervise, "bot_bottle_root", original)
 
     def test_prepare_creates_queue_and_current_config(self):
         plan = _StubSupervise().prepare(

@@ -5,8 +5,8 @@ contribute; they flow through the per-agent git-gate (PRD 0008)."""
 
 import unittest
 
-from claude_bottle.manifest import Manifest
-from claude_bottle.pipelock import (
+from bot_bottle.manifest import Manifest
+from bot_bottle.pipelock import (
     pipelock_effective_allowlist,
     pipelock_effective_tls_passthrough,
 )

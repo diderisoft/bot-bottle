@@ -3,7 +3,7 @@ resolution (PRD 0017)."""
 
 import unittest
 
-from claude_bottle.egress import (
+from bot_bottle.egress import (
     DEFAULT_ALLOWLIST,
     egress_manifest_routes,
     egress_render_routes,
@@ -11,9 +11,9 @@ from claude_bottle.egress import (
     egress_routes_for_bottle,
     egress_token_env_map,
 )
-from claude_bottle.log import Die
-from claude_bottle.manifest import Manifest
-from claude_bottle.yaml_subset import parse_yaml_subset
+from bot_bottle.log import Die
+from bot_bottle.manifest import Manifest
+from bot_bottle.yaml_subset import parse_yaml_subset
 
 
 def _bottle(routes):
@@ -188,7 +188,7 @@ class TestRenderRoutes(unittest.TestCase):
     def test_round_trip_through_addon_core(self):
         # Render here → parse in the addon must succeed for every
         # combination the manifest can produce.
-        from claude_bottle.egress_addon_core import load_routes
+        from bot_bottle.egress_addon_core import load_routes
         b = _bottle([
             {"host": "api.github.com",
              "auth": {"scheme": "Bearer", "token_ref": "GH_PAT"},

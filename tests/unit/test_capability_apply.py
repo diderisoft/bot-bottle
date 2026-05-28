@@ -12,9 +12,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from claude_bottle import supervise
-from claude_bottle.backend.docker import bottle_state, capability_apply
-from claude_bottle.backend.docker.capability_apply import (
+from bot_bottle import supervise
+from bot_bottle.backend.docker import bottle_state, capability_apply
+from bot_bottle.backend.docker.capability_apply import (
     CapabilityApplyError,
     apply_capability_change,
     fetch_current_dockerfile,
@@ -24,13 +24,13 @@ from claude_bottle.backend.docker.capability_apply import (
 class _FakeHomeMixin:
     def _setup_fake_home(self):
         self._tmp = tempfile.TemporaryDirectory(prefix="cap-apply-test.")
-        original = supervise.claude_bottle_root
+        original = supervise.bot_bottle_root
 
         def fake_root() -> Path:
-            return Path(self._tmp.name) / ".claude-bottle"
+            return Path(self._tmp.name) / ".bot-bottle"
 
-        supervise.claude_bottle_root = fake_root  # type: ignore[assignment]
-        self._restore = lambda: setattr(supervise, "claude_bottle_root", original)
+        supervise.bot_bottle_root = fake_root  # type: ignore[assignment]
+        self._restore = lambda: setattr(supervise, "bot_bottle_root", original)
 
     def _teardown_fake_home(self):
         self._restore()

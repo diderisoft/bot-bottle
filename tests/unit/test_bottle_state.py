@@ -6,9 +6,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from claude_bottle import supervise
-from claude_bottle.backend.docker import bottle_state
-from claude_bottle.backend.docker.bottle_state import (
+from bot_bottle import supervise
+from bot_bottle.backend.docker import bottle_state
+from bot_bottle.backend.docker.bottle_state import (
     BottleMetadata,
     read_metadata,
     write_metadata,
@@ -18,13 +18,13 @@ from claude_bottle.backend.docker.bottle_state import (
 class _FakeHomeMixin:
     def _setup_fake_home(self):
         self._tmp = tempfile.TemporaryDirectory(prefix="bottle-state-test.")
-        original = supervise.claude_bottle_root
+        original = supervise.bot_bottle_root
 
         def fake_root() -> Path:
-            return Path(self._tmp.name) / ".claude-bottle"
+            return Path(self._tmp.name) / ".bot-bottle"
 
-        supervise.claude_bottle_root = fake_root  # type: ignore[assignment]
-        self._restore = lambda: setattr(supervise, "claude_bottle_root", original)
+        supervise.bot_bottle_root = fake_root  # type: ignore[assignment]
+        self._restore = lambda: setattr(supervise, "bot_bottle_root", original)
 
     def _teardown_fake_home(self):
         self._restore()
@@ -58,11 +58,11 @@ class TestPerBottleDockerfile(_FakeHomeMixin, unittest.TestCase):
 
     def test_dockerfile_path_under_state_dir(self):
         path = bottle_state.per_bottle_dockerfile_path("dev")
-        self.assertTrue(str(path).endswith("/.claude-bottle/state/dev/Dockerfile"))
+        self.assertTrue(str(path).endswith("/.bot-bottle/state/dev/Dockerfile"))
 
     def test_image_tag_unique_per_slug(self):
         self.assertEqual(
-            "claude-bottle-rebuilt-dev:latest",
+            "bot-bottle-rebuilt-dev:latest",
             bottle_state.per_bottle_image_tag("dev"),
         )
         self.assertNotEqual(
@@ -72,7 +72,7 @@ class TestPerBottleDockerfile(_FakeHomeMixin, unittest.TestCase):
 
     def test_transcript_dir_under_state_dir(self):
         path = bottle_state.transcript_snapshot_dir("dev")
-        self.assertTrue(str(path).endswith("/.claude-bottle/state/dev/transcript"))
+        self.assertTrue(str(path).endswith("/.bot-bottle/state/dev/transcript"))
 
 
 class TestBottleIdentity(unittest.TestCase):
@@ -143,7 +143,7 @@ class TestPreserveMarker(_FakeHomeMixin, unittest.TestCase):
 
     def test_marker_path_under_state_dir(self):
         path = bottle_state.preserve_marker_path("dev-x")
-        self.assertTrue(str(path).endswith("/.claude-bottle/state/dev-x/.preserve"))
+        self.assertTrue(str(path).endswith("/.bot-bottle/state/dev-x/.preserve"))
 
 
 class TestCleanupState(_FakeHomeMixin, unittest.TestCase):
@@ -197,7 +197,7 @@ class TestBottleMetadata(_FakeHomeMixin, unittest.TestCase):
         )
         path = write_metadata(meta)
         self.assertTrue(
-            str(path).endswith("/.claude-bottle/state/dev-x/metadata.json"),
+            str(path).endswith("/.bot-bottle/state/dev-x/metadata.json"),
         )
 
     def test_overwriting_metadata_updates_timestamp(self):

@@ -15,21 +15,21 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from claude_bottle import supervise
-from claude_bottle.backend.docker import bottle_state
-from claude_bottle.backend.docker.cleanup import _list_orphan_state_dirs
+from bot_bottle import supervise
+from bot_bottle.backend.docker import bottle_state
+from bot_bottle.backend.docker.cleanup import _list_orphan_state_dirs
 
 
 class _FakeHomeMixin:
     def _setup_fake_home(self) -> None:
         self._tmp = tempfile.TemporaryDirectory(prefix="docker-cleanup-test.")
-        original = supervise.claude_bottle_root
+        original = supervise.bot_bottle_root
 
         def fake_root() -> Path:
-            return Path(self._tmp.name) / ".claude-bottle"
+            return Path(self._tmp.name) / ".bot-bottle"
 
-        supervise.claude_bottle_root = fake_root  # type: ignore[assignment]
-        self._restore = lambda: setattr(supervise, "claude_bottle_root", original)
+        supervise.bot_bottle_root = fake_root  # type: ignore[assignment]
+        self._restore = lambda: setattr(supervise, "bot_bottle_root", original)
 
     def _teardown_fake_home(self) -> None:
         self._restore()
@@ -61,7 +61,7 @@ class TestOrphanStateDirs(_FakeHomeMixin, unittest.TestCase):
         bottle_state.write_per_bottle_dockerfile("live-bbb", "FROM x\n")
         self.assertEqual(
             [],
-            _list_orphan_state_dirs({"claude-bottle-live-bbb"}, set()),
+            _list_orphan_state_dirs({"bot-bottle-live-bbb"}, set()),
         )
 
     def test_preserve_marker_skips_dir(self):
@@ -86,7 +86,7 @@ class TestOrphanStateDirs(_FakeHomeMixin, unittest.TestCase):
         bottle_state.write_per_bottle_dockerfile("kept-ggg", "FROM z\n")
         bottle_state.mark_preserved("kept-ggg")
 
-        result = _list_orphan_state_dirs({"claude-bottle-live-fff"}, set())
+        result = _list_orphan_state_dirs({"bot-bottle-live-fff"}, set())
         self.assertEqual(["orphan-eee"], result)
 
     def test_sorted_output(self):
@@ -116,7 +116,7 @@ class TestOrphanStateDirs(_FakeHomeMixin, unittest.TestCase):
         self.assertEqual(
             [],
             _list_orphan_state_dirs(
-                {"claude-bottle-something-else"},  # different project up
+                {"bot-bottle-something-else"},  # different project up
                 {"smol-iii"},                       # but smol-iii is live
             ),
         )

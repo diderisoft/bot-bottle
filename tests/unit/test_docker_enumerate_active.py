@@ -23,8 +23,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from claude_bottle import supervise
-from claude_bottle.backend.docker import bottle_state, enumerate as _enumerate
+from bot_bottle import supervise
+from bot_bottle.backend.docker import bottle_state, enumerate as _enumerate
 
 
 class TestParseServicesByProject(unittest.TestCase):
@@ -33,18 +33,18 @@ class TestParseServicesByProject(unittest.TestCase):
 
     def test_one_container(self):
         out = _enumerate._parse_services_by_project(
-            "claude-bottle-dev-abc\tegress\n"
+            "bot-bottle-dev-abc\tegress\n"
         )
-        self.assertEqual({"claude-bottle-dev-abc": {"egress"}}, out)
+        self.assertEqual({"bot-bottle-dev-abc": {"egress"}}, out)
 
     def test_multiple_services_per_project(self):
         out = _enumerate._parse_services_by_project(
-            "claude-bottle-dev-abc\tegress\n"
-            "claude-bottle-dev-abc\tpipelock\n"
-            "claude-bottle-dev-abc\tsupervise\n"
+            "bot-bottle-dev-abc\tegress\n"
+            "bot-bottle-dev-abc\tpipelock\n"
+            "bot-bottle-dev-abc\tsupervise\n"
         )
         self.assertEqual(
-            {"claude-bottle-dev-abc": {"egress", "pipelock", "supervise"}},
+            {"bot-bottle-dev-abc": {"egress", "pipelock", "supervise"}},
             out,
         )
 
@@ -63,24 +63,24 @@ class TestParseServicesByProject(unittest.TestCase):
         # Defends against unlabeled containers slipping into the
         # output (the filter should prevent it, but be robust).
         out = _enumerate._parse_services_by_project(
-            "claude-bottle-dev-abc\tegress\n"
+            "bot-bottle-dev-abc\tegress\n"
             "no-tab-here\n"
             "\tmissing-project\n"
             "missing-service\t\n"
         )
-        self.assertEqual({"claude-bottle-dev-abc": {"egress"}}, out)
+        self.assertEqual({"bot-bottle-dev-abc": {"egress"}}, out)
 
 
 class _FakeHomeMixin:
     def _setup_fake_home(self) -> None:
         self._tmp = tempfile.TemporaryDirectory(prefix="enum-active.")
-        original = supervise.claude_bottle_root
+        original = supervise.bot_bottle_root
 
         def fake_root() -> Path:
-            return Path(self._tmp.name) / ".claude-bottle"
+            return Path(self._tmp.name) / ".bot-bottle"
 
-        supervise.claude_bottle_root = fake_root  # type: ignore[assignment]
-        self._restore_home = lambda: setattr(supervise, "claude_bottle_root", original)
+        supervise.bot_bottle_root = fake_root  # type: ignore[assignment]
+        self._restore_home = lambda: setattr(supervise, "bot_bottle_root", original)
 
     def _teardown_fake_home(self) -> None:
         self._restore_home()
@@ -113,11 +113,11 @@ class TestEnumerateActive(_FakeHomeMixin, unittest.TestCase):
             cwd="",
             copy_cwd=False,
             started_at="2026-05-26T03:00:00+00:00",
-            compose_project="claude-bottle-dev-abc",
+            compose_project="bot-bottle-dev-abc",
         ))
         self._stub(
             ["dev-abc"],
-            {"claude-bottle-dev-abc": {"pipelock", "egress", "supervise"}},
+            {"bot-bottle-dev-abc": {"pipelock", "egress", "supervise"}},
         )
         active = _enumerate.enumerate_active()
         self.assertEqual(1, len(active))
@@ -131,7 +131,7 @@ class TestEnumerateActive(_FakeHomeMixin, unittest.TestCase):
     def test_missing_metadata_renders_question_mark(self):
         # State dir doesn't exist for this slug — agent_name falls
         # back to "?" rather than dropping the row.
-        self._stub(["mystery-zzz"], {"claude-bottle-mystery-zzz": {"pipelock"}})
+        self._stub(["mystery-zzz"], {"bot-bottle-mystery-zzz": {"pipelock"}})
         active = _enumerate.enumerate_active()
         self.assertEqual(1, len(active))
         self.assertEqual("?", active[0].agent_name)
@@ -148,7 +148,7 @@ class TestEnumerateActive(_FakeHomeMixin, unittest.TestCase):
             cwd="",
             copy_cwd=False,
             started_at="2026-05-26T03:05:00+00:00",
-            compose_project="claude-bottle-warming-up",
+            compose_project="bot-bottle-warming-up",
         ))
         self._stub(["warming-up"], {})
         active = _enumerate.enumerate_active()
@@ -162,7 +162,7 @@ class TestEnumerateActive(_FakeHomeMixin, unittest.TestCase):
                 cwd="",
                 copy_cwd=False,
                 started_at="t",
-                compose_project=f"claude-bottle-{slug}",
+                compose_project=f"bot-bottle-{slug}",
             ))
         # list_active_slugs returns sorted; preserve that order in
         # the output.

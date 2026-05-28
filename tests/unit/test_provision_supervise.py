@@ -8,8 +8,8 @@ plumbing surfaces in unit CI."""
 
 import unittest
 
-from claude_bottle.backend.docker.provision.supervise import supervise_mcp_url
-from claude_bottle.supervise import SUPERVISE_HOSTNAME, SUPERVISE_PORT
+from bot_bottle.backend.docker.provision.supervise import supervise_mcp_url
+from bot_bottle.supervise import SUPERVISE_HOSTNAME, SUPERVISE_PORT
 
 
 class TestSuperviseMcpUrl(unittest.TestCase):

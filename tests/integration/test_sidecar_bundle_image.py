@@ -28,7 +28,7 @@ import unittest
 from tests._docker import skip_unless_docker
 
 
-_IMAGE = "claude-bottle-sidecars-test:chunk1"
+_IMAGE = "bot-bottle-sidecars-test:chunk1"
 _DOCKERFILE = "Dockerfile.sidecars"
 
 
@@ -108,7 +108,7 @@ class TestSidecarBundleImage(unittest.TestCase):
         # ENTRYPOINT wiring works.
         proc = subprocess.run(
             ["docker", "run", "--rm",
-             "-e", "CLAUDE_BOTTLE_SIDECAR_DAEMONS=nothing",
+             "-e", "BOT_BOTTLE_SIDECAR_DAEMONS=nothing",
              _IMAGE],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             timeout=10.0,

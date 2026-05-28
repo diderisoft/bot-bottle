@@ -6,13 +6,13 @@ test in Phase 4. Here we cover the host-side parsing + yaml roundtrip.
 
 import unittest
 
-from claude_bottle.backend.docker.pipelock_apply import (
+from bot_bottle.backend.docker.pipelock_apply import (
     PipelockApplyError,
     parse_allowlist_content,
     render_allowlist_content,
 )
-from claude_bottle.pipelock import pipelock_render_yaml
-from claude_bottle.yaml_subset import parse_yaml_subset
+from bot_bottle.pipelock import pipelock_render_yaml
+from bot_bottle.yaml_subset import parse_yaml_subset
 
 
 class TestParseAllowlistContent(unittest.TestCase):

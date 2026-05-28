@@ -1,5 +1,5 @@
 """Unit: image_id / tag / push helpers in
-claude_bottle.backend.docker.util (PRD 0023 chunk 4c additions).
+bot_bottle.backend.docker.util (PRD 0023 chunk 4c additions).
 
 Tests mock `subprocess.run` and assert on argv shape + parsing.
 The actual docker round-trip is covered by the chunk 4c
@@ -11,7 +11,7 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-from claude_bottle.backend.docker import util as docker_mod
+from bot_bottle.backend.docker import util as docker_mod
 
 
 def _ok(stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess:
@@ -34,11 +34,11 @@ class TestImageId(unittest.TestCase):
             return_value=_ok(stdout="sha256:abcdef\n"),
         ) as run:
             self.assertEqual(
-                "sha256:abcdef", docker_mod.image_id("claude-bottle:latest")
+                "sha256:abcdef", docker_mod.image_id("bot-bottle-claude:latest")
             )
         argv = run.call_args.args[0]
         self.assertEqual(
-            ["docker", "image", "inspect", "--format", "{{.Id}}", "claude-bottle:latest"],
+            ["docker", "image", "inspect", "--format", "{{.Id}}", "bot-bottle-claude:latest"],
             argv,
         )
 
@@ -59,10 +59,10 @@ class TestSave(unittest.TestCase):
         with patch.object(
             docker_mod.subprocess, "run", return_value=_ok(),
         ) as run:
-            docker_mod.save("claude-bottle:latest", "/tmp/img.tar")
+            docker_mod.save("bot-bottle-claude:latest", "/tmp/img.tar")
         argv = run.call_args.args[0]
         self.assertEqual(
-            ["docker", "save", "claude-bottle:latest", "-o", "/tmp/img.tar"],
+            ["docker", "save", "bot-bottle-claude:latest", "-o", "/tmp/img.tar"],
             argv,
         )
 

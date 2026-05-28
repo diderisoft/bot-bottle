@@ -1,4 +1,4 @@
-# claude-bottle Codex provider image.
+# bot-bottle Codex provider image.
 #
 # Mirrors the default Claude image shape: Node LTS, git/network tooling,
 # non-root node user, and the provider CLI installed globally.

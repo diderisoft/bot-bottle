@@ -16,13 +16,13 @@ from __future__ import annotations
 import sys
 import unittest
 
-from claude_bottle.backend.smolmachines import pty_resize as _pty_resize
-from claude_bottle.backend.smolmachines.bottle import SmolmachinesBottle
+from bot_bottle.backend.smolmachines import pty_resize as _pty_resize
+from bot_bottle.backend.smolmachines.bottle import SmolmachinesBottle
 
 
 def _bottle(prompt_path: str | None = None, **env: str) -> SmolmachinesBottle:
     return SmolmachinesBottle(
-        "claude-bottle-dev-abc",
+        "bot-bottle-dev-abc",
         prompt_path=prompt_path,
         guest_env=env,
     )
@@ -47,7 +47,7 @@ class TestClaudeArgvWrapped(unittest.TestCase):
         self.assertEqual(
             [
                 sys.executable, _pty_resize.__file__,
-                "claude-bottle-dev-abc", "--",
+                "bot-bottle-dev-abc", "--",
             ],
             argv[:4],
         )
@@ -57,7 +57,7 @@ class TestClaudeArgvWrapped(unittest.TestCase):
         self.assertEqual(
             [
                 "smolvm", "machine", "exec", "--name",
-                "claude-bottle-dev-abc",
+                "bot-bottle-dev-abc",
                 "-i", "-t",
                 "-e", "HOME=/home/node",
                 "-e", "USER=node",
@@ -79,7 +79,7 @@ class TestClaudeArgvWrapped(unittest.TestCase):
 
     def test_appends_prompt_file_flag_when_set(self):
         argv = _unwrap(
-            _bottle("/home/node/.claude-bottle-prompt.txt").claude_argv(
+            _bottle("/home/node/.bot-bottle-prompt.txt").claude_argv(
                 ["--dangerously-skip-permissions"],
             )
         )
@@ -87,7 +87,7 @@ class TestClaudeArgvWrapped(unittest.TestCase):
             [
                 "claude",
                 "--append-system-prompt-file",
-                "/home/node/.claude-bottle-prompt.txt",
+                "/home/node/.bot-bottle-prompt.txt",
                 "--dangerously-skip-permissions",
             ],
             argv[argv.index("claude"):],

@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from claude_bottle.git_gate import (
+from bot_bottle.git_gate import (
     GitGate,
     GitGatePlan,
     GitGateUpstream,
@@ -16,8 +16,8 @@ from claude_bottle.git_gate import (
     git_gate_render_hook,
     git_gate_upstreams_for_bottle,
 )
-from claude_bottle.log import Die
-from claude_bottle.manifest import Manifest
+from bot_bottle.log import Die
+from bot_bottle.manifest import Manifest
 from tests.fixtures import fixture_minimal, fixture_with_git
 
 
@@ -34,7 +34,7 @@ class TestUpstreamsForBottle(unittest.TestCase):
         bottle = fixture_with_git().bottles["dev"]
         ups = git_gate_upstreams_for_bottle(bottle)
         self.assertEqual(2, len(ups))
-        self.assertEqual("claude-bottle", ups[0].name)
+        self.assertEqual("bot-bottle", ups[0].name)
         self.assertEqual("gitea.dideric.is", ups[0].upstream_host)
         self.assertEqual("30009", ups[0].upstream_port)
         self.assertEqual("foo", ups[1].name)
@@ -53,8 +53,8 @@ class TestExtraHostsPlumbing(unittest.TestCase):
                 "dev": {
                     "git": {"remotes": {
                         "gitea.dideric.is": {
-                            "Name": "claude-bottle",
-                            "Upstream": "ssh://git@gitea.dideric.is:30009/didericis/claude-bottle.git",
+                            "Name": "bot-bottle",
+                            "Upstream": "ssh://git@gitea.dideric.is:30009/didericis/bot-bottle.git",
                             "IdentityFile": "/dev/null",
                             "ExtraHosts": {"gitea.dideric.is": "192.0.2.10"},
                         },
@@ -140,8 +140,8 @@ class TestEntrypointRender(unittest.TestCase):
     def test_one_init_repo_call_per_upstream(self):
         ups = (
             GitGateUpstream(
-                name="claude-bottle",
-                upstream_url="ssh://git@gitea.dideric.is:30009/didericis/claude-bottle.git",
+                name="bot-bottle",
+                upstream_url="ssh://git@gitea.dideric.is:30009/didericis/bot-bottle.git",
                 upstream_host="gitea.dideric.is",
                 upstream_port="30009",
                 identity_file="/host/path/key",
@@ -159,8 +159,8 @@ class TestEntrypointRender(unittest.TestCase):
         script = git_gate_render_entrypoint(ups)
         self.assertIn("#!/bin/sh", script)
         self.assertIn(
-            "init_repo 'claude-bottle' "
-            "'ssh://git@gitea.dideric.is:30009/didericis/claude-bottle.git'",
+            "init_repo 'bot-bottle' "
+            "'ssh://git@gitea.dideric.is:30009/didericis/bot-bottle.git'",
             script,
         )
         self.assertIn(

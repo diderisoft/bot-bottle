@@ -18,7 +18,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from claude_bottle.backend.smolmachines import launch as _launch_mod
+from bot_bottle.backend.smolmachines import launch as _launch_mod
 
 
 class TestEnsureSmolmachine(unittest.TestCase):
@@ -53,7 +53,7 @@ class TestEnsureSmolmachine(unittest.TestCase):
         ) as push, patch.object(
             _launch_mod._smolvm, "pack_create",
         ) as pack:
-            result = _launch_mod._ensure_smolmachine("claude-bottle:latest")
+            result = _launch_mod._ensure_smolmachine("bot-bottle-claude:latest")
 
         self.assertEqual(sidecar, result)
         # build still runs (Dockerfile edits land without manual rmi).
@@ -71,7 +71,7 @@ class TestEnsureSmolmachine(unittest.TestCase):
         # ephemeral_registry yields a RegistryHandle with the
         # docker network + a push endpoint (container DNS) and
         # pull endpoint (host port-forward).
-        from claude_bottle.backend.smolmachines.local_registry import (
+        from bot_bottle.backend.smolmachines.local_registry import (
             RegistryHandle,
         )
 
@@ -111,7 +111,7 @@ class TestEnsureSmolmachine(unittest.TestCase):
             _launch_mod._smolvm, "pack_create",
             side_effect=record("pack"),
         ) as pack:
-            _launch_mod._ensure_smolmachine("claude-bottle:latest")
+            _launch_mod._ensure_smolmachine("bot-bottle-claude:latest")
 
         # Build → save → push → pack in that order. No `docker
         # push` (the daemon's HTTPS-by-default path is what we're
@@ -121,14 +121,14 @@ class TestEnsureSmolmachine(unittest.TestCase):
         # docker save targets a per-digest tarball alongside the
         # cached sidecar.
         save_args = save.call_args.args
-        self.assertEqual("claude-bottle:latest", save_args[0])
+        self.assertEqual("bot-bottle-claude:latest", save_args[0])
         self.assertTrue(save_args[1].endswith(f"{digest}.image.tar"))
 
         # crane push runs against the push_endpoint (container DNS
         # on the registry network) with the digest as the tag.
         push_args = push.call_args.args
         self.assertEqual(
-            f"cb-registry-xyz:5000/claude-bottle:{digest}", push_args[2],
+            f"cb-registry-xyz:5000/bot-bottle:{digest}", push_args[2],
         )
 
         # pack_create reads from the pull_endpoint (host port-
@@ -136,7 +136,7 @@ class TestEnsureSmolmachine(unittest.TestCase):
         # different routing hostname — the registry stores one blob.
         pack_args = pack.call_args.args
         self.assertEqual(
-            f"localhost:54321/claude-bottle:{digest}", pack_args[0],
+            f"localhost:54321/bot-bottle:{digest}", pack_args[0],
         )
         self.assertTrue(str(pack_args[1]).endswith(f"{digest}.smolmachine"))
 

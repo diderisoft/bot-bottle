@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from claude_bottle.backend.smolmachines.util import (
+from bot_bottle.backend.smolmachines.util import (
     smolmachines_bundle_subnet,
     smolmachines_preflight,
 )
@@ -57,14 +57,14 @@ class TestBundleSubnet(unittest.TestCase):
 class TestPreflight(unittest.TestCase):
     def test_smolvm_present_returns_none(self):
         with patch(
-            "claude_bottle.backend.smolmachines.util.shutil.which",
+            "bot_bottle.backend.smolmachines.util.shutil.which",
             return_value="/usr/local/bin/smolvm",
         ):
             self.assertIsNone(smolmachines_preflight())
 
     def test_missing_smolvm_dies(self):
         with patch(
-            "claude_bottle.backend.smolmachines.util.shutil.which",
+            "bot_bottle.backend.smolmachines.util.shutil.which",
             return_value=None,
         ):
             with self.assertRaises(SystemExit) as cm:
@@ -75,7 +75,7 @@ class TestPreflight(unittest.TestCase):
         import io
         import sys
         with patch(
-            "claude_bottle.backend.smolmachines.util.shutil.which",
+            "bot_bottle.backend.smolmachines.util.shutil.which",
             return_value=None,
         ):
             captured = io.StringIO()

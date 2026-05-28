@@ -36,7 +36,7 @@ python -m unittest tests.unit.test_pipelock_yaml          # one file
 ```
 
 Discovery is invoked with `-t .` (top-level dir = repo root) so the
-`claude_bottle` package on `sys.path` resolves correctly.
+`bot_bottle` package on `sys.path` resolves correctly.
 
 ## What the integration tests cover
 
@@ -56,16 +56,16 @@ Discovery is invoked with `-t .` (top-level dir = repo root) so the
 
 `tests/canaries/` holds upstream-regression checks (e.g. the pinned
 pipelock digest's binary still runs). These are gated on
-`CLAUDE_BOTTLE_RUN_CANARIES=1` and not part of the per-push suite.
+`BOT_BOTTLE_RUN_CANARIES=1` and not part of the per-push suite.
 They're invoked by the scheduled `canaries` workflow.
 
 ```bash
-CLAUDE_BOTTLE_RUN_CANARIES=1 python -m unittest discover -t . -s tests/canaries -v
+BOT_BOTTLE_RUN_CANARIES=1 python -m unittest discover -t . -s tests/canaries -v
 ```
 
 ## What's NOT covered
 
-- `claude_bottle/ssh.py` end-to-end (would need a fake SSH host inside
+- `bot_bottle/ssh.py` end-to-end (would need a fake SSH host inside
   the container).
 - A live SSH-through-pipelock tunnel against a real Tailscale-style IP.
 - DLP false-positive measurements.
@@ -80,7 +80,7 @@ CLAUDE_BOTTLE_RUN_CANARIES=1 python -m unittest discover -t . -s tests/canaries 
    ```python
    import unittest
 
-   from claude_bottle.<module> import <symbol>
+   from bot_bottle.<module> import <symbol>
 
    class TestThing(unittest.TestCase):
        def test_x(self):

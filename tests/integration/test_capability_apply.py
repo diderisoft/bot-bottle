@@ -7,7 +7,7 @@ an interactive claude session). Instead, this test stages the
 minimum the orchestrator interacts with:
 
   - A lightweight `alpine:latest sleep infinity` container named
-    `claude-bottle-<slug>` (matches the agent container name pattern)
+    `bot-bottle-<slug>` (matches the agent container name pattern)
     on the per-bottle internal network.
   - A marker file under `/home/node/.claude/` so we can assert the
     transcript snapshot path actually transferred bytes.
@@ -31,15 +31,15 @@ import time
 import unittest
 from pathlib import Path
 
-from claude_bottle import supervise
-from claude_bottle.backend.docker import bottle_state, capability_apply
-from claude_bottle.backend.docker.capability_apply import apply_capability_change
-from claude_bottle.backend.docker.network import (
+from bot_bottle import supervise
+from bot_bottle.backend.docker import bottle_state, capability_apply
+from bot_bottle.backend.docker.capability_apply import apply_capability_change
+from bot_bottle.backend.docker.network import (
     network_create_egress,
     network_create_internal,
     network_remove,
 )
-from claude_bottle.backend.docker.sidecar_bundle import (
+from bot_bottle.backend.docker.sidecar_bundle import (
     sidecar_bundle_container_name,
 )
 from tests._docker import skip_unless_docker
@@ -61,21 +61,21 @@ class TestCapabilityApply(unittest.TestCase):
 
     def setUp(self):
         self.slug = f"cb-test-cap-{os.getpid()}-{int(time.time())}"
-        self.agent_name = f"claude-bottle-{self.slug}"
+        self.agent_name = f"bot-bottle-{self.slug}"
         self.sidecar_names: list[str] = []
         self.internal_net = ""
         self.egress_net = ""
-        # Fake home so tests don't touch ~/.claude-bottle/.
+        # Fake home so tests don't touch ~/.bot-bottle/.
         self._tmp = tempfile.TemporaryDirectory(prefix="cap-apply-int.")
-        self._original_root = supervise.claude_bottle_root
+        self._original_root = supervise.bot_bottle_root
 
         def fake_root() -> Path:
-            return Path(self._tmp.name) / ".claude-bottle"
+            return Path(self._tmp.name) / ".bot-bottle"
 
-        supervise.claude_bottle_root = fake_root  # type: ignore[assignment]
+        supervise.bot_bottle_root = fake_root  # type: ignore[assignment]
 
     def tearDown(self):
-        supervise.claude_bottle_root = self._original_root  # type: ignore[assignment]
+        supervise.bot_bottle_root = self._original_root  # type: ignore[assignment]
         for name in [self.agent_name, *self.sidecar_names]:
             subprocess.run(
                 ["docker", "rm", "-f", name],

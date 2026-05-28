@@ -15,7 +15,7 @@ import platform
 import subprocess
 import unittest
 
-from claude_bottle.backend.smolmachines.smolvm import is_available
+from bot_bottle.backend.smolmachines.smolvm import is_available
 
 
 @unittest.skipIf(

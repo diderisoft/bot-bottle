@@ -6,7 +6,7 @@ half of the addon. The mitmproxy hook wrapper in
 
 import unittest
 
-from claude_bottle.egress_addon_core import (
+from bot_bottle.egress_addon_core import (
     Decision,
     Route,
     decide,

@@ -11,8 +11,8 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from claude_bottle.log import Die
-from claude_bottle.manifest import Manifest
+from bot_bottle.log import Die
+from bot_bottle.manifest import Manifest
 
 
 def _write(p: Path, text: str) -> None:
@@ -63,21 +63,21 @@ class _ResolveCase(unittest.TestCase):
         shutil.rmtree(self.home_root, ignore_errors=True)
         shutil.rmtree(self.cwd_root, ignore_errors=True)
 
-    # Convenience: paths under home/cwd .claude-bottle dirs.
+    # Convenience: paths under home/cwd .bot-bottle dirs.
     @property
     def home_cb(self) -> Path:
-        return self.home_root / ".claude-bottle"
+        return self.home_root / ".bot-bottle"
 
     @property
     def cwd_cb(self) -> Path:
-        return self.cwd_root / ".claude-bottle"
+        return self.cwd_root / ".bot-bottle"
 
     def resolve(self) -> Manifest:
         return Manifest.resolve(str(self.cwd_root))
 
 
 class TestBottleFileParses(_ResolveCase):
-    """SC #1: a bottle file under $HOME/.claude-bottle/bottles/
+    """SC #1: a bottle file under $HOME/.bot-bottle/bottles/
     parses into the expected Bottle shape."""
 
     def test_loads(self):
@@ -94,7 +94,7 @@ class TestBottleFileParses(_ResolveCase):
 
 
 class TestAgentFileParses(_ResolveCase):
-    """SC #2: an agent file under $HOME/.claude-bottle/agents/
+    """SC #2: an agent file under $HOME/.bot-bottle/agents/
     parses, the body becomes the prompt, the frontmatter fields
     map to Agent fields."""
 
@@ -171,7 +171,7 @@ class TestStdlibOnly(unittest.TestCase):
     existence of an `import yaml`-free file is the assertion."""
 
     def test_no_pyyaml(self):
-        src = Path("claude_bottle/yaml_subset.py").read_text()
+        src = Path("bot_bottle/yaml_subset.py").read_text()
         self.assertNotIn("import yaml", src)
         self.assertNotIn("from yaml", src)
 
@@ -262,12 +262,12 @@ class TestUnknownBottleKeyDies(_ResolveCase):
 
 
 class TestStaleJsonDies(_ResolveCase):
-    """If `claude-bottle.json` exists in $HOME alongside no
-    `.claude-bottle/` dir, die with a clear pointer at the README's
+    """If `bot-bottle.json` exists in $HOME alongside no
+    `.bot-bottle/` dir, die with a clear pointer at the README's
     new manifest section. Don't silently ignore the JSON content."""
 
     def test_dies(self):
-        (self.home_root / "claude-bottle.json").write_text('{"bottles": {}}')
+        (self.home_root / "bot-bottle.json").write_text('{"bottles": {}}')
         with self.assertRaises(Die):
             self.resolve()
 

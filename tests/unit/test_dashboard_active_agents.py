@@ -6,20 +6,20 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from claude_bottle import supervise
-from claude_bottle.cli import dashboard
+from bot_bottle import supervise
+from bot_bottle.cli import dashboard
 
 
 class _FakeHomeMixin:
     def _setup_fake_home(self) -> None:
         self._tmp = tempfile.TemporaryDirectory(prefix="dashboard-aa-test.")
-        original = supervise.claude_bottle_root
+        original = supervise.bot_bottle_root
 
         def fake_root() -> Path:
-            return Path(self._tmp.name) / ".claude-bottle"
+            return Path(self._tmp.name) / ".bot-bottle"
 
-        supervise.claude_bottle_root = fake_root  # type: ignore[assignment]
-        self._restore_home = lambda: setattr(supervise, "claude_bottle_root", original)
+        supervise.bot_bottle_root = fake_root  # type: ignore[assignment]
+        self._restore_home = lambda: setattr(supervise, "bot_bottle_root", original)
 
     def _teardown_fake_home(self) -> None:
         self._restore_home()
@@ -230,7 +230,7 @@ class TestBottleForSlug(unittest.TestCase):
     def test_unowned_synthesizes_docker_bottle(self):
         bottle, _ = dashboard._bottle_for_slug("dev-xyz", {}, None)
         # The synth wraps the slug-derived container name.
-        self.assertEqual("claude-bottle-dev-xyz", bottle.name)
+        self.assertEqual("bot-bottle-dev-xyz", bottle.name)
 
     def test_unowned_without_manifest_omits_prompt_path(self):
         bottle, hint = dashboard._bottle_for_slug("dev-xyz", {}, None)
@@ -295,7 +295,7 @@ class TestTmuxPaneArgvBuilders(unittest.TestCase):
 
     DOCKER_ARGV = [
         "docker", "exec", "-it",
-        "claude-bottle-dev-abc",
+        "bot-bottle-dev-abc",
         "claude", "--dangerously-skip-permissions", "--continue",
     ]
 
@@ -329,9 +329,9 @@ class TestResumeArgvWithFallback(unittest.TestCase):
     --continue has no session to resume."""
 
     def _bottle(self, prompt_path: str | None = None):
-        from claude_bottle.backend.docker.bottle import DockerBottle
+        from bot_bottle.backend.docker.bottle import DockerBottle
         return DockerBottle(
-            container="claude-bottle-dev-abc",
+            container="bot-bottle-dev-abc",
             teardown=lambda: None,
             prompt_path_in_container=prompt_path,
         )
@@ -340,7 +340,7 @@ class TestResumeArgvWithFallback(unittest.TestCase):
         argv = dashboard._build_resume_argv_with_fallback(self._bottle())
         # Must end with `sh -c '<cmd> --continue || <cmd>'`.
         self.assertEqual(
-            ["docker", "exec", "-it", "claude-bottle-dev-abc", "sh", "-c"],
+            ["docker", "exec", "-it", "bot-bottle-dev-abc", "sh", "-c"],
             argv[:6],
         )
         inner = argv[6]
@@ -362,10 +362,10 @@ class TestResumeArgvWithFallback(unittest.TestCase):
         self.assertIn("--dangerously-skip-permissions", argv[-1])
 
     def test_includes_prompt_file_flag_when_set(self):
-        bottle = self._bottle("/home/node/.claude-bottle-prompt.txt")
+        bottle = self._bottle("/home/node/.bot-bottle-prompt.txt")
         argv = dashboard._build_resume_argv_with_fallback(bottle)
         self.assertIn("--append-system-prompt-file", argv[-1])
-        self.assertIn("/home/node/.claude-bottle-prompt.txt", argv[-1])
+        self.assertIn("/home/node/.bot-bottle-prompt.txt", argv[-1])
 
 
 class TestClaudeRuntimeArgs(unittest.TestCase):

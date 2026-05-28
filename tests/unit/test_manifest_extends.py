@@ -14,8 +14,8 @@ import contextlib
 import io
 import unittest
 
-from claude_bottle.log import Die
-from claude_bottle.manifest import Manifest
+from bot_bottle.log import Die
+from bot_bottle.manifest import Manifest
 
 
 def _die_message(callable_, *args, **kwargs) -> str:

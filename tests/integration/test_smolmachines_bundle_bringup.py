@@ -18,7 +18,7 @@ import subprocess
 import time
 import unittest
 
-from claude_bottle.backend.smolmachines.sidecar_bundle import (
+from bot_bottle.backend.smolmachines.sidecar_bundle import (
     BundleLaunchSpec,
     bundle_container_name,
     bundle_network_name,
@@ -47,13 +47,13 @@ class TestBundleBringup(unittest.TestCase):
         remove_bundle_network(self.network)
 
     def _bundle_image_built(self) -> bool:
-        """The bundle image (`claude-bottle-sidecars:latest`) is
+        """The bundle image (`bot-bottle-sidecars:latest`) is
         built lazily by the docker backend's compose. If a
         smolmachines-only operator hasn't run the docker backend
         first, the image won't exist locally. Skip rather than
         fail."""
         r = subprocess.run(
-            ["docker", "image", "inspect", "claude-bottle-sidecars:latest"],
+            ["docker", "image", "inspect", "bot-bottle-sidecars:latest"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             check=False,
         )
@@ -62,7 +62,7 @@ class TestBundleBringup(unittest.TestCase):
     def test_create_network_then_start_bundle_pins_ip(self):
         if not self._bundle_image_built():
             self.skipTest(
-                "claude-bottle-sidecars:latest not built; run a docker "
+                "bot-bottle-sidecars:latest not built; run a docker "
                 "bottle first or `docker build -f Dockerfile.sidecars .`"
             )
 
@@ -85,7 +85,7 @@ class TestBundleBringup(unittest.TestCase):
             # Only run the pipelock daemon for this smoke — it's
             # the lightest of the four and doesn't need bind
             # mounts beyond what we'd skip without
-            # CLAUDE_BOTTLE_SIDECAR_DAEMONS. (The init
+            # BOT_BOTTLE_SIDECAR_DAEMONS. (The init
             # supervisor will exit if pipelock fails to find its
             # yaml — that's expected here; we just need the
             # container to land on the network at the right IP.)

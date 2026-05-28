@@ -6,7 +6,7 @@ highlight window?`"""
 
 import unittest
 
-from claude_bottle.cli import dashboard
+from bot_bottle.cli import dashboard
 
 
 class TestIsRecent(unittest.TestCase):

@@ -1,6 +1,6 @@
 """Unit: sidecar bundle init supervisor (PRD 0024 chunk 1).
 
-Tests both the helper functions in `claude_bottle.sidecar_init`
+Tests both the helper functions in `bot_bottle.sidecar_init`
 and the supervisor's end-to-end signal / exit-code behavior. The
 end-to-end tests use real subprocesses (`/bin/sleep`,
 `/bin/sh -c '...'`) — short-lived, no docker required — so they
@@ -17,7 +17,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from claude_bottle.sidecar_init import (
+from bot_bottle.sidecar_init import (
     _DaemonSpec,
     _Supervisor,
     _env_for_daemon,
@@ -88,18 +88,18 @@ class TestSelectedDaemons(unittest.TestCase):
                          ["egress", "pipelock", "git-gate", "supervise"])
 
     def test_empty_returns_all(self):
-        got = _selected_daemons({"CLAUDE_BOTTLE_SIDECAR_DAEMONS": ""},
+        got = _selected_daemons({"BOT_BOTTLE_SIDECAR_DAEMONS": ""},
                                 all_daemons=self._DAEMONS)
         self.assertEqual(4, len(got))
 
     def test_whitespace_only_returns_all(self):
-        got = _selected_daemons({"CLAUDE_BOTTLE_SIDECAR_DAEMONS": "   "},
+        got = _selected_daemons({"BOT_BOTTLE_SIDECAR_DAEMONS": "   "},
                                 all_daemons=self._DAEMONS)
         self.assertEqual(4, len(got))
 
     def test_explicit_subset(self):
         got = _selected_daemons(
-            {"CLAUDE_BOTTLE_SIDECAR_DAEMONS": "egress,pipelock"},
+            {"BOT_BOTTLE_SIDECAR_DAEMONS": "egress,pipelock"},
             all_daemons=self._DAEMONS,
         )
         self.assertEqual([d.name for d in got], ["egress", "pipelock"])
@@ -109,7 +109,7 @@ class TestSelectedDaemons(unittest.TestCase):
         # the canonical _DAEMONS order so egress starts before
         # pipelock (race-window reason).
         got = _selected_daemons(
-            {"CLAUDE_BOTTLE_SIDECAR_DAEMONS": "supervise,pipelock,egress"},
+            {"BOT_BOTTLE_SIDECAR_DAEMONS": "supervise,pipelock,egress"},
             all_daemons=self._DAEMONS,
         )
         self.assertEqual([d.name for d in got],
@@ -117,14 +117,14 @@ class TestSelectedDaemons(unittest.TestCase):
 
     def test_unknown_names_ignored(self):
         got = _selected_daemons(
-            {"CLAUDE_BOTTLE_SIDECAR_DAEMONS": "egress,bogus"},
+            {"BOT_BOTTLE_SIDECAR_DAEMONS": "egress,bogus"},
             all_daemons=self._DAEMONS,
         )
         self.assertEqual([d.name for d in got], ["egress"])
 
     def test_whitespace_in_names_stripped(self):
         got = _selected_daemons(
-            {"CLAUDE_BOTTLE_SIDECAR_DAEMONS": " egress , pipelock "},
+            {"BOT_BOTTLE_SIDECAR_DAEMONS": " egress , pipelock "},
             all_daemons=self._DAEMONS,
         )
         self.assertEqual([d.name for d in got], ["egress", "pipelock"])
@@ -355,7 +355,7 @@ class TestSupervisor(unittest.TestCase):
         time.sleep(0.3)  # let `trap` register
         sup.request_shutdown(reason="test")
 
-        with patch("claude_bottle.sidecar_init._GRACE_SECONDS", 0.3):
+        with patch("bot_bottle.sidecar_init._GRACE_SECONDS", 0.3):
             rc = self._drive(sup, max_wait_s=4.0)
 
         # Process was SIGKILL'd → returncode -9 on POSIX.
@@ -397,14 +397,14 @@ class TestMainEndToEnd(unittest.TestCase):
 
         helper = (
             "import os, runpy, sys\n"
-            "from claude_bottle import sidecar_init as si\n"
+            "from bot_bottle import sidecar_init as si\n"
             "si._DAEMONS = (\n"
             "  si._DaemonSpec('alpha', ('/bin/sleep','30')),\n"
             "  si._DaemonSpec('beta',  ('/bin/sleep','30')),\n"
             ")\n"
             "sys.exit(si.main([]))\n"
         )
-        env = {**os.environ, "CLAUDE_BOTTLE_SIDECAR_DAEMONS": daemons_csv}
+        env = {**os.environ, "BOT_BOTTLE_SIDECAR_DAEMONS": daemons_csv}
         proc = subprocess.Popen(
             [sys.executable, "-c", helper],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

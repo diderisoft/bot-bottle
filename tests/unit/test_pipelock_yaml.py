@@ -12,8 +12,8 @@ import unittest
 from pathlib import Path
 from typing import Any, cast
 
-from claude_bottle.manifest import Manifest
-from claude_bottle.pipelock import (
+from bot_bottle.manifest import Manifest
+from bot_bottle.pipelock import (
     DEFAULT_TLS_PASSTHROUGH,
     PipelockProxy,
     pipelock_build_config,
@@ -114,7 +114,7 @@ class TestBuildConfig(unittest.TestCase):
         # fires. The only knob that actually skips the block is the
         # global on/off, so we flip it off whenever the bottle is set
         # up to route claude through pipelock.
-        from claude_bottle.manifest import Manifest
+        from bot_bottle.manifest import Manifest
         bottle = Manifest.from_json_obj({
             "bottles": {"dev": {"egress": {"routes": [
                 {"host": "api.anthropic.com",
@@ -209,7 +209,7 @@ class TestRenderAndWrite(unittest.TestCase):
         self.assertIn('- "172.20.0.0/16"', text)
 
     def test_render_emits_seed_phrase_off_for_anthropic_route(self):
-        from claude_bottle.manifest import Manifest
+        from bot_bottle.manifest import Manifest
         bottle = Manifest.from_json_obj({
             "bottles": {"dev": {"egress": {"routes": [
                 {"host": "api.anthropic.com",

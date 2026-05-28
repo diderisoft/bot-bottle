@@ -12,22 +12,22 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from claude_bottle.backend import BottleSpec
-from claude_bottle.backend.docker.bottle_plan import DockerBottlePlan
-from claude_bottle.backend.docker.compose import (
+from bot_bottle.backend import BottleSpec
+from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
+from bot_bottle.backend.docker.compose import (
     COMPOSE_PROJECT_PREFIX,
     bottle_plan_to_compose,
     compose_project_name,
     slug_from_compose_project,
 )
-from claude_bottle.egress import (
+from bot_bottle.egress import (
     EgressPlan,
     EgressRoute,
 )
-from claude_bottle.git_gate import GitGatePlan, GitGateUpstream
-from claude_bottle.manifest import Manifest
-from claude_bottle.pipelock import PipelockProxyPlan
-from claude_bottle.supervise import SupervisePlan
+from bot_bottle.git_gate import GitGatePlan, GitGateUpstream
+from bot_bottle.manifest import Manifest
+from bot_bottle.pipelock import PipelockProxyPlan
+from bot_bottle.supervise import SupervisePlan
 
 
 SLUG = "demo-abc12"
@@ -78,9 +78,9 @@ def _proxy_plan() -> PipelockProxyPlan:
     return PipelockProxyPlan(
         yaml_path=STATE / "pipelock.yaml",
         slug=SLUG,
-        internal_network=f"claude-bottle-net-{SLUG}",
+        internal_network=f"bot-bottle-net-{SLUG}",
         internal_network_cidr="10.1.2.0/24",
-        egress_network=f"claude-bottle-egress-{SLUG}",
+        egress_network=f"bot-bottle-egress-{SLUG}",
         ca_cert_host_path=STATE / "pipelock-ca" / "ca.pem",
         ca_key_host_path=STATE / "pipelock-ca" / "ca-key.pem",
     )
@@ -93,8 +93,8 @@ def _git_gate_plan(upstreams: tuple[GitGateUpstream, ...] = ()) -> GitGatePlan:
         hook_script=STATE / "git-gate" / "pre-receive",
         access_hook_script=STATE / "git-gate" / "access-hook",
         upstreams=upstreams,
-        internal_network=f"claude-bottle-net-{SLUG}",
-        egress_network=f"claude-bottle-egress-{SLUG}",
+        internal_network=f"bot-bottle-net-{SLUG}",
+        egress_network=f"bot-bottle-egress-{SLUG}",
     )
 
 
@@ -109,8 +109,8 @@ def _egress_plan(routes: tuple[EgressRoute, ...] = ()) -> EgressPlan:
         routes_path=STATE / "egress" / "routes.yaml",
         routes=routes,
         token_env_map=token_env_map,
-        internal_network=f"claude-bottle-net-{SLUG}",
-        egress_network=f"claude-bottle-egress-{SLUG}",
+        internal_network=f"bot-bottle-net-{SLUG}",
+        egress_network=f"bot-bottle-egress-{SLUG}",
         mitmproxy_ca_host_path=STATE / "egress-ca" / "mitmproxy-ca.pem",
         mitmproxy_ca_cert_only_host_path=STATE / "egress-ca" / "ca.pem",
         pipelock_ca_host_path=STATE / "pipelock-ca" / "ca.pem",
@@ -123,7 +123,7 @@ def _supervise_plan() -> SupervisePlan:
         slug=SLUG,
         queue_dir=STATE / "supervise" / "queue",
         current_config_dir=STATE / "supervise" / "current-config",
-        internal_network=f"claude-bottle-net-{SLUG}",
+        internal_network=f"bot-bottle-net-{SLUG}",
     )
 
 
@@ -161,11 +161,11 @@ def _plan(
         spec=_spec(supervise=supervise, with_git=with_git, with_egress=with_egress),
         stage_dir=STAGE,
         slug=SLUG,
-        container_name=f"claude-bottle-{SLUG}",
+        container_name=f"bot-bottle-{SLUG}",
         container_name_pinned=False,
-        image="claude-bottle:latest",
+        image="bot-bottle-claude:latest",
         derived_image="",
-        runtime_image="claude-bottle:latest",
+        runtime_image="bot-bottle-claude:latest",
         dockerfile_path="",
         env_file=Path("/dev/null"),  # exists, size 0 → renderer skips env_file
         forwarded_env={"CLAUDE_CODE_OAUTH_TOKEN": "x"},
@@ -181,18 +181,18 @@ def _plan(
 class TestProjectAndNetworks(unittest.TestCase):
     def test_project_name(self):
         spec = bottle_plan_to_compose(_plan())
-        self.assertEqual(f"claude-bottle-{SLUG}", spec["name"])
+        self.assertEqual(f"bot-bottle-{SLUG}", spec["name"])
 
     def test_internal_network_is_internal(self):
         spec = bottle_plan_to_compose(_plan())
         net = spec["networks"]["internal"]
-        self.assertEqual(f"claude-bottle-net-{SLUG}", net["name"])
+        self.assertEqual(f"bot-bottle-net-{SLUG}", net["name"])
         self.assertTrue(net["internal"])
 
     def test_egress_network_is_external_bridge(self):
         spec = bottle_plan_to_compose(_plan())
         net = spec["networks"]["egress"]
-        self.assertEqual(f"claude-bottle-egress-{SLUG}", net["name"])
+        self.assertEqual(f"bot-bottle-egress-{SLUG}", net["name"])
         # No `internal:` key on the egress network — defaults to a
         # normal user-defined bridge.
         self.assertNotIn("internal", net)
@@ -262,13 +262,13 @@ class TestAgentAlwaysPresent(unittest.TestCase):
     def test_agent_current_config_mount_only_with_supervise(self):
         with_sv = bottle_plan_to_compose(_plan(supervise=True))["services"]["agent"]
         self.assertTrue(any(
-            v["target"] == "/etc/claude-bottle/current-config"
+            v["target"] == "/etc/bot-bottle/current-config"
             for v in with_sv.get("volumes", [])
         ))
         without_sv = bottle_plan_to_compose(_plan(supervise=False))["services"]["agent"]
         # Either no volumes key at all, or no current-config target.
         self.assertFalse(any(
-            v["target"] == "/etc/claude-bottle/current-config"
+            v["target"] == "/etc/bot-bottle/current-config"
             for v in without_sv.get("volumes", [])
         ))
 
@@ -293,12 +293,12 @@ class TestSidecarBundleShape(unittest.TestCase):
 
     def test_bundle_uses_bundle_image_and_dockerfile(self):
         sc = self._render()["services"]["sidecars"]
-        self.assertEqual("claude-bottle-sidecars:latest", sc["image"])
+        self.assertEqual("bot-bottle-sidecars:latest", sc["image"])
         self.assertEqual("Dockerfile.sidecars", sc["build"]["dockerfile"])
 
     def test_bundle_container_name_uses_sidecars_prefix(self):
         sc = self._render()["services"]["sidecars"]
-        self.assertEqual(f"claude-bottle-sidecars-{SLUG}", sc["container_name"])
+        self.assertEqual(f"bot-bottle-sidecars-{SLUG}", sc["container_name"])
 
     def test_bundle_joins_both_networks(self):
         sc = self._render()["services"]["sidecars"]
@@ -335,18 +335,18 @@ class TestSidecarBundleShape(unittest.TestCase):
         daemons = {
             line.split("=", 1)[1]
             for line in sc["environment"]
-            if line.startswith("CLAUDE_BOTTLE_SIDECAR_DAEMONS=")
+            if line.startswith("BOT_BOTTLE_SIDECAR_DAEMONS=")
         }
         self.assertEqual({"egress,pipelock"}, daemons)
 
     def test_daemons_csv_expands_with_optional_sidecars(self):
         sc = self._render(with_git=True, supervise=True)["services"]["sidecars"]
         for line in sc["environment"]:
-            if line.startswith("CLAUDE_BOTTLE_SIDECAR_DAEMONS="):
+            if line.startswith("BOT_BOTTLE_SIDECAR_DAEMONS="):
                 csv = line.split("=", 1)[1]
                 break
         else:
-            self.fail("CLAUDE_BOTTLE_SIDECAR_DAEMONS not in env")
+            self.fail("BOT_BOTTLE_SIDECAR_DAEMONS not in env")
         self.assertEqual(
             ["egress", "pipelock", "git-gate", "supervise"],
             csv.split(","),

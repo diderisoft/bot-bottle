@@ -7,9 +7,9 @@ which hostname will land in pipelock's allowlist on approval."""
 
 import unittest
 
-from claude_bottle import supervise
-from claude_bottle.cli import dashboard
-from claude_bottle.supervise import (
+from bot_bottle import supervise
+from bot_bottle.cli import dashboard
+from bot_bottle.supervise import (
     Proposal,
     TOOL_CAPABILITY_BLOCK,
     TOOL_EGRESS_BLOCK,

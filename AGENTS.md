@@ -5,7 +5,7 @@
 Codex-bottle spins up an isolated container for running Codex with a
 curated set of skills and env vars. The point is to run Codex with broad
 permissions inside a sandbox, so a misbehaving agent cannot reach the host.
-A Python CLI (entry point `cli.py`, package `claude_bottle/`) orchestrates
+A Python CLI (entry point `cli.py`, package `bot_bottle/`) orchestrates
 the container lifecycle and the copying of skills and env vars into it.
 
 ## Goals

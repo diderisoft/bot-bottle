@@ -4,14 +4,14 @@ integration test."""
 
 import unittest
 
-from claude_bottle.backend.docker.egress_apply import (
+from bot_bottle.backend.docker.egress_apply import (
     EgressApplyError,
     _hosts_in_routes,
     _merge_single_route,
     _pipelock_safe_hosts,
     validate_routes_content,
 )
-from claude_bottle.yaml_subset import parse_yaml_subset
+from bot_bottle.yaml_subset import parse_yaml_subset
 
 
 # YAML fixtures matching the hand-rolled `_render_routes_payload`

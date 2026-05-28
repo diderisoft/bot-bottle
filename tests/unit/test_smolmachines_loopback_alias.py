@@ -15,7 +15,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from claude_bottle.backend.smolmachines import loopback_alias
+from bot_bottle.backend.smolmachines import loopback_alias
 
 
 def _ok(stdout: str = "") -> subprocess.CompletedProcess:
@@ -161,7 +161,7 @@ class TestAliasInUseDetection(unittest.TestCase):
         # First call: docker ps -> two bundle names.
         # Then docker inspect each, returning a port-bindings JSON
         # blob with a HostIp on the per-bottle alias.
-        ps_out = "claude-bottle-sidecars-a\nclaude-bottle-sidecars-b\n"
+        ps_out = "bot-bottle-sidecars-a\nbot-bottle-sidecars-b\n"
         inspect_a = (
             '{"8888/tcp":[{"HostIp":"127.0.0.16","HostPort":"54000"}]}'
         )
@@ -183,7 +183,7 @@ class TestAliasInUseDetection(unittest.TestCase):
             )
 
     def test_inspect_failures_are_skipped(self):
-        ps_out = "claude-bottle-sidecars-c\n"
+        ps_out = "bot-bottle-sidecars-c\n"
         with patch.object(
             loopback_alias.subprocess, "run",
             side_effect=[_ok(stdout=ps_out), _fail("inspect failed")],

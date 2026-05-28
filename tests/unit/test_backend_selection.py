@@ -12,8 +12,8 @@ import os
 import unittest
 from unittest.mock import patch
 
-from claude_bottle import backend as backend_mod
-from claude_bottle.backend import (
+from bot_bottle import backend as backend_mod
+from bot_bottle.backend import (
     ActiveAgent,
     enumerate_active_agents,
     get_bottle_backend,
@@ -23,12 +23,12 @@ from claude_bottle.backend import (
 
 class TestGetBottleBackend(unittest.TestCase):
     def test_explicit_name_wins_over_env(self):
-        with patch.dict(os.environ, {"CLAUDE_BOTTLE_BACKEND": "smolmachines"}):
+        with patch.dict(os.environ, {"BOT_BOTTLE_BACKEND": "smolmachines"}):
             b = get_bottle_backend("docker")
         self.assertEqual("docker", b.name)
 
     def test_env_var_fallback(self):
-        with patch.dict(os.environ, {"CLAUDE_BOTTLE_BACKEND": "smolmachines"}):
+        with patch.dict(os.environ, {"BOT_BOTTLE_BACKEND": "smolmachines"}):
             b = get_bottle_backend()
         self.assertEqual("smolmachines", b.name)
 
@@ -139,11 +139,11 @@ class TestHasBackend(unittest.TestCase):
         with patch.object(
             backend_mod, "_BACKENDS", {"docker": _FakeBackend()},
         ):
-            from claude_bottle.backend import has_backend
+            from bot_bottle.backend import has_backend
             self.assertFalse(has_backend("docker"))
 
     def test_unknown_backend_returns_false(self):
-        from claude_bottle.backend import has_backend
+        from bot_bottle.backend import has_backend
         self.assertFalse(has_backend("nonexistent"))
 
 

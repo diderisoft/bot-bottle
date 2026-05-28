@@ -1,11 +1,11 @@
-# claude-bottle
+# bot-bottle
 
 ## What this is
 
-claude-bottle spins up an isolated container for running Claude Code with a
+bot-bottle spins up an isolated container for running Claude Code with a
 curated set of skills and env vars. The point is to run Claude with broad
 permissions inside a sandbox, so a misbehaving agent cannot reach the host.
-A Python CLI (entry point `cli.py`, package `claude_bottle/`) orchestrates
+A Python CLI (entry point `cli.py`, package `bot_bottle/`) orchestrates
 the container lifecycle and the copying of skills and env vars into it.
 
 ## Goals
@@ -25,7 +25,7 @@ the container lifecycle and the copying of skills and env vars into it.
 - `README.md` — short public-facing description.
 - `CLAUDE.md` — this file, orientation for future Claude sessions.
 - `.gitignore` — OS junk.
-- `claude-bottle.json` — manifest of named agents (env / skills / prompt
+- `bot-bottle.json` — manifest of named agents (env / skills / prompt
   per agent), consumed by `cli.py`. See "Manifest" under
   "Intended design".
 - `docs/INDEX.md` — pointer to the research notes.

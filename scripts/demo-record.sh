@@ -11,8 +11,8 @@ if ! command -v vhs >/dev/null 2>&1; then
   exit 1
 fi
 
-if [ -z "${CLAUDE_BOTTLE_OAUTH_TOKEN:-}" ]; then
-  echo "demo-record: CLAUDE_BOTTLE_OAUTH_TOKEN is unset; claude inside the bottle will not auth" >&2
+if [ -z "${BOT_BOTTLE_OAUTH_TOKEN:-}" ]; then
+  echo "demo-record: BOT_BOTTLE_OAUTH_TOKEN is unset; claude inside the bottle will not auth" >&2
   exit 1
 fi
 

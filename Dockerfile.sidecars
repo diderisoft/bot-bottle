@@ -36,7 +36,7 @@
 # Stage 1: pipelock binary. The upstream pipelock image is a
 # scratch image with the binary at /pipelock (entrypoint).
 # Pinned by digest in lockstep with
-# claude_bottle/backend/docker/pipelock.py:PIPELOCK_IMAGE.
+# bot_bottle/backend/docker/pipelock.py:PIPELOCK_IMAGE.
 FROM ghcr.io/luckypipewrench/pipelock@sha256:3b1a39417b98406ddc5dc2d8fcb42865ddc0c68a43d355db55f0f8cb06bc6de9 AS pipelock-src
 
 # Stage 2: gitleaks binary. The upstream gitleaks image is alpine
@@ -75,13 +75,13 @@ COPY --from=gitleaks-src /usr/bin/gitleaks /usr/bin/gitleaks
 # Kept flat under /app/ so mitmdump's loader resolves them as
 # top-level siblings (absolute imports), matching the prior
 # Dockerfile.egress / Dockerfile.supervise layout.
-COPY claude_bottle/egress_addon_core.py /app/egress_addon_core.py
-COPY claude_bottle/egress_addon.py      /app/egress_addon.py
-COPY claude_bottle/yaml_subset.py       /app/yaml_subset.py
-COPY claude_bottle/supervise.py         /app/supervise.py
-COPY claude_bottle/supervise_server.py  /app/supervise_server.py
-COPY claude_bottle/sidecar_init.py      /app/sidecar_init.py
-COPY claude_bottle/egress_entrypoint.sh /app/egress-entrypoint.sh
+COPY bot_bottle/egress_addon_core.py /app/egress_addon_core.py
+COPY bot_bottle/egress_addon.py      /app/egress_addon.py
+COPY bot_bottle/yaml_subset.py       /app/yaml_subset.py
+COPY bot_bottle/supervise.py         /app/supervise.py
+COPY bot_bottle/supervise_server.py  /app/supervise_server.py
+COPY bot_bottle/sidecar_init.py      /app/sidecar_init.py
+COPY bot_bottle/egress_entrypoint.sh /app/egress-entrypoint.sh
 RUN chmod +x /app/egress-entrypoint.sh
 
 # Pre-create runtime directories the compose renderer + start

@@ -32,9 +32,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from claude_bottle.backend import BottleSpec, get_bottle_backend
-from claude_bottle.backend.smolmachines.smolvm import is_available as _smolvm_available
-from claude_bottle.manifest import Manifest
+from bot_bottle.backend import BottleSpec, get_bottle_backend
+from bot_bottle.backend.smolmachines.smolvm import is_available as _smolvm_available
+from bot_bottle.manifest import Manifest
 from tests._docker import skip_unless_docker
 
 
@@ -76,7 +76,7 @@ class TestSmolmachinesLaunch(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.stage = Path(tempfile.mkdtemp(prefix="cb-smol-launch."))
-        os.environ["CLAUDE_BOTTLE_BACKEND"] = "smolmachines"
+        os.environ["BOT_BOTTLE_BACKEND"] = "smolmachines"
         backend = get_bottle_backend()
         spec = BottleSpec(
             manifest=_minimal_manifest(),
@@ -94,7 +94,7 @@ class TestSmolmachinesLaunch(unittest.TestCase):
             cls._launch.__exit__(None, None, None)
         finally:
             shutil.rmtree(cls.stage, ignore_errors=True)
-            os.environ.pop("CLAUDE_BOTTLE_BACKEND", None)
+            os.environ.pop("BOT_BOTTLE_BACKEND", None)
 
     def test_smoke_exec_echo(self):
         # The plumbing-verifies-end-to-end smoke: a shell command
@@ -152,10 +152,10 @@ class TestSmolmachinesLaunch(unittest.TestCase):
 
     def test_prompt_file_lands_in_guest(self):
         # provision_prompt copies the host-side prompt.txt into the
-        # guest at /root/.claude-bottle-prompt.txt. The content
+        # guest at /root/.bot-bottle-prompt.txt. The content
         # must match what the manifest declared so claude-code's
         # --append-system-prompt-file reads the right text.
-        r = self.bottle.exec("cat /root/.claude-bottle-prompt.txt")
+        r = self.bottle.exec("cat /root/.bot-bottle-prompt.txt")
         self.assertEqual(0, r.returncode, msg=r.stderr)
         self.assertEqual(_AGENT_PROMPT, r.stdout.rstrip("\n"))
 

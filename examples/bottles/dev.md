@@ -8,7 +8,7 @@ cred_proxy:
     - path: /anthropic/
       upstream: https://api.anthropic.com
       auth_scheme: Bearer
-      token_ref: CLAUDE_BOTTLE_OAUTH_TOKEN
+      token_ref: BOT_BOTTLE_OAUTH_TOKEN
       role: anthropic-base-url
     - path: /gh-api/
       upstream: https://api.github.com
@@ -34,5 +34,5 @@ cred_proxy:
 The `dev` bottle — backs a generic development workflow.
 
 Holds tokens for Anthropic, GitHub, a self-hosted Gitea, and npm.
-Drop this file into `~/.claude-bottle/bottles/dev.md` and any agent
+Drop this file into `~/.bot-bottle/bottles/dev.md` and any agent
 referencing `bottle: dev` will launch against this infrastructure.

@@ -5,8 +5,8 @@ actually use, and every rejection case the PRD enumerates."""
 import textwrap
 import unittest
 
-from claude_bottle.yaml_subset import YamlSubsetError
-from claude_bottle.yaml_subset import parse_frontmatter, parse_yaml_subset
+from bot_bottle.yaml_subset import YamlSubsetError
+from bot_bottle.yaml_subset import parse_frontmatter, parse_yaml_subset
 
 
 def _y(s: str):
@@ -174,7 +174,7 @@ class TestBlockList(unittest.TestCase):
 
     def test_list_item_with_inline_list_value(self):
         # role: [git-insteadof, tea-login] — the exact shape in the
-        # claude-bottle manifest.
+        # bot-bottle manifest.
         out = _y("""
             routes:
               - path: /x/
@@ -267,7 +267,7 @@ class TestRealisticBottleFile(unittest.TestCase):
             git:
               remotes:
                 gitea.dideric.is:
-                  Name: claude-bottle
+                  Name: bot-bottle
                   Upstream: ssh://git@gitea.dideric.is:30009/x/y.git
                   IdentityFile: ~/.ssh/gitea.pem
                   ExtraHosts:

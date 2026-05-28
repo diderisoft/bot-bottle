@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="docs/logo.svg" alt="claude-bottle logo" width="140">
+  <img src="docs/logo.svg" alt="bot-bottle logo" width="140">
 </p>
 
-# claude-bottle
+# bot-bottle
 
-[![test](https://gitea.dideric.is/didericis/claude-bottle/actions/workflows/test.yml/badge.svg?branch=main)](https://gitea.dideric.is/didericis/claude-bottle/actions?workflow=test.yml)
+[![test](https://gitea.dideric.is/didericis/bot-bottle/actions/workflows/test.yml/badge.svg?branch=main)](https://gitea.dideric.is/didericis/bot-bottle/actions?workflow=test.yml)
 
 Run multiple Claude Code agents on your own machine, each scoped to its own secrets, skills, and egress allowlist.
 
@@ -21,7 +21,7 @@ asked to commit and push an AKIA-shaped key, git-gate's gitleaks
 pre-receive hook rejects the ref.
 Run it yourself with `bash scripts/demo.sh`.
 
-## Why "claude-bottle"?
+## Why "bot-bottle"?
 
 Each container is a bottle; Claude is the genie inside. The genie's
 powers are exactly what the manifest grants it — a specific set of
@@ -39,7 +39,7 @@ the genie does not persist.
 
 ## Project status
 
-claude-bottle is a self-hosted secure runtime for AI coding agents.
+bot-bottle is a self-hosted secure runtime for AI coding agents.
 Each agent runs in an isolated container or micro-VM-backed bottle with
 scoped secrets, allowlisted egress, TLS-aware proxying, DLP checks, and
 a git-gate that withholds upstream credentials and scans pushes before
@@ -70,7 +70,7 @@ agent to reach it at all. The container itself adds a layer between
 the agent and the host, but the v1 design leans more on secret
 minimization and egress allowlisting than on the container as a
 hardened boundary. On Linux hosts where [gVisor](https://gvisor.dev/)
-is registered with Docker, claude-bottle auto-detects it and launches
+is registered with Docker, bot-bottle auto-detects it and launches
 every bottle under `runsc` for a userspace syscall barrier — no
 manifest configuration required. The broader v2 discussion lives in
 `docs/research/stronger-isolation-alternatives.md`.
@@ -207,7 +207,7 @@ left running; remove it with `docker rm -f <container-name>`.
 
 A second backend runs the agent in a smolvm micro-VM (libkrun) with the
 sidecar bundle still in Docker. Selected via
-`CLAUDE_BOTTLE_BACKEND=smolmachines ./cli.py start <agent>`. Requires
+`BOT_BOTTLE_BACKEND=smolmachines ./cli.py start <agent>`. Requires
 `smolvm` on PATH (`curl -sSL https://smolmachines.com/install.sh | sh`).
 
 The integration tests run against whichever backend the env var
@@ -236,11 +236,11 @@ docstring for the investigation trail.
 ## Manifest
 
 Bottles and agents live as Markdown files with YAML frontmatter under
-`~/.claude-bottle/`. Each bottle is one file in `bottles/`, each agent
+`~/.bot-bottle/`. Each bottle is one file in `bottles/`, each agent
 is one file in `agents/`:
 
 ```
-~/.claude-bottle/
+~/.bot-bottle/
 ├── bottles/
 │   ├── dev.md
 │   └── gitea-dev.md
@@ -253,8 +253,8 @@ The filename (without `.md`) is the entity's name. Filenames must
 match `[a-z][a-z0-9-]*`; files that don't are skipped with a warning.
 
 A repo can ship its own agent files alongside its code at
-`<repo>/.claude-bottle/agents/<name>.md`. Those agents reference
-bottles defined in `~/.claude-bottle/bottles/` (the only place
+`<repo>/.bot-bottle/agents/<name>.md`. Those agents reference
+bottles defined in `~/.bot-bottle/bottles/` (the only place
 bottles can come from); a `bottles/` subdir in a repo is ignored
 with a warning. **This is the trust boundary**: bottle infrastructure
 — credentials, egress allowlists, git remotes — comes from your home
@@ -293,7 +293,7 @@ Cycles (`A extends B extends A`), self-references, and missing
 parents die at parse with a clear pointer. Bottles remain
 `$HOME`-only — `extends:` preserves the trust boundary above.
 
-### Example bottle (`~/.claude-bottle/bottles/gitea-dev.md`)
+### Example bottle (`~/.bot-bottle/bottles/gitea-dev.md`)
 
 ````markdown
 ---
@@ -310,8 +310,8 @@ git:
     email: "eric+claude@dideric.is"
   remotes:
     gitea.dideric.is:
-      Name: claude-bottle
-      Upstream: ssh://git@gitea.dideric.is:30009/didericis/claude-bottle.git
+      Name: bot-bottle
+      Upstream: ssh://git@gitea.dideric.is:30009/didericis/bot-bottle.git
       IdentityFile: /Users/didericis/.ssh/id_ed25519_gitea
       KnownHostKey: ssh-ed25519 AAAA...
 
@@ -325,7 +325,7 @@ egress:
       role: claude_code_oauth
       auth:
         scheme: Bearer
-        token_ref: CLAUDE_BOTTLE_OAUTH_TOKEN
+        token_ref: BOT_BOTTLE_OAUTH_TOKEN
     - host: api.github.com
       auth:
         scheme: Bearer
@@ -340,9 +340,9 @@ For a Codex-backed bottle, set `agent_provider.template: codex` and
 use the `codex_auth` egress role for the OpenAI API route. The built-in
 Codex template uses `Dockerfile.codex`; set `agent_provider.dockerfile`
 to build the agent from a custom Dockerfile while keeping the
-claude-bottle sidecars in place.
+bot-bottle sidecars in place.
 
-### Example agent (`~/.claude-bottle/agents/gitea-helper.md`)
+### Example agent (`~/.bot-bottle/agents/gitea-helper.md`)
 
 ````markdown
 ---
@@ -358,7 +358,7 @@ The agent's Markdown body is its system prompt (whitespace
 stripped). The frontmatter declares the bottle to launch in and any
 skills to mount. You can also include Claude Code subagent fields
 (`name`, `description`, `model`, `color`, `memory`) in the
-frontmatter — claude-bottle ignores them at launch but doesn't
+frontmatter — bot-bottle ignores them at launch but doesn't
 reject them, so the same file can drop into `~/.claude/agents/` as a
 Claude Code subagent.
 
@@ -371,7 +371,7 @@ nested dicts). Anchors, multi-line block scalars, tags, and
 ambiguous bare strings (`yes` / `NO` / `2026-05-24` /
 `0x...`) all die with a clear pointer at the spec — quote your
 strings when in doubt. The full schema lives in
-`claude_bottle/yaml_subset.py` (~450 lines, stdlib-only, no PyYAML).
+`bot_bottle/yaml_subset.py` (~450 lines, stdlib-only, no PyYAML).
 
 Working examples live under `examples/`. Pipelock's design lives in
 `docs/prds/0001-per-agent-egress-proxy-via-pipelock.md` and the
@@ -380,7 +380,7 @@ boundary rationale lives in `docs/prds/0011-per-file-md-manifest.md`.
 
 ## Auth: OAuth token, not API key
 
-claude-bottle authenticates `claude` inside the container with the same
+bot-bottle authenticates `claude` inside the container with the same
 Pro/Max subscription you already use on the host, via a long-lived OAuth
 token. No `ANTHROPIC_API_KEY` is needed.
 
@@ -389,7 +389,7 @@ Code stores OAuth credentials in the encrypted Keychain, not in
 `~/.claude.json`. Mounting that file into a Linux container does not
 carry the credentials with it. Linux hosts keep credentials in
 `~/.claude/.credentials.json`, but to keep the launcher portable
-claude-bottle uses the env-var path on every host.
+bot-bottle uses the env-var path on every host.
 
 **One-time setup on the host:**
 
@@ -398,28 +398,28 @@ claude setup-token   # browser login, prints a ~1-year OAuth token
 ```
 
 Stash the token in your shell env (e.g. `~/.zshrc` or a secret manager)
-as `CLAUDE_BOTTLE_OAUTH_TOKEN`:
+as `BOT_BOTTLE_OAUTH_TOKEN`:
 
 ```sh
-export CLAUDE_BOTTLE_OAUTH_TOKEN="<token>"
+export BOT_BOTTLE_OAUTH_TOKEN="<token>"
 ```
 
 The bottle reaches the Anthropic API only through the cred-proxy
 sidecar. To let `claude` authenticate, declare a route in
 `bottle.cred_proxy.routes` with `role: "anthropic-base-url"` and
-`token_ref: "CLAUDE_BOTTLE_OAUTH_TOKEN"`:
+`token_ref: "BOT_BOTTLE_OAUTH_TOKEN"`:
 
 ```jsonc
 {
   "path":        "/anthropic/",
   "upstream":    "https://api.anthropic.com",
   "auth_scheme": "Bearer",
-  "token_ref":   "CLAUDE_BOTTLE_OAUTH_TOKEN",
+  "token_ref":   "BOT_BOTTLE_OAUTH_TOKEN",
   "role":        "anthropic-base-url"
 }
 ```
 
-At launch, `cli.py` reads `CLAUDE_BOTTLE_OAUTH_TOKEN` from the host
+At launch, `cli.py` reads `BOT_BOTTLE_OAUTH_TOKEN` from the host
 env and forwards it into the cred-proxy container's environ — never
 into the agent's. The agent receives `ANTHROPIC_BASE_URL` pointing at
 `http://cred-proxy:9099/anthropic` and a non-secret placeholder for
@@ -438,7 +438,7 @@ via `claude setup-token` again. Reference:
 
 ## Trademarks
 
-claude-bottle is an independent project and is not affiliated with,
+bot-bottle is an independent project and is not affiliated with,
 endorsed by, or sponsored by Anthropic, PBC. "Claude" and "Claude
 Code" are trademarks of Anthropic, PBC; the project name uses
 "claude" descriptively to indicate that the tool runs Claude Code

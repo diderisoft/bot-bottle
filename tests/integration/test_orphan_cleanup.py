@@ -13,7 +13,7 @@ import os
 import subprocess
 import unittest
 
-from claude_bottle.backend.docker.network import (
+from bot_bottle.backend.docker.network import (
     network_create_egress,
     network_create_internal,
     network_remove,
@@ -40,7 +40,7 @@ class TestOrphanCleanup(unittest.TestCase):
 
     def test_remove_missing_is_noop(self):
         # Returning True == idempotent success.
-        self.assertTrue(network_remove(f"claude-bottle-net-{self.slug}-does-not-exist"))
+        self.assertTrue(network_remove(f"bot-bottle-net-{self.slug}-does-not-exist"))
 
     @unittest.skipIf(
         os.environ.get("GITEA_ACTIONS") == "true",
