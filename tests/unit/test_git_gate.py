@@ -51,12 +51,14 @@ class TestExtraHostsPlumbing(unittest.TestCase):
         m = Manifest.from_json_obj({
             "bottles": {
                 "dev": {
-                    "git": [{
-                        "Name": "claude-bottle",
-                        "Upstream": "ssh://git@gitea.dideric.is:30009/didericis/claude-bottle.git",
-                        "IdentityFile": "/dev/null",
-                        "ExtraHosts": {"gitea.dideric.is": "192.0.2.10"},
-                    }],
+                    "git": {"remotes": {
+                        "gitea.dideric.is": {
+                            "Name": "claude-bottle",
+                            "Upstream": "ssh://git@gitea.dideric.is:30009/didericis/claude-bottle.git",
+                            "IdentityFile": "/dev/null",
+                            "ExtraHosts": {"gitea.dideric.is": "192.0.2.10"},
+                        },
+                    }},
                 },
             },
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},

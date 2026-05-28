@@ -1,4 +1,4 @@
-"""Unit: Bottle.git_user manifest parsing + validation (issue #86)."""
+"""Unit: Bottle git.user manifest parsing + validation (issue #86)."""
 
 import contextlib
 import io
@@ -24,7 +24,7 @@ def _die_message(callable_, *args, **kwargs) -> str:
 
 def _manifest(git_user):
     return {
-        "bottles": {"dev": {"git_user": git_user}},
+        "bottles": {"dev": {"git": {"user": git_user}}},
         "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
     }
 
@@ -53,7 +53,7 @@ class TestGitUserParsing(unittest.TestCase):
         self.assertEqual("bot@example.com", u.email)
 
     def test_omitted_defaults_to_empty(self):
-        # No git_user block at all → empty GitUser, is_empty True →
+        # No git.user block at all → empty GitUser, is_empty True →
         # provisioner skips the `git config` step entirely.
         m = Manifest.from_json_obj({
             "bottles": {"dev": {}},
@@ -63,7 +63,7 @@ class TestGitUserParsing(unittest.TestCase):
         self.assertTrue(u.is_empty())
 
     def test_both_empty_strings_dies(self):
-        # An explicit `git_user: {name: "", email: ""}` is a typo
+        # An explicit `git.user: {name: "", email: ""}` is a typo
         # /  half-finished edit; fail loudly rather than silently
         # no-op (the operator clearly meant to configure something).
         msg = _die_message(
@@ -83,13 +83,24 @@ class TestGitUserParsing(unittest.TestCase):
         msg = _die_message(
             Manifest.from_json_obj, _manifest({"name": 42}),
         )
-        self.assertIn("git_user.name must be a string", msg)
+        self.assertIn("git.user.name must be a string", msg)
 
     def test_non_string_email_dies(self):
         msg = _die_message(
             Manifest.from_json_obj, _manifest({"email": ["x@y.z"]}),
         )
-        self.assertIn("git_user.email must be a string", msg)
+        self.assertIn("git.user.email must be a string", msg)
+
+    def test_legacy_top_level_git_user_dies(self):
+        msg = _die_message(
+            Manifest.from_json_obj,
+            {
+                "bottles": {"dev": {"git_user": {"name": "Bot"}}},
+                "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+            },
+        )
+        self.assertIn("git_user", msg)
+        self.assertIn("git.user", msg)
 
 
 class TestGitUserDirect(unittest.TestCase):

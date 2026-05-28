@@ -31,6 +31,12 @@ from claude_bottle.pipelock import PipelockProxyPlan
 from claude_bottle.supervise import SupervisePlan
 
 
+def _remote_host(g: GitEntry) -> str:
+    if g.UpstreamHost:
+        return g.UpstreamHost
+    return g.Upstream.split("@", 1)[1].split("/", 1)[0].split(":", 1)[0]
+
+
 def _plan(
     *,
     agent_prompt: str = "",
@@ -49,17 +55,20 @@ def _plan(
     agent_supervise_url: str = "http://127.0.0.1:55556/",
 ) -> SmolmachinesBottlePlan:
     bottle_json: dict = {}
+    git_json: dict = {}
     if git:
-        bottle_json["git"] = [
-            {
+        git_json["remotes"] = {
+            _remote_host(g): {
                 "Name": g.Name,
                 "Upstream": g.Upstream,
                 "IdentityFile": g.IdentityFile,
             }
             for g in git
-        ]
+        }
     if git_user is not None:
-        bottle_json["git_user"] = git_user
+        git_json["user"] = git_user
+    if git_json:
+        bottle_json["git"] = git_json
     if supervise:
         bottle_json["supervise"] = True
     manifest = Manifest.from_json_obj({

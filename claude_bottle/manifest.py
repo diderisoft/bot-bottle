@@ -14,8 +14,9 @@ the system prompt, for bottles the body is human documentation
 Bottle schema (frontmatter):
   extends:      <bottle-name>                   # optional (PRD 0025)
   env:          { <NAME>: <env-entry>, ... }
-  git:          [ <git-entry>, ... ]
-  git_user:     { name: <str>, email: <str> }   # optional
+  git:
+    user:       { name: <str>, email: <str> }   # optional
+    remotes:    { <host>: <git-entry>, ... }    # optional
   egress: { routes: [ <egress-route>, ... ] }
   supervise:    <bool>                          # optional
 
@@ -88,31 +89,61 @@ class GitEntry:
     @classmethod
     def from_dict(cls, bottle_name: str, idx: int, raw: object) -> "GitEntry":
         d = _as_json_object(raw, f"bottle '{bottle_name}' git[{idx}]")
+        return cls._from_object(bottle_name, d, f"git[{idx}]", None)
+
+    @classmethod
+    def from_remote_dict(
+        cls, bottle_name: str, host_key: str, raw: object
+    ) -> "GitEntry":
+        if not host_key:
+            die(f"bottle '{bottle_name}' git.remotes has an empty host key")
+        d = _as_json_object(raw, f"bottle '{bottle_name}' git.remotes[{host_key!r}]")
+        return cls._from_object(
+            bottle_name, d, f"git.remotes[{host_key!r}]", host_key,
+        )
+
+    @classmethod
+    def _from_object(
+        cls,
+        bottle_name: str,
+        d: dict[str, object],
+        label: str,
+        host_key: str | None,
+    ) -> "GitEntry":
         name = d.get("Name")
         if not isinstance(name, str) or not name:
-            die(f"bottle '{bottle_name}' git[{idx}] missing required string field 'Name'")
+            die(
+                f"bottle '{bottle_name}' {label} missing required string "
+                f"field 'Name'"
+            )
         upstream = d.get("Upstream")
         if not isinstance(upstream, str) or not upstream:
             die(
-                f"bottle '{bottle_name}' git '{name}' missing required string field "
+                f"bottle '{bottle_name}' {label} '{name}' missing required string field "
                 f"'Upstream'"
             )
         ident = d.get("IdentityFile")
         if not isinstance(ident, str) or not ident:
             die(
-                f"bottle '{bottle_name}' git '{name}' missing required string field "
+                f"bottle '{bottle_name}' {label} '{name}' missing required string field "
                 f"'IdentityFile'"
             )
         khk = _opt_str(
             d.get("KnownHostKey"),
-            f"bottle '{bottle_name}' git '{name}' KnownHostKey",
+            f"bottle '{bottle_name}' {label} '{name}' KnownHostKey",
         )
         extra_hosts = _opt_extra_hosts(
-            d.get("ExtraHosts"), f"bottle '{bottle_name}' git '{name}' ExtraHosts"
+            d.get("ExtraHosts"),
+            f"bottle '{bottle_name}' {label} '{name}' ExtraHosts",
         )
         user, host, port, path = _parse_git_upstream(
-            upstream, f"bottle '{bottle_name}' git '{name}' Upstream"
+            upstream, f"bottle '{bottle_name}' {label} '{name}' Upstream"
         )
+        if host_key is not None and host_key != host:
+            die(
+                f"bottle '{bottle_name}' git.remotes key {host_key!r} "
+                f"does not match Upstream host {host!r}"
+            )
         return cls(
             Name=name,
             Upstream=upstream,
@@ -177,28 +208,28 @@ class GitUser:
 
     @classmethod
     def from_dict(cls, bottle_name: str, raw: object) -> "GitUser":
-        d = _as_json_object(raw, f"bottle '{bottle_name}' git_user")
+        d = _as_json_object(raw, f"bottle '{bottle_name}' git.user")
         for k in d.keys():
             if k not in {"name", "email"}:
                 die(
-                    f"bottle '{bottle_name}' git_user has unknown key {k!r}; "
+                    f"bottle '{bottle_name}' git.user has unknown key {k!r}; "
                     f"allowed: name, email"
                 )
         name = d.get("name", "")
         email = d.get("email", "")
         if not isinstance(name, str):
             die(
-                f"bottle '{bottle_name}' git_user.name must be a string "
+                f"bottle '{bottle_name}' git.user.name must be a string "
                 f"(was {type(name).__name__})"
             )
         if not isinstance(email, str):
             die(
-                f"bottle '{bottle_name}' git_user.email must be a string "
+                f"bottle '{bottle_name}' git.user.email must be a string "
                 f"(was {type(email).__name__})"
             )
         if not name and not email:
             die(
-                f"bottle '{bottle_name}' git_user is set but neither "
+                f"bottle '{bottle_name}' git.user is set but neither "
                 f"name nor email is non-empty; remove the block or "
                 f"fill at least one field."
             )
@@ -206,6 +237,37 @@ class GitUser:
 
     def is_empty(self) -> bool:
         return not self.name and not self.email
+
+
+def _parse_git_config(
+    bottle_name: str,
+    raw: object,
+) -> tuple[tuple[GitEntry, ...], GitUser]:
+    d = _as_json_object(raw, f"bottle '{bottle_name}' git")
+    for k in d.keys():
+        if k not in {"user", "remotes"}:
+            die(
+                f"bottle '{bottle_name}' git has unknown key {k!r}; "
+                f"allowed: user, remotes"
+            )
+
+    git_user = (
+        GitUser.from_dict(bottle_name, d["user"])
+        if "user" in d
+        else GitUser()
+    )
+
+    git: tuple[GitEntry, ...] = ()
+    remotes_raw = d.get("remotes")
+    if remotes_raw is not None:
+        remotes = _as_json_object(remotes_raw, f"bottle '{bottle_name}' git.remotes")
+        git = tuple(
+            GitEntry.from_remote_dict(bottle_name, host, entry)
+            for host, entry in remotes.items()
+        )
+        _validate_unique_git_names(bottle_name, git)
+
+    return git, git_user
 
 
 @dataclass(frozen=True)
@@ -396,9 +458,9 @@ class Bottle:
     env: Mapping[str, str] = field(default_factory=_empty_str_dict)
     git: tuple[GitEntry, ...] = ()
     # Per-bottle git identity (issue #86). Empty default — bottles
-    # that don't set `git_user:` in the manifest skip the
+    # that don't set `git.user:` in the manifest skip the
     # `git config --global` step entirely. Set independently of
-    # the `git:` upstream list above: a bottle can declare a user
+    # the `git.remotes:` upstream map above: a bottle can declare a user
     # identity without any git-gate upstreams, and vice versa.
     git_user: GitUser = field(default_factory=GitUser)
     egress: EgressConfig = field(default_factory=EgressConfig)
@@ -432,6 +494,20 @@ class Bottle:
                 f"credential and gitleaks-scan pushes."
             )
 
+        if "git_user" in d:
+            die(
+                f"bottle '{name}' has a 'git_user' field, which has been "
+                f"removed. Move it under 'git.user'."
+            )
+
+        unknown = set(d.keys()) - _BOTTLE_KEYS
+        if unknown:
+            allowed = ", ".join(sorted(_BOTTLE_KEYS))
+            die(
+                f"bottle '{name}' has unknown key(s) {sorted(unknown)}; "
+                f"allowed keys are {allowed}."
+            )
+
         env: dict[str, str] = {}
         env_raw = d.get("env")
         if env_raw is not None:
@@ -445,16 +521,10 @@ class Bottle:
                 env[var] = value
 
         git: tuple[GitEntry, ...] = ()
+        git_user = GitUser()
         git_raw = d.get("git")
         if git_raw is not None:
-            if not isinstance(git_raw, list):
-                die(f"bottle '{name}' git must be an array (was {type(git_raw).__name__})")
-            git_list = cast(list[object], git_raw)
-            git = tuple(
-                GitEntry.from_dict(name, i, entry)
-                for i, entry in enumerate(git_list)
-            )
-            _validate_unique_git_names(name, git)
+            git, git_user = _parse_git_config(name, git_raw)
 
         if "tokens" in d:
             die(
@@ -478,12 +548,6 @@ class Bottle:
                 f"host.\n"
                 f"See docs/prds/0017-egress-via-mitmproxy.md."
             )
-
-        git_user = (
-            GitUser.from_dict(name, d["git_user"])
-            if "git_user" in d
-            else GitUser()
-        )
 
         egress = (
             EgressConfig.from_dict(name, d["egress"])
@@ -840,7 +904,7 @@ _FILENAME_RX = re.compile(r"^[a-z][a-z0-9-]*$")
 # sets dies with a "did you mean" pointer — typos shouldn't silently
 # ghost into an empty config.
 _BOTTLE_KEYS = frozenset(
-    {"env", "extends", "git", "git_user", "egress", "supervise"}
+    {"env", "extends", "git", "egress", "supervise"}
 )
 _AGENT_KEYS_REQUIRED = frozenset({"bottle"})
 _AGENT_KEYS_OPTIONAL = frozenset({"skills"})
@@ -984,10 +1048,9 @@ def _merge_bottles(
     name: str,
 ) -> Bottle:
     """Apply PRD 0025 merge rules: parent is base; child's declared
-    fields overlay. List-valued fields full-replace when the child
-    declared them (presence-driven on the raw dict, so an explicit
-    `git: []` clears the parent's list); env merges dict-style
-    with child-wins on key collision; git_user overlays per-field."""
+    fields overlay. env merges dict-style with child-wins on key
+    collision; git.user overlays per-field; git.remotes merges by
+    upstream host with child entries replacing duplicate hosts."""
     # Parse the child's declared fields into a Bottle (with the
     # usual defaults for anything missing). Validation runs the same
     # way it would for a leaf bottle — typos / wrong types die here.
@@ -996,20 +1059,25 @@ def _merge_bottles(
     # env: dict merge, child wins on collision.
     merged_env = {**parent.env, **child.env}
 
-    # git_user: per-field overlay. Each non-empty field on child
+    # git.user: per-field overlay. Each non-empty field on child
     # wins; empties fall through to parent. The default GitUser()
-    # is two empty strings, so a child that omits the block
+    # is two empty strings, so a child that omits git.user
     # inherits the parent's user verbatim.
     merged_git_user = GitUser(
         name=child.git_user.name or parent.git_user.name,
         email=child.git_user.email or parent.git_user.email,
     )
 
-    # Presence-driven full-replace for the list-valued + scalar
-    # fields. "Did the child's raw dict have this key?" is the
-    # source of truth — an explicit `git: []` means "drop the
-    # parent's git list", whereas a missing `git:` means "inherit".
-    merged_git = child.git if "git" in child_raw else parent.git
+    # git.remotes: missing means inherit; an explicit empty object
+    # clears; otherwise parent and child merge by UpstreamHost with
+    # child entries replacing duplicate hosts.
+    if _child_declares_git_remotes(child_raw):
+        merged_git = _merge_git_remotes(parent.git, child.git) if child.git else ()
+    else:
+        merged_git = parent.git
+
+    # Presence-driven full-replace for the remaining list-valued +
+    # scalar fields.
     merged_egress = child.egress if "egress" in child_raw else parent.egress
     merged_supervise = (
         child.supervise if "supervise" in child_raw else parent.supervise
@@ -1022,6 +1090,24 @@ def _merge_bottles(
         egress=merged_egress,
         supervise=merged_supervise,
     )
+
+
+def _child_declares_git_remotes(child_raw: dict[str, object]) -> bool:
+    git_raw = child_raw.get("git")
+    if git_raw is None:
+        return False
+    git_obj = _as_json_object(git_raw, "child git")
+    return "remotes" in git_obj
+
+
+def _merge_git_remotes(
+    parent: tuple[GitEntry, ...],
+    child: tuple[GitEntry, ...],
+) -> tuple[GitEntry, ...]:
+    by_host = {entry.UpstreamHost: entry for entry in parent}
+    for entry in child:
+        by_host[entry.UpstreamHost] = entry
+    return tuple(by_host.values())
 
 
 def _load_agents_from_dir(

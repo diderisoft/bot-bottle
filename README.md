@@ -256,11 +256,13 @@ field (PRD 0025). The parent's resolved config is the base; the
 child's declared fields overlay. Merge rules:
 
 - `env:` — dict merge, child wins on key collision.
-- `git:`, `egress:`, `supervise:` — full replace when the child
-  declares the field. An explicit `git: []` clears the parent's
-  list; omitting the field inherits the parent's verbatim.
-- `git_user:` — per-field overlay (child's non-empty `name` /
+- `git.user:` — per-field overlay (child's non-empty `name` /
   `email` wins; empty falls through to parent).
+- `git.remotes:` — dict merge by host, child wins on host collision.
+  An explicit `git.remotes: {}` clears the parent's remotes; omitting
+  `git.remotes` inherits the parent's remotes.
+- `egress:`, `supervise:` — full replace when the child declares the
+  field.
 
 ```yaml
 ---
@@ -286,19 +288,15 @@ env:
   GIT_AUTHOR_NAME: didericis
 
 git:
-  - Name: claude-bottle
-    Upstream: ssh://git@gitea.dideric.is:30009/didericis/claude-bottle.git
-    IdentityFile: /Users/didericis/.ssh/id_ed25519_gitea
-    KnownHostKey: ssh-ed25519 AAAA...
-
-# Optional per-bottle git identity. When set, `git config --global
-# user.name` / `user.email` are applied inside the bottle at
-# provisioning so the agent's commits land with this attribution
-# instead of git refusing to commit. Either field can be set
-# independently. Issue #86.
-git_user:
-  name: "Eric Bauerfeld"
-  email: "eric+claude@dideric.is"
+  user:
+    name: "Eric Bauerfeld"
+    email: "eric+claude@dideric.is"
+  remotes:
+    gitea.dideric.is:
+      Name: claude-bottle
+      Upstream: ssh://git@gitea.dideric.is:30009/didericis/claude-bottle.git
+      IdentityFile: /Users/didericis/.ssh/id_ed25519_gitea
+      KnownHostKey: ssh-ed25519 AAAA...
 
 # Routes declared here are held by a per-bottle cred-proxy sidecar,
 # not the agent. Each route names a path the agent dials, the

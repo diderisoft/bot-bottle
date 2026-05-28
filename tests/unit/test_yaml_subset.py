@@ -265,11 +265,13 @@ class TestRealisticBottleFile(unittest.TestCase):
                   path_allowlist:
                     - /didericis/
             git:
-              - Name: claude-bottle
-                Upstream: ssh://git@gitea.dideric.is:30009/x/y.git
-                IdentityFile: ~/.ssh/gitea.pem
-                ExtraHosts:
-                  gitea.dideric.is: 192.0.2.10
+              remotes:
+                gitea.dideric.is:
+                  Name: claude-bottle
+                  Upstream: ssh://git@gitea.dideric.is:30009/x/y.git
+                  IdentityFile: ~/.ssh/gitea.pem
+                  ExtraHosts:
+                    gitea.dideric.is: 192.0.2.10
         """)
         # Spot-check the deep parts; the structure is large.
         self.assertEqual(2, len(out["egress"]["routes"]))
@@ -283,7 +285,7 @@ class TestRealisticBottleFile(unittest.TestCase):
         )
         self.assertEqual(
             "192.0.2.10",
-            out["git"][0]["ExtraHosts"]["gitea.dideric.is"],
+            out["git"]["remotes"]["gitea.dideric.is"]["ExtraHosts"]["gitea.dideric.is"],
         )
 
 

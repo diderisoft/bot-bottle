@@ -11,7 +11,7 @@ Three concerns, all about git in the agent:
      ls-remote) transparently hits the per-agent git-gate. The
      gate mirrors the upstream in both directions, so URL
      rewriting is symmetric.
-  3. If the bottle declares `git_user` (issue #86), set
+  3. If the bottle declares `git.user` (issue #86), set
      `git config --global user.{name,email}` inside the bottle so
      the agent's commits are attributed to that identity.
 """
@@ -94,7 +94,7 @@ def _provision_git_user(plan: DockerBottlePlan, target: str) -> None:
     Runs as the `node` user so `--global` lands in
     `/home/node/.gitconfig` (matching the existing
     `_provision_git_gate_config` write location). No-op when the
-    bottle didn't declare `git_user`.
+    bottle didn't declare `git.user`.
 
     Each field set independently — name-only or email-only
     configs only run the `git config` line for the field

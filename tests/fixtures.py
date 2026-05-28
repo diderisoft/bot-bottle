@@ -42,20 +42,22 @@ def fixture_with_git_dict() -> dict[str, Any]:
     return {
         "bottles": {
             "dev": {
-                "git": [
-                    {
-                        "Name": "claude-bottle",
-                        "Upstream": "ssh://git@gitea.dideric.is:30009/didericis/claude-bottle.git",
-                        "IdentityFile": "/dev/null",
-                        "KnownHostKey": "ssh-ed25519 AAAA...",
+                "git": {
+                    "remotes": {
+                        "gitea.dideric.is": {
+                            "Name": "claude-bottle",
+                            "Upstream": "ssh://git@gitea.dideric.is:30009/didericis/claude-bottle.git",
+                            "IdentityFile": "/dev/null",
+                            "KnownHostKey": "ssh-ed25519 AAAA...",
+                        },
+                        "github.com": {
+                            "Name": "foo",
+                            "Upstream": "ssh://git@github.com/didericis/foo.git",
+                            "IdentityFile": "/dev/null",
+                            "KnownHostKey": "ssh-ed25519 BBBB...",
+                        },
                     },
-                    {
-                        "Name": "foo",
-                        "Upstream": "ssh://git@github.com/didericis/foo.git",
-                        "IdentityFile": "/dev/null",
-                        "KnownHostKey": "ssh-ed25519 BBBB...",
-                    },
-                ]
+                }
             }
         },
         "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},

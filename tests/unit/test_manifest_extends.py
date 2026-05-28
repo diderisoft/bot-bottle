@@ -116,10 +116,9 @@ class TestExtendsEnvMerge(unittest.TestCase):
         self.assertEqual({"A": "1", "B": "2"}, dict(m.bottles["child"].env))
 
 
-class TestExtendsListsFullReplace(unittest.TestCase):
-    """git: and egress: are full-replace when the child declares
-    them — partial merge would be ambiguous (ordering + name
-    collisions). See PRD 0025 "Merge rules"."""
+class TestExtendsGitMerge(unittest.TestCase):
+    """git.user overlays by field; git.remotes merges by upstream
+    host, with child entries replacing duplicate hosts."""
 
     _GIT_ENTRY_A = {
         "Name": "a",
@@ -132,30 +131,66 @@ class TestExtendsListsFullReplace(unittest.TestCase):
         "IdentityFile": "/dev/null",
     }
 
-    def test_child_git_replaces_parent_entirely(self):
+    def test_child_git_remotes_merge_with_parent(self):
         m = _build(
-            base={"git": [self._GIT_ENTRY_A]},
-            child={"extends": "base", "git": [self._GIT_ENTRY_B]},
+            base={"git": {"remotes": {"host-a": self._GIT_ENTRY_A}}},
+            child={
+                "extends": "base",
+                "git": {"remotes": {"host-b": self._GIT_ENTRY_B}},
+            },
         )
         names = [e.Name for e in m.bottles["child"].git]
-        self.assertEqual(["b"], names)
+        self.assertEqual(["a", "b"], names)
+
+    def test_child_git_remote_replaces_same_host(self):
+        replacement = {
+            "Name": "a2",
+            "Upstream": "ssh://git@host-a/replacement.git",
+            "IdentityFile": "/dev/null",
+        }
+        m = _build(
+            base={"git": {"remotes": {"host-a": self._GIT_ENTRY_A}}},
+            child={
+                "extends": "base",
+                "git": {"remotes": {"host-a": replacement}},
+            },
+        )
+        entries = m.bottles["child"].git
+        self.assertEqual(1, len(entries))
+        self.assertEqual("a2", entries[0].Name)
+        self.assertEqual("replacement.git", entries[0].UpstreamPath)
 
     def test_child_omits_git_inherits_full_list(self):
         m = _build(
-            base={"git": [self._GIT_ENTRY_A, self._GIT_ENTRY_B]},
+            base={"git": {"remotes": {
+                "host-a": self._GIT_ENTRY_A,
+                "host-b": self._GIT_ENTRY_B,
+            }}},
             child={"extends": "base"},
         )
         names = [e.Name for e in m.bottles["child"].git]
         self.assertEqual(["a", "b"], names)
 
     def test_child_explicit_empty_git_clears_parent(self):
-        # `git: []` is the documented way to say "drop the
-        # parent's list" rather than "inherit it".
+        # `git.remotes: {}` is the documented way to say "drop
+        # the parent's remotes" rather than "inherit them".
         m = _build(
-            base={"git": [self._GIT_ENTRY_A]},
-            child={"extends": "base", "git": []},
+            base={"git": {"remotes": {"host-a": self._GIT_ENTRY_A}}},
+            child={"extends": "base", "git": {"remotes": {}}},
         )
         self.assertEqual((), m.bottles["child"].git)
+
+    def test_child_git_user_inherits_parent_remotes(self):
+        m = _build(
+            base={"git": {"remotes": {"host-a": self._GIT_ENTRY_A}}},
+            child={"extends": "base", "git": {"user": {"name": "Child"}}},
+        )
+        self.assertEqual(["a"], [e.Name for e in m.bottles["child"].git])
+        self.assertEqual("Child", m.bottles["child"].git_user.name)
+
+
+class TestExtendsListsFullReplace(unittest.TestCase):
+    """egress: remains full-replace when the child declares it."""
 
     def test_child_egress_replaces_parent_entirely(self):
         m = _build(
@@ -178,12 +213,12 @@ class TestExtendsListsFullReplace(unittest.TestCase):
 
 
 class TestExtendsGitUserOverlay(unittest.TestCase):
-    """git_user: per-field overlay. Each non-empty field on child
+    """git.user: per-field overlay. Each non-empty field on child
     wins; empties fall through to parent."""
 
     def test_parent_full_child_omits(self):
         m = _build(
-            base={"git_user": {"name": "Parent", "email": "p@x"}},
+            base={"git": {"user": {"name": "Parent", "email": "p@x"}}},
             child={"extends": "base"},
         )
         u = m.bottles["child"].git_user
@@ -192,10 +227,10 @@ class TestExtendsGitUserOverlay(unittest.TestCase):
 
     def test_child_overrides_both(self):
         m = _build(
-            base={"git_user": {"name": "Parent", "email": "p@x"}},
+            base={"git": {"user": {"name": "Parent", "email": "p@x"}}},
             child={
                 "extends": "base",
-                "git_user": {"name": "Child", "email": "c@x"},
+                "git": {"user": {"name": "Child", "email": "c@x"}},
             },
         )
         u = m.bottles["child"].git_user
@@ -206,8 +241,8 @@ class TestExtendsGitUserOverlay(unittest.TestCase):
         # Parent sets only name; child sets only email. Both end
         # up populated on the child.
         m = _build(
-            base={"git_user": {"name": "Parent"}},
-            child={"extends": "base", "git_user": {"email": "c@x"}},
+            base={"git": {"user": {"name": "Parent"}}},
+            child={"extends": "base", "git": {"user": {"email": "c@x"}}},
         )
         u = m.bottles["child"].git_user
         self.assertEqual("Parent", u.name)
@@ -215,8 +250,8 @@ class TestExtendsGitUserOverlay(unittest.TestCase):
 
     def test_child_overrides_only_email(self):
         m = _build(
-            base={"git_user": {"name": "Parent", "email": "p@x"}},
-            child={"extends": "base", "git_user": {"email": "c@x"}},
+            base={"git": {"user": {"name": "Parent", "email": "p@x"}}},
+            child={"extends": "base", "git": {"user": {"email": "c@x"}}},
         )
         u = m.bottles["child"].git_user
         # Child overrides email; name inherited from parent.

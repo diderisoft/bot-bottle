@@ -43,11 +43,13 @@ def _manifest(*, supervise: bool, with_git: bool, with_egress: bool) -> Manifest
     if supervise:
         bottle["supervise"] = True
     if with_git:
-        bottle["git"] = [{
-            "Name": "upstream",
-            "Upstream": "ssh://git@example.com:22/x/y.git",
-            "IdentityFile": "/etc/hostname",  # any existing file
-        }]
+        bottle["git"] = {"remotes": {
+            "example.com": {
+                "Name": "upstream",
+                "Upstream": "ssh://git@example.com:22/x/y.git",
+                "IdentityFile": "/etc/hostname",  # any existing file
+            },
+        }}
     if with_egress:
         bottle["egress"] = {
             "routes": [{

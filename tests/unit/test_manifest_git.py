@@ -8,9 +8,24 @@ from claude_bottle.manifest import Manifest
 
 def _manifest(git_entries):
     return {
-        "bottles": {"dev": {"git": git_entries}},
+        "bottles": {"dev": {"git": {"remotes": {
+            _host_for(entry): entry for entry in git_entries
+        }}}},
         "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
     }
+
+
+def _host_for(entry):
+    upstream = entry.get("Upstream", "")
+    if "@a.example" in upstream:
+        return "a.example"
+    if "@b.example" in upstream:
+        return "b.example"
+    if "@github.com" in upstream:
+        return "github.com"
+    if "@gitea.dideric.is" in upstream:
+        return "gitea.dideric.is"
+    return "example.com"
 
 
 class TestGitEntryParsing(unittest.TestCase):
@@ -161,12 +176,34 @@ class TestGitEntryExtraHosts(unittest.TestCase):
 class TestGitEntryCrossValidation(unittest.TestCase):
     def test_duplicate_name_dies(self):
         with self.assertRaises(Die):
-            Manifest.from_json_obj(_manifest([
-                {"Name": "foo", "Upstream": "ssh://git@a.example/x.git",
-                 "IdentityFile": "/dev/null"},
-                {"Name": "foo", "Upstream": "ssh://git@b.example/y.git",
-                 "IdentityFile": "/dev/null"},
-            ]))
+            Manifest.from_json_obj({
+                "bottles": {"dev": {"git": {"remotes": {
+                    "a.example": {
+                        "Name": "foo",
+                        "Upstream": "ssh://git@a.example/x.git",
+                        "IdentityFile": "/dev/null",
+                    },
+                    "b.example": {
+                        "Name": "foo",
+                        "Upstream": "ssh://git@b.example/y.git",
+                        "IdentityFile": "/dev/null",
+                    },
+                }}}},
+                "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+            })
+
+    def test_remote_key_must_match_upstream_host(self):
+        with self.assertRaises(Die):
+            Manifest.from_json_obj({
+                "bottles": {"dev": {"git": {"remotes": {
+                    "wrong.example": {
+                        "Name": "foo",
+                        "Upstream": "ssh://git@github.com/foo.git",
+                        "IdentityFile": "/dev/null",
+                    },
+                }}}},
+                "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+            })
 
     def test_legacy_ssh_field_dies_with_hint(self):
         # PRD 0009: bottle.ssh is removed; manifests carrying it must
@@ -196,12 +233,19 @@ class TestEmptyGitField(unittest.TestCase):
         })
         self.assertEqual((), m.bottles["dev"].git)
 
-    def test_git_array_type_required(self):
+    def test_git_object_type_required(self):
         with self.assertRaises(Die):
             Manifest.from_json_obj({
                 "bottles": {"dev": {"git": "not-a-list"}},
                 "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
             })
+
+    def test_empty_remotes_yields_empty_tuple(self):
+        m = Manifest.from_json_obj({
+            "bottles": {"dev": {"git": {"remotes": {}}}},
+            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        })
+        self.assertEqual((), m.bottles["dev"].git)
 
 
 if __name__ == "__main__":

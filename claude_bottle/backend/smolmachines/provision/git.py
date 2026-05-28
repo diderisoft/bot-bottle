@@ -11,7 +11,7 @@ Three concerns, all about git in the agent:
      against a declared upstream transparently hits the per-bottle
      git-gate. The gate mirrors the upstream in both directions,
      so URL rewriting is symmetric.
-  3. If the bottle declares `git_user` (issue #86), set
+  3. If the bottle declares `git.user` (issue #86), set
      `git config --global user.{name,email}` inside the guest so
      the agent's commits are attributed to that identity.
 
@@ -113,7 +113,7 @@ def _provision_git_user(
     """Apply `git config --global user.{name,email}` inside the
     guest as the node user so --global lands in the same
     `/home/node/.gitconfig` that `_provision_git_gate_config`
-    writes to. No-op when the bottle didn't declare `git_user`.
+    writes to. No-op when the bottle didn't declare `git.user`.
 
     Runs via `runuser -u node --`; HOME is forced via smolvm's
     `-e` flag because runuser (without -l) inherits root's
