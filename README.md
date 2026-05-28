@@ -293,16 +293,43 @@ Cycles (`A extends B extends A`), self-references, and missing
 parents die at parse with a clear pointer. Bottles remain
 `$HOME`-only — `extends:` preserves the trust boundary above.
 
+### Provider base bottles
+
+Keep provider/runtime policy in one home-owned base bottle, then have
+task bottles extend it. That keeps provider egress/auth in one place
+without hiding security-relevant routes behind `agent_provider.template`.
+
+For example, `~/.bot-bottle/bottles/claude.md` can hold the Claude
+provider selection and Anthropic API egress:
+
+````markdown
+---
+agent_provider:
+  template: claude
+
+egress:
+  routes:
+    - host: api.anthropic.com
+      role: claude_code_oauth
+      auth:
+        scheme: Bearer
+        token_ref: BOT_BOTTLE_OAUTH_TOKEN
+---
+
+Common Claude provider boundary.
+````
+
+Task bottles can then inherit that provider boundary and add their own
+env/git configuration without repeating the Claude route.
+
 ### Example bottle (`~/.bot-bottle/bottles/gitea-dev.md`)
 
 ````markdown
 ---
+extends: claude
+
 env:
   GIT_AUTHOR_NAME: didericis
-
-agent_provider:
-  template: claude       # default; codex is also supported
-  dockerfile: ""         # optional custom agent Dockerfile
 
 git:
   user:
@@ -314,33 +341,17 @@ git:
       Upstream: ssh://git@gitea.dideric.is:30009/didericis/bot-bottle.git
       IdentityFile: /Users/didericis/.ssh/id_ed25519_gitea
       KnownHostKey: ssh-ed25519 AAAA...
-
-# Egress routes are held by a per-bottle sidecar, not the agent.
-# Auth token values go into the sidecar's environ, never into the
-# agent. Provider-specific roles add non-secret placeholder env vars
-# so the selected CLI starts while egress strips/re-injects auth.
-egress:
-  routes:
-    - host: api.anthropic.com
-      role: claude_code_oauth
-      auth:
-        scheme: Bearer
-        token_ref: BOT_BOTTLE_OAUTH_TOKEN
-    - host: api.github.com
-      auth:
-        scheme: Bearer
-        token_ref: GH_PAT
 ---
 
 The `gitea-dev` bottle. Backs my work on personal projects: provider
 auth through egress and gitea.dideric.is over SSH.
 ````
 
-For a Codex-backed bottle, set `agent_provider.template: codex` and
-use the `codex_auth` egress role for the OpenAI API route. The built-in
-Codex template uses `Dockerfile.codex`; set `agent_provider.dockerfile`
-to build the agent from a custom Dockerfile while keeping the
-bot-bottle sidecars in place.
+For a Codex-backed base bottle, set `agent_provider.template: codex`
+and use the `codex_auth` egress role for the OpenAI API route. The
+built-in Codex template uses `Dockerfile.codex`; set
+`agent_provider.dockerfile` to build the agent from a custom
+Dockerfile while keeping the bot-bottle sidecars in place.
 
 ### Example agent (`~/.bot-bottle/agents/gitea-helper.md`)
 
