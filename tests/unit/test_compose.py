@@ -9,8 +9,10 @@ supervise on/off).
 
 from __future__ import annotations
 
+import subprocess
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from bot_bottle.backend import BottleSpec
 from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
@@ -18,6 +20,8 @@ from bot_bottle.backend.docker.compose import (
     COMPOSE_PROJECT_PREFIX,
     bottle_plan_to_compose,
     compose_project_name,
+    list_active_slugs,
+    list_compose_projects,
     slug_from_compose_project,
 )
 from bot_bottle.egress import (
@@ -453,6 +457,34 @@ class TestProjectNaming(unittest.TestCase):
         # Defends against `docker compose ls` including non-bottle
         # projects on a host with other compose setups.
         self.assertEqual("", slug_from_compose_project("other-project"))
+
+
+class TestComposeProjectListing(unittest.TestCase):
+    def test_compose_ls_error_warns_by_default(self):
+        with (
+            mock.patch(
+                "bot_bottle.backend.docker.compose.subprocess.run",
+                return_value=subprocess.CompletedProcess(
+                    args=["docker"], returncode=1, stdout="", stderr="no daemon",
+                ),
+            ),
+            mock.patch("bot_bottle.backend.docker.compose.warn") as warn,
+        ):
+            self.assertEqual([], list_compose_projects())
+        warn.assert_called_once_with("docker compose ls failed: no daemon")
+
+    def test_compose_ls_error_can_be_quiet_for_dashboard_polling(self):
+        with (
+            mock.patch(
+                "bot_bottle.backend.docker.compose.subprocess.run",
+                return_value=subprocess.CompletedProcess(
+                    args=["docker"], returncode=1, stdout="", stderr="no daemon",
+                ),
+            ),
+            mock.patch("bot_bottle.backend.docker.compose.warn") as warn,
+        ):
+            self.assertEqual([], list_active_slugs(warn_on_error=False))
+        warn.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -24,7 +24,7 @@ def enumerate_active() -> list[ActiveAgent]:
     responsible for gating on `has_backend('docker')` if it
     matters; if docker is missing the `docker ps` call below
     returns an empty list silently."""
-    slugs = list_active_slugs(include_stopped=False)
+    slugs = list_active_slugs(include_stopped=False, warn_on_error=False)
     if not slugs:
         return []
     services_by_project = _query_services_by_project()

@@ -371,7 +371,9 @@ def slug_from_compose_project(project: str) -> str:
     return project[len(COMPOSE_PROJECT_PREFIX):]
 
 
-def list_compose_projects(*, include_stopped: bool = True) -> list[str]:
+def list_compose_projects(
+    *, include_stopped: bool = True, warn_on_error: bool = True,
+) -> list[str]:
     """All compose project names starting with `bot-bottle-`.
     `include_stopped=True` (default) runs `docker compose ls --all`
     so exited projects appear too; pass False to get only projects
@@ -379,7 +381,10 @@ def list_compose_projects(*, include_stopped: bool = True) -> list[str]:
 
     Returns [] on docker daemon errors or malformed output rather
     than raising — callers should treat the empty list as "no
-    projects discoverable", not "no projects exist"."""
+    projects discoverable", not "no projects exist". `warn_on_error`
+    stays true for explicit operator commands like cleanup, but active
+    discovery paths set it false so dashboard refreshes don't spam
+    stderr while Docker Desktop is stopped."""
     argv = ["docker", "compose", "ls", "--format", "json"]
     if include_stopped:
         argv.insert(3, "--all")
@@ -392,12 +397,14 @@ def list_compose_projects(*, include_stopped: bool = True) -> list[str]:
         # error from the caller's POV: no projects discoverable.
         return []
     if result.returncode != 0:
-        warn(f"docker compose ls failed: {result.stderr.strip()}")
+        if warn_on_error:
+            warn(f"docker compose ls failed: {result.stderr.strip()}")
         return []
     try:
         projects = json.loads(result.stdout or "[]")
     except json.JSONDecodeError as e:
-        warn(f"docker compose ls returned malformed JSON: {e}")
+        if warn_on_error:
+            warn(f"docker compose ls returned malformed JSON: {e}")
         return []
     names: list[str] = []
     for p in projects:
@@ -409,14 +416,19 @@ def list_compose_projects(*, include_stopped: bool = True) -> list[str]:
     return sorted(set(names))
 
 
-def list_active_slugs(*, include_stopped: bool = False) -> list[str]:
+def list_active_slugs(
+    *, include_stopped: bool = False, warn_on_error: bool = True,
+) -> list[str]:
     """Slugs (project name minus prefix) of currently-running
     bottles. Used by the dashboard's operator-edit verbs to choose
     a bottle to apply a config edit to."""
     return sorted(
         slug for slug in (
             slug_from_compose_project(p)
-            for p in list_compose_projects(include_stopped=include_stopped)
+            for p in list_compose_projects(
+                include_stopped=include_stopped,
+                warn_on_error=warn_on_error,
+            )
         ) if slug
     )
 
