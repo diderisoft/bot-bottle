@@ -142,6 +142,7 @@ def launch(
         # daemons the agent needs to reach from the smolvm guest.
         bundle_spec = _bundle_launch_spec(plan, network, loopback_ip)
         token_env = _resolve_token_env(plan, os.environ)
+        _bundle.ensure_bundle_image(bundle_spec.image)
         _bundle.start_bundle(bundle_spec, env={**os.environ, **token_env})
         stack.callback(_bundle.stop_bundle, plan.slug)
 

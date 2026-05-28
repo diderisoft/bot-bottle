@@ -29,7 +29,14 @@ from pathlib import Path
 from typing import Sequence
 
 from ...log import die, warn
-from ..docker.sidecar_bundle import SIDECAR_BUNDLE_IMAGE
+from ..docker import util as docker_mod
+from ..docker.sidecar_bundle import (
+    SIDECAR_BUNDLE_DOCKERFILE,
+    SIDECAR_BUNDLE_IMAGE,
+)
+
+
+_REPO_DIR = str(Path(__file__).resolve().parent.parent.parent.parent)
 
 
 def bundle_network_name(slug: str) -> str:
@@ -83,6 +90,21 @@ class BundleLaunchSpec:
     # can't reach other bottles' (or other host services') ports
     # via 127.0.0.1.
     publish_host_ip: str = "127.0.0.1"
+
+
+def ensure_bundle_image(image: str = SIDECAR_BUNDLE_IMAGE) -> None:
+    """Build the sidecar bundle image before `docker run`.
+
+    The Docker backend gets this for free from compose's `build:`
+    stanza. smolmachines starts the bundle with plain `docker run`,
+    so without an explicit build a first launch tries to pull the
+    local-only `bot-bottle-sidecars:latest` tag from a registry.
+    """
+    docker_mod.build_image(
+        image,
+        _REPO_DIR,
+        dockerfile=SIDECAR_BUNDLE_DOCKERFILE,
+    )
 
 
 def create_bundle_network(network_name: str, subnet: str, gateway: str) -> None:

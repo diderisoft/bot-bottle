@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import subprocess
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from bot_bottle.backend.smolmachines.sidecar_bundle import (
@@ -16,6 +17,7 @@ from bot_bottle.backend.smolmachines.sidecar_bundle import (
     bundle_container_name,
     bundle_network_name,
     create_bundle_network,
+    ensure_bundle_image,
     remove_bundle_network,
     start_bundle,
     stop_bundle,
@@ -180,6 +182,21 @@ class TestStartBundle(unittest.TestCase):
         ) as m:
             start_bundle(_spec(), env={"FOO": "bar"})
         self.assertEqual({"FOO": "bar"}, m.call_args.kwargs["env"])
+
+
+class TestEnsureBundleImage(unittest.TestCase):
+    def test_builds_sidecar_dockerfile_before_plain_docker_run(self):
+        with patch(
+            "bot_bottle.backend.smolmachines.sidecar_bundle.docker_mod.build_image",
+        ) as build:
+            ensure_bundle_image()
+
+        build.assert_called_once()
+        args = build.call_args.args
+        kwargs = build.call_args.kwargs
+        self.assertEqual("bot-bottle-sidecars:latest", args[0])
+        self.assertTrue((Path(args[1]) / "Dockerfile.sidecars").is_file())
+        self.assertEqual("Dockerfile.sidecars", kwargs["dockerfile"])
 
 
 class TestStopBundle(unittest.TestCase):
