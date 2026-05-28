@@ -248,6 +248,36 @@ with a warning. **This is the trust boundary**: bottle infrastructure
 directory only. A cloned repo cannot redirect a host env var to an
 attacker-named upstream because it has no way to declare a bottle.
 
+### Bottle composition with `extends:`
+
+A bottle can inherit from another via `extends: <bottle-name>` so
+operators don't have to duplicate a whole bottle file to vary one
+field (PRD 0025). The parent's resolved config is the base; the
+child's declared fields overlay. Merge rules:
+
+- `env:` — dict merge, child wins on key collision.
+- `git:`, `egress:`, `supervise:` — full replace when the child
+  declares the field. An explicit `git: []` clears the parent's
+  list; omitting the field inherits the parent's verbatim.
+- `git_user:` — per-field overlay (child's non-empty `name` /
+  `email` wins; empty falls through to parent).
+
+```yaml
+---
+extends: dev          # inherit everything from bottles/dev.md
+egress:
+  routes:
+    - host: staging.example.com
+      auth:
+        scheme: Bearer
+        token_ref: STAGING_TOKEN
+---
+```
+
+Cycles (`A extends B extends A`), self-references, and missing
+parents die at parse with a clear pointer. Bottles remain
+`$HOME`-only — `extends:` preserves the trust boundary above.
+
 ### Example bottle (`~/.claude-bottle/bottles/gitea-dev.md`)
 
 ````markdown
