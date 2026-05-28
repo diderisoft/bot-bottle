@@ -127,23 +127,6 @@ class EgressPlan:
     pipelock_proxy_url: str = ""
 
 
-# Hosts the agent needs by default for claude-code itself. Folded
-# into every bottle's egress routes table as bare-pass entries
-# (no auth, no path filter) so the agent reaches them without each
-# bottle having to opt in. Pipelock used to own this list; PRD 0017
-# moves it to egress because egress is the primary gate
-# now and pipelock's allowlist is mirrored from egress.
-DEFAULT_ALLOWLIST: tuple[str, ...] = (
-    "api.anthropic.com",
-    "statsig.anthropic.com",
-    "sentry.io",
-    "claude.ai",
-    "platform.claude.com",
-    "downloads.claude.ai",
-    "raw.githubusercontent.com",
-)
-
-
 def egress_manifest_routes(
     bottle: Bottle,
 ) -> tuple[EgressRoute, ...]:
@@ -157,10 +140,9 @@ def egress_manifest_routes(
     shares slot 0. Unauthenticated routes (`auth` omitted) contribute
     no slot.
 
-    Does NOT include the folded-in DEFAULT_ALLOWLIST /
-    bottle.egress.allowlist bare-pass entries — see
-    `egress_routes_for_bottle` for the effective set the
-    addon enforces."""
+    This is the effective set the addon enforces. Provider runtime
+    routes are intentionally not injected implicitly; every allowed
+    host must come from the home-owned bottle manifest."""
     out: list[EgressRoute] = []
     slot_for_token: dict[str, str] = {}
     for r in bottle.egress.routes:
@@ -189,26 +171,14 @@ def egress_manifest_routes(
 def egress_routes_for_bottle(
     bottle: Bottle,
 ) -> tuple[EgressRoute, ...]:
-    """Effective egress routes: manifest routes followed by
-    bare-pass entries for DEFAULT_ALLOWLIST hosts. This is what
-    gets rendered into routes.yaml + what the addon enforces.
+    """Effective egress routes. This is what gets rendered into
+    routes.yaml + what the addon enforces.
 
-    Manifest routes win over defaults on host collision (manifest
-    routes carry more specific config — auth, path filter, role
-    markers). Hostname comparison is case-insensitive.
-
-    Operators that want to allow an arbitrary host that isn't in
-    DEFAULT_ALLOWLIST declare it directly in
-    `bottle.egress.routes` as a bare-pass entry
+    Operators that want to allow a host declare it directly in
+    `bottle.egress.routes` as an authenticated route or bare-pass entry
     (`- host: <name>`). The legacy `bottle.egress.allowlist`
     folding is gone — egress is the single allowlist surface."""
-    out: list[EgressRoute] = list(egress_manifest_routes(bottle))
-    claimed: set[str] = {r.host.lower() for r in out}
-    for host in DEFAULT_ALLOWLIST:
-        if host.lower() not in claimed:
-            out.append(EgressRoute(host=host))
-            claimed.add(host.lower())
-    return tuple(out)
+    return egress_manifest_routes(bottle)
 
 
 def egress_token_env_map(
@@ -327,7 +297,6 @@ class Egress(ABC):
         )
 
 __all__ = [
-    "DEFAULT_ALLOWLIST",
     "EGRESS_HOSTNAME",
     "EGRESS_ROUTES_IN_CONTAINER",
     "Egress",

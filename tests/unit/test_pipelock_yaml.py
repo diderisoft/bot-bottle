@@ -42,9 +42,8 @@ class TestBuildConfig(unittest.TestCase):
             },
             cfg["request_body_scanning"],
         )
-        # Baked defaults always present.
-        self.assertIn("api.anthropic.com", cast(list[str], cfg["api_allowlist"]))
-        self.assertIn("raw.githubusercontent.com", cast(list[str], cfg["api_allowlist"]))
+        # No provider defaults are injected implicitly.
+        self.assertEqual([], cast(list[str], cfg["api_allowlist"]))
         # pipelock has no SSH carve-outs at all — neither
         # trusted_domains nor ssrf are emitted from bottle data.
         self.assertNotIn("trusted_domains", cfg)

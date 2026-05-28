@@ -21,11 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from .egress import (
-    DEFAULT_ALLOWLIST,
-    EGRESS_HOSTNAME,
-    egress_routes_for_bottle,
-)
+from .egress import EGRESS_HOSTNAME, egress_routes_for_bottle
 from .supervise import SUPERVISE_HOSTNAME
 from .manifest import Bottle
 
@@ -67,12 +63,11 @@ PIPELOCK_HOSTNAME = "pipelock"
 def pipelock_effective_allowlist(bottle: Bottle) -> list[str]:
     """Hostnames pipelock allows. Sorted for stability.
 
-    Always mirrors `egress_routes_for_bottle(bottle)` — the
-    egress is the single allowlist surface; pipelock's
-    allowlist is the downstream copy for defense-in-depth + DLP
-    body scanning. For bottles without any `egress.routes[]`
-    declared, this is just the baked DEFAULT_ALLOWLIST that
-    egress_routes_for_bottle always folds in.
+    Always mirrors `egress_routes_for_bottle(bottle)` — egress is the
+    single allowlist surface, and pipelock's allowlist is the downstream
+    copy for defense-in-depth + DLP body scanning. For bottles without
+    any `egress.routes[]` declared, this is empty except for supervise
+    sidecar traffic when `supervise: true`.
 
     The supervise sidecar's hostname is auto-added when supervise
     is enabled (sibling-sidecar traffic that flows through pipelock
@@ -354,4 +349,3 @@ class PipelockProxy:
         yaml_path.write_text(pipelock_render_yaml(cfg))
         yaml_path.chmod(0o600)
         return PipelockProxyPlan(yaml_path=yaml_path, slug=slug)
-

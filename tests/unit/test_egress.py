@@ -4,7 +4,6 @@ resolution (PRD 0017)."""
 import unittest
 
 from bot_bottle.egress import (
-    DEFAULT_ALLOWLIST,
     egress_manifest_routes,
     egress_render_routes,
     egress_resolve_token_values,
@@ -85,37 +84,28 @@ class TestRoutesForBottle(unittest.TestCase):
         self.assertEqual("", routes[1].token_env)
 
 
-class TestRoutesForBottleFoldsDefaults(unittest.TestCase):
-    """The effective route table includes DEFAULT_ALLOWLIST +
-    bottle.egress.allowlist as bare-pass entries — pipelock's
-    allowlist is a mirror of this set."""
+class TestRoutesForBottleUsesManifestOnly(unittest.TestCase):
+    """The effective route table is exactly the manifest-declared
+    routes. Provider defaults are not injected implicitly."""
 
-    def test_defaults_present_when_no_manifest_routes(self):
+    def test_no_manifest_routes_means_no_effective_routes(self):
         b = _bottle([])
-        hosts = [r.host for r in egress_routes_for_bottle(b)]
-        for default in DEFAULT_ALLOWLIST:
-            self.assertIn(default, hosts)
+        self.assertEqual((), egress_routes_for_bottle(b))
 
-    def test_manifest_route_wins_over_default(self):
-        # api.anthropic.com is in DEFAULT_ALLOWLIST. A manifest
-        # route for the same host takes precedence — we want the
-        # auth config to apply, not a duplicate bare-pass entry.
+    def test_manifest_route_preserved_with_auth(self):
         b = _bottle([{
             "host": "api.anthropic.com",
             "auth": {"scheme": "Bearer", "token_ref": "T"},
         }])
         routes = egress_routes_for_bottle(b)
-        anthropic = [r for r in routes if r.host == "api.anthropic.com"]
-        self.assertEqual(1, len(anthropic))
-        self.assertEqual("Bearer", anthropic[0].auth_scheme)
+        self.assertEqual(1, len(routes))
+        self.assertEqual("api.anthropic.com", routes[0].host)
+        self.assertEqual("Bearer", routes[0].auth_scheme)
 
-    def test_manifest_only_when_no_defaults_or_allowlist(self):
-        # Sanity: egress_manifest_routes returns just the
-        # manifest entries — defaults are added by the
-        # _routes_for_bottle wrapper.
+    def test_manifest_only(self):
         b = _bottle([{"host": "x.example"}])
-        manifest = [r.host for r in egress_manifest_routes(b)]
-        self.assertEqual(["x.example"], manifest)
+        effective = [r.host for r in egress_routes_for_bottle(b)]
+        self.assertEqual(["x.example"], effective)
 
 
 class TestTokenEnvMap(unittest.TestCase):

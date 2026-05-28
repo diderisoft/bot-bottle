@@ -1,7 +1,7 @@
 """Unit: pipelock_effective_allowlist — pipelock's allowlist
-mirrors `egress_routes_for_bottle` (which folds in
-DEFAULT_ALLOWLIST). Git upstreams declared in `bottle.git` don't
-contribute; they flow through the per-agent git-gate (PRD 0008)."""
+mirrors manifest-declared egress routes. Git upstreams declared in
+`bottle.git` don't contribute; they flow through the per-agent
+git-gate (PRD 0008)."""
 
 import unittest
 
@@ -24,16 +24,11 @@ def _routes(routes):
 
 
 class TestEffectiveAllowlist(unittest.TestCase):
-    def test_default_allowlist_present_without_any_manifest_routes(self):
-        # No egress routes declared → pipelock allowlist is
-        # just the baked DEFAULT_ALLOWLIST (folded in by
-        # egress_routes_for_bottle).
+    def test_empty_without_any_manifest_routes(self):
         eff = pipelock_effective_allowlist(_bottle({}))
-        self.assertIn("api.anthropic.com", eff)
-        self.assertIn("sentry.io", eff)
+        self.assertEqual([], eff)
 
     def test_sorted_and_deduped(self):
-        # Manifest route for a default host collapses to one entry.
         eff = pipelock_effective_allowlist(_bottle(_routes([
             {"host": "api.anthropic.com",
              "auth": {"scheme": "Bearer", "token_ref": "T"}},
@@ -53,14 +48,12 @@ class TestAllowlistWithRoutes(unittest.TestCase):
         self.assertIn("registry.npmjs.org", eff)
         self.assertIn("api.github.com", eff)
 
-    def test_baked_defaults_still_present_alongside_manifest_routes(self):
+    def test_no_baked_defaults_alongside_manifest_routes(self):
         eff = pipelock_effective_allowlist(_bottle(_routes([
             {"host": "x.example",
              "auth": {"scheme": "Bearer", "token_ref": "T"}},
         ])))
-        for default in ("api.anthropic.com", "sentry.io"):
-            self.assertIn(default, eff)
-        self.assertIn("x.example", eff)
+        self.assertEqual(["x.example"], eff)
 
     def test_egress_hostname_NOT_in_pipelock_allowlist(self):
         # The agent never dials egress via the proxy mechanism
