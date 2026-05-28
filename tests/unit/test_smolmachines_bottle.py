@@ -5,10 +5,15 @@ directly (it spawns claude inside a tmux pane rather than as a
 child of the current process), so the argv shape is the
 non-trivial part. `exec_claude` is a thin wrapper around the same
 builder + `subprocess.run`; we lock the shape here.
+
+The TTY-mode argv is wrapped in the pty_resize helper (issue #82
+workaround); we assert both the wrapper presence and the wrapped
+smolvm argv shape. Non-TTY mode skips the wrapper.
 """
 
 from __future__ import annotations
 
+import sys
 import unittest
 
 from claude_bottle.backend.smolmachines.bottle import SmolmachinesBottle
@@ -22,9 +27,30 @@ def _bottle(prompt_path: str | None = None, **env: str) -> SmolmachinesBottle:
     )
 
 
-class TestClaudeArgv(unittest.TestCase):
-    def test_minimal_argv_no_prompt(self):
+def _unwrap(argv: list[str]) -> list[str]:
+    """Strip the pty_resize wrapper from the front of a TTY-mode
+    argv, return the inner smolvm argv. Mirrors what the kernel
+    sees inside the wrapper's `subprocess.Popen`."""
+    idx = argv.index("--")
+    return argv[idx + 1:]
+
+
+class TestClaudeArgvWrapped(unittest.TestCase):
+    """TTY-mode argv: pty_resize wrapper + inner smolvm exec."""
+
+    def test_pty_resize_wrapper_prefix(self):
         argv = _bottle().claude_argv([])
+        self.assertEqual(
+            [
+                sys.executable, "-m",
+                "claude_bottle.backend.smolmachines.pty_resize",
+                "claude-bottle-dev-abc", "--",
+            ],
+            argv[:5],
+        )
+
+    def test_minimal_inner_argv_no_prompt(self):
+        argv = _unwrap(_bottle().claude_argv([]))
         self.assertEqual(
             [
                 "smolvm", "machine", "exec", "--name",
@@ -40,19 +66,19 @@ class TestClaudeArgv(unittest.TestCase):
         )
 
     def test_appends_passed_args_after_claude(self):
-        argv = _bottle().claude_argv(
+        argv = _unwrap(_bottle().claude_argv(
             ["--dangerously-skip-permissions", "--continue"],
-        )
-        # The claude tail is at the end of the argv, after the
-        # `runuser -u node --` switch.
+        ))
         self.assertEqual(
             ["claude", "--dangerously-skip-permissions", "--continue"],
             argv[argv.index("claude"):],
         )
 
     def test_appends_prompt_file_flag_when_set(self):
-        argv = _bottle("/home/node/.claude-bottle-prompt.txt").claude_argv(
-            ["--dangerously-skip-permissions"],
+        argv = _unwrap(
+            _bottle("/home/node/.claude-bottle-prompt.txt").claude_argv(
+                ["--dangerously-skip-permissions"],
+            )
         )
         self.assertEqual(
             [
@@ -72,20 +98,12 @@ class TestClaudeArgv(unittest.TestCase):
         argv = _bottle("").claude_argv(["--continue"])
         self.assertNotIn("--append-system-prompt-file", argv)
 
-    def test_tty_false_drops_it_flags(self):
-        argv = _bottle().claude_argv([], tty=False)
-        self.assertNotIn("-i", argv)
-        self.assertNotIn("-t", argv)
-
     def test_guest_env_forwarded_as_e_flags(self):
-        argv = _bottle(
+        argv = _unwrap(_bottle(
             None,
             HTTPS_PROXY="http://127.0.0.1:1234",
             NO_PROXY="localhost",
-        ).claude_argv([])
-        # `-e K=V` pairs land before the `--`. Order isn't
-        # guaranteed across dict iterations on older Pythons, but
-        # both must appear.
+        ).claude_argv([]))
         self.assertIn("-e", argv)
         self.assertIn("HTTPS_PROXY=http://127.0.0.1:1234", argv)
         self.assertIn("NO_PROXY=localhost", argv)
@@ -101,6 +119,21 @@ class TestClaudeArgv(unittest.TestCase):
             ["runuser", "-u", "node", "--"],
             argv[claude_idx - 4:claude_idx],
         )
+
+
+class TestClaudeArgvNoTTY(unittest.TestCase):
+    """`tty=False` paths skip the pty_resize wrapper — there's no
+    PTY whose SIGWINCH we'd need to bridge."""
+
+    def test_no_wrapper_when_tty_false(self):
+        argv = _bottle().claude_argv([], tty=False)
+        self.assertEqual("smolvm", argv[0])
+        self.assertNotIn("pty_resize", " ".join(argv))
+
+    def test_tty_false_drops_it_flags(self):
+        argv = _bottle().claude_argv([], tty=False)
+        self.assertNotIn("-i", argv)
+        self.assertNotIn("-t", argv)
 
 
 if __name__ == "__main__":

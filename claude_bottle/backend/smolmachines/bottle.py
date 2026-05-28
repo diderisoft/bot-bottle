@@ -18,6 +18,7 @@ minimal Debian VM with no PAM session config."""
 from __future__ import annotations
 
 import subprocess
+import sys
 from typing import Mapping
 
 from .. import Bottle, ExecResult
@@ -88,7 +89,17 @@ class SmolmachinesBottle(Bottle):
             claude_tail += ["--append-system-prompt-file", self._prompt_path]
         claude_tail += argv
         flags += ["--", "runuser", "-u", "node", "--", *claude_tail]
-        return flags
+        if not tty:
+            # No PTY allocated — no SIGWINCH to forward, no resize
+            # bridge needed. Skip the wrapper so non-interactive
+            # exec paths (e.g., provisioning shell-outs that
+            # happen to go through this method) stay light.
+            return flags
+        return [
+            sys.executable, "-m",
+            "claude_bottle.backend.smolmachines.pty_resize",
+            self.name, "--", *flags,
+        ]
 
     def exec_claude(self, argv: list[str], *, tty: bool = True) -> int:
         """Run `claude` interactively inside the VM as the `node`
