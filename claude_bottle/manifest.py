@@ -12,6 +12,7 @@ the system prompt, for bottles the body is human documentation
 (ignored by the parser).
 
 Bottle schema (frontmatter):
+  extends:      <bottle-name>                   # optional (PRD 0025)
   env:          { <NAME>: <env-entry>, ... }
   git:          [ <git-entry>, ... ]
   git_user:     { name: <str>, email: <str> }   # optional
@@ -641,12 +642,17 @@ class Manifest:
     def from_json_obj(cls, obj: object) -> "Manifest":
         """Validate and build a Manifest from a raw JSON-like dict."""
         d = _as_json_object(obj, "manifest")
-        raw_bottles = _section_dict(d.get("bottles"), "manifest 'bottles'")
+        raw_bottles_obj = _section_dict(d.get("bottles"), "manifest 'bottles'")
         raw_agents = _section_dict(d.get("agents"), "manifest 'agents'")
 
-        bottles: dict[str, Bottle] = {
-            n: Bottle.from_dict(n, b) for n, b in raw_bottles.items()
-        }
+        # Coerce each bottle's raw to dict[str, object] so the
+        # PRD 0025 resolver can apply extends-merge rules
+        # consistently with the md-loader path.
+        raw_bottles: dict[str, dict[str, object]] = {}
+        for n, b in raw_bottles_obj.items():
+            raw_bottles[n] = _as_json_object(b, f"bottle '{n}'")
+        bottles = _resolve_bottles(raw_bottles)
+
         bottle_names = set(bottles.keys())
         agents: dict[str, Agent] = {
             n: Agent.from_dict(n, a, bottle_names) for n, a in raw_agents.items()
@@ -834,7 +840,7 @@ _FILENAME_RX = re.compile(r"^[a-z][a-z0-9-]*$")
 # sets dies with a "did you mean" pointer — typos shouldn't silently
 # ghost into an empty config.
 _BOTTLE_KEYS = frozenset(
-    {"env", "git", "git_user", "egress", "supervise"}
+    {"env", "extends", "git", "git_user", "egress", "supervise"}
 )
 _AGENT_KEYS_REQUIRED = frozenset({"bottle"})
 _AGENT_KEYS_OPTIONAL = frozenset({"skills"})
@@ -878,10 +884,15 @@ def _entity_name_from_path(path: Path) -> str | None:
 def _load_bottles_from_dir(bottles_dir: Path) -> dict[str, Bottle]:
     """Walk `<bottles_dir>/*.md`, parse each as a bottle, return
     `{name: Bottle}`. Missing dir → empty dict (the user simply
-    hasn't declared any bottles yet)."""
-    out: dict[str, Bottle] = {}
+    hasn't declared any bottles yet).
+
+    Two-pass to resolve PRD 0025 `extends:` chains:
+      1. Collect each file's raw frontmatter into `{name: raw}`.
+      2. Recursively merge `extends:` chains into effective
+         Bottle objects (`_resolve_bottles`)."""
+    raws: dict[str, dict[str, object]] = {}
     if not bottles_dir.is_dir():
-        return out
+        return {}
     for path in sorted(bottles_dir.glob("*.md")):
         name = _entity_name_from_path(path)
         if name is None:
@@ -903,8 +914,114 @@ def _load_bottles_from_dir(bottles_dir: Path) -> dict[str, Bottle]:
                 f"bottle file {path}: unknown frontmatter key(s) "
                 f"{sorted(unknown)}; allowed keys are {allowed}."
             )
-        out[name] = Bottle.from_dict(name, fm)
-    return out
+        raws[name] = fm
+    return _resolve_bottles(raws)
+
+
+def _resolve_bottles(raws: dict[str, dict[str, object]]) -> dict[str, Bottle]:
+    """Apply `extends:` chains (PRD 0025) and return a flat
+    `{name: Bottle}` of resolved configs. Cycle / missing-parent
+    / self-reference die with a clear pointer."""
+    cache: dict[str, Bottle] = {}
+    for name in raws:
+        if name not in cache:
+            _resolve_one_bottle(name, raws, cache, ())
+    return cache
+
+
+def _resolve_one_bottle(
+    name: str,
+    raws: dict[str, dict[str, object]],
+    cache: dict[str, Bottle],
+    seen: tuple[str, ...],
+) -> Bottle:
+    """Recursive resolver. `seen` is the current extends-chain for
+    cycle detection; on cycle die with the chain so the operator
+    can see which two files to break the loop in."""
+    if name in cache:
+        return cache[name]
+    if name in seen:
+        chain = " -> ".join(seen + (name,))
+        die(f"bottle '{name}' is in an extends cycle: {chain}")
+    raw = raws[name]
+    parent_name_raw = raw.get("extends")
+    # Strip `extends:` before passing to Bottle.from_dict so it
+    # isn't accidentally treated as a real Bottle field by future
+    # schema additions. It's only meaningful here.
+    child_raw = {k: v for k, v in raw.items() if k != "extends"}
+
+    if parent_name_raw is None:
+        bottle = Bottle.from_dict(name, child_raw)
+        cache[name] = bottle
+        return bottle
+
+    if not isinstance(parent_name_raw, str):
+        die(
+            f"bottle '{name}' extends must be a string "
+            f"(was {type(parent_name_raw).__name__})"
+        )
+    parent_name: str = parent_name_raw
+    if parent_name == name:
+        die(
+            f"bottle '{name}' extends itself; remove the "
+            f"self-reference"
+        )
+    if parent_name not in raws:
+        avail = ", ".join(sorted(raws.keys())) or "(none)"
+        die(
+            f"bottle '{name}' extends '{parent_name}' which is not "
+            f"defined. Available bottles: {avail}"
+        )
+    parent = _resolve_one_bottle(parent_name, raws, cache, seen + (name,))
+    bottle = _merge_bottles(parent, child_raw, name)
+    cache[name] = bottle
+    return bottle
+
+
+def _merge_bottles(
+    parent: Bottle,
+    child_raw: dict[str, object],
+    name: str,
+) -> Bottle:
+    """Apply PRD 0025 merge rules: parent is base; child's declared
+    fields overlay. List-valued fields full-replace when the child
+    declared them (presence-driven on the raw dict, so an explicit
+    `git: []` clears the parent's list); env merges dict-style
+    with child-wins on key collision; git_user overlays per-field."""
+    # Parse the child's declared fields into a Bottle (with the
+    # usual defaults for anything missing). Validation runs the same
+    # way it would for a leaf bottle — typos / wrong types die here.
+    child = Bottle.from_dict(name, child_raw)
+
+    # env: dict merge, child wins on collision.
+    merged_env = {**parent.env, **child.env}
+
+    # git_user: per-field overlay. Each non-empty field on child
+    # wins; empties fall through to parent. The default GitUser()
+    # is two empty strings, so a child that omits the block
+    # inherits the parent's user verbatim.
+    merged_git_user = GitUser(
+        name=child.git_user.name or parent.git_user.name,
+        email=child.git_user.email or parent.git_user.email,
+    )
+
+    # Presence-driven full-replace for the list-valued + scalar
+    # fields. "Did the child's raw dict have this key?" is the
+    # source of truth — an explicit `git: []` means "drop the
+    # parent's git list", whereas a missing `git:` means "inherit".
+    merged_git = child.git if "git" in child_raw else parent.git
+    merged_egress = child.egress if "egress" in child_raw else parent.egress
+    merged_supervise = (
+        child.supervise if "supervise" in child_raw else parent.supervise
+    )
+
+    return Bottle(
+        env=merged_env,
+        git=merged_git,
+        git_user=merged_git_user,
+        egress=merged_egress,
+        supervise=merged_supervise,
+    )
 
 
 def _load_agents_from_dir(
