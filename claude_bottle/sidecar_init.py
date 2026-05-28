@@ -54,6 +54,33 @@ class _DaemonSpec:
     argv: Sequence[str]
 
 
+# Env-var name prefixes that carry egress-only credentials.
+# `egress_apply.py` assigns `EGRESS_TOKEN_<n>` slots that egress
+# reads to inject `Authorization` headers on configured routes;
+# every other daemon in the bundle (especially pipelock with
+# `scan_env: true`) MUST NOT see these values or it'll match the
+# injected token in the request egress just sent and 403-block
+# the legitimate traffic (issue #84). The agent itself runs in a
+# different machine and never has access to these slots in the
+# first place, so stripping them from non-egress daemons loses no
+# DLP coverage — pipelock can't catch the exfil of a value the
+# agent doesn't have.
+_EGRESS_ONLY_ENV_PREFIXES: tuple[str, ...] = ("EGRESS_TOKEN_",)
+
+
+def _env_for_daemon(name: str, base_env: dict[str, str]) -> dict[str, str]:
+    """Egress sees the full bundle env. Everyone else gets a copy
+    with `EGRESS_TOKEN_*` (and any other future egress-only
+    credential slots) stripped. Returns a fresh dict — callers
+    can mutate without affecting `base_env`."""
+    if name == "egress":
+        return dict(base_env)
+    return {
+        k: v for k, v in base_env.items()
+        if not any(k.startswith(p) for p in _EGRESS_ONLY_ENV_PREFIXES)
+    }
+
+
 # Order matters only for first-launch race-window reasons: egress
 # starts first so pipelock's upstream connect succeeds during
 # pipelock's own startup. git-gate and supervise are independent.
@@ -116,6 +143,7 @@ def _spawn(spec: _DaemonSpec) -> subprocess.Popen:
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         bufsize=0,
+        env=_env_for_daemon(spec.name, dict(os.environ)),
     )
     threading.Thread(
         target=_pump, args=(spec.name, proc.stdout), daemon=True

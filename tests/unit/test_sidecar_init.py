@@ -20,8 +20,54 @@ from unittest.mock import patch
 from claude_bottle.sidecar_init import (
     _DaemonSpec,
     _Supervisor,
+    _env_for_daemon,
     _selected_daemons,
 )
+
+
+class TestEnvForDaemon(unittest.TestCase):
+    """Scope egress-only credential env vars to the egress daemon.
+
+    Regression for issue #84: pipelock's `scan_env: true` matched
+    `EGRESS_TOKEN_*` against egress's just-injected Authorization
+    header and 403-blocked the legitimate request. The agent
+    never has access to these slots, so stripping them from
+    non-egress daemons loses no DLP coverage."""
+
+    _BASE = {
+        "PATH": "/usr/bin",
+        "EGRESS_TOKEN_0": "tok-anthropic",
+        "EGRESS_TOKEN_1": "tok-gitea",
+        "EGRESS_UPSTREAM_PROXY": "http://127.0.0.1:8888",
+        "SUPERVISE_PORT": "9100",
+    }
+
+    def test_egress_sees_full_env(self):
+        env = _env_for_daemon("egress", self._BASE)
+        self.assertEqual(self._BASE, env)
+
+    def test_pipelock_loses_egress_tokens(self):
+        env = _env_for_daemon("pipelock", self._BASE)
+        self.assertNotIn("EGRESS_TOKEN_0", env)
+        self.assertNotIn("EGRESS_TOKEN_1", env)
+        # Non-token bundle env stays — supervise / git-gate / the
+        # upstream proxy URL are all load-bearing for other
+        # daemons.
+        self.assertEqual("/usr/bin", env["PATH"])
+        self.assertEqual("http://127.0.0.1:8888", env["EGRESS_UPSTREAM_PROXY"])
+        self.assertEqual("9100", env["SUPERVISE_PORT"])
+
+    def test_git_gate_and_supervise_also_lose_egress_tokens(self):
+        for name in ("git-gate", "supervise"):
+            env = _env_for_daemon(name, self._BASE)
+            self.assertNotIn("EGRESS_TOKEN_0", env)
+            self.assertNotIn("EGRESS_TOKEN_1", env)
+
+    def test_returns_independent_dict(self):
+        # Caller mutation mustn't affect the original.
+        env = _env_for_daemon("pipelock", self._BASE)
+        env["X"] = "y"
+        self.assertNotIn("X", self._BASE)
 
 
 class TestSelectedDaemons(unittest.TestCase):
