@@ -33,15 +33,8 @@ from __future__ import annotations
 
 import subprocess
 
-from ...util import log_ca_fingerprint, select_ca_cert
+from ...util import AGENT_CA_PATH, log_ca_fingerprint, select_ca_cert
 from ..bottle_plan import DockerBottlePlan
-
-
-# Debian-family path for sources that `update-ca-certificates` reads.
-# Bundle path is what the command rebuilds and what every standard
-# TLS consumer in the image reads.
-AGENT_CA_PATH = "/usr/local/share/ca-certificates/bot-bottle-mitm-ca.crt"
-AGENT_CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt"
 
 
 def provision_ca(plan: DockerBottlePlan, target: str) -> None:

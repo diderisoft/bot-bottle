@@ -59,6 +59,7 @@ from ...supervise import (
     SUPERVISE_PORT,
 )
 from ...util import expand_tilde
+from ..util import AGENT_CA_BUNDLE, AGENT_CA_PATH
 from .bottle_plan import DockerBottlePlan
 from .egress import (
     EGRESS_CA_IN_CONTAINER,
@@ -75,7 +76,6 @@ from .pipelock import (
     PIPELOCK_CA_KEY_IN_CONTAINER,
     PIPELOCK_PORT,
 )
-from .provision.ca import AGENT_CA_BUNDLE, AGENT_CA_PATH
 from .sidecar_bundle import (
     SIDECAR_BUNDLE_DOCKERFILE,
     SIDECAR_BUNDLE_IMAGE,

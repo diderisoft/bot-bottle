@@ -17,6 +17,15 @@ if TYPE_CHECKING:
     from ..pipelock import PipelockProxyPlan
 
 
+# Debian-family CA layout, shared by every backend (all guest images
+# are Debian-family). AGENT_CA_PATH is the source path that
+# `update-ca-certificates` reads; AGENT_CA_BUNDLE is the bundle it
+# rebuilds, which curl, Python `ssl`, and OpenSSL-based tools all read
+# by default.
+AGENT_CA_PATH = "/usr/local/share/ca-certificates/bot-bottle-mitm-ca.crt"
+AGENT_CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt"
+
+
 def host_skill_dir(name: str) -> str:
     """Return the host-side path for a named skill:
     `$HOME/.claude/skills/<name>`. Dies if HOME is unset."""

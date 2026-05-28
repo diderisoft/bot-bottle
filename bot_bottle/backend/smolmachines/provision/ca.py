@@ -16,8 +16,12 @@ flag exists; the VM init is root), so we don't need the explicit
 from __future__ import annotations
 
 from ....log import die
-from ...docker.provision.ca import AGENT_CA_BUNDLE, AGENT_CA_PATH
-from ...util import log_ca_fingerprint, select_ca_cert
+from ...util import (
+    AGENT_CA_BUNDLE,
+    AGENT_CA_PATH,
+    log_ca_fingerprint,
+    select_ca_cert,
+)
 from .. import smolvm as _smolvm
 from ..bottle_plan import SmolmachinesBottlePlan
 
@@ -63,7 +67,6 @@ def provision_ca(plan: SmolmachinesBottlePlan, target: str) -> None:
 
 
 # Re-exported for the launch/provision_ca caller + tests. The path
-# constants come from the docker module because they're tied to
-# Debian's `update-ca-certificates` layout — same in both backends
-# since both guest images are Debian-family.
+# constants live in the shared `backend.util` (Debian's
+# `update-ca-certificates` layout is the same in both backends).
 __all__ = ["AGENT_CA_BUNDLE", "AGENT_CA_PATH", "provision_ca"]
