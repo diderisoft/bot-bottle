@@ -8,6 +8,7 @@ import unittest
 from bot_bottle.manifest import Manifest
 from bot_bottle.pipelock import (
     pipelock_effective_allowlist,
+    pipelock_effective_ssrf_ip_allowlist,
     pipelock_effective_tls_passthrough,
 )
 
@@ -111,6 +112,30 @@ class TestTlsPassthrough(unittest.TestCase):
              "auth": {"scheme": "Bearer", "token_ref": "G"}},
         ])))
         self.assertEqual(["api.openai.com"], passthrough)
+
+
+class TestSsrfIpAllowlist(unittest.TestCase):
+    def test_default_empty(self):
+        allowlist = pipelock_effective_ssrf_ip_allowlist(_bottle({}))
+        self.assertEqual([], allowlist)
+
+    def test_route_policy_adds_ssrf_ip_allowlist(self):
+        allowlist = pipelock_effective_ssrf_ip_allowlist(_bottle(_routes([
+            {"host": "gitea.dideric.is",
+             "auth": {"scheme": "token", "token_ref": "G"},
+             "pipelock": {"ssrf_ip_allowlist": ["192.0.2.10/32"]}},
+        ])))
+        self.assertEqual(["192.0.2.10/32"], allowlist)
+
+    def test_route_policy_merges_with_extra(self):
+        allowlist = pipelock_effective_ssrf_ip_allowlist(
+            _bottle(_routes([
+                {"host": "gitea.dideric.is",
+                 "pipelock": {"ssrf_ip_allowlist": ["192.0.2.10/32"]}},
+            ])),
+            ("172.20.0.0/16",),
+        )
+        self.assertEqual(["192.0.2.10/32", "172.20.0.0/16"], allowlist)
 
 
 if __name__ == "__main__":

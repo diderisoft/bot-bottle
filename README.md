@@ -435,6 +435,21 @@ egress:
         tls_passthrough: true
 ```
 
+Routes that resolve to private or Tailscale addresses can opt into
+pipelock's SSRF destination allowlist explicitly:
+
+```yaml
+egress:
+  routes:
+    - host: gitea.dideric.is
+      auth:
+        scheme: token
+        token_ref: BOT_BOTTLE_GITEA_TOKEN
+      pipelock:
+        ssrf_ip_allowlist:
+          - 192.0.2.10/32
+```
+
 At launch, `cli.py` reads `BOT_BOTTLE_CLAUDE_OAUTH_TOKEN` from the host
 env and forwards it into the cred-proxy container's environ — never
 into the agent's. The agent receives `ANTHROPIC_BASE_URL` pointing at

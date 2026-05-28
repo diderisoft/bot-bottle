@@ -111,6 +111,20 @@ class TestBuildConfig(unittest.TestCase):
         self.assertIn("ssrf", cfg)
         self.assertEqual({"ip_allowlist": ["172.20.0.0/16"]}, cfg["ssrf"])
 
+    def test_ssrf_block_emitted_from_route_policy(self):
+        bottle = Manifest.from_json_obj({
+            "bottles": {"dev": {"egress": {"routes": [
+                {"host": "gitea.dideric.is",
+                 "pipelock": {"ssrf_ip_allowlist": ["192.0.2.10/32"]}},
+            ]}}},
+            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        }).bottles["dev"]
+        cfg = pipelock_build_config(bottle)
+        self.assertEqual(
+            {"ip_allowlist": ["192.0.2.10/32"]},
+            cfg["ssrf"],
+        )
+
     def test_seed_phrase_detection_disabled_by_default(self):
         # Only the broad BIP-39 detector is disabled. The rest of
         # DLP remains enabled via the `dlp` and request-body sections.

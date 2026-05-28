@@ -223,9 +223,20 @@ class TestPipelockPolicy(unittest.TestCase):
         }])
         self.assertTrue(b.egress.routes[0].Pipelock.TlsPassthrough)
 
+    def test_ssrf_ip_allowlist_route_policy(self):
+        b = _bottle([{
+            "host": "gitea.dideric.is",
+            "pipelock": {"ssrf_ip_allowlist": ["192.0.2.10/32"]},
+        }])
+        self.assertEqual(
+            ("192.0.2.10/32",),
+            b.egress.routes[0].Pipelock.SsrfIpAllowlist,
+        )
+
     def test_tls_passthrough_defaults_false(self):
         b = _bottle([{"host": "api.openai.com"}])
         self.assertFalse(b.egress.routes[0].Pipelock.TlsPassthrough)
+        self.assertEqual((), b.egress.routes[0].Pipelock.SsrfIpAllowlist)
 
     def test_pipelock_policy_must_be_object(self):
         with self.assertRaises(Die):
@@ -236,6 +247,20 @@ class TestPipelockPolicy(unittest.TestCase):
             _bottle([{
                 "host": "x.example",
                 "pipelock": {"tls_passthrough": "yes"},
+            }])
+
+    def test_ssrf_ip_allowlist_must_be_array(self):
+        with self.assertRaises(Die):
+            _bottle([{
+                "host": "x.example",
+                "pipelock": {"ssrf_ip_allowlist": "192.0.2.10/32"},
+            }])
+
+    def test_ssrf_ip_allowlist_items_must_be_cidr_or_ip(self):
+        with self.assertRaises(Die):
+            _bottle([{
+                "host": "x.example",
+                "pipelock": {"ssrf_ip_allowlist": ["not-an-ip"]},
             }])
 
     def test_unknown_pipelock_key_rejected(self):

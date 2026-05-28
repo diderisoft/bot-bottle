@@ -114,6 +114,22 @@ def pipelock_effective_tls_passthrough(bottle: Bottle) -> list[str]:
     return sorted(seen.keys())
 
 
+def pipelock_effective_ssrf_ip_allowlist(
+    bottle: Bottle,
+    extra: tuple[str, ...] = (),
+) -> list[str]:
+    """IP/CIDR entries that bypass pipelock's SSRF destination guard.
+
+    Launch code can pass backend-owned entries through `extra`, while
+    route-owned entries come from `pipelock.ssrf_ip_allowlist`.
+    """
+    seen: dict[str, None] = {ip: None for ip in extra}
+    for route in bottle.egress.routes:
+        for ip in route.Pipelock.SsrfIpAllowlist:
+            seen.setdefault(ip, None)
+    return sorted(seen.keys())
+
+
 
 
 
@@ -191,8 +207,11 @@ def pipelock_build_config(
             "ca_key": ca_key_path,
             "passthrough_domains": pipelock_effective_tls_passthrough(bottle),
         }
-    if ssrf_ip_allowlist:
-        cfg["ssrf"] = {"ip_allowlist": list(ssrf_ip_allowlist)}
+    effective_ssrf_ip_allowlist = pipelock_effective_ssrf_ip_allowlist(
+        bottle, ssrf_ip_allowlist,
+    )
+    if effective_ssrf_ip_allowlist:
+        cfg["ssrf"] = {"ip_allowlist": effective_ssrf_ip_allowlist}
     return cfg
 
 
