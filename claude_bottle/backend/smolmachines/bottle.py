@@ -22,7 +22,19 @@ import sys
 from typing import Mapping
 
 from .. import Bottle, ExecResult
+from . import pty_resize as _pty_resize
 from . import smolvm as _smolvm
+
+
+# Absolute path to the pty_resize wrapper. The dashboard's tmux
+# pane (split-window / respawn-pane) opens the new pane in its
+# OWN cwd, not the cwd of the process running split-window — so
+# invoking the wrapper as `python -m <dotted-path>` would fail
+# with ModuleNotFoundError whenever the operator's tmux pane was
+# started from anywhere outside the claude-bottle repo. Absolute
+# path sidesteps the cwd dependence (the wrapper has no
+# claude_bottle.* imports, so it runs as a standalone script).
+_PTY_RESIZE_SCRIPT = _pty_resize.__file__
 
 
 # Per-user env the agent image's USER (node) expects. claude
@@ -96,8 +108,7 @@ class SmolmachinesBottle(Bottle):
             # happen to go through this method) stay light.
             return flags
         return [
-            sys.executable, "-m",
-            "claude_bottle.backend.smolmachines.pty_resize",
+            sys.executable, _PTY_RESIZE_SCRIPT,
             self.name, "--", *flags,
         ]
 

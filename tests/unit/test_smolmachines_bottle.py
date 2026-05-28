@@ -16,6 +16,7 @@ from __future__ import annotations
 import sys
 import unittest
 
+from claude_bottle.backend.smolmachines import pty_resize as _pty_resize
 from claude_bottle.backend.smolmachines.bottle import SmolmachinesBottle
 
 
@@ -40,13 +41,15 @@ class TestClaudeArgvWrapped(unittest.TestCase):
 
     def test_pty_resize_wrapper_prefix(self):
         argv = _bottle().claude_argv([])
+        # Absolute script path (not `-m <dotted>`) so the tmux
+        # pane's cwd doesn't matter — see the `_PTY_RESIZE_SCRIPT`
+        # docstring in bottle.py.
         self.assertEqual(
             [
-                sys.executable, "-m",
-                "claude_bottle.backend.smolmachines.pty_resize",
+                sys.executable, _pty_resize.__file__,
                 "claude-bottle-dev-abc", "--",
             ],
-            argv[:5],
+            argv[:4],
         )
 
     def test_minimal_inner_argv_no_prompt(self):
@@ -128,7 +131,7 @@ class TestClaudeArgvNoTTY(unittest.TestCase):
     def test_no_wrapper_when_tty_false(self):
         argv = _bottle().claude_argv([], tty=False)
         self.assertEqual("smolvm", argv[0])
-        self.assertNotIn("pty_resize", " ".join(argv))
+        self.assertFalse(any("pty_resize" in a for a in argv))
 
     def test_tty_false_drops_it_flags(self):
         argv = _bottle().claude_argv([], tty=False)
