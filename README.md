@@ -48,11 +48,6 @@ development history, Docker and smolmachines backends, dashboard and
 remediation flows, and unit/integration tests covering exfiltration and
 sandbox escape scenarios.
 
-Current status: personal/small-team security tool, not yet enterprise
-fleet infrastructure. Next work: central policy and audit, stronger
-container hardening, SBOM/vulnerability scanning, and team/RBAC
-support.
-
 ## Security model
 
 Each agent runs in its own bottle: its own container, its own internal
@@ -143,7 +138,7 @@ and MCP endpoints resolve without an agent-side change.
 ```
 
 - **agent image** — built from the provider template Dockerfile
-  (`Dockerfile` for Claude, `Dockerfile.codex` for Codex, or
+  (`Dockerfile.claude` for Claude, `Dockerfile.codex` for Codex, or
   `agent_provider.dockerfile`) on first run; runs the selected agent
   CLI with the manifest-granted skills, env vars, and `~/.gitconfig`
   (the latter for the git-gate's `insteadOf` rules when `bottle.git`

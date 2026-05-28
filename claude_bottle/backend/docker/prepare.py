@@ -183,7 +183,7 @@ def resolve_plan(
         supervise_dockerfile_path = (
             Path(dockerfile_path)
             if dockerfile_path
-            else Path(__file__).resolve().parent.parent.parent.parent / "Dockerfile"
+            else Path(__file__).resolve().parent.parent.parent.parent / "Dockerfile.claude"
         )
         dockerfile_content = (
             supervise_dockerfile_path.read_text()
