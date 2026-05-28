@@ -143,7 +143,11 @@ class GitEntry:
         user, host, port, path = _parse_git_upstream(
             upstream, f"bottle '{bottle_name}' {label} '{name}' Upstream"
         )
-        if host_key is not None and host_key != host:
+        if (
+            host_key is not None
+            and host_key != host
+            and not _is_ip_literal(host)
+        ):
             die(
                 f"bottle '{bottle_name}' git.remotes key {host_key!r} "
                 f"does not match Upstream host {host!r}"
@@ -961,6 +965,14 @@ def _parse_git_upstream(url: str, label: str) -> tuple[str, str, str, str]:
     if not host:
         die(f"{label} host is empty in {url!r}")
     return (user, host, port, path)
+
+
+def _is_ip_literal(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return True
 
 
 def _validate_egress_routes(

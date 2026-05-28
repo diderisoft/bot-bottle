@@ -205,6 +205,21 @@ class TestGitEntryCrossValidation(unittest.TestCase):
                 "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
             })
 
+    def test_remote_key_can_name_logical_host_for_ip_upstream(self):
+        m = Manifest.from_json_obj({
+            "bottles": {"dev": {"git": {"remotes": {
+                "gitea.dideric.is": {
+                    "Name": "bot-bottle",
+                    "Upstream": "ssh://git@192.0.2.10:30009/didericis/bot-bottle.git",
+                    "IdentityFile": "/dev/null",
+                },
+            }}}},
+            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        })
+        e = m.bottles["dev"].git[0]
+        self.assertEqual("192.0.2.10", e.UpstreamHost)
+        self.assertEqual("30009", e.UpstreamPort)
+
     def test_legacy_ssh_field_dies_with_hint(self):
         # PRD 0009: bottle.ssh is removed; manifests carrying it must
         # fail loudly with a hint pointing at bottle.git.
