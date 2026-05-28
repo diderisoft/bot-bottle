@@ -35,12 +35,28 @@ follow-up tracked separately)."""
 
 from __future__ import annotations
 
+import datetime
 import fcntl
+import os
 import signal
 import struct
 import subprocess
 import sys
 import termios
+import traceback
+
+
+_DEBUG_LOG_PATH = os.path.expanduser("~/.claude-bottle/pty_resize.log")
+
+
+def _log(msg: str) -> None:
+    try:
+        os.makedirs(os.path.dirname(_DEBUG_LOG_PATH), exist_ok=True)
+        with open(_DEBUG_LOG_PATH, "a") as f:
+            ts = datetime.datetime.now().isoformat(timespec="milliseconds")
+            f.write(f"[{ts} pid={os.getpid()}] {msg}\n")
+    except OSError:
+        pass
 
 
 def _read_winsize() -> tuple[int, int] | None:
@@ -100,35 +116,42 @@ def main(argv: list[str]) -> int:
     We don't use argparse — the `--` separator is the contract and
     everything past it is forwarded verbatim. Keeps the wrapper
     transparent for callers building argv programmatically."""
+    _log(f"start argv={argv!r} TMUX={os.environ.get('TMUX','<unset>')!r} "
+         f"ppid={os.getppid()}")
+
     if len(argv) < 3 or argv[1] != "--":
         sys.stderr.write(
             "usage: python -m claude_bottle.backend.smolmachines.pty_resize "
             "<machine> -- <smolvm-argv...>\n"
         )
+        _log("exit=2 (bad argv)")
         return 2
     machine = argv[0]
     inner = argv[2:]
 
     def sync(*_args) -> None:
         size = _read_winsize()
+        _log(f"sync size={size!r}")
         if size is None:
             return
         _push_size(machine, *size)
 
-    # Install BEFORE spawning the child so the first SIGWINCH
-    # (e.g., from tmux refreshing the pane right after respawn)
-    # is caught even if it races the initial sync.
     signal.signal(signal.SIGWINCH, sync)
 
-    proc = subprocess.Popen(inner)
+    try:
+        proc = subprocess.Popen(inner)
+    except BaseException:
+        _log("Popen failed:\n" + traceback.format_exc())
+        raise
+    _log(f"child pid={proc.pid}")
     sync()  # push initial size — VM PTY starts at 0 0.
     while True:
         try:
-            return proc.wait()
+            rc = proc.wait()
+            _log(f"child exit rc={rc}")
+            return rc
         except KeyboardInterrupt:
-            # Ctrl-C in the operator's terminal → forward to the
-            # child once, then keep waiting. claude handles its
-            # own interrupt cleanup.
+            _log("KeyboardInterrupt → forward SIGINT to child")
             proc.send_signal(signal.SIGINT)
 
 
