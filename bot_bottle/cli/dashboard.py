@@ -368,8 +368,6 @@ def _picker_modal(
     """Modal agent picker. Type to filter; j/k or arrows to
     navigate; Enter to confirm; Esc to abort (first press clears
     filter if any, second press exits)."""
-    if not names:
-        return None
     selected = 0
     query = ""
     while True:
@@ -455,9 +453,13 @@ def _draw_picker_modal(
     list_start_row = 3
     visible_rows = box_h - list_start_row - 1
     if not filtered:
+        empty_message = (
+            "(no agents configured)"
+            if not all_names else "(no agents match filter)"
+        )
         win.addnstr(
             list_start_row, 2,
-            "(no agents match filter)",
+            empty_message,
             box_w - 4, curses.A_DIM,
         )
     else:
@@ -1154,6 +1156,8 @@ def _new_agent_flow(
     names = sorted(manifest.agents.keys())
     picked = _picker_modal(stdscr, names, _running_counts(bottles, agents_now))
     if picked is None:
+        if not names:
+            return "no agents configured; create ~/.bot-bottle/agents/*.md"
         return "agent start aborted"
 
     # Backend picker (issue #77): operator chooses docker /
@@ -1401,8 +1405,10 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
 
     def _get_manifest() -> Manifest:
         if manifest_cache[0] is None:
-            manifest_cache[0] = Manifest.resolve(USER_CWD)
+            manifest_cache[0] = Manifest.resolve(USER_CWD, missing_ok=True)
         return manifest_cache[0]
+    if not _get_manifest().bottles and not _get_manifest().agents:
+        status_line = "warning: no bot-bottle config/agents found; new-agent picker is empty"
     # First-tick guard: a brand-new dashboard finds any
     # pre-existing queue entries on its first poll; those
     # shouldn't ring the bell as if they just arrived.

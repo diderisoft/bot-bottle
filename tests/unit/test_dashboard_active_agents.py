@@ -5,6 +5,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from bot_bottle import supervise
 from bot_bottle.cli import dashboard
@@ -142,6 +143,18 @@ class TestFilterAgents(unittest.TestCase):
         # order the manifest exposed.
         out = dashboard._filter_agents("e", ["beta", "alpha", "echo"])
         self.assertEqual(["beta", "echo"], out)
+
+
+class TestDashboardManifestLoading(unittest.TestCase):
+    def test_new_agent_flow_empty_manifest_has_no_picker_entries(self):
+        manifest = dashboard.Manifest.from_json_obj({"bottles": {}, "agents": {}})
+        with mock.patch("bot_bottle.cli.dashboard._picker_modal", return_value=None) as picker:
+            status = dashboard._new_agent_flow(
+                None, manifest, {}, [], tmux_state=None,  # type: ignore[arg-type]
+            )
+        picker.assert_called_once()
+        self.assertEqual([], picker.call_args.args[1])
+        self.assertIn("no agents configured", status)
 
 
 class TestRunningCounts(unittest.TestCase):

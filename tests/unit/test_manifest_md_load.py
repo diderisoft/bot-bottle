@@ -280,6 +280,11 @@ class TestNoManifestDies(_ResolveCase):
         with self.assertRaises(Die):
             self.resolve()
 
+    def test_missing_ok_returns_empty_manifest(self):
+        m = Manifest.resolve(str(self.cwd_root), missing_ok=True)
+        self.assertEqual({}, dict(m.bottles))
+        self.assertEqual({}, dict(m.agents))
+
 
 class TestUnknownBottleReferenceDies(_ResolveCase):
     """An agent file naming a bottle that doesn't exist on disk

@@ -661,7 +661,7 @@ class Manifest:
     agents: Mapping[str, Agent]
 
     @classmethod
-    def resolve(cls, cwd: str) -> "Manifest":
+    def resolve(cls, cwd: str, *, missing_ok: bool = False) -> "Manifest":
         """Walk the per-file manifest tree and build a Manifest.
 
         Layout (PRD 0011):
@@ -673,6 +673,11 @@ class Manifest:
         (cwd wins). A bottles/ subdir under $CWD is logged as a
         warning and ignored — the filesystem layout IS the trust
         boundary.
+
+        If `missing_ok` is true, a missing `$HOME/.bot-bottle/`
+        returns an empty manifest instead of dying. This is for
+        passive UI surfaces like the dashboard, which can still
+        monitor already-running agents without launch config.
 
         If `bot-bottle.json` exists alongside a missing
         `.bot-bottle/` directory at either side, dies with a
@@ -689,6 +694,8 @@ class Manifest:
             _check_stale_json(cwd_dir, cwd_md, "$CWD")
 
         if not home_md.is_dir():
+            if missing_ok:
+                return cls.from_json_obj({"bottles": {}, "agents": {}})
             die(
                 f"no manifest found: {home_md} does not exist. "
                 f"See README.md for the per-file Markdown layout "
