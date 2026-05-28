@@ -98,25 +98,23 @@ class TestBuildConfig(unittest.TestCase):
         self.assertIn("ssrf", cfg)
         self.assertEqual({"ip_allowlist": ["172.20.0.0/16"]}, cfg["ssrf"])
 
-    def test_seed_phrase_detection_left_at_default_when_no_anthropic_route(self):
-        # No override emitted -> pipelock keeps its built-in default
-        # (BIP-39 detection enabled). Bottles that don't carry an
-        # Anthropic route don't need the false-positive workaround.
+    def test_seed_phrase_detection_disabled_by_default(self):
+        # Only the broad BIP-39 detector is disabled. The rest of
+        # DLP remains enabled via the `dlp` and request-body sections.
         cfg = pipelock_build_config(fixture_minimal().bottles["dev"])
-        self.assertNotIn("seed_phrase_detection", cfg)
+        self.assertEqual({"enabled": False}, cfg["seed_phrase_detection"])
 
-    def test_seed_phrase_detection_disabled_for_anthropic_route(self):
-        # claude-code's chat bodies trip pipelock's BIP-39 detector
+    def test_seed_phrase_detection_disabled_for_openai_route(self):
+        # OpenAI/Codex chat bodies trip pipelock's BIP-39 detector
         # (12+ English words that pass the checksum). pipelock 2.3.0
         # has no per-path knob for this detector, and both `suppress`
         # and `rules.disabled` only silence alerts — the block still
         # fires. The only knob that actually skips the block is the
-        # global on/off, so we flip it off whenever the bottle is set
-        # up to route claude through pipelock.
+        # global on/off.
         from bot_bottle.manifest import Manifest
         bottle = Manifest.from_json_obj({
             "bottles": {"dev": {"egress": {"routes": [
-                {"host": "api.anthropic.com",
+                {"host": "api.openai.com",
                  "auth": {"scheme": "Bearer", "token_ref": "T"}},
             ]}}},
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
@@ -207,16 +205,10 @@ class TestRenderAndWrite(unittest.TestCase):
         self.assertIn("ip_allowlist:", text)
         self.assertIn('- "172.20.0.0/16"', text)
 
-    def test_render_emits_seed_phrase_off_for_anthropic_route(self):
-        from bot_bottle.manifest import Manifest
-        bottle = Manifest.from_json_obj({
-            "bottles": {"dev": {"egress": {"routes": [
-                {"host": "api.anthropic.com",
-                 "auth": {"scheme": "Bearer", "token_ref": "T"}},
-            ]}}},
-            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
-        }).bottles["dev"]
-        text = pipelock_render_yaml(pipelock_build_config(bottle))
+    def test_render_emits_seed_phrase_off_by_default(self):
+        text = pipelock_render_yaml(
+            pipelock_build_config(fixture_minimal().bottles["dev"])
+        )
         self.assertIn("seed_phrase_detection:", text)
         self.assertIn("enabled: false", text)
 

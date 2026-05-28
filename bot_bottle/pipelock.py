@@ -84,14 +84,13 @@ def pipelock_effective_allowlist(bottle: Bottle) -> list[str]:
 
 
 def pipelock_seed_phrase_detection_enabled(bottle: Bottle) -> bool:
-    """Whether pipelock's BIP-39 seed-phrase detector stays on for
-    this bottle.
+    """Whether pipelock's BIP-39 seed-phrase detector stays on.
 
     LLM conversation bodies legitimately trip the detector — any 12+
-    English words that pass the BIP-39 checksum match — so any
-    bottle that routes claude through pipelock's body scanner gets
-    blocked on the first real chat. We tried two narrower knobs
-    first:
+    English words that pass the BIP-39 checksum match — so agents can
+    get blocked on ordinary prompts/responses regardless of provider
+    (Claude, Codex/OpenAI, or future harnesses). We tried two narrower
+    knobs first:
 
       - `suppress: [{rule, path}]` — pipelock accepts the schema
         but the entry only silences the alert; the body_dlp block
@@ -102,16 +101,11 @@ def pipelock_seed_phrase_detection_enabled(bottle: Bottle) -> bool:
     Empirically only `seed_phrase_detection.enabled: false`
     actually stops the block (verified by sending a 12-word BIP-39
     body through three pipelock instances). It is a global toggle —
-    no per-path / per-host knob in pipelock 2.3.0 — so we turn the
-    detector off for the entire bottle when the bottle declares an
-    egress route to `api.anthropic.com`. The trade-off is
-    accepted: BIP-39 detection has little value in bot-bottle's
-    threat model (the agent has no access to a user's crypto wallet
-    seeds; the patterns that matter — gh*_, sk-ant-, AKIA, etc. —
-    keep firing)."""
-    return not any(
-        r.Host == "api.anthropic.com" for r in bottle.egress.routes
-    )
+    no per-path / per-host knob in pipelock 2.3.0 — so we turn off
+    only this detector for every bottle. The rest of pipelock's DLP
+    defaults and request-body/header scanning remain enabled."""
+    del bottle  # kept for call-site stability and future policy knobs.
+    return False
 
 
 def pipelock_effective_tls_passthrough(bottle: Bottle) -> list[str]:
