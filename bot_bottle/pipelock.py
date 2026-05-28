@@ -26,20 +26,10 @@ from .supervise import SUPERVISE_HOSTNAME
 from .manifest import Bottle
 
 # Hosts pipelock should NOT TLS-MITM, even when tls_interception is
-# enabled. The Claude API endpoint is an LLM provider — its request
-# bodies are user-authored conversation text that legitimately can
-# trigger DLP scanners (notably the BIP-39 seed-phrase detector, which
-# fires on any 12+ consecutive English words that happen to be on the
-# BIP-39 wordlist and pass the checksum). Per pipelock's own
-# configuration.md, the recommended treatment for LLM API endpoints is
-# `passthrough_domains`: pipelock still proxies the CONNECT (so the
-# api_allowlist gate applies), but it does not generate a leaf cert or
-# decrypt the body. Body scanning happens on hosts that aren't
-# passthrough'd, so DLP protection against agent exfil to other
-# allowlisted hosts is unchanged.
-DEFAULT_TLS_PASSTHROUGH: tuple[str, ...] = (
-    "api.anthropic.com",
-)
+# enabled. This is now route-owned manifest policy via
+# `egress.routes[].pipelock.tls_passthrough`; no provider hosts are
+# injected implicitly.
+DEFAULT_TLS_PASSTHROUGH: tuple[str, ...] = ()
 
 
 # In-container paths the rendered pipelock YAML references under
@@ -109,25 +99,19 @@ def pipelock_seed_phrase_detection_enabled(bottle: Bottle) -> bool:
 
 
 def pipelock_effective_tls_passthrough(bottle: Bottle) -> list[str]:
-    """Hostnames pipelock should pass through (no TLS MITM, no body
-    scan). Default carries the LLM API endpoint — its request bodies
-    are user-authored conversation text that legitimately trips DLP
-    scanners (notably pipelock's BIP-39 seed-phrase detector). Every
-    other allowlisted host is MITM'd by pipelock's per-bottle CA so
-    its body scanner sees the cleartext.
+    """Hostnames pipelock should pass through (no TLS MITM).
 
-    egress route hosts (github, gitea, npm) are deliberately
-    NOT auto-added here. egress's HTTPS client trusts pipelock's
-    CA at runtime (folded into its trust store via docker cp), so
-    pipelock MITMs and body-scans the egress → upstream leg the
-    same way it body-scanned the agent's direct HTTPS traffic before
-    the PRD 0017 cutover.
-
-    `bottle` is kept on the signature for forward-compat (a future
-    knob might let a manifest opt a host into passthrough); today
-    the returned list is independent of the bottle."""
-    del bottle  # not consulted; see docstring.
-    return sorted(DEFAULT_TLS_PASSTHROUGH)
+    A route opts in with `pipelock.tls_passthrough: true`. This is
+    useful for provider API routes where egress injects the
+    Authorization header after the agent boundary; pipelock still
+    enforces the host allowlist but does not decrypt and scan that
+    provider request.
+    """
+    seen: dict[str, None] = {host: None for host in DEFAULT_TLS_PASSTHROUGH}
+    for route in bottle.egress.routes:
+        if route.Pipelock.TlsPassthrough:
+            seen.setdefault(route.Host, None)
+    return sorted(seen.keys())
 
 
 

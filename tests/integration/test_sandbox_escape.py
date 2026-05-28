@@ -310,15 +310,10 @@ class TestSandboxEscape(unittest.TestCase):
         remediation lands as its own PRD before this test merges.
         DON'T mark expectedFailure to silence it.
 
-        Destination note: we use `raw.githubusercontent.com` (one
-        of the DEFAULT_ALLOWLIST hosts) rather than
-        api.anthropic.com because pipelock passthrough's the
-        Anthropic API endpoint specifically — its DLP scanners
-        false-positive on real LLM conversation bodies (BIP-39
-        seed phrases, etc.). That trade-off is documented in
-        `pipelock.DEFAULT_TLS_PASSTHROUGH`. For non-passthrough
-        hosts pipelock MITMs and the DLP scan applies, which is
-        what this attack exercises."""
+        Destination note: we use `raw.githubusercontent.com`, one
+        of the DEFAULT_ALLOWLIST hosts. It is not route-configured
+        for pipelock TLS passthrough, so pipelock MITMs it and the
+        DLP scan applies, which is what this attack exercises."""
         # Capture HTTP code via curl's -w; don't use --fail so
         # we get the response body even on 4xx.
         url_base = "https://raw.githubusercontent.com"

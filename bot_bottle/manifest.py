@@ -18,6 +18,8 @@ Bottle schema (frontmatter):
     user:       { name: <str>, email: <str> }   # optional
     remotes:    { <host>: <git-entry>, ... }    # optional
   egress: { routes: [ <egress-route>, ... ] }
+    # route keys: host, path_allowlist, auth, role, pipelock
+    # pipelock: { tls_passthrough: <bool> }
   supervise:    <bool>                          # optional
 
 Agent schema (frontmatter):
@@ -320,6 +322,39 @@ def _parse_git_config(
 
 
 @dataclass(frozen=True)
+class PipelockRoutePolicy:
+    """Per-route pipelock policy overrides.
+
+    `TlsPassthrough` adds the route host to pipelock's
+    `tls_interception.passthrough_domains`, so pipelock still enforces
+    the hostname allowlist but does not MITM/decrypt request bodies or
+    headers for that host.
+    """
+
+    TlsPassthrough: bool = False
+
+    @classmethod
+    def from_dict(
+        cls, bottle_name: str, idx: int, raw: object,
+    ) -> "PipelockRoutePolicy":
+        label = f"bottle '{bottle_name}' egress.routes[{idx}] pipelock"
+        d = _as_json_object(raw, label)
+        for k in d:
+            if k not in ("tls_passthrough",):
+                die(
+                    f"{label} has unknown key {k!r}; "
+                    f"only 'tls_passthrough' is accepted"
+                )
+        tls_passthrough_raw = d.get("tls_passthrough", False)
+        if not isinstance(tls_passthrough_raw, bool):
+            die(
+                f"{label}.tls_passthrough must be a boolean "
+                f"(was {type(tls_passthrough_raw).__name__})"
+            )
+        return cls(TlsPassthrough=tls_passthrough_raw)
+
+
+@dataclass(frozen=True)
 class EgressRoute:
     """One route on the per-bottle egress sidecar (PRD 0017).
 
@@ -355,6 +390,7 @@ class EgressRoute:
     AuthScheme: str = ""
     TokenRef: str = ""
     Role: tuple[str, ...] = ()
+    Pipelock: PipelockRoutePolicy = field(default_factory=PipelockRoutePolicy)
 
     @classmethod
     def from_dict(cls, bottle_name: str, idx: int, raw: object) -> "EgressRoute":
@@ -451,11 +487,17 @@ class EgressRoute:
                     f"{', '.join(sorted(EGRESS_ROLES))}"
                 )
 
+        pipelock = (
+            PipelockRoutePolicy.from_dict(bottle_name, idx, d["pipelock"])
+            if "pipelock" in d
+            else PipelockRoutePolicy()
+        )
+
         for k in d:
-            if k not in ("host", "path_allowlist", "auth", "role"):
+            if k not in ("host", "path_allowlist", "auth", "role", "pipelock"):
                 die(
                     f"{label} has unknown key {k!r}; accepted keys are "
-                    f"'host', 'path_allowlist', 'auth', 'role'"
+                    f"'host', 'path_allowlist', 'auth', 'role', 'pipelock'"
                 )
 
         return cls(
@@ -464,6 +506,7 @@ class EgressRoute:
             AuthScheme=auth_scheme,
             TokenRef=token_ref,
             Role=roles,
+            Pipelock=pipelock,
         )
 
 

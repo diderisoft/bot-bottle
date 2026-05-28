@@ -54,11 +54,7 @@ class TestBuildConfig(unittest.TestCase):
 
     def test_tls_interception_block_emitted_when_paths_supplied(self):
         # PRD 0006: paths flow in via the platform-neutral in-container
-        # constants; this directly pins the dict shape. passthrough_domains
-        # is baked in so LLM provider endpoints (api.anthropic.com) skip
-        # MITM — pipelock's docs explicitly recommend this for LLM hosts,
-        # and without it the BIP-39 body scanner false-positives on
-        # Claude conversation traffic.
+        # constants; this directly pins the dict shape.
         cfg = pipelock_build_config(
             fixture_minimal().bottles["dev"],
             ca_cert_path="/etc/pipelock-ca.pem",
@@ -69,11 +65,28 @@ class TestBuildConfig(unittest.TestCase):
                 "enabled": True,
                 "ca_cert": "/etc/pipelock-ca.pem",
                 "ca_key": "/etc/pipelock-ca-key.pem",
-                "passthrough_domains": list(DEFAULT_TLS_PASSTHROUGH),
+                "passthrough_domains": [],
             },
             cfg["tls_interception"],
         )
-        self.assertIn("api.anthropic.com", DEFAULT_TLS_PASSTHROUGH)
+        self.assertEqual((), DEFAULT_TLS_PASSTHROUGH)
+
+    def test_tls_passthrough_route_policy_emits_domain(self):
+        bottle = Manifest.from_json_obj({
+            "bottles": {"dev": {"egress": {"routes": [
+                {"host": "api.openai.com",
+                 "auth": {"scheme": "Bearer", "token_ref": "T"},
+                 "pipelock": {"tls_passthrough": True}},
+            ]}}},
+            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        }).bottles["dev"]
+        cfg = pipelock_build_config(
+            bottle,
+            ca_cert_path="/etc/pipelock-ca.pem",
+            ca_key_path="/etc/pipelock-ca-key.pem",
+        )
+        tls = cast(dict[str, object], cfg["tls_interception"])
+        self.assertEqual(["api.openai.com"], tls["passthrough_domains"])
 
     def test_tls_interception_requires_both_paths(self):
         # Half-set is a programmer error, not a silent omission.
@@ -179,19 +192,24 @@ class TestRenderAndWrite(unittest.TestCase):
         """`PipelockProxy.prepare` plumbs the module-level in-container
         CA constants through to the YAML. The block should land in the
         rendered output with `enabled: true`, the configured paths,
-        and the baked LLM-provider passthrough list. The actual
+        and any route-owned passthrough domains. The actual
         host-side CA generation happens in launch (not prepare), so
         this test exercises only the YAML rendering."""
-        plan = PipelockProxy().prepare(
-            fixture_minimal().bottles["dev"], "demo", self.out_dir
-        )
+        bottle = Manifest.from_json_obj({
+            "bottles": {"dev": {"egress": {"routes": [
+                {"host": "api.openai.com",
+                 "pipelock": {"tls_passthrough": True}},
+            ]}}},
+            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        }).bottles["dev"]
+        plan = PipelockProxy().prepare(bottle, "demo", self.out_dir)
         content = plan.yaml_path.read_text()
         self.assertIn("tls_interception:", content)
         self.assertIn("enabled: true", content)
         self.assertIn('ca_cert: "/etc/pipelock-ca.pem"', content)
         self.assertIn('ca_key: "/etc/pipelock-ca-key.pem"', content)
         self.assertIn("passthrough_domains:", content)
-        self.assertIn('- "api.anthropic.com"', content)
+        self.assertIn('- "api.openai.com"', content)
 
     def test_render_emits_ssrf_block_when_allowlist_given(self):
         cfg = pipelock_build_config(

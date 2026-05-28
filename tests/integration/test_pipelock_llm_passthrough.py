@@ -1,17 +1,14 @@
-"""Integration: pipelock's `tls_interception.passthrough_domains`
-exempts api.anthropic.com from MITM, so request bodies that would
-otherwise trip the body-scan layer (notably the BIP-39 seed-phrase
-detector firing on user-authored Claude conversation text) are not
-inspected and the request reaches Anthropic's TLS endpoint.
+"""Integration: route-owned `pipelock.tls_passthrough` renders into
+pipelock's `tls_interception.passthrough_domains`, so request bodies
+that would otherwise trip the body-scan layer are not inspected and the
+request reaches the provider TLS endpoint.
 
 Probe: POST the canonical zero-entropy 12-word BIP-39 mnemonic
 (`abandon` × 11 + `about`) — checksum-valid by construction — to
-`https://api.anthropic.com/v1/messages`. Without the passthrough,
-pipelock returns a 403 `blocked: request body contains secret:
-BIP-39 Seed Phrase`. With it, pipelock relays the CONNECT opaquely
-and the upstream replies with whatever it likes (401/4xx from
-Anthropic for an unauthenticated junk POST). We assert that the
-verdict is NOT pipelock's block.
+`https://api.anthropic.com/v1/messages`. With the route policy,
+pipelock relays the CONNECT opaquely and the upstream replies with
+whatever it likes (401/4xx from Anthropic for an unauthenticated junk
+POST). We assert that the verdict is NOT pipelock's block.
 """
 
 from __future__ import annotations
@@ -46,7 +43,13 @@ class TestPipelockLlmPassthrough(unittest.TestCase):
     def test_bip39_body_to_anthropic_is_not_blocked(self):
         manifest = Manifest.from_json_obj({
             "bottles": {
-                "dev": {"env": {"SEED": _BIP39_PHRASE}},
+                "dev": {
+                    "env": {"SEED": _BIP39_PHRASE},
+                    "egress": {"routes": [{
+                        "host": "api.anthropic.com",
+                        "pipelock": {"tls_passthrough": True},
+                    }]},
+                },
             },
             "agents": {
                 "demo": {"skills": [], "prompt": "", "bottle": "dev"},

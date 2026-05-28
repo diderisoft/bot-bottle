@@ -215,6 +215,34 @@ class TestRole(unittest.TestCase):
             }])
 
 
+class TestPipelockPolicy(unittest.TestCase):
+    def test_tls_passthrough_route_policy(self):
+        b = _bottle([{
+            "host": "api.openai.com",
+            "pipelock": {"tls_passthrough": True},
+        }])
+        self.assertTrue(b.egress.routes[0].Pipelock.TlsPassthrough)
+
+    def test_tls_passthrough_defaults_false(self):
+        b = _bottle([{"host": "api.openai.com"}])
+        self.assertFalse(b.egress.routes[0].Pipelock.TlsPassthrough)
+
+    def test_pipelock_policy_must_be_object(self):
+        with self.assertRaises(Die):
+            _bottle([{"host": "x.example", "pipelock": True}])
+
+    def test_tls_passthrough_must_be_bool(self):
+        with self.assertRaises(Die):
+            _bottle([{
+                "host": "x.example",
+                "pipelock": {"tls_passthrough": "yes"},
+            }])
+
+    def test_unknown_pipelock_key_rejected(self):
+        with self.assertRaises(Die):
+            _bottle([{"host": "x.example", "pipelock": {"wat": True}}])
+
+
 class TestRouteValidation(unittest.TestCase):
     def test_duplicate_hosts_rejected(self):
         # Routes match by exact host; duplicates leave the choice

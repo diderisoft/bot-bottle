@@ -14,7 +14,7 @@
 #     combined trust bundle (system roots + pipelock CA) and point
 #     mitmproxy at it. The option REPLACES mitmproxy's default
 #     trust store, so passing pipelock's CA alone would break
-#     pipelock-passthrough hosts (api.anthropic.com etc.).
+#     route-configured pipelock passthrough hosts.
 #   * `-s /app/egress_addon.py` loads the addon that reads
 #     /etc/egress/routes.yaml.
 

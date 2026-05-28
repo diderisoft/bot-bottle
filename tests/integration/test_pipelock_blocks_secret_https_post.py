@@ -12,12 +12,11 @@ pipelock's per-bottle CA so curl trusts pipelock's bumped leaf, and
 pipelock sees the decrypted body and returns its known
 `blocked: request body contains secret: <pattern>` 403.
 
-The host has to be allowlisted (so the CONNECT is accepted) but NOT
-in `tls_interception.passthrough_domains` (so the body actually gets
-scanned). `api.anthropic.com` is passthrough'd to skip MITM on the
-LLM endpoint, so this probe targets `raw.githubusercontent.com` —
-also on the baked allowlist (Claude Code fetches release assets from
-it) and intercepted+scanned like any non-passthrough host."""
+The host has to be allowlisted (so the CONNECT is accepted) but must
+not opt into `pipelock.tls_passthrough` (so the body actually gets
+scanned). This probe targets `raw.githubusercontent.com`, which is on
+the baked allowlist and intercepted+scanned like any non-passthrough
+host."""
 
 from __future__ import annotations
 

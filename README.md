@@ -314,6 +314,8 @@ egress:
       auth:
         scheme: Bearer
         token_ref: BOT_BOTTLE_CLAUDE_OAUTH_TOKEN
+      pipelock:
+        tls_passthrough: true
 ---
 
 Common Claude provider boundary.
@@ -429,6 +431,8 @@ egress:
       auth:
         scheme: Bearer
         token_ref: BOT_BOTTLE_CLAUDE_OAUTH_TOKEN
+      pipelock:
+        tls_passthrough: true
 ```
 
 At launch, `cli.py` reads `BOT_BOTTLE_CLAUDE_OAUTH_TOKEN` from the host

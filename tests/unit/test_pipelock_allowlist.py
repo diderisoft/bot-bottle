@@ -89,18 +89,28 @@ class TestAllowlistWithRoutes(unittest.TestCase):
 
 
 class TestTlsPassthrough(unittest.TestCase):
-    def test_default_includes_api_anthropic(self):
+    def test_default_empty(self):
         passthrough = pipelock_effective_tls_passthrough(_bottle({}))
-        self.assertEqual(["api.anthropic.com"], passthrough)
+        self.assertEqual([], passthrough)
 
-    def test_route_hosts_NOT_added_to_passthrough(self):
+    def test_route_hosts_not_added_to_passthrough_by_default(self):
         passthrough = pipelock_effective_tls_passthrough(_bottle(_routes([
             {"host": "api.github.com",
              "auth": {"scheme": "Bearer", "token_ref": "G"}},
             {"host": "registry.npmjs.org",
              "auth": {"scheme": "Bearer", "token_ref": "N"}},
         ])))
-        self.assertEqual(["api.anthropic.com"], passthrough)
+        self.assertEqual([], passthrough)
+
+    def test_route_policy_adds_tls_passthrough(self):
+        passthrough = pipelock_effective_tls_passthrough(_bottle(_routes([
+            {"host": "api.openai.com",
+             "auth": {"scheme": "Bearer", "token_ref": "O"},
+             "pipelock": {"tls_passthrough": True}},
+            {"host": "api.github.com",
+             "auth": {"scheme": "Bearer", "token_ref": "G"}},
+        ])))
+        self.assertEqual(["api.openai.com"], passthrough)
 
 
 if __name__ == "__main__":
