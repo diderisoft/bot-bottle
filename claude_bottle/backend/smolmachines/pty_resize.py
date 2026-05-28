@@ -132,23 +132,9 @@ def main(argv: list[str]) -> int:
     signal.signal(signal.SIGWINCH, sync)
 
     proc = subprocess.Popen(inner)
-    # Defer the initial sync. Firing it immediately races
-    # libkrun's per-exec OCI config write: both `smolvm machine
-    # exec` invocations stash a config.json in the same smolvm
-    # state dir during their bringup window, libkrun loads one
-    # mid-write, and the main exec dies with SIGKILL (rc=137)
-    # or libkrun's "parse error: trailing garbage" depending on
-    # scheduling. Trivial inner commands finish before the
-    # overlap matters; claude's slower startup hits the race
-    # every time, only inside tmux (the outside-tmux foreground
-    # handoff path takes a different bringup sequence that
-    # happens to dodge the window).
-    #
-    # A 2s timer is past the bringup window on a warm VM, so
-    # the side-channel writes a fresh config.json without
-    # collision, and the in-VM PTY is sized before claude has
-    # finished rendering its first frame. daemon=True so the
-    # timer doesn't block exit when the child finishes quickly.
+    # Initial sync is deferred — see _STARTUP_SYNC_DELAY_SEC.
+    # daemon=True so the timer doesn't block exit when the child
+    # finishes before the delay elapses.
     timer = threading.Timer(_STARTUP_SYNC_DELAY_SEC, sync)
     timer.daemon = True
     timer.start()
