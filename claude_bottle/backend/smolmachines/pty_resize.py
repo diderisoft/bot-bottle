@@ -35,33 +35,12 @@ follow-up tracked separately)."""
 
 from __future__ import annotations
 
-import datetime
 import fcntl
-import os
 import signal
 import struct
 import subprocess
 import sys
 import termios
-import traceback
-
-
-# Debug log so we can diagnose tmux-pane crashes that happen in
-# pane respawn — the dashboard's curses surface eats stderr, and
-# `tmux respawn-pane`'s default remain-on-exit is off. Always-on
-# (small overhead) so a user reporting a crash can just share the
-# file. Append-mode, per-pid line prefix.
-_DEBUG_LOG_PATH = os.path.expanduser("~/.claude-bottle/pty_resize.log")
-
-
-def _log(msg: str) -> None:
-    try:
-        os.makedirs(os.path.dirname(_DEBUG_LOG_PATH), exist_ok=True)
-        with open(_DEBUG_LOG_PATH, "a") as f:
-            ts = datetime.datetime.now().isoformat(timespec="milliseconds")
-            f.write(f"[{ts} pid={os.getpid()}] {msg}\n")
-    except OSError:
-        pass
 
 
 def _read_winsize() -> tuple[int, int] | None:
@@ -92,13 +71,24 @@ def _push_size(machine: str, rows: int, cols: int) -> None:
     handle); `stty -F` returns silently on PTYs that don't apply.
 
     Best-effort: swallow failures. A failed resize doesn't break
-    the session — it just leaves the in-VM PTY at its old size."""
+    the session — it just leaves the in-VM PTY at its old size.
+
+    `stdin=DEVNULL` is load-bearing: under tmux, inheriting the
+    pane PTY here means two concurrent smolvm processes (this one
+    and the agent session the wrapper is shepherding) share the
+    PTY's foreground-process-group / input plumbing, and smolvm
+    bails with an internal config-parse error or SIGKILL within
+    ~100ms of the side-channel firing. Outside tmux the same
+    pattern survived, presumably because iTerm's PTY plumbing is
+    more forgiving than tmux's, but the DEVNULL is the right
+    default either way — the side-channel never needs stdin."""
     subprocess.run(
         ["smolvm", "machine", "exec", "--name", machine, "--",
          "sh", "-c",
          f"for f in /dev/pts/*; do "
          f"stty -F \"$f\" cols {cols} rows {rows} 2>/dev/null; "
          f"done"],
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         check=False,
     )
@@ -110,23 +100,17 @@ def main(argv: list[str]) -> int:
     We don't use argparse — the `--` separator is the contract and
     everything past it is forwarded verbatim. Keeps the wrapper
     transparent for callers building argv programmatically."""
-    _log(f"start argv={argv!r} cwd={os.getcwd()!r} "
-         f"PATH={os.environ.get('PATH','')!r} "
-         f"TMUX={os.environ.get('TMUX','<unset>')!r}")
-
     if len(argv) < 3 or argv[1] != "--":
         sys.stderr.write(
             "usage: python -m claude_bottle.backend.smolmachines.pty_resize "
             "<machine> -- <smolvm-argv...>\n"
         )
-        _log("exit=2 (bad argv)")
         return 2
     machine = argv[0]
     inner = argv[2:]
 
     def sync(*_args) -> None:
         size = _read_winsize()
-        _log(f"sync size={size!r}")
         if size is None:
             return
         _push_size(machine, *size)
@@ -136,23 +120,15 @@ def main(argv: list[str]) -> int:
     # is caught even if it races the initial sync.
     signal.signal(signal.SIGWINCH, sync)
 
-    try:
-        proc = subprocess.Popen(inner)
-    except BaseException:
-        _log("Popen failed:\n" + traceback.format_exc())
-        raise
-    _log(f"child pid={proc.pid}")
+    proc = subprocess.Popen(inner)
     sync()  # push initial size — VM PTY starts at 0 0.
     while True:
         try:
-            rc = proc.wait()
-            _log(f"child exit rc={rc}")
-            return rc
+            return proc.wait()
         except KeyboardInterrupt:
             # Ctrl-C in the operator's terminal → forward to the
             # child once, then keep waiting. claude handles its
             # own interrupt cleanup.
-            _log("KeyboardInterrupt → forward SIGINT to child")
             proc.send_signal(signal.SIGINT)
 
 

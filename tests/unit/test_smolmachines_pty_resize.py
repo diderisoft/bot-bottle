@@ -34,6 +34,19 @@ class TestPushSize(unittest.TestCase):
         self.assertIn("rows 50", argv[8])
         self.assertIn("for f in /dev/pts/*", argv[8])
 
+    def test_side_channel_uses_devnull_stdin(self):
+        # Load-bearing regression: under tmux, inheriting the
+        # pane PTY as the side-channel's stdin makes smolvm crash
+        # within ~100ms (concurrent smolvm processes sharing the
+        # PTY's FG-PG / input plumbing). DEVNULL stdin sidesteps
+        # the interaction.
+        with patch.object(pty_resize.subprocess, "run") as run:
+            pty_resize._push_size("claude-bottle-m", 24, 80)
+        self.assertEqual(
+            pty_resize.subprocess.DEVNULL,
+            run.call_args.kwargs.get("stdin"),
+        )
+
     def test_swallows_subprocess_failures(self):
         # `check=False` + DEVNULL streams: a side-channel failure
         # mustn't break the operator's session.
