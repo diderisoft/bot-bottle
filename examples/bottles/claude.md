@@ -8,7 +8,7 @@ egress:
       role: claude_code_oauth
       auth:
         scheme: Bearer
-        token_ref: BOT_BOTTLE_OAUTH_TOKEN
+        token_ref: BOT_BOTTLE_CLAUDE_OAUTH_TOKEN
 ---
 
 Common Claude provider boundary. Drop this file into

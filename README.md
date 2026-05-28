@@ -313,7 +313,7 @@ egress:
       role: claude_code_oauth
       auth:
         scheme: Bearer
-        token_ref: BOT_BOTTLE_OAUTH_TOKEN
+        token_ref: BOT_BOTTLE_CLAUDE_OAUTH_TOKEN
 ---
 
 Common Claude provider boundary.
@@ -389,11 +389,12 @@ Working examples live under `examples/`. Pipelock's design lives in
 rationale in `docs/research/pipelock-assessment.md`. The trust
 boundary rationale lives in `docs/prds/0011-per-file-md-manifest.md`.
 
-## Auth: OAuth token, not API key
+## Auth: Claude OAuth token, not API key
 
-bot-bottle authenticates `claude` inside the container with the same
-Pro/Max subscription you already use on the host, via a long-lived OAuth
-token. No `ANTHROPIC_API_KEY` is needed.
+Bottles that use `agent_provider.template: claude` authenticate
+`claude` inside the container with the same Pro/Max subscription you
+already use on the host, via a long-lived OAuth token. No
+`ANTHROPIC_API_KEY` is needed.
 
 **Why a token instead of mounting `~/.claude.json`:** on macOS, Claude
 Code stores OAuth credentials in the encrypted Keychain, not in
@@ -409,28 +410,28 @@ claude setup-token   # browser login, prints a ~1-year OAuth token
 ```
 
 Stash the token in your shell env (e.g. `~/.zshrc` or a secret manager)
-as `BOT_BOTTLE_OAUTH_TOKEN`:
+as `BOT_BOTTLE_CLAUDE_OAUTH_TOKEN`:
 
 ```sh
-export BOT_BOTTLE_OAUTH_TOKEN="<token>"
+export BOT_BOTTLE_CLAUDE_OAUTH_TOKEN="<token>"
 ```
 
-The bottle reaches the Anthropic API only through the cred-proxy
-sidecar. To let `claude` authenticate, declare a route in
-`bottle.cred_proxy.routes` with `role: "anthropic-base-url"` and
-`token_ref: "BOT_BOTTLE_OAUTH_TOKEN"`:
+The Claude bottle reaches the Anthropic API only through the cred-proxy
+sidecar. To let `claude` authenticate, declare an egress route with
+`role: claude_code_oauth` and
+`token_ref: BOT_BOTTLE_CLAUDE_OAUTH_TOKEN`:
 
-```jsonc
-{
-  "path":        "/anthropic/",
-  "upstream":    "https://api.anthropic.com",
-  "auth_scheme": "Bearer",
-  "token_ref":   "BOT_BOTTLE_OAUTH_TOKEN",
-  "role":        "anthropic-base-url"
-}
+```yaml
+egress:
+  routes:
+    - host: api.anthropic.com
+      role: claude_code_oauth
+      auth:
+        scheme: Bearer
+        token_ref: BOT_BOTTLE_CLAUDE_OAUTH_TOKEN
 ```
 
-At launch, `cli.py` reads `BOT_BOTTLE_OAUTH_TOKEN` from the host
+At launch, `cli.py` reads `BOT_BOTTLE_CLAUDE_OAUTH_TOKEN` from the host
 env and forwards it into the cred-proxy container's environ — never
 into the agent's. The agent receives `ANTHROPIC_BASE_URL` pointing at
 `http://cred-proxy:9099/anthropic` and a non-secret placeholder for
@@ -439,7 +440,7 @@ the proxy strips and replaces the header on every request). `printenv`
 inside the agent does not surface the real token, and the value is
 never written to disk or placed on argv on the host.
 
-A bottle without an `anthropic-base-url` route has no path to the
+A Claude bottle without a `claude_code_oauth` route has no path to the
 Anthropic API — there is no fallback that forwards the token directly
 to the agent. Caveats: the token is bound to your subscription tier
 (Pro/Max/Team/Enterprise), it does not work with `claude --bare`
