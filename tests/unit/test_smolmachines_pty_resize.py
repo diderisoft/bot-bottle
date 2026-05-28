@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import unittest
+import unittest.mock
 from unittest.mock import patch
 
 from claude_bottle.backend.smolmachines import pty_resize
@@ -124,6 +125,39 @@ class TestMainArgvParsing(unittest.TestCase):
             self.assertEqual(2, pty_resize.main([]))
             self.assertEqual(2, pty_resize.main(["m"]))
             self.assertEqual(2, pty_resize.main(["m", "--"]))
+
+
+class TestStartupSyncDeferred(unittest.TestCase):
+    """Regression: the initial sync MUST be deferred (timer), not
+    called synchronously between Popen + wait. Calling it
+    immediately races libkrun's per-exec OCI config write during
+    the main exec's bringup and crashes the child (rc=137 or
+    'parse error: trailing garbage')."""
+
+    def test_main_schedules_timer_does_not_call_sync_synchronously(self):
+        # Fake Popen + wait so main returns immediately. Patch
+        # Timer to record args without spawning a real thread.
+        # _push_size patched so any rogue synchronous call would
+        # be observable.
+        fake_proc = unittest.mock.MagicMock()
+        fake_proc.wait.return_value = 0
+        with patch.object(
+            pty_resize.subprocess, "Popen", return_value=fake_proc,
+        ), patch.object(
+            pty_resize.threading, "Timer",
+        ) as timer_cls, patch.object(
+            pty_resize, "_push_size",
+        ) as push:
+            rc = pty_resize.main(["machine-name", "--", "echo", "hi"])
+
+        self.assertEqual(0, rc)
+        # Timer scheduled with the documented delay constant.
+        timer_cls.assert_called_once()
+        delay, callback = timer_cls.call_args.args
+        self.assertEqual(pty_resize._STARTUP_SYNC_DELAY_SEC, delay)
+        # _push_size never called synchronously — the only path to
+        # it is via the (mocked) timer's callback firing.
+        push.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -35,28 +35,26 @@ follow-up tracked separately)."""
 
 from __future__ import annotations
 
-import datetime
 import fcntl
-import os
 import signal
 import struct
 import subprocess
 import sys
 import termios
-import traceback
+import threading
 
 
-_DEBUG_LOG_PATH = os.path.expanduser("~/.claude-bottle/pty_resize.log")
-
-
-def _log(msg: str) -> None:
-    try:
-        os.makedirs(os.path.dirname(_DEBUG_LOG_PATH), exist_ok=True)
-        with open(_DEBUG_LOG_PATH, "a") as f:
-            ts = datetime.datetime.now().isoformat(timespec="milliseconds")
-            f.write(f"[{ts} pid={os.getpid()}] {msg}\n")
-    except OSError:
-        pass
+# How long to wait after the main exec starts before pushing the
+# initial size. Concurrent `smolvm machine exec` invocations race
+# libkrun's per-exec OCI config write during the main exec's
+# bringup window; the side-channel firing immediately corrupts
+# `config.json` and the main exec dies with SIGKILL (rc=137) or
+# libkrun's "parse error: trailing garbage" depending on
+# scheduling. Two seconds is well past the bringup window on a
+# warm VM, well under the operator's "this is unresponsive"
+# threshold, and short enough that claude's initial render
+# almost always fires after the size has been set.
+_STARTUP_SYNC_DELAY_SEC = 2.0
 
 
 def _read_winsize() -> tuple[int, int] | None:
@@ -116,42 +114,48 @@ def main(argv: list[str]) -> int:
     We don't use argparse — the `--` separator is the contract and
     everything past it is forwarded verbatim. Keeps the wrapper
     transparent for callers building argv programmatically."""
-    _log(f"start argv={argv!r} TMUX={os.environ.get('TMUX','<unset>')!r} "
-         f"ppid={os.getppid()}")
-
     if len(argv) < 3 or argv[1] != "--":
         sys.stderr.write(
             "usage: python -m claude_bottle.backend.smolmachines.pty_resize "
             "<machine> -- <smolvm-argv...>\n"
         )
-        _log("exit=2 (bad argv)")
         return 2
     machine = argv[0]
     inner = argv[2:]
 
     def sync(*_args) -> None:
         size = _read_winsize()
-        _log(f"sync size={size!r}")
         if size is None:
             return
         _push_size(machine, *size)
 
     signal.signal(signal.SIGWINCH, sync)
 
-    try:
-        proc = subprocess.Popen(inner)
-    except BaseException:
-        _log("Popen failed:\n" + traceback.format_exc())
-        raise
-    _log(f"child pid={proc.pid}")
-    sync()  # push initial size — VM PTY starts at 0 0.
+    proc = subprocess.Popen(inner)
+    # Defer the initial sync. Firing it immediately races
+    # libkrun's per-exec OCI config write: both `smolvm machine
+    # exec` invocations stash a config.json in the same smolvm
+    # state dir during their bringup window, libkrun loads one
+    # mid-write, and the main exec dies with SIGKILL (rc=137)
+    # or libkrun's "parse error: trailing garbage" depending on
+    # scheduling. Trivial inner commands finish before the
+    # overlap matters; claude's slower startup hits the race
+    # every time, only inside tmux (the outside-tmux foreground
+    # handoff path takes a different bringup sequence that
+    # happens to dodge the window).
+    #
+    # A 2s timer is past the bringup window on a warm VM, so
+    # the side-channel writes a fresh config.json without
+    # collision, and the in-VM PTY is sized before claude has
+    # finished rendering its first frame. daemon=True so the
+    # timer doesn't block exit when the child finishes quickly.
+    timer = threading.Timer(_STARTUP_SYNC_DELAY_SEC, sync)
+    timer.daemon = True
+    timer.start()
     while True:
         try:
-            rc = proc.wait()
-            _log(f"child exit rc={rc}")
-            return rc
+            return proc.wait()
         except KeyboardInterrupt:
-            _log("KeyboardInterrupt → forward SIGINT to child")
             proc.send_signal(signal.SIGINT)
 
 
