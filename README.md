@@ -37,6 +37,22 @@ the genie does not persist.
 - Run multiple agents in parallel, isolated from each other
 - Keep code, credentials, and agent activity on infrastructure I control — no third-party agent runtime
 
+## Project status
+
+claude-bottle is a self-hosted secure runtime for AI coding agents.
+Each agent runs in an isolated container or micro-VM-backed bottle with
+scoped secrets, allowlisted egress, TLS-aware proxying, DLP checks, and
+a git-gate that withholds upstream credentials and scans pushes before
+forwarding. The project includes a documented threat model, PRD-driven
+development history, Docker and smolmachines backends, dashboard and
+remediation flows, and unit/integration tests covering exfiltration and
+sandbox escape scenarios.
+
+Current status: personal/small-team security tool, not yet enterprise
+fleet infrastructure. Next work: central policy and audit, stronger
+container hardening, SBOM/vulnerability scanning, and team/RBAC
+support.
+
 ## Security model
 
 Each agent runs in its own bottle: its own container, its own internal
