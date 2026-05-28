@@ -207,6 +207,12 @@ def launch(
         # Step 9: yield. exec_claude continues to use `docker exec -it`
         # — the agent runs `sleep infinity` per the renderer's
         # service spec.
-        yield DockerBottle(plan.container_name, teardown, prompt_path)
+        yield DockerBottle(
+            plan.container_name,
+            teardown,
+            prompt_path,
+            agent_command=plan.agent_command,
+            agent_prompt_mode=plan.agent_prompt_mode,
+        )
     finally:
         teardown()

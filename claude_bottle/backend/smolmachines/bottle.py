@@ -21,6 +21,7 @@ import subprocess
 import sys
 from typing import Mapping
 
+from ...agent_provider import prompt_args
 from .. import Bottle, ExecResult
 from . import pty_resize as _pty_resize
 from . import smolvm as _smolvm
@@ -72,6 +73,8 @@ class SmolmachinesBottle(Bottle):
         *,
         prompt_path: str | None = None,
         guest_env: Mapping[str, str] | None = None,
+        agent_command: str = "claude",
+        agent_prompt_mode: str = "claude_append_file",
     ) -> None:
         self.name = machine_name
         # In-VM path to the agent's prompt file. None when the
@@ -83,6 +86,12 @@ class SmolmachinesBottle(Bottle):
         # Forwarded on every `smolvm machine exec` via `-e K=V`
         # because exec doesn't inherit from machine_create's env.
         self._guest_env = dict(guest_env or {})
+        self._agent_command = agent_command
+        self._agent_prompt_mode = agent_prompt_mode
+        self.agent_command = agent_command
+        self.agent_provider_template = (
+            "codex" if agent_command == "codex" else "claude"
+        )
 
     def claude_argv(
         self, argv: list[str], *, tty: bool = True,
@@ -92,10 +101,16 @@ class SmolmachinesBottle(Bottle):
             flags += ["-i", "-t"]
         flags += _env_flags_for("node")
         flags += _guest_env_flags(self._guest_env)
-        claude_tail = ["claude"]
-        if self._prompt_path:
-            claude_tail += ["--append-system-prompt-file", self._prompt_path]
-        claude_tail += argv
+        claude_tail = [self._agent_command]
+        provider_prompt_args = prompt_args(
+            self._agent_prompt_mode, self._prompt_path, argv=argv,
+        )
+        if self._agent_prompt_mode == "codex_read_prompt_file":
+            claude_tail += argv
+            claude_tail += provider_prompt_args
+        else:
+            claude_tail += provider_prompt_args
+            claude_tail += argv
         flags += ["--", "runuser", "-u", "node", "--", *claude_tail]
         if not tty:
             # No PTY allocated — no SIGWINCH to forward, no resize

@@ -22,6 +22,16 @@ def _bottle(prompt_path: str | None = None) -> DockerBottle:
     )
 
 
+def _codex_bottle(prompt_path: str | None = None) -> DockerBottle:
+    return DockerBottle(
+        container="claude-bottle-dev-abc",
+        teardown=lambda: None,
+        prompt_path_in_container=prompt_path,
+        agent_command="codex",
+        agent_prompt_mode="codex_read_prompt_file",
+    )
+
+
 class TestClaudeArgv(unittest.TestCase):
     def test_minimal_argv_no_prompt(self):
         argv = _bottle().claude_argv([])
@@ -78,6 +88,35 @@ class TestClaudeArgv(unittest.TestCase):
         original = ["--continue"]
         _bottle("/x").claude_argv(original)
         self.assertEqual(["--continue"], original)
+
+    def test_codex_provider_uses_codex_command(self):
+        argv = _codex_bottle().claude_argv(
+            ["--dangerously-bypass-approvals-and-sandbox"],
+        )
+        self.assertEqual(
+            ["docker", "exec", "-it", "claude-bottle-dev-abc", "codex",
+             "--dangerously-bypass-approvals-and-sandbox"],
+            argv,
+        )
+
+    def test_codex_provider_passes_prompt_reference_as_initial_prompt(self):
+        argv = _codex_bottle("/home/node/.claude-bottle-prompt.txt").claude_argv([])
+        self.assertEqual(
+            ["docker", "exec", "-it", "claude-bottle-dev-abc", "codex",
+             "Read and follow the instructions in "
+             "/home/node/.claude-bottle-prompt.txt."],
+            argv,
+        )
+
+    def test_codex_resume_does_not_append_initial_prompt(self):
+        argv = _codex_bottle("/home/node/.claude-bottle-prompt.txt").claude_argv(
+            ["--dangerously-bypass-approvals-and-sandbox", "resume", "--last"],
+        )
+        self.assertEqual(
+            ["docker", "exec", "-it", "claude-bottle-dev-abc", "codex",
+             "--dangerously-bypass-approvals-and-sandbox", "resume", "--last"],
+            argv,
+        )
 
 
 if __name__ == "__main__":

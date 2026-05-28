@@ -14,6 +14,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ...agent_provider import runtime_for
 from ...backend import BottleSpec
 from ...backend.docker.bottle_state import (
     BottleMetadata,
@@ -55,6 +56,8 @@ def resolve_plan(
 
     manifest = spec.manifest
     bottle = manifest.bottle_for(spec.agent_name)
+    provider = bottle.agent_provider
+    provider_runtime = runtime_for(provider.template)
 
     slug = spec.identity or bottle_identity(spec.agent_name)
 
@@ -117,8 +120,12 @@ def resolve_plan(
     # the agent gets a non-secret placeholder here (matches the
     # docker backend's forwarded_env logic in
     # claude_bottle/backend/docker/prepare.py).
-    if any("claude_code_oauth" in r.roles for r in egress_plan.routes):
-        guest_env["CLAUDE_CODE_OAUTH_TOKEN"] = "egress-placeholder"
+    has_provider_auth = any(
+        provider_runtime.auth_role in r.roles for r in egress_plan.routes
+    )
+    if has_provider_auth:
+        guest_env[provider_runtime.placeholder_env] = "egress-placeholder"
+    if provider.template == "claude" and has_provider_auth:
         guest_env.setdefault("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
         guest_env.setdefault("DISABLE_ERROR_REPORTING", "1")
 
@@ -145,9 +152,16 @@ def resolve_plan(
     # Stash the agent image ref — `launch.launch` runs the
     # build → pack pipeline at bringup. Honors CLAUDE_BOTTLE_IMAGE
     # to match the docker backend's `resolve_plan` default.
-    agent_image_ref = os.environ.get(
-        "CLAUDE_BOTTLE_IMAGE", "claude-bottle:latest"
-    )
+    agent_dockerfile_path = ""
+    if provider.dockerfile:
+        agent_dockerfile_path = _resolve_manifest_dockerfile(provider.dockerfile, spec)
+        image_default = f"claude-bottle:{provider.template}-{slug}"
+    elif provider_runtime.dockerfile:
+        agent_dockerfile_path = provider_runtime.dockerfile
+        image_default = provider_runtime.image
+    else:
+        image_default = provider_runtime.image
+    agent_image_ref = os.environ.get("CLAUDE_BOTTLE_IMAGE", image_default)
 
     return SmolmachinesBottlePlan(
         spec=spec,
@@ -164,4 +178,15 @@ def resolve_plan(
         git_gate_plan=git_gate_plan,
         egress_plan=egress_plan,
         supervise_plan=supervise_plan,
+        agent_command=provider_runtime.command,
+        agent_prompt_mode=provider_runtime.prompt_mode,
+        agent_provider_template=provider.template,
+        agent_dockerfile_path=agent_dockerfile_path,
     )
+
+
+def _resolve_manifest_dockerfile(path_value: str, spec: BottleSpec) -> str:
+    path = Path(os.path.expanduser(path_value))
+    if not path.is_absolute():
+        path = Path(spec.user_cwd) / path
+    return str(path)

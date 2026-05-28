@@ -51,6 +51,9 @@ class DockerBottlePlan(BottlePlan):
     # is opt-in via the manifest's bottle.supervise field.
     supervise_plan: SupervisePlan | None
     use_runsc: bool
+    agent_command: str = "claude"
+    agent_prompt_mode: str = "claude_append_file"
+    agent_provider_template: str = "claude"
 
     def print(self, *, remote_control: bool) -> None:
         """Render the y/N preflight summary to stderr — compact form
@@ -73,6 +76,7 @@ class DockerBottlePlan(BottlePlan):
 
         print(file=sys.stderr)
         info(f"agent           : {spec.agent_name}")
+        info(f"provider        : {self.agent_provider_template}")
         print_multi("env             ", env_names)
         print_multi("skills          ", list(agent.skills))
         info(f"bottle          : {agent.bottle}")
@@ -91,4 +95,3 @@ class DockerBottlePlan(BottlePlan):
                 egress_lines.append(f"{r.host}{auth}")
             print_multi("  egress        ", egress_lines)
         print(file=sys.stderr)
-

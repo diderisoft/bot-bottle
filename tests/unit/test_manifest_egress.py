@@ -18,6 +18,18 @@ def _bottle(routes):
     }).bottles["dev"]
 
 
+def _provider_bottle(provider, routes):
+    return Manifest.from_json_obj({
+        "bottles": {
+            "dev": {
+                "agent_provider": {"template": provider},
+                "egress": {"routes": routes},
+            }
+        },
+        "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+    }).bottles["dev"]
+
+
 class TestMinimalRoute(unittest.TestCase):
     def test_host_only(self):
         b = _bottle([{"host": "api.example.com"}])
@@ -177,6 +189,30 @@ class TestRole(unittest.TestCase):
                  "role": "claude_code_oauth",
                  "auth": {"scheme": "Bearer", "token_ref": "T2"}},
             ])
+
+    def test_codex_auth_role_allowed_for_codex_provider(self):
+        b = _provider_bottle("codex", [{
+            "host": "api.openai.com",
+            "role": "codex_auth",
+            "auth": {"scheme": "Bearer", "token_ref": "OPENAI_TOKEN"},
+        }])
+        self.assertEqual(("codex_auth",), b.egress.routes[0].Role)
+
+    def test_claude_role_rejected_for_codex_provider(self):
+        with self.assertRaises(Die):
+            _provider_bottle("codex", [{
+                "host": "api.anthropic.com",
+                "role": "claude_code_oauth",
+                "auth": {"scheme": "Bearer", "token_ref": "T"},
+            }])
+
+    def test_codex_role_rejected_for_default_claude_provider(self):
+        with self.assertRaises(Die):
+            _bottle([{
+                "host": "api.openai.com",
+                "role": "codex_auth",
+                "auth": {"scheme": "Bearer", "token_ref": "T"},
+            }])
 
 
 class TestRouteValidation(unittest.TestCase):

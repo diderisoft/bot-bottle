@@ -92,6 +92,10 @@ class SmolmachinesBottlePlan(BottlePlan):
     agent_proxy_url: str = ""
     agent_git_gate_host: str = ""
     agent_supervise_url: str = ""
+    agent_command: str = "claude"
+    agent_prompt_mode: str = "claude_append_file"
+    agent_provider_template: str = "claude"
+    agent_dockerfile_path: str = ""
 
     def print(self, *, remote_control: bool) -> None:
         """Compact y/N preflight. Same shape as the Docker
@@ -113,6 +117,7 @@ class SmolmachinesBottlePlan(BottlePlan):
 
         print(file=sys.stderr)
         info(f"agent           : {spec.agent_name}")
+        info(f"provider        : {self.agent_provider_template}")
         print_multi("env             ", env_names)
         print_multi("skills          ", list(agent.skills))
         info(f"bottle          : {agent.bottle}")

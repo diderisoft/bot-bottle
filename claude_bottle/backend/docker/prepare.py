@@ -14,6 +14,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ...agent_provider import runtime_for
 from ...egress import Egress
 from ...env import ResolvedEnv, resolve_env
 from ...git_gate import GitGate
@@ -58,6 +59,8 @@ def resolve_plan(
     manifest = spec.manifest
     agent = manifest.agents[spec.agent_name]
     bottle = manifest.bottle_for(spec.agent_name)
+    provider = bottle.agent_provider
+    provider_runtime = runtime_for(provider.template)
 
     # PRD 0016 follow-up: identity, not bare slug. A fresh `start`
     # mints a random-suffixed identity (so parallel runs of the same
@@ -89,8 +92,14 @@ def resolve_plan(
     if per_bottle_dockerfile(slug) is not None:
         image_default = per_bottle_image_tag(slug)
         dockerfile_path = str(per_bottle_dockerfile_path(slug))
+    elif provider.dockerfile:
+        image_default = f"claude-bottle:{provider.template}-{slug}"
+        dockerfile_path = _resolve_manifest_dockerfile(provider.dockerfile, spec)
+    elif provider_runtime.dockerfile:
+        image_default = provider_runtime.image
+        dockerfile_path = provider_runtime.dockerfile
     else:
-        image_default = "claude-bottle:latest"
+        image_default = provider_runtime.image
     image = os.environ.get("CLAUDE_BOTTLE_IMAGE", image_default)
     derived_image = ""
     runtime_image = image
@@ -171,8 +180,16 @@ def resolve_plan(
         # PRD 0017 chunk 3 moved them behind the
         # `list-egress-routes` MCP tool so the agent gets live
         # state rather than a launch-time snapshot.)
-        dockerfile_path = Path(__file__).resolve().parent.parent.parent.parent / "Dockerfile"
-        dockerfile_content = dockerfile_path.read_text() if dockerfile_path.is_file() else ""
+        supervise_dockerfile_path = (
+            Path(dockerfile_path)
+            if dockerfile_path
+            else Path(__file__).resolve().parent.parent.parent.parent / "Dockerfile"
+        )
+        dockerfile_content = (
+            supervise_dockerfile_path.read_text()
+            if supervise_dockerfile_path.is_file()
+            else ""
+        )
         supervise_dir = supervise_state_dir(slug)
         supervise_dir.mkdir(parents=True, exist_ok=True)
         supervise_plan = supervise.prepare(
@@ -192,12 +209,12 @@ def resolve_plan(
     # placeholder. The placeholder isn't any real token value, so
     # leaking it would tell an attacker only that egress is in
     # front. Manifest validation enforces singleton on this role.
-    has_anthropic_auth = any(
-        "claude_code_oauth" in r.roles
-        for r in egress_plan.routes
+    has_provider_auth = any(
+        provider_runtime.auth_role in r.roles for r in egress_plan.routes
     )
-    if has_anthropic_auth:
-        forwarded_env["CLAUDE_CODE_OAUTH_TOKEN"] = "egress-placeholder"
+    if has_provider_auth:
+        forwarded_env[provider_runtime.placeholder_env] = "egress-placeholder"
+    if provider.template == "claude" and has_provider_auth:
         # Belt-and-braces: turn off telemetry endpoints (statsig,
         # error reporting) that egress can't gate by auth.
         forwarded_env.setdefault("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
@@ -225,6 +242,9 @@ def resolve_plan(
         egress_plan=egress_plan,
         supervise_plan=supervise_plan,
         use_runsc=use_runsc,
+        agent_command=provider_runtime.command,
+        agent_prompt_mode=provider_runtime.prompt_mode,
+        agent_provider_template=provider.template,
     )
 
 
@@ -243,3 +263,10 @@ def _write_env_file(resolved: ResolvedEnv, env_file: Path) -> None:
         env_lines.append(f"{name}={value}")
     env_file.write_text("\n".join(env_lines) + ("\n" if env_lines else ""))
     env_file.chmod(0o600)
+
+
+def _resolve_manifest_dockerfile(path_value: str, spec: BottleSpec) -> str:
+    path = Path(os.path.expanduser(path_value))
+    if not path.is_absolute():
+        path = Path(spec.user_cwd) / path
+    return str(path)

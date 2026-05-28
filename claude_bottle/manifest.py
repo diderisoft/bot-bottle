@@ -48,6 +48,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping, cast
 
+from .agent_provider import PROVIDER_TEMPLATES
 from .log import die, warn
 from .yaml_subset import YamlSubsetError, parse_frontmatter
 
@@ -180,6 +181,7 @@ EGRESS_AUTH_SCHEMES = ("Bearer", "token")
 # special happens on the agent side.
 EGRESS_ROLES = frozenset({
     "claude_code_oauth",
+    "codex_auth",
 })
 
 # Singleton roles may appear on at most one route per bottle.
@@ -188,7 +190,54 @@ EGRESS_ROLES = frozenset({
 # ambiguous for any future role-aware logic.
 EGRESS_SINGLETON_ROLES = frozenset({
     "claude_code_oauth",
+    "codex_auth",
 })
+
+PROVIDER_EGRESS_ROLES = {
+    "claude": frozenset({"claude_code_oauth"}),
+    "codex": frozenset({"codex_auth"}),
+}
+
+
+@dataclass(frozen=True)
+class AgentProvider:
+    """Provider/template for the agent process inside a bottle.
+
+    `template` selects a built-in launch/runtime contract. `dockerfile`
+    optionally points at a custom agent-image Dockerfile while leaving
+    claude-bottle's sidecar infrastructure intact.
+    """
+
+    template: str = "claude"
+    dockerfile: str = ""
+
+    @classmethod
+    def from_dict(cls, bottle_name: str, raw: object) -> "AgentProvider":
+        d = _as_json_object(raw, f"bottle '{bottle_name}' agent_provider")
+        for k in d:
+            if k not in {"template", "dockerfile"}:
+                die(
+                    f"bottle '{bottle_name}' agent_provider has unknown key {k!r}; "
+                    f"allowed: template, dockerfile"
+                )
+        template = d.get("template", "claude")
+        if not isinstance(template, str) or not template:
+            die(
+                f"bottle '{bottle_name}' agent_provider.template must be a "
+                f"non-empty string"
+            )
+        if template not in PROVIDER_TEMPLATES:
+            die(
+                f"bottle '{bottle_name}' agent_provider.template {template!r} "
+                f"is not one of {', '.join(sorted(PROVIDER_TEMPLATES))}"
+            )
+        dockerfile = d.get("dockerfile", "")
+        if not isinstance(dockerfile, str):
+            die(
+                f"bottle '{bottle_name}' agent_provider.dockerfile must be a "
+                f"string (was {type(dockerfile).__name__})"
+            )
+        return cls(template=template, dockerfile=dockerfile)
 
 
 @dataclass(frozen=True)
@@ -428,7 +477,9 @@ class EgressConfig:
     routes: tuple[EgressRoute, ...] = ()
 
     @classmethod
-    def from_dict(cls, bottle_name: str, raw: object) -> "EgressConfig":
+    def from_dict(
+        cls, bottle_name: str, raw: object, *, provider_template: str = "claude",
+    ) -> "EgressConfig":
         d = _as_json_object(raw, f"bottle '{bottle_name}' egress")
         routes_raw = d.get("routes")
         routes: tuple[EgressRoute, ...] = ()
@@ -443,7 +494,9 @@ class EgressConfig:
                 EgressRoute.from_dict(bottle_name, i, entry)
                 for i, entry in enumerate(routes_list)
             )
-            _validate_egress_routes(bottle_name, routes)
+            _validate_egress_routes(
+                bottle_name, routes, provider_template=provider_template,
+            )
         for k in d:
             if k != "routes":
                 die(
@@ -456,6 +509,7 @@ class EgressConfig:
 @dataclass(frozen=True)
 class Bottle:
     env: Mapping[str, str] = field(default_factory=_empty_str_dict)
+    agent_provider: AgentProvider = field(default_factory=AgentProvider)
     git: tuple[GitEntry, ...] = ()
     # Per-bottle git identity (issue #86). Empty default — bottles
     # that don't set `git.user:` in the manifest skip the
@@ -526,8 +580,17 @@ class Bottle:
         if git_raw is not None:
             git, git_user = _parse_git_config(name, git_raw)
 
+        agent_provider = (
+            AgentProvider.from_dict(name, d["agent_provider"])
+            if "agent_provider" in d
+            else AgentProvider()
+        )
+
         egress = (
-            EgressConfig.from_dict(name, d["egress"])
+            EgressConfig.from_dict(
+                name, d["egress"],
+                provider_template=agent_provider.template,
+            )
             if "egress" in d
             else EgressConfig()
         )
@@ -540,8 +603,8 @@ class Bottle:
             )
 
         return cls(
-            env=env, git=git, git_user=git_user, egress=egress,
-            supervise=supervise_raw,
+            env=env, agent_provider=agent_provider, git=git,
+            git_user=git_user, egress=egress, supervise=supervise_raw,
         )
 
 
@@ -823,6 +886,8 @@ def _parse_git_upstream(url: str, label: str) -> tuple[str, str, str, str]:
 def _validate_egress_routes(
     bottle_name: str,
     routes: tuple[EgressRoute, ...],
+    *,
+    provider_template: str = "claude",
 ) -> None:
     """Cross-validation for `bottle.egress.routes`:
 
@@ -854,6 +919,16 @@ def _validate_egress_routes(
                 f"routes with role {role!r} (hosts: {hosts}); this role drives a "
                 f"single launch-step side effect — pick one."
             )
+    allowed_roles = PROVIDER_EGRESS_ROLES[provider_template]
+    for route in routes:
+        for role in route.Role:
+            if role not in allowed_roles:
+                die(
+                    f"bottle '{bottle_name}' egress route for host "
+                    f"{route.Host!r} has role {role!r}, but provider "
+                    f"{provider_template!r} only accepts roles "
+                    f"{', '.join(sorted(allowed_roles)) or '(none)'}"
+                )
 
 
 def _validate_unique_git_names(bottle_name: str, git: tuple[GitEntry, ...]) -> None:
@@ -881,7 +956,7 @@ _FILENAME_RX = re.compile(r"^[a-z][a-z0-9-]*$")
 # sets dies with a "did you mean" pointer — typos shouldn't silently
 # ghost into an empty config.
 _BOTTLE_KEYS = frozenset(
-    {"env", "extends", "git", "egress", "supervise"}
+    {"env", "extends", "agent_provider", "git", "egress", "supervise"}
 )
 _AGENT_KEYS_REQUIRED = frozenset({"bottle"})
 _AGENT_KEYS_OPTIONAL = frozenset({"skills"})
@@ -1056,12 +1131,22 @@ def _merge_bottles(
     # Presence-driven full-replace for the remaining list-valued +
     # scalar fields.
     merged_egress = child.egress if "egress" in child_raw else parent.egress
+    merged_agent_provider = (
+        child.agent_provider
+        if "agent_provider" in child_raw
+        else parent.agent_provider
+    )
     merged_supervise = (
         child.supervise if "supervise" in child_raw else parent.supervise
+    )
+    _validate_egress_routes(
+        name, merged_egress.routes,
+        provider_template=merged_agent_provider.template,
     )
 
     return Bottle(
         env=merged_env,
+        agent_provider=merged_agent_provider,
         git=merged_git,
         git_user=merged_git_user,
         egress=merged_egress,

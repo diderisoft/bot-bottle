@@ -215,6 +215,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         bottle = manifest.bottle_for(spec.agent_name)
         self._validate_skills(agent.skills)
         self._validate_git_entries(bottle.git)
+        self._validate_agent_provider_dockerfile(spec)
 
     def _validate_skills(self, skills: Sequence[str]) -> None:
         """Each named skill must be a directory under the host's
@@ -237,6 +238,20 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
             key = expand_tilde(entry.IdentityFile)
             if not os.path.isfile(key):
                 die(f"git upstream key file not found for '{entry.Name}': {key}")
+
+    def _validate_agent_provider_dockerfile(self, spec: BottleSpec) -> None:
+        bottle = spec.manifest.bottle_for(spec.agent_name)
+        dockerfile = bottle.agent_provider.dockerfile
+        if not dockerfile:
+            return
+        path = Path(expand_tilde(dockerfile))
+        if not path.is_absolute():
+            path = Path(spec.user_cwd) / path
+        if not path.is_file():
+            die(
+                f"agent_provider.dockerfile for bottle "
+                f"'{spec.manifest.agents[spec.agent_name].bottle}' not found: {path}"
+            )
 
     @abstractmethod
     def _resolve_plan(self, spec: BottleSpec, *, stage_dir: Path) -> PlanT:

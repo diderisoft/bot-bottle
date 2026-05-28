@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import supervise as _supervise
+from ..agent_provider import runtime_for
 from ..backend import (
     ActiveAgent,
     BottleSpec,
@@ -693,7 +694,7 @@ def _stop_bottle_flow(
         return (
             f"[{slug}] not dashboard-owned — use ./cli.py cleanup"
         )
-    cm, _bottle, identity = bottles.pop(slug)
+    cm, bottle, identity = bottles.pop(slug)
 
     def _do_teardown() -> None:
         # Best-effort snapshot before teardown so the operator
@@ -703,7 +704,8 @@ def _stop_bottle_flow(
         # existing preserve marker (if any) is honored by
         # settle_state below.
         try:
-            capture_session_state(identity, exit_code=0)
+            if getattr(bottle, "agent_provider_template", "claude") == "claude":
+                capture_session_state(identity, exit_code=0)
         except BaseException:
             pass
         try:
@@ -761,21 +763,24 @@ def _in_tmux() -> bool:
     return bool(os.environ.get("TMUX"))
 
 
-def _claude_runtime_args(*, resume: bool, remote_control: bool = False) -> list[str]:
+def _claude_runtime_args(
+    *, resume: bool, remote_control: bool = False, provider_template: str = "claude",
+) -> list[str]:
     """The argv the dashboard hands to `bottle.claude_argv`
     on every attach — matches what `attach_claude` builds for the
     foreground handoff so both surfaces produce the same claude
     invocation."""
-    args = ["--dangerously-skip-permissions"]
+    runtime = runtime_for(provider_template)
+    args = list(runtime.bypass_args)
     if remote_control:
-        args.append("--remote-control")
+        args.extend(runtime.remote_control_args)
     if resume:
-        args.append("--continue")
+        args.extend(runtime.resume_args)
     return args
 
 
 def _build_resume_argv_with_fallback(
-    bottle, *, remote_control: bool = False,
+    bottle, *, remote_control: bool = False, provider_template: str = "claude",
 ) -> list[str]:
     """Build a backend-exec argv that runs `claude --continue` and
     falls back to plain `claude` if no prior session exists.
@@ -796,20 +801,34 @@ def _build_resume_argv_with_fallback(
     `smolvm machine exec --name <m> -- runuser -u node --`).
     Splitting at `claude` keeps the framing as the prefix and
     wraps just the claude tail in `sh -c`."""
-    base_args = ["--dangerously-skip-permissions"]
-    if remote_control:
-        base_args.append("--remote-control")
+    if provider_template != "claude":
+        return bottle.claude_argv(
+            _claude_runtime_args(
+                resume=True,
+                remote_control=remote_control,
+                provider_template=provider_template,
+            )
+        )
+    base_args = _claude_runtime_args(
+        resume=False,
+        remote_control=remote_control,
+        provider_template=provider_template,
+    )
     base_exec = bottle.claude_argv(base_args)
     # Split exec-framing prefix from the claude-and-args tail so
     # we can compose `<claude…> --continue || <claude…>` inside
-    # `sh -c`. The `claude` token is the marker.
-    claude_idx = base_exec.index("claude")
+    # `sh -c`. The provider command token is the marker.
+    command = getattr(bottle, "agent_command", runtime_for(provider_template).command)
+    claude_idx = base_exec.index(command)
     prefix = base_exec[:claude_idx]
     claude_cmd = " ".join(shlex.quote(a) for a in base_exec[claude_idx:])
+    resume_args = " ".join(
+        shlex.quote(a) for a in runtime_for(provider_template).resume_args
+    )
     return [
         *prefix,
         "sh", "-c",
-        f"{claude_cmd} --continue || {claude_cmd}",
+        f"{claude_cmd} {resume_args} || {claude_cmd}",
     ]
 
 
@@ -1018,8 +1037,12 @@ def _attach_via_handoff(
     `_attach_in_tmux` when tmux misbehaves)."""
     curses.endwin()
     try:
+        provider_template = getattr(bottle, "agent_provider_template", "claude")
         exit_code = attach_claude(
-            bottle, remote_control=False, resume=resume,
+            bottle,
+            remote_control=False,
+            resume=resume,
+            provider_template=provider_template,
         )
     except BaseException:
         stdscr.refresh()
@@ -1049,14 +1072,21 @@ def _attach_in_tmux(
     auto-attach after a stop) leave it False so the operator
     stays in the dashboard pane."""
     if resume:
+        provider_template = getattr(bottle, "agent_provider_template", "claude")
         # `--continue` exits non-zero when no prior session
         # exists (agent spun up but never typed at). Wrap with a
         # shell-level fallback so the pane lands in a fresh
         # claude instead of crashing.
-        claude_argv = _build_resume_argv_with_fallback(bottle)
+        claude_argv = _build_resume_argv_with_fallback(
+            bottle, provider_template=provider_template,
+        )
     else:
+        provider_template = getattr(bottle, "agent_provider_template", "claude")
         claude_argv = bottle.claude_argv(
-            _claude_runtime_args(resume=False),
+            _claude_runtime_args(
+                resume=False,
+                provider_template=provider_template,
+            ),
         )
     pane_id = _ensure_right_pane(tmux_state, claude_argv)
     if pane_id is None:
@@ -1208,8 +1238,14 @@ def _new_agent_flow(
         # Foreground handoff: claude owns the terminal until exit,
         # then we restore curses.
         try:
-            exit_code = attach_claude(bottle, remote_control=False)
-            capture_session_state(identity, exit_code)
+            provider_template = getattr(plan, "agent_provider_template", "claude")
+            exit_code = attach_claude(
+                bottle,
+                remote_control=False,
+                provider_template=provider_template,
+            )
+            if provider_template == "claude":
+                capture_session_state(identity, exit_code)
         finally:
             stdscr.refresh()
         return f"[{plan.slug}] claude session ended (exit {exit_code})"

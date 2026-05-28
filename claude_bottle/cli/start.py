@@ -18,6 +18,7 @@ import tempfile
 from pathlib import Path
 from typing import Callable
 
+from ..agent_provider import runtime_for
 from ..backend import (
     Bottle,
     BottleSpec,
@@ -114,6 +115,7 @@ def prepare_with_preflight(
 
 def attach_claude(
     bottle: Bottle, *, remote_control: bool = False, resume: bool = False,
+    provider_template: str = "claude",
 ) -> int:
     """Run claude inside `bottle` as an interactive session. Blocks
     until the session ends; returns the claude process's exit code.
@@ -129,17 +131,16 @@ def attach_claude(
     dashboard, which calls it from inside a `curses.endwin → … →
     stdscr.refresh()` handoff so the curses surface gets out of the
     terminal's way while claude has it."""
+    runtime = runtime_for(provider_template)
     info(
-        "attaching interactive claude session "
+        f"attaching interactive {provider_template} session "
         "(Ctrl-D or 'exit' to leave; container will be removed)"
     )
-    claude_args = ["--dangerously-skip-permissions"]
+    claude_args = list(runtime.bypass_args)
     if remote_control:
-        claude_args.append("--remote-control")
+        claude_args.extend(runtime.remote_control_args)
     if resume:
-        # `--continue` jumps straight to the most recent session
-        # without showing the picker `--resume` would surface.
-        claude_args.append("--continue")
+        claude_args.extend(runtime.resume_args)
     return bottle.exec_claude(claude_args, tty=True)
 
 
@@ -217,7 +218,12 @@ def _launch_bottle(
 
         backend = get_bottle_backend(backend_name)
         with backend.launch(plan) as bottle:
-            exit_code = attach_claude(bottle, remote_control=remote_control)
+            provider_template = getattr(plan, "agent_provider_template", "claude")
+            exit_code = attach_claude(
+                bottle,
+                remote_control=remote_control,
+                provider_template=provider_template,
+            )
             info(
                 f"session ended (exit {exit_code}); "
                 f"container {bottle.name} will be removed"
@@ -230,7 +236,8 @@ def _launch_bottle(
             # way. snapshot_transcript is best-effort so the
             # capability-block path's prior snapshot isn't clobbered
             # when the container is already gone.
-            capture_session_state(identity, exit_code)
+            if provider_template == "claude":
+                capture_session_state(identity, exit_code)
         return 0
     finally:
         # PRD 0018 chunk 2: prepare now writes the bottle's bind-mount

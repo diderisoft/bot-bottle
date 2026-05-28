@@ -1,16 +1,11 @@
-"""DockerBottle — concrete Bottle handle yielded by
-DockerBottleBackend.launch.
-
-Holds the container name plus the in-container prompt path so
-exec_claude can transparently add --append-system-prompt-file when a
-prompt was provisioned.
-"""
+"""DockerBottle — concrete Bottle handle yielded by DockerBottleBackend."""
 
 from __future__ import annotations
 
 import subprocess
 from typing import Callable
 
+from ...agent_provider import prompt_args
 from .. import Bottle, ExecResult
 
 
@@ -22,22 +17,32 @@ class DockerBottle(Bottle):
         container: str,
         teardown: Callable[[], None],
         prompt_path_in_container: str | None,
+        *,
+        agent_command: str = "claude",
+        agent_prompt_mode: str = "claude_append_file",
     ):
         self.name = container
         self._teardown = teardown
         self._prompt_path = prompt_path_in_container
+        self._agent_command = agent_command
+        self._agent_prompt_mode = agent_prompt_mode
+        self.agent_command = agent_command
+        self.agent_provider_template = (
+            "codex" if agent_command == "codex" else "claude"
+        )
         self._closed = False
 
     def claude_argv(
         self, argv: list[str], *, tty: bool = True,
     ) -> list[str]:
         full_argv = list(argv)
-        if self._prompt_path:
-            full_argv.extend(["--append-system-prompt-file", self._prompt_path])
+        full_argv.extend(
+            prompt_args(self._agent_prompt_mode, self._prompt_path, argv=full_argv)
+        )
         cmd = ["docker", "exec"]
         if tty:
             cmd.append("-it")
-        cmd.extend([self.name, "claude", *full_argv])
+        cmd.extend([self.name, self._agent_command, *full_argv])
         return cmd
 
     def exec_claude(self, argv: list[str], *, tty: bool = True) -> int:

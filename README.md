@@ -126,10 +126,12 @@ and MCP endpoints resolve without an agent-side change.
    └─────────────────────────────────────────────────────────────────────┘
 ```
 
-- **agent image** — built from the repo `Dockerfile` (`node:22-slim`
-  base) on first run; runs `claude` with the manifest-granted skills,
-  env vars, and `~/.gitconfig` (the latter for the git-gate's
-  `insteadOf` rules when `bottle.git` is set).
+- **agent image** — built from the provider template Dockerfile
+  (`Dockerfile` for Claude, `Dockerfile.codex` for Codex, or
+  `agent_provider.dockerfile`) on first run; runs the selected agent
+  CLI with the manifest-granted skills, env vars, and `~/.gitconfig`
+  (the latter for the git-gate's `insteadOf` rules when `bottle.git`
+  is set).
 - **pipelock image** — per-agent sidecar. Terminates the agent's
   outbound HTTP/HTTPS, enforces the resolved allowlist, runs DLP
   scanning. Design in `docs/prds/0001-per-agent-egress-proxy-via-pipelock.md`
@@ -261,8 +263,8 @@ child's declared fields overlay. Merge rules:
 - `git.remotes:` — dict merge by host, child wins on host collision.
   An explicit `git.remotes: {}` clears the parent's remotes; omitting
   `git.remotes` inherits the parent's remotes.
-- `egress:`, `supervise:` — full replace when the child declares the
-  field.
+- `agent_provider:`, `egress:`, `supervise:` — full replace when the
+  child declares the field.
 
 ```yaml
 ---
@@ -287,6 +289,10 @@ parents die at parse with a clear pointer. Bottles remain
 env:
   GIT_AUTHOR_NAME: didericis
 
+agent_provider:
+  template: claude       # default; codex is also supported
+  dockerfile: ""         # optional custom agent Dockerfile
+
 git:
   user:
     name: "Eric Bauerfeld"
@@ -298,55 +304,32 @@ git:
       IdentityFile: /Users/didericis/.ssh/id_ed25519_gitea
       KnownHostKey: ssh-ed25519 AAAA...
 
-# Routes declared here are held by a per-bottle cred-proxy sidecar,
-# not the agent. Each route names a path the agent dials, the
-# upstream the proxy forwards to, an auth_scheme, and a token_ref
-# (host env var). The value goes into the sidecar's environ via
-# `docker create -e`, never touches argv or disk. Optional `role`
-# tags drive agent-side rewrites: anthropic-base-url (sets
-# ANTHROPIC_BASE_URL), npm-registry (writes ~/.npmrc), git-insteadof
-# (writes ~/.gitconfig), tea-login (writes ~/.config/tea/config.yml).
-# See docs/prds/0010-cred-proxy.md.
-cred_proxy:
-  routes:
-    - path: /anthropic/
-      upstream: https://api.anthropic.com
-      auth_scheme: Bearer
-      token_ref: CLAUDE_BOTTLE_OAUTH_TOKEN
-      role: anthropic-base-url
-    - path: /gh-api/
-      upstream: https://api.github.com
-      auth_scheme: Bearer
-      token_ref: GH_PAT
-    - path: /gh-git/
-      upstream: https://github.com
-      auth_scheme: Bearer
-      token_ref: GH_PAT
-      role: git-insteadof
-    - path: /npm/
-      upstream: https://registry.npmjs.org
-      auth_scheme: Bearer
-      token_ref: NPM_TOKEN
-      role: npm-registry
-
-# Egress is forced through a per-agent pipelock sidecar on a Docker
-# `--internal` network — without the proxy the agent has no route
-# off-box. The effective allowlist is the union of baked-in defaults
-# (api.anthropic.com, claude.ai, ...) and the hostnames listed here.
-# Pipelock also runs DLP scanning and detects URL-embedded
-# high-entropy secrets. The resolved allowlist is shown in the y/N
-# preflight before launch.
+# Egress routes are held by a per-bottle sidecar, not the agent.
+# Auth token values go into the sidecar's environ, never into the
+# agent. Provider-specific roles add non-secret placeholder env vars
+# so the selected CLI starts while egress strips/re-injects auth.
 egress:
-  allowlist:
-    - github.com
-    - registry.npmjs.org
-    - pypi.org
+  routes:
+    - host: api.anthropic.com
+      role: claude_code_oauth
+      auth:
+        scheme: Bearer
+        token_ref: CLAUDE_BOTTLE_OAUTH_TOKEN
+    - host: api.github.com
+      auth:
+        scheme: Bearer
+        token_ref: GH_PAT
 ---
 
-The `gitea-dev` bottle. Backs my work on personal projects: Anthropic
-OAuth via cred-proxy, gitea.dideric.is over SSH (with PAT for tea
-API), and npm for publishing scoped packages.
+The `gitea-dev` bottle. Backs my work on personal projects: provider
+auth through egress and gitea.dideric.is over SSH.
 ````
+
+For a Codex-backed bottle, set `agent_provider.template: codex` and
+use the `codex_auth` egress role for the OpenAI API route. The built-in
+Codex template uses `Dockerfile.codex`; set `agent_provider.dockerfile`
+to build the agent from a custom Dockerfile while keeping the
+claude-bottle sidecars in place.
 
 ### Example agent (`~/.claude-bottle/agents/gitea-helper.md`)
 

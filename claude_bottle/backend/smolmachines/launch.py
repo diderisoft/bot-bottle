@@ -219,7 +219,10 @@ def launch(
         # output doesn't garble the dashboard's preflight modal:
         # both the curses-endwin path and the tmux pane-routing
         # path redirect stderr around `launch` already.
-        agent_from_path = _ensure_smolmachine(plan.agent_image_ref)
+        agent_from_path = _ensure_smolmachine(
+            plan.agent_image_ref,
+            dockerfile=plan.agent_dockerfile_path,
+        )
 
         # smolvm VM. --from carries the pre-packed .smolmachine
         # artifact; --allow-cidr + -e carry the per-bottle TSI
@@ -286,6 +289,8 @@ def launch(
             plan.machine_name,
             prompt_path=prompt_path,
             guest_env=plan.guest_env,
+            agent_command=plan.agent_command,
+            agent_prompt_mode=plan.agent_prompt_mode,
         )
     finally:
         stack.close()
@@ -413,7 +418,7 @@ def _resolve_token_env(
     return egress_resolve_token_values(ep.token_env_map, dict(host_env))
 
 
-def _ensure_smolmachine(image_ref: str) -> Path:
+def _ensure_smolmachine(image_ref: str, *, dockerfile: str = "") -> Path:
     """Build the agent docker image and convert it into a
     `.smolmachine` artifact, caching the result under
     `~/.cache/claude-bottle/smolmachines/` keyed by the docker image
@@ -438,7 +443,7 @@ def _ensure_smolmachine(image_ref: str) -> Path:
     so we skip the whole pipeline when the cached sidecar is
     already on disk for this image ID."""
     _SMOLMACHINE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    docker_mod.build_image(image_ref, _REPO_DIR)
+    docker_mod.build_image(image_ref, _REPO_DIR, dockerfile=dockerfile)
     # `sha256:abcd...` -> `abcd...` first 16 chars: short enough to
     # keep filenames manageable, long enough to make collisions
     # astronomically unlikely.
