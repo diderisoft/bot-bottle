@@ -166,6 +166,17 @@ def git_gate_render_gitconfig(
     for entry in entries:
         out.append(f'[url "git://{gate_host}/{entry.Name}.git"]\n')
         out.append(f"\tinsteadOf = {entry.Upstream}\n")
+        if entry.RemoteKey and entry.RemoteKey != entry.UpstreamHost:
+            port = (
+                f":{entry.UpstreamPort}"
+                if entry.UpstreamPort and entry.UpstreamPort != "22"
+                else ""
+            )
+            alias = (
+                f"ssh://{entry.UpstreamUser}@{entry.RemoteKey}{port}/"
+                f"{entry.UpstreamPath}"
+            )
+            out.append(f"\tinsteadOf = {alias}\n")
     return "".join(out)
 
 
@@ -404,4 +415,3 @@ class GitGate(ABC):
             access_hook_script=access_hook,
             upstreams=upstreams,
         )
-

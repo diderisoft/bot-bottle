@@ -85,6 +85,7 @@ class GitEntry:
     IdentityFile: str
     KnownHostKey: str = ""
     ExtraHosts: Mapping[str, str] = field(default_factory=_empty_str_dict)
+    RemoteKey: str = ""
     UpstreamUser: str = ""
     UpstreamHost: str = ""
     UpstreamPort: str = ""
@@ -158,6 +159,7 @@ class GitEntry:
             IdentityFile=ident,
             KnownHostKey=khk,
             ExtraHosts=extra_hosts,
+            RemoteKey=host_key or host,
             UpstreamUser=user,
             UpstreamHost=host,
             UpstreamPort=port,

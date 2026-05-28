@@ -217,6 +217,7 @@ class TestGitEntryCrossValidation(unittest.TestCase):
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
         })
         e = m.bottles["dev"].git[0]
+        self.assertEqual("gitea.dideric.is", e.RemoteKey)
         self.assertEqual("192.0.2.10", e.UpstreamHost)
         self.assertEqual("30009", e.UpstreamPort)
 

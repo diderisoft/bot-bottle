@@ -10,6 +10,7 @@ from bot_bottle.git_gate import (
     GIT_GATE_HOSTNAME,
     git_gate_render_gitconfig,
 )
+from bot_bottle.manifest import Manifest
 from tests.fixtures import fixture_minimal, fixture_with_git
 
 
@@ -57,6 +58,29 @@ class TestGitGateGitconfigRender(unittest.TestCase):
         out = git_gate_render_gitconfig(bottle.git, "192.168.20.2:9418")
         self.assertIn(
             '[url "git://192.168.20.2:9418/bot-bottle.git"]', out,
+        )
+
+    def test_ip_upstream_also_rewrites_logical_remote_key(self):
+        m = Manifest.from_json_obj({
+            "bottles": {"dev": {"git": {"remotes": {
+                "gitea.dideric.is": {
+                    "Name": "bot-bottle",
+                    "Upstream": "ssh://git@192.0.2.10:30009/didericis/bot-bottle.git",
+                    "IdentityFile": "/dev/null",
+                },
+            }}}},
+            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        })
+        out = git_gate_render_gitconfig(m.bottles["dev"].git, GIT_GATE_HOSTNAME)
+        self.assertIn(
+            "\tinsteadOf = "
+            "ssh://git@192.0.2.10:30009/didericis/bot-bottle.git",
+            out,
+        )
+        self.assertIn(
+            "\tinsteadOf = "
+            "ssh://git@gitea.dideric.is:30009/didericis/bot-bottle.git",
+            out,
         )
 
 
