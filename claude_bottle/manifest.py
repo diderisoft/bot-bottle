@@ -14,7 +14,9 @@ the system prompt, for bottles the body is human documentation
 Bottle schema (frontmatter):
   env:          { <NAME>: <env-entry>, ... }
   git:          [ <git-entry>, ... ]
+  git_user:     { name: <str>, email: <str> }   # optional
   egress: { routes: [ <egress-route>, ... ] }
+  supervise:    <bool>                          # optional
 
 Agent schema (frontmatter):
   bottle:        <bottle-name>          # required
@@ -155,6 +157,54 @@ EGRESS_ROLES = frozenset({
 EGRESS_SINGLETON_ROLES = frozenset({
     "claude_code_oauth",
 })
+
+
+@dataclass(frozen=True)
+class GitUser:
+    """Per-bottle `git config --global user.name` / `user.email`
+    pair (issue #86). The agent's commits inside the bottle are
+    attributed to this identity rather than the agent image's
+    image-baked default (no user, or whatever the image dropped
+    in). Either or both fields can be set independently.
+
+    `from_dict` is forgiving on shape (a single missing field is
+    fine — we just skip that config line at provisioning) but
+    strict on types (string-or-die)."""
+
+    name: str = ""
+    email: str = ""
+
+    @classmethod
+    def from_dict(cls, bottle_name: str, raw: object) -> "GitUser":
+        d = _as_json_object(raw, f"bottle '{bottle_name}' git_user")
+        for k in d.keys():
+            if k not in {"name", "email"}:
+                die(
+                    f"bottle '{bottle_name}' git_user has unknown key {k!r}; "
+                    f"allowed: name, email"
+                )
+        name = d.get("name", "")
+        email = d.get("email", "")
+        if not isinstance(name, str):
+            die(
+                f"bottle '{bottle_name}' git_user.name must be a string "
+                f"(was {type(name).__name__})"
+            )
+        if not isinstance(email, str):
+            die(
+                f"bottle '{bottle_name}' git_user.email must be a string "
+                f"(was {type(email).__name__})"
+            )
+        if not name and not email:
+            die(
+                f"bottle '{bottle_name}' git_user is set but neither "
+                f"name nor email is non-empty; remove the block or "
+                f"fill at least one field."
+            )
+        return cls(name=name, email=email)
+
+    def is_empty(self) -> bool:
+        return not self.name and not self.email
 
 
 @dataclass(frozen=True)
@@ -344,6 +394,12 @@ class EgressConfig:
 class Bottle:
     env: Mapping[str, str] = field(default_factory=_empty_str_dict)
     git: tuple[GitEntry, ...] = ()
+    # Per-bottle git identity (issue #86). Empty default — bottles
+    # that don't set `git_user:` in the manifest skip the
+    # `git config --global` step entirely. Set independently of
+    # the `git:` upstream list above: a bottle can declare a user
+    # identity without any git-gate upstreams, and vice versa.
+    git_user: GitUser = field(default_factory=GitUser)
     egress: EgressConfig = field(default_factory=EgressConfig)
     # Opt-in per-bottle stuck-recovery sidecar (PRD 0013). When true,
     # the launch step brings up a supervise sidecar that exposes three
@@ -422,6 +478,12 @@ class Bottle:
                 f"See docs/prds/0017-egress-via-mitmproxy.md."
             )
 
+        git_user = (
+            GitUser.from_dict(name, d["git_user"])
+            if "git_user" in d
+            else GitUser()
+        )
+
         egress = (
             EgressConfig.from_dict(name, d["egress"])
             if "egress" in d
@@ -436,7 +498,7 @@ class Bottle:
             )
 
         return cls(
-            env=env, git=git, egress=egress,
+            env=env, git=git, git_user=git_user, egress=egress,
             supervise=supervise_raw,
         )
 
@@ -772,7 +834,7 @@ _FILENAME_RX = re.compile(r"^[a-z][a-z0-9-]*$")
 # sets dies with a "did you mean" pointer — typos shouldn't silently
 # ghost into an empty config.
 _BOTTLE_KEYS = frozenset(
-    {"env", "git", "egress", "supervise"}
+    {"env", "git", "git_user", "egress", "supervise"}
 )
 _AGENT_KEYS_REQUIRED = frozenset({"bottle"})
 _AGENT_KEYS_OPTIONAL = frozenset({"skills"})
