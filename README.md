@@ -261,6 +261,15 @@ git:
     IdentityFile: /Users/didericis/.ssh/id_ed25519_gitea
     KnownHostKey: ssh-ed25519 AAAA...
 
+# Optional per-bottle git identity. When set, `git config --global
+# user.name` / `user.email` are applied inside the bottle at
+# provisioning so the agent's commits land with this attribution
+# instead of git refusing to commit. Either field can be set
+# independently. Issue #86.
+git_user:
+  name: "Eric Bauerfeld"
+  email: "eric+claude@dideric.is"
+
 # Routes declared here are held by a per-bottle cred-proxy sidecar,
 # not the agent. Each route names a path the agent dials, the
 # upstream the proxy forwards to, an auth_scheme, and a token_ref
