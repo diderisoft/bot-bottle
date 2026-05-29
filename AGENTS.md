@@ -35,8 +35,21 @@ the container lifecycle and the copying of skills and env vars into it.
 
 ## Conventions
 
-- Product requirement docs live in `docs/prds/`.
-- Research notes live in `docs/research/`.
+- Three kinds of doc, each with its own conventions in-folder; see
+  `docs/README.md` for when to write which:
+  - **PRDs** (`docs/prds/`) — one feature per file, numbered
+    `NNNN-kebab.md`. A `Status:` line tracks lifecycle: Draft → Active
+    (shipped to `main`) → Superseded/Retargeted. Format in
+    `docs/prds/README.md`.
+  - **Research notes** (`docs/research/`) — opinionated investigations;
+    unnumbered kebab-case, freeform and verdict-first. See
+    `docs/research/README.md`.
+  - **Decision records** (`docs/decisions/`) — ADR-lite, numbered
+    `NNNN-kebab.md`, for policies and non-feature decisions. See
+    `docs/decisions/README.md`.
+- Keep decision rationale self-contained in the repo, not in Gitea
+  issue threads. Issues are an ephemeral inbox; the durable "why" lives
+  in a PRD, research note, or decision record.
 - Low dependencies by default. The project is Python, stdlib-first (no
   runtime pip dependencies in the package itself; the only language
   runtime is the Python 3.13 used by the CLI + sidecars). Ask before
