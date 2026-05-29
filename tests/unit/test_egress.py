@@ -123,13 +123,16 @@ class TestRoutesForBottleUsesManifestOnly(unittest.TestCase):
         effective = [r.host for r in egress_routes_for_bottle(b)]
         self.assertEqual(["x.example"], effective)
 
-    def test_codex_forward_host_credentials_adds_chatgpt_route(self):
+    def test_codex_forward_host_credentials_adds_codex_routes(self):
         b = _codex_bottle(forward_host_credentials=True, routes=[])
         routes = egress_routes_for_bottle(b)
-        self.assertEqual(["chatgpt.com"], [r.host for r in routes])
+        self.assertEqual(["api.openai.com", "chatgpt.com"], [r.host for r in routes])
         self.assertEqual("Bearer", routes[0].auth_scheme)
         self.assertEqual("EGRESS_TOKEN_0", routes[0].token_env)
         self.assertEqual(CODEX_HOST_CREDENTIAL_TOKEN_REF, routes[0].token_ref)
+        self.assertEqual("Bearer", routes[1].auth_scheme)
+        self.assertEqual("EGRESS_TOKEN_0", routes[1].token_env)
+        self.assertEqual(CODEX_HOST_CREDENTIAL_TOKEN_REF, routes[1].token_ref)
 
     def test_codex_forward_host_credentials_upgrades_bare_chatgpt_route(self):
         b = _codex_bottle(
@@ -137,12 +140,30 @@ class TestRoutesForBottleUsesManifestOnly(unittest.TestCase):
             routes=[{"host": "chatgpt.com", "path_allowlist": ["/backend-api/"]}],
         )
         routes = egress_routes_for_bottle(b)
-        self.assertEqual(1, len(routes))
+        self.assertEqual(2, len(routes))
         self.assertEqual("chatgpt.com", routes[0].host)
         self.assertEqual("Bearer", routes[0].auth_scheme)
         self.assertEqual("EGRESS_TOKEN_0", routes[0].token_env)
         self.assertEqual(CODEX_HOST_CREDENTIAL_TOKEN_REF, routes[0].token_ref)
         self.assertEqual(("/backend-api/",), routes[0].path_allowlist)
+        self.assertEqual("api.openai.com", routes[1].host)
+        self.assertEqual("EGRESS_TOKEN_0", routes[1].token_env)
+
+    def test_codex_forward_host_credentials_accepts_explicit_synthetic_route(self):
+        b = _codex_bottle(
+            forward_host_credentials=True,
+            routes=[{
+                "host": "api.openai.com",
+                "auth": {
+                    "scheme": "Bearer",
+                    "token_ref": CODEX_HOST_CREDENTIAL_TOKEN_REF,
+                },
+            }],
+        )
+        routes = egress_routes_for_bottle(b)
+        self.assertEqual(["api.openai.com", "chatgpt.com"], [r.host for r in routes])
+        self.assertEqual("EGRESS_TOKEN_0", routes[0].token_env)
+        self.assertEqual("EGRESS_TOKEN_0", routes[1].token_env)
 
     def test_codex_forward_host_credentials_conflicts_with_authed_route(self):
         b = _codex_bottle(

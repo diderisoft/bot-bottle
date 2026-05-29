@@ -353,7 +353,8 @@ For a Codex-backed base bottle, set `agent_provider.template: codex`.
 The Codex template expects ChatGPT/device login state instead of an
 `OPENAI_API_KEY` env var; no API-key placeholder is forwarded into the
 agent. To let bot-bottle read the host's current Codex ChatGPT access
-token and inject it from egress only, opt in explicitly:
+token and inject it from egress only for Codex's API calls, opt in
+explicitly:
 
 ```yaml
 agent_provider:
@@ -373,8 +374,8 @@ launcher reads only `tokens.access_token` from the host's
 to the sidecar's `EGRESS_TOKEN_N` env slot. The agent container does
 not receive `auth.json`, refresh tokens, access-token env vars, or
 `OPENAI_API_KEY`. The effective egress table automatically adds or
-upgrades `chatgpt.com` to an authenticated route when
-`forward_host_credentials` is true.
+upgrades `api.openai.com` and `chatgpt.com` to authenticated routes
+when `forward_host_credentials` is true.
 
 The built-in Codex template uses `Dockerfile.codex`; set
 `agent_provider.dockerfile` to build the agent from a custom Dockerfile

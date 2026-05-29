@@ -31,7 +31,7 @@ from pathlib import Path
 from .log import die
 from .manifest import Bottle
 
-CODEX_CHATGPT_HOST = "chatgpt.com"
+CODEX_HOST_CREDENTIAL_HOSTS = ("api.openai.com", "chatgpt.com")
 CODEX_HOST_CREDENTIAL_TOKEN_REF = "BOT_BOTTLE_CODEX_HOST_ACCESS_TOKEN"
 
 
@@ -181,7 +181,7 @@ def egress_routes_for_bottle(
     `bottle.egress.routes` as an authenticated route or bare-pass entry
     (`- host: <name>`). Codex host-credential forwarding is the
     provider-owned exception: when explicitly enabled, it adds or
-    upgrades `chatgpt.com` to an egress-owned authenticated route. The
+    upgrades the Codex API hosts to egress-owned authenticated routes. The
     legacy `bottle.egress.allowlist` folding is gone — egress is the
     single allowlist surface."""
     routes = list(egress_manifest_routes(bottle))
@@ -191,36 +191,56 @@ def egress_routes_for_bottle(
     if bottle.agent_provider.template != "codex":
         return tuple(routes)
 
+    for host in CODEX_HOST_CREDENTIAL_HOSTS:
+        routes = _ensure_codex_host_credential_route(routes, host)
+    return tuple(routes)
+
+
+def _next_token_env(routes: list[EgressRoute]) -> str:
+    return f"EGRESS_TOKEN_{len({r.token_env for r in routes if r.token_env})}"
+
+
+def _codex_host_credential_token_env(routes: list[EgressRoute]) -> str:
+    for route in routes:
+        if route.token_ref == CODEX_HOST_CREDENTIAL_TOKEN_REF:
+            return route.token_env
+    return _next_token_env(routes)
+
+
+def _ensure_codex_host_credential_route(
+    routes: list[EgressRoute], host: str,
+) -> list[EgressRoute]:
     for idx, route in enumerate(routes):
-        if route.host.lower() != CODEX_CHATGPT_HOST:
+        if route.host.lower() != host:
             continue
         if route.auth_scheme or route.token_ref:
+            if (
+                route.auth_scheme == "Bearer"
+                and route.token_ref == CODEX_HOST_CREDENTIAL_TOKEN_REF
+            ):
+                return routes
             die(
                 "codex host credential forwarding conflicts with an "
-                "authenticated egress route for chatgpt.com. Remove that "
+                f"authenticated egress route for {host}. Remove that "
                 "route auth block or disable agent_provider.forward_host_credentials."
             )
         routes[idx] = EgressRoute(
             host=route.host,
             path_allowlist=route.path_allowlist,
             auth_scheme="Bearer",
-            token_env=_next_token_env(routes),
+            token_env=_codex_host_credential_token_env(routes),
             token_ref=CODEX_HOST_CREDENTIAL_TOKEN_REF,
             roles=route.roles,
         )
-        return tuple(routes)
+        return routes
 
     routes.append(EgressRoute(
-        host=CODEX_CHATGPT_HOST,
+        host=host,
         auth_scheme="Bearer",
-        token_env=_next_token_env(routes),
+        token_env=_codex_host_credential_token_env(routes),
         token_ref=CODEX_HOST_CREDENTIAL_TOKEN_REF,
     ))
-    return tuple(routes)
-
-
-def _next_token_env(routes: list[EgressRoute]) -> str:
-    return f"EGRESS_TOKEN_{len({r.token_env for r in routes if r.token_env})}"
+    return routes
 
 
 def egress_token_env_map(
