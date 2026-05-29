@@ -31,6 +31,9 @@ def cmd_info(argv: list[str]) -> int:
         f"first line: {prompt_first_line or '(empty)'}"
     )
     info(f"bottle             : {agent.bottle}")
+    identity = manifest.git_identity_summary(args.name)
+    if identity:
+        info(f"  git identity  : {identity}")
     if bottle.git:
         for e in bottle.git:
             info(

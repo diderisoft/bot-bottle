@@ -47,7 +47,7 @@ import ipaddress
 import json
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Mapping, cast
 
@@ -692,6 +692,11 @@ class Agent:
     bottle: str
     skills: tuple[str, ...] = ()
     prompt: str = ""
+    # Per-agent git identity (issue #94). Overlays the referenced
+    # bottle's git.user per-field at `Manifest.bottle_for`. Only the
+    # `user` block is allowed at the agent level; `git.remotes` stays
+    # bottle-only because it carries credentials and host trust.
+    git_user: GitUser = GitUser()
 
     @classmethod
     def from_dict(cls, name: str, raw: object, bottle_names: set[str]) -> "Agent":
@@ -731,7 +736,25 @@ class Agent:
         else:
             die(f"agent '{name}' prompt must be a string (was {type(prompt_raw).__name__})")
 
-        return cls(bottle=bottle, skills=skills, prompt=prompt)
+        # git: agents may declare only `git.user` (name/email). Any
+        # other git key — notably `remotes` — is rejected: remotes
+        # carry credentials and host trust and stay bottle-only.
+        git_user = GitUser()
+        git_raw = d.get("git")
+        if git_raw is not None:
+            gd = _as_json_object(git_raw, f"agent '{name}' git")
+            for k in gd.keys():
+                if k != "user":
+                    die(
+                        f"agent '{name}' git.{k} is not allowed at the "
+                        f"agent level; only git.user (name/email) may be "
+                        f"set on an agent. git.remotes is bottle-only "
+                        f"(it carries credentials and host trust)."
+                    )
+            if "user" in gd:
+                git_user = GitUser.from_dict(name, gd["user"])
+
+        return cls(bottle=bottle, skills=skills, prompt=prompt, git_user=git_user)
 
 
 @dataclass(frozen=True)
@@ -874,11 +897,50 @@ class Manifest:
             )
         die(f"bottle '{name}' not defined in bot-bottle.json (no bottles defined).")
 
+    def _effective_git_user(self, agent_name: str) -> GitUser:
+        """Merge the agent's git.user over the referenced bottle's,
+        per-field, agent-wins-on-non-empty (issue #94). Same overlay
+        the `extends:` resolver applies between bottles
+        (`_merge_bottles`)."""
+        agent = self.agents[agent_name]
+        base = self.bottles[agent.bottle].git_user
+        over = agent.git_user
+        if over.is_empty():
+            return base
+        return GitUser(
+            name=over.name or base.name,
+            email=over.email or base.email,
+        )
+
     def bottle_for(self, agent_name: str) -> Bottle:
-        """Resolve the Bottle the named agent references. The validator
-        guarantees both lookups succeed for a manifest built via
-        from_json_obj."""
-        return self.bottles[self.agents[agent_name].bottle]
+        """Resolve the Bottle the named agent references, with the
+        agent's git.user overlaid on top. The validator guarantees both
+        lookups succeed for a manifest built via from_json_obj.
+
+        The overlay lives here, the single point both backends call to
+        resolve an agent's bottle, so the docker / smolmachines git
+        provisioners pick up the merged identity unchanged."""
+        bottle = self.bottles[self.agents[agent_name].bottle]
+        merged = self._effective_git_user(agent_name)
+        if merged == bottle.git_user:
+            return bottle
+        return replace(bottle, git_user=merged)
+
+    def git_identity_summary(self, agent_name: str) -> str | None:
+        """One-line effective git identity with per-field provenance
+        for launch summaries, e.g.
+        `name=claude (agent), email=eric@dideric.is (bottle)`.
+        Returns None when neither agent nor bottle sets an identity."""
+        over = self.agents[agent_name].git_user
+        merged = self._effective_git_user(agent_name)
+        if merged.is_empty():
+            return None
+        parts: list[str] = []
+        if merged.name:
+            parts.append(f"name={merged.name} ({'agent' if over.name else 'bottle'})")
+        if merged.email:
+            parts.append(f"email={merged.email} ({'agent' if over.email else 'bottle'})")
+        return ", ".join(parts)
 
 
 def _as_json_object(value: object, label: str) -> dict[str, object]:
@@ -1053,7 +1115,7 @@ _BOTTLE_KEYS = frozenset(
     {"env", "extends", "agent_provider", "git", "egress", "supervise"}
 )
 _AGENT_KEYS_REQUIRED = frozenset({"bottle"})
-_AGENT_KEYS_OPTIONAL = frozenset({"skills"})
+_AGENT_KEYS_OPTIONAL = frozenset({"skills", "git"})
 # Claude Code subagent fields bot-bottle ignores at launch but
 # doesn't reject — lets the same file double as `~/.claude/agents/*.md`.
 _AGENT_KEYS_CC_PASSTHROUGH = frozenset({
@@ -1301,11 +1363,13 @@ def _load_agents_from_dir(
             )
         # Build the dict Agent.from_dict expects. The body becomes
         # prompt; CC passthrough fields stay in fm and get ignored
-        # by from_dict (which only reads bottle/skills/prompt).
+        # by from_dict (which reads bottle/skills/git/prompt).
         agent_dict: dict[str, object] = {
             "bottle": fm.get("bottle"),
             "skills": fm.get("skills", []),
             "prompt": body.strip(),
         }
+        if "git" in fm:
+            agent_dict["git"] = fm["git"]
         out[name] = Agent.from_dict(name, agent_dict, bottle_names)
     return out

@@ -85,6 +85,10 @@ class DockerBottlePlan(BottlePlan):
         print_multi("skills          ", list(agent.skills))
         info(f"bottle          : {agent.bottle}")
 
+        identity = manifest.git_identity_summary(spec.agent_name)
+        if identity:
+            info(f"  git identity  : {identity}")
+
         git_lines = [
             f"{u.upstream_host}:{u.upstream_port}"
             for u in self.git_gate_plan.upstreams

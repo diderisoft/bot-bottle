@@ -125,6 +125,9 @@ class SmolmachinesBottlePlan(BottlePlan):
         print_multi("env             ", env_names)
         print_multi("skills          ", list(agent.skills))
         info(f"bottle          : {agent.bottle}")
+        identity = manifest.git_identity_summary(spec.agent_name)
+        if identity:
+            info(f"  git identity  : {identity}")
         if upstreams:
             print_multi("  git gate      ", upstreams)
         if routes:
