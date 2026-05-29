@@ -6,7 +6,7 @@ top-level keys; values are strings / ints / bools / null / lists /
 nested dicts; no anchors, no multi-line block scalars, no tags, no
 implicit type coercion gotchas). A real YAML library is a much
 larger dependency surface than we need. The project's stdlib-only
-stance (CLAUDE.md) is the load-bearing reason; the safety
+stance (AGENTS.md) is the load-bearing reason; the safety
 properties — no Norway problem, no surprise date/octal coercion —
 are the bonus.
 

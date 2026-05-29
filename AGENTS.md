@@ -1,16 +1,16 @@
-# Codex-bottle
+# bot-bottle
 
 ## What this is
 
-Codex-bottle spins up an isolated container for running Codex with a
-curated set of skills and env vars. The point is to run Codex with broad
+bot-bottle spins up an isolated container for running AI coding agents with a
+curated set of skills and env vars. The point is to run agents with broad
 permissions inside a sandbox, so a misbehaving agent cannot reach the host.
 A Python CLI (entry point `cli.py`, package `bot_bottle/`) orchestrates
 the container lifecycle and the copying of skills and env vars into it.
 
 ## Goals
 
-- Minimize risk of running Codex with full permissions
+- Minimize risk of running agents with full permissions
 - Allow me to easily spin up agent tasks in parallel
 - Create isolated, well defined, easily updated, shareable agents
 
@@ -23,9 +23,9 @@ the container lifecycle and the copying of skills and env vars into it.
 ## Repository layout
 
 - `README.md` — short public-facing description.
-- `AGENTS.md` — this file, orientation for future Codex sessions.
+- `AGENTS.md` — this file, orientation for future agent sessions.
 - `.gitignore` — OS junk.
-- `Codex-bottle.json` — manifest of named agents (env / skills / prompt
+- `bot-bottle.json` — legacy manifest of named agents (env / skills / prompt
   per agent), consumed by `cli.py`. See "Manifest" under
   "Intended design".
 - `docs/INDEX.md` — pointer to the research notes.
