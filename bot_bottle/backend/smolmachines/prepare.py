@@ -112,18 +112,18 @@ def resolve_plan(
     egress_dir.mkdir(parents=True, exist_ok=True)
     egress_plan = Egress().prepare(bottle, slug, egress_dir)
 
-    # Claude-code refuses to start without *something* it
-    # recognises as a credential. When the bottle has an egress
-    # route carrying the `claude_code_oauth` role marker, egress
-    # strips + re-injects the real Authorization header on the
-    # outbound leg using a token held in egress's own environ — so
-    # the agent gets a non-secret placeholder here (matches the
-    # docker backend's forwarded_env logic in
-    # bot_bottle/backend/docker/prepare.py).
+    # Some provider CLIs refuse to start without *some* credential
+    # env var even when egress will strip + re-inject the real
+    # Authorization header. For those providers, auth_role names the
+    # route marker that enables a non-secret placeholder env. Codex is
+    # intentionally absent here: it should use its device/ChatGPT login
+    # state, and an OPENAI_API_KEY placeholder would force API-key auth.
     has_provider_auth = any(
-        provider_runtime.auth_role in r.roles for r in egress_plan.routes
+        provider_runtime.auth_role
+        and provider_runtime.auth_role in r.roles
+        for r in egress_plan.routes
     )
-    if has_provider_auth:
+    if has_provider_auth and provider_runtime.placeholder_env:
         guest_env[provider_runtime.placeholder_env] = "egress-placeholder"
     if provider.template == "claude" and has_provider_auth:
         guest_env.setdefault("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")

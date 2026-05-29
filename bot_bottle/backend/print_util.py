@@ -34,12 +34,12 @@ def visible_agent_env_names(
 ) -> list[str]:
     """Env names worth showing in launch summaries.
 
-    Provider auth placeholders (`OPENAI_API_KEY`,
-    `CLAUDE_CODE_OAUTH_TOKEN`) are implementation details: they are
-    non-secret dummy values that satisfy the provider CLI while egress
-    injects the real upstream Authorization header. Showing them in
-    preflight makes the operator think a real key is entering the
-    agent, so hide only that provider-owned placeholder.
+    Provider auth placeholders (currently `CLAUDE_CODE_OAUTH_TOKEN`)
+    are implementation details: they are non-secret dummy values that
+    satisfy the provider CLI while egress injects the real upstream
+    Authorization header. Showing them in preflight makes the operator
+    think a real key is entering the agent, so hide only the active
+    provider-owned placeholder.
     """
     hidden = {runtime_for(agent_provider_template).placeholder_env}
-    return sorted({name for name in env_names if name not in hidden})
+    return sorted({name for name in env_names if name and name not in hidden})

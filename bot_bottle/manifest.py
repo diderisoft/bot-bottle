@@ -188,6 +188,11 @@ EGRESS_AUTH_SCHEMES = ("Bearer", "token")
 #                      logic — declare the role on whichever route
 #                      injects the OAuth header.
 #
+#   codex_auth: legacy marker for Codex API-key-style egress routes.
+#               It is still accepted for older bottle manifests, but
+#               no longer triggers an OPENAI_API_KEY placeholder. Codex
+#               bottles should prefer device/ChatGPT login state.
+#
 # Routes without a `role` are pure proxy entries: egress
 # enforces path_allowlist + injects auth on its own, but nothing
 # special happens on the agent side.
@@ -196,10 +201,9 @@ EGRESS_ROLES = frozenset({
     "codex_auth",
 })
 
-# Singleton roles may appear on at most one route per bottle.
-# claude_code_oauth drives a single placeholder env var; two routes
-# claiming it would leave "which one is the canonical OAuth route?"
-# ambiguous for any future role-aware logic.
+# Singleton roles may appear on at most one route per bottle. Some
+# roles drive a single provider auth path; two routes claiming one
+# marker would leave "which one is canonical?" ambiguous.
 EGRESS_SINGLETON_ROLES = frozenset({
     "claude_code_oauth",
     "codex_auth",

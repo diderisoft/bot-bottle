@@ -8,9 +8,9 @@ from bot_bottle.backend.print_util import visible_agent_env_names
 
 
 class TestVisibleAgentEnvNames(unittest.TestCase):
-    def test_hides_codex_auth_placeholder(self):
+    def test_codex_shows_openai_api_key_if_user_declares_it(self):
         self.assertEqual(
-            ["CUSTOM"],
+            ["CUSTOM", "OPENAI_API_KEY"],
             visible_agent_env_names(
                 ["OPENAI_API_KEY", "CUSTOM"],
                 agent_provider_template="codex",

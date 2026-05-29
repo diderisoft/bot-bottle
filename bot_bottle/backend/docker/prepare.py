@@ -201,18 +201,18 @@ def resolve_plan(
     # never lands on argv or in env_file) goes into one dict. Nothing
     # mutates the host os.environ.
     forwarded_env: dict[str, str] = dict(resolved.forwarded)
-    # When the bottle declares an egress route with the
-    # `claude_code_oauth` role marker, claude-code's outbound
-    # Authorization gets stripped + re-injected by egress. The
-    # agent's environ still needs *something* claude-code recognises
-    # as a credential or it refuses to start; ship a non-secret
-    # placeholder. The placeholder isn't any real token value, so
-    # leaking it would tell an attacker only that egress is in
-    # front. Manifest validation enforces singleton on this role.
+    # Some provider CLIs refuse to start without *some* credential
+    # env var even when egress will strip + re-inject the real
+    # Authorization header. For those providers, auth_role names the
+    # route marker that enables a non-secret placeholder env. Codex is
+    # intentionally absent here: it should use its device/ChatGPT login
+    # state, and an OPENAI_API_KEY placeholder would force API-key auth.
     has_provider_auth = any(
-        provider_runtime.auth_role in r.roles for r in egress_plan.routes
+        provider_runtime.auth_role
+        and provider_runtime.auth_role in r.roles
+        for r in egress_plan.routes
     )
-    if has_provider_auth:
+    if has_provider_auth and provider_runtime.placeholder_env:
         forwarded_env[provider_runtime.placeholder_env] = "egress-placeholder"
     if provider.template == "claude" and has_provider_auth:
         # Belt-and-braces: turn off telemetry endpoints (statsig,

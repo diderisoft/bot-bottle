@@ -349,11 +349,23 @@ The `gitea-dev` bottle. Backs my work on personal projects: provider
 auth through egress and gitea.dideric.is over SSH.
 ````
 
-For a Codex-backed base bottle, set `agent_provider.template: codex`
-and use the `codex_auth` egress role for the OpenAI API route. The
-built-in Codex template uses `Dockerfile.codex`; set
-`agent_provider.dockerfile` to build the agent from a custom
-Dockerfile while keeping the bot-bottle sidecars in place.
+For a Codex-backed base bottle, set `agent_provider.template: codex`.
+The Codex template expects ChatGPT/device login state instead of an
+`OPENAI_API_KEY` env var; no API-key placeholder is forwarded into the
+agent. To let headless device-code login request a user code, add an
+unauthenticated egress route for the device-auth endpoint:
+
+```yaml
+egress:
+  routes:
+    - host: auth.openai.com
+      path_allowlist:
+        - /api/accounts/deviceauth/
+```
+
+The built-in Codex template uses `Dockerfile.codex`; set
+`agent_provider.dockerfile` to build the agent from a custom Dockerfile
+while keeping the bot-bottle sidecars in place.
 
 ### Example agent (`~/.bot-bottle/agents/gitea-helper.md`)
 
