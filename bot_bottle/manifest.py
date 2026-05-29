@@ -44,7 +44,6 @@ on-disk files.
 from __future__ import annotations
 
 import ipaddress
-import json
 import os
 import re
 from dataclasses import dataclass, field, replace
@@ -967,15 +966,6 @@ def _section_dict(value: object, label: str) -> dict[str, object]:
     if value is None:
         return {}
     return _as_json_object(value, label)
-
-
-def _load_json_or_die(path: Path) -> dict[str, object]:
-    try:
-        with path.open() as f:
-            doc: object = json.load(f)
-    except json.JSONDecodeError:
-        raise ManifestError(f"bot-bottle.json at {path} is not valid JSON")
-    return _as_json_object(doc, f"bot-bottle.json at {path}")
 
 
 def _opt_str(value: object, label: str) -> str:
