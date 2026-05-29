@@ -29,6 +29,13 @@ def _provider_bottle(provider, routes):
     }).bottles["dev"]
 
 
+def _provider_config_bottle(agent_provider):
+    return Manifest.from_json_obj({
+        "bottles": {"dev": {"agent_provider": agent_provider}},
+        "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+    }).bottles["dev"]
+
+
 class TestMinimalRoute(unittest.TestCase):
     def test_host_only(self):
         b = _bottle([{"host": "api.example.com"}])
@@ -50,6 +57,33 @@ class TestMinimalRoute(unittest.TestCase):
     def test_unknown_top_level_key_dies(self):
         with self.assertRaises(ManifestError):
             _bottle([{"host": "x.example", "wat": "yes"}])
+
+
+class TestAgentProviderHostCredentials(unittest.TestCase):
+    def test_forward_host_credentials_defaults_false(self):
+        b = _provider_config_bottle({"template": "codex"})
+        self.assertFalse(b.agent_provider.forward_host_credentials)
+
+    def test_forward_host_credentials_allowed_for_codex(self):
+        b = _provider_config_bottle({
+            "template": "codex",
+            "forward_host_credentials": True,
+        })
+        self.assertTrue(b.agent_provider.forward_host_credentials)
+
+    def test_forward_host_credentials_must_be_boolean(self):
+        with self.assertRaises(ManifestError):
+            _provider_config_bottle({
+                "template": "codex",
+                "forward_host_credentials": "yes",
+            })
+
+    def test_forward_host_credentials_rejected_for_claude(self):
+        with self.assertRaises(ManifestError):
+            _provider_config_bottle({
+                "template": "claude",
+                "forward_host_credentials": True,
+            })
 
 
 class TestPathAllowlist(unittest.TestCase):

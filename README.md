@@ -352,16 +352,29 @@ auth through egress and gitea.dideric.is over SSH.
 For a Codex-backed base bottle, set `agent_provider.template: codex`.
 The Codex template expects ChatGPT/device login state instead of an
 `OPENAI_API_KEY` env var; no API-key placeholder is forwarded into the
-agent. To let headless device-code login request a user code, add an
-unauthenticated egress route for the device-auth endpoint:
+agent. To let bot-bottle read the host's current Codex ChatGPT access
+token and inject it from egress only, opt in explicitly:
 
 ```yaml
+agent_provider:
+  template: codex
+  forward_host_credentials: true
+
 egress:
   routes:
     - host: auth.openai.com
       path_allowlist:
         - /api/accounts/deviceauth/
 ```
+
+Run `codex login --device-auth` on the host before launch. The
+launcher reads only `tokens.access_token` from the host's
+`~/.codex/auth.json`, verifies it is fresh ChatGPT auth, and passes it
+to the sidecar's `EGRESS_TOKEN_N` env slot. The agent container does
+not receive `auth.json`, refresh tokens, access-token env vars, or
+`OPENAI_API_KEY`. The effective egress table automatically adds or
+upgrades `chatgpt.com` to an authenticated route when
+`forward_host_credentials` is true.
 
 The built-in Codex template uses `Dockerfile.codex`; set
 `agent_provider.dockerfile` to build the agent from a custom Dockerfile

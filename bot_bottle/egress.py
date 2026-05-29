@@ -31,6 +31,9 @@ from pathlib import Path
 from .log import die
 from .manifest import Bottle
 
+CODEX_CHATGPT_HOST = "chatgpt.com"
+CODEX_HOST_CREDENTIAL_TOKEN_REF = "BOT_BOTTLE_CODEX_HOST_ACCESS_TOKEN"
+
 
 # DNS name agents will dial for the per-bottle egress sidecar.
 # Backend-agnostic by contract: every concrete backend (Docker today,
@@ -174,11 +177,50 @@ def egress_routes_for_bottle(
     """Effective egress routes. This is what gets rendered into
     routes.yaml + what the addon enforces.
 
-    Operators that want to allow a host declare it directly in
+    Operators that want to allow a host usually declare it directly in
     `bottle.egress.routes` as an authenticated route or bare-pass entry
-    (`- host: <name>`). The legacy `bottle.egress.allowlist`
-    folding is gone — egress is the single allowlist surface."""
-    return egress_manifest_routes(bottle)
+    (`- host: <name>`). Codex host-credential forwarding is the
+    provider-owned exception: when explicitly enabled, it adds or
+    upgrades `chatgpt.com` to an egress-owned authenticated route. The
+    legacy `bottle.egress.allowlist` folding is gone — egress is the
+    single allowlist surface."""
+    routes = list(egress_manifest_routes(bottle))
+    if not bottle.agent_provider.forward_host_credentials:
+        return tuple(routes)
+
+    if bottle.agent_provider.template != "codex":
+        return tuple(routes)
+
+    for idx, route in enumerate(routes):
+        if route.host.lower() != CODEX_CHATGPT_HOST:
+            continue
+        if route.auth_scheme or route.token_ref:
+            die(
+                "codex host credential forwarding conflicts with an "
+                "authenticated egress route for chatgpt.com. Remove that "
+                "route auth block or disable agent_provider.forward_host_credentials."
+            )
+        routes[idx] = EgressRoute(
+            host=route.host,
+            path_allowlist=route.path_allowlist,
+            auth_scheme="Bearer",
+            token_env=_next_token_env(routes),
+            token_ref=CODEX_HOST_CREDENTIAL_TOKEN_REF,
+            roles=route.roles,
+        )
+        return tuple(routes)
+
+    routes.append(EgressRoute(
+        host=CODEX_CHATGPT_HOST,
+        auth_scheme="Bearer",
+        token_env=_next_token_env(routes),
+        token_ref=CODEX_HOST_CREDENTIAL_TOKEN_REF,
+    ))
+    return tuple(routes)
+
+
+def _next_token_env(routes: list[EgressRoute]) -> str:
+    return f"EGRESS_TOKEN_{len({r.token_env for r in routes if r.token_env})}"
 
 
 def egress_token_env_map(
@@ -251,6 +293,8 @@ def egress_resolve_token_values(
     a sealed mapping without touching `os.environ`."""
     out: dict[str, str] = {}
     for token_env, token_ref in token_env_map.items():
+        if token_ref == CODEX_HOST_CREDENTIAL_TOKEN_REF:
+            continue
         value = host_env.get(token_ref)
         if value is None:
             die(

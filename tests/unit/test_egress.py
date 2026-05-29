@@ -4,6 +4,7 @@ resolution (PRD 0017)."""
 import unittest
 
 from bot_bottle.egress import (
+    CODEX_HOST_CREDENTIAL_TOKEN_REF,
     egress_manifest_routes,
     egress_render_routes,
     egress_resolve_token_values,
@@ -18,6 +19,21 @@ from bot_bottle.yaml_subset import parse_yaml_subset
 def _bottle(routes):
     return Manifest.from_json_obj({
         "bottles": {"dev": {"egress": {"routes": routes}}},
+        "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+    }).bottles["dev"]
+
+
+def _codex_bottle(*, forward_host_credentials: bool, routes):
+    return Manifest.from_json_obj({
+        "bottles": {
+            "dev": {
+                "agent_provider": {
+                    "template": "codex",
+                    "forward_host_credentials": forward_host_credentials,
+                },
+                "egress": {"routes": routes},
+            }
+        },
         "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
     }).bottles["dev"]
 
@@ -106,6 +122,38 @@ class TestRoutesForBottleUsesManifestOnly(unittest.TestCase):
         b = _bottle([{"host": "x.example"}])
         effective = [r.host for r in egress_routes_for_bottle(b)]
         self.assertEqual(["x.example"], effective)
+
+    def test_codex_forward_host_credentials_adds_chatgpt_route(self):
+        b = _codex_bottle(forward_host_credentials=True, routes=[])
+        routes = egress_routes_for_bottle(b)
+        self.assertEqual(["chatgpt.com"], [r.host for r in routes])
+        self.assertEqual("Bearer", routes[0].auth_scheme)
+        self.assertEqual("EGRESS_TOKEN_0", routes[0].token_env)
+        self.assertEqual(CODEX_HOST_CREDENTIAL_TOKEN_REF, routes[0].token_ref)
+
+    def test_codex_forward_host_credentials_upgrades_bare_chatgpt_route(self):
+        b = _codex_bottle(
+            forward_host_credentials=True,
+            routes=[{"host": "chatgpt.com", "path_allowlist": ["/backend-api/"]}],
+        )
+        routes = egress_routes_for_bottle(b)
+        self.assertEqual(1, len(routes))
+        self.assertEqual("chatgpt.com", routes[0].host)
+        self.assertEqual("Bearer", routes[0].auth_scheme)
+        self.assertEqual("EGRESS_TOKEN_0", routes[0].token_env)
+        self.assertEqual(CODEX_HOST_CREDENTIAL_TOKEN_REF, routes[0].token_ref)
+        self.assertEqual(("/backend-api/",), routes[0].path_allowlist)
+
+    def test_codex_forward_host_credentials_conflicts_with_authed_route(self):
+        b = _codex_bottle(
+            forward_host_credentials=True,
+            routes=[{
+                "host": "chatgpt.com",
+                "auth": {"scheme": "Bearer", "token_ref": "OTHER"},
+            }],
+        )
+        with self.assertRaises(Die):
+            egress_routes_for_bottle(b)
 
 
 class TestTokenEnvMap(unittest.TestCase):
@@ -216,6 +264,13 @@ class TestResolveTokenValues(unittest.TestCase):
                 {"EGRESS_TOKEN_0": "GH_PAT"},
                 {"GH_PAT": ""},
             )
+
+    def test_codex_host_credential_ref_is_resolved_by_launch(self):
+        out = egress_resolve_token_values(
+            {"EGRESS_TOKEN_0": CODEX_HOST_CREDENTIAL_TOKEN_REF},
+            {},
+        )
+        self.assertEqual({}, out)
 
 
 if __name__ == "__main__":

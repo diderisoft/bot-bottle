@@ -228,15 +228,16 @@ class AgentProvider:
 
     template: str = "claude"
     dockerfile: str = ""
+    forward_host_credentials: bool = False
 
     @classmethod
     def from_dict(cls, bottle_name: str, raw: object) -> "AgentProvider":
         d = _as_json_object(raw, f"bottle '{bottle_name}' agent_provider")
         for k in d:
-            if k not in {"template", "dockerfile"}:
+            if k not in {"template", "dockerfile", "forward_host_credentials"}:
                 raise ManifestError(
                     f"bottle '{bottle_name}' agent_provider has unknown key {k!r}; "
-                    f"allowed: template, dockerfile"
+                    f"allowed: template, dockerfile, forward_host_credentials"
                 )
         template = d.get("template", "claude")
         if not isinstance(template, str) or not template:
@@ -255,7 +256,22 @@ class AgentProvider:
                 f"bottle '{bottle_name}' agent_provider.dockerfile must be a "
                 f"string (was {type(dockerfile).__name__})"
             )
-        return cls(template=template, dockerfile=dockerfile)
+        forward_host_credentials = d.get("forward_host_credentials", False)
+        if not isinstance(forward_host_credentials, bool):
+            raise ManifestError(
+                f"bottle '{bottle_name}' agent_provider.forward_host_credentials "
+                f"must be a boolean (was {type(forward_host_credentials).__name__})"
+            )
+        if forward_host_credentials and template != "codex":
+            raise ManifestError(
+                f"bottle '{bottle_name}' agent_provider.forward_host_credentials "
+                "is currently only supported for template 'codex'"
+            )
+        return cls(
+            template=template,
+            dockerfile=dockerfile,
+            forward_host_credentials=forward_host_credentials,
+        )
 
 
 @dataclass(frozen=True)

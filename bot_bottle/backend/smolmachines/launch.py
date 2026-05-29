@@ -26,7 +26,12 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Callable, Generator
 
-from ...egress import EGRESS_ROUTES_IN_CONTAINER, egress_resolve_token_values
+from ...codex_auth import codex_host_access_token
+from ...egress import (
+    CODEX_HOST_CREDENTIAL_TOKEN_REF,
+    EGRESS_ROUTES_IN_CONTAINER,
+    egress_resolve_token_values,
+)
 from ...pipelock import (
     PIPELOCK_CA_CERT_IN_CONTAINER,
     PIPELOCK_CA_KEY_IN_CONTAINER,
@@ -423,7 +428,16 @@ def _resolve_token_env(
     ep = plan.egress_plan
     if not ep.routes:
         return {}
-    return egress_resolve_token_values(ep.token_env_map, dict(host_env))
+    env = dict(host_env)
+    token_values = egress_resolve_token_values(ep.token_env_map, env)
+    if plan.spec.manifest.bottle_for(
+        plan.spec.agent_name,
+    ).agent_provider.forward_host_credentials:
+        access_token = codex_host_access_token(env)
+        for token_env, token_ref in ep.token_env_map.items():
+            if token_ref == CODEX_HOST_CREDENTIAL_TOKEN_REF:
+                token_values[token_env] = access_token
+    return token_values
 
 
 def _ensure_smolmachine(image_ref: str, *, dockerfile: str = "") -> Path:
