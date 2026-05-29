@@ -280,7 +280,14 @@ while IFS=' ' read -r old new ref; do
   [ -z "$ref" ] && continue
   [ "$new" = "$zero" ] && continue
   if [ "$old" = "$zero" ]; then
-    log_opts="$new"
+    # New ref: scan only the commits this push introduces — those
+    # reachable from $new but not from any ref the gate already has.
+    # Everything already on the gate arrived via upstream mirror-fetch
+    # or a previously gitleaks-scanned push, so it's already-upstream
+    # or already-scanned; re-scanning it (the old `$new` full-ancestry
+    # range) only resurfaces historical findings and blocks every new
+    # branch. See PRD 0028 / issue #106.
+    log_opts="$new --not --all"
   else
     log_opts="$old..$new"
   fi
@@ -300,7 +307,7 @@ if [ ! -f "$hostsfile" ]; then
   echo "git-gate: add KnownHostKey to the bottle.git entry and restart the bottle" >&2
   exit 1
 fi
-ssh_cmd="ssh -i $keyfile -o UserKnownHostsFile=$hostsfile -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes"
+ssh_cmd="ssh -i $keyfile -o UserKnownHostsFile=$hostsfile -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10"
 
 while IFS=' ' read -r old new ref; do
   [ -z "$ref" ] && continue
@@ -355,7 +362,7 @@ if [ -z "$keyfile" ] || [ ! -f "$hostsfile" ]; then
   echo "git-gate: missing credentials for $repo_dir; refusing fetch" >&2
   exit 1
 fi
-ssh_cmd="ssh -i $keyfile -o UserKnownHostsFile=$hostsfile -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes"
+ssh_cmd="ssh -i $keyfile -o UserKnownHostsFile=$hostsfile -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10"
 
 echo "git-gate: refreshing $repo_dir from upstream" >&2
 if ! GIT_SSH_COMMAND="$ssh_cmd" git -C "$repo_dir" fetch origin --prune >&2; then

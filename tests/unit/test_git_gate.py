@@ -197,6 +197,24 @@ class TestHookRender(unittest.TestCase):
         # Stdin is buffered to a tempfile so both phases can re-read.
         self.assertIn("refs_file=$(mktemp)", hook)
 
+    def test_new_ref_scan_scoped_to_incoming_commits(self):
+        # A new branch (old=all-zeros) must scan only commits new to the
+        # gate, not the full ancestry — otherwise historical findings
+        # block every new-branch push (PRD 0028 / issue #106).
+        hook = git_gate_render_hook()
+        self.assertIn('log_opts="$new --not --all"', hook)
+        # The old over-broad full-ancestry range must be gone.
+        self.assertNotIn('log_opts="$new"', hook)
+        # Existing-branch delta scan is unchanged.
+        self.assertIn('log_opts="$old..$new"', hook)
+
+    def test_forward_ssh_is_non_interactive_and_bounded(self):
+        # No prompt (BatchMode) and a connect timeout, so an unreachable
+        # upstream fails fast instead of hanging the receive-pack.
+        hook = git_gate_render_hook()
+        self.assertIn("BatchMode=yes", hook)
+        self.assertIn("ConnectTimeout=", hook)
+
 
 class TestAccessHookRender(unittest.TestCase):
     def test_access_hook_refreshes_origin_on_upload_pack(self):
@@ -215,6 +233,13 @@ class TestAccessHookRender(unittest.TestCase):
         # the agent's fetch as a real error rather than stale data.
         self.assertIn("refusing to serve stale data", hook)
         self.assertIn("exit 1", hook)
+
+    def test_access_hook_ssh_is_non_interactive_and_bounded(self):
+        # Same hardening as the forward path: the fetch ssh must not
+        # prompt and must time out rather than hang upload-pack.
+        hook = git_gate_render_access_hook()
+        self.assertIn("BatchMode=yes", hook)
+        self.assertIn("ConnectTimeout=", hook)
 
 
 class TestPrepare(unittest.TestCase):
