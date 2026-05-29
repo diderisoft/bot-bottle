@@ -188,10 +188,12 @@ EGRESS_AUTH_SCHEMES = ("Bearer", "token")
 #                      logic — declare the role on whichever route
 #                      injects the OAuth header.
 #
-#   codex_auth: legacy marker for Codex API-key-style egress routes.
-#               It is still accepted for older bottle manifests, but
-#               no longer triggers an OPENAI_API_KEY placeholder. Codex
-#               bottles should prefer device/ChatGPT login state.
+#   codex_auth: placeholder marker reserved for follow-up Codex
+#               credential-injection work. It is still accepted so
+#               existing manifests and future egress-held auth flows
+#               have a stable role name, but it no longer triggers an
+#               OPENAI_API_KEY placeholder. Codex bottles should prefer
+#               device/ChatGPT login state today.
 #
 # Routes without a `role` are pure proxy entries: egress
 # enforces path_allowlist + injects auth on its own, but nothing
