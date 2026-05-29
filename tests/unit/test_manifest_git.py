@@ -2,8 +2,7 @@
 
 import unittest
 
-from bot_bottle.log import Die
-from bot_bottle.manifest import Manifest
+from bot_bottle.manifest import ManifestError, Manifest
 
 
 def _manifest(git_entries):
@@ -63,28 +62,28 @@ class TestGitEntryParsing(unittest.TestCase):
         self.assertEqual("", m.bottles["dev"].git[0].KnownHostKey)
 
     def test_missing_name_dies(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             Manifest.from_json_obj(_manifest([{
                 "Upstream": "ssh://git@github.com/foo.git",
                 "IdentityFile": "/dev/null",
             }]))
 
     def test_missing_upstream_dies(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             Manifest.from_json_obj(_manifest([{
                 "Name": "foo",
                 "IdentityFile": "/dev/null",
             }]))
 
     def test_missing_identity_file_dies(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             Manifest.from_json_obj(_manifest([{
                 "Name": "foo",
                 "Upstream": "ssh://git@github.com/foo.git",
             }]))
 
     def test_non_ssh_upstream_dies(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             Manifest.from_json_obj(_manifest([{
                 "Name": "foo",
                 "Upstream": "https://github.com/didericis/foo.git",
@@ -94,7 +93,7 @@ class TestGitEntryParsing(unittest.TestCase):
     def test_scp_style_upstream_dies(self):
         # SCP-style "git@host:path" is intentionally not supported in
         # v1 — ssh:// only.
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             Manifest.from_json_obj(_manifest([{
                 "Name": "foo",
                 "Upstream": "git@github.com:didericis/foo.git",
@@ -102,7 +101,7 @@ class TestGitEntryParsing(unittest.TestCase):
             }]))
 
     def test_upstream_without_user_dies(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             Manifest.from_json_obj(_manifest([{
                 "Name": "foo",
                 "Upstream": "ssh://github.com/foo.git",
@@ -110,7 +109,7 @@ class TestGitEntryParsing(unittest.TestCase):
             }]))
 
     def test_upstream_without_path_dies(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             Manifest.from_json_obj(_manifest([{
                 "Name": "foo",
                 "Upstream": "ssh://git@github.com",
@@ -118,7 +117,7 @@ class TestGitEntryParsing(unittest.TestCase):
             }]))
 
     def test_non_numeric_port_dies(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             Manifest.from_json_obj(_manifest([{
                 "Name": "foo",
                 "Upstream": "ssh://git@github.com:notaport/foo.git",
@@ -146,7 +145,7 @@ class TestGitEntryExtraHosts(unittest.TestCase):
         self.assertEqual({"gitea.dideric.is": "192.0.2.10"}, eh)
 
     def test_extra_hosts_must_be_object(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             Manifest.from_json_obj(_manifest([{
                 "Name": "foo",
                 "Upstream": "ssh://git@github.com/foo.git",
@@ -155,7 +154,7 @@ class TestGitEntryExtraHosts(unittest.TestCase):
             }]))
 
     def test_extra_hosts_ip_must_be_string(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             Manifest.from_json_obj(_manifest([{
                 "Name": "foo",
                 "Upstream": "ssh://git@github.com/foo.git",
@@ -164,7 +163,7 @@ class TestGitEntryExtraHosts(unittest.TestCase):
             }]))
 
     def test_extra_hosts_empty_ip_dies(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             Manifest.from_json_obj(_manifest([{
                 "Name": "foo",
                 "Upstream": "ssh://git@github.com/foo.git",
@@ -175,7 +174,7 @@ class TestGitEntryExtraHosts(unittest.TestCase):
 
 class TestGitEntryCrossValidation(unittest.TestCase):
     def test_duplicate_name_dies(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             Manifest.from_json_obj({
                 "bottles": {"dev": {"git": {"remotes": {
                     "a.example": {
@@ -193,7 +192,7 @@ class TestGitEntryCrossValidation(unittest.TestCase):
             })
 
     def test_remote_key_must_match_upstream_host(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             Manifest.from_json_obj({
                 "bottles": {"dev": {"git": {"remotes": {
                     "wrong.example": {
@@ -224,7 +223,7 @@ class TestGitEntryCrossValidation(unittest.TestCase):
     def test_legacy_ssh_field_dies_with_hint(self):
         # PRD 0009: bottle.ssh is removed; manifests carrying it must
         # fail loudly with a hint pointing at bottle.git.
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             Manifest.from_json_obj({
                 "bottles": {
                     "dev": {
@@ -250,7 +249,7 @@ class TestEmptyGitField(unittest.TestCase):
         self.assertEqual((), m.bottles["dev"].git)
 
     def test_git_object_type_required(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             Manifest.from_json_obj({
                 "bottles": {"dev": {"git": "not-a-list"}},
                 "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},

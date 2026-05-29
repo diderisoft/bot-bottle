@@ -11,8 +11,7 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from bot_bottle.log import Die
-from bot_bottle.manifest import Manifest
+from bot_bottle.manifest import ManifestError, Manifest
 
 
 def _write(p: Path, text: str) -> None:
@@ -238,7 +237,7 @@ class TestUnknownAgentKeyDies(_ResolveCase):
             ...
             """,
         )
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             self.resolve()
 
 
@@ -257,7 +256,7 @@ class TestUnknownBottleKeyDies(_ResolveCase):
             """,
         )
         _write(self.home_cb / "agents" / "implementer.md", _AGENT_IMPL)
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             self.resolve()
 
 
@@ -268,7 +267,7 @@ class TestStaleJsonDies(_ResolveCase):
 
     def test_dies(self):
         (self.home_root / "bot-bottle.json").write_text('{"bottles": {}}')
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             self.resolve()
 
 
@@ -277,7 +276,7 @@ class TestNoManifestDies(_ResolveCase):
     pointer at the new layout."""
 
     def test_dies(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             self.resolve()
 
     def test_missing_ok_returns_empty_manifest(self):
@@ -300,7 +299,7 @@ class TestUnknownBottleReferenceDies(_ResolveCase):
             ---
             """,
         )
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             self.resolve()
 
 

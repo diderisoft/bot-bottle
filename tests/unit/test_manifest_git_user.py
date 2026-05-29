@@ -1,25 +1,17 @@
 """Unit: Bottle git.user manifest parsing + validation (issue #86)."""
 
-import contextlib
-import io
 import unittest
 
-from bot_bottle.log import Die
-from bot_bottle.manifest import GitUser, Manifest
+from bot_bottle.manifest import ManifestError, GitUser, Manifest
 
 
-def _die_message(callable_, *args, **kwargs) -> str:
-    """Run `callable_` expecting it to die, return the stderr text
-    so tests can assert specifics. `die()` prints to stderr then
-    raises Die(1) — the exit code is in the exception, the human
-    message is in stderr."""
-    buf = io.StringIO()
-    with contextlib.redirect_stderr(buf):
-        try:
-            callable_(*args, **kwargs)
-        except Die:
-            return buf.getvalue()
-    raise AssertionError("expected Die was not raised")
+def _error_message(callable_, *args, **kwargs) -> str:
+    """Run `callable_` expecting a ManifestError; return its message."""
+    try:
+        callable_(*args, **kwargs)
+    except ManifestError as e:
+        return str(e)
+    raise AssertionError("expected ManifestError was not raised")
 
 
 def _manifest(git_user):
@@ -66,13 +58,13 @@ class TestGitUserParsing(unittest.TestCase):
         # An explicit `git.user: {name: "", email: ""}` is a typo
         # /  half-finished edit; fail loudly rather than silently
         # no-op (the operator clearly meant to configure something).
-        msg = _die_message(
+        msg = _error_message(
             Manifest.from_json_obj, _manifest({"name": "", "email": ""}),
         )
         self.assertIn("neither name nor email", msg)
 
     def test_unknown_key_dies(self):
-        msg = _die_message(
+        msg = _error_message(
             Manifest.from_json_obj,
             _manifest({"name": "Bot", "username": "bot"}),
         )
@@ -80,19 +72,19 @@ class TestGitUserParsing(unittest.TestCase):
         self.assertIn("username", msg)
 
     def test_non_string_name_dies(self):
-        msg = _die_message(
+        msg = _error_message(
             Manifest.from_json_obj, _manifest({"name": 42}),
         )
         self.assertIn("git.user.name must be a string", msg)
 
     def test_non_string_email_dies(self):
-        msg = _die_message(
+        msg = _error_message(
             Manifest.from_json_obj, _manifest({"email": ["x@y.z"]}),
         )
         self.assertIn("git.user.email must be a string", msg)
 
     def test_legacy_top_level_git_user_dies(self):
-        msg = _die_message(
+        msg = _error_message(
             Manifest.from_json_obj,
             {
                 "bottles": {"dev": {"git_user": {"name": "Bot"}}},

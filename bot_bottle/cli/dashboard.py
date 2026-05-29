@@ -54,7 +54,7 @@ from ..backend.docker.pipelock_apply import (
     render_allowlist_content,
 )
 from ..log import Die, error, info
-from ..manifest import Manifest
+from ..manifest import Manifest, ManifestError
 from ..supervise import (
     ACTION_OPERATOR_EDIT,
     COMPONENT_FOR_TOOL,
@@ -1458,14 +1458,12 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
         return manifest_cache[0]
     # A malformed manifest must not take the whole dashboard down — the
     # operator may just be watching running bottles. Degrade to a
-    # status-line warning. Die is a SystemExit (not an Exception), so it
-    # has to be caught explicitly or it escapes the loop and crashes.
+    # status-line warning instead. (Any non-config error propagates to
+    # cmd_dashboard's crash handler.)
     try:
         _loaded = _get_manifest()
-    except Die as e:
-        status_line = f"config error: {e.message or 'malformed manifest'}"
-    except Exception as e:
-        status_line = f"config load failed: {e}"
+    except ManifestError as e:
+        status_line = f"config error: {e}"
     else:
         if not _loaded.bottles and not _loaded.agents:
             status_line = "warning: no bot-bottle config/agents found; new-agent picker is empty"
@@ -1554,10 +1552,8 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
             # bottle running.
             try:
                 manifest = _get_manifest()
-            except Die as e:
-                # Config error (Die is a SystemExit, missed by the
-                # except-Exception below). Surface the reason inline.
-                status_line = f"config error: {e.message or 'malformed manifest'}"
+            except ManifestError as e:
+                status_line = f"config error: {e}"
                 continue
             except Exception as e:
                 status_line = f"manifest load failed: {e}"

@@ -12,8 +12,6 @@ a temp-dir case locks the md loader (the `_AGENT_KEYS` allow + the
 
 from __future__ import annotations
 
-import contextlib
-import io
 import os
 import shutil
 import tempfile
@@ -21,18 +19,16 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from bot_bottle.log import Die
-from bot_bottle.manifest import Manifest
+from bot_bottle.manifest import ManifestError, Manifest
 
 
-def _die_message(callable_, *args, **kwargs) -> str:
-    buf = io.StringIO()
-    with contextlib.redirect_stderr(buf):
-        try:
-            callable_(*args, **kwargs)
-        except Die:
-            return buf.getvalue()
-    raise AssertionError("expected Die was not raised")
+def _error_message(callable_, *args, **kwargs) -> str:
+    """Run `callable_` expecting a ManifestError; return its message."""
+    try:
+        callable_(*args, **kwargs)
+    except ManifestError as e:
+        return str(e)
+    raise AssertionError("expected ManifestError was not raised")
 
 
 def _manifest(*, bottle_user=None, agent_git=None) -> Manifest:
@@ -120,19 +116,19 @@ class TestAgentGitUserOverlay(unittest.TestCase):
 
 class TestAgentGitUserRejections(unittest.TestCase):
     def test_agent_remotes_dies_bottle_only(self):
-        msg = _die_message(_manifest, agent_git={
+        msg = _error_message(_manifest, agent_git={
             "remotes": {"h": {"Name": "r", "Upstream": "ssh://x/y.git"}},
         })
         self.assertIn("git.remotes", msg)
         self.assertIn("bottle-only", msg)
 
     def test_agent_unknown_git_subkey_dies(self):
-        msg = _die_message(_manifest, agent_git={"nope": {}})
+        msg = _error_message(_manifest, agent_git={"nope": {}})
         self.assertIn("not allowed at the agent level", msg)
 
     def test_agent_git_user_both_empty_dies(self):
         # Reuses GitUser.from_dict validation.
-        msg = _die_message(_manifest, agent_git={"user": {"name": "", "email": ""}})
+        msg = _error_message(_manifest, agent_git={"user": {"name": "", "email": ""}})
         self.assertIn("neither name nor email", msg)
 
 
@@ -239,7 +235,7 @@ class TestAgentGitUserMdLoader(unittest.TestCase):
     def test_md_agent_remotes_dies(self):
         self._write("bottles/dev.md", _BOTTLE_DEV)
         self._write("agents/impl.md", _AGENT_WITH_REMOTES)
-        msg = _die_message(Manifest.resolve, str(self.home))
+        msg = _error_message(Manifest.resolve, str(self.home))
         self.assertIn("git.remotes", msg)
         self.assertIn("bottle-only", msg)
 

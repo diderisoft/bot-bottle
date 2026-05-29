@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import sys
 
-from ..log import Die, die
+from ..log import Die, die, error
+from ..manifest import ManifestError
 from ._common import PROG
 from . import list as _list_mod
 from .cleanup import cmd_cleanup
@@ -63,6 +64,11 @@ def main(argv: list[str] | None = None) -> int:
         die(f"unknown command: {command}")
     try:
         return handler(rest) or 0
+    except ManifestError as e:
+        # Manifest/config problems surface as a catchable exception;
+        # print the reason and exit non-zero (same UX die() used to give).
+        error(str(e))
+        return 1
     except Die as e:
         return e.code if isinstance(e.code, int) else 1
     except KeyboardInterrupt:

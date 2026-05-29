@@ -7,8 +7,7 @@ silently ignoring."""
 import unittest
 from typing import Any
 
-from bot_bottle.log import Die
-from bot_bottle.manifest import Bottle, Manifest
+from bot_bottle.manifest import ManifestError, Bottle, Manifest
 
 
 def _manifest_with_runtime(value: object) -> dict[str, Any]:
@@ -32,7 +31,7 @@ class TestManifestRuntimeRemoved(unittest.TestCase):
     def test_any_runtime_value_is_rejected(self):
         for value in ("runsc", "runc", "kata-runtime", "", 42, None):
             with self.subTest(value=value):
-                with self.assertRaises(Die):
+                with self.assertRaises(ManifestError):
                     Manifest.from_json_obj(_manifest_with_runtime(value))
 
 

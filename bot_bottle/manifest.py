@@ -29,7 +29,7 @@ Agent schema (frontmatter):
   name, description, model, color, memory
 
 The agent file's Markdown body is the system prompt (stripped).
-Unknown top-level frontmatter keys die with a hint.
+Unknown top-level frontmatter keys raise ManifestError with a hint.
 
 Bottles can ONLY live under $HOME. A bottles/ dir under $CWD is a
 warn at load time and contributes nothing. The trust boundary is
@@ -52,8 +52,12 @@ from pathlib import Path
 from typing import Mapping, cast
 
 from .agent_provider import PROVIDER_TEMPLATES
-from .log import die, warn
+from .log import warn
 from .yaml_subset import YamlSubsetError, parse_frontmatter
+
+
+class ManifestError(Exception):
+    """A manifest file (or the manifest tree) is invalid."""
 
 
 def _empty_str_dict() -> dict[str, str]:
@@ -101,7 +105,7 @@ class GitEntry:
         cls, bottle_name: str, host_key: str, raw: object
     ) -> "GitEntry":
         if not host_key:
-            die(f"bottle '{bottle_name}' git.remotes has an empty host key")
+            raise ManifestError(f"bottle '{bottle_name}' git.remotes has an empty host key")
         d = _as_json_object(raw, f"bottle '{bottle_name}' git.remotes[{host_key!r}]")
         return cls._from_object(
             bottle_name, d, f"git.remotes[{host_key!r}]", host_key,
@@ -117,19 +121,19 @@ class GitEntry:
     ) -> "GitEntry":
         name = d.get("Name")
         if not isinstance(name, str) or not name:
-            die(
+            raise ManifestError(
                 f"bottle '{bottle_name}' {label} missing required string "
                 f"field 'Name'"
             )
         upstream = d.get("Upstream")
         if not isinstance(upstream, str) or not upstream:
-            die(
+            raise ManifestError(
                 f"bottle '{bottle_name}' {label} '{name}' missing required string field "
                 f"'Upstream'"
             )
         ident = d.get("IdentityFile")
         if not isinstance(ident, str) or not ident:
-            die(
+            raise ManifestError(
                 f"bottle '{bottle_name}' {label} '{name}' missing required string field "
                 f"'IdentityFile'"
             )
@@ -149,7 +153,7 @@ class GitEntry:
             and host_key != host
             and not _is_ip_literal(host)
         ):
-            die(
+            raise ManifestError(
                 f"bottle '{bottle_name}' git.remotes key {host_key!r} "
                 f"does not match Upstream host {host!r}"
             )
@@ -225,24 +229,24 @@ class AgentProvider:
         d = _as_json_object(raw, f"bottle '{bottle_name}' agent_provider")
         for k in d:
             if k not in {"template", "dockerfile"}:
-                die(
+                raise ManifestError(
                     f"bottle '{bottle_name}' agent_provider has unknown key {k!r}; "
                     f"allowed: template, dockerfile"
                 )
         template = d.get("template", "claude")
         if not isinstance(template, str) or not template:
-            die(
+            raise ManifestError(
                 f"bottle '{bottle_name}' agent_provider.template must be a "
                 f"non-empty string"
             )
         if template not in PROVIDER_TEMPLATES:
-            die(
+            raise ManifestError(
                 f"bottle '{bottle_name}' agent_provider.template {template!r} "
                 f"is not one of {', '.join(sorted(PROVIDER_TEMPLATES))}"
             )
         dockerfile = d.get("dockerfile", "")
         if not isinstance(dockerfile, str):
-            die(
+            raise ManifestError(
                 f"bottle '{bottle_name}' agent_provider.dockerfile must be a "
                 f"string (was {type(dockerfile).__name__})"
             )
@@ -269,24 +273,24 @@ class GitUser:
         d = _as_json_object(raw, f"bottle '{bottle_name}' git.user")
         for k in d.keys():
             if k not in {"name", "email"}:
-                die(
+                raise ManifestError(
                     f"bottle '{bottle_name}' git.user has unknown key {k!r}; "
                     f"allowed: name, email"
                 )
         name = d.get("name", "")
         email = d.get("email", "")
         if not isinstance(name, str):
-            die(
+            raise ManifestError(
                 f"bottle '{bottle_name}' git.user.name must be a string "
                 f"(was {type(name).__name__})"
             )
         if not isinstance(email, str):
-            die(
+            raise ManifestError(
                 f"bottle '{bottle_name}' git.user.email must be a string "
                 f"(was {type(email).__name__})"
             )
         if not name and not email:
-            die(
+            raise ManifestError(
                 f"bottle '{bottle_name}' git.user is set but neither "
                 f"name nor email is non-empty; remove the block or "
                 f"fill at least one field."
@@ -304,7 +308,7 @@ def _parse_git_config(
     d = _as_json_object(raw, f"bottle '{bottle_name}' git")
     for k in d.keys():
         if k not in {"user", "remotes"}:
-            die(
+            raise ManifestError(
                 f"bottle '{bottle_name}' git has unknown key {k!r}; "
                 f"allowed: user, remotes"
             )
@@ -352,34 +356,34 @@ class PipelockRoutePolicy:
         d = _as_json_object(raw, label)
         for k in d:
             if k not in ("tls_passthrough", "ssrf_ip_allowlist"):
-                die(
+                raise ManifestError(
                     f"{label} has unknown key {k!r}; "
                     f"only 'tls_passthrough' and 'ssrf_ip_allowlist' "
                     f"are accepted"
                 )
         tls_passthrough_raw = d.get("tls_passthrough", False)
         if not isinstance(tls_passthrough_raw, bool):
-            die(
+            raise ManifestError(
                 f"{label}.tls_passthrough must be a boolean "
                 f"(was {type(tls_passthrough_raw).__name__})"
             )
         ssrf_raw = d.get("ssrf_ip_allowlist", [])
         if not isinstance(ssrf_raw, list):
-            die(
+            raise ManifestError(
                 f"{label}.ssrf_ip_allowlist must be an array "
                 f"(was {type(ssrf_raw).__name__})"
             )
         ssrf_ip_allowlist: list[str] = []
         for j, item in enumerate(ssrf_raw):
             if not isinstance(item, str) or not item:
-                die(
+                raise ManifestError(
                     f"{label}.ssrf_ip_allowlist[{j}] must be a non-empty "
                     f"string (was {type(item).__name__})"
                 )
             try:
                 ipaddress.ip_network(item, strict=False)
             except ValueError as e:
-                die(
+                raise ManifestError(
                     f"{label}.ssrf_ip_allowlist[{j}] must be an IP address "
                     f"or CIDR (was {item!r}): {e}"
                 )
@@ -434,13 +438,13 @@ class EgressRoute:
         d = _as_json_object(raw, label)
         host = d.get("host")
         if not isinstance(host, str) or not host:
-            die(f"{label} missing required string field 'host'")
+            raise ManifestError(f"{label} missing required string field 'host'")
 
         path_allow_raw = d.get("path_allowlist")
         prefixes: tuple[str, ...] = ()
         if path_allow_raw is not None:
             if not isinstance(path_allow_raw, list):
-                die(
+                raise ManifestError(
                     f"{label} path_allowlist must be an array "
                     f"(was {type(path_allow_raw).__name__})"
                 )
@@ -448,12 +452,12 @@ class EgressRoute:
             collected: list[str] = []
             for j, p in enumerate(path_list):
                 if not isinstance(p, str):
-                    die(
+                    raise ManifestError(
                         f"{label} path_allowlist[{j}] must be a string "
                         f"(was {type(p).__name__})"
                     )
                 if not p.startswith("/"):
-                    die(
+                    raise ManifestError(
                         f"{label} path_allowlist[{j}] {p!r} must be an "
                         f"absolute path prefix starting with '/'"
                     )
@@ -466,31 +470,31 @@ class EgressRoute:
             auth_raw = d.get("auth")
             auth_d = _as_json_object(auth_raw, f"{label} auth")
             if not auth_d:
-                die(
+                raise ManifestError(
                     f"{label} auth is empty ({{}}); omit the 'auth' key "
                     f"entirely if this route is unauthenticated. Otherwise "
                     f"both 'scheme' and 'token_ref' are required."
                 )
             auth_scheme_raw = auth_d.get("scheme")
             if not isinstance(auth_scheme_raw, str) or not auth_scheme_raw:
-                die(
+                raise ManifestError(
                     f"{label} auth.scheme is required when 'auth' is set "
                     f"(non-empty string)"
                 )
             if auth_scheme_raw not in EGRESS_AUTH_SCHEMES:
-                die(
+                raise ManifestError(
                     f"{label} auth.scheme {auth_scheme_raw!r} is not one of "
                     f"{', '.join(EGRESS_AUTH_SCHEMES)}"
                 )
             token_ref_raw = auth_d.get("token_ref")
             if not isinstance(token_ref_raw, str) or not token_ref_raw:
-                die(
+                raise ManifestError(
                     f"{label} auth.token_ref is required when 'auth' is set "
                     f"(name of the host env var holding the token value)"
                 )
             for k in auth_d:
                 if k not in ("scheme", "token_ref"):
-                    die(
+                    raise ManifestError(
                         f"{label} auth has unknown key {k!r}; "
                         f"only 'scheme' and 'token_ref' are accepted"
                     )
@@ -508,17 +512,17 @@ class EgressRoute:
             collected_roles: list[str] = []
             for r in role_list:
                 if not isinstance(r, str):
-                    die(f"{label} role items must be strings (got {type(r).__name__})")
+                    raise ManifestError(f"{label} role items must be strings (got {type(r).__name__})")
                 collected_roles.append(r)
             roles = tuple(collected_roles)
         else:
-            die(
+            raise ManifestError(
                 f"{label} role must be a string or a list of strings "
                 f"(was {type(role_raw).__name__})"
             )
         for r in roles:
             if r not in EGRESS_ROLES:
-                die(
+                raise ManifestError(
                     f"{label} role {r!r} is not one of "
                     f"{', '.join(sorted(EGRESS_ROLES))}"
                 )
@@ -531,7 +535,7 @@ class EgressRoute:
 
         for k in d:
             if k not in ("host", "path_allowlist", "auth", "role", "pipelock"):
-                die(
+                raise ManifestError(
                     f"{label} has unknown key {k!r}; accepted keys are "
                     f"'host', 'path_allowlist', 'auth', 'role', 'pipelock'"
                 )
@@ -564,7 +568,7 @@ class EgressConfig:
         routes: tuple[EgressRoute, ...] = ()
         if routes_raw is not None:
             if not isinstance(routes_raw, list):
-                die(
+                raise ManifestError(
                     f"bottle '{bottle_name}' egress.routes must be an array "
                     f"(was {type(routes_raw).__name__})"
                 )
@@ -578,7 +582,7 @@ class EgressConfig:
             )
         for k in d:
             if k != "routes":
-                die(
+                raise ManifestError(
                     f"bottle '{bottle_name}' egress has unknown key {k!r}; "
                     f"only 'routes' is accepted"
                 )
@@ -611,7 +615,7 @@ class Bottle:
         d = _as_json_object(raw, f"bottle '{name}'")
 
         if "runtime" in d:
-            die(
+            raise ManifestError(
                 f"bottle '{name}' has a 'runtime' field, which is no longer "
                 f"supported. gVisor (runsc) is now auto-detected by the "
                 f"backend; remove the 'runtime' field from the bottle "
@@ -619,7 +623,7 @@ class Bottle:
             )
 
         if "ssh" in d:
-            die(
+            raise ManifestError(
                 f"bottle '{name}' has an 'ssh' field, which has been removed "
                 f"(PRD 0009). Move each entry to 'git': declare the upstream "
                 f"as a git remote with Name + Upstream URL + IdentityFile, "
@@ -628,7 +632,7 @@ class Bottle:
             )
 
         if "git_user" in d:
-            die(
+            raise ManifestError(
                 f"bottle '{name}' has a 'git_user' field, which has been "
                 f"removed. Move it under 'git.user'."
             )
@@ -636,7 +640,7 @@ class Bottle:
         unknown = set(d.keys()) - _BOTTLE_KEYS
         if unknown:
             allowed = ", ".join(sorted(_BOTTLE_KEYS))
-            die(
+            raise ManifestError(
                 f"bottle '{name}' has unknown key(s) {sorted(unknown)}; "
                 f"allowed keys are {allowed}."
             )
@@ -647,7 +651,7 @@ class Bottle:
             env_dict = _as_json_object(env_raw, f"bottle '{name}' env")
             for var, value in env_dict.items():
                 if not isinstance(value, str):
-                    die(
+                    raise ManifestError(
                         f"env entry {var} in bottle '{name}' must be a JSON string "
                         f"(was {type(value).__name__}). Use \"?<message>\" for prompt-at-runtime."
                     )
@@ -676,7 +680,7 @@ class Bottle:
 
         supervise_raw = d.get("supervise", False)
         if not isinstance(supervise_raw, bool):
-            die(
+            raise ManifestError(
                 f"bottle '{name}' supervise must be a boolean "
                 f"(was {type(supervise_raw).__name__})"
             )
@@ -704,10 +708,10 @@ class Agent:
 
         bottle = d.get("bottle")
         if not isinstance(bottle, str) or not bottle:
-            die(f"agent '{name}' must declare a 'bottle' field naming a defined bottle")
+            raise ManifestError(f"agent '{name}' must declare a 'bottle' field naming a defined bottle")
         if bottle not in bottle_names:
             available = ", ".join(sorted(bottle_names)) or "(none defined)"
-            die(
+            raise ManifestError(
                 f"agent '{name}' references bottle '{bottle}', which is not defined. "
                 f"Available: {available}"
             )
@@ -716,12 +720,12 @@ class Agent:
         skills_raw = d.get("skills")
         if skills_raw is not None:
             if not isinstance(skills_raw, list):
-                die(f"agent '{name}' skills must be an array (was {type(skills_raw).__name__})")
+                raise ManifestError(f"agent '{name}' skills must be an array (was {type(skills_raw).__name__})")
             collected: list[str] = []
             skills_list = cast(list[object], skills_raw)
             for i, skill in enumerate(skills_list):
                 if not isinstance(skill, str):
-                    die(
+                    raise ManifestError(
                         f"agent '{name}' skills[{i}] must be a string "
                         f"(was {type(skill).__name__})"
                     )
@@ -734,7 +738,7 @@ class Agent:
         elif isinstance(prompt_raw, str):
             prompt = prompt_raw
         else:
-            die(f"agent '{name}' prompt must be a string (was {type(prompt_raw).__name__})")
+            raise ManifestError(f"agent '{name}' prompt must be a string (was {type(prompt_raw).__name__})")
 
         # git: agents may declare only `git.user` (name/email). Any
         # other git key — notably `remotes` — is rejected: remotes
@@ -745,7 +749,7 @@ class Agent:
             gd = _as_json_object(git_raw, f"agent '{name}' git")
             for k in gd.keys():
                 if k != "user":
-                    die(
+                    raise ManifestError(
                         f"agent '{name}' git.{k} is not allowed at the "
                         f"agent level; only git.user (name/email) may be "
                         f"set on an agent. git.remotes is bottle-only "
@@ -798,7 +802,7 @@ class Manifest:
         if not home_md.is_dir():
             if missing_ok:
                 return cls.from_json_obj({"bottles": {}, "agents": {}})
-            die(
+            raise ManifestError(
                 f"no manifest found: {home_md} does not exist. "
                 f"See README.md for the per-file Markdown layout "
                 f"(PRD 0011)."
@@ -880,8 +884,8 @@ class Manifest:
             return
         available = ", ".join(self.agents.keys())
         if available:
-            die(f"agent '{name}' not defined in bot-bottle.json. Available: {available}")
-        die(f"agent '{name}' not defined in bot-bottle.json (manifest is empty).")
+            raise ManifestError(f"agent '{name}' not defined in bot-bottle.json. Available: {available}")
+        raise ManifestError(f"agent '{name}' not defined in bot-bottle.json (manifest is empty).")
 
     def has_bottle(self, name: str) -> bool:
         return name in self.bottles
@@ -891,11 +895,11 @@ class Manifest:
             return
         available = ", ".join(self.bottles.keys())
         if available:
-            die(
+            raise ManifestError(
                 f"bottle '{name}' not defined in bot-bottle.json. "
                 f"Available bottles: {available}"
             )
-        die(f"bottle '{name}' not defined in bot-bottle.json (no bottles defined).")
+        raise ManifestError(f"bottle '{name}' not defined in bot-bottle.json (no bottles defined).")
 
     def _effective_git_user(self, agent_name: str) -> GitUser:
         """Merge the agent's git.user over the referenced bottle's,
@@ -948,12 +952,12 @@ def _as_json_object(value: object, label: str) -> dict[str, object]:
     a view typed as `dict[str, object]` so downstream `.get(...)` calls
     have a typed surface."""
     if not isinstance(value, dict):
-        die(f"{label} must be a JSON object (was {type(value).__name__})")
+        raise ManifestError(f"{label} must be a JSON object (was {type(value).__name__})")
     items = cast(dict[object, object], value)
     out: dict[str, object] = {}
     for k, v in items.items():
         if not isinstance(k, str):
-            die(f"{label} keys must be strings (found {type(k).__name__})")
+            raise ManifestError(f"{label} keys must be strings (found {type(k).__name__})")
         out[k] = v
     return out
 
@@ -970,7 +974,7 @@ def _load_json_or_die(path: Path) -> dict[str, object]:
         with path.open() as f:
             doc: object = json.load(f)
     except json.JSONDecodeError:
-        die(f"bot-bottle.json at {path} is not valid JSON")
+        raise ManifestError(f"bot-bottle.json at {path} is not valid JSON")
     return _as_json_object(doc, f"bot-bottle.json at {path}")
 
 
@@ -978,7 +982,7 @@ def _opt_str(value: object, label: str) -> str:
     if value is None:
         return ""
     if not isinstance(value, str):
-        die(f"{label} must be a string (was {type(value).__name__})")
+        raise ManifestError(f"{label} must be a string (was {type(value).__name__})")
     return value
 
 
@@ -993,11 +997,11 @@ def _opt_extra_hosts(value: object, label: str) -> dict[str, str]:
     out: dict[str, str] = {}
     for host, ip in obj.items():
         if not host:
-            die(f"{label} contains an empty hostname key")
+            raise ManifestError(f"{label} contains an empty hostname key")
         if not isinstance(ip, str):
-            die(f"{label}['{host}'] must be a string (was {type(ip).__name__})")
+            raise ManifestError(f"{label}['{host}'] must be a string (was {type(ip).__name__})")
         if not ip:
-            die(f"{label}['{host}'] must be a non-empty string")
+            raise ManifestError(f"{label}['{host}'] must be a non-empty string")
         out[host] = ip
     return out
 
@@ -1007,27 +1011,27 @@ def _parse_git_upstream(url: str, label: str) -> tuple[str, str, str, str]:
     Dies if `url` doesn't match the ssh:// shape v1 supports. Default
     port is 22 (matches OpenSSH)."""
     if not url.startswith("ssh://"):
-        die(f"{label} must be an ssh:// URL (was {url!r})")
+        raise ManifestError(f"{label} must be an ssh:// URL (was {url!r})")
     rest = url[len("ssh://"):]
     if "@" not in rest:
-        die(f"{label} must include a user (e.g. ssh://git@host/path.git); was {url!r}")
+        raise ManifestError(f"{label} must include a user (e.g. ssh://git@host/path.git); was {url!r}")
     user, _, hostpart = rest.partition("@")
     if not user:
-        die(f"{label} user is empty in {url!r}")
+        raise ManifestError(f"{label} user is empty in {url!r}")
     if "/" not in hostpart:
-        die(f"{label} must include a path (e.g. ssh://git@host/path.git); was {url!r}")
+        raise ManifestError(f"{label} must include a path (e.g. ssh://git@host/path.git); was {url!r}")
     hostport, _, path = hostpart.partition("/")
     if not path:
-        die(f"{label} path is empty in {url!r}")
+        raise ManifestError(f"{label} path is empty in {url!r}")
     if ":" in hostport:
         host, _, port = hostport.partition(":")
         if not port.isdigit():
-            die(f"{label} port must be numeric in {url!r}")
+            raise ManifestError(f"{label} port must be numeric in {url!r}")
     else:
         host = hostport
         port = "22"
     if not host:
-        die(f"{label} host is empty in {url!r}")
+        raise ManifestError(f"{label} host is empty in {url!r}")
     return (user, host, port, path)
 
 
@@ -1061,7 +1065,7 @@ def _validate_egress_routes(
     for r in routes:
         key = r.Host.lower()
         if key in seen_hosts:
-            die(
+            raise ManifestError(
                 f"bottle '{bottle_name}' egress.routes has duplicate host "
                 f"{r.Host!r}; each host must be unique on the proxy."
             )
@@ -1070,7 +1074,7 @@ def _validate_egress_routes(
         with_role = [r for r in routes if role in r.Role]
         if len(with_role) > 1:
             hosts = ", ".join(r.Host for r in with_role)
-            die(
+            raise ManifestError(
                 f"bottle '{bottle_name}' egress.routes has {len(with_role)} "
                 f"routes with role {role!r} (hosts: {hosts}); this role drives a "
                 f"single launch-step side effect — pick one."
@@ -1079,7 +1083,7 @@ def _validate_egress_routes(
     for route in routes:
         for role in route.Role:
             if role not in allowed_roles:
-                die(
+                raise ManifestError(
                     f"bottle '{bottle_name}' egress route for host "
                     f"{route.Host!r} has role {role!r}, but provider "
                     f"{agent_provider_template!r} only accepts roles "
@@ -1091,7 +1095,7 @@ def _validate_unique_git_names(bottle_name: str, git: tuple[GitEntry, ...]) -> N
     seen: dict[str, None] = {}
     for g in git:
         if g.Name in seen:
-            die(
+            raise ManifestError(
                 f"bottle '{bottle_name}' git entries have duplicate Name '{g.Name}'; "
                 f"each entry maps to a distinct bare repo on the gate."
             )
@@ -1132,7 +1136,7 @@ def _check_stale_json(dir_path: Path, md_dir: Path, label: str) -> None:
     to silently leave the JSON content unused."""
     legacy = dir_path / "bot-bottle.json"
     if legacy.is_file() and not md_dir.exists():
-        die(
+        raise ManifestError(
             f"found {legacy} but {md_dir} does not exist. The manifest "
             f"format changed in PRD 0011 — rewrite the JSON content "
             f"as per-file Markdown under {md_dir}/bottles/ and "
@@ -1176,13 +1180,13 @@ def _load_bottles_from_dir(bottles_dir: Path) -> dict[str, Bottle]:
         try:
             fm, _body = parse_frontmatter(path.read_text())
         except OSError as e:
-            die(f"could not read {path}: {e}")
+            raise ManifestError(f"could not read {path}: {e}")
         except YamlSubsetError as e:
-            die(f"{path}: {e}")
+            raise ManifestError(f"{path}: {e}")
         unknown = set(fm.keys()) - _BOTTLE_KEYS
         if unknown:
             allowed = ", ".join(sorted(_BOTTLE_KEYS))
-            die(
+            raise ManifestError(
                 f"bottle file {path}: unknown frontmatter key(s) "
                 f"{sorted(unknown)}; allowed keys are {allowed}."
             )
@@ -1214,7 +1218,7 @@ def _resolve_one_bottle(
         return cache[name]
     if name in seen:
         chain = " -> ".join(seen + (name,))
-        die(f"bottle '{name}' is in an extends cycle: {chain}")
+        raise ManifestError(f"bottle '{name}' is in an extends cycle: {chain}")
     raw = raws[name]
     parent_name_raw = raw.get("extends")
     # Strip `extends:` before passing to Bottle.from_dict so it
@@ -1228,19 +1232,19 @@ def _resolve_one_bottle(
         return bottle
 
     if not isinstance(parent_name_raw, str):
-        die(
+        raise ManifestError(
             f"bottle '{name}' extends must be a string "
             f"(was {type(parent_name_raw).__name__})"
         )
     parent_name: str = parent_name_raw
     if parent_name == name:
-        die(
+        raise ManifestError(
             f"bottle '{name}' extends itself; remove the "
             f"self-reference"
         )
     if parent_name not in raws:
         avail = ", ".join(sorted(raws.keys())) or "(none)"
-        die(
+        raise ManifestError(
             f"bottle '{name}' extends '{parent_name}' which is not "
             f"defined. Available bottles: {avail}"
         )
@@ -1351,13 +1355,13 @@ def _load_agents_from_dir(
         try:
             fm, body = parse_frontmatter(path.read_text())
         except OSError as e:
-            die(f"could not read {path}: {e}")
+            raise ManifestError(f"could not read {path}: {e}")
         except YamlSubsetError as e:
-            die(f"{path}: {e}")
+            raise ManifestError(f"{path}: {e}")
         unknown = set(fm.keys()) - _AGENT_KEYS
         if unknown:
             allowed = ", ".join(sorted(_AGENT_KEYS))
-            die(
+            raise ManifestError(
                 f"agent file {path}: unknown frontmatter key(s) "
                 f"{sorted(unknown)}; allowed keys are {allowed}."
             )

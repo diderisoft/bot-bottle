@@ -7,8 +7,7 @@ auth omission means unauthenticated."""
 
 import unittest
 
-from bot_bottle.log import Die
-from bot_bottle.manifest import EgressRoute, Manifest
+from bot_bottle.manifest import ManifestError, EgressRoute, Manifest
 
 
 def _bottle(routes):
@@ -41,15 +40,15 @@ class TestMinimalRoute(unittest.TestCase):
         self.assertEqual("", r.TokenRef)
 
     def test_host_required(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             _bottle([{}])
 
     def test_host_must_be_non_empty(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             _bottle([{"host": ""}])
 
     def test_unknown_top_level_key_dies(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             _bottle([{"host": "x.example", "wat": "yes"}])
 
 
@@ -59,15 +58,15 @@ class TestPathAllowlist(unittest.TestCase):
         self.assertEqual((), b.egress.routes[0].PathAllowlist)
 
     def test_must_be_array(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             _bottle([{"host": "x.example", "path_allowlist": "/x/"}])
 
     def test_items_must_be_strings(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             _bottle([{"host": "x.example", "path_allowlist": [42]}])
 
     def test_items_must_be_absolute_paths(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             _bottle([{"host": "x.example", "path_allowlist": ["nope/"]}])
 
     def test_full_list(self):
@@ -100,25 +99,25 @@ class TestAuth(unittest.TestCase):
     def test_empty_auth_block_rejected(self):
         # Per PRD 0017: `auth: {}` is an error, not a synonym for
         # "no auth" — that's what omission is for.
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             _bottle([{"host": "x.example", "auth": {}}])
 
     def test_missing_scheme_rejected(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             _bottle([{
                 "host": "x.example",
                 "auth": {"token_ref": "T"},
             }])
 
     def test_missing_token_ref_rejected(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             _bottle([{
                 "host": "x.example",
                 "auth": {"scheme": "Bearer"},
             }])
 
     def test_unknown_scheme_rejected(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             _bottle([{
                 "host": "x.example",
                 "auth": {"scheme": "Basic", "token_ref": "T"},
@@ -133,7 +132,7 @@ class TestAuth(unittest.TestCase):
         self.assertEqual("token", b.egress.routes[0].AuthScheme)
 
     def test_unknown_auth_key_rejected(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             _bottle([{
                 "host": "x.example",
                 "auth": {"scheme": "Bearer", "token_ref": "T", "extra": "no"},
@@ -166,22 +165,22 @@ class TestRole(unittest.TestCase):
     def test_unknown_role_rejected(self):
         # The role enum is locked down — typos shouldn't silently
         # become no-op markers.
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             _bottle([{"host": "x.example", "role": "totally-made-up"}])
 
     def test_non_string_role_rejected(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             _bottle([{"host": "x.example", "role": 42}])
 
     def test_list_with_non_string_item_rejected(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             _bottle([{"host": "x.example",
                       "role": ["claude_code_oauth", 42]}])
 
     def test_singleton_claude_code_oauth_enforced(self):
         # Two routes both claiming the role would make "which one
         # drives the placeholder env?" ambiguous.
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             _bottle([
                 {"host": "api.anthropic.com", "role": "claude_code_oauth",
                  "auth": {"scheme": "Bearer", "token_ref": "T1"}},
@@ -199,7 +198,7 @@ class TestRole(unittest.TestCase):
         self.assertEqual(("codex_auth",), b.egress.routes[0].Role)
 
     def test_claude_role_rejected_for_codex_provider(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             _provider_bottle("codex", [{
                 "host": "api.anthropic.com",
                 "role": "claude_code_oauth",
@@ -207,7 +206,7 @@ class TestRole(unittest.TestCase):
             }])
 
     def test_codex_role_rejected_for_default_claude_provider(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             _bottle([{
                 "host": "api.openai.com",
                 "role": "codex_auth",
@@ -239,32 +238,32 @@ class TestPipelockPolicy(unittest.TestCase):
         self.assertEqual((), b.egress.routes[0].Pipelock.SsrfIpAllowlist)
 
     def test_pipelock_policy_must_be_object(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             _bottle([{"host": "x.example", "pipelock": True}])
 
     def test_tls_passthrough_must_be_bool(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             _bottle([{
                 "host": "x.example",
                 "pipelock": {"tls_passthrough": "yes"},
             }])
 
     def test_ssrf_ip_allowlist_must_be_array(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             _bottle([{
                 "host": "x.example",
                 "pipelock": {"ssrf_ip_allowlist": "192.0.2.10/32"},
             }])
 
     def test_ssrf_ip_allowlist_items_must_be_cidr_or_ip(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             _bottle([{
                 "host": "x.example",
                 "pipelock": {"ssrf_ip_allowlist": ["not-an-ip"]},
             }])
 
     def test_unknown_pipelock_key_rejected(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             _bottle([{"host": "x.example", "pipelock": {"wat": True}}])
 
 
@@ -273,14 +272,14 @@ class TestRouteValidation(unittest.TestCase):
         # Routes match by exact host; duplicates leave the choice
         # ambiguous, so we reject them up front rather than picking
         # the first/last silently.
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             _bottle([
                 {"host": "github.com"},
                 {"host": "github.com", "path_allowlist": ["/x/"]},
             ])
 
     def test_duplicate_host_case_insensitive(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             _bottle([
                 {"host": "GitHub.com"},
                 {"host": "github.com"},
@@ -301,7 +300,7 @@ class TestRouteValidation(unittest.TestCase):
 
 class TestConfigShape(unittest.TestCase):
     def test_unknown_egress_key_rejected(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(ManifestError):
             Manifest.from_json_obj({
                 "bottles": {"dev": {"egress": {"wat": []}}},
                 "agents": {"demo": {"skills": [], "prompt": "",

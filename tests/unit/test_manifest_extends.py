@@ -10,22 +10,18 @@ it here covers both."""
 
 from __future__ import annotations
 
-import contextlib
-import io
 import unittest
 
-from bot_bottle.log import Die
-from bot_bottle.manifest import Manifest
+from bot_bottle.manifest import ManifestError, Manifest
 
 
-def _die_message(callable_, *args, **kwargs) -> str:
-    buf = io.StringIO()
-    with contextlib.redirect_stderr(buf):
-        try:
-            callable_(*args, **kwargs)
-        except Die:
-            return buf.getvalue()
-    raise AssertionError("expected Die was not raised")
+def _error_message(callable_, *args, **kwargs) -> str:
+    """Run `callable_` expecting a ManifestError; return its message."""
+    try:
+        callable_(*args, **kwargs)
+    except ManifestError as e:
+        return str(e)
+    raise AssertionError("expected ManifestError was not raised")
 
 
 def _build(**bottles) -> Manifest:
@@ -295,16 +291,16 @@ class TestExtendsChain(unittest.TestCase):
 
 class TestExtendsErrors(unittest.TestCase):
     def test_missing_parent_dies(self):
-        msg = _die_message(_build, child={"extends": "ghost"})
+        msg = _error_message(_build, child={"extends": "ghost"})
         self.assertIn("extends 'ghost'", msg)
         self.assertIn("not defined", msg)
 
     def test_self_extends_dies(self):
-        msg = _die_message(_build, loop={"extends": "loop"})
+        msg = _error_message(_build, loop={"extends": "loop"})
         self.assertIn("extends itself", msg)
 
     def test_two_node_cycle_dies(self):
-        msg = _die_message(
+        msg = _error_message(
             _build,
             a={"extends": "b"},
             b={"extends": "a"},
@@ -315,7 +311,7 @@ class TestExtendsErrors(unittest.TestCase):
         self.assertIn("b", msg)
 
     def test_three_node_cycle_dies(self):
-        msg = _die_message(
+        msg = _error_message(
             _build,
             a={"extends": "b"},
             b={"extends": "c"},
@@ -324,7 +320,7 @@ class TestExtendsErrors(unittest.TestCase):
         self.assertIn("extends cycle", msg)
 
     def test_non_string_extends_dies(self):
-        msg = _die_message(_build, child={"extends": ["base"]})
+        msg = _error_message(_build, child={"extends": ["base"]})
         self.assertIn("extends must be a string", msg)
 
 
