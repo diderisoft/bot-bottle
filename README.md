@@ -362,6 +362,10 @@ Dockerfile while keeping the bot-bottle sidecars in place.
 bottle: gitea-dev
 skills:
   - init-prd
+git:
+  user:
+    name: gitea-helper
+    email: eric+gitea-helper@dideric.is
 ---
 
 You help maintain Gitea-hosted projects.
@@ -374,6 +378,19 @@ skills to mount. You can also include Claude Code subagent fields
 frontmatter — bot-bottle ignores them at launch but doesn't
 reject them, so the same file can drop into `~/.claude/agents/` as a
 Claude Code subagent.
+
+An agent may also declare `git.user` (`name` / `email`). It overlays
+the referenced bottle's `git.user` per-field — the agent's non-empty
+fields win, the rest fall through to the bottle — so two agents can
+share one bottle and still commit under distinct identities without
+an identity-only bottle (PRD 0027). Only `git.user` is allowed at the
+agent level; `git.remotes` stays bottle-only because it carries
+credentials and host trust. The launch preflight and `cli.py info`
+print the effective identity annotated `(agent)` / `(bottle)` so you
+can see where each field came from. Git authorship is not a
+credential — push auth is the bottle's remote key/token — so a
+repo-shipped agent setting its own identity grants no access; treat
+an agent identity as *claimed, not vouched*.
 
 Unknown top-level frontmatter keys die at load with a "did you mean"
 pointer; typos don't silently ghost into an empty config.

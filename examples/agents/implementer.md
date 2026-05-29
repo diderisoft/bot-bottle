@@ -5,6 +5,10 @@ model: opus
 bottle: dev
 skills:
   - init-prd
+git:
+  user:
+    name: implementer-bot
+    email: eric+implementer@dideric.is
 ---
 
 You are a feature-implementation agent running inside an ephemeral
