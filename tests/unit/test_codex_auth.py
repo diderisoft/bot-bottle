@@ -24,6 +24,12 @@ def _jwt(exp: int) -> str:
     return f"{enc({'alg': 'none'})}.{enc({'exp': exp})}.sig"
 
 
+def _jwt_payload(token: str) -> dict:
+    payload = token.split(".")[1]
+    payload += "=" * (-len(payload) % 4)
+    return json.loads(base64.urlsafe_b64decode(payload.encode()).decode())
+
+
 class TestCodexHostAccessToken(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="cb-codex-auth.")
@@ -121,6 +127,55 @@ class TestCodexHostAccessToken(unittest.TestCase):
                 now=datetime(2026, 1, 1, tzinfo=timezone.utc),
             )
         )
+
+    def test_dummy_auth_keeps_required_account_claim_shape(self):
+        def jwt(payload: dict) -> str:
+            def enc(obj: dict) -> str:
+                raw = json.dumps(obj, separators=(",", ":")).encode()
+                return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+            return f"{enc({'alg': 'none'})}.{enc(payload)}.sig"
+
+        self._write({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "access_token": jwt({
+                    "exp": 2000000000,
+                    "https://api.openai.com/auth": {
+                        "chatgpt_plan_type": "plus",
+                        "chatgpt_account_id": "acct-real",
+                        "chatgpt_user_id": "user-real",
+                        "user_id": "auth-user-real",
+                        "localhost": True,
+                    },
+                    "https://api.openai.com/profile": {
+                        "email": "real@example.invalid",
+                        "email_verified": True,
+                    },
+                }),
+                "id_token": jwt({
+                    "exp": 2000000000,
+                    "email": "real@example.invalid",
+                    "email_verified": True,
+                    "https://api.openai.com/auth": {
+                        "chatgpt_plan_type": "plus",
+                        "chatgpt_account_id": "acct-real",
+                    },
+                }),
+                "refresh_token": "hidden",
+            },
+        })
+        dummy = json.loads(codex_dummy_auth_json(
+            {"CODEX_HOME": str(self.home)},
+            now=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        ))
+        access_payload = _jwt_payload(dummy["tokens"]["access_token"])
+        auth = access_payload["https://api.openai.com/auth"]
+        profile = access_payload["https://api.openai.com/profile"]
+        self.assertEqual("plus", auth["chatgpt_plan_type"])
+        self.assertEqual("bot-bottle-placeholder", auth["chatgpt_account_id"])
+        self.assertEqual("bot-bottle-placeholder", auth["chatgpt_user_id"])
+        self.assertEqual("bot-bottle@example.invalid", profile["email"])
+        self.assertTrue(profile["email_verified"])
 
 
 if __name__ == "__main__":

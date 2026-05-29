@@ -108,15 +108,108 @@ def _dummy_jwt(now: datetime | None = None) -> str:
     check_now = now or datetime.now(timezone.utc)
     exp = int(check_now.timestamp()) + 3600
 
+    return _encode_dummy_jwt({
+        "exp": exp,
+        "sub": "bot-bottle-placeholder",
+    })
+
+
+def _dummy_jwt_from_host(value: object, *, now: datetime | None = None) -> str:
+    if not isinstance(value, str):
+        return _dummy_jwt(now)
+    parts = value.split(".")
+    if len(parts) < 2:
+        return _dummy_jwt(now)
+    try:
+        payload = json.loads(_b64url_decode(parts[1]))
+    except (ValueError, json.JSONDecodeError):
+        return _dummy_jwt(now)
+    if not isinstance(payload, dict):
+        return _dummy_jwt(now)
+    return _encode_dummy_jwt(_redact_jwt_payload(payload, now=now))
+
+
+def _encode_dummy_jwt(payload: dict) -> str:
     def enc(obj: dict) -> str:
         raw = json.dumps(obj, separators=(",", ":")).encode()
         return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
-    return (
-        f"{enc({'alg': 'none', 'typ': 'JWT'})}."
-        f"{enc({'exp': exp, 'sub': 'bot-bottle-placeholder'})}."
-        "placeholder"
-    )
+    return f"{enc({'alg': 'none', 'typ': 'JWT'})}.{enc(payload)}.placeholder"
+
+
+def _redact_jwt_payload(
+    payload: dict,
+    *,
+    now: datetime | None = None,
+) -> dict:
+    check_now = now or datetime.now(timezone.utc)
+    out = _redact_claims(payload)
+    if not isinstance(out, dict):
+        out = {}
+    out["exp"] = int(check_now.timestamp()) + 3600
+    out.setdefault("sub", "bot-bottle-placeholder")
+    return out
+
+
+def _redact_claims(value: object) -> object:
+    if isinstance(value, dict):
+        out: dict[str, object] = {}
+        for key, inner in value.items():
+            lower = key.lower()
+            if key == "https://api.openai.com/profile":
+                out[key] = _redact_profile_claim(inner)
+            elif key == "https://api.openai.com/auth":
+                out[key] = _redact_auth_claim(inner)
+            elif lower == "email":
+                out[key] = "bot-bottle@example.invalid"
+            elif lower == "email_verified":
+                out[key] = True
+            elif lower in {"exp", "iat", "nbf", "auth_time", "pwd_auth_time"}:
+                out[key] = inner if isinstance(inner, (int, float)) else 0
+            elif lower in {"aud", "scp", "amr"}:
+                out[key] = inner if isinstance(inner, list) else []
+            elif isinstance(inner, bool):
+                out[key] = inner
+            elif isinstance(inner, (dict, list)):
+                out[key] = _redact_claims(inner)
+            else:
+                out[key] = "bot-bottle-placeholder"
+        return out
+    if isinstance(value, list):
+        return []
+    return "bot-bottle-placeholder"
+
+
+def _redact_profile_claim(value: object) -> dict:
+    profile = value if isinstance(value, dict) else {}
+    return {
+        "email": "bot-bottle@example.invalid",
+        "email_verified": bool(profile.get("email_verified", True)),
+    }
+
+
+def _redact_auth_claim(value: object) -> dict:
+    auth = value if isinstance(value, dict) else {}
+    out: dict[str, object] = {}
+    for key, inner in auth.items():
+        lower = key.lower()
+        if lower == "chatgpt_plan_type" and isinstance(inner, str) and inner:
+            out[key] = inner
+        elif lower == "localhost" and isinstance(inner, bool):
+            out[key] = inner
+        elif isinstance(inner, bool):
+            out[key] = inner
+        elif isinstance(inner, list):
+            out[key] = []
+        elif isinstance(inner, dict):
+            out[key] = {}
+        else:
+            out[key] = "bot-bottle-placeholder"
+    out.setdefault("chatgpt_plan_type", "unknown")
+    out.setdefault("user_id", "bot-bottle-placeholder")
+    out.setdefault("chatgpt_user_id", "bot-bottle-placeholder")
+    out.setdefault("chatgpt_account_id", "bot-bottle-placeholder")
+    return out
 
 
 def _redact_codex_auth(value: object, *, now: datetime | None = None) -> object:
@@ -129,7 +222,7 @@ def _redact_codex_auth(value: object, *, now: datetime | None = None) -> object:
             elif lower == "tokens":
                 out[key] = _redact_codex_auth(inner, now=now)
             elif lower in {"access_token", "id_token"}:
-                out[key] = _dummy_jwt(now)
+                out[key] = _dummy_jwt_from_host(inner, now=now)
             elif "token" in lower or "secret" in lower or lower.endswith("_key"):
                 out[key] = "bot-bottle-placeholder"
             elif lower in {"account_id", "user_id", "email"}:
