@@ -50,7 +50,5 @@ PRDs, research notes, issues/PRs. Forge links are convenience
 pointers; the reasoning above must stand without them.
 ```
 
-## Index
-
-- [ADR 0001](0001-merge-prs-with-rebase.md) — merge PRs with rebase, not merge commits.
-- [ADR 0002](0002-agent-identity-claimed-not-vouched.md) — agent-set git identity is claimed, not vouched.
+The records are the index: `ls docs/decisions/` or skim the titles.
+No hand-maintained list to keep in sync.
