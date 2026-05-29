@@ -7,21 +7,9 @@ reasoning lives in the clone, not in a forge issue thread or a chat log
 that disappears when the provider does.
 
 See `docs/research/issue-tracking-vs-in-repo-decision-history.md` for
-the rationale behind keeping decision history in-repo.
-
-## When to write one
-
-| Artifact | For |
-|---|---|
-| **PRD** (`docs/prds/`) | A feature: what to build, scope, success criteria. |
-| **Research note** (`docs/research/`) | A landscape/tradeoff investigation. |
-| **Decision record** (`docs/decisions/`) | A decision that isn't itself a feature — a policy, a convention, a "we will / won't do this," or a load-bearing choice made inside a larger PRD that deserves to be discoverable on its own. |
-
-A decision that's fully specified by a PRD doesn't need duplicating
-here. Write a record when the *decision* would otherwise be buried in
-prose, lost in an issue thread, or have no in-repo home at all (small
-requests that don't merit a PRD; non-feature choices like merge
-strategy or a trust posture).
+the rationale behind keeping decision history in-repo, and
+[`docs/README.md`](../README.md) for when to write a decision record
+vs. a PRD or research note.
 
 ## Format
 
