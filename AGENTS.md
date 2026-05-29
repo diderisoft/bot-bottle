@@ -28,9 +28,10 @@ the container lifecycle and the copying of skills and env vars into it.
 - `bot-bottle.json` — legacy manifest of named agents (env / skills / prompt
   per agent), consumed by `cli.py`. See "Manifest" under
   "Intended design".
-- `docs/INDEX.md` — pointer to the research notes.
-- `docs/prds/` — product requirement docs.
-- `docs/research/` — research notes (empty for now, kept tracked via `.gitkeep`).
+- `docs/README.md` — docs overview; when to write which document.
+- `docs/prds/` — product requirement docs (see `docs/prds/README.md` for format).
+- `docs/research/` — research notes.
+- `docs/decisions/` — decision records (ADR-lite).
 
 ## Conventions
 
