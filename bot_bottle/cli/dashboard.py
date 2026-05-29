@@ -21,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -52,7 +53,7 @@ from ..backend.docker.pipelock_apply import (
     parse_allowlist_content,
     render_allowlist_content,
 )
-from ..log import info
+from ..log import Die, error, info
 from ..manifest import Manifest
 from ..supervise import (
     ACTION_OPERATOR_EDIT,
@@ -1277,7 +1278,55 @@ def cmd_dashboard(argv: list[str]) -> int:
         curses.wrapper(_main_loop)
     except KeyboardInterrupt:
         return 130
+    except Die as e:
+        # die() printed the reason to stderr, but that happened while
+        # curses owned the terminal — the text landed on the alternate
+        # screen and was wiped when the terminal was restored. Re-surface
+        # it now that we're back on the normal screen.
+        if e.message:
+            error(e.message)
+        else:
+            error("dashboard exited on a fatal error (no detail captured).")
+        return e.code if isinstance(e.code, int) else 1
+    except Exception as e:
+        # Any other crash inside the TUI. The traceback would otherwise
+        # vanish with the alternate screen, so persist it and tell the
+        # operator where to look.
+        log_path = _write_crash_log(e)
+        error(f"dashboard crashed: {type(e).__name__}: {e}")
+        error(f"full traceback written to {log_path}")
+        return 1
     return 0
+
+
+def _write_crash_log(exc: BaseException) -> Path:
+    """Persist `exc`'s traceback to a stable file under ~/.bot-bottle/
+    and return its path.
+
+    The dashboard runs under curses, so a crash's stderr/traceback is
+    painted onto the alternate screen and lost when the terminal is
+    restored — this leaves the operator a durable record of *why* it
+    died. Best-effort: falls back to a tempfile if the home dir can't
+    be written."""
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    body = "".join(
+        traceback.format_exception(type(exc), exc, exc.__traceback__)
+    )
+    entry = f"=== dashboard crash {stamp} ===\n{body}\n"
+    try:
+        log_dir = _supervise.bot_bottle_root() / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        path = log_dir / "dashboard-crash.log"
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(entry)
+        return path
+    except OSError:
+        fd, tmp = tempfile.mkstemp(
+            prefix="bot-bottle-dashboard-crash-", suffix=".log",
+        )
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(entry)
+        return Path(tmp)
 
 
 def _list_once() -> int:
@@ -1407,8 +1456,19 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
         if manifest_cache[0] is None:
             manifest_cache[0] = Manifest.resolve(USER_CWD, missing_ok=True)
         return manifest_cache[0]
-    if not _get_manifest().bottles and not _get_manifest().agents:
-        status_line = "warning: no bot-bottle config/agents found; new-agent picker is empty"
+    # A malformed manifest must not take the whole dashboard down — the
+    # operator may just be watching running bottles. Degrade to a
+    # status-line warning. Die is a SystemExit (not an Exception), so it
+    # has to be caught explicitly or it escapes the loop and crashes.
+    try:
+        _loaded = _get_manifest()
+    except Die as e:
+        status_line = f"config error: {e.message or 'malformed manifest'}"
+    except Exception as e:
+        status_line = f"config load failed: {e}"
+    else:
+        if not _loaded.bottles and not _loaded.agents:
+            status_line = "warning: no bot-bottle config/agents found; new-agent picker is empty"
     # First-tick guard: a brand-new dashboard finds any
     # pre-existing queue entries on its first poll; those
     # shouldn't ring the bell as if they just arrived.
@@ -1494,6 +1554,11 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
             # bottle running.
             try:
                 manifest = _get_manifest()
+            except Die as e:
+                # Config error (Die is a SystemExit, missed by the
+                # except-Exception below). Surface the reason inline.
+                status_line = f"config error: {e.message or 'malformed manifest'}"
+                continue
             except Exception as e:
                 status_line = f"manifest load failed: {e}"
                 continue
