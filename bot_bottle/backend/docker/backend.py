@@ -29,6 +29,7 @@ from .bottle_plan import DockerBottlePlan
 from .provision import ca as _ca
 from .provision import git as _git
 from .provision import prompt as _prompt
+from .provision import provider_auth as _provider_auth
 from .provision import skills as _skills
 from .provision import supervise as _supervise_prov
 
@@ -61,6 +62,9 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
 
     def provision_prompt(self, plan: DockerBottlePlan, target: str) -> str | None:
         return _prompt.provision_prompt(plan, target)
+
+    def provision_provider_auth(self, plan: DockerBottlePlan, target: str) -> None:
+        _provider_auth.provision_provider_auth(plan, target)
 
     def provision_skills(self, plan: DockerBottlePlan, target: str) -> None:
         _skills.provision_skills(plan, target)

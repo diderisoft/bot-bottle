@@ -55,6 +55,7 @@ class DockerBottlePlan(BottlePlan):
     agent_command: str = "claude"
     agent_prompt_mode: PromptMode = "append_file"
     agent_provider_template: str = "claude"
+    codex_auth_file: Path | None = None
 
     def print(self, *, remote_control: bool) -> None:
         """Render the y/N preflight summary to stderr — compact form

@@ -286,6 +286,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         intercepted without per-tool reconfiguration."""
         self.provision_ca(plan, target)
         prompt_path = self.provision_prompt(plan, target)
+        self.provision_provider_auth(plan, target)
         self.provision_skills(plan, target)
         self.provision_git(plan, target)
         self.provision_supervise(plan, target)
@@ -299,6 +300,11 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         except Docker today) aren't forced to implement it. The Docker
         backend overrides to docker-cp the cert in and run
         `update-ca-certificates`."""
+
+    def provision_provider_auth(self, plan: PlanT, target: str) -> None:
+        """Install non-secret provider auth marker files into the agent
+        home when a provider needs them to select the right auth mode.
+        The default is no-op."""
 
     @abstractmethod
     def provision_prompt(self, plan: PlanT, target: str) -> str | None:

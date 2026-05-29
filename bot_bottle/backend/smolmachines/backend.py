@@ -19,6 +19,7 @@ from .bottle_plan import SmolmachinesBottlePlan
 from .provision import ca as _ca
 from .provision import git as _git
 from .provision import prompt as _prompt
+from .provision import provider_auth as _provider_auth
 from .provision import skills as _skills
 from .provision import supervise as _supervise
 
@@ -60,6 +61,11 @@ class SmolmachinesBottleBackend(
         self, plan: SmolmachinesBottlePlan, target: str
     ) -> str | None:
         return _prompt.provision_prompt(plan, target)
+
+    def provision_provider_auth(
+        self, plan: SmolmachinesBottlePlan, target: str
+    ) -> None:
+        _provider_auth.provision_provider_auth(plan, target)
 
     def provision_skills(
         self, plan: SmolmachinesBottlePlan, target: str

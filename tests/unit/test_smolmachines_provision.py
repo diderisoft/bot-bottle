@@ -21,6 +21,7 @@ from bot_bottle.backend.smolmachines.provision import (
     ca as _ca,
     git as _git,
     prompt as _prompt,
+    provider_auth as _provider_auth,
     skills as _skills,
     supervise as _supervise,
 )
@@ -55,6 +56,7 @@ def _plan(
     bundle_ip: str = "192.168.50.2",
     agent_git_gate_host: str = "127.0.0.1:55555",
     agent_supervise_url: str = "http://127.0.0.1:55556/",
+    codex_auth_file: Path | None = None,
 ) -> SmolmachinesBottlePlan:
     bottle_json: dict = {}
     git_json: dict = {}
@@ -129,6 +131,7 @@ def _plan(
         supervise_plan=supervise_plan,
         agent_git_gate_host=agent_git_gate_host,
         agent_supervise_url=agent_supervise_url,
+        codex_auth_file=codex_auth_file,
     )
 
 
@@ -187,6 +190,42 @@ class TestProvisionPrompt(unittest.TestCase):
             ["chmod", "600", "/home/node/.bot-bottle-prompt.txt"],
             argv_seen,
         )
+
+
+class TestProvisionProviderAuth(unittest.TestCase):
+    def test_noop_without_codex_auth_file(self):
+        with patch(
+            "bot_bottle.backend.smolmachines.provision.provider_auth._smolvm.machine_cp"
+        ) as cp, patch(
+            "bot_bottle.backend.smolmachines.provision.provider_auth._smolvm.machine_exec"
+        ) as ex:
+            _provider_auth.provision_provider_auth(
+                _plan(), "bot-bottle-demo-abc12",
+            )
+        self.assertEqual(0, cp.call_count)
+        self.assertEqual(0, ex.call_count)
+
+    def test_copies_dummy_auth_json_to_codex_home(self):
+        with patch(
+            "bot_bottle.backend.smolmachines.provision.provider_auth._smolvm.machine_cp"
+        ) as cp, patch(
+            "bot_bottle.backend.smolmachines.provision.provider_auth._smolvm.machine_exec"
+        ) as ex:
+            _provider_auth.provision_provider_auth(
+                _plan(codex_auth_file=Path("/tmp/codex-auth.json")),
+                "bot-bottle-demo-abc12",
+            )
+        cp.assert_called_once_with(
+            "/tmp/codex-auth.json",
+            "bot-bottle-demo-abc12:/home/node/.codex/auth.json",
+        )
+        argv_seen = [call.args[1] for call in ex.call_args_list]
+        self.assertIn(["mkdir", "-p", "/home/node/.codex"], argv_seen)
+        self.assertIn(
+            ["chown", "node:node", "/home/node/.codex/auth.json"],
+            argv_seen,
+        )
+        self.assertIn(["chmod", "600", "/home/node/.codex/auth.json"], argv_seen)
 
 
 class TestProvisionSkills(unittest.TestCase):

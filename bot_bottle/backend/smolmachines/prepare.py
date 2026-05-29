@@ -16,6 +16,7 @@ from pathlib import Path
 
 from ...agent_provider import runtime_for
 from ...backend import BottleSpec
+from ...codex_auth import write_codex_dummy_auth_file
 from ...backend.docker.bottle_state import (
     BottleMetadata,
     agent_state_dir,
@@ -144,9 +145,12 @@ def resolve_plan(
     agent_dir = agent_state_dir(slug)
     agent_dir.mkdir(parents=True, exist_ok=True)
     prompt_file = agent_dir / "prompt.txt"
+    codex_auth_file = agent_dir / "codex-auth.json"
     agent = manifest.agents[spec.agent_name]
     prompt_file.write_text(agent.prompt or "")
     prompt_file.chmod(0o600)
+    if provider.forward_host_credentials:
+        write_codex_dummy_auth_file(codex_auth_file, dict(os.environ))
 
     machine_name = f"bot-bottle-{slug}"
     # Stash the agent image ref — `launch.launch` runs the
@@ -182,6 +186,7 @@ def resolve_plan(
         agent_prompt_mode=provider_runtime.prompt_mode,
         agent_provider_template=provider.template,
         agent_dockerfile_path=agent_dockerfile_path,
+        codex_auth_file=codex_auth_file if provider.forward_host_credentials else None,
     )
 
 

@@ -97,6 +97,7 @@ class SmolmachinesBottlePlan(BottlePlan):
     agent_prompt_mode: PromptMode = "append_file"
     agent_provider_template: str = "claude"
     agent_dockerfile_path: str = ""
+    codex_auth_file: Path | None = None
 
     def print(self, *, remote_control: bool) -> None:
         """Compact y/N preflight. Same shape as the Docker
