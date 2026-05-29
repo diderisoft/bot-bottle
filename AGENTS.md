@@ -30,7 +30,7 @@ the container lifecycle and the copying of skills and env vars into it.
   "Intended design".
 - `docs/README.md` — docs overview; when to write which document.
 - `docs/prds/` — product requirement docs (see `docs/prds/README.md` for format).
-- `docs/research/` — research notes.
+- `docs/research/` — research notes (see `docs/research/README.md`).
 - `docs/decisions/` — decision records (ADR-lite).
 
 ## Conventions
