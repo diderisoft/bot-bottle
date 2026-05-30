@@ -44,7 +44,7 @@ GIT_GATE_HOSTNAME = "git-gate"
 # Bound half-open git client sessions. If an agent/tool runner is
 # interrupted during push, git daemon should reap the receive-pack
 # child instead of keeping the gate wedged indefinitely.
-GIT_GATE_DAEMON_TIMEOUT_SECS = 60
+GIT_GATE_DAEMON_TIMEOUT_SECS = 15
 
 
 def _empty_str_map() -> dict[str, str]:
