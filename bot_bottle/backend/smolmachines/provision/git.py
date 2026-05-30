@@ -18,7 +18,7 @@ Three concerns, all about git in the agent:
 Differs from `backend.docker.provision.git` in one address detail:
 the TSI-allowlisted guest can only reach the bundle's pinned IP
 (no DNS resolver in the /32 allowlist), so the insteadOf URLs
-are `git://<bundle_ip>:<port>/<name>.git` rather than the
+are `http://<bundle_ip>:<port>/<name>.git` rather than the
 docker backend's `git://git-gate/<name>.git`. The render itself
 is the shared `git_gate_render_gitconfig` on the platform-neutral
 git_gate module."""
@@ -82,12 +82,14 @@ def _provision_git_gate_config(plan: SmolmachinesBottlePlan, target: str) -> Non
     if not bottle.git:
         return
 
-    # `127.0.0.1:<host port>` form: the bundle's git-gate port
-    # is published on host loopback at launch time so the
-    # smolvm guest (which can only reach macOS networking via
+    # `<loopback alias>:<host port>` form: the bundle's git-gate
+    # HTTP port is published on host loopback at launch time so
+    # the smolvm guest (which can only reach macOS networking via
     # TSI, not the docker bridge IP) can dial it. launch.py
     # populates `plan.agent_git_gate_host` after bundle bringup.
-    content = git_gate_render_gitconfig(bottle.git, plan.agent_git_gate_host)
+    content = git_gate_render_gitconfig(
+        bottle.git, plan.agent_git_gate_host, scheme="http",
+    )
 
     guest_gitconfig = f"{_guest_home()}/.gitconfig"
     # Stage the file under the plan's stage_dir so `machine cp`

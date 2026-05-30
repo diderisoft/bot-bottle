@@ -9,6 +9,7 @@ from __future__ import annotations
 import subprocess
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -23,9 +24,10 @@ from bot_bottle.backend.smolmachines.provision import (
     skills as _skills,
     supervise as _supervise,
 )
+from bot_bottle.backend.smolmachines.launch import _bundle_launch_spec
 from bot_bottle.backend.smolmachines.smolvm import SmolvmRunResult
 from bot_bottle.egress import EgressPlan, EgressRoute
-from bot_bottle.git_gate import GitGatePlan
+from bot_bottle.git_gate import GitGatePlan, GitGateUpstream
 from bot_bottle.manifest import GitEntry, Manifest
 from bot_bottle.pipelock import PipelockProxyPlan
 from bot_bottle.supervise import SupervisePlan
@@ -447,9 +449,9 @@ class TestProvisionGit(unittest.TestCase):
 
     def test_writes_gitconfig_with_ip_port_form_for_smolmachines(self):
         # Smolmachines's TSI-allowlisted guest dials git-gate via
-        # `127.0.0.1:<host port>` — the bundle's git-gate port is
-        # published on host loopback at launch time, and the plan
-        # carries the discovered host port (here mocked to 9418).
+        # smart HTTP at `127.0.0.1:<host port>` — the bundle's
+        # git HTTP port is published on host loopback at launch
+        # time, and the plan carries the discovered host port.
         plan = _plan(
             git=[GitEntry(
                 Name="bot-bottle",
@@ -472,11 +474,39 @@ class TestProvisionGit(unittest.TestCase):
         self.assertEqual(self.stage, staged_path.parent)
         content = staged_path.read_text()
         self.assertIn(
-            '[url "git://127.0.0.1:9418/bot-bottle.git"]', content,
+            '[url "http://127.0.0.1:9418/bot-bottle.git"]', content,
         )
         self.assertIn(
             "\tinsteadOf = ssh://git@host/repo.git", content,
         )
+
+
+class TestBundleLaunchSpec(unittest.TestCase):
+    def test_git_gate_uses_http_daemon_for_smolmachines(self):
+        plan = _plan()
+        plan = replace(
+            plan,
+            git_gate_plan=replace(
+                plan.git_gate_plan,
+                upstreams=(GitGateUpstream(
+                    name="bot-bottle",
+                    upstream_url="ssh://git@host/repo.git",
+                    upstream_host="host",
+                    upstream_port="22",
+                    identity_file="/tmp/key",
+                    known_host_key="",
+                ),),
+            ),
+        )
+
+        spec = _bundle_launch_spec(plan, "net", "127.0.0.16")
+
+        self.assertEqual(
+            "egress,pipelock,git-gate,git-http",
+            spec.daemons_csv,
+        )
+        self.assertIn(9420, spec.ports_to_publish)
+        self.assertNotIn(9418, spec.ports_to_publish)
 
 
 class TestProvisionGitUser(unittest.TestCase):

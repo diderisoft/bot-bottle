@@ -20,7 +20,7 @@ sick daemon."
 
 Daemon subset is env-driven. The compose renderer narrows it via
 `BOT_BOTTLE_SIDECAR_DAEMONS=egress,pipelock` for bottles that
-don't use git-gate or supervise. Default: all four.
+don't use git-gate or supervise. Default: all daemons.
 
 Stdlib-only by design — adding supervisord/s6/runit for four
 daemons is heavier than this script.
@@ -98,6 +98,7 @@ _DAEMONS: tuple[_DaemonSpec, ...] = (
          "--listen", "0.0.0.0:8888"),
     ),
     _DaemonSpec("git-gate", ("/bin/sh", "/git-gate-entrypoint.sh")),
+    _DaemonSpec("git-http", ("python3", "/app/git_http_backend.py")),
     _DaemonSpec("supervise", ("python3", "/app/supervise_server.py")),
 )
 

@@ -173,6 +173,9 @@ class TestEntrypointRender(unittest.TestCase):
         self.assertIn("--timeout=15", script)
         self.assertIn("--init-timeout=15", script)
         self.assertIn("--base-path=/git", script)
+        # Smart HTTP receive-pack uses the same bare repos and hooks
+        # as git-daemon, so repos must opt in to HTTP pushes too.
+        self.assertIn("http.receivepack true", script)
         # The access-hook is what makes fetch a mirror operation
         # against the upstream (PRD 0008 v1.1).
         self.assertIn("--access-hook=/etc/git-gate/access-hook", script)

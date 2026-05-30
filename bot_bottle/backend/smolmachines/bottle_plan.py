@@ -68,7 +68,7 @@ class SmolmachinesBottlePlan(BottlePlan):
     # empty when the agent has no prompt — claude-code reads it
     # via --append-system-prompt-file only when non-empty.
     prompt_file: Path
-    # Inner Plans for the four bundle daemons. The same shape the
+    # Inner Plans for the sidecar bundle daemons. The same shape the
     # docker backend uses — same `.prepare()` calls produced
     # them — but our launch step doesn't populate the
     # docker-specific network fields (internal_network,

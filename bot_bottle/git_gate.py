@@ -146,13 +146,13 @@ def git_gate_aggregate_extra_hosts(
 
 
 def git_gate_render_gitconfig(
-    entries: tuple[GitEntry, ...], gate_host: str
+    entries: tuple[GitEntry, ...], gate_host: str, *, scheme: str = "git",
 ) -> str:
     """Render the agent's ~/.gitconfig content for git-gate
     `insteadOf` rewrites. Pure host-side, no docker / smolvm;
     exposed for tests + reuse across backends.
 
-    `gate_host` is the part of the URL between `git://` and the
+    `gate_host` is the part of the URL between `<scheme>://` and the
     repo path — backends differ here:
       - docker:        `git-gate` (the short network alias)
       - smolmachines:  `<bundle_ip>:<port>` (no DNS in the
@@ -169,7 +169,7 @@ def git_gate_render_gitconfig(
         "# fetch-from-upstream-before-every-upload-pack via access-hook).\n",
     ]
     for entry in entries:
-        out.append(f'[url "git://{gate_host}/{entry.Name}.git"]\n')
+        out.append(f'[url "{scheme}://{gate_host}/{entry.Name}.git"]\n')
         out.append(f"\tinsteadOf = {entry.Upstream}\n")
         if entry.RemoteKey and entry.RemoteKey != entry.UpstreamHost:
             port = (
@@ -237,6 +237,7 @@ def git_gate_render_entrypoint(upstreams: tuple[GitGateUpstream, ...]) -> str:
         "  git -C \"$repo\" config git-gate.identityFile \"$keyfile\"",
         "  git -C \"$repo\" config git-gate.knownHosts \"$hostsfile\"",
         "  git -C \"$repo\" config receive.denyCurrentBranch ignore",
+        "  git -C \"$repo\" config http.receivepack true",
         "  install -m 755 /etc/git-gate/pre-receive \"$repo/hooks/pre-receive\"",
         "}",
         "",

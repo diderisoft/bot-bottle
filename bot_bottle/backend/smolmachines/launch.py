@@ -45,7 +45,6 @@ from ..docker.git_gate import (
     GIT_GATE_CREDS_DIR_IN_CONTAINER,
     GIT_GATE_ENTRYPOINT_IN_CONTAINER,
     GIT_GATE_HOOK_IN_CONTAINER,
-    GIT_GATE_PORT as _GIT_GATE_PORT,
 )
 from ..docker.pipelock import (
     BUNDLE_LOCAL_PIPELOCK_URL,
@@ -77,6 +76,7 @@ _SMOLMACHINE_CACHE_DIR = Path.home() / ".cache" / "bot-bottle" / "smolmachines"
 # them up post-start. Pipelock's port is an env-overridable string
 # in docker.pipelock; coerce to int here.
 _PIPELOCK_PORT = int(_PIPELOCK_PORT_STR)
+_GIT_HTTP_PORT = 9420
 _SUPERVISE_PORT = SUPERVISE_PORT
 
 
@@ -172,7 +172,7 @@ def launch(
         agent_git_gate_host = ""
         if plan.git_gate_plan.upstreams:
             git_gate_host_port = _bundle.bundle_host_port(
-                plan.slug, _GIT_GATE_PORT, host_ip=loopback_ip,
+                plan.slug, _GIT_HTTP_PORT, host_ip=loopback_ip,
             )
             agent_git_gate_host = f"{loopback_ip}:{git_gate_host_port}"
         agent_supervise_url = ""
@@ -190,10 +190,11 @@ def launch(
         # otherwise claude's HTTPS_PROXY catches direct calls to
         # the supervise URL (`http://<alias>:<port>/`) and proxies
         # them through egress, which has no route for the alias
-        # and rejects with "Failed to connect". The git-gate URL
-        # uses git://, not affected by HTTP_PROXY, so the alias
-        # only has to be in NO_PROXY for the MCP / supervise
-        # path. Append rather than overwrite so prepare.py's
+        # and rejects with "Failed to connect". The smolmachines
+        # git-gate URL uses smart HTTP, so it also has to bypass
+        # the agent's HTTP_PROXY and go straight to the host-
+        # published git HTTP endpoint. Append rather than overwrite
+        # so prepare.py's
         # `localhost,127.0.0.1` baseline stays in place.
         existing_no_proxy = plan.guest_env.get("NO_PROXY", "localhost,127.0.0.1")
         guest_env = {
@@ -203,7 +204,7 @@ def launch(
             "NO_PROXY":    f"{existing_no_proxy},{loopback_ip}",
         }
         if agent_git_gate_host:
-            guest_env["GIT_GATE_URL"] = f"git://{agent_git_gate_host}"
+            guest_env["GIT_GATE_URL"] = f"http://{agent_git_gate_host}"
         if agent_supervise_url:
             guest_env["MCP_SUPERVISE_URL"] = agent_supervise_url
         plan = dataclasses.replace(
@@ -305,10 +306,10 @@ def _bundle_launch_spec(
     Daemons in the CSV:
       - egress + pipelock are always present (pipelock is the
         agent's first hop; egress is its upstream).
-      - git-gate is conditional on plan.git_gate_plan.upstreams.
+      - git-gate + git-http are conditional on plan.git_gate_plan.upstreams.
       - supervise is conditional on plan.supervise_plan.
 
-    Env + volumes are the union of the four daemons' needs, with
+    Env + volumes are the union of the sidecar daemons' needs, with
     daemon-private values only (HTTPS_PROXY is scoped to the
     egress process by egress_entrypoint.sh — see PRD 0024's bundle
     bind-address PR)."""
@@ -353,7 +354,7 @@ def _bundle_launch_spec(
     extra_hosts: list[str] = []
     gp = plan.git_gate_plan
     if gp.upstreams:
-        daemons.append("git-gate")
+        daemons += ["git-gate", "git-http"]
         volumes += [
             (str(gp.entrypoint_script), GIT_GATE_ENTRYPOINT_IN_CONTAINER, True),
             (str(gp.hook_script), GIT_GATE_HOOK_IN_CONTAINER, True),
@@ -395,7 +396,7 @@ def _bundle_launch_spec(
     else:
         ports_to_publish = [_PIPELOCK_PORT]
     if gp.upstreams:
-        ports_to_publish.append(_GIT_GATE_PORT)
+        ports_to_publish.append(_GIT_HTTP_PORT)
     if sp is not None:
         ports_to_publish.append(_SUPERVISE_PORT)
 

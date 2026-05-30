@@ -31,6 +31,7 @@
 #   9099  egress (mitmproxy, pipelock's upstream — not externally
 #                 addressed by the agent)
 #   9418  git-gate (git-daemon)
+#   9420  git-gate smart HTTP (smolmachines agent-facing transport)
 #   9100  supervise (MCP HTTP)
 
 # Stage 1: pipelock binary. The upstream pipelock image is a
@@ -81,6 +82,7 @@ COPY bot_bottle/yaml_subset.py       /app/yaml_subset.py
 COPY bot_bottle/supervise.py         /app/supervise.py
 COPY bot_bottle/supervise_server.py  /app/supervise_server.py
 COPY bot_bottle/sidecar_init.py      /app/sidecar_init.py
+COPY bot_bottle/git_http_backend.py  /app/git_http_backend.py
 COPY bot_bottle/egress_entrypoint.sh /app/egress-entrypoint.sh
 RUN chmod +x /app/egress-entrypoint.sh
 
@@ -97,7 +99,7 @@ RUN mkdir -p \
 
 # Documentation only — the compose renderer publishes whichever
 # subset the bottle uses.
-EXPOSE 8888 9099 9418 9100
+EXPOSE 8888 9099 9418 9420 9100
 
 # WORKDIR matches Dockerfile.supervise's prior layout so the
 # in-app same-dir import in supervise_server.py stays deterministic.

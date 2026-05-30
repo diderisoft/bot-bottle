@@ -60,6 +60,15 @@ class TestGitGateGitconfigRender(unittest.TestCase):
             '[url "git://192.168.20.2:9418/bot-bottle.git"]', out,
         )
 
+    def test_scheme_can_be_http_for_smolmachines(self):
+        bottle = fixture_with_git().bottles["dev"]
+        out = git_gate_render_gitconfig(
+            bottle.git, "127.0.0.16:57001", scheme="http",
+        )
+        self.assertIn(
+            '[url "http://127.0.0.16:57001/bot-bottle.git"]', out,
+        )
+
     def test_ip_upstream_also_rewrites_logical_remote_key(self):
         m = Manifest.from_json_obj({
             "bottles": {"dev": {"git": {"remotes": {

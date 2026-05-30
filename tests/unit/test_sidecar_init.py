@@ -50,15 +50,15 @@ class TestEnvForDaemon(unittest.TestCase):
         env = _env_for_daemon("pipelock", self._BASE)
         self.assertNotIn("EGRESS_TOKEN_0", env)
         self.assertNotIn("EGRESS_TOKEN_1", env)
-        # Non-token bundle env stays — supervise / git-gate / the
+        # Non-token bundle env stays — supervise / git-gate / git-http / the
         # upstream proxy URL are all load-bearing for other
         # daemons.
         self.assertEqual("/usr/bin", env["PATH"])
         self.assertEqual("http://127.0.0.1:8888", env["EGRESS_UPSTREAM_PROXY"])
         self.assertEqual("9100", env["SUPERVISE_PORT"])
 
-    def test_git_gate_and_supervise_also_lose_egress_tokens(self):
-        for name in ("git-gate", "supervise"):
+    def test_git_daemons_and_supervise_also_lose_egress_tokens(self):
+        for name in ("git-gate", "git-http", "supervise"):
             env = _env_for_daemon(name, self._BASE)
             self.assertNotIn("EGRESS_TOKEN_0", env)
             self.assertNotIn("EGRESS_TOKEN_1", env)
