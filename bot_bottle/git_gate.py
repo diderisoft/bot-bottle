@@ -41,6 +41,10 @@ from .manifest import Bottle, GitEntry
 # Short network alias for git-gate inside the sidecar bundle. The
 # agent's `.gitconfig` insteadOf rewrites resolve through this name.
 GIT_GATE_HOSTNAME = "git-gate"
+# Bound half-open git client sessions. If an agent/tool runner is
+# interrupted during push, git daemon should reap the receive-pack
+# child instead of keeping the gate wedged indefinitely.
+GIT_GATE_DAEMON_TIMEOUT_SECS = 60
 
 
 def _empty_str_map() -> dict[str, str]:
@@ -247,6 +251,8 @@ def git_gate_render_entrypoint(upstreams: tuple[GitGateUpstream, ...]) -> str:
         "",
         "exec git daemon \\",
         "  --reuseaddr \\",
+        f"  --timeout={GIT_GATE_DAEMON_TIMEOUT_SECS} \\",
+        f"  --init-timeout={GIT_GATE_DAEMON_TIMEOUT_SECS} \\",
         "  --base-path=/git \\",
         "  --export-all \\",
         "  --enable=receive-pack \\",

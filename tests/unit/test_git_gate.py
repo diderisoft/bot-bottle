@@ -170,6 +170,8 @@ class TestEntrypointRender(unittest.TestCase):
         # Daemon line is what keeps PID 1 alive.
         self.assertIn("exec git daemon", script)
         self.assertIn("--enable=receive-pack", script)
+        self.assertIn("--timeout=60", script)
+        self.assertIn("--init-timeout=60", script)
         self.assertIn("--base-path=/git", script)
         # The access-hook is what makes fetch a mirror operation
         # against the upstream (PRD 0008 v1.1).
