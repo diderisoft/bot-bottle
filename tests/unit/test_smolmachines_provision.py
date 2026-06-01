@@ -57,6 +57,7 @@ def _plan(
     agent_git_gate_host: str = "127.0.0.1:55555",
     agent_supervise_url: str = "http://127.0.0.1:55556/",
     codex_auth_file: Path | None = None,
+    guest_env: dict[str, str] | None = None,
 ) -> SmolmachinesBottlePlan:
     bottle_json: dict = {}
     git_json: dict = {}
@@ -107,7 +108,7 @@ def _plan(
         bundle_ip=bundle_ip,
         machine_name="bot-bottle-demo-abc12",
         agent_image_ref="bot-bottle-claude:latest",
-        guest_env={},
+        guest_env=dict(guest_env or {}),
         prompt_file=Path("/tmp/state/demo-abc12/agent/prompt.txt"),
         proxy_plan=PipelockProxyPlan(
             yaml_path=Path("/tmp/pipelock.yaml"),
@@ -193,24 +194,26 @@ class TestProvisionPrompt(unittest.TestCase):
 
 
 class TestProvisionProviderAuth(unittest.TestCase):
+    def _patch(self):
+        return (
+            patch(
+                "bot_bottle.backend.smolmachines.provision.provider_auth._smolvm.machine_cp"
+            ),
+            patch(
+                "bot_bottle.backend.smolmachines.provision.provider_auth._smolvm.machine_exec"
+            ),
+        )
+
     def test_noop_without_codex_auth_file(self):
-        with patch(
-            "bot_bottle.backend.smolmachines.provision.provider_auth._smolvm.machine_cp"
-        ) as cp, patch(
-            "bot_bottle.backend.smolmachines.provision.provider_auth._smolvm.machine_exec"
-        ) as ex:
-            _provider_auth.provision_provider_auth(
-                _plan(), "bot-bottle-demo-abc12",
-            )
+        cp_p, ex_p = self._patch()
+        with cp_p as cp, ex_p as ex:
+            _provider_auth.provision_provider_auth(_plan(), "bot-bottle-demo-abc12")
         self.assertEqual(0, cp.call_count)
         self.assertEqual(0, ex.call_count)
 
     def test_copies_dummy_auth_json_to_codex_home(self):
-        with patch(
-            "bot_bottle.backend.smolmachines.provision.provider_auth._smolvm.machine_cp"
-        ) as cp, patch(
-            "bot_bottle.backend.smolmachines.provision.provider_auth._smolvm.machine_exec"
-        ) as ex:
+        cp_p, ex_p = self._patch()
+        with cp_p as cp, ex_p as ex:
             ex.return_value = SmolvmRunResult(0, "Logged in using ChatGPT\n", "")
             _provider_auth.provision_provider_auth(
                 _plan(codex_auth_file=Path("/tmp/codex-auth.json")),
@@ -222,6 +225,28 @@ class TestProvisionProviderAuth(unittest.TestCase):
         )
         argv_seen = [call.args[1] for call in ex.call_args_list]
         self.assertIn(["mkdir", "-p", "/home/node/.codex"], argv_seen)
+        self.assertIn(
+            ["chown", "node:node", "/home/node/.codex"],
+            argv_seen,
+        )
+        self.assertIn(
+            ["chmod", "700", "/home/node/.codex"],
+            argv_seen,
+        )
+        self.assertIn(
+            [
+                "find", "/home/node/.codex",
+                "-maxdepth", "1",
+                "-type", "f",
+                "(",
+                "-name", "*.sqlite",
+                "-o", "-name", "*.sqlite-*",
+                "-o", "-name", "*.codex-repair-*.bak",
+                ")",
+                "-delete",
+            ],
+            argv_seen,
+        )
         self.assertIn(
             ["chown", "node:node", "/home/node/.codex/auth.json"],
             argv_seen,
@@ -238,16 +263,65 @@ class TestProvisionProviderAuth(unittest.TestCase):
             argv_seen,
         )
 
-    def test_dies_when_codex_rejects_dummy_auth(self):
-        with patch(
-            "bot_bottle.backend.smolmachines.provision.provider_auth._smolvm.machine_cp"
-        ), patch(
-            "bot_bottle.backend.smolmachines.provision.provider_auth._smolvm.machine_exec"
-        ) as ex:
-            ex.return_value = SmolvmRunResult(1, "Not logged in\n", "")
+    def test_honors_codex_home_from_guest_env(self):
+        cp_p, ex_p = self._patch()
+        with cp_p as cp, ex_p as ex:
+            ex.return_value = SmolvmRunResult(0, "Logged in using ChatGPT\n", "")
+            _provider_auth.provision_provider_auth(
+                _plan(
+                    codex_auth_file=Path("/tmp/codex-auth.json"),
+                    guest_env={"CODEX_HOME": "/run/codex-home"},
+                ),
+                "bot-bottle-demo-abc12",
+            )
+        cp.assert_called_once_with(
+            "/tmp/codex-auth.json",
+            "bot-bottle-demo-abc12:/run/codex-home/auth.json",
+        )
+        argv_seen = [call.args[1] for call in ex.call_args_list]
+        self.assertIn(
+            [
+                "runuser", "-u", "node", "--",
+                "env",
+                "HOME=/home/node",
+                "CODEX_HOME=/run/codex-home",
+                "codex", "login", "status",
+            ],
+            argv_seen,
+        )
+
+    def test_dies_when_codex_home_cannot_be_created(self):
+        cp_p, ex_p = self._patch()
+        with cp_p as cp, ex_p as ex:
+            ex.return_value = SmolvmRunResult(1, "", "mkdir: nope\n")
             with self.assertRaises(SystemExit):
                 _provider_auth.provision_provider_auth(
-                    _plan(codex_auth_file=Path("/tmp/codex-auth.json")),
+                    _plan(
+                        codex_auth_file=Path("/tmp/codex-auth.json"),
+                    ),
+                    "bot-bottle-demo-abc12",
+                )
+        self.assertEqual(0, cp.call_count)
+        self.assertEqual(1, ex.call_count)
+
+    def test_dies_when_codex_rejects_dummy_auth(self):
+        cp_p, ex_p = self._patch()
+        with cp_p, ex_p as ex:
+            # CODEX_HOME setup ok (0), but codex login status fails (1).
+            ex.side_effect = [
+                SmolvmRunResult(0, "", ""),  # mkdir CODEX_HOME
+                SmolvmRunResult(0, "", ""),  # chown CODEX_HOME
+                SmolvmRunResult(0, "", ""),  # chmod CODEX_HOME
+                SmolvmRunResult(0, "", ""),  # reset runtime db files
+                SmolvmRunResult(0, "", ""),  # chown auth.json
+                SmolvmRunResult(0, "", ""),  # chmod auth.json
+                SmolvmRunResult(1, "Not logged in\n", ""),  # login status
+            ]
+            with self.assertRaises(SystemExit):
+                _provider_auth.provision_provider_auth(
+                    _plan(
+                        codex_auth_file=Path("/tmp/codex-auth.json"),
+                    ),
                     "bot-bottle-demo-abc12",
                 )
 

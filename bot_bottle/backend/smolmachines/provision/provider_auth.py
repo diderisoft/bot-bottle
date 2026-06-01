@@ -22,10 +22,50 @@ def provision_provider_auth(plan: SmolmachinesBottlePlan, target: str) -> None:
     if not plan.codex_auth_file:
         return
     guest_home = os.environ.get("BOT_BOTTLE_GUEST_HOME", _DEFAULT_GUEST_HOME)
-    auth_dir = f"{guest_home}/.codex"
-    auth_path = f"{auth_dir}/auth.json"
+    auth_dir = plan.guest_env.get("CODEX_HOME", f"{guest_home}/.codex")
 
-    _smolvm.machine_exec(target, ["mkdir", "-p", auth_dir])
+    result = _smolvm.machine_exec(
+        target,
+        ["mkdir", "-p", auth_dir],
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        if detail:
+            detail = f": {detail}"
+        die(f"codex host credentials: could not create {auth_dir}{detail}")
+    result = _smolvm.machine_exec(target, ["chown", "node:node", auth_dir])
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        if detail:
+            detail = f": {detail}"
+        die(f"codex host credentials: could not chown {auth_dir}{detail}")
+    result = _smolvm.machine_exec(target, ["chmod", "700", auth_dir])
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        if detail:
+            detail = f": {detail}"
+        die(f"codex host credentials: could not chmod {auth_dir}{detail}")
+    result = _smolvm.machine_exec(
+        target,
+        [
+            "find", auth_dir,
+            "-maxdepth", "1",
+            "-type", "f",
+            "(",
+            "-name", "*.sqlite",
+            "-o", "-name", "*.sqlite-*",
+            "-o", "-name", "*.codex-repair-*.bak",
+            ")",
+            "-delete",
+        ],
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        if detail:
+            detail = f": {detail}"
+        die(f"codex host credentials: could not reset runtime db files{detail}")
+
+    auth_path = f"{auth_dir}/auth.json"
     _smolvm.machine_cp(str(plan.codex_auth_file), f"{target}:{auth_path}")
     _smolvm.machine_exec(target, ["chown", "node:node", auth_path])
     _smolvm.machine_exec(target, ["chmod", "600", auth_path])
