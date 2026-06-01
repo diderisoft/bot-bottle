@@ -11,7 +11,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ...agent_provider import PromptMode
+from ...agent_provider import AgentProvisionPlan, PromptMode
 from ...egress import EgressPlan
 from ...git_gate import GitGatePlan
 from ...log import info
@@ -52,10 +52,19 @@ class DockerBottlePlan(BottlePlan):
     # is opt-in via the manifest's bottle.supervise field.
     supervise_plan: SupervisePlan | None
     use_runsc: bool
-    agent_command: str = "claude"
-    agent_prompt_mode: PromptMode = "append_file"
-    agent_provider_template: str = "claude"
-    codex_auth_file: Path | None = None
+    agent_provision: AgentProvisionPlan
+
+    @property
+    def agent_command(self) -> str:
+        return self.agent_provision.command
+
+    @property
+    def agent_prompt_mode(self) -> PromptMode:
+        return self.agent_provision.prompt_mode
+
+    @property
+    def agent_provider_template(self) -> str:
+        return self.agent_provision.template
 
     def print(self, *, remote_control: bool) -> None:
         """Render the y/N preflight summary to stderr — compact form
@@ -75,7 +84,11 @@ class DockerBottlePlan(BottlePlan):
         # upstream tokens in its own environ, so no token forwarding
         # from the agent to the proxy is needed.
         env_names = visible_agent_env_names(
-            sorted(set(bottle.env.keys()) | set(self.forwarded_env.keys())),
+            sorted(
+                set(bottle.env.keys())
+                | set(self.forwarded_env.keys())
+                | set(self.agent_provision.guest_env.keys())
+            ),
             agent_provider_template=self.agent_provider_template,
         )
 

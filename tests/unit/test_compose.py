@@ -14,6 +14,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from bot_bottle.agent_provider import AgentProvisionPlan
 from bot_bottle.backend import BottleSpec
 from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
 from bot_bottle.backend.docker.compose import (
@@ -180,6 +181,14 @@ def _plan(
         egress_plan=_egress_plan(routes),
         supervise_plan=_supervise_plan() if supervise else None,
         use_runsc=False,
+        agent_provision=AgentProvisionPlan(
+            template="claude",
+            command="claude",
+            prompt_mode="append_file",
+            image="bot-bottle-claude:latest",
+            dockerfile="",
+            guest_env={},
+        ),
     )
 
 
@@ -249,6 +258,20 @@ class TestAgentAlwaysPresent(unittest.TestCase):
         # so secret token values stay out of the file.
         s = bottle_plan_to_compose(_plan())["services"]["agent"]
         self.assertIn("CLAUDE_CODE_OAUTH_TOKEN", s["environment"])
+
+    def test_agent_provider_env_uses_literal_values(self):
+        plan = _plan()
+        provision = AgentProvisionPlan(
+            template="codex",
+            command="codex",
+            prompt_mode="read_prompt_file",
+            image="bot-bottle-codex:latest",
+            dockerfile="",
+            guest_env={"CODEX_HOME": "/home/node/.codex"},
+        )
+        plan = type(plan)(**{**vars(plan), "agent_provision": provision})
+        s = bottle_plan_to_compose(plan)["services"]["agent"]
+        self.assertIn("CODEX_HOME=/home/node/.codex", s["environment"])
 
     def test_agent_runsc_runtime(self):
         plan = _plan()

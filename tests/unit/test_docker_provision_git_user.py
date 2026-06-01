@@ -13,6 +13,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from bot_bottle.agent_provider import AgentProvisionPlan
 from bot_bottle.backend import BottleSpec
 from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
 from bot_bottle.backend.docker.provision import git as _git
@@ -66,6 +67,14 @@ def _plan(*, git_user: dict | None = None,
         ),
         supervise_plan=None,
         use_runsc=False,
+        agent_provision=AgentProvisionPlan(
+            template="claude",
+            command="claude",
+            prompt_mode="append_file",
+            image="bot-bottle-claude:latest",
+            dockerfile="",
+            guest_env={},
+        ),
     )
 
 

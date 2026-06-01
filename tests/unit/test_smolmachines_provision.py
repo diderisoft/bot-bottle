@@ -13,6 +13,12 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
+from bot_bottle.agent_provider import (
+    AgentProvisionCommand,
+    AgentProvisionDir,
+    AgentProvisionFile,
+    AgentProvisionPlan,
+)
 from bot_bottle.backend import BottleSpec
 from bot_bottle.backend.smolmachines.bottle_plan import (
     SmolmachinesBottlePlan,
@@ -133,8 +139,69 @@ def _plan(
         supervise_plan=supervise_plan,
         agent_git_gate_host=agent_git_gate_host,
         agent_supervise_url=agent_supervise_url,
-        codex_auth_file=codex_auth_file,
-        agent_provider_template=agent_provider_template,
+        agent_provision=_agent_provision(
+            agent_provider_template,
+            codex_auth_file=codex_auth_file,
+            guest_env=dict(guest_env or {}),
+        ),
+    )
+
+
+def _agent_provision(
+    template: str,
+    *,
+    codex_auth_file: Path | None = None,
+    guest_env: dict[str, str] | None = None,
+) -> AgentProvisionPlan:
+    if template != "codex":
+        return AgentProvisionPlan(
+            template=template,
+            command=template,
+            prompt_mode="append_file",
+            image="",
+            dockerfile="",
+            guest_env=dict(guest_env or {}),
+        )
+    auth_dir = (guest_env or {}).get("CODEX_HOME", "/home/node/.codex")
+    files = [
+        AgentProvisionFile(
+            Path("/tmp/codex-config.toml"),
+            f"{auth_dir}/config.toml",
+        ),
+    ]
+    pre_copy: tuple[AgentProvisionCommand, ...] = ()
+    verify: tuple[AgentProvisionCommand, ...] = ()
+    if codex_auth_file is not None:
+        files.append(AgentProvisionFile(codex_auth_file, f"{auth_dir}/auth.json"))
+        pre_copy = (AgentProvisionCommand((
+            "find", auth_dir,
+            "-maxdepth", "1",
+            "-type", "f",
+            "(",
+            "-name", "*.sqlite",
+            "-o", "-name", "*.sqlite-*",
+            "-o", "-name", "*.codex-repair-*.bak",
+            ")",
+            "-delete",
+        ), "codex host credentials: could not reset runtime db files"),)
+        verify = (AgentProvisionCommand((
+            "runuser", "-u", "node", "--",
+            "env",
+            "HOME=/home/node",
+            f"CODEX_HOME={auth_dir}",
+            "codex", "login", "status",
+        ), "codex host credentials: dummy auth was copied into the guest"),)
+    return AgentProvisionPlan(
+        template="codex",
+        command="codex",
+        prompt_mode="read_prompt_file",
+        image="bot-bottle-codex:latest",
+        dockerfile="",
+        guest_env=dict(guest_env or {}),
+        dirs=(AgentProvisionDir(auth_dir),),
+        files=tuple(files),
+        pre_copy=pre_copy,
+        verify=verify,
     )
 
 
@@ -221,15 +288,12 @@ class TestProvisionProviderAuth(unittest.TestCase):
                 _plan(agent_provider_template="codex"),
                 "bot-bottle-demo-abc12",
             )
-        self.assertEqual(0, cp.call_count)
+        cp.assert_called_once_with(
+            "/tmp/codex-config.toml",
+            "bot-bottle-demo-abc12:/home/node/.codex/config.toml",
+        )
         argv_seen = [call.args[1] for call in ex.call_args_list]
         self.assertIn(["mkdir", "-p", "/home/node/.codex"], argv_seen)
-        trust_config = next(
-            a for a in argv_seen
-            if a[:2] == ["sh", "-c"] and "config.toml" in a[2]
-        )
-        self.assertIn('[projects."/home/node"]', trust_config[2])
-        self.assertIn('trust_level = "trusted"', trust_config[2])
         self.assertIn(
             ["chown", "node:node", "/home/node/.codex/config.toml"],
             argv_seen,
@@ -247,9 +311,16 @@ class TestProvisionProviderAuth(unittest.TestCase):
                 ),
                 "bot-bottle-demo-abc12",
             )
-        cp.assert_called_once_with(
-            "/tmp/codex-auth.json",
-            "bot-bottle-demo-abc12:/home/node/.codex/auth.json",
+        cp_calls = [call.args for call in cp.call_args_list]
+        self.assertIn(
+            ("/tmp/codex-config.toml",
+             "bot-bottle-demo-abc12:/home/node/.codex/config.toml"),
+            cp_calls,
+        )
+        self.assertIn(
+            ("/tmp/codex-auth.json",
+             "bot-bottle-demo-abc12:/home/node/.codex/auth.json"),
+            cp_calls,
         )
         argv_seen = [call.args[1] for call in ex.call_args_list]
         self.assertIn(["mkdir", "-p", "/home/node/.codex"], argv_seen)
@@ -303,9 +374,16 @@ class TestProvisionProviderAuth(unittest.TestCase):
                 ),
                 "bot-bottle-demo-abc12",
             )
-        cp.assert_called_once_with(
-            "/tmp/codex-auth.json",
-            "bot-bottle-demo-abc12:/run/codex-home/auth.json",
+        cp_calls = [call.args for call in cp.call_args_list]
+        self.assertIn(
+            ("/tmp/codex-config.toml",
+             "bot-bottle-demo-abc12:/run/codex-home/config.toml"),
+            cp_calls,
+        )
+        self.assertIn(
+            ("/tmp/codex-auth.json",
+             "bot-bottle-demo-abc12:/run/codex-home/auth.json"),
+            cp_calls,
         )
         argv_seen = [call.args[1] for call in ex.call_args_list]
         self.assertIn(
@@ -343,7 +421,6 @@ class TestProvisionProviderAuth(unittest.TestCase):
                 SmolvmRunResult(0, "", ""),  # chown CODEX_HOME
                 SmolvmRunResult(0, "", ""),  # chmod CODEX_HOME
                 SmolvmRunResult(0, "", ""),  # reset runtime db files
-                SmolvmRunResult(0, "", ""),  # write config.toml
                 SmolvmRunResult(0, "", ""),  # chown config.toml
                 SmolvmRunResult(0, "", ""),  # chmod config.toml
                 SmolvmRunResult(0, "", ""),  # chown auth.json

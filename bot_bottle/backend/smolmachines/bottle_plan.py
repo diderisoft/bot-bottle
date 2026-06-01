@@ -12,7 +12,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from ...agent_provider import PromptMode
+from ...agent_provider import AgentProvisionPlan, PromptMode
 from ...egress import EgressPlan
 from ...git_gate import GitGatePlan
 from ...log import info
@@ -82,6 +82,7 @@ class SmolmachinesBottlePlan(BottlePlan):
     # None when bottle.supervise is False, matching the docker
     # backend's convention.
     supervise_plan: SupervisePlan | None
+    agent_provision: AgentProvisionPlan
     # Agent-side endpoints. On Docker Desktop the docker bridge
     # IPs aren't reachable from the smolvm guest (TSI uses macOS
     # networking; docker container IPs live in the daemon's VM),
@@ -93,11 +94,22 @@ class SmolmachinesBottlePlan(BottlePlan):
     agent_proxy_url: str = ""
     agent_git_gate_host: str = ""
     agent_supervise_url: str = ""
-    agent_command: str = "claude"
-    agent_prompt_mode: PromptMode = "append_file"
-    agent_provider_template: str = "claude"
-    agent_dockerfile_path: str = ""
-    codex_auth_file: Path | None = None
+
+    @property
+    def agent_command(self) -> str:
+        return self.agent_provision.command
+
+    @property
+    def agent_prompt_mode(self) -> PromptMode:
+        return self.agent_provision.prompt_mode
+
+    @property
+    def agent_provider_template(self) -> str:
+        return self.agent_provision.template
+
+    @property
+    def agent_dockerfile_path(self) -> str:
+        return self.agent_provision.dockerfile
 
     def print(self, *, remote_control: bool) -> None:
         """Compact y/N preflight. Same shape as the Docker
@@ -109,7 +121,10 @@ class SmolmachinesBottlePlan(BottlePlan):
         bottle = manifest.bottle_for(spec.agent_name)
 
         env_names = visible_agent_env_names(
-            sorted(bottle.env.keys()),
+            sorted(
+                set(bottle.env.keys())
+                | set(self.agent_provision.guest_env.keys())
+            ),
             agent_provider_template=self.agent_provider_template,
         )
         upstreams = [

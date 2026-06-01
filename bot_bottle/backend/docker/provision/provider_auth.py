@@ -2,87 +2,35 @@
 
 from __future__ import annotations
 
-import os
-import shlex
 import subprocess
 
 from ..bottle_plan import DockerBottlePlan
 
 
-_DEFAULT_GUEST_HOME = "/home/node"
-
-
 def provision_provider_auth(plan: DockerBottlePlan, target: str) -> None:
-    """Prepare Codex home state inside a Docker bottle.
+    """Apply provider-owned guest setup through Docker primitives."""
+    provision = plan.agent_provision
+    for d in provision.dirs:
+        _exec(target, ["mkdir", "-p", d.guest_path])
+        _exec(target, ["chown", d.owner, d.guest_path])
+        _exec(target, ["chmod", d.mode, d.guest_path])
+    for command in provision.pre_copy:
+        _exec(target, list(command.argv))
+    for f in provision.files:
+        subprocess.run(
+            ["docker", "cp", str(f.host_path), f"{target}:{f.guest_path}"],
+            stdout=subprocess.DEVNULL,
+            check=True,
+        )
+        _exec(target, ["chown", f.owner, f.guest_path])
+        _exec(target, ["chmod", f.mode, f.guest_path])
+    for command in provision.verify:
+        _exec(target, list(command.argv))
 
-    Every Codex bottle gets a minimal config.toml that trusts the
-    in-container launch directory. When host credentials are forwarded,
-    auth.json contains no real access or refresh token values; it only
-    nudges Codex into the same user/device auth branch as the host.
-    """
-    if plan.agent_provider_template != "codex":
-        return
-    container_home = os.environ.get(
-        "BOT_BOTTLE_CONTAINER_HOME", _DEFAULT_GUEST_HOME,
-    )
-    auth_dir = f"{container_home}/.codex"
 
+def _exec(target: str, argv: list[str]) -> None:
     subprocess.run(
-        ["docker", "exec", "-u", "0", target, "mkdir", "-p", auth_dir],
-        stdout=subprocess.DEVNULL,
-        check=True,
-    )
-    subprocess.run(
-        ["docker", "exec", "-u", "0", target, "chown", "node:node", auth_dir],
-        stdout=subprocess.DEVNULL,
-        check=True,
-    )
-    subprocess.run(
-        ["docker", "exec", "-u", "0", target, "chmod", "700", auth_dir],
-        stdout=subprocess.DEVNULL,
-        check=True,
-    )
-    config_path = f"{auth_dir}/config.toml"
-    config = (
-        f'[projects."{container_home}"]\n'
-        'trust_level = "trusted"\n'
-    )
-    subprocess.run(
-        [
-            "docker", "exec", "-u", "0", target,
-            "sh", "-c",
-            f"printf %s {shlex.quote(config)} > {shlex.quote(config_path)}",
-        ],
-        stdout=subprocess.DEVNULL,
-        check=True,
-    )
-    subprocess.run(
-        ["docker", "exec", "-u", "0", target, "chown", "node:node", config_path],
-        stdout=subprocess.DEVNULL,
-        check=True,
-    )
-    subprocess.run(
-        ["docker", "exec", "-u", "0", target, "chmod", "600", config_path],
-        stdout=subprocess.DEVNULL,
-        check=True,
-    )
-
-    if not plan.codex_auth_file:
-        return
-
-    auth_path = f"{auth_dir}/auth.json"
-    subprocess.run(
-        ["docker", "cp", str(plan.codex_auth_file), f"{target}:{auth_path}"],
-        stdout=subprocess.DEVNULL,
-        check=True,
-    )
-    subprocess.run(
-        ["docker", "exec", "-u", "0", target, "chown", "node:node", auth_path],
-        stdout=subprocess.DEVNULL,
-        check=True,
-    )
-    subprocess.run(
-        ["docker", "exec", "-u", "0", target, "chmod", "600", auth_path],
+        ["docker", "exec", "-u", "0", target, *argv],
         stdout=subprocess.DEVNULL,
         check=True,
     )

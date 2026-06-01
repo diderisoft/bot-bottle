@@ -286,6 +286,8 @@ def _agent_service(plan: DockerBottlePlan) -> dict[str, Any]:
         f"SSL_CERT_FILE={AGENT_CA_BUNDLE}",
         f"REQUESTS_CA_BUNDLE={AGENT_CA_BUNDLE}",
     ]
+    for name, value in sorted(plan.agent_provision.guest_env.items()):
+        env.append(f"{name}={value}")
     # Forwarded vars (OAuth token, manifest host-interpolations):
     # bare name → inherits from compose-up process env, value
     # never lands on argv or in the compose file.

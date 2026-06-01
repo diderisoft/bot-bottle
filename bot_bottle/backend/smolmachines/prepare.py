@@ -14,9 +14,8 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ...agent_provider import runtime_for
+from ...agent_provider import agent_provision_plan, runtime_for
 from ...backend import BottleSpec
-from ...codex_auth import write_codex_dummy_auth_file
 from ...backend.docker.bottle_state import (
     BottleMetadata,
     agent_state_dir,
@@ -163,12 +162,9 @@ def resolve_plan(
     agent_dir = agent_state_dir(slug)
     agent_dir.mkdir(parents=True, exist_ok=True)
     prompt_file = agent_dir / "prompt.txt"
-    codex_auth_file = agent_dir / "codex-auth.json"
     agent = manifest.agents[spec.agent_name]
     prompt_file.write_text(agent.prompt or "")
     prompt_file.chmod(0o600)
-    if provider.forward_host_credentials:
-        write_codex_dummy_auth_file(codex_auth_file, dict(os.environ))
 
     machine_name = f"bot-bottle-{slug}"
     # Stash the agent image ref — `launch.launch` runs the
@@ -184,6 +180,15 @@ def resolve_plan(
     else:
         image_default = provider_runtime.image
     agent_image_ref = os.environ.get("BOT_BOTTLE_IMAGE", image_default)
+    agent_provision = agent_provision_plan(
+        template=provider.template,
+        dockerfile=agent_dockerfile_path,
+        state_dir=agent_dir,
+        guest_home=os.environ.get("BOT_BOTTLE_GUEST_HOME", "/home/node"),
+        guest_env=guest_env,
+        forward_host_credentials=provider.forward_host_credentials,
+        host_env=dict(os.environ),
+    )
 
     return SmolmachinesBottlePlan(
         spec=spec,
@@ -194,17 +199,13 @@ def resolve_plan(
         bundle_ip=bundle_ip,
         machine_name=machine_name,
         agent_image_ref=agent_image_ref,
-        guest_env=guest_env,
+        guest_env=agent_provision.guest_env,
         prompt_file=prompt_file,
         proxy_plan=proxy_plan,
         git_gate_plan=git_gate_plan,
         egress_plan=egress_plan,
         supervise_plan=supervise_plan,
-        agent_command=provider_runtime.command,
-        agent_prompt_mode=provider_runtime.prompt_mode,
-        agent_provider_template=provider.template,
-        agent_dockerfile_path=agent_dockerfile_path,
-        codex_auth_file=codex_auth_file if provider.forward_host_credentials else None,
+        agent_provision=agent_provision,
     )
 
 

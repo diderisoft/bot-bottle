@@ -6,6 +6,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from bot_bottle.agent_provider import (
+    AgentProvisionDir,
+    AgentProvisionFile,
+    AgentProvisionPlan,
+)
 from bot_bottle.backend import BottleSpec
 from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
 from bot_bottle.backend.docker.provision import provider_auth as _provider_auth
@@ -61,9 +66,44 @@ def _plan(
         ),
         supervise_plan=None,
         use_runsc=False,
-        agent_command="codex",
-        agent_provider_template=agent_provider_template,
-        codex_auth_file=codex_auth_file,
+        agent_provision=_agent_provision(
+            agent_provider_template, codex_auth_file=codex_auth_file,
+        ),
+    )
+
+
+def _agent_provision(
+    template: str, *, codex_auth_file: Path | None = None,
+) -> AgentProvisionPlan:
+    if template != "codex":
+        return AgentProvisionPlan(
+            template=template,
+            command=template,
+            prompt_mode="append_file",
+            image="",
+            dockerfile="",
+            guest_env={},
+        )
+    files = [
+        AgentProvisionFile(
+            Path("/tmp/codex-config.toml"),
+            "/home/node/.codex/config.toml",
+        ),
+    ]
+    if codex_auth_file is not None:
+        files.append(AgentProvisionFile(
+            codex_auth_file,
+            "/home/node/.codex/auth.json",
+        ))
+    return AgentProvisionPlan(
+        template="codex",
+        command="codex",
+        prompt_mode="read_prompt_file",
+        image="bot-bottle-codex:latest",
+        dockerfile="",
+        guest_env={},
+        dirs=(AgentProvisionDir("/home/node/.codex"),),
+        files=tuple(files),
     )
 
 
@@ -88,10 +128,12 @@ class TestProvisionProviderAuth(unittest.TestCase):
         )
         trust_config = next(
             a for a in argvs
-            if a[:6] == ["docker", "exec", "-u", "0", "bot-bottle-demo-abc12", "sh"]
+            if a[:2] == ["docker", "cp"] and a[2] == "/tmp/codex-config.toml"
         )
-        self.assertIn('[projects."/home/node"]', trust_config[-1])
-        self.assertIn('trust_level = "trusted"', trust_config[-1])
+        self.assertEqual(
+            "bot-bottle-demo-abc12:/home/node/.codex/config.toml",
+            trust_config[3],
+        )
         self.assertIn(
             ["docker", "exec", "-u", "0", "bot-bottle-demo-abc12",
              "chown", "node:node", "/home/node/.codex/config.toml"],

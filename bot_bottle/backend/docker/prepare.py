@@ -14,8 +14,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ...agent_provider import runtime_for
-from ...codex_auth import write_codex_dummy_auth_file
+from ...agent_provider import agent_provision_plan, runtime_for
 from ...egress import Egress
 from ...env import ResolvedEnv, resolve_env
 from ...git_gate import GitGate
@@ -156,7 +155,6 @@ def resolve_plan(
     agent_dir.mkdir(parents=True, exist_ok=True)
     env_file = agent_dir / "agent.env"
     prompt_file = agent_dir / "prompt.txt"
-    codex_auth_file = agent_dir / "codex-auth.json"
     prompt_file.write_text("")
     prompt_file.chmod(0o600)
 
@@ -221,12 +219,18 @@ def resolve_plan(
         # error reporting) that egress can't gate by auth.
         forwarded_env.setdefault("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
         forwarded_env.setdefault("DISABLE_ERROR_REPORTING", "1")
-    if provider.forward_host_credentials:
-        write_codex_dummy_auth_file(codex_auth_file, dict(os.environ))
     _write_env_file(resolved, env_file)
     prompt_file.write_text(agent.prompt)
 
     use_runsc = docker_mod.runsc_available()
+    agent_provision = agent_provision_plan(
+        template=provider.template,
+        dockerfile=dockerfile_path,
+        state_dir=agent_dir,
+        guest_home=os.environ.get("BOT_BOTTLE_CONTAINER_HOME", "/home/node"),
+        forward_host_credentials=provider.forward_host_credentials,
+        host_env=dict(os.environ),
+    )
 
     return DockerBottlePlan(
         spec=spec,
@@ -246,10 +250,7 @@ def resolve_plan(
         egress_plan=egress_plan,
         supervise_plan=supervise_plan,
         use_runsc=use_runsc,
-        agent_command=provider_runtime.command,
-        agent_prompt_mode=provider_runtime.prompt_mode,
-        agent_provider_template=provider.template,
-        codex_auth_file=codex_auth_file if provider.forward_host_credentials else None,
+        agent_provision=agent_provision,
     )
 
 
