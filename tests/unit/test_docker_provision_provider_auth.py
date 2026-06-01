@@ -75,7 +75,7 @@ class TestProvisionProviderAuth(unittest.TestCase):
             )
         self.assertEqual(0, run.call_count)
 
-    def test_codex_provider_trusts_workspace_without_auth_file(self):
+    def test_codex_provider_trusts_launch_dir_without_auth_file(self):
         with patch.object(_provider_auth.subprocess, "run") as run:
             _provider_auth.provision_provider_auth(
                 _plan(), "bot-bottle-demo-abc12",
@@ -91,7 +91,6 @@ class TestProvisionProviderAuth(unittest.TestCase):
             if a[:6] == ["docker", "exec", "-u", "0", "bot-bottle-demo-abc12", "sh"]
         )
         self.assertIn('[projects."/home/node"]', trust_config[-1])
-        self.assertIn('[projects."/home/node/workspace"]', trust_config[-1])
         self.assertIn('trust_level = "trusted"', trust_config[-1])
         self.assertIn(
             ["docker", "exec", "-u", "0", "bot-bottle-demo-abc12",

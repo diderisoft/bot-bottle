@@ -213,7 +213,7 @@ class TestProvisionProviderAuth(unittest.TestCase):
         self.assertEqual(0, cp.call_count)
         self.assertEqual(0, ex.call_count)
 
-    def test_codex_provider_trusts_workspace_without_auth_file(self):
+    def test_codex_provider_trusts_launch_dir_without_auth_file(self):
         cp_p, ex_p = self._patch()
         with cp_p as cp, ex_p as ex:
             ex.return_value = SmolvmRunResult(0, "", "")
@@ -229,7 +229,6 @@ class TestProvisionProviderAuth(unittest.TestCase):
             if a[:2] == ["sh", "-c"] and "config.toml" in a[2]
         )
         self.assertIn('[projects."/home/node"]', trust_config[2])
-        self.assertIn('[projects."/home/node/workspace"]', trust_config[2])
         self.assertIn('trust_level = "trusted"', trust_config[2])
         self.assertIn(
             ["chown", "node:node", "/home/node/.codex/config.toml"],

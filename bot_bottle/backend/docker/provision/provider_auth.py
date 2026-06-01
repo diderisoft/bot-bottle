@@ -9,22 +9,22 @@ import subprocess
 from ..bottle_plan import DockerBottlePlan
 
 
-_CODEX_HOME_PROJECT = "/home/node"
-_CODEX_WORKSPACE = "/home/node/workspace"
+_DEFAULT_GUEST_HOME = "/home/node"
 
 
 def provision_provider_auth(plan: DockerBottlePlan, target: str) -> None:
     """Prepare Codex home state inside a Docker bottle.
 
     Every Codex bottle gets a minimal config.toml that trusts the
-    in-container launch directory and workspace path. When host
-    credentials are forwarded, auth.json contains no real access or
-    refresh token values; it only nudges Codex into the same user/device
-    auth branch as the host.
+    in-container launch directory. When host credentials are forwarded,
+    auth.json contains no real access or refresh token values; it only
+    nudges Codex into the same user/device auth branch as the host.
     """
     if plan.agent_provider_template != "codex":
         return
-    container_home = os.environ.get("BOT_BOTTLE_CONTAINER_HOME", "/home/node")
+    container_home = os.environ.get(
+        "BOT_BOTTLE_CONTAINER_HOME", _DEFAULT_GUEST_HOME,
+    )
     auth_dir = f"{container_home}/.codex"
 
     subprocess.run(
@@ -44,10 +44,7 @@ def provision_provider_auth(plan: DockerBottlePlan, target: str) -> None:
     )
     config_path = f"{auth_dir}/config.toml"
     config = (
-        f'[projects."{_CODEX_HOME_PROJECT}"]\n'
-        'trust_level = "trusted"\n'
-        "\n"
-        f'[projects."{_CODEX_WORKSPACE}"]\n'
+        f'[projects."{container_home}"]\n'
         'trust_level = "trusted"\n'
     )
     subprocess.run(
