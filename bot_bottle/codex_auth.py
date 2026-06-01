@@ -75,11 +75,22 @@ def codex_dummy_auth_json(
     now: datetime | None = None,
 ) -> str:
     """Return a non-secret `auth.json` that keeps Codex in the host's
-    auth branch while egress owns the real bearer token."""
+    auth branch while egress owns the real bearer token.
+
+    The dummy access/id tokens carry the *host* token's real `exp` so
+    Codex's proactive refresh lifecycle (it refreshes when its local
+    access token is at/past expiry) tracks the real token instead of
+    firing after an artificial TTL. Codex cannot refresh inside the
+    bottle — the refresh token is a placeholder and the OpenAI token
+    endpoint is off-route — so a shorter dummy exp would drop Codex to
+    the sign-in screen the moment it lapsed, even while egress still
+    holds a valid bearer."""
     path = codex_auth_path(host_env)
-    codex_host_access_token(host_env, now=now)
+    access = codex_host_access_token(host_env, now=now)
     raw = _read_auth_object(path)
-    dummy = _redact_codex_auth(deepcopy(raw), now=now)
+    host_exp = _jwt_exp(access)
+    exp_ts = int(host_exp.timestamp()) if host_exp is not None else None
+    dummy = _redact_codex_auth(deepcopy(raw), now=now, exp_ts=exp_ts)
     return json.dumps(dummy, indent=2, sort_keys=True) + "\n"
 
 
@@ -104,29 +115,35 @@ def _read_auth_object(path: Path) -> dict:
     return raw
 
 
-def _dummy_jwt(now: datetime | None = None) -> str:
+def _dummy_exp(now: datetime | None, exp_ts: int | None) -> int:
+    if exp_ts is not None:
+        return exp_ts
     check_now = now or datetime.now(timezone.utc)
-    exp = int(check_now.timestamp()) + 3600
+    return int(check_now.timestamp()) + 3600
 
+
+def _dummy_jwt(now: datetime | None = None, *, exp_ts: int | None = None) -> str:
     return _encode_dummy_jwt({
-        "exp": exp,
+        "exp": _dummy_exp(now, exp_ts),
         "sub": "bot-bottle-placeholder",
     })
 
 
-def _dummy_jwt_from_host(value: object, *, now: datetime | None = None) -> str:
+def _dummy_jwt_from_host(
+    value: object, *, now: datetime | None = None, exp_ts: int | None = None,
+) -> str:
     if not isinstance(value, str):
-        return _dummy_jwt(now)
+        return _dummy_jwt(now, exp_ts=exp_ts)
     parts = value.split(".")
     if len(parts) < 2:
-        return _dummy_jwt(now)
+        return _dummy_jwt(now, exp_ts=exp_ts)
     try:
         payload = json.loads(_b64url_decode(parts[1]))
     except (ValueError, json.JSONDecodeError):
-        return _dummy_jwt(now)
+        return _dummy_jwt(now, exp_ts=exp_ts)
     if not isinstance(payload, dict):
-        return _dummy_jwt(now)
-    return _encode_dummy_jwt(_redact_jwt_payload(payload, now=now))
+        return _dummy_jwt(now, exp_ts=exp_ts)
+    return _encode_dummy_jwt(_redact_jwt_payload(payload, now=now, exp_ts=exp_ts))
 
 
 def _encode_dummy_jwt(payload: dict) -> str:
@@ -141,12 +158,12 @@ def _redact_jwt_payload(
     payload: dict,
     *,
     now: datetime | None = None,
+    exp_ts: int | None = None,
 ) -> dict:
-    check_now = now or datetime.now(timezone.utc)
     out = _redact_claims(payload)
     if not isinstance(out, dict):
         out = {}
-    out["exp"] = int(check_now.timestamp()) + 3600
+    out["exp"] = _dummy_exp(now, exp_ts)
     out.setdefault("sub", "bot-bottle-placeholder")
     return out
 
@@ -195,6 +212,11 @@ def _redact_auth_claim(value: object) -> dict:
         lower = key.lower()
         if lower == "chatgpt_plan_type" and isinstance(inner, str) and inner:
             out[key] = inner
+        elif lower == "chatgpt_account_id" and isinstance(inner, str) and inner:
+            # Current Codex uses the selected account id when building
+            # ChatGPT requests. Keep that non-secret identifier aligned
+            # with the host while egress owns the real bearer token.
+            out[key] = inner
         elif lower == "localhost" and isinstance(inner, bool):
             out[key] = inner
         elif isinstance(inner, bool):
@@ -212,7 +234,9 @@ def _redact_auth_claim(value: object) -> dict:
     return out
 
 
-def _redact_codex_auth(value: object, *, now: datetime | None = None) -> object:
+def _redact_codex_auth(
+    value: object, *, now: datetime | None = None, exp_ts: int | None = None,
+) -> object:
     if isinstance(value, dict):
         out: dict[str, object] = {}
         for key, inner in value.items():
@@ -220,18 +244,20 @@ def _redact_codex_auth(value: object, *, now: datetime | None = None) -> object:
             if lower == "openai_api_key":
                 out[key] = None
             elif lower == "tokens":
-                out[key] = _redact_codex_auth(inner, now=now)
+                out[key] = _redact_codex_auth(inner, now=now, exp_ts=exp_ts)
             elif lower in {"access_token", "id_token"}:
-                out[key] = _dummy_jwt_from_host(inner, now=now)
+                out[key] = _dummy_jwt_from_host(inner, now=now, exp_ts=exp_ts)
             elif "token" in lower or "secret" in lower or lower.endswith("_key"):
                 out[key] = "bot-bottle-placeholder"
+            elif lower == "account_id" and isinstance(inner, str) and inner:
+                out[key] = inner
             elif lower in {"account_id", "user_id", "email"}:
                 out[key] = "bot-bottle-placeholder"
             else:
-                out[key] = _redact_codex_auth(inner, now=now)
+                out[key] = _redact_codex_auth(inner, now=now, exp_ts=exp_ts)
         return out
     if isinstance(value, list):
-        return [_redact_codex_auth(v, now=now) for v in value]
+        return [_redact_codex_auth(v, now=now, exp_ts=exp_ts) for v in value]
     return value
 
 

@@ -21,7 +21,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from .egress import EGRESS_HOSTNAME, egress_routes_for_bottle
+from .egress import (
+    CODEX_HOST_CREDENTIAL_HOSTS,
+    EGRESS_HOSTNAME,
+    egress_routes_for_bottle,
+)
 from .supervise import SUPERVISE_HOSTNAME
 from .manifest import Bottle
 
@@ -111,6 +115,19 @@ def pipelock_effective_tls_passthrough(bottle: Bottle) -> list[str]:
     for route in bottle.egress.routes:
         if route.Pipelock.TlsPassthrough:
             seen.setdefault(route.Host, None)
+    # forward_host_credentials makes egress inject the host ChatGPT bearer
+    # on the Codex API hosts AFTER the agent boundary. Pipelock sits
+    # downstream of egress and DLP-scans request headers; left to MITM
+    # these routes it flags the injected JWT as a leaked secret
+    # ("request header contains secret") and blocks. Pass them through so
+    # pipelock still enforces the host allowlist on CONNECT but does not
+    # decrypt + rescan egress-owned auth. The auto-added routes live in
+    # egress_routes_for_bottle, not bottle.egress.routes, so add the
+    # hosts explicitly here.
+    provider = bottle.agent_provider
+    if provider.forward_host_credentials and provider.template == "codex":
+        for host in CODEX_HOST_CREDENTIAL_HOSTS:
+            seen.setdefault(host, None)
     return sorted(seen.keys())
 
 

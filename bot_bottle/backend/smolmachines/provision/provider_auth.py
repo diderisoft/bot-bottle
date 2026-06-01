@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 
+from ....log import die
 from .. import smolvm as _smolvm
 from ..bottle_plan import SmolmachinesBottlePlan
 
@@ -28,3 +29,21 @@ def provision_provider_auth(plan: SmolmachinesBottlePlan, target: str) -> None:
     _smolvm.machine_cp(str(plan.codex_auth_file), f"{target}:{auth_path}")
     _smolvm.machine_exec(target, ["chown", "node:node", auth_path])
     _smolvm.machine_exec(target, ["chmod", "600", auth_path])
+    result = _smolvm.machine_exec(
+        target,
+        [
+            "runuser", "-u", "node", "--",
+            "env",
+            f"HOME={guest_home}",
+            f"CODEX_HOME={auth_dir}",
+            "codex", "login", "status",
+        ],
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        if detail:
+            detail = f": {detail}"
+        die(
+            "codex host credentials: dummy auth was copied into the "
+            f"smolmachine, but Codex did not accept it{detail}"
+        )

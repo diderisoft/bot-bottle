@@ -120,12 +120,37 @@ class TestCodexHostAccessToken(unittest.TestCase):
         self.assertNotEqual(access, dummy["tokens"]["access_token"])
         self.assertNotEqual(refresh, dummy["tokens"]["refresh_token"])
         self.assertEqual("bot-bottle-placeholder", dummy["tokens"]["refresh_token"])
-        self.assertEqual("bot-bottle-placeholder", dummy["tokens"]["account_id"])
+        self.assertEqual("acct-host", dummy["tokens"]["account_id"])
         self.assertIsNotNone(
             codex_host_access_token(
                 {"CODEX_HOME": str(self.home)},
                 now=datetime(2026, 1, 1, tzinfo=timezone.utc),
             )
+        )
+
+    def test_dummy_auth_tokens_inherit_host_token_exp(self):
+        # Codex refreshes when its local access token is at/past exp;
+        # the dummy must carry the host token's real exp so Codex does
+        # not drop to the sign-in screen after an artificial TTL while
+        # egress still holds a valid bearer.
+        host_exp = 2000000000
+        self._write({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "access_token": _jwt(host_exp),
+                "id_token": _jwt(host_exp),
+                "refresh_token": "hidden",
+            },
+        })
+        dummy = json.loads(codex_dummy_auth_json(
+            {"CODEX_HOME": str(self.home)},
+            now=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        ))
+        self.assertEqual(
+            host_exp, _jwt_payload(dummy["tokens"]["access_token"])["exp"],
+        )
+        self.assertEqual(
+            host_exp, _jwt_payload(dummy["tokens"]["id_token"])["exp"],
         )
 
     def test_dummy_auth_keeps_required_account_claim_shape(self):
@@ -172,7 +197,7 @@ class TestCodexHostAccessToken(unittest.TestCase):
         auth = access_payload["https://api.openai.com/auth"]
         profile = access_payload["https://api.openai.com/profile"]
         self.assertEqual("plus", auth["chatgpt_plan_type"])
-        self.assertEqual("bot-bottle-placeholder", auth["chatgpt_account_id"])
+        self.assertEqual("acct-real", auth["chatgpt_account_id"])
         self.assertEqual("bot-bottle-placeholder", auth["chatgpt_user_id"])
         self.assertEqual("bot-bottle@example.invalid", profile["email"])
         self.assertTrue(profile["email_verified"])

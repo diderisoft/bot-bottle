@@ -113,6 +113,25 @@ class TestTlsPassthrough(unittest.TestCase):
         ])))
         self.assertEqual(["api.openai.com"], passthrough)
 
+    def test_forward_host_credentials_passes_through_codex_hosts(self):
+        # Egress injects the host bearer on the Codex API hosts; pipelock
+        # must pass them through or its header DLP blocks the injected JWT
+        # ("request header contains secret"). These routes are auto-added
+        # (not in bottle.egress.routes), so passthrough is host-derived.
+        passthrough = pipelock_effective_tls_passthrough(_bottle({
+            "agent_provider": {
+                "template": "codex",
+                "forward_host_credentials": True,
+            },
+        }))
+        self.assertEqual(["api.openai.com", "chatgpt.com"], passthrough)
+
+    def test_no_codex_passthrough_without_forward_host_credentials(self):
+        passthrough = pipelock_effective_tls_passthrough(_bottle({
+            "agent_provider": {"template": "codex"},
+        }))
+        self.assertEqual([], passthrough)
+
 
 class TestSsrfIpAllowlist(unittest.TestCase):
     def test_default_empty(self):

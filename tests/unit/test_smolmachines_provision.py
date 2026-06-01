@@ -211,6 +211,7 @@ class TestProvisionProviderAuth(unittest.TestCase):
         ) as cp, patch(
             "bot_bottle.backend.smolmachines.provision.provider_auth._smolvm.machine_exec"
         ) as ex:
+            ex.return_value = SmolvmRunResult(0, "Logged in using ChatGPT\n", "")
             _provider_auth.provision_provider_auth(
                 _plan(codex_auth_file=Path("/tmp/codex-auth.json")),
                 "bot-bottle-demo-abc12",
@@ -226,6 +227,29 @@ class TestProvisionProviderAuth(unittest.TestCase):
             argv_seen,
         )
         self.assertIn(["chmod", "600", "/home/node/.codex/auth.json"], argv_seen)
+        self.assertIn(
+            [
+                "runuser", "-u", "node", "--",
+                "env",
+                "HOME=/home/node",
+                "CODEX_HOME=/home/node/.codex",
+                "codex", "login", "status",
+            ],
+            argv_seen,
+        )
+
+    def test_dies_when_codex_rejects_dummy_auth(self):
+        with patch(
+            "bot_bottle.backend.smolmachines.provision.provider_auth._smolvm.machine_cp"
+        ), patch(
+            "bot_bottle.backend.smolmachines.provision.provider_auth._smolvm.machine_exec"
+        ) as ex:
+            ex.return_value = SmolvmRunResult(1, "Not logged in\n", "")
+            with self.assertRaises(SystemExit):
+                _provider_auth.provision_provider_auth(
+                    _plan(codex_auth_file=Path("/tmp/codex-auth.json")),
+                    "bot-bottle-demo-abc12",
+                )
 
 
 class TestProvisionSkills(unittest.TestCase):

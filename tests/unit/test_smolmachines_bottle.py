@@ -59,10 +59,9 @@ class TestClaudeArgvWrapped(unittest.TestCase):
                 "smolvm", "machine", "exec", "--name",
                 "bot-bottle-dev-abc",
                 "-i", "-t",
-                "-e", "HOME=/home/node",
-                "-e", "USER=node",
                 "--",
                 "runuser", "-u", "node", "--",
+                "env", "HOME=/home/node", "USER=node",
                 "claude",
             ],
             argv,
@@ -107,7 +106,7 @@ class TestClaudeArgvWrapped(unittest.TestCase):
             HTTPS_PROXY="http://127.0.0.1:1234",
             NO_PROXY="localhost",
         ).agent_argv([]))
-        self.assertIn("-e", argv)
+        self.assertIn("env", argv)
         self.assertIn("HTTPS_PROXY=http://127.0.0.1:1234", argv)
         self.assertIn("NO_PROXY=localhost", argv)
 
@@ -119,8 +118,8 @@ class TestClaudeArgvWrapped(unittest.TestCase):
         argv = _bottle().agent_argv([])
         agent_idx = argv.index("claude")
         self.assertEqual(
-            ["runuser", "-u", "node", "--"],
-            argv[agent_idx - 4:agent_idx],
+            ["runuser", "-u", "node", "--", "env"],
+            argv[agent_idx - 7:agent_idx - 2],
         )
 
 

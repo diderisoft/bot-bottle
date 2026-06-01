@@ -373,11 +373,12 @@ launcher reads `tokens.access_token` from the host's
 `~/.codex/auth.json`, verifies it is fresh user/device auth, and passes
 it to the sidecar's `EGRESS_TOKEN_N` env slot. The agent container gets
 a dummy `~/.codex/auth.json` that preserves the host auth-mode shape
-but replaces credential values with placeholders, so Codex chooses the
-user/device auth path without receiving real access tokens, refresh
-tokens, or `OPENAI_API_KEY`. The effective egress table automatically
-adds or upgrades `api.openai.com` and `chatgpt.com` to authenticated
-routes when `forward_host_credentials` is true.
+but replaces credential values with placeholders. It keeps the selected
+ChatGPT account id so Codex sends requests for the same account while
+egress owns the real bearer token. The agent never receives real access
+tokens, refresh tokens, or `OPENAI_API_KEY`. The effective egress table
+automatically adds or upgrades `api.openai.com` and `chatgpt.com` to
+authenticated routes when `forward_host_credentials` is true.
 
 The built-in Codex template uses `Dockerfile.codex`; set
 `agent_provider.dockerfile` to build the agent from a custom Dockerfile

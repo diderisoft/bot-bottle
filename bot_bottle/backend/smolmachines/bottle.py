@@ -45,19 +45,11 @@ _HOME_FOR = {
 }
 
 
-def _env_flags_for(user: str) -> list[str]:
+def _env_assignments_for(user: str, env: Mapping[str, str]) -> list[str]:
     home = _HOME_FOR.get(user, f"/home/{user}")
-    return ["-e", f"HOME={home}", "-e", f"USER={user}"]
-
-
-def _guest_env_flags(env: Mapping[str, str]) -> list[str]:
-    """Render `{K: V}` into a flat `-e K=V` argv slice for
-    `smolvm machine exec`. `smolvm machine create -e` set env
-    on PID 1 but it doesn't propagate to fresh exec process
-    trees, so we have to re-pass them every call."""
-    out: list[str] = []
+    out = [f"HOME={home}", f"USER={user}"]
     for k, v in env.items():
-        out += ["-e", f"{k}={v}"]
+        out.append(f"{k}={v}")
     return out
 
 
@@ -98,9 +90,8 @@ class SmolmachinesBottle(Bottle):
         flags = ["smolvm", "machine", "exec", "--name", self.name]
         if tty:
             flags += ["-i", "-t"]
-        flags += _env_flags_for("node")
-        flags += _guest_env_flags(self._guest_env)
-        agent_tail = [self.agent_command]
+        agent_tail = ["env", *_env_assignments_for("node", self._guest_env),
+                      self.agent_command]
         provider_prompt_args = prompt_args(
             self._agent_prompt_mode, self._prompt_path, argv=argv,
         )
@@ -148,16 +139,16 @@ class SmolmachinesBottle(Bottle):
         on both backends. Pass `user="root"` for tests that need
         root.
 
-        `runuser -u <user> -- /bin/sh -c <script>` switches UID
-        without invoking a login shell; HOME / USER are set via
-        `smolvm -e` (see `_env_flags_for`)."""
-        argv = (
-            _env_flags_for(user)
-            + _guest_env_flags(self._guest_env)
-            + ["--", "runuser", "-u", user, "--", "/bin/sh", "-c", script]
-        )
-        # _smolvm.machine_exec expects argv (the bit after `--`);
-        # the -e flags go before, so call smolvm directly.
+        `runuser -u <user> -- env ... /bin/sh -c <script>` switches UID
+        without invoking a login shell, then sets HOME / USER and the
+        bottle env in the child process."""
+        argv = [
+            "--", "runuser", "-u", user, "--",
+            "env", *_env_assignments_for(user, self._guest_env),
+            "/bin/sh", "-c", script,
+        ]
+        # Call smolvm directly because this path needs the host-side
+        # subprocess capture shape used by the Docker backend.
         r = subprocess.run(
             ["smolvm", "machine", "exec", "--name", self.name] + argv,
             capture_output=True, text=True, check=False,
