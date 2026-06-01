@@ -215,11 +215,6 @@ def resolve_plan(
     )
     if has_provider_auth and provider_runtime.placeholder_env:
         forwarded_env[provider_runtime.placeholder_env] = "egress-placeholder"
-    if provider.template == "claude" and has_provider_auth:
-        # Belt-and-braces: turn off telemetry endpoints (statsig,
-        # error reporting) that egress can't gate by auth.
-        forwarded_env.setdefault("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
-        forwarded_env.setdefault("DISABLE_ERROR_REPORTING", "1")
     _write_env_file(resolved, env_file)
     prompt_file.write_text(agent.prompt)
 
@@ -230,6 +225,7 @@ def resolve_plan(
         state_dir=agent_dir,
         guest_home=os.environ.get("BOT_BOTTLE_CONTAINER_HOME", "/home/node"),
         forward_host_credentials=provider.forward_host_credentials,
+        has_provider_auth=has_provider_auth,
         host_env=dict(os.environ),
     )
     guest_env = dict(agent_provision.guest_env)

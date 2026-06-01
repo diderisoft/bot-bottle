@@ -76,6 +76,20 @@ class TestAgentProviderRuntime(unittest.TestCase):
         self.assertEqual(1, len(plan.verify))
         self.assertIn("CODEX_HOME=/run/codex-home", plan.verify[0].argv)
 
+    def test_claude_with_provider_auth_disables_nonessential_traffic(self):
+        with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
+            plan = agent_provision_plan(
+                template="claude",
+                dockerfile="/tmp/Dockerfile.claude",
+                state_dir=Path(tmp),
+                has_provider_auth=True,
+            )
+        self.assertEqual(
+            "1",
+            plan.env_vars["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"],
+        )
+        self.assertEqual("1", plan.env_vars["DISABLE_ERROR_REPORTING"])
+
 
 if __name__ == "__main__":
     unittest.main()

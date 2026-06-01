@@ -126,9 +126,6 @@ def resolve_plan(
     )
     if has_provider_auth and provider_runtime.placeholder_env:
         guest_env[provider_runtime.placeholder_env] = "egress-placeholder"
-    if provider.template == "claude" and has_provider_auth:
-        guest_env.setdefault("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
-        guest_env.setdefault("DISABLE_ERROR_REPORTING", "1")
 
     supervise_plan = None
     if bottle.supervise:
@@ -170,6 +167,7 @@ def resolve_plan(
         guest_home=os.environ.get("BOT_BOTTLE_GUEST_HOME", "/home/node"),
         guest_env=guest_env,
         forward_host_credentials=provider.forward_host_credentials,
+        has_provider_auth=has_provider_auth,
         host_env=dict(os.environ),
     )
     merged_guest_env = dict(agent_provision.guest_env)

@@ -121,6 +121,7 @@ def agent_provision_plan(
     guest_home: str = "/home/node",
     guest_env: dict[str, str] | None = None,
     forward_host_credentials: bool = False,
+    has_provider_auth: bool = False,
     host_env: dict[str, str] | None = None,
 ) -> AgentProvisionPlan:
     runtime = runtime_for(template)
@@ -171,6 +172,9 @@ def agent_provision_plan(
                 "codex host credentials: dummy auth was copied into the "
                 "guest, but Codex did not accept it"
             )))
+    if template == PROVIDER_CLAUDE and has_provider_auth:
+        env_vars["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
+        env_vars["DISABLE_ERROR_REPORTING"] = "1"
 
     return AgentProvisionPlan(
         template=template,
