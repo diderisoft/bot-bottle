@@ -8,7 +8,7 @@ command, default image, and prompt/auth behavior.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
@@ -71,6 +71,7 @@ class AgentProvisionPlan:
     image: str
     dockerfile: str
     guest_env: dict[str, str]
+    env_vars: dict[str, str] = field(default_factory=dict)
     dirs: tuple[AgentProvisionDir, ...] = ()
     files: tuple[AgentProvisionFile, ...] = ()
     pre_copy: tuple[AgentProvisionCommand, ...] = ()
@@ -124,17 +125,17 @@ def agent_provision_plan(
 ) -> AgentProvisionPlan:
     runtime = runtime_for(template)
     resolved_guest_env = dict(guest_env or {})
+    env_vars: dict[str, str] = {}
     dirs: list[AgentProvisionDir] = []
     files: list[AgentProvisionFile] = []
     pre_copy: list[AgentProvisionCommand] = []
     verify: list[AgentProvisionCommand] = []
 
     if template == PROVIDER_CODEX:
-        resolved_guest_env.setdefault(
-            "CODEX_CA_CERTIFICATE",
-            "/etc/ssl/certs/ca-certificates.crt",
-        )
+        env_vars["CODEX_CA_CERTIFICATE"] = "/etc/ssl/certs/ca-certificates.crt"
         auth_dir = resolved_guest_env.get("CODEX_HOME", f"{guest_home}/.codex")
+        if forward_host_credentials:
+            env_vars["CODEX_HOME"] = auth_dir
         dirs.append(AgentProvisionDir(auth_dir))
         config_path = f"{auth_dir}/config.toml"
         config_file = state_dir / "codex-config.toml"
@@ -177,6 +178,7 @@ def agent_provision_plan(
         prompt_mode=runtime.prompt_mode,
         image=runtime.image,
         dockerfile=dockerfile,
+        env_vars=env_vars,
         guest_env=resolved_guest_env,
         dirs=tuple(dirs),
         files=tuple(files),

@@ -42,8 +42,9 @@ class TestAgentProviderRuntime(unittest.TestCase):
         self.assertEqual("/tmp/Dockerfile.codex", plan.dockerfile)
         self.assertEqual(
             "/etc/ssl/certs/ca-certificates.crt",
-            plan.guest_env["CODEX_CA_CERTIFICATE"],
+            plan.env_vars["CODEX_CA_CERTIFICATE"],
         )
+        self.assertEqual({}, plan.guest_env)
         self.assertEqual(("/home/node/.codex",), tuple(d.guest_path for d in plan.dirs))
         self.assertEqual(
             ("/home/node/.codex/config.toml",),
@@ -70,6 +71,7 @@ class TestAgentProviderRuntime(unittest.TestCase):
             "/run/codex-home/auth.json",
             {f.guest_path for f in plan.files},
         )
+        self.assertEqual("/run/codex-home", plan.env_vars["CODEX_HOME"])
         self.assertEqual(1, len(plan.pre_copy))
         self.assertEqual(1, len(plan.verify))
         self.assertIn("CODEX_HOME=/run/codex-home", plan.verify[0].argv)

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
+from dataclasses import replace
 from pathlib import Path
 
 from ...agent_provider import agent_provision_plan, runtime_for
@@ -231,6 +232,10 @@ def resolve_plan(
         forward_host_credentials=provider.forward_host_credentials,
         host_env=dict(os.environ),
     )
+    guest_env = dict(agent_provision.guest_env)
+    for key, val in agent_provision.env_vars.items():
+        guest_env.setdefault(key, val)
+    agent_provision = replace(agent_provision, guest_env=guest_env)
 
     return DockerBottlePlan(
         spec=spec,

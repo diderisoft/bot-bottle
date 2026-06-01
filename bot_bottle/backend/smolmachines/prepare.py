@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
+from dataclasses import replace
 from pathlib import Path
 
 from ...agent_provider import agent_provision_plan, runtime_for
@@ -128,24 +129,6 @@ def resolve_plan(
     if provider.template == "claude" and has_provider_auth:
         guest_env.setdefault("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
         guest_env.setdefault("DISABLE_ERROR_REPORTING", "1")
-    if provider.template == "codex":
-        # Codex is a Rust/rustls client: unlike the Node agents it does
-        # NOT consult the system trust store or honor NODE_EXTRA_CA_CERTS.
-        # It reads CODEX_CA_CERTIFICATE (falling back to SSL_CERT_FILE)
-        # for custom roots, across HTTPS *and* the wss responses channel.
-        # Point it at the bundle update-ca-certificates rebuilt with the
-        # egress MITM CA so Codex trusts the proxy and egress can inject
-        # the host bearer — without this, codex bottles need
-        # pipelock tls_passthrough, which disables auth injection.
-        guest_env["CODEX_CA_CERTIFICATE"] = (
-            "/etc/ssl/certs/ca-certificates.crt"
-        )
-    if provider.template == "codex" and provider.forward_host_credentials:
-        # Smolvm exec process trees do not reliably inherit the image
-        # user's login environment. Pin CODEX_HOME to the same path
-        # provision_provider_auth writes so Codex never falls back to a
-        # root or unset home and shows the sign-in picker.
-        guest_env["CODEX_HOME"] = "/home/node/.codex"
 
     supervise_plan = None
     if bottle.supervise:
@@ -189,6 +172,10 @@ def resolve_plan(
         forward_host_credentials=provider.forward_host_credentials,
         host_env=dict(os.environ),
     )
+    merged_guest_env = dict(agent_provision.guest_env)
+    for key, val in agent_provision.env_vars.items():
+        merged_guest_env.setdefault(key, val)
+    agent_provision = replace(agent_provision, guest_env=merged_guest_env)
 
     return SmolmachinesBottlePlan(
         spec=spec,
