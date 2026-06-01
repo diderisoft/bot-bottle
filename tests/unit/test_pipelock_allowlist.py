@@ -5,6 +5,8 @@ git-gate (PRD 0008)."""
 
 import unittest
 
+from bot_bottle.agent_provider import CODEX_HOST_CREDENTIAL_HOSTS
+from bot_bottle.egress import CODEX_HOST_CREDENTIAL_TOKEN_REF, EgressRoute
 from bot_bottle.manifest import Manifest
 from bot_bottle.pipelock import (
     pipelock_effective_allowlist,
@@ -116,17 +118,23 @@ class TestTlsPassthrough(unittest.TestCase):
     def test_forward_host_credentials_passes_through_codex_hosts(self):
         # Egress injects the host bearer on the Codex API hosts; pipelock
         # must pass them through or its header DLP blocks the injected JWT
-        # ("request header contains secret"). These routes are auto-added
-        # (not in bottle.egress.routes), so passthrough is host-derived.
-        passthrough = pipelock_effective_tls_passthrough(_bottle({
-            "agent_provider": {
-                "template": "codex",
-                "forward_host_credentials": True,
-            },
-        }))
+        # ("request header contains secret"). Provider routes carry
+        # tls_passthrough=True; pipelock reads this via egress_routes_for_bottle.
+        provider_routes = tuple(
+            EgressRoute(
+                host=host,
+                auth_scheme="Bearer",
+                token_ref=CODEX_HOST_CREDENTIAL_TOKEN_REF,
+                tls_passthrough=True,
+            )
+            for host in CODEX_HOST_CREDENTIAL_HOSTS
+        )
+        passthrough = pipelock_effective_tls_passthrough(
+            _bottle({}), provider_routes,
+        )
         self.assertEqual(["api.openai.com", "chatgpt.com"], passthrough)
 
-    def test_no_codex_passthrough_without_forward_host_credentials(self):
+    def test_no_codex_passthrough_without_provider_routes(self):
         passthrough = pipelock_effective_tls_passthrough(_bottle({
             "agent_provider": {"template": "codex"},
         }))

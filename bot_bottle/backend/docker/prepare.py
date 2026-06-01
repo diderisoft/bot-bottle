@@ -16,7 +16,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from ...agent_provider import agent_provision_plan, runtime_for
-from ...egress import Egress
+from ...egress import Egress, egress_manifest_routes
 from ...env import ResolvedEnv, resolve_env
 from ...git_gate import GitGate
 from ...log import die
@@ -159,17 +159,57 @@ def resolve_plan(
     prompt_file.write_text("")
     prompt_file.chmod(0o600)
 
-    pipelock_dir = pipelock_state_dir(slug)
-    pipelock_dir.mkdir(parents=True, exist_ok=True)
-    proxy_plan = proxy.prepare(bottle, slug, pipelock_dir)
-
     git_gate_dir = git_gate_state_dir(slug)
     git_gate_dir.mkdir(parents=True, exist_ok=True)
     git_gate_plan = git_gate.prepare(bottle, slug, git_gate_dir)
 
+    resolved = resolve_env(manifest, spec.agent_name)
+    # Everything that should reach the bottle by-name (so its value
+    # never lands on argv or in env_file) goes into one dict. Nothing
+    # mutates the host os.environ.
+    forwarded_env: dict[str, str] = dict(resolved.forwarded)
+    # Some provider CLIs refuse to start without *some* credential
+    # env var even when egress will strip + re-inject the real
+    # Authorization header. For those providers, auth_role names the
+    # route marker that enables a non-secret placeholder env. Codex is
+    # intentionally absent here: it should use its device/ChatGPT login
+    # state, and an OPENAI_API_KEY placeholder would force API-key auth.
+    has_provider_auth = any(
+        provider_runtime.auth_role
+        and provider_runtime.auth_role in r.roles
+        for r in egress_manifest_routes(bottle)
+    )
+    if has_provider_auth and provider_runtime.placeholder_env:
+        forwarded_env[provider_runtime.placeholder_env] = "egress-placeholder"
+    _write_env_file(resolved, env_file)
+    prompt_file.write_text(agent.prompt)
+
+    use_runsc = docker_mod.runsc_available()
+    agent_provision = agent_provision_plan(
+        template=provider.template,
+        dockerfile=dockerfile_path,
+        state_dir=agent_dir,
+        guest_home=os.environ.get("BOT_BOTTLE_CONTAINER_HOME", "/home/node"),
+        forward_host_credentials=provider.forward_host_credentials,
+        has_provider_auth=has_provider_auth,
+        host_env=dict(os.environ),
+    )
+    guest_env = dict(agent_provision.guest_env)
+    for key, val in agent_provision.env_vars.items():
+        guest_env.setdefault(key, val)
+    agent_provision = replace(agent_provision, guest_env=guest_env)
+
+    pipelock_dir = pipelock_state_dir(slug)
+    pipelock_dir.mkdir(parents=True, exist_ok=True)
+    proxy_plan = proxy.prepare(
+        bottle, slug, pipelock_dir, agent_provision.egress_routes,
+    )
+
     egress_dir = egress_state_dir(slug)
     egress_dir.mkdir(parents=True, exist_ok=True)
-    egress_plan = egress.prepare(bottle, slug, egress_dir)
+    egress_plan = egress.prepare(
+        bottle, slug, egress_dir, agent_provision.egress_routes,
+    )
 
     supervise_plan = None
     if bottle.supervise:
@@ -197,41 +237,6 @@ def resolve_plan(
             slug, supervise_dir,
             dockerfile_content=dockerfile_content,
         )
-    resolved = resolve_env(manifest, spec.agent_name)
-    # Everything that should reach the bottle by-name (so its value
-    # never lands on argv or in env_file) goes into one dict. Nothing
-    # mutates the host os.environ.
-    forwarded_env: dict[str, str] = dict(resolved.forwarded)
-    # Some provider CLIs refuse to start without *some* credential
-    # env var even when egress will strip + re-inject the real
-    # Authorization header. For those providers, auth_role names the
-    # route marker that enables a non-secret placeholder env. Codex is
-    # intentionally absent here: it should use its device/ChatGPT login
-    # state, and an OPENAI_API_KEY placeholder would force API-key auth.
-    has_provider_auth = any(
-        provider_runtime.auth_role
-        and provider_runtime.auth_role in r.roles
-        for r in egress_plan.routes
-    )
-    if has_provider_auth and provider_runtime.placeholder_env:
-        forwarded_env[provider_runtime.placeholder_env] = "egress-placeholder"
-    _write_env_file(resolved, env_file)
-    prompt_file.write_text(agent.prompt)
-
-    use_runsc = docker_mod.runsc_available()
-    agent_provision = agent_provision_plan(
-        template=provider.template,
-        dockerfile=dockerfile_path,
-        state_dir=agent_dir,
-        guest_home=os.environ.get("BOT_BOTTLE_CONTAINER_HOME", "/home/node"),
-        forward_host_credentials=provider.forward_host_credentials,
-        has_provider_auth=has_provider_auth,
-        host_env=dict(os.environ),
-    )
-    guest_env = dict(agent_provision.guest_env)
-    for key, val in agent_provision.env_vars.items():
-        guest_env.setdefault(key, val)
-    agent_provision = replace(agent_provision, guest_env=guest_env)
 
     return DockerBottlePlan(
         spec=spec,

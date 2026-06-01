@@ -16,6 +16,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from ...agent_provider import agent_provision_plan, runtime_for
+from ...egress import egress_manifest_routes
 from ...backend import BottleSpec
 from ...backend.docker.bottle_state import (
     BottleMetadata,
@@ -95,23 +96,9 @@ def resolve_plan(
         "REQUESTS_CA_BUNDLE":  "/etc/ssl/certs/ca-certificates.crt",
     }
 
-    # Inner Plans for the four bundle daemons. The ABCs are
-    # platform-neutral — `.prepare()` writes config files + returns
-    # a Plan dataclass with no backend-specific assumptions. State
-    # dirs are still keyed by slug under the docker backend's
-    # bottle_state layout (shared on-host convention; not a docker
-    # dependency).
-    pipelock_dir = pipelock_state_dir(slug)
-    pipelock_dir.mkdir(parents=True, exist_ok=True)
-    proxy_plan = PipelockProxy().prepare(bottle, slug, pipelock_dir)
-
     git_gate_dir = git_gate_state_dir(slug)
     git_gate_dir.mkdir(parents=True, exist_ok=True)
     git_gate_plan = GitGate().prepare(bottle, slug, git_gate_dir)
-
-    egress_dir = egress_state_dir(slug)
-    egress_dir.mkdir(parents=True, exist_ok=True)
-    egress_plan = Egress().prepare(bottle, slug, egress_dir)
 
     # Some provider CLIs refuse to start without *some* credential
     # env var even when egress will strip + re-inject the real
@@ -122,16 +109,10 @@ def resolve_plan(
     has_provider_auth = any(
         provider_runtime.auth_role
         and provider_runtime.auth_role in r.roles
-        for r in egress_plan.routes
+        for r in egress_manifest_routes(bottle)
     )
     if has_provider_auth and provider_runtime.placeholder_env:
         guest_env[provider_runtime.placeholder_env] = "egress-placeholder"
-
-    supervise_plan = None
-    if bottle.supervise:
-        supervise_dir = supervise_state_dir(slug)
-        supervise_dir.mkdir(parents=True, exist_ok=True)
-        supervise_plan = Supervise().prepare(slug, supervise_dir)
 
     # Prompt file is always written (mode 0o600) so the in-VM
     # path always exists. Content is the agent's `prompt`
@@ -174,6 +155,30 @@ def resolve_plan(
     for key, val in agent_provision.env_vars.items():
         merged_guest_env.setdefault(key, val)
     agent_provision = replace(agent_provision, guest_env=merged_guest_env)
+
+    # Inner Plans for the four bundle daemons. The ABCs are
+    # platform-neutral — `.prepare()` writes config files + returns
+    # a Plan dataclass with no backend-specific assumptions. State
+    # dirs are still keyed by slug under the docker backend's
+    # bottle_state layout (shared on-host convention; not a docker
+    # dependency).
+    pipelock_dir = pipelock_state_dir(slug)
+    pipelock_dir.mkdir(parents=True, exist_ok=True)
+    proxy_plan = PipelockProxy().prepare(
+        bottle, slug, pipelock_dir, agent_provision.egress_routes,
+    )
+
+    egress_dir = egress_state_dir(slug)
+    egress_dir.mkdir(parents=True, exist_ok=True)
+    egress_plan = Egress().prepare(
+        bottle, slug, egress_dir, agent_provision.egress_routes,
+    )
+
+    supervise_plan = None
+    if bottle.supervise:
+        supervise_dir = supervise_state_dir(slug)
+        supervise_dir.mkdir(parents=True, exist_ok=True)
+        supervise_plan = Supervise().prepare(slug, supervise_dir)
 
     return SmolmachinesBottlePlan(
         spec=spec,

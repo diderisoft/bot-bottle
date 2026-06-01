@@ -5,6 +5,7 @@ import unittest
 
 from bot_bottle.egress import (
     CODEX_HOST_CREDENTIAL_TOKEN_REF,
+    EgressRoute,
     egress_manifest_routes,
     egress_render_routes,
     egress_resolve_token_values,
@@ -23,19 +24,13 @@ def _bottle(routes):
     }).bottles["dev"]
 
 
-def _codex_bottle(*, forward_host_credentials: bool, routes):
-    return Manifest.from_json_obj({
-        "bottles": {
-            "dev": {
-                "agent_provider": {
-                    "template": "codex",
-                    "forward_host_credentials": forward_host_credentials,
-                },
-                "egress": {"routes": routes},
-            }
-        },
-        "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
-    }).bottles["dev"]
+def _provider_route(host: str, token_ref: str, *, tls_passthrough: bool = False) -> EgressRoute:
+    return EgressRoute(
+        host=host,
+        auth_scheme="Bearer",
+        token_ref=token_ref,
+        tls_passthrough=tls_passthrough,
+    )
 
 
 class TestRoutesForBottle(unittest.TestCase):
@@ -100,9 +95,8 @@ class TestRoutesForBottle(unittest.TestCase):
         self.assertEqual("", routes[1].token_env)
 
 
-class TestRoutesForBottleUsesManifestOnly(unittest.TestCase):
-    """The effective route table is exactly the manifest-declared
-    routes. Provider defaults are not injected implicitly."""
+class TestRoutesForBottleManifestOnly(unittest.TestCase):
+    """Without provider routes the effective table is exactly the manifest."""
 
     def test_no_manifest_routes_means_no_effective_routes(self):
         b = _bottle([])
@@ -123,58 +117,97 @@ class TestRoutesForBottleUsesManifestOnly(unittest.TestCase):
         effective = [r.host for r in egress_routes_for_bottle(b)]
         self.assertEqual(["x.example"], effective)
 
-    def test_codex_forward_host_credentials_adds_codex_routes(self):
-        b = _codex_bottle(forward_host_credentials=True, routes=[])
+    def test_tls_passthrough_lifted_from_manifest(self):
+        b = _bottle([{
+            "host": "api.openai.com",
+            "auth": {"scheme": "Bearer", "token_ref": "T"},
+            "pipelock": {"tls_passthrough": True},
+        }])
         routes = egress_routes_for_bottle(b)
-        self.assertEqual(["api.openai.com", "chatgpt.com"], [r.host for r in routes])
+        self.assertTrue(routes[0].tls_passthrough)
+
+    def test_tls_passthrough_false_by_default(self):
+        b = _bottle([{"host": "api.github.com"}])
+        routes = egress_routes_for_bottle(b)
+        self.assertFalse(routes[0].tls_passthrough)
+
+
+class TestProviderRouteMerge(unittest.TestCase):
+    """Provider routes are merged into manifest routes generically."""
+
+    def test_provider_route_appended_when_not_in_manifest(self):
+        b = _bottle([])
+        pr = _provider_route("api.openai.com", "TOK")
+        routes = egress_routes_for_bottle(b, (pr,))
+        self.assertEqual(1, len(routes))
+        self.assertEqual("api.openai.com", routes[0].host)
         self.assertEqual("Bearer", routes[0].auth_scheme)
         self.assertEqual("EGRESS_TOKEN_0", routes[0].token_env)
-        self.assertEqual(CODEX_HOST_CREDENTIAL_TOKEN_REF, routes[0].token_ref)
-        self.assertEqual("Bearer", routes[1].auth_scheme)
-        self.assertEqual("EGRESS_TOKEN_0", routes[1].token_env)
-        self.assertEqual(CODEX_HOST_CREDENTIAL_TOKEN_REF, routes[1].token_ref)
+        self.assertEqual("TOK", routes[0].token_ref)
 
-    def test_codex_forward_host_credentials_upgrades_bare_chatgpt_route(self):
-        b = _codex_bottle(
-            forward_host_credentials=True,
-            routes=[{"host": "chatgpt.com", "path_allowlist": ["/backend-api/"]}],
-        )
-        routes = egress_routes_for_bottle(b)
-        self.assertEqual(2, len(routes))
+    def test_two_provider_routes_with_same_token_ref_share_slot(self):
+        b = _bottle([])
+        routes = egress_routes_for_bottle(b, (
+            _provider_route("api.openai.com", CODEX_HOST_CREDENTIAL_TOKEN_REF),
+            _provider_route("chatgpt.com",    CODEX_HOST_CREDENTIAL_TOKEN_REF),
+        ))
+        self.assertEqual(["api.openai.com", "chatgpt.com"], [r.host for r in routes])
+        self.assertEqual("EGRESS_TOKEN_0", routes[0].token_env)
+        self.assertEqual("EGRESS_TOKEN_0", routes[1].token_env)
+
+    def test_provider_route_upgrades_bare_manifest_route(self):
+        b = _bottle([{"host": "chatgpt.com", "path_allowlist": ["/backend-api/"]}])
+        pr = _provider_route("chatgpt.com", CODEX_HOST_CREDENTIAL_TOKEN_REF)
+        routes = egress_routes_for_bottle(b, (pr,))
+        self.assertEqual(1, len(routes))
         self.assertEqual("chatgpt.com", routes[0].host)
         self.assertEqual("Bearer", routes[0].auth_scheme)
         self.assertEqual("EGRESS_TOKEN_0", routes[0].token_env)
         self.assertEqual(CODEX_HOST_CREDENTIAL_TOKEN_REF, routes[0].token_ref)
         self.assertEqual(("/backend-api/",), routes[0].path_allowlist)
-        self.assertEqual("api.openai.com", routes[1].host)
-        self.assertEqual("EGRESS_TOKEN_0", routes[1].token_env)
 
-    def test_codex_forward_host_credentials_accepts_explicit_synthetic_route(self):
-        b = _codex_bottle(
-            forward_host_credentials=True,
-            routes=[{
-                "host": "api.openai.com",
-                "auth": {
-                    "scheme": "Bearer",
-                    "token_ref": CODEX_HOST_CREDENTIAL_TOKEN_REF,
-                },
-            }],
-        )
-        routes = egress_routes_for_bottle(b)
-        self.assertEqual(["api.openai.com", "chatgpt.com"], [r.host for r in routes])
+    def test_provider_route_noop_when_same_auth_already_in_manifest(self):
+        b = _bottle([{
+            "host": "api.openai.com",
+            "auth": {"scheme": "Bearer", "token_ref": CODEX_HOST_CREDENTIAL_TOKEN_REF},
+        }])
+        pr = _provider_route("api.openai.com", CODEX_HOST_CREDENTIAL_TOKEN_REF)
+        routes = egress_routes_for_bottle(b, (pr,))
+        self.assertEqual(1, len(routes))
         self.assertEqual("EGRESS_TOKEN_0", routes[0].token_env)
-        self.assertEqual("EGRESS_TOKEN_0", routes[1].token_env)
 
-    def test_codex_forward_host_credentials_conflicts_with_authed_route(self):
-        b = _codex_bottle(
-            forward_host_credentials=True,
-            routes=[{
-                "host": "chatgpt.com",
-                "auth": {"scheme": "Bearer", "token_ref": "OTHER"},
-            }],
+    def test_provider_route_upgrades_tls_passthrough_on_existing_same_auth(self):
+        b = _bottle([{
+            "host": "api.openai.com",
+            "auth": {"scheme": "Bearer", "token_ref": CODEX_HOST_CREDENTIAL_TOKEN_REF},
+        }])
+        pr = _provider_route(
+            "api.openai.com", CODEX_HOST_CREDENTIAL_TOKEN_REF, tls_passthrough=True,
         )
+        routes = egress_routes_for_bottle(b, (pr,))
+        self.assertEqual(1, len(routes))
+        self.assertTrue(routes[0].tls_passthrough)
+
+    def test_provider_route_conflicts_with_different_authed_manifest_route(self):
+        b = _bottle([{
+            "host": "chatgpt.com",
+            "auth": {"scheme": "Bearer", "token_ref": "OTHER"},
+        }])
+        pr = _provider_route("chatgpt.com", CODEX_HOST_CREDENTIAL_TOKEN_REF)
         with self.assertRaises(Die):
-            egress_routes_for_bottle(b)
+            egress_routes_for_bottle(b, (pr,))
+
+    def test_provider_route_tls_passthrough_set_on_appended_route(self):
+        b = _bottle([])
+        pr = _provider_route("api.openai.com", "TOK", tls_passthrough=True)
+        routes = egress_routes_for_bottle(b, (pr,))
+        self.assertTrue(routes[0].tls_passthrough)
+
+    def test_provider_route_tls_passthrough_set_on_upgraded_bare_route(self):
+        b = _bottle([{"host": "api.openai.com"}])
+        pr = _provider_route("api.openai.com", "TOK", tls_passthrough=True)
+        routes = egress_routes_for_bottle(b, (pr,))
+        self.assertTrue(routes[0].tls_passthrough)
 
 
 class TestTokenEnvMap(unittest.TestCase):

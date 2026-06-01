@@ -31,7 +31,6 @@ from pathlib import Path
 from .log import die
 from .manifest import Bottle
 
-CODEX_HOST_CREDENTIAL_HOSTS = ("api.openai.com", "chatgpt.com")
 CODEX_HOST_CREDENTIAL_TOKEN_REF = "BOT_BOTTLE_CODEX_HOST_ACCESS_TOKEN"
 
 
@@ -69,7 +68,13 @@ class EgressRoute:
 
     `roles` carries the manifest route's optional role markers (see
     `manifest.EGRESS_ROLES`). The launch step reads these for
-    side effects like the claude-code OAuth placeholder env."""
+    side effects like the claude-code OAuth placeholder env.
+
+    `tls_passthrough` signals that pipelock must not TLS-MITM this
+    host — either because the manifest declared `pipelock.tls_passthrough:
+    true` (lifted in `egress_manifest_routes`) or because a provider
+    route set it (e.g. egress injects its own Bearer on that host
+    after the agent boundary and pipelock's header DLP would block it)."""
 
     host: str
     path_allowlist: tuple[str, ...] = ()
@@ -77,6 +82,7 @@ class EgressRoute:
     token_env: str = ""
     token_ref: str = ""
     roles: tuple[str, ...] = ()
+    tls_passthrough: bool = False
 
 
 @dataclass(frozen=True)
@@ -161,84 +167,94 @@ def egress_manifest_routes(
                 token_env=token_env,
                 token_ref=r.TokenRef,
                 roles=r.Role,
+                tls_passthrough=r.Pipelock.TlsPassthrough,
             ))
         else:
             out.append(EgressRoute(
                 host=r.Host,
                 path_allowlist=r.PathAllowlist,
                 roles=r.Role,
+                tls_passthrough=r.Pipelock.TlsPassthrough,
             ))
     return tuple(out)
 
 
 def egress_routes_for_bottle(
     bottle: Bottle,
+    provider_routes: tuple[EgressRoute, ...] = (),
 ) -> tuple[EgressRoute, ...]:
-    """Effective egress routes. This is what gets rendered into
-    routes.yaml + what the addon enforces.
+    """Effective egress routes for the agent. This is what gets rendered
+    into routes.yaml and what the addon enforces.
 
-    Operators that want to allow a host usually declare it directly in
-    `bottle.egress.routes` as an authenticated route or bare-pass entry
-    (`- host: <name>`). Codex host-credential forwarding is the
-    provider-owned exception: when explicitly enabled, it adds or
-    upgrades the Codex API hosts to egress-owned authenticated routes. The
-    legacy `bottle.egress.allowlist` folding is gone — egress is the
-    single allowlist surface."""
+    Merges manifest-declared routes with provider-owned routes. The
+    manifest is the primary surface; `provider_routes` are synthesised
+    by `agent_provision_plan` and may add or upgrade manifest entries.
+    Provider routes that conflict with an existing authenticated manifest
+    route (different auth scheme or token ref) raise a hard error."""
     routes = list(egress_manifest_routes(bottle))
-    if not bottle.agent_provider.forward_host_credentials:
-        return tuple(routes)
-
-    if bottle.agent_provider.template != "codex":
-        return tuple(routes)
-
-    for host in CODEX_HOST_CREDENTIAL_HOSTS:
-        routes = _ensure_codex_host_credential_route(routes, host)
+    for pr in provider_routes:
+        routes = _merge_provider_route(routes, pr)
     return tuple(routes)
 
 
-def _next_token_env(routes: list[EgressRoute]) -> str:
+def _find_or_alloc_token_env(routes: list[EgressRoute], token_ref: str) -> str:
+    """Return the existing token_env slot for `token_ref`, or allocate the next one."""
+    for route in routes:
+        if route.token_ref == token_ref and route.token_env:
+            return route.token_env
     return f"EGRESS_TOKEN_{len({r.token_env for r in routes if r.token_env})}"
 
 
-def _codex_host_credential_token_env(routes: list[EgressRoute]) -> str:
-    for route in routes:
-        if route.token_ref == CODEX_HOST_CREDENTIAL_TOKEN_REF:
-            return route.token_env
-    return _next_token_env(routes)
-
-
-def _ensure_codex_host_credential_route(
-    routes: list[EgressRoute], host: str,
+def _merge_provider_route(
+    routes: list[EgressRoute], pr: EgressRoute,
 ) -> list[EgressRoute]:
+    """Merge one provider-declared route into the manifest route list.
+
+    Upgrade a bare-pass manifest route to authenticated if the provider
+    declares auth for that host, or append if the host isn't in the manifest.
+    Identical auth (same scheme + token_ref) on an existing route is a
+    no-op, with a tls_passthrough upgrade if the provider route sets it.
+    Conflicting auth (different scheme or token_ref) dies."""
     for idx, route in enumerate(routes):
-        if route.host.lower() != host:
+        if route.host.lower() != pr.host.lower():
             continue
         if route.auth_scheme or route.token_ref:
-            if (
-                route.auth_scheme == "Bearer"
-                and route.token_ref == CODEX_HOST_CREDENTIAL_TOKEN_REF
-            ):
+            if route.auth_scheme == pr.auth_scheme and route.token_ref == pr.token_ref:
+                if pr.tls_passthrough and not route.tls_passthrough:
+                    routes[idx] = EgressRoute(
+                        host=route.host,
+                        path_allowlist=route.path_allowlist,
+                        auth_scheme=route.auth_scheme,
+                        token_env=route.token_env,
+                        token_ref=route.token_ref,
+                        roles=route.roles,
+                        tls_passthrough=True,
+                    )
                 return routes
             die(
-                "codex host credential forwarding conflicts with an "
-                f"authenticated egress route for {host}. Remove that "
-                "route auth block or disable agent_provider.forward_host_credentials."
+                f"provider egress route for {pr.host!r} conflicts with an "
+                f"authenticated manifest route (different auth scheme or token "
+                f"ref). Remove the manifest route's auth block or disable the "
+                f"feature that adds this provider route."
             )
+        token_env = _find_or_alloc_token_env(routes, pr.token_ref)
         routes[idx] = EgressRoute(
             host=route.host,
             path_allowlist=route.path_allowlist,
-            auth_scheme="Bearer",
-            token_env=_codex_host_credential_token_env(routes),
-            token_ref=CODEX_HOST_CREDENTIAL_TOKEN_REF,
+            auth_scheme=pr.auth_scheme,
+            token_env=token_env,
+            token_ref=pr.token_ref,
             roles=route.roles,
+            tls_passthrough=pr.tls_passthrough,
         )
         return routes
-
+    token_env = _find_or_alloc_token_env(routes, pr.token_ref)
     routes.append(EgressRoute(
-        host=host,
-        auth_scheme="Bearer",
-        token_env=_codex_host_credential_token_env(routes),
-        token_ref=CODEX_HOST_CREDENTIAL_TOKEN_REF,
+        host=pr.host,
+        auth_scheme=pr.auth_scheme,
+        token_env=token_env,
+        token_ref=pr.token_ref,
+        tls_passthrough=pr.tls_passthrough,
     ))
     return routes
 
@@ -338,18 +354,23 @@ class Egress(ABC):
     sidecar's start/stop lifecycle is backend-specific and lives on
     concrete subclasses."""
 
-    def prepare(self, bottle: Bottle, slug: str, stage_dir: Path) -> EgressPlan:
-        """Lift `bottle.egress.routes` into resolved routes,
-        render the routes file (mode 600) under `stage_dir`, and
+    def prepare(
+        self,
+        bottle: Bottle,
+        slug: str,
+        stage_dir: Path,
+        provider_routes: tuple[EgressRoute, ...] = (),
+    ) -> EgressPlan:
+        """Lift `bottle.egress.routes` + `provider_routes` into resolved
+        routes, render the routes file (mode 600) under `stage_dir`, and
         return the plan. Pure host-side, no docker subprocess. The
         token-env map records the mapping the launch step uses to
-        forward values from the host's environ into the sidecar's
-        environ.
+        forward values from the host's environ into the sidecar's environ.
 
         Returned plan is incomplete: the launch step must fill
         `internal_network` / `egress_network` / `pipelock_proxy_url`
         via `dataclasses.replace` before passing it to `.start`."""
-        routes = egress_routes_for_bottle(bottle)
+        routes = egress_routes_for_bottle(bottle, provider_routes)
         routes_path = stage_dir / "egress_routes.yaml"
         routes_path.write_text(egress_render_routes(routes))
         routes_path.chmod(0o600)
@@ -361,6 +382,7 @@ class Egress(ABC):
         )
 
 __all__ = [
+    "CODEX_HOST_CREDENTIAL_TOKEN_REF",
     "EGRESS_HOSTNAME",
     "EGRESS_ROUTES_IN_CONTAINER",
     "Egress",

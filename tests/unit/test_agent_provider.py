@@ -8,7 +8,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from bot_bottle.agent_provider import agent_provision_plan, runtime_for
+from bot_bottle.agent_provider import (
+    CODEX_HOST_CREDENTIAL_HOSTS,
+    agent_provision_plan,
+    runtime_for,
+)
+from bot_bottle.egress import CODEX_HOST_CREDENTIAL_TOKEN_REF
 
 
 def _jwt(exp: int) -> str:
@@ -89,6 +94,47 @@ class TestAgentProviderRuntime(unittest.TestCase):
             plan.env_vars["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"],
         )
         self.assertEqual("1", plan.env_vars["DISABLE_ERROR_REPORTING"])
+
+    def test_codex_forward_host_credentials_populates_egress_routes(self):
+        with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
+            home = Path(tmp) / "host-codex"
+            home.mkdir()
+            (home / "auth.json").write_text(json.dumps({
+                "auth_mode": "chatgpt",
+                "tokens": {"access_token": _jwt(2000000000)},
+            }))
+            plan = agent_provision_plan(
+                template="codex",
+                dockerfile="",
+                state_dir=Path(tmp),
+                forward_host_credentials=True,
+                host_env={"CODEX_HOME": str(home)},
+            )
+        hosts = [r.host for r in plan.egress_routes]
+        self.assertEqual(sorted(CODEX_HOST_CREDENTIAL_HOSTS), sorted(hosts))
+        for r in plan.egress_routes:
+            self.assertEqual("Bearer", r.auth_scheme)
+            self.assertEqual(CODEX_HOST_CREDENTIAL_TOKEN_REF, r.token_ref)
+            self.assertTrue(r.tls_passthrough)
+
+    def test_codex_without_forward_host_credentials_has_no_egress_routes(self):
+        with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
+            plan = agent_provision_plan(
+                template="codex",
+                dockerfile="",
+                state_dir=Path(tmp),
+                forward_host_credentials=False,
+            )
+        self.assertEqual((), plan.egress_routes)
+
+    def test_claude_plan_has_no_egress_routes(self):
+        with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
+            plan = agent_provision_plan(
+                template="claude",
+                dockerfile="",
+                state_dir=Path(tmp),
+            )
+        self.assertEqual((), plan.egress_routes)
 
 
 if __name__ == "__main__":

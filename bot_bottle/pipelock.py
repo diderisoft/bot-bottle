@@ -21,11 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from .egress import (
-    CODEX_HOST_CREDENTIAL_HOSTS,
-    EGRESS_HOSTNAME,
-    egress_routes_for_bottle,
-)
+from .egress import EGRESS_HOSTNAME, EgressRoute, egress_routes_for_bottle
 from .supervise import SUPERVISE_HOSTNAME
 from .manifest import Bottle
 
@@ -54,14 +50,17 @@ PIPELOCK_HOSTNAME = "pipelock"
 # --- Allowlist resolution --------------------------------------------------
 
 
-def pipelock_effective_allowlist(bottle: Bottle) -> list[str]:
+def pipelock_effective_allowlist(
+    bottle: Bottle,
+    provider_routes: tuple[EgressRoute, ...] = (),
+) -> list[str]:
     """Hostnames pipelock allows. Sorted for stability.
 
-    Always mirrors `egress_routes_for_bottle(bottle)` — egress is the
-    single allowlist surface, and pipelock's allowlist is the downstream
-    copy for defense-in-depth + DLP body scanning. For bottles without
-    any `egress.routes[]` declared, this is empty except for supervise
-    sidecar traffic when `supervise: true`.
+    Always mirrors `egress_routes_for_bottle(bottle, provider_routes)` —
+    egress is the single allowlist surface, and pipelock's allowlist is
+    the downstream copy for defense-in-depth + DLP body scanning. For
+    bottles without any `egress.routes[]` declared, this is empty except
+    for supervise sidecar traffic when `supervise: true`.
 
     The supervise sidecar's hostname is auto-added when supervise
     is enabled (sibling-sidecar traffic that flows through pipelock
@@ -69,7 +68,7 @@ def pipelock_effective_allowlist(bottle: Bottle) -> list[str]:
     `bottle.git` do NOT contribute here — git traffic flows
     through git-gate (PRD 0008), not pipelock."""
     seen: dict[str, None] = {}
-    for r in egress_routes_for_bottle(bottle):
+    for r in egress_routes_for_bottle(bottle, provider_routes):
         if r.host:
             seen.setdefault(r.host, None)
     if bottle.supervise:
@@ -102,32 +101,23 @@ def pipelock_seed_phrase_detection_enabled(bottle: Bottle) -> bool:
     return False
 
 
-def pipelock_effective_tls_passthrough(bottle: Bottle) -> list[str]:
+def pipelock_effective_tls_passthrough(
+    bottle: Bottle,
+    provider_routes: tuple[EgressRoute, ...] = (),
+) -> list[str]:
     """Hostnames pipelock should pass through (no TLS MITM).
 
-    A route opts in with `pipelock.tls_passthrough: true`. This is
-    useful for provider API routes where egress injects the
-    Authorization header after the agent boundary; pipelock still
-    enforces the host allowlist but does not decrypt and scan that
-    provider request.
+    A manifest route opts in with `pipelock.tls_passthrough: true`
+    (lifted into `EgressRoute.tls_passthrough` in `egress_manifest_routes`).
+    Provider routes that set `tls_passthrough=True` (e.g. Codex credential
+    routes where egress injects the host bearer after the agent boundary)
+    are also included. Both arrive via `egress_routes_for_bottle` — no
+    provider-specific branching needed here.
     """
     seen: dict[str, None] = {host: None for host in DEFAULT_TLS_PASSTHROUGH}
-    for route in bottle.egress.routes:
-        if route.Pipelock.TlsPassthrough:
-            seen.setdefault(route.Host, None)
-    # forward_host_credentials makes egress inject the host ChatGPT bearer
-    # on the Codex API hosts AFTER the agent boundary. Pipelock sits
-    # downstream of egress and DLP-scans request headers; left to MITM
-    # these routes it flags the injected JWT as a leaked secret
-    # ("request header contains secret") and blocks. Pass them through so
-    # pipelock still enforces the host allowlist on CONNECT but does not
-    # decrypt + rescan egress-owned auth. The auto-added routes live in
-    # egress_routes_for_bottle, not bottle.egress.routes, so add the
-    # hosts explicitly here.
-    provider = bottle.agent_provider
-    if provider.forward_host_credentials and provider.template == "codex":
-        for host in CODEX_HOST_CREDENTIAL_HOSTS:
-            seen.setdefault(host, None)
+    for route in egress_routes_for_bottle(bottle, provider_routes):
+        if route.tls_passthrough:
+            seen.setdefault(route.host, None)
     return sorted(seen.keys())
 
 
@@ -159,6 +149,7 @@ def pipelock_build_config(
     ca_cert_path: str = "",
     ca_key_path: str = "",
     ssrf_ip_allowlist: tuple[str, ...] = (),
+    provider_routes: tuple[EgressRoute, ...] = (),
 ) -> dict[str, object]:
     """Build the structured pipelock config dict the sidecar will load.
 
@@ -188,7 +179,7 @@ def pipelock_build_config(
         "version": 1,
         "mode": "strict",
         "enforce": True,
-        "api_allowlist": pipelock_effective_allowlist(bottle),
+        "api_allowlist": pipelock_effective_allowlist(bottle, provider_routes),
         "forward_proxy": {"enabled": True},
     }
     if not pipelock_seed_phrase_detection_enabled(bottle):
@@ -222,7 +213,7 @@ def pipelock_build_config(
             "enabled": True,
             "ca_cert": ca_cert_path,
             "ca_key": ca_key_path,
-            "passthrough_domains": pipelock_effective_tls_passthrough(bottle),
+            "passthrough_domains": pipelock_effective_tls_passthrough(bottle, provider_routes),
         }
     effective_ssrf_ip_allowlist = pipelock_effective_ssrf_ip_allowlist(
         bottle, ssrf_ip_allowlist,
@@ -336,7 +327,11 @@ class PipelockProxy:
     (`PIPELOCK_CA_CERT_IN_CONTAINER` / `PIPELOCK_CA_KEY_IN_CONTAINER`)."""
 
     def prepare(
-        self, bottle: Bottle, slug: str, stage_dir: Path
+        self,
+        bottle: Bottle,
+        slug: str,
+        stage_dir: Path,
+        provider_routes: tuple[EgressRoute, ...] = (),
     ) -> PipelockProxyPlan:
         """Write the pipelock yaml config (mode 600) under `stage_dir`
         and return the plan for launch. Pure host-side, no docker
@@ -359,6 +354,7 @@ class PipelockProxy:
             bottle,
             ca_cert_path=PIPELOCK_CA_CERT_IN_CONTAINER,
             ca_key_path=PIPELOCK_CA_KEY_IN_CONTAINER,
+            provider_routes=provider_routes,
         )
         yaml_path.write_text(pipelock_render_yaml(cfg))
         yaml_path.chmod(0o600)

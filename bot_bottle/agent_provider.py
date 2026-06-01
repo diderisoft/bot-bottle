@@ -13,11 +13,17 @@ from pathlib import Path
 from typing import Literal
 
 from .codex_auth import write_codex_dummy_auth_file
+from .egress import CODEX_HOST_CREDENTIAL_TOKEN_REF, EgressRoute
 
 
 PROVIDER_CLAUDE = "claude"
 PROVIDER_CODEX = "codex"
 PROVIDER_TEMPLATES = frozenset({PROVIDER_CLAUDE, PROVIDER_CODEX})
+
+# Hosts that egress injects the host ChatGPT bearer on when Codex
+# forward_host_credentials is enabled. Pipelock must pass these through
+# (no TLS MITM) or its header DLP blocks the injected JWT.
+CODEX_HOST_CREDENTIAL_HOSTS = ("api.openai.com", "chatgpt.com")
 PromptMode = Literal["append_file", "read_prompt_file"]
 
 
@@ -63,6 +69,11 @@ class AgentProvisionPlan:
     Backends interpret this plan with their own copy/exec primitives.
     Provider-specific content stays here so future provider plugins can
     return the same shape without adding backend-plan fields.
+
+    `egress_routes` are provider-declared EgressRoutes that backends
+    pass to `Egress.prepare` and `PipelockProxy.prepare`. This keeps
+    provider logic out of the egress and pipelock modules — they merge
+    provider routes generically without knowing the provider type.
     """
 
     template: str
@@ -76,6 +87,7 @@ class AgentProvisionPlan:
     files: tuple[AgentProvisionFile, ...] = ()
     pre_copy: tuple[AgentProvisionCommand, ...] = ()
     verify: tuple[AgentProvisionCommand, ...] = ()
+    egress_routes: tuple[EgressRoute, ...] = ()
 
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -131,6 +143,7 @@ def agent_provision_plan(
     files: list[AgentProvisionFile] = []
     pre_copy: list[AgentProvisionCommand] = []
     verify: list[AgentProvisionCommand] = []
+    egress_routes: list[EgressRoute] = []
 
     if template == PROVIDER_CODEX:
         env_vars["CODEX_CA_CERTIFICATE"] = "/etc/ssl/certs/ca-certificates.crt"
@@ -148,6 +161,13 @@ def agent_provision_plan(
         files.append(AgentProvisionFile(config_file, config_path))
 
         if forward_host_credentials:
+            for host in CODEX_HOST_CREDENTIAL_HOSTS:
+                egress_routes.append(EgressRoute(
+                    host=host,
+                    auth_scheme="Bearer",
+                    token_ref=CODEX_HOST_CREDENTIAL_TOKEN_REF,
+                    tls_passthrough=True,
+                ))
             auth_file = state_dir / "codex-auth.json"
             write_codex_dummy_auth_file(auth_file, host_env or dict(os.environ))
             files.append(AgentProvisionFile(auth_file, f"{auth_dir}/auth.json"))
@@ -188,6 +208,7 @@ def agent_provision_plan(
         files=tuple(files),
         pre_copy=tuple(pre_copy),
         verify=tuple(verify),
+        egress_routes=tuple(egress_routes),
     )
 
 
