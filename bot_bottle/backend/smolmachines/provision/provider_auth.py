@@ -11,6 +11,7 @@ from ..bottle_plan import SmolmachinesBottlePlan
 
 
 _DEFAULT_GUEST_HOME = "/home/node"
+_CODEX_HOME_PROJECT = "/home/node"
 _CODEX_WORKSPACE = "/home/node/workspace"
 
 
@@ -18,9 +19,10 @@ def provision_provider_auth(plan: SmolmachinesBottlePlan, target: str) -> None:
     """Prepare Codex home state inside the smolmachine.
 
     Every Codex bottle gets a minimal config.toml that trusts the
-    in-guest workspace path. When host credentials are forwarded, the
-    real host access token remains in the egress bundle env; auth.json
-    only selects Codex's user/device auth code path.
+    in-guest launch directory and workspace path. When host credentials
+    are forwarded, the real host access token remains in the egress
+    bundle env; auth.json only selects Codex's user/device auth code
+    path.
     """
     if plan.agent_provider_template != "codex":
         return
@@ -70,6 +72,9 @@ def provision_provider_auth(plan: SmolmachinesBottlePlan, target: str) -> None:
 
     config_path = f"{auth_dir}/config.toml"
     config = (
+        f'[projects."{_CODEX_HOME_PROJECT}"]\n'
+        'trust_level = "trusted"\n'
+        "\n"
         f'[projects."{_CODEX_WORKSPACE}"]\n'
         'trust_level = "trusted"\n'
     )

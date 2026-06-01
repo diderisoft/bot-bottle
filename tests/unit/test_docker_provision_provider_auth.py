@@ -90,6 +90,7 @@ class TestProvisionProviderAuth(unittest.TestCase):
             a for a in argvs
             if a[:6] == ["docker", "exec", "-u", "0", "bot-bottle-demo-abc12", "sh"]
         )
+        self.assertIn('[projects."/home/node"]', trust_config[-1])
         self.assertIn('[projects."/home/node/workspace"]', trust_config[-1])
         self.assertIn('trust_level = "trusted"', trust_config[-1])
         self.assertIn(

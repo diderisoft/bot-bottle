@@ -228,6 +228,7 @@ class TestProvisionProviderAuth(unittest.TestCase):
             a for a in argv_seen
             if a[:2] == ["sh", "-c"] and "config.toml" in a[2]
         )
+        self.assertIn('[projects."/home/node"]', trust_config[2])
         self.assertIn('[projects."/home/node/workspace"]', trust_config[2])
         self.assertIn('trust_level = "trusted"', trust_config[2])
         self.assertIn(
