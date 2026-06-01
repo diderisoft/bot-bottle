@@ -15,7 +15,11 @@ from bot_bottle.manifest import Manifest
 from bot_bottle.pipelock import PipelockProxyPlan
 
 
-def _plan(*, codex_auth_file: Path | None = None) -> DockerBottlePlan:
+def _plan(
+    *,
+    codex_auth_file: Path | None = None,
+    agent_provider_template: str = "codex",
+) -> DockerBottlePlan:
     manifest = Manifest.from_json_obj({
         "bottles": {"dev": {"agent_provider": {"template": "codex"}}},
         "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
@@ -58,18 +62,46 @@ def _plan(*, codex_auth_file: Path | None = None) -> DockerBottlePlan:
         supervise_plan=None,
         use_runsc=False,
         agent_command="codex",
-        agent_provider_template="codex",
+        agent_provider_template=agent_provider_template,
         codex_auth_file=codex_auth_file,
     )
 
 
 class TestProvisionProviderAuth(unittest.TestCase):
-    def test_noop_without_codex_auth_file(self):
+    def test_noop_for_non_codex_provider(self):
+        with patch.object(_provider_auth.subprocess, "run") as run:
+            _provider_auth.provision_provider_auth(
+                _plan(agent_provider_template="claude"), "bot-bottle-demo-abc12",
+            )
+        self.assertEqual(0, run.call_count)
+
+    def test_codex_provider_trusts_workspace_without_auth_file(self):
         with patch.object(_provider_auth.subprocess, "run") as run:
             _provider_auth.provision_provider_auth(
                 _plan(), "bot-bottle-demo-abc12",
             )
-        self.assertEqual(0, run.call_count)
+        argvs = [call.args[0] for call in run.call_args_list]
+        self.assertIn(
+            ["docker", "exec", "-u", "0", "bot-bottle-demo-abc12",
+             "mkdir", "-p", "/home/node/.codex"],
+            argvs,
+        )
+        trust_config = next(
+            a for a in argvs
+            if a[:6] == ["docker", "exec", "-u", "0", "bot-bottle-demo-abc12", "sh"]
+        )
+        self.assertIn('[projects."/home/node/workspace"]', trust_config[-1])
+        self.assertIn('trust_level = "trusted"', trust_config[-1])
+        self.assertIn(
+            ["docker", "exec", "-u", "0", "bot-bottle-demo-abc12",
+             "chown", "node:node", "/home/node/.codex/config.toml"],
+            argvs,
+        )
+        self.assertIn(
+            ["docker", "exec", "-u", "0", "bot-bottle-demo-abc12",
+             "chmod", "600", "/home/node/.codex/config.toml"],
+            argvs,
+        )
 
     def test_copies_dummy_auth_json_to_codex_home(self):
         with patch.object(_provider_auth.subprocess, "run") as run:
@@ -81,6 +113,16 @@ class TestProvisionProviderAuth(unittest.TestCase):
         self.assertIn(
             ["docker", "exec", "-u", "0", "bot-bottle-demo-abc12",
              "mkdir", "-p", "/home/node/.codex"],
+            argvs,
+        )
+        self.assertIn(
+            ["docker", "exec", "-u", "0", "bot-bottle-demo-abc12",
+             "chown", "node:node", "/home/node/.codex"],
+            argvs,
+        )
+        self.assertIn(
+            ["docker", "exec", "-u", "0", "bot-bottle-demo-abc12",
+             "chmod", "700", "/home/node/.codex"],
             argvs,
         )
         self.assertIn(

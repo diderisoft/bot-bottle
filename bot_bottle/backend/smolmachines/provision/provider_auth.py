@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 
 from ....log import die
 from .. import smolvm as _smolvm
@@ -10,16 +11,18 @@ from ..bottle_plan import SmolmachinesBottlePlan
 
 
 _DEFAULT_GUEST_HOME = "/home/node"
+_CODEX_WORKSPACE = "/home/node/workspace"
 
 
 def provision_provider_auth(plan: SmolmachinesBottlePlan, target: str) -> None:
-    """Copy a dummy Codex auth marker when host credentials are
-    forwarded through egress.
+    """Prepare Codex home state inside the smolmachine.
 
-    The real host access token remains in the egress bundle env; this
-    file only selects Codex's user/device auth code path.
+    Every Codex bottle gets a minimal config.toml that trusts the
+    in-guest workspace path. When host credentials are forwarded, the
+    real host access token remains in the egress bundle env; auth.json
+    only selects Codex's user/device auth code path.
     """
-    if not plan.codex_auth_file:
+    if plan.agent_provider_template != "codex":
         return
     guest_home = os.environ.get("BOT_BOTTLE_GUEST_HOME", _DEFAULT_GUEST_HOME)
     auth_dir = plan.guest_env.get("CODEX_HOME", f"{guest_home}/.codex")
@@ -64,6 +67,29 @@ def provision_provider_auth(plan: SmolmachinesBottlePlan, target: str) -> None:
         if detail:
             detail = f": {detail}"
         die(f"codex host credentials: could not reset runtime db files{detail}")
+
+    config_path = f"{auth_dir}/config.toml"
+    config = (
+        f'[projects."{_CODEX_WORKSPACE}"]\n'
+        'trust_level = "trusted"\n'
+    )
+    result = _smolvm.machine_exec(
+        target,
+        [
+            "sh", "-c",
+            f"printf %s {shlex.quote(config)} > {shlex.quote(config_path)}",
+        ],
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        if detail:
+            detail = f": {detail}"
+        die(f"codex host credentials: could not write {config_path}{detail}")
+    _smolvm.machine_exec(target, ["chown", "node:node", config_path])
+    _smolvm.machine_exec(target, ["chmod", "600", config_path])
+
+    if not plan.codex_auth_file:
+        return
 
     auth_path = f"{auth_dir}/auth.json"
     _smolvm.machine_cp(str(plan.codex_auth_file), f"{target}:{auth_path}")

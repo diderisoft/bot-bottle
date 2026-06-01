@@ -57,6 +57,7 @@ def _plan(
     agent_git_gate_host: str = "127.0.0.1:55555",
     agent_supervise_url: str = "http://127.0.0.1:55556/",
     codex_auth_file: Path | None = None,
+    agent_provider_template: str = "claude",
     guest_env: dict[str, str] | None = None,
 ) -> SmolmachinesBottlePlan:
     bottle_json: dict = {}
@@ -133,6 +134,7 @@ def _plan(
         agent_git_gate_host=agent_git_gate_host,
         agent_supervise_url=agent_supervise_url,
         codex_auth_file=codex_auth_file,
+        agent_provider_template=agent_provider_template,
     )
 
 
@@ -204,19 +206,45 @@ class TestProvisionProviderAuth(unittest.TestCase):
             ),
         )
 
-    def test_noop_without_codex_auth_file(self):
+    def test_noop_for_non_codex_provider(self):
         cp_p, ex_p = self._patch()
         with cp_p as cp, ex_p as ex:
             _provider_auth.provision_provider_auth(_plan(), "bot-bottle-demo-abc12")
         self.assertEqual(0, cp.call_count)
         self.assertEqual(0, ex.call_count)
 
+    def test_codex_provider_trusts_workspace_without_auth_file(self):
+        cp_p, ex_p = self._patch()
+        with cp_p as cp, ex_p as ex:
+            ex.return_value = SmolvmRunResult(0, "", "")
+            _provider_auth.provision_provider_auth(
+                _plan(agent_provider_template="codex"),
+                "bot-bottle-demo-abc12",
+            )
+        self.assertEqual(0, cp.call_count)
+        argv_seen = [call.args[1] for call in ex.call_args_list]
+        self.assertIn(["mkdir", "-p", "/home/node/.codex"], argv_seen)
+        trust_config = next(
+            a for a in argv_seen
+            if a[:2] == ["sh", "-c"] and "config.toml" in a[2]
+        )
+        self.assertIn('[projects."/home/node/workspace"]', trust_config[2])
+        self.assertIn('trust_level = "trusted"', trust_config[2])
+        self.assertIn(
+            ["chown", "node:node", "/home/node/.codex/config.toml"],
+            argv_seen,
+        )
+        self.assertIn(["chmod", "600", "/home/node/.codex/config.toml"], argv_seen)
+
     def test_copies_dummy_auth_json_to_codex_home(self):
         cp_p, ex_p = self._patch()
         with cp_p as cp, ex_p as ex:
             ex.return_value = SmolvmRunResult(0, "Logged in using ChatGPT\n", "")
             _provider_auth.provision_provider_auth(
-                _plan(codex_auth_file=Path("/tmp/codex-auth.json")),
+                _plan(
+                    agent_provider_template="codex",
+                    codex_auth_file=Path("/tmp/codex-auth.json"),
+                ),
                 "bot-bottle-demo-abc12",
             )
         cp.assert_called_once_with(
@@ -269,6 +297,7 @@ class TestProvisionProviderAuth(unittest.TestCase):
             ex.return_value = SmolvmRunResult(0, "Logged in using ChatGPT\n", "")
             _provider_auth.provision_provider_auth(
                 _plan(
+                    agent_provider_template="codex",
                     codex_auth_file=Path("/tmp/codex-auth.json"),
                     guest_env={"CODEX_HOME": "/run/codex-home"},
                 ),
@@ -297,6 +326,7 @@ class TestProvisionProviderAuth(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 _provider_auth.provision_provider_auth(
                     _plan(
+                        agent_provider_template="codex",
                         codex_auth_file=Path("/tmp/codex-auth.json"),
                     ),
                     "bot-bottle-demo-abc12",
@@ -313,6 +343,9 @@ class TestProvisionProviderAuth(unittest.TestCase):
                 SmolvmRunResult(0, "", ""),  # chown CODEX_HOME
                 SmolvmRunResult(0, "", ""),  # chmod CODEX_HOME
                 SmolvmRunResult(0, "", ""),  # reset runtime db files
+                SmolvmRunResult(0, "", ""),  # write config.toml
+                SmolvmRunResult(0, "", ""),  # chown config.toml
+                SmolvmRunResult(0, "", ""),  # chmod config.toml
                 SmolvmRunResult(0, "", ""),  # chown auth.json
                 SmolvmRunResult(0, "", ""),  # chmod auth.json
                 SmolvmRunResult(1, "Not logged in\n", ""),  # login status
@@ -320,6 +353,7 @@ class TestProvisionProviderAuth(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 _provider_auth.provision_provider_auth(
                     _plan(
+                        agent_provider_template="codex",
                         codex_auth_file=Path("/tmp/codex-auth.json"),
                     ),
                     "bot-bottle-demo-abc12",
