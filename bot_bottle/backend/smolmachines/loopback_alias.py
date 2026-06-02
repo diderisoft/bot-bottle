@@ -45,6 +45,7 @@ alias gets handed to a new bottle."""
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import platform
@@ -81,6 +82,14 @@ _SMOLVM_DB_PATH = (
 # 127.0.0.53 (systemd-resolved) and 127.0.0.54 (libvirt).
 _POOL_START = 16
 _POOL_END = 31  # inclusive
+
+
+# File lock that serialises concurrent allocate() calls so two
+# simultaneous launches can't read the same docker state and claim
+# the same alias. Narrowed to the allocate() call itself; docker run
+# runs after the lock is released. Once the container is running it
+# appears in docker state and future allocate() calls will see it.
+_ALLOC_LOCK_PATH = Path.home() / ".cache" / "bot-bottle" / "smolmachines.lock"
 
 
 # Loopback aliases pool: 127.0.0.<start>..127.0.0.<end>.
@@ -179,9 +188,20 @@ def allocate(slug: str) -> str:
     On non-macOS the whole `127.0.0.0/8` is loopback by default;
     `127.0.0.1` is fine to share and we skip the alias dance.
     This still returns a deterministic address so launch.py's
-    callers don't have to branch on platform."""
+    callers don't have to branch on platform.
+
+    An exclusive file lock serialises concurrent calls so two
+    simultaneous launches don't read the same docker state and
+    claim the same alias."""
     if not _is_macos():
         return "127.0.0.1"
+    _ALLOC_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(_ALLOC_LOCK_PATH, "w") as lf:
+        fcntl.flock(lf, fcntl.LOCK_EX)
+        return _allocate_locked()
+
+
+def _allocate_locked() -> str:
     in_use = _aliases_in_use()
     for ip in _pool_addresses():
         if ip not in in_use:

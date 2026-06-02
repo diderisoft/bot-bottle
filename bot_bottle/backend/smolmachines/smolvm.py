@@ -27,9 +27,12 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Sequence
+
+from ...log import die
 
 
 _SMOLVM = "smolvm"
@@ -194,6 +197,30 @@ def machine_exec(
         returncode=result.returncode,
         stdout=result.stdout or "",
         stderr=result.stderr or "",
+    )
+
+
+def wait_exec_ready(name: str, *, timeout: float = 5.0) -> None:
+    """Poll `machine exec true` until exit 0 or `timeout` elapses.
+
+    Replaces `time.sleep(1.5)` after `machine_start`: libkrun's exec
+    channel needs a brief warm-up before back-to-back exec calls are
+    safe. Polling exits as soon as the channel is ready and fails
+    loudly if the VM never responds."""
+    deadline = time.monotonic() + timeout
+    delay = 0.1
+    while time.monotonic() < deadline:
+        r = machine_exec(name, ["true"])
+        if r.returncode == 0:
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(delay, remaining))
+        delay = min(delay * 2, 0.5)
+    die(
+        f"smolvm machine {name!r}: exec channel not ready after "
+        f"{timeout:.0f}s — VM may have failed to boot."
     )
 
 

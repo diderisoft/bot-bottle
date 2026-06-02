@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import dataclasses
 import os
-import time
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Callable, Generator
@@ -94,200 +93,23 @@ def launch(
     via the ExitStack."""
     stack = ExitStack()
     try:
-        # 1. Reserve a loopback alias for this bottle. macOS only
-        # routes 127.0.0.1 by default; the per-bottle alias is
-        # what bundles the docker port-publishes and TSI allowlist
-        # against, so this bottle can't reach other bottles' (or
-        # other host services') ports on the loopback. Lazy
-        # sudo-driven on first use per boot. No-op on Linux.
-        _loopback.ensure_pool()
-        loopback_ip = _loopback.allocate(plan.slug)
+        loopback_ip, network = _allocate_resources(plan, stack)
+        plan = _mint_certs(plan)
+        plan = _start_bundle(plan, network, loopback_ip, stack)
+        plan = _discover_urls(plan, loopback_ip)
 
-        # 2. Per-bottle docker bridge.
-        network = _bundle.bundle_network_name(plan.slug)
-        _bundle.create_bundle_network(network, plan.bundle_subnet, plan.bundle_gateway)
-        stack.callback(_bundle.remove_bundle_network, network)
-
-        # 2. Mint per-bottle CAs and update the inner Plans with
-        # their launch-time paths. pipelock always runs in the
-        # bundle; egress's CA is only minted when the bottle
-        # declares routes (otherwise egress runs idle without
-        # MITM and the CA files would be unused).
-        ca_cert_host, ca_key_host = pipelock_tls_init(plan.proxy_plan.yaml_path.parent)
-        proxy_plan = dataclasses.replace(
-            plan.proxy_plan,
-            ca_cert_host_path=ca_cert_host,
-            ca_key_host_path=ca_key_host,
-        )
-        egress_plan = plan.egress_plan
-        if egress_plan.routes:
-            egress_ca_host, egress_ca_cert_only = egress_tls_init(
-                plan.egress_plan.routes_path.parent,
-            )
-            egress_plan = dataclasses.replace(
-                egress_plan,
-                mitmproxy_ca_host_path=egress_ca_host,
-                mitmproxy_ca_cert_only_host_path=egress_ca_cert_only,
-                pipelock_ca_host_path=ca_cert_host,
-                # On smolmachines, egress's upstream is pipelock
-                # on the bundle's localhost — they're in the same
-                # container's network namespace.
-                pipelock_proxy_url=BUNDLE_LOCAL_PIPELOCK_URL,
-            )
-        plan = dataclasses.replace(
-            plan, proxy_plan=proxy_plan, egress_plan=egress_plan,
-        )
-
-        # 3. Build the BundleLaunchSpec from the (now-resolved)
-        # inner Plans: daemon subset, env, bind-mounts, and the
-        # loopback alias to bind published ports against. The
-        # spec's ports_to_publish list expands depending on which
-        # daemons the agent needs to reach from the smolvm guest.
-        bundle_spec = _bundle_launch_spec(plan, network, loopback_ip)
-        token_env = _resolve_token_env(plan, dict(os.environ))
-        _bundle.ensure_bundle_image(bundle_spec.image)
-        _bundle.start_bundle(bundle_spec, env={**os.environ, **token_env})
-        stack.callback(_bundle.stop_bundle, plan.slug)
-
-        # 4. Discover the host-side ports docker assigned for the
-        # bundle's published container ports, and bind the
-        # agent's URLs to `<loopback_ip>:<host port>`. Docker
-        # container IPs (192.168.x.x in the daemon's bridge)
-        # aren't reachable from the smolvm guest on macOS — TSI
-        # uses macOS networking, and macOS sees the daemon's
-        # bridge via the published-port loopback forward only.
-        #
-        # Proxy hop order matches the docker backend: when the
-        # bottle declares egress routes, the agent's first hop is
-        # egress (for token injection), then pipelock. Without
-        # routes, the agent dials pipelock directly. Whichever
-        # one is "agent-facing" is the daemon whose port we
-        # publish on host loopback; the other stays bundle-
-        # internal as the upstream proxy.
-        if plan.egress_plan.routes:
-            agent_facing_port = _EGRESS_PORT
-        else:
-            agent_facing_port = _PIPELOCK_PORT
-        agent_facing_host_port = _bundle.bundle_host_port(
-            plan.slug, agent_facing_port, host_ip=loopback_ip,
-        )
-        agent_proxy_url = f"http://{loopback_ip}:{agent_facing_host_port}"
-        agent_git_gate_host = ""
-        if plan.git_gate_plan.upstreams:
-            git_gate_host_port = _bundle.bundle_host_port(
-                plan.slug, _GIT_HTTP_PORT, host_ip=loopback_ip,
-            )
-            agent_git_gate_host = f"{loopback_ip}:{git_gate_host_port}"
-        agent_supervise_url = ""
-        if plan.supervise_plan is not None:
-            supervise_host_port = _bundle.bundle_host_port(
-                plan.slug, _SUPERVISE_PORT, host_ip=loopback_ip,
-            )
-            agent_supervise_url = f"http://{loopback_ip}:{supervise_host_port}/"
-
-        # Stamp the URLs onto the plan + guest_env. provision_git
-        # and provision_supervise read the plan fields; the agent
-        # reads guest_env on every exec_agent.
-        #
-        # NO_PROXY has to include the per-bottle loopback alias —
-        # otherwise claude's HTTPS_PROXY catches direct calls to
-        # the supervise URL (`http://<alias>:<port>/`) and proxies
-        # them through egress, which has no route for the alias
-        # and rejects with "Failed to connect". The smolmachines
-        # git-gate URL uses smart HTTP, so it also has to bypass
-        # the agent's HTTP_PROXY and go straight to the host-
-        # published git HTTP endpoint. Append rather than overwrite
-        # so prepare.py's
-        # `localhost,127.0.0.1` baseline stays in place.
-        existing_no_proxy = plan.guest_env.get("NO_PROXY", "localhost,127.0.0.1")
-        guest_env = {
-            **plan.guest_env,
-            "HTTPS_PROXY": agent_proxy_url,
-            "HTTP_PROXY":  agent_proxy_url,
-            "NO_PROXY":    f"{existing_no_proxy},{loopback_ip}",
-        }
-        if agent_git_gate_host:
-            guest_env["GIT_GATE_URL"] = f"http://{agent_git_gate_host}"
-        if agent_supervise_url:
-            guest_env["MCP_SUPERVISE_URL"] = agent_supervise_url
-        plan = dataclasses.replace(
-            plan,
-            guest_env=guest_env,
-            agent_proxy_url=agent_proxy_url,
-            agent_git_gate_host=agent_git_gate_host,
-            agent_supervise_url=agent_supervise_url,
-        )
-
-        # 5. Build the agent image and pack it into a
-        # `.smolmachine` artifact (or hit the per-Dockerfile-digest
-        # cache). Runs here, not in prepare, so the docker-build
-        # output doesn't garble the dashboard's preflight modal:
-        # both the curses-endwin path and the tmux pane-routing
-        # path redirect stderr around `launch` already.
+        # Build the agent image and pack it into a `.smolmachine`
+        # artifact (or hit the per-Dockerfile-digest cache). Runs
+        # here, not in prepare, so the docker-build output doesn't
+        # garble the dashboard's preflight modal.
         agent_from_path = _ensure_smolmachine(
             plan.agent_image_ref,
             dockerfile=plan.agent_dockerfile_path,
         )
 
-        # smolvm VM. --from carries the pre-packed .smolmachine
-        # artifact; --allow-cidr + -e carry the per-bottle TSI
-        # allowlist + env. The allowlist is the per-bottle
-        # loopback alias — narrowing it to one /32 keeps the
-        # agent from reaching other host loopback services or
-        # other bottles' published ports. Smolfile isn't usable
-        # here — smolvm 0.8.0 makes `--from` and `--smolfile`
-        # mutually exclusive.
-        _smolvm.machine_create(
-            plan.machine_name,
-            from_path=agent_from_path,
-            allow_cidrs=[f"{loopback_ip}/32"],
-            env=plan.guest_env,
-        )
-        stack.callback(_smolvm.machine_delete, plan.machine_name)
-        # Workaround smolvm 0.8.0: `--allow-cidr` is silently
-        # dropped when combined with `--from`. Patch the persisted
-        # state DB to set the allowlist before start so the booted
-        # VM's TSI actually enforces. See loopback_alias's module
-        # docstring for the investigation that led here.
-        _loopback.force_allowlist(plan.machine_name, [f"{loopback_ip}/32"])
-        _smolvm.machine_start(plan.machine_name)
-        stack.callback(_smolvm.machine_stop, plan.machine_name)
+        _launch_vm(plan, agent_from_path, loopback_ip, stack)
+        _init_vm(plan)
 
-        # 6. Repair filesystem ownership + perms that smolvm's
-        # pack process remapped to the host invoker's uid (501
-        # on macOS) rather than preserving the image's expected
-        # ownership.
-        #
-        #  - /home/node → node:node so the node user can write
-        #    its own dotfiles (claude appendFileSync on
-        #    ~/.claude.json otherwise bails with ENOENT/EPERM
-        #    and the TUI hangs without surfacing the error).
-        #  - /tmp + /var/tmp → root:root mode 1777 so non-root
-        #    processes can create their per-uid scratch dirs
-        #    (claude-code creates /tmp/claude-<uid>/ as soon as
-        #    it spawns a Bash tool call).
-        #
-        # All folded into one sh -c so we only pay one
-        # machine_exec round trip — back-to-back exec calls
-        # right after machine_start hit a SIGKILL race in
-        # libkrun's exec channel (see provision_ca for the
-        # other half of this same workaround).
-        _smolvm.machine_exec(plan.machine_name, [
-            "sh", "-c",
-            "chown -R node:node /home/node && "
-            "chown root:root /tmp /var/tmp && "
-            "chmod 1777 /tmp /var/tmp",
-        ])
-
-        # Wait briefly for the VM to settle. Back-to-back smolvm
-        # machine_exec calls immediately after machine_start
-        # occasionally SIGKILL the in-VM child at ~100ms (looks
-        # like a VM warm-up race in libkrun's exec channel).
-        # 1.5s is empirically enough to dodge it; provisioning
-        # already takes seconds so the wait is amortized.
-        time.sleep(1.5)
-
-        # 7. Provision (CA / prompt / skills / git / supervise).
         prompt_path = provision(plan, plan.machine_name)
 
         yield SmolmachinesBottle(
@@ -299,6 +121,180 @@ def launch(
         )
     finally:
         stack.close()
+
+
+def _allocate_resources(
+    plan: SmolmachinesBottlePlan,
+    stack: ExitStack,
+) -> tuple[str, str]:
+    """Reserve a loopback alias and create the per-bottle docker bridge.
+
+    macOS only routes 127.0.0.1 by default; the per-bottle alias
+    scopes TSI's allowlist to this bottle's published ports so the
+    agent can't reach other bottles' or host services' ports on
+    loopback. No-op on Linux."""
+    _loopback.ensure_pool()
+    loopback_ip = _loopback.allocate(plan.slug)
+    network = _bundle.bundle_network_name(plan.slug)
+    _bundle.create_bundle_network(network, plan.bundle_subnet, plan.bundle_gateway)
+    stack.callback(_bundle.remove_bundle_network, network)
+    return loopback_ip, network
+
+
+def _mint_certs(plan: SmolmachinesBottlePlan) -> SmolmachinesBottlePlan:
+    """Mint per-bottle CAs and return the plan with CA paths filled.
+
+    Pipelock always runs in the bundle. Egress's CA is only minted
+    when the bottle declares routes — otherwise egress runs idle
+    without MITM and the CA files would be unused."""
+    ca_cert_host, ca_key_host = pipelock_tls_init(plan.proxy_plan.yaml_path.parent)
+    proxy_plan = dataclasses.replace(
+        plan.proxy_plan,
+        ca_cert_host_path=ca_cert_host,
+        ca_key_host_path=ca_key_host,
+    )
+    egress_plan = plan.egress_plan
+    if egress_plan.routes:
+        egress_ca_host, egress_ca_cert_only = egress_tls_init(
+            plan.egress_plan.routes_path.parent,
+        )
+        egress_plan = dataclasses.replace(
+            egress_plan,
+            mitmproxy_ca_host_path=egress_ca_host,
+            mitmproxy_ca_cert_only_host_path=egress_ca_cert_only,
+            pipelock_ca_host_path=ca_cert_host,
+            # On smolmachines, egress's upstream is pipelock on the
+            # bundle's localhost — they're in the same container's
+            # network namespace.
+            pipelock_proxy_url=BUNDLE_LOCAL_PIPELOCK_URL,
+        )
+    return dataclasses.replace(plan, proxy_plan=proxy_plan, egress_plan=egress_plan)
+
+
+def _start_bundle(
+    plan: SmolmachinesBottlePlan,
+    network: str,
+    loopback_ip: str,
+    stack: ExitStack,
+) -> SmolmachinesBottlePlan:
+    """Build the BundleLaunchSpec, resolve token env, start the
+    sidecar bundle container, and register teardown."""
+    bundle_spec = _bundle_launch_spec(plan, network, loopback_ip)
+    token_env = _resolve_token_env(plan, dict(os.environ))
+    _bundle.ensure_bundle_image(bundle_spec.image)
+    _bundle.start_bundle(bundle_spec, env={**os.environ, **token_env})
+    stack.callback(_bundle.stop_bundle, plan.slug)
+    return plan
+
+
+def _discover_urls(
+    plan: SmolmachinesBottlePlan,
+    loopback_ip: str,
+) -> SmolmachinesBottlePlan:
+    """Discover host-side ports for published container ports and
+    return the plan with URLs + guest_env stamped in.
+
+    Docker container IPs (192.168.x.x in the daemon's bridge)
+    aren't reachable from the smolvm guest on macOS — TSI uses
+    macOS networking, and macOS sees the daemon's bridge via the
+    published-port loopback forward only.
+
+    Proxy hop order: when the bottle declares egress routes, the
+    agent's first hop is egress (for token injection), then
+    pipelock. Without routes, the agent dials pipelock directly.
+    NO_PROXY includes the per-bottle loopback alias so the
+    supervise + git-gate URLs bypass HTTPS_PROXY."""
+    if plan.egress_plan.routes:
+        agent_facing_port = _EGRESS_PORT
+    else:
+        agent_facing_port = _PIPELOCK_PORT
+    agent_facing_host_port = _bundle.bundle_host_port(
+        plan.slug, agent_facing_port, host_ip=loopback_ip,
+    )
+    agent_proxy_url = f"http://{loopback_ip}:{agent_facing_host_port}"
+
+    agent_git_gate_host = ""
+    if plan.git_gate_plan.upstreams:
+        git_gate_host_port = _bundle.bundle_host_port(
+            plan.slug, _GIT_HTTP_PORT, host_ip=loopback_ip,
+        )
+        agent_git_gate_host = f"{loopback_ip}:{git_gate_host_port}"
+
+    agent_supervise_url = ""
+    if plan.supervise_plan is not None:
+        supervise_host_port = _bundle.bundle_host_port(
+            plan.slug, _SUPERVISE_PORT, host_ip=loopback_ip,
+        )
+        agent_supervise_url = f"http://{loopback_ip}:{supervise_host_port}/"
+
+    existing_no_proxy = plan.guest_env.get("NO_PROXY", "localhost,127.0.0.1")
+    guest_env = {
+        **plan.guest_env,
+        "HTTPS_PROXY": agent_proxy_url,
+        "HTTP_PROXY":  agent_proxy_url,
+        "NO_PROXY":    f"{existing_no_proxy},{loopback_ip}",
+    }
+    if agent_git_gate_host:
+        guest_env["GIT_GATE_URL"] = f"http://{agent_git_gate_host}"
+    if agent_supervise_url:
+        guest_env["MCP_SUPERVISE_URL"] = agent_supervise_url
+
+    return dataclasses.replace(
+        plan,
+        guest_env=guest_env,
+        agent_proxy_url=agent_proxy_url,
+        agent_git_gate_host=agent_git_gate_host,
+        agent_supervise_url=agent_supervise_url,
+    )
+
+
+def _launch_vm(
+    plan: SmolmachinesBottlePlan,
+    agent_from_path: Path,
+    loopback_ip: str,
+    stack: ExitStack,
+) -> None:
+    """Create, patch, and start the smolvm VM; register teardown.
+
+    --allow-cidr is the per-bottle loopback alias so the guest can
+    only reach this bottle's bundle ports. force_allowlist patches
+    smolvm 0.8.0's silent-drop of --allow-cidr when combined with
+    --from. Smolfile isn't usable here — smolvm 0.8.0 makes --from
+    and --smolfile mutually exclusive."""
+    _smolvm.machine_create(
+        plan.machine_name,
+        from_path=agent_from_path,
+        allow_cidrs=[f"{loopback_ip}/32"],
+        env=plan.guest_env,
+    )
+    stack.callback(_smolvm.machine_delete, plan.machine_name)
+    # Workaround smolvm 0.8.0: `--allow-cidr` is silently dropped
+    # when combined with `--from`. Patch the persisted state DB
+    # before start so the booted VM's TSI actually enforces.
+    _loopback.force_allowlist(plan.machine_name, [f"{loopback_ip}/32"])
+    _smolvm.machine_start(plan.machine_name)
+    stack.callback(_smolvm.machine_stop, plan.machine_name)
+
+
+def _init_vm(plan: SmolmachinesBottlePlan) -> None:
+    """Repair filesystem ownership and wait for exec channel readiness.
+
+    Ownership repair: smolvm's pack process remaps files to the host
+    invoker's uid (501 on macOS). /home/node must be node:node so
+    Claude Code can write ~/.claude.json; /tmp + /var/tmp need root
+    mode 1777 so non-root processes can create per-uid scratch dirs.
+    All folded into one sh -c to avoid back-to-back exec calls
+    immediately after machine_start (libkrun exec-channel race).
+
+    wait_exec_ready polls until the exec channel is ready for the
+    subsequent provision calls, replacing the empirical sleep."""
+    _smolvm.machine_exec(plan.machine_name, [
+        "sh", "-c",
+        "chown -R node:node /home/node && "
+        "chown root:root /tmp /var/tmp && "
+        "chmod 1777 /tmp /var/tmp",
+    ])
+    _smolvm.wait_exec_ready(plan.machine_name)
 
 
 def _bundle_launch_spec(
@@ -324,10 +320,9 @@ def _bundle_launch_spec(
     # is "agent-facing" gets its port published on the host
     # loopback (see `_ensure_smolmachine`'s discovery loop) and the
     # other stays bundle-internal. The bundle is NOT reachable by
-    # bridge IP from the smolvm guest, so the
-    # PRD-0023-chunk-3 EGRESS_LISTEN_HOST=127.0.0.1 mitigation
-    # isn't needed: the agent can only dial whatever daemon's
-    # host port we publish, period.
+    # bridge IP from the smolvm guest on macOS — TSI uses macOS
+    # networking, and macOS sees the daemon's bridge via the
+    # published-port loopback forward only.
 
     # --- pipelock ---------------------------------------------
     pp = plan.proxy_plan

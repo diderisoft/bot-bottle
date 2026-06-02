@@ -12,6 +12,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from bot_bottle.backend.smolmachines import smolvm as smolvm_mod
 from bot_bottle.backend.smolmachines.smolvm import (
     SmolvmError,
     SmolvmRunResult,
@@ -23,6 +24,7 @@ from bot_bottle.backend.smolmachines.smolvm import (
     machine_start,
     machine_stop,
     pack_create,
+    wait_exec_ready,
 )
 
 
@@ -202,6 +204,45 @@ class TestErrorPath(unittest.TestCase):
         ):
             r = machine_exec("agent-xyz", ["sh", "-c", "exit 42"])
         self.assertEqual(SmolvmRunResult(42, "", "nope"), r)
+
+
+class TestWaitExecReady(unittest.TestCase):
+    """wait_exec_ready polls machine_exec(name, ["true"]) until it
+    returns 0, then exits. On timeout it calls die()."""
+
+    def test_returns_immediately_when_exec_succeeds_first_try(self):
+        with patch.object(smolvm_mod, "machine_exec",
+                          return_value=SmolvmRunResult(0, "", "")) as m:
+            wait_exec_ready("vm-x")
+        m.assert_called_once_with("vm-x", ["true"])
+
+    def test_retries_on_nonzero_and_returns_on_success(self):
+        results = [
+            SmolvmRunResult(1, "", "not ready"),
+            SmolvmRunResult(1, "", "not ready"),
+            SmolvmRunResult(0, "", ""),
+        ]
+        with patch.object(smolvm_mod, "machine_exec",
+                          side_effect=results) as m, \
+             patch.object(smolvm_mod.time, "sleep"):
+            wait_exec_ready("vm-x")
+        self.assertEqual(3, m.call_count)
+
+    def test_dies_on_timeout(self):
+        # machine_exec always returns non-zero; monotonic advances past
+        # the deadline after the first sleep so the loop exits.
+        ticks = [0.0, 0.0, 10.0]  # third call puts us past deadline
+        with patch.object(smolvm_mod, "machine_exec",
+                          return_value=SmolvmRunResult(1, "", "")), \
+             patch.object(smolvm_mod.time, "monotonic",
+                          side_effect=ticks), \
+             patch.object(smolvm_mod.time, "sleep"), \
+             patch.object(smolvm_mod, "die",
+                          side_effect=SystemExit("die")) as die_mock:
+            with self.assertRaises(SystemExit):
+                wait_exec_ready("vm-x", timeout=5.0)
+        die_mock.assert_called_once()
+        self.assertIn("vm-x", die_mock.call_args.args[0])
 
 
 class TestIsAvailable(unittest.TestCase):

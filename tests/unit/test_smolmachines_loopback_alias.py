@@ -11,6 +11,7 @@ import json
 import sqlite3
 import subprocess
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -142,6 +143,55 @@ class TestAllocate(unittest.TestCase):
              ):
             with self.assertRaises(SystemExit):
                 loopback_alias.allocate("demo-overflow")
+
+
+class TestAllocateLock(unittest.TestCase):
+    """allocate() on macOS acquires a file lock so concurrent calls
+    serialise rather than racing on docker state."""
+
+    def test_acquires_exclusive_lock_on_macos(self):
+        import fcntl as fcntl_mod
+        flock_calls: list[int] = []
+
+        def record_flock(fd, op):
+            flock_calls.append(op)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            lock_path = Path(tmp) / "smolmachines.lock"
+            with patch.object(loopback_alias, "_is_macos", return_value=True), \
+                 patch.object(loopback_alias, "_ALLOC_LOCK_PATH", lock_path), \
+                 patch.object(loopback_alias, "_aliases_in_use", return_value=set()), \
+                 patch.object(loopback_alias.fcntl, "flock",
+                              side_effect=record_flock):
+                loopback_alias.allocate("demo")
+
+        self.assertIn(fcntl_mod.LOCK_EX, flock_calls)
+
+    def test_no_lock_on_linux(self):
+        # Linux early-returns before touching the lock file.
+        with patch.object(loopback_alias, "_is_macos", return_value=False), \
+             patch.object(loopback_alias.fcntl, "flock") as flock:
+            loopback_alias.allocate("demo")
+        flock.assert_not_called()
+
+    def test_sequential_allocations_with_shared_lock_are_serialised(self):
+        # Two sequential calls share the same lock file. The second
+        # call sees {127.0.0.16} in use (as if the first caller's
+        # docker run completed between the two lock acquisitions) and
+        # returns the next alias.
+        in_use_seq = [set(), {"127.0.0.16"}]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            lock_path = Path(tmp) / "smolmachines.lock"
+            results: list[str] = []
+            for _ in range(2):
+                with patch.object(loopback_alias, "_is_macos", return_value=True), \
+                     patch.object(loopback_alias, "_ALLOC_LOCK_PATH", lock_path), \
+                     patch.object(loopback_alias, "_aliases_in_use",
+                                  return_value=in_use_seq.pop(0)):
+                    results.append(loopback_alias.allocate("demo"))
+
+        self.assertEqual(["127.0.0.16", "127.0.0.17"], results)
 
 
 class TestAliasInUseDetection(unittest.TestCase):
