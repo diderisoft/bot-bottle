@@ -42,9 +42,9 @@ class GitHttpHandler(BaseHTTPRequestHandler):
             hook_path = os.environ.get(
                 "GIT_GATE_ACCESS_HOOK", "/etc/git-gate/access-hook",
             )
+            peer = self.client_address[0]
             hook = subprocess.run(
-                [hook_path, "upload-pack",
-                 str(repo_dir), self.client_address[0], self.client_address[0]],
+                [hook_path, "upload-pack", str(repo_dir), peer, peer],
                 capture_output=True,
                 check=False,
             )
