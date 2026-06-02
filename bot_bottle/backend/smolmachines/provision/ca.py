@@ -15,6 +15,8 @@ flag exists; the VM init is root), so we don't need the explicit
 
 from __future__ import annotations
 
+import time
+
 from ....log import die
 from ...util import (
     AGENT_CA_BUNDLE,
@@ -24,6 +26,9 @@ from ...util import (
 )
 from .. import smolvm as _smolvm
 from ..bottle_plan import SmolmachinesBottlePlan
+
+
+_SIGKILL_EXIT = 128 + 9
 
 
 def provision_ca(plan: SmolmachinesBottlePlan, target: str) -> None:
@@ -40,17 +45,16 @@ def provision_ca(plan: SmolmachinesBottlePlan, target: str) -> None:
     # REQUESTS_CA_BUNDLE) on the guest_env covers Node + Python
     # `requests` / libraries that don't load the system bundle.
     #
-    # chown + chmod + update-ca-certificates run in one
-    # `sh -c` so we only pay one machine_exec round trip; the
-    # `&&` chaining surfaces the first failure as the return
-    # code.
-    r = _smolvm.machine_exec(target, [
-        "sh", "-c",
-        f"chown root:root {AGENT_CA_PATH} && "
-        f"chmod 644 {AGENT_CA_PATH} && "
-        f"update-ca-certificates",
-    ])
-    if r.returncode != 0 or "1 added" not in (r.stdout or ""):
+    r = _install_ca(target)
+    if r.returncode == _SIGKILL_EXIT:
+        # smolvm/libkrun can SIGKILL an otherwise-normal exec
+        # during early-VM provisioning. `update-ca-certificates`
+        # is idempotent, so retry the same install once after a
+        # short settle delay before treating it as fatal.
+        time.sleep(1.0)
+        r = _install_ca(target)
+
+    if r.returncode != 0:
         # update-ca-certificates not adding our cert is fatal —
         # claude-code's TLS handshake against the egress-MITM'd
         # api.anthropic.com would fail downstream. Bail early
@@ -64,6 +68,23 @@ def provision_ca(plan: SmolmachinesBottlePlan, target: str) -> None:
         )
 
     log_ca_fingerprint(cert_host_path, label)
+
+
+def _install_ca(target: str) -> _smolvm.SmolvmRunResult:
+    # chown + chmod + update-ca-certificates + bundle
+    # verification run in one `sh -c` so we only pay one
+    # machine_exec round trip; the `&&` chaining surfaces the
+    # first failure as the return code. The verify check is more
+    # stable than requiring "1 added" in stdout: a retry after a
+    # partially-completed first run may legitimately report "0
+    # added" while the cert is already installed.
+    return _smolvm.machine_exec(target, [
+        "sh", "-c",
+        f"chown root:root {AGENT_CA_PATH} && "
+        f"chmod 644 {AGENT_CA_PATH} && "
+        f"update-ca-certificates && "
+        f"openssl verify -CAfile {AGENT_CA_BUNDLE} {AGENT_CA_PATH}",
+    ])
 
 
 # Re-exported for the launch/provision_ca caller + tests. The path

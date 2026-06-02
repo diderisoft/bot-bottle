@@ -622,6 +622,26 @@ class TestProvisionCA(unittest.TestCase):
             "bot-bottle-demo-abc12:" + _ca.AGENT_CA_PATH,
         )
 
+    def test_retries_smolvm_sigkill_during_update_ca(self):
+        plan = _plan(pipelock_ca_path=self.pipelock_ca)
+        killed = SmolvmRunResult(
+            returncode=137,
+            stdout="Updating certificates in /etc/ssl/certs...\n",
+            stderr="",
+        )
+        with patch(
+            "bot_bottle.backend.smolmachines.provision.ca._smolvm.machine_cp"
+        ), patch(
+            "bot_bottle.backend.smolmachines.provision.ca._smolvm.machine_exec",
+            side_effect=[killed, self._UPDATE_OK],
+        ) as ex, patch(
+            "bot_bottle.backend.smolmachines.provision.ca.time.sleep"
+        ) as sleep:
+            _ca.provision_ca(plan, "bot-bottle-demo-abc12")
+
+        self.assertEqual(2, ex.call_count)
+        sleep.assert_called_once_with(1.0)
+
     def test_dies_when_selected_cert_missing(self):
         # Plan claims a pipelock cert at a path that doesn't exist —
         # something went wrong in launch's pipelock_tls_init.
