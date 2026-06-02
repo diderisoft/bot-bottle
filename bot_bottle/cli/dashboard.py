@@ -647,23 +647,19 @@ def _bottle_for_slug(
 ) -> tuple["object", str]:
     """Return `(bottle_handle, prompt_path_hint)` for a re-attach.
     If the slug is in `bottles` (dashboard-owned), return the stored
-    handle directly. Otherwise synthesize a `DockerBottle` from the
-    container name `bot-bottle-<slug>`. For synthesized bottles
-    the prompt-file path comes from the manifest's agent if we can
-    resolve it via metadata.json + the loaded manifest; otherwise
-    the re-attach runs without `--append-system-prompt-file`.
+    handle directly. Otherwise synthesize a bottle from the persisted
+    metadata. The backend field in metadata (PRD 0040) selects Docker
+    or smolmachines; unknown or missing metadata defaults to Docker.
 
     Returns the empty string for prompt_path_hint when we omit the
     flag — the caller passes None to DockerBottle in that case."""
     from ..backend.docker.bottle import DockerBottle
     from ..backend.docker.bottle_state import read_metadata
+    from ..backend.smolmachines.bottle import SmolmachinesBottle
     if slug in bottles:
         _cm, bottle, _identity = bottles[slug]
         return bottle, ""
-    # The container hosting the agent's agent process is named
-    # `bot-bottle-<slug>` — set by the compose renderer
-    # (no service suffix on the agent service, by design).
-    container_name = f"bot-bottle-{slug}"
+    machine_name = f"bot-bottle-{slug}"
     prompt_path: str | None = None
     metadata = read_metadata(slug)
     if metadata is not None and manifest is not None:
@@ -673,11 +669,18 @@ def _bottle_for_slug(
                 "BOT_BOTTLE_CONTAINER_HOME", "/home/node",
             )
             prompt_path = f"{container_home}/.bot-bottle-prompt.txt"
-    synth = DockerBottle(
-        container=container_name,
-        teardown=lambda: None,
-        prompt_path_in_container=prompt_path,
-    )
+    backend = metadata.backend if metadata is not None else ""
+    if backend == "smolmachines":
+        synth: object = SmolmachinesBottle(
+            machine_name,
+            prompt_path=prompt_path,
+        )
+    else:
+        synth = DockerBottle(
+            container=machine_name,
+            teardown=lambda: None,
+            prompt_path_in_container=prompt_path,
+        )
     return synth, (prompt_path or "")
 
 

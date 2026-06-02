@@ -52,8 +52,10 @@ def cmd_resume(argv: list[str]) -> int:
         user_cwd=metadata.cwd or USER_CWD,
         identity=metadata.identity,
     )
+    backend_name = metadata.backend or None
     return _launch_bottle(
         spec,
         dry_run=args.dry_run,
         remote_control=args.remote_control,
+        backend_name=backend_name,
     )

@@ -105,6 +105,10 @@ class BottleMetadata:
     # written before chunk 3 (resume / inspect should fall back to
     # deriving from identity in that case).
     compose_project: str = ""
+    # PRD 0040: backend name ("docker" or "smolmachines"). Empty string
+    # for state dirs written before PRD 0040; callers default to "docker"
+    # for backward compatibility.
+    backend: str = ""
 
 
 def metadata_path(identity: str) -> Path:
@@ -138,6 +142,7 @@ def read_metadata(identity: str) -> BottleMetadata | None:
         copy_cwd=bool(raw.get("copy_cwd", False)),
         started_at=str(raw.get("started_at", "")),
         compose_project=str(raw.get("compose_project", "")),
+        backend=str(raw.get("backend", "")),
     )
 
 

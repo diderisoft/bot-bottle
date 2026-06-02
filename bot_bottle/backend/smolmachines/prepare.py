@@ -71,9 +71,8 @@ def resolve_plan(
         cwd=spec.user_cwd if spec.copy_cwd else "",
         copy_cwd=spec.copy_cwd,
         started_at=datetime.now(timezone.utc).isoformat(),
-        # No compose project for smolmachines bottles; chunk 4
-        # will give dashboard discovery a backend-specific path.
         compose_project="",
+        backend="smolmachines",
     ))
 
     subnet, gateway, bundle_ip = smolmachines_bundle_subnet(slug)

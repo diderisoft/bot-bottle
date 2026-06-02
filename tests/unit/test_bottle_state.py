@@ -216,5 +216,112 @@ class TestBottleMetadata(_FakeHomeMixin, unittest.TestCase):
         self.assertEqual("t2", loaded.started_at)
 
 
+class TestBottleMetadataBackend(_FakeHomeMixin, unittest.TestCase):
+    """PRD 0040: backend field is persisted and read back."""
+
+    def setUp(self):
+        self._setup_fake_home()
+
+    def tearDown(self):
+        self._teardown_fake_home()
+
+    def test_backend_field_roundtrips_docker(self):
+        meta = BottleMetadata(
+            identity="dev-b1",
+            agent_name="dev",
+            cwd="",
+            copy_cwd=False,
+            started_at="2026-06-02T00:00:00+00:00",
+            compose_project="bot-bottle-dev-b1",
+            backend="docker",
+        )
+        write_metadata(meta)
+        loaded = read_metadata("dev-b1")
+        self.assertIsNotNone(loaded)
+        assert loaded is not None
+        self.assertEqual("docker", loaded.backend)
+
+    def test_backend_field_roundtrips_smolmachines(self):
+        meta = BottleMetadata(
+            identity="dev-b2",
+            agent_name="dev",
+            cwd="",
+            copy_cwd=False,
+            started_at="2026-06-02T00:00:00+00:00",
+            compose_project="",
+            backend="smolmachines",
+        )
+        write_metadata(meta)
+        loaded = read_metadata("dev-b2")
+        self.assertIsNotNone(loaded)
+        assert loaded is not None
+        self.assertEqual("smolmachines", loaded.backend)
+
+    def test_missing_backend_field_defaults_to_empty(self):
+        # Old state dirs written before PRD 0040 have no backend key.
+        import json
+        from bot_bottle.backend.docker import bottle_state as bs
+        path = bs.metadata_path("dev-b3")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "identity": "dev-b3",
+            "agent_name": "dev",
+            "cwd": "",
+            "copy_cwd": False,
+            "started_at": "2026-06-02T00:00:00+00:00",
+            "compose_project": "bot-bottle-dev-b3",
+        }))
+        loaded = read_metadata("dev-b3")
+        self.assertIsNotNone(loaded)
+        assert loaded is not None
+        self.assertEqual("", loaded.backend)
+
+
+class TestBottleForSlugBackend(_FakeHomeMixin, unittest.TestCase):
+    """PRD 0040: _bottle_for_slug constructs the right bottle type."""
+
+    def setUp(self):
+        self._setup_fake_home()
+
+    def tearDown(self):
+        self._teardown_fake_home()
+
+    def test_docker_metadata_returns_docker_bottle(self):
+        from bot_bottle.backend.docker.bottle import DockerBottle
+        from bot_bottle.cli.dashboard import _bottle_for_slug
+        write_metadata(BottleMetadata(
+            identity="dev-d1",
+            agent_name="dev",
+            cwd="",
+            copy_cwd=False,
+            started_at="2026-06-02T00:00:00+00:00",
+            compose_project="bot-bottle-dev-d1",
+            backend="docker",
+        ))
+        bottle, _ = _bottle_for_slug("dev-d1", {}, None)
+        self.assertIsInstance(bottle, DockerBottle)
+
+    def test_smolmachines_metadata_returns_smolmachines_bottle(self):
+        from bot_bottle.backend.smolmachines.bottle import SmolmachinesBottle
+        from bot_bottle.cli.dashboard import _bottle_for_slug
+        write_metadata(BottleMetadata(
+            identity="dev-s1",
+            agent_name="dev",
+            cwd="",
+            copy_cwd=False,
+            started_at="2026-06-02T00:00:00+00:00",
+            compose_project="",
+            backend="smolmachines",
+        ))
+        bottle, _ = _bottle_for_slug("dev-s1", {}, None)
+        self.assertIsInstance(bottle, SmolmachinesBottle)
+
+    def test_no_metadata_defaults_to_docker_bottle(self):
+        from bot_bottle.backend.docker.bottle import DockerBottle
+        from bot_bottle.cli.dashboard import _bottle_for_slug
+        bottle, _ = _bottle_for_slug("unknown-slug", {}, None)
+        self.assertIsInstance(bottle, DockerBottle)
+
+
 if __name__ == "__main__":
     unittest.main()

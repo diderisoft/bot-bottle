@@ -79,6 +79,7 @@ def resolve_plan(
         copy_cwd=spec.copy_cwd,
         started_at=datetime.now(timezone.utc).isoformat(),
         compose_project=f"bot-bottle-{slug}",
+        backend="docker",
     ))
     # Clear any leftover preserve marker from a prior capability-block
     # so this fresh launch can be cleaned up at session-end unless
