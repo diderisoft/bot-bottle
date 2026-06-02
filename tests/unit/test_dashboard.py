@@ -577,5 +577,54 @@ class TestEditInEditor(unittest.TestCase):
                 os.environ["EDITOR"] = original_editor
 
 
+class TestCapabilityBlockSmolmachinesGuard(_FakeHomeMixin, unittest.TestCase):
+    """approve() must refuse capability-block for smolmachines bottles and
+    pass it through for Docker bottles (PRD 0039)."""
+
+    def setUp(self):
+        self._setup_fake_home()
+        self._original_apply_capability = dashboard.apply_capability_change
+        dashboard.apply_capability_change = lambda slug, content: ("", content)
+
+    def tearDown(self):
+        dashboard.apply_capability_change = self._original_apply_capability
+        self._teardown_fake_home()
+
+    def _enqueue_capability(self, slug: str = "dev") -> "dashboard.QueuedProposal":
+        p = _proposal(slug=slug, tool=TOOL_CAPABILITY_BLOCK)
+        qdir = supervise.queue_dir_for_slug(slug)
+        qdir.mkdir(parents=True, exist_ok=True)
+        supervise.write_proposal(qdir, p)
+        return dashboard.QueuedProposal(proposal=p, queue_dir=qdir)
+
+    def _write_metadata(self, slug: str, compose_project: str) -> None:
+        from bot_bottle.backend.docker.bottle_state import BottleMetadata, write_metadata
+        write_metadata(BottleMetadata(
+            identity=slug,
+            agent_name="myagent",
+            cwd="",
+            copy_cwd=False,
+            started_at="2026-06-02T00:00:00+00:00",
+            compose_project=compose_project,
+        ))
+
+    def test_smolmachines_bottle_raises_capability_apply_error(self):
+        self._write_metadata("dev", compose_project="")
+        qp = self._enqueue_capability("dev")
+        with self.assertRaises(CapabilityApplyError) as ctx:
+            dashboard.approve(qp)
+        self.assertIn("smolmachines", str(ctx.exception))
+
+    def test_docker_bottle_calls_apply_capability_change(self):
+        self._write_metadata("dev", compose_project="bot-bottle-dev")
+        qp = self._enqueue_capability("dev")
+        dashboard.approve(qp)  # must not raise
+
+    def test_no_metadata_falls_through_to_docker_path(self):
+        # No metadata at all → assume Docker (backward-compatible).
+        qp = self._enqueue_capability("dev")
+        dashboard.approve(qp)  # must not raise
+
+
 if __name__ == "__main__":
     unittest.main()
