@@ -7,6 +7,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import tempfile
 from typing import Iterable, Iterator
 
 from ...log import die, info
@@ -130,17 +131,26 @@ def build_image_with_cwd(
     if not os.path.isdir(cwd):
         die(f"cwd not found at {cwd}")
     info(f"building image {derived} from {base} with {cwd} -> {workspace.guest_path}")
-    dockerfile = (
-        f"FROM {base}\n"
-        f"COPY --chown=node:node . {workspace.guest_path}\n"
-        f"WORKDIR {workspace.workdir}\n"
-    )
-    subprocess.run(
-        ["docker", "build", "-t", derived, "-f", "-", cwd],
-        input=dockerfile,
-        text=True,
-        check=True,
-    )
+    with tempfile.TemporaryDirectory(prefix="bot-bottle-cwd.") as tmp:
+        context_dir = os.path.join(tmp, "context")
+        staged_workspace = os.path.join(context_dir, "workspace")
+        shutil.copytree(
+            cwd,
+            staged_workspace,
+            symlinks=True,
+            ignore=shutil.ignore_patterns(".git"),
+        )
+        dockerfile = (
+            f"FROM {base}\n"
+            f"COPY --chown=node:node workspace/. {workspace.guest_path}\n"
+            f"WORKDIR {workspace.workdir}\n"
+        )
+        subprocess.run(
+            ["docker", "build", "-t", derived, "-f", "-", context_dir],
+            input=dockerfile,
+            text=True,
+            check=True,
+        )
 
 
 def image_id(ref: str) -> str:
