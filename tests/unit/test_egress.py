@@ -33,8 +33,10 @@ def _provider_route(host: str, token_ref: str, *, tls_passthrough: bool = False)
     )
 
 
-class TestRoutesForBottle(unittest.TestCase):
-    def test_authenticated_route_gets_slot(self):
+class TestManifestRouteLift(unittest.TestCase):
+    """egress_manifest_routes is a pure lifter — no slot assignment."""
+
+    def test_authenticated_route_lifted_without_slot(self):
         b = _bottle([{
             "host": "api.github.com",
             "auth": {"scheme": "Bearer", "token_ref": "GH_PAT"},
@@ -44,8 +46,8 @@ class TestRoutesForBottle(unittest.TestCase):
         r = routes[0]
         self.assertEqual("api.github.com", r.host)
         self.assertEqual("Bearer", r.auth_scheme)
-        self.assertEqual("EGRESS_TOKEN_0", r.token_env)
         self.assertEqual("GH_PAT", r.token_ref)
+        self.assertEqual("", r.token_env)  # slot assigned later
         self.assertEqual((), r.path_allowlist)
 
     def test_unauthenticated_route_has_empty_auth_fields(self):
@@ -57,6 +59,20 @@ class TestRoutesForBottle(unittest.TestCase):
         self.assertEqual("", r.token_ref)
         self.assertEqual(("/x/",), r.path_allowlist)
 
+
+class TestSlotAssignment(unittest.TestCase):
+    """Slot assignment happens in egress_routes_for_bottle."""
+
+    def test_authenticated_route_gets_slot(self):
+        b = _bottle([{
+            "host": "api.github.com",
+            "auth": {"scheme": "Bearer", "token_ref": "GH_PAT"},
+        }])
+        routes = egress_routes_for_bottle(b)
+        r = routes[0]
+        self.assertEqual("EGRESS_TOKEN_0", r.token_env)
+        self.assertEqual("GH_PAT", r.token_ref)
+
     def test_shared_token_ref_collapses_to_one_slot(self):
         b = _bottle([
             {"host": "api.github.com",
@@ -64,7 +80,7 @@ class TestRoutesForBottle(unittest.TestCase):
             {"host": "github.com",
              "auth": {"scheme": "Bearer", "token_ref": "GH_PAT"}},
         ])
-        routes = egress_manifest_routes(b)
+        routes = egress_routes_for_bottle(b)
         slots = {r.token_env for r in routes}
         self.assertEqual({"EGRESS_TOKEN_0"}, slots)
 
@@ -75,7 +91,7 @@ class TestRoutesForBottle(unittest.TestCase):
             {"host": "b.example",
              "auth": {"scheme": "Bearer", "token_ref": "T2"}},
         ])
-        routes = egress_manifest_routes(b)
+        routes = egress_routes_for_bottle(b)
         slots = [r.token_env for r in routes]
         self.assertEqual(["EGRESS_TOKEN_0", "EGRESS_TOKEN_1"], slots)
 
@@ -89,7 +105,7 @@ class TestRoutesForBottle(unittest.TestCase):
             {"host": "b.example",
              "auth": {"scheme": "Bearer", "token_ref": "T2"}},
         ])
-        routes = egress_manifest_routes(b)
+        routes = egress_routes_for_bottle(b)
         authed = [r.token_env for r in routes if r.token_env]
         self.assertEqual(["EGRESS_TOKEN_0", "EGRESS_TOKEN_1"], authed)
         self.assertEqual("", routes[1].token_env)
@@ -133,7 +149,7 @@ class TestRoutesForBottleManifestOnly(unittest.TestCase):
 
 
 class TestProviderRouteMerge(unittest.TestCase):
-    """Provider routes are merged into manifest routes generically."""
+    """Provider routes win on host collision; manifest fills the rest."""
 
     def test_provider_route_appended_when_not_in_manifest(self):
         b = _bottle([])
@@ -156,8 +172,9 @@ class TestProviderRouteMerge(unittest.TestCase):
         self.assertEqual("", routes[0].token_ref)
         self.assertEqual({}, egress_token_env_map(routes))
 
-    def test_unauthenticated_provider_route_upgrades_bare_without_token_slot(self):
-        b = _bottle([{"host": "api.openai.com"}])
+    def test_provider_route_wins_over_bare_manifest_route(self):
+        # Provisioned host wins outright; manifest path_allowlist is dropped.
+        b = _bottle([{"host": "api.openai.com", "path_allowlist": ["/v1/"]}])
         pr = EgressRoute(host="api.openai.com", tls_passthrough=True)
         routes = egress_routes_for_bottle(b, (pr,))
         self.assertEqual(1, len(routes))
@@ -165,6 +182,7 @@ class TestProviderRouteMerge(unittest.TestCase):
         self.assertEqual("", routes[0].token_env)
         self.assertEqual("", routes[0].token_ref)
         self.assertTrue(routes[0].tls_passthrough)
+        self.assertEqual((), routes[0].path_allowlist)
         self.assertEqual({}, egress_token_env_map(routes))
 
     def test_two_provider_routes_with_same_token_ref_share_slot(self):
@@ -177,8 +195,11 @@ class TestProviderRouteMerge(unittest.TestCase):
         self.assertEqual("EGRESS_TOKEN_0", routes[0].token_env)
         self.assertEqual("EGRESS_TOKEN_0", routes[1].token_env)
 
-    def test_provider_route_upgrades_bare_manifest_route(self):
-        b = _bottle([{"host": "chatgpt.com", "path_allowlist": ["/backend-api/"]}])
+    def test_provider_route_wins_over_authed_manifest_route(self):
+        # Provider wins even when manifest has its own auth for the host.
+        b = _bottle([{"host": "chatgpt.com",
+                      "path_allowlist": ["/backend-api/"],
+                      "auth": {"scheme": "Bearer", "token_ref": "OTHER"}}])
         pr = _provider_route("chatgpt.com", CODEX_HOST_CREDENTIAL_TOKEN_REF)
         routes = egress_routes_for_bottle(b, (pr,))
         self.assertEqual(1, len(routes))
@@ -186,38 +207,20 @@ class TestProviderRouteMerge(unittest.TestCase):
         self.assertEqual("Bearer", routes[0].auth_scheme)
         self.assertEqual("EGRESS_TOKEN_0", routes[0].token_env)
         self.assertEqual(CODEX_HOST_CREDENTIAL_TOKEN_REF, routes[0].token_ref)
-        self.assertEqual(("/backend-api/",), routes[0].path_allowlist)
+        self.assertEqual((), routes[0].path_allowlist)
 
-    def test_provider_route_noop_when_same_auth_already_in_manifest(self):
-        b = _bottle([{
-            "host": "api.openai.com",
-            "auth": {"scheme": "Bearer", "token_ref": CODEX_HOST_CREDENTIAL_TOKEN_REF},
-        }])
+    def test_manifest_route_preserved_for_non_provisioned_host(self):
+        b = _bottle([
+            {"host": "api.openai.com"},
+            {"host": "api.github.com",
+             "auth": {"scheme": "Bearer", "token_ref": "GH_PAT"}},
+        ])
         pr = _provider_route("api.openai.com", CODEX_HOST_CREDENTIAL_TOKEN_REF)
         routes = egress_routes_for_bottle(b, (pr,))
-        self.assertEqual(1, len(routes))
-        self.assertEqual("EGRESS_TOKEN_0", routes[0].token_env)
-
-    def test_provider_route_upgrades_tls_passthrough_on_existing_same_auth(self):
-        b = _bottle([{
-            "host": "api.openai.com",
-            "auth": {"scheme": "Bearer", "token_ref": CODEX_HOST_CREDENTIAL_TOKEN_REF},
-        }])
-        pr = _provider_route(
-            "api.openai.com", CODEX_HOST_CREDENTIAL_TOKEN_REF, tls_passthrough=True,
-        )
-        routes = egress_routes_for_bottle(b, (pr,))
-        self.assertEqual(1, len(routes))
-        self.assertTrue(routes[0].tls_passthrough)
-
-    def test_provider_route_conflicts_with_different_authed_manifest_route(self):
-        b = _bottle([{
-            "host": "chatgpt.com",
-            "auth": {"scheme": "Bearer", "token_ref": "OTHER"},
-        }])
-        pr = _provider_route("chatgpt.com", CODEX_HOST_CREDENTIAL_TOKEN_REF)
-        with self.assertRaises(Die):
-            egress_routes_for_bottle(b, (pr,))
+        hosts = [r.host for r in routes]
+        self.assertEqual(["api.openai.com", "api.github.com"], hosts)
+        self.assertEqual(CODEX_HOST_CREDENTIAL_TOKEN_REF, routes[0].token_ref)
+        self.assertEqual("GH_PAT", routes[1].token_ref)
 
     def test_provider_route_tls_passthrough_set_on_appended_route(self):
         b = _bottle([])
@@ -225,7 +228,7 @@ class TestProviderRouteMerge(unittest.TestCase):
         routes = egress_routes_for_bottle(b, (pr,))
         self.assertTrue(routes[0].tls_passthrough)
 
-    def test_provider_route_tls_passthrough_set_on_upgraded_bare_route(self):
+    def test_provider_route_tls_passthrough_wins_over_bare_manifest_route(self):
         b = _bottle([{"host": "api.openai.com"}])
         pr = _provider_route("api.openai.com", "TOK", tls_passthrough=True)
         routes = egress_routes_for_bottle(b, (pr,))
@@ -239,7 +242,7 @@ class TestTokenEnvMap(unittest.TestCase):
              "auth": {"scheme": "Bearer", "token_ref": "T1"}},
             {"host": "passthrough.example"},
         ])
-        routes = egress_manifest_routes(b)
+        routes = egress_routes_for_bottle(b)
         m = egress_token_env_map(routes)
         self.assertEqual({"EGRESS_TOKEN_0": "T1"}, m)
 
@@ -263,7 +266,7 @@ class TestRenderRoutes(unittest.TestCase):
             "auth": {"scheme": "Bearer", "token_ref": "GH_PAT"},
             "path_allowlist": ["/repos/x/"],
         }])
-        routes = egress_manifest_routes(b)
+        routes = egress_routes_for_bottle(b)
         parsed = self._parsed(routes)
         self.assertEqual(
             [{
@@ -281,7 +284,7 @@ class TestRenderRoutes(unittest.TestCase):
         # enforces both-or-neither, so emitting empty strings would
         # round-trip as a partial pair and crash.
         b = _bottle([{"host": "github.com", "path_allowlist": ["/x/"]}])
-        routes = egress_manifest_routes(b)
+        routes = egress_routes_for_bottle(b)
         entry = self._parsed(routes)[0]
         self.assertNotIn("auth_scheme", entry)
         self.assertNotIn("token_env", entry)
@@ -291,7 +294,7 @@ class TestRenderRoutes(unittest.TestCase):
             "host": "api.anthropic.com",
             "auth": {"scheme": "Bearer", "token_ref": "CL"},
         }])
-        routes = egress_manifest_routes(b)
+        routes = egress_routes_for_bottle(b)
         self.assertNotIn("path_allowlist", self._parsed(routes)[0])
 
     def test_empty_routes_round_trips(self):
@@ -310,7 +313,7 @@ class TestRenderRoutes(unittest.TestCase):
             {"host": "github.com", "path_allowlist": ["/x/"]},
             {"host": "api.anthropic.com"},
         ])
-        routes = egress_manifest_routes(b)
+        routes = egress_routes_for_bottle(b)
         addon_routes = load_routes(egress_render_routes(routes))
         self.assertEqual(3, len(addon_routes))
         self.assertEqual("Bearer", addon_routes[0].auth_scheme)
