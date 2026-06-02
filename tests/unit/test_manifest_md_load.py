@@ -220,6 +220,80 @@ class TestAgentFileDoublesAsClaudeCodeSubagent(_ResolveCase):
         self.assertEqual(("init-prd",), m.agents["implementer"].skills)
 
 
+class TestManifestEntryPointParity(_ResolveCase):
+    """The MD and JSON entry points share validation and composition
+    behavior for the same raw manifest shape."""
+
+    def test_agent_prompt_and_skills_match_json_entry(self):
+        _write(self.home_cb / "bottles" / "dev.md", _BOTTLE_DEV)
+        _write(self.home_cb / "agents" / "implementer.md", _AGENT_IMPL)
+
+        md_manifest = self.resolve()
+        json_manifest = Manifest.from_json_obj({
+            "bottles": {
+                "dev": {
+                    "egress": {
+                        "routes": [
+                            {
+                                "host": "api.anthropic.com",
+                                "auth": {
+                                    "scheme": "Bearer",
+                                    "token_ref": "CLAUDE_CODE_OAUTH_TOKEN",
+                                },
+                            },
+                            {"host": "example.com"},
+                        ],
+                    },
+                },
+            },
+            "agents": {
+                "implementer": {
+                    "bottle": "dev",
+                    "skills": ["init-prd"],
+                    "prompt": "You are a feature implementation agent.",
+                },
+            },
+        })
+
+        self.assertEqual(
+            md_manifest.agents["implementer"],
+            json_manifest.agents["implementer"],
+        )
+        self.assertEqual(
+            md_manifest.bottles["dev"].egress.routes,
+            json_manifest.bottles["dev"].egress.routes,
+        )
+
+    def test_json_agent_rejects_unknown_keys(self):
+        with self.assertRaises(ManifestError):
+            Manifest.from_json_obj({
+                "bottles": {"dev": {}},
+                "agents": {
+                    "implementer": {
+                        "bottle": "dev",
+                        "skillz": ["init-prd"],
+                    },
+                },
+            })
+
+    def test_json_agent_accepts_claude_code_passthrough_keys(self):
+        manifest = Manifest.from_json_obj({
+            "bottles": {"dev": {}},
+            "agents": {
+                "implementer": {
+                    "name": "implementer",
+                    "description": "Implements features against PRDs.",
+                    "model": "opus",
+                    "color": "blue",
+                    "memory": "project",
+                    "bottle": "dev",
+                },
+            },
+        })
+
+        self.assertEqual("dev", manifest.agents["implementer"].bottle)
+
+
 class TestUnknownAgentKeyDies(_ResolveCase):
     """A typo'd / unknown frontmatter key on an agent file dies
     rather than silently ignoring."""

@@ -45,14 +45,13 @@ from __future__ import annotations
 
 import ipaddress
 import os
-import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Mapping, cast
 
 from .agent_provider import PROVIDER_TEMPLATES
 from .log import warn
-from .yaml_subset import YamlSubsetError, parse_frontmatter
+from .manifest_schema import AGENT_MODEL_KEYS, BOTTLE_KEYS
 
 
 class ManifestError(Exception):
@@ -629,9 +628,9 @@ class Bottle:
                 f"removed. Move it under 'git.user'."
             )
 
-        unknown = set(d.keys()) - _BOTTLE_KEYS
+        unknown = set(d.keys()) - BOTTLE_KEYS
         if unknown:
-            allowed = ", ".join(sorted(_BOTTLE_KEYS))
+            allowed = ", ".join(sorted(BOTTLE_KEYS))
             raise ManifestError(
                 f"bottle '{name}' has unknown key(s) {sorted(unknown)}; "
                 f"allowed keys are {allowed}."
@@ -694,6 +693,13 @@ class Agent:
     @classmethod
     def from_dict(cls, name: str, raw: object, bottle_names: set[str]) -> "Agent":
         d = _as_json_object(raw, f"agent '{name}'")
+        unknown = set(d.keys()) - AGENT_MODEL_KEYS
+        if unknown:
+            allowed = ", ".join(sorted(AGENT_MODEL_KEYS))
+            raise ManifestError(
+                f"agent '{name}' has unknown key(s) {sorted(unknown)}; "
+                f"allowed keys are {allowed}."
+            )
 
         bottle = d.get("bottle")
         if not isinstance(bottle, str) or not bottle:
@@ -784,9 +790,11 @@ class Manifest:
         home_md = home_dir / ".bot-bottle"
         cwd_md = cwd_dir / ".bot-bottle"
 
-        _check_stale_json(home_dir, home_md, "$HOME")
+        from .manifest_loader import check_stale_json
+
+        check_stale_json(home_dir, home_md, "$HOME")
         if cwd_dir.resolve() != home_dir.resolve():
-            _check_stale_json(cwd_dir, cwd_md, "$CWD")
+            check_stale_json(cwd_dir, cwd_md, "$CWD")
 
         if not home_md.is_dir():
             if missing_ok:
@@ -818,11 +826,13 @@ class Manifest:
         Used by tests to build a Manifest from fixture directories
         without touching `os.environ`."""
         bottles_dir = home_dir / "bottles"
-        bottles = _load_bottles_from_dir(bottles_dir)
+        from .manifest_loader import load_agents_from_dir, load_bottles_from_dir
+
+        bottles = load_bottles_from_dir(bottles_dir)
 
         bottle_names = set(bottles.keys())
         agents_dir = home_dir / "agents"
-        agents = _load_agents_from_dir(agents_dir, bottle_names, source="$HOME")
+        agents = load_agents_from_dir(agents_dir, bottle_names, source="$HOME")
 
         if cwd_dir is not None:
             stale_bottles = cwd_dir / "bottles"
@@ -837,7 +847,7 @@ class Manifest:
                         f"(PRD 0011). Move them or delete."
                     )
             cwd_agents_dir = cwd_dir / "agents"
-            cwd_agents = _load_agents_from_dir(
+            cwd_agents = load_agents_from_dir(
                 cwd_agents_dir, bottle_names, source="$CWD"
             )
             agents = {**agents, **cwd_agents}
@@ -857,7 +867,9 @@ class Manifest:
         raw_bottles: dict[str, dict[str, object]] = {}
         for n, b in raw_bottles_obj.items():
             raw_bottles[n] = _as_json_object(b, f"bottle '{n}'")
-        bottles = _resolve_bottles(raw_bottles)
+        from .manifest_extends import resolve_bottles
+
+        bottles = resolve_bottles(raw_bottles)
 
         bottle_names = set(bottles.keys())
         agents: dict[str, Agent] = {
@@ -1055,277 +1067,3 @@ def _validate_unique_git_names(bottle_name: str, git: tuple[GitEntry, ...]) -> N
                 f"each entry maps to a distinct bare repo on the gate."
             )
         seen[g.Name] = None
-
-
-
-
-# --- Per-file MD loader (PRD 0011) ----------------------------------------
-
-# Filename-as-key uses kebab-case ASCII. The first character is a
-# letter so we don't conflict with hidden files / Markdown special
-# names (`.md`, `_template.md`, etc.). Filenames that fail this
-# pattern are skipped with a warning rather than crashing the load.
-_FILENAME_RX = re.compile(r"^[a-z][a-z0-9-]*$")
-
-# Frontmatter keys we accept on each entity. Anything not in these
-# sets dies with a "did you mean" pointer — typos shouldn't silently
-# ghost into an empty config.
-_BOTTLE_KEYS = frozenset(
-    {"env", "extends", "agent_provider", "git", "egress", "supervise"}
-)
-_AGENT_KEYS_REQUIRED = frozenset({"bottle"})
-_AGENT_KEYS_OPTIONAL = frozenset({"skills", "git"})
-# Claude Code subagent fields bot-bottle ignores at launch but
-# doesn't reject — lets the same file double as `~/.claude/agents/*.md`.
-_AGENT_KEYS_CC_PASSTHROUGH = frozenset({
-    "name", "description", "model", "color", "memory",
-})
-_AGENT_KEYS = (
-    _AGENT_KEYS_REQUIRED | _AGENT_KEYS_OPTIONAL | _AGENT_KEYS_CC_PASSTHROUGH
-)
-
-
-def _check_stale_json(dir_path: Path, md_dir: Path, label: str) -> None:
-    """Die if `<dir_path>/bot-bottle.json` exists but `md_dir` does
-    not — the manifest format changed in PRD 0011 and we don't want
-    to silently leave the JSON content unused."""
-    legacy = dir_path / "bot-bottle.json"
-    if legacy.is_file() and not md_dir.exists():
-        raise ManifestError(
-            f"found {legacy} but {md_dir} does not exist. The manifest "
-            f"format changed in PRD 0011 — rewrite the JSON content "
-            f"as per-file Markdown under {md_dir}/bottles/ and "
-            f"{md_dir}/agents/. See README.md for the schema. "
-            f"({label})"
-        )
-
-
-def _entity_name_from_path(path: Path) -> str | None:
-    """Return the entity name implied by the filename, or None if
-    the filename doesn't fit the [a-z][a-z0-9-]* convention. None
-    triggers a skip-with-warning at the caller."""
-    if path.suffix != ".md":
-        return None
-    stem = path.stem
-    if not _FILENAME_RX.match(stem):
-        return None
-    return stem
-
-
-def _load_bottles_from_dir(bottles_dir: Path) -> dict[str, Bottle]:
-    """Walk `<bottles_dir>/*.md`, parse each as a bottle, return
-    `{name: Bottle}`. Missing dir → empty dict (the user simply
-    hasn't declared any bottles yet).
-
-    Two-pass to resolve PRD 0025 `extends:` chains:
-      1. Collect each file's raw frontmatter into `{name: raw}`.
-      2. Recursively merge `extends:` chains into effective
-         Bottle objects (`_resolve_bottles`)."""
-    raws: dict[str, dict[str, object]] = {}
-    if not bottles_dir.is_dir():
-        return {}
-    for path in sorted(bottles_dir.glob("*.md")):
-        name = _entity_name_from_path(path)
-        if name is None:
-            warn(
-                f"skipping {path}: filename must match "
-                f"[a-z][a-z0-9-]*.md (got {path.name!r})"
-            )
-            continue
-        try:
-            fm, _body = parse_frontmatter(path.read_text())
-        except OSError as e:
-            raise ManifestError(f"could not read {path}: {e}")
-        except YamlSubsetError as e:
-            raise ManifestError(f"{path}: {e}")
-        unknown = set(fm.keys()) - _BOTTLE_KEYS
-        if unknown:
-            allowed = ", ".join(sorted(_BOTTLE_KEYS))
-            raise ManifestError(
-                f"bottle file {path}: unknown frontmatter key(s) "
-                f"{sorted(unknown)}; allowed keys are {allowed}."
-            )
-        raws[name] = fm
-    return _resolve_bottles(raws)
-
-
-def _resolve_bottles(raws: dict[str, dict[str, object]]) -> dict[str, Bottle]:
-    """Apply `extends:` chains (PRD 0025) and return a flat
-    `{name: Bottle}` of resolved configs. Cycle / missing-parent
-    / self-reference die with a clear pointer."""
-    cache: dict[str, Bottle] = {}
-    for name in raws:
-        if name not in cache:
-            _resolve_one_bottle(name, raws, cache, ())
-    return cache
-
-
-def _resolve_one_bottle(
-    name: str,
-    raws: dict[str, dict[str, object]],
-    cache: dict[str, Bottle],
-    seen: tuple[str, ...],
-) -> Bottle:
-    """Recursive resolver. `seen` is the current extends-chain for
-    cycle detection; on cycle die with the chain so the operator
-    can see which two files to break the loop in."""
-    if name in cache:
-        return cache[name]
-    if name in seen:
-        chain = " -> ".join(seen + (name,))
-        raise ManifestError(f"bottle '{name}' is in an extends cycle: {chain}")
-    raw = raws[name]
-    parent_name_raw = raw.get("extends")
-    # Strip `extends:` before passing to Bottle.from_dict so it
-    # isn't accidentally treated as a real Bottle field by future
-    # schema additions. It's only meaningful here.
-    child_raw = {k: v for k, v in raw.items() if k != "extends"}
-
-    if parent_name_raw is None:
-        bottle = Bottle.from_dict(name, child_raw)
-        cache[name] = bottle
-        return bottle
-
-    if not isinstance(parent_name_raw, str):
-        raise ManifestError(
-            f"bottle '{name}' extends must be a string "
-            f"(was {type(parent_name_raw).__name__})"
-        )
-    parent_name: str = parent_name_raw
-    if parent_name == name:
-        raise ManifestError(
-            f"bottle '{name}' extends itself; remove the "
-            f"self-reference"
-        )
-    if parent_name not in raws:
-        avail = ", ".join(sorted(raws.keys())) or "(none)"
-        raise ManifestError(
-            f"bottle '{name}' extends '{parent_name}' which is not "
-            f"defined. Available bottles: {avail}"
-        )
-    parent = _resolve_one_bottle(parent_name, raws, cache, seen + (name,))
-    bottle = _merge_bottles(parent, child_raw, name)
-    cache[name] = bottle
-    return bottle
-
-
-def _merge_bottles(
-    parent: Bottle,
-    child_raw: dict[str, object],
-    name: str,
-) -> Bottle:
-    """Apply PRD 0025 merge rules: parent is base; child's declared
-    fields overlay. env merges dict-style with child-wins on key
-    collision; git.user overlays per-field; git.remotes merges by
-    upstream host with child entries replacing duplicate hosts."""
-    # Parse the child's declared fields into a Bottle (with the
-    # usual defaults for anything missing). Validation runs the same
-    # way it would for a leaf bottle — typos / wrong types die here.
-    child = Bottle.from_dict(name, child_raw)
-
-    # env: dict merge, child wins on collision.
-    merged_env = {**parent.env, **child.env}
-
-    # git.user: per-field overlay. Each non-empty field on child
-    # wins; empties fall through to parent. The default GitUser()
-    # is two empty strings, so a child that omits git.user
-    # inherits the parent's user verbatim.
-    merged_git_user = GitUser(
-        name=child.git_user.name or parent.git_user.name,
-        email=child.git_user.email or parent.git_user.email,
-    )
-
-    # git.remotes: missing means inherit; an explicit empty object
-    # clears; otherwise parent and child merge by UpstreamHost with
-    # child entries replacing duplicate hosts.
-    if _child_declares_git_remotes(child_raw):
-        merged_git = _merge_git_remotes(parent.git, child.git) if child.git else ()
-    else:
-        merged_git = parent.git
-
-    # Presence-driven full-replace for the remaining list-valued +
-    # scalar fields.
-    merged_egress = child.egress if "egress" in child_raw else parent.egress
-    merged_agent_provider = (
-        child.agent_provider
-        if "agent_provider" in child_raw
-        else parent.agent_provider
-    )
-    merged_supervise = (
-        child.supervise if "supervise" in child_raw else parent.supervise
-    )
-    _validate_egress_routes(name, merged_egress.routes)
-
-    return Bottle(
-        env=merged_env,
-        agent_provider=merged_agent_provider,
-        git=merged_git,
-        git_user=merged_git_user,
-        egress=merged_egress,
-        supervise=merged_supervise,
-    )
-
-
-def _child_declares_git_remotes(child_raw: dict[str, object]) -> bool:
-    git_raw = child_raw.get("git")
-    if git_raw is None:
-        return False
-    git_obj = _as_json_object(git_raw, "child git")
-    return "remotes" in git_obj
-
-
-def _merge_git_remotes(
-    parent: tuple[GitEntry, ...],
-    child: tuple[GitEntry, ...],
-) -> tuple[GitEntry, ...]:
-    by_host = {entry.UpstreamHost: entry for entry in parent}
-    for entry in child:
-        by_host[entry.UpstreamHost] = entry
-    return tuple(by_host.values())
-
-
-def _load_agents_from_dir(
-    agents_dir: Path,
-    bottle_names: set[str],
-    *,
-    source: str,
-) -> dict[str, Agent]:
-    """Walk `<agents_dir>/*.md`, parse each as an agent, return
-    `{name: Agent}`. The Markdown body becomes the agent's
-    `prompt`. Missing dir → empty dict."""
-    out: dict[str, Agent] = {}
-    if not agents_dir.is_dir():
-        return out
-    for path in sorted(agents_dir.glob("*.md")):
-        name = _entity_name_from_path(path)
-        if name is None:
-            warn(
-                f"skipping {path}: filename must match "
-                f"[a-z][a-z0-9-]*.md (got {path.name!r})"
-            )
-            continue
-        try:
-            fm, body = parse_frontmatter(path.read_text())
-        except OSError as e:
-            raise ManifestError(f"could not read {path}: {e}")
-        except YamlSubsetError as e:
-            raise ManifestError(f"{path}: {e}")
-        unknown = set(fm.keys()) - _AGENT_KEYS
-        if unknown:
-            allowed = ", ".join(sorted(_AGENT_KEYS))
-            raise ManifestError(
-                f"agent file {path}: unknown frontmatter key(s) "
-                f"{sorted(unknown)}; allowed keys are {allowed}."
-            )
-        # Build the dict Agent.from_dict expects. The body becomes
-        # prompt; CC passthrough fields stay in fm and get ignored
-        # by from_dict (which reads bottle/skills/git/prompt).
-        agent_dict: dict[str, object] = {
-            "bottle": fm.get("bottle"),
-            "skills": fm.get("skills", []),
-            "prompt": body.strip(),
-        }
-        if "git" in fm:
-            agent_dict["git"] = fm["git"]
-        out[name] = Agent.from_dict(name, agent_dict, bottle_names)
-    return out
