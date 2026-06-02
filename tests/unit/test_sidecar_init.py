@@ -301,6 +301,64 @@ class TestSupervisor(unittest.TestCase):
         sup.request_shutdown(reason="cleanup")
         self._drive(sup)
 
+    def test_request_restart_is_drained_by_tick(self):
+        specs = [
+            _DaemonSpec("pipelock", ("/bin/sleep", "30")),
+            _DaemonSpec("supervise", ("/bin/sleep", "30")),
+        ]
+        sup = _Supervisor(specs)
+        sup.start_all()
+        time.sleep(0.1)
+        old_pipelock_pid = sup.procs[0][1].pid
+        supervise_pid = sup.procs[1][1].pid
+
+        ok = sup.request_restart("pipelock")
+        self.assertTrue(ok)
+        # The non-blocking request path only records intent.
+        self.assertEqual(old_pipelock_pid, sup.procs[0][1].pid)
+
+        done = sup.tick()
+        self.assertFalse(done)
+
+        self.assertNotEqual(old_pipelock_pid, sup.procs[0][1].pid)
+        self.assertEqual(supervise_pid, sup.procs[1][1].pid)
+
+        sup.request_shutdown(reason="cleanup")
+        self._drive(sup)
+
+    def test_repeated_restart_requests_coalesce(self):
+        specs = [_DaemonSpec("pipelock", ("/bin/sleep", "30"))]
+        sup = _Supervisor(specs)
+        sup.start_all()
+        time.sleep(0.1)
+
+        self.assertTrue(sup.request_restart("pipelock"))
+        self.assertTrue(sup.request_restart("pipelock"))
+        self.assertEqual({"pipelock"}, sup._restart_requested)
+
+        old_pid = sup.procs[0][1].pid
+        sup.tick()
+        first_restarted_pid = sup.procs[0][1].pid
+        self.assertNotEqual(old_pid, first_restarted_pid)
+
+        # A second tick should not restart again; the coalesced
+        # request was consumed by the first tick.
+        sup.tick()
+        self.assertEqual(first_restarted_pid, sup.procs[0][1].pid)
+
+        sup.request_shutdown(reason="cleanup")
+        self._drive(sup)
+
+    def test_request_restart_unknown_daemon_no_op(self):
+        specs = [_DaemonSpec("a", ("/bin/sleep", "30"))]
+        sup = _Supervisor(specs)
+        sup.start_all()
+        ok = sup.request_restart("ghost")
+        self.assertFalse(ok)
+        self.assertEqual(set(), sup._restart_requested)
+        sup.request_shutdown(reason="cleanup")
+        self._drive(sup)
+
     def test_restart_unknown_daemon_no_op(self):
         specs = [_DaemonSpec("a", ("/bin/sleep", "30"))]
         sup = _Supervisor(specs)
@@ -320,12 +378,24 @@ class TestSupervisor(unittest.TestCase):
                          "must not respawn a daemon during teardown")
         self._drive(sup)
 
+    def test_pending_restart_dropped_during_shutdown(self):
+        specs = [_DaemonSpec("pipelock", ("/bin/sleep", "30"))]
+        sup = _Supervisor(specs)
+        sup.start_all()
+        time.sleep(0.1)
+        old_pid = sup.procs[0][1].pid
+
+        self.assertTrue(sup.request_restart("pipelock"))
+        sup.request_shutdown(reason="test")
+        self.assertEqual(set(), sup._restart_requested)
+        self._drive(sup)
+
+        self.assertEqual(old_pid, sup.procs[0][1].pid)
+
     def test_shutdown_after_start_terminates_children(self):
         # Two long-running children. Caller requests shutdown;
-        # both should receive SIGTERM and exit. exit_code() is
-        # max of (returncodes) — both signal-killed (negative),
-        # so max() picks 0 in the typical case (or the
-        # platform-specific signal returncode).
+        # both should receive SIGTERM and exit. Signal-only
+        # shutdown clamps to a zero supervisor exit code.
         specs = [
             _DaemonSpec("a", ("/bin/sleep", "60")),
             _DaemonSpec("b", ("/bin/sleep", "60")),
@@ -335,7 +405,7 @@ class TestSupervisor(unittest.TestCase):
         time.sleep(0.2)  # let them actually start
         sup.request_shutdown(reason="test")
         rc = self._drive(sup)
-        self.assertIsNotNone(rc)
+        self.assertEqual(0, rc)
         # Both children got the signal — neither survived past
         # the grace deadline.
         for _, p in sup.procs:
@@ -360,7 +430,7 @@ class TestSupervisor(unittest.TestCase):
 
         # Process was SIGKILL'd → returncode -9 on POSIX.
         self.assertEqual(-9, sup.procs[0][1].returncode)
-        self.assertIsNotNone(rc)
+        self.assertEqual(0, rc)
 
     def test_idempotent_shutdown_requests(self):
         specs = [_DaemonSpec("a", ("/bin/sleep", "60"))]
@@ -426,12 +496,7 @@ class TestMainEndToEnd(unittest.TestCase):
         self.assertIn("starting alpha", out)
         self.assertIn("starting beta", out)
         self.assertIn("forwarding SIGTERM", out)
-        # Sleep terminated by SIGTERM exits with returncode -15;
-        # supervisor surfaces that via max(...) and main()
-        # returns -15 → process exit becomes 256-15 = 241.
-        # On macOS bash may convert to 143. Either way, nonzero
-        # AND the child finished — we don't pin the exact code.
-        self.assertNotEqual(0, rc)
+        self.assertEqual(0, rc)
 
     def test_empty_daemon_set_exits_zero_immediately(self):
         # Use a sentinel value that filters out both alpha+beta.

@@ -163,6 +163,10 @@ class _Supervisor:
         # Names of children that have been logged as having exited
         # so we only log each death once across watch-loop ticks.
         self._logged_dead: set[str] = set()
+        # Signal handlers add daemon names here and return quickly.
+        # The main watch loop drains the set, so repeated restart
+        # requests for one daemon coalesce into one restart.
+        self._restart_requested: set[str] = set()
 
     def start_all(self) -> None:
         for spec in self.specs:
@@ -173,6 +177,7 @@ class _Supervisor:
         if self.shutdown_at is not None:
             return
         self.shutdown_at = time.monotonic()
+        self._restart_requested.clear()
         _log(f"shutting down ({reason}); forwarding SIGTERM")
         for _, p in self.procs:
             if p.poll() is None:
@@ -181,6 +186,24 @@ class _Supervisor:
                 except ProcessLookupError:
                     pass
 
+    def request_restart(self, daemon_name: str) -> bool:
+        """Queue a daemon restart for the main loop to process.
+
+        Signal handlers use this non-blocking path instead of doing
+        subprocess lifecycle work directly. Requests coalesce by
+        daemon name: one pending restart is enough to make the daemon
+        reread the latest config from disk.
+
+        Returns True iff a daemon by that name is known to the
+        supervisor and shutdown has not started."""
+        if self.shutdown_at is not None:
+            _log(f"restart {daemon_name} skipped; supervisor is shutting down")
+            return False
+        if not any(spec.name == daemon_name for spec, _ in self.procs):
+            return False
+        self._restart_requested.add(daemon_name)
+        return True
+
     def tick(self) -> bool:
         """One iteration of the watch loop. Returns True when every
         child has exited and the supervisor can return.
@@ -188,6 +211,8 @@ class _Supervisor:
         A child dying unexpectedly is logged but does NOT initiate
         shutdown — see the module docstring's failure-policy
         section. Shutdown is signal-driven only."""
+        self._drain_restart_requests()
+
         for spec, p in self.procs:
             rc = p.poll()
             if rc is None or spec.name in self._logged_dead:
@@ -223,11 +248,29 @@ class _Supervisor:
         return all(p.poll() is not None for _, p in self.procs)
 
     def exit_code(self) -> int:
-        """Worst child returncode wins. On graceful shutdown every
-        child is signal-killed (negative returncode) and max()
-        returns 0; if some child crashed nonzero before the signal
-        the operator gets that code on container exit."""
-        return max((p.returncode for _, p in self.procs), default=0)
+        """Positive child failures win; otherwise report success.
+
+        Python represents signal-terminated children as negative
+        return codes. A signal-only graceful shutdown should not leak
+        that platform-specific detail into the container exit status,
+        but a positive crash before shutdown should remain visible."""
+        positives = [
+            p.returncode for _, p in self.procs
+            if p.returncode is not None and p.returncode > 0
+        ]
+        return max(positives, default=0)
+
+    def _drain_restart_requests(self) -> None:
+        if self.shutdown_at is not None:
+            self._restart_requested.clear()
+            return
+        requested = tuple(sorted(self._restart_requested))
+        self._restart_requested.clear()
+        for daemon_name in requested:
+            if self.shutdown_at is not None:
+                self._restart_requested.clear()
+                return
+            self.restart_daemon(daemon_name)
 
     def forward_signal(self, sig: int, daemon_name: str) -> bool:
         """Forward a signal to one named child. Used by the SIGHUP
@@ -323,7 +366,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     # supervisor restarts the pipelock daemon in place (other
     # daemons keep running — specifically supervise, whose MCP
     # socket would drop on a whole-container `docker restart`).
-    signal.signal(signal.SIGUSR1, lambda *_: sup.restart_daemon("pipelock"))
+    signal.signal(signal.SIGUSR1, lambda *_: sup.request_restart("pipelock"))
 
     while not sup.tick():
         time.sleep(_POLL_INTERVAL)
