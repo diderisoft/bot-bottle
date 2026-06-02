@@ -38,6 +38,7 @@ from bot_bottle.git_gate import GitGatePlan, GitGateUpstream
 from bot_bottle.manifest import GitEntry, Manifest
 from bot_bottle.pipelock import PipelockProxyPlan
 from bot_bottle.supervise import SupervisePlan
+from bot_bottle.workspace import workspace_plan
 
 
 def _remote_host(g: GitEntry) -> str:
@@ -144,6 +145,7 @@ def _plan(
             codex_auth_file=codex_auth_file,
             guest_env=dict(guest_env or {}),
         ),
+        workspace_plan=workspace_plan(spec, guest_home="/home/node"),
     )
 
 

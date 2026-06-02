@@ -33,6 +33,7 @@ from bot_bottle.git_gate import GitGatePlan, GitGateUpstream
 from bot_bottle.manifest import Manifest
 from bot_bottle.pipelock import PipelockProxyPlan
 from bot_bottle.supervise import SupervisePlan
+from bot_bottle.workspace import workspace_plan
 
 
 SLUG = "demo-abc12"
@@ -163,8 +164,9 @@ def _plan(
             roles=(),
         ),)
 
+    spec = _spec(supervise=supervise, with_git=with_git, with_egress=with_egress)
     return DockerBottlePlan(
-        spec=_spec(supervise=supervise, with_git=with_git, with_egress=with_egress),
+        spec=spec,
         stage_dir=STAGE,
         slug=SLUG,
         container_name=f"bot-bottle-{SLUG}",
@@ -189,6 +191,7 @@ def _plan(
             dockerfile="",
             guest_env={},
         ),
+        workspace_plan=workspace_plan(spec, guest_home="/home/node"),
     )
 
 

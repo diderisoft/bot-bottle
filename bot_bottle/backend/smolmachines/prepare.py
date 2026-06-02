@@ -32,6 +32,7 @@ from ...env import resolve_env
 from ...git_gate import GitGate
 from ...pipelock import PipelockProxy
 from ...supervise import Supervise
+from ...workspace import workspace_plan as resolve_workspace_plan
 from .bottle_plan import SmolmachinesBottlePlan
 from .util import smolmachines_bundle_subnet, smolmachines_preflight
 
@@ -60,6 +61,8 @@ def resolve_plan(
     bottle = manifest.bottle_for(spec.agent_name)
     provider = bottle.agent_provider
     provider_runtime = runtime_for(provider.template)
+    guest_home = os.environ.get("BOT_BOTTLE_GUEST_HOME", "/home/node")
+    workspace_plan = resolve_workspace_plan(spec, guest_home=guest_home)
 
     slug = spec.identity or bottle_identity(spec.agent_name)
 
@@ -130,7 +133,7 @@ def resolve_plan(
         template=provider.template,
         dockerfile=agent_dockerfile_path,
         state_dir=agent_dir,
-        guest_home=os.environ.get("BOT_BOTTLE_GUEST_HOME", "/home/node"),
+        guest_home=guest_home,
         guest_env=guest_env,
         forward_host_credentials=provider.forward_host_credentials,
         auth_token=provider.auth_token,
@@ -181,6 +184,7 @@ def resolve_plan(
         egress_plan=egress_plan,
         supervise_plan=supervise_plan,
         agent_provision=agent_provision,
+        workspace_plan=workspace_plan,
     )
 
 

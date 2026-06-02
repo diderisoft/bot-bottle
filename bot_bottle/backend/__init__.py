@@ -46,6 +46,7 @@ from ..log import die, info
 from ..manifest import GitEntry, Manifest
 from ..supervise import SupervisePlan
 from ..util import expand_tilde
+from ..workspace import WorkspacePlan
 from .print_util import print_multi, visible_agent_env_names
 from .util import host_skill_dir
 
@@ -79,6 +80,7 @@ class BottlePlan(ABC):
     egress_plan: EgressPlan
     supervise_plan: SupervisePlan | None
     agent_provision: AgentProvisionPlan
+    workspace_plan: WorkspacePlan
 
     def print(self, *, remote_control: bool) -> None:
         """Render the y/N preflight summary to stderr."""
@@ -320,7 +322,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         decide whether to add provider-specific prompt args to the agent's
         argv.
 
-        Default orchestration: ca → prompt → skills → git →
+        Default orchestration: ca → prompt → skills → workspace → git →
         supervise. CA install runs first so the agent's trust store
         is rebuilt before anything inside the agent makes a TLS call.
         Subclasses typically don't override this; they implement the
@@ -335,6 +337,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         prompt_path = self.provision_prompt(plan, target)
         self.provision_provider_auth(plan, target)
         self.provision_skills(plan, target)
+        self.provision_workspace(plan, target)
         self.provision_git(plan, target)
         self.provision_supervise(plan, target)
         return prompt_path
@@ -364,6 +367,11 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
     def provision_skills(self, plan: PlanT, target: str) -> None:
         """Copy the agent's named skills from the host into the
         running bottle. No-op when the agent has no skills."""
+
+    def provision_workspace(self, plan: PlanT, target: str) -> None:
+        """Copy the operator workspace into the running bottle when
+        the backend cannot bake it into the agent image. Default is
+        no-op for backends like Docker that handle this before launch."""
 
     @abstractmethod
     def provision_git(self, plan: PlanT, target: str) -> None:

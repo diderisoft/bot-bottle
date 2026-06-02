@@ -22,6 +22,7 @@ from ...git_gate import GitGate
 from ...log import die
 from ...pipelock import PipelockProxy
 from ...supervise import Supervise
+from ...workspace import workspace_plan as resolve_workspace_plan
 from .. import BottleSpec
 from . import util as docker_mod
 from .bottle_plan import DockerBottlePlan
@@ -62,6 +63,8 @@ def resolve_plan(
     bottle = manifest.bottle_for(spec.agent_name)
     provider = bottle.agent_provider
     provider_runtime = runtime_for(provider.template)
+    guest_home = os.environ.get("BOT_BOTTLE_CONTAINER_HOME", "/home/node")
+    workspace_plan = resolve_workspace_plan(spec, guest_home=guest_home)
 
     # PRD 0016 follow-up: identity, not bare slug. A fresh `start`
     # mints a random-suffixed identity (so parallel runs of the same
@@ -177,7 +180,7 @@ def resolve_plan(
         template=provider.template,
         dockerfile=dockerfile_path,
         state_dir=agent_dir,
-        guest_home=os.environ.get("BOT_BOTTLE_CONTAINER_HOME", "/home/node"),
+        guest_home=guest_home,
         forward_host_credentials=provider.forward_host_credentials,
         auth_token=provider.auth_token,
         host_env=dict(os.environ),
@@ -245,6 +248,7 @@ def resolve_plan(
         supervise_plan=supervise_plan,
         use_runsc=use_runsc,
         agent_provision=agent_provision,
+        workspace_plan=workspace_plan,
     )
 
 

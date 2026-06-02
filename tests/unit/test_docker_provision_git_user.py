@@ -21,6 +21,7 @@ from bot_bottle.egress import EgressPlan
 from bot_bottle.git_gate import GitGatePlan
 from bot_bottle.manifest import Manifest
 from bot_bottle.pipelock import PipelockProxyPlan
+from bot_bottle.workspace import workspace_plan
 
 
 def _plan(*, git_user: dict | None = None,
@@ -75,6 +76,7 @@ def _plan(*, git_user: dict | None = None,
             dockerfile="",
             guest_env={},
         ),
+        workspace_plan=workspace_plan(spec, guest_home="/home/node"),
     )
 
 

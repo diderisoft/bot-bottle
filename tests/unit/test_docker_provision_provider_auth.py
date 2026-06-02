@@ -18,6 +18,7 @@ from bot_bottle.egress import EgressPlan
 from bot_bottle.git_gate import GitGatePlan
 from bot_bottle.manifest import Manifest
 from bot_bottle.pipelock import PipelockProxyPlan
+from bot_bottle.workspace import workspace_plan
 
 
 def _plan(
@@ -29,13 +30,14 @@ def _plan(
         "bottles": {"dev": {"agent_provider": {"template": "codex"}}},
         "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
     })
+    spec = BottleSpec(
+        manifest=manifest,
+        agent_name="demo",
+        copy_cwd=False,
+        user_cwd="/tmp/x",
+    )
     return DockerBottlePlan(
-        spec=BottleSpec(
-            manifest=manifest,
-            agent_name="demo",
-            copy_cwd=False,
-            user_cwd="/tmp/x",
-        ),
+        spec=spec,
         stage_dir=Path("/tmp/stage"),
         slug="demo-abc12",
         container_name="bot-bottle-demo-abc12",
@@ -69,6 +71,7 @@ def _plan(
         agent_provision=_agent_provision(
             agent_provider_template, codex_auth_file=codex_auth_file,
         ),
+        workspace_plan=workspace_plan(spec, guest_home="/home/node"),
     )
 
 
