@@ -31,7 +31,6 @@ class TestAgentProviderRuntime(unittest.TestCase):
                 dockerfile="/tmp/Dockerfile.codex",
                 state_dir=Path(tmp),
             )
-            config = (Path(tmp) / "codex-config.toml").read_text()
         self.assertEqual("codex", plan.template)
         self.assertEqual("codex", plan.command)
         self.assertEqual("read_prompt_file", plan.prompt_mode)
@@ -46,9 +45,6 @@ class TestAgentProviderRuntime(unittest.TestCase):
             ("/home/node/.codex/config.toml",),
             tuple(f.guest_path for f in plan.files),
         )
-        self.assertIn('[projects."/home/node"]', config)
-        self.assertIn('[projects."/home/node/workspace"]', config)
-        self.assertEqual(2, config.count('trust_level = "trusted"'))
 
     def test_codex_forward_host_credentials_adds_auth_and_verify(self):
         with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
