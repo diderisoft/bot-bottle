@@ -175,33 +175,15 @@ class GitEntry:
 # token-not-Bearer quirk (go-gitea/gitea#16734).
 EGRESS_AUTH_SCHEMES = ("Bearer", "token")
 
-# Optional per-route role markers. A role signals "this route plays
-# a specific named part in the bottle's auth flow"; the launch step
-# acts on the marker.
-#
-#   codex_auth: placeholder marker for Codex egress-held auth flows.
-#               Accepted on Codex routes for forward-compatibility;
-#               the provisioner does not act on it today.
-#
-# Routes without a `role` are pure proxy entries: egress
-# enforces path_allowlist + injects auth on its own, but nothing
-# special happens on the agent side.
-#
-# Note: the former `claude_code_oauth` role has been removed. Claude
-# OAuth is now provisioner-owned via `agent_provider.auth_token`; the
-# provisioner injects the api.anthropic.com route automatically.
-EGRESS_ROLES = frozenset({
-    "codex_auth",
-})
-
-# Singleton roles may appear on at most one route per bottle.
-EGRESS_SINGLETON_ROLES = frozenset({
-    "codex_auth",
-})
-
-PROVIDER_EGRESS_ROLES = {
+# Per-route role markers. Both former roles (claude_code_oauth,
+# codex_auth) have been removed — provider auth is now provisioner-owned
+# via agent_provider.auth_token / forward_host_credentials. The field
+# and validation plumbing remain for future roles.
+EGRESS_ROLES: frozenset[str] = frozenset()
+EGRESS_SINGLETON_ROLES: frozenset[str] = frozenset()
+PROVIDER_EGRESS_ROLES: dict[str, frozenset[str]] = {
     "claude": frozenset(),
-    "codex": frozenset({"codex_auth"}),
+    "codex": frozenset(),
 }
 
 

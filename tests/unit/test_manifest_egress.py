@@ -203,35 +203,12 @@ class TestRole(unittest.TestCase):
         b = _bottle([{"host": "x.example"}])
         self.assertEqual((), b.egress.routes[0].Role)
 
-    def test_string_normalizes_to_tuple(self):
-        b = _provider_bottle("codex", [{
-            "host": "api.openai.com",
-            "role": "codex_auth",
-            "auth": {"scheme": "Bearer", "token_ref": "T"},
-        }])
-        self.assertEqual(("codex_auth",), b.egress.routes[0].Role)
-
-    def test_list_supported(self):
-        b = _provider_bottle("codex", [{
-            "host": "api.openai.com",
-            "role": ["codex_auth"],
-            "auth": {"scheme": "Bearer", "token_ref": "T"},
-        }])
-        self.assertEqual(("codex_auth",), b.egress.routes[0].Role)
-
-    def test_unknown_role_rejected(self):
-        # The role enum is locked down — typos shouldn't silently
-        # become no-op markers.
-        with self.assertRaises(ManifestError):
-            _bottle([{"host": "x.example", "role": "totally-made-up"}])
-
-    def test_claude_code_oauth_role_rejected(self):
-        # claude_code_oauth was removed; provisioner injects the route
-        # automatically via agent_provider.auth_token.
-        with self.assertRaises(ManifestError):
-            _bottle([{"host": "api.anthropic.com",
-                      "role": "claude_code_oauth",
-                      "auth": {"scheme": "Bearer", "token_ref": "T"}}])
+    def test_any_role_rejected(self):
+        # All former roles removed; the field is reserved for future use.
+        for role in ("claude_code_oauth", "codex_auth", "totally-made-up"):
+            with self.subTest(role=role):
+                with self.assertRaises(ManifestError):
+                    _bottle([{"host": "x.example", "role": role}])
 
     def test_non_string_role_rejected(self):
         with self.assertRaises(ManifestError):
@@ -239,24 +216,7 @@ class TestRole(unittest.TestCase):
 
     def test_list_with_non_string_item_rejected(self):
         with self.assertRaises(ManifestError):
-            _bottle([{"host": "x.example",
-                      "role": ["codex_auth", 42]}])
-
-    def test_codex_auth_role_allowed_for_codex_provider(self):
-        b = _provider_bottle("codex", [{
-            "host": "api.openai.com",
-            "role": "codex_auth",
-            "auth": {"scheme": "Bearer", "token_ref": "OPENAI_TOKEN"},
-        }])
-        self.assertEqual(("codex_auth",), b.egress.routes[0].Role)
-
-    def test_codex_role_rejected_for_default_claude_provider(self):
-        with self.assertRaises(ManifestError):
-            _bottle([{
-                "host": "api.openai.com",
-                "role": "codex_auth",
-                "auth": {"scheme": "Bearer", "token_ref": "T"},
-            }])
+            _bottle([{"host": "x.example", "role": ["x", 42]}])
 
 
 class TestPipelockPolicy(unittest.TestCase):
