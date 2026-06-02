@@ -175,17 +175,6 @@ class GitEntry:
 # token-not-Bearer quirk (go-gitea/gitea#16734).
 EGRESS_AUTH_SCHEMES = ("Bearer", "token")
 
-# Per-route role markers. Both former roles (claude_code_oauth,
-# codex_auth) have been removed — provider auth is now provisioner-owned
-# via agent_provider.auth_token / forward_host_credentials. The field
-# and validation plumbing remain for future roles.
-EGRESS_ROLES: frozenset[str] = frozenset()
-EGRESS_SINGLETON_ROLES: frozenset[str] = frozenset()
-PROVIDER_EGRESS_ROLES: dict[str, frozenset[str]] = {
-    "claude": frozenset(),
-    "codex": frozenset(),
-}
-
 
 @dataclass(frozen=True)
 class AgentProvider:
@@ -420,7 +409,8 @@ class EgressRoute:
     manifest's `auth` block is omitted both fields are empty strings —
     no Authorization is written, no token forwarded.
 
-    `Role` is an optional tuple of named markers (see EGRESS_ROLES).
+    `Role` is reserved for future use; all role strings are currently
+    rejected by the validator.
 
     Validation rules (enforced in `from_dict`):
       - `host` required, non-empty.
@@ -429,10 +419,7 @@ class EgressRoute:
         `token_ref` as non-empty strings; an empty `auth: {}` is an
         error rather than a synonym for "no auth" (omit `auth` for
         that case).
-      - `role` optional. String or list of strings drawn from
-        EGRESS_ROLES. Singleton roles (see
-        EGRESS_SINGLETON_ROLES) may appear on at most one
-        route per bottle.
+      - `role` optional, reserved — any non-empty value is rejected.
     """
 
     Host: str
@@ -530,12 +517,11 @@ class EgressRoute:
                 f"{label} role must be a string or a list of strings "
                 f"(was {type(role_raw).__name__})"
             )
-        for r in roles:
-            if r not in EGRESS_ROLES:
-                raise ManifestError(
-                    f"{label} role {r!r} is not one of "
-                    f"{', '.join(sorted(EGRESS_ROLES))}"
-                )
+        if roles:
+            raise ManifestError(
+                f"{label} role {roles[0]!r} is not accepted; "
+                f"the 'role' field is reserved for future use"
+            )
 
         pipelock = (
             PipelockRoutePolicy.from_dict(bottle_name, idx, d["pipelock"])
@@ -570,9 +556,7 @@ class EgressConfig:
     routes: tuple[EgressRoute, ...] = ()
 
     @classmethod
-    def from_dict(
-        cls, bottle_name: str, raw: object, *, agent_provider_template: str = "claude",
-    ) -> "EgressConfig":
+    def from_dict(cls, bottle_name: str, raw: object) -> "EgressConfig":
         d = _as_json_object(raw, f"bottle '{bottle_name}' egress")
         routes_raw = d.get("routes")
         routes: tuple[EgressRoute, ...] = ()
@@ -587,9 +571,7 @@ class EgressConfig:
                 EgressRoute.from_dict(bottle_name, i, entry)
                 for i, entry in enumerate(routes_list)
             )
-            _validate_egress_routes(
-                bottle_name, routes, agent_provider_template=agent_provider_template,
-            )
+            _validate_egress_routes(bottle_name, routes)
         for k in d:
             if k != "routes":
                 raise ManifestError(
@@ -680,10 +662,7 @@ class Bottle:
         )
 
         egress = (
-            EgressConfig.from_dict(
-                name, d["egress"],
-                agent_provider_template=agent_provider.template,
-            )
+            EgressConfig.from_dict(name, d["egress"])
             if "egress" in d
             else EgressConfig()
         )
@@ -1047,21 +1026,15 @@ def _is_ip_literal(value: str) -> bool:
 def _validate_egress_routes(
     bottle_name: str,
     routes: tuple[EgressRoute, ...],
-    *,
-    agent_provider_template: str = "claude",
 ) -> None:
-    """Cross-validation for `bottle.egress.routes`:
+    """Cross-validation for `bottle.egress.routes`: hosts must be unique.
 
-    - Hosts must be unique within the bottle. The proxy matches by
-      exact-host (v1, prefix matching is on path_allowlist only);
-      duplicate hosts leave the route choice ambiguous.
-    - Singleton roles (see EGRESS_SINGLETON_ROLES) may appear
-      on at most one route per bottle.
+    The proxy matches by exact-host (v1); duplicate hosts leave the
+    route choice ambiguous so we reject them up front.
 
     No cross-validation against `bottle.git` is performed. git-gate
-    (SSH push/fetch) and egress (HTTPS) broker different
-    protocols; declaring both for the same host is a legitimate
-    dev setup."""
+    (SSH push/fetch) and egress (HTTPS) broker different protocols;
+    declaring both for the same host is a legitimate dev setup."""
     seen_hosts: dict[str, None] = {}
     for r in routes:
         key = r.Host.lower()
@@ -1071,25 +1044,6 @@ def _validate_egress_routes(
                 f"{r.Host!r}; each host must be unique on the proxy."
             )
         seen_hosts[key] = None
-    for role in EGRESS_SINGLETON_ROLES:
-        with_role = [r for r in routes if role in r.Role]
-        if len(with_role) > 1:
-            hosts = ", ".join(r.Host for r in with_role)
-            raise ManifestError(
-                f"bottle '{bottle_name}' egress.routes has {len(with_role)} "
-                f"routes with role {role!r} (hosts: {hosts}); this role drives a "
-                f"single launch-step side effect — pick one."
-            )
-    allowed_roles = PROVIDER_EGRESS_ROLES[agent_provider_template]
-    for route in routes:
-        for role in route.Role:
-            if role not in allowed_roles:
-                raise ManifestError(
-                    f"bottle '{bottle_name}' egress route for host "
-                    f"{route.Host!r} has role {role!r}, but provider "
-                    f"{agent_provider_template!r} only accepts roles "
-                    f"{', '.join(sorted(allowed_roles)) or '(none)'}"
-                )
 
 
 def _validate_unique_git_names(bottle_name: str, git: tuple[GitEntry, ...]) -> None:
@@ -1300,10 +1254,7 @@ def _merge_bottles(
     merged_supervise = (
         child.supervise if "supervise" in child_raw else parent.supervise
     )
-    _validate_egress_routes(
-        name, merged_egress.routes,
-        agent_provider_template=merged_agent_provider.template,
-    )
+    _validate_egress_routes(name, merged_egress.routes)
 
     return Bottle(
         env=merged_env,

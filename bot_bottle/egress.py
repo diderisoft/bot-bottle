@@ -69,9 +69,8 @@ class EgressRoute:
     under `token_env`. Routes that share a `token_ref` coalesce to
     one `token_env` slot.
 
-    `roles` carries the manifest route's optional role markers (see
-    `manifest.EGRESS_ROLES`). The launch step reads these for
-    side effects like the claude-code OAuth placeholder env.
+    `roles` carries the manifest route's role tuple (reserved for
+    future use; always empty today).
 
     `tls_passthrough` signals that pipelock must not TLS-MITM this
     host — either because the manifest declared `pipelock.tls_passthrough:
