@@ -659,7 +659,7 @@ def _bottle_for_slug(
     if slug in bottles:
         _cm, bottle, _identity = bottles[slug]
         return bottle, ""
-    machine_name = f"bot-bottle-{slug}"
+    instance_name = f"bot-bottle-{slug}"
     prompt_path: str | None = None
     metadata = read_metadata(slug)
     if metadata is not None and manifest is not None:
@@ -672,12 +672,12 @@ def _bottle_for_slug(
     backend = metadata.backend if metadata is not None else ""
     if backend == "smolmachines":
         synth: object = SmolmachinesBottle(
-            machine_name,
+            instance_name,
             prompt_path=prompt_path,
         )
     else:
         synth = DockerBottle(
-            container=machine_name,
+            container=instance_name,
             teardown=lambda: None,
             prompt_path_in_container=prompt_path,
         )
