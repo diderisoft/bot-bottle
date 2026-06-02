@@ -187,8 +187,10 @@ def _redact_claims(value: object) -> object:
                 out[key] = inner if isinstance(inner, list) else []
             elif isinstance(inner, bool):
                 out[key] = inner
-            elif isinstance(inner, (dict, list)):
-                out[key] = _redact_claims(inner)
+            elif isinstance(inner, dict):
+                out[key] = {}
+            elif isinstance(inner, list):
+                out[key] = []
             else:
                 out[key] = "bot-bottle-placeholder"
         return out
@@ -237,28 +239,49 @@ def _redact_auth_claim(value: object) -> dict:
 def _redact_codex_auth(
     value: object, *, now: datetime | None = None, exp_ts: int | None = None,
 ) -> object:
+    auth = value if isinstance(value, dict) else {}
+    out: dict[str, object] = {}
+    for key, inner in auth.items():
+        lower = key.lower()
+        if lower == "auth_mode" and isinstance(inner, str) and inner:
+            out[key] = inner
+        elif lower == "openai_api_key":
+            out[key] = None
+        elif lower == "tokens":
+            out[key] = _redact_token_block(inner, now=now, exp_ts=exp_ts)
+        else:
+            out[key] = _redact_unknown_auth_value(inner)
+    return out
+
+
+def _redact_token_block(
+    value: object, *, now: datetime | None = None, exp_ts: int | None = None,
+) -> dict[str, object]:
+    tokens = value if isinstance(value, dict) else {}
+    out: dict[str, object] = {}
+    for key, inner in tokens.items():
+        lower = key.lower()
+        if lower in {"access_token", "id_token"}:
+            out[key] = _dummy_jwt_from_host(inner, now=now, exp_ts=exp_ts)
+        elif lower == "account_id" and isinstance(inner, str) and inner:
+            # Current Codex uses this non-secret selected account id
+            # while egress owns the real bearer token.
+            out[key] = inner
+        else:
+            out[key] = _redact_unknown_auth_value(inner)
+    return out
+
+
+def _redact_unknown_auth_value(value: object) -> object:
+    if isinstance(value, bool):
+        return value
     if isinstance(value, dict):
-        out: dict[str, object] = {}
-        for key, inner in value.items():
-            lower = key.lower()
-            if lower == "openai_api_key":
-                out[key] = None
-            elif lower == "tokens":
-                out[key] = _redact_codex_auth(inner, now=now, exp_ts=exp_ts)
-            elif lower in {"access_token", "id_token"}:
-                out[key] = _dummy_jwt_from_host(inner, now=now, exp_ts=exp_ts)
-            elif "token" in lower or "secret" in lower or lower.endswith("_key"):
-                out[key] = "bot-bottle-placeholder"
-            elif lower == "account_id" and isinstance(inner, str) and inner:
-                out[key] = inner
-            elif lower in {"account_id", "user_id", "email"}:
-                out[key] = "bot-bottle-placeholder"
-            else:
-                out[key] = _redact_codex_auth(inner, now=now, exp_ts=exp_ts)
-        return out
+        return {}
     if isinstance(value, list):
-        return [_redact_codex_auth(v, now=now, exp_ts=exp_ts) for v in value]
-    return value
+        return []
+    if value is None:
+        return None
+    return "bot-bottle-placeholder"
 
 
 def _jwt_exp(token: str) -> datetime | None:

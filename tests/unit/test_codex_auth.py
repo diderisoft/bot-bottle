@@ -18,10 +18,14 @@ from bot_bottle.log import Die
 
 
 def _jwt(exp: int) -> str:
+    return _jwt_with_payload({"exp": exp})
+
+
+def _jwt_with_payload(payload: dict) -> str:
     def enc(obj: dict) -> str:
         raw = json.dumps(obj, separators=(",", ":")).encode()
         return base64.urlsafe_b64encode(raw).decode().rstrip("=")
-    return f"{enc({'alg': 'none'})}.{enc({'exp': exp})}.sig"
+    return f"{enc({'alg': 'none'})}.{enc(payload)}.sig"
 
 
 def _jwt_payload(token: str) -> dict:
@@ -154,16 +158,10 @@ class TestCodexHostAccessToken(unittest.TestCase):
         )
 
     def test_dummy_auth_keeps_required_account_claim_shape(self):
-        def jwt(payload: dict) -> str:
-            def enc(obj: dict) -> str:
-                raw = json.dumps(obj, separators=(",", ":")).encode()
-                return base64.urlsafe_b64encode(raw).decode().rstrip("=")
-            return f"{enc({'alg': 'none'})}.{enc(payload)}.sig"
-
         self._write({
             "auth_mode": "chatgpt",
             "tokens": {
-                "access_token": jwt({
+                "access_token": _jwt_with_payload({
                     "exp": 2000000000,
                     "https://api.openai.com/auth": {
                         "chatgpt_plan_type": "plus",
@@ -177,7 +175,7 @@ class TestCodexHostAccessToken(unittest.TestCase):
                         "email_verified": True,
                     },
                 }),
-                "id_token": jwt({
+                "id_token": _jwt_with_payload({
                     "exp": 2000000000,
                     "email": "real@example.invalid",
                     "email_verified": True,
@@ -201,6 +199,79 @@ class TestCodexHostAccessToken(unittest.TestCase):
         self.assertEqual("bot-bottle-placeholder", auth["chatgpt_user_id"])
         self.assertEqual("bot-bottle@example.invalid", profile["email"])
         self.assertTrue(profile["email_verified"])
+
+    def test_dummy_auth_redacts_unknown_future_auth_fields(self):
+        secrets = [
+            "top-session-secret",
+            "top-nested-secret",
+            "refresh-secret",
+            "session-token-secret",
+            "jwt-custom-secret",
+            "jwt-nested-secret",
+            "jwt-list-secret",
+            "id-token-secret",
+            "auth-claim-secret",
+            "auth-claim-nested-secret",
+            "top-list-secret",
+            "token-nested-secret",
+            "token-list-secret",
+        ]
+        self._write({
+            "auth_mode": "chatgpt",
+            "session_context": "top-session-secret",
+            "future_nested": {"value": "top-nested-secret"},
+            "future_list": ["top-list-secret"],
+            "tokens": {
+                "access_token": _jwt_with_payload({
+                    "exp": 2000000000,
+                    "custom_session": "jwt-custom-secret",
+                    "future_nested": {"value": "jwt-nested-secret"},
+                    "future_list": ["jwt-list-secret"],
+                    "https://api.openai.com/auth": {
+                        "chatgpt_plan_type": "plus",
+                        "chatgpt_account_id": "acct-real",
+                        "session_context": "auth-claim-secret",
+                        "nested": {"value": "auth-claim-nested-secret"},
+                    },
+                }),
+                "id_token": _jwt_with_payload({
+                    "exp": 2000000000,
+                    "opaque": "id-token-secret",
+                }),
+                "refresh_token": "refresh-secret",
+                "session_token": "session-token-secret",
+                "future_object": {"value": "token-nested-secret"},
+                "future_list": ["token-list-secret"],
+                "account_id": "acct-host",
+            },
+        })
+
+        dummy_json = codex_dummy_auth_json(
+            {"CODEX_HOME": str(self.home)},
+            now=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        for secret in secrets:
+            self.assertNotIn(secret, dummy_json)
+
+        dummy = json.loads(dummy_json)
+        self.assertEqual("bot-bottle-placeholder", dummy["session_context"])
+        self.assertEqual({}, dummy["future_nested"])
+        self.assertEqual([], dummy["future_list"])
+        self.assertEqual("bot-bottle-placeholder", dummy["tokens"]["refresh_token"])
+        self.assertEqual("bot-bottle-placeholder", dummy["tokens"]["session_token"])
+        self.assertEqual({}, dummy["tokens"]["future_object"])
+        self.assertEqual([], dummy["tokens"]["future_list"])
+
+        access_payload = _jwt_payload(dummy["tokens"]["access_token"])
+        self.assertEqual(
+            "bot-bottle-placeholder",
+            access_payload["custom_session"],
+        )
+        self.assertEqual({}, access_payload["future_nested"])
+        self.assertEqual([], access_payload["future_list"])
+        auth = access_payload["https://api.openai.com/auth"]
+        self.assertEqual("bot-bottle-placeholder", auth["session_context"])
+        self.assertEqual({}, auth["nested"])
 
 
 if __name__ == "__main__":
