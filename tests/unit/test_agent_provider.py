@@ -117,7 +117,7 @@ class TestAgentProviderRuntime(unittest.TestCase):
             self.assertEqual(CODEX_HOST_CREDENTIAL_TOKEN_REF, r.token_ref)
             self.assertTrue(r.tls_passthrough)
 
-    def test_codex_without_forward_host_credentials_has_no_egress_routes(self):
+    def test_codex_without_forward_host_credentials_has_passthrough_egress_routes(self):
         with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
             plan = agent_provision_plan(
                 template="codex",
@@ -125,7 +125,14 @@ class TestAgentProviderRuntime(unittest.TestCase):
                 state_dir=Path(tmp),
                 forward_host_credentials=False,
             )
-        self.assertEqual((), plan.egress_routes)
+        self.assertEqual(
+            {r.host for r in plan.egress_routes},
+            set(CODEX_HOST_CREDENTIAL_HOSTS),
+        )
+        for r in plan.egress_routes:
+            self.assertEqual("", r.auth_scheme)
+            self.assertEqual("", r.token_ref)
+            self.assertTrue(r.tls_passthrough)
 
     def test_claude_plan_has_no_egress_routes(self):
         with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:

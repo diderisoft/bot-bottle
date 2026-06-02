@@ -160,14 +160,14 @@ def agent_provision_plan(
         config_file.chmod(0o600)
         files.append(AgentProvisionFile(config_file, config_path))
 
+        for host in CODEX_HOST_CREDENTIAL_HOSTS:
+            egress_routes.append(EgressRoute(
+                host=host,
+                auth_scheme="Bearer" if forward_host_credentials else "",
+                token_ref=CODEX_HOST_CREDENTIAL_TOKEN_REF if forward_host_credentials else "",
+                tls_passthrough=True,
+            ))
         if forward_host_credentials:
-            for host in CODEX_HOST_CREDENTIAL_HOSTS:
-                egress_routes.append(EgressRoute(
-                    host=host,
-                    auth_scheme="Bearer",
-                    token_ref=CODEX_HOST_CREDENTIAL_TOKEN_REF,
-                    tls_passthrough=True,
-                ))
             auth_file = state_dir / "codex-auth.json"
             write_codex_dummy_auth_file(auth_file, host_env or dict(os.environ))
             files.append(AgentProvisionFile(auth_file, f"{auth_dir}/auth.json"))
