@@ -35,6 +35,7 @@ import json
 import os
 import socketserver
 import sys
+import time
 import typing
 import urllib.error
 import urllib.parse
@@ -62,6 +63,10 @@ ERR_INVALID_REQUEST = -32600
 ERR_METHOD_NOT_FOUND = -32601
 ERR_INVALID_PARAMS = -32602
 ERR_INTERNAL = -32603
+
+DEFAULT_RESPONSE_TIMEOUT_SECONDS = 30.0
+MIN_RESPONSE_POLL_INTERVAL_SECONDS = 0.05
+EGRESS_LIST_TIMEOUT_SECONDS = 5.0
 
 
 @dataclass(frozen=True)
@@ -412,6 +417,7 @@ def _validate_and_bundle_egress_route(
 class ServerConfig:
     bottle_slug: str
     queue_dir: Path
+    response_timeout_seconds: float = DEFAULT_RESPONSE_TIMEOUT_SECONDS
 
 
 def handle_initialize(_params: dict[str, object]) -> dict[str, object]:
@@ -442,7 +448,7 @@ def handle_list_egress_routes(
     })
     opener = urllib.request.build_opener(proxy_handler)
     try:
-        with opener.open(_sv.EGRESS_INTROSPECT_URL, timeout=5) as resp:
+        with opener.open(_sv.EGRESS_INTROSPECT_URL, timeout=EGRESS_LIST_TIMEOUT_SECONDS) as resp:
             body = resp.read().decode("utf-8")
     except (urllib.error.URLError, OSError) as e:
         return {
@@ -520,7 +526,20 @@ def handle_tools_call(
         f"for bottle {config.bottle_slug}; waiting for operator...\n"
     )
     sys.stderr.flush()
-    response = _sv.wait_for_response(config.queue_dir, proposal.id)
+    deadline = time.monotonic() + config.response_timeout_seconds
+    try:
+        response = _sv.wait_for_response(
+            config.queue_dir,
+            proposal.id,
+            poll_interval=MIN_RESPONSE_POLL_INTERVAL_SECONDS,
+            deadline=deadline,
+        )
+    except TimeoutError:
+        text = format_pending_response_text(config.response_timeout_seconds)
+        return {
+            "content": [{"type": "text", "text": text}],
+            "isError": False,
+        }
     _sv.archive_proposal(config.queue_dir, proposal.id)
 
     text = format_response_text(response)
@@ -540,6 +559,16 @@ def format_response_text(response: "_sv.Response") -> str:
         lines.append("the operator modified your proposal before approving; "
                      "the final config is now what's been applied")
     return "\n".join(lines)
+
+
+def format_pending_response_text(timeout_seconds: float) -> str:
+    return "\n".join([
+        "status: pending",
+        (
+            "notes: operator response timed out after "
+            f"{timeout_seconds:g}s; proposal remains queued"
+        ),
+    ])
 
 
 # --- HTTP transport --------------------------------------------------------
@@ -654,10 +683,15 @@ def serve(
     queue_dir: Path,
     port: int = _sv.SUPERVISE_PORT,
     bind: str = "0.0.0.0",
+    response_timeout_seconds: float = DEFAULT_RESPONSE_TIMEOUT_SECONDS,
 ) -> typing.NoReturn:
     queue_dir.mkdir(parents=True, exist_ok=True)
     server = MCPServer((bind, port), MCPHandler)
-    server.config = ServerConfig(bottle_slug=bottle_slug, queue_dir=queue_dir)
+    server.config = ServerConfig(
+        bottle_slug=bottle_slug,
+        queue_dir=queue_dir,
+        response_timeout_seconds=response_timeout_seconds,
+    )
     sys.stderr.write(
         f"supervise listening on {bind}:{port}; "
         f"slug={bottle_slug!r}; queue={queue_dir}; "
@@ -682,8 +716,36 @@ def main(argv: list[str]) -> int:
     queue_dir = Path(os.environ.get("SUPERVISE_QUEUE_DIR", _sv.QUEUE_DIR_IN_CONTAINER))
     port = int(os.environ.get("SUPERVISE_PORT", str(_sv.SUPERVISE_PORT)))
     bind = os.environ.get("SUPERVISE_BIND", "0.0.0.0")
-    serve(bottle_slug=bottle_slug, queue_dir=queue_dir, port=port, bind=bind)
+    try:
+        response_timeout_seconds = _response_timeout_from_env(os.environ)
+    except ValueError as e:
+        sys.stderr.write(f"supervise: {e}\n")
+        return 2
+    serve(
+        bottle_slug=bottle_slug,
+        queue_dir=queue_dir,
+        port=port,
+        bind=bind,
+        response_timeout_seconds=response_timeout_seconds,
+    )
     return 0  # serve() does not return
+
+
+def _response_timeout_from_env(env: typing.Mapping[str, str]) -> float:
+    raw = env.get("SUPERVISE_RESPONSE_TIMEOUT_SECONDS", "").strip()
+    if not raw:
+        return DEFAULT_RESPONSE_TIMEOUT_SECONDS
+    try:
+        value = float(raw)
+    except ValueError as e:
+        raise ValueError(
+            "SUPERVISE_RESPONSE_TIMEOUT_SECONDS must be a positive number"
+        ) from e
+    if value <= 0:
+        raise ValueError(
+            "SUPERVISE_RESPONSE_TIMEOUT_SECONDS must be a positive number"
+        )
+    return value
 
 
 if __name__ == "__main__":

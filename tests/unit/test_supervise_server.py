@@ -8,6 +8,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 # The server module loads `supervise` via same-directory import inside
@@ -29,8 +30,10 @@ from bot_bottle.supervise_server import (
     ServerConfig,
     TOOL_DEFINITIONS,
     _RpcError,
+    _response_timeout_from_env,
     format_response_text,
     handle_initialize,
+    handle_list_egress_routes,
     handle_tools_call,
     handle_tools_list,
     jsonrpc_error,
@@ -299,6 +302,70 @@ class TestHandleToolsCall(unittest.TestCase):
         # Both files moved to processed/.
         processed = list((self.queue_dir / "processed").glob("*.json"))
         self.assertEqual(2, len(processed))
+
+    def test_pending_response_times_out_without_archive(self):
+        config = ServerConfig(
+            bottle_slug="dev",
+            queue_dir=self.queue_dir,
+            response_timeout_seconds=0.05,
+        )
+        result = handle_tools_call(
+            {
+                "name": _sv.TOOL_EGRESS_BLOCK,
+                "arguments": {
+                    "host": "example.com",
+                    "justification": "need a route",
+                },
+            },
+            config,
+        )
+
+        self.assertFalse(result["isError"])  # type: ignore[index]
+        text = result["content"][0]["text"]  # type: ignore[index]
+        self.assertIn("status: pending", text)
+        self.assertIn("proposal remains queued", text)
+        self.assertEqual(1, len(_sv.list_pending_proposals(self.queue_dir)))
+        self.assertFalse((self.queue_dir / "processed").exists())
+
+
+class TestHandleListEgressRoutes(unittest.TestCase):
+    def test_url_error_returns_tool_error(self):
+        class _Opener:
+            def open(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+                raise OSError("egress unavailable")
+
+        with patch.object(supervise_server.urllib.request, "build_opener", return_value=_Opener()):
+            result = handle_list_egress_routes(
+                {},
+                ServerConfig(bottle_slug="dev", queue_dir=Path("/unused")),
+            )
+
+        self.assertTrue(result["isError"])  # type: ignore[index]
+        text = result["content"][0]["text"]  # type: ignore[index]
+        self.assertIn("could not reach", text)
+        self.assertIn("egress unavailable", text)
+
+
+class TestResponseTimeoutEnv(unittest.TestCase):
+    def test_unset_uses_default(self):
+        self.assertEqual(
+            supervise_server.DEFAULT_RESPONSE_TIMEOUT_SECONDS,
+            _response_timeout_from_env({}),
+        )
+
+    def test_positive_float_accepted(self):
+        self.assertEqual(
+            12.5,
+            _response_timeout_from_env({"SUPERVISE_RESPONSE_TIMEOUT_SECONDS": "12.5"}),
+        )
+
+    def test_invalid_value_rejected(self):
+        with self.assertRaises(ValueError):
+            _response_timeout_from_env({"SUPERVISE_RESPONSE_TIMEOUT_SECONDS": "soon"})
+
+    def test_nonpositive_value_rejected(self):
+        with self.assertRaises(ValueError):
+            _response_timeout_from_env({"SUPERVISE_RESPONSE_TIMEOUT_SECONDS": "0"})
 
 
 # --- Response text formatting ---------------------------------------------
