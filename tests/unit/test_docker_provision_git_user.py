@@ -25,6 +25,8 @@ from bot_bottle.workspace import workspace_plan
 
 
 def _plan(*, git_user: dict | None = None,
+          copy_cwd: bool = False,
+          user_cwd: str = "/tmp/x",
           stage_dir: Path | None = None) -> DockerBottlePlan:
     bottle_json: dict = {}
     if git_user is not None:
@@ -35,7 +37,7 @@ def _plan(*, git_user: dict | None = None,
     })
     spec = BottleSpec(
         manifest=manifest, agent_name="demo",
-        copy_cwd=False, user_cwd="/tmp/x",
+        copy_cwd=copy_cwd, user_cwd=user_cwd,
     )
     return DockerBottlePlan(
         spec=spec,
@@ -107,6 +109,28 @@ class TestProvisionGitUser(unittest.TestCase):
                 _plan(stage_dir=self.stage), "bot-bottle-demo-abc12",
             )
         self.assertEqual([], _git_config_calls(run))
+
+    def test_copies_cwd_git_to_workspace_plan_path(self):
+        cwd = self.stage / "cwd"
+        (cwd / ".git").mkdir(parents=True)
+        plan = _plan(copy_cwd=True, user_cwd=str(cwd), stage_dir=self.stage)
+        with patch.object(_git.subprocess, "run") as run:
+            _git._provision_cwd_git(plan, "bot-bottle-demo-abc12")
+
+        self.assertEqual(
+            [
+                "docker", "cp", f"{cwd}/.git",
+                "bot-bottle-demo-abc12:/home/node/workspace/.git",
+            ],
+            run.call_args_list[0].args[0],
+        )
+        self.assertEqual(
+            [
+                "docker", "exec", "-u", "0", "bot-bottle-demo-abc12",
+                "chown", "-R", "node:node", "/home/node/workspace/.git",
+            ],
+            run.call_args_list[1].args[0],
+        )
 
     def test_sets_name_and_email(self):
         plan = _plan(

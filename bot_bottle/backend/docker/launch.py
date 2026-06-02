@@ -101,7 +101,7 @@ def launch(
         )
         if plan.derived_image:
             docker_mod.build_image_with_cwd(
-                plan.derived_image, plan.image, plan.spec.user_cwd
+                plan.derived_image, plan.image, plan.workspace_plan
             )
 
         # Networks: compose-managed. The names are derived

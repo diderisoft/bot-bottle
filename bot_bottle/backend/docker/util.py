@@ -10,6 +10,7 @@ import subprocess
 from typing import Iterable, Iterator
 
 from ...log import die, info
+from ...workspace import WorkspacePlan
 
 
 # Cap on the suffix the container-name conflict logic will try before
@@ -116,28 +117,23 @@ def build_image(ref: str, context: str, *, dockerfile: str = "") -> None:
     subprocess.run(args, check=True)
 
 
-_TRUST_DIALOG_NODE_SCRIPT = (
-    'const fs=require("fs"),p=process.env.HOME+"/.claude.json",'
-    'c=JSON.parse(fs.readFileSync(p,"utf8"));'
-    'c.projects=c.projects||{};'
-    'c.projects[process.env.HOME+"/workspace"]={hasTrustDialogAccepted:true};'
-    'fs.writeFileSync(p,JSON.stringify(c,null,2));'
-)
-
-
-def build_image_with_cwd(derived: str, base: str, cwd: str) -> None:
-    """Build a thin derived image that copies <cwd> into
-    /home/node/workspace and adds a trust-dialog entry for it."""
+def build_image_with_cwd(
+    derived: str,
+    base: str,
+    workspace: WorkspacePlan,
+) -> None:
+    """Build a thin derived image that copies the workspace into
+    the plan's guest path and sets the plan's workdir."""
     import os
 
+    cwd = str(workspace.host_path)
     if not os.path.isdir(cwd):
         die(f"cwd not found at {cwd}")
-    info(f"building image {derived} from {base} with {cwd} -> /home/node/workspace")
+    info(f"building image {derived} from {base} with {cwd} -> {workspace.guest_path}")
     dockerfile = (
         f"FROM {base}\n"
-        f"COPY --chown=node:node . /home/node/workspace\n"
-        f"RUN node -e '{_TRUST_DIALOG_NODE_SCRIPT}'\n"
-        f"WORKDIR /home/node/workspace\n"
+        f"COPY --chown=node:node . {workspace.guest_path}\n"
+        f"WORKDIR {workspace.workdir}\n"
     )
     subprocess.run(
         ["docker", "build", "-t", derived, "-f", "-", cwd],

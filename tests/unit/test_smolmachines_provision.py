@@ -30,6 +30,7 @@ from bot_bottle.backend.smolmachines.provision import (
     provider_auth as _provider_auth,
     skills as _skills,
     supervise as _supervise,
+    workspace as _workspace,
 )
 from bot_bottle.backend.smolmachines.launch import _bundle_launch_spec
 from bot_bottle.backend.smolmachines.smolvm import SmolvmRunResult
@@ -846,6 +847,55 @@ class TestProvisionGitUser(unittest.TestCase):
         calls = self._git_config_calls(ex)
         self.assertEqual(1, len(calls))
         self.assertEqual(["user.email", "bot@example.com"], calls[0][0][7:])
+
+
+class TestProvisionWorkspace(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory(prefix="cb-prov-workspace.")
+        self.stage = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_noop_when_copy_cwd_false(self):
+        plan = _plan(copy_cwd=False, stage_dir=self.stage)
+        with patch(
+            "bot_bottle.backend.smolmachines.provision.workspace._smolvm.machine_cp"
+        ) as cp, patch(
+            "bot_bottle.backend.smolmachines.provision.workspace._smolvm.machine_exec"
+        ) as ex:
+            _workspace.provision_workspace(plan, "bot-bottle-demo-abc12")
+        cp.assert_not_called()
+        ex.assert_not_called()
+
+    def test_copies_workspace_to_plan_path_and_chowns(self):
+        cwd = self.stage / "cwd"
+        cwd.mkdir()
+        plan = _plan(copy_cwd=True, user_cwd=str(cwd), stage_dir=self.stage)
+        with patch(
+            "bot_bottle.backend.smolmachines.provision.workspace._smolvm.machine_cp"
+        ) as cp, patch(
+            "bot_bottle.backend.smolmachines.provision.workspace._smolvm.machine_exec"
+        ) as ex:
+            _workspace.provision_workspace(plan, "bot-bottle-demo-abc12")
+
+        cp.assert_called_once_with(
+            str(cwd),
+            "bot-bottle-demo-abc12:/home/node/workspace",
+        )
+        argvs = [c.args[1] for c in ex.call_args_list]
+        self.assertIn(
+            ["sh", "-c", "rm -rf /home/node/workspace && mkdir -p /home/node"],
+            argvs,
+        )
+        self.assertIn(
+            [
+                "sh", "-c",
+                "chown -R node:node /home/node/workspace && "
+                "chmod 755 /home/node/workspace",
+            ],
+            argvs,
+        )
 
 
 class TestProvisionSupervise(unittest.TestCase):

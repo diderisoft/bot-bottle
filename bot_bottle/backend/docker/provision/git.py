@@ -3,7 +3,7 @@
 Three concerns, all about git in the agent:
 
   1. If --cwd was passed AND the host cwd has a .git, copy that .git
-     into /home/node/workspace/.git so the agent operates on the
+     into the planned guest workspace so the agent operates on the
      user's repo.
   2. If the bottle declares `git` entries (PRD 0008), write a
      ~/.gitconfig with insteadOf rules so every git operation
@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import os
 import subprocess
-from pathlib import Path
 
 from ....git_gate import GIT_GATE_HOSTNAME, git_gate_render_gitconfig
 from ....log import info
@@ -40,19 +39,22 @@ def _provision_cwd_git(plan: DockerBottlePlan, target: str) -> None:
     """If --cwd was set and the host cwd has a .git directory, copy
     it into /home/node/workspace/.git and fix ownership. No-op
     otherwise."""
-    if not (plan.spec.copy_cwd and Path(plan.spec.user_cwd, ".git").is_dir()):
+    workspace = plan.workspace_plan
+    if not (workspace.enabled and workspace.copy_git and workspace.has_host_git_dir):
         return
     container = target
-    info(f"copying {plan.spec.user_cwd}/.git -> {container}:/home/node/workspace/.git")
+    guest_workspace_git = f"{workspace.guest_path}/.git"
+    host_git = str(workspace.host_path / ".git")
+    info(f"copying {host_git} -> {container}:{guest_workspace_git}")
     subprocess.run(
-        ["docker", "cp", f"{plan.spec.user_cwd}/.git", f"{container}:/home/node/workspace/.git"],
+        ["docker", "cp", host_git, f"{container}:{guest_workspace_git}"],
         stdout=subprocess.DEVNULL,
         check=True,
     )
     subprocess.run(
         [
             "docker", "exec", "-u", "0", container,
-            "chown", "-R", "node:node", "/home/node/workspace/.git",
+            "chown", "-R", workspace.owner, guest_workspace_git,
         ],
         stdout=subprocess.DEVNULL,
         check=True,

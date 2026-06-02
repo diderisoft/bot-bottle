@@ -8,10 +8,13 @@ integration smoke."""
 from __future__ import annotations
 
 import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from bot_bottle.backend.docker import util as docker_mod
+from bot_bottle.workspace import WorkspacePlan
 
 
 def _ok(stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess:
@@ -65,6 +68,27 @@ class TestSave(unittest.TestCase):
             ["docker", "save", "bot-bottle-claude:latest", "-o", "/tmp/img.tar"],
             argv,
         )
+
+
+class TestBuildImageWithCwd(unittest.TestCase):
+    def test_uses_workspace_plan_paths(self):
+        with tempfile.TemporaryDirectory(prefix="bb-docker-cwd.") as tmp:
+            workspace = WorkspacePlan(
+                enabled=True,
+                host_path=Path(tmp),
+                guest_home="/guest/home",
+                guest_path="/guest/home/workspace",
+                workdir="/guest/home/workspace",
+            )
+            with patch.object(docker_mod.subprocess, "run") as run:
+                docker_mod.build_image_with_cwd("derived:tag", "base:tag", workspace)
+
+        argv = run.call_args.args[0]
+        dockerfile = run.call_args.kwargs["input"]
+        self.assertEqual(["docker", "build", "-t", "derived:tag", "-f", "-", tmp], argv)
+        self.assertIn("FROM base:tag\n", dockerfile)
+        self.assertIn("COPY --chown=node:node . /guest/home/workspace\n", dockerfile)
+        self.assertIn("WORKDIR /guest/home/workspace\n", dockerfile)
 
 
 if __name__ == "__main__":

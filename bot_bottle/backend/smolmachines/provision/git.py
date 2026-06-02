@@ -4,7 +4,7 @@
 Three concerns, all about git in the agent:
 
   1. If --cwd was passed AND the host cwd has a .git, copy that
-     .git into /home/node/workspace/.git so the agent operates on
+     .git into the planned guest workspace so the agent operates on
      the user's repo.
   2. If the bottle declares `git` entries (PRD 0008), write a
      ~/.gitconfig with insteadOf rules so every git operation
@@ -58,20 +58,22 @@ def _provision_cwd_git(plan: SmolmachinesBottlePlan, target: str) -> None:
     """If --cwd was set and the host cwd has a .git directory, copy
     it into <guest_home>/workspace/.git and fix ownership. No-op
     otherwise."""
-    if not (plan.spec.copy_cwd and Path(plan.spec.user_cwd, ".git").is_dir()):
+    workspace = plan.workspace_plan
+    if not (workspace.enabled and workspace.copy_git and workspace.has_host_git_dir):
         return
-    guest_workspace_git = f"{_guest_home()}/workspace/.git"
-    info(f"copying {plan.spec.user_cwd}/.git -> {target}:{guest_workspace_git}")
+    guest_workspace_git = f"{workspace.guest_path}/.git"
+    host_git = str(workspace.host_path / ".git")
+    info(f"copying {host_git} -> {target}:{guest_workspace_git}")
     # mkdir -p the workspace dir so `machine cp` lands the .git
     # directly there even on first-time bottles.
-    _smolvm.machine_exec(target, ["mkdir", "-p", f"{_guest_home()}/workspace"])
+    _smolvm.machine_exec(target, ["mkdir", "-p", workspace.guest_path])
     _smolvm.machine_cp(
-        f"{plan.spec.user_cwd}/.git", f"{target}:{guest_workspace_git}",
+        host_git, f"{target}:{guest_workspace_git}",
     )
     # `machine cp` lands files as root; the agent runs as node so
     # the workspace tree must be chowned over.
     _smolvm.machine_exec(
-        target, ["chown", "-R", "node:node", guest_workspace_git],
+        target, ["chown", "-R", workspace.owner, guest_workspace_git],
     )
 
 
