@@ -28,6 +28,7 @@ from ...backend.docker.bottle_state import (
     write_metadata,
 )
 from ...egress import Egress
+from ...env import resolve_env
 from ...git_gate import GitGate
 from ...pipelock import PipelockProxy
 from ...supervise import Supervise
@@ -77,18 +78,18 @@ def resolve_plan(
 
     subnet, gateway, bundle_ip = smolmachines_bundle_subnet(slug)
 
-    # Agent's env: the prepare-time view doesn't yet know the
-    # host loopback ports the bundle's daemons get published on
-    # (those come from docker AFTER `docker run` returns), so
-    # HTTPS_PROXY / GIT_GATE_URL / MCP_SUPERVISE_URL are
-    # populated in launch.py and stamped onto guest_env there.
-    # What we set here is the part that doesn't depend on
-    # bundle bringup — bottle.env literals, the empty-NO_PROXY
-    # safe default, and the TLS trust env trio
-    # (NODE_EXTRA_CA_CERTS / SSL_CERT_FILE / REQUESTS_CA_BUNDLE)
-    # pointing at Debian's update-ca-certificates output bundle.
+    # Agent's env: resolve through resolve_env() so ?prompt entries
+    # are prompted and ${HOST_VAR} entries are interpolated — matching
+    # the Docker backend's contract. Forwarded (secret/interpolated)
+    # values still reach the guest as -e K=V smolvm flags because
+    # smolvm 0.8.0 has no env-file or stdin injection path; this is
+    # the known argv-exposure gap documented in PRD 0038.
+    # HTTPS_PROXY / GIT_GATE_URL / MCP_SUPERVISE_URL are populated
+    # in launch.py after bundle bringup.
+    resolved = resolve_env(manifest, spec.agent_name)
     guest_env: dict[str, str] = {
-        **bottle.env,
+        **resolved.literals,
+        **resolved.forwarded,
         "NO_PROXY":    "localhost,127.0.0.1",
         "NODE_EXTRA_CA_CERTS": "/etc/ssl/certs/ca-certificates.crt",
         "SSL_CERT_FILE":       "/etc/ssl/certs/ca-certificates.crt",
