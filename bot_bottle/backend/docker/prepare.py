@@ -184,6 +184,7 @@ def resolve_plan(
         forward_host_credentials=provider.forward_host_credentials,
         auth_token=provider.auth_token,
         host_env=dict(os.environ),
+        trusted_project_path=workspace_plan.workdir,
     )
     guest_env = dict(agent_provision.guest_env)
     for key, val in agent_provision.env_vars.items():

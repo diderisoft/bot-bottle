@@ -7,6 +7,7 @@ command, default image, and prompt/auth behavior.
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -136,9 +137,11 @@ def agent_provision_plan(
     auth_token: str = "",
     forward_host_credentials: bool = False,
     host_env: dict[str, str] | None = None,
+    trusted_project_path: str = "",
 ) -> AgentProvisionPlan:
     runtime = runtime_for(template)
     resolved_guest_env = dict(guest_env or {})
+    trusted_path = trusted_project_path or guest_home
     env_vars: dict[str, str] = {}
     provisioned_env: dict[str, str] = {}
     dirs: list[AgentProvisionDir] = []
@@ -156,8 +159,9 @@ def agent_provision_plan(
         dirs.append(AgentProvisionDir(auth_dir))
         config_path = f"{auth_dir}/config.toml"
         config_file = state_dir / "codex-config.toml"
+        toml_path = trusted_path.replace("\\", "\\\\").replace('"', '\\"')
         config_file.write_text(
-            f'[projects."{guest_home}"]\n'
+            f'[projects."{toml_path}"]\n'
             'trust_level = "trusted"\n'
         )
         config_file.chmod(0o600)
@@ -202,6 +206,19 @@ def agent_provision_plan(
     if template == PROVIDER_CLAUDE:
         env_vars["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
         env_vars["DISABLE_ERROR_REPORTING"] = "1"
+        claude_config = state_dir / "claude.json"
+        claude_projects = {
+            guest_home: {"hasTrustDialogAccepted": True},
+        }
+        claude_projects[trusted_path] = {"hasTrustDialogAccepted": True}
+        claude_config.write_text(json.dumps({
+            "hasCompletedOnboarding": True,
+            "theme": "dark",
+            "bypassPermissionsModeAccepted": True,
+            "projects": claude_projects,
+        }, indent=2) + "\n")
+        claude_config.chmod(0o600)
+        files.append(AgentProvisionFile(claude_config, f"{guest_home}/.claude.json"))
         egress_routes.append(EgressRoute(
             host="api.anthropic.com",
             auth_scheme="Bearer" if auth_token else "",

@@ -31,6 +31,7 @@ class TestAgentProviderRuntime(unittest.TestCase):
                 dockerfile="/tmp/Dockerfile.codex",
                 state_dir=Path(tmp),
             )
+            config = Path(tmp, "codex-config.toml").read_text()
         self.assertEqual("codex", plan.template)
         self.assertEqual("codex", plan.command)
         self.assertEqual("read_prompt_file", plan.prompt_mode)
@@ -45,6 +46,18 @@ class TestAgentProviderRuntime(unittest.TestCase):
             ("/home/node/.codex/config.toml",),
             tuple(f.guest_path for f in plan.files),
         )
+        self.assertIn('[projects."/home/node"]', config)
+
+    def test_codex_trusts_requested_project_path(self):
+        with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
+            agent_provision_plan(
+                template="codex",
+                dockerfile="",
+                state_dir=Path(tmp),
+                trusted_project_path="/home/node/workspace",
+            )
+            config = Path(tmp, "codex-config.toml").read_text()
+        self.assertIn('[projects."/home/node/workspace"]', config)
 
     def test_codex_forward_host_credentials_adds_auth_and_verify(self):
         with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
@@ -79,6 +92,7 @@ class TestAgentProviderRuntime(unittest.TestCase):
                 state_dir=Path(tmp),
                 auth_token="BOT_BOTTLE_CLAUDE_OAUTH_TOKEN",
             )
+            claude_config = json.loads(Path(tmp, "claude.json").read_text())
         self.assertEqual(1, len(plan.egress_routes))
         route = plan.egress_routes[0]
         self.assertEqual("api.anthropic.com", route.host)
@@ -89,6 +103,20 @@ class TestAgentProviderRuntime(unittest.TestCase):
         self.assertEqual("1", plan.env_vars["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"])
         self.assertEqual("1", plan.env_vars["DISABLE_ERROR_REPORTING"])
         self.assertEqual(frozenset({"CLAUDE_CODE_OAUTH_TOKEN"}), plan.hidden_env_names)
+        self.assertIn("/home/node", claude_config["projects"])
+        self.assertIn("/home/node/.claude.json", {f.guest_path for f in plan.files})
+
+    def test_claude_trusts_requested_project_path(self):
+        with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
+            agent_provision_plan(
+                template="claude",
+                dockerfile="",
+                state_dir=Path(tmp),
+                trusted_project_path="/home/node/workspace",
+            )
+            config = json.loads(Path(tmp, "claude.json").read_text())
+        self.assertIn("/home/node", config["projects"])
+        self.assertIn("/home/node/workspace", config["projects"])
 
     def test_codex_forward_host_credentials_populates_egress_routes(self):
         with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
