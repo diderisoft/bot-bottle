@@ -19,7 +19,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
 
 from .egress import EGRESS_HOSTNAME, EgressRoute, egress_routes_for_bottle
 from .supervise import SUPERVISE_HOSTNAME
@@ -223,6 +222,180 @@ def pipelock_build_config(
     return cfg
 
 
+_PIPELOCK_TOP_LEVEL_KEYS = {
+    "version",
+    "mode",
+    "enforce",
+    "api_allowlist",
+    "seed_phrase_detection",
+    "forward_proxy",
+    "dlp",
+    "request_body_scanning",
+    "tls_interception",
+    "ssrf",
+}
+
+
+def _pipelock_render_error(section: str, key: str, expected: str) -> ValueError:
+    return ValueError(
+        f"pipelock_render_yaml: {section}.{key} must be {expected}"
+    )
+
+
+def _reject_unknown_keys(
+    section: str,
+    obj: dict[str, object],
+    allowed: set[str],
+) -> None:
+    for key in sorted(set(obj) - allowed):
+        raise ValueError(f"pipelock_render_yaml: {section}.{key} is unsupported")
+
+
+def _required_dict(
+    obj: dict[str, object],
+    section: str,
+    key: str,
+) -> dict[str, object]:
+    value = obj.get(key)
+    if not isinstance(value, dict):
+        raise _pipelock_render_error(section, key, "a mapping")
+    return value
+
+
+def _required_bool(obj: dict[str, object], section: str, key: str) -> bool:
+    value = obj.get(key)
+    if not isinstance(value, bool):
+        raise _pipelock_render_error(section, key, "a boolean")
+    return value
+
+
+def _required_int(obj: dict[str, object], section: str, key: str) -> int:
+    value = obj.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise _pipelock_render_error(section, key, "an integer")
+    return value
+
+
+def _required_str(obj: dict[str, object], section: str, key: str) -> str:
+    value = obj.get(key)
+    if not isinstance(value, str):
+        raise _pipelock_render_error(section, key, "a string")
+    return value
+
+
+def _required_str_list(
+    obj: dict[str, object],
+    section: str,
+    key: str,
+) -> list[str]:
+    value = obj.get(key)
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise _pipelock_render_error(section, key, "a list of strings")
+    return value
+
+
+def _optional_str_list(
+    obj: dict[str, object],
+    section: str,
+    key: str,
+) -> list[str]:
+    if key not in obj:
+        return []
+    return _required_str_list(obj, section, key)
+
+
+def _optional_bool(
+    obj: dict[str, object],
+    section: str,
+    key: str,
+) -> bool | None:
+    if key not in obj:
+        return None
+    return _required_bool(obj, section, key)
+
+
+def _optional_str(
+    obj: dict[str, object],
+    section: str,
+    key: str,
+) -> str | None:
+    if key not in obj:
+        return None
+    return _required_str(obj, section, key)
+
+
+def _validate_pipelock_render_config(cfg: dict[str, object]) -> dict[str, object]:
+    _reject_unknown_keys("config", cfg, _PIPELOCK_TOP_LEVEL_KEYS)
+    normalized: dict[str, object] = {
+        "version": _required_int(cfg, "config", "version"),
+        "mode": _required_str(cfg, "config", "mode"),
+        "enforce": _required_bool(cfg, "config", "enforce"),
+        "api_allowlist": _required_str_list(cfg, "config", "api_allowlist"),
+    }
+
+    if "seed_phrase_detection" in cfg:
+        spd = _required_dict(cfg, "config", "seed_phrase_detection")
+        _reject_unknown_keys("seed_phrase_detection", spd, {"enabled"})
+        normalized["seed_phrase_detection"] = {
+            "enabled": _required_bool(spd, "seed_phrase_detection", "enabled"),
+        }
+
+    fp = _required_dict(cfg, "config", "forward_proxy")
+    _reject_unknown_keys("forward_proxy", fp, {"enabled"})
+    normalized["forward_proxy"] = {
+        "enabled": _required_bool(fp, "forward_proxy", "enabled"),
+    }
+
+    dlp = _required_dict(cfg, "config", "dlp")
+    _reject_unknown_keys("dlp", dlp, {"include_defaults", "scan_env"})
+    normalized["dlp"] = {
+        "include_defaults": _required_bool(dlp, "dlp", "include_defaults"),
+        "scan_env": _required_bool(dlp, "dlp", "scan_env"),
+    }
+
+    rbs = _required_dict(cfg, "config", "request_body_scanning")
+    _reject_unknown_keys(
+        "request_body_scanning",
+        rbs,
+        {"action", "scan_headers", "header_mode"},
+    )
+    normalized_rbs: dict[str, object] = {
+        "action": _required_str(rbs, "request_body_scanning", "action"),
+    }
+    scan_headers = _optional_bool(rbs, "request_body_scanning", "scan_headers")
+    if scan_headers is not None:
+        normalized_rbs["scan_headers"] = scan_headers
+    header_mode = _optional_str(rbs, "request_body_scanning", "header_mode")
+    if header_mode is not None:
+        normalized_rbs["header_mode"] = header_mode
+    normalized["request_body_scanning"] = normalized_rbs
+
+    if "tls_interception" in cfg:
+        tls = _required_dict(cfg, "config", "tls_interception")
+        _reject_unknown_keys(
+            "tls_interception",
+            tls,
+            {"enabled", "ca_cert", "ca_key", "passthrough_domains"},
+        )
+        normalized["tls_interception"] = {
+            "enabled": _required_bool(tls, "tls_interception", "enabled"),
+            "ca_cert": _required_str(tls, "tls_interception", "ca_cert"),
+            "ca_key": _required_str(tls, "tls_interception", "ca_key"),
+            "passthrough_domains": _optional_str_list(
+                tls, "tls_interception", "passthrough_domains",
+            ),
+        }
+
+    if "ssrf" in cfg:
+        ssrf = _required_dict(cfg, "config", "ssrf")
+        _reject_unknown_keys("ssrf", ssrf, {"ip_allowlist"})
+        normalized["ssrf"] = {
+            "ip_allowlist": _required_str_list(ssrf, "ssrf", "ip_allowlist"),
+        }
+
+    return normalized
+
+
 def pipelock_render_yaml(cfg: dict[str, object]) -> str:
     """Render a pipelock config dict (as produced by
     `pipelock_build_config`) as YAML. Hand-rolled so we don't take a
@@ -230,31 +403,38 @@ def pipelock_render_yaml(cfg: dict[str, object]) -> str:
     def _bool(b: object) -> str:
         return "true" if b else "false"
 
+    cfg = _validate_pipelock_render_config(cfg)
     lines: list[str] = []
     lines.append(f"version: {cfg['version']}")
     lines.append(f"mode: {cfg['mode']}")
     lines.append(f"enforce: {_bool(cfg['enforce'])}")
     lines.append("")
     lines.append("api_allowlist:")
-    for h in cast(list[str], cfg["api_allowlist"]):
+    api_allowlist = cfg["api_allowlist"]
+    assert isinstance(api_allowlist, list)
+    for h in api_allowlist:
         lines.append(f'  - "{h}"')
     lines.append("")
     if "seed_phrase_detection" in cfg:
         lines.append("seed_phrase_detection:")
-        spd = cast(dict[str, object], cfg["seed_phrase_detection"])
+        spd = cfg["seed_phrase_detection"]
+        assert isinstance(spd, dict)
         lines.append(f"  enabled: {_bool(spd['enabled'])}")
         lines.append("")
     lines.append("forward_proxy:")
-    fp = cast(dict[str, object], cfg["forward_proxy"])
+    fp = cfg["forward_proxy"]
+    assert isinstance(fp, dict)
     lines.append(f"  enabled: {_bool(fp['enabled'])}")
     lines.append("")
     lines.append("dlp:")
-    dlp = cast(dict[str, object], cfg["dlp"])
+    dlp = cfg["dlp"]
+    assert isinstance(dlp, dict)
     lines.append(f"  include_defaults: {_bool(dlp['include_defaults'])}")
     lines.append(f"  scan_env: {_bool(dlp['scan_env'])}")
     lines.append("")
     lines.append("request_body_scanning:")
-    rbs = cast(dict[str, object], cfg["request_body_scanning"])
+    rbs = cfg["request_body_scanning"]
+    assert isinstance(rbs, dict)
     lines.append(f'  action: "{rbs["action"]}"')
     if "scan_headers" in rbs:
         lines.append(f"  scan_headers: {_bool(rbs['scan_headers'])}")
@@ -263,11 +443,13 @@ def pipelock_render_yaml(cfg: dict[str, object]) -> str:
     if "tls_interception" in cfg:
         lines.append("")
         lines.append("tls_interception:")
-        tls = cast(dict[str, object], cfg["tls_interception"])
+        tls = cfg["tls_interception"]
+        assert isinstance(tls, dict)
         lines.append(f"  enabled: {_bool(tls['enabled'])}")
         lines.append(f'  ca_cert: "{tls["ca_cert"]}"')
         lines.append(f'  ca_key: "{tls["ca_key"]}"')
-        passthrough = cast(list[str], tls.get("passthrough_domains", []))
+        passthrough = tls["passthrough_domains"]
+        assert isinstance(passthrough, list)
         if passthrough:
             lines.append("  passthrough_domains:")
             for d in passthrough:
@@ -275,9 +457,12 @@ def pipelock_render_yaml(cfg: dict[str, object]) -> str:
     if "ssrf" in cfg:
         lines.append("")
         lines.append("ssrf:")
-        ssrf = cast(dict[str, object], cfg["ssrf"])
+        ssrf = cfg["ssrf"]
+        assert isinstance(ssrf, dict)
         lines.append("  ip_allowlist:")
-        for ip in cast(list[str], ssrf["ip_allowlist"]):
+        ip_allowlist = ssrf["ip_allowlist"]
+        assert isinstance(ip_allowlist, list)
+        for ip in ip_allowlist:
             lines.append(f'    - "{ip}"')
     return "\n".join(lines) + "\n"
 
