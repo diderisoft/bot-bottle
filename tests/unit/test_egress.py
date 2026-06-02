@@ -145,6 +145,28 @@ class TestProviderRouteMerge(unittest.TestCase):
         self.assertEqual("EGRESS_TOKEN_0", routes[0].token_env)
         self.assertEqual("TOK", routes[0].token_ref)
 
+    def test_unauthenticated_provider_route_appends_without_token_slot(self):
+        b = _bottle([])
+        pr = EgressRoute(host="api.openai.com", tls_passthrough=True)
+        routes = egress_routes_for_bottle(b, (pr,))
+        self.assertEqual(1, len(routes))
+        self.assertEqual("api.openai.com", routes[0].host)
+        self.assertEqual("", routes[0].auth_scheme)
+        self.assertEqual("", routes[0].token_env)
+        self.assertEqual("", routes[0].token_ref)
+        self.assertEqual({}, egress_token_env_map(routes))
+
+    def test_unauthenticated_provider_route_upgrades_bare_without_token_slot(self):
+        b = _bottle([{"host": "api.openai.com"}])
+        pr = EgressRoute(host="api.openai.com", tls_passthrough=True)
+        routes = egress_routes_for_bottle(b, (pr,))
+        self.assertEqual(1, len(routes))
+        self.assertEqual("", routes[0].auth_scheme)
+        self.assertEqual("", routes[0].token_env)
+        self.assertEqual("", routes[0].token_ref)
+        self.assertTrue(routes[0].tls_passthrough)
+        self.assertEqual({}, egress_token_env_map(routes))
+
     def test_two_provider_routes_with_same_token_ref_share_slot(self):
         b = _bottle([])
         routes = egress_routes_for_bottle(b, (

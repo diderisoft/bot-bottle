@@ -154,8 +154,12 @@ def agent_provision_plan(
         dirs.append(AgentProvisionDir(auth_dir))
         config_path = f"{auth_dir}/config.toml"
         config_file = state_dir / "codex-config.toml"
+        workspace = f"{guest_home}/workspace"
         config_file.write_text(
             f'[projects."{guest_home}"]\n'
+            'trust_level = "trusted"\n'
+            "\n"
+            f'[projects."{workspace}"]\n'
             'trust_level = "trusted"\n'
         )
         config_file.chmod(0o600)

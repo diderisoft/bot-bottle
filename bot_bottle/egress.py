@@ -201,6 +201,8 @@ def egress_routes_for_bottle(
 
 def _find_or_alloc_token_env(routes: list[EgressRoute], token_ref: str) -> str:
     """Return the existing token_env slot for `token_ref`, or allocate the next one."""
+    if not token_ref:
+        return ""
     for route in routes:
         if route.token_ref == token_ref and route.token_env:
             return route.token_env
@@ -239,7 +241,11 @@ def _merge_provider_route(
                 f"ref). Remove the manifest route's auth block or disable the "
                 f"feature that adds this provider route."
             )
-        token_env = _find_or_alloc_token_env(routes, pr.token_ref)
+        token_env = (
+            _find_or_alloc_token_env(routes, pr.token_ref)
+            if pr.auth_scheme and pr.token_ref
+            else ""
+        )
         routes[idx] = EgressRoute(
             host=route.host,
             path_allowlist=route.path_allowlist,
@@ -250,7 +256,11 @@ def _merge_provider_route(
             tls_passthrough=pr.tls_passthrough,
         )
         return routes
-    token_env = _find_or_alloc_token_env(routes, pr.token_ref)
+    token_env = (
+        _find_or_alloc_token_env(routes, pr.token_ref)
+        if pr.auth_scheme and pr.token_ref
+        else ""
+    )
     routes.append(EgressRoute(
         host=pr.host,
         auth_scheme=pr.auth_scheme,
@@ -273,7 +283,7 @@ def egress_token_env_map(
     silently picking one."""
     out: dict[str, str] = {}
     for r in routes:
-        if not r.token_env:
+        if not (r.auth_scheme and r.token_ref and r.token_env):
             continue
         existing = out.get(r.token_env)
         if existing is not None and existing != r.token_ref:
