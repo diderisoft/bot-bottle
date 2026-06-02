@@ -32,7 +32,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from ...log import die
 
 
 _SMOLVM = "smolvm"
@@ -218,9 +217,13 @@ def wait_exec_ready(name: str, *, timeout: float = 5.0) -> None:
             break
         time.sleep(min(delay, remaining))
         delay = min(delay * 2, 0.5)
-    die(
-        f"smolvm machine {name!r}: exec channel not ready after "
-        f"{timeout:.0f}s — VM may have failed to boot."
+    argv = ["smolvm", "machine", "exec", "--name", name, "--", "true"]
+    raise SmolvmError(
+        argv,
+        subprocess.CompletedProcess(
+            args=argv, returncode=-1, stdout="",
+            stderr=f"exec channel not ready after {timeout:.0f}s — VM may have failed to boot.",
+        ),
     )
 
 

@@ -228,7 +228,7 @@ class TestWaitExecReady(unittest.TestCase):
             wait_exec_ready("vm-x")
         self.assertEqual(3, m.call_count)
 
-    def test_dies_on_timeout(self):
+    def test_raises_smolvm_error_on_timeout(self):
         # machine_exec always returns non-zero; monotonic advances past
         # the deadline after the first sleep so the loop exits.
         ticks = [0.0, 0.0, 10.0]  # third call puts us past deadline
@@ -236,13 +236,11 @@ class TestWaitExecReady(unittest.TestCase):
                           return_value=SmolvmRunResult(1, "", "")), \
              patch.object(smolvm_mod.time, "monotonic",
                           side_effect=ticks), \
-             patch.object(smolvm_mod.time, "sleep"), \
-             patch.object(smolvm_mod, "die",
-                          side_effect=SystemExit("die")) as die_mock:
-            with self.assertRaises(SystemExit):
+             patch.object(smolvm_mod.time, "sleep"):
+            with self.assertRaises(SmolvmError) as cm:
                 wait_exec_ready("vm-x", timeout=5.0)
-        die_mock.assert_called_once()
-        self.assertIn("vm-x", die_mock.call_args.args[0])
+        self.assertIn("vm-x", str(cm.exception))
+        self.assertIn("not ready", str(cm.exception))
 
 
 class TestIsAvailable(unittest.TestCase):
