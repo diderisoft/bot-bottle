@@ -16,7 +16,6 @@ from dataclasses import replace
 from pathlib import Path
 
 from ...agent_provider import agent_provision_plan, runtime_for
-from ...egress import egress_manifest_routes
 from ...backend import BottleSpec
 from ...backend.docker.bottle_state import (
     BottleMetadata,
@@ -134,7 +133,7 @@ def resolve_plan(
         guest_home=os.environ.get("BOT_BOTTLE_GUEST_HOME", "/home/node"),
         guest_env=guest_env,
         forward_host_credentials=provider.forward_host_credentials,
-        manifest_egress_routes=egress_manifest_routes(bottle),
+        auth_token=provider.auth_token,
         host_env=dict(os.environ),
     )
     merged_guest_env = dict(agent_provision.guest_env)

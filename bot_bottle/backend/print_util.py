@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from typing import Sequence
 
-from ..agent_provider import placeholder_env_for
 from ..log import info
 
 
@@ -30,16 +29,13 @@ def print_multi(label: str, values: Sequence[str]) -> None:
 
 
 def visible_agent_env_names(
-    env_names: Sequence[str], *, agent_provider_template: str,
+    env_names: Sequence[str], *, hidden_env_names: frozenset[str],
 ) -> list[str]:
     """Env names worth showing in launch summaries.
 
-    Provider auth placeholders (currently `CLAUDE_CODE_OAUTH_TOKEN`)
-    are implementation details: they are non-secret dummy values that
-    satisfy the provider CLI while egress injects the real upstream
-    Authorization header. Showing them in preflight makes the operator
-    think a real key is entering the agent, so hide only the active
-    provider-owned placeholder.
+    Provider-injected placeholder env vars are implementation details:
+    they are non-secret dummy values that satisfy provider CLIs while
+    egress injects the real Authorization header. The plan's
+    `hidden_env_names` carries exactly which names to suppress.
     """
-    hidden = {placeholder_env_for(agent_provider_template)}
-    return sorted({name for name in env_names if name and name not in hidden})
+    return sorted({name for name in env_names if name and name not in hidden_env_names})

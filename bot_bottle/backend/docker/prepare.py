@@ -16,7 +16,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from ...agent_provider import agent_provision_plan, runtime_for
-from ...egress import Egress, egress_manifest_routes
+from ...egress import Egress
 from ...env import ResolvedEnv, resolve_env
 from ...git_gate import GitGate
 from ...log import die
@@ -178,7 +178,7 @@ def resolve_plan(
         state_dir=agent_dir,
         guest_home=os.environ.get("BOT_BOTTLE_CONTAINER_HOME", "/home/node"),
         forward_host_credentials=provider.forward_host_credentials,
-        manifest_egress_routes=egress_manifest_routes(bottle),
+        auth_token=provider.auth_token,
         host_env=dict(os.environ),
     )
     guest_env = dict(agent_provision.guest_env)

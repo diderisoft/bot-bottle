@@ -85,6 +85,31 @@ class TestAgentProviderHostCredentials(unittest.TestCase):
                 "forward_host_credentials": True,
             })
 
+    def test_auth_token_defaults_empty(self):
+        b = _provider_config_bottle({"template": "claude"})
+        self.assertEqual("", b.agent_provider.auth_token)
+
+    def test_auth_token_allowed_for_claude(self):
+        b = _provider_config_bottle({
+            "template": "claude",
+            "auth_token": "BOT_BOTTLE_CLAUDE_OAUTH_TOKEN",
+        })
+        self.assertEqual("BOT_BOTTLE_CLAUDE_OAUTH_TOKEN", b.agent_provider.auth_token)
+
+    def test_auth_token_must_be_string(self):
+        with self.assertRaises(ManifestError):
+            _provider_config_bottle({
+                "template": "claude",
+                "auth_token": 42,
+            })
+
+    def test_auth_token_rejected_for_codex(self):
+        with self.assertRaises(ManifestError):
+            _provider_config_bottle({
+                "template": "codex",
+                "auth_token": "SOME_TOKEN",
+            })
+
 
 class TestPathAllowlist(unittest.TestCase):
     def test_optional(self):
@@ -179,28 +204,34 @@ class TestRole(unittest.TestCase):
         self.assertEqual((), b.egress.routes[0].Role)
 
     def test_string_normalizes_to_tuple(self):
-        b = _bottle([{
-            "host": "api.anthropic.com",
-            "role": "claude_code_oauth",
+        b = _provider_bottle("codex", [{
+            "host": "api.openai.com",
+            "role": "codex_auth",
             "auth": {"scheme": "Bearer", "token_ref": "T"},
         }])
-        self.assertEqual(("claude_code_oauth",),
-                         b.egress.routes[0].Role)
+        self.assertEqual(("codex_auth",), b.egress.routes[0].Role)
 
     def test_list_supported(self):
-        b = _bottle([{
-            "host": "api.anthropic.com",
-            "role": ["claude_code_oauth"],
+        b = _provider_bottle("codex", [{
+            "host": "api.openai.com",
+            "role": ["codex_auth"],
             "auth": {"scheme": "Bearer", "token_ref": "T"},
         }])
-        self.assertEqual(("claude_code_oauth",),
-                         b.egress.routes[0].Role)
+        self.assertEqual(("codex_auth",), b.egress.routes[0].Role)
 
     def test_unknown_role_rejected(self):
         # The role enum is locked down — typos shouldn't silently
         # become no-op markers.
         with self.assertRaises(ManifestError):
             _bottle([{"host": "x.example", "role": "totally-made-up"}])
+
+    def test_claude_code_oauth_role_rejected(self):
+        # claude_code_oauth was removed; provisioner injects the route
+        # automatically via agent_provider.auth_token.
+        with self.assertRaises(ManifestError):
+            _bottle([{"host": "api.anthropic.com",
+                      "role": "claude_code_oauth",
+                      "auth": {"scheme": "Bearer", "token_ref": "T"}}])
 
     def test_non_string_role_rejected(self):
         with self.assertRaises(ManifestError):
@@ -209,19 +240,7 @@ class TestRole(unittest.TestCase):
     def test_list_with_non_string_item_rejected(self):
         with self.assertRaises(ManifestError):
             _bottle([{"host": "x.example",
-                      "role": ["claude_code_oauth", 42]}])
-
-    def test_singleton_claude_code_oauth_enforced(self):
-        # Two routes both claiming the role would make "which one
-        # drives the placeholder env?" ambiguous.
-        with self.assertRaises(ManifestError):
-            _bottle([
-                {"host": "api.anthropic.com", "role": "claude_code_oauth",
-                 "auth": {"scheme": "Bearer", "token_ref": "T1"}},
-                {"host": "api2.anthropic.example",
-                 "role": "claude_code_oauth",
-                 "auth": {"scheme": "Bearer", "token_ref": "T2"}},
-            ])
+                      "role": ["codex_auth", 42]}])
 
     def test_codex_auth_role_allowed_for_codex_provider(self):
         b = _provider_bottle("codex", [{
@@ -230,14 +249,6 @@ class TestRole(unittest.TestCase):
             "auth": {"scheme": "Bearer", "token_ref": "OPENAI_TOKEN"},
         }])
         self.assertEqual(("codex_auth",), b.egress.routes[0].Role)
-
-    def test_claude_role_rejected_for_codex_provider(self):
-        with self.assertRaises(ManifestError):
-            _provider_bottle("codex", [{
-                "host": "api.anthropic.com",
-                "role": "claude_code_oauth",
-                "auth": {"scheme": "Bearer", "token_ref": "T"},
-            }])
 
     def test_codex_role_rejected_for_default_claude_provider(self):
         with self.assertRaises(ManifestError):

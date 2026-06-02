@@ -125,7 +125,7 @@ class SmolmachinesBottlePlan(BottlePlan):
                 set(bottle.env.keys())
                 | set(self.agent_provision.guest_env.keys())
             ),
-            agent_provider_template=self.agent_provider_template,
+            hidden_env_names=self.agent_provision.hidden_env_names,
         )
         upstreams = [
             f"{g.Name} → {g.Upstream}" for g in bottle.git

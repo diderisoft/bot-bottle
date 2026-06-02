@@ -179,40 +179,28 @@ EGRESS_AUTH_SCHEMES = ("Bearer", "token")
 # a specific named part in the bottle's auth flow"; the launch step
 # acts on the marker.
 #
-#   claude_code_oauth: this route auth-injects on the agent's
-#                      claude-code OAuth flow. Triggers prepare.py
-#                      to ship a placeholder CLAUDE_CODE_OAUTH_TOKEN
-#                      to the agent (so claude-code starts) and
-#                      disable nonessential-traffic / error-reporting
-#                      env vars. Host doesn't matter to the placeholder
-#                      logic — declare the role on whichever route
-#                      injects the OAuth header.
-#
-#   codex_auth: placeholder marker reserved for follow-up Codex
-#               credential-injection work. It is still accepted so
-#               existing manifests and future egress-held auth flows
-#               have a stable role name, but it no longer triggers an
-#               OPENAI_API_KEY placeholder. Codex bottles should prefer
-#               device/ChatGPT login state today.
+#   codex_auth: placeholder marker for Codex egress-held auth flows.
+#               Accepted on Codex routes for forward-compatibility;
+#               the provisioner does not act on it today.
 #
 # Routes without a `role` are pure proxy entries: egress
 # enforces path_allowlist + injects auth on its own, but nothing
 # special happens on the agent side.
+#
+# Note: the former `claude_code_oauth` role has been removed. Claude
+# OAuth is now provisioner-owned via `agent_provider.auth_token`; the
+# provisioner injects the api.anthropic.com route automatically.
 EGRESS_ROLES = frozenset({
-    "claude_code_oauth",
     "codex_auth",
 })
 
-# Singleton roles may appear on at most one route per bottle. Some
-# roles drive a single provider auth path; two routes claiming one
-# marker would leave "which one is canonical?" ambiguous.
+# Singleton roles may appear on at most one route per bottle.
 EGRESS_SINGLETON_ROLES = frozenset({
-    "claude_code_oauth",
     "codex_auth",
 })
 
 PROVIDER_EGRESS_ROLES = {
-    "claude": frozenset({"claude_code_oauth"}),
+    "claude": frozenset(),
     "codex": frozenset({"codex_auth"}),
 }
 
@@ -224,20 +212,30 @@ class AgentProvider:
     `template` selects a built-in launch/runtime contract. `dockerfile`
     optionally points at a custom agent-image Dockerfile while leaving
     bot-bottle's sidecar infrastructure intact.
+
+    `auth_token` names the host env var that holds the provider's OAuth
+    token (Claude only). The provisioner injects a provider-owned egress
+    route for api.anthropic.com that re-injects this token as the Bearer
+    header, and sets a placeholder CLAUDE_CODE_OAUTH_TOKEN in the agent
+    so the Claude Code CLI starts.
+
+    `forward_host_credentials` forwards the host Codex auth token into
+    the egress sidecar (Codex only).
     """
 
     template: str = "claude"
     dockerfile: str = ""
+    auth_token: str = ""
     forward_host_credentials: bool = False
 
     @classmethod
     def from_dict(cls, bottle_name: str, raw: object) -> "AgentProvider":
         d = _as_json_object(raw, f"bottle '{bottle_name}' agent_provider")
         for k in d:
-            if k not in {"template", "dockerfile", "forward_host_credentials"}:
+            if k not in {"template", "dockerfile", "auth_token", "forward_host_credentials"}:
                 raise ManifestError(
                     f"bottle '{bottle_name}' agent_provider has unknown key {k!r}; "
-                    f"allowed: template, dockerfile, forward_host_credentials"
+                    f"allowed: template, dockerfile, auth_token, forward_host_credentials"
                 )
         template = d.get("template", "claude")
         if not isinstance(template, str) or not template:
@@ -256,6 +254,17 @@ class AgentProvider:
                 f"bottle '{bottle_name}' agent_provider.dockerfile must be a "
                 f"string (was {type(dockerfile).__name__})"
             )
+        auth_token = d.get("auth_token", "")
+        if not isinstance(auth_token, str):
+            raise ManifestError(
+                f"bottle '{bottle_name}' agent_provider.auth_token must be a "
+                f"string (was {type(auth_token).__name__})"
+            )
+        if auth_token and template != "claude":
+            raise ManifestError(
+                f"bottle '{bottle_name}' agent_provider.auth_token is only "
+                f"supported for template 'claude'"
+            )
         forward_host_credentials = d.get("forward_host_credentials", False)
         if not isinstance(forward_host_credentials, bool):
             raise ManifestError(
@@ -270,6 +279,7 @@ class AgentProvider:
         return cls(
             template=template,
             dockerfile=dockerfile,
+            auth_token=auth_token,
             forward_host_credentials=forward_host_credentials,
         )
 
@@ -428,10 +438,7 @@ class EgressRoute:
     manifest's `auth` block is omitted both fields are empty strings —
     no Authorization is written, no token forwarded.
 
-    `Role` is an optional tuple of named markers (see
-    EGRESS_ROLES). The launch step reads these and triggers
-    associated side effects (e.g. the `claude_code_oauth` marker
-    causes prepare.py to set a placeholder OAuth env on the agent).
+    `Role` is an optional tuple of named markers (see EGRESS_ROLES).
 
     Validation rules (enforced in `from_dict`):
       - `host` required, non-empty.

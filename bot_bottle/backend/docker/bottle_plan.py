@@ -89,7 +89,7 @@ class DockerBottlePlan(BottlePlan):
                 | set(self.forwarded_env.keys())
                 | set(self.agent_provision.guest_env.keys())
             ),
-            agent_provider_template=self.agent_provider_template,
+            hidden_env_names=self.agent_provision.hidden_env_names,
         )
 
         print(file=sys.stderr)

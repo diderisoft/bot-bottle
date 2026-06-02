@@ -8,21 +8,21 @@ from bot_bottle.backend.print_util import visible_agent_env_names
 
 
 class TestVisibleAgentEnvNames(unittest.TestCase):
-    def test_codex_shows_openai_api_key_if_user_declares_it(self):
+    def test_shows_all_when_no_hidden_names(self):
         self.assertEqual(
             ["CUSTOM", "OPENAI_API_KEY"],
             visible_agent_env_names(
                 ["OPENAI_API_KEY", "CUSTOM"],
-                agent_provider_template="codex",
+                hidden_env_names=frozenset(),
             ),
         )
 
-    def test_hides_only_active_provider_placeholder(self):
+    def test_hides_provider_placeholder(self):
         self.assertEqual(
             ["CUSTOM", "OPENAI_API_KEY"],
             visible_agent_env_names(
                 ["CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY", "CUSTOM"],
-                agent_provider_template="claude",
+                hidden_env_names=frozenset({"CLAUDE_CODE_OAUTH_TOKEN"}),
             ),
         )
 

@@ -33,7 +33,6 @@ class AgentProviderRuntime:
     command: str
     image: str
     dockerfile: str
-    auth_role: str
     prompt_mode: PromptMode
     bypass_args: tuple[str, ...]
     resume_args: tuple[str, ...]
@@ -73,6 +72,11 @@ class AgentProvisionPlan:
     pass to `Egress.prepare` and `PipelockProxy.prepare`. This keeps
     provider logic out of the egress and pipelock modules — they merge
     provider routes generically without knowing the provider type.
+
+    `hidden_env_names` is the set of env var names the provider injected
+    as non-secret placeholders. `print_util.visible_agent_env_names` uses
+    this to suppress them from the preflight summary so operators don't
+    mistake them for real credentials.
     """
 
     template: str
@@ -87,6 +91,7 @@ class AgentProvisionPlan:
     pre_copy: tuple[AgentProvisionCommand, ...] = ()
     verify: tuple[AgentProvisionCommand, ...] = ()
     egress_routes: tuple[EgressRoute, ...] = ()
+    hidden_env_names: frozenset[str] = field(default_factory=frozenset)
 
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -98,7 +103,6 @@ _RUNTIMES = {
         command="claude",
         image="bot-bottle-claude:latest",
         dockerfile=str(_REPO_ROOT / "Dockerfile.claude"),
-        auth_role="claude_code_oauth",
         prompt_mode="append_file",
         bypass_args=("--dangerously-skip-permissions",),
         resume_args=("--continue",),
@@ -109,7 +113,6 @@ _RUNTIMES = {
         command="codex",
         image="bot-bottle-codex:latest",
         dockerfile=str(_REPO_ROOT / "Dockerfile.codex"),
-        auth_role="",
         prompt_mode="read_prompt_file",
         bypass_args=("--dangerously-bypass-approvals-and-sandbox",),
         resume_args=("resume", "--last"),
@@ -122,13 +125,6 @@ def runtime_for(template: str) -> AgentProviderRuntime:
     return _RUNTIMES[template]
 
 
-def placeholder_env_for(template: str) -> str:
-    """Return the provider auth placeholder env var name, or empty string."""
-    if template == PROVIDER_CLAUDE:
-        return "CLAUDE_CODE_OAUTH_TOKEN"
-    return ""
-
-
 def agent_provision_plan(
     *,
     template: str,
@@ -136,14 +132,11 @@ def agent_provision_plan(
     state_dir: Path,
     guest_home: str = "/home/node",
     guest_env: dict[str, str] | None = None,
+    auth_token: str = "",
     forward_host_credentials: bool = False,
-    manifest_egress_routes: tuple[EgressRoute, ...] = (),
     host_env: dict[str, str] | None = None,
 ) -> AgentProvisionPlan:
     runtime = runtime_for(template)
-    has_provider_auth = bool(runtime.auth_role) and any(
-        runtime.auth_role in r.roles for r in manifest_egress_routes
-    )
     resolved_guest_env = dict(guest_env or {})
     env_vars: dict[str, str] = {}
     dirs: list[AgentProvisionDir] = []
@@ -151,6 +144,7 @@ def agent_provision_plan(
     pre_copy: list[AgentProvisionCommand] = []
     verify: list[AgentProvisionCommand] = []
     egress_routes: list[EgressRoute] = []
+    hidden_env_names: frozenset[str] = frozenset()
 
     if template == PROVIDER_CODEX:
         env_vars["CODEX_CA_CERTIFICATE"] = "/etc/ssl/certs/ca-certificates.crt"
@@ -199,10 +193,17 @@ def agent_provision_plan(
                 "codex host credentials: dummy auth was copied into the "
                 "guest, but Codex did not accept it"
             )))
-    if template == PROVIDER_CLAUDE and has_provider_auth:
+    if template == PROVIDER_CLAUDE and auth_token:
+        egress_routes.append(EgressRoute(
+            host="api.anthropic.com",
+            auth_scheme="Bearer",
+            token_ref=auth_token,
+            tls_passthrough=True,
+        ))
         env_vars["CLAUDE_CODE_OAUTH_TOKEN"] = "egress-placeholder"
         env_vars["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
         env_vars["DISABLE_ERROR_REPORTING"] = "1"
+        hidden_env_names = frozenset({"CLAUDE_CODE_OAUTH_TOKEN"})
 
     return AgentProvisionPlan(
         template=template,
@@ -217,6 +218,7 @@ def agent_provision_plan(
         pre_copy=tuple(pre_copy),
         verify=tuple(verify),
         egress_routes=tuple(egress_routes),
+        hidden_env_names=hidden_env_names,
     )
 
 
