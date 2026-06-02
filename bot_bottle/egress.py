@@ -27,9 +27,12 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .log import die
-from .manifest import Bottle
+
+if TYPE_CHECKING:
+    from .manifest import Bottle
 
 CODEX_HOST_CREDENTIAL_TOKEN_REF = "BOT_BOTTLE_CODEX_HOST_ACCESS_TOKEN"
 
