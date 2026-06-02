@@ -34,7 +34,6 @@ class AgentProviderRuntime:
     image: str
     dockerfile: str
     auth_role: str
-    placeholder_env: str
     prompt_mode: PromptMode
     bypass_args: tuple[str, ...]
     resume_args: tuple[str, ...]
@@ -100,7 +99,6 @@ _RUNTIMES = {
         image="bot-bottle-claude:latest",
         dockerfile=str(_REPO_ROOT / "Dockerfile.claude"),
         auth_role="claude_code_oauth",
-        placeholder_env="CLAUDE_CODE_OAUTH_TOKEN",
         prompt_mode="append_file",
         bypass_args=("--dangerously-skip-permissions",),
         resume_args=("--continue",),
@@ -112,7 +110,6 @@ _RUNTIMES = {
         image="bot-bottle-codex:latest",
         dockerfile=str(_REPO_ROOT / "Dockerfile.codex"),
         auth_role="",
-        placeholder_env="",
         prompt_mode="read_prompt_file",
         bypass_args=("--dangerously-bypass-approvals-and-sandbox",),
         resume_args=("resume", "--last"),
@@ -125,6 +122,13 @@ def runtime_for(template: str) -> AgentProviderRuntime:
     return _RUNTIMES[template]
 
 
+def placeholder_env_for(template: str) -> str:
+    """Return the provider auth placeholder env var name, or empty string."""
+    if template == PROVIDER_CLAUDE:
+        return "CLAUDE_CODE_OAUTH_TOKEN"
+    return ""
+
+
 def agent_provision_plan(
     *,
     template: str,
@@ -133,10 +137,13 @@ def agent_provision_plan(
     guest_home: str = "/home/node",
     guest_env: dict[str, str] | None = None,
     forward_host_credentials: bool = False,
-    has_provider_auth: bool = False,
+    manifest_egress_routes: tuple[EgressRoute, ...] = (),
     host_env: dict[str, str] | None = None,
 ) -> AgentProvisionPlan:
     runtime = runtime_for(template)
+    has_provider_auth = bool(runtime.auth_role) and any(
+        runtime.auth_role in r.roles for r in manifest_egress_routes
+    )
     resolved_guest_env = dict(guest_env or {})
     env_vars: dict[str, str] = {}
     dirs: list[AgentProvisionDir] = []
@@ -193,6 +200,7 @@ def agent_provision_plan(
                 "guest, but Codex did not accept it"
             )))
     if template == PROVIDER_CLAUDE and has_provider_auth:
+        env_vars["CLAUDE_CODE_OAUTH_TOKEN"] = "egress-placeholder"
         env_vars["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
         env_vars["DISABLE_ERROR_REPORTING"] = "1"
 

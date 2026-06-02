@@ -13,7 +13,7 @@ from bot_bottle.agent_provider import (
     agent_provision_plan,
     runtime_for,
 )
-from bot_bottle.egress import CODEX_HOST_CREDENTIAL_TOKEN_REF
+from bot_bottle.egress import CODEX_HOST_CREDENTIAL_TOKEN_REF, EgressRoute
 
 
 def _jwt(exp: int) -> str:
@@ -24,15 +24,13 @@ def _jwt(exp: int) -> str:
 
 
 class TestAgentProviderRuntime(unittest.TestCase):
-    def test_claude_keeps_oauth_placeholder(self):
+    def test_claude_has_auth_role(self):
         runtime = runtime_for("claude")
         self.assertEqual("claude_code_oauth", runtime.auth_role)
-        self.assertEqual("CLAUDE_CODE_OAUTH_TOKEN", runtime.placeholder_env)
 
-    def test_codex_does_not_inject_openai_api_key_placeholder(self):
+    def test_codex_has_no_auth_role(self):
         runtime = runtime_for("codex")
         self.assertEqual("", runtime.auth_role)
-        self.assertEqual("", runtime.placeholder_env)
 
     def test_codex_plan_declares_home_state(self):
         with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
@@ -81,18 +79,19 @@ class TestAgentProviderRuntime(unittest.TestCase):
         self.assertEqual(1, len(plan.verify))
         self.assertIn("CODEX_HOME=/run/codex-home", plan.verify[0].argv)
 
-    def test_claude_with_provider_auth_disables_nonessential_traffic(self):
+    def test_claude_with_provider_auth_sets_placeholder_and_disables_nonessential_traffic(self):
         with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
             plan = agent_provision_plan(
                 template="claude",
                 dockerfile="/tmp/Dockerfile.claude",
                 state_dir=Path(tmp),
-                has_provider_auth=True,
+                manifest_egress_routes=(EgressRoute(
+                    host="api.anthropic.com",
+                    roles=("claude_code_oauth",),
+                ),),
             )
-        self.assertEqual(
-            "1",
-            plan.env_vars["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"],
-        )
+        self.assertEqual("egress-placeholder", plan.env_vars["CLAUDE_CODE_OAUTH_TOKEN"])
+        self.assertEqual("1", plan.env_vars["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"])
         self.assertEqual("1", plan.env_vars["DISABLE_ERROR_REPORTING"])
 
     def test_codex_forward_host_credentials_populates_egress_routes(self):

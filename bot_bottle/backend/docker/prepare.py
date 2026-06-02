@@ -168,19 +168,6 @@ def resolve_plan(
     # never lands on argv or in env_file) goes into one dict. Nothing
     # mutates the host os.environ.
     forwarded_env: dict[str, str] = dict(resolved.forwarded)
-    # Some provider CLIs refuse to start without *some* credential
-    # env var even when egress will strip + re-inject the real
-    # Authorization header. For those providers, auth_role names the
-    # route marker that enables a non-secret placeholder env. Codex is
-    # intentionally absent here: it should use its device/ChatGPT login
-    # state, and an OPENAI_API_KEY placeholder would force API-key auth.
-    has_provider_auth = any(
-        provider_runtime.auth_role
-        and provider_runtime.auth_role in r.roles
-        for r in egress_manifest_routes(bottle)
-    )
-    if has_provider_auth and provider_runtime.placeholder_env:
-        forwarded_env[provider_runtime.placeholder_env] = "egress-placeholder"
     _write_env_file(resolved, env_file)
     prompt_file.write_text(agent.prompt)
 
@@ -191,7 +178,7 @@ def resolve_plan(
         state_dir=agent_dir,
         guest_home=os.environ.get("BOT_BOTTLE_CONTAINER_HOME", "/home/node"),
         forward_host_credentials=provider.forward_host_credentials,
-        has_provider_auth=has_provider_auth,
+        manifest_egress_routes=egress_manifest_routes(bottle),
         host_env=dict(os.environ),
     )
     guest_env = dict(agent_provision.guest_env)

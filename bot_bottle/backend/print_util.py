@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Sequence
 
-from ..agent_provider import runtime_for
+from ..agent_provider import placeholder_env_for
 from ..log import info
 
 
@@ -41,5 +41,5 @@ def visible_agent_env_names(
     think a real key is entering the agent, so hide only the active
     provider-owned placeholder.
     """
-    hidden = {runtime_for(agent_provider_template).placeholder_env}
+    hidden = {placeholder_env_for(agent_provider_template)}
     return sorted({name for name in env_names if name and name not in hidden})
