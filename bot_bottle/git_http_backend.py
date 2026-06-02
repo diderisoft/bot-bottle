@@ -19,6 +19,9 @@ from urllib.parse import urlsplit
 
 DEFAULT_PORT = 9420
 
+# Body-size cap matching supervise_server.py's 1 MiB limit.
+_MAX_BODY_BYTES = 1 * 1024 * 1024
+
 
 class GitHttpHandler(BaseHTTPRequestHandler):
     server_version = "bot-bottle-git-http/1"
@@ -76,7 +79,18 @@ class GitHttpHandler(BaseHTTPRequestHandler):
             value = self.headers.get(header)
             if value:
                 env[variable] = value
-        length = int(self.headers.get("content-length", "0") or "0")
+        raw_length = self.headers.get("content-length", "0") or "0"
+        try:
+            length = int(raw_length)
+        except ValueError:
+            self.send_error(400, "Bad Content-Length")
+            return
+        if length < 0:
+            self.send_error(400, "Negative Content-Length")
+            return
+        if length > _MAX_BODY_BYTES:
+            self.send_error(413, "Request body too large")
+            return
         body = self.rfile.read(length) if length else b""
         proc = subprocess.run(
             ["git", "http-backend"],

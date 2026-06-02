@@ -165,5 +165,77 @@ class TestGitHttpBackend(unittest.TestCase):
             os.environ["GIT_GATE_ACCESS_HOOK"] = value
 
 
+class TestContentLengthBounds(unittest.TestCase):
+    """PRD 0041: malformed or oversized Content-Length is rejected before
+    git http-backend is invoked."""
+
+    def setUp(self):
+        from http.server import ThreadingHTTPServer
+        import tempfile, os
+        self._tmp = tempfile.mkdtemp()
+        os.environ["GIT_PROJECT_ROOT"] = self._tmp
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), GitHttpHandler)
+        self._thread = threading.Thread(
+            target=self._server.serve_forever, daemon=True,
+        )
+        self._thread.start()
+        self._port = self._server.server_port
+
+    def tearDown(self):
+        self._server.shutdown()
+        self._server.server_close()
+        os.environ.pop("GIT_PROJECT_ROOT", None)
+        import shutil
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def _post(self, path: str, *, content_length_header: str,
+              body: bytes = b"x") -> int:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self._port}{path}",
+            data=body,
+            method="POST",
+        )
+        req.add_header("Content-Length", content_length_header)
+        req.add_header("Content-Type", "application/x-git-receive-pack-request")
+        try:
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                return resp.status
+        except urllib.error.HTTPError as e:
+            return e.code
+
+    def test_non_numeric_content_length_returns_400(self):
+        status = self._post("/repo.git/git-receive-pack",
+                            content_length_header="abc")
+        self.assertEqual(400, status)
+
+    def test_negative_content_length_returns_400(self):
+        status = self._post("/repo.git/git-receive-pack",
+                            content_length_header="-1")
+        self.assertEqual(400, status)
+
+    def test_oversized_content_length_returns_413(self):
+        # Declare 2 MiB — over the 1 MiB cap.
+        status = self._post("/repo.git/git-receive-pack",
+                            content_length_header=str(2 * 1024 * 1024))
+        self.assertEqual(413, status)
+
+    def test_valid_small_body_passes_through(self):
+        # With a valid Content-Length the handler proceeds into
+        # git http-backend; that will fail (no real git repo) but the
+        # status won't be 400 or 413.
+        with mock.patch("bot_bottle.git_http_backend.subprocess.run") as run:
+            run.return_value = mock.Mock(
+                returncode=0,
+                stdout=(
+                    b"Status: 200 OK\r\n"
+                    b"Content-Type: application/x-git-receive-pack-result\r\n"
+                    b"\r\n"
+                ),
+            )
+            status = self._post("/repo.git/git-receive-pack",
+                                content_length_header="1", body=b"x")
+        self.assertNotIn(status, (400, 413))
+
+
 if __name__ == "__main__":
     unittest.main()
