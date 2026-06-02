@@ -81,6 +81,46 @@ class TestEnumerateActiveAgents(unittest.TestCase):
         ):
             self.assertEqual([a, b], enumerate_active_agents())
 
+    def test_sorts_by_started_at_then_slug_across_backends(self):
+        newer = ActiveAgent(
+            backend_name="docker", slug="docker-new", agent_name="impl",
+            started_at="2026-06-02T12:00:00Z", services=(),
+        )
+        tie_b = ActiveAgent(
+            backend_name="docker", slug="b-slug", agent_name="review",
+            started_at="2026-06-02T11:00:00Z", services=(),
+        )
+        missing_metadata = ActiveAgent(
+            backend_name="smolmachines", slug="missing-metadata",
+            agent_name="?", started_at="", services=(),
+        )
+        tie_a = ActiveAgent(
+            backend_name="smolmachines", slug="a-slug", agent_name="research",
+            started_at="2026-06-02T11:00:00Z", services=(),
+        )
+
+        class _FakeBackend:
+            def __init__(self, items):
+                self._items = items
+
+            def is_available(self):
+                return True
+
+            def enumerate_active(self):
+                return self._items
+
+        with patch.object(
+            backend_mod, "_BACKENDS",
+            {
+                "docker": _FakeBackend([newer, tie_b]),
+                "smolmachines": _FakeBackend([missing_metadata, tie_a]),
+            },
+        ):
+            self.assertEqual(
+                [missing_metadata, tie_a, tie_b, newer],
+                enumerate_active_agents(),
+            )
+
     def test_empty_when_no_backends_have_active(self):
         class _FakeBackend:
             def is_available(self):

@@ -466,14 +466,20 @@ def enumerate_active_agents() -> list[ActiveAgent]:
     """All currently-running agents, across every available
     backend. Used by CLI `list active` and the dashboard's agents
     pane so neither has to know which backends exist. Skips
-    backends whose `is_available()` reports False. Ordered by
-    backend name, then by whatever each backend's
-    `enumerate_active` returns."""
+    backends whose `is_available()` reports False.
+
+    Sorted by `(started_at, slug)` so the list is stable across
+    dashboard refresh ticks — agents don't shift position while
+    the operator navigates with arrow keys. ISO 8601 timestamps
+    sort lexicographically in chronological order; `slug` is the
+    deterministic tiebreaker. Agents with missing metadata
+    (`started_at == ""`) sort first."""
     out: list[ActiveAgent] = []
     for name in known_backend_names():
         if not has_backend(name):
             continue
         out.extend(_BACKENDS[name].enumerate_active())
+    out.sort(key=lambda a: (a.started_at, a.slug))
     return out
 
 
