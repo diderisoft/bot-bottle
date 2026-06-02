@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .egress_addon_core import Route
 from .log import die
 
 if TYPE_CHECKING:
@@ -54,21 +55,17 @@ EGRESS_ROUTES_IN_CONTAINER = "/etc/egress/routes.yaml"
 
 
 @dataclass(frozen=True)
-class EgressRoute:
-    """One resolved route on the egress sidecar.
+class EgressRoute(Route):
+    """Host-side extension of the addon's `Route`.
 
-    `host` matches the request's hostname (case-insensitive). The
-    optional `path_allowlist` constrains the URL path; empty tuple
-    means no path-level filtering. The `auth_scheme` / `token_env` /
-    `token_ref` triple is the credential-injection config; empty
-    strings mean "no auth injection" (the manifest's nested `auth`
-    block was omitted).
+    Inherits `host`, `path_allowlist`, `auth_scheme`, and `token_env`
+    from `egress_addon_core.Route` — those are the fields that cross the
+    YAML wire into the sidecar. The three fields below are host-only and
+    are never serialised to the addon.
 
-    `token_env` is the env-var slot inside the egress container
-    (e.g. `EGRESS_TOKEN_0`); `token_ref` is the host env var
-    the CLI reads at launch and forwards into the container's environ
-    under `token_env`. Routes that share a `token_ref` coalesce to
-    one `token_env` slot.
+    `token_ref` is the host env var the CLI reads at launch and forwards
+    into the container's environ under `token_env`. Routes that share a
+    `token_ref` coalesce to one `token_env` slot.
 
     `roles` carries the manifest route's role tuple (reserved for
     future use; always empty today).
@@ -79,10 +76,6 @@ class EgressRoute:
     route set it (e.g. egress injects its own Bearer on that host
     after the agent boundary and pipelock's header DLP would block it)."""
 
-    host: str
-    path_allowlist: tuple[str, ...] = ()
-    auth_scheme: str = ""
-    token_env: str = ""
     token_ref: str = ""
     roles: tuple[str, ...] = ()
     tls_passthrough: bool = False
@@ -223,7 +216,7 @@ def egress_token_env_map(
     return out
 
 
-def _route_to_yaml_fields(r: EgressRoute) -> dict:
+def _route_to_yaml_fields(r: Route) -> dict:
     """Return the addon-visible fields for one route.
 
     Single authoritative mapping between EgressRoute (host-side) and
