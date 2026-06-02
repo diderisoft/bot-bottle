@@ -8,25 +8,20 @@ in chunk 4."""
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from ...agent_provider import AgentProvisionPlan, PromptMode
-from ...egress import EgressPlan
-from ...git_gate import GitGatePlan
-from ...log import info
+from ...agent_provider import PromptMode
 from ...pipelock import PipelockProxyPlan
-from ...supervise import SupervisePlan
 from .. import BottlePlan
-from ..print_util import print_multi, visible_agent_env_names
 
 
 @dataclass(frozen=True)
 class SmolmachinesBottlePlan(BottlePlan):
     """Resolved fields the launch step needs to bring up the bottle.
 
-    Inherits `spec` and `stage_dir` from BottlePlan."""
+    Inherits `spec`, `stage_dir`, `git_gate_plan`, `egress_plan`,
+    `supervise_plan`, and `agent_provision` from BottlePlan."""
 
     slug: str
     # Per-bottle docker subnet for the sidecar bundle container.
@@ -77,12 +72,6 @@ class SmolmachinesBottlePlan(BottlePlan):
     # per-bottle bridge with a pinned IP. The unused fields stay
     # at their dataclass defaults.
     proxy_plan: PipelockProxyPlan
-    git_gate_plan: GitGatePlan
-    egress_plan: EgressPlan
-    # None when bottle.supervise is False, matching the docker
-    # backend's convention.
-    supervise_plan: SupervisePlan | None
-    agent_provision: AgentProvisionPlan
     # Agent-side endpoints. On Docker Desktop the docker bridge
     # IPs aren't reachable from the smolvm guest (TSI uses macOS
     # networking; docker container IPs live in the daemon's VM),
@@ -110,42 +99,3 @@ class SmolmachinesBottlePlan(BottlePlan):
     @property
     def agent_dockerfile_path(self) -> str:
         return self.agent_provision.dockerfile
-
-    def print(self, *, remote_control: bool) -> None:
-        """Compact y/N preflight. Same shape as the Docker
-        backend's so operators see one format across backends."""
-        del remote_control  # not surfaced in the compact summary
-        spec = self.spec
-        manifest = spec.manifest
-        agent = manifest.agents[spec.agent_name]
-        bottle = manifest.bottle_for(spec.agent_name)
-
-        env_names = visible_agent_env_names(
-            sorted(
-                set(bottle.env.keys())
-                | set(self.agent_provision.guest_env.keys())
-            ),
-            hidden_env_names=self.agent_provision.hidden_env_names,
-        )
-        upstreams = [
-            f"{g.Name} → {g.Upstream}" for g in bottle.git
-        ]
-        # Use the resolved egress_plan (lowercase `host` on the
-        # plan-level EgressRoute) rather than `bottle.egress.routes`,
-        # which is the manifest's capitalized-attr form.
-        routes = [r.host for r in self.egress_plan.routes]
-
-        print(file=sys.stderr)
-        info(f"agent           : {spec.agent_name}")
-        info(f"provider        : {self.agent_provider_template}")
-        print_multi("env             ", env_names)
-        print_multi("skills          ", list(agent.skills))
-        info(f"bottle          : {agent.bottle}")
-        identity = manifest.git_identity_summary(spec.agent_name)
-        if identity:
-            info(f"  git identity  : {identity}")
-        if upstreams:
-            print_multi("  git gate      ", upstreams)
-        if routes:
-            print_multi("  egress        ", routes)
-        print(file=sys.stderr)
