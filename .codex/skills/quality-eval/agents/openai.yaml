@@ -1,0 +1,3 @@
+display_name: Quality Eval
+short_description: Scores code quality with a strict five-dimension rubric and refactoring playbook.
+default_prompt: Evaluate this code objectively using the quality-eval rubric and return the three-section score report.
