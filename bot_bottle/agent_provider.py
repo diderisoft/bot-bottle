@@ -193,17 +193,18 @@ def agent_provision_plan(
                 "codex host credentials: dummy auth was copied into the "
                 "guest, but Codex did not accept it"
             )))
-    if template == PROVIDER_CLAUDE and auth_token:
+    if template == PROVIDER_CLAUDE:
         egress_routes.append(EgressRoute(
             host="api.anthropic.com",
-            auth_scheme="Bearer",
+            auth_scheme="Bearer" if auth_token else "",
             token_ref=auth_token,
             tls_passthrough=True,
         ))
-        env_vars["CLAUDE_CODE_OAUTH_TOKEN"] = "egress-placeholder"
-        env_vars["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
-        env_vars["DISABLE_ERROR_REPORTING"] = "1"
-        hidden_env_names = frozenset({"CLAUDE_CODE_OAUTH_TOKEN"})
+        if auth_token:
+            env_vars["CLAUDE_CODE_OAUTH_TOKEN"] = "egress-placeholder"
+            env_vars["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
+            env_vars["DISABLE_ERROR_REPORTING"] = "1"
+            hidden_env_names = frozenset({"CLAUDE_CODE_OAUTH_TOKEN"})
 
     return AgentProvisionPlan(
         template=template,

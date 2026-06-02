@@ -129,14 +129,21 @@ class TestAgentProviderRuntime(unittest.TestCase):
             self.assertEqual("", r.token_ref)
             self.assertTrue(r.tls_passthrough)
 
-    def test_claude_plan_has_no_egress_routes(self):
+    def test_claude_without_auth_token_has_passthrough_egress_route(self):
         with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
             plan = agent_provision_plan(
                 template="claude",
                 dockerfile="",
                 state_dir=Path(tmp),
             )
-        self.assertEqual((), plan.egress_routes)
+        self.assertEqual(1, len(plan.egress_routes))
+        route = plan.egress_routes[0]
+        self.assertEqual("api.anthropic.com", route.host)
+        self.assertEqual("", route.auth_scheme)
+        self.assertEqual("", route.token_ref)
+        self.assertTrue(route.tls_passthrough)
+        self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", plan.env_vars)
+        self.assertEqual(frozenset(), plan.hidden_env_names)
 
 
 if __name__ == "__main__":
