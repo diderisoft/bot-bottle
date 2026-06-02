@@ -26,11 +26,9 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Callable, Generator
 
-from ...codex_auth import codex_host_access_token
 from ...egress import (
-    CODEX_HOST_CREDENTIAL_TOKEN_REF,
     EGRESS_ROUTES_IN_CONTAINER,
-    egress_resolve_token_values,
+    egress_resolve_token_values_with_provider,
 )
 from ...pipelock import (
     PIPELOCK_CA_CERT_IN_CONTAINER,
@@ -146,7 +144,7 @@ def launch(
         # spec's ports_to_publish list expands depending on which
         # daemons the agent needs to reach from the smolvm guest.
         bundle_spec = _bundle_launch_spec(plan, network, loopback_ip)
-        token_env = _resolve_token_env(plan, os.environ)
+        token_env = _resolve_token_env(plan, dict(os.environ))
         _bundle.ensure_bundle_image(bundle_spec.image)
         _bundle.start_bundle(bundle_spec, env={**os.environ, **token_env})
         stack.callback(_bundle.stop_bundle, plan.slug)
@@ -420,24 +418,17 @@ def _bundle_launch_spec(
 
 
 def _resolve_token_env(
-    plan: SmolmachinesBottlePlan, host_env: object
+    plan: SmolmachinesBottlePlan, host_env: dict[str, str],
 ) -> dict[str, str]:
     """Resolve the egress token env-var values from the host's
     environ so they reach the bundle's process env via docker's
     `-e NAME` inheritance. Empty when no routes declare auth."""
-    ep = plan.egress_plan
-    if not ep.routes:
-        return {}
-    env = dict(host_env)
-    token_values = egress_resolve_token_values(ep.token_env_map, env)
-    if plan.spec.manifest.bottle_for(
-        plan.spec.agent_name,
-    ).agent_provider.forward_host_credentials:
-        access_token = codex_host_access_token(env)
-        for token_env, token_ref in ep.token_env_map.items():
-            if token_ref == CODEX_HOST_CREDENTIAL_TOKEN_REF:
-                token_values[token_env] = access_token
-    return token_values
+    bottle = plan.spec.manifest.bottle_for(plan.spec.agent_name)
+    return egress_resolve_token_values_with_provider(
+        plan.egress_plan.token_env_map,
+        bottle.agent_provider.forward_host_credentials,
+        host_env,
+    )
 
 
 def _ensure_smolmachine(image_ref: str, *, dockerfile: str = "") -> Path:

@@ -42,11 +42,7 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Callable, Generator
 
-from ...codex_auth import codex_host_access_token
-from ...egress import (
-    CODEX_HOST_CREDENTIAL_TOKEN_REF,
-    egress_resolve_token_values,
-)
+from ...egress import egress_resolve_token_values_with_provider
 from ...log import info
 from . import network as network_mod
 from . import util as docker_mod
@@ -180,18 +176,12 @@ def launch(
         # Step 7: compose up. Token values + the OAuth placeholder
         # flow through subprocess env; the compose file holds only
         # bare names for the secret-carrying entries.
-        token_values: dict[str, str] = {}
-        if plan.egress_plan.routes:
-            token_values = egress_resolve_token_values(
-                plan.egress_plan.token_env_map, dict(os.environ),
-            )
-            if plan.spec.manifest.bottle_for(
-                plan.spec.agent_name,
-            ).agent_provider.forward_host_credentials:
-                access_token = codex_host_access_token(dict(os.environ))
-                for token_env, token_ref in plan.egress_plan.token_env_map.items():
-                    if token_ref == CODEX_HOST_CREDENTIAL_TOKEN_REF:
-                        token_values[token_env] = access_token
+        bottle = plan.spec.manifest.bottle_for(plan.spec.agent_name)
+        token_values = egress_resolve_token_values_with_provider(
+            plan.egress_plan.token_env_map,
+            bottle.agent_provider.forward_host_credentials,
+            dict(os.environ),
+        )
         compose_env: dict[str, str] = {
             **os.environ,
             **plan.forwarded_env,
