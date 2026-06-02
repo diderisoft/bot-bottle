@@ -245,7 +245,12 @@ class _Supervisor:
                             except ProcessLookupError:
                                 pass
 
-        return all(p.poll() is not None for _, p in self.procs)
+        done = all(p.poll() is not None for _, p in self.procs)
+        if done:
+            for _, p in self.procs:
+                if p.stdout is not None:
+                    p.stdout.close()
+        return done
 
     def exit_code(self) -> int:
         """Positive child failures win; otherwise report success.
@@ -335,6 +340,8 @@ class _Supervisor:
                     except ProcessLookupError:
                         pass
                     p.wait()
+            if p.stdout is not None:
+                p.stdout.close()
             self._logged_dead.discard(daemon_name)
             new_proc = _spawn(spec)
             self.procs[idx] = (spec, new_proc)

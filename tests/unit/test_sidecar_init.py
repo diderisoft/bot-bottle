@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 import unittest
+import warnings
 from pathlib import Path
 from unittest.mock import patch
 
@@ -134,6 +135,10 @@ class TestSupervisor(unittest.TestCase):
     """End-to-end: drive `_Supervisor` directly with fake commands.
     We don't go through `main()` because main installs signal
     handlers process-wide, which collides with the test runner."""
+
+    def setUp(self):
+        warnings.simplefilter("error", ResourceWarning)
+        self.addCleanup(warnings.resetwarnings)
 
     def _drive(self, sup: _Supervisor, max_wait_s: float = 6.0) -> int:
         deadline = time.monotonic() + max_wait_s
