@@ -122,6 +122,14 @@ def _dummy_exp(now: datetime | None, exp_ts: int | None) -> int:
     return int(check_now.timestamp()) + 3600
 
 
+def _dummy_timestamp(now: datetime | None = None) -> str:
+    check_now = now or datetime.now(timezone.utc)
+    if check_now.tzinfo is None:
+        check_now = check_now.replace(tzinfo=timezone.utc)
+    check_now = check_now.astimezone(timezone.utc)
+    return check_now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
 def _dummy_jwt(now: datetime | None = None, *, exp_ts: int | None = None) -> str:
     return _encode_dummy_jwt({
         "exp": _dummy_exp(now, exp_ts),
@@ -247,6 +255,10 @@ def _redact_codex_auth(
             out[key] = inner
         elif lower == "openai_api_key":
             out[key] = None
+        elif lower == "last_refresh":
+            # Codex parses this as a timestamp on startup. Keep the
+            # schema valid without copying host-side session metadata.
+            out[key] = _dummy_timestamp(now)
         elif lower == "tokens":
             out[key] = _redact_token_block(inner, now=now, exp_ts=exp_ts)
         else:

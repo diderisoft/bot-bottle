@@ -157,6 +157,22 @@ class TestCodexHostAccessToken(unittest.TestCase):
             host_exp, _jwt_payload(dummy["tokens"]["id_token"])["exp"],
         )
 
+    def test_dummy_auth_replaces_last_refresh_with_valid_timestamp(self):
+        self._write({
+            "auth_mode": "chatgpt",
+            "last_refresh": "host-refresh-metadata",
+            "tokens": {
+                "access_token": _jwt(2000000000),
+                "refresh_token": "hidden",
+            },
+        })
+        dummy = json.loads(codex_dummy_auth_json(
+            {"CODEX_HOME": str(self.home)},
+            now=datetime(2026, 1, 1, 2, 3, 4, 5000, tzinfo=timezone.utc),
+        ))
+        self.assertEqual("2026-01-01T02:03:04.005Z", dummy["last_refresh"])
+        self.assertNotEqual("host-refresh-metadata", dummy["last_refresh"])
+
     def test_dummy_auth_keeps_required_account_claim_shape(self):
         self._write({
             "auth_mode": "chatgpt",
@@ -215,10 +231,12 @@ class TestCodexHostAccessToken(unittest.TestCase):
             "top-list-secret",
             "token-nested-secret",
             "token-list-secret",
+            "last-refresh-secret",
         ]
         self._write({
             "auth_mode": "chatgpt",
             "session_context": "top-session-secret",
+            "last_refresh": "last-refresh-secret",
             "future_nested": {"value": "top-nested-secret"},
             "future_list": ["top-list-secret"],
             "tokens": {
@@ -255,6 +273,7 @@ class TestCodexHostAccessToken(unittest.TestCase):
 
         dummy = json.loads(dummy_json)
         self.assertEqual("bot-bottle-placeholder", dummy["session_context"])
+        self.assertEqual("2026-01-01T00:00:00.000Z", dummy["last_refresh"])
         self.assertEqual({}, dummy["future_nested"])
         self.assertEqual([], dummy["future_list"])
         self.assertEqual("bot-bottle-placeholder", dummy["tokens"]["refresh_token"])
