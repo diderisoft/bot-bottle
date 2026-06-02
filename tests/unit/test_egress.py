@@ -2,7 +2,6 @@
 resolution (PRD 0017)."""
 
 import unittest
-import unittest.mock
 
 from bot_bottle.egress import (
     CODEX_HOST_CREDENTIAL_TOKEN_REF,
@@ -10,7 +9,6 @@ from bot_bottle.egress import (
     egress_manifest_routes,
     egress_render_routes,
     egress_resolve_token_values,
-    egress_resolve_token_values_with_provider,
     egress_routes_for_bottle,
     egress_token_env_map,
 )
@@ -343,71 +341,12 @@ class TestResolveTokenValues(unittest.TestCase):
                 {"GH_PAT": ""},
             )
 
-    def test_codex_host_credential_ref_is_resolved_by_launch(self):
+    def test_codex_host_credential_ref_resolved_via_provisioned_env(self):
         out = egress_resolve_token_values(
             {"EGRESS_TOKEN_0": CODEX_HOST_CREDENTIAL_TOKEN_REF},
-            {},
+            {CODEX_HOST_CREDENTIAL_TOKEN_REF: "codex-access-token"},
         )
-        self.assertEqual({}, out)
-
-
-class TestResolveTokenValuesWithProvider(unittest.TestCase):
-    def test_empty_map_returns_empty(self):
-        out = egress_resolve_token_values_with_provider({}, False, {})
-        self.assertEqual({}, out)
-
-    def test_empty_map_with_forward_credentials_returns_empty(self):
-        # forward_host_credentials=True but no slots → no codex call needed.
-        out = egress_resolve_token_values_with_provider({}, True, {})
-        self.assertEqual({}, out)
-
-    def test_manifest_tokens_resolved_without_forward_credentials(self):
-        out = egress_resolve_token_values_with_provider(
-            {"EGRESS_TOKEN_0": "GH_PAT"},
-            False,
-            {"GH_PAT": "ghp_secret"},
-        )
-        self.assertEqual({"EGRESS_TOKEN_0": "ghp_secret"}, out)
-
-    def test_codex_token_slotted_in_when_forward_credentials_and_matching_ref(self):
-        with unittest.mock.patch(
-            "bot_bottle.egress.codex_host_access_token",
-            return_value="codex-access-token",
-        ):
-            out = egress_resolve_token_values_with_provider(
-                {"EGRESS_TOKEN_0": CODEX_HOST_CREDENTIAL_TOKEN_REF},
-                True,
-                {},
-            )
         self.assertEqual({"EGRESS_TOKEN_0": "codex-access-token"}, out)
-
-    def test_codex_token_not_slotted_when_no_matching_ref(self):
-        # forward_host_credentials=True but no CODEX_HOST_CREDENTIAL_TOKEN_REF
-        # slot in the map → manifest tokens only; Codex token is fetched but
-        # nothing to slot it into.
-        with unittest.mock.patch(
-            "bot_bottle.egress.codex_host_access_token",
-            return_value="codex-access-token",
-        ):
-            out = egress_resolve_token_values_with_provider(
-                {"EGRESS_TOKEN_0": "GH_PAT"},
-                True,
-                {"GH_PAT": "ghp_secret"},
-            )
-        self.assertEqual({"EGRESS_TOKEN_0": "ghp_secret"}, out)
-
-    def test_codex_not_called_when_forward_credentials_false(self):
-        called = []
-        with unittest.mock.patch(
-            "bot_bottle.egress.codex_host_access_token",
-            side_effect=lambda *_: called.append(1) or "tok",
-        ):
-            egress_resolve_token_values_with_provider(
-                {"EGRESS_TOKEN_0": "GH_PAT"},
-                False,
-                {"GH_PAT": "ghp_secret"},
-            )
-        self.assertEqual([], called)
 
 
 if __name__ == "__main__":

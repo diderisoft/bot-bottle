@@ -42,7 +42,7 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Callable, Generator
 
-from ...egress import egress_resolve_token_values_with_provider
+from ...egress import egress_resolve_token_values
 from ...log import info
 from . import network as network_mod
 from . import util as docker_mod
@@ -176,11 +176,9 @@ def launch(
         # Step 7: compose up. Token values + the OAuth placeholder
         # flow through subprocess env; the compose file holds only
         # bare names for the secret-carrying entries.
-        bottle = plan.spec.manifest.bottle_for(plan.spec.agent_name)
-        token_values = egress_resolve_token_values_with_provider(
-            plan.egress_plan.token_env_map,
-            bottle.agent_provider.forward_host_credentials,
-            dict(os.environ),
+        effective_env = {**dict(os.environ), **plan.agent_provision.provisioned_env}
+        token_values = egress_resolve_token_values(
+            plan.egress_plan.token_env_map, effective_env,
         )
         compose_env: dict[str, str] = {
             **os.environ,

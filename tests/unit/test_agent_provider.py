@@ -145,6 +145,37 @@ class TestAgentProviderRuntime(unittest.TestCase):
         self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", plan.env_vars)
         self.assertEqual(frozenset(), plan.hidden_env_names)
 
+    def test_codex_forward_host_credentials_populates_provisioned_env(self):
+        access = _jwt(2000000000)
+        with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
+            home = Path(tmp) / "host-codex"
+            home.mkdir()
+            (home / "auth.json").write_text(json.dumps({
+                "auth_mode": "chatgpt",
+                "tokens": {"access_token": access},
+            }))
+            plan = agent_provision_plan(
+                template="codex",
+                dockerfile="",
+                state_dir=Path(tmp),
+                forward_host_credentials=True,
+                host_env={"CODEX_HOME": str(home)},
+            )
+        self.assertEqual(
+            {CODEX_HOST_CREDENTIAL_TOKEN_REF: access},
+            plan.provisioned_env,
+        )
+
+    def test_codex_without_forward_host_credentials_has_empty_provisioned_env(self):
+        with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
+            plan = agent_provision_plan(
+                template="codex",
+                dockerfile="",
+                state_dir=Path(tmp),
+                forward_host_credentials=False,
+            )
+        self.assertEqual({}, plan.provisioned_env)
+
 
 if __name__ == "__main__":
     unittest.main()

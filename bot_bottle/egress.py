@@ -29,7 +29,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .codex_auth import codex_host_access_token
 from .log import die
 
 if TYPE_CHECKING:
@@ -342,8 +341,6 @@ def egress_resolve_token_values(
     a sealed mapping without touching `os.environ`."""
     out: dict[str, str] = {}
     for token_env, token_ref in token_env_map.items():
-        if token_ref == CODEX_HOST_CREDENTIAL_TOKEN_REF:
-            continue
         value = host_env.get(token_ref)
         if value is None:
             die(
@@ -359,31 +356,6 @@ def egress_resolve_token_values(
             )
         out[token_env] = value
     return out
-
-
-def egress_resolve_token_values_with_provider(
-    token_env_map: dict[str, str],
-    forward_host_credentials: bool,
-    host_env: dict[str, str],
-) -> dict[str, str]:
-    """Resolve all egress token env-var values, including the optional
-    Codex host credential slot.
-
-    Combines `egress_resolve_token_values` (manifest-declared token refs)
-    with the `forward_host_credentials` path (Codex ChatGPT bearer).
-    Returns an empty dict when `token_env_map` is empty.
-
-    Pure function: `host_env` is passed in so tests can use a sealed
-    mapping without touching `os.environ`."""
-    if not token_env_map:
-        return {}
-    token_values = egress_resolve_token_values(token_env_map, host_env)
-    if forward_host_credentials:
-        access_token = codex_host_access_token(host_env)
-        for token_env, token_ref in token_env_map.items():
-            if token_ref == CODEX_HOST_CREDENTIAL_TOKEN_REF:
-                token_values[token_env] = access_token
-    return token_values
 
 
 class Egress(ABC):
@@ -429,7 +401,6 @@ __all__ = [
     "egress_manifest_routes",
     "egress_render_routes",
     "egress_resolve_token_values",
-    "egress_resolve_token_values_with_provider",
     "egress_routes_for_bottle",
     "egress_token_env_map",
 ]

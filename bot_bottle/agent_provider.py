@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from .codex_auth import write_codex_dummy_auth_file
+from .codex_auth import codex_host_access_token, write_codex_dummy_auth_file
 from .egress import CODEX_HOST_CREDENTIAL_TOKEN_REF, EgressRoute
 
 
@@ -92,6 +92,7 @@ class AgentProvisionPlan:
     verify: tuple[AgentProvisionCommand, ...] = ()
     egress_routes: tuple[EgressRoute, ...] = ()
     hidden_env_names: frozenset[str] = field(default_factory=frozenset)
+    provisioned_env: dict[str, str] = field(default_factory=dict)
 
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -139,6 +140,7 @@ def agent_provision_plan(
     runtime = runtime_for(template)
     resolved_guest_env = dict(guest_env or {})
     env_vars: dict[str, str] = {}
+    provisioned_env: dict[str, str] = {}
     dirs: list[AgentProvisionDir] = []
     files: list[AgentProvisionFile] = []
     pre_copy: list[AgentProvisionCommand] = []
@@ -169,8 +171,12 @@ def agent_provision_plan(
                 tls_passthrough=True,
             ))
         if forward_host_credentials:
+            _host_env = host_env or dict(os.environ)
+            provisioned_env[CODEX_HOST_CREDENTIAL_TOKEN_REF] = codex_host_access_token(
+                _host_env,
+            )
             auth_file = state_dir / "codex-auth.json"
-            write_codex_dummy_auth_file(auth_file, host_env or dict(os.environ))
+            write_codex_dummy_auth_file(auth_file, _host_env)
             files.append(AgentProvisionFile(auth_file, f"{auth_dir}/auth.json"))
             pre_copy.append(AgentProvisionCommand((
                 "find", auth_dir,
@@ -220,6 +226,7 @@ def agent_provision_plan(
         verify=tuple(verify),
         egress_routes=tuple(egress_routes),
         hidden_env_names=hidden_env_names,
+        provisioned_env=provisioned_env,
     )
 
 

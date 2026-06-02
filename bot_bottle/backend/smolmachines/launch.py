@@ -28,7 +28,7 @@ from typing import Callable, Generator
 
 from ...egress import (
     EGRESS_ROUTES_IN_CONTAINER,
-    egress_resolve_token_values_with_provider,
+    egress_resolve_token_values,
 )
 from ...pipelock import (
     PIPELOCK_CA_CERT_IN_CONTAINER,
@@ -423,12 +423,8 @@ def _resolve_token_env(
     """Resolve the egress token env-var values from the host's
     environ so they reach the bundle's process env via docker's
     `-e NAME` inheritance. Empty when no routes declare auth."""
-    bottle = plan.spec.manifest.bottle_for(plan.spec.agent_name)
-    return egress_resolve_token_values_with_provider(
-        plan.egress_plan.token_env_map,
-        bottle.agent_provider.forward_host_credentials,
-        host_env,
-    )
+    effective_env = {**host_env, **plan.agent_provision.provisioned_env}
+    return egress_resolve_token_values(plan.egress_plan.token_env_map, effective_env)
 
 
 def _ensure_smolmachine(image_ref: str, *, dockerfile: str = "") -> Path:
