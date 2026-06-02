@@ -349,7 +349,6 @@ def _bundle_launch_spec(
             env.append(token_env)
 
     # --- git-gate ---------------------------------------------
-    extra_hosts: list[str] = []
     gp = plan.git_gate_plan
     if gp.upstreams:
         daemons += ["git-gate", "git-http"]

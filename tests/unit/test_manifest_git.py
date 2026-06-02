@@ -125,53 +125,6 @@ class TestGitEntryParsing(unittest.TestCase):
             }]))
 
 
-class TestGitEntryExtraHosts(unittest.TestCase):
-    def test_extra_hosts_defaults_to_empty(self):
-        m = Manifest.from_json_obj(_manifest([{
-            "Name": "foo",
-            "Upstream": "ssh://git@github.com/foo.git",
-            "IdentityFile": "/dev/null",
-        }]))
-        self.assertEqual({}, dict(m.bottles["dev"].git[0].ExtraHosts))
-
-    def test_extra_hosts_parses_host_to_ip_map(self):
-        m = Manifest.from_json_obj(_manifest([{
-            "Name": "bot-bottle",
-            "Upstream": "ssh://git@gitea.dideric.is:30009/didericis/bot-bottle.git",
-            "IdentityFile": "/dev/null",
-            "ExtraHosts": {"gitea.dideric.is": "192.0.2.10"},
-        }]))
-        eh = dict(m.bottles["dev"].git[0].ExtraHosts)
-        self.assertEqual({"gitea.dideric.is": "192.0.2.10"}, eh)
-
-    def test_extra_hosts_must_be_object(self):
-        with self.assertRaises(ManifestError):
-            Manifest.from_json_obj(_manifest([{
-                "Name": "foo",
-                "Upstream": "ssh://git@github.com/foo.git",
-                "IdentityFile": "/dev/null",
-                "ExtraHosts": ["gitea.dideric.is", "192.0.2.10"],
-            }]))
-
-    def test_extra_hosts_ip_must_be_string(self):
-        with self.assertRaises(ManifestError):
-            Manifest.from_json_obj(_manifest([{
-                "Name": "foo",
-                "Upstream": "ssh://git@github.com/foo.git",
-                "IdentityFile": "/dev/null",
-                "ExtraHosts": {"gitea.dideric.is": 100},
-            }]))
-
-    def test_extra_hosts_empty_ip_dies(self):
-        with self.assertRaises(ManifestError):
-            Manifest.from_json_obj(_manifest([{
-                "Name": "foo",
-                "Upstream": "ssh://git@github.com/foo.git",
-                "IdentityFile": "/dev/null",
-                "ExtraHosts": {"gitea.dideric.is": ""},
-            }]))
-
-
 class TestGitEntryCrossValidation(unittest.TestCase):
     def test_duplicate_name_dies(self):
         with self.assertRaises(ManifestError):

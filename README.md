@@ -157,14 +157,8 @@ and MCP endpoints resolve without an agent-side change.
   upstream has *now* (fail-closed if unreachable). The agent's
   `~/.gitconfig` rewrites the real URL to the gate via `insteadOf`,
   so push, fetch, clone, and pull all route through. The agent
-  never sees the upstream credential. If the upstream's hostname
-  isn't resolvable from the gate container (e.g. a Tailscale-only
-  host whose public DNS points elsewhere), pin its IP via
-  `ExtraHosts: { "<hostname>": "<ip>" }` on the `bottle.git` entry —
-  the gate's `/etc/hosts` gets the override while the agent's
-  `insteadOf` rewrite still keys off the original hostname. Brought
-  up only when `bottle.git` has entries. Design in
-  `docs/prds/0008-git-gate.md`.
+  never sees the upstream credential. Brought up only when
+  `bottle.git` has entries. Design in `docs/prds/0008-git-gate.md`.
 - **cred-proxy image** — per-bottle sidecar (`python:3.13-alpine`
   base, stdlib-only) that holds API tokens declared in
   `bottle.cred_proxy.routes`. Each route names a `path`,

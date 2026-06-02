@@ -56,7 +56,6 @@ def _git_gate_plan(tmp: str) -> GitGatePlan:
                 upstream_port="30009",
                 identity_file="/dev/null",
                 known_host_key="ssh-ed25519 AAAA...",
-                extra_hosts={},
             ),
         ),
     )

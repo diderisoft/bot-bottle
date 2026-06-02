@@ -151,7 +151,6 @@ def _plan(
             identity_file="/etc/hostname",
             known_host_key="",
             known_hosts_file=STATE / "git-gate" / "upstream-known_hosts",
-            extra_hosts={"example.com": "10.0.0.1"},
         ),)
     routes: tuple[EgressRoute, ...] = ()
     if with_egress:
@@ -440,12 +439,8 @@ class TestSidecarBundleShape(unittest.TestCase):
         self.assertTrue(any("supervise/queue" in t or t.startswith("/run/supervise")
                             for t in targets))
 
-    def test_extra_hosts_emitted_for_git_upstreams(self):
+    def test_extra_hosts_omitted_for_git_upstreams(self):
         sc = self._render(with_git=True)["services"]["sidecars"]
-        self.assertIn("example.com:10.0.0.1", sc.get("extra_hosts", []))
-
-    def test_extra_hosts_omitted_when_no_git(self):
-        sc = self._render()["services"]["sidecars"]
         self.assertNotIn("extra_hosts", sc)
 
     def test_agent_depends_on_bundle_only(self):

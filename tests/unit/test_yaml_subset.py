@@ -160,13 +160,13 @@ class TestBlockList(unittest.TestCase):
         out = _y("""
             entries:
               - name: foo
-                ExtraHosts:
+                metadata:
                   host.example: 10.0.0.1
               - name: bar
         """)
         self.assertEqual(
             {"entries": [
-                {"name": "foo", "ExtraHosts": {"host.example": "10.0.0.1"}},
+                {"name": "foo", "metadata": {"host.example": "10.0.0.1"}},
                 {"name": "bar"},
             ]},
             out,
@@ -270,8 +270,7 @@ class TestRealisticBottleFile(unittest.TestCase):
                   Name: bot-bottle
                   Upstream: ssh://git@gitea.dideric.is:30009/x/y.git
                   IdentityFile: ~/.ssh/gitea.pem
-                  ExtraHosts:
-                    gitea.dideric.is: 192.0.2.10
+                  KnownHostKey: ssh-ed25519 AAAA...
         """)
         # Spot-check the deep parts; the structure is large.
         self.assertEqual(2, len(out["egress"]["routes"]))
@@ -284,8 +283,8 @@ class TestRealisticBottleFile(unittest.TestCase):
             out["egress"]["routes"][0]["auth"]["scheme"],
         )
         self.assertEqual(
-            "192.0.2.10",
-            out["git"]["remotes"]["gitea.dideric.is"]["ExtraHosts"]["gitea.dideric.is"],
+            "ssh-ed25519 AAAA...",
+            out["git"]["remotes"]["gitea.dideric.is"]["KnownHostKey"],
         )
 
 

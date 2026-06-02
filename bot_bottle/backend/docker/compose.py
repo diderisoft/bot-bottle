@@ -49,7 +49,7 @@ from ...egress import (
     EGRESS_HOSTNAME,
     EGRESS_ROUTES_IN_CONTAINER,
 )
-from ...git_gate import GIT_GATE_HOSTNAME, git_gate_aggregate_extra_hosts
+from ...git_gate import GIT_GATE_HOSTNAME
 from ...log import die, warn
 from ...pipelock import PIPELOCK_HOSTNAME
 from ...supervise import (
@@ -198,7 +198,6 @@ def _sidecar_bundle_service(plan: DockerBottlePlan) -> dict[str, Any]:
             env.append(token_env)
 
     # --- git-gate ----------------------------------------------------
-    extra_hosts: list[str] = []
     gp = plan.git_gate_plan
     if gp.upstreams:
         volumes += [
@@ -217,8 +216,6 @@ def _sidecar_bundle_service(plan: DockerBottlePlan) -> dict[str, Any]:
                     u.known_hosts_file,
                     f"{GIT_GATE_CREDS_DIR_IN_CONTAINER}/{u.name}-known_hosts",
                 ))
-        extra_map = git_gate_aggregate_extra_hosts(gp.upstreams)
-        extra_hosts = [f"{host}:{ip}" for host, ip in sorted(extra_map.items())]
 
     # --- supervise ---------------------------------------------------
     sp = plan.supervise_plan
@@ -261,8 +258,6 @@ def _sidecar_bundle_service(plan: DockerBottlePlan) -> dict[str, Any]:
         "environment": env,
         "volumes": volumes,
     }
-    if extra_hosts:
-        service["extra_hosts"] = extra_hosts
     return service
 
 
