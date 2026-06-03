@@ -3,18 +3,32 @@
 The manifest owns the user-facing AgentProvider shape. This module is
 the launch-time table that turns a provider template into an executable
 command, default image, and prompt/auth behavior.
+
+Per PRD 0050 the per-provider implementations live under
+`bot_bottle/contrib/<template>/agent_provider.py`. This module exposes:
+
+  - `AgentProvider` (ABC) — the contract each plugin implements.
+  - `get_provider(template)` — lazy-imported registry; the analogue
+    of `bot_bottle/deploy_key_provisioner.get_provisioner`.
+  - `AgentProvisionPlan` (+ helper dataclasses) — declarative shape
+    each provider produces and the backends consume unchanged.
+  - `agent_provision_plan` / `runtime_for` — thin wrappers around the
+    registry kept so existing callers keep working without per-call
+    edits.
 """
 
 from __future__ import annotations
 
-import json
-import os
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
-from .codex_auth import codex_host_access_token, write_codex_dummy_auth_file
-from .egress import CODEX_HOST_CREDENTIAL_TOKEN_REF, EgressRoute
+from .egress import EgressRoute
+
+
+if TYPE_CHECKING:
+    from .backend import Bottle, BottlePlan
 
 
 PROVIDER_CLAUDE = "claude"
@@ -26,6 +40,8 @@ PROVIDER_TEMPLATES = frozenset({PROVIDER_CLAUDE, PROVIDER_CODEX})
 # (no TLS MITM) or its header DLP blocks the injected JWT.
 CODEX_HOST_CREDENTIAL_HOSTS = ("api.openai.com", "chatgpt.com")
 PromptMode = Literal["append_file", "read_prompt_file"]
+
+GUEST_HOME = "/home/node"
 
 
 @dataclass(frozen=True)
@@ -96,35 +112,96 @@ class AgentProvisionPlan:
     provisioned_env: dict[str, str] = field(default_factory=dict)
 
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
+class AgentProvider(ABC):
+    """Per-template plugin: produces the provision plan and applies
+    the provider-specific in-guest setup steps (skills, prompt, the
+    declarative `dirs`/`files`/`pre_copy`/`verify` apply loop, and
+    supervise MCP registration). Concrete subclasses live under
+    `bot_bottle/contrib/<template>/agent_provider.py`."""
+
+    @property
+    @abstractmethod
+    def runtime(self) -> AgentProviderRuntime:
+        """The static command / image / prompt-mode table for this
+        template."""
+
+    @abstractmethod
+    def provision_plan(
+        self,
+        *,
+        dockerfile: str,
+        state_dir: Path,
+        guest_home: str = GUEST_HOME,
+        guest_env: dict[str, str] | None = None,
+        auth_token: str = "",
+        forward_host_credentials: bool = False,
+        host_env: dict[str, str] | None = None,
+        trusted_project_path: str = "",
+    ) -> AgentProvisionPlan:
+        """Build the declarative AgentProvisionPlan for one launch.
+        Backends call this during `prepare` and consume the result as
+        before."""
+
+    def provision_skills(self, plan: "BottlePlan", bottle: "Bottle") -> None:
+        """Copy each of the agent's named skills from
+        ~/.claude/skills/<name>/ on the host into
+        /home/node/.claude/skills/<name>/ in the guest. No-op when
+        the agent has no skills.
+
+        Default implementation matches the legacy backend-side
+        modules; providers override only if the in-guest layout
+        differs."""
+        from . import _provision_apply
+        _provision_apply.apply_skills(plan, bottle)
+
+    def provision_prompt(self, plan: "BottlePlan", bottle: "Bottle") -> str | None:
+        """Copy the prompt file into the guest, fix ownership/mode,
+        and return the in-guest path iff the agent has a non-empty
+        prompt (drives the `--append-system-prompt-file` flag).
+
+        The file is copied either way so the path always exists."""
+        from . import _provision_apply
+        return _provision_apply.apply_prompt(plan, bottle)
+
+    def provision(self, plan: "BottlePlan", bottle: "Bottle") -> None:
+        """Apply the declarative `dirs`/`pre_copy`/`files`/`verify`
+        steps from `plan.agent_provision`. Default implementation
+        works for any provider that produces a standard plan; was
+        called `provision_provider_auth` on `BottleBackend` before
+        PRD 0050."""
+        from . import _provision_apply
+        _provision_apply.apply_provision(plan, bottle)
+
+    @abstractmethod
+    def provision_supervise_mcp(
+        self,
+        plan: "BottlePlan",
+        bottle: "Bottle",
+        supervise_url: str,
+    ) -> None:
+        """Register the per-bottle supervise sidecar as an MCP server
+        in the provider's in-guest config. Called by the backend after
+        the supervise sidecar is reachable. No-op when
+        `plan.supervise_plan is None`."""
 
 
-_RUNTIMES = {
-    PROVIDER_CLAUDE: AgentProviderRuntime(
-        template=PROVIDER_CLAUDE,
-        command="claude",
-        image="bot-bottle-claude:latest",
-        dockerfile=str(_REPO_ROOT / "Dockerfile.claude"),
-        prompt_mode="append_file",
-        bypass_args=("--dangerously-skip-permissions",),
-        resume_args=("--continue",),
-        remote_control_args=("--remote-control",),
-    ),
-    PROVIDER_CODEX: AgentProviderRuntime(
-        template=PROVIDER_CODEX,
-        command="codex",
-        image="bot-bottle-codex:latest",
-        dockerfile=str(_REPO_ROOT / "Dockerfile.codex"),
-        prompt_mode="read_prompt_file",
-        bypass_args=("--dangerously-bypass-approvals-and-sandbox",),
-        resume_args=("resume", "--last"),
-        remote_control_args=(),
-    ),
-}
+def get_provider(template: str) -> AgentProvider:
+    """Resolve a provider template name to its plugin instance.
+
+    Lazy-imports the contrib module so importing this module doesn't
+    pull provider-specific code paths in. Mirrors the contrib
+    convention PRD 0048 established for deploy key provisioners."""
+    if template == PROVIDER_CLAUDE:
+        from .contrib.claude.agent_provider import ClaudeAgentProvider
+        return ClaudeAgentProvider()
+    if template == PROVIDER_CODEX:
+        from .contrib.codex.agent_provider import CodexAgentProvider
+        return CodexAgentProvider()
+    raise ValueError(f"unknown agent provider template: {template!r}")
 
 
 def runtime_for(template: str) -> AgentProviderRuntime:
-    return _RUNTIMES[template]
+    return get_provider(template).runtime
 
 
 def agent_provision_plan(
@@ -132,118 +209,24 @@ def agent_provision_plan(
     template: str,
     dockerfile: str,
     state_dir: Path,
-    guest_home: str = "/home/node",
+    guest_home: str = GUEST_HOME,
     guest_env: dict[str, str] | None = None,
     auth_token: str = "",
     forward_host_credentials: bool = False,
     host_env: dict[str, str] | None = None,
     trusted_project_path: str = "",
 ) -> AgentProvisionPlan:
-    runtime = runtime_for(template)
-    resolved_guest_env = dict(guest_env or {})
-    trusted_path = trusted_project_path or guest_home
-    env_vars: dict[str, str] = {}
-    provisioned_env: dict[str, str] = {}
-    dirs: list[AgentProvisionDir] = []
-    files: list[AgentProvisionFile] = []
-    pre_copy: list[AgentProvisionCommand] = []
-    verify: list[AgentProvisionCommand] = []
-    egress_routes: list[EgressRoute] = []
-    hidden_env_names: frozenset[str] = frozenset()
-
-    if template == PROVIDER_CODEX:
-        env_vars["CODEX_CA_CERTIFICATE"] = "/etc/ssl/certs/ca-certificates.crt"
-        auth_dir = resolved_guest_env.get("CODEX_HOME", f"{guest_home}/.codex")
-        if forward_host_credentials:
-            env_vars["CODEX_HOME"] = auth_dir
-        dirs.append(AgentProvisionDir(auth_dir))
-        config_path = f"{auth_dir}/config.toml"
-        config_file = state_dir / "codex-config.toml"
-        toml_path = trusted_path.replace("\\", "\\\\").replace('"', '\\"')
-        config_file.write_text(
-            f'[projects."{toml_path}"]\n'
-            'trust_level = "trusted"\n'
-        )
-        config_file.chmod(0o600)
-        files.append(AgentProvisionFile(config_file, config_path))
-
-        for host in CODEX_HOST_CREDENTIAL_HOSTS:
-            egress_routes.append(EgressRoute(
-                host=host,
-                auth_scheme="Bearer" if forward_host_credentials else "",
-                token_ref=CODEX_HOST_CREDENTIAL_TOKEN_REF if forward_host_credentials else "",
-                tls_passthrough=True,
-            ))
-        if forward_host_credentials:
-            _host_env = host_env or dict(os.environ)
-            provisioned_env[CODEX_HOST_CREDENTIAL_TOKEN_REF] = codex_host_access_token(
-                _host_env,
-            )
-            auth_file = state_dir / "codex-auth.json"
-            write_codex_dummy_auth_file(auth_file, _host_env)
-            files.append(AgentProvisionFile(auth_file, f"{auth_dir}/auth.json"))
-            pre_copy.append(AgentProvisionCommand((
-                "find", auth_dir,
-                "-maxdepth", "1",
-                "-type", "f",
-                "(",
-                "-name", "*.sqlite",
-                "-o", "-name", "*.sqlite-*",
-                "-o", "-name", "*.codex-repair-*.bak",
-                ")",
-                "-delete",
-            ), "codex host credentials: could not reset runtime db files"))
-            verify.append(AgentProvisionCommand((
-                "runuser", "-u", "node", "--",
-                "env",
-                f"HOME={guest_home}",
-                f"CODEX_HOME={auth_dir}",
-                "codex", "login", "status",
-            ), (
-                "codex host credentials: dummy auth was copied into the "
-                "guest, but Codex did not accept it"
-            )))
-    if template == PROVIDER_CLAUDE:
-        env_vars["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
-        env_vars["DISABLE_ERROR_REPORTING"] = "1"
-        claude_config = state_dir / "claude.json"
-        claude_projects = {
-            guest_home: {"hasTrustDialogAccepted": True},
-        }
-        claude_projects[trusted_path] = {"hasTrustDialogAccepted": True}
-        claude_config.write_text(json.dumps({
-            "hasCompletedOnboarding": True,
-            "theme": "dark",
-            "bypassPermissionsModeAccepted": True,
-            "projects": claude_projects,
-        }, indent=2) + "\n")
-        claude_config.chmod(0o600)
-        files.append(AgentProvisionFile(claude_config, f"{guest_home}/.claude.json"))
-        egress_routes.append(EgressRoute(
-            host="api.anthropic.com",
-            auth_scheme="Bearer" if auth_token else "",
-            token_ref=auth_token,
-            tls_passthrough=True,
-        ))
-        if auth_token:
-            env_vars["CLAUDE_CODE_OAUTH_TOKEN"] = "egress-placeholder"
-            hidden_env_names = frozenset({"CLAUDE_CODE_OAUTH_TOKEN"})
-
-    return AgentProvisionPlan(
-        template=template,
-        command=runtime.command,
-        prompt_mode=runtime.prompt_mode,
-        image=runtime.image,
+    """Back-compat shim — `prepare` callers stay the same; the work
+    now lives on the provider plugin."""
+    return get_provider(template).provision_plan(
         dockerfile=dockerfile,
-        env_vars=env_vars,
-        guest_env=resolved_guest_env,
-        dirs=tuple(dirs),
-        files=tuple(files),
-        pre_copy=tuple(pre_copy),
-        verify=tuple(verify),
-        egress_routes=tuple(egress_routes),
-        hidden_env_names=hidden_env_names,
-        provisioned_env=provisioned_env,
+        state_dir=state_dir,
+        guest_home=guest_home,
+        guest_env=guest_env,
+        auth_token=auth_token,
+        forward_host_credentials=forward_host_credentials,
+        host_env=host_env,
+        trusted_project_path=trusted_project_path,
     )
 
 
