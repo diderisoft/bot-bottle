@@ -1,5 +1,11 @@
 """SmolmachinesBottleBackend — the smolmachines implementation of
-BottleBackend (PRD 0023)."""
+BottleBackend (PRD 0023).
+
+Per PRD 0050 the per-provider provisioning steps (prompt, skills,
+the declarative provision-plan apply, supervise MCP registration)
+live on the `AgentProvider` plugin under `bot_bottle/contrib/`. The
+smolmachines backend only owns the steps that are about backend
+infrastructure: CA install (no-op for now), workspace, git copy-in."""
 
 from __future__ import annotations
 
@@ -18,10 +24,6 @@ from .bottle_cleanup_plan import SmolmachinesBottleCleanupPlan
 from .bottle_plan import SmolmachinesBottlePlan
 from .provision import ca as _ca
 from .provision import git as _git
-from .provision import prompt as _prompt
-from .provision import provider_auth as _provider_auth
-from .provision import skills as _skills
-from .provision import supervise as _supervise
 from .provision import workspace as _workspace
 
 
@@ -58,21 +60,6 @@ class SmolmachinesBottleBackend(
     ) -> None:
         _ca.provision_ca(plan, bottle)
 
-    def provision_prompt(
-        self, plan: SmolmachinesBottlePlan, bottle: Bottle
-    ) -> str | None:
-        return _prompt.provision_prompt(plan, bottle)
-
-    def provision_provider_auth(
-        self, plan: SmolmachinesBottlePlan, bottle: Bottle
-    ) -> None:
-        _provider_auth.provision_provider_auth(plan, bottle)
-
-    def provision_skills(
-        self, plan: SmolmachinesBottlePlan, bottle: Bottle
-    ) -> None:
-        _skills.provision_skills(plan, bottle)
-
     def provision_workspace(
         self, plan: SmolmachinesBottlePlan, bottle: Bottle
     ) -> None:
@@ -83,10 +70,12 @@ class SmolmachinesBottleBackend(
     ) -> None:
         _git.provision_git(plan, bottle)
 
-    def provision_supervise(
-        self, plan: SmolmachinesBottlePlan, bottle: Bottle
-    ) -> None:
-        _supervise.provision_supervise(plan, bottle)
+    def supervise_mcp_url(self, plan: SmolmachinesBottlePlan) -> str:
+        """The smolmachines guest reaches the supervise sidecar via a
+        host-published random port the launch step pinned earlier
+        (`http://<loopback_ip>:<random_port>/`). `agent_supervise_url`
+        on the plan is "" when the bottle has no sidecar."""
+        return plan.agent_supervise_url
 
     def prepare_cleanup(self) -> SmolmachinesBottleCleanupPlan:
         return _cleanup.prepare_cleanup()

@@ -1,8 +1,11 @@
-"""Per-provisioner modules for the Docker backend.
+"""Backend-infrastructure provisioners for the Docker backend.
 
-Each module exports one top-level function:
-    provision_<thing>(plan: DockerBottlePlan, bottle: Bottle) -> ...
+Per PRD 0050 the per-provider provisioning steps (prompt, skills,
+declarative provision-plan apply, supervise MCP registration) live on
+the `AgentProvider` plugin under `bot_bottle/contrib/`. The modules
+left in this subpackage handle only the steps that are
+backend-specific:
 
-`DockerBottleBackend.provision_*` methods delegate to these. The
-abstract `BottleBackend.provision_*` surface is unchanged; this
-subpackage exists only to keep `backend.py` from being a god-file."""
+  - ca.py   — install per-bottle CA bundle into the guest trust store
+  - git.py  — copy host cwd `.git` into the guest when --cwd is used
+"""

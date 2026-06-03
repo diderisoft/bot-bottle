@@ -1,14 +1,12 @@
-"""Provisioning helpers for the smolmachines backend (PRD 0023
-chunk 4).
+"""Backend-infrastructure provisioners for the smolmachines backend.
 
-Each method maps onto one of `BottleBackend`'s `provision_*`
-overrides. They run after the VM is up + the bundle is reachable
-and copy host-side state (prompt, skills, .git, CA cert,
-supervise MCP config) into the guest via `smolvm machine cp` /
-`smolvm machine exec`.
+Per PRD 0050 the per-provider provisioning steps (prompt, skills,
+declarative provision-plan apply, supervise MCP registration) live on
+the `AgentProvider` plugin under `bot_bottle/contrib/`. The modules
+left in this subpackage handle only the steps that are
+backend-specific:
 
-Chunk 4a ships `provision_prompt` and `provision_skills` — the
-two that don't depend on agent-image tooling (claude-code,
-update-ca-certificates) beyond `cp` and `mkdir`. provision_ca /
-provision_git / provision_supervise land once the agent-image
-gap is solved."""
+  - ca.py        — install per-bottle CA bundle into the guest trust store
+  - git.py       — copy host cwd `.git` into the guest when --cwd is used
+  - workspace.py — copy the operator workspace into the guest
+"""

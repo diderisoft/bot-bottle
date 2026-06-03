@@ -39,7 +39,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Generic, Sequence, TypeVar
 
-from ..agent_provider import AgentProvisionPlan
+from ..agent_provider import AgentProvisionPlan, get_provider
 from ..egress import EgressPlan
 from ..git_gate import GitGatePlan
 from ..log import die, info
@@ -320,24 +320,33 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         to decide whether to add provider-specific prompt args to the
         agent's argv.
 
-        Default orchestration: ca → prompt → skills → workspace → git →
-        supervise. CA install runs first so the agent's trust store
-        is rebuilt before anything inside the agent makes a TLS call.
-        Subclasses typically don't override this; they implement the
-        sub-methods below.
+        Default orchestration: ca → prompt → provider apply → skills
+        → workspace → git → supervise-mcp. CA install runs first so
+        the agent's trust store is rebuilt before anything inside the
+        agent makes a TLS call.
+
+        Per PRD 0050 the per-provider steps (prompt, skills,
+        declarative provision-plan apply, supervise MCP registration)
+        live on the `AgentProvider` plugin. The backend only owns the
+        steps that are about backend infrastructure (CA, workspace,
+        git) and surfaces the supervise sidecar URL its launch step
+        knows about via `supervise_mcp_url`.
 
         PRD 0017: cred-proxy's agent-side dotfile rewrites (~/.npmrc,
         ~/.gitconfig insteadOf, tea config) are gone. Egress-proxy is
         on the agent's HTTP_PROXY path so every tool that respects
         HTTPS_PROXY (claude-code, git over HTTPS, npm, curl) is
         intercepted without per-tool reconfiguration."""
+        provider = get_provider(plan.agent_provision.template)
         self.provision_ca(plan, bottle)
-        prompt_path = self.provision_prompt(plan, bottle)
-        self.provision_provider_auth(plan, bottle)
-        self.provision_skills(plan, bottle)
+        prompt_path = provider.provision_prompt(plan, bottle)
+        provider.provision(plan, bottle)
+        provider.provision_skills(plan, bottle)
         self.provision_workspace(plan, bottle)
         self.provision_git(plan, bottle)
-        self.provision_supervise(plan, bottle)
+        provider.provision_supervise_mcp(
+            plan, bottle, self.supervise_mcp_url(plan),
+        )
         return prompt_path
 
     def provision_ca(self, plan: PlanT, bottle: "Bottle") -> None:
@@ -349,23 +358,6 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         backend overrides to docker-cp the cert in and run
         `update-ca-certificates`."""
 
-    def provision_provider_auth(self, plan: PlanT, bottle: "Bottle") -> None:
-        """Install non-secret provider auth marker files into the agent
-        home when a provider needs them to select the right auth mode.
-        The default is no-op."""
-
-    @abstractmethod
-    def provision_prompt(self, plan: PlanT, bottle: "Bottle") -> str | None:
-        """Copy the prompt file into the running bottle. Returns the
-        in-container path iff the agent has a non-empty prompt;
-        callers use the return value to decide whether to add
-        provider-specific prompt args to the agent's argv."""
-
-    @abstractmethod
-    def provision_skills(self, plan: PlanT, bottle: "Bottle") -> None:
-        """Copy the agent's named skills from the host into the
-        running bottle. No-op when the agent has no skills."""
-
     def provision_workspace(self, plan: PlanT, bottle: "Bottle") -> None:
         """Copy the operator workspace into the running bottle when
         the backend cannot bake it into the agent image. Default is
@@ -376,12 +368,16 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         """Copy the host's cwd `.git` directory into the running
         bottle if the user requested --cwd. No-op otherwise."""
 
-    def provision_supervise(self, plan: PlanT, bottle: "Bottle") -> None:
-        """Write the in-bottle Claude Code MCP config so the agent
-        discovers the per-bottle supervise sidecar (PRD 0013).
-        No-op when bottle.supervise is False or the backend doesn't
-        support the supervise sidecar yet. The Docker backend
-        overrides."""
+    def supervise_mcp_url(self, plan: PlanT) -> str:
+        """Return the agent-side URL of the per-bottle supervise
+        sidecar, or "" when this bottle has no sidecar. The provider
+        plugin's `provision_supervise_mcp` uses it to register the
+        MCP entry inside the guest.
+
+        Default returns "" so backends without supervise support
+        don't have to implement it. Docker and smolmachines override."""
+        del plan
+        return ""
 
     @abstractmethod
     def prepare_cleanup(self) -> CleanupT:

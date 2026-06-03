@@ -9,6 +9,12 @@ This module is a thin façade. The real work lives in four siblings:
 
 The base class's `prepare` template runs cross-backend host-side
 validation before calling `_resolve_plan` here.
+
+Per PRD 0050 the per-provider provisioning steps (prompt, skills,
+the declarative provision-plan apply, supervise MCP registration)
+live on the `AgentProvider` plugin under `bot_bottle/contrib/`. The
+Docker backend only owns the steps that are about backend
+infrastructure: CA install and git copy-in.
 """
 
 from __future__ import annotations
@@ -18,6 +24,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator, Sequence
 
+from ...supervise import SUPERVISE_HOSTNAME, SUPERVISE_PORT
 from .. import ActiveAgent, Bottle, BottleBackend, BottleSpec
 from . import cleanup as _cleanup
 from . import enumerate as _enumerate
@@ -28,10 +35,6 @@ from .bottle_cleanup_plan import DockerBottleCleanupPlan
 from .bottle_plan import DockerBottlePlan
 from .provision import ca as _ca
 from .provision import git as _git
-from .provision import prompt as _prompt
-from .provision import provider_auth as _provider_auth
-from .provision import skills as _skills
-from .provision import supervise as _supervise_prov
 
 
 class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanupPlan"]):
@@ -60,20 +63,16 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
     def provision_ca(self, plan: DockerBottlePlan, bottle: Bottle) -> None:
         _ca.provision_ca(plan, bottle)
 
-    def provision_prompt(self, plan: DockerBottlePlan, bottle: Bottle) -> str | None:
-        return _prompt.provision_prompt(plan, bottle)
-
-    def provision_provider_auth(self, plan: DockerBottlePlan, bottle: Bottle) -> None:
-        _provider_auth.provision_provider_auth(plan, bottle)
-
-    def provision_skills(self, plan: DockerBottlePlan, bottle: Bottle) -> None:
-        _skills.provision_skills(plan, bottle)
-
     def provision_git(self, plan: DockerBottlePlan, bottle: Bottle) -> None:
         _git.provision_git(plan, bottle)
 
-    def provision_supervise(self, plan: DockerBottlePlan, bottle: Bottle) -> None:
-        _supervise_prov.provision_supervise(plan, bottle)
+    def supervise_mcp_url(self, plan: DockerBottlePlan) -> str:
+        """Docker bottles reach the supervise sidecar via the
+        compose-network alias `supervise:9100`. No per-bottle URL
+        plumbing needed; the alias resolves inside the bridge."""
+        if plan.supervise_plan is None:
+            return ""
+        return f"http://{SUPERVISE_HOSTNAME}:{SUPERVISE_PORT}/"
 
     def prepare_cleanup(self) -> DockerBottleCleanupPlan:
         return _cleanup.prepare_cleanup()
