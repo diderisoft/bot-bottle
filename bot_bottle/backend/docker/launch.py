@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Callable, Generator
 
 from ...egress import egress_resolve_token_values
-from ...log import info
+from ...log import info, warn
 from . import network as network_mod
 from . import util as docker_mod
 from .bottle import DockerBottle
@@ -87,10 +87,11 @@ def launch(
     def teardown() -> None:
         try:
             stack.close()
-        except BaseException:
-            # Teardown must not raise; swallow so the caller's
-            # __exit__ path can still propagate the original error.
-            pass
+        except BaseException as exc:
+            warn(
+                f"teardown failed for container {plan.container_name}"
+                f" (compose-down): {exc!r}"
+            )
 
     try:
         # Step 1: agent image build. Sidecar images get built lazily by
