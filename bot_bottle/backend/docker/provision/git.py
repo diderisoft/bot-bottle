@@ -19,74 +19,63 @@ Three concerns, all about git in the agent:
 from __future__ import annotations
 
 import os
-import subprocess
+import shlex
 
 from ....git_gate import GIT_GATE_HOSTNAME, git_gate_render_gitconfig
 from ....log import info
-from .. import util as docker_mod
+from ... import Bottle
 from ..bottle_plan import DockerBottlePlan
 
 
-def provision_git(plan: DockerBottlePlan, target: str) -> None:
+def provision_git(plan: DockerBottlePlan, bottle: Bottle) -> None:
     """Set up git inside the bottle. Runs all three subcases; each
     no-ops when its condition isn't met."""
-    _provision_cwd_git(plan, target)
-    _provision_git_gate_config(plan, target)
-    _provision_git_user(plan, target)
+    _provision_cwd_git(plan, bottle)
+    _provision_git_gate_config(plan, bottle)
+    _provision_git_user(plan, bottle)
 
 
-def _provision_cwd_git(plan: DockerBottlePlan, target: str) -> None:
+def _provision_cwd_git(plan: DockerBottlePlan, bottle: Bottle) -> None:
     """If --cwd was set and the host cwd has a .git directory, copy
     it into /home/node/workspace/.git and fix ownership. No-op
     otherwise."""
     workspace = plan.workspace_plan
     if not (workspace.enabled and workspace.copy_git and workspace.has_host_git_dir):
         return
-    container = target
     guest_workspace_git = f"{workspace.guest_path}/.git"
     host_git = str(workspace.host_path / ".git")
-    info(f"copying {host_git} -> {container}:{guest_workspace_git}")
-    subprocess.run(
-        ["docker", "cp", host_git, f"{container}:{guest_workspace_git}"],
-        stdout=subprocess.DEVNULL,
-        check=True,
-    )
-    subprocess.run(
-        [
-            "docker", "exec", "-u", "0", container,
-            "chown", "-R", workspace.owner, guest_workspace_git,
-        ],
-        stdout=subprocess.DEVNULL,
-        check=True,
+    info(f"copying {host_git} -> {bottle.name}:{guest_workspace_git}")
+    bottle.cp_in(host_git, guest_workspace_git)
+    bottle.exec(
+        f"chown -R {shlex.quote(workspace.owner)} {shlex.quote(guest_workspace_git)}",
+        user="root",
     )
 
 
-def _provision_git_gate_config(plan: DockerBottlePlan, target: str) -> None:
+def _provision_git_gate_config(plan: DockerBottlePlan, bottle: Bottle) -> None:
     """Write ~/.gitconfig in the bottle with the git-gate
     insteadOf rules. No-op when the bottle has no `git` entries."""
-    bottle = plan.spec.manifest.bottle_for(plan.spec.agent_name)
-    if not bottle.git:
+    manifest_bottle = plan.spec.manifest.bottle_for(plan.spec.agent_name)
+    if not manifest_bottle.git:
         return
-    container = target
     container_home = os.environ.get("BOT_BOTTLE_CONTAINER_HOME", "/home/node")
     container_gitconfig = f"{container_home}/.gitconfig"
 
-    content = git_gate_render_gitconfig(bottle.git, GIT_GATE_HOSTNAME)
+    content = git_gate_render_gitconfig(manifest_bottle.git, GIT_GATE_HOSTNAME)
     config_file = plan.stage_dir / "agent_gitconfig"
     config_file.write_text(content)
     config_file.chmod(0o600)
 
-    info(f"writing {container_gitconfig} with {len(bottle.git)} insteadOf rule(s)")
-    subprocess.run(
-        ["docker", "cp", str(config_file), f"{container}:{container_gitconfig}"],
-        stdout=subprocess.DEVNULL,
-        check=True,
+    info(f"writing {container_gitconfig} with {len(manifest_bottle.git)} insteadOf rule(s)")
+    bottle.cp_in(str(config_file), container_gitconfig)
+    bottle.exec(
+        f"chown node:node {shlex.quote(container_gitconfig)} && "
+        f"chmod 644 {shlex.quote(container_gitconfig)}",
+        user="root",
     )
-    docker_mod.docker_exec_root(container, ["chown", "node:node", container_gitconfig])
-    docker_mod.docker_exec_root(container, ["chmod", "644", container_gitconfig])
 
 
-def _provision_git_user(plan: DockerBottlePlan, target: str) -> None:
+def _provision_git_user(plan: DockerBottlePlan, bottle: Bottle) -> None:
     """Apply `git config --global user.{name,email}` inside the
     bottle so the agent's commits are attributed to the operator-
     chosen identity instead of the agent image's default
@@ -101,23 +90,19 @@ def _provision_git_user(plan: DockerBottlePlan, target: str) -> None:
     Each field set independently — name-only or email-only
     configs only run the `git config` line for the field
     present."""
-    bottle = plan.spec.manifest.bottle_for(plan.spec.agent_name)
-    gu = bottle.git_user
+    manifest_bottle = plan.spec.manifest.bottle_for(plan.spec.agent_name)
+    gu = manifest_bottle.git_user
     if gu.is_empty():
         return
     if gu.name:
         info(f"git config --global user.name = {gu.name!r}")
-        subprocess.run(
-            ["docker", "exec", "-u", "node", target,
-             "git", "config", "--global", "user.name", gu.name],
-            stdout=subprocess.DEVNULL,
-            check=True,
+        bottle.exec(
+            f"git config --global user.name {shlex.quote(gu.name)}",
+            user="node",
         )
     if gu.email:
         info(f"git config --global user.email = {gu.email!r}")
-        subprocess.run(
-            ["docker", "exec", "-u", "node", target,
-             "git", "config", "--global", "user.email", gu.email],
-            stdout=subprocess.DEVNULL,
-            check=True,
+        bottle.exec(
+            f"git config --global user.email {shlex.quote(gu.email)}",
+            user="node",
         )

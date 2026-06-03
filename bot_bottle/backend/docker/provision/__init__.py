@@ -1,7 +1,7 @@
 """Per-provisioner modules for the Docker backend.
 
 Each module exports one top-level function:
-    provision_<thing>(plan: DockerBottlePlan, target: str) -> ...
+    provision_<thing>(plan: DockerBottlePlan, bottle: Bottle) -> ...
 
 `DockerBottleBackend.provision_*` methods delegate to these. The
 abstract `BottleBackend.provision_*` surface is unchanged; this

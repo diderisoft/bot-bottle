@@ -2,35 +2,34 @@
 
 from __future__ import annotations
 
-import subprocess
+import shlex
 
+from ....log import die
+from ... import Bottle
 from ..bottle_plan import DockerBottlePlan
 
 
-def provision_provider_auth(plan: DockerBottlePlan, target: str) -> None:
-    """Apply provider-owned guest setup through Docker primitives."""
+def provision_provider_auth(plan: DockerBottlePlan, bottle: Bottle) -> None:
+    """Apply provider-owned guest setup through the bottle's exec / cp_in."""
     provision = plan.agent_provision
     for d in provision.dirs:
-        _exec(target, ["mkdir", "-p", d.guest_path])
-        _exec(target, ["chown", d.owner, d.guest_path])
-        _exec(target, ["chmod", d.mode, d.guest_path])
+        _exec(bottle, f"mkdir -p {shlex.quote(d.guest_path)}", d.guest_path)
+        _exec(bottle, f"chown {shlex.quote(d.owner)} {shlex.quote(d.guest_path)}", d.guest_path)
+        _exec(bottle, f"chmod {shlex.quote(d.mode)} {shlex.quote(d.guest_path)}", d.guest_path)
     for command in provision.pre_copy:
-        _exec(target, list(command.argv))
+        _exec(bottle, shlex.join(command.argv), command.error)
     for f in provision.files:
-        subprocess.run(
-            ["docker", "cp", str(f.host_path), f"{target}:{f.guest_path}"],
-            stdout=subprocess.DEVNULL,
-            check=True,
-        )
-        _exec(target, ["chown", f.owner, f.guest_path])
-        _exec(target, ["chmod", f.mode, f.guest_path])
+        bottle.cp_in(str(f.host_path), f.guest_path)
+        _exec(bottle, f"chown {shlex.quote(f.owner)} {shlex.quote(f.guest_path)}", f.guest_path)
+        _exec(bottle, f"chmod {shlex.quote(f.mode)} {shlex.quote(f.guest_path)}", f.guest_path)
     for command in provision.verify:
-        _exec(target, list(command.argv))
+        _exec(bottle, shlex.join(command.argv), command.error)
 
 
-def _exec(target: str, argv: list[str]) -> None:
-    subprocess.run(
-        ["docker", "exec", "-u", "0", target, *argv],
-        stdout=subprocess.DEVNULL,
-        check=True,
-    )
+def _exec(bottle: Bottle, script: str, error: str) -> None:
+    result = bottle.exec(script, user="root")
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        if detail:
+            detail = f": {detail}"
+        die(f"agent provider provisioning: {error}{detail}")

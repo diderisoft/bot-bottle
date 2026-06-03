@@ -7,21 +7,21 @@ stuck-recovery MCP tools (pipelock-block, capability-block) at
 startup.
 
 Mirrors `backend.docker.provision.supervise` — same `claude mcp
-add` call, just dispatched via `smolvm machine exec` instead of
+add` call, just dispatched via bottle.exec instead of
 `docker exec`, and against `<bundle_ip>:<port>` instead of the
 short `supervise` alias (no DNS in the TSI-allowlisted guest)."""
 
 from __future__ import annotations
 
 from ....log import info, warn
-from .. import smolvm as _smolvm
+from ... import Bottle
 from ..bottle_plan import SmolmachinesBottlePlan
 
 
 _SUPERVISE_MCP_NAME = "supervise"
 
 
-def provision_supervise(plan: SmolmachinesBottlePlan, target: str) -> None:
+def provision_supervise(plan: SmolmachinesBottlePlan, bottle: Bottle) -> None:
     """Run `claude mcp add` inside the guest to register the
     supervise sidecar in claude-code's user config. No-op when
     bottle.supervise is False.
@@ -38,22 +38,13 @@ def provision_supervise(plan: SmolmachinesBottlePlan, target: str) -> None:
         return
     url = plan.agent_supervise_url
     info(f"registering supervise MCP server in agent claude config → {url}")
-    # `claude mcp add --scope user` writes to ~/.claude.json. The
-    # agent is the `node` user; smolvm machine_exec runs as root
-    # by default, so we have to switch user explicitly and set
-    # HOME so the config lands in /home/node/.claude.json (where
-    # the agent's claude actually reads it from).
-    r = _smolvm.machine_exec(
-        target,
-        [
-            "runuser", "-u", "node", "--",
-            "env", "HOME=/home/node",
-            "claude", "mcp", "add",
-            "--scope", "user",
-            "--transport", "http",
-            _SUPERVISE_MCP_NAME,
-            url,
-        ],
+    # `claude mcp add --scope user` writes to ~/.claude.json. Run
+    # as node so the config lands in /home/node/.claude.json.
+    # SmolmachinesBottle.exec sets HOME and USER automatically
+    # for the requested user.
+    r = bottle.exec(
+        f"claude mcp add --scope user --transport http {_SUPERVISE_MCP_NAME} {url}",
+        user="node",
     )
     if r.returncode != 0:
         warn(

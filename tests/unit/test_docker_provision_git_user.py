@@ -1,20 +1,20 @@
 """Unit: docker backend `_provision_git_user` (issue #86).
 
-Mocks `subprocess.run` and asserts the `docker exec -u node …
-git config --global …` argv shape. The cwd + git-gate passes
-are covered indirectly by the existing integration-shaped tests
-in test_smolmachines_provision; this file targets just the new
-git_user pass."""
+Mocks `bottle.exec` / `bottle.cp_in` and asserts on the script
+strings and user parameter. The cwd + git-gate passes are covered
+indirectly by the existing integration-shaped tests in
+test_smolmachines_provision; this file targets just the git_user
+pass."""
 
 from __future__ import annotations
 
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, call
 
 from bot_bottle.agent_provider import AgentProvisionPlan
-from bot_bottle.backend import BottleSpec
+from bot_bottle.backend import Bottle, BottleSpec, ExecResult
 from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
 from bot_bottle.backend.docker.provision import git as _git
 from bot_bottle.egress import EgressPlan
@@ -82,16 +82,22 @@ def _plan(*, git_user: dict | None = None,
     )
 
 
-def _git_config_calls(mock_run) -> list[list[str]]:
-    """Filter `subprocess.run` calls down to the ones that run
-    `git config --global` inside the bottle, returning each argv."""
-    out: list[list[str]] = []
-    for call in mock_run.call_args_list:
-        argv = call.args[0]
-        if (len(argv) >= 5
-                and argv[0] == "docker" and argv[1] == "exec"
-                and "git" in argv and "config" in argv):
-            out.append(list(argv))
+def _make_bottle(name: str = "bot-bottle-demo-abc12") -> MagicMock:
+    bottle = MagicMock(spec=Bottle)
+    bottle.name = name
+    bottle.exec.return_value = ExecResult(returncode=0, stdout="", stderr="")
+    return bottle
+
+
+def _git_config_exec_calls(bottle: MagicMock) -> list[tuple[str, str]]:
+    """Filter bottle.exec calls to git-config invocations.
+    Returns list of (script, user) tuples."""
+    out = []
+    for c in bottle.exec.call_args_list:
+        script = c.args[0] if c.args else c.kwargs.get("script", "")
+        user = c.kwargs.get("user", c.args[1] if len(c.args) > 1 else "node")
+        if "git config" in script:
+            out.append((script, user))
     return out
 
 
@@ -104,71 +110,65 @@ class TestProvisionGitUser(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_noop_when_no_git_user(self):
-        with patch.object(_git.subprocess, "run") as run:
-            _git._provision_git_user(
-                _plan(stage_dir=self.stage), "bot-bottle-demo-abc12",
-            )
-        self.assertEqual([], _git_config_calls(run))
+        bottle = _make_bottle()
+        _git._provision_git_user(_plan(stage_dir=self.stage), bottle)
+        self.assertEqual([], _git_config_exec_calls(bottle))
 
     def test_copies_cwd_git_to_workspace_plan_path(self):
         cwd = self.stage / "cwd"
         (cwd / ".git").mkdir(parents=True)
         plan = _plan(copy_cwd=True, user_cwd=str(cwd), stage_dir=self.stage)
-        with patch.object(_git.subprocess, "run") as run:
-            _git._provision_cwd_git(plan, "bot-bottle-demo-abc12")
+        bottle = _make_bottle()
+        _git._provision_cwd_git(plan, bottle)
 
-        self.assertEqual(
-            [
-                "docker", "cp", f"{cwd}/.git",
-                "bot-bottle-demo-abc12:/home/node/workspace/.git",
-            ],
-            run.call_args_list[0].args[0],
+        bottle.cp_in.assert_called_once_with(
+            f"{cwd}/.git",
+            "/home/node/workspace/.git",
         )
-        self.assertEqual(
-            [
-                "docker", "exec", "-u", "0", "bot-bottle-demo-abc12",
-                "chown", "-R", "node:node", "/home/node/workspace/.git",
-            ],
-            run.call_args_list[1].args[0],
-        )
+        chown_calls = [
+            c for c in bottle.exec.call_args_list
+            if "chown" in (c.args[0] if c.args else "")
+        ]
+        self.assertEqual(1, len(chown_calls))
+        self.assertIn("node:node", chown_calls[0].args[0])
+        self.assertIn("/home/node/workspace/.git", chown_calls[0].args[0])
 
     def test_sets_name_and_email(self):
         plan = _plan(
             git_user={"name": "Eric Bauerfeld", "email": "eric@dideric.is"},
             stage_dir=self.stage,
         )
-        with patch.object(_git.subprocess, "run") as run:
-            _git._provision_git_user(plan, "bot-bottle-demo-abc12")
-        calls = _git_config_calls(run)
+        bottle = _make_bottle()
+        _git._provision_git_user(plan, bottle)
+        calls = _git_config_exec_calls(bottle)
         self.assertEqual(2, len(calls))
-        # All `docker exec` invocations run as `-u node` so the
-        # --global config lands in /home/node/.gitconfig.
-        for argv in calls:
-            self.assertEqual(
-                ["docker", "exec", "-u", "node", "bot-bottle-demo-abc12",
-                 "git", "config", "--global"],
-                argv[:8],
-            )
-        self.assertEqual(["user.name", "Eric Bauerfeld"], calls[0][8:])
-        self.assertEqual(["user.email", "eric@dideric.is"], calls[1][8:])
+        for script, user in calls:
+            self.assertEqual("node", user)
+            self.assertIn("git config --global", script)
+        self.assertIn("user.name", calls[0][0])
+        self.assertIn("Eric Bauerfeld", calls[0][0])
+        self.assertIn("user.email", calls[1][0])
+        self.assertIn("eric@dideric.is", calls[1][0])
 
     def test_name_only_sets_only_name(self):
         plan = _plan(git_user={"name": "Bot"}, stage_dir=self.stage)
-        with patch.object(_git.subprocess, "run") as run:
-            _git._provision_git_user(plan, "bot-bottle-demo-abc12")
-        calls = _git_config_calls(run)
+        bottle = _make_bottle()
+        _git._provision_git_user(plan, bottle)
+        calls = _git_config_exec_calls(bottle)
         self.assertEqual(1, len(calls))
-        self.assertEqual(["user.name", "Bot"], calls[0][8:])
+        self.assertIn("user.name", calls[0][0])
+        self.assertIn("Bot", calls[0][0])
 
     def test_email_only_sets_only_email(self):
         plan = _plan(
             git_user={"email": "bot@example.com"}, stage_dir=self.stage,
         )
-        with patch.object(_git.subprocess, "run") as run:
-            _git._provision_git_user(plan, "bot-bottle-demo-abc12")
-        calls = _git_config_calls(run)
+        bottle = _make_bottle()
+        _git._provision_git_user(plan, bottle)
+        calls = _git_config_exec_calls(bottle)
         self.assertEqual(1, len(calls))
-        self.assertEqual(["user.email", "bot@example.com"], calls[0][8:])
+        self.assertIn("user.email", calls[0][0])
+        self.assertIn("bot@example.com", calls[0][0])
 
 
 if __name__ == "__main__":

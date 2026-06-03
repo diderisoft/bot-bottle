@@ -26,12 +26,13 @@ git_gate module."""
 from __future__ import annotations
 
 import os
+import shlex
 import tempfile
 from pathlib import Path
 
 from ....git_gate import git_gate_render_gitconfig
 from ....log import info
-from .. import smolvm as _smolvm
+from ... import Bottle
 from ..bottle_plan import SmolmachinesBottlePlan
 
 
@@ -46,15 +47,15 @@ def _guest_home() -> str:
     return os.environ.get("BOT_BOTTLE_GUEST_HOME", _DEFAULT_GUEST_HOME)
 
 
-def provision_git(plan: SmolmachinesBottlePlan, target: str) -> None:
+def provision_git(plan: SmolmachinesBottlePlan, bottle: Bottle) -> None:
     """Set up git inside the guest. Runs all three subcases; each
     no-ops when its condition isn't met."""
-    _provision_cwd_git(plan, target)
-    _provision_git_gate_config(plan, target)
-    _provision_git_user(plan, target)
+    _provision_cwd_git(plan, bottle)
+    _provision_git_gate_config(plan, bottle)
+    _provision_git_user(plan, bottle)
 
 
-def _provision_cwd_git(plan: SmolmachinesBottlePlan, target: str) -> None:
+def _provision_cwd_git(plan: SmolmachinesBottlePlan, bottle: Bottle) -> None:
     """If --cwd was set and the host cwd has a .git directory, copy
     it into <guest_home>/workspace/.git and fix ownership. No-op
     otherwise."""
@@ -63,25 +64,26 @@ def _provision_cwd_git(plan: SmolmachinesBottlePlan, target: str) -> None:
         return
     guest_workspace_git = f"{workspace.guest_path}/.git"
     host_git = str(workspace.host_path / ".git")
-    info(f"copying {host_git} -> {target}:{guest_workspace_git}")
-    # mkdir -p the workspace dir so `machine cp` lands the .git
+    info(f"copying {host_git} -> {bottle.name}:{guest_workspace_git}")
+    # mkdir -p the workspace dir so cp_in lands the .git
     # directly there even on first-time bottles.
-    _smolvm.machine_exec(target, ["mkdir", "-p", workspace.guest_path])
-    _smolvm.machine_cp(
-        host_git, f"{target}:{guest_workspace_git}",
-    )
-    # `machine cp` lands files as root; the agent runs as node so
+    bottle.exec(f"mkdir -p {shlex.quote(workspace.guest_path)}", user="root")
+    bottle.cp_in(host_git, guest_workspace_git)
+    # cp_in lands files as root; the agent runs as node so
     # the workspace tree must be chowned over.
-    _smolvm.machine_exec(
-        target, ["chown", "-R", workspace.owner, guest_workspace_git],
+    bottle.exec(
+        f"chown -R {shlex.quote(workspace.owner)} {shlex.quote(guest_workspace_git)}",
+        user="root",
     )
 
 
-def _provision_git_gate_config(plan: SmolmachinesBottlePlan, target: str) -> None:
+def _provision_git_gate_config(
+    plan: SmolmachinesBottlePlan, bottle: Bottle
+) -> None:
     """Write ~/.gitconfig in the guest with the git-gate insteadOf
     rules. No-op when the bottle has no `git` entries."""
-    bottle = plan.spec.manifest.bottle_for(plan.spec.agent_name)
-    if not bottle.git:
+    manifest_bottle = plan.spec.manifest.bottle_for(plan.spec.agent_name)
+    if not manifest_bottle.git:
         return
 
     # `<loopback alias>:<host port>` form: the bundle's git-gate
@@ -90,11 +92,11 @@ def _provision_git_gate_config(plan: SmolmachinesBottlePlan, target: str) -> Non
     # TSI, not the docker bridge IP) can dial it. launch.py
     # populates `plan.agent_git_gate_host` after bundle bringup.
     content = git_gate_render_gitconfig(
-        bottle.git, plan.agent_git_gate_host, scheme="http",
+        manifest_bottle.git, plan.agent_git_gate_host, scheme="http",
     )
 
     guest_gitconfig = f"{_guest_home()}/.gitconfig"
-    # Stage the file under the plan's stage_dir so `machine cp`
+    # Stage the file under the plan's stage_dir so cp_in
     # has a stable host path. The plan's stage_dir is cleaned up
     # by start.py's session-end teardown.
     with tempfile.NamedTemporaryFile(
@@ -105,41 +107,38 @@ def _provision_git_gate_config(plan: SmolmachinesBottlePlan, target: str) -> Non
         config_file = Path(f.name)
     os.chmod(config_file, 0o600)
 
-    info(f"writing {guest_gitconfig} with {len(bottle.git)} insteadOf rule(s)")
-    _smolvm.machine_cp(str(config_file), f"{target}:{guest_gitconfig}")
-    _smolvm.machine_exec(target, ["chown", "node:node", guest_gitconfig])
-    _smolvm.machine_exec(target, ["chmod", "644", guest_gitconfig])
+    info(f"writing {guest_gitconfig} with {len(manifest_bottle.git)} insteadOf rule(s)")
+    bottle.cp_in(str(config_file), guest_gitconfig)
+    bottle.exec(
+        f"chown node:node {shlex.quote(guest_gitconfig)} && "
+        f"chmod 644 {shlex.quote(guest_gitconfig)}",
+        user="root",
+    )
 
 
 def _provision_git_user(
-    plan: SmolmachinesBottlePlan, target: str,
+    plan: SmolmachinesBottlePlan, bottle: Bottle,
 ) -> None:
     """Apply `git config --global user.{name,email}` inside the
     guest as the node user so --global lands in the same
     `/home/node/.gitconfig` that `_provision_git_gate_config`
     writes to. No-op when the bottle didn't declare `git.user`.
 
-    Runs via `runuser -u node --`; HOME is forced via smolvm's
-    `-e` flag because runuser (without -l) inherits root's
-    HOME=/root, which would put --global in the wrong file."""
-    bottle = plan.spec.manifest.bottle_for(plan.spec.agent_name)
-    gu = bottle.git_user
+    SmolmachinesBottle.exec(user="node") automatically sets
+    HOME=/home/node so --global writes to /home/node/.gitconfig."""
+    manifest_bottle = plan.spec.manifest.bottle_for(plan.spec.agent_name)
+    gu = manifest_bottle.git_user
     if gu.is_empty():
         return
-    env = {"HOME": _guest_home(), "USER": "node"}
     if gu.name:
         info(f"git config --global user.name = {gu.name!r}")
-        _smolvm.machine_exec(
-            target,
-            ["runuser", "-u", "node", "--",
-             "git", "config", "--global", "user.name", gu.name],
-            env=env,
+        bottle.exec(
+            f"git config --global user.name {shlex.quote(gu.name)}",
+            user="node",
         )
     if gu.email:
         info(f"git config --global user.email = {gu.email!r}")
-        _smolvm.machine_exec(
-            target,
-            ["runuser", "-u", "node", "--",
-             "git", "config", "--global", "user.email", gu.email],
-            env=env,
+        bottle.exec(
+            f"git config --global user.email {shlex.quote(gu.email)}",
+            user="node",
         )

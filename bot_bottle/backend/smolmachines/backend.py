@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator, Sequence
 
-from .. import ActiveAgent, BottleBackend, BottleSpec
+from .. import ActiveAgent, Bottle, BottleBackend, BottleSpec
 from . import cleanup as _cleanup
 from . import enumerate as _enumerate
 from . import launch as _launch
@@ -54,39 +54,39 @@ class SmolmachinesBottleBackend(
             yield bottle
 
     def provision_ca(
-        self, plan: SmolmachinesBottlePlan, target: str
+        self, plan: SmolmachinesBottlePlan, bottle: Bottle
     ) -> None:
-        _ca.provision_ca(plan, target)
+        _ca.provision_ca(plan, bottle)
 
     def provision_prompt(
-        self, plan: SmolmachinesBottlePlan, target: str
+        self, plan: SmolmachinesBottlePlan, bottle: Bottle
     ) -> str | None:
-        return _prompt.provision_prompt(plan, target)
+        return _prompt.provision_prompt(plan, bottle)
 
     def provision_provider_auth(
-        self, plan: SmolmachinesBottlePlan, target: str
+        self, plan: SmolmachinesBottlePlan, bottle: Bottle
     ) -> None:
-        _provider_auth.provision_provider_auth(plan, target)
+        _provider_auth.provision_provider_auth(plan, bottle)
 
     def provision_skills(
-        self, plan: SmolmachinesBottlePlan, target: str
+        self, plan: SmolmachinesBottlePlan, bottle: Bottle
     ) -> None:
-        _skills.provision_skills(plan, target)
+        _skills.provision_skills(plan, bottle)
 
     def provision_workspace(
-        self, plan: SmolmachinesBottlePlan, target: str
+        self, plan: SmolmachinesBottlePlan, bottle: Bottle
     ) -> None:
-        _workspace.provision_workspace(plan, target)
+        _workspace.provision_workspace(plan, bottle)
 
     def provision_git(
-        self, plan: SmolmachinesBottlePlan, target: str
+        self, plan: SmolmachinesBottlePlan, bottle: Bottle
     ) -> None:
-        _git.provision_git(plan, target)
+        _git.provision_git(plan, bottle)
 
     def provision_supervise(
-        self, plan: SmolmachinesBottlePlan, target: str
+        self, plan: SmolmachinesBottlePlan, bottle: Bottle
     ) -> None:
-        _supervise.provision_supervise(plan, target)
+        _supervise.provision_supervise(plan, bottle)
 
     def prepare_cleanup(self) -> SmolmachinesBottleCleanupPlan:
         return _cleanup.prepare_cleanup()

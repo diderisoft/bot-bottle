@@ -13,7 +13,7 @@ import os
 
 from ....log import die, info
 from ...util import host_skill_dir
-from .. import smolvm as _smolvm
+from ... import Bottle
 from ..bottle_plan import SmolmachinesBottlePlan
 
 
@@ -24,18 +24,18 @@ from ..bottle_plan import SmolmachinesBottlePlan
 _DEFAULT_SKILLS_DIR = "/home/node/.claude/skills"
 
 
-def provision_skills(plan: SmolmachinesBottlePlan, target: str) -> None:
+def provision_skills(plan: SmolmachinesBottlePlan, bottle: Bottle) -> None:
     """Copy each of the agent's named skills from the host's
     ~/.claude/skills/<name>/ into the guest's equivalent path.
-    For each skill: `mkdir -p` the destination, `smolvm machine cp`
-    the host source dir over, then chown the result to node:node so
-    the agent can read it. No-op when the agent has no skills.
+    For each skill: `mkdir -p` the destination, cp_in the host
+    source dir over, then chown the result to node:node so the
+    agent can read it. No-op when the agent has no skills.
 
-    smolvm machine cp on a directory copies recursively (same
-    semantics as `cp -r`); unlike docker cp's trailing-slash
-    convention, smolvm doesn't need the `/.` suffix dance.
+    cp_in on a directory copies recursively; unlike docker cp's
+    trailing-slash convention, smolvm doesn't need the `/.` suffix
+    dance.
 
-    machine cp lands files as root inside the VM, so we chown each
+    cp_in lands files as root inside the VM, so we chown each
     skill tree over to node:node after the copy — same pattern as
     the docker backend's provision_prompt."""
     agent = plan.spec.manifest.agents[plan.spec.agent_name]
@@ -46,7 +46,7 @@ def provision_skills(plan: SmolmachinesBottlePlan, target: str) -> None:
         "BOT_BOTTLE_GUEST_SKILLS_DIR", _DEFAULT_SKILLS_DIR,
     )
 
-    _smolvm.machine_exec(target, ["mkdir", "-p", skills_dir])
+    bottle.exec(f"mkdir -p {skills_dir}", user="root")
 
     for name in agent.skills:
         src = host_skill_dir(name)
@@ -56,8 +56,8 @@ def provision_skills(plan: SmolmachinesBottlePlan, target: str) -> None:
                 f"validation and copy at {src}."
             )
         dst = f"{skills_dir}/{name}"
-        info(f"copying skill {name} into {target}:{dst}")
+        info(f"copying skill {name} into {bottle.name}:{dst}")
         # Wipe any prior copy so re-runs don't accumulate.
-        _smolvm.machine_exec(target, ["rm", "-rf", dst])
-        _smolvm.machine_cp(src, f"{target}:{dst}")
-        _smolvm.machine_exec(target, ["chown", "-R", "node:node", dst])
+        bottle.exec(f"rm -rf {dst}", user="root")
+        bottle.cp_in(src, dst)
+        bottle.exec(f"chown -R node:node {dst}", user="root")

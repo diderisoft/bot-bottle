@@ -31,33 +31,21 @@ stage dir; nothing in the agent ever sees it."""
 
 from __future__ import annotations
 
-import subprocess
-
+from ... import Bottle
 from ...util import AGENT_CA_PATH, log_ca_fingerprint, select_ca_cert
 from ..bottle_plan import DockerBottlePlan
 
 
-def provision_ca(plan: DockerBottlePlan, target: str) -> None:
+def provision_ca(plan: DockerBottlePlan, bottle: Bottle) -> None:
     """Copy the agent-facing CA cert into the agent, rebuild the
     trust bundle, emit a one-line fingerprint log. Called from
     `BottleBackend.provision` after the agent container is up."""
-    container = target
     cert_host_path, label = select_ca_cert(plan.egress_plan, plan.proxy_plan)
 
-    subprocess.run(
-        ["docker", "cp", str(cert_host_path), f"{container}:{AGENT_CA_PATH}"],
-        stdout=subprocess.DEVNULL,
-        check=True,
-    )
-    subprocess.run(
-        ["docker", "exec", "-u", "0", container, "chmod", "644", AGENT_CA_PATH],
-        stdout=subprocess.DEVNULL,
-        check=True,
-    )
-    subprocess.run(
-        ["docker", "exec", "-u", "0", container, "update-ca-certificates"],
-        stdout=subprocess.DEVNULL,
-        check=True,
+    bottle.cp_in(str(cert_host_path), AGENT_CA_PATH)
+    bottle.exec(
+        f"chmod 644 {AGENT_CA_PATH} && update-ca-certificates",
+        user="root",
     )
 
     log_ca_fingerprint(cert_host_path, label)

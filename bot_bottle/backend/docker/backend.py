@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator, Sequence
 
-from .. import ActiveAgent, BottleBackend, BottleSpec
+from .. import ActiveAgent, Bottle, BottleBackend, BottleSpec
 from . import cleanup as _cleanup
 from . import enumerate as _enumerate
 from . import launch as _launch
@@ -57,23 +57,23 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
         with _launch.launch(plan, provision=self.provision) as bottle:
             yield bottle
 
-    def provision_ca(self, plan: DockerBottlePlan, target: str) -> None:
-        _ca.provision_ca(plan, target)
+    def provision_ca(self, plan: DockerBottlePlan, bottle: Bottle) -> None:
+        _ca.provision_ca(plan, bottle)
 
-    def provision_prompt(self, plan: DockerBottlePlan, target: str) -> str | None:
-        return _prompt.provision_prompt(plan, target)
+    def provision_prompt(self, plan: DockerBottlePlan, bottle: Bottle) -> str | None:
+        return _prompt.provision_prompt(plan, bottle)
 
-    def provision_provider_auth(self, plan: DockerBottlePlan, target: str) -> None:
-        _provider_auth.provision_provider_auth(plan, target)
+    def provision_provider_auth(self, plan: DockerBottlePlan, bottle: Bottle) -> None:
+        _provider_auth.provision_provider_auth(plan, bottle)
 
-    def provision_skills(self, plan: DockerBottlePlan, target: str) -> None:
-        _skills.provision_skills(plan, target)
+    def provision_skills(self, plan: DockerBottlePlan, bottle: Bottle) -> None:
+        _skills.provision_skills(plan, bottle)
 
-    def provision_git(self, plan: DockerBottlePlan, target: str) -> None:
-        _git.provision_git(plan, target)
+    def provision_git(self, plan: DockerBottlePlan, bottle: Bottle) -> None:
+        _git.provision_git(plan, bottle)
 
-    def provision_supervise(self, plan: DockerBottlePlan, target: str) -> None:
-        _supervise_prov.provision_supervise(plan, target)
+    def provision_supervise(self, plan: DockerBottlePlan, bottle: Bottle) -> None:
+        _supervise_prov.provision_supervise(plan, bottle)
 
     def prepare_cleanup(self) -> DockerBottleCleanupPlan:
         return _cleanup.prepare_cleanup()

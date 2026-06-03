@@ -18,10 +18,9 @@ sidecar that isn't running.
 
 from __future__ import annotations
 
-import subprocess
-
 from ....log import info, warn
 from ....supervise import SUPERVISE_HOSTNAME, SUPERVISE_PORT
+from ... import Bottle
 from ..bottle_plan import DockerBottlePlan
 
 
@@ -32,7 +31,7 @@ def supervise_mcp_url() -> str:
     return f"http://{SUPERVISE_HOSTNAME}:{SUPERVISE_PORT}/"
 
 
-def provision_supervise(plan: DockerBottlePlan, target: str) -> None:
+def provision_supervise(plan: DockerBottlePlan, bottle: Bottle) -> None:
     """Run `claude mcp add` inside the agent container to register
     the supervise sidecar in claude-code's user config. No-op when
     bottle.supervise is False.
@@ -43,16 +42,11 @@ def provision_supervise(plan: DockerBottlePlan, target: str) -> None:
     if plan.supervise_plan is None:
         return
     url = supervise_mcp_url()
-    argv = [
-        "docker", "exec", "-u", "node", target,
-        "claude", "mcp", "add",
-        "--scope", "user",
-        "--transport", "http",
-        _SUPERVISE_MCP_NAME,
-        url,
-    ]
     info(f"registering supervise MCP server in agent claude config → {url}")
-    r = subprocess.run(argv, capture_output=True, text=True, check=False)
+    r = bottle.exec(
+        f"claude mcp add --scope user --transport http {_SUPERVISE_MCP_NAME} {url}",
+        user="node",
+    )
     if r.returncode != 0:
         warn(
             f"`claude mcp add supervise` failed (exit {r.returncode}): "

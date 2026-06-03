@@ -312,15 +312,13 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
     def launch(self, plan: PlanT) -> AbstractContextManager[Bottle]:
         """Build/run the bottle and yield a handle; tear down on exit."""
 
-    def provision(self, plan: PlanT, target: str) -> str | None:
+    def provision(self, plan: PlanT, bottle: "Bottle") -> str | None:
         """Copy host-side files (CA cert, prompt, skills, .git) into
         the running bottle. Called from `launch` after the container
-        / machine is up. `target` identifies the running instance in
-        backend-specific terms (Docker: resolved container name; fly:
-        machine id). Returns the in-container prompt path if a prompt
-        was provisioned, else None — the Bottle handle uses it to
-        decide whether to add provider-specific prompt args to the agent's
-        argv.
+        / machine is up. Returns the in-container prompt path if a
+        prompt was provisioned, else None — the Bottle handle uses it
+        to decide whether to add provider-specific prompt args to the
+        agent's argv.
 
         Default orchestration: ca → prompt → skills → workspace → git →
         supervise. CA install runs first so the agent's trust store
@@ -333,16 +331,16 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         on the agent's HTTP_PROXY path so every tool that respects
         HTTPS_PROXY (claude-code, git over HTTPS, npm, curl) is
         intercepted without per-tool reconfiguration."""
-        self.provision_ca(plan, target)
-        prompt_path = self.provision_prompt(plan, target)
-        self.provision_provider_auth(plan, target)
-        self.provision_skills(plan, target)
-        self.provision_workspace(plan, target)
-        self.provision_git(plan, target)
-        self.provision_supervise(plan, target)
+        self.provision_ca(plan, bottle)
+        prompt_path = self.provision_prompt(plan, bottle)
+        self.provision_provider_auth(plan, bottle)
+        self.provision_skills(plan, bottle)
+        self.provision_workspace(plan, bottle)
+        self.provision_git(plan, bottle)
+        self.provision_supervise(plan, bottle)
         return prompt_path
 
-    def provision_ca(self, plan: PlanT, target: str) -> None:
+    def provision_ca(self, plan: PlanT, bottle: "Bottle") -> None:
         """Install the per-bottle CA into the agent's trust store so
         the agent trusts the bumped CONNECT cert egress (was
         pipelock, pre-PRD-0017) presents. Default impl is a no-op so
@@ -351,34 +349,34 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         backend overrides to docker-cp the cert in and run
         `update-ca-certificates`."""
 
-    def provision_provider_auth(self, plan: PlanT, target: str) -> None:
+    def provision_provider_auth(self, plan: PlanT, bottle: "Bottle") -> None:
         """Install non-secret provider auth marker files into the agent
         home when a provider needs them to select the right auth mode.
         The default is no-op."""
 
     @abstractmethod
-    def provision_prompt(self, plan: PlanT, target: str) -> str | None:
+    def provision_prompt(self, plan: PlanT, bottle: "Bottle") -> str | None:
         """Copy the prompt file into the running bottle. Returns the
         in-container path iff the agent has a non-empty prompt;
         callers use the return value to decide whether to add
         provider-specific prompt args to the agent's argv."""
 
     @abstractmethod
-    def provision_skills(self, plan: PlanT, target: str) -> None:
+    def provision_skills(self, plan: PlanT, bottle: "Bottle") -> None:
         """Copy the agent's named skills from the host into the
         running bottle. No-op when the agent has no skills."""
 
-    def provision_workspace(self, plan: PlanT, target: str) -> None:
+    def provision_workspace(self, plan: PlanT, bottle: "Bottle") -> None:
         """Copy the operator workspace into the running bottle when
         the backend cannot bake it into the agent image. Default is
         no-op for backends like Docker that handle this before launch."""
 
     @abstractmethod
-    def provision_git(self, plan: PlanT, target: str) -> None:
+    def provision_git(self, plan: PlanT, bottle: "Bottle") -> None:
         """Copy the host's cwd `.git` directory into the running
         bottle if the user requested --cwd. No-op otherwise."""
 
-    def provision_supervise(self, plan: PlanT, target: str) -> None:
+    def provision_supervise(self, plan: PlanT, bottle: "Bottle") -> None:
         """Write the in-bottle Claude Code MCP config so the agent
         discovers the per-bottle supervise sidecar (PRD 0013).
         No-op when bottle.supervise is False or the backend doesn't

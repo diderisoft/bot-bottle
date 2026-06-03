@@ -113,15 +113,16 @@ def launch(
         _launch_vm(plan, agent_from_path, loopback_ip, stack)
         _init_vm(plan)
 
-        prompt_path = provision(plan, plan.machine_name)
-
-        yield SmolmachinesBottle(
+        bottle = SmolmachinesBottle(
             plan.machine_name,
-            prompt_path=prompt_path,
+            prompt_path=None,
             guest_env=plan.guest_env,
             agent_command=plan.agent_command,
             agent_prompt_mode=plan.agent_prompt_mode,
         )
+        bottle._prompt_path = provision(plan, bottle)
+
+        yield bottle
     finally:
         _teardown_smolmachines(stack, plan)
 

@@ -1,8 +1,8 @@
 """Unit: smolmachines provisioning helpers (PRD 0023 chunks 4a + 4d).
 
-Tests mock `smolvm.machine_cp` / `smolvm.machine_exec` and assert
-on the dispatched call shape. The real round-trip lives in the
-chunk-4 integration smoke."""
+Tests mock `bottle.exec` / `bottle.cp_in` and assert on the
+dispatched script shape. The real round-trip lives in the chunk-4
+integration smoke."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from bot_bottle.agent_provider import (
     AgentProvisionCommand,
@@ -19,7 +19,7 @@ from bot_bottle.agent_provider import (
     AgentProvisionFile,
     AgentProvisionPlan,
 )
-from bot_bottle.backend import BottleSpec
+from bot_bottle.backend import Bottle, BottleSpec, ExecResult
 from bot_bottle.backend.smolmachines.bottle_plan import (
     SmolmachinesBottlePlan,
 )
@@ -33,7 +33,6 @@ from bot_bottle.backend.smolmachines.provision import (
     workspace as _workspace,
 )
 from bot_bottle.backend.smolmachines.launch import _bundle_launch_spec
-from bot_bottle.backend.smolmachines.smolvm import SmolvmRunResult
 from bot_bottle.egress import EgressPlan, EgressRoute
 from bot_bottle.git_gate import GitGatePlan, GitGateUpstream
 from bot_bottle.manifest import GitEntry, Manifest
@@ -41,6 +40,28 @@ from bot_bottle.pipelock import PipelockProxyPlan
 from bot_bottle.supervise import SupervisePlan
 from bot_bottle.workspace import workspace_plan
 
+
+def _make_bottle(
+    name: str = "bot-bottle-demo-abc12",
+    exec_result: ExecResult | None = None,
+) -> MagicMock:
+    bottle = MagicMock(spec=Bottle)
+    bottle.name = name
+    bottle.exec.return_value = (
+        exec_result if exec_result is not None
+        else ExecResult(returncode=0, stdout="", stderr="")
+    )
+    return bottle
+
+
+def _exec_scripts(bottle: MagicMock) -> list[str]:
+    """All script strings passed to bottle.exec, in call order."""
+    return [c.args[0] for c in bottle.exec.call_args_list]
+
+
+def _exec_users(bottle: MagicMock) -> list[str]:
+    """user= kwarg from each bottle.exec call, in order."""
+    return [c.kwargs.get("user", "node") for c in bottle.exec.call_args_list]
 
 
 def _plan(
@@ -203,235 +224,181 @@ def _agent_provision(
 
 
 class TestProvisionPrompt(unittest.TestCase):
-    def test_cp_uses_smolvm_machine_cp_with_machine_path_syntax(self):
-        with patch(
-            "bot_bottle.backend.smolmachines.provision.prompt._smolvm.machine_cp"
-        ) as cp, patch(
-            "bot_bottle.backend.smolmachines.provision.prompt._smolvm.machine_exec"
-        ):
-            _prompt.provision_prompt(_plan(), "bot-bottle-demo-abc12")
-        cp.assert_called_once_with(
+    def test_cp_uses_bottle_cp_in(self):
+        bottle = _make_bottle()
+        _prompt.provision_prompt(_plan(), bottle)
+        bottle.cp_in.assert_called_once_with(
             "/tmp/state/demo-abc12/agent/prompt.txt",
-            "bot-bottle-demo-abc12:/home/node/.bot-bottle-prompt.txt",
+            "/home/node/.bot-bottle-prompt.txt",
         )
 
     def test_returns_path_when_agent_has_prompt(self):
-        with patch(
-            "bot_bottle.backend.smolmachines.provision.prompt._smolvm.machine_cp"
-        ), patch(
-            "bot_bottle.backend.smolmachines.provision.prompt._smolvm.machine_exec"
-        ):
-            r = _prompt.provision_prompt(
-                _plan(agent_prompt="You are a helpful assistant."),
-                "bot-bottle-demo-abc12",
-            )
+        bottle = _make_bottle()
+        r = _prompt.provision_prompt(
+            _plan(agent_prompt="You are a helpful assistant."),
+            bottle,
+        )
         self.assertEqual("/home/node/.bot-bottle-prompt.txt", r)
 
     def test_returns_none_when_agent_has_no_prompt(self):
         # The file is still copied (path-must-exist contract);
         # only the return value differs.
-        with patch(
-            "bot_bottle.backend.smolmachines.provision.prompt._smolvm.machine_cp"
-        ) as cp, patch(
-            "bot_bottle.backend.smolmachines.provision.prompt._smolvm.machine_exec"
-        ):
-            r = _prompt.provision_prompt(_plan(agent_prompt=""), "bot-bottle-demo-abc12")
+        bottle = _make_bottle()
+        r = _prompt.provision_prompt(_plan(agent_prompt=""), bottle)
         self.assertIsNone(r)
-        cp.assert_called_once()
+        bottle.cp_in.assert_called_once()
 
     def test_chowns_to_node_after_copy(self):
-        # machine cp lands as root; without the chown, the node user
+        # cp_in lands as root; without the chown, the node user
         # can't read its own mode-600 prompt.
-        with patch(
-            "bot_bottle.backend.smolmachines.provision.prompt._smolvm.machine_cp"
-        ), patch(
-            "bot_bottle.backend.smolmachines.provision.prompt._smolvm.machine_exec"
-        ) as ex:
-            _prompt.provision_prompt(_plan(), "bot-bottle-demo-abc12")
-        argv_seen = [call.args[1] for call in ex.call_args_list]
-        self.assertIn(
-            ["chown", "node:node", "/home/node/.bot-bottle-prompt.txt"],
-            argv_seen,
+        bottle = _make_bottle()
+        _prompt.provision_prompt(_plan(), bottle)
+        scripts = _exec_scripts(bottle)
+        self.assertTrue(
+            any("chown node:node" in s and "/home/node/.bot-bottle-prompt.txt" in s
+                for s in scripts)
         )
-        self.assertIn(
-            ["chmod", "600", "/home/node/.bot-bottle-prompt.txt"],
-            argv_seen,
+        self.assertTrue(
+            any("chmod 600" in s and "/home/node/.bot-bottle-prompt.txt" in s
+                for s in scripts)
         )
 
 
 class TestProvisionProviderAuth(unittest.TestCase):
-    def _patch(self):
-        return (
-            patch(
-                "bot_bottle.backend.smolmachines.provision.provider_auth._smolvm.machine_cp"
-            ),
-            patch(
-                "bot_bottle.backend.smolmachines.provision.provider_auth._smolvm.machine_exec"
-            ),
-        )
-
     def test_noop_for_non_codex_provider(self):
-        cp_p, ex_p = self._patch()
-        with cp_p as cp, ex_p as ex:
-            _provider_auth.provision_provider_auth(_plan(), "bot-bottle-demo-abc12")
-        self.assertEqual(0, cp.call_count)
-        self.assertEqual(0, ex.call_count)
+        bottle = _make_bottle()
+        _provider_auth.provision_provider_auth(_plan(), bottle)
+        self.assertEqual(0, bottle.cp_in.call_count)
+        self.assertEqual(0, bottle.exec.call_count)
 
     def test_codex_provider_trusts_launch_dir_without_auth_file(self):
-        cp_p, ex_p = self._patch()
-        with cp_p as cp, ex_p as ex:
-            ex.return_value = SmolvmRunResult(0, "", "")
-            _provider_auth.provision_provider_auth(
-                _plan(agent_provider_template="codex"),
-                "bot-bottle-demo-abc12",
-            )
-        cp.assert_called_once_with(
+        bottle = _make_bottle()
+        _provider_auth.provision_provider_auth(
+            _plan(agent_provider_template="codex"),
+            bottle,
+        )
+        bottle.cp_in.assert_called_once_with(
             "/tmp/codex-config.toml",
-            "bot-bottle-demo-abc12:/home/node/.codex/config.toml",
+            "/home/node/.codex/config.toml",
         )
-        argv_seen = [call.args[1] for call in ex.call_args_list]
-        self.assertIn(["mkdir", "-p", "/home/node/.codex"], argv_seen)
-        self.assertIn(
-            ["chown", "node:node", "/home/node/.codex/config.toml"],
-            argv_seen,
+        scripts = _exec_scripts(bottle)
+        self.assertTrue(any("mkdir -p" in s and "/home/node/.codex" in s for s in scripts))
+        self.assertTrue(
+            any("chown" in s and "node:node" in s and "/home/node/.codex/config.toml" in s
+                for s in scripts)
         )
-        self.assertIn(["chmod", "600", "/home/node/.codex/config.toml"], argv_seen)
+        self.assertTrue(
+            any("chmod" in s and "600" in s and "/home/node/.codex/config.toml" in s
+                for s in scripts)
+        )
 
     def test_copies_dummy_auth_json_to_codex_home(self):
-        cp_p, ex_p = self._patch()
-        with cp_p as cp, ex_p as ex:
-            ex.return_value = SmolvmRunResult(0, "Logged in using ChatGPT\n", "")
-            _provider_auth.provision_provider_auth(
-                _plan(
-                    agent_provider_template="codex",
-                    codex_auth_file=Path("/tmp/codex-auth.json"),
-                ),
-                "bot-bottle-demo-abc12",
-            )
-        cp_calls = [call.args for call in cp.call_args_list]
+        bottle = _make_bottle()
+        _provider_auth.provision_provider_auth(
+            _plan(
+                agent_provider_template="codex",
+                codex_auth_file=Path("/tmp/codex-auth.json"),
+            ),
+            bottle,
+        )
+        cp_calls = [c.args for c in bottle.cp_in.call_args_list]
         self.assertIn(
-            ("/tmp/codex-config.toml",
-             "bot-bottle-demo-abc12:/home/node/.codex/config.toml"),
+            ("/tmp/codex-config.toml", "/home/node/.codex/config.toml"),
             cp_calls,
         )
         self.assertIn(
-            ("/tmp/codex-auth.json",
-             "bot-bottle-demo-abc12:/home/node/.codex/auth.json"),
+            ("/tmp/codex-auth.json", "/home/node/.codex/auth.json"),
             cp_calls,
         )
-        argv_seen = [call.args[1] for call in ex.call_args_list]
-        self.assertIn(["mkdir", "-p", "/home/node/.codex"], argv_seen)
-        self.assertIn(
-            ["chown", "node:node", "/home/node/.codex"],
-            argv_seen,
+        scripts = _exec_scripts(bottle)
+        self.assertTrue(any("mkdir -p" in s and "/home/node/.codex" in s for s in scripts))
+        self.assertTrue(
+            any("chown" in s and "node:node" in s and s.rstrip().endswith("/home/node/.codex")
+                for s in scripts)
         )
-        self.assertIn(
-            ["chmod", "700", "/home/node/.codex"],
-            argv_seen,
+        self.assertTrue(
+            any("chmod" in s and "700" in s and s.rstrip().endswith("/home/node/.codex")
+                for s in scripts)
         )
-        self.assertIn(
-            [
-                "find", "/home/node/.codex",
-                "-maxdepth", "1",
-                "-type", "f",
-                "(",
-                "-name", "*.sqlite",
-                "-o", "-name", "*.sqlite-*",
-                "-o", "-name", "*.codex-repair-*.bak",
-                ")",
-                "-delete",
-            ],
-            argv_seen,
+        # The pre_copy `find ... -delete` script should be present
+        # (shlex.join properly quotes the `(`/`)`/`*.sqlite`).
+        self.assertTrue(
+            any("find" in s and "-delete" in s and "*.sqlite" in s for s in scripts)
         )
-        self.assertIn(
-            ["chown", "node:node", "/home/node/.codex/auth.json"],
-            argv_seen,
+        self.assertTrue(
+            any("chown" in s and "/home/node/.codex/auth.json" in s for s in scripts)
         )
-        self.assertIn(["chmod", "600", "/home/node/.codex/auth.json"], argv_seen)
-        self.assertIn(
-            [
-                "runuser", "-u", "node", "--",
-                "env",
-                "HOME=/home/node",
-                "CODEX_HOME=/home/node/.codex",
-                "codex", "login", "status",
-            ],
-            argv_seen,
+        self.assertTrue(
+            any("chmod" in s and "600" in s and "/home/node/.codex/auth.json" in s
+                for s in scripts)
+        )
+        # Verify command runs `codex login status` via runuser node.
+        self.assertTrue(
+            any("runuser" in s and "codex login status" in s for s in scripts)
         )
 
     def test_honors_codex_home_from_guest_env(self):
-        cp_p, ex_p = self._patch()
-        with cp_p as cp, ex_p as ex:
-            ex.return_value = SmolvmRunResult(0, "Logged in using ChatGPT\n", "")
+        bottle = _make_bottle()
+        _provider_auth.provision_provider_auth(
+            _plan(
+                agent_provider_template="codex",
+                codex_auth_file=Path("/tmp/codex-auth.json"),
+                guest_env={"CODEX_HOME": "/run/codex-home"},
+            ),
+            bottle,
+        )
+        cp_calls = [c.args for c in bottle.cp_in.call_args_list]
+        self.assertIn(
+            ("/tmp/codex-config.toml", "/run/codex-home/config.toml"),
+            cp_calls,
+        )
+        self.assertIn(
+            ("/tmp/codex-auth.json", "/run/codex-home/auth.json"),
+            cp_calls,
+        )
+        scripts = _exec_scripts(bottle)
+        self.assertTrue(
+            any("runuser" in s and "CODEX_HOME=/run/codex-home" in s and "codex login status" in s
+                for s in scripts)
+        )
+
+    def test_dies_when_codex_home_cannot_be_created(self):
+        bottle = _make_bottle(
+            exec_result=ExecResult(1, "", "mkdir: nope\n"),
+        )
+        with self.assertRaises(SystemExit):
             _provider_auth.provision_provider_auth(
                 _plan(
                     agent_provider_template="codex",
                     codex_auth_file=Path("/tmp/codex-auth.json"),
-                    guest_env={"CODEX_HOME": "/run/codex-home"},
                 ),
-                "bot-bottle-demo-abc12",
+                bottle,
             )
-        cp_calls = [call.args for call in cp.call_args_list]
-        self.assertIn(
-            ("/tmp/codex-config.toml",
-             "bot-bottle-demo-abc12:/run/codex-home/config.toml"),
-            cp_calls,
-        )
-        self.assertIn(
-            ("/tmp/codex-auth.json",
-             "bot-bottle-demo-abc12:/run/codex-home/auth.json"),
-            cp_calls,
-        )
-        argv_seen = [call.args[1] for call in ex.call_args_list]
-        self.assertIn(
-            [
-                "runuser", "-u", "node", "--",
-                "env",
-                "HOME=/home/node",
-                "CODEX_HOME=/run/codex-home",
-                "codex", "login", "status",
-            ],
-            argv_seen,
-        )
-
-    def test_dies_when_codex_home_cannot_be_created(self):
-        cp_p, ex_p = self._patch()
-        with cp_p as cp, ex_p as ex:
-            ex.return_value = SmolvmRunResult(1, "", "mkdir: nope\n")
-            with self.assertRaises(SystemExit):
-                _provider_auth.provision_provider_auth(
-                    _plan(
-                        agent_provider_template="codex",
-                        codex_auth_file=Path("/tmp/codex-auth.json"),
-                    ),
-                    "bot-bottle-demo-abc12",
-                )
-        self.assertEqual(0, cp.call_count)
-        self.assertEqual(1, ex.call_count)
+        self.assertEqual(0, bottle.cp_in.call_count)
+        self.assertEqual(1, bottle.exec.call_count)
 
     def test_dies_when_codex_rejects_dummy_auth(self):
-        cp_p, ex_p = self._patch()
-        with cp_p, ex_p as ex:
-            # CODEX_HOME setup ok (0), but codex login status fails (1).
-            ex.side_effect = [
-                SmolvmRunResult(0, "", ""),  # mkdir CODEX_HOME
-                SmolvmRunResult(0, "", ""),  # chown CODEX_HOME
-                SmolvmRunResult(0, "", ""),  # chmod CODEX_HOME
-                SmolvmRunResult(0, "", ""),  # reset runtime db files
-                SmolvmRunResult(0, "", ""),  # chown config.toml
-                SmolvmRunResult(0, "", ""),  # chmod config.toml
-                SmolvmRunResult(0, "", ""),  # chown auth.json
-                SmolvmRunResult(0, "", ""),  # chmod auth.json
-                SmolvmRunResult(1, "Not logged in\n", ""),  # login status
-            ]
-            with self.assertRaises(SystemExit):
-                _provider_auth.provision_provider_auth(
-                    _plan(
-                        agent_provider_template="codex",
-                        codex_auth_file=Path("/tmp/codex-auth.json"),
-                    ),
-                    "bot-bottle-demo-abc12",
-                )
+        # CODEX_HOME setup ok, but codex login status fails (last exec).
+        bottle = _make_bottle()
+        bottle.exec.side_effect = [
+            ExecResult(0, "", ""),  # mkdir CODEX_HOME
+            ExecResult(0, "", ""),  # chown CODEX_HOME
+            ExecResult(0, "", ""),  # chmod CODEX_HOME
+            ExecResult(0, "", ""),  # find ... -delete (pre_copy)
+            ExecResult(0, "", ""),  # chown config.toml
+            ExecResult(0, "", ""),  # chmod config.toml
+            ExecResult(0, "", ""),  # chown auth.json
+            ExecResult(0, "", ""),  # chmod auth.json
+            ExecResult(1, "Not logged in\n", ""),  # login status (verify)
+        ]
+        with self.assertRaises(SystemExit):
+            _provider_auth.provision_provider_auth(
+                _plan(
+                    agent_provider_template="codex",
+                    codex_auth_file=Path("/tmp/codex-auth.json"),
+                ),
+                bottle,
+            )
 
 
 class TestProvisionSkills(unittest.TestCase):
@@ -442,98 +409,69 @@ class TestProvisionSkills(unittest.TestCase):
         )
 
     def test_no_op_when_agent_has_no_skills(self):
-        with patch(
-            "bot_bottle.backend.smolmachines.provision.skills._smolvm.machine_cp"
-        ) as cp, patch(
-            "bot_bottle.backend.smolmachines.provision.skills._smolvm.machine_exec"
-        ) as ex:
-            _skills.provision_skills(_plan(skills=[]), "bot-bottle-demo-abc12")
-        self.assertEqual(0, cp.call_count)
-        self.assertEqual(0, ex.call_count)
+        bottle = _make_bottle()
+        _skills.provision_skills(_plan(skills=[]), bottle)
+        self.assertEqual(0, bottle.cp_in.call_count)
+        self.assertEqual(0, bottle.exec.call_count)
 
     def test_mkdir_plus_cp_per_skill(self):
+        bottle = _make_bottle()
         with self._patch_host_skill_dir({
             "init-prd": "/host/skills/init-prd",
             "verify": "/host/skills/verify",
         }), patch(
             "bot_bottle.backend.smolmachines.provision.skills.os.path.isdir",
             return_value=True,
-        ), patch(
-            "bot_bottle.backend.smolmachines.provision.skills._smolvm.machine_cp"
-        ) as cp, patch(
-            "bot_bottle.backend.smolmachines.provision.skills._smolvm.machine_exec"
-        ) as ex:
+        ):
             _skills.provision_skills(
                 _plan(skills=["init-prd", "verify"]),
-                "bot-bottle-demo-abc12",
+                bottle,
             )
 
-        # mkdir -p once + (rm -rf + chown) per skill = 5 exec calls.
-        self.assertEqual(5, ex.call_count)
-        mkdir_call = ex.call_args_list[0]
-        self.assertEqual(
-            ("bot-bottle-demo-abc12", ["mkdir", "-p", "/home/node/.claude/skills"]),
-            mkdir_call.args,
+        # mkdir skills_dir once + (rm -rf + chown) per skill = 5 exec calls.
+        self.assertEqual(5, bottle.exec.call_count)
+        scripts = _exec_scripts(bottle)
+        self.assertTrue(
+            any("mkdir -p" in s and "/home/node/.claude/skills" in s for s in scripts)
         )
         # Two cp calls, one per skill, into the per-skill subdir.
-        self.assertEqual(2, cp.call_count)
-        cp_targets = {call.args[1] for call in cp.call_args_list}
-        self.assertEqual(
-            {
-                "bot-bottle-demo-abc12:/home/node/.claude/skills/init-prd",
-                "bot-bottle-demo-abc12:/home/node/.claude/skills/verify",
-            },
-            cp_targets,
-        )
-        # Each skill gets a chown -R node:node so claude can read it.
-        chown_argvs = [
-            call.args[1] for call in ex.call_args_list
-            if call.args[1][:1] == ["chown"]
-        ]
-        self.assertEqual(2, len(chown_argvs))
-        chown_targets = {argv[-1] for argv in chown_argvs}
+        self.assertEqual(2, bottle.cp_in.call_count)
+        cp_targets = {call.args[1] for call in bottle.cp_in.call_args_list}
         self.assertEqual(
             {
                 "/home/node/.claude/skills/init-prd",
                 "/home/node/.claude/skills/verify",
             },
-            chown_targets,
+            cp_targets,
         )
+        # Each skill gets a chown -R node:node so claude can read it.
+        chown_scripts = [s for s in scripts if "chown -R node:node" in s]
+        self.assertEqual(2, len(chown_scripts))
 
     def test_skills_dir_overridable_via_env(self):
         import os
+        bottle = _make_bottle()
         with self._patch_host_skill_dir({"init-prd": "/host/skills/init-prd"}), \
              patch(
                  "bot_bottle.backend.smolmachines.provision.skills.os.path.isdir",
                  return_value=True,
              ), \
-             patch.dict(os.environ, {"BOT_BOTTLE_GUEST_SKILLS_DIR": "/home/node/.claude/skills"}), \
-             patch(
-                 "bot_bottle.backend.smolmachines.provision.skills._smolvm.machine_cp"
-             ) as cp, \
-             patch(
-                 "bot_bottle.backend.smolmachines.provision.skills._smolvm.machine_exec"
-             ):
-            _skills.provision_skills(_plan(skills=["init-prd"]), "bot-bottle-demo-abc12")
+             patch.dict(os.environ, {"BOT_BOTTLE_GUEST_SKILLS_DIR": "/home/node/.claude/skills"}):
+            _skills.provision_skills(_plan(skills=["init-prd"]), bottle)
         self.assertEqual(
-            "bot-bottle-demo-abc12:/home/node/.claude/skills/init-prd",
-            cp.call_args.args[1],
+            "/home/node/.claude/skills/init-prd",
+            bottle.cp_in.call_args.args[1],
         )
 
     def test_missing_skill_dies(self):
+        bottle = _make_bottle()
         with self._patch_host_skill_dir({"init-prd": "/host/skills/init-prd"}), \
              patch(
                  "bot_bottle.backend.smolmachines.provision.skills.os.path.isdir",
                  return_value=False,
-             ), \
-             patch(
-                 "bot_bottle.backend.smolmachines.provision.skills._smolvm.machine_cp"
-             ), \
-             patch(
-                 "bot_bottle.backend.smolmachines.provision.skills._smolvm.machine_exec"
              ):
             with self.assertRaises(SystemExit):
-                _skills.provision_skills(_plan(skills=["init-prd"]), "bot-bottle-demo-abc12")
+                _skills.provision_skills(_plan(skills=["init-prd"]), bottle)
 
 
 def _write_self_signed_cert(path: Path) -> None:
@@ -553,7 +491,7 @@ def _write_self_signed_cert(path: Path) -> None:
 class TestProvisionCA(unittest.TestCase):
     """provision_ca selects the right CA cert (egress when the
     bottle has routes, else pipelock) and dispatches
-    machine_cp + machine_exec in the right order."""
+    cp_in + exec in the right order."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory(prefix="cb-prov-ca.")
@@ -566,10 +504,10 @@ class TestProvisionCA(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    # provision_ca dies hard if update-ca-certificates' stdout
-    # doesn't include "1 added"; supply a stock success return
-    # so the bulk of the tests below exercise the happy path.
-    _UPDATE_OK = SmolvmRunResult(
+    # provision_ca dies hard if update-ca-certificates' exit
+    # is non-zero; supply a stock success return so the bulk of
+    # the tests below exercise the happy path.
+    _UPDATE_OK = ExecResult(
         returncode=0,
         stdout="Updating certificates in /etc/ssl/certs...\n1 added, 0 removed; done.\n",
         stderr="",
@@ -577,27 +515,20 @@ class TestProvisionCA(unittest.TestCase):
 
     def test_pipelock_path_when_no_routes(self):
         plan = _plan(pipelock_ca_path=self.pipelock_ca)
-        with patch(
-            "bot_bottle.backend.smolmachines.provision.ca._smolvm.machine_cp"
-        ) as cp, patch(
-            "bot_bottle.backend.smolmachines.provision.ca._smolvm.machine_exec",
-            return_value=self._UPDATE_OK,
-        ) as ex:
-            _ca.provision_ca(plan, "bot-bottle-demo-abc12")
-        cp.assert_called_once_with(
+        bottle = _make_bottle(exec_result=self._UPDATE_OK)
+        _ca.provision_ca(plan, bottle)
+        bottle.cp_in.assert_called_once_with(
             str(self.pipelock_ca),
-            "bot-bottle-demo-abc12:" + _ca.AGENT_CA_PATH,
+            _ca.AGENT_CA_PATH,
         )
-        # chmod + chown + update-ca-certificates are now folded
-        # into one `sh -c` invocation (working around a smolvm
-        # exec warm-up SIGKILL race), so we look at the single
-        # exec's argv rather than expecting separate calls.
-        ex.assert_called_once()
-        argv = ex.call_args.args[1]
-        self.assertEqual("sh", argv[0])
-        self.assertEqual("-c", argv[1])
-        self.assertIn("chmod 644", argv[2])
-        self.assertIn("update-ca-certificates", argv[2])
+        # chmod + chown + update-ca-certificates are folded into
+        # one exec invocation; look at the single exec's script
+        # rather than expecting separate calls.
+        bottle.exec.assert_called_once()
+        script = bottle.exec.call_args.args[0]
+        self.assertIn("chmod 644", script)
+        self.assertIn("update-ca-certificates", script)
+        self.assertEqual("root", bottle.exec.call_args.kwargs.get("user"))
 
     def test_egress_path_when_routes_declared(self):
         plan = _plan(
@@ -605,51 +536,39 @@ class TestProvisionCA(unittest.TestCase):
             egress_ca_path=self.egress_ca,
             pipelock_ca_path=self.pipelock_ca,
         )
-        with patch(
-            "bot_bottle.backend.smolmachines.provision.ca._smolvm.machine_cp"
-        ) as cp, patch(
-            "bot_bottle.backend.smolmachines.provision.ca._smolvm.machine_exec",
-            return_value=self._UPDATE_OK,
-        ):
-            _ca.provision_ca(plan, "bot-bottle-demo-abc12")
+        bottle = _make_bottle(exec_result=self._UPDATE_OK)
+        _ca.provision_ca(plan, bottle)
         # When routes are declared, egress is the agent's first hop,
         # so egress's CA is the one that gets installed.
-        cp.assert_called_once_with(
+        bottle.cp_in.assert_called_once_with(
             str(self.egress_ca),
-            "bot-bottle-demo-abc12:" + _ca.AGENT_CA_PATH,
+            _ca.AGENT_CA_PATH,
         )
 
     def test_retries_smolvm_sigkill_during_update_ca(self):
         plan = _plan(pipelock_ca_path=self.pipelock_ca)
-        killed = SmolvmRunResult(
+        killed = ExecResult(
             returncode=137,
             stdout="Updating certificates in /etc/ssl/certs...\n",
             stderr="",
         )
+        bottle = _make_bottle()
+        bottle.exec.side_effect = [killed, self._UPDATE_OK]
         with patch(
-            "bot_bottle.backend.smolmachines.provision.ca._smolvm.machine_cp"
-        ), patch(
-            "bot_bottle.backend.smolmachines.provision.ca._smolvm.machine_exec",
-            side_effect=[killed, self._UPDATE_OK],
-        ) as ex, patch(
             "bot_bottle.backend.smolmachines.provision.ca.time.sleep"
         ) as sleep:
-            _ca.provision_ca(plan, "bot-bottle-demo-abc12")
+            _ca.provision_ca(plan, bottle)
 
-        self.assertEqual(2, ex.call_count)
+        self.assertEqual(2, bottle.exec.call_count)
         sleep.assert_called_once_with(1.0)
 
     def test_dies_when_selected_cert_missing(self):
         # Plan claims a pipelock cert at a path that doesn't exist —
         # something went wrong in launch's pipelock_tls_init.
         plan = _plan(pipelock_ca_path=self.tmp / "does-not-exist.pem")
-        with patch(
-            "bot_bottle.backend.smolmachines.provision.ca._smolvm.machine_cp"
-        ), patch(
-            "bot_bottle.backend.smolmachines.provision.ca._smolvm.machine_exec"
-        ):
-            with self.assertRaises(SystemExit):
-                _ca.provision_ca(plan, "bot-bottle-demo-abc12")
+        bottle = _make_bottle()
+        with self.assertRaises(SystemExit):
+            _ca.provision_ca(plan, bottle)
 
 
 class TestProvisionGit(unittest.TestCase):
@@ -665,16 +584,10 @@ class TestProvisionGit(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_noop_when_no_cwd_and_no_git_entries(self):
-        with patch(
-            "bot_bottle.backend.smolmachines.provision.git._smolvm.machine_cp"
-        ) as cp, patch(
-            "bot_bottle.backend.smolmachines.provision.git._smolvm.machine_exec"
-        ) as ex:
-            _git.provision_git(
-                _plan(stage_dir=self.stage), "bot-bottle-demo-abc12",
-            )
-        cp.assert_not_called()
-        ex.assert_not_called()
+        bottle = _make_bottle()
+        _git.provision_git(_plan(stage_dir=self.stage), bottle)
+        bottle.cp_in.assert_not_called()
+        bottle.exec.assert_not_called()
 
     def test_copies_cwd_git_when_copy_cwd_and_git_present(self):
         # Stage a fake host .git dir under user_cwd so the path-
@@ -684,33 +597,25 @@ class TestProvisionGit(unittest.TestCase):
         plan = _plan(
             copy_cwd=True, user_cwd=str(cwd), stage_dir=self.stage,
         )
-        with patch(
-            "bot_bottle.backend.smolmachines.provision.git._smolvm.machine_cp"
-        ) as cp, patch(
-            "bot_bottle.backend.smolmachines.provision.git._smolvm.machine_exec"
-        ) as ex:
-            _git.provision_git(plan, "bot-bottle-demo-abc12")
-        cp.assert_called_once_with(
+        bottle = _make_bottle()
+        _git.provision_git(plan, bottle)
+        bottle.cp_in.assert_called_once_with(
             f"{cwd}/.git",
-            "bot-bottle-demo-abc12:/home/node/workspace/.git",
+            "/home/node/workspace/.git",
         )
-        argvs = [c.args[1] for c in ex.call_args_list]
-        self.assertIn(["mkdir", "-p", "/home/node/workspace"], argvs)
+        scripts = _exec_scripts(bottle)
+        self.assertTrue(any("mkdir -p" in s and "/home/node/workspace" in s for s in scripts))
         # chown the workspace tree so the agent (node) owns it.
-        self.assertIn(
-            ["chown", "-R", "node:node", "/home/node/workspace/.git"],
-            argvs,
+        self.assertTrue(
+            any("chown -R" in s and "node:node" in s and "/home/node/workspace/.git" in s
+                for s in scripts)
         )
 
     def test_skips_cwd_when_copy_cwd_false(self):
         plan = _plan(copy_cwd=False, stage_dir=self.stage)
-        with patch(
-            "bot_bottle.backend.smolmachines.provision.git._smolvm.machine_cp"
-        ) as cp, patch(
-            "bot_bottle.backend.smolmachines.provision.git._smolvm.machine_exec"
-        ):
-            _git.provision_git(plan, "bot-bottle-demo-abc12")
-        cp.assert_not_called()
+        bottle = _make_bottle()
+        _git.provision_git(plan, bottle)
+        bottle.cp_in.assert_not_called()
 
     def test_writes_gitconfig_with_ip_port_form_for_smolmachines(self):
         # Smolmachines's TSI-allowlisted guest dials git-gate via
@@ -726,15 +631,11 @@ class TestProvisionGit(unittest.TestCase):
             stage_dir=self.stage,
             agent_git_gate_host="127.0.0.1:9418",
         )
-        with patch(
-            "bot_bottle.backend.smolmachines.provision.git._smolvm.machine_cp"
-        ) as cp, patch(
-            "bot_bottle.backend.smolmachines.provision.git._smolvm.machine_exec"
-        ):
-            _git.provision_git(plan, "bot-bottle-demo-abc12")
+        bottle = _make_bottle()
+        _git.provision_git(plan, bottle)
         # The staged gitconfig path is whatever NamedTemporaryFile
         # picked; we read its contents.
-        cp_call = cp.call_args
+        cp_call = bottle.cp_in.call_args
         staged_path = Path(cp_call.args[0])
         self.assertEqual(self.stage, staged_path.parent)
         content = staged_path.read_text()
@@ -776,71 +677,63 @@ class TestBundleLaunchSpec(unittest.TestCase):
 
 class TestProvisionGitUser(unittest.TestCase):
     """`_provision_git_user` runs `git config --global` inside the
-    guest as the node user with HOME forced via `smolvm -e`
-    (otherwise --global lands in /root/.gitconfig). No-op when the
-    bottle didn't declare git_user (issue #86)."""
+    guest as the node user. SmolmachinesBottle.exec sets HOME and
+    USER automatically for the requested user, so --global lands
+    in /home/node/.gitconfig. No-op when the bottle didn't declare
+    git_user (issue #86)."""
 
-    def _git_config_calls(self, mock_exec):
-        """Filter machine_exec calls down to git-config invocations,
-        return list of (argv, env-dict) tuples."""
+    def _git_config_calls(self, bottle: MagicMock) -> list[tuple[str, str]]:
+        """Filter bottle.exec calls down to git-config invocations,
+        return list of (script, user) tuples."""
         out = []
-        for c in mock_exec.call_args_list:
-            argv = c.args[1] if len(c.args) > 1 else c.kwargs.get("argv", [])
-            if "git" in argv and "config" in argv:
-                out.append((argv, c.kwargs.get("env") or {}))
+        for c in bottle.exec.call_args_list:
+            script = c.args[0] if c.args else ""
+            user = c.kwargs.get("user", "node")
+            if "git config" in script:
+                out.append((script, user))
         return out
 
     def test_noop_when_no_git_user(self):
-        with patch(
-            "bot_bottle.backend.smolmachines.provision.git._smolvm.machine_exec"
-        ) as ex:
-            _git._provision_git_user(_plan(), "bot-bottle-demo-abc12")
-        self.assertEqual([], self._git_config_calls(ex))
+        bottle = _make_bottle()
+        _git._provision_git_user(_plan(), bottle)
+        self.assertEqual([], self._git_config_calls(bottle))
 
     def test_sets_name_and_email_as_node(self):
         plan = _plan(git_user={
             "name": "Eric Bauerfeld",
             "email": "eric@dideric.is",
         })
-        with patch(
-            "bot_bottle.backend.smolmachines.provision.git._smolvm.machine_exec"
-        ) as ex:
-            _git._provision_git_user(plan, "bot-bottle-demo-abc12")
-        calls = self._git_config_calls(ex)
+        bottle = _make_bottle()
+        _git._provision_git_user(plan, bottle)
+        calls = self._git_config_calls(bottle)
         self.assertEqual(2, len(calls))
-        # Both go through `runuser -u node --` so they run as node;
-        # HOME is forced via smolvm -e so --global writes to
-        # /home/node/.gitconfig and not /root/.gitconfig.
-        for argv, env in calls:
-            self.assertEqual(
-                ["runuser", "-u", "node", "--",
-                 "git", "config", "--global"],
-                argv[:7],
-            )
-            self.assertEqual("/home/node", env.get("HOME"))
-            self.assertEqual("node", env.get("USER"))
-        self.assertEqual(["user.name", "Eric Bauerfeld"], calls[0][0][7:])
-        self.assertEqual(["user.email", "eric@dideric.is"], calls[1][0][7:])
+        # Both run as node so SmolmachinesBottle.exec sets HOME=/home/node
+        # automatically, ensuring --global writes to /home/node/.gitconfig.
+        for script, user in calls:
+            self.assertEqual("node", user)
+            self.assertIn("git config --global", script)
+        self.assertIn("user.name", calls[0][0])
+        self.assertIn("Eric Bauerfeld", calls[0][0])
+        self.assertIn("user.email", calls[1][0])
+        self.assertIn("eric@dideric.is", calls[1][0])
 
     def test_name_only(self):
         plan = _plan(git_user={"name": "Bot"})
-        with patch(
-            "bot_bottle.backend.smolmachines.provision.git._smolvm.machine_exec"
-        ) as ex:
-            _git._provision_git_user(plan, "bot-bottle-demo-abc12")
-        calls = self._git_config_calls(ex)
+        bottle = _make_bottle()
+        _git._provision_git_user(plan, bottle)
+        calls = self._git_config_calls(bottle)
         self.assertEqual(1, len(calls))
-        self.assertEqual(["user.name", "Bot"], calls[0][0][7:])
+        self.assertIn("user.name", calls[0][0])
+        self.assertIn("Bot", calls[0][0])
 
     def test_email_only(self):
         plan = _plan(git_user={"email": "bot@example.com"})
-        with patch(
-            "bot_bottle.backend.smolmachines.provision.git._smolvm.machine_exec"
-        ) as ex:
-            _git._provision_git_user(plan, "bot-bottle-demo-abc12")
-        calls = self._git_config_calls(ex)
+        bottle = _make_bottle()
+        _git._provision_git_user(plan, bottle)
+        calls = self._git_config_calls(bottle)
         self.assertEqual(1, len(calls))
-        self.assertEqual(["user.email", "bot@example.com"], calls[0][0][7:])
+        self.assertIn("user.email", calls[0][0])
+        self.assertIn("bot@example.com", calls[0][0])
 
 
 class TestProvisionWorkspace(unittest.TestCase):
@@ -853,94 +746,68 @@ class TestProvisionWorkspace(unittest.TestCase):
 
     def test_noop_when_copy_cwd_false(self):
         plan = _plan(copy_cwd=False, stage_dir=self.stage)
-        with patch(
-            "bot_bottle.backend.smolmachines.provision.workspace._smolvm.machine_cp"
-        ) as cp, patch(
-            "bot_bottle.backend.smolmachines.provision.workspace._smolvm.machine_exec"
-        ) as ex:
-            _workspace.provision_workspace(plan, "bot-bottle-demo-abc12")
-        cp.assert_not_called()
-        ex.assert_not_called()
+        bottle = _make_bottle()
+        _workspace.provision_workspace(plan, bottle)
+        bottle.cp_in.assert_not_called()
+        bottle.exec.assert_not_called()
 
     def test_copies_workspace_to_plan_path_and_chowns(self):
         cwd = self.stage / "cwd"
         cwd.mkdir()
         plan = _plan(copy_cwd=True, user_cwd=str(cwd), stage_dir=self.stage)
-        with patch(
-            "bot_bottle.backend.smolmachines.provision.workspace._smolvm.machine_cp"
-        ) as cp, patch(
-            "bot_bottle.backend.smolmachines.provision.workspace._smolvm.machine_exec"
-        ) as ex:
-            _workspace.provision_workspace(plan, "bot-bottle-demo-abc12")
+        bottle = _make_bottle()
+        _workspace.provision_workspace(plan, bottle)
 
-        cp.assert_called_once_with(
+        bottle.cp_in.assert_called_once_with(
             str(cwd),
-            "bot-bottle-demo-abc12:/home/node/workspace",
+            "/home/node/workspace",
         )
-        argvs = [c.args[1] for c in ex.call_args_list]
-        self.assertIn(
-            ["sh", "-c", "rm -rf /home/node/workspace && mkdir -p /home/node"],
-            argvs,
+        scripts = _exec_scripts(bottle)
+        self.assertTrue(
+            any("rm -rf /home/node/workspace" in s and "mkdir -p /home/node" in s
+                for s in scripts)
         )
-        self.assertIn(
-            [
-                "sh", "-c",
-                "chown -R node:node /home/node/workspace && "
-                "chmod 755 /home/node/workspace",
-            ],
-            argvs,
+        self.assertTrue(
+            any("chown -R node:node /home/node/workspace" in s
+                and "chmod 755 /home/node/workspace" in s
+                for s in scripts)
         )
 
 
 class TestProvisionSupervise(unittest.TestCase):
     def test_noop_when_supervise_not_enabled(self):
-        with patch(
-            "bot_bottle.backend.smolmachines.provision.supervise._smolvm.machine_exec"
-        ) as ex:
-            _supervise.provision_supervise(_plan(), "bot-bottle-demo-abc12")
-        ex.assert_not_called()
+        bottle = _make_bottle()
+        _supervise.provision_supervise(_plan(), bottle)
+        bottle.exec.assert_not_called()
 
     def test_calls_claude_mcp_add_when_supervise_enabled(self):
         plan = _plan(
             supervise=True,
             agent_supervise_url="http://127.0.0.1:9100/",
         )
-        with patch(
-            "bot_bottle.backend.smolmachines.provision.supervise._smolvm.machine_exec",
-            return_value=SmolvmRunResult(returncode=0, stdout="", stderr=""),
-        ) as ex:
-            _supervise.provision_supervise(plan, "bot-bottle-demo-abc12")
-        ex.assert_called_once()
-        argv = ex.call_args.args[1]
-        # `claude mcp add --scope user` writes to ~/.claude.json,
-        # and the agent is the `node` user — switch UID + set
-        # HOME so the config lands in /home/node/.claude.json,
-        # not root's. URL is the agent-side endpoint (host
-        # loopback + discovered port), not the docker bridge IP.
-        self.assertEqual(
-            [
-                "runuser", "-u", "node", "--",
-                "env", "HOME=/home/node",
-                "claude", "mcp", "add",
-                "--scope", "user",
-                "--transport", "http",
-                "supervise",
-                "http://127.0.0.1:9100/",
-            ],
-            argv,
-        )
+        bottle = _make_bottle()
+        _supervise.provision_supervise(plan, bottle)
+        bottle.exec.assert_called_once()
+        script = bottle.exec.call_args.args[0]
+        user = bottle.exec.call_args.kwargs.get("user")
+        self.assertEqual("node", user)
+        # SmolmachinesBottle.exec(user="node") handles uid switch +
+        # HOME setup automatically — the script itself is just the
+        # claude command.
+        self.assertIn("claude mcp add", script)
+        self.assertIn("--scope user", script)
+        self.assertIn("--transport http", script)
+        self.assertIn("supervise", script)
+        self.assertIn("http://127.0.0.1:9100/", script)
 
     def test_non_zero_exit_logs_warning_but_does_not_raise(self):
         plan = _plan(supervise=True)
-        with patch(
-            "bot_bottle.backend.smolmachines.provision.supervise._smolvm.machine_exec",
-            return_value=SmolvmRunResult(
-                returncode=1, stdout="", stderr="boom",
-            ),
-        ):
-            # No raise — the bottle still works without the MCP
-            # entry, so we log and move on.
-            _supervise.provision_supervise(plan, "bot-bottle-demo-abc12")
+        bottle = _make_bottle(
+            exec_result=ExecResult(returncode=1, stdout="", stderr="boom"),
+        )
+        # No raise — the bottle still works without the MCP
+        # entry, so we log and move on.
+        _supervise.provision_supervise(plan, bottle)
 
 
 if __name__ == "__main__":

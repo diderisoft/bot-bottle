@@ -208,19 +208,21 @@ def launch(
             compose_dump_logs, project, compose_file, compose_log_path(state_dir),
         )
 
-        # Step 8: provision. Unchanged — uses `docker exec` against
-        # the agent container by its known name.
-        prompt_path = provision(plan, plan.container_name)
+        # Step 8: provision. Create the bottle first so provisioners
+        # can use bottle.exec / bottle.cp_in; set the prompt path
+        # returned by provision_prompt after the fact.
+        bottle = DockerBottle(
+            plan.container_name,
+            teardown,
+            None,
+            agent_command=plan.agent_command,
+            agent_prompt_mode=plan.agent_prompt_mode,
+        )
+        bottle._prompt_path = provision(plan, bottle)
 
         # Step 9: yield. exec_agent continues to use `docker exec -it`
         # — the agent runs `sleep infinity` per the renderer's
         # service spec.
-        yield DockerBottle(
-            plan.container_name,
-            teardown,
-            prompt_path,
-            agent_command=plan.agent_command,
-            agent_prompt_mode=plan.agent_prompt_mode,
-        )
+        yield bottle
     finally:
         teardown()

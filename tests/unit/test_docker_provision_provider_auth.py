@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock
 
 from bot_bottle.agent_provider import (
     AgentProvisionDir,
     AgentProvisionFile,
     AgentProvisionPlan,
 )
-from bot_bottle.backend import BottleSpec
+from bot_bottle.backend import Bottle, BottleSpec, ExecResult
 from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
 from bot_bottle.backend.docker.provision import provider_auth as _provider_auth
 from bot_bottle.egress import EgressPlan
@@ -110,80 +110,62 @@ def _agent_provision(
     )
 
 
+def _make_bottle(name: str = "bot-bottle-demo-abc12") -> MagicMock:
+    bottle = MagicMock(spec=Bottle)
+    bottle.name = name
+    bottle.exec.return_value = ExecResult(returncode=0, stdout="", stderr="")
+    return bottle
+
+
 class TestProvisionProviderAuth(unittest.TestCase):
     def test_noop_for_non_codex_provider(self):
-        with patch.object(_provider_auth.subprocess, "run") as run:
-            _provider_auth.provision_provider_auth(
-                _plan(agent_provider_template="claude"), "bot-bottle-demo-abc12",
-            )
-        self.assertEqual(0, run.call_count)
+        bottle = _make_bottle()
+        _provider_auth.provision_provider_auth(
+            _plan(agent_provider_template="claude"), bottle,
+        )
+        self.assertEqual(0, bottle.cp_in.call_count)
+        self.assertEqual(0, bottle.exec.call_count)
 
     def test_codex_provider_trusts_launch_dir_without_auth_file(self):
-        with patch.object(_provider_auth.subprocess, "run") as run:
-            _provider_auth.provision_provider_auth(
-                _plan(), "bot-bottle-demo-abc12",
-            )
-        argvs = [call.args[0] for call in run.call_args_list]
+        bottle = _make_bottle()
+        _provider_auth.provision_provider_auth(_plan(), bottle)
+        scripts = [c.args[0] for c in bottle.exec.call_args_list]
+        self.assertTrue(
+            any("mkdir -p" in s and "/home/node/.codex" in s for s in scripts)
+        )
+        cp_calls = [c.args for c in bottle.cp_in.call_args_list]
         self.assertIn(
-            ["docker", "exec", "-u", "0", "bot-bottle-demo-abc12",
-             "mkdir", "-p", "/home/node/.codex"],
-            argvs,
+            ("/tmp/codex-config.toml", "/home/node/.codex/config.toml"),
+            cp_calls,
         )
-        trust_config = next(
-            a for a in argvs
-            if a[:2] == ["docker", "cp"] and a[2] == "/tmp/codex-config.toml"
+        self.assertTrue(
+            any("chown" in s and "/home/node/.codex/config.toml" in s for s in scripts)
         )
-        self.assertEqual(
-            "bot-bottle-demo-abc12:/home/node/.codex/config.toml",
-            trust_config[3],
-        )
-        self.assertIn(
-            ["docker", "exec", "-u", "0", "bot-bottle-demo-abc12",
-             "chown", "node:node", "/home/node/.codex/config.toml"],
-            argvs,
-        )
-        self.assertIn(
-            ["docker", "exec", "-u", "0", "bot-bottle-demo-abc12",
-             "chmod", "600", "/home/node/.codex/config.toml"],
-            argvs,
+        self.assertTrue(
+            any("chmod" in s and "/home/node/.codex/config.toml" in s for s in scripts)
         )
 
     def test_copies_dummy_auth_json_to_codex_home(self):
-        with patch.object(_provider_auth.subprocess, "run") as run:
-            _provider_auth.provision_provider_auth(
-                _plan(codex_auth_file=Path("/tmp/codex-auth.json")),
-                "bot-bottle-demo-abc12",
-            )
-        argvs = [call.args[0] for call in run.call_args_list]
+        bottle = _make_bottle()
+        _provider_auth.provision_provider_auth(
+            _plan(codex_auth_file=Path("/tmp/codex-auth.json")),
+            bottle,
+        )
+        cp_calls = [c.args for c in bottle.cp_in.call_args_list]
         self.assertIn(
-            ["docker", "exec", "-u", "0", "bot-bottle-demo-abc12",
-             "mkdir", "-p", "/home/node/.codex"],
-            argvs,
+            ("/tmp/codex-config.toml", "/home/node/.codex/config.toml"),
+            cp_calls,
         )
         self.assertIn(
-            ["docker", "exec", "-u", "0", "bot-bottle-demo-abc12",
-             "chown", "node:node", "/home/node/.codex"],
-            argvs,
+            ("/tmp/codex-auth.json", "/home/node/.codex/auth.json"),
+            cp_calls,
         )
-        self.assertIn(
-            ["docker", "exec", "-u", "0", "bot-bottle-demo-abc12",
-             "chmod", "700", "/home/node/.codex"],
-            argvs,
+        scripts = [c.args[0] for c in bottle.exec.call_args_list]
+        self.assertTrue(
+            any("chown" in s and "/home/node/.codex/auth.json" in s for s in scripts)
         )
-        self.assertIn(
-            ["docker", "cp", "/tmp/codex-auth.json",
-             "bot-bottle-demo-abc12:/home/node/.codex/auth.json"],
-            argvs,
-        )
-        self.assertIn(
-            ["docker", "exec", "-u", "0", "bot-bottle-demo-abc12",
-             "chown", "node:node", "/home/node/.codex/auth.json"],
-            argvs,
-        )
-        self.assertIn(
-            ["docker", "exec", "-u", "0", "bot-bottle-demo-abc12",
-             "chmod", "600", "/home/node/.codex/auth.json"],
-            argvs,
+        self.assertTrue(
+            any("chmod" in s and "/home/node/.codex/auth.json" in s for s in scripts)
         )
 
 
