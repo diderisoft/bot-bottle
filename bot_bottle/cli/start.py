@@ -2,10 +2,8 @@
 interactive claude-code session. The container is torn down when the
 session ends.
 
-The launch core is shared with `cli.py resume <identity>` and (PRD
-0020 chunk 1+) the dashboard's in-process start flow: see the
-public helpers `prepare_with_preflight`, `attach_agent`, and the
-private orchestrator `_launch_bottle`.
+The launch core is shared with `cli.py resume <identity>` through
+the private orchestrator `_launch_bottle`.
 """
 
 from __future__ import annotations
@@ -71,7 +69,7 @@ def cmd_start(argv: list[str]) -> int:
     )
 
 
-# --- Public helpers shared with the dashboard (PRD 0020) -----------------
+# --- Launch helpers ------------------------------------------------------
 
 
 def prepare_with_preflight(
@@ -84,14 +82,11 @@ def prepare_with_preflight(
     backend_name: str | None = None,
 ) -> tuple[DockerBottlePlan | None, str]:
     """Run `backend.prepare`, render the preflight summary via the
-    injected callable, prompt y/N via the injected callable. The CLI
-    binds these to stderr/stdin; the dashboard binds them to a
-    curses modal.
+    injected callable, prompt y/N via the injected callable.
 
     `backend_name` selects which backend prepares the plan
-    (`None` → `$BOT_BOTTLE_BACKEND` → `docker`). Dashboard
-    passes the value from its new-agent backend-picker modal; the
-    CLI passes whatever `--backend` resolved to.
+    (`None` → `$BOT_BOTTLE_BACKEND` → `docker`). The CLI passes
+    whatever `--backend` resolved to.
 
     Returns `(plan, identity)`. `plan` is None on dry-run or
     operator-N, but `identity` is set as soon as `backend.prepare`
@@ -122,16 +117,10 @@ def attach_agent(
     agent process's exit code.
 
     `resume=True` adds `--continue` so claude picks up its most
-    recent session non-interactively (no session-picker prompt) —
-    the right shape for the dashboard's Enter re-attach (PRD 0020
-    chunk 3), where a bottle typically has exactly one session.
-    First-attach paths (`./cli.py start`, the dashboard's new-agent
-    flow) leave it False.
+    recent session non-interactively (no session-picker prompt).
+    First-attach paths (`./cli.py start`) leave it False.
 
-    Used as the inner step of `./cli.py start` (one-shot) and by the
-    dashboard, which calls it from inside a `curses.endwin → … →
-    stdscr.refresh()` handoff so the curses surface gets out of the
-    terminal's way while the agent has it."""
+    Used as the inner step of `./cli.py start`."""
     runtime = runtime_for(agent_provider_template)
     info(
         f"attaching interactive {agent_provider_template} session "
@@ -148,8 +137,7 @@ def attach_agent(
 def capture_claude_session_state(identity: str, exit_code: int) -> None:
     """Inside the launch context, while the container is still
     alive: snapshot the transcript and mark for preservation if
-    claude crashed. Public for the dashboard's death-handling path
-    (PRD 0020 open question 3)."""
+    claude crashed."""
     # FIXME: this captures Claude-specific session state. A follow-up
     # spike should explore freezing provider-neutral container state
     # instead of relying on each agent's transcript layout.
@@ -162,9 +150,7 @@ def capture_claude_session_state(identity: str, exit_code: int) -> None:
 
 def settle_state(identity: str) -> None:
     """Post-teardown housekeeping: print the resume hint if the
-    state was preserved, otherwise reap the per-bottle state dir.
-    Public so the dashboard's explicit-stop path calls the same
-    settlement the CLI uses on context exit."""
+    state was preserved, otherwise reap the per-bottle state dir."""
     if not identity:
         return
     if is_preserved(identity):

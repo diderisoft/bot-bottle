@@ -12,8 +12,8 @@ agent calls when it hits a stuck-recovery category:
 Each tool call: the agent passes the full proposed file plus a
 justification text. The sidecar validates the proposal syntactically,
 writes it to the host's per-bottle queue dir, and holds the tool-call
-connection open. The operator's TUI dashboard
-(bot_bottle.cli.dashboard) sees the proposal, accepts
+connection open. The operator's supervise TUI
+(bot_bottle.cli.supervise) sees the proposal, accepts
 approve / modify / reject, and writes a response file alongside the
 proposal. The sidecar sees the response and returns `{status, notes}`
 to the agent.
