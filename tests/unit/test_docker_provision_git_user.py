@@ -30,7 +30,7 @@ def _plan(*, git_user: dict | None = None,
           stage_dir: Path | None = None) -> DockerBottlePlan:
     bottle_json: dict = {}
     if git_user is not None:
-        bottle_json["git"] = {"user": git_user}
+        bottle_json["git-gate"] = {"user": git_user}
     manifest = Manifest.from_json_obj({
         "bottles": {"dev": bottle_json},
         "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},

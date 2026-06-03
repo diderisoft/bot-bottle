@@ -38,23 +38,21 @@ def fixture_with_egress_dict() -> dict[str, Any]:
 
 
 def fixture_with_git_dict() -> dict[str, Any]:
-    """Bottle declares a git-gate upstream. JSON shape."""
+    """Bottle declares git-gate upstreams. JSON shape."""
     return {
         "bottles": {
             "dev": {
-                "git": {
-                    "remotes": {
-                        "gitea.dideric.is": {
-                            "Name": "bot-bottle",
-                            "Upstream": "ssh://git@gitea.dideric.is:30009/didericis/bot-bottle.git",
-                            "IdentityFile": "/dev/null",
-                            "KnownHostKey": "ssh-ed25519 AAAA...",
+                "git-gate": {
+                    "repos": {
+                        "bot-bottle": {
+                            "url": "ssh://git@gitea.dideric.is:30009/didericis/bot-bottle.git",
+                            "identity": "/dev/null",
+                            "host_key": "ssh-ed25519 AAAA...",
                         },
-                        "github.com": {
-                            "Name": "foo",
-                            "Upstream": "ssh://git@github.com/didericis/foo.git",
-                            "IdentityFile": "/dev/null",
-                            "KnownHostKey": "ssh-ed25519 BBBB...",
+                        "foo": {
+                            "url": "ssh://git@github.com/didericis/foo.git",
+                            "identity": "/dev/null",
+                            "host_key": "ssh-ed25519 BBBB...",
                         },
                     },
                 }

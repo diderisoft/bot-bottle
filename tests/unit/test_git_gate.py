@@ -220,11 +220,10 @@ class TestPrepare(unittest.TestCase):
 
     def test_prepare_skips_known_hosts_file_when_key_missing(self):
         manifest = Manifest.from_json_obj({
-            "bottles": {"dev": {"git": {"remotes": {
-                "github.com": {
-                    "Name": "foo",
-                    "Upstream": "ssh://git@github.com/didericis/foo.git",
-                    "IdentityFile": "/dev/null",
+            "bottles": {"dev": {"git-gate": {"repos": {
+                "foo": {
+                    "url": "ssh://git@github.com/didericis/foo.git",
+                    "identity": "/dev/null",
                 },
             }}}},
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},

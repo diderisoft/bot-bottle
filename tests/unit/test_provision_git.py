@@ -69,13 +69,14 @@ class TestGitGateGitconfigRender(unittest.TestCase):
             '[url "http://127.0.0.16:57001/bot-bottle.git"]', out,
         )
 
-    def test_ip_upstream_also_rewrites_logical_remote_key(self):
+    def test_ip_upstream_emits_single_insteadof(self):
+        # In the new format the dict key is the repo name, not a host
+        # alias, so there is only one insteadOf rule — for the IP URL.
         m = Manifest.from_json_obj({
-            "bottles": {"dev": {"git": {"remotes": {
-                "gitea.dideric.is": {
-                    "Name": "bot-bottle",
-                    "Upstream": "ssh://git@192.0.2.10:30009/didericis/bot-bottle.git",
-                    "IdentityFile": "/dev/null",
+            "bottles": {"dev": {"git-gate": {"repos": {
+                "bot-bottle": {
+                    "url": "ssh://git@192.0.2.10:30009/didericis/bot-bottle.git",
+                    "identity": "/dev/null",
                 },
             }}}},
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
@@ -86,11 +87,7 @@ class TestGitGateGitconfigRender(unittest.TestCase):
             "ssh://git@192.0.2.10:30009/didericis/bot-bottle.git",
             out,
         )
-        self.assertIn(
-            "\tinsteadOf = "
-            "ssh://git@gitea.dideric.is:30009/didericis/bot-bottle.git",
-            out,
-        )
+        self.assertNotIn("gitea.dideric.is", out)
 
 
 if __name__ == "__main__":

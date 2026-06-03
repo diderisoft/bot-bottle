@@ -42,11 +42,6 @@ from bot_bottle.supervise import SupervisePlan
 from bot_bottle.workspace import workspace_plan
 
 
-def _remote_host(g: GitEntry) -> str:
-    if g.UpstreamHost:
-        return g.UpstreamHost
-    return g.Upstream.split("@", 1)[1].split("/", 1)[0].split(":", 1)[0]
-
 
 def _plan(
     *,
@@ -69,20 +64,19 @@ def _plan(
     guest_env: dict[str, str] | None = None,
 ) -> SmolmachinesBottlePlan:
     bottle_json: dict = {}
-    git_json: dict = {}
+    git_gate_json: dict = {}
     if git:
-        git_json["remotes"] = {
-            _remote_host(g): {
-                "Name": g.Name,
-                "Upstream": g.Upstream,
-                "IdentityFile": g.IdentityFile,
+        git_gate_json["repos"] = {
+            g.Name: {
+                "url": g.Upstream,
+                "identity": g.IdentityFile,
             }
             for g in git
         }
     if git_user is not None:
-        git_json["user"] = git_user
-    if git_json:
-        bottle_json["git"] = git_json
+        git_gate_json["user"] = git_user
+    if git_gate_json:
+        bottle_json["git-gate"] = git_gate_json
     if supervise:
         bottle_json["supervise"] = True
     manifest = Manifest.from_json_obj({
