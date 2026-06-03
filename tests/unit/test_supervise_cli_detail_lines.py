@@ -8,7 +8,7 @@ which hostname will land in pipelock's allowlist on approval."""
 import unittest
 
 from bot_bottle import supervise
-from bot_bottle.cli import supervise as dashboard
+from bot_bottle.cli import supervise as supervise_cli
 from bot_bottle.supervise import (
     Proposal,
     TOOL_CAPABILITY_BLOCK,
@@ -18,7 +18,7 @@ from bot_bottle.supervise import (
 )
 
 
-def _qp(tool: str, payload: str) -> dashboard.QueuedProposal:
+def _qp(tool: str, payload: str) -> supervise_cli.QueuedProposal:
     from datetime import datetime, timezone
     from pathlib import Path
     p = Proposal.new(
@@ -29,14 +29,14 @@ def _qp(tool: str, payload: str) -> dashboard.QueuedProposal:
         current_file_hash=sha256_hex(payload),
         now=datetime(2026, 5, 25, 12, 0, 0, tzinfo=timezone.utc),
     )
-    return dashboard.QueuedProposal(proposal=p, queue_dir=Path("/tmp/q"))
+    return supervise_cli.QueuedProposal(proposal=p, queue_dir=Path("/tmp/q"))
 
 
 class TestPipelockHostHighlight(unittest.TestCase):
     GREEN = 0xDEADBEEF  # arbitrary sentinel; _detail_lines passes through
 
     def test_appends_green_host_line_for_pipelock_block(self):
-        lines = dashboard._detail_lines(
+        lines = supervise_cli._detail_lines(
             _qp(TOOL_PIPELOCK_BLOCK, "https://api.github.com/repos/foo/bar"),
             green_attr=self.GREEN,
         )
@@ -47,14 +47,14 @@ class TestPipelockHostHighlight(unittest.TestCase):
         self.assertEqual(["api.github.com"], green_lines)
 
     def test_no_green_lines_for_egress_block(self):
-        lines = dashboard._detail_lines(
+        lines = supervise_cli._detail_lines(
             _qp(TOOL_EGRESS_BLOCK, '{"routes": []}'),
             green_attr=self.GREEN,
         )
         self.assertEqual([], [t for t, a in lines if a == self.GREEN])
 
     def test_no_green_lines_for_capability_block(self):
-        lines = dashboard._detail_lines(
+        lines = supervise_cli._detail_lines(
             _qp(TOOL_CAPABILITY_BLOCK, "FROM python:3.13\n"),
             green_attr=self.GREEN,
         )
@@ -64,7 +64,7 @@ class TestPipelockHostHighlight(unittest.TestCase):
         # Shouldn't happen in production — supervise_server validates
         # the URL before queuing — but if a malformed payload ever
         # reaches the supervise TUI, don't render a misleading host line.
-        lines = dashboard._detail_lines(
+        lines = supervise_cli._detail_lines(
             _qp(TOOL_PIPELOCK_BLOCK, "garbage-not-a-url"),
             green_attr=self.GREEN,
         )
@@ -73,7 +73,7 @@ class TestPipelockHostHighlight(unittest.TestCase):
     def test_no_green_attr_passed_still_renders_host(self):
         # Even without color support (green_attr=0), the host line
         # is still present — it just won't be coloured.
-        lines = dashboard._detail_lines(
+        lines = supervise_cli._detail_lines(
             _qp(TOOL_PIPELOCK_BLOCK, "https://api.github.com/x"),
             green_attr=0,
         )
@@ -86,14 +86,14 @@ class TestFailedUrlHost(unittest.TestCase):
     def test_extracts_hostname(self):
         self.assertEqual(
             "api.github.com",
-            dashboard._failed_url_host("https://api.github.com/repos/foo"),
+            supervise_cli._failed_url_host("https://api.github.com/repos/foo"),
         )
 
     def test_returns_empty_for_unparseable(self):
-        self.assertEqual("", dashboard._failed_url_host("not a url"))
+        self.assertEqual("", supervise_cli._failed_url_host("not a url"))
 
     def test_returns_empty_for_url_without_host(self):
-        self.assertEqual("", dashboard._failed_url_host("https:///nohost"))
+        self.assertEqual("", supervise_cli._failed_url_host("https:///nohost"))
 
 
 if __name__ == "__main__":

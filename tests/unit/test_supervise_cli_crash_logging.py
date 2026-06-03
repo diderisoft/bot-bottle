@@ -1,6 +1,6 @@
 """Unit: supervise launch/crash failure logging (issue #100).
 
-The dashboard runs under curses, so anything written to stderr while the
+The supervise TUI runs under curses, so anything written to stderr while the
 TUI owns the terminal is wiped when the terminal is restored. These
 tests lock the recovery paths: a config error (`Die`) is re-surfaced
 after the wrapper returns, and an unexpected crash is persisted to a
@@ -17,7 +17,7 @@ from pathlib import Path
 from unittest import mock
 
 from bot_bottle import supervise
-from bot_bottle.cli import supervise as dashboard
+from bot_bottle.cli import supervise as supervise_cli
 from bot_bottle.log import Die, die
 
 
@@ -63,37 +63,37 @@ class TestCmdSuperviseErrorPaths(_FakeHomeMixin, unittest.TestCase):
 
     def test_keyboard_interrupt_returns_130(self):
         with mock.patch.object(
-            dashboard.curses, "wrapper", side_effect=KeyboardInterrupt
+            supervise_cli.curses, "wrapper", side_effect=KeyboardInterrupt
         ):
-            self.assertEqual(130, dashboard.cmd_supervise([]))
+            self.assertEqual(130, supervise_cli.cmd_supervise([]))
 
     def test_die_resurfaces_message_after_curses(self):
         buf = io.StringIO()
         with mock.patch.object(
-            dashboard.curses, "wrapper",
+            supervise_cli.curses, "wrapper",
             side_effect=Die(1, "manifest parse error at line 3"),
         ):
             with contextlib.redirect_stderr(buf):
-                rc = dashboard.cmd_supervise([])
+                rc = supervise_cli.cmd_supervise([])
         self.assertEqual(1, rc)
         self.assertIn("manifest parse error at line 3", buf.getvalue())
 
     def test_die_without_message_has_fallback(self):
         buf = io.StringIO()
-        with mock.patch.object(dashboard.curses, "wrapper", side_effect=Die(1)):
+        with mock.patch.object(supervise_cli.curses, "wrapper", side_effect=Die(1)):
             with contextlib.redirect_stderr(buf):
-                rc = dashboard.cmd_supervise([])
+                rc = supervise_cli.cmd_supervise([])
         self.assertEqual(1, rc)
         self.assertIn("fatal error", buf.getvalue())
 
     def test_unexpected_exception_writes_crash_log(self):
         buf = io.StringIO()
         with mock.patch.object(
-            dashboard.curses, "wrapper",
+            supervise_cli.curses, "wrapper",
             side_effect=ValueError("kaboom in render"),
         ):
             with contextlib.redirect_stderr(buf):
-                rc = dashboard.cmd_supervise([])
+                rc = supervise_cli.cmd_supervise([])
         self.assertEqual(1, rc)
         out = buf.getvalue()
         self.assertIn("supervise crashed: ValueError: kaboom in render", out)
@@ -116,7 +116,7 @@ class TestWriteCrashLog(_FakeHomeMixin, unittest.TestCase):
         try:
             raise RuntimeError("explode")
         except RuntimeError as e:
-            path = dashboard._write_crash_log(e)
+            path = supervise_cli._write_crash_log(e)
         self.assertEqual(self._root / "logs" / "supervise-crash.log", path)
         text = path.read_text()
         self.assertIn("=== supervise crash", text)
@@ -131,7 +131,7 @@ class TestWriteCrashLog(_FakeHomeMixin, unittest.TestCase):
         try:
             raise RuntimeError("explode2")
         except RuntimeError as e:
-            path = dashboard._write_crash_log(e)
+            path = supervise_cli._write_crash_log(e)
         self.assertTrue(path.exists())
         self.assertIn("explode2", path.read_text())
 

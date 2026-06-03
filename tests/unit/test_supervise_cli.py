@@ -4,9 +4,9 @@ The curses TUI itself isn't exercised here — these tests cover the
 discovery + approve/reject + audit-write paths that the TUI's key
 handlers call into.
 
-apply_routes_change is stubbed at the supervise module level so the
-tests don't need a running cred-proxy sidecar; the real docker
-exec/cp/SIGHUP plumbing is covered by the integration test.
+add_route is stubbed at the supervise CLI module level so the tests
+don't need a running egress sidecar; the real docker exec/cp/SIGHUP
+plumbing is covered by the integration test.
 """
 
 import os
@@ -19,7 +19,7 @@ from bot_bottle import supervise
 from bot_bottle.backend.docker.capability_apply import CapabilityApplyError
 from bot_bottle.backend.docker.egress_apply import EgressApplyError
 from bot_bottle.backend.docker.pipelock_apply import PipelockApplyError
-from bot_bottle.cli import supervise as dashboard
+from bot_bottle.cli import supervise as supervise_cli
 from bot_bottle.supervise import (
     Proposal,
     STATUS_APPROVED,
@@ -83,14 +83,14 @@ class TestDiscoverPending(_FakeHomeMixin, unittest.TestCase):
         self._teardown_fake_home()
 
     def test_empty_when_no_queues(self):
-        self.assertEqual([], dashboard.discover_pending())
+        self.assertEqual([], supervise_cli.discover_pending())
 
     def test_walks_all_slug_subdirs(self):
         for slug in ("dev", "api"):
             qdir = supervise.queue_dir_for_slug(slug)
             qdir.mkdir(parents=True)
             supervise.write_proposal(qdir, _proposal(slug=slug))
-        pending = dashboard.discover_pending()
+        pending = supervise_cli.discover_pending()
         self.assertEqual({"dev", "api"}, {qp.proposal.bottle_slug for qp in pending})
 
     def test_sorted_by_arrival_across_bottles(self):
@@ -110,7 +110,7 @@ class TestDiscoverPending(_FakeHomeMixin, unittest.TestCase):
             qdir = supervise.queue_dir_for_slug(p.bottle_slug)
             qdir.mkdir(parents=True, exist_ok=True)
             supervise.write_proposal(qdir, p)
-        pending = dashboard.discover_pending()
+        pending = supervise_cli.discover_pending()
         self.assertEqual([early.id, late.id], [qp.proposal.id for qp in pending])
 
     def test_excludes_already_responded(self):
@@ -121,34 +121,34 @@ class TestDiscoverPending(_FakeHomeMixin, unittest.TestCase):
         supervise.write_response(qdir, supervise.Response(
             proposal_id=p.id, status=STATUS_APPROVED, notes="",
         ))
-        self.assertEqual([], dashboard.discover_pending())
+        self.assertEqual([], supervise_cli.discover_pending())
 
 
 class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
     def setUp(self):
         self._setup_fake_home()
-        self._original_add_route = dashboard.add_route
-        self._original_apply_allowlist = dashboard.apply_allowlist_change
-        self._original_fetch_allowlist = dashboard.fetch_current_allowlist
-        self._original_apply_capability = dashboard.apply_capability_change
+        self._original_add_route = supervise_cli.add_route
+        self._original_apply_allowlist = supervise_cli.apply_allowlist_change
+        self._original_fetch_allowlist = supervise_cli.fetch_current_allowlist
+        self._original_apply_capability = supervise_cli.apply_capability_change
         # Default stubs: succeed with deterministic before/after so the
         # audit log shows a non-empty diff.
-        dashboard.add_route = lambda slug, content: (
+        supervise_cli.add_route = lambda slug, content: (
             '{"routes": []}\n', '{"routes": [{"host": "x"}]}\n',
         )
-        dashboard.apply_allowlist_change = lambda slug, content: (
+        supervise_cli.apply_allowlist_change = lambda slug, content: (
             "old.example\n", content,
         )
-        dashboard.fetch_current_allowlist = lambda slug: "old.example\n"
-        dashboard.apply_capability_change = lambda slug, content: (
+        supervise_cli.fetch_current_allowlist = lambda slug: "old.example\n"
+        supervise_cli.apply_capability_change = lambda slug, content: (
             "FROM old\n", content,
         )
 
     def tearDown(self):
-        dashboard.add_route = self._original_add_route
-        dashboard.apply_allowlist_change = self._original_apply_allowlist
-        dashboard.fetch_current_allowlist = self._original_fetch_allowlist
-        dashboard.apply_capability_change = self._original_apply_capability
+        supervise_cli.add_route = self._original_add_route
+        supervise_cli.apply_allowlist_change = self._original_apply_allowlist
+        supervise_cli.fetch_current_allowlist = self._original_fetch_allowlist
+        supervise_cli.apply_capability_change = self._original_apply_capability
         self._teardown_fake_home()
 
     def _enqueue(self, tool: str = TOOL_EGRESS_BLOCK):
@@ -156,11 +156,11 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
         qdir = supervise.queue_dir_for_slug("dev")
         qdir.mkdir(parents=True, exist_ok=True)
         supervise.write_proposal(qdir, p)
-        return dashboard.QueuedProposal(proposal=p, queue_dir=qdir)
+        return supervise_cli.QueuedProposal(proposal=p, queue_dir=qdir)
 
     def test_approve_writes_response_and_audit(self):
         qp = self._enqueue()
-        dashboard.approve(qp)
+        supervise_cli.approve(qp)
         resp = read_response(qp.queue_dir, qp.proposal.id)
         self.assertEqual(STATUS_APPROVED, resp.status)
         self.assertIsNone(resp.final_file)
@@ -170,7 +170,7 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
 
     def test_approve_with_final_file_marks_modified(self):
         qp = self._enqueue()
-        dashboard.approve(qp, final_file='{"routes": [{"path": "/x/"}]}\n', notes="tweaked")
+        supervise_cli.approve(qp, final_file='{"routes": [{"path": "/x/"}]}\n', notes="tweaked")
         resp = read_response(qp.queue_dir, qp.proposal.id)
         self.assertEqual(STATUS_MODIFIED, resp.status)
         self.assertEqual('{"routes": [{"path": "/x/"}]}\n', resp.final_file)
@@ -180,7 +180,7 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
 
     def test_reject_writes_rejection(self):
         qp = self._enqueue()
-        dashboard.reject(qp, reason="nope")
+        supervise_cli.reject(qp, reason="nope")
         resp = read_response(qp.queue_dir, qp.proposal.id)
         self.assertEqual(STATUS_REJECTED, resp.status)
         self.assertEqual("nope", resp.notes)
@@ -190,7 +190,7 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
 
     def test_capability_block_skips_audit_log(self):
         qp = self._enqueue(tool=TOOL_CAPABILITY_BLOCK)
-        dashboard.approve(qp)
+        supervise_cli.approve(qp)
         # No audit log for capability-block (per PRD 0013 / 0016).
         # cred-proxy and pipelock logs both empty.
         self.assertEqual([], read_audit_entries("egress", "dev"))
@@ -198,7 +198,7 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
 
     def test_pipelock_audit_distinct_from_egress(self):
         qp = self._enqueue(tool=TOOL_PIPELOCK_BLOCK)
-        dashboard.approve(qp)
+        supervise_cli.approve(qp)
         self.assertEqual(1, len(read_audit_entries("pipelock", "dev")))
         self.assertEqual(0, len(read_audit_entries("egress", "dev")))
 
@@ -210,10 +210,10 @@ class TestEgressApplyWiring(_FakeHomeMixin, unittest.TestCase):
 
     def setUp(self):
         self._setup_fake_home()
-        self._original_add_route = dashboard.add_route
+        self._original_add_route = supervise_cli.add_route
 
     def tearDown(self):
-        dashboard.add_route = self._original_add_route
+        supervise_cli.add_route = self._original_add_route
         self._teardown_fake_home()
 
     def _enqueue_egress(self, proposed: str = '{"host": "x.example"}\n'):
@@ -227,17 +227,17 @@ class TestEgressApplyWiring(_FakeHomeMixin, unittest.TestCase):
         qdir = supervise.queue_dir_for_slug("dev")
         qdir.mkdir(parents=True, exist_ok=True)
         supervise.write_proposal(qdir, p)
-        return dashboard.QueuedProposal(proposal=p, queue_dir=qdir)
+        return supervise_cli.QueuedProposal(proposal=p, queue_dir=qdir)
 
     def test_egress_block_calls_add_route_with_proposed_json(self):
         calls = []
-        dashboard.add_route = lambda slug, content: (
+        supervise_cli.add_route = lambda slug, content: (
             calls.append((slug, content)) or ("before", "after")
         )
         qp = self._enqueue_egress(
             proposed='{"host": "new.example", "path_allowlist": ["/x/"]}\n'
         )
-        dashboard.approve(qp)
+        supervise_cli.approve(qp)
         self.assertEqual(1, len(calls))
         slug, content = calls[0]
         self.assertEqual("dev", slug)
@@ -250,11 +250,11 @@ class TestEgressApplyWiring(_FakeHomeMixin, unittest.TestCase):
 
     def test_modify_passes_final_file_to_add_route(self):
         calls = []
-        dashboard.add_route = lambda slug, content: (
+        supervise_cli.add_route = lambda slug, content: (
             calls.append(content) or ("before", "after")
         )
         qp = self._enqueue_egress()
-        dashboard.approve(
+        supervise_cli.approve(
             qp,
             final_file='{"host": "edited.example"}\n',
             notes="tweaked",
@@ -262,12 +262,12 @@ class TestEgressApplyWiring(_FakeHomeMixin, unittest.TestCase):
         self.assertEqual(['{"host": "edited.example"}\n'], calls)
 
     def test_apply_failure_blocks_response_and_audit(self):
-        dashboard.add_route = lambda slug, content: (_ for _ in ()).throw(
+        supervise_cli.add_route = lambda slug, content: (_ for _ in ()).throw(
             EgressApplyError("docker exec failed")
         )
         qp = self._enqueue_egress()
         with self.assertRaises(EgressApplyError):
-            dashboard.approve(qp)
+            supervise_cli.approve(qp)
         # No response file (proposal stays pending).
         self.assertEqual(
             [qp.proposal.id],
@@ -277,25 +277,20 @@ class TestEgressApplyWiring(_FakeHomeMixin, unittest.TestCase):
         self.assertEqual([], read_audit_entries("egress", "dev"))
 
     def test_real_diff_lands_in_audit(self):
-        dashboard.add_route = lambda slug, content: (
+        supervise_cli.add_route = lambda slug, content: (
             '{"routes": []}\n',  # before
             '{"routes": [{"host": "new.example"}]}\n',  # after
         )
         qp = self._enqueue_egress(proposed='{"host": "new.example"}\n')
-        dashboard.approve(qp)
+        supervise_cli.approve(qp)
         entries = read_audit_entries("egress", "dev")
         self.assertEqual(1, len(entries))
         self.assertIn('+{"routes": [{"host": "new.example"}]}', entries[0].diff)
         self.assertIn('-{"routes": []}', entries[0].diff)
 
     def test_reject_does_not_call_apply(self):
-        called = []
-        dashboard.apply_routes_change = lambda slug, content: (
-            called.append(True) or ("", content)
-        )
         qp = self._enqueue_egress()
-        dashboard.reject(qp, reason="no thanks")
-        self.assertEqual([], called)
+        supervise_cli.reject(qp, reason="no thanks")
         # Reject still writes a response + audit entry with empty diff.
         resp = read_response(qp.queue_dir, qp.proposal.id)
         self.assertEqual(STATUS_REJECTED, resp.status)
@@ -312,12 +307,12 @@ class TestPipelockApplyWiring(_FakeHomeMixin, unittest.TestCase):
 
     def setUp(self):
         self._setup_fake_home()
-        self._original_apply = dashboard.apply_allowlist_change
-        self._original_fetch = dashboard.fetch_current_allowlist
+        self._original_apply = supervise_cli.apply_allowlist_change
+        self._original_fetch = supervise_cli.fetch_current_allowlist
 
     def tearDown(self):
-        dashboard.apply_allowlist_change = self._original_apply
-        dashboard.fetch_current_allowlist = self._original_fetch
+        supervise_cli.apply_allowlist_change = self._original_apply
+        supervise_cli.fetch_current_allowlist = self._original_fetch
         self._teardown_fake_home()
 
     def _enqueue_pipelock(self, failed_url: str = "https://api.github.com/repos/foo/bar"):
@@ -331,17 +326,17 @@ class TestPipelockApplyWiring(_FakeHomeMixin, unittest.TestCase):
         qdir = supervise.queue_dir_for_slug("dev")
         qdir.mkdir(parents=True, exist_ok=True)
         supervise.write_proposal(qdir, p)
-        return dashboard.QueuedProposal(proposal=p, queue_dir=qdir)
+        return supervise_cli.QueuedProposal(proposal=p, queue_dir=qdir)
 
     def test_url_host_merged_into_current_allowlist(self):
-        dashboard.fetch_current_allowlist = lambda slug: "existing.example\n"
+        supervise_cli.fetch_current_allowlist = lambda slug: "existing.example\n"
         applied = []
-        dashboard.apply_allowlist_change = lambda slug, content: (
+        supervise_cli.apply_allowlist_change = lambda slug, content: (
             applied.append((slug, content))
             or ("existing.example\n", content)
         )
         qp = self._enqueue_pipelock("https://api.github.com/repos/foo/bar")
-        dashboard.approve(qp)
+        supervise_cli.approve(qp)
         # apply_allowlist_change was called with the merged content:
         # existing host + the URL's host (no path, since pipelock is
         # hostname-only).
@@ -353,27 +348,27 @@ class TestPipelockApplyWiring(_FakeHomeMixin, unittest.TestCase):
         self.assertNotIn("/repos/foo/bar", content)  # path stripped
 
     def test_host_already_in_allowlist_is_idempotent(self):
-        dashboard.fetch_current_allowlist = lambda slug: "api.github.com\n"
+        supervise_cli.fetch_current_allowlist = lambda slug: "api.github.com\n"
         applied = []
-        dashboard.apply_allowlist_change = lambda slug, content: (
+        supervise_cli.apply_allowlist_change = lambda slug, content: (
             applied.append(content)
             or ("api.github.com\n", content)
         )
         qp = self._enqueue_pipelock("https://api.github.com/some/path")
-        dashboard.approve(qp)
+        supervise_cli.approve(qp)
         # Still applied, but the content is unchanged from current —
         # before/after diff is empty.
         self.assertEqual(1, len(applied))
         self.assertEqual("api.github.com\n", applied[0])
 
     def test_apply_failure_blocks_response_and_audit(self):
-        dashboard.fetch_current_allowlist = lambda slug: "existing.example\n"
-        dashboard.apply_allowlist_change = lambda slug, content: (_ for _ in ()).throw(
+        supervise_cli.fetch_current_allowlist = lambda slug: "existing.example\n"
+        supervise_cli.apply_allowlist_change = lambda slug, content: (_ for _ in ()).throw(
             PipelockApplyError("docker exec failed")
         )
         qp = self._enqueue_pipelock()
         with self.assertRaises(PipelockApplyError):
-            dashboard.approve(qp)
+            supervise_cli.approve(qp)
         self.assertEqual(
             [qp.proposal.id],
             [p.id for p in supervise.list_pending_proposals(qp.queue_dir)],
@@ -381,12 +376,12 @@ class TestPipelockApplyWiring(_FakeHomeMixin, unittest.TestCase):
         self.assertEqual([], read_audit_entries("pipelock", "dev"))
 
     def test_url_without_host_raises(self):
-        dashboard.fetch_current_allowlist = lambda slug: ""
+        supervise_cli.fetch_current_allowlist = lambda slug: ""
         # supervise_server's validator would catch this; if a broken
         # URL ever makes it through, the supervise TUI surfaces it too.
         qp = self._enqueue_pipelock("https:///nohost")
         with self.assertRaises(PipelockApplyError):
-            dashboard.approve(qp)
+            supervise_cli.approve(qp)
 
 
 class TestCapabilityApplyWiring(_FakeHomeMixin, unittest.TestCase):
@@ -397,10 +392,10 @@ class TestCapabilityApplyWiring(_FakeHomeMixin, unittest.TestCase):
 
     def setUp(self):
         self._setup_fake_home()
-        self._original = dashboard.apply_capability_change
+        self._original = supervise_cli.apply_capability_change
 
     def tearDown(self):
-        dashboard.apply_capability_change = self._original
+        supervise_cli.apply_capability_change = self._original
         self._teardown_fake_home()
 
     def _enqueue_capability(self, proposed: str = "FROM python:3.13\nRUN apk add ripgrep\n"):
@@ -414,44 +409,44 @@ class TestCapabilityApplyWiring(_FakeHomeMixin, unittest.TestCase):
         qdir = supervise.queue_dir_for_slug("dev")
         qdir.mkdir(parents=True, exist_ok=True)
         supervise.write_proposal(qdir, p)
-        return dashboard.QueuedProposal(proposal=p, queue_dir=qdir)
+        return supervise_cli.QueuedProposal(proposal=p, queue_dir=qdir)
 
     def test_capability_block_calls_apply_with_proposed_file(self):
         calls = []
-        dashboard.apply_capability_change = lambda slug, content: (
+        supervise_cli.apply_capability_change = lambda slug, content: (
             calls.append((slug, content)) or ("FROM old\n", content)
         )
         qp = self._enqueue_capability("FROM bookworm\n")
-        dashboard.approve(qp)
+        supervise_cli.approve(qp)
         self.assertEqual([("dev", "FROM bookworm\n")], calls)
 
     def test_apply_failure_blocks_response_and_keeps_pending(self):
-        dashboard.apply_capability_change = lambda slug, content: (_ for _ in ()).throw(
+        supervise_cli.apply_capability_change = lambda slug, content: (_ for _ in ()).throw(
             CapabilityApplyError("teardown failed")
         )
         qp = self._enqueue_capability()
         with self.assertRaises(CapabilityApplyError):
-            dashboard.approve(qp)
+            supervise_cli.approve(qp)
         self.assertEqual(
             [qp.proposal.id],
             [p.id for p in supervise.list_pending_proposals(qp.queue_dir)],
         )
 
     def test_no_audit_log_for_capability(self):
-        dashboard.apply_capability_change = lambda slug, content: ("FROM old\n", content)
+        supervise_cli.apply_capability_change = lambda slug, content: ("FROM old\n", content)
         qp = self._enqueue_capability()
-        dashboard.approve(qp)
+        supervise_cli.approve(qp)
         # capability-block has no audit log per PRD 0013 — its record
         # lives in the per-bottle Dockerfile + transcript state.
         self.assertEqual([], read_audit_entries("egress", "dev"))
         self.assertEqual([], read_audit_entries("pipelock", "dev"))
 
     def test_proposal_archived_after_apply(self):
-        dashboard.apply_capability_change = lambda slug, content: ("FROM old\n", content)
+        supervise_cli.apply_capability_change = lambda slug, content: ("FROM old\n", content)
         qp = self._enqueue_capability()
-        dashboard.approve(qp)
+        supervise_cli.approve(qp)
         # Sidecar would normally archive after delivering the response,
-        # but it's gone by then. The dashboard archives so
+        # but it's gone by then. The supervise TUI archives so
         # discover_pending stops surfacing the resolved proposal.
         self.assertEqual([], supervise.list_pending_proposals(qp.queue_dir))
         processed = list((qp.queue_dir / "processed").glob("*.json"))
@@ -482,7 +477,7 @@ class TestEditInEditor(unittest.TestCase):
             os.chmod(editor_script, 0o755)
             os.environ["EDITOR"] = editor_script
             try:
-                result = dashboard.edit_in_editor("original")
+                result = supervise_cli.edit_in_editor("original")
                 self.assertEqual("edited", result)
             finally:
                 os.unlink(editor_script)
@@ -504,7 +499,7 @@ class TestEditInEditor(unittest.TestCase):
             os.chmod(editor_script, 0o755)
             os.environ["EDITOR"] = editor_script
             try:
-                result = dashboard.edit_in_editor("original")
+                result = supervise_cli.edit_in_editor("original")
                 self.assertIsNone(result)
             finally:
                 os.unlink(editor_script)
@@ -521,19 +516,19 @@ class TestCapabilityBlockSmolmachinesGuard(_FakeHomeMixin, unittest.TestCase):
 
     def setUp(self):
         self._setup_fake_home()
-        self._original_apply_capability = dashboard.apply_capability_change
-        dashboard.apply_capability_change = lambda slug, content: ("", content)
+        self._original_apply_capability = supervise_cli.apply_capability_change
+        supervise_cli.apply_capability_change = lambda slug, content: ("", content)
 
     def tearDown(self):
-        dashboard.apply_capability_change = self._original_apply_capability
+        supervise_cli.apply_capability_change = self._original_apply_capability
         self._teardown_fake_home()
 
-    def _enqueue_capability(self, slug: str = "dev") -> "dashboard.QueuedProposal":
+    def _enqueue_capability(self, slug: str = "dev") -> "supervise_cli.QueuedProposal":
         p = _proposal(slug=slug, tool=TOOL_CAPABILITY_BLOCK)
         qdir = supervise.queue_dir_for_slug(slug)
         qdir.mkdir(parents=True, exist_ok=True)
         supervise.write_proposal(qdir, p)
-        return dashboard.QueuedProposal(proposal=p, queue_dir=qdir)
+        return supervise_cli.QueuedProposal(proposal=p, queue_dir=qdir)
 
     def _write_metadata(self, slug: str, compose_project: str) -> None:
         from bot_bottle.backend.docker.bottle_state import BottleMetadata, write_metadata
@@ -550,18 +545,18 @@ class TestCapabilityBlockSmolmachinesGuard(_FakeHomeMixin, unittest.TestCase):
         self._write_metadata("dev", compose_project="")
         qp = self._enqueue_capability("dev")
         with self.assertRaises(CapabilityApplyError) as ctx:
-            dashboard.approve(qp)
+            supervise_cli.approve(qp)
         self.assertIn("smolmachines", str(ctx.exception))
 
     def test_docker_bottle_calls_apply_capability_change(self):
         self._write_metadata("dev", compose_project="bot-bottle-dev")
         qp = self._enqueue_capability("dev")
-        dashboard.approve(qp)  # must not raise
+        supervise_cli.approve(qp)  # must not raise
 
     def test_no_metadata_falls_through_to_docker_path(self):
         # No metadata at all → assume Docker (backward-compatible).
         qp = self._enqueue_capability("dev")
-        dashboard.approve(qp)  # must not raise
+        supervise_cli.approve(qp)  # must not raise
 
 
 if __name__ == "__main__":
