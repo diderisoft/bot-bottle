@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Callable, Generator
 
 from ...egress import egress_resolve_token_values
+from ...git_gate import revoke_git_gate_provisioned_keys
 from ...log import info, warn
 from . import network as network_mod
 from . import util as docker_mod
@@ -51,6 +52,7 @@ from .bottle_plan import DockerBottlePlan
 from .bottle_state import (
     bottle_state_dir,
     egress_state_dir,
+    git_gate_state_dir,
     pipelock_state_dir,
 )
 from .compose import (
@@ -84,6 +86,9 @@ def launch(
     Teardown on exit."""
     stack = ExitStack()
 
+    _bottle_for_revoke = plan.spec.manifest.bottle_for(plan.spec.agent_name)
+    _git_gate_dir_for_revoke = git_gate_state_dir(plan.slug)
+
     def teardown() -> None:
         try:
             stack.close()
@@ -92,6 +97,9 @@ def launch(
                 f"teardown failed for container {plan.container_name}"
                 f" (compose-down): {exc!r}"
             )
+        revoke_git_gate_provisioned_keys(
+            _bottle_for_revoke, _git_gate_dir_for_revoke
+        )
 
     try:
         # Step 1: agent image build. Sidecar images get built lazily by

@@ -243,6 +243,113 @@ class TestGitEntryCrossValidation(unittest.TestCase):
         self.assertIn("PRD 0047", msg)
 
 
+class TestProvisionedKey(unittest.TestCase):
+    """git-gate.repos entries that use provisioned_key (PRD 0048)."""
+
+    def test_provisioned_key_minimal(self):
+        m = Manifest.from_json_obj(_manifest({
+            "bot-bottle": {
+                "url": "ssh://git@gitea.dideric.is:30009/didericis/bot-bottle.git",
+                "provisioned_key": {
+                    "provider": "gitea",
+                    "token_env": "GITEA_TOKEN",
+                },
+            },
+        }))
+        e = m.bottles["dev"].git[0]
+        self.assertEqual("bot-bottle", e.Name)
+        self.assertIsNotNone(e.ProvisionedKey)
+        assert e.ProvisionedKey is not None
+        self.assertEqual("gitea", e.ProvisionedKey.provider)
+        self.assertEqual("GITEA_TOKEN", e.ProvisionedKey.token_env)
+        self.assertEqual("", e.ProvisionedKey.api_url)
+        self.assertEqual("", e.IdentityFile)
+
+    def test_provisioned_key_with_api_url(self):
+        m = Manifest.from_json_obj(_manifest({
+            "repo": {
+                "url": "ssh://git@gitea.example.com/org/repo.git",
+                "provisioned_key": {
+                    "provider": "gitea",
+                    "token_env": "MY_TOKEN",
+                    "api_url": "https://gitea.example.com",
+                },
+            },
+        }))
+        pk = m.bottles["dev"].git[0].ProvisionedKey
+        assert pk is not None
+        self.assertEqual("https://gitea.example.com", pk.api_url)
+
+    def test_both_identity_and_provisioned_key_dies(self):
+        with self.assertRaises(ManifestError) as ctx:
+            Manifest.from_json_obj(_manifest({
+                "foo": {
+                    "url": "ssh://git@github.com/foo.git",
+                    "identity": "/dev/null",
+                    "provisioned_key": {"provider": "gitea", "token_env": "T"},
+                },
+            }))
+        self.assertIn("exactly one of", str(ctx.exception))
+        self.assertIn("got both", str(ctx.exception))
+
+    def test_neither_identity_nor_provisioned_key_dies(self):
+        with self.assertRaises(ManifestError) as ctx:
+            Manifest.from_json_obj(_manifest({
+                "foo": {"url": "ssh://git@github.com/foo.git"},
+            }))
+        self.assertIn("exactly one of", str(ctx.exception))
+        self.assertIn("got neither", str(ctx.exception))
+
+    def test_unknown_key_in_provisioned_key_block_dies(self):
+        with self.assertRaises(ManifestError):
+            Manifest.from_json_obj(_manifest({
+                "foo": {
+                    "url": "ssh://git@github.com/foo.git",
+                    "provisioned_key": {
+                        "provider": "gitea",
+                        "token_env": "T",
+                        "key_type": "rsa",  # not allowed
+                    },
+                },
+            }))
+
+    def test_missing_provider_dies(self):
+        with self.assertRaises(ManifestError):
+            Manifest.from_json_obj(_manifest({
+                "foo": {
+                    "url": "ssh://git@github.com/foo.git",
+                    "provisioned_key": {"token_env": "T"},
+                },
+            }))
+
+    def test_missing_token_env_dies(self):
+        with self.assertRaises(ManifestError):
+            Manifest.from_json_obj(_manifest({
+                "foo": {
+                    "url": "ssh://git@github.com/foo.git",
+                    "provisioned_key": {"provider": "gitea"},
+                },
+            }))
+
+    def test_provisioned_key_entry_has_no_identity_file(self):
+        m = Manifest.from_json_obj(_manifest({
+            "foo": {
+                "url": "ssh://git@github.com/didericis/foo.git",
+                "provisioned_key": {"provider": "gitea", "token_env": "T"},
+            },
+        }))
+        self.assertEqual("", m.bottles["dev"].git[0].IdentityFile)
+
+    def test_identity_entry_has_no_provisioned_key(self):
+        m = Manifest.from_json_obj(_manifest({
+            "foo": {
+                "url": "ssh://git@github.com/foo.git",
+                "identity": "/dev/null",
+            },
+        }))
+        self.assertIsNone(m.bottles["dev"].git[0].ProvisionedKey)
+
+
 class TestEmptyGitGateField(unittest.TestCase):
     def test_no_git_gate_field_yields_empty_tuple(self):
         m = Manifest.from_json_obj({

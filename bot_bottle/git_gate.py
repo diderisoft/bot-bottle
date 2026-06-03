@@ -29,11 +29,14 @@ backend-specific and lives on concrete subclasses (see
 
 from __future__ import annotations
 
+import dataclasses
+import os
 import shlex
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 
+from .log import info
 from .manifest import Bottle, GitEntry
 
 
@@ -357,6 +360,80 @@ exit 0
 """
 
 
+def _provision_dynamic_key(
+    entry: GitEntry,
+    slug: str,
+    stage_dir: Path,
+) -> str:
+    """Generate a fresh ed25519 keypair, register the public half with
+    the forge, and persist the private key + key ID under `stage_dir`.
+
+    Returns the host-side path to the private key file so the caller
+    can inject it into the GitGateUpstream as `identity_file`."""
+    from .deploy_key_provisioner import get_provisioner
+    pk = entry.ProvisionedKey
+    assert pk is not None
+    token = os.environ.get(pk.token_env)
+    if token is None:
+        raise RuntimeError(
+            f"git-gate.repos[{entry.Name!r}] provisioned_key.token_env"
+            f" = {pk.token_env!r}: env var is not set"
+        )
+    api_url = pk.api_url or f"https://{entry.UpstreamHost}"
+    provisioner = get_provisioner(pk.provider, token, api_url)
+
+    owner_repo = entry.UpstreamPath
+    if owner_repo.endswith(".git"):
+        owner_repo = owner_repo[:-4]
+    title = f"bot-bottle:{slug}:{entry.Name}"
+
+    info(f"provisioning deploy key for git-gate.repos[{entry.Name!r}]")
+    key_id, private_key_bytes = provisioner.create(owner_repo, title)
+
+    key_file = stage_dir / f"{entry.Name}-key"
+    key_file.write_bytes(private_key_bytes)
+    key_file.chmod(0o600)
+
+    id_file = stage_dir / f"{entry.Name}-deploy-key-id"
+    id_file.write_text(key_id)
+    id_file.chmod(0o600)
+
+    info(f"provisioned deploy key {key_id} for git-gate.repos[{entry.Name!r}]")
+    return str(key_file)
+
+
+def revoke_git_gate_provisioned_keys(bottle: Bottle, stage_dir: Path) -> None:
+    """Revoke all deploy keys provisioned for `bottle` during prepare.
+
+    Called at teardown after containers stop. Raises if any revocation
+    fails — a stranded key is a security concern that the operator must
+    address manually."""
+    from .deploy_key_provisioner import get_provisioner
+    for entry in bottle.git:
+        if entry.ProvisionedKey is None:
+            continue
+        pk = entry.ProvisionedKey
+        id_file = stage_dir / f"{entry.Name}-deploy-key-id"
+        if not id_file.exists():
+            continue
+        key_id = id_file.read_text().strip()
+        token = os.environ.get(pk.token_env)
+        if token is None:
+            raise RuntimeError(
+                f"git-gate.repos[{entry.Name!r}] provisioned_key.token_env"
+                f" = {pk.token_env!r}: env var is not set;"
+                f" cannot revoke deploy key {key_id}"
+            )
+        api_url = pk.api_url or f"https://{entry.UpstreamHost}"
+        provisioner = get_provisioner(pk.provider, token, api_url)
+        owner_repo = entry.UpstreamPath
+        if owner_repo.endswith(".git"):
+            owner_repo = owner_repo[:-4]
+        info(f"revoking deploy key {key_id} for git-gate.repos[{entry.Name!r}]")
+        provisioner.delete(owner_repo, key_id)
+        info(f"revoked deploy key {key_id} for git-gate.repos[{entry.Name!r}]")
+
+
 class GitGate(ABC):
     """The per-agent git-gate. Encapsulates the host-side prepare
     (upstream lift + entrypoint/hook render); the sidecar's
@@ -368,10 +445,21 @@ class GitGate(ABC):
         entrypoint, pre-receive hook, and access-hook scripts (mode
         600) under `stage_dir`. Pure host-side, no docker subprocess.
 
+        For `provisioned_key` entries, also generates and registers
+        a fresh deploy key via the forge API and writes the private key
+        + key ID to `stage_dir`.
+
         Returned plan is incomplete: the launch step must fill
         `internal_network` / `egress_network` via `dataclasses.replace`
         before passing the plan to `.start`."""
-        upstreams = git_gate_upstreams_for_bottle(bottle)
+        upstreams_list = list(git_gate_upstreams_for_bottle(bottle))
+        for i, entry in enumerate(bottle.git):
+            if entry.ProvisionedKey is not None:
+                key_file = _provision_dynamic_key(entry, slug, stage_dir)
+                upstreams_list[i] = dataclasses.replace(
+                    upstreams_list[i], identity_file=key_file
+                )
+        upstreams = tuple(upstreams_list)
         entrypoint = stage_dir / "git_gate_entrypoint.sh"
         entrypoint.write_text(git_gate_render_entrypoint(upstreams))
         entrypoint.chmod(0o600)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Optional
 
 from .manifest_util import ManifestError, as_json_object
 
@@ -62,6 +63,24 @@ def validate_unique_git_names(bottle_name: str, git: tuple[GitEntry, ...]) -> No
 
 
 @dataclass(frozen=True)
+class ProvisionedKeyConfig:
+    """Configuration for automatic deploy-key lifecycle management
+    (PRD 0048). Used when a git-gate.repos entry opts out of a
+    static identity file and instead wants a fresh SSH keypair
+    generated at spin-up and revoked at teardown.
+
+    `provider` names the contrib sub-package to load (e.g. `gitea`).
+    `token_env` is the name of a host-side env var carrying the API
+    token; the value is read at provision time, never stored on the
+    plan. `api_url` is the forge's HTTP API root; if empty, it is
+    derived from the upstream URL's host at provision time."""
+
+    provider: str
+    token_env: str
+    api_url: str = ""
+
+
+@dataclass(frozen=True)
 class GitEntry:
     """One upstream the per-agent git-gate (PRD 0008) is allowed to
     talk to. `Upstream` is the real remote URL the agent would push to
@@ -74,14 +93,15 @@ class GitEntry:
     stashed in the `Upstream*` fields so the git-gate render step
     doesn't have to re-parse.
 
-    Manifest source: `git-gate.repos.<Name>` (PRD 0047). The YAML keys
-    are `url`, `identity`, and `host_key`; the internal field names are
-    stable across that rename."""
+    Manifest source: `git-gate.repos.<Name>` (PRD 0047/0048). Exactly
+    one of `identity` (static key path) or `provisioned_key` (automatic
+    lifecycle) must be present. The internal field names are stable."""
 
     Name: str
     Upstream: str
-    IdentityFile: str
+    IdentityFile: str = ""
     KnownHostKey: str = ""
+    ProvisionedKey: Optional[ProvisionedKeyConfig] = None
     RemoteKey: str = ""
     UpstreamUser: str = ""
     UpstreamHost: str = ""
@@ -94,8 +114,9 @@ class GitEntry:
     ) -> "GitEntry":
         """Parse one entry from `git-gate.repos.<repo_name>`.
 
-        YAML keys: `url` (required), `identity` (required),
-        `host_key` (optional). The repo_name becomes `Name`."""
+        YAML keys: `url` (required), exactly one of `identity` or
+        `provisioned_key` (required), `host_key` (optional).
+        The repo_name becomes `Name`."""
         if not repo_name:
             raise ManifestError(
                 f"bottle '{bottle_name}' git-gate.repos has an empty key"
@@ -108,21 +129,44 @@ class GitEntry:
         label = f"git-gate.repos[{repo_name!r}]"
         d = as_json_object(raw, f"bottle '{bottle_name}' {label}")
         for k in d:
-            if k not in {"url", "identity", "host_key"}:
+            if k not in {"url", "identity", "provisioned_key", "host_key"}:
                 raise ManifestError(
                     f"bottle '{bottle_name}' {label} has unknown key {k!r}; "
-                    f"allowed: url, identity, host_key"
+                    f"allowed: url, identity, provisioned_key, host_key"
                 )
         upstream = d.get("url")
         if not isinstance(upstream, str) or not upstream:
             raise ManifestError(
                 f"bottle '{bottle_name}' {label} missing required string field 'url'"
             )
-        ident = d.get("identity")
-        if not isinstance(ident, str) or not ident:
+
+        has_identity = "identity" in d
+        has_provisioned = "provisioned_key" in d
+        if has_identity and has_provisioned:
             raise ManifestError(
-                f"bottle '{bottle_name}' {label} missing required string field 'identity'"
+                f"bottle '{bottle_name}' {label} must set exactly one of "
+                f"'identity' or 'provisioned_key'; got both."
             )
+        if not has_identity and not has_provisioned:
+            raise ManifestError(
+                f"bottle '{bottle_name}' {label} must set exactly one of "
+                f"'identity' or 'provisioned_key'; got neither."
+            )
+
+        ident = ""
+        provisioned_key: Optional[ProvisionedKeyConfig] = None
+        if has_identity:
+            raw_ident = d.get("identity")
+            if not isinstance(raw_ident, str) or not raw_ident:
+                raise ManifestError(
+                    f"bottle '{bottle_name}' {label} 'identity' must be a non-empty string"
+                )
+            ident = raw_ident
+        else:
+            provisioned_key = _parse_provisioned_key_config(
+                bottle_name, label, d["provisioned_key"]
+            )
+
         khk = _opt_str(
             d.get("host_key"),
             f"bottle '{bottle_name}' {label} host_key",
@@ -135,12 +179,47 @@ class GitEntry:
             Upstream=upstream,
             IdentityFile=ident,
             KnownHostKey=khk,
+            ProvisionedKey=provisioned_key,
             RemoteKey=host,
             UpstreamUser=user,
             UpstreamHost=host,
             UpstreamPort=port,
             UpstreamPath=path,
         )
+
+
+def _parse_provisioned_key_config(
+    bottle_name: str, label: str, raw: object
+) -> ProvisionedKeyConfig:
+    d = as_json_object(raw, f"bottle '{bottle_name}' {label}.provisioned_key")
+    for k in d:
+        if k not in {"provider", "token_env", "api_url"}:
+            raise ManifestError(
+                f"bottle '{bottle_name}' {label}.provisioned_key has unknown key {k!r}; "
+                f"allowed: provider, token_env, api_url"
+            )
+    provider = d.get("provider")
+    if not isinstance(provider, str) or not provider:
+        raise ManifestError(
+            f"bottle '{bottle_name}' {label}.provisioned_key missing required "
+            f"string field 'provider'"
+        )
+    token_env = d.get("token_env")
+    if not isinstance(token_env, str) or not token_env:
+        raise ManifestError(
+            f"bottle '{bottle_name}' {label}.provisioned_key missing required "
+            f"string field 'token_env'"
+        )
+    api_url_raw = d.get("api_url", "")
+    if not isinstance(api_url_raw, str):
+        raise ManifestError(
+            f"bottle '{bottle_name}' {label}.provisioned_key 'api_url' must be a string"
+        )
+    return ProvisionedKeyConfig(
+        provider=provider,
+        token_env=token_env,
+        api_url=api_url_raw,
+    )
 
 
 @dataclass(frozen=True)

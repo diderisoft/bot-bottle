@@ -53,6 +53,9 @@ from ..docker.pipelock import (
     PIPELOCK_PORT as _PIPELOCK_PORT_STR,
     pipelock_tls_init,
 )
+from ...git_gate import revoke_git_gate_provisioned_keys
+from ...log import warn
+from ..docker.bottle_state import git_gate_state_dir
 from . import loopback_alias as _loopback
 from . import sidecar_bundle as _bundle
 from . import smolvm as _smolvm
@@ -120,7 +123,28 @@ def launch(
             agent_prompt_mode=plan.agent_prompt_mode,
         )
     finally:
+        _teardown_smolmachines(stack, plan)
+
+
+def _teardown_smolmachines(
+    stack: ExitStack,
+    plan: SmolmachinesBottlePlan,
+) -> None:
+    """Unwind the ExitStack, then revoke any provisioned deploy keys.
+
+    ExitStack errors are caught and logged (non-fatal) so that key
+    revocation always runs. Revocation errors propagate — a stranded
+    deploy key is a security concern the operator must address."""
+    teardown_exc: BaseException | None = None
+    try:
         stack.close()
+    except BaseException as exc:
+        teardown_exc = exc
+        warn(f"smolmachines teardown failed: {exc!r}")
+    bottle = plan.spec.manifest.bottle_for(plan.spec.agent_name)
+    revoke_git_gate_provisioned_keys(bottle, git_gate_state_dir(plan.slug))
+    if teardown_exc is not None:
+        raise teardown_exc
 
 
 def _allocate_resources(
