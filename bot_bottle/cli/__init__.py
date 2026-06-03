@@ -1,6 +1,6 @@
 """Main CLI dispatcher.
 
-Commands: cleanup, dashboard, edit, info, init, list, resume, start
+Commands: cleanup, edit, info, init, list, resume, start, supervise
 """
 
 from __future__ import annotations
@@ -12,24 +12,24 @@ from ..manifest import ManifestError
 from ._common import PROG
 from . import list as _list_mod
 from .cleanup import cmd_cleanup
-from .dashboard import cmd_dashboard
 from .edit import cmd_edit
 from .info import cmd_info
 from .init import cmd_init
 from .resume import cmd_resume
 from .start import cmd_start
+from .supervise import cmd_supervise
 
 cmd_list = _list_mod.cmd_list
 
 COMMANDS = {
     "cleanup": cmd_cleanup,
-    "dashboard": cmd_dashboard,
     "edit": cmd_edit,
     "info": cmd_info,
     "init": cmd_init,
     "list": cmd_list,
     "resume": cmd_resume,
     "start": cmd_start,
+    "supervise": cmd_supervise,
 }
 
 
@@ -37,13 +37,13 @@ def usage() -> None:
     sys.stderr.write(f"usage: {PROG} <command> [args...]\n\n")
     sys.stderr.write("Commands:\n")
     sys.stderr.write("  cleanup   stop and remove all active bot-bottle containers\n")
-    sys.stderr.write("  dashboard view + approve/modify/reject pending supervise proposals (PRD 0013)\n")
     sys.stderr.write("  edit      open an agent in vim for editing\n")
     sys.stderr.write("  info      print env, skills, and prompt details for a named agent\n")
     sys.stderr.write("  init      interactively create a new agent and add it to bot-bottle.json\n")
     sys.stderr.write("  list      list available agents or active containers\n")
     sys.stderr.write("  resume    re-launch a bottle by its identity (continues state from PRD 0016)\n")
-    sys.stderr.write("  start     boot a container for a named agent and attach an interactive session\n\n")
+    sys.stderr.write("  start     boot a container for a named agent and attach an interactive session\n")
+    sys.stderr.write("  supervise view + approve/modify/reject pending supervise proposals (PRD 0013)\n\n")
     sys.stderr.write(f"Run '{PROG} <command> --help' for command-specific usage.\n")
 
 
