@@ -71,7 +71,8 @@ def _merge_bottles(
     name: str,
 ) -> Bottle:
     """Apply PRD 0025 merge rules."""
-    from .manifest import Bottle, GitUser, _validate_egress_routes
+    from .manifest import Bottle, GitUser
+    from .manifest_egress import _validate_egress_routes
 
     # Parse the child's declared fields into a Bottle (with the
     # usual defaults for anything missing). Validation runs the same
@@ -122,7 +123,7 @@ def _merge_bottles(
 
 
 def _child_declares_git_gate_repos(child_raw: dict[str, object]) -> bool:
-    from .manifest import _as_json_object
+    from ._manifest_util import _as_json_object
 
     git_raw = child_raw.get("git-gate")
     if git_raw is None:

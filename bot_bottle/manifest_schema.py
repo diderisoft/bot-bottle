@@ -58,7 +58,7 @@ def _validate_frontmatter_keys(
     keys: object,
     allowed_keys: frozenset[str],
 ) -> None:
-    from .manifest import ManifestError
+    from ._manifest_util import ManifestError
 
     key_set = set(keys)
     unknown = key_set - allowed_keys
