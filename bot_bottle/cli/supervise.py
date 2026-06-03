@@ -17,7 +17,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 import traceback
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -59,7 +58,6 @@ from ._common import PROG
 
 
 _REFRESH_INTERVAL_MS = 1000
-_NEW_PROPOSAL_HIGHLIGHT_SEC = 5.0
 
 
 @dataclass(frozen=True)
@@ -97,20 +95,6 @@ def _approval_status(qp: QueuedProposal, verb: str) -> str:
     if qp.proposal.tool == TOOL_CAPABILITY_BLOCK:
         return f"{base}; resume: ./cli.py resume {qp.proposal.bottle_slug}"
     return base
-
-
-def _is_recent(
-    proposal_id: str,
-    first_seen: dict[str, float] | None,
-    now: float | None,
-) -> bool:
-    """True if `proposal_id` was first seen within the highlight window."""
-    if first_seen is None or now is None:
-        return False
-    started = first_seen.get(proposal_id)
-    if started is None:
-        return False
-    return (now - started) < _NEW_PROPOSAL_HIGHLIGHT_SEC
 
 
 def _detail_lines(
@@ -388,21 +372,19 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
     curses.curs_set(0)
     stdscr.timeout(_REFRESH_INTERVAL_MS)
     green_attr = _try_init_green()
-    first_seen: dict[str, float] = {}
     selected = 0
     status_line = ""
-    saw_first_tick = False
     supervise_pane_id = os.environ.get("TMUX_PANE", "")
+    seen_ids: set[str] = set()
 
     while True:
         pending = discover_pending()
         if selected >= len(pending):
             selected = max(0, len(pending) - 1)
 
-        now = time.monotonic()
         live_ids = {qp.proposal.id for qp in pending}
-        newly_arrived = live_ids - first_seen.keys()
-        if saw_first_tick and newly_arrived:
+        newly_arrived = live_ids - seen_ids
+        if seen_ids and newly_arrived:
             try:
                 curses.beep()
             except curses.error:
@@ -413,15 +395,11 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
                 if qp.proposal.id in newly_arrived:
                     selected = i
                     break
-        for proposal_id in live_ids:
-            first_seen.setdefault(proposal_id, now)
-        for stale_id in list(first_seen.keys() - live_ids):
-            del first_seen[stale_id]
-        saw_first_tick = True
+        seen_ids = live_ids
 
         _render(
             stdscr, pending, selected, status_line,
-            first_seen=first_seen, now=now, green_attr=green_attr,
+            green_attr=green_attr,
         )
 
         try:
@@ -478,8 +456,6 @@ def _render(
     selected: int,
     status_line: str,
     *,
-    first_seen: dict[str, float] | None = None,
-    now: float | None = None,
     green_attr: int = 0,
 ) -> None:
     stdscr.erase()
@@ -512,8 +488,6 @@ def _render(
                 f"{_proposed_payload_label(p.tool)}"
             )
             attr = curses.A_REVERSE if i == selected else curses.A_NORMAL
-            if _is_recent(p.id, first_seen, now):
-                attr |= green_attr
             stdscr.addnstr(row, 0, line, w - 1, attr)
             row += 1
             if row >= h - 3:
