@@ -14,9 +14,9 @@ the system prompt, for bottles the body is human documentation
 Bottle schema (frontmatter):
   extends:      <bottle-name>                   # optional (PRD 0025)
   env:          { <NAME>: <env-entry>, ... }
-  git:
+  git-gate:                                     # optional (PRD 0047)
     user:       { name: <str>, email: <str> }   # optional
-    remotes:    { <host>: <git-entry>, ... }    # optional
+    repos:      { <name>: <git-gate-entry>, ... }  # optional
   egress: { routes: [ <egress-route>, ... ] }
     # route keys: host, path_allowlist, auth, role, pipelock
     # pipelock: { tls_passthrough: <bool>, ssrf_ip_allowlist: [<cidr>, ...] }
@@ -25,6 +25,8 @@ Bottle schema (frontmatter):
 Agent schema (frontmatter):
   bottle:        <bottle-name>          # required
   skills:        [ <skill-name>, ... ]   # optional
+  git-gate:
+    user:        { name: <str>, email: <str> }  # optional; overlays bottle
   # Claude Code subagent passthrough fields — accepted, ignored:
   name, description, model, color, memory
 
@@ -73,7 +75,11 @@ class GitEntry:
 
     The Upstream URL is parsed once at construction and the pieces are
     stashed in the `Upstream*` fields so the git-gate render step
-    doesn't have to re-parse."""
+    doesn't have to re-parse.
+
+    Manifest source: `git-gate.repos.<Name>` (PRD 0047). The YAML keys
+    are `url`, `identity`, and `host_key`; the internal field names are
+    stable across that rename."""
 
     Name: str
     Upstream: str
@@ -86,69 +92,48 @@ class GitEntry:
     UpstreamPath: str = ""
 
     @classmethod
-    def from_dict(cls, bottle_name: str, idx: int, raw: object) -> "GitEntry":
-        d = _as_json_object(raw, f"bottle '{bottle_name}' git[{idx}]")
-        return cls._from_object(bottle_name, d, f"git[{idx}]", None)
-
-    @classmethod
-    def from_remote_dict(
-        cls, bottle_name: str, host_key: str, raw: object
+    def from_repos_entry(
+        cls, bottle_name: str, repo_name: str, raw: object
     ) -> "GitEntry":
-        if not host_key:
-            raise ManifestError(f"bottle '{bottle_name}' git.remotes has an empty host key")
-        d = _as_json_object(raw, f"bottle '{bottle_name}' git.remotes[{host_key!r}]")
-        return cls._from_object(
-            bottle_name, d, f"git.remotes[{host_key!r}]", host_key,
-        )
+        """Parse one entry from `git-gate.repos.<repo_name>`.
 
-    @classmethod
-    def _from_object(
-        cls,
-        bottle_name: str,
-        d: dict[str, object],
-        label: str,
-        host_key: str | None,
-    ) -> "GitEntry":
-        name = d.get("Name")
-        if not isinstance(name, str) or not name:
+        YAML keys: `url` (required), `identity` (required),
+        `host_key` (optional). The repo_name becomes `Name`."""
+        if not repo_name:
             raise ManifestError(
-                f"bottle '{bottle_name}' {label} missing required string "
-                f"field 'Name'"
+                f"bottle '{bottle_name}' git-gate.repos has an empty key"
             )
-        upstream = d.get("Upstream")
+        label = f"git-gate.repos[{repo_name!r}]"
+        d = _as_json_object(raw, f"bottle '{bottle_name}' {label}")
+        for k in d:
+            if k not in {"url", "identity", "host_key"}:
+                raise ManifestError(
+                    f"bottle '{bottle_name}' {label} has unknown key {k!r}; "
+                    f"allowed: url, identity, host_key"
+                )
+        upstream = d.get("url")
         if not isinstance(upstream, str) or not upstream:
             raise ManifestError(
-                f"bottle '{bottle_name}' {label} '{name}' missing required string field "
-                f"'Upstream'"
+                f"bottle '{bottle_name}' {label} missing required string field 'url'"
             )
-        ident = d.get("IdentityFile")
+        ident = d.get("identity")
         if not isinstance(ident, str) or not ident:
             raise ManifestError(
-                f"bottle '{bottle_name}' {label} '{name}' missing required string field "
-                f"'IdentityFile'"
+                f"bottle '{bottle_name}' {label} missing required string field 'identity'"
             )
         khk = _opt_str(
-            d.get("KnownHostKey"),
-            f"bottle '{bottle_name}' {label} '{name}' KnownHostKey",
+            d.get("host_key"),
+            f"bottle '{bottle_name}' {label} host_key",
         )
         user, host, port, path = _parse_git_upstream(
-            upstream, f"bottle '{bottle_name}' {label} '{name}' Upstream"
+            upstream, f"bottle '{bottle_name}' {label} url"
         )
-        if (
-            host_key is not None
-            and host_key != host
-            and not _is_ip_literal(host)
-        ):
-            raise ManifestError(
-                f"bottle '{bottle_name}' git.remotes key {host_key!r} "
-                f"does not match Upstream host {host!r}"
-            )
         return cls(
-            Name=name,
+            Name=repo_name,
             Upstream=upstream,
             IdentityFile=ident,
             KnownHostKey=khk,
-            RemoteKey=host_key or host,
+            RemoteKey=host,
             UpstreamUser=user,
             UpstreamHost=host,
             UpstreamPort=port,
@@ -258,28 +243,28 @@ class GitUser:
 
     @classmethod
     def from_dict(cls, bottle_name: str, raw: object) -> "GitUser":
-        d = _as_json_object(raw, f"bottle '{bottle_name}' git.user")
+        d = _as_json_object(raw, f"bottle '{bottle_name}' git-gate.user")
         for k in d.keys():
             if k not in {"name", "email"}:
                 raise ManifestError(
-                    f"bottle '{bottle_name}' git.user has unknown key {k!r}; "
+                    f"bottle '{bottle_name}' git-gate.user has unknown key {k!r}; "
                     f"allowed: name, email"
                 )
         name = d.get("name", "")
         email = d.get("email", "")
         if not isinstance(name, str):
             raise ManifestError(
-                f"bottle '{bottle_name}' git.user.name must be a string "
+                f"bottle '{bottle_name}' git-gate.user.name must be a string "
                 f"(was {type(name).__name__})"
             )
         if not isinstance(email, str):
             raise ManifestError(
-                f"bottle '{bottle_name}' git.user.email must be a string "
+                f"bottle '{bottle_name}' git-gate.user.email must be a string "
                 f"(was {type(email).__name__})"
             )
         if not name and not email:
             raise ManifestError(
-                f"bottle '{bottle_name}' git.user is set but neither "
+                f"bottle '{bottle_name}' git-gate.user is set but neither "
                 f"name nor email is non-empty; remove the block or "
                 f"fill at least one field."
             )
@@ -289,16 +274,16 @@ class GitUser:
         return not self.name and not self.email
 
 
-def _parse_git_config(
+def _parse_git_gate_config(
     bottle_name: str,
     raw: object,
 ) -> tuple[tuple[GitEntry, ...], GitUser]:
-    d = _as_json_object(raw, f"bottle '{bottle_name}' git")
+    d = _as_json_object(raw, f"bottle '{bottle_name}' git-gate")
     for k in d.keys():
-        if k not in {"user", "remotes"}:
+        if k not in {"user", "repos"}:
             raise ManifestError(
-                f"bottle '{bottle_name}' git has unknown key {k!r}; "
-                f"allowed: user, remotes"
+                f"bottle '{bottle_name}' git-gate has unknown key {k!r}; "
+                f"allowed: user, repos"
             )
 
     git_user = (
@@ -308,12 +293,12 @@ def _parse_git_config(
     )
 
     git: tuple[GitEntry, ...] = ()
-    remotes_raw = d.get("remotes")
-    if remotes_raw is not None:
-        remotes = _as_json_object(remotes_raw, f"bottle '{bottle_name}' git.remotes")
+    repos_raw = d.get("repos")
+    if repos_raw is not None:
+        repos = _as_json_object(repos_raw, f"bottle '{bottle_name}' git-gate.repos")
         git = tuple(
-            GitEntry.from_remote_dict(bottle_name, host, entry)
-            for host, entry in remotes.items()
+            GitEntry.from_repos_entry(bottle_name, name, entry)
+            for name, entry in repos.items()
         )
         _validate_unique_git_names(bottle_name, git)
 
@@ -573,10 +558,9 @@ class Bottle:
     agent_provider: AgentProvider = field(default_factory=AgentProvider)
     git: tuple[GitEntry, ...] = ()
     # Per-bottle git identity (issue #86). Empty default — bottles
-    # that don't set `git.user:` in the manifest skip the
-    # `git config --global` step entirely. Set independently of
-    # the `git.remotes:` upstream map above: a bottle can declare a user
-    # identity without any git-gate upstreams, and vice versa.
+    # that don't set `git-gate.user:` in the manifest skip the
+    # `git config --global` step entirely. A bottle can declare a user
+    # identity without any git-gate.repos upstreams, and vice versa.
     git_user: GitUser = field(default_factory=GitUser)
     egress: EgressConfig = field(default_factory=EgressConfig)
     # Opt-in per-bottle stuck-recovery sidecar (PRD 0013). When true,
@@ -603,16 +587,22 @@ class Bottle:
         if "ssh" in d:
             raise ManifestError(
                 f"bottle '{name}' has an 'ssh' field, which has been removed "
-                f"(PRD 0009). Move each entry to 'git': declare the upstream "
-                f"as a git remote with Name + Upstream URL + IdentityFile, "
-                f"and the per-bottle git-gate (PRD 0008) will hold the "
-                f"credential and gitleaks-scan pushes."
+                f"(PRD 0009). Declare upstreams under 'git-gate.repos' with "
+                f"url + identity + host_key; the git-gate sidecar (PRD 0008) "
+                f"holds the credential and gitleaks-scans pushes."
+            )
+
+        if "git" in d:
+            raise ManifestError(
+                f"bottle '{name}' uses 'git' which has been replaced by "
+                f"'git-gate' (PRD 0047). Move git.user → git-gate.user "
+                f"and git.remotes → git-gate.repos (fields: url, identity, host_key)."
             )
 
         if "git_user" in d:
             raise ManifestError(
                 f"bottle '{name}' has a 'git_user' field, which has been "
-                f"removed. Move it under 'git.user'."
+                f"removed. Move it under 'git-gate.user'."
             )
 
         unknown = set(d.keys()) - BOTTLE_KEYS
@@ -637,9 +627,9 @@ class Bottle:
 
         git: tuple[GitEntry, ...] = ()
         git_user = GitUser()
-        git_raw = d.get("git")
+        git_raw = d.get("git-gate")
         if git_raw is not None:
-            git, git_user = _parse_git_config(name, git_raw)
+            git, git_user = _parse_git_gate_config(name, git_raw)
 
         agent_provider = (
             AgentProvider.from_dict(name, d["agent_provider"])
@@ -672,9 +662,9 @@ class Agent:
     skills: tuple[str, ...] = ()
     prompt: str = ""
     # Per-agent git identity (issue #94). Overlays the referenced
-    # bottle's git.user per-field at `Manifest.bottle_for`. Only the
-    # `user` block is allowed at the agent level; `git.remotes` stays
-    # bottle-only because it carries credentials and host trust.
+    # bottle's git-gate.user per-field at `Manifest.bottle_for`. Only
+    # `user` is allowed at the agent level; `repos` stays bottle-only
+    # because it carries credentials and host trust.
     git_user: GitUser = GitUser()
 
     @classmethod
@@ -722,19 +712,18 @@ class Agent:
         else:
             raise ManifestError(f"agent '{name}' prompt must be a string (was {type(prompt_raw).__name__})")
 
-        # git: agents may declare only `git.user` (name/email). Any
-        # other git key — notably `remotes` — is rejected: remotes
-        # carry credentials and host trust and stay bottle-only.
+        # git-gate: agents may declare only `git-gate.user` (name/email).
+        # `git-gate.repos` is bottle-only — it carries credentials and host trust.
         git_user = GitUser()
-        git_raw = d.get("git")
+        git_raw = d.get("git-gate")
         if git_raw is not None:
-            gd = _as_json_object(git_raw, f"agent '{name}' git")
+            gd = _as_json_object(git_raw, f"agent '{name}' git-gate")
             for k in gd.keys():
                 if k != "user":
                     raise ManifestError(
-                        f"agent '{name}' git.{k} is not allowed at the "
-                        f"agent level; only git.user (name/email) may be "
-                        f"set on an agent. git.remotes is bottle-only "
+                        f"agent '{name}' git-gate.{k} is not allowed at the "
+                        f"agent level; only git-gate.user (name/email) may be "
+                        f"set on an agent. git-gate.repos is bottle-only "
                         f"(it carries credentials and host trust)."
                     )
             if "user" in gd:
@@ -1011,9 +1000,10 @@ def _validate_egress_routes(
     The proxy matches by exact-host (v1); duplicate hosts leave the
     route choice ambiguous so we reject them up front.
 
-    No cross-validation against `bottle.git` is performed. git-gate
-    (SSH push/fetch) and egress (HTTPS) broker different protocols;
-    declaring both for the same host is a legitimate dev setup."""
+    No cross-validation against `bottle.git-gate.repos` is performed.
+    git-gate (SSH push/fetch) and egress (HTTPS) broker different
+    protocols; declaring both for the same host is a legitimate dev
+    setup."""
     seen_hosts: dict[str, None] = {}
     for r in routes:
         key = r.Host.lower()
@@ -1030,7 +1020,7 @@ def _validate_unique_git_names(bottle_name: str, git: tuple[GitEntry, ...]) -> N
     for g in git:
         if g.Name in seen:
             raise ManifestError(
-                f"bottle '{bottle_name}' git entries have duplicate Name '{g.Name}'; "
+                f"bottle '{bottle_name}' git-gate.repos has duplicate name '{g.Name}'; "
                 f"each entry maps to a distinct bare repo on the gate."
             )
         seen[g.Name] = None

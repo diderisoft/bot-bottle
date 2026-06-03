@@ -81,19 +81,19 @@ def _merge_bottles(
     # env: dict merge, child wins on collision.
     merged_env = {**parent.env, **child.env}
 
-    # git.user: per-field overlay. Each non-empty field on child
+    # git-gate.user: per-field overlay. Each non-empty field on child
     # wins; empties fall through to parent. The default GitUser()
-    # is two empty strings, so a child that omits git.user
+    # is two empty strings, so a child that omits git-gate.user
     # inherits the parent's user verbatim.
     merged_git_user = GitUser(
         name=child.git_user.name or parent.git_user.name,
         email=child.git_user.email or parent.git_user.email,
     )
 
-    # git.remotes: missing means inherit; an explicit empty object
+    # git-gate.repos: missing means inherit; an explicit empty object
     # clears; otherwise parent and child merge by UpstreamHost with
     # child entries replacing duplicate hosts.
-    if _child_declares_git_remotes(child_raw):
+    if _child_declares_git_gate_repos(child_raw):
         merged_git = _merge_git_remotes(parent.git, child.git) if child.git else ()
     else:
         merged_git = parent.git
@@ -121,14 +121,14 @@ def _merge_bottles(
     )
 
 
-def _child_declares_git_remotes(child_raw: dict[str, object]) -> bool:
+def _child_declares_git_gate_repos(child_raw: dict[str, object]) -> bool:
     from .manifest import _as_json_object
 
-    git_raw = child_raw.get("git")
+    git_raw = child_raw.get("git-gate")
     if git_raw is None:
         return False
-    git_obj = _as_json_object(git_raw, "child git")
-    return "remotes" in git_obj
+    git_obj = _as_json_object(git_raw, "child git-gate")
+    return "repos" in git_obj
 
 
 def _merge_git_remotes(

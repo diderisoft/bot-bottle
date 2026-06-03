@@ -93,13 +93,13 @@ def load_agents_from_dir(
         validate_agent_frontmatter_keys(path, fm.keys())
         # Build the dict Agent.from_dict expects. The body becomes
         # prompt; Claude Code passthrough fields stay in fm and get
-        # ignored by Agent.from_dict (which reads bottle/skills/git/prompt).
+        # ignored by Agent.from_dict (reads bottle/skills/git-gate/prompt).
         agent_dict: dict[str, object] = {
             "bottle": fm.get("bottle"),
             "skills": fm.get("skills", []),
             "prompt": body.strip(),
         }
-        if "git" in fm:
-            agent_dict["git"] = fm["git"]
+        if "git-gate" in fm:
+            agent_dict["git-gate"] = fm["git-gate"]
         out[name] = Agent.from_dict(name, agent_dict, bottle_names)
     return out
