@@ -5,7 +5,7 @@ model: opus
 bottle: dev
 skills:
   - init-prd
-git:
+git-gate:
   user:
     name: implementer-bot
     email: eric+implementer@dideric.is

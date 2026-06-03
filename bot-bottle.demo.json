@@ -4,14 +4,15 @@
       "env": {
         "FAKE_TOKEN": "ghp_aB3cD4eF5gH6iJ7kL8mN9oP0qR1sT2uV3wX4yZ"
       },
-      "git": [
-        {
-          "Name": "foo",
-          "Upstream": "ssh://git@upstream.invalid/path.git",
-          "IdentityFile": "~/.cache/bot-bottle-demo/fake-key",
-          "KnownHostKey": "ssh-ed25519 AAAAEXAMPLE"
+      "git-gate": {
+        "repos": {
+          "foo": {
+            "url": "ssh://git@upstream.invalid/path.git",
+            "identity": "~/.cache/bot-bottle-demo/fake-key",
+            "host_key": "ssh-ed25519 AAAAEXAMPLE"
+          }
         }
-      ]
+      }
     }
   },
 
