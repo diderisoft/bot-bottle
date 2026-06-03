@@ -354,27 +354,12 @@ def _try_init_green() -> int:
         return 0
 
 
-def _in_tmux() -> bool:
-    return bool(os.environ.get("TMUX"))
-
-
-def _select_tmux_pane(pane_id: str) -> None:
-    try:
-        subprocess.run(
-            ["tmux", "select-pane", "-t", pane_id],
-            capture_output=True, text=True, check=False,
-        )
-    except FileNotFoundError:
-        pass
-
-
 def _main_loop(stdscr: "curses._CursesWindow") -> None:
     curses.curs_set(0)
     stdscr.timeout(_REFRESH_INTERVAL_MS)
     green_attr = _try_init_green()
     selected = 0
     status_line = ""
-    supervise_pane_id = os.environ.get("TMUX_PANE", "")
     seen_ids: set[str] = set()
 
     while True:
@@ -389,8 +374,6 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
                 curses.beep()
             except curses.error:
                 pass
-            if supervise_pane_id and _in_tmux():
-                _select_tmux_pane(supervise_pane_id)
             for i, qp in enumerate(pending):
                 if qp.proposal.id in newly_arrived:
                     selected = i
