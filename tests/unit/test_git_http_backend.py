@@ -150,6 +150,97 @@ class TestGitHttpBackend(unittest.TestCase):
             )
             self.assertEqual("git/test", env["HTTP_USER_AGENT"])
 
+    def test_access_hook_denial_is_logged_to_stdout(self):
+        """When the access-hook exits non-zero we still return 403 to the
+        client, but the hook's stderr must also appear on the handler's
+        stdout so docker logs surface *why* — otherwise the agent sees
+        the message and the operator just sees `403 -`."""
+        from http.server import ThreadingHTTPServer
+        import io
+        import sys
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "repo.git").mkdir()
+            old_root = os.environ.get("GIT_PROJECT_ROOT")
+            os.environ["GIT_PROJECT_ROOT"] = str(root)
+            self.addCleanup(self._restore_env, old_root)
+
+            server = ThreadingHTTPServer(("127.0.0.1", 0), GitHttpHandler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            self.addCleanup(server.shutdown)
+            self.addCleanup(server.server_close)
+
+            denial = b"git-gate: upstream fetch failed; refusing to serve stale data\n"
+            with mock.patch(
+                "bot_bottle.git_http_backend.subprocess.run",
+                return_value=subprocess.CompletedProcess(
+                    ["hook"], 1, b"", denial,
+                ),
+            ):
+                buf = io.StringIO()
+                with mock.patch.object(sys, "stdout", buf):
+                    req = urllib.request.Request(
+                        f"http://127.0.0.1:{server.server_port}"
+                        "/repo.git/info/refs?service=git-upload-pack",
+                        method="GET",
+                    )
+                    try:
+                        urllib.request.urlopen(req, timeout=5)
+                        self.fail("expected HTTPError 403")
+                    except urllib.error.HTTPError as e:
+                        self.assertEqual(403, e.code)
+                        self.assertIn(b"upstream fetch failed", e.read())
+
+                logged = buf.getvalue()
+                self.assertIn("access-hook denied", logged)
+                self.assertIn("upstream fetch failed", logged)
+
+    def test_access_hook_denial_without_output_logs_exit_code(self):
+        """If the hook exits non-zero but produces no stderr/stdout, the
+        log line should still say *something* — the exit code — instead
+        of silently emitting an empty line."""
+        from http.server import ThreadingHTTPServer
+        import io
+        import sys
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "repo.git").mkdir()
+            old_root = os.environ.get("GIT_PROJECT_ROOT")
+            os.environ["GIT_PROJECT_ROOT"] = str(root)
+            self.addCleanup(self._restore_env, old_root)
+
+            server = ThreadingHTTPServer(("127.0.0.1", 0), GitHttpHandler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            self.addCleanup(server.shutdown)
+            self.addCleanup(server.server_close)
+
+            with mock.patch(
+                "bot_bottle.git_http_backend.subprocess.run",
+                return_value=subprocess.CompletedProcess(
+                    ["hook"], 2, b"", b"",
+                ),
+            ):
+                buf = io.StringIO()
+                with mock.patch.object(sys, "stdout", buf):
+                    req = urllib.request.Request(
+                        f"http://127.0.0.1:{server.server_port}"
+                        "/repo.git/info/refs?service=git-upload-pack",
+                        method="GET",
+                    )
+                    try:
+                        urllib.request.urlopen(req, timeout=5)
+                        self.fail("expected HTTPError 403")
+                    except urllib.error.HTTPError as e:
+                        self.assertEqual(403, e.code)
+
+                logged = buf.getvalue()
+                self.assertIn("access-hook denied", logged)
+                self.assertIn("exit=2", logged)
+
     @staticmethod
     def _restore_env(value: str | None) -> None:
         if value is None:

@@ -49,6 +49,18 @@ class GitHttpHandler(BaseHTTPRequestHandler):
                 check=False,
             )
             if hook.returncode != 0:
+                detail = (hook.stderr or hook.stdout).decode(
+                    "utf-8", errors="replace",
+                ).rstrip()
+                if detail:
+                    for line in detail.splitlines():
+                        self.log_message("access-hook denied %s: %s",
+                                         parsed.path, line)
+                else:
+                    self.log_message(
+                        "access-hook denied %s: exit=%d (no output)",
+                        parsed.path, hook.returncode,
+                    )
                 self.send_response(403)
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
                 self.end_headers()
