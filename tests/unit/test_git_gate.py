@@ -76,14 +76,18 @@ class TestEntrypointRender(unittest.TestCase):
         )
         script = git_gate_render_entrypoint(ups)
         self.assertIn("#!/bin/sh", script)
-        self.assertIn(
-            "init_repo 'bot-bottle' "
-            "'ssh://git@gitea.dideric.is:30009/didericis/bot-bottle.git'",
-            script,
+        # shlex.quote leaves safe strings unquoted; verify via token parse.
+        import shlex as _shlex
+        lines_with_init = [l for l in script.splitlines() if l.startswith("init_repo ")]
+        self.assertEqual(2, len(lines_with_init))
+        self.assertEqual(
+            ["init_repo", "bot-bottle",
+             "ssh://git@gitea.dideric.is:30009/didericis/bot-bottle.git"],
+            _shlex.split(lines_with_init[0]),
         )
-        self.assertIn(
-            "init_repo 'foo' 'ssh://git@github.com/didericis/foo.git'",
-            script,
+        self.assertEqual(
+            ["init_repo", "foo", "ssh://git@github.com/didericis/foo.git"],
+            _shlex.split(lines_with_init[1]),
         )
         # Daemon line is what keeps PID 1 alive.
         self.assertIn("exec git daemon", script)
@@ -107,6 +111,41 @@ class TestEntrypointRender(unittest.TestCase):
         script = git_gate_render_entrypoint(())
         self.assertNotIn("init_repo '", script)
         self.assertIn("exec git daemon", script)
+
+    def test_single_quote_in_upstream_url_is_escaped(self):
+        ups = (GitGateUpstream(
+            name="myrepo",
+            upstream_url="ssh://git@host/path'with'quotes.git",
+            upstream_host="host",
+            upstream_port="22",
+            identity_file="/key",
+            known_host_key="",
+        ),)
+        script = git_gate_render_entrypoint(ups)
+        self.assertNotIn(
+            "init_repo 'myrepo' 'ssh://git@host/path'with'quotes.git'",
+            script,
+        )
+        self.assertIn("init_repo", script)
+        self.assertIn("path", script)
+
+    def test_space_and_semicolon_in_upstream_url_are_escaped(self):
+        import shlex as _shlex
+        raw_url = "ssh://git@host/path with spaces;evil.git"
+        ups = (GitGateUpstream(
+            name="myrepo",
+            upstream_url=raw_url,
+            upstream_host="host",
+            upstream_port="22",
+            identity_file="/key",
+            known_host_key="",
+        ),)
+        script = git_gate_render_entrypoint(ups)
+        line = next(l for l in script.splitlines() if l.startswith("init_repo "))
+        tokens = _shlex.split(line)
+        self.assertEqual(3, len(tokens))
+        self.assertEqual("myrepo", tokens[1])
+        self.assertEqual(raw_url, tokens[2])
 
 
 class TestHookRender(unittest.TestCase):

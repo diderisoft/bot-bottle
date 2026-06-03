@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from .manifest_util import ManifestError, as_json_object
+
+# Shell-safe characters for git-gate repo names. Names are embedded in
+# the generated entrypoint shell script (shlex.quote is the primary
+# defence; this regex is belt-and-suspenders and documents intent).
+_GIT_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 def _opt_str(value: object, label: str) -> str:
@@ -93,6 +99,11 @@ class GitEntry:
         if not repo_name:
             raise ManifestError(
                 f"bottle '{bottle_name}' git-gate.repos has an empty key"
+            )
+        if not _GIT_NAME_RE.match(repo_name):
+            raise ManifestError(
+                f"bottle '{bottle_name}' git-gate.repos name {repo_name!r} is invalid; "
+                f"allowed characters: A-Z a-z 0-9 . _ -"
             )
         label = f"git-gate.repos[{repo_name!r}]"
         d = as_json_object(raw, f"bottle '{bottle_name}' {label}")

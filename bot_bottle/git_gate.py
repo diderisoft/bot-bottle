@@ -29,6 +29,7 @@ backend-specific and lives on concrete subclasses (see
 
 from __future__ import annotations
 
+import shlex
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -207,10 +208,7 @@ def git_gate_render_entrypoint(upstreams: tuple[GitGateUpstream, ...]) -> str:
         "mkdir -p /git",
     ]
     for u in upstreams:
-        # Single-quote args so URL/path content (containing : and /)
-        # passes through ash unmangled. Names came through the manifest
-        # validator so they don't contain a single quote.
-        lines.append(f"init_repo '{u.name}' '{u.upstream_url}'")
+        lines.append(f"init_repo {shlex.quote(u.name)} {shlex.quote(u.upstream_url)}")
     lines.extend([
         "",
         "exec git daemon \\",

@@ -185,6 +185,51 @@ class TestGitEntryCrossValidation(unittest.TestCase):
                 "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
             })
 
+    def test_name_with_single_quote_dies(self):
+        with self.assertRaises(ManifestError):
+            Manifest.from_json_obj(_manifest({
+                "o'reilly": {
+                    "url": "ssh://git@github.com/foo.git",
+                    "identity": "/dev/null",
+                },
+            }))
+
+    def test_name_with_space_dies(self):
+        with self.assertRaises(ManifestError):
+            Manifest.from_json_obj(_manifest({
+                "my repo": {
+                    "url": "ssh://git@github.com/foo.git",
+                    "identity": "/dev/null",
+                },
+            }))
+
+    def test_name_with_semicolon_dies(self):
+        with self.assertRaises(ManifestError):
+            Manifest.from_json_obj(_manifest({
+                "foo;bar": {
+                    "url": "ssh://git@github.com/foo.git",
+                    "identity": "/dev/null",
+                },
+            }))
+
+    def test_name_with_dollar_dies(self):
+        with self.assertRaises(ManifestError):
+            Manifest.from_json_obj(_manifest({
+                "foo$bar": {
+                    "url": "ssh://git@github.com/foo.git",
+                    "identity": "/dev/null",
+                },
+            }))
+
+    def test_valid_name_with_dots_and_hyphens_accepted(self):
+        m = Manifest.from_json_obj(_manifest({
+            "my.repo-name_1": {
+                "url": "ssh://git@github.com/foo.git",
+                "identity": "/dev/null",
+            },
+        }))
+        self.assertEqual("my.repo-name_1", m.bottles["dev"].git[0].Name)
+
     def test_legacy_git_key_dies_with_hint(self):
         msg = ""
         try:
