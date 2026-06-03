@@ -1,4 +1,4 @@
-"""Unit: dashboard launch/crash failure logging (issue #100).
+"""Unit: supervise launch/crash failure logging (issue #100).
 
 The dashboard runs under curses, so anything written to stderr while the
 TUI owns the terminal is wiped when the terminal is restored. These
@@ -17,7 +17,7 @@ from pathlib import Path
 from unittest import mock
 
 from bot_bottle import supervise
-from bot_bottle.cli import dashboard
+from bot_bottle.cli import supervise as dashboard
 from bot_bottle.log import Die, die
 
 
@@ -44,7 +44,7 @@ class _FakeHomeMixin:
     ~/.bot-bottle."""
 
     def _setup_fake_home(self):
-        self._tmp = tempfile.TemporaryDirectory(prefix="dash-crash-test.")
+        self._tmp = tempfile.TemporaryDirectory(prefix="supervise-crash-test.")
         self._orig_root = supervise.bot_bottle_root
         self._root = Path(self._tmp.name) / ".bot-bottle"
         supervise.bot_bottle_root = lambda: self._root  # type: ignore[assignment]
@@ -54,7 +54,7 @@ class _FakeHomeMixin:
         self._tmp.cleanup()
 
 
-class TestCmdDashboardErrorPaths(_FakeHomeMixin, unittest.TestCase):
+class TestCmdSuperviseErrorPaths(_FakeHomeMixin, unittest.TestCase):
     def setUp(self):
         self._setup_fake_home()
 
@@ -65,7 +65,7 @@ class TestCmdDashboardErrorPaths(_FakeHomeMixin, unittest.TestCase):
         with mock.patch.object(
             dashboard.curses, "wrapper", side_effect=KeyboardInterrupt
         ):
-            self.assertEqual(130, dashboard.cmd_dashboard([]))
+            self.assertEqual(130, dashboard.cmd_supervise([]))
 
     def test_die_resurfaces_message_after_curses(self):
         buf = io.StringIO()
@@ -74,7 +74,7 @@ class TestCmdDashboardErrorPaths(_FakeHomeMixin, unittest.TestCase):
             side_effect=Die(1, "manifest parse error at line 3"),
         ):
             with contextlib.redirect_stderr(buf):
-                rc = dashboard.cmd_dashboard([])
+                rc = dashboard.cmd_supervise([])
         self.assertEqual(1, rc)
         self.assertIn("manifest parse error at line 3", buf.getvalue())
 
@@ -82,7 +82,7 @@ class TestCmdDashboardErrorPaths(_FakeHomeMixin, unittest.TestCase):
         buf = io.StringIO()
         with mock.patch.object(dashboard.curses, "wrapper", side_effect=Die(1)):
             with contextlib.redirect_stderr(buf):
-                rc = dashboard.cmd_dashboard([])
+                rc = dashboard.cmd_supervise([])
         self.assertEqual(1, rc)
         self.assertIn("fatal error", buf.getvalue())
 
@@ -93,12 +93,12 @@ class TestCmdDashboardErrorPaths(_FakeHomeMixin, unittest.TestCase):
             side_effect=ValueError("kaboom in render"),
         ):
             with contextlib.redirect_stderr(buf):
-                rc = dashboard.cmd_dashboard([])
+                rc = dashboard.cmd_supervise([])
         self.assertEqual(1, rc)
         out = buf.getvalue()
-        self.assertIn("dashboard crashed: ValueError: kaboom in render", out)
+        self.assertIn("supervise crashed: ValueError: kaboom in render", out)
         self.assertIn("full traceback written to", out)
-        log_path = self._root / "logs" / "dashboard-crash.log"
+        log_path = self._root / "logs" / "supervise-crash.log"
         self.assertTrue(log_path.exists())
         content = log_path.read_text()
         self.assertIn("kaboom in render", content)
@@ -117,9 +117,9 @@ class TestWriteCrashLog(_FakeHomeMixin, unittest.TestCase):
             raise RuntimeError("explode")
         except RuntimeError as e:
             path = dashboard._write_crash_log(e)
-        self.assertEqual(self._root / "logs" / "dashboard-crash.log", path)
+        self.assertEqual(self._root / "logs" / "supervise-crash.log", path)
         text = path.read_text()
-        self.assertIn("=== dashboard crash", text)
+        self.assertIn("=== supervise crash", text)
         self.assertIn("RuntimeError: explode", text)
 
     def test_falls_back_to_tempfile_when_home_unwritable(self):

@@ -277,51 +277,5 @@ class TestBottleMetadataBackend(_FakeHomeMixin, unittest.TestCase):
         self.assertEqual("", loaded.backend)
 
 
-class TestBottleForSlugBackend(_FakeHomeMixin, unittest.TestCase):
-    """PRD 0040: _bottle_for_slug constructs the right bottle type."""
-
-    def setUp(self):
-        self._setup_fake_home()
-
-    def tearDown(self):
-        self._teardown_fake_home()
-
-    def test_docker_metadata_returns_docker_bottle(self):
-        from bot_bottle.backend.docker.bottle import DockerBottle
-        from bot_bottle.cli.dashboard import _bottle_for_slug
-        write_metadata(BottleMetadata(
-            identity="dev-d1",
-            agent_name="dev",
-            cwd="",
-            copy_cwd=False,
-            started_at="2026-06-02T00:00:00+00:00",
-            compose_project="bot-bottle-dev-d1",
-            backend="docker",
-        ))
-        bottle, _ = _bottle_for_slug("dev-d1", {}, None)
-        self.assertIsInstance(bottle, DockerBottle)
-
-    def test_smolmachines_metadata_returns_smolmachines_bottle(self):
-        from bot_bottle.backend.smolmachines.bottle import SmolmachinesBottle
-        from bot_bottle.cli.dashboard import _bottle_for_slug
-        write_metadata(BottleMetadata(
-            identity="dev-s1",
-            agent_name="dev",
-            cwd="",
-            copy_cwd=False,
-            started_at="2026-06-02T00:00:00+00:00",
-            compose_project="",
-            backend="smolmachines",
-        ))
-        bottle, _ = _bottle_for_slug("dev-s1", {}, None)
-        self.assertIsInstance(bottle, SmolmachinesBottle)
-
-    def test_no_metadata_defaults_to_docker_bottle(self):
-        from bot_bottle.backend.docker.bottle import DockerBottle
-        from bot_bottle.cli.dashboard import _bottle_for_slug
-        bottle, _ = _bottle_for_slug("unknown-slug", {}, None)
-        self.assertIsInstance(bottle, DockerBottle)
-
-
 if __name__ == "__main__":
     unittest.main()

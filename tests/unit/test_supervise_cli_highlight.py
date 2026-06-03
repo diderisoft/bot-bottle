@@ -1,4 +1,4 @@
-"""Unit: dashboard's new-proposal highlight window.
+"""Unit: supervise's new-proposal highlight window.
 
 The curses rendering itself is exercised manually; this isolates
 the pure decision `is the proposal still in its post-arrival
@@ -6,7 +6,7 @@ highlight window?`"""
 
 import unittest
 
-from bot_bottle.cli import dashboard
+from bot_bottle.cli import supervise as dashboard
 
 
 class TestIsRecent(unittest.TestCase):

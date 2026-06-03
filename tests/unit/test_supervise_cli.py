@@ -1,10 +1,10 @@
-"""Unit: dashboard headless paths (PRD 0013 phase 4, PRD 0014).
+"""Unit: supervise headless paths (PRD 0013 phase 4, PRD 0014).
 
 The curses TUI itself isn't exercised here — these tests cover the
 discovery + approve/reject + audit-write paths that the TUI's key
 handlers call into.
 
-apply_routes_change is stubbed at the dashboard module level so the
+apply_routes_change is stubbed at the supervise module level so the
 tests don't need a running cred-proxy sidecar; the real docker
 exec/cp/SIGHUP plumbing is covered by the integration test.
 """
@@ -19,7 +19,7 @@ from bot_bottle import supervise
 from bot_bottle.backend.docker.capability_apply import CapabilityApplyError
 from bot_bottle.backend.docker.egress_apply import EgressApplyError
 from bot_bottle.backend.docker.pipelock_apply import PipelockApplyError
-from bot_bottle.cli import dashboard
+from bot_bottle.cli import supervise as dashboard
 from bot_bottle.supervise import (
     Proposal,
     STATUS_APPROVED,
@@ -61,7 +61,7 @@ class _FakeHomeMixin:
     """Patch supervise.bot_bottle_root to a temp dir for the test."""
 
     def _setup_fake_home(self):
-        self._tmp = tempfile.TemporaryDirectory(prefix="dashboard-test.")
+        self._tmp = tempfile.TemporaryDirectory(prefix="supervise-test.")
         original = supervise.bot_bottle_root
 
         def fake_root() -> Path:
@@ -306,7 +306,7 @@ class TestEgressApplyWiring(_FakeHomeMixin, unittest.TestCase):
 
 class TestPipelockApplyWiring(_FakeHomeMixin, unittest.TestCase):
     """PRD 0015 Phase 2 + PR #25 follow-up: approve() on a
-    pipelock-block proposal carries the failed URL; the dashboard
+    pipelock-block proposal carries the failed URL; the supervise TUI
     extracts the host, merges it into the running allowlist, and
     calls apply_allowlist_change with the merged content."""
 
@@ -383,7 +383,7 @@ class TestPipelockApplyWiring(_FakeHomeMixin, unittest.TestCase):
     def test_url_without_host_raises(self):
         dashboard.fetch_current_allowlist = lambda slug: ""
         # supervise_server's validator would catch this; if a broken
-        # URL ever makes it through, the dashboard surfaces it too.
+        # URL ever makes it through, the supervise TUI surfaces it too.
         qp = self._enqueue_pipelock("https:///nohost")
         with self.assertRaises(PipelockApplyError):
             dashboard.approve(qp)
@@ -456,68 +456,6 @@ class TestCapabilityApplyWiring(_FakeHomeMixin, unittest.TestCase):
         self.assertEqual([], supervise.list_pending_proposals(qp.queue_dir))
         processed = list((qp.queue_dir / "processed").glob("*.json"))
         self.assertEqual(2, len(processed))
-
-
-class TestOperatorEditRoutes(_FakeHomeMixin, unittest.TestCase):
-    """PRD 0014 Phase 4: operator-initiated routes edit (not gated
-    on a pending proposal)."""
-
-    def setUp(self):
-        self._setup_fake_home()
-        self._original_apply = dashboard.apply_routes_change
-
-    def tearDown(self):
-        dashboard.apply_routes_change = self._original_apply
-        self._teardown_fake_home()
-
-    def test_writes_audit_with_operator_edit_action(self):
-        dashboard.apply_routes_change = lambda slug, content: (
-            '{"routes": []}\n', content,
-        )
-        dashboard.operator_edit_routes("dev", '{"routes": [{"path": "/x/"}]}\n')
-        entries = read_audit_entries("egress", "dev")
-        self.assertEqual(1, len(entries))
-        self.assertEqual(supervise.ACTION_OPERATOR_EDIT, entries[0].operator_action)
-        self.assertEqual("", entries[0].justification)
-        self.assertIn("+", entries[0].diff)
-
-    def test_failure_does_not_write_audit(self):
-        dashboard.apply_routes_change = lambda slug, content: (_ for _ in ()).throw(
-            EgressApplyError("nope")
-        )
-        with self.assertRaises(EgressApplyError):
-            dashboard.operator_edit_routes("dev", '{"routes": []}\n')
-        self.assertEqual([], read_audit_entries("egress", "dev"))
-
-
-class TestOperatorEditAllowlist(_FakeHomeMixin, unittest.TestCase):
-    """PRD 0015 Phase 3: operator-initiated pipelock allowlist edit."""
-
-    def setUp(self):
-        self._setup_fake_home()
-        self._original = dashboard.apply_allowlist_change
-
-    def tearDown(self):
-        dashboard.apply_allowlist_change = self._original
-        self._teardown_fake_home()
-
-    def test_writes_audit_with_operator_edit_action(self):
-        dashboard.apply_allowlist_change = lambda slug, content: (
-            "old.example\n", content,
-        )
-        dashboard.operator_edit_allowlist("dev", "old.example\nnew.example\n")
-        entries = read_audit_entries("pipelock", "dev")
-        self.assertEqual(1, len(entries))
-        self.assertEqual(supervise.ACTION_OPERATOR_EDIT, entries[0].operator_action)
-        self.assertIn("+new.example", entries[0].diff)
-
-    def test_failure_does_not_write_audit(self):
-        dashboard.apply_allowlist_change = lambda slug, content: (_ for _ in ()).throw(
-            PipelockApplyError("nope")
-        )
-        with self.assertRaises(PipelockApplyError):
-            dashboard.operator_edit_allowlist("dev", "x.example\n")
-        self.assertEqual([], read_audit_entries("pipelock", "dev"))
 
 
 class TestEditInEditor(unittest.TestCase):

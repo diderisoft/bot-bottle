@@ -1,4 +1,4 @@
-"""Unit: dashboard's detail-view line builder.
+"""Unit: supervise's detail-view line builder.
 
 _detail_lines returns (text, attr) tuples. Most are plain; for
 pipelock-block proposals it appends a "→ would allow host: <host>"
@@ -8,7 +8,7 @@ which hostname will land in pipelock's allowlist on approval."""
 import unittest
 
 from bot_bottle import supervise
-from bot_bottle.cli import dashboard
+from bot_bottle.cli import supervise as dashboard
 from bot_bottle.supervise import (
     Proposal,
     TOOL_CAPABILITY_BLOCK,
@@ -63,7 +63,7 @@ class TestPipelockHostHighlight(unittest.TestCase):
     def test_skips_host_line_when_url_unparseable(self):
         # Shouldn't happen in production — supervise_server validates
         # the URL before queuing — but if a malformed payload ever
-        # reaches the dashboard, don't render a misleading host line.
+        # reaches the supervise TUI, don't render a misleading host line.
         lines = dashboard._detail_lines(
             _qp(TOOL_PIPELOCK_BLOCK, "garbage-not-a-url"),
             green_attr=self.GREEN,
