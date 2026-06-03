@@ -72,7 +72,7 @@ def _merge_bottles(
 ) -> Bottle:
     """Apply PRD 0025 merge rules."""
     from .manifest import Bottle, GitUser
-    from .manifest_egress import _validate_egress_routes
+    from .manifest_egress import validate_egress_routes
 
     # Parse the child's declared fields into a Bottle (with the
     # usual defaults for anything missing). Validation runs the same
@@ -110,7 +110,7 @@ def _merge_bottles(
     merged_supervise = (
         child.supervise if "supervise" in child_raw else parent.supervise
     )
-    _validate_egress_routes(name, merged_egress.routes)
+    validate_egress_routes(name, merged_egress.routes)
 
     return Bottle(
         env=merged_env,
@@ -123,12 +123,12 @@ def _merge_bottles(
 
 
 def _child_declares_git_gate_repos(child_raw: dict[str, object]) -> bool:
-    from ._manifest_util import _as_json_object
+    from .manifest_util import as_json_object
 
     git_raw = child_raw.get("git-gate")
     if git_raw is None:
         return False
-    git_obj = _as_json_object(git_raw, "child git-gate")
+    git_obj = as_json_object(git_raw, "child git-gate")
     return "repos" in git_obj
 
 

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import cast
 
 from .agent_provider import PROVIDER_TEMPLATES
-from ._manifest_util import ManifestError, _as_json_object
+from .manifest_util import ManifestError, as_json_object
 from .manifest_git import GitUser
 from .manifest_schema import AGENT_MODEL_KEYS
 
@@ -36,7 +36,7 @@ class AgentProvider:
 
     @classmethod
     def from_dict(cls, bottle_name: str, raw: object) -> "AgentProvider":
-        d = _as_json_object(raw, f"bottle '{bottle_name}' agent_provider")
+        d = as_json_object(raw, f"bottle '{bottle_name}' agent_provider")
         for k in d:
             if k not in {"template", "dockerfile", "auth_token", "forward_host_credentials"}:
                 raise ManifestError(
@@ -103,7 +103,7 @@ class Agent:
 
     @classmethod
     def from_dict(cls, name: str, raw: object, bottle_names: set[str]) -> "Agent":
-        d = _as_json_object(raw, f"agent '{name}'")
+        d = as_json_object(raw, f"agent '{name}'")
         unknown = set(d.keys()) - AGENT_MODEL_KEYS
         if unknown:
             allowed = ", ".join(sorted(AGENT_MODEL_KEYS))
@@ -151,7 +151,7 @@ class Agent:
         git_user = GitUser()
         git_raw = d.get("git-gate")
         if git_raw is not None:
-            gd = _as_json_object(git_raw, f"agent '{name}' git-gate")
+            gd = as_json_object(git_raw, f"agent '{name}' git-gate")
             for k in gd.keys():
                 if k != "user":
                     raise ManifestError(

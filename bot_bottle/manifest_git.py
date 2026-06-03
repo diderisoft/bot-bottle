@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ._manifest_util import ManifestError, _as_json_object
+from .manifest_util import ManifestError, as_json_object
 
 
 def _opt_str(value: object, label: str) -> str:
@@ -15,7 +15,7 @@ def _opt_str(value: object, label: str) -> str:
     return value
 
 
-def _parse_git_upstream(url: str, label: str) -> tuple[str, str, str, str]:
+def parse_git_upstream(url: str, label: str) -> tuple[str, str, str, str]:
     """Parse `ssh://user@host[:port]/path` into (user, host, port, path).
     Dies if `url` doesn't match the ssh:// shape v1 supports. Default
     port is 22 (matches OpenSSH)."""
@@ -44,7 +44,7 @@ def _parse_git_upstream(url: str, label: str) -> tuple[str, str, str, str]:
     return (user, host, port, path)
 
 
-def _validate_unique_git_names(bottle_name: str, git: tuple[GitEntry, ...]) -> None:
+def validate_unique_git_names(bottle_name: str, git: tuple[GitEntry, ...]) -> None:
     seen: dict[str, None] = {}
     for g in git:
         if g.Name in seen:
@@ -95,7 +95,7 @@ class GitEntry:
                 f"bottle '{bottle_name}' git-gate.repos has an empty key"
             )
         label = f"git-gate.repos[{repo_name!r}]"
-        d = _as_json_object(raw, f"bottle '{bottle_name}' {label}")
+        d = as_json_object(raw, f"bottle '{bottle_name}' {label}")
         for k in d:
             if k not in {"url", "identity", "host_key"}:
                 raise ManifestError(
@@ -116,7 +116,7 @@ class GitEntry:
             d.get("host_key"),
             f"bottle '{bottle_name}' {label} host_key",
         )
-        user, host, port, path = _parse_git_upstream(
+        user, host, port, path = parse_git_upstream(
             upstream, f"bottle '{bottle_name}' {label} url"
         )
         return cls(
@@ -149,7 +149,7 @@ class GitUser:
 
     @classmethod
     def from_dict(cls, bottle_name: str, raw: object) -> "GitUser":
-        d = _as_json_object(raw, f"bottle '{bottle_name}' git-gate.user")
+        d = as_json_object(raw, f"bottle '{bottle_name}' git-gate.user")
         for k in d.keys():
             if k not in {"name", "email"}:
                 raise ManifestError(
@@ -180,11 +180,11 @@ class GitUser:
         return not self.name and not self.email
 
 
-def _parse_git_gate_config(
+def parse_git_gate_config(
     bottle_name: str,
     raw: object,
 ) -> tuple[tuple[GitEntry, ...], GitUser]:
-    d = _as_json_object(raw, f"bottle '{bottle_name}' git-gate")
+    d = as_json_object(raw, f"bottle '{bottle_name}' git-gate")
     for k in d.keys():
         if k not in {"user", "repos"}:
             raise ManifestError(
@@ -201,11 +201,11 @@ def _parse_git_gate_config(
     git: tuple[GitEntry, ...] = ()
     repos_raw = d.get("repos")
     if repos_raw is not None:
-        repos = _as_json_object(repos_raw, f"bottle '{bottle_name}' git-gate.repos")
+        repos = as_json_object(repos_raw, f"bottle '{bottle_name}' git-gate.repos")
         git = tuple(
             GitEntry.from_repos_entry(bottle_name, name, entry)
             for name, entry in repos.items()
         )
-        _validate_unique_git_names(bottle_name, git)
+        validate_unique_git_names(bottle_name, git)
 
     return git, git_user

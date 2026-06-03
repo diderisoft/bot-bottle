@@ -5,7 +5,16 @@ level deeper, under their backend package."""
 
 from __future__ import annotations
 
+import ipaddress
 import os
+
+
+def is_ip_literal(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return True
 
 
 def expand_tilde(path: str) -> str:

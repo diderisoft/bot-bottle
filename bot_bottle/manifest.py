@@ -50,16 +50,16 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Mapping
 
-from ._manifest_util import ManifestError, _as_json_object
+from .manifest_util import ManifestError, as_json_object
 from .manifest_agent import Agent, AgentProvider
 from .manifest_egress import (
     EGRESS_AUTH_SCHEMES,
     EgressConfig,
     EgressRoute,
     PipelockRoutePolicy,
-    _validate_egress_routes,
+    validate_egress_routes,
 )
-from .manifest_git import GitEntry, GitUser, _parse_git_gate_config
+from .manifest_git import GitEntry, GitUser, parse_git_gate_config
 from .manifest_schema import BOTTLE_KEYS
 
 # Re-export everything that callers currently import from this module.
@@ -75,9 +75,6 @@ __all__ = [
     "Agent",
     "Bottle",
     "Manifest",
-    # private helpers used by manifest_extends / manifest_loader
-    "_as_json_object",
-    "_validate_egress_routes",
 ]
 
 
@@ -86,10 +83,10 @@ def _empty_str_dict() -> dict[str, str]:
 
 
 def _section_dict(value: object, label: str) -> dict[str, object]:
-    """Like _as_json_object but treats absent/null as an empty section."""
+    """Like as_json_object but treats absent/null as an empty section."""
     if value is None:
         return {}
-    return _as_json_object(value, label)
+    return as_json_object(value, label)
 
 
 @dataclass(frozen=True)
@@ -114,7 +111,7 @@ class Bottle:
 
     @classmethod
     def from_dict(cls, name: str, raw: object) -> "Bottle":
-        d = _as_json_object(raw, f"bottle '{name}'")
+        d = as_json_object(raw, f"bottle '{name}'")
 
         if "runtime" in d:
             raise ManifestError(
@@ -156,7 +153,7 @@ class Bottle:
         env: dict[str, str] = {}
         env_raw = d.get("env")
         if env_raw is not None:
-            env_dict = _as_json_object(env_raw, f"bottle '{name}' env")
+            env_dict = as_json_object(env_raw, f"bottle '{name}' env")
             for var, value in env_dict.items():
                 if not isinstance(value, str):
                     raise ManifestError(
@@ -169,7 +166,7 @@ class Bottle:
         git_user = GitUser()
         git_raw = d.get("git-gate")
         if git_raw is not None:
-            git, git_user = _parse_git_gate_config(name, git_raw)
+            git, git_user = parse_git_gate_config(name, git_raw)
 
         agent_provider = (
             AgentProvider.from_dict(name, d["agent_provider"])
@@ -298,7 +295,7 @@ class Manifest:
     @classmethod
     def from_json_obj(cls, obj: object) -> "Manifest":
         """Validate and build a Manifest from a raw JSON-like dict."""
-        d = _as_json_object(obj, "manifest")
+        d = as_json_object(obj, "manifest")
         raw_bottles_obj = _section_dict(d.get("bottles"), "manifest 'bottles'")
         raw_agents = _section_dict(d.get("agents"), "manifest 'agents'")
 
@@ -307,7 +304,7 @@ class Manifest:
         # consistently with the md-loader path.
         raw_bottles: dict[str, dict[str, object]] = {}
         for n, b in raw_bottles_obj.items():
-            raw_bottles[n] = _as_json_object(b, f"bottle '{n}'")
+            raw_bottles[n] = as_json_object(b, f"bottle '{n}'")
         from .manifest_extends import resolve_bottles
 
         bottles = resolve_bottles(raw_bottles)

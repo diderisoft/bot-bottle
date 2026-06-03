@@ -9,7 +9,7 @@ class ManifestError(Exception):
     """A manifest file (or the manifest tree) is invalid."""
 
 
-def _as_json_object(value: object, label: str) -> dict[str, object]:
+def as_json_object(value: object, label: str) -> dict[str, object]:
     """Assert that `value` is a JSON object (str-keyed dict) and return
     a view typed as `dict[str, object]` so downstream `.get(...)` calls
     have a typed surface."""
