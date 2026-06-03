@@ -282,5 +282,103 @@ class TestPrepare(unittest.TestCase):
         self.assertIn("exec git daemon", content)
 
 
+class TestShellEscaping(unittest.TestCase):
+    """Regression tests: all three render functions must produce syntactically
+    valid sh code even when names and upstream URLs contain shell-special
+    characters.  Tests construct GitGateUpstream directly — bypassing manifest
+    name validation — so the rendering layer is exercised in isolation."""
+
+    _MALICIOUS_URL_CASES = [
+        ("single_quote", "ssh://git@host/path'with'quotes.git"),
+        ("double_quote", 'ssh://git@host/path"with"quotes.git'),
+        ("space",        "ssh://git@host/path with spaces.git"),
+        ("semicolon",    "ssh://git@host/path;evil.git"),
+        ("newline",      "ssh://git@host/path\nwith\nnewlines.git"),
+        ("backtick",     "ssh://git@host/path`whoami`.git"),
+    ]
+
+    _MALICIOUS_NAME_CASES = [
+        ("single_quote", "repo'name"),
+        ("double_quote", 'repo"name'),
+        ("space",        "repo name"),
+        ("semicolon",    "repo;name"),
+        ("newline",      "repo\nname"),
+        ("backtick",     "repo`name"),
+    ]
+
+    def _make_upstream(self, url: str, name: str = "myrepo") -> GitGateUpstream:
+        return GitGateUpstream(
+            name=name,
+            upstream_url=url,
+            upstream_host="host",
+            upstream_port="22",
+            identity_file="/key",
+            known_host_key="",
+        )
+
+    def _assert_valid_sh(self, script: str, label: str = "") -> None:
+        import subprocess
+        fd, path = tempfile.mkstemp(suffix=".sh")
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(script)
+            result = subprocess.run(
+                ["sh", "-n", path], capture_output=True, text=True,
+            )
+            self.assertEqual(
+                0, result.returncode,
+                f"sh -n failed{(' for ' + label) if label else ''}: {result.stderr}",
+            )
+        finally:
+            os.unlink(path)
+
+    def test_hook_renders_valid_sh(self):
+        self._assert_valid_sh(git_gate_render_hook(), "pre-receive hook")
+
+    def test_access_hook_renders_valid_sh(self):
+        self._assert_valid_sh(git_gate_render_access_hook(), "access hook")
+
+    def test_entrypoint_with_pathological_upstream_url_renders_valid_sh(self):
+        for label, url in self._MALICIOUS_URL_CASES:
+            with self.subTest(char=label):
+                script = git_gate_render_entrypoint((self._make_upstream(url),))
+                self._assert_valid_sh(script, label)
+
+    def test_entrypoint_upstream_url_value_preserved_after_quoting(self):
+        import shlex as _shlex
+        for label, url in self._MALICIOUS_URL_CASES:
+            with self.subTest(char=label):
+                script = git_gate_render_entrypoint((self._make_upstream(url),))
+                # The quoted form of the URL must appear verbatim in the script so
+                # the shell reconstructs exactly the original value at runtime.
+                expected = f"init_repo {_shlex.quote('myrepo')} {_shlex.quote(url)}"
+                self.assertIn(
+                    expected, script,
+                    f"{label}: expected quoted form not found in script",
+                )
+
+    def test_entrypoint_with_pathological_name_renders_valid_sh(self):
+        for label, name in self._MALICIOUS_NAME_CASES:
+            with self.subTest(char=label):
+                script = git_gate_render_entrypoint((
+                    self._make_upstream("ssh://git@github.com/foo/bar.git", name=name),
+                ))
+                self._assert_valid_sh(script, label)
+
+    def test_entrypoint_name_value_preserved_after_quoting(self):
+        import shlex as _shlex
+        url = "ssh://git@github.com/foo/bar.git"
+        for label, name in self._MALICIOUS_NAME_CASES:
+            with self.subTest(char=label):
+                script = git_gate_render_entrypoint((
+                    self._make_upstream(url, name=name),
+                ))
+                expected = f"init_repo {_shlex.quote(name)} {_shlex.quote(url)}"
+                self.assertIn(
+                    expected, script,
+                    f"{label}: expected quoted form not found in script",
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
