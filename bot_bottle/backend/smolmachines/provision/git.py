@@ -36,15 +36,12 @@ from ... import Bottle
 from ..bottle_plan import SmolmachinesBottlePlan
 
 
-# `node` is the agent user from the repo Dockerfile. Override via
-# BOT_BOTTLE_GUEST_HOME mirrors the docker backend's
-# BOT_BOTTLE_CONTAINER_HOME knob — same purpose, different
-# transport.
-_DEFAULT_GUEST_HOME = "/home/node"
+# `node` is the agent user from the repo Dockerfile.
+_GUEST_HOME = "/home/node"
 
 
 def _guest_home() -> str:
-    return os.environ.get("BOT_BOTTLE_GUEST_HOME", _DEFAULT_GUEST_HOME)
+    return _GUEST_HOME
 
 
 def provision_git(plan: SmolmachinesBottlePlan, bottle: Bottle) -> None:

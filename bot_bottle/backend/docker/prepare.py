@@ -63,7 +63,7 @@ def resolve_plan(
     bottle = manifest.bottle_for(spec.agent_name)
     provider = bottle.agent_provider
     provider_runtime = runtime_for(provider.template)
-    guest_home = os.environ.get("BOT_BOTTLE_CONTAINER_HOME", "/home/node")
+    guest_home = "/home/node"
     workspace_plan = resolve_workspace_plan(spec, guest_home=guest_home)
 
     # PRD 0016 follow-up: identity, not bare slug. A fresh `start`

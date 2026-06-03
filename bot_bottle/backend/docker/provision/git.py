@@ -18,7 +18,6 @@ Three concerns, all about git in the agent:
 
 from __future__ import annotations
 
-import os
 import shlex
 
 from ....git_gate import GIT_GATE_HOSTNAME, git_gate_render_gitconfig
@@ -58,8 +57,7 @@ def _provision_git_gate_config(plan: DockerBottlePlan, bottle: Bottle) -> None:
     manifest_bottle = plan.spec.manifest.bottle_for(plan.spec.agent_name)
     if not manifest_bottle.git:
         return
-    container_home = os.environ.get("BOT_BOTTLE_CONTAINER_HOME", "/home/node")
-    container_gitconfig = f"{container_home}/.gitconfig"
+    container_gitconfig = "/home/node/.gitconfig"
 
     content = git_gate_render_gitconfig(manifest_bottle.git, GIT_GATE_HOSTNAME)
     config_file = plan.stage_dir / "agent_gitconfig"
