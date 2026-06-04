@@ -15,14 +15,14 @@ from bot_bottle.pipelock import (
 )
 
 
-def _bottle(spec):
+def _bottle(spec):  # type: ignore
     return Manifest.from_json_obj({
         "bottles": {"dev": spec},
         "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
     }).bottles["dev"]
 
 
-def _routes(routes):
+def _routes(routes):  # type: ignore
     return {"egress": {"routes": routes}}
 
 

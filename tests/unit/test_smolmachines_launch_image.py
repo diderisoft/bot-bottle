@@ -76,19 +76,19 @@ class TestEnsureSmolmachine(unittest.TestCase):
         )
 
         class _Reg:
-            def __enter__(self_inner):
+            def __enter__(self_inner):  # type: ignore
                 return RegistryHandle(
                     network="cb-net-xyz",
                     push_endpoint="cb-registry-xyz:5000",
                     pull_endpoint="localhost:54321",
                 )
-            def __exit__(self_inner, *exc):
+            def __exit__(self_inner, *exc):  # type: ignore
                 return False
 
         calls: list[str] = []
 
-        def record(name):
-            def _f(*a, **kw):
+        def record(name):  # type: ignore
+            def _f(*a, **kw):  # type: ignore
                 calls.append(name)
             return _f
 

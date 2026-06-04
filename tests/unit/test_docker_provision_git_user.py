@@ -24,11 +24,11 @@ from bot_bottle.pipelock import PipelockProxyPlan
 from bot_bottle.workspace import workspace_plan
 
 
-def _plan(*, git_user: dict | None = None,
+def _plan(*, git_user: dict | None = None,  # type: ignore
           copy_cwd: bool = False,
           user_cwd: str = "/tmp/x",
           stage_dir: Path | None = None) -> DockerBottlePlan:
-    bottle_json: dict = {}
+    bottle_json: dict = {}  # type: ignore
     if git_user is not None:
         bottle_json["git-gate"] = {"user": git_user}
     manifest = Manifest.from_json_obj({

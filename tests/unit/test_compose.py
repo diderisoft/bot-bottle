@@ -311,7 +311,7 @@ class TestSidecarBundleShape(unittest.TestCase):
     shape entirely, so the bundle is the only thing exercised here."""
 
     def _render(self, **plan_kwargs: object) -> Any:  # type: ignore
-        return bottle_plan_to_compose(_plan(**plan_kwargs))
+        return bottle_plan_to_compose(_plan(**plan_kwargs))  # type: ignore
 
     def test_emits_two_services_minimal(self):
         spec = self._render()

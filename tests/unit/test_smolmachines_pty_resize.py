@@ -85,7 +85,7 @@ class TestReadWinsize(unittest.TestCase):
 
         calls: list[int] = []
 
-        def fake_ioctl(fd, req, buf):
+        def fake_ioctl(fd, req, buf):  # type: ignore
             calls.append(fd)
             if fd == 0:
                 raise OSError("stdin not a tty")
@@ -105,7 +105,7 @@ class TestReadWinsize(unittest.TestCase):
             struct.pack("hhhh", 24, 80, 0, 0),     # stdout: real
         ])
 
-        def fake_ioctl(fd, req, buf):
+        def fake_ioctl(fd, req, buf):  # type: ignore
             return next(responses)
 
         with patch.object(pty_resize.fcntl, "ioctl", side_effect=fake_ioctl):
@@ -153,7 +153,7 @@ class TestStartupSyncDeferred(unittest.TestCase):
         self.assertEqual(0, rc)
         # Timer scheduled with the documented delay constant.
         timer_cls.assert_called_once()
-        delay, callback = timer_cls.call_args.args
+        delay, callback = timer_cls.call_args.args  # type: ignore
         self.assertEqual(pty_resize._STARTUP_SYNC_DELAY_SEC, delay)
         # _push_size never called synchronously — the only path to
         # it is via the (mocked) timer's callback firing.

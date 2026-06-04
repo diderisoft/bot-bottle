@@ -17,7 +17,7 @@ from bot_bottle.manifest import Manifest
 from bot_bottle.yaml_subset import parse_yaml_subset
 
 
-def _bottle(routes):
+def _bottle(routes):  # type: ignore
     return Manifest.from_json_obj({
         "bottles": {"dev": {"egress": {"routes": routes}}},
         "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
@@ -257,8 +257,8 @@ class TestRenderRoutes(unittest.TestCase):
     will see, not the textual layout."""
 
     @staticmethod
-    def _parsed(routes) -> list[dict]:
-        return parse_yaml_subset(egress_render_routes(routes))["routes"]
+    def _parsed(routes) -> list[dict]:  # type: ignore
+        return parse_yaml_subset(egress_render_routes(routes))["routes"]  # type: ignore
 
     def test_authenticated_route_serialised_with_auth_fields(self):
         b = _bottle([{

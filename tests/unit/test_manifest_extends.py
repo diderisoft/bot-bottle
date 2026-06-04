@@ -15,7 +15,7 @@ import unittest
 from bot_bottle.manifest import ManifestError, Manifest
 
 
-def _error_message(callable_, *args, **kwargs) -> str:
+def _error_message(callable_, *args, **kwargs) -> str:  # type: ignore
     """Run `callable_` expecting a ManifestError; return its message."""
     try:
         callable_(*args, **kwargs)
@@ -24,7 +24,7 @@ def _error_message(callable_, *args, **kwargs) -> str:
     raise AssertionError("expected ManifestError was not raised")
 
 
-def _build(**bottles) -> Manifest:
+def _build(**bottles) -> Manifest:  # type: ignore
     """Build a manifest with the given bottles and one trivial agent
     referencing the first bottle (so the manifest is valid)."""
     first = next(iter(bottles))

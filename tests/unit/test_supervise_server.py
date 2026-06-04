@@ -16,7 +16,7 @@ from unittest.mock import patch
 # we mirror that by injecting bot_bottle/ onto sys.path under the
 # bare name `supervise`.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "bot_bottle"))
-import supervise as _sv  # noqa: E402
+import supervise as _sv  # noqa: E402  # type: ignore
 
 from bot_bottle import supervise_server  # noqa: E402
 from bot_bottle.supervise_server import (
@@ -330,7 +330,7 @@ class TestHandleToolsCall(unittest.TestCase):
 class TestHandleListEgressRoutes(unittest.TestCase):
     def test_url_error_returns_tool_error(self):
         class _Opener:
-            def open(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+            def open(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003  # type: ignore
                 raise OSError("egress unavailable")
 
         with patch.object(supervise_server.urllib.request, "build_opener", return_value=_Opener()):

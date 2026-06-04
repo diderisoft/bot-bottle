@@ -28,13 +28,13 @@ from bot_bottle.backend.smolmachines.smolvm import (
 )
 
 
-def _ok(stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess:
+def _ok(stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess:  # type: ignore
     return subprocess.CompletedProcess(
         args=[], returncode=0, stdout=stdout, stderr=stderr,
     )
 
 
-def _fail(stderr: str = "boom") -> subprocess.CompletedProcess:
+def _fail(stderr: str = "boom") -> subprocess.CompletedProcess:  # type: ignore
     return subprocess.CompletedProcess(
         args=[], returncode=1, stdout="", stderr=stderr,
     )

@@ -210,11 +210,11 @@ class TestCodexHostAccessToken(unittest.TestCase):
         access_payload = _jwt_payload(dummy["tokens"]["access_token"])
         auth = access_payload["https://api.openai.com/auth"]
         profile = access_payload["https://api.openai.com/profile"]
-        self.assertEqual("plus", auth["chatgpt_plan_type"])
-        self.assertEqual("acct-real", auth["chatgpt_account_id"])
-        self.assertEqual("bot-bottle-placeholder", auth["chatgpt_user_id"])
-        self.assertEqual("bot-bottle@example.invalid", profile["email"])
-        self.assertTrue(profile["email_verified"])
+        self.assertEqual("plus", auth["chatgpt_plan_type"])  # type: ignore
+        self.assertEqual("acct-real", auth["chatgpt_account_id"])  # type: ignore
+        self.assertEqual("bot-bottle-placeholder", auth["chatgpt_user_id"])  # type: ignore
+        self.assertEqual("bot-bottle@example.invalid", profile["email"])  # type: ignore
+        self.assertTrue(profile["email_verified"])  # type: ignore
 
     def test_dummy_auth_redacts_unknown_future_auth_fields(self):
         secrets = [
@@ -289,8 +289,8 @@ class TestCodexHostAccessToken(unittest.TestCase):
         self.assertEqual({}, access_payload["future_nested"])
         self.assertEqual([], access_payload["future_list"])
         auth = access_payload["https://api.openai.com/auth"]
-        self.assertEqual("bot-bottle-placeholder", auth["session_context"])
-        self.assertEqual({}, auth["nested"])
+        self.assertEqual("bot-bottle-placeholder", auth["session_context"])  # type: ignore
+        self.assertEqual({}, auth["nested"])  # type: ignore
 
 
 if __name__ == "__main__":

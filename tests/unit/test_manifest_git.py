@@ -5,7 +5,7 @@ import unittest
 from bot_bottle.manifest import ManifestError, Manifest
 
 
-def _manifest(repos: dict) -> dict:
+def _manifest(repos: dict) -> dict:  # type: ignore
     return {
         "bottles": {"dev": {"git-gate": {"repos": repos}}},
         "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},

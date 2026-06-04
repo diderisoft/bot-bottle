@@ -15,13 +15,13 @@ from unittest.mock import patch
 from bot_bottle.backend.smolmachines import local_registry
 
 
-def _ok(stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess:
+def _ok(stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess:  # type: ignore
     return subprocess.CompletedProcess(
         args=[], returncode=0, stdout=stdout, stderr=stderr,
     )
 
 
-def _fail(stderr: str = "boom") -> subprocess.CompletedProcess:
+def _fail(stderr: str = "boom") -> subprocess.CompletedProcess:  # type: ignore
     return subprocess.CompletedProcess(
         args=[], returncode=1, stdout="", stderr=stderr,
     )
@@ -149,7 +149,7 @@ class TestEphemeralRegistry(unittest.TestCase):
     def test_unique_session_ids_per_call(self):
         sessions: list[tuple[str, str]] = []
 
-        def capture(argv, *a, **kw):
+        def capture(argv, *a, **kw):  # type: ignore
             if argv[:3] == ["docker", "network", "create"]:
                 return _ok()
             if argv[:2] == ["docker", "run"]:
@@ -242,7 +242,7 @@ class _FakeSocket:
     def __enter__(self):
         return self
 
-    def __exit__(self, *exc):
+    def __exit__(self, *exc):  # type: ignore
         return False
 
 

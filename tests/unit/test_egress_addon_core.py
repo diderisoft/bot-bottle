@@ -159,7 +159,7 @@ class TestMatchRoute(unittest.TestCase):
     def test_exact_match(self):
         r = match_route(self.ROUTES, "api.github.com")
         self.assertIsNotNone(r)
-        self.assertEqual("api.github.com", r.host)
+        self.assertEqual("api.github.com", r.host)  # type: ignore
 
     def test_case_insensitive(self):
         # DNS hostnames are case-insensitive per RFC 1035; mitmproxy
@@ -167,7 +167,7 @@ class TestMatchRoute(unittest.TestCase):
         # uppercase. Lookup must normalise.
         r = match_route(self.ROUTES, "API.GitHub.COM")
         self.assertIsNotNone(r)
-        self.assertEqual("api.github.com", r.host)
+        self.assertEqual("api.github.com", r.host)  # type: ignore
 
     def test_no_match_returns_none(self):
         self.assertIsNone(match_route(self.ROUTES, "elsewhere.example"))
@@ -370,7 +370,7 @@ class TestGitPushBlockFailFast(unittest.TestCase):
                 self.send_header("Content-Length", "0")
                 self.end_headers()
 
-            def log_message(self, _fmt, *_args):
+            def log_message(self, _fmt, *_args):  # type: ignore
                 pass
 
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)

@@ -21,10 +21,10 @@ _ROUTES_EMPTY = "routes: []\n"
 _ROUTES_ONE = 'routes:\n  - host: "api.anthropic.com"\n'
 
 
-def _routes(parsed: str) -> list[dict]:
+def _routes(parsed: str) -> list[dict]:  # type: ignore
     """Parse a YAML routes string and pull out the routes list, so
     tests can assert on shape directly."""
-    return parse_yaml_subset(parsed)["routes"]
+    return parse_yaml_subset(parsed)["routes"]  # type: ignore
 
 
 class TestValidateRoutesContent(unittest.TestCase):

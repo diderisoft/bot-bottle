@@ -20,11 +20,11 @@ def _provisioner() -> GiteaDeployKeyProvisioner:
     )
 
 
-def _urlopen_response(body: dict, status: int = 200) -> MagicMock:
+def _urlopen_response(body: dict, status: int = 200) -> MagicMock:  # type: ignore
     resp = MagicMock()
     resp.read.return_value = json.dumps(body).encode()
     resp.status = status
-    resp.__enter__ = lambda s: s
+    resp.__enter__ = lambda s: s  # type: ignore
     resp.__exit__ = MagicMock(return_value=False)
     return resp
 

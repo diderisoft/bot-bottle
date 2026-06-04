@@ -17,13 +17,13 @@ from bot_bottle.backend.docker import util as docker_mod
 from bot_bottle.workspace import WorkspacePlan
 
 
-def _ok(stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess:
+def _ok(stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess:  # type: ignore
     return subprocess.CompletedProcess(
         args=[], returncode=0, stdout=stdout, stderr=stderr,
     )
 
 
-def _fail(stderr: str = "boom") -> subprocess.CompletedProcess:
+def _fail(stderr: str = "boom") -> subprocess.CompletedProcess:  # type: ignore
     return subprocess.CompletedProcess(
         args=[], returncode=1, stdout="", stderr=stderr,
     )
@@ -110,7 +110,7 @@ class TestBuildImageWithCwd(unittest.TestCase):
                 workdir="/guest/home/workspace",
             )
 
-            def inspect_context(*args, **kwargs):
+            def inspect_context(*args, **kwargs):  # type: ignore
                 context = Path(args[0][-1])
                 staged = context / "workspace"
                 self.assertTrue((staged / ".gitignore").is_file())

@@ -53,7 +53,7 @@ def _plan(
     agent_provision: AgentProvisionPlan | None = None,
     supervise: bool = False,
 ) -> DockerBottlePlan:
-    bottle_json: dict = {"agent_provider": {"template": "codex"}}
+    bottle_json: dict = {"agent_provider": {"template": "codex"}}  # type: ignore
     if supervise:
         bottle_json["supervise"] = True
     manifest = Manifest.from_json_obj({
@@ -153,7 +153,7 @@ class TestCodexProvisionSkills(unittest.TestCase):
         bottle = _make_bottle()
         with patch(
             "bot_bottle.backend.util.host_skill_dir",
-            side_effect=lambda n: f"/host/skills/{n}",
+            side_effect=lambda n: f"/host/skills/{n}",  # type: ignore
         ), patch(
             "bot_bottle.contrib.codex.agent_provider.os.path.isdir",
             return_value=True,

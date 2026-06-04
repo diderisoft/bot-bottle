@@ -55,7 +55,7 @@ def _exec_scripts(bottle: MagicMock) -> list[str]:
     return [c.args[0] for c in bottle.exec.call_args_list]
 
 
-def _exec_users(bottle: MagicMock) -> list[str]:
+def _exec_users(bottle: MagicMock) -> list[str]:  # type: ignore
     """user= kwarg from each bottle.exec call, in order."""
     return [c.kwargs.get("user", "node") for c in bottle.exec.call_args_list]
 
@@ -64,8 +64,8 @@ def _plan(
     *,
     agent_prompt: str = "",
     skills: list[str] | None = None,
-    git: list[GitEntry] = (),
-    git_user: dict | None = None,
+    git: list[GitEntry] = (),  # type: ignore
+    git_user: dict | None = None,  # type: ignore
     copy_cwd: bool = False,
     user_cwd: str = "/tmp/x",
     stage_dir: Path | None = None,
@@ -80,8 +80,8 @@ def _plan(
     agent_provider_template: str = "claude",
     guest_env: dict[str, str] | None = None,
 ) -> SmolmachinesBottlePlan:
-    bottle_json: dict = {}
-    git_gate_json: dict = {}
+    bottle_json: dict = {}  # type: ignore
+    git_gate_json: dict = {}  # type: ignore
     if git:
         git_gate_json["repos"] = {
             g.Name: {

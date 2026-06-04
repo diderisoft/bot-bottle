@@ -24,19 +24,19 @@ from bot_bottle.backend.smolmachines.sidecar_bundle import (
 )
 
 
-def _ok(stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess:
+def _ok(stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess:  # type: ignore
     return subprocess.CompletedProcess(
         args=[], returncode=0, stdout=stdout, stderr=stderr,
     )
 
 
-def _fail(stderr: str = "boom") -> subprocess.CompletedProcess:
+def _fail(stderr: str = "boom") -> subprocess.CompletedProcess:  # type: ignore
     return subprocess.CompletedProcess(
         args=[], returncode=1, stdout="", stderr=stderr,
     )
 
 
-def _spec(**kwargs) -> BundleLaunchSpec:
+def _spec(**kwargs) -> BundleLaunchSpec:  # type: ignore
     defaults = dict(
         slug="demo-abc12",
         network_name="bot-bottle-bundle-demo-abc12",
@@ -45,7 +45,7 @@ def _spec(**kwargs) -> BundleLaunchSpec:
         bundle_ip="192.168.50.2",
     )
     defaults.update(kwargs)
-    return BundleLaunchSpec(**defaults)
+    return BundleLaunchSpec(**defaults)  # type: ignore
 
 
 class TestNamingHelpers(unittest.TestCase):
@@ -69,7 +69,7 @@ class TestNamingHelpers(unittest.TestCase):
 
 
 class TestNetworkLifecycle(unittest.TestCase):
-    def _patch_run(self, **kwargs):
+    def _patch_run(self, **kwargs):  # type: ignore
         return patch(
             "bot_bottle.backend.smolmachines.sidecar_bundle.subprocess.run",
             **kwargs,
@@ -200,7 +200,7 @@ class TestEnsureBundleImage(unittest.TestCase):
 
 
 class TestStopBundle(unittest.TestCase):
-    def _patch_run(self, **kwargs):
+    def _patch_run(self, **kwargs):  # type: ignore
         return patch(
             "bot_bottle.backend.smolmachines.sidecar_bundle.subprocess.run",
             **kwargs,

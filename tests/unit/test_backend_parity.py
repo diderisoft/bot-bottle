@@ -177,7 +177,7 @@ class TestExecResultParity(unittest.TestCase):
 
     def _stub_run(self, argv: object, **kwargs: object) -> object:  # type: ignore
         return subprocess.CompletedProcess(
-            argv, 0, stdout="out\n", stderr="err\n",
+            argv, 0, stdout="out\n", stderr="err\n",  # type: ignore
         )
 
     def test_docker_exec_result_shape(self):

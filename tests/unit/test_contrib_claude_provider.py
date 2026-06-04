@@ -52,7 +52,7 @@ def _plan(
     agent_provision: AgentProvisionPlan | None = None,
     supervise: bool = False,
 ) -> DockerBottlePlan:
-    bottle_json: dict = {"agent_provider": {"template": "claude"}}
+    bottle_json: dict = {"agent_provider": {"template": "claude"}}  # type: ignore
     if supervise:
         bottle_json["supervise"] = True
     manifest = Manifest.from_json_obj({
@@ -165,7 +165,7 @@ class TestClaudeProvisionSkills(unittest.TestCase):
         bottle = _make_bottle()
         with patch(
             "bot_bottle.backend.util.host_skill_dir",
-            side_effect=lambda n: f"/host/skills/{n}",
+            side_effect=lambda n: f"/host/skills/{n}",  # type: ignore
         ), patch(
             "bot_bottle.contrib.claude.agent_provider.os.path.isdir",
             return_value=True,
@@ -191,7 +191,7 @@ class TestClaudeProvisionSkills(unittest.TestCase):
         bottle = _make_bottle()
         with patch(
             "bot_bottle.backend.util.host_skill_dir",
-            side_effect=lambda n: f"/host/skills/{n}",
+            side_effect=lambda n: f"/host/skills/{n}",  # type: ignore
         ), patch(
             "bot_bottle.contrib.claude.agent_provider.os.path.isdir",
             return_value=False,

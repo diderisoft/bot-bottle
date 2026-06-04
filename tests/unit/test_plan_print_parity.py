@@ -221,7 +221,7 @@ class TestEgressPrintParity(unittest.TestCase):
                 result.append(ln)
             elif collecting:
                 if (
-                    ln.startswith(indent_prefix)
+                    ln.startswith(indent_prefix)  # type: ignore
                     and "egress" not in ln
                     and ":" not in ln.lstrip()[:20]
                 ):

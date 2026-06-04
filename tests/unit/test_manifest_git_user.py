@@ -5,7 +5,7 @@ import unittest
 from bot_bottle.manifest import ManifestError, GitUser, Manifest
 
 
-def _error_message(callable_, *args, **kwargs) -> str:
+def _error_message(callable_, *args, **kwargs) -> str:  # type: ignore
     """Run `callable_` expecting a ManifestError; return its message."""
     try:
         callable_(*args, **kwargs)
@@ -14,7 +14,7 @@ def _error_message(callable_, *args, **kwargs) -> str:
     raise AssertionError("expected ManifestError was not raised")
 
 
-def _manifest(git_user):
+def _manifest(git_user):  # type: ignore
     return {
         "bottles": {"dev": {"git-gate": {"user": git_user}}},
         "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},

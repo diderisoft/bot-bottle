@@ -18,13 +18,13 @@ from unittest.mock import patch
 from bot_bottle.backend.smolmachines import loopback_alias
 
 
-def _ok(stdout: str = "") -> subprocess.CompletedProcess:
+def _ok(stdout: str = "") -> subprocess.CompletedProcess:  # type: ignore
     return subprocess.CompletedProcess(
         args=[], returncode=0, stdout=stdout, stderr="",
     )
 
 
-def _fail(stderr: str = "boom") -> subprocess.CompletedProcess:
+def _fail(stderr: str = "boom") -> subprocess.CompletedProcess:  # type: ignore
     return subprocess.CompletedProcess(
         args=[], returncode=1, stdout="", stderr=stderr,
     )
@@ -78,7 +78,7 @@ class TestEnsurePool(unittest.TestCase):
         # lo0 only has 16+17 already; sudo runs for 18..31 (14 missing).
         runs: list[list[str]] = []
 
-        def fake_run(argv, *a, **kw):
+        def fake_run(argv, *a, **kw):  # type: ignore
             runs.append(argv)
             if argv[:2] == ["/sbin/ifconfig", "lo0"]:
                 return _ok(stdout=_LO0_PARTIAL)
@@ -97,7 +97,7 @@ class TestEnsurePool(unittest.TestCase):
         )
 
     def test_sudo_failure_dies(self):
-        def fake_run(argv, *a, **kw):
+        def fake_run(argv, *a, **kw):  # type: ignore
             if argv[:2] == ["/sbin/ifconfig", "lo0"]:
                 return _ok(stdout=_LO0_DEFAULT)
             if argv[:1] == ["sudo"]:
@@ -152,7 +152,7 @@ class TestAllocateLock(unittest.TestCase):
         import fcntl as fcntl_mod
         flock_calls: list[int] = []
 
-        def record_flock(fd, op):
+        def record_flock(fd, op):  # type: ignore
             flock_calls.append(op)
 
         with tempfile.TemporaryDirectory() as tmp:

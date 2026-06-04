@@ -290,7 +290,7 @@ class TestSandboxEscape(unittest.TestCase):
             f"If the response came from the actual upstream, the "
             f"secret REACHED the network — that's the leak this "
             f"test exists to catch. body={body!r} "
-            f"stderr={(r.stderr or '').strip()!r}",
+            f"stderr={(r.stderr or '').strip()!r}",  # type: ignore
         )
 
     def test_3_http_exfil_blocked(self) -> None:
@@ -431,7 +431,7 @@ class TestSandboxEscape(unittest.TestCase):
             with self.subTest(secret=name):
                 # Fresh repo per shape so prior commits don't
                 # confuse gitleaks's diff. -rm -rf is best-effort.
-                script = (
+                script = (  # type: ignore
                     'set -eu\n'
                     'cd /tmp\n'
                     'rm -rf sandbox-escape-repo\n'
@@ -446,8 +446,8 @@ class TestSandboxEscape(unittest.TestCase):
                     f'git remote add origin {upstream_url}\n'
                     'git push origin HEAD:refs/heads/master 2>&1\n'
                 )
-                r = self._bottle.exec(  # type: ignorescript)
-                combined = (r.stderr + r.stdout).lower()
+                r = self._bottle.exec(script)  # type: ignore
+                combined = (r.stderr + r.stdout).lower()  # type: ignore
 
                 self.assertNotEqual(
                     0, r.returncode,

@@ -1,13 +1,13 @@
 {
   "include": [
     "cli.py",
-    "bot_bottle"
+    "bot_bottle",
+    "tests"
   ],
   "exclude": [
     "**/__pycache__",
     "**/.venv",
-    "**/venv",
-    "tests/**"
+    "**/venv"
   ],
   "pythonVersion": "3.11",
   "typeCheckingMode": "strict",

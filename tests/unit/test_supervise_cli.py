@@ -133,14 +133,14 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
         self._original_apply_capability = supervise_cli.apply_capability_change
         # Default stubs: succeed with deterministic before/after so the
         # audit log shows a non-empty diff.
-        supervise_cli.add_route = lambda slug, content: (
+        supervise_cli.add_route = lambda slug, content: (  # type: ignore
             '{"routes": []}\n', '{"routes": [{"host": "x"}]}\n',
         )
-        supervise_cli.apply_allowlist_change = lambda slug, content: (
+        supervise_cli.apply_allowlist_change = lambda slug, content: (  # type: ignore
             "old.example\n", content,
         )
-        supervise_cli.fetch_current_allowlist = lambda slug: "old.example\n"
-        supervise_cli.apply_capability_change = lambda slug, content: (
+        supervise_cli.fetch_current_allowlist = lambda slug: "old.example\n"  # type: ignore
+        supervise_cli.apply_capability_change = lambda slug, content: (  # type: ignore
             "FROM old\n", content,
         )
 
@@ -231,7 +231,7 @@ class TestEgressApplyWiring(_FakeHomeMixin, unittest.TestCase):
 
     def test_egress_block_calls_add_route_with_proposed_json(self):
         calls = []
-        supervise_cli.add_route = lambda slug, content: (
+        supervise_cli.add_route = lambda slug, content: (  # type: ignore
             calls.append((slug, content)) or ("before", "after")
         )
         qp = self._enqueue_egress(
@@ -250,7 +250,7 @@ class TestEgressApplyWiring(_FakeHomeMixin, unittest.TestCase):
 
     def test_modify_passes_final_file_to_add_route(self):
         calls = []
-        supervise_cli.add_route = lambda slug, content: (
+        supervise_cli.add_route = lambda slug, content: (  # type: ignore
             calls.append(content) or ("before", "after")
         )
         qp = self._enqueue_egress()
@@ -262,7 +262,7 @@ class TestEgressApplyWiring(_FakeHomeMixin, unittest.TestCase):
         self.assertEqual(['{"host": "edited.example"}\n'], calls)
 
     def test_apply_failure_blocks_response_and_audit(self):
-        supervise_cli.add_route = lambda slug, content: (_ for _ in ()).throw(
+        supervise_cli.add_route = lambda slug, content: (_ for _ in ()).throw(  # type: ignore
             EgressApplyError("docker exec failed")
         )
         qp = self._enqueue_egress()
@@ -277,7 +277,7 @@ class TestEgressApplyWiring(_FakeHomeMixin, unittest.TestCase):
         self.assertEqual([], read_audit_entries("egress", "dev"))
 
     def test_real_diff_lands_in_audit(self):
-        supervise_cli.add_route = lambda slug, content: (
+        supervise_cli.add_route = lambda slug, content: (  # type: ignore
             '{"routes": []}\n',  # before
             '{"routes": [{"host": "new.example"}]}\n',  # after
         )
@@ -329,9 +329,9 @@ class TestPipelockApplyWiring(_FakeHomeMixin, unittest.TestCase):
         return supervise_cli.QueuedProposal(proposal=p, queue_dir=qdir)
 
     def test_url_host_merged_into_current_allowlist(self):
-        supervise_cli.fetch_current_allowlist = lambda slug: "existing.example\n"
+        supervise_cli.fetch_current_allowlist = lambda slug: "existing.example\n"  # type: ignore
         applied = []
-        supervise_cli.apply_allowlist_change = lambda slug, content: (
+        supervise_cli.apply_allowlist_change = lambda slug, content: (  # type: ignore
             applied.append((slug, content))
             or ("existing.example\n", content)
         )
@@ -348,9 +348,9 @@ class TestPipelockApplyWiring(_FakeHomeMixin, unittest.TestCase):
         self.assertNotIn("/repos/foo/bar", content)  # path stripped
 
     def test_host_already_in_allowlist_is_idempotent(self):
-        supervise_cli.fetch_current_allowlist = lambda slug: "api.github.com\n"
+        supervise_cli.fetch_current_allowlist = lambda slug: "api.github.com\n"  # type: ignore
         applied = []
-        supervise_cli.apply_allowlist_change = lambda slug, content: (
+        supervise_cli.apply_allowlist_change = lambda slug, content: (  # type: ignore
             applied.append(content)
             or ("api.github.com\n", content)
         )
@@ -362,8 +362,8 @@ class TestPipelockApplyWiring(_FakeHomeMixin, unittest.TestCase):
         self.assertEqual("api.github.com\n", applied[0])
 
     def test_apply_failure_blocks_response_and_audit(self):
-        supervise_cli.fetch_current_allowlist = lambda slug: "existing.example\n"
-        supervise_cli.apply_allowlist_change = lambda slug, content: (_ for _ in ()).throw(
+        supervise_cli.fetch_current_allowlist = lambda slug: "existing.example\n"  # type: ignore
+        supervise_cli.apply_allowlist_change = lambda slug, content: (_ for _ in ()).throw(  # type: ignore
             PipelockApplyError("docker exec failed")
         )
         qp = self._enqueue_pipelock()
@@ -376,7 +376,7 @@ class TestPipelockApplyWiring(_FakeHomeMixin, unittest.TestCase):
         self.assertEqual([], read_audit_entries("pipelock", "dev"))
 
     def test_url_without_host_raises(self):
-        supervise_cli.fetch_current_allowlist = lambda slug: ""
+        supervise_cli.fetch_current_allowlist = lambda slug: ""  # type: ignore
         # supervise_server's validator would catch this; if a broken
         # URL ever makes it through, the supervise TUI surfaces it too.
         qp = self._enqueue_pipelock("https:///nohost")
@@ -413,7 +413,7 @@ class TestCapabilityApplyWiring(_FakeHomeMixin, unittest.TestCase):
 
     def test_capability_block_calls_apply_with_proposed_file(self):
         calls = []
-        supervise_cli.apply_capability_change = lambda slug, content: (
+        supervise_cli.apply_capability_change = lambda slug, content: (  # type: ignore
             calls.append((slug, content)) or ("FROM old\n", content)
         )
         qp = self._enqueue_capability("FROM bookworm\n")
@@ -421,7 +421,7 @@ class TestCapabilityApplyWiring(_FakeHomeMixin, unittest.TestCase):
         self.assertEqual([("dev", "FROM bookworm\n")], calls)
 
     def test_apply_failure_blocks_response_and_keeps_pending(self):
-        supervise_cli.apply_capability_change = lambda slug, content: (_ for _ in ()).throw(
+        supervise_cli.apply_capability_change = lambda slug, content: (_ for _ in ()).throw(  # type: ignore
             CapabilityApplyError("teardown failed")
         )
         qp = self._enqueue_capability()
@@ -433,7 +433,7 @@ class TestCapabilityApplyWiring(_FakeHomeMixin, unittest.TestCase):
         )
 
     def test_no_audit_log_for_capability(self):
-        supervise_cli.apply_capability_change = lambda slug, content: ("FROM old\n", content)
+        supervise_cli.apply_capability_change = lambda slug, content: ("FROM old\n", content)  # type: ignore
         qp = self._enqueue_capability()
         supervise_cli.approve(qp)
         # capability-block has no audit log per PRD 0013 — its record
@@ -442,7 +442,7 @@ class TestCapabilityApplyWiring(_FakeHomeMixin, unittest.TestCase):
         self.assertEqual([], read_audit_entries("pipelock", "dev"))
 
     def test_proposal_archived_after_apply(self):
-        supervise_cli.apply_capability_change = lambda slug, content: ("FROM old\n", content)
+        supervise_cli.apply_capability_change = lambda slug, content: ("FROM old\n", content)  # type: ignore
         qp = self._enqueue_capability()
         supervise_cli.approve(qp)
         # Sidecar would normally archive after delivering the response,
@@ -517,7 +517,7 @@ class TestCapabilityBlockSmolmachinesGuard(_FakeHomeMixin, unittest.TestCase):
     def setUp(self):
         self._setup_fake_home()
         self._original_apply_capability = supervise_cli.apply_capability_change
-        supervise_cli.apply_capability_change = lambda slug, content: ("", content)
+        supervise_cli.apply_capability_change = lambda slug, content: ("", content)  # type: ignore
 
     def tearDown(self):
         supervise_cli.apply_capability_change = self._original_apply_capability

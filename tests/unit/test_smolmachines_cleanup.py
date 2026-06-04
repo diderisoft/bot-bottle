@@ -18,7 +18,7 @@ from bot_bottle.backend.smolmachines.bottle_cleanup_plan import (
 )
 
 
-def _ok(stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess:
+def _ok(stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess:  # type: ignore
     return subprocess.CompletedProcess(
         args=[], returncode=0, stdout=stdout, stderr=stderr,
     )
@@ -35,7 +35,7 @@ class TestPrepareCleanup(unittest.TestCase):
         self.assertTrue(plan.empty)
 
     def test_lists_machines_bundles_networks(self):
-        def fake_run(argv, *a, **kw):
+        def fake_run(argv, *a, **kw):  # type: ignore
             if argv[:3] == ["smolvm", "machine", "ls"]:
                 return _ok(stdout=(
                     '[{"name":"bot-bottle-a-1","state":"running"},'
@@ -92,7 +92,7 @@ class TestCleanup(unittest.TestCase):
         )
         calls: list[list[str]] = []
 
-        def fake_run(argv, *a, **kw):
+        def fake_run(argv, *a, **kw):  # type: ignore
             calls.append(list(argv[:4]))
             return _ok()
 
@@ -130,7 +130,7 @@ class TestCleanup(unittest.TestCase):
             _ok(),  # bundle rm succeeds
         ])
 
-        def fake_run(argv, *a, **kw):
+        def fake_run(argv, *a, **kw):  # type: ignore
             return next(results)
 
         with patch.object(cleanup.subprocess, "run", side_effect=fake_run), \

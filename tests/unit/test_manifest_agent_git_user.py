@@ -22,7 +22,7 @@ from pathlib import Path
 from bot_bottle.manifest import ManifestError, Manifest
 
 
-def _error_message(callable_, *args, **kwargs) -> str:
+def _error_message(callable_, *args, **kwargs) -> str:  # type: ignore
     """Run `callable_` expecting a ManifestError; return its message."""
     try:
         callable_(*args, **kwargs)
@@ -31,11 +31,11 @@ def _error_message(callable_, *args, **kwargs) -> str:
     raise AssertionError("expected ManifestError was not raised")
 
 
-def _manifest(*, bottle_user=None, agent_git=None) -> Manifest:
-    bottle: dict = {}
+def _manifest(*, bottle_user=None, agent_git=None) -> Manifest:  # type: ignore
+    bottle: dict = {}  # type: ignore
     if bottle_user is not None:
         bottle = {"git-gate": {"user": bottle_user}}
-    agent: dict = {"skills": [], "prompt": "", "bottle": "dev"}
+    agent: dict = {"skills": [], "prompt": "", "bottle": "dev"}  # type: ignore
     if agent_git is not None:
         agent["git-gate"] = agent_git
     return Manifest.from_json_obj({

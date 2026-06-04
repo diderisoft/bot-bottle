@@ -189,7 +189,7 @@ class TestGitHttpBackend(unittest.TestCase):
                     try:
                         urllib.request.urlopen(req, timeout=5)
                         self.fail("expected HTTPError 403")
-                    except urllib.error.HTTPError as e:
+                    except urllib.error.HTTPError as e:  # type: ignore
                         self.assertEqual(403, e.code)
                         self.assertIn(b"upstream fetch failed", e.read())
 
@@ -234,7 +234,7 @@ class TestGitHttpBackend(unittest.TestCase):
                     try:
                         urllib.request.urlopen(req, timeout=5)
                         self.fail("expected HTTPError 403")
-                    except urllib.error.HTTPError as e:
+                    except urllib.error.HTTPError as e:  # type: ignore
                         self.assertEqual(403, e.code)
 
                 logged = buf.getvalue()
@@ -291,7 +291,7 @@ class TestContentLengthBounds(unittest.TestCase):
         try:
             with urllib.request.urlopen(req, timeout=3) as resp:
                 return resp.status
-        except urllib.error.HTTPError as e:
+        except urllib.error.HTTPError as e:  # type: ignore
             return e.code
 
     def test_non_numeric_content_length_returns_400(self):

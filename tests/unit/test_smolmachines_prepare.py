@@ -46,7 +46,7 @@ class TestSmolmachinesResolveEnv(unittest.TestCase):
             orig_root = _sup.bot_bottle_root
             _sup.bot_bottle_root = lambda: Path(tmp) / ".bot-bottle"  # type: ignore[assignment]
 
-            host_env = {**os.environ, **(extra_host_env or {})}
+            host_env = {**os.environ, **(extra_host_env or {})}  # type: ignore
 
             try:
                 with (
@@ -67,7 +67,7 @@ class TestSmolmachinesResolveEnv(unittest.TestCase):
                     mock_gg.return_value.prepare.return_value = MagicMock()
                     mock_pl.return_value.prepare.return_value = MagicMock()
                     mock_eg.return_value.prepare.return_value = MagicMock()
-                    def _make_provision(**kwargs):
+                    def _make_provision(**kwargs):  # type: ignore
                         return AgentProvisionPlan(
                             template="claude",
                             command="claude",
@@ -76,7 +76,7 @@ class TestSmolmachinesResolveEnv(unittest.TestCase):
                             image="bot-bottle-claude:latest",
                             guest_env=dict(kwargs.get("guest_env") or {}),
                         )
-                    mock_app.side_effect = lambda **kw: _make_provision(**kw)
+                    mock_app.side_effect = lambda **kw: _make_provision(**kw)  # type: ignore
 
                     from bot_bottle.backend.smolmachines.prepare import resolve_plan
                     plan = resolve_plan(spec, stage_dir=stage)

@@ -10,14 +10,14 @@ import unittest
 from bot_bottle.manifest import ManifestError, Manifest
 
 
-def _bottle(routes):
+def _bottle(routes):  # type: ignore
     return Manifest.from_json_obj({
         "bottles": {"dev": {"egress": {"routes": routes}}},
         "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
     }).bottles["dev"]
 
 
-def _provider_bottle(provider, routes):
+def _provider_bottle(provider, routes):  # type: ignore
     return Manifest.from_json_obj({
         "bottles": {
             "dev": {
@@ -29,7 +29,7 @@ def _provider_bottle(provider, routes):
     }).bottles["dev"]
 
 
-def _provider_config_bottle(agent_provider):
+def _provider_config_bottle(agent_provider):  # type: ignore
     return Manifest.from_json_obj({
         "bottles": {"dev": {"agent_provider": agent_provider}},
         "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},

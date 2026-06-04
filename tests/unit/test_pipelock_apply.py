@@ -74,7 +74,7 @@ class TestYamlRoundtripPreservesPipelockFields(unittest.TestCase):
             "dlp": {"include_defaults": True, "scan_env": True},
             "request_body_scanning": {"action": "block"},
         }
-        rendered = pipelock_render_yaml(cfg)
+        rendered = pipelock_render_yaml(cfg)  # type: ignore
         parsed = parse_yaml_subset(rendered)
         self.assertEqual(["a.example", "b.example"], parsed["api_allowlist"])
         self.assertEqual(1, parsed["version"])
@@ -97,7 +97,7 @@ class TestYamlRoundtripPreservesPipelockFields(unittest.TestCase):
                 "passthrough_domains": ["api.anthropic.com"],
             },
         }
-        parsed = parse_yaml_subset(pipelock_render_yaml(cfg))
+        parsed = parse_yaml_subset(pipelock_render_yaml(cfg))  # type: ignore
         parsed["api_allowlist"] = ["new.example"]
         rerendered = pipelock_render_yaml(parsed)
         roundtripped = parse_yaml_subset(rerendered)
