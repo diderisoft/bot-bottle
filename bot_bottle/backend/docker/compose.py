@@ -71,11 +71,11 @@ from .git_gate import (
     GIT_GATE_ENTRYPOINT_IN_CONTAINER,
     GIT_GATE_HOOK_IN_CONTAINER,
 )
-from .pipelock import (
+from ...pipelock import (
     PIPELOCK_CA_CERT_IN_CONTAINER,
     PIPELOCK_CA_KEY_IN_CONTAINER,
-    PIPELOCK_PORT,
 )
+from .pipelock import PIPELOCK_PORT
 from .sidecar_bundle import (
     SIDECAR_BUNDLE_DOCKERFILE,
     SIDECAR_BUNDLE_IMAGE,
