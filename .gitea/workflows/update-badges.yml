@@ -8,6 +8,7 @@ on:
       - '**.py'
       - '.pylintrc'
       - 'pyrightconfig.json'
+  workflow_dispatch:
 
 jobs:
   update-badges:
