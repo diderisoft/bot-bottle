@@ -1,0 +1,6 @@
+# Development and linting dependencies only.
+# The bot-bottle project itself has no runtime dependencies.
+# These tools are used for code quality checks in CI/CD.
+
+pylint>=3.0.0
+pyright>=1.1.300

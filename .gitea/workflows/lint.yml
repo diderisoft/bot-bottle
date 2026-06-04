@@ -18,11 +18,12 @@ jobs:
         with:
           python-version: '3.12'
           cache: 'pip'
+          cache-dependency-path: requirements-dev.txt
 
-      - name: Install dependencies
+      - name: Install dev dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pylint pyright
+          pip install -r requirements-dev.txt
 
       - name: Run pylint
         run: |
