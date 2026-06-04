@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import cast
 
 
 class YamlSubsetError(ValueError):
@@ -283,7 +284,7 @@ def _split_flow(body: str, lineno: int, kind: str) -> list[str]:
     depth_c = 0
     in_single = False
     in_double = False
-    cur = []
+    cur: list[str] = []
     for ch in body:
         if ch == "'" and not in_double:
             in_single = not in_single
@@ -330,6 +331,7 @@ def _split_key_value(content: str, lineno: int) -> tuple[str, str]:
             if i + 1 >= len(content) or content[i + 1] in (" ", "\t"):
                 return content[:i].strip(), content[i + 1:].lstrip()
     die(f"yaml-subset: line {lineno} missing `: ` separator: {content!r}")
+    return "", ""  # unreachable, but needed for type checker
 
 
 def _parse_block(
@@ -536,7 +538,7 @@ def parse_yaml_subset(text: str) -> dict[str, object]:
         )
     if not isinstance(value, dict):
         die("yaml-subset: top-level value must be a mapping")
-    return value
+    return cast(dict[str, object], value)
 
 
 def parse_frontmatter(text: str) -> tuple[dict[str, object], str]:
