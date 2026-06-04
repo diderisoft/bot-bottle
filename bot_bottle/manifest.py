@@ -56,7 +56,6 @@ from .manifest_egress import (
     EGRESS_AUTH_SCHEMES,
     EgressConfig,
     EgressRoute,
-    PipelockRoutePolicy,
 )
 from .manifest_git import GitEntry, GitUser, parse_git_gate_config
 from .manifest_schema import BOTTLE_KEYS
@@ -68,7 +67,6 @@ __all__ = [
     "GitUser",
     "AgentProvider",
     "EGRESS_AUTH_SCHEMES",
-    "PipelockRoutePolicy",
     "EgressRoute",
     "EgressConfig",
     "Agent",

@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import ipaddress
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import cast
 
 from .manifest_util import ManifestError, as_json_object
@@ -40,68 +39,6 @@ def validate_egress_routes(
 
 
 @dataclass(frozen=True)
-class PipelockRoutePolicy:
-    """Per-route pipelock policy overrides.
-
-    `TlsPassthrough` adds the route host to pipelock's
-    `tls_interception.passthrough_domains`, so pipelock still enforces
-    the hostname allowlist but does not MITM/decrypt request bodies or
-    headers for that host.
-
-    `SsrfIpAllowlist` adds explicit IPs/CIDRs to pipelock's SSRF
-    allowlist for private/internal destinations behind this route.
-    """
-
-    TlsPassthrough: bool = False
-    SsrfIpAllowlist: tuple[str, ...] = ()
-
-    @classmethod
-    def from_dict(
-        cls, bottle_name: str, idx: int, raw: object,
-    ) -> "PipelockRoutePolicy":
-        label = f"bottle '{bottle_name}' egress.routes[{idx}] pipelock"
-        d = as_json_object(raw, label)
-        for k in d:
-            if k not in ("tls_passthrough", "ssrf_ip_allowlist"):
-                raise ManifestError(
-                    f"{label} has unknown key {k!r}; "
-                    f"only 'tls_passthrough' and 'ssrf_ip_allowlist' "
-                    f"are accepted"
-                )
-        tls_passthrough_raw = d.get("tls_passthrough", False)
-        if not isinstance(tls_passthrough_raw, bool):
-            raise ManifestError(
-                f"{label}.tls_passthrough must be a boolean "
-                f"(was {type(tls_passthrough_raw).__name__})"
-            )
-        ssrf_raw = d.get("ssrf_ip_allowlist", [])
-        if not isinstance(ssrf_raw, list):
-            raise ManifestError(
-                f"{label}.ssrf_ip_allowlist must be an array "
-                f"(was {type(ssrf_raw).__name__})"
-            )
-        ssrf_ip_allowlist: list[str] = []
-        for j, item in enumerate(ssrf_raw):
-            if not isinstance(item, str) or not item:
-                raise ManifestError(
-                    f"{label}.ssrf_ip_allowlist[{j}] must be a non-empty "
-                    f"string (was {type(item).__name__})"
-                )
-            try:
-                ipaddress.ip_network(item, strict=False)
-            except ValueError as e:
-                raise ManifestError(
-                    f"{label}.ssrf_ip_allowlist[{j}] must be an IP address "
-                    f"or CIDR (was {item!r}): {e}"
-                ) from e
-            ssrf_ip_allowlist.append(item)
-        return cls(
-            TlsPassthrough=tls_passthrough_raw,
-            SsrfIpAllowlist=tuple(ssrf_ip_allowlist),
-        )
-
-
-@dataclass(frozen=True)
 class EgressRoute:
     """One route on the per-bottle egress sidecar (PRD 0017).
 
@@ -132,7 +69,6 @@ class EgressRoute:
     AuthScheme: str = ""
     TokenRef: str = ""
     Role: tuple[str, ...] = ()
-    Pipelock: PipelockRoutePolicy = field(default_factory=PipelockRoutePolicy)
 
     @classmethod
     def from_dict(cls, bottle_name: str, idx: int, raw: object) -> "EgressRoute":
@@ -229,17 +165,11 @@ class EgressRoute:
                 f"the 'role' field is reserved for future use"
             )
 
-        pipelock = (
-            PipelockRoutePolicy.from_dict(bottle_name, idx, d["pipelock"])
-            if "pipelock" in d
-            else PipelockRoutePolicy()
-        )
-
         for k in d:
-            if k not in ("host", "path_allowlist", "auth", "role", "pipelock"):
+            if k not in ("host", "path_allowlist", "auth", "role"):
                 raise ManifestError(
                     f"{label} has unknown key {k!r}; accepted keys are "
-                    f"'host', 'path_allowlist', 'auth', 'role', 'pipelock'"
+                    f"'host', 'path_allowlist', 'auth', 'role'"
                 )
 
         return cls(
@@ -248,7 +178,6 @@ class EgressRoute:
             AuthScheme=auth_scheme,
             TokenRef=token_ref,
             Role=roles,
-            Pipelock=pipelock,
         )
 
 
