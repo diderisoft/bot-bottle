@@ -6,18 +6,14 @@
 
 [![test](https://gitea.dideric.is/didericis/bot-bottle/actions/workflows/test.yml/badge.svg?branch=main)](https://gitea.dideric.is/didericis/bot-bottle/actions?workflow=test.yml)
 
-**Threat model.** A coding agent on your machine can read every secret your shell can, push secrets to git, and reach any host you can — one prompt-injected `curl` is enough to exfiltrate.
+**Problem:** Developer wants to run a coding agent without supervision, but they don't want a prompt injected or misbehaving agent wrecking their environment or exfiltrating sensitive data.
 
-**Solution.** Run each agent in a bottle whose manifest pins its skills, secrets, and reachable hosts; pipelock terminates egress with an allowlist and DLP body scan, cred-proxy injects tokens the agent never sees, and git-gate runs gitleaks on every push.
-
-![pipelock and git-gate blocking exfil attempts against a live bottle](docs/demo.gif)
-
-Run the demo yourself with `bash scripts/demo.sh`.
+**Solution:** Ephemeral, per agent "bottles" the agent cannot modify that scan all traffic for data exfiltration and limit capabilities and egress to only what the agent needs.
 
 ## Features
 
-- **Per-bottle egress allowlist (pipelock)** — TLS-bumped HTTP/HTTPS chokepoint with a per-manifest host allowlist and request-body DLP scanner; DoH and arbitrary hosts blocked by default.
-- **Tokens the agent never sees (cred-proxy)** — host secrets live in a sidecar; the agent dials `http://cred-proxy:9099/<path>` and the proxy strips inbound `Authorization` and injects the real token before forwarding. `printenv` in the agent shows proxy URLs only.
+- **Per-bottle egress allowlist** — TLS-bumped HTTP/HTTPS chokepoint with a per-manifest host allowlist and request-body DLP scanner; DoH and arbitrary hosts blocked by default.
+- **Tokens the agent never sees** — host secrets live in a sidecar; the agent dials `http://sidecar:9099/<path>` and the proxy strips inbound `Authorization` and injects the real token before forwarding. `printenv` in the agent shows proxy URLs only.
 - **Gitleaks-scanned push (git-gate)** — `bottle.git` remotes route through a per-bottle `git daemon` that gitleaks-scans incoming refs pre-receive and forwards clean refs upstream over SSH. The agent never holds the upstream credential.
 - **Manifest-scoped skills + secrets** — each bottle declares its skills, env, git identity, remotes, and egress routes; unknown keys die at load.
 - **Trust boundary at `$HOME`** — bottles (credentials, egress, remotes) live only under `~/.bot-bottle/bottles/`. Repos may ship agents but not bottles, so a cloned repo can't redirect an env var to an attacker host.
@@ -38,26 +34,21 @@ A bottle is two containers per agent: an `agent` container, and a `sidecars` con
                                   ▼
    ┌─────────────────────────── bottle ──────────────────────────────────┐
    │                                                                     │
-   │   ┌──────────────────┐                                              │
-   │   │ agent image      │  HTTPS_PROXY                                 │
-   │   │ (claude-code,    │ ────────────────────────┐                    │
-   │   │  built locally)  │                         │                    │
-   │   │                  │   plain HTTP            │                    │
-   │   │ skills, env,     │  (token injection) ┌────▼─────────┐          │
-   │   │ ~/.gitconfig,    │ ──────────────────►│ cred-proxy   │          │
-   │   │ ~/.npmrc, tea    │                    │ (strips/inj  │          │
-   │   │                  │                    │  Authoriz.)  │          │
-   │   │ environ: URLs    │                    └─────┬────────┘          │
-   │   │ only, no real    │     HTTPS_PROXY          │                   │
-   │   │ tokens           │                          ▼                   │
-   │   │                  │                  ┌────────────────┐          │  HTTPS to
+   │   ┌──────────────────┐                   ┌──────────────┐           │
+   │   │ agent image      │   HTTP(S) proxy   │ cred-proxy   │           │
+   │   │ (claude-code,    │ ─────────────────►│ (strips/inj  │           │
+   │   │  codex, etc)     │                   │  Authoriz.)  │           │
+   │   │                  │                   └──────┬───────┘           │
+   │   │ environ: URLs    │                          │                   │
+   │   │ only, no real    │                          ▼                   │
+   │   │ tokens           │                  ┌────────────────┐          │  HTTPS to
    │   │                  │                  │ pipelock image │──────────┼──►  allowlisted
    │   │                  │                  │ (TLS bump, DLP │          │     hosts (incl.
    │   │                  │                  │  body scan,    │          │      cred-proxy
    │   │                  │                  │  allowlist)    │          │      upstreams)
    │   │                  │                  └────────────────┘          │
    │   │                  │                                              │
-   │   │                  │   git://         ┌────────────────┐          │  SSH push/fetch
+   │   │                  │    git proxy     ┌────────────────┐          │  SSH push/fetch
    │   │                  │ ────────────────►│ git-gate image │──────────┼──►  to bottle.git
    │   │                  │                  │ (gitleaks +    │          │      upstreams
    │   └──────────────────┘                  │  git daemon)   │          │     (direct — not
