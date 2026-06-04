@@ -1,10 +1,9 @@
-"""Unit: DockerBottle's argv builder (PRD 0021 chunk 1).
+"""Unit: DockerBottle's argv builder.
 
-`agent_argv` is the pure helper that `exec_agent` and the
-PRD-0021 tmux helpers both build on. It encodes two non-trivial
-rules — the optional `--append-system-prompt-file` flag and the
-optional `-it` for TTY mode — that we lock down here so the tmux
-path can rely on identical behavior.
+`agent_argv` is the pure helper for constructing docker exec command
+arguments. It encodes two non-trivial rules — the optional
+`--append-system-prompt-file` flag and the optional `-it` for TTY mode
+— that we lock down here so callers can rely on consistent behavior.
 """
 
 from __future__ import annotations

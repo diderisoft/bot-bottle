@@ -25,9 +25,8 @@ the container lifecycle and the copying of skills and env vars into it.
 - `README.md` — short public-facing description.
 - `AGENTS.md` — this file, orientation for future agent sessions.
 - `.gitignore` — OS junk.
-- `bot-bottle.json` — legacy manifest of named agents (env / skills / prompt
-  per agent), consumed by `cli.py`. See "Manifest" under
-  "Intended design".
+- `.bot-bottle/` — per-repo agent and bottle manifests (YAML markdown format).
+- `examples/` — example bottles and agents showing the manifest format.
 - `docs/README.md` — docs overview; when to write which document.
 - `docs/prds/` — product requirement docs (see `docs/prds/README.md` for format).
 - `docs/research/` — research notes (see `docs/research/README.md`).
