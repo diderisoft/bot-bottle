@@ -33,6 +33,7 @@ from ..backend.docker.capability_apply import snapshot_transcript
 from ..log import info
 from ..manifest import Manifest
 from ._common import PROG, USER_CWD, read_tty_line
+from . import tui
 
 
 def cmd_start(argv: list[str]) -> int:
@@ -49,15 +50,39 @@ def cmd_start(argv: list[str]) -> int:
             "or 'docker'). Overrides the env var when set."
         ),
     )
-    parser.add_argument("name", help="agent name defined in bot-bottle.json")
+    parser.add_argument(
+        "name",
+        nargs="?",
+        default=None,
+        help="agent name defined in bot-bottle.json (omit to pick interactively)",
+    )
     args = parser.parse_args(argv)
 
     dry_run = args.dry_run or os.environ.get("BOT_BOTTLE_DRY_RUN") == "1"
 
     manifest = Manifest.resolve(USER_CWD)
+
+    agent_name: str | None = args.name
+    if agent_name is None:
+        agent_name = tui.filter_select(
+            sorted(manifest.agents.keys()),
+            title="Select agent",
+        )
+        if agent_name is None:
+            return 0
+
+    backend_name: str | None = args.backend
+    if backend_name is None and "BOT_BOTTLE_BACKEND" not in os.environ:
+        backend_name = tui.filter_select(
+            list(known_backend_names()),
+            title="Select backend",
+        )
+        if backend_name is None:
+            return 0
+
     spec = BottleSpec(
         manifest=manifest,
-        agent_name=args.name,
+        agent_name=agent_name,
         copy_cwd=args.cwd,
         user_cwd=USER_CWD,
     )
@@ -65,7 +90,7 @@ def cmd_start(argv: list[str]) -> int:
         spec,
         dry_run=dry_run,
         remote_control=args.remote_control,
-        backend_name=args.backend,
+        backend_name=backend_name,
     )
 
 
