@@ -23,7 +23,7 @@ from ...agent_provider import (
     AgentProvisionFile,
     AgentProvisionPlan,
 )
-from ...codex_auth import codex_host_access_token, write_codex_dummy_auth_file
+from .codex_auth import codex_host_access_token, write_codex_dummy_auth_file
 from ...egress import CODEX_HOST_CREDENTIAL_TOKEN_REF, EgressRoute
 from ...log import die, info, warn
 

@@ -9,7 +9,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from bot_bottle.codex_auth import (
+from bot_bottle.contrib.codex.codex_auth import (
     codex_auth_path,
     codex_dummy_auth_json,
     codex_host_access_token,
