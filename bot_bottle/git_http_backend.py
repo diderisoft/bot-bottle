@@ -78,8 +78,8 @@ class GitHttpHandler(BaseHTTPRequestHandler):
             "REMOTE_ADDR": self.client_address[0],
             "REMOTE_PORT": str(self.client_address[1]),
             "REMOTE_USER": "",
-            "SERVER_NAME": self.server.server_name,
-            "SERVER_PORT": str(self.server.server_port),
+            "SERVER_NAME": self.server.server_name,  # type: ignore
+            "SERVER_PORT": str(self.server.server_port),  # type: ignore
             "SERVER_PROTOCOL": self.request_version,
         })
         for header, variable in (
@@ -157,8 +157,8 @@ class GitHttpHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, fmt: str, *args: object) -> None:
-        sys.stdout.write(fmt % args + "\n")
+    def log_message(self, format: str, *args: object) -> None:  # type: ignore
+        sys.stdout.write(format % args + "\n")
         sys.stdout.flush()
 
 

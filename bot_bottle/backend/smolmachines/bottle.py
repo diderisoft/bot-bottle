@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from typing import Mapping
+from typing import Mapping, cast
 
 from ...agent_provider import PromptMode, prompt_args
 from .. import Bottle, ExecResult
@@ -93,9 +93,9 @@ class SmolmachinesBottle(Bottle):
         agent_tail = ["env", *_env_assignments_for("node", self._guest_env),
                       self.agent_command]
         provider_prompt_args = prompt_args(
-            self._agent_prompt_mode, self.prompt_path, argv=argv,
+            cast(PromptMode, self._agent_prompt_mode), self.prompt_path, argv=argv,
         )
-        if self._agent_prompt_mode == "read_prompt_file":
+        if cast(PromptMode, self._agent_prompt_mode) == "read_prompt_file":
             agent_tail += argv
             agent_tail += provider_prompt_args
         else:

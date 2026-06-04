@@ -144,7 +144,7 @@ class ClaudeAgentProvider(AgentProvider):
         prompt (drives `--append-system-prompt-file`); the file is
         copied either way so the path always exists."""
         prompt_path = _prompt_path(plan.guest_home)
-        bottle.cp_in(str(plan.prompt_file), prompt_path)
+        bottle.cp_in(str(plan.prompt_file), prompt_path)  # type: ignore
         bottle.exec(
             f"chown node:node {prompt_path} && chmod 600 {prompt_path}",
             user="root",

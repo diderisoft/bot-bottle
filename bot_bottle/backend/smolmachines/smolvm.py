@@ -52,7 +52,7 @@ class SmolvmError(RuntimeError):
     pack failed, etc.). Carries the captured stderr for the
     operator-facing log line."""
 
-    def __init__(self, argv: Sequence[str], result: subprocess.CompletedProcess):
+    def __init__(self, argv: Sequence[str], result: subprocess.CompletedProcess[str]):
         self.argv = list(argv)
         self.returncode = result.returncode
         self.stdout = result.stdout
@@ -65,7 +65,7 @@ class SmolvmError(RuntimeError):
 
 
 def _smolvm(*args: str, env: Mapping[str, str] | None = None,
-            check: bool = True) -> subprocess.CompletedProcess:
+            check: bool = True) -> subprocess.CompletedProcess[str]:
     """One subprocess call into the smolvm CLI. `check=True`
     raises SmolvmError on non-zero; `check=False` returns the
     CompletedProcess for the caller to inspect."""

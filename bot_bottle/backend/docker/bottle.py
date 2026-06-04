@@ -5,6 +5,8 @@ from __future__ import annotations
 import subprocess
 from typing import Callable
 
+from typing import cast
+
 from ...agent_provider import PromptMode, prompt_args
 from .. import Bottle, ExecResult
 
@@ -36,7 +38,7 @@ class DockerBottle(Bottle):
     ) -> list[str]:
         full_argv = list(argv)
         full_argv.extend(
-            prompt_args(self._agent_prompt_mode, self.prompt_path, argv=full_argv)
+            prompt_args(cast(PromptMode, self._agent_prompt_mode), self.prompt_path, argv=full_argv)
         )
         cmd = ["docker", "exec"]
         if tty:

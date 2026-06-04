@@ -354,7 +354,7 @@ def _try_init_green() -> int:
         return 0
 
 
-def _main_loop(stdscr: "curses._CursesWindow") -> None:
+def _main_loop(stdscr: "curses._CursesWindow") -> None:  # type: ignore
     curses.curs_set(0)
     stdscr.timeout(_REFRESH_INTERVAL_MS)
     green_attr = _try_init_green()
@@ -434,7 +434,7 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:
 
 
 def _render(
-    stdscr: "curses._CursesWindow",
+    stdscr: "curses._CursesWindow",  # type: ignore
     pending: list[QueuedProposal],
     selected: int,
     status_line: str,
@@ -488,7 +488,7 @@ def _render(
 
 
 def _detail_view(
-    stdscr: "curses._CursesWindow",
+    stdscr: "curses._CursesWindow",  # type: ignore
     qp: QueuedProposal,
     *,
     green_attr: int = 0,
@@ -539,7 +539,7 @@ def _detail_view(
             return
 
 
-def _modify(stdscr: "curses._CursesWindow", qp: QueuedProposal) -> str | None:
+def _modify(stdscr: "curses._CursesWindow", qp: QueuedProposal) -> str | None:  # type: ignore
     """Suspend curses, open $EDITOR on the proposed file, return edited content."""
     suffix = _suffix_for_tool(qp.proposal.tool)
     curses.endwin()
@@ -550,7 +550,7 @@ def _modify(stdscr: "curses._CursesWindow", qp: QueuedProposal) -> str | None:
     return edited
 
 
-def _prompt(stdscr: "curses._CursesWindow", label: str) -> str:
+def _prompt(stdscr: "curses._CursesWindow", label: str) -> str:  # type: ignore
     """One-line input at the bottom of the screen."""
     curses.curs_set(1)
     h, _ = stdscr.getmaxyx()

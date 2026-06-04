@@ -42,7 +42,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Generator, Iterator
+from typing import Generator
 
 from ...log import die
 

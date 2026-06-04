@@ -138,7 +138,7 @@ def _pump(name: str, stream: IO[bytes]) -> None:
         sys.stdout.flush()
 
 
-def _spawn(spec: _DaemonSpec) -> subprocess.Popen:
+def _spawn(spec: _DaemonSpec) -> subprocess.Popen[bytes]:
     proc = subprocess.Popen(
         list(spec.argv),
         stdout=subprocess.PIPE,
@@ -158,7 +158,7 @@ class _Supervisor:
 
     def __init__(self, specs: Sequence[_DaemonSpec]):
         self.specs = tuple(specs)
-        self.procs: list[tuple[_DaemonSpec, subprocess.Popen]] = []
+        self.procs: list[tuple[_DaemonSpec, subprocess.Popen[bytes]]] = []
         self.shutdown_at: float | None = None
         # Names of children that have been logged as having exited
         # so we only log each death once across watch-loop ticks.

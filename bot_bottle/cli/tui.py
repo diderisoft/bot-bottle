@@ -13,7 +13,7 @@ from __future__ import annotations
 import curses
 import os
 import sys
-from typing import Optional
+from typing import Any, Optional
 
 
 def filter_select(
@@ -39,7 +39,7 @@ def filter_select(
         return None
 
     try:
-        result = _run_picker(items, title=title, tty_fd=tty_fd)
+        result = _run_picker(items, title=title, tty_fd=tty_fd.fileno())
     finally:
         tty_fd.close()
 
@@ -59,11 +59,10 @@ _KEY_ENTER_ALT = 10
 _CANCEL_KEYS = frozenset([_KEY_ESC, _KEY_CTRL_C, _KEY_CTRL_D, ord("q")])
 
 
-def _run_picker(items: list[str], *, title: str, tty_fd) -> Optional[str]:
+def _run_picker(items: list[str], *, title: str, tty_fd: int) -> Optional[str]:
     """Drive a curses session on *tty_fd* and return the picked item."""
     # newterm lets us run curses on an arbitrary fd rather than the
     # process's controlling tty / stdout — crucial when stdout is piped.
-    old_term = os.environ.get("TERM", "xterm-256color")
     os.environ.setdefault("TERM", "xterm-256color")
 
     # Save / restore the real stdin/stdout so curses newterm can use tty_fd.
@@ -72,7 +71,7 @@ def _run_picker(items: list[str], *, title: str, tty_fd) -> Optional[str]:
 
     try:
         import io
-        tty_text = io.TextIOWrapper(tty_fd, write_through=True)
+        tty_text = io.TextIOWrapper(io.FileIO(tty_fd, mode='r+'), write_through=True)
         sys.__stdin__ = tty_text   # type: ignore[assignment]
         sys.__stdout__ = tty_text  # type: ignore[assignment]
 
@@ -99,7 +98,7 @@ def _run_picker(items: list[str], *, title: str, tty_fd) -> Optional[str]:
     return result
 
 
-def _picker_loop(screen, items: list[str], *, title: str) -> Optional[str]:
+def _picker_loop(screen: Any, items: list[str], *, title: str) -> Optional[str]:
     query = ""
     cursor = 0
 
@@ -158,7 +157,7 @@ def _filter_items(items: list[str], query: str) -> list[str]:
     return [i for i in items if q in i.lower()]
 
 
-def _render(screen, filtered: list[str], cursor: int, *, query: str, title: str) -> None:
+def _render(screen: Any, filtered: list[str], cursor: int, *, query: str, title: str) -> None:
     screen.erase()
     rows, cols = screen.getmaxyx()
     min_rows = 5
@@ -212,7 +211,7 @@ def _render(screen, filtered: list[str], cursor: int, *, query: str, title: str)
     screen.refresh()
 
 
-def _addstr_safe(screen, row: int, col: int, text: str, attr: int = curses.A_NORMAL) -> None:
+def _addstr_safe(screen: Any, row: int, col: int, text: str, attr: int = curses.A_NORMAL) -> None:
     try:
         screen.addstr(row, col, text, attr)
     except curses.error:

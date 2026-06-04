@@ -42,6 +42,7 @@ import subprocess
 import sys
 import termios
 import threading
+from types import FrameType
 
 
 # How long to wait after the main exec starts before pushing the
@@ -123,7 +124,7 @@ def main(argv: list[str]) -> int:
     machine = argv[0]
     inner = argv[2:]
 
-    def sync(*_args: int) -> None:
+    def sync(_signum: int, _frame: FrameType | None) -> None:
         size = _read_winsize()
         if size is None:
             return
