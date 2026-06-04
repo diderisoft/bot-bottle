@@ -60,11 +60,11 @@ def _validate_frontmatter_keys(
 ) -> None:
     from .manifest_util import ManifestError
 
-    key_set = set(keys)
-    unknown = key_set - allowed_keys
+    key_set = set(keys)  # type: ignore
+    unknown = key_set - allowed_keys  # type: ignore
     if unknown:
         allowed = ", ".join(sorted(allowed_keys))
         raise ManifestError(
             f"{kind} file {path}: unknown frontmatter key(s) "
-            f"{sorted(unknown)}; allowed keys are {allowed}."
+            f"{sorted(unknown)}; allowed keys are {allowed}."  # type: ignore
         )
