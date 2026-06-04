@@ -216,14 +216,14 @@ def egress_token_env_map(
     return out
 
 
-def _route_to_yaml_fields(r: Route) -> dict:
+def _route_to_yaml_fields(r: Route) -> dict[str, object]:
     """Return the addon-visible fields for one route.
 
     Single authoritative mapping between EgressRoute (host-side) and
     egress_addon_core.Route (sidecar-side). When a field is added to
     the addon's Route that must appear in the YAML, add it here and
     in egress_addon_core._parse_one together."""
-    fields: dict = {"host": r.host}
+    fields: dict[str, object] = {"host": r.host}
     if r.auth_scheme and r.token_env:
         fields["auth_scheme"] = r.auth_scheme
         fields["token_env"] = r.token_env
@@ -252,7 +252,7 @@ def egress_render_routes(
             lines.append(f'    token_env: "{f["token_env"]}"')
         if "path_allowlist" in f:
             lines.append("    path_allowlist:")
-            for p in f["path_allowlist"]:
+            for p in f["path_allowlist"]:  # type: ignore
                 lines.append(f'      - "{p}"')
     return "\n".join(lines) + "\n"
 
