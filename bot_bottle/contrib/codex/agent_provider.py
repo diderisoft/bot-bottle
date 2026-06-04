@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING
 
 from ...agent_provider import (
     CODEX_HOST_CREDENTIAL_HOSTS,
-    GUEST_HOME,
     AgentProvider,
     AgentProviderRuntime,
     AgentProvisionCommand,
@@ -36,11 +35,18 @@ if TYPE_CHECKING:
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 _SUPERVISE_MCP_NAME = "supervise"
-# Codex agents still read skills from the claude-code convention
-# (~/.claude/skills/) — the bot-bottle-codex image follows the same
-# layout. If Codex grows native skill discovery later, override here.
-_SKILLS_DIR = f"{GUEST_HOME}/.claude/skills"
-_PROMPT_PATH = f"{GUEST_HOME}/.bot-bottle-prompt.txt"
+
+
+def _skills_dir(guest_home: str) -> str:
+    # Codex agents still read skills from the claude-code convention
+    # (~/.claude/skills/) — the bot-bottle-codex image follows the
+    # same layout. If Codex grows native skill discovery later,
+    # change here.
+    return f"{guest_home}/.claude/skills"
+
+
+def _prompt_path(guest_home: str) -> str:
+    return f"{guest_home}/.bot-bottle-prompt.txt"
 
 _RUNTIME = AgentProviderRuntime(
     template="codex",
@@ -64,7 +70,7 @@ class CodexAgentProvider(AgentProvider):
         *,
         dockerfile: str,
         state_dir: Path,
-        guest_home: str = GUEST_HOME,
+        guest_home: str,
         guest_env: dict[str, str] | None = None,
         auth_token: str = "",
         forward_host_credentials: bool = False,
@@ -162,7 +168,8 @@ class CodexAgentProvider(AgentProvider):
         agent = plan.spec.manifest.agents[plan.spec.agent_name]
         if not agent.skills:
             return
-        bottle.exec(f"mkdir -p {_SKILLS_DIR}", user="root")
+        skills_dir = _skills_dir(plan.workspace_plan.guest_home)
+        bottle.exec(f"mkdir -p {skills_dir}", user="root")
         for name in agent.skills:
             src = host_skill_dir(name)
             if not os.path.isdir(src):
@@ -170,7 +177,7 @@ class CodexAgentProvider(AgentProvider):
                     f"skill {name!r} disappeared from host between "
                     f"validation and copy at {src}."
                 )
-            dst = f"{_SKILLS_DIR}/{name}"
+            dst = f"{skills_dir}/{name}"
             info(f"copying skill {name} into {bottle.name}:{dst}")
             bottle.exec(f"rm -rf {dst} && mkdir -p {dst}", user="root")
             bottle.cp_in(f"{src}/.", f"{dst}/")
@@ -181,13 +188,14 @@ class CodexAgentProvider(AgentProvider):
         Codex reads it via the agent's `Read and follow the
         instructions in <path>.` bootstrap (see `prompt_args`); the
         file is copied either way so the path always exists."""
-        bottle.cp_in(str(plan.prompt_file), _PROMPT_PATH)
+        prompt_path = _prompt_path(plan.workspace_plan.guest_home)
+        bottle.cp_in(str(plan.prompt_file), prompt_path)
         bottle.exec(
-            f"chown node:node {_PROMPT_PATH} && chmod 600 {_PROMPT_PATH}",
+            f"chown node:node {prompt_path} && chmod 600 {prompt_path}",
             user="root",
         )
         agent = plan.spec.manifest.agents[plan.spec.agent_name]
-        return _PROMPT_PATH if agent.prompt else None
+        return prompt_path if agent.prompt else None
 
     def provision(self, plan: "BottlePlan", bottle: "Bottle") -> None:
         """Apply the codex-side declarative provision steps from

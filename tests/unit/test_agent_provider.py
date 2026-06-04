@@ -27,6 +27,7 @@ class TestAgentProviderRuntime(unittest.TestCase):
     def test_codex_plan_declares_home_state(self):
         with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
             plan = agent_provision_plan(
+                guest_home="/home/node",
                 template="codex",
                 dockerfile="/tmp/Dockerfile.codex",
                 state_dir=Path(tmp),
@@ -51,6 +52,7 @@ class TestAgentProviderRuntime(unittest.TestCase):
     def test_codex_trusts_requested_project_path(self):
         with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
             agent_provision_plan(
+                guest_home="/home/node",
                 template="codex",
                 dockerfile="",
                 state_dir=Path(tmp),
@@ -68,6 +70,7 @@ class TestAgentProviderRuntime(unittest.TestCase):
                 "tokens": {"access_token": _jwt(2000000000)},
             }))
             plan = agent_provision_plan(
+                guest_home="/home/node",
                 template="codex",
                 dockerfile="",
                 state_dir=Path(tmp),
@@ -87,6 +90,7 @@ class TestAgentProviderRuntime(unittest.TestCase):
     def test_claude_with_auth_token_injects_provider_route_and_placeholder(self):
         with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
             plan = agent_provision_plan(
+                guest_home="/home/node",
                 template="claude",
                 dockerfile="/tmp/Dockerfile.claude",
                 state_dir=Path(tmp),
@@ -109,6 +113,7 @@ class TestAgentProviderRuntime(unittest.TestCase):
     def test_claude_trusts_requested_project_path(self):
         with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
             agent_provision_plan(
+                guest_home="/home/node",
                 template="claude",
                 dockerfile="",
                 state_dir=Path(tmp),
@@ -127,6 +132,7 @@ class TestAgentProviderRuntime(unittest.TestCase):
                 "tokens": {"access_token": _jwt(2000000000)},
             }))
             plan = agent_provision_plan(
+                guest_home="/home/node",
                 template="codex",
                 dockerfile="",
                 state_dir=Path(tmp),
@@ -143,6 +149,7 @@ class TestAgentProviderRuntime(unittest.TestCase):
     def test_codex_without_forward_host_credentials_has_passthrough_egress_routes(self):
         with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
             plan = agent_provision_plan(
+                guest_home="/home/node",
                 template="codex",
                 dockerfile="",
                 state_dir=Path(tmp),
@@ -160,6 +167,7 @@ class TestAgentProviderRuntime(unittest.TestCase):
     def test_claude_without_auth_token_has_passthrough_egress_route(self):
         with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
             plan = agent_provision_plan(
+                guest_home="/home/node",
                 template="claude",
                 dockerfile="",
                 state_dir=Path(tmp),
@@ -183,6 +191,7 @@ class TestAgentProviderRuntime(unittest.TestCase):
                 "tokens": {"access_token": access},
             }))
             plan = agent_provision_plan(
+                guest_home="/home/node",
                 template="codex",
                 dockerfile="",
                 state_dir=Path(tmp),
@@ -197,6 +206,7 @@ class TestAgentProviderRuntime(unittest.TestCase):
     def test_codex_without_forward_host_credentials_has_empty_provisioned_env(self):
         with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
             plan = agent_provision_plan(
+                guest_home="/home/node",
                 template="codex",
                 dockerfile="",
                 state_dir=Path(tmp),

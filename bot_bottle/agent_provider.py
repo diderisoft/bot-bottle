@@ -41,8 +41,6 @@ PROVIDER_TEMPLATES = frozenset({PROVIDER_CLAUDE, PROVIDER_CODEX})
 CODEX_HOST_CREDENTIAL_HOSTS = ("api.openai.com", "chatgpt.com")
 PromptMode = Literal["append_file", "read_prompt_file"]
 
-GUEST_HOME = "/home/node"
-
 
 @dataclass(frozen=True)
 class AgentProviderRuntime:
@@ -131,7 +129,7 @@ class AgentProvider(ABC):
         *,
         dockerfile: str,
         state_dir: Path,
-        guest_home: str = GUEST_HOME,
+        guest_home: str,
         guest_env: dict[str, str] | None = None,
         auth_token: str = "",
         forward_host_credentials: bool = False,
@@ -201,7 +199,7 @@ def agent_provision_plan(
     template: str,
     dockerfile: str,
     state_dir: Path,
-    guest_home: str = GUEST_HOME,
+    guest_home: str,
     guest_env: dict[str, str] | None = None,
     auth_token: str = "",
     forward_host_credentials: bool = False,
