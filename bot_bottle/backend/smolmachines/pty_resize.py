@@ -68,8 +68,9 @@ def _read_winsize() -> tuple[int, int] | None:
       - tmux respawn-pane: tmux sets all three to the pane's PTY.
       - non-TTY (someone piped stdin in tests): none are; the
         sync just no-ops, which is the right behavior."""
-    for fd in (sys.stdin.fileno(), sys.stdout.fileno(), sys.stderr.fileno()):
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
         try:
+            fd = stream.fileno()
             data = fcntl.ioctl(fd, termios.TIOCGWINSZ, b"\x00" * 8)
         except OSError:
             continue

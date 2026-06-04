@@ -15,8 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
 
-from .log import die
-from .util import expand_tilde
+from ...log import die
+from ...util import expand_tilde
 
 
 def codex_auth_path(host_env: dict[str, str] | None = None) -> Path:
