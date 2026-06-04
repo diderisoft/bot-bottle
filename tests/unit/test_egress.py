@@ -24,12 +24,11 @@ def _bottle(routes):  # type: ignore
     }).bottles["dev"]
 
 
-def _provider_route(host: str, token_ref: str, *, tls_passthrough: bool = False) -> EgressRoute:
+def _provider_route(host: str, token_ref: str) -> EgressRoute:
     return EgressRoute(
         host=host,
         auth_scheme="Bearer",
         token_ref=token_ref,
-        tls_passthrough=tls_passthrough,
     )
 
 
@@ -150,7 +149,7 @@ class TestProviderRouteMerge(unittest.TestCase):
 
     def test_unauthenticated_provider_route_appends_without_token_slot(self):
         b = _bottle([])
-        pr = EgressRoute(host="api.openai.com", tls_passthrough=True)
+        pr = EgressRoute(host="api.openai.com")
         routes = egress_routes_for_bottle(b, (pr,))
         self.assertEqual(1, len(routes))
         self.assertEqual("api.openai.com", routes[0].host)
@@ -162,13 +161,12 @@ class TestProviderRouteMerge(unittest.TestCase):
     def test_provider_route_wins_over_bare_manifest_route(self):
         # Provisioned host wins outright; manifest path_allowlist is dropped.
         b = _bottle([{"host": "api.openai.com", "path_allowlist": ["/v1/"]}])
-        pr = EgressRoute(host="api.openai.com", tls_passthrough=True)
+        pr = EgressRoute(host="api.openai.com")
         routes = egress_routes_for_bottle(b, (pr,))
         self.assertEqual(1, len(routes))
         self.assertEqual("", routes[0].auth_scheme)
         self.assertEqual("", routes[0].token_env)
         self.assertEqual("", routes[0].token_ref)
-        self.assertTrue(routes[0].tls_passthrough)
         self.assertEqual((), routes[0].path_allowlist)
         self.assertEqual({}, egress_token_env_map(routes))
 
@@ -208,19 +206,6 @@ class TestProviderRouteMerge(unittest.TestCase):
         self.assertEqual(["api.openai.com", "api.github.com"], hosts)
         self.assertEqual(CODEX_HOST_CREDENTIAL_TOKEN_REF, routes[0].token_ref)
         self.assertEqual("GH_PAT", routes[1].token_ref)
-
-    def test_provider_route_tls_passthrough_set_on_appended_route(self):
-        b = _bottle([])
-        pr = _provider_route("api.openai.com", "TOK", tls_passthrough=True)
-        routes = egress_routes_for_bottle(b, (pr,))
-        self.assertTrue(routes[0].tls_passthrough)
-
-    def test_provider_route_tls_passthrough_wins_over_bare_manifest_route(self):
-        b = _bottle([{"host": "api.openai.com"}])
-        pr = _provider_route("api.openai.com", "TOK", tls_passthrough=True)
-        routes = egress_routes_for_bottle(b, (pr,))
-        self.assertTrue(routes[0].tls_passthrough)
-
 
 class TestTokenEnvMap(unittest.TestCase):
     def test_only_authenticated_routes_contribute(self):

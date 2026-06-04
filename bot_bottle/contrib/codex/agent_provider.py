@@ -110,7 +110,6 @@ class CodexAgentProvider(AgentProvider):
                 host=host,
                 auth_scheme="Bearer" if forward_host_credentials else "",
                 token_ref=CODEX_HOST_CREDENTIAL_TOKEN_REF if forward_host_credentials else "",
-                tls_passthrough=True,
             ))
 
         if forward_host_credentials:

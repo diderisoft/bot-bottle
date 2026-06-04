@@ -56,12 +56,10 @@ class TestValidation(unittest.TestCase):
     def test_empty_proposed_file_rejected_for_tools_with_file_field(self):
         # egress-block has structured input (validated in
         # _validate_and_bundle_egress_route, not here) and
-        # list-egress-routes takes no input. Only the other
-        # two go through `validate_proposed_file`.
-        for tool in (_sv.TOOL_PIPELOCK_BLOCK, _sv.TOOL_CAPABILITY_BLOCK):
-            with self.subTest(tool=tool):
-                with self.assertRaises(_RpcError):
-                    validate_proposed_file(tool, "   \n\t")
+        # list-egress-routes takes no input. Only capability-block
+        # goes through `validate_proposed_file`.
+        with self.assertRaises(_RpcError):
+            validate_proposed_file(_sv.TOOL_CAPABILITY_BLOCK, "   \n\t")
 
 
 # --- JSON-RPC parsing ------------------------------------------------------
@@ -144,7 +142,6 @@ class TestHandleToolsList(unittest.TestCase):
         self.assertEqual(
             sorted([
                 _sv.TOOL_EGRESS_BLOCK,
-                _sv.TOOL_PIPELOCK_BLOCK,
                 _sv.TOOL_CAPABILITY_BLOCK,
                 _sv.TOOL_LIST_EGRESS_ROUTES,
             ]),
@@ -229,9 +226,9 @@ class TestHandleToolsCall(unittest.TestCase):
         try:
             result = handle_tools_call(
                 {
-                    "name": _sv.TOOL_PIPELOCK_BLOCK,
+                    "name": _sv.TOOL_CAPABILITY_BLOCK,
                     "arguments": {
-                        "failed_url": "https://example.com/path",
+                        "dockerfile": "FROM python:3.13\n",
                         "justification": "needed for tests",
                     },
                 },

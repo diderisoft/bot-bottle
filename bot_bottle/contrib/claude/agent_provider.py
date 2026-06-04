@@ -94,7 +94,6 @@ class ClaudeAgentProvider(AgentProvider):
             host="api.anthropic.com",
             auth_scheme="Bearer" if auth_token else "",
             token_ref=auth_token,
-            tls_passthrough=True,
         ),)
         hidden_env_names: frozenset[str] = frozenset()
         if auth_token:

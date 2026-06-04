@@ -18,7 +18,6 @@ from bot_bottle.supervise import (
     STATUS_REJECTED,
     TOOL_CAPABILITY_BLOCK,
     TOOL_EGRESS_BLOCK,
-    TOOL_PIPELOCK_BLOCK,
     archive_proposal,
     audit_log_path,
     list_pending_proposals,
@@ -320,16 +319,14 @@ class TestToolConstants(unittest.TestCase):
         self.assertEqual(
             (
                 TOOL_EGRESS_BLOCK,
-                TOOL_PIPELOCK_BLOCK,
                 TOOL_CAPABILITY_BLOCK,
                 supervise.TOOL_LIST_EGRESS_ROUTES,
             ),
             supervise.TOOLS,
         )
 
-    def test_component_map_covers_two_remediation_tools_only(self):
+    def test_component_map_covers_egress_remediation_only(self):
         self.assertIn(TOOL_EGRESS_BLOCK, supervise.COMPONENT_FOR_TOOL)
-        self.assertIn(TOOL_PIPELOCK_BLOCK, supervise.COMPONENT_FOR_TOOL)
         self.assertNotIn(TOOL_CAPABILITY_BLOCK, supervise.COMPONENT_FOR_TOOL)
 
 

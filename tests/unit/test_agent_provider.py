@@ -101,7 +101,6 @@ class TestAgentProviderRuntime(unittest.TestCase):
         self.assertEqual("api.anthropic.com", route.host)
         self.assertEqual("Bearer", route.auth_scheme)
         self.assertEqual("BOT_BOTTLE_CLAUDE_OAUTH_TOKEN", route.token_ref)
-        self.assertTrue(route.tls_passthrough)
         self.assertEqual("egress-placeholder", plan.env_vars["CLAUDE_CODE_OAUTH_TOKEN"])
         self.assertEqual("1", plan.env_vars["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"])
         self.assertEqual("1", plan.env_vars["DISABLE_ERROR_REPORTING"])
@@ -143,7 +142,6 @@ class TestAgentProviderRuntime(unittest.TestCase):
         for r in plan.egress_routes:
             self.assertEqual("Bearer", r.auth_scheme)
             self.assertEqual(CODEX_HOST_CREDENTIAL_TOKEN_REF, r.token_ref)
-            self.assertTrue(r.tls_passthrough)
 
     def test_codex_without_forward_host_credentials_has_passthrough_egress_routes(self):
         with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
@@ -161,7 +159,6 @@ class TestAgentProviderRuntime(unittest.TestCase):
         for r in plan.egress_routes:
             self.assertEqual("", r.auth_scheme)
             self.assertEqual("", r.token_ref)
-            self.assertTrue(r.tls_passthrough)
 
     def test_claude_without_auth_token_has_passthrough_egress_route(self):
         with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
@@ -176,7 +173,6 @@ class TestAgentProviderRuntime(unittest.TestCase):
         self.assertEqual("api.anthropic.com", route.host)
         self.assertEqual("", route.auth_scheme)
         self.assertEqual("", route.token_ref)
-        self.assertTrue(route.tls_passthrough)
         self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", plan.env_vars)
         self.assertEqual(frozenset(), plan.hidden_env_names)
 
