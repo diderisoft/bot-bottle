@@ -38,12 +38,15 @@ def filter_select(
     except OSError:
         return None
 
-    # Note: Don't close tty_fd here. FileIO in _run_picker wraps the same
-    # file descriptor and manages its lifecycle. Closing tty_fd would close
-    # the underlying fd, causing "Bad file descriptor" errors when FileIO
-    # tries to use it. Let the file object be closed by garbage collection.
-    result = _run_picker(items, title=title, tty_fd=tty_fd.fileno())
-    return result
+    try:
+        # Use os.dup() to duplicate the fd so the original file object
+        # and FileIO in _run_picker each manage independent copies,
+        # preventing double-close errors.
+        import os as _os
+        fd_dup = _os.dup(tty_fd.fileno())
+        return _run_picker(items, title=title, tty_fd=fd_dup)
+    finally:
+        tty_fd.close()
 
 
 # ---------------------------------------------------------------------------
