@@ -4,8 +4,7 @@ Replaces the cred-proxy sidecar (PRD 0010) with a mitmproxy-based
 sidecar that becomes the agent's `HTTP_PROXY` / `HTTPS_PROXY`. It
 owns three jobs:
 
-  1. MITM the agent's HTTPS with the per-bottle CA (moved from
-     pipelock).
+  1. MITM the agent's HTTPS with the per-bottle CA.
   2. Enforce manifest-declared `path_allowlist` per route.
   3. Inject `Authorization` headers for routes that declare an
      `auth` block, the same way cred-proxy does today.
@@ -48,9 +47,8 @@ EGRESS_HOSTNAME = "egress"
 
 # In-container path the addon reads. Pre-created in
 # `Dockerfile.sidecars` so the host bind-mount can drop the file
-# directly. Content is YAML (hand-rolled by `egress_render_routes`
-# in the style of `pipelock_render_yaml`, parsed by `yaml_subset`
-# inside the addon).
+# directly. Content is YAML (hand-rolled by `egress_render_routes`,
+# parsed by `yaml_subset` inside the addon).
 EGRESS_ROUTES_IN_CONTAINER = "/etc/egress/routes.yaml"
 
 
@@ -70,15 +68,11 @@ class EgressRoute(Route):
     `roles` carries the manifest route's role tuple (reserved for
     future use; always empty today).
 
-    `tls_passthrough` signals that pipelock must not TLS-MITM this
-    host — either because the manifest declared `pipelock.tls_passthrough:
-    true` (lifted in `egress_manifest_routes`) or because a provider
-    route set it (e.g. egress injects its own Bearer on that host
-    after the agent boundary and pipelock's header DLP would block it)."""
+    `roles` carries the manifest route's role tuple (reserved for
+    future use; always empty today)."""
 
     token_ref: str = ""
     roles: tuple[str, ...] = ()
-    tls_passthrough: bool = False
 
 
 @dataclass(frozen=True)
@@ -87,10 +81,10 @@ class EgressPlan:
 
     The slug + routes_path + routes + token_env_map fields are
     filled at prepare time (host-side, side-effect-free on docker).
-    The network + CA + pipelock fields are populated by the backend's
-    launch step via `dataclasses.replace` once those resources
-    exist. Empty defaults are sentinels meaning "not yet set";
-    `.start` validates that they are populated.
+    The network + CA fields are populated by the backend's launch step
+    via `dataclasses.replace` once those resources exist. Empty defaults
+    are sentinels meaning "not yet set"; `.start` validates that they are
+    populated.
 
     `token_env_map` is `{<token_env in container>: <token_ref on host>}`.
     The backend's start step reads `os.environ[token_ref]` and
@@ -108,16 +102,6 @@ class EgressPlan:
     key) for installing into the agent's trust store via
     `provision_ca`. Separate file rather than re-parsing the
     concat so secrets and trust artefacts stay on distinct paths.
-
-    `pipelock_ca_host_path` is the host path of the pipelock CA
-    (cert only). `.start` docker-cps it into the sidecar so the
-    proxy's outbound HTTPS client trusts pipelock's MITM on the
-    egress → upstream leg.
-
-    `pipelock_proxy_url` is the URL egress sets as `HTTPS_PROXY`
-    in its environ so outbound HTTPS traverses pipelock — keeping
-    pipelock's hostname allowlist + DLP body scanner on the
-    egress → upstream leg.
     """
 
     slug: str
@@ -128,8 +112,6 @@ class EgressPlan:
     egress_network: str = ""
     mitmproxy_ca_host_path: Path = Path()
     mitmproxy_ca_cert_only_host_path: Path = Path()
-    pipelock_ca_host_path: Path = Path()
-    pipelock_proxy_url: str = ""
 
 
 def egress_manifest_routes(
@@ -147,7 +129,6 @@ def egress_manifest_routes(
             auth_scheme=r.AuthScheme,
             token_ref=r.TokenRef,
             roles=r.Role,
-            tls_passthrough=r.Pipelock.TlsPassthrough,
         ))
     return tuple(out)
 
@@ -306,7 +287,7 @@ class Egress(ABC):
         forward values from the host's environ into the sidecar's environ.
 
         Returned plan is incomplete: the launch step must fill
-        `internal_network` / `egress_network` / `pipelock_proxy_url`
+        `internal_network` / `egress_network`
         via `dataclasses.replace` before passing it to `.start`."""
         routes = egress_routes_for_bottle(bottle, provider_routes)
         routes_path = stage_dir / "egress_routes.yaml"

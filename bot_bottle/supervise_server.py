@@ -1,8 +1,8 @@
 """Supervise sidecar HTTP server (PRD 0013).
 
-Per-bottle MCP server exposing three tools — `egress-block`,
-`pipelock-block`, `capability-block` — that the agent calls to
-propose config changes when stuck. Each tool call:
+Per-bottle MCP server exposing two tools — `egress-block`,
+`capability-block` — that the agent calls to propose config changes
+when stuck. Each tool call:
 
   1. Validates the proposed file syntactically.
   2. Writes a Proposal to /run/supervise/queue/ (bind-mounted from
@@ -18,7 +18,7 @@ Speaks MCP over HTTP+JSON-RPC. Methods handled:
 
   * `initialize`           — handshake; returns server info + caps.
   * `notifications/initialized` — ack-only.
-  * `tools/list`           — returns the three tool definitions.
+  * `tools/list`           — returns the tool definitions.
   * `tools/call`           — validates, queues, blocks, returns.
 
 Everything else returns JSON-RPC error -32601 (method not found).
@@ -151,8 +151,8 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
             "or rejects in the supervise TUI. On approval the "
             "supervisor writes the merged routes.yaml, SIGHUPs "
             "egress (atomic swap, no dropped connections), and "
-            "mirrors the host onto pipelock's allowlist for the "
-            "downstream gate."
+            "writes the merged routes.yaml and SIGHUPs egress "
+            "(atomic swap, no dropped connections)."
         ),
         "inputSchema": {
             "type": "object",
@@ -203,15 +203,11 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
         "name": _sv.TOOL_LIST_EGRESS_ROUTES,
         "description": (
             "List the current egress route table — the bottle's "
-            "primary egress allowlist. Returns JSON with one entry "
-            "per allowed host, each carrying its path_allowlist (if "
-            "any) and whether the proxy injects Authorization for "
-            "the route. Use this before composing an "
-            "`egress-block` proposal so the new routes file "
-            "extends the live one rather than replacing it. "
-            "Pipelock's allowlist is a mirror of this set — every "
-            "host listed here is also reachable through pipelock's "
-            "downstream hostname gate."
+            "allowlist. Returns JSON with one entry per allowed host, "
+            "each carrying its path_allowlist (if any) and whether "
+            "the proxy injects Authorization for the route. Use this "
+            "before composing an `egress-block` proposal so the new "
+            "routes file extends the live one rather than replacing it."
         ),
         "inputSchema": {
             "type": "object",
@@ -220,47 +216,11 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
         },
     },
     {
-        "name": _sv.TOOL_PIPELOCK_BLOCK,
-        "description": (
-            "Call when pipelock refused your outbound request and "
-            "the failing host is genuinely missing from the bottle's "
-            "allowlist (vs. blocked for DLP reasons — those need a "
-            "different remediation). In practice pipelock's allowlist "
-            "is now a mirror of the egress routes set by "
-            "`egress-block`, so prefer that tool when you want "
-            "to add a host. This tool stays available for the rare "
-            "case where pipelock and egress have diverged. "
-            "Pass the full URL you tried to hit (scheme + host + "
-            "path); the supervisor extracts the hostname and merges "
-            "it into pipelock's allowlist. On approval the "
-            "supervisor restarts pipelock."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "failed_url": {
-                    "type": "string",
-                    "description": (
-                        "The full URL pipelock blocked, e.g. "
-                        "https://api.github.com/repos/foo/bar. Scheme "
-                        "and hostname are required; path is recorded "
-                        "as operator context."
-                    ),
-                },
-                "justification": {
-                    "type": "string",
-                    "description": "Why the new host should be allowed.",
-                },
-            },
-            "required": ["failed_url", "justification"],
-        },
-    },
-    {
         "name": _sv.TOOL_CAPABILITY_BLOCK,
         "description": (
             "Call when the bottle is missing a tool, skill, permission, "
             "or env var you need — something that lives in the agent "
-            "Dockerfile rather than in routes or the pipelock allowlist. "
+            "Dockerfile rather than in the egress routes. "
             "Read the current Dockerfile from "
             "/etc/bot-bottle/current-config/Dockerfile, compose a "
             "modified version, and pass the full new file plus a "
@@ -286,27 +246,10 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
 ]
 
 
-# Map each tool to the input field that carries the agent's
-# tool-specific payload (stored in Proposal.proposed_file as
-# free-form text the apply path interprets per tool).
-#
-#   egress-block: JSON object describing a SINGLE route to
-#                       add — `{host, path_allowlist?, auth?}`. The
-#                       supervisor merges this into the live routes
-#                       file at approval time.
-#   pipelock-block:     the full failed URL (scheme + host + path) —
-#                       supervisor extracts the host, merges into the
-#                       bottle's current allowlist; the path is shown
-#                       to the operator for context (pipelock doesn't
-#                       do path-level matching).
-#   capability-block:   full proposed Dockerfile
-#
-# Egress-proxy-block doesn't use a single "field name" → the JSON
-# payload is constructed from multiple structured input fields in
-# `handle_egress_block`. The mapping stays one-entry-per-tool
-# so the generic dispatch keeps working for the other two.
+# Map each non-egress tool to the input field that carries the agent's
+# payload (stored in Proposal.proposed_file). egress-block builds its
+# payload from structured input fields in `handle_egress_block`.
 PROPOSED_FILE_FIELD: dict[str, str] = {
-    _sv.TOOL_PIPELOCK_BLOCK: "failed_url",
     _sv.TOOL_CAPABILITY_BLOCK: "dockerfile",
 }
 
@@ -325,23 +268,7 @@ def validate_proposed_file(tool: str, content: str) -> None:
     enter the queue."""
     if not content.strip():
         raise _RpcError(ERR_INVALID_PARAMS, f"{tool}: proposed file is empty")
-    if tool == _sv.TOOL_PIPELOCK_BLOCK:
-        # `content` is the full failed URL. Require scheme + host so
-        # the supervisor can extract a hostname for the allowlist
-        # merge; the path is preserved for operator context.
-        parsed = urllib.parse.urlsplit(content.strip())
-        if parsed.scheme not in ("http", "https"):
-            raise _RpcError(
-                ERR_INVALID_PARAMS,
-                f"{tool}: failed_url must start with http:// or https:// "
-                f"(got {content!r})",
-            )
-        if not parsed.hostname:
-            raise _RpcError(
-                ERR_INVALID_PARAMS,
-                f"{tool}: failed_url is missing a hostname (got {content!r})",
-            )
-    elif tool == _sv.TOOL_CAPABILITY_BLOCK:
+    if tool == _sv.TOOL_CAPABILITY_BLOCK:
         # Dockerfiles are too varied to validate syntactically beyond
         # non-empty. The operator reads the diff in the TUI.
         pass

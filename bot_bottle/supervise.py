@@ -6,8 +6,7 @@ sits on the bottle's internal network and exposes three MCP tools the
 agent calls when it hits a stuck-recovery category:
 
   * egress-block — agent proposes a new routes.yaml
-  * pipelock-block     — agent proposes a new pipelock allowlist
-  * capability-block   — agent proposes a new agent Dockerfile
+  * capability-block — agent proposes a new agent Dockerfile
 
 Each tool call: the agent passes the full proposed file plus a
 justification text. The sidecar validates the proposal syntactically,
@@ -50,12 +49,10 @@ SUPERVISE_HOSTNAME = "supervise"
 SUPERVISE_PORT = 9100
 
 TOOL_EGRESS_BLOCK = "egress-block"
-TOOL_PIPELOCK_BLOCK = "pipelock-block"
 TOOL_CAPABILITY_BLOCK = "capability-block"
 TOOL_LIST_EGRESS_ROUTES = "list-egress-routes"
 TOOLS: tuple[str, ...] = (
     TOOL_EGRESS_BLOCK,
-    TOOL_PIPELOCK_BLOCK,
     TOOL_CAPABILITY_BLOCK,
     TOOL_LIST_EGRESS_ROUTES,
 )
@@ -76,7 +73,6 @@ EGRESS_INTROSPECT_URL = "http://_egress.local/allowlist"
 # record laid down in PRD 0016.
 COMPONENT_FOR_TOOL: dict[str, str] = {
     TOOL_EGRESS_BLOCK: "egress",
-    TOOL_PIPELOCK_BLOCK: "pipelock",
 }
 
 STATUS_APPROVED = "approved"
@@ -562,7 +558,6 @@ __all__ = [
     "TOOL_CAPABILITY_BLOCK",
     "TOOL_EGRESS_BLOCK",
     "TOOL_LIST_EGRESS_ROUTES",
-    "TOOL_PIPELOCK_BLOCK",
     "archive_proposal",
     "audit_dir",
     "audit_log_path",

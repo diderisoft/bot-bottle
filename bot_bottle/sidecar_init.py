@@ -1,7 +1,7 @@
 """Per-bottle sidecar supervisor (PRD 0024 chunk 1).
 
 PID 1 inside the `bot-bottle-sidecars` bundle image. Spawns
-the configured daemons (egress, pipelock, git-gate, supervise),
+the configured daemons (egress, git-gate, supervise),
 forwards SIGTERM/SIGINT to each child, and propagates per-daemon
 stdout+stderr to the container log with a `[name] ` prefix.
 
@@ -19,7 +19,7 @@ PR; the interim policy is "don't take the bundle down for one
 sick daemon."
 
 Daemon subset is env-driven. The compose renderer narrows it via
-`BOT_BOTTLE_SIDECAR_DAEMONS=egress,pipelock` for bottles that
+`BOT_BOTTLE_SIDECAR_DAEMONS=egress` for bottles that
 don't use git-gate or supervise. Default: all daemons.
 
 Stdlib-only by design — adding supervisord/s6/runit for four
@@ -57,14 +57,7 @@ class _DaemonSpec:
 # Env-var name prefixes that carry egress-only credentials.
 # `egress_apply.py` assigns `EGRESS_TOKEN_<n>` slots that egress
 # reads to inject `Authorization` headers on configured routes;
-# every other daemon in the bundle (especially pipelock with
-# `scan_env: true`) MUST NOT see these values or it'll match the
-# injected token in the request egress just sent and 403-block
-# the legitimate traffic (issue #84). The agent itself runs in a
-# different machine and never has access to these slots in the
-# first place, so stripping them from non-egress daemons loses no
-# DLP coverage — pipelock can't catch the exfil of a value the
-# agent doesn't have.
+# no other daemon in the bundle should see these values.
 _EGRESS_ONLY_ENV_PREFIXES: tuple[str, ...] = ("EGRESS_TOKEN_",)
 
 
@@ -81,22 +74,8 @@ def _env_for_daemon(name: str, base_env: dict[str, str]) -> dict[str, str]:
     }
 
 
-# Order matters only for first-launch race-window reasons: egress
-# starts first so pipelock's upstream connect succeeds during
-# pipelock's own startup. git-gate and supervise are independent.
-# Pipelock binds 0.0.0.0:8888 explicitly. Without `--listen` it
-# defaults to 127.0.0.1 which would be unreachable from sibling
-# services on the docker network. The legacy four-sidecar
-# compose renderer passed the same flag; the bundle keeps the
-# explicit binding.
 _DAEMONS: tuple[_DaemonSpec, ...] = (
     _DaemonSpec("egress", ("/bin/sh", "/app/egress-entrypoint.sh")),
-    _DaemonSpec(
-        "pipelock",
-        ("/usr/local/bin/pipelock", "run",
-         "--config", "/etc/pipelock.yaml",
-         "--listen", "0.0.0.0:8888"),
-    ),
     _DaemonSpec("git-gate", ("/bin/sh", "/git-gate-entrypoint.sh")),
     _DaemonSpec("git-http", ("python3", "/app/git_http_backend.py")),
     _DaemonSpec("supervise", ("python3", "/app/supervise_server.py")),
@@ -367,13 +346,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     # delivers SIGHUP to PID 1 (this supervisor); forward it to
     # mitmdump so it reloads its addon.
     signal.signal(signal.SIGHUP, lambda *_: sup.forward_signal(signal.SIGHUP, "egress"))  # type: ignore
-    # SIGUSR1 pipelock-restart path: pipelock_apply.py runs
-    # `docker kill --signal USR1 <bundle>` after writing
-    # pipelock.yaml. Pipelock has no in-process reload, so the
-    # supervisor restarts the pipelock daemon in place (other
-    # daemons keep running — specifically supervise, whose MCP
-    # socket would drop on a whole-container `docker restart`).
-    signal.signal(signal.SIGUSR1, lambda *_: sup.request_restart("pipelock"))  # type: ignore
 
     while not sup.tick():
         time.sleep(_POLL_INTERVAL)

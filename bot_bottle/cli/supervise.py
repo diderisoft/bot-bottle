@@ -3,9 +3,7 @@ act on them (approve / modify / reject).
 
 Curses-based TUI; modify-then-approve shells out to $EDITOR. The
 approval handlers wire to the per-tool remediation engines:
-PRD 0014 (egress, retargeted from cred-proxy in PRD 0017
-chunk 3) writes routes.yaml + SIGHUPs egress; PRD 0015
-(pipelock) writes the allowlist + restarts pipelock; PRD 0016
+PRD 0014 (egress) writes routes.yaml + SIGHUPs egress; PRD 0016
 (capability) rebuilds the bottle Dockerfile.
 """
 
@@ -29,13 +27,6 @@ from ..backend.docker.capability_apply import (
     apply_capability_change,
 )
 from ..backend.docker.egress_apply import EgressApplyError, add_route
-from ..backend.docker.pipelock_apply import (
-    PipelockApplyError,
-    apply_allowlist_change,
-    fetch_current_allowlist,
-    parse_allowlist_content,
-    render_allowlist_content,
-)
 from ..log import Die, error, info
 from ..supervise import (
     COMPONENT_FOR_TOOL,
@@ -47,7 +38,6 @@ from ..supervise import (
     STATUS_REJECTED,
     TOOL_CAPABILITY_BLOCK,
     TOOL_EGRESS_BLOCK,
-    TOOL_PIPELOCK_BLOCK,
     archive_proposal,
     list_pending_proposals,
     render_diff,
@@ -71,7 +61,7 @@ class QueuedProposal:
 # Errors any remediation engine may raise. Caught by the TUI key
 # handlers and surfaced in the status line so a failed apply keeps
 # the proposal pending rather than crashing curses.
-ApplyError = (EgressApplyError, PipelockApplyError, CapabilityApplyError)
+ApplyError = (EgressApplyError, CapabilityApplyError)
 
 
 def discover_pending() -> list[QueuedProposal]:
@@ -116,31 +106,10 @@ def _detail_lines(
     out.extend(("  " + line, 0) for line in p.justification.splitlines() or [""])
     out.extend([
         ("", 0),
-        (_proposed_payload_label(p.tool) + ":", 0),
+        ("proposed file:", 0),
     ])
     out.extend((line, 0) for line in p.proposed_file.splitlines() or [""])
-    if p.tool == TOOL_PIPELOCK_BLOCK:
-        host = _failed_url_host(p.proposed_file)
-        if host:
-            out.append(("", 0))
-            out.append((host, green_attr))
     return out
-
-
-def _failed_url_host(url: str) -> str:
-    """Best-effort hostname extraction from a pipelock-block proposal."""
-    import urllib.parse
-
-    try:
-        return urllib.parse.urlsplit(url.strip()).hostname or ""
-    except ValueError:
-        return ""
-
-
-def _proposed_payload_label(tool: str) -> str:
-    if tool == TOOL_PIPELOCK_BLOCK:
-        return "failed URL"
-    return "proposed file"
 
 
 def _suffix_for_tool(tool: str) -> str:
@@ -165,10 +134,6 @@ def approve(
     diff_before, diff_after = "", ""
     if qp.proposal.tool == TOOL_EGRESS_BLOCK:
         diff_before, diff_after = add_route(
-            qp.proposal.bottle_slug, file_to_apply,
-        )
-    elif qp.proposal.tool == TOOL_PIPELOCK_BLOCK:
-        diff_before, diff_after = _apply_pipelock_url(
             qp.proposal.bottle_slug, file_to_apply,
         )
     elif qp.proposal.tool == TOOL_CAPABILITY_BLOCK:
@@ -210,23 +175,6 @@ def reject(qp: QueuedProposal, *, reason: str) -> None:
     _write_audit(qp, action=STATUS_REJECTED, notes=reason, diff_before="", diff_after="")
 
 
-def _apply_pipelock_url(slug: str, failed_url: str) -> tuple[str, str]:
-    """Merge a pipelock-block failed URL's host into the allowlist."""
-    import urllib.parse
-
-    parsed = urllib.parse.urlsplit(failed_url.strip())
-    host = parsed.hostname or ""
-    if not host:
-        raise PipelockApplyError(
-            f"proposed failed_url has no extractable host: {failed_url!r}"
-        )
-    current = fetch_current_allowlist(slug)
-    hosts = parse_allowlist_content(current)
-    if host not in hosts:
-        hosts.append(host)
-    return apply_allowlist_change(slug, render_allowlist_content(hosts))
-
-
 def _write_audit(
     qp: QueuedProposal,
     *,
@@ -235,7 +183,7 @@ def _write_audit(
     diff_before: str,
     diff_after: str,
 ) -> None:
-    """Audit log for egress / pipelock tools."""
+    """Audit log for egress tool."""
     component = COMPONENT_FOR_TOOL.get(qp.proposal.tool)
     if component is None:
         return
@@ -467,8 +415,7 @@ def _render(
             cursor = "> " if i == selected else "  "
             line = (
                 f"{cursor}{ts_short}  "
-                f"[{p.bottle_slug}]  {p.tool:<18}  {p.id[:8]}  "
-                f"{_proposed_payload_label(p.tool)}"
+                f"[{p.bottle_slug}]  {p.tool:<18}  {p.id[:8]}"
             )
             attr = curses.A_REVERSE if i == selected else curses.A_NORMAL
             stdscr.addnstr(row, 0, line, w - 1, attr)
