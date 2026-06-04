@@ -22,14 +22,8 @@ from ...log import die
 EGRESS_PORT = int(os.environ.get("BOT_BOTTLE_EGRESS_PORT", "9099"))
 
 # In-container path for mitmproxy's CA. The format is a single PEM
-# file holding BOTH the cert and the private key, concatenated. The
-# upstream-trust CA (pipelock's, so egress trusts the upstream
-# leg) is a separate file because pipelock keeps a different CA on
-# its end.
+# file holding BOTH the cert and the private key, concatenated.
 EGRESS_CA_IN_CONTAINER = "/home/mitmproxy/.mitmproxy/mitmproxy-ca.pem"
-EGRESS_PIPELOCK_CA_IN_CONTAINER = (
-    "/home/mitmproxy/.mitmproxy/pipelock-ca.pem"
-)
 
 
 def egress_tls_init(stage_dir: Path) -> tuple[Path, Path]:
@@ -42,16 +36,8 @@ def egress_tls_init(stage_dir: Path) -> tuple[Path, Path]:
         trust store by `provision_ca` so the agent trusts the bumped
         CONNECT cert egress presents.
 
-    Why openssl req (not the pipelock binary's `tls init`):
-    pipelock's CA generator stamps a non-standard `Subject Key
-    Identifier` on the CA (random rather than SHA-1 of the pubkey).
-    mitmproxy computes the `Authority Key Identifier` on each leaf
-    it mints as SHA-1(issuer's pubkey). openssl's chain validator
-    uses the leaf's AKI to find the issuer cert by SKI; pipelock's
-    SKI doesn't match → openssl reports "unable to get local issuer
-    certificate" even though the CA is right there in the trust
-    store. openssl req's `subjectKeyIdentifier=hash` extension uses
-    SHA-1(pubkey), matching mitmproxy's computation.
+    openssl req's `subjectKeyIdentifier=hash` extension uses
+    SHA-1(pubkey), matching mitmproxy's AKI computation on leaves.
 
     Both files live under `<stage_dir>/egress-ca/` (mode 644 —
     `docker cp` preserves the mode into the container, where the

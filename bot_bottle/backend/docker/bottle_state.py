@@ -49,7 +49,6 @@ _TRANSCRIPT_SUBDIR = "transcript"
 # live here so chunk 3's `docker compose up` can find them at stable
 # paths. Each sidecar's `prepare()` writes config + CAs into its own
 # subdir; the launch step is unchanged today (still `docker cp`).
-_PIPELOCK_SUBDIR = "pipelock"
 _EGRESS_SUBDIR = "egress"
 _GIT_GATE_SUBDIR = "git-gate"
 _SUPERVISE_SUBDIR = "supervise"
@@ -234,12 +233,6 @@ def transcript_snapshot_dir(identity: str) -> Path:
 # nothing requested preservation.
 
 
-def pipelock_state_dir(identity: str) -> Path:
-    """State subdir for the pipelock sidecar: pipelock.yaml + the
-    per-bottle CA cert/key. Bind-mount source from chunk 3 onward."""
-    return bottle_state_dir(identity) / _PIPELOCK_SUBDIR
-
-
 def egress_state_dir(identity: str) -> Path:
     """State subdir for the egress sidecar: routes.yaml + the
     per-bottle mitmproxy CA. Bind-mount source from chunk 3 onward."""
@@ -325,7 +318,6 @@ __all__ = [
     "per_bottle_dockerfile",
     "per_bottle_dockerfile_path",
     "per_bottle_image_tag",
-    "pipelock_state_dir",
     "preserve_marker_path",
     "read_metadata",
     "supervise_state_dir",

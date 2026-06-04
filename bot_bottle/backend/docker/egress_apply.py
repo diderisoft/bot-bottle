@@ -8,13 +8,6 @@ egress-block proposal (or runs the operator-initiated
 sidecar via `docker cp`, then `docker kill --signal HUP` to make
 the addon reload without dropping connections.
 
-Also mirrors the new route hosts into pipelock's hostname allowlist
-so the downstream leg lets them through — egress enforces
-the path-aware allowlist on the agent leg, pipelock enforces the
-hostname allowlist + DLP body scan on the upstream leg, and a
-host added to one must be in the other or the request 403s
-somewhere along the chain.
-
 Raises EgressApplyError on any failure — the dashboard
 surfaces the message and keeps the proposal pending so the
 operator can retry.
@@ -23,7 +16,6 @@ operator can retry.
 from __future__ import annotations
 
 import json
-import re
 import subprocess
 from pathlib import Path
 from typing import cast
@@ -33,13 +25,6 @@ from ...egress_addon_core import load_routes
 from ...yaml_subset import YamlSubsetError, parse_yaml_subset
 from .bottle_state import egress_state_dir
 from .sidecar_bundle import sidecar_bundle_container_name
-from .pipelock_apply import (
-    PipelockApplyError,
-    apply_allowlist_change,
-    fetch_current_allowlist,
-    parse_allowlist_content,
-    render_allowlist_content,
-)
 
 
 def _render_routes_payload(routes_list: list[dict[str, object]]) -> str:
@@ -108,92 +93,18 @@ def validate_routes_content(content: str) -> None:
         ) from e
 
 
-def _hosts_in_routes(content: str) -> list[str]:
-    """Extract the host list from a routes.yaml content string.
-    Uses the addon's own parser so any host the addon will match on
-    also lands in pipelock's allowlist. Returns sorted+deduped."""
-    try:
-        routes = load_routes(content)
-    except ValueError as e:
-        raise EgressApplyError(
-            f"proposed routes.yaml is not valid: {e}"
-        ) from e
-    return sorted({r.host for r in routes if r.host})
-
-
-# Pipelock's allowlist parser accepts only literal hostnames:
-# `[A-Za-z0-9_.-]+`. Anything else (wildcards, IPv6 literals,
-# stray characters) is silently dropped from the mirror so the
-# pipelock apply doesn't fail parse before the new yaml is even
-# written. The dropped hosts stay on egress's route table —
-# but the addon does exact-host match only, so they'll never
-# match anything either. (Wildcard host matching was removed —
-# see `match_route` in egress_addon_core for the rationale.)
-_PIPELOCK_HOST_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
-
-
-def _pipelock_safe_hosts(hosts: list[str]) -> list[str]:
-    """Drop any host pipelock's allowlist parser would reject.
-    Order preserved."""
-    return [h for h in hosts if _PIPELOCK_HOST_RE.match(h)]
-
-
-def _mirror_hosts_to_pipelock(slug: str, hosts: list[str]) -> None:
-    """Ensure every pipelock-compatible `hosts` entry is on
-    pipelock's allowlist. Fetches pipelock's current allowlist,
-    merges, re-applies. Hosts pipelock can't represent (wildcards,
-    etc.) are silently skipped — they stay live on egress
-    but aren't enforced at pipelock. No-op if every host is already
-    present (apply still restarts pipelock if any host is new).
-    Raises EgressApplyError on pipelock failures so the
-    caller's diff/audit reflects the half-state."""
-    safe_hosts = _pipelock_safe_hosts(hosts)
-    try:
-        current = fetch_current_allowlist(slug)
-        existing = parse_allowlist_content(current)
-        merged = sorted(set(existing) | set(safe_hosts))
-        if merged == sorted(existing):
-            return  # nothing to add
-        apply_allowlist_change(slug, render_allowlist_content(merged))
-    except PipelockApplyError as e:
-        # Mirror runs BEFORE the egress write, so egress
-        # is unchanged on this failure path. Report it as a
-        # pipelock-side problem so the operator looks in the right
-        # place; their `pipelock edit` flow can repair manually.
-        raise EgressApplyError(
-            f"pipelock allowlist mirror failed (egress NOT "
-            f"updated): {e}. Fix pipelock's allowlist manually with "
-            f"`pipelock edit <bottle>` then retry the proposal."
-        ) from e
-
-
 def apply_routes_change(slug: str, new_content: str) -> tuple[str, str]:
     """Apply `new_content` to the egress sidecar for `slug`:
       1. Fetch current routes.yaml (for the before-diff).
       2. Validate the new content via the addon's own parser.
-      3. Mirror the route hosts onto pipelock's allowlist (so the
-         downstream hostname gate lets them through).
-      4. Write to a temp file, `docker cp` into the egress
-         sidecar.
-      5. `docker kill --signal HUP` so the addon reloads.
-
-    Order matters: pipelock first, then egress. If the
-    pipelock step fails, egress hasn't been touched and the
-    old routes stay live. If the egress step fails after
-    pipelock succeeded, pipelock has the host in its allowlist but
-    egress doesn't enforce it yet — harmless extra-permissive
-    state at pipelock, and a re-approval will land the egress
-    side.
+      3. Write to the bind-mount source path.
+      4. `docker kill --signal HUP` so the addon reloads.
 
     Returns (before, after) where `after` == `new_content`. Raises
     EgressApplyError on any step."""
     container = sidecar_bundle_container_name(slug)
     before = fetch_current_routes(slug)
     validate_routes_content(new_content)
-
-    # Pipelock mirror first — if it fails, egress stays intact
-    # and the operator gets a clear error about the half-state.
-    _mirror_hosts_to_pipelock(slug, _hosts_in_routes(new_content))
 
     # routes.yaml is bind-mounted into the egress container as a
     # SINGLE FILE. Docker single-file bind mounts pin the source
@@ -209,12 +120,6 @@ def apply_routes_change(slug: str, new_content: str) -> tuple[str, str]:
     target = _egress_routes_host_path(slug)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(new_content)
-    # mitmproxy in the container reads through the bind mount as
-    # uid 1000; the host file has to be world-readable for that
-    # read to succeed (parent dir at 0o700 still restricts who
-    # can reach the file on the host). Routes content is not
-    # secret — tokens live in the container's environ — so 0o644
-    # is the right trade-off.
     target.chmod(0o644)
     sig = subprocess.run(
         ["docker", "kill", "--signal", "HUP", container],
@@ -311,13 +216,6 @@ def _merge_single_route(
             next_idx = len(existing_slots)
             entry_typed["auth_scheme"] = str(cast(object, auth_typed.get("scheme")))
             entry_typed["token_env"] = f"EGRESS_TOKEN_{next_idx}"
-            # NOTE: the addon reads token VALUES from its container's
-            # environ keyed by token_env. A newly-added auth route at
-            # runtime points at a slot that has no env value → the
-            # addon will 403 with "token env unset" until the operator
-            # arranges for the value to land in the container's env.
-            # Recording this here so the operator-facing diff carries
-            # the slot name they'll need to provision.
         routes_typed.append(entry_typed)
 
     return _render_routes_payload(cast(list[dict[str, object]], routes_typed))

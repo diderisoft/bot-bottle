@@ -6,16 +6,10 @@ The flow is:
 
   1. Build the agent's base + derived image (compose builds the
      sidecar images via the `build:` directive on first up).
-  2. Pre-create the per-bottle networks. We do this outside compose
-     so we can inspect the assigned internal CIDR and embed it in
-     pipelock's yaml (compose's `external: true` lets the compose
-     file reference these pre-existing networks).
-  3. Mint the per-bottle CAs (chunk 2 writes them under
-     state/<slug>/{pipelock,egress}/).
-  4. Re-render pipelock yaml with the now-known internal CIDR so
-     the SSRF allowlist exempts the bottle's own subnet.
-  5. Populate the inner plans with launch-time fields so the
-     renderer can read network names, CA paths, pipelock URL.
+  2. Mint the per-bottle egress CA (chunk 2 writes it under
+     state/<slug>/egress/).
+  3. Populate the inner plans with launch-time fields so the
+     renderer can read network names, CA paths.
   6. Render the compose spec, write it to
      state/<slug>/docker-compose.yml, write metadata.json.
   7. `docker compose up -d` (token + OAuth values flow into the
@@ -53,7 +47,6 @@ from .bottle_state import (
     bottle_state_dir,
     egress_state_dir,
     git_gate_state_dir,
-    pipelock_state_dir,
 )
 from .compose import (
     bottle_plan_to_compose,
@@ -66,10 +59,6 @@ from .compose import (
     write_compose_file,
 )
 from .egress import egress_tls_init
-from .pipelock import (
-    BUNDLE_LOCAL_PIPELOCK_URL,
-    pipelock_tls_init,
-)
 
 
 # Where the repo root lives, for `docker build` context. Computed once.
@@ -113,35 +102,13 @@ def launch(
                 plan.derived_image, plan.image, plan.workspace_plan
             )
 
-        # Networks: compose-managed. The names are derived
-        # deterministically from the slug so the renderer can put
-        # them on the services and `compose up` creates them with
-        # those names. The empirical spike confirmed pipelock's
-        # SSRF guard only checks proxied-request destinations, not
-        # source IPs — so the bottle's own internal CIDR doesn't
-        # need to be in `ssrf.ip_allowlist`. Pre-create + CIDR
-        # introspection are gone; compose owns the network
-        # lifecycle.
         internal_network = network_mod.network_name_for_slug(plan.slug)
         egress_network = network_mod.network_egress_name_for_slug(plan.slug)
 
-        # Mint per-bottle CAs into state/<slug>/{pipelock,egress}/.
-        ca_cert_host, ca_key_host = pipelock_tls_init(pipelock_state_dir(plan.slug))
         egress_ca_host, egress_ca_cert_only = egress_tls_init(
             egress_state_dir(plan.slug),
         )
 
-        # Populate launch-time fields on every inner plan so the
-        # renderer reads concrete network names, CA paths, and
-        # pipelock URL.
-        proxy_plan = dataclasses.replace(
-            plan.proxy_plan,
-            internal_network=internal_network,
-            internal_network_cidr="",
-            egress_network=egress_network,
-            ca_cert_host_path=ca_cert_host,
-            ca_key_host_path=ca_key_host,
-        )
         git_gate_plan = plan.git_gate_plan
         if git_gate_plan.upstreams:
             git_gate_plan = dataclasses.replace(
@@ -157,8 +124,6 @@ def launch(
                 egress_network=egress_network,
                 mitmproxy_ca_host_path=egress_ca_host,
                 mitmproxy_ca_cert_only_host_path=egress_ca_cert_only,
-                pipelock_ca_host_path=ca_cert_host,
-                pipelock_proxy_url=BUNDLE_LOCAL_PIPELOCK_URL,
             )
         supervise_plan = plan.supervise_plan
         if supervise_plan is not None:
@@ -168,7 +133,6 @@ def launch(
             )
         plan = dataclasses.replace(
             plan,
-            proxy_plan=proxy_plan,
             git_gate_plan=git_gate_plan,
             egress_plan=egress_plan,
             supervise_plan=supervise_plan,

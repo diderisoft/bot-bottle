@@ -20,7 +20,6 @@ from ...egress import Egress
 from ...env import ResolvedEnv, resolve_env
 from ...git_gate import GitGate
 from ...log import die
-from ...pipelock import PipelockProxy
 from ...supervise import Supervise
 from ...workspace import workspace_plan as resolve_workspace_plan
 from .. import BottleSpec
@@ -36,7 +35,6 @@ from .bottle_state import (
     per_bottle_dockerfile,
     per_bottle_dockerfile_path,
     per_bottle_image_tag,
-    pipelock_state_dir,
     supervise_state_dir,
     write_metadata,
 )
@@ -53,7 +51,6 @@ def resolve_plan(
     validation already ran in the base class."""
     docker_mod.require_docker()
 
-    proxy = PipelockProxy()
     git_gate = GitGate()
     egress = Egress()
     supervise = Supervise()
@@ -191,12 +188,6 @@ def resolve_plan(
         guest_env.setdefault(key, val)
     agent_provision = replace(agent_provision, guest_env=guest_env)
 
-    pipelock_dir = pipelock_state_dir(slug)
-    pipelock_dir.mkdir(parents=True, exist_ok=True)
-    proxy_plan = proxy.prepare(
-        bottle, slug, pipelock_dir, agent_provision.egress_routes,
-    )
-
     egress_dir = egress_state_dir(slug)
     egress_dir.mkdir(parents=True, exist_ok=True)
     egress_plan = egress.prepare(
@@ -244,7 +235,6 @@ def resolve_plan(
         env_file=env_file,
         forwarded_env=forwarded_env,
         prompt_file=prompt_file,
-        proxy_plan=proxy_plan,
         git_gate_plan=git_gate_plan,
         egress_plan=egress_plan,
         supervise_plan=supervise_plan,

@@ -11,7 +11,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ...agent_provider import PromptMode
-from ...pipelock import PipelockProxyPlan
 from .. import BottlePlan
 
 
@@ -40,7 +39,6 @@ class DockerBottlePlan(BottlePlan):
     # accidental log of the plan dataclass.
     forwarded_env: dict[str, str] = field(repr=False)
     prompt_file: Path
-    proxy_plan: PipelockProxyPlan
     use_runsc: bool
 
     @property
