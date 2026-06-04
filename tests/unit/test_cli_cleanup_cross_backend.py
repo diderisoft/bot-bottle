@@ -6,7 +6,6 @@ the operator confirms.  Mocks the backends and stdin."""
 
 from __future__ import annotations
 
-import sys
 import unittest
 from unittest.mock import patch, MagicMock
 

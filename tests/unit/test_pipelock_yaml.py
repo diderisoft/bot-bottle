@@ -10,7 +10,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 from bot_bottle.manifest import Manifest
 from bot_bottle.pipelock import (

@@ -7,7 +7,7 @@ auth omission means unauthenticated."""
 
 import unittest
 
-from bot_bottle.manifest import ManifestError, EgressRoute, Manifest
+from bot_bottle.manifest import ManifestError, Manifest
 
 
 def _bottle(routes):

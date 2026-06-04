@@ -47,7 +47,6 @@ from __future__ import annotations
 
 import fcntl
 import json
-import os
 import platform
 import re
 import sqlite3

@@ -78,11 +78,13 @@ def parse_routes(payload: object) -> tuple[Route, ...]:
     """
     if not isinstance(payload, dict):
         raise ValueError("routes payload: top-level must be an object")
-    raw = payload.get("routes")
+    payload_dict: dict[str, object] = typing.cast(dict[str, object], payload)
+    raw: object = payload_dict.get("routes")
     if not isinstance(raw, list):
         raise ValueError("routes payload: 'routes' must be a list")
+    raw_list: list[object] = typing.cast(list[object], raw)
     out: list[Route] = []
-    for i, r in enumerate(raw):
+    for i, r in enumerate(raw_list):
         out.append(_parse_one(i, r))
     return tuple(out)
 
@@ -91,15 +93,17 @@ def _parse_one(idx: int, raw: object) -> Route:
     label = f"route[{idx}]"
     if not isinstance(raw, dict):
         raise ValueError(f"{label}: must be an object (got {type(raw).__name__})")
-    host = raw.get("host")
+    raw_dict: dict[str, object] = typing.cast(dict[str, object], raw)
+    host: object = raw_dict.get("host")
     if not isinstance(host, str) or not host:
         raise ValueError(f"{label}: 'host' must be a non-empty string")
 
-    path_allow_raw = raw.get("path_allowlist", [])
+    path_allow_raw: object = raw_dict.get("path_allowlist", [])
     if not isinstance(path_allow_raw, list):
         raise ValueError(f"{label} ({host}): 'path_allowlist' must be a list")
+    path_allow_list: list[object] = typing.cast(list[object], path_allow_raw)
     prefixes: list[str] = []
-    for j, p in enumerate(path_allow_raw):
+    for j, p in enumerate(path_allow_list):
         if not isinstance(p, str):
             raise ValueError(
                 f"{label} ({host}): path_allowlist[{j}] must be a string"
@@ -111,8 +115,8 @@ def _parse_one(idx: int, raw: object) -> Route:
             )
         prefixes.append(p)
 
-    auth_scheme = raw.get("auth_scheme", "")
-    token_env = raw.get("token_env", "")
+    auth_scheme: object = raw_dict.get("auth_scheme", "")
+    token_env: object = raw_dict.get("token_env", "")
     if not isinstance(auth_scheme, str):
         raise ValueError(f"{label} ({host}): 'auth_scheme' must be a string")
     if not isinstance(token_env, str):

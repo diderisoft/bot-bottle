@@ -9,10 +9,8 @@ All actual launch work is stubbed so no container is created.
 from __future__ import annotations
 
 import os
-import sys
-import types
 import unittest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import bot_bottle.cli.start as start_mod
 import bot_bottle.cli.tui as tui_mod

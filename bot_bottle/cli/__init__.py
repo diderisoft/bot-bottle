@@ -41,9 +41,18 @@ def usage() -> None:
     sys.stderr.write("  info      print env, skills, and prompt details for a named agent\n")
     sys.stderr.write("  init      interactively create a new agent and add it to bot-bottle.json\n")
     sys.stderr.write("  list      list available agents or active containers\n")
-    sys.stderr.write("  resume    re-launch a bottle by its identity (continues state from PRD 0016)\n")
-    sys.stderr.write("  start     boot a container for a named agent and attach an interactive session\n")
-    sys.stderr.write("  supervise view + approve/modify/reject pending supervise proposals (PRD 0013)\n\n")
+    sys.stderr.write(
+        "  resume    re-launch a bottle by its identity "
+        "(continues state from PRD 0016)\n"
+    )
+    sys.stderr.write(
+        "  start     boot a container for a named agent and "
+        "attach an interactive session\n"
+    )
+    sys.stderr.write(
+        "  supervise view + approve/modify/reject pending supervise "
+        "proposals (PRD 0013)\n\n"
+    )
     sys.stderr.write(f"Run '{PROG} <command> --help' for command-specific usage.\n")
 
 

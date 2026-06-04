@@ -37,7 +37,11 @@ from bot_bottle.supervise import (
 FIXED_TS = datetime(2026, 5, 25, 12, 0, 0, tzinfo=timezone.utc)
 
 
-def _proposal(tool: str = TOOL_EGRESS_BLOCK, proposed: str = "{}", justification: str = "need a route") -> Proposal:
+def _proposal(
+    tool: str = TOOL_EGRESS_BLOCK,
+    proposed: str = "{}",
+    justification: str = "need a route",
+) -> Proposal:
     return Proposal.new(
         bottle_slug="dev",
         tool=tool,

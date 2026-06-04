@@ -57,7 +57,6 @@ from .manifest_egress import (
     EgressConfig,
     EgressRoute,
     PipelockRoutePolicy,
-    validate_egress_routes,
 )
 from .manifest_git import GitEntry, GitUser, parse_git_gate_config
 from .manifest_schema import BOTTLE_KEYS
@@ -323,8 +322,11 @@ class Manifest:
             return
         available = ", ".join(self.agents.keys())
         if available:
-            raise ManifestError(f"agent '{name}' not defined in bot-bottle.json. Available: {available}")
-        raise ManifestError(f"agent '{name}' not defined in bot-bottle.json (manifest is empty).")
+            msg = f"agent '{name}' not defined in bot-bottle.json. Available: {available}"
+            raise ManifestError(msg)
+        raise ManifestError(
+            f"agent '{name}' not defined in bot-bottle.json (manifest is empty)."
+        )
 
     def has_bottle(self, name: str) -> bool:
         return name in self.bottles

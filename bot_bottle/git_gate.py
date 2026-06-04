@@ -32,7 +32,7 @@ from __future__ import annotations
 import dataclasses
 import os
 import shlex
-from abc import ABC, abstractmethod
+from abc import ABC
 from dataclasses import dataclass
 from pathlib import Path
 

@@ -30,7 +30,6 @@ semantics open question.
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -39,7 +38,6 @@ from ...log import info, warn
 from .bottle_state import (
     mark_preserved,
     per_bottle_dockerfile,
-    per_bottle_dockerfile_path,
     transcript_snapshot_dir,
     write_per_bottle_dockerfile,
 )

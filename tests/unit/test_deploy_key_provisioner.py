@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch
 
 from bot_bottle.deploy_key_provisioner import DeployKeyProvisioner, get_provisioner
 from bot_bottle.manifest import ManifestError

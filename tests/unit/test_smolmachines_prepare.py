@@ -59,7 +59,9 @@ class TestSmolmachinesResolveEnv(unittest.TestCase):
                     patch("bot_bottle.backend.smolmachines.prepare.PipelockProxy") as mock_pl,
                     patch("bot_bottle.backend.smolmachines.prepare.Egress") as mock_eg,
                     patch("bot_bottle.backend.smolmachines.prepare.Supervise"),
-                    patch("bot_bottle.backend.smolmachines.prepare.agent_provision_plan") as mock_app,
+                    patch(
+                        "bot_bottle.backend.smolmachines.prepare.agent_provision_plan"
+                    ) as mock_app,
                     patch("bot_bottle.backend.smolmachines.prepare.runtime_for"),
                 ):
                     mock_gg.return_value.prepare.return_value = MagicMock()

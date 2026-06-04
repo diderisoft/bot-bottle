@@ -11,7 +11,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 from bot_bottle.agent_provider import AgentProvisionPlan
 from bot_bottle.backend import Bottle, BottleSpec, ExecResult

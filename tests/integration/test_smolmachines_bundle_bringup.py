@@ -12,7 +12,6 @@ localhost-reach / egress-port-bypass probes) lives in chunk 2d."""
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import time

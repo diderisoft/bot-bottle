@@ -214,7 +214,8 @@ class EgressRoute:
             collected_roles: list[str] = []
             for r in role_list:
                 if not isinstance(r, str):
-                    raise ManifestError(f"{label} role items must be strings (got {type(r).__name__})")
+                    msg = f"{label} role items must be strings (got {type(r).__name__})"
+                    raise ManifestError(msg)
                 collected_roles.append(r)
             roles = tuple(collected_roles)
         else:

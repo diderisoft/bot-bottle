@@ -51,7 +51,8 @@ def cmd_init(argv: list[str]) -> int:
             die(f"{target_file} exists but is not valid JSON; fix or remove it first")
         if agent_name in (existing.get("agents") or {}):
             sys.stderr.write(
-                f'bot-bottle: agent "{agent_name}" already exists in {target_file}. Overwrite? [y/N] '
+                f'bot-bottle: agent "{agent_name}" already exists in '
+                f'{target_file}. Overwrite? [y/N] '
             )
             sys.stderr.flush()
             ow = read_tty_line()
@@ -71,7 +72,10 @@ def cmd_init(argv: list[str]) -> int:
 
     # Prompt
     print(file=sys.stderr)
-    info("System prompt — enter text, then a lone '.' on its own line to finish (just '.' to leave empty):")
+    info(
+        "System prompt — enter text, then a lone '.' on its own line to "
+        "finish (just '.' to leave empty):"
+    )
     prompt_lines: list[str] = []
     while True:
         line = read_tty_line()
@@ -99,7 +103,10 @@ def cmd_init(argv: list[str]) -> int:
 
         if bottle_name in (existing.get("bottles") or {}):
             bottle_exists_already = True
-            info(f"Bottle '{bottle_name}' already exists in {target_file}; agent will reference it.")
+            info(
+                f"Bottle '{bottle_name}' already exists in {target_file}; "
+                f"agent will reference it."
+            )
         else:
             info(f"Creating new bottle '{bottle_name}'.")
             bottle_env = _prompt_for_env_vars()
@@ -131,8 +138,14 @@ def cmd_init(argv: list[str]) -> int:
 
 def _prompt_for_env_vars() -> dict[str, str]:
     print(file=sys.stderr)
-    info("Env vars — enter each var name then its mode. Press Enter with no name to finish.")
-    info("  Modes:  secret (prompt at runtime) | interpolated (read from host env) | literal (hardcoded value)")
+    info(
+        "Env vars — enter each var name then its mode. Press Enter with "
+        "no name to finish."
+    )
+    info(
+        "  Modes:  secret (prompt at runtime) | interpolated (read from "
+        "host env) | literal (hardcoded value)"
+    )
     out: dict[str, str] = {}
     while True:
         print(file=sys.stderr)

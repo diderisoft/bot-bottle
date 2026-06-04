@@ -25,7 +25,7 @@ flow (PRD 0014) at egress and renames the MCP tool.
 from __future__ import annotations
 
 import dataclasses
-from abc import ABC, abstractmethod
+from abc import ABC
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING

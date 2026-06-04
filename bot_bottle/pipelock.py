@@ -20,7 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from .egress import EGRESS_HOSTNAME, EgressRoute, egress_routes_for_bottle
+from .egress import EgressRoute, egress_routes_for_bottle
 from .supervise import SUPERVISE_HOSTNAME
 from .manifest import Bottle
 

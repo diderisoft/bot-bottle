@@ -114,7 +114,10 @@ class Agent:
 
         bottle = d.get("bottle")
         if not isinstance(bottle, str) or not bottle:
-            raise ManifestError(f"agent '{name}' must declare a 'bottle' field naming a defined bottle")
+            raise ManifestError(
+                f"agent '{name}' must declare a 'bottle' field naming a "
+                f"defined bottle"
+            )
         if bottle not in bottle_names:
             available = ", ".join(sorted(bottle_names)) or "(none defined)"
             raise ManifestError(
@@ -126,7 +129,10 @@ class Agent:
         skills_raw = d.get("skills")
         if skills_raw is not None:
             if not isinstance(skills_raw, list):
-                raise ManifestError(f"agent '{name}' skills must be an array (was {type(skills_raw).__name__})")
+                raise ManifestError(
+                    f"agent '{name}' skills must be an array "
+                    f"(was {type(skills_raw).__name__})"
+                )
             collected: list[str] = []
             skills_list = cast(list[object], skills_raw)
             for i, skill in enumerate(skills_list):
@@ -144,7 +150,10 @@ class Agent:
         elif isinstance(prompt_raw, str):
             prompt = prompt_raw
         else:
-            raise ManifestError(f"agent '{name}' prompt must be a string (was {type(prompt_raw).__name__})")
+            raise ManifestError(
+                f"agent '{name}' prompt must be a string "
+                f"(was {type(prompt_raw).__name__})"
+            )
 
         # git-gate: agents may declare only `git-gate.user` (name/email).
         # `git-gate.repos` is bottle-only — it carries credentials and host trust.

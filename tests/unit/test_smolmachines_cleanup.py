@@ -124,7 +124,9 @@ class TestCleanup(unittest.TestCase):
         )
         results = iter([
             _ok(),  # stop succeeds
-            subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="boom"),  # delete fails
+            subprocess.CompletedProcess(
+                args=[], returncode=1, stdout="", stderr="boom"
+            ),  # delete fails
             _ok(),  # bundle rm succeeds
         ])
 

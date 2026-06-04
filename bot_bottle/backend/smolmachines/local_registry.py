@@ -61,7 +61,10 @@ REGISTRY_IMAGE = os.environ.get(
 # narrow.
 CRANE_IMAGE = os.environ.get(
     "BOT_BOTTLE_CRANE_IMAGE",
-    "gcr.io/go-containerregistry/crane@sha256:0ae17ecb34315aa7cbff28f6eddee3b7adae0b2f90101260d990804db1eb0084",
+    (
+        "gcr.io/go-containerregistry/crane@sha256:"
+        "0ae17ecb34315aa7cbff28f6eddee3b7adae0b2f90101260d990804db1eb0084"
+    ),
 )
 
 

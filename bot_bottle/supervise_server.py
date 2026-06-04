@@ -159,7 +159,10 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
             "properties": {
                 "host": {
                     "type": "string",
-                    "description": "The hostname to allow (e.g. 'api.github.com'). Case-insensitive on match.",
+                    "description": (
+                        "The hostname to allow (e.g. 'api.github.com'). "
+                        "Case-insensitive on match."
+                    ),
                 },
                 "path_allowlist": {
                     "type": "array",

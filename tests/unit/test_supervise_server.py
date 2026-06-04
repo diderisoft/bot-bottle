@@ -39,7 +39,6 @@ from bot_bottle.supervise_server import (
     jsonrpc_error,
     jsonrpc_result,
     parse_jsonrpc,
-    serve,
     validate_proposed_file,
 )
 

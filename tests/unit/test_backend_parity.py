@@ -14,7 +14,7 @@ from __future__ import annotations
 import subprocess
 import unittest
 from typing import Callable
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import patch
 
 
 # ---------------------------------------------------------------------------

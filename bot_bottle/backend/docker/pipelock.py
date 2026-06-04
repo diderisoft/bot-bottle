@@ -15,30 +15,23 @@ import subprocess
 from pathlib import Path
 
 from ...log import die
-# Re-exported for the compose renderer + smolmachines launch step
-# (they used to import these from this module before they moved to
-# the platform-neutral pipelock module).
-from ...pipelock import (  # noqa: F401
-    PIPELOCK_CA_CERT_IN_CONTAINER,
-    PIPELOCK_CA_KEY_IN_CONTAINER,
-)
 
 
 # Pipelock image, pinned by digest. The digest is the multi-arch image
 # index for ghcr.io/luckypipewrench/pipelock:2.3.0.
 PIPELOCK_IMAGE = os.environ.get(
     "BOT_BOTTLE_PIPELOCK_IMAGE",
-    "ghcr.io/luckypipewrench/pipelock@sha256:3b1a39417b98406ddc5dc2d8fcb42865ddc0c68a43d355db55f0f8cb06bc6de9",
+    "ghcr.io/luckypipewrench/pipelock@sha256:"
+    "3b1a39417b98406ddc5dc2d8fcb42865ddc0c68a43d355db55f0f8cb06bc6de9",
 )
 
 # Listening port for pipelock's forward proxy.
 PIPELOCK_PORT = os.environ.get("BOT_BOTTLE_PIPELOCK_PORT", "8888")
 
 
-# The URL egress dials for its upstream HTTPS_PROXY. egress and
-# pipelock share the same container's network namespace inside the
-# sidecar bundle, so loopback reaches pipelock directly — no docker
-# DNS aliases involved.
+# The URL egress dials for its upstream HTTPS_PROXY. egress and pipelock
+# share the same container's network namespace inside the sidecar bundle, so
+# loopback reaches pipelock directly — no docker DNS aliases involved.
 BUNDLE_LOCAL_PIPELOCK_URL = f"http://127.0.0.1:{PIPELOCK_PORT}"
 
 

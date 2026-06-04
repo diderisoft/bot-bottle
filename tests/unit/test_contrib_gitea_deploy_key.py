@@ -6,9 +6,7 @@ import json
 import unittest
 import urllib.error
 from io import BytesIO
-from pathlib import Path
-from tempfile import mkdtemp
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 from bot_bottle.contrib.gitea.deploy_key_provisioner import (
     GiteaDeployKeyProvisioner,

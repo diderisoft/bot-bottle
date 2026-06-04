@@ -38,7 +38,12 @@ from mitmproxy import http  # type: ignore[import-not-found]
 # Absolute import (NOT `from .egress_addon_core`) — the
 # container drops both files flat into /app/ so they are sibling
 # top-level modules to mitmdump's loader, not a package.
-from egress_addon_core import Route, decide, is_git_push_request, load_routes  # type: ignore[import-not-found]
+from egress_addon_core import (  # type: ignore[import-not-found]
+    Route,
+    decide,
+    is_git_push_request,
+    load_routes,
+)
 
 
 DEFAULT_ROUTES_PATH = "/etc/egress/routes.yaml"

@@ -24,7 +24,6 @@ this test runs in DinD too — no act_runner skip needed.
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import tempfile
 import time
@@ -32,7 +31,7 @@ import unittest
 from pathlib import Path
 
 from bot_bottle import supervise
-from bot_bottle.backend.docker import bottle_state, capability_apply
+from bot_bottle.backend.docker import bottle_state
 from bot_bottle.backend.docker.capability_apply import apply_capability_change
 from bot_bottle.backend.docker.network import (
     network_create_egress,

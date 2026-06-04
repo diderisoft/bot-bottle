@@ -30,12 +30,18 @@ def parse_git_upstream(url: str, label: str) -> tuple[str, str, str, str]:
         raise ManifestError(f"{label} must be an ssh:// URL (was {url!r})")
     rest = url[len("ssh://"):]
     if "@" not in rest:
-        raise ManifestError(f"{label} must include a user (e.g. ssh://git@host/path.git); was {url!r}")
+        raise ManifestError(
+            f"{label} must include a user (e.g. ssh://git@host/path.git); "
+            f"was {url!r}"
+        )
     user, _, hostpart = rest.partition("@")
     if not user:
         raise ManifestError(f"{label} user is empty in {url!r}")
     if "/" not in hostpart:
-        raise ManifestError(f"{label} must include a path (e.g. ssh://git@host/path.git); was {url!r}")
+        raise ManifestError(
+            f"{label} must include a path (e.g. ssh://git@host/path.git); "
+            f"was {url!r}"
+        )
     hostport, _, path = hostpart.partition("/")
     if not path:
         raise ManifestError(f"{label} path is empty in {url!r}")

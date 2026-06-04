@@ -14,7 +14,6 @@ from unittest.mock import MagicMock, patch
 
 from bot_bottle.agent_provider import (
     AgentProvisionCommand,
-    AgentProvisionDir,
     AgentProvisionFile,
     AgentProvisionPlan,
 )

@@ -40,7 +40,7 @@ import json
 import os
 import time
 import uuid
-from abc import ABC, abstractmethod
+from abc import ABC
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
