@@ -42,8 +42,7 @@ def filter_select(
         # Use os.dup() to duplicate the fd so the original file object
         # and FileIO in _run_picker each manage independent copies,
         # preventing double-close errors.
-        import os as _os
-        fd_dup = _os.dup(tty_fd.fileno())
+        fd_dup = os.dup(tty_fd.fileno())
         return _run_picker(items, title=title, tty_fd=fd_dup)
     finally:
         tty_fd.close()

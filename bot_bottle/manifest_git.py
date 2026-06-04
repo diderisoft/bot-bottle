@@ -246,7 +246,7 @@ class GitUser:
     @classmethod
     def from_dict(cls, bottle_name: str, raw: object) -> "GitUser":
         d = as_json_object(raw, f"bottle '{bottle_name}' git-gate.user")
-        for k in d.keys():
+        for k in d:
             if k not in {"name", "email"}:
                 raise ManifestError(
                     f"bottle '{bottle_name}' git-gate.user has unknown key {k!r}; "
@@ -281,7 +281,7 @@ def parse_git_gate_config(
     raw: object,
 ) -> tuple[tuple[GitEntry, ...], GitUser]:
     d = as_json_object(raw, f"bottle '{bottle_name}' git-gate")
-    for k in d.keys():
+    for k in d:
         if k not in {"user", "repos"}:
             raise ManifestError(
                 f"bottle '{bottle_name}' git-gate has unknown key {k!r}; "

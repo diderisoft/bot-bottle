@@ -161,7 +161,7 @@ class Agent:
         git_raw = d.get("git-gate")
         if git_raw is not None:
             gd = as_json_object(git_raw, f"agent '{name}' git-gate")
-            for k in gd.keys():
+            for k in gd:
                 if k != "user":
                     raise ManifestError(
                         f"agent '{name}' git-gate.{k} is not allowed at the "
