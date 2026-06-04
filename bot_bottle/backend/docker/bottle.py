@@ -23,7 +23,7 @@ class DockerBottle(Bottle):
     ):
         self.name = container
         self._teardown = teardown
-        self._prompt_path = prompt_path_in_container
+        self.prompt_path = prompt_path_in_container
         self._agent_prompt_mode = agent_prompt_mode
         self.agent_command = agent_command
         self.agent_provider_template = (
@@ -36,7 +36,7 @@ class DockerBottle(Bottle):
     ) -> list[str]:
         full_argv = list(argv)
         full_argv.extend(
-            prompt_args(self._agent_prompt_mode, self._prompt_path, argv=full_argv)
+            prompt_args(self._agent_prompt_mode, self.prompt_path, argv=full_argv)
         )
         cmd = ["docker", "exec"]
         if tty:

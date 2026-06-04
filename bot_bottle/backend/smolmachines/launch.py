@@ -89,7 +89,7 @@ _SUPERVISE_PORT = SUPERVISE_PORT
 def launch(
     plan: SmolmachinesBottlePlan,
     *,
-    provision: Callable[[SmolmachinesBottlePlan, str], str | None],
+    provision: Callable[[SmolmachinesBottlePlan, "SmolmachinesBottle"], str | None],
 ) -> Generator[SmolmachinesBottle, None, None]:
     """Build + run the bottle and yield a handle; tear everything
     down on exit. Errors during bringup unwind any partial state
@@ -120,7 +120,7 @@ def launch(
             agent_command=plan.agent_command,
             agent_prompt_mode=plan.agent_prompt_mode,
         )
-        bottle._prompt_path = provision(plan, bottle)
+        bottle.prompt_path = provision(plan, bottle)
 
         yield bottle
     finally:

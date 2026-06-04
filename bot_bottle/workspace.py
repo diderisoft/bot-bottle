@@ -13,8 +13,15 @@ DEFAULT_WORKSPACE_MODE = "755"
 
 
 class WorkspaceSpec(Protocol):
-    copy_cwd: bool
-    user_cwd: str
+    @property
+    def copy_cwd(self) -> bool:
+        """Whether to copy the current working directory."""
+        ...
+
+    @property
+    def user_cwd(self) -> str:
+        """The user's current working directory."""
+        ...
 
 
 @dataclass(frozen=True)

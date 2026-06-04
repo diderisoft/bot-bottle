@@ -80,7 +80,7 @@ _REPO_DIR = str(Path(__file__).resolve().parent.parent.parent.parent)
 def launch(
     plan: DockerBottlePlan,
     *,
-    provision: Callable[[DockerBottlePlan, str], str | None],
+    provision: Callable[[DockerBottlePlan, "DockerBottle"], str | None],
 ) -> Generator[DockerBottle, None, None]:
     """Build, launch, and provision a Docker bottle via compose.
     Teardown on exit."""
@@ -218,7 +218,7 @@ def launch(
             agent_command=plan.agent_command,
             agent_prompt_mode=plan.agent_prompt_mode,
         )
-        bottle._prompt_path = provision(plan, bottle)
+        bottle.prompt_path = provision(plan, bottle)
 
         # Step 9: yield. exec_agent continues to use `docker exec -it`
         # — the agent runs `sleep infinity` per the renderer's

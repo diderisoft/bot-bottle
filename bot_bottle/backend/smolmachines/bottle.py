@@ -72,7 +72,7 @@ class SmolmachinesBottle(Bottle):
         # In-VM path to the agent's prompt file. None when the
         # agent declared no prompt (file still exists; we just
         # don't pass --append-system-prompt-file).
-        self._prompt_path = prompt_path
+        self.prompt_path = prompt_path
         # Env vars the agent process needs (HTTPS_PROXY,
         # CLAUDE_CODE_OAUTH_TOKEN, manifest-declared bottle env, …).
         # Forwarded on every `smolvm machine exec` via `-e K=V`
@@ -93,7 +93,7 @@ class SmolmachinesBottle(Bottle):
         agent_tail = ["env", *_env_assignments_for("node", self._guest_env),
                       self.agent_command]
         provider_prompt_args = prompt_args(
-            self._agent_prompt_mode, self._prompt_path, argv=argv,
+            self._agent_prompt_mode, self.prompt_path, argv=argv,
         )
         if self._agent_prompt_mode == "read_prompt_file":
             agent_tail += argv

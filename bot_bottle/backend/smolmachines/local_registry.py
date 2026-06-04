@@ -42,7 +42,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Iterator
+from typing import Generator, Iterator
 
 from ...log import die
 
@@ -98,7 +98,7 @@ class RegistryHandle:
 
 
 @contextmanager
-def ephemeral_registry() -> Iterator[RegistryHandle]:
+def ephemeral_registry() -> Generator[RegistryHandle, None, None]:
     """Bring up a per-session docker network + a `registry:2.8.3`
     container on it (published on a random host port), yield a
     `RegistryHandle`, force-remove both on exit.

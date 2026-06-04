@@ -123,7 +123,7 @@ def main(argv: list[str]) -> int:
     machine = argv[0]
     inner = argv[2:]
 
-    def sync(*_args) -> None:
+    def sync(*_args: int) -> None:
         size = _read_winsize()
         if size is None:
             return
