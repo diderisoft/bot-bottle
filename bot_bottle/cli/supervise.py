@@ -263,7 +263,7 @@ def edit_in_editor(content: str, *, suffix: str = ".tmp") -> str | None:
         path = f.name
     try:
         subprocess.run([editor, path], check=False)
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             edited = f.read()
         return edited if edited != content else None
     finally:
@@ -296,7 +296,7 @@ def cmd_supervise(argv: list[str]) -> int:
         else:
             error("supervise exited on a fatal error (no detail captured).")
         return e.code if isinstance(e.code, int) else 1
-    except Exception as e:
+    except Exception as e:  # noqa: W0718 — catch supervise crash for logging
         log_path = _write_crash_log(e)
         error(f"supervise crashed: {type(e).__name__}: {e}")
         error(f"full traceback written to {log_path}")
@@ -439,7 +439,7 @@ def _render(
     selected: int,
     status_line: str,
     *,
-    green_attr: int = 0,
+    green_attr: int = 0,  # noqa: F841 — unused, but required by interface
 ) -> None:
     stdscr.erase()
     h, w = stdscr.getmaxyx()

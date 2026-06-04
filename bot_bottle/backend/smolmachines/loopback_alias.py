@@ -176,11 +176,11 @@ def force_allowlist(machine_name: str, allowed_cidrs: list[str]) -> None:
         con.close()
 
 
-def allocate(slug: str) -> str:
+def allocate(_slug: str) -> str:
     """Pick the lowest-numbered alias from the pool not already
     in use by a running smolmachines bundle. Bails when the pool
     is exhausted — the caller should report the limit to the
-    operator. `slug` is logged for traceability; not otherwise
+    operator. `_slug` is logged for traceability; not otherwise
     used (no on-disk reservation, allocation is purely
     docker-state-driven).
 
@@ -195,7 +195,7 @@ def allocate(slug: str) -> str:
     if not _is_macos():
         return "127.0.0.1"
     _ALLOC_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(_ALLOC_LOCK_PATH, "w") as lf:
+    with open(_ALLOC_LOCK_PATH, "w", encoding="utf-8") as lf:
         fcntl.flock(lf, fcntl.LOCK_EX)
         return _allocate_locked()
 
@@ -211,7 +211,6 @@ def _allocate_locked() -> str:
         f"Stop a running bottle (`smolvm machine ls --json`) or "
         f"raise _POOL_END in loopback_alias.py."
     )
-    return ""  # unreachable; die() never returns
 
 
 def _alias_present(ip: str) -> bool:

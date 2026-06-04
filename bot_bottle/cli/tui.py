@@ -89,7 +89,7 @@ def _run_picker(items: list[str], *, title: str, tty_fd: int) -> Optional[str]:
             curses.nocbreak()
             curses.echo()
             curses.endwin()
-    except Exception:
+    except Exception:  # noqa: W0718 — curses can raise many error types
         return None
     finally:
         sys.__stdin__ = orig_stdin    # type: ignore[assignment]

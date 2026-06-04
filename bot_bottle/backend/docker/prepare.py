@@ -219,7 +219,7 @@ def resolve_plan(
             else Path(__file__).resolve().parent.parent.parent.parent / "Dockerfile.claude"
         )
         dockerfile_content = (
-            supervise_dockerfile_path.read_text()
+            supervise_dockerfile_path.read_text(encoding="utf-8")
             if supervise_dockerfile_path.is_file()
             else ""
         )

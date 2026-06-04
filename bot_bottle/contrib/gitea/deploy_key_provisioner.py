@@ -117,5 +117,5 @@ def _split_owner_repo(owner_repo: str) -> tuple[str, str]:
 def _read_error_body(exc: urllib.error.HTTPError) -> str:
     try:
         return exc.read().decode("utf-8", errors="replace")
-    except Exception:
+    except Exception:  # noqa: broad-exception-caught — safely fallback to empty error message
         return ""

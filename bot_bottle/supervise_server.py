@@ -590,7 +590,7 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
 
     server_version = f"{SERVER_NAME}/{SERVER_VERSION}"
 
-    def log_message(self, format: str, *args: typing.Any) -> None:
+    def log_message(self, format: str, *args: typing.Any) -> None:  # noqa: A002
         if os.environ.get("SUPERVISE_DEBUG"):
             super().log_message(format, *args)
 
@@ -630,7 +630,7 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
         except _RpcError as e:
             self._write_jsonrpc(jsonrpc_error(req.id, e.code, e.message))
             return
-        except Exception as e:  # pragma: no cover — defensive
+        except Exception as e:  # noqa: W0718 — catch-all for RPC dispatch errors
             sys.stderr.write(f"supervise: internal error: {e}\n")
             self._write_jsonrpc(jsonrpc_error(req.id, ERR_INTERNAL, "internal error"))
             return

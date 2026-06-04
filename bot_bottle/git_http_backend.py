@@ -157,7 +157,7 @@ class GitHttpHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, format: str, *args: object) -> None:  # type: ignore
+    def log_message(self, format: str, *args: object) -> None:  # type: ignore  # noqa: A002
         sys.stdout.write(format % args + "\n")
         sys.stdout.flush()
 

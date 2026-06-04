@@ -89,7 +89,7 @@ def _read_secret_silent(name: str, prompt_body: str) -> str:
     if not (sys.stdin.isatty() or sys.stderr.isatty()):
         # Fall back to /dev/tty so this still works when stdin is a pipe.
         try:
-            tty = open("/dev/tty", "r+")
+            tty = open("/dev/tty", "r+", encoding="utf-8")
         except OSError:
             die(
                 f"cannot prompt for secret '{name}': no tty available. "

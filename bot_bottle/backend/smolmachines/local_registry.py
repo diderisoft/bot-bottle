@@ -208,7 +208,6 @@ def _host_port(name: str) -> int:
         return int(port_str)
     except ValueError:
         die(f"unexpected `docker port` output: {line!r}")
-        return -1  # unreachable; die() never returns
 
 
 def _wait_ready(port: int) -> None:

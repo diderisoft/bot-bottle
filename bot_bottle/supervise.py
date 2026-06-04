@@ -519,22 +519,22 @@ def _atomic_write(path: Path, content: str, *, mode: int) -> None:
 try:
     import fcntl as _fcntl
 
-    def _try_flock(fd: int) -> None:
+    def _try_flock(fd: int) -> None:  # type: ignore[reportRedeclaration]
         try:
             _fcntl.flock(fd, _fcntl.LOCK_EX)
         except OSError:
             pass
 
-    def _try_funlock(fd: int) -> None:
+    def _try_funlock(fd: int) -> None:  # type: ignore[reportRedeclaration]
         try:
             _fcntl.flock(fd, _fcntl.LOCK_UN)
         except OSError:
             pass
 except ImportError:  # pragma: no cover — Windows path
-    def _try_flock(fd: int) -> None:
+    def _try_flock(fd: int) -> None:  # noqa: F841 — Windows fallback
         return None
 
-    def _try_funlock(fd: int) -> None:
+    def _try_funlock(fd: int) -> None:  # noqa: F841 — Windows fallback
         return None
 
 

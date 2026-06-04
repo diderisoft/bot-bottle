@@ -54,9 +54,9 @@ def load_bottles_from_dir(bottles_dir: Path) -> dict[str, Bottle]:
         try:
             fm, _body = parse_frontmatter(path.read_text())
         except OSError as e:
-            raise ManifestError(f"could not read {path}: {e}")
+            raise ManifestError(f"could not read {path}: {e}") from e
         except YamlSubsetError as e:
-            raise ManifestError(f"{path}: {e}")
+            raise ManifestError(f"{path}: {e}") from e
         validate_bottle_frontmatter_keys(path, fm.keys())
         raws[name] = fm
     return resolve_bottles(raws)
@@ -66,7 +66,7 @@ def load_agents_from_dir(
     agents_dir: Path,
     bottle_names: set[str],
     *,
-    source: str,
+    source: str,  # noqa: F841 — unused, but required by interface
 ) -> dict[str, Agent]:
     """Walk `<agents_dir>/*.md`, parse each as an agent, and return
     `{name: Agent}`. The Markdown body becomes the agent's prompt.
@@ -87,9 +87,9 @@ def load_agents_from_dir(
         try:
             fm, body = parse_frontmatter(path.read_text())
         except OSError as e:
-            raise ManifestError(f"could not read {path}: {e}")
+            raise ManifestError(f"could not read {path}: {e}") from e
         except YamlSubsetError as e:
-            raise ManifestError(f"{path}: {e}")
+            raise ManifestError(f"{path}: {e}") from e
         validate_agent_frontmatter_keys(path, fm.keys())
         # Build the dict Agent.from_dict expects. The body becomes
         # prompt; Claude Code passthrough fields stay in fm and get

@@ -99,7 +99,7 @@ def fetch_current_yaml(slug: str) -> str:
                 f"could not fetch pipelock.yaml from {container}: "
                 f"{(r.stderr or '').strip() or 'container not running?'}"
             )
-        return Path(tmp_path).read_text()
+        return Path(tmp_path).read_text(encoding="utf-8")
     finally:
         try:
             Path(tmp_path).unlink()

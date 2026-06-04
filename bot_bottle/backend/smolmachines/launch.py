@@ -139,7 +139,7 @@ def _teardown_smolmachines(
     teardown_exc: BaseException | None = None
     try:
         stack.close()
-    except BaseException as exc:
+    except BaseException as exc:  # noqa: W0718 — teardown must not fail
         teardown_exc = exc
         warn(f"smolmachines teardown failed: {exc!r}")
     bottle = plan.spec.manifest.bottle_for(plan.spec.agent_name)

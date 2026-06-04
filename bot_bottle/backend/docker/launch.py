@@ -92,7 +92,7 @@ def launch(
     def teardown() -> None:
         try:
             stack.close()
-        except BaseException as exc:
+        except BaseException as exc:  # noqa: W0718 — teardown must not fail
             warn(
                 f"teardown failed for container {plan.container_name}"
                 f" (compose-down): {exc!r}"

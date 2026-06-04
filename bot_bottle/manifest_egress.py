@@ -93,7 +93,7 @@ class PipelockRoutePolicy:
                 raise ManifestError(
                     f"{label}.ssrf_ip_allowlist[{j}] must be an IP address "
                     f"or CIDR (was {item!r}): {e}"
-                )
+                ) from e
             ssrf_ip_allowlist.append(item)
         return cls(
             TlsPassthrough=tls_passthrough_raw,

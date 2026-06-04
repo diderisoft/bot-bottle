@@ -223,7 +223,6 @@ def bundle_host_port(
         f"no port mapping on {host_ip} for {container} "
         f"{container_port}/tcp; got: {(result.stdout or '').strip()!r}"
     )
-    return -1  # unreachable; die() never returns
 
 
 def stop_bundle(slug: str) -> None:
