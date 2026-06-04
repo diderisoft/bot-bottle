@@ -142,35 +142,27 @@ class AgentProvider(ABC):
         Backends call this during `prepare` and consume the result as
         before."""
 
+    @abstractmethod
     def provision_skills(self, plan: "BottlePlan", bottle: "Bottle") -> None:
-        """Copy each of the agent's named skills from
-        ~/.claude/skills/<name>/ on the host into
-        /home/node/.claude/skills/<name>/ in the guest. No-op when
-        the agent has no skills.
+        """Copy each of the agent's named skills from the host into
+        the guest. No-op when the agent has no skills. The in-guest
+        layout is provider-specific (claude-code's
+        `~/.claude/skills/` today; future providers may differ)."""
 
-        Default implementation matches the legacy backend-side
-        modules; providers override only if the in-guest layout
-        differs."""
-        from . import _provision_apply
-        _provision_apply.apply_skills(plan, bottle)
-
+    @abstractmethod
     def provision_prompt(self, plan: "BottlePlan", bottle: "Bottle") -> str | None:
         """Copy the prompt file into the guest, fix ownership/mode,
         and return the in-guest path iff the agent has a non-empty
         prompt (drives the `--append-system-prompt-file` flag).
 
         The file is copied either way so the path always exists."""
-        from . import _provision_apply
-        return _provision_apply.apply_prompt(plan, bottle)
 
+    @abstractmethod
     def provision(self, plan: "BottlePlan", bottle: "Bottle") -> None:
-        """Apply the declarative `dirs`/`pre_copy`/`files`/`verify`
-        steps from `plan.agent_provision`. Default implementation
-        works for any provider that produces a standard plan; was
-        called `provision_provider_auth` on `BottleBackend` before
-        PRD 0050."""
-        from . import _provision_apply
-        _provision_apply.apply_provision(plan, bottle)
+        """Apply the provider's declarative
+        `dirs`/`pre_copy`/`files`/`verify` steps from
+        `plan.agent_provision`. Was called `provision_provider_auth`
+        on `BottleBackend` before PRD 0050."""
 
     @abstractmethod
     def provision_supervise_mcp(

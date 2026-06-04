@@ -10,6 +10,7 @@ invocation that registers the supervise sidecar in Codex's
 from __future__ import annotations
 
 import os
+import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -25,7 +26,7 @@ from ...agent_provider import (
 )
 from ...codex_auth import codex_host_access_token, write_codex_dummy_auth_file
 from ...egress import CODEX_HOST_CREDENTIAL_TOKEN_REF, EgressRoute
-from ...log import info, warn
+from ...log import die, info, warn
 
 
 if TYPE_CHECKING:
@@ -35,6 +36,11 @@ if TYPE_CHECKING:
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 _SUPERVISE_MCP_NAME = "supervise"
+# Codex agents still read skills from the claude-code convention
+# (~/.claude/skills/) — the bot-bottle-codex image follows the same
+# layout. If Codex grows native skill discovery later, override here.
+_SKILLS_DIR = f"{GUEST_HOME}/.claude/skills"
+_PROMPT_PATH = f"{GUEST_HOME}/.bot-bottle-prompt.txt"
 
 _RUNTIME = AgentProviderRuntime(
     template="codex",
@@ -147,6 +153,79 @@ class CodexAgentProvider(AgentProvider):
             provisioned_env=provisioned_env,
         )
 
+    def provision_skills(self, plan: "BottlePlan", bottle: "Bottle") -> None:
+        """Copy each named skill tree from `~/.claude/skills/<name>/`
+        on the host into the guest. No-op when the agent has no
+        skills."""
+        from ...backend.util import host_skill_dir
+
+        agent = plan.spec.manifest.agents[plan.spec.agent_name]
+        if not agent.skills:
+            return
+        bottle.exec(f"mkdir -p {_SKILLS_DIR}", user="root")
+        for name in agent.skills:
+            src = host_skill_dir(name)
+            if not os.path.isdir(src):
+                die(
+                    f"skill {name!r} disappeared from host between "
+                    f"validation and copy at {src}."
+                )
+            dst = f"{_SKILLS_DIR}/{name}"
+            info(f"copying skill {name} into {bottle.name}:{dst}")
+            bottle.exec(f"rm -rf {dst} && mkdir -p {dst}", user="root")
+            bottle.cp_in(f"{src}/.", f"{dst}/")
+            bottle.exec(f"chown -R node:node {dst}", user="root")
+
+    def provision_prompt(self, plan: "BottlePlan", bottle: "Bottle") -> str | None:
+        """Copy the prompt file into the guest, fix ownership/mode.
+        Codex reads it via the agent's `Read and follow the
+        instructions in <path>.` bootstrap (see `prompt_args`); the
+        file is copied either way so the path always exists."""
+        bottle.cp_in(str(plan.prompt_file), _PROMPT_PATH)
+        bottle.exec(
+            f"chown node:node {_PROMPT_PATH} && chmod 600 {_PROMPT_PATH}",
+            user="root",
+        )
+        agent = plan.spec.manifest.agents[plan.spec.agent_name]
+        return _PROMPT_PATH if agent.prompt else None
+
+    def provision(self, plan: "BottlePlan", bottle: "Bottle") -> None:
+        """Apply the codex-side declarative provision steps from
+        `plan.agent_provision`: the `~/.codex/` dir + config.toml
+        trust marker, plus the dummy-auth.json drop + `codex login
+        status` verify when host-credential forwarding is on."""
+        provision = plan.agent_provision
+        for d in provision.dirs:
+            path = shlex.quote(d.guest_path)
+            _exec(bottle, f"mkdir -p {path}", f"could not create {d.guest_path}")
+            _exec(
+                bottle,
+                f"chown {shlex.quote(d.owner)} {path}",
+                f"could not chown {d.guest_path}",
+            )
+            _exec(
+                bottle,
+                f"chmod {shlex.quote(d.mode)} {path}",
+                f"could not chmod {d.guest_path}",
+            )
+        for command in provision.pre_copy:
+            _exec(bottle, shlex.join(command.argv), command.error)
+        for f in provision.files:
+            bottle.cp_in(str(f.host_path), f.guest_path)
+            path = shlex.quote(f.guest_path)
+            _exec(
+                bottle,
+                f"chown {shlex.quote(f.owner)} {path}",
+                f"could not chown {f.guest_path}",
+            )
+            _exec(
+                bottle,
+                f"chmod {shlex.quote(f.mode)} {path}",
+                f"could not chmod {f.guest_path}",
+            )
+        for command in provision.verify:
+            _exec(bottle, shlex.join(command.argv), command.error)
+
     def provision_supervise_mcp(
         self,
         plan: "BottlePlan",
@@ -173,3 +252,12 @@ class CodexAgentProvider(AgentProvider):
                 f"register manually with: "
                 f"codex mcp add --transport http supervise {supervise_url}"
             )
+
+
+def _exec(bottle: "Bottle", script: str, error: str) -> None:
+    result = bottle.exec(script, user="root")
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        if detail:
+            detail = f": {detail}"
+        die(f"agent provider provisioning: {error}{detail}")
