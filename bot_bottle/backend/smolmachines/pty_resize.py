@@ -124,13 +124,13 @@ def main(argv: list[str]) -> int:
     machine = argv[0]
     inner = argv[2:]
 
-    def sync(_signum: int, _frame: FrameType | None) -> None:
+    def sync(_signum: int | None = None, _frame: FrameType | None = None) -> None:
         size = _read_winsize()
         if size is None:
             return
         _push_size(machine, *size)
 
-    signal.signal(signal.SIGWINCH, sync)
+    signal.signal(signal.SIGWINCH, sync)  # type: ignore[arg-type]
 
     proc = subprocess.Popen(inner)
     # Initial sync is deferred — see _STARTUP_SYNC_DELAY_SEC.
