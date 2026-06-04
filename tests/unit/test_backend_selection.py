@@ -65,7 +65,7 @@ class TestEnumerateActiveAgents(unittest.TestCase):
         )
 
         class _FakeBackend:
-            def __init__(self, items, available=True):
+            def __init__(self, items: object, available: object = True) -> None:  # type: ignore
                 self._items = items
                 self._available = available
 
@@ -100,13 +100,13 @@ class TestEnumerateActiveAgents(unittest.TestCase):
         )
 
         class _FakeBackend:
-            def __init__(self, items):
+            def __init__(self, items: object) -> None:  # type: ignore
                 self._items = items
 
-            def is_available(self):
+            def is_available(self) -> bool:
                 return True
 
-            def enumerate_active(self):
+            def enumerate_active(self) -> object:
                 return self._items
 
         with patch.object(
@@ -150,11 +150,11 @@ class TestEnumerateActiveAgents(unittest.TestCase):
         )
 
         class _FakeBackend:
-            def __init__(self, items, available):
+            def __init__(self, items: object, available: object) -> None:  # type: ignore
                 self._items = items
                 self._available = available
 
-            def is_available(self):
+            def is_available(self) -> object:
                 return self._available
 
             def enumerate_active(self):

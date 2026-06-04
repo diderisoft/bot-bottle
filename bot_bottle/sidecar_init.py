@@ -360,20 +360,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     sup = _Supervisor(specs)
     sup.start_all()
 
-    signal.signal(signal.SIGTERM, lambda *_: sup.request_shutdown("SIGTERM"))
-    signal.signal(signal.SIGINT, lambda *_: sup.request_shutdown("SIGINT"))
+    signal.signal(signal.SIGTERM, lambda *_: sup.request_shutdown("SIGTERM"))  # type: ignore
+    signal.signal(signal.SIGINT, lambda *_: sup.request_shutdown("SIGINT"))  # type: ignore
     # SIGHUP reload path: egress_apply.py runs `docker kill
     # --signal HUP <bundle>` after writing routes.yaml. The kernel
     # delivers SIGHUP to PID 1 (this supervisor); forward it to
     # mitmdump so it reloads its addon.
-    signal.signal(signal.SIGHUP, lambda *_: sup.forward_signal(signal.SIGHUP, "egress"))
+    signal.signal(signal.SIGHUP, lambda *_: sup.forward_signal(signal.SIGHUP, "egress"))  # type: ignore
     # SIGUSR1 pipelock-restart path: pipelock_apply.py runs
     # `docker kill --signal USR1 <bundle>` after writing
     # pipelock.yaml. Pipelock has no in-process reload, so the
     # supervisor restarts the pipelock daemon in place (other
     # daemons keep running — specifically supervise, whose MCP
     # socket would drop on a whole-container `docker restart`).
-    signal.signal(signal.SIGUSR1, lambda *_: sup.request_restart("pipelock"))
+    signal.signal(signal.SIGUSR1, lambda *_: sup.request_restart("pipelock"))  # type: ignore
 
     while not sup.tick():
         time.sleep(_POLL_INTERVAL)

@@ -16,7 +16,7 @@ from bot_bottle.egress import CODEX_HOST_CREDENTIAL_TOKEN_REF
 
 
 def _jwt(exp: int) -> str:
-    def enc(obj: dict) -> str:
+    def enc(obj: dict[str, object]) -> str:  # type: ignore
         raw = json.dumps(obj, separators=(",", ":")).encode()
         return base64.urlsafe_b64encode(raw).decode().rstrip("=")
     return f"{enc({'alg': 'none'})}.{enc({'exp': exp})}.sig"

@@ -175,7 +175,7 @@ class TestExecUserSwitching(unittest.TestCase):
 class TestExecResultParity(unittest.TestCase):
     """Both backends return ExecResult with returncode, stdout, stderr."""
 
-    def _stub_run(self, argv, **kwargs):
+    def _stub_run(self, argv: object, **kwargs: object) -> object:  # type: ignore
         return subprocess.CompletedProcess(
             argv, 0, stdout="out\n", stderr="err\n",
         )

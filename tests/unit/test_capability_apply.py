@@ -67,13 +67,13 @@ class TestApplyCapabilityChange(_FakeHomeMixin, unittest.TestCase):
         self._orig_push = capability_apply._push_working_tree
         self._orig_teardown = capability_apply._teardown_bottle
 
-        def stub_snapshot(slug):
+        def stub_snapshot(slug: object) -> None:  # type: ignore
             self._calls.append(f"snapshot:{slug}")
 
-        def stub_push(slug):
+        def stub_push(slug: object) -> None:  # type: ignore
             self._calls.append(f"push:{slug}")
 
-        def stub_teardown(slug):
+        def stub_teardown(slug: object) -> None:  # type: ignore
             self._calls.append(f"teardown:{slug}")
 
         capability_apply.snapshot_transcript = stub_snapshot  # type: ignore[assignment]

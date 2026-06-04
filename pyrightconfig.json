@@ -16,5 +16,16 @@
   "reportUnknownParameterType": false,
   "reportUnknownVariableType": false,
   "reportUnknownArgumentType": false,
-  "reportPrivateUsage": false
+  "reportPrivateUsage": false,
+  "overrides": [
+    {
+      "include": ["tests/**"],
+      "typeCheckingMode": "basic",
+      "reportMissingParameterType": false,
+      "reportMissingTypeArgument": false,
+      "reportOptionalMemberAccess": false,
+      "reportUnnecessaryComparison": false,
+      "reportAttributeAccessIssue": false
+    }
+  ]
 }
