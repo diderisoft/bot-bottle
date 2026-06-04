@@ -233,6 +233,7 @@ def resolve_plan(
     return DockerBottlePlan(
         spec=spec,
         stage_dir=stage_dir,
+        guest_home=guest_home,
         slug=slug,
         container_name=container_name,
         container_name_pinned=container_name_pinned,

@@ -164,6 +164,7 @@ def _plan(
 
     spec = _spec(supervise=supervise, with_git=with_git, with_egress=with_egress)
     return DockerBottlePlan(
+        guest_home="/home/node",
         spec=spec,
         stage_dir=STAGE,
         slug=SLUG,

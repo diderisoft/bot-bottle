@@ -168,7 +168,7 @@ class CodexAgentProvider(AgentProvider):
         agent = plan.spec.manifest.agents[plan.spec.agent_name]
         if not agent.skills:
             return
-        skills_dir = _skills_dir(plan.workspace_plan.guest_home)
+        skills_dir = _skills_dir(plan.guest_home)
         bottle.exec(f"mkdir -p {skills_dir}", user="root")
         for name in agent.skills:
             src = host_skill_dir(name)
@@ -188,7 +188,7 @@ class CodexAgentProvider(AgentProvider):
         Codex reads it via the agent's `Read and follow the
         instructions in <path>.` bootstrap (see `prompt_args`); the
         file is copied either way so the path always exists."""
-        prompt_path = _prompt_path(plan.workspace_plan.guest_home)
+        prompt_path = _prompt_path(plan.guest_home)
         bottle.cp_in(str(plan.prompt_file), prompt_path)
         bottle.exec(
             f"chown node:node {prompt_path} && chmod 600 {prompt_path}",

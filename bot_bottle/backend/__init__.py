@@ -76,6 +76,7 @@ class BottlePlan(ABC):
 
     spec: BottleSpec
     stage_dir: Path
+    guest_home: str
     git_gate_plan: GitGatePlan
     egress_plan: EgressPlan
     supervise_plan: SupervisePlan | None

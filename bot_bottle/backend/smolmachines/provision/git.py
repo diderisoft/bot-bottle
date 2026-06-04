@@ -36,14 +36,6 @@ from ... import Bottle
 from ..bottle_plan import SmolmachinesBottlePlan
 
 
-# `node` is the agent user from the repo Dockerfile.
-_GUEST_HOME = "/home/node"
-
-
-def _guest_home() -> str:
-    return _GUEST_HOME
-
-
 def provision_git(plan: SmolmachinesBottlePlan, bottle: Bottle) -> None:
     """Set up git inside the guest. Runs all three subcases; each
     no-ops when its condition isn't met."""
@@ -92,7 +84,7 @@ def _provision_git_gate_config(
         manifest_bottle.git, plan.agent_git_gate_host, scheme="http",
     )
 
-    guest_gitconfig = f"{_guest_home()}/.gitconfig"
+    guest_gitconfig = f"{plan.guest_home}/.gitconfig"
     # Stage the file under the plan's stage_dir so cp_in
     # has a stable host path. The plan's stage_dir is cleaned up
     # by start.py's session-end teardown.

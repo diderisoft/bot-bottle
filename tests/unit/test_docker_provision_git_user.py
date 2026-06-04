@@ -40,6 +40,7 @@ def _plan(*, git_user: dict | None = None,
         copy_cwd=copy_cwd, user_cwd=user_cwd,
     )
     return DockerBottlePlan(
+        guest_home="/home/node",
         spec=spec,
         stage_dir=stage_dir or Path("/tmp/stage"),
         slug="demo-abc12",

@@ -57,7 +57,7 @@ def _provision_git_gate_config(plan: DockerBottlePlan, bottle: Bottle) -> None:
     manifest_bottle = plan.spec.manifest.bottle_for(plan.spec.agent_name)
     if not manifest_bottle.git:
         return
-    container_gitconfig = "/home/node/.gitconfig"
+    container_gitconfig = f"{plan.guest_home}/.gitconfig"
 
     content = git_gate_render_gitconfig(manifest_bottle.git, GIT_GATE_HOSTNAME)
     config_file = plan.stage_dir / "agent_gitconfig"

@@ -78,6 +78,7 @@ def _plan(
             current_config_dir=Path("/tmp/current-config"),
         )
     return DockerBottlePlan(
+        guest_home="/home/node",
         spec=spec,
         stage_dir=Path("/tmp/stage"),
         slug="demo-abc12",

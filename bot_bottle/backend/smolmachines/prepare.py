@@ -172,6 +172,7 @@ def resolve_plan(
     return SmolmachinesBottlePlan(
         spec=spec,
         stage_dir=stage_dir,
+        guest_home=guest_home,
         slug=slug,
         bundle_subnet=subnet,
         bundle_gateway=gateway,

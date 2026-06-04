@@ -120,6 +120,7 @@ def _plan(
             current_config_dir=Path("/tmp/current-config"),
         )
     return SmolmachinesBottlePlan(
+        guest_home="/home/node",
         spec=spec,
         stage_dir=stage_dir or Path("/tmp/stage"),
         slug="demo-abc12",
