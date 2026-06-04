@@ -38,7 +38,6 @@ import sys
 import time
 import typing
 import urllib.error
-import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
