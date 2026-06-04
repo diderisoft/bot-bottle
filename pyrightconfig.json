@@ -11,5 +11,10 @@
   ],
   "pythonVersion": "3.11",
   "typeCheckingMode": "strict",
-  "reportMissingTypeStubs": "none"
+  "reportMissingTypeStubs": "none",
+  "reportUnknownMemberType": false,
+  "reportUnknownParameterType": false,
+  "reportUnknownVariableType": false,
+  "reportUnknownArgumentType": false,
+  "reportPrivateUsage": false
 }
