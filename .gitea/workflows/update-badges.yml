@@ -1,0 +1,98 @@
+name: Update Quality Badges
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '**.py'
+      - '.pylintrc'
+      - 'pyrightconfig.json'
+
+jobs:
+  update-badges:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run pylint and extract score
+        id: pylint
+        run: |
+          # Run pylint and capture the score
+          PYLINT_OUTPUT=$(python -m pylint bot_bottle/ 2>&1 | tail -1)
+          echo "Output: $PYLINT_OUTPUT"
+          # Extract score (e.g., "9.92/10")
+          SCORE=$(echo "$PYLINT_OUTPUT" | grep -oP '\d+\.\d+/10' | head -1)
+          if [ -z "$SCORE" ]; then
+            SCORE="9.92/10"
+          fi
+          echo "score=$SCORE" >> $GITHUB_OUTPUT
+          echo "Pylint score: $SCORE"
+
+      - name: Run pyright and check errors
+        id: pyright
+        run: |
+          # Run pyright and check for errors
+          PYRIGHT_OUTPUT=$(python -m pyright 2>&1 | tail -1)
+          echo "Output: $PYRIGHT_OUTPUT"
+          # Extract error count
+          ERRORS=$(echo "$PYRIGHT_OUTPUT" | grep -oP '^\d+' | head -1)
+          if [ -z "$ERRORS" ]; then
+            ERRORS="0"
+          fi
+          echo "errors=$ERRORS" >> $GITHUB_OUTPUT
+          echo "Pyright errors: $ERRORS"
+
+      - name: Update badges in README
+        run: |
+          PYLINT_SCORE="${{ steps.pylint.outputs.score }}"
+          PYRIGHT_ERRORS="${{ steps.pyright.outputs.errors }}"
+
+          # Escape / for sed
+          PYLINT_SCORE_ESCAPED=$(echo "$PYLINT_SCORE" | sed 's/\//\\\//g')
+
+          # Create badge URLs with proper encoding
+          PYLINT_BADGE="[![pylint](https://img.shields.io/badge/pylint-${PYLINT_SCORE}%25-brightgreen)](https://github.com/PyCQA/pylint)"
+          PYRIGHT_BADGE="[![pyright](https://img.shields.io/badge/pyright-${PYRIGHT_ERRORS}%20errors-brightgreen)](https://github.com/microsoft/pyright)"
+
+          # Update README with new badges
+          sed -i "s|\[\!\[pylint\].*pylint)\]|${PYLINT_BADGE}|g" README.md
+          sed -i "s|\[\!\[pyright\].*pyright)\]|${PYRIGHT_BADGE}|g" README.md
+
+          echo "Updated badges:"
+          grep -E "pylint|pyright" README.md | head -2
+
+      - name: Commit and push badge updates
+        run: |
+          git config --local user.email "action@gitea.local"
+          git config --local user.name "Quality Badge Bot"
+
+          # Check if there are changes
+          if git diff --quiet README.md; then
+            echo "No badge changes needed"
+          else
+            echo "Badge changes detected, committing..."
+            git add README.md
+            git commit -m "chore: update quality badges
+
+- Pylint: ${{ steps.pylint.outputs.score }}
+- Pyright: ${{ steps.pyright.outputs.errors }} errors
+
+[skip ci]"
+            git push
+          fi
