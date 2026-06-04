@@ -38,11 +38,11 @@ def filter_select(
     except OSError:
         return None
 
-    try:
-        result = _run_picker(items, title=title, tty_fd=tty_fd.fileno())
-    finally:
-        tty_fd.close()
-
+    # Note: Don't close tty_fd here. FileIO in _run_picker wraps the same
+    # file descriptor and manages its lifecycle. Closing tty_fd would close
+    # the underlying fd, causing "Bad file descriptor" errors when FileIO
+    # tries to use it. Let the file object be closed by garbage collection.
+    result = _run_picker(items, title=title, tty_fd=tty_fd.fileno())
     return result
 
 
