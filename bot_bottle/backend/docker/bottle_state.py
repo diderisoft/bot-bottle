@@ -35,6 +35,7 @@ import secrets
 import string
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from ... import supervise as _supervise
 from . import util as docker_mod
@@ -135,14 +136,15 @@ def read_metadata(identity: str) -> BottleMetadata | None:
     raw = json.loads(path.read_text())
     if not isinstance(raw, dict):
         return None
+    raw_typed = cast(dict[str, object], raw)
     return BottleMetadata(
-        identity=str(raw.get("identity", identity)),
-        agent_name=str(raw.get("agent_name", "")),
-        cwd=str(raw.get("cwd", "")),
-        copy_cwd=bool(raw.get("copy_cwd", False)),
-        started_at=str(raw.get("started_at", "")),
-        compose_project=str(raw.get("compose_project", "")),
-        backend=str(raw.get("backend", "")),
+        identity=str(raw_typed.get("identity", identity)),
+        agent_name=str(raw_typed.get("agent_name", "")),
+        cwd=str(raw_typed.get("cwd", "")),
+        copy_cwd=bool(raw_typed.get("copy_cwd", False)),
+        started_at=str(raw_typed.get("started_at", "")),
+        compose_project=str(raw_typed.get("compose_project", "")),
+        backend=str(raw_typed.get("backend", "")),
     )
 
 
