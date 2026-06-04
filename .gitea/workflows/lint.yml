@@ -1,11 +1,11 @@
-name: Lint and Type Check
+name: lint
 
 on:
   push:
     paths:
-      - '**.py'
-      - '.pylintrc'
-      - '.gitea/workflows/lint.yml'
+      - "**.py"
+      - ".pylintrc"
+      - ".gitea/workflows/lint.yml"
 
 jobs:
   lint:
@@ -16,7 +16,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Install dev dependencies
         run: |
