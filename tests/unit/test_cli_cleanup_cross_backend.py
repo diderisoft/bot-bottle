@@ -31,7 +31,7 @@ class TestCmdCleanup(unittest.TestCase):
             return_value=("docker", "smolmachines"),
         ), patch.object(
             cmd, "get_bottle_backend",
-            side_effect=lambda name: backends_by_name[name],
+            side_effect=lambda name: backends_by_name[name],  # type: ignore
         ), patch.object(
             cmd, "_prompt_yes", return_value=True,
         ):
@@ -52,7 +52,7 @@ class TestCmdCleanup(unittest.TestCase):
             return_value=("docker", "smolmachines"),
         ), patch.object(
             cmd, "get_bottle_backend",
-            side_effect=lambda name: backends_by_name[name],
+            side_effect=lambda name: backends_by_name[name],  # type: ignore
         ), patch.object(
             cmd, "_prompt_yes",
         ) as prompt:
@@ -71,7 +71,7 @@ class TestCmdCleanup(unittest.TestCase):
             return_value=("docker", "smolmachines"),
         ), patch.object(
             cmd, "get_bottle_backend",
-            side_effect=lambda name: backends_by_name[name],
+            side_effect=lambda name: backends_by_name[name],  # type: ignore
         ), patch.object(
             cmd, "_prompt_yes", return_value=False,
         ):
@@ -91,7 +91,7 @@ class TestCmdCleanup(unittest.TestCase):
             return_value=("docker", "smolmachines"),
         ), patch.object(
             cmd, "get_bottle_backend",
-            side_effect=lambda name: backends_by_name[name],
+            side_effect=lambda name: backends_by_name[name],  # type: ignore
         ), patch.object(
             cmd, "_prompt_yes", return_value=True,
         ):

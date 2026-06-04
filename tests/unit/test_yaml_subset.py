@@ -273,18 +273,18 @@ class TestRealisticBottleFile(unittest.TestCase):
                   KnownHostKey: ssh-ed25519 AAAA...
         """)
         # Spot-check the deep parts; the structure is large.
-        self.assertEqual(2, len(out["egress"]["routes"]))
+        self.assertEqual(2, len(out["egress"]["routes"]))  # type: ignore
         self.assertEqual(
             ["/didericis/"],
-            out["egress"]["routes"][1]["path_allowlist"],
+            out["egress"]["routes"][1]["path_allowlist"],  # type: ignore
         )
         self.assertEqual(
             "Bearer",
-            out["egress"]["routes"][0]["auth"]["scheme"],
+            out["egress"]["routes"][0]["auth"]["scheme"],  # type: ignore
         )
         self.assertEqual(
             "ssh-ed25519 AAAA...",
-            out["git"]["remotes"]["gitea.dideric.is"]["KnownHostKey"],
+            out["git"]["remotes"]["gitea.dideric.is"]["KnownHostKey"],  # type: ignore
         )
 
 

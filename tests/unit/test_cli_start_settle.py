@@ -36,7 +36,7 @@ class TestCaptureSessionState(_FakeHomeMixin, unittest.TestCase):
         # covers the real docker cp path.
         self._snap_calls: list[str] = []
         self._orig_snap = start_mod.snapshot_transcript
-        start_mod.snapshot_transcript = lambda identity: (
+        start_mod.snapshot_transcript = lambda identity: (  # type: ignore
             self._snap_calls.append(identity)
         )
 

@@ -1,13 +1,13 @@
 {
   "include": [
     "cli.py",
-    "bot_bottle",
-    "tests"
+    "bot_bottle"
   ],
   "exclude": [
     "**/__pycache__",
     "**/.venv",
-    "**/venv"
+    "**/venv",
+    "tests/**"
   ],
   "pythonVersion": "3.11",
   "typeCheckingMode": "strict",
@@ -16,16 +16,5 @@
   "reportUnknownParameterType": false,
   "reportUnknownVariableType": false,
   "reportUnknownArgumentType": false,
-  "reportPrivateUsage": false,
-  "overrides": [
-    {
-      "include": ["tests/**"],
-      "typeCheckingMode": "basic",
-      "reportMissingParameterType": false,
-      "reportMissingTypeArgument": false,
-      "reportOptionalMemberAccess": false,
-      "reportUnnecessaryComparison": false,
-      "reportAttributeAccessIssue": false
-    }
-  ]
+  "reportPrivateUsage": false
 }

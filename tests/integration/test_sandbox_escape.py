@@ -271,7 +271,7 @@ class TestSandboxEscape(unittest.TestCase):
         other outcome (200 from upstream, 401/404 from upstream,
         non-marker 5xx) means the request escaped — the secret
         reached the network."""
-        body_and_code = (r.stdout or "").strip()
+        body_and_code = (r.stdout or "").strip()  # type: ignore
         # The curl invocation appends `\nHTTP_CODE:%{http_code}` so
         # we can disambiguate. Split that off.
         http_code = ""
@@ -281,7 +281,7 @@ class TestSandboxEscape(unittest.TestCase):
             body, _, http_code = body_and_code.rpartition(marker)
             http_code = http_code.strip()
             body = body.rstrip()
-        haystack = (body + " " + (r.stderr or "")).lower()
+        haystack = (body + " " + (r.stderr or "")).lower()  # type: ignore
         has_marker = any(m in haystack for m in self._SANDBOX_BLOCK_MARKERS)
         self.assertTrue(
             has_marker and http_code == "403",
@@ -343,9 +343,9 @@ class TestSandboxEscape(unittest.TestCase):
                 f'-H "X-Custom: $TEST_SECRET_ANTHROPIC"',
             ),
         ]
-        for name, cmd in shapes:
+        for name, cmd in shapes:  # type: ignore
             with self.subTest(shape=name):
-                r = self._bottle.exec(  # type: ignorecmd)
+                r = self._bottle.exec(cmd)  # type: ignore
                 self._assert_sandbox_block(name, r)
 
     # ---- attack 4: DNS exfil -----------------------------------------

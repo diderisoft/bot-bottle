@@ -12,6 +12,7 @@ from __future__ import annotations
 import subprocess
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 from bot_bottle.agent_provider import AgentProvisionPlan
@@ -45,7 +46,7 @@ def _manifest(*, supervise: bool, with_git: bool, with_egress: bool) -> Manifest
     """Minimal manifest with the toggles the chunk-1 matrix needs.
     The renderer only reads from the plan, not the manifest, so this
     is just here to back BottleSpec."""
-    bottle: dict = {}
+    bottle: dict[str, object] = {}
     if supervise:
         bottle["supervise"] = True
     if with_git:
@@ -271,13 +272,13 @@ class TestAgentAlwaysPresent(unittest.TestCase):
             dockerfile="",
             guest_env={"CODEX_HOME": "/home/node/.codex"},
         )
-        plan = type(plan)(**{**vars(plan), "agent_provision": provision})
+        plan = type(plan)(**{**vars(plan), "agent_provision": provision})  # type: ignore
         s = bottle_plan_to_compose(plan)["services"]["agent"]
         self.assertIn("CODEX_HOME=/home/node/.codex", s["environment"])
 
     def test_agent_runsc_runtime(self):
         plan = _plan()
-        plan = type(plan)(**{**vars(plan), "use_runsc": True})
+        plan = type(plan)(**{**vars(plan), "use_runsc": True})  # type: ignore
         s = bottle_plan_to_compose(plan)["services"]["agent"]
         self.assertEqual("runsc", s["runtime"])
 
@@ -309,7 +310,7 @@ class TestSidecarBundleShape(unittest.TestCase):
     + supervise). PRD 0024 chunk 5 dropped the legacy four-sidecar
     shape entirely, so the bundle is the only thing exercised here."""
 
-    def _render(self, **plan_kwargs):
+    def _render(self, **plan_kwargs: object) -> Any:  # type: ignore
         return bottle_plan_to_compose(_plan(**plan_kwargs))
 
     def test_emits_two_services_minimal(self):

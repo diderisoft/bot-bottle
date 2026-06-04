@@ -21,14 +21,14 @@ def _jwt(exp: int) -> str:
     return _jwt_with_payload({"exp": exp})
 
 
-def _jwt_with_payload(payload: dict) -> str:
-    def enc(obj: dict) -> str:
+def _jwt_with_payload(payload: dict[str, object]) -> str:  # type: ignore
+    def enc(obj: dict[str, object]) -> str:  # type: ignore
         raw = json.dumps(obj, separators=(",", ":")).encode()
         return base64.urlsafe_b64encode(raw).decode().rstrip("=")
     return f"{enc({'alg': 'none'})}.{enc(payload)}.sig"
 
 
-def _jwt_payload(token: str) -> dict:
+def _jwt_payload(token: str) -> dict[str, object]:  # type: ignore
     payload = token.split(".")[1]
     payload += "=" * (-len(payload) % 4)
     return json.loads(base64.urlsafe_b64decode(payload.encode()).decode())
@@ -43,7 +43,7 @@ class TestCodexHostAccessToken(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def _write(self, payload: dict) -> None:
+    def _write(self, payload: dict[str, object]) -> None:  # type: ignore
         self.auth_path.write_text(json.dumps(payload))
 
     def test_auth_path_uses_codex_home(self):

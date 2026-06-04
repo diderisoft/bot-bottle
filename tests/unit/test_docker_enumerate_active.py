@@ -99,7 +99,7 @@ class TestEnumerateActive(_FakeHomeMixin, unittest.TestCase):
         self._teardown_fake_home()
 
     def _stub(self, slugs: list[str], services_by_project: dict[str, set[str]]) -> None:
-        _enumerate.list_active_slugs = lambda **_: slugs
+        _enumerate.list_active_slugs = lambda **_: slugs  # type: ignore
         _enumerate._query_services_by_project = lambda: services_by_project
 
     def test_no_active_slugs_returns_empty(self):
