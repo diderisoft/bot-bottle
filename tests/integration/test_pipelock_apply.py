@@ -32,11 +32,11 @@ from bot_bottle.backend.docker.network import (
     network_create_internal,
     network_remove,
 )
-from bot_bottle.backend.docker.pipelock import (
-    PIPELOCK_CA_CERT_IN_CONTAINER,  # type: ignore
-    PIPELOCK_CA_KEY_IN_CONTAINER,  # type: ignore
-    pipelock_tls_init,
+from bot_bottle.pipelock import (
+    PIPELOCK_CA_CERT_IN_CONTAINER,
+    PIPELOCK_CA_KEY_IN_CONTAINER,
 )
+from bot_bottle.backend.docker.pipelock import pipelock_tls_init
 from bot_bottle.pipelock import PipelockProxy
 from bot_bottle.backend.docker.pipelock_apply import (
     PipelockApplyError,
