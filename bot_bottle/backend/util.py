@@ -14,7 +14,6 @@ from ..log import die, info
 
 if TYPE_CHECKING:
     from ..egress import EgressPlan
-    from ..pipelock import PipelockProxyPlan
 
 
 # Debian-family CA layout, shared by every backend (all guest images
@@ -35,35 +34,20 @@ def host_skill_dir(name: str) -> str:
     return f"{home}/.claude/skills/{name}"
 
 
-def select_ca_cert(
-    egress_plan: EgressPlan, proxy_plan: PipelockProxyPlan
-) -> tuple[Path, str]:
-    """Pick the agent-facing CA cert (and a short label for the log
-    line) that matches the proxy the agent's HTTP_PROXY points at.
-    Egress wins when the bottle declares any routes (it sits in front
-    of pipelock); else pipelock.
+def select_ca_cert(egress_plan: EgressPlan) -> tuple[Path, str]:
+    """Return the egress MITM CA cert path and label for provision_ca.
 
-    Shared by every backend's `provision_ca`: launch mints the chosen
-    CA(s) and re-binds their host paths into these inner plans before
-    provision runs, so an empty/missing path here means launch's
-    bringup is broken — fatal."""
-    if egress_plan.routes:
-        cert = egress_plan.mitmproxy_ca_cert_only_host_path
-        if cert == Path() or not cert.is_file():
-            die(
-                f"egress CA cert missing at {cert or '(empty)'}; "
-                f"launch must have called egress_tls_init and "
-                f"re-bound the plan before provision"
-            )
-        return cert, "egress"
-    cert = proxy_plan.ca_cert_host_path
-    if not cert or not cert.is_file():
+    Launch always mints the CA and re-binds the host path into the
+    egress_plan before provision runs, so an empty/missing path here
+    means launch's bringup is broken — fatal."""
+    cert = egress_plan.mitmproxy_ca_cert_only_host_path
+    if cert == Path() or not cert.is_file():
         die(
-            f"pipelock CA cert missing at {cert or '(empty)'}; "
-            f"launch must have called pipelock_tls_init and re-bound "
-            f"the plan before provision"
+            f"egress CA cert missing at {cert or '(empty)'}; "
+            f"launch must have called egress_tls_init and "
+            f"re-bound the plan before provision"
         )
-    return cert, "pipelock"
+    return cert, "egress"
 
 
 def log_ca_fingerprint(cert_host_path: Path, label: str) -> None:

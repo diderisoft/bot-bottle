@@ -1,23 +1,18 @@
 # Per-bottle sidecar bundle image (PRD 0024).
 #
-# Collapses the four prior per-sidecar images (pipelock, egress,
-# git-gate, supervise) into one. A small stdlib-Python init
-# supervisor at /app/sidecar_init.py spawns all four daemons,
-# forwards SIGTERM, and propagates per-daemon stdout/stderr to the
-# container log with a `[name]` prefix. See PRD 0024 for the
-# rationale.
+# Collapses the prior per-sidecar images (egress, git-gate,
+# supervise) into one. A small stdlib-Python init supervisor at
+# /app/sidecar_init.py spawns all daemons, forwards SIGTERM, and
+# propagates per-daemon stdout/stderr to the container log with a
+# `[name]` prefix. See PRD 0024 for the rationale.
 #
-# Layout (preserved verbatim from the prior four Dockerfiles so the
-# compose renderer's bind-mount paths and docker-cp targets keep
-# working):
+# Layout:
 #
-#   /usr/local/bin/pipelock              pipelock binary
 #   /usr/bin/gitleaks                    gitleaks binary
 #   /app/egress_addon.py + siblings      mitmproxy addon (egress)
 #   /app/egress-entrypoint.sh            mitmdump launcher
 #   /app/supervise_server.py + .py       supervise MCP server
 #   /app/sidecar_init.py                 PID 1 supervisor
-#   /etc/pipelock.yaml                   bind-mounted at run time
 #   /etc/egress/routes.yaml              bind-mounted at run time
 #   /etc/git-gate/pre-receive            docker-cp'd at start time
 #   /git-gate-entrypoint.sh              docker-cp'd at start time
@@ -27,25 +22,17 @@
 #   /home/mitmproxy/.mitmproxy/          mitmproxy CA dir
 #
 # Exposed ports inside the container:
-#   8888  pipelock (HTTPS_PROXY)
-#   9099  egress (mitmproxy, pipelock's upstream — not externally
-#                 addressed by the agent)
+#   9099  egress (mitmproxy, agent-facing HTTPS proxy)
 #   9418  git-gate (git-daemon)
 #   9420  git-gate smart HTTP (smolmachines agent-facing transport)
 #   9100  supervise (MCP HTTP)
 
-# Stage 1: pipelock binary. The upstream pipelock image is a
-# scratch image with the binary at /pipelock (entrypoint).
-# Pinned by digest in lockstep with
-# bot_bottle/backend/docker/pipelock.py:PIPELOCK_IMAGE.
-FROM ghcr.io/luckypipewrench/pipelock@sha256:3b1a39417b98406ddc5dc2d8fcb42865ddc0c68a43d355db55f0f8cb06bc6de9 AS pipelock-src
-
-# Stage 2: gitleaks binary. The upstream gitleaks image is alpine
+# Stage 1: gitleaks binary. The upstream gitleaks image is alpine
 # with the binary at /usr/bin/gitleaks. Pinned by digest in lockstep
 # with Dockerfile.git-gate's prior base (now deleted at chunk 3).
 FROM zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f AS gitleaks-src
 
-# Stage 3: assembly. mitmproxy/mitmproxy is debian-slim-based with
+# Stage 2: assembly. mitmproxy/mitmproxy is debian-slim-based with
 # Python + mitmdump pre-installed — heavier than the others, so
 # this stage starts there and pulls the standalone binaries in.
 FROM mitmproxy/mitmproxy:11.1.3
@@ -60,16 +47,14 @@ USER root
 #     plus the core `git` binary the pre-receive hook invokes.
 #   openssh-client supplies the upstream SSH transport the
 #     pre-receive hook uses to forward accepted refs.
-#   ca-certificates is needed for both pipelock and mitmdump
-#     upstream TLS (the base image already has it; listed for
-#     explicitness).
+#   ca-certificates is needed for mitmdump upstream TLS (the
+#     base image already has it; listed for explicitness).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       git openssh-client ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
 # Pull the standalone binaries into the final image.
-COPY --from=pipelock-src /pipelock        /usr/local/bin/pipelock
 COPY --from=gitleaks-src /usr/bin/gitleaks /usr/bin/gitleaks
 
 # Project Python: addon + server modules + the init supervisor.

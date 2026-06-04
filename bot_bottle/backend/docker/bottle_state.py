@@ -56,8 +56,8 @@ _AGENT_SUBDIR = "agent"
 _METADATA_NAME = "metadata.json"
 # Live-config dir bind-mounted into the supervise sidecar (read-only).
 # Host's apply paths keep these files fresh so supervise's
-# `list-pipelock-allowlist` / `list-egress-routes` MCP tools
-# return the current state — not a snapshot from launch time.
+# `list-egress-routes` MCP tool returns the current state —
+# not a snapshot from launch time.
 _LIVE_CONFIG_SUBDIR = "live-config"
 LIVE_CONFIG_ROUTES_NAME = "routes.yaml"
 LIVE_CONFIG_ALLOWLIST_NAME = "allowlist"

@@ -19,7 +19,7 @@ This module ships the lifecycle primitives only — create
 network, start bundle, stop bundle, remove network — wrapped
 around `subprocess.run(["docker", ...])`. Wiring them into the
 launch flow + populating the `BundleLaunchSpec` from the inner
-Plans (PipelockProxyPlan, EgressPlan, …) lands in chunk 2d."""
+Plans (EgressPlan, …) lands in chunk 2d."""
 
 from __future__ import annotations
 
@@ -69,7 +69,7 @@ class BundleLaunchSpec:
     # Daemon subset CSV for BOT_BOTTLE_SIDECAR_DAEMONS. The
     # supervisor inside the bundle reads it to skip
     # bottle-irrelevant daemons (e.g. supervise=False bottles).
-    daemons_csv: str = "egress,pipelock"
+    daemons_csv: str = "egress"
     # Plain "KEY=VALUE" strings + "KEY" bare names (the bare-name
     # form inherits the value from the docker-run subprocess env,
     # matching the docker backend's compose-up secret-forwarding

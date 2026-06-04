@@ -50,6 +50,7 @@ from .git_gate import (
     GIT_GATE_ENTRYPOINT_IN_CONTAINER,
     GIT_GATE_HOOK_IN_CONTAINER,
 )
+from . import network as network_mod
 from .sidecar_bundle import (
     SIDECAR_BUNDLE_DOCKERFILE,
     SIDECAR_BUNDLE_IMAGE,
@@ -91,11 +92,11 @@ def _networks(plan: DockerBottlePlan) -> dict[str, Any]:
     bridge."""
     return {
         "internal": {
-            "name": plan.proxy_plan.internal_network,
+            "name": network_mod.network_name_for_slug(plan.slug),
             "internal": True,
         },
         "egress": {
-            "name": plan.proxy_plan.egress_network,
+            "name": network_mod.network_egress_name_for_slug(plan.slug),
         },
     }
 
@@ -131,11 +132,9 @@ def _sidecar_bundle_service(plan: DockerBottlePlan) -> dict[str, Any]:
 
     # --- egress -------------------------------------------------------
     ep = plan.egress_plan
+    volumes.append(_bind(ep.mitmproxy_ca_host_path, EGRESS_CA_IN_CONTAINER))
     if ep.routes:
-        volumes += [
-            _bind(ep.routes_path, EGRESS_ROUTES_IN_CONTAINER),
-            _bind(ep.mitmproxy_ca_host_path, EGRESS_CA_IN_CONTAINER),
-        ]
+        volumes.append(_bind(ep.routes_path, EGRESS_ROUTES_IN_CONTAINER))
         for token_env in sorted(ep.token_env_map.keys()):
             env.append(token_env)
 

@@ -4,7 +4,6 @@ The bulk of the implementation lives in sibling modules:
 
   - util:                 thin Docker subprocess wrappers
   - network:              Docker network plumbing
-  - pipelock:             DockerPipelockProxy lifecycle
   - bottle_plan:          DockerBottlePlan
   - bottle_cleanup_plan:  DockerBottleCleanupPlan
   - bottle:               DockerBottle handle

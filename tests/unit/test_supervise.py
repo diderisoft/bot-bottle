@@ -247,13 +247,13 @@ class TestAuditLog(unittest.TestCase):
             write_audit_entry(AuditEntry(
                 timestamp=f"2026-05-25T12:00:0{i}+00:00",
                 bottle_slug="dev",
-                component="pipelock",
+                component="egress",
                 operator_action=STATUS_APPROVED,
                 operator_notes=f"n{i}",
                 justification="",
                 diff="",
             ))
-        path = audit_log_path("pipelock", "dev")
+        path = audit_log_path("egress", "dev")
         with path.open() as f:
             lines = [line for line in f if line.strip()]
         self.assertEqual(3, len(lines))
@@ -273,7 +273,7 @@ class TestAuditLog(unittest.TestCase):
         write_audit_entry(AuditEntry(
             timestamp="t",
             bottle_slug="dev",
-            component="pipelock",
+            component="egress",
             operator_action=STATUS_APPROVED,
             operator_notes="",
             justification="",
@@ -289,7 +289,7 @@ class TestAuditLog(unittest.TestCase):
             diff="",
         ))
         self.assertEqual(1, len(read_audit_entries("cred-proxy", "dev")))
-        self.assertEqual(1, len(read_audit_entries("pipelock", "dev")))
+        self.assertEqual(1, len(read_audit_entries("egress", "dev")))
         self.assertEqual(1, len(read_audit_entries("cred-proxy", "other")))
 
     def test_read_audit_entries_missing_log_returns_empty(self):

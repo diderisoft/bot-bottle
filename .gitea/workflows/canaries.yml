@@ -1,6 +1,6 @@
-# Weekly canary suite. Catches upstream regressions (broken pipelock
-# image packaging at the pinned digest, etc.) without coupling every
-# dev push to upstream registry availability.
+# Weekly canary suite. Catches upstream regressions (broken pinned
+# digest, etc.) without coupling every dev push to upstream registry
+# availability.
 #
 # Opt-in via CLAUDE_BOTTLE_RUN_CANARIES=1 so the same files can be run
 # locally with the same gating.

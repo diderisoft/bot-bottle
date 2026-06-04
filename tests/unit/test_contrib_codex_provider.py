@@ -24,7 +24,6 @@ from bot_bottle.contrib.codex.agent_provider import CodexAgentProvider
 from bot_bottle.egress import EgressPlan
 from bot_bottle.git_gate import GitGatePlan
 from bot_bottle.manifest import Manifest
-from bot_bottle.pipelock import PipelockProxyPlan
 from bot_bottle.supervise import SupervisePlan
 from bot_bottle.workspace import workspace_plan
 
@@ -91,9 +90,6 @@ def _plan(
         env_file=Path("/tmp/agent.env"),
         forwarded_env={},
         prompt_file=Path("/tmp/state/demo-abc12/agent/prompt.txt"),
-        proxy_plan=PipelockProxyPlan(
-            yaml_path=Path("/tmp/pipelock.yaml"), slug="demo-abc12",
-        ),
         git_gate_plan=GitGatePlan(
             slug="demo-abc12",
             entrypoint_script=Path("/tmp/git-gate-entrypoint.sh"),

@@ -32,7 +32,6 @@ from bot_bottle.egress import (
 )
 from bot_bottle.git_gate import GitGatePlan, GitGateUpstream
 from bot_bottle.manifest import Manifest
-from bot_bottle.pipelock import PipelockProxyPlan
 from bot_bottle.supervise import SupervisePlan
 from bot_bottle.workspace import workspace_plan
 
@@ -80,18 +79,6 @@ def _spec(*, supervise: bool, with_git: bool, with_egress: bool) -> BottleSpec:
     )
 
 
-def _proxy_plan() -> PipelockProxyPlan:
-    return PipelockProxyPlan(
-        yaml_path=STATE / "pipelock.yaml",
-        slug=SLUG,
-        internal_network=f"bot-bottle-net-{SLUG}",
-        internal_network_cidr="10.1.2.0/24",
-        egress_network=f"bot-bottle-egress-{SLUG}",
-        ca_cert_host_path=STATE / "pipelock-ca" / "ca.pem",
-        ca_key_host_path=STATE / "pipelock-ca" / "ca-key.pem",
-    )
-
-
 def _git_gate_plan(upstreams: tuple[GitGateUpstream, ...] = ()) -> GitGatePlan:
     return GitGatePlan(
         slug=SLUG,
@@ -119,8 +106,6 @@ def _egress_plan(routes: tuple[EgressRoute, ...] = ()) -> EgressPlan:
         egress_network=f"bot-bottle-egress-{SLUG}",
         mitmproxy_ca_host_path=STATE / "egress-ca" / "mitmproxy-ca.pem",
         mitmproxy_ca_cert_only_host_path=STATE / "egress-ca" / "ca.pem",
-        pipelock_ca_host_path=STATE / "pipelock-ca" / "ca.pem",
-        pipelock_proxy_url="http://127.0.0.1:8888",
     )
 
 
@@ -178,7 +163,6 @@ def _plan(
         env_file=Path("/dev/null"),  # exists, size 0 → renderer skips env_file
         forwarded_env={"CLAUDE_CODE_OAUTH_TOKEN": "x"},
         prompt_file=STAGE / "prompt",
-        proxy_plan=_proxy_plan(),
         git_gate_plan=_git_gate_plan(upstreams),
         egress_plan=_egress_plan(routes),
         supervise_plan=_supervise_plan() if supervise else None,
@@ -233,16 +217,15 @@ class TestAgentAlwaysPresent(unittest.TestCase):
         s = bottle_plan_to_compose(_plan())["services"]["agent"]
         self.assertEqual({"internal"}, set(s["networks"].keys()))
 
-    def test_agent_proxy_via_pipelock_when_no_egress(self):
-        s = bottle_plan_to_compose(_plan(with_egress=False))["services"]["agent"]
-        env = s["environment"]
-        # Looking for HTTPS_PROXY pointing at pipelock's container name.
-        proxy_lines = [e for e in env if e.startswith("HTTPS_PROXY=")]
-        self.assertEqual(1, len(proxy_lines))
-        self.assertEqual(
-            "HTTPS_PROXY=http://pipelock:8888",
-            proxy_lines[0],
-        )
+    def test_agent_proxy_always_via_egress(self):
+        for with_egress in (False, True):
+            with self.subTest(with_egress=with_egress):
+                s = bottle_plan_to_compose(
+                    _plan(with_egress=with_egress)
+                )["services"]["agent"]
+                proxy_lines = [e for e in s["environment"] if e.startswith("HTTPS_PROXY=")]
+                self.assertEqual(1, len(proxy_lines))
+                self.assertEqual("HTTPS_PROXY=http://egress:9099", proxy_lines[0])
 
     def test_agent_proxy_via_egress_when_egress_present(self):
         s = bottle_plan_to_compose(_plan(with_egress=True))["services"]["agent"]
@@ -306,9 +289,9 @@ class TestAgentAlwaysPresent(unittest.TestCase):
 
 class TestSidecarBundleShape(unittest.TestCase):
     """The compose renderer emits exactly one `sidecars` service in
-    place of the four daemons it owns (pipelock + egress + git-gate
-    + supervise). PRD 0024 chunk 5 dropped the legacy four-sidecar
-    shape entirely, so the bundle is the only thing exercised here."""
+    place of the daemons it owns (egress + git-gate + supervise).
+    PRD 0024 chunk 5 dropped the legacy four-sidecar shape entirely,
+    so the bundle is the only thing exercised here."""
 
     def _render(self, **plan_kwargs: object) -> Any:  # type: ignore
         return bottle_plan_to_compose(_plan(**plan_kwargs))  # type: ignore
@@ -335,13 +318,10 @@ class TestSidecarBundleShape(unittest.TestCase):
         sc = self._render()["services"]["sidecars"]
         self.assertEqual({"internal", "egress"}, set(sc["networks"].keys()))
 
-    def test_internal_aliases_cover_pipelock_and_egress_shortnames(self):
-        # The agent's HTTPS_PROXY url references either `egress` or
-        # `pipelock`. Both must resolve to the bundle.
+    def test_internal_aliases_include_egress_shortname(self):
         sc = self._render()["services"]["sidecars"]
         aliases = set(sc["networks"]["internal"]["aliases"])
         self.assertIn("egress", aliases)
-        self.assertIn("pipelock", aliases)
 
     def test_internal_aliases_omit_inactive_sidecars(self):
         # With no git-gate / supervise, those names are NOT aliased
@@ -359,16 +339,13 @@ class TestSidecarBundleShape(unittest.TestCase):
         self.assertIn("supervise", aliases)
 
     def test_daemons_csv_lists_only_active(self):
-        # Egress + pipelock are always in the daemon set even when
-        # the bottle has no routes (egress falls back to regular@9099
-        # and is just unused; cheaper than special-casing).
         sc = self._render()["services"]["sidecars"]
         daemons = {
             line.split("=", 1)[1]
             for line in sc["environment"]
             if line.startswith("BOT_BOTTLE_SIDECAR_DAEMONS=")
         }
-        self.assertEqual({"egress,pipelock"}, daemons)
+        self.assertEqual({"egress"}, daemons)
 
     def test_daemons_csv_expands_with_optional_sidecars(self):
         sc = self._render(with_git=True, supervise=True)["services"]["sidecars"]
@@ -379,13 +356,13 @@ class TestSidecarBundleShape(unittest.TestCase):
         else:
             self.fail("BOT_BOTTLE_SIDECAR_DAEMONS not in env")
         self.assertEqual(
-            ["egress", "pipelock", "git-gate", "supervise"],
+            ["egress", "git-gate", "supervise"],
             csv.split(","),
         )
 
     def test_bundle_env_does_not_set_https_proxy(self):
         # HTTPS_PROXY at the container level would route git-gate's
-        # git fetches through pipelock. Scoping it to mitmdump is
+        # git fetches through the proxy. Scoping it to mitmdump is
         # the job of egress_entrypoint.sh; the bundle env must not
         # leak it.
         sc = self._render(with_egress=True)["services"]["sidecars"]
@@ -397,22 +374,15 @@ class TestSidecarBundleShape(unittest.TestCase):
                 f"bundle env must not set {line!r}",
             )
 
-    def test_egress_env_present_when_routes_declared(self):
+    def test_egress_token_env_present_when_routes_declared(self):
         sc = self._render(with_egress=True)["services"]["sidecars"]
         env_strings = sc["environment"]
-        self.assertTrue(any(
-            e.startswith("EGRESS_UPSTREAM_PROXY=") for e in env_strings))
-        self.assertTrue(any(
-            e.startswith("EGRESS_UPSTREAM_CA=") for e in env_strings))
-        # Token env name is forwarded as a bare entry.
         self.assertIn("EGRESS_TOKEN_0", env_strings)
 
-    def test_egress_env_omitted_when_no_routes(self):
+    def test_egress_token_env_omitted_when_no_routes(self):
         sc = self._render()["services"]["sidecars"]
         env_strings = sc["environment"]
-        for e in env_strings:
-            self.assertFalse(e.startswith("EGRESS_UPSTREAM_PROXY="))
-            self.assertFalse(e.startswith("EGRESS_UPSTREAM_CA="))
+        self.assertNotIn("EGRESS_TOKEN_0", env_strings)
 
     def test_supervise_env_present_when_active(self):
         sc = self._render(supervise=True)["services"]["sidecars"]
@@ -421,22 +391,19 @@ class TestSidecarBundleShape(unittest.TestCase):
         self.assertTrue(any(e.startswith("SUPERVISE_QUEUE_DIR=") for e in env_strings))
         self.assertTrue(any(e.startswith("SUPERVISE_PORT=") for e in env_strings))
 
-    def test_volumes_union_minimal_includes_pipelock(self):
+    def test_volumes_always_includes_egress_ca(self):
         sc = self._render()["services"]["sidecars"]
         targets = {v["target"] for v in sc["volumes"]}
-        self.assertIn("/etc/pipelock.yaml", targets)
+        self.assertIn("/home/mitmproxy/.mitmproxy/mitmproxy-ca.pem", targets)
 
     def test_volumes_union_full_matrix(self):
         sc = self._render(with_git=True, with_egress=True, supervise=True)[
             "services"]["sidecars"]
         targets = {v["target"] for v in sc["volumes"]}
-        # Pipelock + egress + git-gate + supervise paths all
-        # present.
-        self.assertIn("/etc/pipelock.yaml", targets)
+        self.assertIn("/home/mitmproxy/.mitmproxy/mitmproxy-ca.pem", targets)
         self.assertIn("/etc/egress/routes.yaml", targets)
         self.assertIn("/git-gate-entrypoint.sh", targets)
         self.assertIn("/git-gate/creds/upstream-known_hosts", targets)
-        # supervise queue dir target = QUEUE_DIR_IN_CONTAINER
         self.assertTrue(any("supervise/queue" in t or t.startswith("/run/supervise")
                             for t in targets))
 

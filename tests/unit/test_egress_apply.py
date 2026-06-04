@@ -6,9 +6,7 @@ import unittest
 
 from bot_bottle.backend.docker.egress_apply import (
     EgressApplyError,
-    _hosts_in_routes,
     _merge_single_route,
-    _pipelock_safe_hosts,
     validate_routes_content,
 )
 from bot_bottle.yaml_subset import parse_yaml_subset
@@ -63,44 +61,6 @@ class TestValidateRoutesContent(unittest.TestCase):
                 'routes:\n'
                 '  - host: "x.example"\n'
                 '    auth_scheme: "Bearer"\n'
-            )
-
-
-class TestHostsInRoutes(unittest.TestCase):
-    def test_extracts_each_unique_host(self):
-        hosts = _hosts_in_routes(
-            'routes:\n'
-            '  - host: "api.github.com"\n'
-            '  - host: "github.com"\n'
-            '  - host: "api.anthropic.com"\n'
-        )
-        # Sorted+deduped.
-        self.assertEqual(
-            ["api.anthropic.com", "api.github.com", "github.com"],
-            hosts,
-        )
-
-    def test_dedupes_same_host(self):
-        hosts = _hosts_in_routes(
-            'routes:\n'
-            '  - host: "x.example"\n'
-            '    path_allowlist:\n'
-            '      - "/a/"\n'
-            '  - host: "x.example"\n'
-            '    path_allowlist:\n'
-            '      - "/b/"\n'
-        )
-        self.assertEqual(["x.example"], hosts)
-
-    def test_empty_routes_returns_empty(self):
-        self.assertEqual([], _hosts_in_routes(_ROUTES_EMPTY))
-
-    def test_invalid_routes_raises(self):
-        # The mirror helper relies on parsing succeeding; bad input
-        # should error before pipelock is touched.
-        with self.assertRaises(EgressApplyError):
-            _hosts_in_routes(
-                'routes:\n  - path_allowlist:\n    - "/no-host/"\n'
             )
 
 
@@ -212,41 +172,6 @@ class TestMergeSingleRoute(unittest.TestCase):
     def test_invalid_current_yaml_raises(self):
         with self.assertRaises(EgressApplyError):
             _merge_single_route("routes:\n\tbad", {"host": "x.example"})
-
-
-class TestPipelockSafeHosts(unittest.TestCase):
-    def test_passes_normal_hostnames_through(self):
-        self.assertEqual(
-            ["api.github.com", "registry.npmjs.org"],
-            _pipelock_safe_hosts(["api.github.com", "registry.npmjs.org"]),
-        )
-
-    def test_drops_wildcards(self):
-        # Wildcard host matching was removed from egress too,
-        # so a `*.foo.com` route is dead weight anyway; we drop it
-        # entirely from the pipelock mirror so the apply doesn't
-        # fail parse.
-        self.assertEqual(
-            ["api.github.com"],
-            _pipelock_safe_hosts(["*.example.com", "api.github.com"]),
-        )
-
-    def test_drops_bare_wildcard(self):
-        self.assertEqual([], _pipelock_safe_hosts(["*"]))
-
-    def test_drops_ipv6_literals(self):
-        self.assertEqual(
-            ["api.example.com"],
-            _pipelock_safe_hosts(["[::1]", "api.example.com"]),
-        )
-
-    def test_preserves_order(self):
-        self.assertEqual(
-            ["a.example", "b.example", "c.example"],
-            _pipelock_safe_hosts([
-                "a.example", "*.junk", "b.example", "weird host", "c.example",
-            ]),
-        )
 
 
 if __name__ == "__main__":

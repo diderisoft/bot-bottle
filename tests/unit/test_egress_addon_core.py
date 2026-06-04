@@ -180,7 +180,7 @@ class TestMatchRoute(unittest.TestCase):
     def test_wildcard_hosts_not_supported(self):
         # `*.example.com` is treated as a literal host string by
         # the exact-only matcher. Removed from the design after
-        # the apex/RFC-6125/pipelock-mirror edge cases stacked up.
+        # the apex/RFC-6125 edge cases stacked up.
         routes = (Route(host="*.example.com"),)
         self.assertIsNone(match_route(routes, "foo.example.com"))
         self.assertIsNone(match_route(routes, "example.com"))
@@ -191,10 +191,8 @@ class TestMatchRoute(unittest.TestCase):
 
 class TestDecide(unittest.TestCase):
     def test_no_matching_route_blocks(self):
-        # Defense-in-depth: egress gates the bottle's allowlist
-        # too, not just pipelock. Any host the operator didn't declare
-        # in egress.routes is 403'd at egress before it
-        # ever reaches pipelock.
+        # Egress gates the bottle's allowlist. Any host the operator
+        # didn't declare in egress.routes is 403'd at egress.
         d = decide((), "elsewhere.example", "/anything", {})
         self.assertEqual("block", d.action)
         self.assertIn("allowlist", d.reason)

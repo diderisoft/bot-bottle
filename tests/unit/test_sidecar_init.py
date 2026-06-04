@@ -29,11 +29,8 @@ from bot_bottle.sidecar_init import (
 class TestEnvForDaemon(unittest.TestCase):
     """Scope egress-only credential env vars to the egress daemon.
 
-    Regression for issue #84: pipelock's `scan_env: true` matched
-    `EGRESS_TOKEN_*` against egress's just-injected Authorization
-    header and 403-blocked the legitimate request. The agent
-    never has access to these slots, so stripping them from
-    non-egress daemons loses no DLP coverage."""
+    The agent never has access to EGRESS_TOKEN_* slots, so stripping
+    them from non-egress daemons loses no DLP coverage."""
 
     _BASE = {
         "PATH": "/usr/bin",
@@ -47,26 +44,20 @@ class TestEnvForDaemon(unittest.TestCase):
         env = _env_for_daemon("egress", self._BASE)
         self.assertEqual(self._BASE, env)
 
-    def test_pipelock_loses_egress_tokens(self):
-        env = _env_for_daemon("pipelock", self._BASE)
-        self.assertNotIn("EGRESS_TOKEN_0", env)
-        self.assertNotIn("EGRESS_TOKEN_1", env)
-        # Non-token bundle env stays — supervise / git-gate / git-http / the
-        # upstream proxy URL are all load-bearing for other
-        # daemons.
-        self.assertEqual("/usr/bin", env["PATH"])
-        self.assertEqual("http://127.0.0.1:8888", env["EGRESS_UPSTREAM_PROXY"])
-        self.assertEqual("9100", env["SUPERVISE_PORT"])
-
-    def test_git_daemons_and_supervise_also_lose_egress_tokens(self):
+    def test_git_daemons_and_supervise_lose_egress_tokens(self):
         for name in ("git-gate", "git-http", "supervise"):
             env = _env_for_daemon(name, self._BASE)
             self.assertNotIn("EGRESS_TOKEN_0", env)
             self.assertNotIn("EGRESS_TOKEN_1", env)
+            # Non-token bundle env stays — supervise / git-gate / git-http are
+            # all load-bearing for other daemons.
+            self.assertEqual("/usr/bin", env["PATH"])
+            self.assertEqual("http://127.0.0.1:8888", env["EGRESS_UPSTREAM_PROXY"])
+            self.assertEqual("9100", env["SUPERVISE_PORT"])
 
     def test_returns_independent_dict(self):
         # Caller mutation mustn't affect the original.
-        env = _env_for_daemon("pipelock", self._BASE)
+        env = _env_for_daemon("git-gate", self._BASE)
         env["X"] = "y"
         self.assertNotIn("X", self._BASE)
 
@@ -78,7 +69,6 @@ class TestSelectedDaemons(unittest.TestCase):
 
     _DAEMONS = (
         _DaemonSpec("egress", ("/bin/sh", "-c", ":")),
-        _DaemonSpec("pipelock", ("/bin/sh", "-c", ":")),
         _DaemonSpec("git-gate", ("/bin/sh", "-c", ":")),
         _DaemonSpec("supervise", ("/bin/sh", "-c", ":")),
     )
@@ -86,35 +76,34 @@ class TestSelectedDaemons(unittest.TestCase):
     def test_unset_returns_all(self):
         got = _selected_daemons({}, all_daemons=self._DAEMONS)
         self.assertEqual([d.name for d in got],
-                         ["egress", "pipelock", "git-gate", "supervise"])
+                         ["egress", "git-gate", "supervise"])
 
     def test_empty_returns_all(self):
         got = _selected_daemons({"BOT_BOTTLE_SIDECAR_DAEMONS": ""},
                                 all_daemons=self._DAEMONS)
-        self.assertEqual(4, len(got))
+        self.assertEqual(3, len(got))
 
     def test_whitespace_only_returns_all(self):
         got = _selected_daemons({"BOT_BOTTLE_SIDECAR_DAEMONS": "   "},
                                 all_daemons=self._DAEMONS)
-        self.assertEqual(4, len(got))
+        self.assertEqual(3, len(got))
 
     def test_explicit_subset(self):
         got = _selected_daemons(
-            {"BOT_BOTTLE_SIDECAR_DAEMONS": "egress,pipelock"},
+            {"BOT_BOTTLE_SIDECAR_DAEMONS": "egress,git-gate"},
             all_daemons=self._DAEMONS,
         )
-        self.assertEqual([d.name for d in got], ["egress", "pipelock"])
+        self.assertEqual([d.name for d in got], ["egress", "git-gate"])
 
     def test_preserves_canonical_order(self):
         # Order in the env var doesn't matter; the result follows
-        # the canonical _DAEMONS order so egress starts before
-        # pipelock (race-window reason).
+        # the canonical _DAEMONS order so egress starts first.
         got = _selected_daemons(
-            {"BOT_BOTTLE_SIDECAR_DAEMONS": "supervise,pipelock,egress"},
+            {"BOT_BOTTLE_SIDECAR_DAEMONS": "supervise,git-gate,egress"},
             all_daemons=self._DAEMONS,
         )
         self.assertEqual([d.name for d in got],
-                         ["egress", "pipelock", "supervise"])
+                         ["egress", "git-gate", "supervise"])
 
     def test_unknown_names_ignored(self):
         got = _selected_daemons(
@@ -125,10 +114,10 @@ class TestSelectedDaemons(unittest.TestCase):
 
     def test_whitespace_in_names_stripped(self):
         got = _selected_daemons(
-            {"BOT_BOTTLE_SIDECAR_DAEMONS": " egress , pipelock "},
+            {"BOT_BOTTLE_SIDECAR_DAEMONS": " egress , git-gate "},
             all_daemons=self._DAEMONS,
         )
-        self.assertEqual([d.name for d in got], ["egress", "pipelock"])
+        self.assertEqual([d.name for d in got], ["egress", "git-gate"])
 
 
 class TestSupervisor(unittest.TestCase):
@@ -279,25 +268,24 @@ class TestSupervisor(unittest.TestCase):
         self._drive(sup)
 
     def test_restart_daemon_replaces_in_place(self):
-        # pipelock_apply.py sends SIGUSR1 to the bundle, supervisor
-        # restarts the pipelock daemon, supervise (the other
-        # daemon's MCP server in production) stays up.
+        # Restart one daemon; the other (supervise, the MCP server
+        # in production) must remain untouched.
         specs = [
-            _DaemonSpec("pipelock", ("/bin/sleep", "30")),
+            _DaemonSpec("git-gate", ("/bin/sleep", "30")),
             _DaemonSpec("supervise", ("/bin/sleep", "30")),
         ]
         sup = _Supervisor(specs)
         sup.start_all()
         time.sleep(0.1)
-        old_pipelock_pid = sup.procs[0][1].pid
+        old_git_gate_pid = sup.procs[0][1].pid
         supervise_pid = sup.procs[1][1].pid
 
-        ok = sup.restart_daemon("pipelock", grace=2.0)
+        ok = sup.restart_daemon("git-gate", grace=2.0)
         self.assertTrue(ok)
 
-        # Pipelock got a fresh PID — different process.
-        new_pipelock_pid = sup.procs[0][1].pid
-        self.assertNotEqual(old_pipelock_pid, new_pipelock_pid)
+        # git-gate got a fresh PID — different process.
+        new_git_gate_pid = sup.procs[0][1].pid
+        self.assertNotEqual(old_git_gate_pid, new_git_gate_pid)
         # Supervise's PID is unchanged — it was NOT restarted.
         self.assertEqual(supervise_pid, sup.procs[1][1].pid)
         self.assertIsNone(sup.procs[1][1].poll(),
@@ -308,38 +296,38 @@ class TestSupervisor(unittest.TestCase):
 
     def test_request_restart_is_drained_by_tick(self):
         specs = [
-            _DaemonSpec("pipelock", ("/bin/sleep", "30")),
+            _DaemonSpec("git-gate", ("/bin/sleep", "30")),
             _DaemonSpec("supervise", ("/bin/sleep", "30")),
         ]
         sup = _Supervisor(specs)
         sup.start_all()
         time.sleep(0.1)
-        old_pipelock_pid = sup.procs[0][1].pid
+        old_git_gate_pid = sup.procs[0][1].pid
         supervise_pid = sup.procs[1][1].pid
 
-        ok = sup.request_restart("pipelock")
+        ok = sup.request_restart("git-gate")
         self.assertTrue(ok)
         # The non-blocking request path only records intent.
-        self.assertEqual(old_pipelock_pid, sup.procs[0][1].pid)
+        self.assertEqual(old_git_gate_pid, sup.procs[0][1].pid)
 
         done = sup.tick()
         self.assertFalse(done)
 
-        self.assertNotEqual(old_pipelock_pid, sup.procs[0][1].pid)
+        self.assertNotEqual(old_git_gate_pid, sup.procs[0][1].pid)
         self.assertEqual(supervise_pid, sup.procs[1][1].pid)
 
         sup.request_shutdown(reason="cleanup")
         self._drive(sup)
 
     def test_repeated_restart_requests_coalesce(self):
-        specs = [_DaemonSpec("pipelock", ("/bin/sleep", "30"))]
+        specs = [_DaemonSpec("git-gate", ("/bin/sleep", "30"))]
         sup = _Supervisor(specs)
         sup.start_all()
         time.sleep(0.1)
 
-        self.assertTrue(sup.request_restart("pipelock"))
-        self.assertTrue(sup.request_restart("pipelock"))
-        self.assertEqual({"pipelock"}, sup._restart_requested)
+        self.assertTrue(sup.request_restart("git-gate"))
+        self.assertTrue(sup.request_restart("git-gate"))
+        self.assertEqual({"git-gate"}, sup._restart_requested)
 
         old_pid = sup.procs[0][1].pid
         sup.tick()
@@ -374,23 +362,23 @@ class TestSupervisor(unittest.TestCase):
         self._drive(sup)
 
     def test_restart_during_shutdown_is_no_op(self):
-        specs = [_DaemonSpec("pipelock", ("/bin/sleep", "30"))]
+        specs = [_DaemonSpec("git-gate", ("/bin/sleep", "30"))]
         sup = _Supervisor(specs)
         sup.start_all()
         sup.request_shutdown(reason="test")
-        ok = sup.restart_daemon("pipelock")
+        ok = sup.restart_daemon("git-gate")
         self.assertFalse(ok,
                          "must not respawn a daemon during teardown")
         self._drive(sup)
 
     def test_pending_restart_dropped_during_shutdown(self):
-        specs = [_DaemonSpec("pipelock", ("/bin/sleep", "30"))]
+        specs = [_DaemonSpec("git-gate", ("/bin/sleep", "30"))]
         sup = _Supervisor(specs)
         sup.start_all()
         time.sleep(0.1)
         old_pid = sup.procs[0][1].pid
 
-        self.assertTrue(sup.request_restart("pipelock"))
+        self.assertTrue(sup.request_restart("git-gate"))
         sup.request_shutdown(reason="test")
         self.assertEqual(set(), sup._restart_requested)
         self._drive(sup)

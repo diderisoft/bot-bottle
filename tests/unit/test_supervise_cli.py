@@ -18,7 +18,6 @@ from pathlib import Path
 from bot_bottle import supervise
 from bot_bottle.backend.docker.capability_apply import CapabilityApplyError
 from bot_bottle.backend.docker.egress_apply import EgressApplyError
-from bot_bottle.backend.docker.pipelock_apply import PipelockApplyError
 from bot_bottle.cli import supervise as supervise_cli
 from bot_bottle.supervise import (
     Proposal,
@@ -27,7 +26,6 @@ from bot_bottle.supervise import (
     STATUS_REJECTED,
     TOOL_CAPABILITY_BLOCK,
     TOOL_EGRESS_BLOCK,
-    TOOL_PIPELOCK_BLOCK,
     read_audit_entries,
     read_response,
     sha256_hex,
@@ -38,13 +36,8 @@ FIXED = datetime(2026, 5, 25, 12, 0, 0, tzinfo=timezone.utc)
 
 
 def _proposal(slug: str = "dev", tool: str = TOOL_EGRESS_BLOCK) -> Proposal:
-    # Per-tool payload shape: cred-proxy gets routes.yaml, pipelock
-    # gets a failed URL (PR #25 follow-up), capability gets a
-    # Dockerfile-ish blob. Match the production dispatch in
-    # PROPOSED_FILE_FIELD.
     payloads = {
         TOOL_EGRESS_BLOCK: '{"routes": []}\n',
-        TOOL_PIPELOCK_BLOCK: "https://example.com/path",
         TOOL_CAPABILITY_BLOCK: "FROM python:3.13\n",
     }
     payload = payloads.get(tool, "")
@@ -128,26 +121,18 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
     def setUp(self):
         self._setup_fake_home()
         self._original_add_route = supervise_cli.add_route
-        self._original_apply_allowlist = supervise_cli.apply_allowlist_change
-        self._original_fetch_allowlist = supervise_cli.fetch_current_allowlist
         self._original_apply_capability = supervise_cli.apply_capability_change
         # Default stubs: succeed with deterministic before/after so the
         # audit log shows a non-empty diff.
         supervise_cli.add_route = lambda slug, content: (  # type: ignore
             '{"routes": []}\n', '{"routes": [{"host": "x"}]}\n',
         )
-        supervise_cli.apply_allowlist_change = lambda slug, content: (  # type: ignore
-            "old.example\n", content,
-        )
-        supervise_cli.fetch_current_allowlist = lambda slug: "old.example\n"  # type: ignore
         supervise_cli.apply_capability_change = lambda slug, content: (  # type: ignore
             "FROM old\n", content,
         )
 
     def tearDown(self):
         supervise_cli.add_route = self._original_add_route
-        supervise_cli.apply_allowlist_change = self._original_apply_allowlist
-        supervise_cli.fetch_current_allowlist = self._original_fetch_allowlist
         supervise_cli.apply_capability_change = self._original_apply_capability
         self._teardown_fake_home()
 
@@ -192,15 +177,7 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
         qp = self._enqueue(tool=TOOL_CAPABILITY_BLOCK)
         supervise_cli.approve(qp)
         # No audit log for capability-block (per PRD 0013 / 0016).
-        # cred-proxy and pipelock logs both empty.
         self.assertEqual([], read_audit_entries("egress", "dev"))
-        self.assertEqual([], read_audit_entries("pipelock", "dev"))
-
-    def test_pipelock_audit_distinct_from_egress(self):
-        qp = self._enqueue(tool=TOOL_PIPELOCK_BLOCK)
-        supervise_cli.approve(qp)
-        self.assertEqual(1, len(read_audit_entries("pipelock", "dev")))
-        self.assertEqual(0, len(read_audit_entries("egress", "dev")))
 
 
 class TestEgressApplyWiring(_FakeHomeMixin, unittest.TestCase):
@@ -299,91 +276,6 @@ class TestEgressApplyWiring(_FakeHomeMixin, unittest.TestCase):
         self.assertEqual("", entries[0].diff)
 
 
-class TestPipelockApplyWiring(_FakeHomeMixin, unittest.TestCase):
-    """PRD 0015 Phase 2 + PR #25 follow-up: approve() on a
-    pipelock-block proposal carries the failed URL; the supervise TUI
-    extracts the host, merges it into the running allowlist, and
-    calls apply_allowlist_change with the merged content."""
-
-    def setUp(self):
-        self._setup_fake_home()
-        self._original_apply = supervise_cli.apply_allowlist_change
-        self._original_fetch = supervise_cli.fetch_current_allowlist
-
-    def tearDown(self):
-        supervise_cli.apply_allowlist_change = self._original_apply
-        supervise_cli.fetch_current_allowlist = self._original_fetch
-        self._teardown_fake_home()
-
-    def _enqueue_pipelock(self, failed_url: str = "https://api.github.com/repos/foo/bar"):
-        p = Proposal.new(
-            bottle_slug="dev", tool=TOOL_PIPELOCK_BLOCK,
-            proposed_file=failed_url,
-            justification="need to read PR metadata",
-            current_file_hash=sha256_hex(failed_url),
-            now=FIXED,
-        )
-        qdir = supervise.queue_dir_for_slug("dev")
-        qdir.mkdir(parents=True, exist_ok=True)
-        supervise.write_proposal(qdir, p)
-        return supervise_cli.QueuedProposal(proposal=p, queue_dir=qdir)
-
-    def test_url_host_merged_into_current_allowlist(self):
-        supervise_cli.fetch_current_allowlist = lambda slug: "existing.example\n"  # type: ignore
-        applied = []
-        supervise_cli.apply_allowlist_change = lambda slug, content: (  # type: ignore
-            applied.append((slug, content))
-            or ("existing.example\n", content)
-        )
-        qp = self._enqueue_pipelock("https://api.github.com/repos/foo/bar")
-        supervise_cli.approve(qp)
-        # apply_allowlist_change was called with the merged content:
-        # existing host + the URL's host (no path, since pipelock is
-        # hostname-only).
-        self.assertEqual(1, len(applied))
-        slug, content = applied[0]
-        self.assertEqual("dev", slug)
-        self.assertIn("existing.example", content)
-        self.assertIn("api.github.com", content)
-        self.assertNotIn("/repos/foo/bar", content)  # path stripped
-
-    def test_host_already_in_allowlist_is_idempotent(self):
-        supervise_cli.fetch_current_allowlist = lambda slug: "api.github.com\n"  # type: ignore
-        applied = []
-        supervise_cli.apply_allowlist_change = lambda slug, content: (  # type: ignore
-            applied.append(content)
-            or ("api.github.com\n", content)
-        )
-        qp = self._enqueue_pipelock("https://api.github.com/some/path")
-        supervise_cli.approve(qp)
-        # Still applied, but the content is unchanged from current —
-        # before/after diff is empty.
-        self.assertEqual(1, len(applied))
-        self.assertEqual("api.github.com\n", applied[0])
-
-    def test_apply_failure_blocks_response_and_audit(self):
-        supervise_cli.fetch_current_allowlist = lambda slug: "existing.example\n"  # type: ignore
-        supervise_cli.apply_allowlist_change = lambda slug, content: (_ for _ in ()).throw(  # type: ignore
-            PipelockApplyError("docker exec failed")
-        )
-        qp = self._enqueue_pipelock()
-        with self.assertRaises(PipelockApplyError):
-            supervise_cli.approve(qp)
-        self.assertEqual(
-            [qp.proposal.id],
-            [p.id for p in supervise.list_pending_proposals(qp.queue_dir)],
-        )
-        self.assertEqual([], read_audit_entries("pipelock", "dev"))
-
-    def test_url_without_host_raises(self):
-        supervise_cli.fetch_current_allowlist = lambda slug: ""  # type: ignore
-        # supervise_server's validator would catch this; if a broken
-        # URL ever makes it through, the supervise TUI surfaces it too.
-        qp = self._enqueue_pipelock("https:///nohost")
-        with self.assertRaises(PipelockApplyError):
-            supervise_cli.approve(qp)
-
-
 class TestCapabilityApplyWiring(_FakeHomeMixin, unittest.TestCase):
     """PRD 0016 Phase 3: approve() on a capability-block proposal
     calls apply_capability_change, archives the proposal afterward
@@ -439,7 +331,6 @@ class TestCapabilityApplyWiring(_FakeHomeMixin, unittest.TestCase):
         # capability-block has no audit log per PRD 0013 — its record
         # lives in the per-bottle Dockerfile + transcript state.
         self.assertEqual([], read_audit_entries("egress", "dev"))
-        self.assertEqual([], read_audit_entries("pipelock", "dev"))
 
     def test_proposal_archived_after_apply(self):
         supervise_cli.apply_capability_change = lambda slug, content: ("FROM old\n", content)  # type: ignore

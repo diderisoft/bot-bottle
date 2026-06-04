@@ -2,10 +2,10 @@
 (PRD 0024).
 
 The bundle image (built by Dockerfile.sidecars, PRD 0024 chunk 1)
-runs pipelock + egress + git-gate + supervise as one container
-per bottle under a small Python init supervisor. As of chunk 5
-the bundle is the only shape — the legacy four-sidecar topology
-and its `BOT_BOTTLE_SIDECAR_BUNDLE` feature flag are gone."""
+runs egress + git-gate + supervise as one container per bottle
+under a small Python init supervisor. As of chunk 5 the bundle
+is the only shape — the legacy four-sidecar topology and its
+`BOT_BOTTLE_SIDECAR_BUNDLE` feature flag are gone."""
 
 from __future__ import annotations
 

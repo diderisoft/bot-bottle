@@ -1,15 +1,15 @@
 """Integration: PRD 0024 chunk 1 — the sidecar bundle image builds
-and the four daemon binaries are present + executable inside it.
+and the daemon binaries are present + executable inside it.
 
 This test does NOT exercise the daemons running against real
-config (pipelock.yaml, routes.yaml, etc) — that lands in chunk 2
-when the renderer wires the bundle into compose. What we verify
-here is the chunk-1 contract:
+config (routes.yaml, etc) — that lands in chunk 2 when the
+renderer wires the bundle into compose. What we verify here is
+the chunk-1 contract:
 
   - Dockerfile.sidecars builds (multi-stage works, base layers
     pull, COPYs resolve).
-  - pipelock, gitleaks, mitmdump are at the documented paths and
-    answer `--version`.
+  - gitleaks, mitmdump are at the documented paths and answer
+    `--version`.
   - The Python init at /app/sidecar_init.py runs and prints the
     expected "no daemons selected" line when the supervisor is
     pointed at an empty daemon set.
@@ -73,11 +73,6 @@ class TestSidecarBundleImage(unittest.TestCase):
             timeout=timeout,
         )
         return proc.returncode, proc.stdout.decode("utf-8", errors="replace")
-
-    def test_pipelock_binary_present_and_versioned(self):
-        rc, out = self._run_in_image("/usr/local/bin/pipelock", "version")
-        self.assertEqual(0, rc, msg=out)
-        self.assertIn("pipelock version", out)
 
     def test_gitleaks_binary_present_and_versioned(self):
         rc, out = self._run_in_image("/usr/bin/gitleaks", "version")

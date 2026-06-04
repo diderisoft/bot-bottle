@@ -53,7 +53,7 @@ _FAKE_SECRETS = {
 @skip_unless_docker()
 @unittest.skipIf(
     os.environ.get("GITEA_ACTIONS") == "true",
-    "skipped under act_runner: pipelock_tls_init uses a host bind mount "
+    "skipped under act_runner: egress_tls_init uses a host bind mount "
     "the runner container can't see, and the network topology hides "
     "sibling-sidecar visibility — same constraint as the other "
     "bottle-bringup integration tests",
@@ -256,14 +256,11 @@ class TestSandboxEscape(unittest.TestCase):
 
     # ---- attack 3: HTTP exfil shapes ---------------------------------
 
-    # Sandbox-block signature: pipelock / egress return HTTP 403 on
-    # policy reject; the response body carries a recognizable
-    # marker. Egress's reject message starts `"egress: host '...'
-    # is not in the bottle's egress.routes allowlist"`; pipelock's
-    # DLP rejects start `"blocked: "` (e.g.
-    # `"blocked: DLP match: Anthropic API Key (critical)"`,
-    # `"blocked: request body contains secret"`).
-    _SANDBOX_BLOCK_MARKERS = ("egress:", "pipelock", "blocked:")
+    # Sandbox-block signature: egress returns HTTP 403 on policy
+    # reject; the response body carries a recognizable marker.
+    # Egress's reject message starts with `"egress: host '...'
+    # is not in the bottle's egress.routes allowlist"`.
+    _SANDBOX_BLOCK_MARKERS = ("egress:", "blocked:")
 
     def _assert_sandbox_block(self, label: str, r: object) -> None:  # type: ignore
         """A real sandbox block produces an HTTP 403 with a
@@ -286,7 +283,7 @@ class TestSandboxEscape(unittest.TestCase):
         self.assertTrue(
             has_marker and http_code == "403",
             f"{label}: expected a sandbox-level block (HTTP 403 with "
-            f"egress/pipelock marker), got HTTP {http_code!r}. "
+            f"egress marker), got HTTP {http_code!r}. "
             f"If the response came from the actual upstream, the "
             f"secret REACHED the network — that's the leak this "
             f"test exists to catch. body={body!r} "
@@ -297,9 +294,8 @@ class TestSandboxEscape(unittest.TestCase):
         """The agent tries to leak `$TEST_SECRET_ANTHROPIC` to an
         ALLOWLISTED destination (api.anthropic.com) via four
         different request shapes. Each must be blocked by a
-        sandbox layer (pipelock DLP / egress filter / etc.) —
-        producing an HTTP 403 with an `egress:` or `pipelock`
-        marker in the response body.
+        sandbox layer (egress allowlist filter) — producing an
+        HTTP 403 with an `egress:` marker in the response body.
 
         Anything else means the request reached upstream and the
         secret leaked, even if the upstream responded with its
@@ -310,10 +306,10 @@ class TestSandboxEscape(unittest.TestCase):
         remediation lands as its own PRD before this test merges.
         DON'T mark expectedFailure to silence it.
 
-        Destination note: we use `raw.githubusercontent.com`, one
-        of the DEFAULT_ALLOWLIST hosts. It is not route-configured
-        for pipelock TLS passthrough, so pipelock MITMs it and the
-        DLP scan applies, which is what this attack exercises."""
+        Destination note: we use `raw.githubusercontent.com`, which
+        is not in the bottle's egress.routes allowlist, so egress
+        blocks every request to it regardless of the secret's
+        location in the request."""
         # Capture HTTP code via curl's -w; don't use --fail so
         # we get the response body even on 4xx.
         url_base = "https://raw.githubusercontent.com"
@@ -352,13 +348,13 @@ class TestSandboxEscape(unittest.TestCase):
 
     def test_4_dns_exfil_blocked(self) -> None:
         """Two sub-attacks against DNS:
-          4a — crafted subdomain that pipelock would resolve. The
-              hostname `<SECRET>.api.anthropic.com` looks "under"
-              the allowlisted apex but pipelock's allowlist is
-              exact-match — it should reject the host BEFORE
-              issuing the DNS query, so the secret never reaches
-              an external resolver.
-          4b — direct DNS query bypassing pipelock entirely. The
+          4a — crafted subdomain attack. The hostname
+              `<SECRET>.api.anthropic.com` looks "under" the
+              allowlisted apex but egress's allowlist is
+              exact-match — it rejects the host before issuing
+              a DNS query, so the secret never reaches an
+              external resolver.
+          4b — direct DNS query bypassing egress entirely. The
               agent's internal network has no default gateway;
               even an explicit resolver like 8.8.8.8 should be
               unreachable. Confirms the network isolation is

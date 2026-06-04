@@ -48,7 +48,7 @@ from ...log import die
 
 
 # registry:2.8.3, pinned by digest. Same env-override pattern as the
-# pipelock image pin in bot_bottle/backend/docker/pipelock.py.
+# sidecar image pin in bot_bottle/backend/docker/sidecar_bundle.py.
 REGISTRY_IMAGE = os.environ.get(
     "BOT_BOTTLE_REGISTRY_IMAGE",
     "registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373",

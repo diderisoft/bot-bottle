@@ -23,24 +23,21 @@ from ...backend.docker.bottle_state import (
     bottle_identity,
     egress_state_dir,
     git_gate_state_dir,
-    pipelock_state_dir,
     supervise_state_dir,
     write_metadata,
 )
 from ...egress import Egress
 from ...env import resolve_env
 from ...git_gate import GitGate
-from ...pipelock import PipelockProxy
 from ...supervise import Supervise
 from ...workspace import workspace_plan as resolve_workspace_plan
 from .bottle_plan import SmolmachinesBottlePlan
 from .util import smolmachines_bundle_subnet, smolmachines_preflight
 
 
-# Gateway ports the bundle exposes inside its container — pipelock
-# HTTPS proxy, git-gate's git-daemon, supervise's MCP. The agent
-# inside the smolvm guest dials these on the bundle's pinned IP.
-_BUNDLE_PIPELOCK_PORT = 8888
+# Gateway ports the bundle exposes inside its container — git-gate's
+# git-daemon, supervise's MCP. The agent inside the smolvm guest
+# dials these on the bundle's pinned IP.
 _BUNDLE_GIT_GATE_PORT = 9418
 _BUNDLE_SUPERVISE_PORT = 9100
 
@@ -145,18 +142,6 @@ def resolve_plan(
         merged_guest_env.setdefault(key, val)
     agent_provision = replace(agent_provision, guest_env=merged_guest_env)
 
-    # Inner Plans for the four bundle daemons. The ABCs are
-    # platform-neutral — `.prepare()` writes config files + returns
-    # a Plan dataclass with no backend-specific assumptions. State
-    # dirs are still keyed by slug under the docker backend's
-    # bottle_state layout (shared on-host convention; not a docker
-    # dependency).
-    pipelock_dir = pipelock_state_dir(slug)
-    pipelock_dir.mkdir(parents=True, exist_ok=True)
-    proxy_plan = PipelockProxy().prepare(
-        bottle, slug, pipelock_dir, agent_provision.egress_routes,
-    )
-
     egress_dir = egress_state_dir(slug)
     egress_dir.mkdir(parents=True, exist_ok=True)
     egress_plan = Egress().prepare(
@@ -181,7 +166,6 @@ def resolve_plan(
         agent_image_ref=agent_image_ref,
         guest_env=agent_provision.guest_env,
         prompt_file=prompt_file,
-        proxy_plan=proxy_plan,
         git_gate_plan=git_gate_plan,
         egress_plan=egress_plan,
         supervise_plan=supervise_plan,

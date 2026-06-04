@@ -18,8 +18,7 @@ Bottle schema (frontmatter):
     user:       { name: <str>, email: <str> }   # optional
     repos:      { <name>: <git-gate-entry>, ... }  # optional
   egress: { routes: [ <egress-route>, ... ] }
-    # route keys: host, path_allowlist, auth, role, pipelock
-    # pipelock: { tls_passthrough: <bool>, ssrf_ip_allowlist: [<cidr>, ...] }
+    # route keys: host, path_allowlist, auth, role
   supervise:    <bool>                          # optional
 
 Agent schema (frontmatter):
@@ -98,12 +97,11 @@ class Bottle:
     git_user: GitUser = field(default_factory=GitUser)
     egress: EgressConfig = field(default_factory=EgressConfig)
     # Opt-in per-bottle stuck-recovery sidecar (PRD 0013). When true,
-    # the launch step brings up a supervise sidecar that exposes three
-    # MCP tools to the agent (cred-proxy-block, pipelock-block,
-    # capability-block; the cred-proxy-block tool is renamed and
-    # retargeted at egress in PRD 0017 chunk 3) plus mounts the
-    # current-config dir read-only into the agent at /etc/bot-bottle/
-    # current-config. False (the default) skips the sidecar and mount.
+    # the launch step brings up a supervise sidecar that exposes MCP
+    # tools to the agent (egress-block, capability-block) plus mounts
+    # the current-config dir read-only into the agent at
+    # /etc/bot-bottle/current-config. False (the default) skips the
+    # sidecar and mount.
     supervise: bool = False
 
     @classmethod

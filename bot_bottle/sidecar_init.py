@@ -282,10 +282,8 @@ class _Supervisor:
 
     def restart_daemon(self, daemon_name: str, *, grace: float = 5.0) -> bool:
         """Terminate one named child and spawn a fresh one, leaving
-        the other daemons running. Used by the pipelock-apply path:
-        pipelock has no in-process reload, so apply_allowlist_change
-        runs `docker kill --signal USR1 <bundle>` after writing the
-        new yaml; the supervisor catches SIGUSR1 and calls this.
+        the other daemons running. A daemon that has no in-process
+        reload can be restarted this way after its config file changes.
 
         Behavior: SIGTERM → wait up to `grace` seconds → SIGKILL if
         still alive → spawn a replacement under the same DaemonSpec.
@@ -293,8 +291,8 @@ class _Supervisor:
         forward_signal / shutdown calls reach the new pid.
 
         Returns True iff a daemon by that name was running and a
-        replacement spawned; False if no such daemon (the
-        compose-renderer subset said this bottle doesn't run it)."""
+        replacement spawned; False if no such daemon (not wired
+        for this bottle)."""
         if self.shutdown_at is not None:
             _log(f"restart {daemon_name} skipped; supervisor is shutting down")
             return False

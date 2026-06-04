@@ -22,7 +22,6 @@ from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
 from bot_bottle.egress import EgressPlan
 from bot_bottle.git_gate import GitGatePlan
 from bot_bottle.manifest import Manifest
-from bot_bottle.pipelock import PipelockProxyPlan
 from bot_bottle.workspace import workspace_plan
 
 
@@ -80,10 +79,6 @@ def _plan(tmp: str) -> DockerBottlePlan:
         env_file=stage / "env",
         forwarded_env={},
         prompt_file=stage / "prompt.txt",
-        proxy_plan=PipelockProxyPlan(
-            yaml_path=stage / "pipelock.yaml",
-            slug="test-teardown-00001",
-        ),
         use_runsc=False,
     )
 
@@ -101,10 +96,6 @@ class TestTeardownWarning(unittest.TestCase):
         buf = io.StringIO()
 
         with mock.patch.object(launch_mod.docker_mod, "build_image"), \
-             mock.patch.object(
-                 launch_mod, "pipelock_tls_init",
-                 return_value=(Path("/ca.crt"), Path("/ca.key")),
-             ), \
              mock.patch.object(
                  launch_mod, "egress_tls_init",
                  return_value=(Path("/egress_ca"), Path("/egress_cert")),

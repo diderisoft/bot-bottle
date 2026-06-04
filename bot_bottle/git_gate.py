@@ -15,9 +15,9 @@ a bare repo on the gate; `git daemon` serves the bare repos over
 
 The agent never sees the upstream credential under either path.
 
-Why a third sidecar (not folded into pipelock or ssh-gate): the
+Why a separate sidecar (not folded into egress or ssh-gate): the
 gate is the only one of the three that holds upstream push
-credentials. Mixing it with pipelock would put push creds in the
+credentials. Mixing it with egress would put push creds in the
 same blast radius as internet-facing TLS interception; mixing it
 with ssh-gate would force ssh-gate above L4 and into git-protocol
 land. See `docs/prds/0008-git-gate.md`.

@@ -1,13 +1,10 @@
-"""Install the per-bottle MITM CA into the smolmachines guest's
-trust store (PRD 0023 chunk 4d).
+"""Install the per-bottle egress MITM CA into the smolmachines
+guest's trust store (PRD 0023 chunk 4d).
 
-Mirrors `backend.docker.provision.ca`: select the right CA (egress
-when the bottle has routes, else pipelock), copy it to Debian's
-`/usr/local/share/ca-certificates/` path,
+Mirrors `backend.docker.provision.ca`: copy the egress CA to
+Debian's `/usr/local/share/ca-certificates/` path,
 `update-ca-certificates` to rebuild the trust bundle, and log the
-fingerprint once. The selected cert depends on the agent's
-HTTP_PROXY target — same logic as the docker backend, since the
-agent dials the same daemons through the same bundle.
+fingerprint once.
 
 `smolvm machine exec` runs commands as root in the VM (no `-u`
 flag exists; the VM init is root), so we don't need the explicit
@@ -35,7 +32,7 @@ def provision_ca(plan: SmolmachinesBottlePlan, bottle: Bottle) -> None:
     """Copy the agent-facing CA cert into the guest, rebuild the
     trust bundle, emit a one-line fingerprint log. Called from
     `BottleBackend.provision` after the smolvm guest is up."""
-    cert_host_path, label = select_ca_cert(plan.egress_plan, plan.proxy_plan)
+    cert_host_path, label = select_ca_cert(plan.egress_plan)
 
     bottle.cp_in(str(cert_host_path), AGENT_CA_PATH)
     # Mode 0644 — readable to non-root tools in the guest.

@@ -40,22 +40,22 @@ class TestParseServicesByProject(unittest.TestCase):
     def test_multiple_services_per_project(self):
         out = _enumerate._parse_services_by_project(
             "bot-bottle-dev-abc\tegress\n"
-            "bot-bottle-dev-abc\tpipelock\n"
+            "bot-bottle-dev-abc\tgit-gate\n"
             "bot-bottle-dev-abc\tsupervise\n"
         )
         self.assertEqual(
-            {"bot-bottle-dev-abc": {"egress", "pipelock", "supervise"}},
+            {"bot-bottle-dev-abc": {"egress", "git-gate", "supervise"}},
             out,
         )
 
     def test_multiple_projects(self):
         out = _enumerate._parse_services_by_project(
             "proj-a\tegress\n"
-            "proj-b\tpipelock\n"
+            "proj-b\tgit-gate\n"
             "proj-a\tsupervise\n"
         )
         self.assertEqual(
-            {"proj-a": {"egress", "supervise"}, "proj-b": {"pipelock"}},
+            {"proj-a": {"egress", "supervise"}, "proj-b": {"git-gate"}},
             out,
         )
 
@@ -117,7 +117,7 @@ class TestEnumerateActive(_FakeHomeMixin, unittest.TestCase):
         ))
         self._stub(
             ["dev-abc"],
-            {"bot-bottle-dev-abc": {"pipelock", "egress", "supervise"}},
+            {"bot-bottle-dev-abc": {"egress", "git-gate", "supervise"}},
         )
         active = _enumerate.enumerate_active()
         self.assertEqual(1, len(active))
@@ -126,17 +126,17 @@ class TestEnumerateActive(_FakeHomeMixin, unittest.TestCase):
         self.assertEqual("dev-abc", a.slug)
         self.assertEqual("implementer", a.agent_name)
         self.assertEqual("2026-05-26T03:00:00+00:00", a.started_at)
-        self.assertEqual(("egress", "pipelock", "supervise"), a.services)
+        self.assertEqual(("egress", "git-gate", "supervise"), a.services)
 
     def test_missing_metadata_renders_question_mark(self):
         # State dir doesn't exist for this slug — agent_name falls
         # back to "?" rather than dropping the row.
-        self._stub(["mystery-zzz"], {"bot-bottle-mystery-zzz": {"pipelock"}})
+        self._stub(["mystery-zzz"], {"bot-bottle-mystery-zzz": {"egress"}})
         active = _enumerate.enumerate_active()
         self.assertEqual(1, len(active))
         self.assertEqual("?", active[0].agent_name)
         self.assertEqual("", active[0].started_at)
-        self.assertEqual(("pipelock",), active[0].services)
+        self.assertEqual(("egress",), active[0].services)
 
     def test_no_services_for_project_yields_empty_tuple(self):
         # Race window between `compose up` returning and the actual

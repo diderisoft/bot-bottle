@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ...agent_provider import PromptMode
-from ...pipelock import PipelockProxyPlan
 from .. import BottlePlan
 
 
@@ -71,7 +70,6 @@ class SmolmachinesBottlePlan(BottlePlan):
     # docker's `--internal` + egress bridge topology; it's on a
     # per-bottle bridge with a pinned IP. The unused fields stay
     # at their dataclass defaults.
-    proxy_plan: PipelockProxyPlan
     # Agent-side endpoints. On Docker Desktop the docker bridge
     # IPs aren't reachable from the smolvm guest (TSI uses macOS
     # networking; docker container IPs live in the daemon's VM),

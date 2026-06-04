@@ -57,7 +57,7 @@ class TestEnumerateActiveAgents(unittest.TestCase):
     def test_concatenates_per_backend(self):
         a = ActiveAgent(
             backend_name="docker", slug="a-1", agent_name="impl",
-            started_at="", services=("pipelock",),
+            started_at="", services=("egress",),
         )
         b = ActiveAgent(
             backend_name="smolmachines", slug="b-2", agent_name="research",

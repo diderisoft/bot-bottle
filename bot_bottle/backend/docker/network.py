@@ -1,11 +1,10 @@
 """Docker network plumbing for the per-agent egress topology.
 
 The agent container sits on a Docker `--internal` network (no default
-gateway). Pipelock straddles that network and a per-agent user-defined
-bridge for upstream egress. We deliberately do NOT use Docker's legacy
+gateway). Egress straddles that network and a per-agent user-defined
+bridge for upstream traffic. We deliberately do NOT use Docker's legacy
 `bridge` network because only user-defined bridges run Docker's
-embedded DNS resolver, which pipelock needs to resolve api.anthropic.com
-and similar upstream hostnames.
+embedded DNS resolver, which egress needs to resolve upstream hostnames.
 
 Naming: bot-bottle-net-<slug> (internal),
 bot-bottle-egress-<slug> (egress). Numeric suffix on conflict
@@ -77,20 +76,12 @@ def network_create_internal(slug: str) -> str:
 
 def network_create_egress(slug: str) -> str:
     """Create a per-agent user-defined bridge (NOT the legacy `bridge`)
-    so the pipelock sidecar has working DNS for upstream hostnames."""
+    so the egress sidecar has working DNS for upstream hostnames."""
     return _network_create_with_prefix(network_egress_name_for_slug(slug), internal=False)
 
 
 def network_inspect_cidr(name: str) -> str:
-    """Return the IPv4 CIDR Docker assigned to a user-defined network.
-
-    Used by pipelock's SSRF guard exception: the bottle's internal
-    network sits in RFC1918 space, so pipelock's `internal:` list
-    would block any agent request whose destination resolves there
-    — including the cred-proxy sidecar's address. Adding the
-    network's CIDR to pipelock's `ssrf.ip_allowlist` lets traffic
-    targeted at the bottle's own sidecars through while pipelock
-    still body-scans and api_allowlist-gates as usual."""
+    """Return the IPv4 CIDR Docker assigned to a user-defined network."""
     result = subprocess.run(
         ["docker", "network", "inspect",
          "--format", "{{range .IPAM.Config}}{{.Subnet}}{{end}}", name],

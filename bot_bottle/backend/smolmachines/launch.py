@@ -9,13 +9,9 @@ guest pointed at the bundle's pinned IP via TSI's
 exit.
 
 The bundle's daemons consume the inner Plans the docker backend
-already produces: pipelock reads its yaml + CA from the
-PipelockProxyPlan; egress reads routes + CAs from the EgressPlan
-+ EGRESS_UPSTREAM_PROXY pointing at `127.0.0.1:8888` (bundle
-local), since the agent dials pipelock first (not egress) on the
-smolmachines path. Git-gate + supervise plumb through the same
-plans the docker backend uses, minus the docker-network fields
-that don't apply here."""
+already produces: egress reads routes + CAs from the EgressPlan.
+Git-gate + supervise plumb through the same plans the docker
+backend uses, minus the docker-network fields that don't apply here."""
 
 from __future__ import annotations
 
@@ -29,16 +25,11 @@ from ...egress import (
     EGRESS_ROUTES_IN_CONTAINER,
     egress_resolve_token_values,
 )
-from ...pipelock import (
-    PIPELOCK_CA_CERT_IN_CONTAINER,
-    PIPELOCK_CA_KEY_IN_CONTAINER,
-)
 from ...supervise import QUEUE_DIR_IN_CONTAINER, SUPERVISE_PORT
 from ...util import expand_tilde
 from ..docker import util as docker_mod
 from ..docker.egress import (
     EGRESS_CA_IN_CONTAINER,
-    EGRESS_PIPELOCK_CA_IN_CONTAINER,
     EGRESS_PORT as _EGRESS_PORT,
     egress_tls_init,
 )
@@ -48,14 +39,9 @@ from ..docker.git_gate import (
     GIT_GATE_ENTRYPOINT_IN_CONTAINER,
     GIT_GATE_HOOK_IN_CONTAINER,
 )
-from ..docker.pipelock import (
-    BUNDLE_LOCAL_PIPELOCK_URL,
-    PIPELOCK_PORT as _PIPELOCK_PORT_STR,
-    pipelock_tls_init,
-)
 from ...git_gate import revoke_git_gate_provisioned_keys
 from ...log import warn
-from ..docker.bottle_state import git_gate_state_dir
+from ..docker.bottle_state import egress_state_dir, git_gate_state_dir
 from . import loopback_alias as _loopback
 from . import sidecar_bundle as _bundle
 from . import smolvm as _smolvm
@@ -78,9 +64,7 @@ _SMOLMACHINE_CACHE_DIR = Path.home() / ".cache" / "bot-bottle" / "smolmachines"
 # Container-internal listening ports for each bundle daemon. The
 # bundle publishes each one on a random host loopback port (see
 # `_bundle.start_bundle`), and `_bundle.bundle_host_port` looks
-# them up post-start. Pipelock's port is an env-overridable string
-# in docker.pipelock; coerce to int here.
-_PIPELOCK_PORT = int(_PIPELOCK_PORT_STR)
+# them up post-start.
 _GIT_HTTP_PORT = 9420
 _SUPERVISE_PORT = SUPERVISE_PORT
 
@@ -167,33 +151,16 @@ def _allocate_resources(
 
 
 def _mint_certs(plan: SmolmachinesBottlePlan) -> SmolmachinesBottlePlan:
-    """Mint per-bottle CAs and return the plan with CA paths filled.
-
-    Pipelock always runs in the bundle. Egress's CA is only minted
-    when the bottle declares routes — otherwise egress runs idle
-    without MITM and the CA files would be unused."""
-    ca_cert_host, ca_key_host = pipelock_tls_init(plan.proxy_plan.yaml_path.parent)
-    proxy_plan = dataclasses.replace(
-        plan.proxy_plan,
-        ca_cert_host_path=ca_cert_host,
-        ca_key_host_path=ca_key_host,
+    """Mint the egress MITM CA and return the plan with CA paths filled."""
+    egress_ca_host, egress_ca_cert_only = egress_tls_init(
+        egress_state_dir(plan.slug),
     )
-    egress_plan = plan.egress_plan
-    if egress_plan.routes:
-        egress_ca_host, egress_ca_cert_only = egress_tls_init(
-            plan.egress_plan.routes_path.parent,
-        )
-        egress_plan = dataclasses.replace(
-            egress_plan,
-            mitmproxy_ca_host_path=egress_ca_host,
-            mitmproxy_ca_cert_only_host_path=egress_ca_cert_only,
-            pipelock_ca_host_path=ca_cert_host,
-            # On smolmachines, egress's upstream is pipelock on the
-            # bundle's localhost — they're in the same container's
-            # network namespace.
-            pipelock_proxy_url=BUNDLE_LOCAL_PIPELOCK_URL,
-        )
-    return dataclasses.replace(plan, proxy_plan=proxy_plan, egress_plan=egress_plan)
+    egress_plan = dataclasses.replace(
+        plan.egress_plan,
+        mitmproxy_ca_host_path=egress_ca_host,
+        mitmproxy_ca_cert_only_host_path=egress_ca_cert_only,
+    )
+    return dataclasses.replace(plan, egress_plan=egress_plan)
 
 
 def _start_bundle(
@@ -224,17 +191,10 @@ def _discover_urls(
     macOS networking, and macOS sees the daemon's bridge via the
     published-port loopback forward only.
 
-    Proxy hop order: when the bottle declares egress routes, the
-    agent's first hop is egress (for token injection), then
-    pipelock. Without routes, the agent dials pipelock directly.
     NO_PROXY includes the per-bottle loopback alias so the
     supervise + git-gate URLs bypass HTTPS_PROXY."""
-    if plan.egress_plan.routes:
-        agent_facing_port = _EGRESS_PORT
-    else:
-        agent_facing_port = _PIPELOCK_PORT
     agent_facing_host_port = _bundle.bundle_host_port(
-        plan.slug, agent_facing_port, host_ip=loopback_ip,
+        plan.slug, _EGRESS_PORT, host_ip=loopback_ip,
     )
     agent_proxy_url = f"http://{loopback_ip}:{agent_facing_host_port}"
 
@@ -328,8 +288,7 @@ def _bundle_launch_spec(
     """Build a BundleLaunchSpec from the resolved inner Plans.
 
     Daemons in the CSV:
-      - egress + pipelock are always present (pipelock is the
-        agent's first hop; egress is its upstream).
+      - egress is always present.
       - git-gate + git-http are conditional on plan.git_gate_plan.upstreams.
       - supervise is conditional on plan.supervise_plan.
 
@@ -337,36 +296,15 @@ def _bundle_launch_spec(
     daemon-private values only (HTTPS_PROXY is scoped to the
     egress process by egress_entrypoint.sh — see PRD 0024's bundle
     bind-address PR)."""
-    daemons: list[str] = ["egress", "pipelock"]
+    daemons: list[str] = ["egress"]
     env: list[str] = []
     volumes: list[tuple[str, str, bool]] = []
 
-    # In this Docker-Desktop-compatible topology, whichever daemon
-    # is "agent-facing" gets its port published on the host
-    # loopback (see `_ensure_smolmachine`'s discovery loop) and the
-    # other stays bundle-internal. The bundle is NOT reachable by
-    # bridge IP from the smolvm guest on macOS — TSI uses macOS
-    # networking, and macOS sees the daemon's bridge via the
-    # published-port loopback forward only.
-
-    # --- pipelock ---------------------------------------------
-    pp = plan.proxy_plan
-    volumes += [
-        (str(pp.yaml_path), "/etc/pipelock.yaml", True),
-        (str(pp.ca_cert_host_path), PIPELOCK_CA_CERT_IN_CONTAINER, True),
-        (str(pp.ca_key_host_path), PIPELOCK_CA_KEY_IN_CONTAINER, True),
-    ]
-
     # --- egress -----------------------------------------------
     ep = plan.egress_plan
+    volumes.append((str(ep.mitmproxy_ca_host_path), EGRESS_CA_IN_CONTAINER, True))
     if ep.routes:
-        env.append(f"EGRESS_UPSTREAM_PROXY={ep.pipelock_proxy_url}")
-        env.append(f"EGRESS_UPSTREAM_CA={EGRESS_PIPELOCK_CA_IN_CONTAINER}")
-        volumes += [
-            (str(ep.routes_path), EGRESS_ROUTES_IN_CONTAINER, True),
-            (str(ep.mitmproxy_ca_host_path), EGRESS_CA_IN_CONTAINER, True),
-            (str(ep.pipelock_ca_host_path), EGRESS_PIPELOCK_CA_IN_CONTAINER, True),
-        ]
+        volumes.append((str(ep.routes_path), EGRESS_ROUTES_IN_CONTAINER, True))
         # Bare-name entries for upstream-token slots. Their values
         # come from the docker-run subprocess env (inherited from
         # the operator's shell), never landing on argv.
@@ -409,14 +347,8 @@ def _bundle_launch_spec(
 
     # Container ports the agent reaches from the smolvm guest —
     # published on host loopback so the guest can dial via TSI +
-    # macOS networking. The HTTP/HTTPS chokepoint is whichever
-    # daemon's port we publish: egress when routes are declared
-    # (token injection first, then forwards to bundle-internal
-    # pipelock), pipelock otherwise.
-    if ep.routes:
-        ports_to_publish: list[int] = [_EGRESS_PORT]
-    else:
-        ports_to_publish = [_PIPELOCK_PORT]
+    # macOS networking. Egress is always the agent's HTTP/HTTPS proxy.
+    ports_to_publish: list[int] = [_EGRESS_PORT]
     if gp.upstreams:
         ports_to_publish.append(_GIT_HTTP_PORT)
     if sp is not None:

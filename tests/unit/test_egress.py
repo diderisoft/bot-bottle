@@ -133,19 +133,6 @@ class TestRoutesForBottleManifestOnly(unittest.TestCase):
         effective = [r.host for r in egress_routes_for_bottle(b)]
         self.assertEqual(["x.example"], effective)
 
-    def test_tls_passthrough_lifted_from_manifest(self):
-        b = _bottle([{
-            "host": "api.openai.com",
-            "auth": {"scheme": "Bearer", "token_ref": "T"},
-            "pipelock": {"tls_passthrough": True},
-        }])
-        routes = egress_routes_for_bottle(b)
-        self.assertTrue(routes[0].tls_passthrough)
-
-    def test_tls_passthrough_false_by_default(self):
-        b = _bottle([{"host": "api.github.com"}])
-        routes = egress_routes_for_bottle(b)
-        self.assertFalse(routes[0].tls_passthrough)
 
 
 class TestProviderRouteMerge(unittest.TestCase):

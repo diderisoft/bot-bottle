@@ -200,10 +200,9 @@ def resolve_plan(
         # root; for `--cwd` derived images the base Dockerfile is what
         # the agent should propose changes against (the derived layer
         # is just a workspace copy).
-        # (routes.yaml + pipelock allowlist used to land here too but
-        # PRD 0017 chunk 3 moved them behind the
-        # `list-egress-routes` MCP tool so the agent gets live
-        # state rather than a launch-time snapshot.)
+        # (routes.yaml used to land here too but PRD 0017 chunk 3
+        # moved it behind the `list-egress-routes` MCP tool so the
+        # agent gets live state rather than a launch-time snapshot.)
         supervise_dockerfile_path = (
             Path(dockerfile_path)
             if dockerfile_path

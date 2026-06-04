@@ -6,15 +6,15 @@
 # call it as a normal child. Behavior is unchanged:
 #
 #   * Upstream proxy: when EGRESS_UPSTREAM_PROXY is set, switch
-#     to `--mode upstream:URL` to forward all post-MITM traffic
-#     through pipelock. mitmproxy does NOT honor HTTPS_PROXY on
-#     its outbound side, so the upstream wiring has to be the
-#     mitmproxy mode flag, not env.
+#     to `--mode upstream:URL` to chain through an upstream proxy.
+#     mitmproxy does NOT honor HTTPS_PROXY on its outbound side,
+#     so the upstream wiring has to be the mitmproxy mode flag,
+#     not env.
 #   * Upstream trust: when EGRESS_UPSTREAM_CA is set, build a
-#     combined trust bundle (system roots + pipelock CA) and point
+#     combined trust bundle (system roots + upstream CA) and point
 #     mitmproxy at it. The option REPLACES mitmproxy's default
-#     trust store, so passing pipelock's CA alone would break
-#     route-configured pipelock passthrough hosts.
+#     trust store, so passing the upstream CA alone would break
+#     non-chained hosts.
 #   * `-s /app/egress_addon.py` loads the addon that reads
 #     /etc/egress/routes.yaml.
 
@@ -38,11 +38,7 @@ fi
 
 # Bind address. Docker backend wants `0.0.0.0` (agent dials egress
 # directly via the docker network alias). Smolmachines backend
-# wants `127.0.0.1` because the agent dials pipelock — not egress
-# — and egress is pipelock's localhost-only upstream inside the
-# bundle. TSI's IP-only allowlist would otherwise let the agent
-# reach `<bundle-ip>:9099` and bypass pipelock's DLP; binding
-# 127.0.0.1 inside the bundle closes that gap (PRD 0023 chunk 3).
+# uses EGRESS_LISTEN_HOST when a non-default binding is needed.
 LISTEN_HOST_FLAG=""
 if [ -n "$EGRESS_LISTEN_HOST" ]; then
   LISTEN_HOST_FLAG="--listen-host $EGRESS_LISTEN_HOST"
@@ -56,13 +52,10 @@ if [ -n "$EGRESS_UPSTREAM_CA" ] && [ -f "$EGRESS_UPSTREAM_CA" ]; then
 fi
 
 # Scope the proxy env to this process tree only. In the bundle
-# image (PRD 0024) the four daemons share one container — setting
+# image (PRD 0024) multiple daemons share one container — setting
 # HTTPS_PROXY at the container level would route git-gate's git
-# pushes through pipelock, which is wrong (pipelock doesn't proxy
-# SSH and would block public git repos). Setting them here means
-# only mitmdump's subprocess inherits them. In the legacy
-# four-sidecar setup these env vars are also set in compose; here
-# they're additionally defensive.
+# pushes through an upstream proxy unintentionally. Setting them
+# here means only mitmdump's subprocess inherits them.
 if [ -n "$EGRESS_UPSTREAM_PROXY" ]; then
   export HTTPS_PROXY="$EGRESS_UPSTREAM_PROXY"
   export HTTP_PROXY="$EGRESS_UPSTREAM_PROXY"

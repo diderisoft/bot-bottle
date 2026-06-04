@@ -20,7 +20,6 @@ from bot_bottle.backend.smolmachines.bottle_plan import SmolmachinesBottlePlan
 from bot_bottle.egress import EgressPlan, EgressRoute
 from bot_bottle.git_gate import GitGatePlan, GitGateUpstream
 from bot_bottle.manifest import Manifest
-from bot_bottle.pipelock import PipelockProxyPlan
 from bot_bottle.workspace import workspace_plan
 
 
@@ -93,13 +92,6 @@ def _agent_provision() -> AgentProvisionPlan:
     )
 
 
-def _proxy_plan(tmp: str) -> PipelockProxyPlan:
-    return PipelockProxyPlan(
-        yaml_path=Path(tmp) / "pipelock.yaml",
-        slug="test-00001",
-    )
-
-
 def _docker_plan(spec: BottleSpec, tmp: str) -> DockerBottlePlan:
     stage = Path(tmp)
     return DockerBottlePlan(
@@ -121,7 +113,6 @@ def _docker_plan(spec: BottleSpec, tmp: str) -> DockerBottlePlan:
         env_file=stage / "env",
         forwarded_env={},
         prompt_file=stage / "prompt.txt",
-        proxy_plan=_proxy_plan(tmp),
         use_runsc=False,
     )
 
@@ -145,7 +136,6 @@ def _smolmachines_plan(spec: BottleSpec, tmp: str) -> SmolmachinesBottlePlan:
         agent_image_ref="bot-bottle-claude:latest",
         guest_env={"HTTPS_PROXY": "http://127.0.0.1:9999"},
         prompt_file=stage / "prompt.txt",
-        proxy_plan=_proxy_plan(tmp),
     )
 
 

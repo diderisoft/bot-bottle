@@ -81,8 +81,7 @@ STATUS_REJECTED = "rejected"
 STATUSES: tuple[str, ...] = (STATUS_APPROVED, STATUS_MODIFIED, STATUS_REJECTED)
 
 # Operator-initiated audit entries (no tool call). PRD 0014's
-# `routes edit <bottle>` and PRD 0015's `pipelock edit <bottle>`
-# verbs write entries with this action.
+# `routes edit <bottle>` verb writes entries with this action.
 ACTION_OPERATOR_EDIT = "operator-edit"
 
 QUEUE_DIR_IN_CONTAINER = "/run/supervise/queue"

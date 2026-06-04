@@ -32,7 +32,6 @@ from bot_bottle.backend.smolmachines.launch import _bundle_launch_spec
 from bot_bottle.egress import EgressPlan, EgressRoute
 from bot_bottle.git_gate import GitGatePlan, GitGateUpstream
 from bot_bottle.manifest import GitEntry, Manifest
-from bot_bottle.pipelock import PipelockProxyPlan
 from bot_bottle.supervise import SupervisePlan
 from bot_bottle.workspace import workspace_plan
 
@@ -71,7 +70,6 @@ def _plan(
     stage_dir: Path | None = None,
     egress_routes: tuple[EgressRoute, ...] = (),
     egress_ca_path: Path = Path(),
-    pipelock_ca_path: Path = Path(),
     supervise: bool = False,
     bundle_ip: str = "192.168.50.2",
     agent_git_gate_host: str = "127.0.0.1:55555",
@@ -131,11 +129,6 @@ def _plan(
         agent_image_ref="bot-bottle-claude:latest",
         guest_env=dict(guest_env or {}),
         prompt_file=Path("/tmp/state/demo-abc12/agent/prompt.txt"),
-        proxy_plan=PipelockProxyPlan(
-            yaml_path=Path("/tmp/pipelock.yaml"),
-            slug="demo-abc12",
-            ca_cert_host_path=pipelock_ca_path,
-        ),
         git_gate_plan=GitGatePlan(
             slug="demo-abc12",
             entrypoint_script=Path("/tmp/git-gate-entrypoint.sh"),
@@ -235,16 +228,13 @@ def _write_self_signed_cert(path: Path) -> None:
 
 
 class TestProvisionCA(unittest.TestCase):
-    """provision_ca selects the right CA cert (egress when the
-    bottle has routes, else pipelock) and dispatches
+    """provision_ca always uses the egress MITM CA and dispatches
     cp_in + exec in the right order."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory(prefix="cb-prov-ca.")
         self.tmp = Path(self._tmp.name)
-        self.pipelock_ca = self.tmp / "pipelock-ca.pem"
         self.egress_ca = self.tmp / "egress-ca.pem"
-        _write_self_signed_cert(self.pipelock_ca)
         _write_self_signed_cert(self.egress_ca)
 
     def tearDown(self):
@@ -259,40 +249,22 @@ class TestProvisionCA(unittest.TestCase):
         stderr="",
     )
 
-    def test_pipelock_path_when_no_routes(self):
-        plan = _plan(pipelock_ca_path=self.pipelock_ca)
+    def test_egress_ca_always_installed(self):
+        plan = _plan(egress_ca_path=self.egress_ca)
         bottle = _make_bottle(exec_result=self._UPDATE_OK)
         _ca.provision_ca(plan, bottle)
         bottle.cp_in.assert_called_once_with(
-            str(self.pipelock_ca),
+            str(self.egress_ca),
             _ca.AGENT_CA_PATH,
         )
-        # chmod + chown + update-ca-certificates are folded into
-        # one exec invocation; look at the single exec's script
-        # rather than expecting separate calls.
         bottle.exec.assert_called_once()
         script = bottle.exec.call_args.args[0]
         self.assertIn("chmod 644", script)
         self.assertIn("update-ca-certificates", script)
         self.assertEqual("root", bottle.exec.call_args.kwargs.get("user"))
 
-    def test_egress_path_when_routes_declared(self):
-        plan = _plan(
-            egress_routes=(EgressRoute(host="api.anthropic.com"),),
-            egress_ca_path=self.egress_ca,
-            pipelock_ca_path=self.pipelock_ca,
-        )
-        bottle = _make_bottle(exec_result=self._UPDATE_OK)
-        _ca.provision_ca(plan, bottle)
-        # When routes are declared, egress is the agent's first hop,
-        # so egress's CA is the one that gets installed.
-        bottle.cp_in.assert_called_once_with(
-            str(self.egress_ca),
-            _ca.AGENT_CA_PATH,
-        )
-
     def test_retries_smolvm_sigkill_during_update_ca(self):
-        plan = _plan(pipelock_ca_path=self.pipelock_ca)
+        plan = _plan(egress_ca_path=self.egress_ca)
         killed = ExecResult(
             returncode=137,
             stdout="Updating certificates in /etc/ssl/certs...\n",
@@ -308,10 +280,8 @@ class TestProvisionCA(unittest.TestCase):
         self.assertEqual(2, bottle.exec.call_count)
         sleep.assert_called_once_with(1.0)
 
-    def test_dies_when_selected_cert_missing(self):
-        # Plan claims a pipelock cert at a path that doesn't exist —
-        # something went wrong in launch's pipelock_tls_init.
-        plan = _plan(pipelock_ca_path=self.tmp / "does-not-exist.pem")
+    def test_dies_when_egress_cert_missing(self):
+        plan = _plan(egress_ca_path=self.tmp / "does-not-exist.pem")
         bottle = _make_bottle()
         with self.assertRaises(SystemExit):
             _ca.provision_ca(plan, bottle)
@@ -414,7 +384,7 @@ class TestBundleLaunchSpec(unittest.TestCase):
         spec = _bundle_launch_spec(plan, "net", "127.0.0.16")
 
         self.assertEqual(
-            "egress,pipelock,git-gate,git-http",
+            "egress,git-gate,git-http",
             spec.daemons_csv,
         )
         self.assertIn(9420, spec.ports_to_publish)

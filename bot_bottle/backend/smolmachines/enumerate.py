@@ -69,8 +69,8 @@ def enumerate_active() -> list[ActiveAgent]:
 
 
 def _query_bundle_services() -> dict[str, tuple[str, ...]]:
-    """`{slug: ('egress', 'pipelock', ...)}` from each running
-    bundle container's `BOT_BOTTLE_SIDECAR_DAEMONS` env var.
+    """`{slug: ('egress', ...)}` from each running bundle container's
+    `BOT_BOTTLE_SIDECAR_DAEMONS` env var.
     Smolmachines bundles all run the PRD-0024 image with the
     same daemon set declared via env, so one inspect per bundle
     gets us the picture without exec'ing into the container.

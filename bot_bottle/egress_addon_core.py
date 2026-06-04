@@ -167,7 +167,7 @@ def is_git_push_request(path: str, query: str) -> bool:
     Universal across routes — the block fires even when no
     egress route matches the host. A bare-pass route (host with
     no auth, no path_allowlist) would otherwise let push through to
-    pipelock + upstream untouched.
+    the upstream untouched.
     """
     if path.endswith("/git-receive-pack"):
         return True
@@ -189,8 +189,8 @@ def match_route(
     exactly (case-insensitive). DNS names are case-insensitive.
 
     Wildcard hosts (`*.foo.com`) are NOT supported — they caused
-    too many edge cases (apex match? cert validation? pipelock
-    mirror mismatch?) for too little payoff. Operators that need
+    too many edge cases (apex match? cert validation?) for too
+    little payoff. Operators that need
     multiple subdomains declare them individually (or one common
     parent host as a bare-pass route)."""
     target = request_host.lower()
@@ -210,8 +210,7 @@ def decide(
     return what the addon should do with the request.
 
     - No matching route → BLOCK. The route table is the bottle's
-      egress allowlist; defense-in-depth complements pipelock's
-      hostname gate on the downstream leg. A bottle that wants a
+      egress allowlist. A bottle that wants a
       host reachable from the agent must declare a route for it
       (bare-pass route — no `auth`, no `path_allowlist` — is fine
       for hosts that just need passthrough).

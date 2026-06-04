@@ -163,8 +163,8 @@ class ActiveAgent:
     bottle is the container, the agent is what runs in it.)
 
     Fields are deliberately backend-neutral. `services` is the set
-    of sidecar daemons currently up for this bottle (`pipelock`,
-    `egress`, `git-gate`, `supervise`); the dashboard uses it to
+    of sidecar daemons currently up for this bottle (`egress`,
+    `git-gate`, `supervise`); the dashboard uses it to
     gate edit verbs. `backend_name` is the matching key in
     `_BACKENDS` (`docker` / `smolmachines`) — used by the active-
     list rendering to disambiguate and by the dashboard's
@@ -213,7 +213,7 @@ class Bottle(ABC):
         `user` (default `node`, matching the agent image's USER
         directive) and return the captured stdout/stderr/returncode.
         The bottle's environment (including HTTPS_PROXY pointing at
-        the pipelock sidecar) is inherited by the child. Non-zero
+        the egress sidecar) is inherited by the child. Non-zero
         exit does not raise — callers inspect `returncode`
         themselves.
 
@@ -352,8 +352,8 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
 
     def provision_ca(self, plan: PlanT, bottle: "Bottle") -> None:
         """Install the per-bottle CA into the agent's trust store so
-        the agent trusts the bumped CONNECT cert egress (was
-        pipelock, pre-PRD-0017) presents. Default impl is a no-op so
+        the agent trusts the bumped CONNECT cert egress presents.
+        Default impl is a no-op so
         backends that don't yet support TLS interception (every backend
         except Docker today) aren't forced to implement it. The Docker
         backend overrides to docker-cp the cert in and run

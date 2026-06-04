@@ -56,7 +56,6 @@ class TestSmolmachinesResolveEnv(unittest.TestCase):
                     patch("bot_bottle.backend.smolmachines.prepare.smolmachines_bundle_subnet",
                           return_value=("10.99.0.0/24", "10.99.0.1", "10.99.0.2")),
                     patch("bot_bottle.backend.smolmachines.prepare.GitGate") as mock_gg,
-                    patch("bot_bottle.backend.smolmachines.prepare.PipelockProxy") as mock_pl,
                     patch("bot_bottle.backend.smolmachines.prepare.Egress") as mock_eg,
                     patch("bot_bottle.backend.smolmachines.prepare.Supervise"),
                     patch(
@@ -65,7 +64,6 @@ class TestSmolmachinesResolveEnv(unittest.TestCase):
                     patch("bot_bottle.backend.smolmachines.prepare.runtime_for"),
                 ):
                     mock_gg.return_value.prepare.return_value = MagicMock()
-                    mock_pl.return_value.prepare.return_value = MagicMock()
                     mock_eg.return_value.prepare.return_value = MagicMock()
                     def _make_provision(**kwargs):  # type: ignore
                         return AgentProvisionPlan(

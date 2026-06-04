@@ -116,15 +116,13 @@ def launch(
                 internal_network=internal_network,
                 egress_network=egress_network,
             )
-        egress_plan = plan.egress_plan
-        if egress_plan.routes:
-            egress_plan = dataclasses.replace(
-                egress_plan,
-                internal_network=internal_network,
-                egress_network=egress_network,
-                mitmproxy_ca_host_path=egress_ca_host,
-                mitmproxy_ca_cert_only_host_path=egress_ca_cert_only,
-            )
+        egress_plan = dataclasses.replace(
+            plan.egress_plan,
+            internal_network=internal_network,
+            egress_network=egress_network,
+            mitmproxy_ca_host_path=egress_ca_host,
+            mitmproxy_ca_cert_only_host_path=egress_ca_cert_only,
+        )
         supervise_plan = plan.supervise_plan
         if supervise_plan is not None:
             supervise_plan = dataclasses.replace(

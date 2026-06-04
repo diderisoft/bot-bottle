@@ -81,13 +81,9 @@ class TestBundleBringup(unittest.TestCase):
             subnet=subnet,
             gateway=gateway,
             bundle_ip=bundle_ip,
-            # Only run the pipelock daemon for this smoke — it's
-            # the lightest of the four and doesn't need bind
-            # mounts beyond what we'd skip without
-            # BOT_BOTTLE_SIDECAR_DAEMONS. (The init
-            # supervisor will exit if pipelock fails to find its
-            # yaml — that's expected here; we just need the
-            # container to land on the network at the right IP.)
+            # Empty daemons_csv → init exits "no daemons selected"
+            # immediately. We just need the container to land on
+            # the network at the right IP before it exits.
             daemons_csv="",  # empty → init exits "no daemons selected"
         )
         start_bundle(spec)

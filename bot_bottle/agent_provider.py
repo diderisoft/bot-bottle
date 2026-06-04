@@ -84,9 +84,9 @@ class AgentProvisionPlan:
     return the same shape without adding backend-plan fields.
 
     `egress_routes` are provider-declared EgressRoutes that backends
-    pass to `Egress.prepare` and `PipelockProxy.prepare`. This keeps
-    provider logic out of the egress and pipelock modules — they merge
-    provider routes generically without knowing the provider type.
+    pass to `Egress.prepare`. This keeps provider logic out of the
+    egress module — it merges provider routes generically without
+    knowing the provider type.
 
     `hidden_env_names` is the set of env var names the provider injected
     as non-secret placeholders. `print_util.visible_agent_env_names` uses

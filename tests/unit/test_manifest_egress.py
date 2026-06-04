@@ -219,57 +219,10 @@ class TestRole(unittest.TestCase):
             _bottle([{"host": "x.example", "role": ["x", 42]}])
 
 
-class TestPipelockPolicy(unittest.TestCase):
-    def test_tls_passthrough_route_policy(self):
-        b = _bottle([{
-            "host": "api.openai.com",
-            "pipelock": {"tls_passthrough": True},
-        }])
-        self.assertTrue(b.egress.routes[0].Pipelock.TlsPassthrough)
-
-    def test_ssrf_ip_allowlist_route_policy(self):
-        b = _bottle([{
-            "host": "gitea.dideric.is",
-            "pipelock": {"ssrf_ip_allowlist": ["192.0.2.10/32"]},
-        }])
-        self.assertEqual(
-            ("192.0.2.10/32",),
-            b.egress.routes[0].Pipelock.SsrfIpAllowlist,
-        )
-
-    def test_tls_passthrough_defaults_false(self):
-        b = _bottle([{"host": "api.openai.com"}])
-        self.assertFalse(b.egress.routes[0].Pipelock.TlsPassthrough)
-        self.assertEqual((), b.egress.routes[0].Pipelock.SsrfIpAllowlist)
-
-    def test_pipelock_policy_must_be_object(self):
+class TestPipelockKeyRejected(unittest.TestCase):
+    def test_pipelock_key_rejected_as_unknown(self):
         with self.assertRaises(ManifestError):
-            _bottle([{"host": "x.example", "pipelock": True}])
-
-    def test_tls_passthrough_must_be_bool(self):
-        with self.assertRaises(ManifestError):
-            _bottle([{
-                "host": "x.example",
-                "pipelock": {"tls_passthrough": "yes"},
-            }])
-
-    def test_ssrf_ip_allowlist_must_be_array(self):
-        with self.assertRaises(ManifestError):
-            _bottle([{
-                "host": "x.example",
-                "pipelock": {"ssrf_ip_allowlist": "192.0.2.10/32"},
-            }])
-
-    def test_ssrf_ip_allowlist_items_must_be_cidr_or_ip(self):
-        with self.assertRaises(ManifestError):
-            _bottle([{
-                "host": "x.example",
-                "pipelock": {"ssrf_ip_allowlist": ["not-an-ip"]},
-            }])
-
-    def test_unknown_pipelock_key_rejected(self):
-        with self.assertRaises(ManifestError):
-            _bottle([{"host": "x.example", "pipelock": {"wat": True}}])
+            _bottle([{"host": "x.example", "pipelock": {"tls_passthrough": True}}])
 
 
 class TestRouteValidation(unittest.TestCase):

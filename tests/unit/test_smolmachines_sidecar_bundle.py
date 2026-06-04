@@ -134,34 +134,35 @@ class TestStartBundle(unittest.TestCase):
 
     def test_daemons_env_passed_in(self):
         with self._patch_run() as m:
-            start_bundle(_spec(daemons_csv="egress,pipelock,supervise"))
+            start_bundle(_spec(daemons_csv="egress,supervise"))
         argv = m.call_args.args[0]
         self.assertIn("-e", argv)
         self.assertIn(
-            "BOT_BOTTLE_SIDECAR_DAEMONS=egress,pipelock,supervise",
+            "BOT_BOTTLE_SIDECAR_DAEMONS=egress,supervise",
             argv,
         )
 
     def test_environment_entries_pass_through(self):
         with self._patch_run() as m:
             start_bundle(_spec(environment=(
-                "EGRESS_UPSTREAM_PROXY=http://...",
                 "SUPERVISE_BOTTLE_SLUG=demo-abc12",
                 "EGRESS_TOKEN_0",  # bare-name → host env inherit
             )))
         argv = m.call_args.args[0]
-        self.assertIn("EGRESS_UPSTREAM_PROXY=http://...", argv)
         self.assertIn("SUPERVISE_BOTTLE_SLUG=demo-abc12", argv)
         self.assertIn("EGRESS_TOKEN_0", argv)
 
     def test_volumes_render_with_ro_flag(self):
         with self._patch_run() as m:
             start_bundle(_spec(volumes=(
-                ("/host/pipelock.yaml", "/etc/pipelock.yaml", True),
+                ("/host/egress-ca.pem", "/home/mitmproxy/.mitmproxy/mitmproxy-ca.pem", True),
                 ("/host/queue", "/run/supervise/queue", False),
             )))
         argv = m.call_args.args[0]
-        self.assertIn("/host/pipelock.yaml:/etc/pipelock.yaml:ro", argv)
+        self.assertIn(
+            "/host/egress-ca.pem:/home/mitmproxy/.mitmproxy/mitmproxy-ca.pem:ro",
+            argv,
+        )
         self.assertIn("/host/queue:/run/supervise/queue", argv)
 
     def test_failure_dies(self):

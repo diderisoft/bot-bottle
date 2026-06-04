@@ -2,8 +2,8 @@
 
 Verifies that flipping `BOT_BOTTLE_SIDECAR_BUNDLE=1` produces a
 working bottle: `docker compose up` brings the agent + bundle pair
-online, the four daemons inside the bundle bind their ports, and
-the agent can reach pipelock + supervise via the bundle's network
+online, the daemons inside the bundle bind their ports, and the
+agent can reach egress + supervise via the bundle's network
 aliases (no agent-side config changes between flag positions).
 
 Skipped under GITEA_ACTIONS — the bundle image is a multi-stage
@@ -27,11 +27,9 @@ from tests._docker import skip_unless_docker
 
 
 def _manifest() -> Manifest:
-    """Bottle with supervise on so the bundle exercises three of
-    the four daemons (pipelock, egress, supervise). Git is off
-    because a meaningful git-gate test needs a real upstream and
-    SSH keys — out of scope for a bundle smoke. Egress is
-    implicitly on as pipelock's upstream regardless of routes."""
+    """Bottle with supervise on so the bundle exercises egress +
+    supervise. Git is off because a meaningful git-gate test needs
+    a real upstream and SSH keys — out of scope for a bundle smoke."""
     return Manifest.from_json_obj({
         "bottles": {
             "dev": {
@@ -68,21 +66,16 @@ class TestSidecarBundleCompose(unittest.TestCase):
                 plan = backend.prepare(spec, stage_dir=stage_dir)
                 with backend.launch(plan) as bottle:
                     # The agent's HTTPS_PROXY URL (resolved at
-                    # renderer-time, unchanged from the legacy
-                    # shape) should reach pipelock inside the
-                    # bundle. We probe by asking for the proxy's
-                    # listening port from inside the agent.
+                    # renderer-time) should reach egress inside
+                    # the bundle. A bare CONNECT with no upstream
+                    # URL gets rejected with 400 or 405 but proves
+                    # the listener is alive at the alias.
                     probe = bottle.exec(
                         "set -eu\n"
                         "echo HTTPS_PROXY=$HTTPS_PROXY\n"
                         "PORT=$(echo \"$HTTPS_PROXY\" | sed -E 's|.*:([0-9]+).*|\\1|')\n"
                         "HOST=$(echo \"$HTTPS_PROXY\" | sed -E 's|http://([^:]+):.*|\\1|')\n"
                         "echo HOST=$HOST PORT=$PORT\n"
-                        # nc is not in the agent image but curl is —
-                        # a CONNECT with no upstream URL will get
-                        # rejected by pipelock with 400 or 405 but
-                        # confirms the listener is alive at the
-                        # alias.
                         "curl -sS --max-time 5 -o /dev/null -w 'http=%{http_code}\\n' "
                         "  \"http://$HOST:$PORT/\" || true\n"
                     )
@@ -98,11 +91,10 @@ class TestSidecarBundleCompose(unittest.TestCase):
             shutil.rmtree(stage_dir, ignore_errors=True)
 
         self.assertEqual(0, probe.returncode, msg=probe.stderr)
-        # pipelock answered SOMETHING — any 4xx is fine, just proves
-        # the bundle's pipelock daemon is listening at the
-        # `pipelock` alias on port 8888 (or whatever the env says).
+        # egress answered SOMETHING — any 4xx is fine, just proves
+        # the egress daemon is listening at the proxy address.
         self.assertIn("http=", probe.stdout,
-                      f"no HTTP response from pipelock: {probe.stdout!r}")
+                      f"no HTTP response from egress: {probe.stdout!r}")
         # supervise's /health endpoint exists (PRD 0013); it should
         # answer 200 or similar — anything non-empty proves the
         # third daemon's alias resolves to the same bundle.

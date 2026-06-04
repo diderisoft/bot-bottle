@@ -20,7 +20,6 @@ from bot_bottle.backend.docker.provision import git as _git
 from bot_bottle.egress import EgressPlan
 from bot_bottle.git_gate import GitGatePlan
 from bot_bottle.manifest import Manifest
-from bot_bottle.pipelock import PipelockProxyPlan
 from bot_bottle.workspace import workspace_plan
 
 
@@ -53,9 +52,6 @@ def _plan(*, git_user: dict | None = None,  # type: ignore
         env_file=Path("/tmp/agent.env"),
         forwarded_env={},
         prompt_file=Path("/tmp/prompt.txt"),
-        proxy_plan=PipelockProxyPlan(
-            yaml_path=Path("/tmp/pipelock.yaml"), slug="demo-abc12",
-        ),
         git_gate_plan=GitGatePlan(
             slug="demo-abc12",
             entrypoint_script=Path("/tmp/git-gate-entrypoint.sh"),
