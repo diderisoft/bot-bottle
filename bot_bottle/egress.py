@@ -15,7 +15,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .egress_addon_core import Route
+from .egress_addon_core import (
+    HeaderMatch as CoreHeaderMatch,
+    MatchEntry as CoreMatchEntry,
+    PathMatch as CorePathMatch,
+    Route,
+)
 from .log import die
 
 if TYPE_CHECKING:
@@ -62,9 +67,6 @@ class EgressPlan:
 def egress_manifest_routes(
     bottle: Bottle,
 ) -> tuple[EgressRoute, ...]:
-    from .egress_addon_core import MatchEntry as CoreMatchEntry
-    from .egress_addon_core import PathMatch as CorePathMatch
-    from .egress_addon_core import HeaderMatch as CoreHeaderMatch
     out: list[EgressRoute] = []
     for r in bottle.egress.routes:
         core_matches: list[CoreMatchEntry] = []
