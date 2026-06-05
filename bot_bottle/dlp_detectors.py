@@ -109,30 +109,50 @@ JAILBREAK_PHRASES: tuple[re.Pattern[str], ...] = (
 )
 
 
+PROXIMITY_CHARS = 500
+
+
+def _min_distance(
+    a_matches: list[re.Match[str]],
+    b_matches: list[re.Match[str]],
+) -> int | None:
+    """Smallest char distance between any pair of matches."""
+    if not a_matches or not b_matches:
+        return None
+    best = None
+    for a in a_matches:
+        for b in b_matches:
+            gap = max(0, max(a.start(), b.start()) - min(a.end(), b.end()))
+            if best is None or gap < best:
+                best = gap
+    return best
+
+
 def scan_naive_injection(text: str) -> ScanResult | None:
-    disclosure = any(p.search(text) for p in DISCLOSURE_PHRASES)
-    token = scan_token_patterns(text) is not None
+    disclosure_hits = [m for p in DISCLOSURE_PHRASES for m in p.finditer(text)]
+    jailbreak_hits = [m for p in JAILBREAK_PHRASES for m in p.finditer(text)]
 
-    # Tier 1: credential + disclosure = BLOCK
-    if disclosure and token:
-        return ScanResult(
-            severity="block",
-            reason="prompt disclosure with embedded credential in response",
-        )
+    if disclosure_hits and jailbreak_hits:
+        dist = _min_distance(disclosure_hits, jailbreak_hits)
+        if dist is not None and dist <= PROXIMITY_CHARS:
+            return ScanResult(
+                severity="block",
+                reason=(
+                    f"disclosure and jailbreak phrases within "
+                    f"{dist} chars in response"
+                ),
+            )
 
-    # Tier 2: multiple jailbreak phrases = WARN
-    jailbreak_count = sum(1 for p in JAILBREAK_PHRASES if p.search(text))
-    if jailbreak_count >= 2:
-        return ScanResult(
-            severity="warn",
-            reason=f"{jailbreak_count} jailbreak phrases detected in response",
-        )
-
-    # Tier 2b: explicit prompt disclosure without credential = WARN
-    if disclosure and "system prompt:" in text.lower():
+    if disclosure_hits:
         return ScanResult(
             severity="warn",
-            reason="explicit system prompt disclosure in response",
+            reason="prompt disclosure phrase detected in response",
+        )
+
+    if jailbreak_hits:
+        return ScanResult(
+            severity="warn",
+            reason="jailbreak phrase detected in response",
         )
 
     return None
