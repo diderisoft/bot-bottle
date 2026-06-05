@@ -18,7 +18,6 @@ from bot_bottle.egress_addon_core import (
     MatchEntry,
     PathMatch,
     Route,
-    ScanResult,
     decide,
     evaluate_matches,
     is_git_push_request,
