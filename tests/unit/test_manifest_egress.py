@@ -1,9 +1,10 @@
-"""Unit: manifest parsing for `bottle.egress.routes[]` (PRD 0017).
+"""Unit: manifest parsing for `bottle.egress.routes[]` (PRD 0017, PRD 0053).
 
-The route shape is new: `host` (required), optional `path_allowlist`,
-optional nested `auth: { scheme, token_ref }`. Validation rules per
-the PRD: empty `auth: {}` is an error, partial `auth` is an error,
-auth omission means unauthenticated."""
+The route shape uses Gateway API HTTPRoute match vocabulary:
+`host` (required), optional `matches` (paths/methods/headers),
+optional nested `auth: { scheme, token_ref }`, optional `dlp`.
+Validation rules per PRD 0017/0053: empty `auth: {}` is an error,
+partial `auth` is an error, auth omission means unauthenticated."""
 
 import unittest
 
@@ -42,7 +43,7 @@ class TestMinimalRoute(unittest.TestCase):
         self.assertEqual(1, len(b.egress.routes))
         r = b.egress.routes[0]
         self.assertEqual("api.example.com", r.Host)
-        self.assertEqual((), r.PathAllowlist)
+        self.assertEqual((), r.Matches)
         self.assertEqual("", r.AuthScheme)
         self.assertEqual("", r.TokenRef)
 
@@ -111,32 +112,118 @@ class TestAgentProviderHostCredentials(unittest.TestCase):
             })
 
 
-class TestPathAllowlist(unittest.TestCase):
+class TestMatches(unittest.TestCase):
     def test_optional(self):
         b = _bottle([{"host": "x.example"}])
-        self.assertEqual((), b.egress.routes[0].PathAllowlist)
+        self.assertEqual((), b.egress.routes[0].Matches)
 
     def test_must_be_array(self):
         with self.assertRaises(ManifestError):
-            _bottle([{"host": "x.example", "path_allowlist": "/x/"}])
+            _bottle([{"host": "x.example", "matches": "nope"}])
 
-    def test_items_must_be_strings(self):
+    def test_path_prefix_default(self):
+        b = _bottle([{"host": "x.example", "matches": [
+            {"paths": [{"value": "/api/"}]}
+        ]}])
+        m = b.egress.routes[0].Matches[0]
+        self.assertEqual(1, len(m.Paths))
+        self.assertEqual("prefix", m.Paths[0].Type)
+        self.assertEqual("/api/", m.Paths[0].Value)
+
+    def test_path_exact(self):
+        b = _bottle([{"host": "x.example", "matches": [
+            {"paths": [{"type": "exact", "value": "/health"}]}
+        ]}])
+        self.assertEqual("exact", b.egress.routes[0].Matches[0].Paths[0].Type)
+
+    def test_path_regex(self):
+        b = _bottle([{"host": "x.example", "matches": [
+            {"paths": [{"type": "regex", "value": "^/api/v[0-9]+/"}]}
+        ]}])
+        self.assertEqual("regex", b.egress.routes[0].Matches[0].Paths[0].Type)
+
+    def test_path_invalid_regex_rejected(self):
         with self.assertRaises(ManifestError):
-            _bottle([{"host": "x.example", "path_allowlist": [42]}])
+            _bottle([{"host": "x.example", "matches": [
+                {"paths": [{"type": "regex", "value": "[unclosed"}]}
+            ]}])
 
-    def test_items_must_be_absolute_paths(self):
+    def test_path_must_start_with_slash_for_prefix(self):
         with self.assertRaises(ManifestError):
-            _bottle([{"host": "x.example", "path_allowlist": ["nope/"]}])
+            _bottle([{"host": "x.example", "matches": [
+                {"paths": [{"value": "nope"}]}
+            ]}])
 
-    def test_full_list(self):
-        b = _bottle([{
-            "host": "github.com",
-            "path_allowlist": ["/didericis/", "/users/didericis"],
-        }])
-        self.assertEqual(
-            ("/didericis/", "/users/didericis"),
-            b.egress.routes[0].PathAllowlist,
-        )
+    def test_methods_normalised_to_uppercase(self):
+        b = _bottle([{"host": "x.example", "matches": [
+            {"methods": ["get", "Post"]}
+        ]}])
+        self.assertEqual(("GET", "POST"), b.egress.routes[0].Matches[0].Methods)
+
+    def test_invalid_method_rejected(self):
+        with self.assertRaises(ManifestError):
+            _bottle([{"host": "x.example", "matches": [
+                {"methods": ["INVALID"]}
+            ]}])
+
+    def test_headers_exact(self):
+        b = _bottle([{"host": "x.example", "matches": [
+            {"headers": [{"name": "content-type", "value": "application/json"}]}
+        ]}])
+        h = b.egress.routes[0].Matches[0].Headers[0]
+        self.assertEqual("content-type", h.Name)
+        self.assertEqual("application/json", h.Value)
+        self.assertEqual("exact", h.Type)
+
+    def test_headers_regex(self):
+        b = _bottle([{"host": "x.example", "matches": [
+            {"headers": [{"name": "accept", "value": "text/.*", "type": "regex"}]}
+        ]}])
+        self.assertEqual("regex", b.egress.routes[0].Matches[0].Headers[0].Type)
+
+    def test_unknown_match_entry_key_rejected(self):
+        with self.assertRaises(ManifestError):
+            _bottle([{"host": "x.example", "matches": [
+                {"paths": [{"value": "/x/"}], "bogus": True}
+            ]}])
+
+
+class TestDlp(unittest.TestCase):
+    def test_omitted_means_all_enabled(self):
+        b = _bottle([{"host": "x.example"}])
+        r = b.egress.routes[0]
+        self.assertIsNone(r.OutboundDetectors)
+        self.assertIsNone(r.InboundDetectors)
+
+    def test_false_means_disabled(self):
+        b = _bottle([{"host": "x.example", "dlp": {
+            "outbound_detectors": False,
+            "inbound_detectors": False,
+        }}])
+        r = b.egress.routes[0]
+        self.assertEqual((), r.OutboundDetectors)
+        self.assertEqual((), r.InboundDetectors)
+
+    def test_named_detectors(self):
+        b = _bottle([{"host": "x.example", "dlp": {
+            "outbound_detectors": ["token_patterns"],
+            "inbound_detectors": ["naive_injection_detection"],
+        }}])
+        r = b.egress.routes[0]
+        self.assertEqual(("token_patterns",), r.OutboundDetectors)
+        self.assertEqual(("naive_injection_detection",), r.InboundDetectors)
+
+    def test_unknown_detector_rejected(self):
+        with self.assertRaises(ManifestError):
+            _bottle([{"host": "x.example", "dlp": {
+                "outbound_detectors": ["nonexistent"],
+            }}])
+
+    def test_unknown_dlp_key_rejected(self):
+        with self.assertRaises(ManifestError):
+            _bottle([{"host": "x.example", "dlp": {
+                "bogus": True,
+            }}])
 
 
 class TestAuth(unittest.TestCase):
@@ -156,8 +243,6 @@ class TestAuth(unittest.TestCase):
         self.assertEqual("GH_PAT", r.TokenRef)
 
     def test_empty_auth_block_rejected(self):
-        # Per PRD 0017: `auth: {}` is an error, not a synonym for
-        # "no auth" — that's what omission is for.
         with self.assertRaises(ManifestError):
             _bottle([{"host": "x.example", "auth": {}}])
 
@@ -183,7 +268,6 @@ class TestAuth(unittest.TestCase):
             }])
 
     def test_token_scheme_allowed(self):
-        # Gitea quirk: `Authorization: token <pat>` (not Bearer).
         b = _bottle([{
             "host": "git.example",
             "auth": {"scheme": "token", "token_ref": "GITEA_PAT"},
@@ -204,7 +288,6 @@ class TestRole(unittest.TestCase):
         self.assertEqual((), b.egress.routes[0].Role)
 
     def test_any_role_rejected(self):
-        # All former roles removed; the field is reserved for future use.
         for role in ("claude_code_oauth", "codex_auth", "totally-made-up"):
             with self.subTest(role=role):
                 with self.assertRaises(ManifestError):
@@ -227,13 +310,12 @@ class TestPipelockKeyRejected(unittest.TestCase):
 
 class TestRouteValidation(unittest.TestCase):
     def test_duplicate_hosts_rejected(self):
-        # Routes match by exact host; duplicates leave the choice
-        # ambiguous, so we reject them up front rather than picking
-        # the first/last silently.
         with self.assertRaises(ManifestError):
             _bottle([
                 {"host": "github.com"},
-                {"host": "github.com", "path_allowlist": ["/x/"]},
+                {"host": "github.com", "matches": [
+                    {"paths": [{"value": "/x/"}]}
+                ]},
             ])
 
     def test_duplicate_host_case_insensitive(self):
@@ -248,7 +330,6 @@ class TestRouteValidation(unittest.TestCase):
         self.assertEqual((), b.egress.routes)
 
     def test_no_egress_block_means_empty(self):
-        # The bottle dataclass defaults to an empty EgressConfig.
         b = Manifest.from_json_obj({
             "bottles": {"dev": {}},
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},

@@ -1,32 +1,31 @@
-"""Egress routing manifest dataclasses and helpers."""
+"""Egress routing manifest dataclasses and helpers (PRD 0017, PRD 0053)."""
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import cast
 
 from .manifest_util import ManifestError, as_json_object
 
-
-# Auth schemes for the egress route's optional `auth` block.
-# Same values cred-proxy accepts today; `token` sidesteps the Gitea
-# token-not-Bearer quirk (go-gitea/gitea#16734).
 EGRESS_AUTH_SCHEMES = ("Bearer", "token")
+
+PATH_MATCH_TYPES = ("exact", "prefix", "regex")
+HEADER_MATCH_TYPES = ("exact", "regex")
+
+VALID_METHODS = frozenset({
+    "GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "TRACE",
+    "CONNECT",
+})
+
+OUTBOUND_DETECTOR_NAMES = frozenset({"token_patterns", "known_secrets"})
+INBOUND_DETECTOR_NAMES = frozenset({"naive_injection_detection"})
 
 
 def validate_egress_routes(
     bottle_name: str,
     routes: tuple[EgressRoute, ...],
 ) -> None:
-    """Cross-validation for `bottle.egress.routes`: hosts must be unique.
-
-    The proxy matches by exact-host (v1); duplicate hosts leave the
-    route choice ambiguous so we reject them up front.
-
-    No cross-validation against `bottle.git-gate.repos` is performed.
-    git-gate (SSH push/fetch) and egress (HTTPS) broker different
-    protocols; declaring both for the same host is a legitimate dev
-    setup."""
     seen_hosts: dict[str, None] = {}
     for r in routes:
         key = r.Host.lower()
@@ -39,36 +38,34 @@ def validate_egress_routes(
 
 
 @dataclass(frozen=True)
+class PathMatch:
+    Type: str = "prefix"
+    Value: str = ""
+
+
+@dataclass(frozen=True)
+class HeaderMatch:
+    Name: str = ""
+    Value: str = ""
+    Type: str = "exact"
+
+
+@dataclass(frozen=True)
+class MatchEntry:
+    Paths: tuple[PathMatch, ...] = ()
+    Methods: tuple[str, ...] = ()
+    Headers: tuple[HeaderMatch, ...] = ()
+
+
+@dataclass(frozen=True)
 class EgressRoute:
-    """One route on the per-bottle egress sidecar (PRD 0017).
-
-    `Host` matches the request's hostname (case-insensitive). The
-    optional `PathAllowlist` constrains the URL path to a set of
-    prefixes; empty tuple means no path-level filtering. The optional
-    `AuthScheme` / `TokenRef` pair drives credential injection:
-    when set, the proxy strips any inbound Authorization and injects
-    `<AuthScheme> <value-of-host-env-named-by-TokenRef>`. When the
-    manifest's `auth` block is omitted both fields are empty strings —
-    no Authorization is written, no token forwarded.
-
-    `Role` is reserved for future use; all role strings are currently
-    rejected by the validator.
-
-    Validation rules (enforced in `from_dict`):
-      - `host` required, non-empty.
-      - `path_allowlist` optional, list of absolute path prefixes.
-      - `auth` optional. If present, MUST carry both `scheme` and
-        `token_ref` as non-empty strings; an empty `auth: {}` is an
-        error rather than a synonym for "no auth" (omit `auth` for
-        that case).
-      - `role` optional, reserved — any non-empty value is rejected.
-    """
-
     Host: str
-    PathAllowlist: tuple[str, ...] = ()
+    Matches: tuple[MatchEntry, ...] = ()
     AuthScheme: str = ""
     TokenRef: str = ""
     Role: tuple[str, ...] = ()
+    OutboundDetectors: tuple[str, ...] | None = None
+    InboundDetectors: tuple[str, ...] | None = None
 
     @classmethod
     def from_dict(cls, bottle_name: str, idx: int, raw: object) -> "EgressRoute":
@@ -78,30 +75,24 @@ class EgressRoute:
         if not isinstance(host, str) or not host:
             raise ManifestError(f"{label} missing required string field 'host'")
 
-        path_allow_raw = d.get("path_allowlist")
-        prefixes: tuple[str, ...] = ()
-        if path_allow_raw is not None:
-            if not isinstance(path_allow_raw, list):
+        # --- matches ---
+        matches: tuple[MatchEntry, ...] = ()
+        matches_raw = d.get("matches")
+        if matches_raw is not None:
+            if not isinstance(matches_raw, list):
                 raise ManifestError(
-                    f"{label} path_allowlist must be an array "
-                    f"(was {type(path_allow_raw).__name__})"
+                    f"{label} matches must be an array "
+                    f"(was {type(matches_raw).__name__})"
                 )
-            path_list = cast(list[object], path_allow_raw)
-            collected: list[str] = []
-            for j, p in enumerate(path_list):
-                if not isinstance(p, str):
-                    raise ManifestError(
-                        f"{label} path_allowlist[{j}] must be a string "
-                        f"(was {type(p).__name__})"
-                    )
-                if not p.startswith("/"):
-                    raise ManifestError(
-                        f"{label} path_allowlist[{j}] {p!r} must be an "
-                        f"absolute path prefix starting with '/'"
-                    )
-                collected.append(p)
-            prefixes = tuple(collected)
+            matches_list = cast(list[object], matches_raw)
+            entries: list[MatchEntry] = []
+            for k, entry_raw in enumerate(matches_list):
+                entries.append(
+                    _parse_match_entry(label, k, entry_raw)
+                )
+            matches = tuple(entries)
 
+        # --- auth ---
         auth_scheme = ""
         token_ref = ""
         if "auth" in d:
@@ -139,6 +130,7 @@ class EgressRoute:
             auth_scheme = auth_scheme_raw
             token_ref = token_ref_raw
 
+        # --- role (reserved) ---
         role_raw = d.get("role")
         roles: tuple[str, ...] = ()
         if role_raw is None:
@@ -165,29 +157,197 @@ class EgressRoute:
                 f"the 'role' field is reserved for future use"
             )
 
+        # --- dlp ---
+        outbound_detectors: tuple[str, ...] | None = None
+        inbound_detectors: tuple[str, ...] | None = None
+        if "dlp" in d:
+            outbound_detectors, inbound_detectors = _parse_dlp_block(
+                label, d.get("dlp"),
+            )
+
         for k in d:
-            if k not in ("host", "path_allowlist", "auth", "role"):
+            if k not in ("host", "matches", "auth", "role", "dlp"):
                 raise ManifestError(
                     f"{label} has unknown key {k!r}; accepted keys are "
-                    f"'host', 'path_allowlist', 'auth', 'role'"
+                    f"'host', 'matches', 'auth', 'role', 'dlp'"
                 )
 
         return cls(
             Host=host,
-            PathAllowlist=prefixes,
+            Matches=matches,
             AuthScheme=auth_scheme,
             TokenRef=token_ref,
             Role=roles,
+            OutboundDetectors=outbound_detectors,
+            InboundDetectors=inbound_detectors,
         )
+
+
+def _parse_match_entry(
+    route_label: str, k: int, raw: object,
+) -> MatchEntry:
+    label = f"{route_label} matches[{k}]"
+    d = as_json_object(raw, label)
+
+    paths: tuple[PathMatch, ...] = ()
+    paths_raw = d.get("paths")
+    if paths_raw is not None:
+        if not isinstance(paths_raw, list):
+            raise ManifestError(f"{label} paths must be an array")
+        paths_list = cast(list[object], paths_raw)
+        parsed_paths: list[PathMatch] = []
+        for j, p_raw in enumerate(paths_list):
+            parsed_paths.append(_parse_path_match(label, j, p_raw))
+        paths = tuple(parsed_paths)
+
+    methods: tuple[str, ...] = ()
+    methods_raw = d.get("methods")
+    if methods_raw is not None:
+        if not isinstance(methods_raw, list):
+            raise ManifestError(f"{label} methods must be an array")
+        methods_list = cast(list[object], methods_raw)
+        normalised: list[str] = []
+        for j, m in enumerate(methods_list):
+            if not isinstance(m, str):
+                raise ManifestError(
+                    f"{label} methods[{j}] must be a string"
+                )
+            upper = m.upper()
+            if upper not in VALID_METHODS:
+                raise ManifestError(
+                    f"{label} methods[{j}] {m!r} is not a valid HTTP method"
+                )
+            normalised.append(upper)
+        methods = tuple(normalised)
+
+    headers: tuple[HeaderMatch, ...] = ()
+    headers_raw = d.get("headers")
+    if headers_raw is not None:
+        if not isinstance(headers_raw, list):
+            raise ManifestError(f"{label} headers must be an array")
+        headers_list = cast(list[object], headers_raw)
+        parsed_headers: list[HeaderMatch] = []
+        for j, h_raw in enumerate(headers_list):
+            parsed_headers.append(_parse_header_match(label, j, h_raw))
+        headers = tuple(parsed_headers)
+
+    for key in d:
+        if key not in ("paths", "methods", "headers"):
+            raise ManifestError(f"{label} has unknown key {key!r}")
+
+    return MatchEntry(Paths=paths, Methods=methods, Headers=headers)
+
+
+def _parse_path_match(
+    entry_label: str, j: int, raw: object,
+) -> PathMatch:
+    label = f"{entry_label} paths[{j}]"
+    d = as_json_object(raw, label)
+    ptype = d.get("type", "prefix")
+    if not isinstance(ptype, str) or ptype not in PATH_MATCH_TYPES:
+        raise ManifestError(
+            f"{label} type must be one of {', '.join(PATH_MATCH_TYPES)} "
+            f"(got {ptype!r})"
+        )
+    value = d.get("value")
+    if not isinstance(value, str) or not value:
+        raise ManifestError(f"{label} value must be a non-empty string")
+    if ptype in ("exact", "prefix") and not value.startswith("/"):
+        raise ManifestError(
+            f"{label} value {value!r} must start with '/' for type {ptype!r}"
+        )
+    if ptype == "regex":
+        try:
+            re.compile(value)
+        except re.error as e:
+            raise ManifestError(
+                f"{label} regex {value!r} failed to compile: {e}"
+            ) from e
+    for k in d:
+        if k not in ("type", "value"):
+            raise ManifestError(f"{label} has unknown key {k!r}")
+    return PathMatch(Type=ptype, Value=value)
+
+
+def _parse_header_match(
+    entry_label: str, j: int, raw: object,
+) -> HeaderMatch:
+    label = f"{entry_label} headers[{j}]"
+    d = as_json_object(raw, label)
+    name = d.get("name")
+    if not isinstance(name, str) or not name:
+        raise ManifestError(f"{label} name must be a non-empty string")
+    value = d.get("value")
+    if not isinstance(value, str):
+        raise ManifestError(f"{label} value must be a string")
+    htype = d.get("type", "exact")
+    if not isinstance(htype, str) or htype not in HEADER_MATCH_TYPES:
+        raise ManifestError(
+            f"{label} type must be one of {', '.join(HEADER_MATCH_TYPES)} "
+            f"(got {htype!r})"
+        )
+    if htype == "regex":
+        try:
+            re.compile(value)
+        except re.error as e:
+            raise ManifestError(
+                f"{label} regex {value!r} failed to compile: {e}"
+            ) from e
+    for k in d:
+        if k not in ("name", "value", "type"):
+            raise ManifestError(f"{label} has unknown key {k!r}")
+    return HeaderMatch(Name=name, Value=value, Type=htype)
+
+
+def _parse_dlp_block(
+    route_label: str,
+    raw: object,
+) -> tuple[tuple[str, ...] | None, tuple[str, ...] | None]:
+    label = f"{route_label} dlp"
+    d = as_json_object(raw, label)
+
+    def _parse_field(
+        field: str,
+        valid_names: frozenset[str],
+    ) -> tuple[str, ...] | None:
+        val = d.get(field)
+        if val is None:
+            return None
+        if val is False:
+            return ()
+        if not isinstance(val, list):
+            raise ManifestError(
+                f"{label} {field} must be false, a list, or omitted"
+            )
+        items = cast(list[object], val)
+        names: list[str] = []
+        for j, item in enumerate(items):
+            if not isinstance(item, str):
+                raise ManifestError(
+                    f"{label} {field}[{j}] must be a string"
+                )
+            if item not in valid_names:
+                raise ManifestError(
+                    f"{label} {field}[{j}] {item!r} is not a valid "
+                    f"detector; valid: {', '.join(sorted(valid_names))}"
+                )
+            names.append(item)
+        return tuple(names)
+
+    outbound = _parse_field("outbound_detectors", OUTBOUND_DETECTOR_NAMES)
+    inbound = _parse_field("inbound_detectors", INBOUND_DETECTOR_NAMES)
+
+    for k in d:
+        if k not in ("outbound_detectors", "inbound_detectors"):
+            raise ManifestError(
+                f"{label} has unknown key {k!r}; accepted keys are "
+                f"'outbound_detectors', 'inbound_detectors'"
+            )
+    return outbound, inbound
 
 
 @dataclass(frozen=True)
 class EgressConfig:
-    """Per-bottle egress configuration. Today this is just the
-    route table; the nesting under `egress:` leaves room for
-    per-bottle proxy settings (port override, log level, etc.) in
-    follow-ups."""
-
     routes: tuple[EgressRoute, ...] = ()
 
     @classmethod

@@ -144,7 +144,6 @@ def _plan(
             auth_scheme="Bearer",
             token_env="EGRESS_TOKEN_0",
             token_ref="TOK",
-            path_allowlist=(),
             roles=(),
         ),)
 

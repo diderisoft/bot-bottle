@@ -67,14 +67,12 @@ def _egress_plan(tmp: str) -> EgressPlan:
         routes=(
             EgressRoute(
                 host="api.example.com",
-                path_allowlist=("/v1/",),
                 auth_scheme="bearer",
                 token_env="EGRESS_TOKEN_0",
                 token_ref="TOKEN",
             ),
             EgressRoute(
                 host="static.example.com",
-                path_allowlist=("/",),
             ),
         ),
         token_env_map={"EGRESS_TOKEN_0": "TOKEN"},

@@ -63,6 +63,7 @@ COPY --from=gitleaks-src /usr/bin/gitleaks /usr/bin/gitleaks
 # Dockerfile.egress / Dockerfile.supervise layout.
 COPY bot_bottle/egress_addon_core.py /app/egress_addon_core.py
 COPY bot_bottle/egress_addon.py      /app/egress_addon.py
+COPY bot_bottle/dlp_detectors.py     /app/dlp_detectors.py
 COPY bot_bottle/yaml_subset.py       /app/yaml_subset.py
 COPY bot_bottle/supervise.py         /app/supervise.py
 COPY bot_bottle/supervise_server.py  /app/supervise_server.py

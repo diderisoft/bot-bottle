@@ -18,7 +18,7 @@ Bottle schema (frontmatter):
     user:       { name: <str>, email: <str> }   # optional
     repos:      { <name>: <git-gate-entry>, ... }  # optional
   egress: { routes: [ <egress-route>, ... ] }
-    # route keys: host, path_allowlist, auth, role
+    # route keys: host, matches, auth, role, dlp
   supervise:    <bool>                          # optional
 
 Agent schema (frontmatter):

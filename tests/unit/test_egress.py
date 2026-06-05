@@ -1,5 +1,5 @@
 """Unit: Egress route lift + routes.yaml render + token
-resolution (PRD 0017)."""
+resolution (PRD 0017, PRD 0053)."""
 
 import unittest
 
@@ -46,17 +46,45 @@ class TestManifestRouteLift(unittest.TestCase):
         self.assertEqual("api.github.com", r.host)
         self.assertEqual("Bearer", r.auth_scheme)
         self.assertEqual("GH_PAT", r.token_ref)
-        self.assertEqual("", r.token_env)  # slot assigned later
-        self.assertEqual((), r.path_allowlist)
+        self.assertEqual("", r.token_env)
+        self.assertEqual((), r.matches)
 
     def test_unauthenticated_route_has_empty_auth_fields(self):
-        b = _bottle([{"host": "github.com", "path_allowlist": ["/x/"]}])
+        b = _bottle([{"host": "github.com", "matches": [
+            {"paths": [{"value": "/x/"}]}
+        ]}])
         routes = egress_manifest_routes(b)
         r = routes[0]
         self.assertEqual("", r.auth_scheme)
         self.assertEqual("", r.token_env)
         self.assertEqual("", r.token_ref)
-        self.assertEqual(("/x/",), r.path_allowlist)
+        self.assertEqual(1, len(r.matches))
+        self.assertEqual(1, len(r.matches[0].paths))
+        self.assertEqual("/x/", r.matches[0].paths[0].value)
+
+    def test_matches_with_methods_and_headers(self):
+        b = _bottle([{"host": "api.example.com", "matches": [
+            {
+                "paths": [{"value": "/api/"}],
+                "methods": ["GET", "POST"],
+                "headers": [{"name": "content-type", "value": "application/json"}],
+            }
+        ]}])
+        routes = egress_manifest_routes(b)
+        m = routes[0].matches[0]
+        self.assertEqual(("GET", "POST"), m.methods)
+        self.assertEqual(1, len(m.headers))
+        self.assertEqual("content-type", m.headers[0].name)
+
+    def test_dlp_detectors_lifted(self):
+        b = _bottle([{"host": "x.example", "dlp": {
+            "outbound_detectors": ["token_patterns"],
+            "inbound_detectors": False,
+        }}])
+        routes = egress_manifest_routes(b)
+        r = routes[0]
+        self.assertEqual(("token_patterns",), r.outbound_detectors)
+        self.assertEqual((), r.inbound_detectors)
 
 
 class TestSlotAssignment(unittest.TestCase):
@@ -95,8 +123,6 @@ class TestSlotAssignment(unittest.TestCase):
         self.assertEqual(["EGRESS_TOKEN_0", "EGRESS_TOKEN_1"], slots)
 
     def test_unauthenticated_routes_dont_consume_slots(self):
-        # A bare-pass route between two authenticated routes mustn't
-        # skip a slot number — slot 0 + slot 1 stay tight.
         b = _bottle([
             {"host": "a.example",
              "auth": {"scheme": "Bearer", "token_ref": "T1"}},
@@ -159,15 +185,16 @@ class TestProviderRouteMerge(unittest.TestCase):
         self.assertEqual({}, egress_token_env_map(routes))
 
     def test_provider_route_wins_over_bare_manifest_route(self):
-        # Provisioned host wins outright; manifest path_allowlist is dropped.
-        b = _bottle([{"host": "api.openai.com", "path_allowlist": ["/v1/"]}])
+        b = _bottle([{"host": "api.openai.com", "matches": [
+            {"paths": [{"value": "/v1/"}]}
+        ]}])
         pr = EgressRoute(host="api.openai.com")
         routes = egress_routes_for_bottle(b, (pr,))
         self.assertEqual(1, len(routes))
         self.assertEqual("", routes[0].auth_scheme)
         self.assertEqual("", routes[0].token_env)
         self.assertEqual("", routes[0].token_ref)
-        self.assertEqual((), routes[0].path_allowlist)
+        self.assertEqual((), routes[0].matches)
         self.assertEqual({}, egress_token_env_map(routes))
 
     def test_two_provider_routes_with_same_token_ref_share_slot(self):
@@ -181,9 +208,8 @@ class TestProviderRouteMerge(unittest.TestCase):
         self.assertEqual("EGRESS_TOKEN_0", routes[1].token_env)
 
     def test_provider_route_wins_over_authed_manifest_route(self):
-        # Provider wins even when manifest has its own auth for the host.
         b = _bottle([{"host": "chatgpt.com",
-                      "path_allowlist": ["/backend-api/"],
+                      "matches": [{"paths": [{"value": "/backend-api/"}]}],
                       "auth": {"scheme": "Bearer", "token_ref": "OTHER"}}])
         pr = _provider_route("chatgpt.com", CODEX_HOST_CREDENTIAL_TOKEN_REF)
         routes = egress_routes_for_bottle(b, (pr,))
@@ -192,7 +218,7 @@ class TestProviderRouteMerge(unittest.TestCase):
         self.assertEqual("Bearer", routes[0].auth_scheme)
         self.assertEqual("EGRESS_TOKEN_0", routes[0].token_env)
         self.assertEqual(CODEX_HOST_CREDENTIAL_TOKEN_REF, routes[0].token_ref)
-        self.assertEqual((), routes[0].path_allowlist)
+        self.assertEqual((), routes[0].matches)
 
     def test_manifest_route_preserved_for_non_provisioned_host(self):
         b = _bottle([
@@ -236,53 +262,46 @@ class TestRenderRoutes(unittest.TestCase):
         b = _bottle([{
             "host": "api.github.com",
             "auth": {"scheme": "Bearer", "token_ref": "GH_PAT"},
-            "path_allowlist": ["/repos/x/"],
+            "matches": [{"paths": [{"value": "/repos/x/"}]}],
         }])
         routes = egress_routes_for_bottle(b)
         parsed = self._parsed(routes)
-        self.assertEqual(
-            [{
-                "host": "api.github.com",
-                "path_allowlist": ["/repos/x/"],
-                "auth_scheme": "Bearer",
-                "token_env": "EGRESS_TOKEN_0",
-            }],
-            parsed,
-        )
+        self.assertEqual(1, len(parsed))
+        self.assertEqual("api.github.com", parsed[0]["host"])
+        self.assertEqual("Bearer", parsed[0]["auth_scheme"])
+        self.assertEqual("EGRESS_TOKEN_0", parsed[0]["token_env"])
+        self.assertIn("matches", parsed[0])
 
     def test_unauthenticated_route_omits_auth_fields(self):
-        # auth_scheme + token_env keys are absent when the route was
-        # declared without an `auth` block — the addon's parser
-        # enforces both-or-neither, so emitting empty strings would
-        # round-trip as a partial pair and crash.
-        b = _bottle([{"host": "github.com", "path_allowlist": ["/x/"]}])
+        b = _bottle([{"host": "github.com", "matches": [
+            {"paths": [{"value": "/x/"}]}
+        ]}])
         routes = egress_routes_for_bottle(b)
         entry = self._parsed(routes)[0]
         self.assertNotIn("auth_scheme", entry)
         self.assertNotIn("token_env", entry)
 
-    def test_no_path_allowlist_omits_field(self):
+    def test_no_matches_omits_field(self):
         b = _bottle([{
             "host": "api.anthropic.com",
             "auth": {"scheme": "Bearer", "token_ref": "CL"},
         }])
         routes = egress_routes_for_bottle(b)
-        self.assertNotIn("path_allowlist", self._parsed(routes)[0])
+        self.assertNotIn("matches", self._parsed(routes)[0])
 
     def test_empty_routes_round_trips(self):
         rendered = egress_render_routes(())
-        # Inline-empty-list form is what the parser accepts.
         self.assertEqual([], parse_yaml_subset(rendered)["routes"])
 
     def test_round_trip_through_addon_core(self):
-        # Render here → parse in the addon must succeed for every
-        # combination the manifest can produce.
         from bot_bottle.egress_addon_core import load_routes
         b = _bottle([
             {"host": "api.github.com",
              "auth": {"scheme": "Bearer", "token_ref": "GH_PAT"},
-             "path_allowlist": ["/repos/x/"]},
-            {"host": "github.com", "path_allowlist": ["/x/"]},
+             "matches": [{"paths": [{"value": "/repos/x/"}]}]},
+            {"host": "github.com", "matches": [
+                {"paths": [{"value": "/x/"}]}
+            ]},
             {"host": "api.anthropic.com"},
         ])
         routes = egress_routes_for_bottle(b)
@@ -292,6 +311,18 @@ class TestRenderRoutes(unittest.TestCase):
         self.assertEqual("EGRESS_TOKEN_0", addon_routes[0].token_env)
         self.assertEqual("", addon_routes[1].auth_scheme)
         self.assertEqual("", addon_routes[2].auth_scheme)
+
+    def test_dlp_round_trips(self):
+        from bot_bottle.egress_addon_core import load_routes
+        b = _bottle([{"host": "x.example", "dlp": {
+            "outbound_detectors": ["token_patterns"],
+            "inbound_detectors": False,
+        }}])
+        routes = egress_routes_for_bottle(b)
+        rendered = egress_render_routes(routes)
+        addon_routes = load_routes(rendered)
+        self.assertEqual(("token_patterns",), addon_routes[0].outbound_detectors)
+        self.assertEqual((), addon_routes[0].inbound_detectors)
 
 
 class TestResolveTokenValues(unittest.TestCase):

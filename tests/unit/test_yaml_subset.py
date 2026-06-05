@@ -262,8 +262,9 @@ class TestRealisticBottleFile(unittest.TestCase):
                   auth:
                     scheme: token
                     token_ref: GITEA_TOKEN
-                  path_allowlist:
-                    - /didericis/
+                  matches:
+                    - paths:
+                        - value: /didericis/
             git:
               remotes:
                 gitea.dideric.is:
@@ -275,8 +276,8 @@ class TestRealisticBottleFile(unittest.TestCase):
         # Spot-check the deep parts; the structure is large.
         self.assertEqual(2, len(out["egress"]["routes"]))  # type: ignore
         self.assertEqual(
-            ["/didericis/"],
-            out["egress"]["routes"][1]["path_allowlist"],  # type: ignore
+            "/didericis/",
+            out["egress"]["routes"][1]["matches"][0]["paths"][0]["value"],  # type: ignore
         )
         self.assertEqual(
             "Bearer",

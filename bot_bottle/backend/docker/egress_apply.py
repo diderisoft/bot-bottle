@@ -1,16 +1,9 @@
 """Host-side helper to apply a routes.yaml change to a running
-egress sidecar (PRD 0014 retargeted by PRD 0017 chunk 3).
+egress sidecar (PRD 0014 retargeted by PRD 0017 chunk 3, PRD 0053).
 
 Used by the supervise dashboard when the operator approves an
-egress-block proposal (or runs the operator-initiated
-`routes edit <bottle>` verb). Fetches the current routes.yaml via
-`docker exec cat`, validates the new content, writes it into the
-sidecar via `docker cp`, then `docker kill --signal HUP` to make
-the addon reload without dropping connections.
-
-Raises EgressApplyError on any failure — the dashboard
-surfaces the message and keeps the proposal pending so the
-operator can retry.
+egress-block proposal. Fetches current routes.yaml, validates,
+writes into the sidecar, then SIGHUPs to reload.
 """
 
 from __future__ import annotations
@@ -29,9 +22,7 @@ from .sidecar_bundle import sidecar_bundle_container_name
 
 def _render_routes_payload(routes_list: list[dict[str, object]]) -> str:
     """Render a list-of-dicts routes payload as YAML matching the
-    shape `egress_render_routes` produces. The apply path
-    round-trips current routes.yaml through this so the file the
-    sidecar sees stays in the YAML format the addon expects."""
+    shape `egress_render_routes` produces."""
     if not routes_list:
         return "routes: []\n"
     lines: list[str] = ["routes:"]
@@ -43,31 +34,42 @@ def _render_routes_payload(routes_list: list[dict[str, object]]) -> str:
         if auth_scheme and token_env:
             lines.append(f'    auth_scheme: "{auth_scheme}"')
             lines.append(f'    token_env: "{token_env}"')
-        paths_obj = entry.get("path_allowlist")
-        paths = cast(list[str], paths_obj) if isinstance(paths_obj, list) else []
-        if paths:
-            lines.append("    path_allowlist:")
-            for p in paths:
-                lines.append(f'      - "{p}"')
+        matches_obj = entry.get("matches")
+        if isinstance(matches_obj, list) and matches_obj:
+            lines.append("    matches:")
+            for match_entry in matches_obj:
+                me = cast(dict[str, object], match_entry)
+                first_key = True
+                if "paths" in me:
+                    lines.append("      - paths:")
+                    first_key = False
+                    for pd in cast(list[dict[str, str]], me["paths"]):
+                        if "type" in pd:
+                            lines.append(f'          - type: "{pd["type"]}"')
+                            lines.append(f'            value: "{pd["value"]}"')
+                        else:
+                            lines.append(f'          - value: "{pd["value"]}"')
+                if "methods" in me:
+                    methods_str = ", ".join(
+                        f'"{m}"' for m in cast(list[str], me["methods"])
+                    )
+                    prefix = "      - " if first_key else "        "
+                    lines.append(f'{prefix}methods: [{methods_str}]')
+                    first_key = False
+                if first_key:
+                    lines.append("      - {}")
     return "\n".join(lines) + "\n"
 
 
 def _egress_routes_host_path(slug: str) -> Path:
-    """The bind-mount source for the egress sidecar's routes.yaml.
-    Must match what egress.prepare wrote at chunk-2 paths."""
     return egress_state_dir(slug) / "egress_routes.yaml"
 
 
 class EgressApplyError(RuntimeError):
-    """Raised when fetch / apply fails. Caller renders to the
-    operator; does not crash the dashboard."""
+    pass
 
 
 def fetch_current_routes(slug: str) -> str:
-    """Read the live routes.yaml from the running egress sidecar
-    for `slug`. Returns the file content as a string. Raises
-    EgressApplyError if the sidecar isn't reachable or the read
-    fails."""
     container = sidecar_bundle_container_name(slug)
     r = subprocess.run(
         ["docker", "exec", container, "cat", EGRESS_ROUTES_IN_CONTAINER],
@@ -82,9 +84,6 @@ def fetch_current_routes(slug: str) -> str:
 
 
 def validate_routes_content(content: str) -> None:
-    """Syntactic check before SIGHUP — the addon's reload also
-    validates, but failing here keeps the old routes live and gives
-    the operator a clearer error than the addon's stderr line."""
     try:
         load_routes(content)
     except ValueError as e:
@@ -94,29 +93,10 @@ def validate_routes_content(content: str) -> None:
 
 
 def apply_routes_change(slug: str, new_content: str) -> tuple[str, str]:
-    """Apply `new_content` to the egress sidecar for `slug`:
-      1. Fetch current routes.yaml (for the before-diff).
-      2. Validate the new content via the addon's own parser.
-      3. Write to the bind-mount source path.
-      4. `docker kill --signal HUP` so the addon reloads.
-
-    Returns (before, after) where `after` == `new_content`. Raises
-    EgressApplyError on any step."""
     container = sidecar_bundle_container_name(slug)
     before = fetch_current_routes(slug)
     validate_routes_content(new_content)
 
-    # routes.yaml is bind-mounted into the egress container as a
-    # SINGLE FILE. Docker single-file bind mounts pin the source
-    # inode at mount time; write-temp-then-rename swaps the inode
-    # on the host, which leaves the container's mount pointing at
-    # the now-orphaned old inode (so the SIGHUP'd reload re-reads
-    # unchanged content). Write in-place instead. Lose file-level
-    # atomicity, but the apply path issues SIGHUP only AFTER the
-    # write returns, and the addon's `load_routes` raises
-    # `ValueError` on a partial read and keeps the previous
-    # in-memory routes — so a SIGHUP that hypothetically raced an
-    # in-flight write is non-disruptive.
     target = _egress_routes_host_path(slug)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(new_content)
@@ -137,22 +117,12 @@ def apply_routes_change(slug: str, new_content: str) -> tuple[str, str]:
 def _merge_single_route(
     current_yaml: str, new_route: dict[str, object],
 ) -> str:
-    """Merge a single proposed route into the current routes.yaml
-    content, returning the merged YAML string.
+    """Merge a single proposed route into the current routes.yaml.
 
-    Behavior:
-      - If `new_route['host']` is NOT in the current routes →
-        append the route.
-      - If the host IS already present → union the path_allowlist
-        entries (proposed ∪ existing). The existing `auth_scheme`
-        and `token_env` are preserved — agent-proposed auth changes
-        on an existing host are ignored, matching the tool's
-        documented semantics.
-
-    Round-trips the file through `yaml_subset` (the same parser
-    the addon uses), so the merged output is in the YAML format
-    the sidecar reads. Token VALUES never appear here; the routes
-    file carries only env-var slot NAMES."""
+    - Host absent → append the route.
+    - Host present → union the match paths (proposed ∪ existing).
+      Auth is preserved from existing route.
+    """
     try:
         cfg = parse_yaml_subset(current_yaml)
     except YamlSubsetError as e:
@@ -172,37 +142,58 @@ def _merge_single_route(
             "proposed route is missing 'host'"
         )
 
-    proposed_paths_obj = new_route.get("path_allowlist")
-    proposed_paths = cast(list[str], proposed_paths_obj) if isinstance(proposed_paths_obj, list) else []
+    # Build proposed matches from the input
+    proposed_matches = new_route.get("matches")
+    if proposed_matches is None:
+        # Accept legacy path_allowlist from agent proposals and convert
+        proposed_paths = new_route.get("path_allowlist")
+        if isinstance(proposed_paths, list) and proposed_paths:
+            proposed_matches = [{"paths": [{"value": p} for p in proposed_paths]}]
 
-    # Look for an existing entry with the same host (case-insensitive).
     for entry in routes_typed:
         if not isinstance(entry, dict):
             continue
         entry_typed = cast(dict[str, object], entry)
         if str(entry_typed.get("host", "")).lower() == new_host:
-            # Merge path_allowlist: union proposed + existing, ordered
-            # by first-seen so existing paths stay in original order.
-            existing_paths_obj = entry_typed.get("path_allowlist")
-            existing_paths = cast(list[str], existing_paths_obj) if isinstance(existing_paths_obj, list) else []
-            seen = {p: None for p in existing_paths}
-            for p in proposed_paths:
-                seen.setdefault(p, None)
-            merged_paths = list(seen.keys())
-            if merged_paths:
-                entry_typed["path_allowlist"] = merged_paths
-            # Preserve existing auth — tool description says agent-
-            # proposed auth on an existing host is ignored.
+            # Merge matches: union path values from proposed into existing
+            if isinstance(proposed_matches, list) and proposed_matches:
+                existing_matches = entry_typed.get("matches")
+                if not isinstance(existing_matches, list):
+                    existing_matches = []
+                # Simple merge: collect all existing path values, add new ones
+                existing_paths: set[str] = set()
+                for me in existing_matches:
+                    me_typed = cast(dict[str, object], me) if isinstance(me, dict) else {}
+                    paths = me_typed.get("paths")
+                    if isinstance(paths, list):
+                        for p in paths:
+                            p_typed = cast(dict[str, object], p) if isinstance(p, dict) else {}
+                            val = p_typed.get("value")
+                            if isinstance(val, str):
+                                existing_paths.add(val)
+                new_paths: list[str] = []
+                for me in proposed_matches:
+                    me_typed = cast(dict[str, object], me) if isinstance(me, dict) else {}
+                    paths = me_typed.get("paths")
+                    if isinstance(paths, list):
+                        for p in paths:
+                            p_typed = cast(dict[str, object], p) if isinstance(p, dict) else {}
+                            val = p_typed.get("value")
+                            if isinstance(val, str) and val not in existing_paths:
+                                new_paths.append(val)
+                                existing_paths.add(val)
+                if new_paths:
+                    if not isinstance(existing_matches, list):
+                        existing_matches = []
+                    existing_matches.append(
+                        {"paths": [{"value": p} for p in new_paths]}
+                    )
+                    entry_typed["matches"] = existing_matches
             break
     else:
-        # Host not present; build a new route entry from the
-        # proposed fields. Need to assign a token_env slot if
-        # `auth` was proposed (otherwise the addon's parser rejects
-        # a half-set auth pair). Slots: count existing slots, pick
-        # the next free index.
         entry_typed: dict[str, object] = {"host": new_route.get("host")}  # type: ignore
-        if proposed_paths:
-            entry_typed["path_allowlist"] = proposed_paths
+        if isinstance(proposed_matches, list) and proposed_matches:
+            entry_typed["matches"] = proposed_matches
         auth = new_route.get("auth")
         if isinstance(auth, dict) and auth.get("scheme") and auth.get("token_ref"):  # type: ignore
             auth_typed = cast(dict[str, object], auth)
@@ -222,10 +213,6 @@ def _merge_single_route(
 
 
 def add_route(slug: str, proposed_route_json: str) -> tuple[str, str]:
-    """Apply a single-route addition to the egress. Parses the
-    agent's proposed route, fetches the current routes file, merges,
-    and applies via `apply_routes_change`. Returns (before, after)
-    full-file content for the audit log."""
     try:
         proposed = json.loads(proposed_route_json)
     except json.JSONDecodeError as e:

@@ -1,8 +1,7 @@
-"""Unit: pure-logic core of the egress mitmproxy addon (PRD 0017).
+"""Unit: pure-logic core of the egress mitmproxy addon (PRD 0017, PRD 0053).
 
 These tests target `egress_addon_core` — the host-importable
-half of the addon. The mitmproxy hook wrapper in
-`egress_addon.py` is container-only and is not exercised here."""
+half of the addon."""
 
 import http.server
 import subprocess
@@ -15,8 +14,13 @@ from urllib.parse import urlsplit
 
 from bot_bottle.egress_addon_core import (
     Decision,
+    HeaderMatch,
+    MatchEntry,
+    PathMatch,
     Route,
+    ScanResult,
     decide,
+    evaluate_matches,
     is_git_push_request,
     load_routes,
     match_route,
@@ -32,26 +36,28 @@ class TestParseRoutes(unittest.TestCase):
         routes = parse_routes({"routes": [{"host": "api.github.com"}]})
         self.assertEqual(1, len(routes))
         self.assertEqual("api.github.com", routes[0].host)
-        self.assertEqual((), routes[0].path_allowlist)
+        self.assertEqual((), routes[0].matches)
         self.assertEqual("", routes[0].auth_scheme)
         self.assertEqual("", routes[0].token_env)
 
     def test_full_route(self):
         routes = parse_routes({"routes": [{
             "host": "api.github.com",
-            "path_allowlist": ["/repos/x/", "/users/x"],
+            "matches": [
+                {"paths": [{"type": "prefix", "value": "/repos/x/"}]},
+            ],
             "auth_scheme": "Bearer",
             "token_env": "EGRESS_TOKEN_0",
         }]})
         r = routes[0]
-        self.assertEqual(("/repos/x/", "/users/x"), r.path_allowlist)
+        self.assertEqual(1, len(r.matches))
+        self.assertEqual(1, len(r.matches[0].paths))
+        self.assertEqual("prefix", r.matches[0].paths[0].type)
+        self.assertEqual("/repos/x/", r.matches[0].paths[0].value)
         self.assertEqual("Bearer", r.auth_scheme)
         self.assertEqual("EGRESS_TOKEN_0", r.token_env)
 
     def test_order_preserved(self):
-        # Host match is exact (not longest-prefix), but the file order
-        # is preserved anyway so the operator's mental model matches
-        # what the proxy sees.
         routes = parse_routes({"routes": [
             {"host": "a.example"},
             {"host": "b.example"},
@@ -63,8 +69,6 @@ class TestParseRoutes(unittest.TestCase):
         )
 
     def test_partial_auth_pair_rejected(self):
-        # auth_scheme without token_env is a renderer bug (the manifest's
-        # `auth: { scheme, token_ref }` block writes both at once).
         with self.assertRaises(ValueError) as cm:
             parse_routes({"routes": [{
                 "host": "x.example",
@@ -80,21 +84,6 @@ class TestParseRoutes(unittest.TestCase):
             }]})
         self.assertIn("both set or both empty", str(cm.exception))
 
-    def test_path_allowlist_must_be_absolute(self):
-        with self.assertRaises(ValueError) as cm:
-            parse_routes({"routes": [{
-                "host": "x.example",
-                "path_allowlist": ["no-leading-slash/"],
-            }]})
-        self.assertIn("absolute path prefix", str(cm.exception))
-
-    def test_path_allowlist_items_must_be_strings(self):
-        with self.assertRaises(ValueError):
-            parse_routes({"routes": [{
-                "host": "x.example",
-                "path_allowlist": [42],
-            }]})
-
     def test_top_level_must_be_object(self):
         with self.assertRaises(ValueError):
             parse_routes(["not", "an", "object"])
@@ -106,6 +95,140 @@ class TestParseRoutes(unittest.TestCase):
     def test_route_must_have_host(self):
         with self.assertRaises(ValueError):
             parse_routes({"routes": [{}]})
+
+    def test_unknown_key_rejected(self):
+        with self.assertRaises(ValueError):
+            parse_routes({"routes": [{
+                "host": "x.example",
+                "path_allowlist": ["/x/"],
+            }]})
+
+
+class TestParseMatchEntries(unittest.TestCase):
+    def test_path_prefix_default_type(self):
+        routes = parse_routes({"routes": [{
+            "host": "x.example",
+            "matches": [{"paths": [{"value": "/api/"}]}],
+        }]})
+        self.assertEqual("prefix", routes[0].matches[0].paths[0].type)
+
+    def test_path_exact(self):
+        routes = parse_routes({"routes": [{
+            "host": "x.example",
+            "matches": [{"paths": [{"type": "exact", "value": "/health"}]}],
+        }]})
+        self.assertEqual("exact", routes[0].matches[0].paths[0].type)
+
+    def test_path_regex(self):
+        routes = parse_routes({"routes": [{
+            "host": "x.example",
+            "matches": [{"paths": [{"type": "regex", "value": "^/v[0-9]+/"}]}],
+        }]})
+        pm = routes[0].matches[0].paths[0]
+        self.assertEqual("regex", pm.type)
+        self.assertIsNotNone(pm.compiled)
+
+    def test_path_bad_regex_rejected(self):
+        with self.assertRaises(ValueError) as cm:
+            parse_routes({"routes": [{
+                "host": "x.example",
+                "matches": [{"paths": [{"type": "regex", "value": "[bad"}]}],
+            }]})
+        self.assertIn("failed to compile", str(cm.exception))
+
+    def test_path_prefix_must_start_with_slash(self):
+        with self.assertRaises(ValueError):
+            parse_routes({"routes": [{
+                "host": "x.example",
+                "matches": [{"paths": [{"value": "no-slash"}]}],
+            }]})
+
+    def test_methods_case_insensitive(self):
+        routes = parse_routes({"routes": [{
+            "host": "x.example",
+            "matches": [{"methods": ["get", "Post"]}],
+        }]})
+        self.assertEqual(("GET", "POST"), routes[0].matches[0].methods)
+
+    def test_invalid_method_rejected(self):
+        with self.assertRaises(ValueError):
+            parse_routes({"routes": [{
+                "host": "x.example",
+                "matches": [{"methods": ["BOGUS"]}],
+            }]})
+
+    def test_headers_exact_default(self):
+        routes = parse_routes({"routes": [{
+            "host": "x.example",
+            "matches": [{"headers": [
+                {"name": "Content-Type", "value": "application/json"},
+            ]}],
+        }]})
+        hm = routes[0].matches[0].headers[0]
+        self.assertEqual("Content-Type", hm.name)
+        self.assertEqual("application/json", hm.value)
+        self.assertEqual("exact", hm.type)
+
+    def test_headers_regex(self):
+        routes = parse_routes({"routes": [{
+            "host": "x.example",
+            "matches": [{"headers": [
+                {"name": "Accept", "value": "application/.*", "type": "regex"},
+            ]}],
+        }]})
+        hm = routes[0].matches[0].headers[0]
+        self.assertEqual("regex", hm.type)
+        self.assertIsNotNone(hm.compiled)
+
+    def test_unknown_match_key_rejected(self):
+        with self.assertRaises(ValueError):
+            parse_routes({"routes": [{
+                "host": "x.example",
+                "matches": [{"paths": [], "bogus": True}],
+            }]})
+
+
+class TestParseDlp(unittest.TestCase):
+    def test_dlp_omitted_means_all_enabled(self):
+        routes = parse_routes({"routes": [{"host": "x.example"}]})
+        self.assertIsNone(routes[0].outbound_detectors)
+        self.assertIsNone(routes[0].inbound_detectors)
+
+    def test_dlp_false_disables(self):
+        routes = parse_routes({"routes": [{
+            "host": "x.example",
+            "dlp": {
+                "outbound_detectors": False,
+                "inbound_detectors": False,
+            },
+        }]})
+        self.assertEqual((), routes[0].outbound_detectors)
+        self.assertEqual((), routes[0].inbound_detectors)
+
+    def test_dlp_named_detectors(self):
+        routes = parse_routes({"routes": [{
+            "host": "x.example",
+            "dlp": {
+                "outbound_detectors": ["token_patterns"],
+                "inbound_detectors": ["naive_injection_detection"],
+            },
+        }]})
+        self.assertEqual(("token_patterns",), routes[0].outbound_detectors)
+        self.assertEqual(("naive_injection_detection",), routes[0].inbound_detectors)
+
+    def test_dlp_unknown_detector_rejected(self):
+        with self.assertRaises(ValueError):
+            parse_routes({"routes": [{
+                "host": "x.example",
+                "dlp": {"outbound_detectors": ["bogus"]},
+            }]})
+
+    def test_dlp_unknown_key_rejected(self):
+        with self.assertRaises(ValueError):
+            parse_routes({"routes": [{
+                "host": "x.example",
+                "dlp": {"wat": True},
+            }]})
 
 
 # --- load_routes ---------------------------------------------------------
@@ -126,25 +249,151 @@ class TestLoadRoutes(unittest.TestCase):
             '  - host: "api.example"\n'
             '    auth_scheme: "Bearer"\n'
             '    token_env: "EGRESS_TOKEN_0"\n'
-            '    path_allowlist:\n'
-            '      - "/v1/"\n'
-            '      - "/messages"\n'
+            '    matches:\n'
+            '      - paths:\n'
+            '          - value: "/v1/"\n'
+            '          - type: "exact"\n'
+            '            value: "/messages"\n'
         )
         self.assertEqual(1, len(routes))
         r = routes[0]
         self.assertEqual("api.example", r.host)
         self.assertEqual("Bearer", r.auth_scheme)
         self.assertEqual("EGRESS_TOKEN_0", r.token_env)
-        self.assertEqual(("/v1/", "/messages"), r.path_allowlist)
+        self.assertEqual(1, len(r.matches))
+        self.assertEqual(2, len(r.matches[0].paths))
 
     def test_empty_routes_list(self):
         routes = load_routes("routes: []\n")
         self.assertEqual((), routes)
 
     def test_invalid_yaml_raises_value_error(self):
-        # Tab indent is a YamlSubsetError; ValueError is its base.
         with self.assertRaises(ValueError):
             load_routes("routes:\n\t- host: x\n")
+
+
+# --- evaluate_matches ---------------------------------------------------
+
+
+class TestEvaluateMatches(unittest.TestCase):
+    def test_empty_matches_allows_all(self):
+        route = Route(host="x.example")
+        self.assertTrue(evaluate_matches(route, "/anything"))
+
+    def test_prefix_match(self):
+        route = Route(host="x.example", matches=(
+            MatchEntry(paths=(PathMatch(type="prefix", value="/api/v1"),)),
+        ))
+        self.assertTrue(evaluate_matches(route, "/api/v1/foo"))
+        self.assertTrue(evaluate_matches(route, "/api/v1"))
+        self.assertFalse(evaluate_matches(route, "/api/v10"))
+        self.assertFalse(evaluate_matches(route, "/other"))
+
+    def test_prefix_with_trailing_slash(self):
+        route = Route(host="x.example", matches=(
+            MatchEntry(paths=(PathMatch(type="prefix", value="/api/"),)),
+        ))
+        self.assertTrue(evaluate_matches(route, "/api/foo"))
+        self.assertFalse(evaluate_matches(route, "/apifoo"))
+
+    def test_exact_match(self):
+        route = Route(host="x.example", matches=(
+            MatchEntry(paths=(PathMatch(type="exact", value="/health"),)),
+        ))
+        self.assertTrue(evaluate_matches(route, "/health"))
+        self.assertFalse(evaluate_matches(route, "/health/deep"))
+        self.assertFalse(evaluate_matches(route, "/other"))
+
+    def test_regex_match(self):
+        import re
+        route = Route(host="x.example", matches=(
+            MatchEntry(paths=(PathMatch(
+                type="regex", value=r"^/v[0-9]+/",
+                compiled=re.compile(r"^/v[0-9]+/"),
+            ),)),
+        ))
+        self.assertTrue(evaluate_matches(route, "/v1/messages"))
+        self.assertTrue(evaluate_matches(route, "/v42/data"))
+        self.assertFalse(evaluate_matches(route, "/api/v1/"))
+
+    def test_method_filter(self):
+        route = Route(host="x.example", matches=(
+            MatchEntry(methods=("GET", "HEAD")),
+        ))
+        self.assertTrue(evaluate_matches(route, "/any", "GET"))
+        self.assertTrue(evaluate_matches(route, "/any", "HEAD"))
+        self.assertFalse(evaluate_matches(route, "/any", "POST"))
+
+    def test_header_exact_match(self):
+        route = Route(host="x.example", matches=(
+            MatchEntry(headers=(
+                HeaderMatch(name="Content-Type", value="application/json"),
+            )),
+        ))
+        self.assertTrue(evaluate_matches(
+            route, "/any", "GET",
+            {"content-type": "application/json"},
+        ))
+        self.assertFalse(evaluate_matches(
+            route, "/any", "GET",
+            {"content-type": "text/html"},
+        ))
+        self.assertFalse(evaluate_matches(route, "/any", "GET", {}))
+
+    def test_header_regex_match(self):
+        import re
+        route = Route(host="x.example", matches=(
+            MatchEntry(headers=(
+                HeaderMatch(
+                    name="Accept", value=r"application/.*",
+                    type="regex", compiled=re.compile(r"application/.*"),
+                ),
+            )),
+        ))
+        self.assertTrue(evaluate_matches(
+            route, "/any", "GET", {"accept": "application/json"},
+        ))
+        self.assertFalse(evaluate_matches(
+            route, "/any", "GET", {"accept": "text/html"},
+        ))
+
+    def test_and_within_entry(self):
+        route = Route(host="x.example", matches=(
+            MatchEntry(
+                paths=(PathMatch(type="prefix", value="/api"),),
+                methods=("POST",),
+            ),
+        ))
+        self.assertTrue(evaluate_matches(route, "/api/data", "POST"))
+        self.assertFalse(evaluate_matches(route, "/api/data", "GET"))
+        self.assertFalse(evaluate_matches(route, "/other", "POST"))
+
+    def test_or_across_entries(self):
+        route = Route(host="x.example", matches=(
+            MatchEntry(
+                paths=(PathMatch(type="prefix", value="/read"),),
+                methods=("GET",),
+            ),
+            MatchEntry(
+                paths=(PathMatch(type="exact", value="/write"),),
+                methods=("POST",),
+            ),
+        ))
+        self.assertTrue(evaluate_matches(route, "/read/foo", "GET"))
+        self.assertTrue(evaluate_matches(route, "/write", "POST"))
+        self.assertFalse(evaluate_matches(route, "/read/foo", "POST"))
+        self.assertFalse(evaluate_matches(route, "/write", "GET"))
+
+    def test_multiple_paths_or_within_entry(self):
+        route = Route(host="x.example", matches=(
+            MatchEntry(paths=(
+                PathMatch(type="prefix", value="/a"),
+                PathMatch(type="prefix", value="/b"),
+            )),
+        ))
+        self.assertTrue(evaluate_matches(route, "/a/foo"))
+        self.assertTrue(evaluate_matches(route, "/b/bar"))
+        self.assertFalse(evaluate_matches(route, "/c/baz"))
 
 
 # --- match_route ---------------------------------------------------------
@@ -153,7 +402,9 @@ class TestLoadRoutes(unittest.TestCase):
 class TestMatchRoute(unittest.TestCase):
     ROUTES = (
         Route(host="api.github.com"),
-        Route(host="github.com", path_allowlist=("/x/",)),
+        Route(host="github.com", matches=(
+            MatchEntry(paths=(PathMatch(type="prefix", value="/x/"),)),
+        )),
     )
 
     def test_exact_match(self):
@@ -162,9 +413,6 @@ class TestMatchRoute(unittest.TestCase):
         self.assertEqual("api.github.com", r.host)  # type: ignore
 
     def test_case_insensitive(self):
-        # DNS hostnames are case-insensitive per RFC 1035; mitmproxy
-        # surfaces the host as the agent wrote it, which may include
-        # uppercase. Lookup must normalise.
         r = match_route(self.ROUTES, "API.GitHub.COM")
         self.assertIsNotNone(r)
         self.assertEqual("api.github.com", r.host)  # type: ignore
@@ -173,14 +421,9 @@ class TestMatchRoute(unittest.TestCase):
         self.assertIsNone(match_route(self.ROUTES, "elsewhere.example"))
 
     def test_no_substring_or_prefix_matching(self):
-        # api.github.com is in the table; github.com is too. Some
-        # other-host shouldn't be matched via a "ends with" check.
         self.assertIsNone(match_route(self.ROUTES, "evil.api.github.com"))
 
     def test_wildcard_hosts_not_supported(self):
-        # `*.example.com` is treated as a literal host string by
-        # the exact-only matcher. Removed from the design after
-        # the apex/RFC-6125 edge cases stacked up.
         routes = (Route(host="*.example.com"),)
         self.assertIsNone(match_route(routes, "foo.example.com"))
         self.assertIsNone(match_route(routes, "example.com"))
@@ -191,31 +434,32 @@ class TestMatchRoute(unittest.TestCase):
 
 class TestDecide(unittest.TestCase):
     def test_no_matching_route_blocks(self):
-        # Egress gates the bottle's allowlist. Any host the operator
-        # didn't declare in egress.routes is 403'd at egress.
         d = decide((), "elsewhere.example", "/anything", {})
         self.assertEqual("block", d.action)
         self.assertIn("allowlist", d.reason)
         self.assertIn("'elsewhere.example'", d.reason)
 
-    def test_path_allowlist_match_forwards(self):
+    def test_matches_prefix_forwards(self):
         d = decide(
-            (Route(host="github.com", path_allowlist=("/didericis/",)),),
+            (Route(host="github.com", matches=(
+                MatchEntry(paths=(PathMatch(type="prefix", value="/didericis/"),)),
+            )),),
             "github.com", "/didericis/repo", {},
         )
         self.assertEqual("forward", d.action)
 
-    def test_path_allowlist_miss_blocks(self):
+    def test_matches_miss_blocks(self):
         d = decide(
-            (Route(host="github.com", path_allowlist=("/didericis/",)),),
+            (Route(host="github.com", matches=(
+                MatchEntry(paths=(PathMatch(type="prefix", value="/didericis/"),)),
+            )),),
             "github.com", "/somebody-else/secret", {},
         )
         self.assertEqual("block", d.action)
-        self.assertIn("path_allowlist", d.reason)
+        self.assertIn("matches", d.reason)
         self.assertIn("'github.com'", d.reason)
 
-    def test_empty_path_allowlist_means_no_constraint(self):
-        # Bare-pass route: declared but no path filtering.
+    def test_empty_matches_means_no_constraint(self):
         d = decide(
             (Route(host="api.anthropic.com"),),
             "api.anthropic.com", "/v1/messages", {},
@@ -232,10 +476,6 @@ class TestDecide(unittest.TestCase):
         self.assertEqual("Bearer the-token", d.inject_authorization)
 
     def test_auth_with_missing_token_env_blocks(self):
-        # The route declared auth but the secret isn't in the
-        # container's env — operator misconfig at start-time, blocked
-        # with a clear reason rather than forwarding an unauthenticated
-        # request the upstream would reject.
         d = decide(
             (Route(host="api.github.com", auth_scheme="Bearer",
                    token_env="EGRESS_TOKEN_0"),),
@@ -245,9 +485,6 @@ class TestDecide(unittest.TestCase):
         self.assertIn("EGRESS_TOKEN_0", d.reason)
 
     def test_auth_with_empty_token_env_blocks(self):
-        # Empty env var is treated the same as unset — we don't inject
-        # a literal "Bearer " (blank token) which would burn the
-        # upstream rate limit with a 401.
         d = decide(
             (Route(host="api.github.com", auth_scheme="Bearer",
                    token_env="EGRESS_TOKEN_0"),),
@@ -257,21 +494,45 @@ class TestDecide(unittest.TestCase):
 
     def test_unauthenticated_route_skips_injection(self):
         d = decide(
-            (Route(host="github.com", path_allowlist=("/x/",)),),
+            (Route(host="github.com", matches=(
+                MatchEntry(paths=(PathMatch(type="prefix", value="/x/"),)),
+            )),),
             "github.com", "/x/repo", {"GH_PAT": "should-not-appear"},
         )
         self.assertEqual("forward", d.action)
         self.assertIsNone(d.inject_authorization)
 
     def test_token_token_scheme(self):
-        # Gitea uses `Authorization: token <pat>` (sidesteps
-        # go-gitea/gitea#16734). The addon is scheme-agnostic.
         d = decide(
             (Route(host="git.example", auth_scheme="token",
                    token_env="EGRESS_TOKEN_0"),),
             "git.example", "/api/v1/repos", {"EGRESS_TOKEN_0": "abc"},
         )
         self.assertEqual("token abc", d.inject_authorization)
+
+    def test_method_matching(self):
+        route = Route(host="x.example", matches=(
+            MatchEntry(methods=("GET",)),
+        ))
+        d = decide((route,), "x.example", "/any", {},
+                    request_method="GET")
+        self.assertEqual("forward", d.action)
+        d = decide((route,), "x.example", "/any", {},
+                    request_method="POST")
+        self.assertEqual("block", d.action)
+
+    def test_header_matching(self):
+        route = Route(host="x.example", matches=(
+            MatchEntry(headers=(
+                HeaderMatch(name="Content-Type", value="application/json"),
+            )),
+        ))
+        d = decide((route,), "x.example", "/any", {},
+                    request_headers={"content-type": "application/json"})
+        self.assertEqual("forward", d.action)
+        d = decide((route,), "x.example", "/any", {},
+                    request_headers={"content-type": "text/html"})
+        self.assertEqual("block", d.action)
 
 
 # --- Decision dataclass --------------------------------------------------
@@ -289,18 +550,15 @@ class TestDecisionDefaults(unittest.TestCase):
 
 class TestIsGitPushRequest(unittest.TestCase):
     def test_post_git_receive_pack_endpoint(self):
-        # The POST that carries the actual push payload.
         self.assertTrue(is_git_push_request("/owner/repo.git/git-receive-pack", ""))
 
     def test_info_refs_with_receive_pack_service(self):
-        # The capability advertisement GET that precedes a push.
         self.assertTrue(is_git_push_request(
             "/owner/repo.git/info/refs",
             "service=git-receive-pack",
         ))
 
     def test_info_refs_with_extra_query_params(self):
-        # service= may appear with other params in any order.
         self.assertTrue(is_git_push_request(
             "/owner/repo.git/info/refs",
             "foo=bar&service=git-receive-pack&z=1",
@@ -311,7 +569,6 @@ class TestIsGitPushRequest(unittest.TestCase):
         ))
 
     def test_fetch_endpoints_not_blocked(self):
-        # `service=git-upload-pack` is fetch; never blocked.
         self.assertFalse(is_git_push_request(
             "/owner/repo.git/info/refs",
             "service=git-upload-pack",
@@ -321,8 +578,6 @@ class TestIsGitPushRequest(unittest.TestCase):
         ))
 
     def test_info_refs_without_service_not_blocked(self):
-        # Bare info/refs (no query) defaults to git-upload-pack on
-        # the server side; not push.
         self.assertFalse(is_git_push_request("/x/info/refs", ""))
 
     def test_unrelated_paths_not_blocked(self):
@@ -333,13 +588,6 @@ class TestIsGitPushRequest(unittest.TestCase):
 
 class TestGitPushBlockFailFast(unittest.TestCase):
     def test_real_git_push_fails_fast_when_egress_blocks_receive_pack(self):
-        """A real git client should see egress's HTTPS-push 403 and exit.
-
-        The local server stands in for the egress proxy response after
-        CONNECT/TLS interception; git smart-HTTP uses the same paths over
-        plain HTTP here, which keeps this regression test hermetic.
-        """
-
         seen_paths: list[str] = []
 
         class Handler(http.server.BaseHTTPRequestHandler):

@@ -1,24 +1,10 @@
-"""Per-bottle egress proxy (PRD 0017).
-
-Replaces the cred-proxy sidecar (PRD 0010) with a mitmproxy-based
-sidecar that becomes the agent's `HTTP_PROXY` / `HTTPS_PROXY`. It
-owns three jobs:
-
-  1. MITM the agent's HTTPS with the per-bottle CA.
-  2. Enforce manifest-declared `path_allowlist` per route.
-  3. Inject `Authorization` headers for routes that declare an
-     `auth` block, the same way cred-proxy does today.
+"""Per-bottle egress proxy (PRD 0017, PRD 0053).
 
 This module defines the abstract proxy (`Egress`), its plan
 dataclass (`EgressPlan`), and the resolved per-route shape
 (`EgressRoute`). The sidecar's start/stop lifecycle is backend-
 specific and lives on concrete subclasses (see
 `bot_bottle/backend/docker/egress.py`).
-
-Chunks 1+2 of the PRD: this module + the mitmproxy addon + the Docker
-lifecycle are wired into the agent's `HTTP_PROXY` path; cred-proxy
-has been removed. Chunk 3 retargets the cred-proxy-block remediation
-flow (PRD 0014) at egress and renames the MCP tool.
 """
 
 from __future__ import annotations
@@ -37,18 +23,8 @@ if TYPE_CHECKING:
 
 CODEX_HOST_CREDENTIAL_TOKEN_REF = "BOT_BOTTLE_CODEX_HOST_ACCESS_TOKEN"
 
-
-# DNS name agents will dial for the per-bottle egress sidecar.
-# Backend-agnostic by contract: every concrete backend (Docker today,
-# others later) attaches this name to its sidecar on the bottle's
-# internal network. The agent's `HTTP_PROXY` env var resolves to
-# `http://egress:<port>` once chunk 2 cuts over.
 EGRESS_HOSTNAME = "egress"
 
-# In-container path the addon reads. Pre-created in
-# `Dockerfile.sidecars` so the host bind-mount can drop the file
-# directly. Content is YAML (hand-rolled by `egress_render_routes`,
-# parsed by `yaml_subset` inside the addon).
 EGRESS_ROUTES_IN_CONTAINER = "/etc/egress/routes.yaml"
 
 
@@ -56,17 +32,13 @@ EGRESS_ROUTES_IN_CONTAINER = "/etc/egress/routes.yaml"
 class EgressRoute(Route):
     """Host-side extension of the addon's `Route`.
 
-    Inherits `host`, `path_allowlist`, `auth_scheme`, and `token_env`
+    Inherits `host`, `matches`, `auth_scheme`, and `token_env`
     from `egress_addon_core.Route` — those are the fields that cross the
-    YAML wire into the sidecar. The three fields below are host-only and
+    YAML wire into the sidecar. The fields below are host-only and
     are never serialised to the addon.
 
     `token_ref` is the host env var the CLI reads at launch and forwards
-    into the container's environ under `token_env`. Routes that share a
-    `token_ref` coalesce to one `token_env` slot.
-
-    `roles` carries the manifest route's role tuple (reserved for
-    future use; always empty today).
+    into the container's environ under `token_env`.
 
     `roles` carries the manifest route's role tuple (reserved for
     future use; always empty today)."""
@@ -77,33 +49,6 @@ class EgressRoute(Route):
 
 @dataclass(frozen=True)
 class EgressPlan:
-    """Output of Egress.prepare; consumed by .start.
-
-    The slug + routes_path + routes + token_env_map fields are
-    filled at prepare time (host-side, side-effect-free on docker).
-    The network + CA fields are populated by the backend's launch step
-    via `dataclasses.replace` once those resources exist. Empty defaults
-    are sentinels meaning "not yet set"; `.start` validates that they are
-    populated.
-
-    `token_env_map` is `{<token_env in container>: <token_ref on host>}`.
-    The backend's start step reads `os.environ[token_ref]` and
-    forwards the value into the egress container's environ
-    under `token_env`. The plan itself never holds token values —
-    secrets never land in a dataclass that might be logged.
-
-    `mitmproxy_ca_host_path` is the host path of the per-bottle
-    egress CA (single PEM with cert+key concatenated) minted
-    by `egress_tls_init`. `.start` docker-cps it into the
-    sidecar at `~/.mitmproxy/mitmproxy-ca.pem` — mitmproxy reads
-    that file at boot to mint per-host leaf certs.
-
-    `mitmproxy_ca_cert_only_host_path` is the cert-only PEM (no
-    key) for installing into the agent's trust store via
-    `provision_ca`. Separate file rather than re-parsing the
-    concat so secrets and trust artefacts stay on distinct paths.
-    """
-
     slug: str
     routes_path: Path
     routes: tuple[EgressRoute, ...]
@@ -117,18 +62,34 @@ class EgressPlan:
 def egress_manifest_routes(
     bottle: Bottle,
 ) -> tuple[EgressRoute, ...]:
-    """Lift each `bottle.egress.routes[]` manifest entry into an EgressRoute.
-    Order is preserved. Token slots are not assigned here — slot assignment
-    is a final step in `egress_routes_for_bottle` after provider and manifest
-    routes are merged."""
+    from .egress_addon_core import MatchEntry as CoreMatchEntry
+    from .egress_addon_core import PathMatch as CorePathMatch
+    from .egress_addon_core import HeaderMatch as CoreHeaderMatch
     out: list[EgressRoute] = []
     for r in bottle.egress.routes:
+        core_matches: list[CoreMatchEntry] = []
+        for m in r.Matches:
+            core_paths = tuple(
+                CorePathMatch(type=p.Type, value=p.Value)
+                for p in m.Paths
+            )
+            core_headers = tuple(
+                CoreHeaderMatch(name=h.Name, value=h.Value, type=h.Type)
+                for h in m.Headers
+            )
+            core_matches.append(CoreMatchEntry(
+                paths=core_paths,
+                methods=m.Methods,
+                headers=core_headers,
+            ))
         out.append(EgressRoute(
             host=r.Host,
-            path_allowlist=r.PathAllowlist,
+            matches=tuple(core_matches),
             auth_scheme=r.AuthScheme,
             token_ref=r.TokenRef,
             roles=r.Role,
+            outbound_detectors=r.OutboundDetectors,
+            inbound_detectors=r.InboundDetectors,
         ))
     return tuple(out)
 
@@ -137,12 +98,6 @@ def egress_routes_for_bottle(
     bottle: Bottle,
     provider_routes: tuple[EgressRoute, ...] = (),
 ) -> tuple[EgressRoute, ...]:
-    """Effective egress routes for the agent.
-
-    Provider routes own their hosts outright; manifest routes for hosts
-    not claimed by any provider are appended. Token slots are assigned
-    in a final pass over the merged list in order, so provisioned routes
-    get the lower slot numbers."""
     manifest = egress_manifest_routes(bottle)
     provisioned_hosts = {pr.host.lower() for pr in provider_routes}
     merged = list(provider_routes) + [
@@ -154,10 +109,6 @@ def egress_routes_for_bottle(
 def _assign_token_slots(
     routes: list[EgressRoute],
 ) -> tuple[EgressRoute, ...]:
-    """Assign EGRESS_TOKEN_N slots to authenticated routes in order.
-
-    Routes sharing a token_ref share a slot. Unauthenticated routes
-    (no auth_scheme / token_ref) keep token_env empty."""
     slot_for_ref: dict[str, str] = {}
     out: list[EgressRoute] = []
     for r in routes:
@@ -175,13 +126,6 @@ def _assign_token_slots(
 def egress_token_env_map(
     routes: tuple[EgressRoute, ...],
 ) -> dict[str, str]:
-    """Collapse the route list into `{token_env: token_ref}` for the
-    authenticated routes. Routes without `auth` contribute no entry.
-
-    Conflict detection: two routes that share a `token_env` slot but
-    name different `token_ref` host vars is a programming error in
-    `egress_routes_for_bottle`; surface it as a die rather than
-    silently picking one."""
     out: dict[str, str] = {}
     for r in routes:
         if not (r.auth_scheme and r.token_ref and r.token_env):
@@ -198,29 +142,61 @@ def egress_token_env_map(
 
 
 def _route_to_yaml_fields(r: Route) -> dict[str, object]:
-    """Return the addon-visible fields for one route.
-
-    Single authoritative mapping between EgressRoute (host-side) and
-    egress_addon_core.Route (sidecar-side). When a field is added to
-    the addon's Route that must appear in the YAML, add it here and
-    in egress_addon_core._parse_one together."""
     fields: dict[str, object] = {"host": r.host}
     if r.auth_scheme and r.token_env:
         fields["auth_scheme"] = r.auth_scheme
         fields["token_env"] = r.token_env
-    if r.path_allowlist:
-        fields["path_allowlist"] = list(r.path_allowlist)
+    if r.matches:
+        matches_data: list[dict[str, object]] = []
+        for entry in r.matches:
+            entry_data: dict[str, object] = {}
+            if entry.paths:
+                paths_data: list[dict[str, str]] = []
+                for pm in entry.paths:
+                    pd: dict[str, str] = {"value": pm.value}
+                    if pm.type != "prefix":
+                        pd["type"] = pm.type
+                    paths_data.append(pd)
+                entry_data["paths"] = paths_data
+            if entry.methods:
+                entry_data["methods"] = list(entry.methods)
+            if entry.headers:
+                headers_data: list[dict[str, str]] = []
+                for hm in entry.headers:
+                    hd: dict[str, str] = {"name": hm.name, "value": hm.value}
+                    if hm.type != "exact":
+                        hd["type"] = hm.type
+                    headers_data.append(hd)
+                entry_data["headers"] = headers_data
+            matches_data.append(entry_data)
+        fields["matches"] = matches_data
+    if r.outbound_detectors is not None or r.inbound_detectors is not None:
+        dlp: dict[str, object] = {}
+        if r.outbound_detectors is not None:
+            dlp["outbound_detectors"] = (
+                False if not r.outbound_detectors
+                else list(r.outbound_detectors)
+            )
+        if r.inbound_detectors is not None:
+            dlp["inbound_detectors"] = (
+                False if not r.inbound_detectors
+                else list(r.inbound_detectors)
+            )
+        fields["dlp"] = dlp
     return fields
+
+
+def _yaml_scalar(v: object) -> str:
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, str):
+        return f'"{v}"'
+    return str(v)
 
 
 def egress_render_routes(
     routes: tuple[EgressRoute, ...],
 ) -> str:
-    """Serialize the route table for the addon to read.
-
-    YAML content — no token values, no host env-var names. Fields are
-    determined by `_route_to_yaml_fields`, which is the single point of
-    truth for the EgressRoute → egress_addon_core.Route mapping."""
     lines: list[str] = ["routes:"]
     if not routes:
         lines[0] = "routes: []"
@@ -231,10 +207,49 @@ def egress_render_routes(
         if "auth_scheme" in f:
             lines.append(f'    auth_scheme: "{f["auth_scheme"]}"')
             lines.append(f'    token_env: "{f["token_env"]}"')
-        if "path_allowlist" in f:
-            lines.append("    path_allowlist:")
-            for p in f["path_allowlist"]:  # type: ignore
-                lines.append(f'      - "{p}"')
+        if "matches" in f:
+            lines.append("    matches:")
+            for entry in f["matches"]:  # type: ignore
+                entry_dict: dict[str, object] = entry  # type: ignore
+                first_key = True
+                if "paths" in entry_dict:
+                    lines.append("      - paths:")
+                    first_key = False
+                    for pd in entry_dict["paths"]:  # type: ignore
+                        pd_dict: dict[str, str] = pd  # type: ignore
+                        if "type" in pd_dict:
+                            lines.append(f'          - type: "{pd_dict["type"]}"')
+                            lines.append(f'            value: "{pd_dict["value"]}"')
+                        else:
+                            lines.append(f'          - value: "{pd_dict["value"]}"')
+                if "methods" in entry_dict:
+                    methods_str = ", ".join(
+                        f'"{m}"' for m in entry_dict["methods"]  # type: ignore
+                    )
+                    prefix = "      - " if first_key else "        "
+                    lines.append(f'{prefix}methods: [{methods_str}]')
+                    first_key = False
+                if "headers" in entry_dict:
+                    prefix = "      - " if first_key else "        "
+                    lines.append(f"{prefix}headers:")
+                    first_key = False
+                    for hd in entry_dict["headers"]:  # type: ignore
+                        hd_dict: dict[str, str] = hd  # type: ignore
+                        lines.append(f'          - name: "{hd_dict["name"]}"')
+                        lines.append(f'            value: "{hd_dict["value"]}"')
+                        if "type" in hd_dict:
+                            lines.append(f'            type: "{hd_dict["type"]}"')
+                if first_key:
+                    lines.append("      - {}")
+        if "dlp" in f:
+            dlp_dict: dict[str, object] = f["dlp"]  # type: ignore
+            lines.append("    dlp:")
+            for dk, dv in dlp_dict.items():
+                if dv is False:
+                    lines.append(f"      {dk}: false")
+                elif isinstance(dv, list):
+                    items_str = ", ".join(f'"{x}"' for x in dv)
+                    lines.append(f"      {dk}: [{items_str}]")
     return "\n".join(lines) + "\n"
 
 
@@ -242,12 +257,6 @@ def egress_resolve_token_values(
     token_env_map: dict[str, str],
     host_env: dict[str, str],
 ) -> dict[str, str]:
-    """Read `host_env[TokenRef]` for each entry in `token_env_map` and
-    return `{token_env: <value>}`. Dies (with a pointer at the missing
-    var name) if any TokenRef is unset.
-
-    Pure function: takes the host env as an argument so tests can pass
-    a sealed mapping without touching `os.environ`."""
     out: dict[str, str] = {}
     for token_env, token_ref in token_env_map.items():
         value = host_env.get(token_ref)
@@ -268,11 +277,6 @@ def egress_resolve_token_values(
 
 
 class Egress(ABC):
-    """The per-bottle egress proxy. Encapsulates the host-side prepare
-    (route lift + routes.yaml render + token-env-map derivation); the
-    sidecar's start/stop lifecycle is backend-specific and lives on
-    concrete subclasses."""
-
     def prepare(
         self,
         bottle: Bottle,
@@ -280,15 +284,6 @@ class Egress(ABC):
         stage_dir: Path,
         provider_routes: tuple[EgressRoute, ...] = (),
     ) -> EgressPlan:
-        """Lift `bottle.egress.routes` + `provider_routes` into resolved
-        routes, render the routes file (mode 600) under `stage_dir`, and
-        return the plan. Pure host-side, no docker subprocess. The
-        token-env map records the mapping the launch step uses to
-        forward values from the host's environ into the sidecar's environ.
-
-        Returned plan is incomplete: the launch step must fill
-        `internal_network` / `egress_network`
-        via `dataclasses.replace` before passing it to `.start`."""
         routes = egress_routes_for_bottle(bottle, provider_routes)
         routes_path = stage_dir / "egress_routes.yaml"
         routes_path.write_text(egress_render_routes(routes))

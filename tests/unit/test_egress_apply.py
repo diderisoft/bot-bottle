@@ -1,5 +1,5 @@
 """Unit: validate_routes_content (PRD 0014 retargeted by PRD 0017
-chunk 3). docker exec / cp / kill paths are covered by the
+chunk 3, PRD 0053). docker exec / cp / kill paths are covered by the
 integration test."""
 
 import unittest
@@ -12,9 +12,6 @@ from bot_bottle.backend.docker.egress_apply import (
 from bot_bottle.yaml_subset import parse_yaml_subset
 
 
-# YAML fixtures matching the hand-rolled `_render_routes_payload`
-# shape. Per-test custom shapes are spelled inline; these are the
-# common ones.
 _ROUTES_EMPTY = "routes: []\n"
 _ROUTES_ONE = 'routes:\n  - host: "api.anthropic.com"\n'
 
@@ -30,14 +27,15 @@ class TestValidateRoutesContent(unittest.TestCase):
         validate_routes_content(_ROUTES_EMPTY)
         validate_routes_content(_ROUTES_ONE)
 
-    def test_accepts_full_route(self):
+    def test_accepts_full_route_with_matches(self):
         validate_routes_content(
             'routes:\n'
             '  - host: "api.github.com"\n'
             '    auth_scheme: "Bearer"\n'
             '    token_env: "EGRESS_TOKEN_0"\n'
-            '    path_allowlist:\n'
-            '      - "/repos/x/"\n'
+            '    matches:\n'
+            '      - paths:\n'
+            '          - value: "/repos/x/"\n'
         )
 
     def test_rejects_bad_yaml(self):
@@ -54,8 +52,6 @@ class TestValidateRoutesContent(unittest.TestCase):
             validate_routes_content('routes: "not a list"\n')
 
     def test_rejects_partial_auth_pair(self):
-        # The addon-core parser enforces both-or-neither — the apply
-        # path picks this up before SIGHUP'ing the sidecar.
         with self.assertRaises(EgressApplyError):
             validate_routes_content(
                 'routes:\n'
@@ -72,13 +68,23 @@ class TestMergeSingleRoute(unittest.TestCase):
         hosts = [r["host"] for r in _routes(merged)]
         self.assertEqual(["api.anthropic.com", "github.com"], hosts)
 
-    def test_appends_path_allowlist(self):
+    def test_appends_matches(self):
+        merged = _merge_single_route(
+            self.BASE,
+            {"host": "github.com", "matches": [
+                {"paths": [{"value": "/repos/x/"}]}
+            ]},
+        )
+        new_route = _routes(merged)[-1]
+        self.assertIn("matches", new_route)
+
+    def test_appends_legacy_path_allowlist_as_matches(self):
         merged = _merge_single_route(
             self.BASE,
             {"host": "github.com", "path_allowlist": ["/repos/x/"]},
         )
         new_route = _routes(merged)[-1]
-        self.assertEqual(["/repos/x/"], new_route["path_allowlist"])
+        self.assertIn("matches", new_route)
 
     def test_appends_auth_with_token_env_slot(self):
         merged = _merge_single_route(
@@ -90,7 +96,6 @@ class TestMergeSingleRoute(unittest.TestCase):
         )
         new_route = _routes(merged)[-1]
         self.assertEqual("Bearer", new_route["auth_scheme"])
-        # First auth slot when no prior auth routes exist.
         self.assertEqual("EGRESS_TOKEN_0", new_route["token_env"])
 
     def test_auth_slot_increments_past_existing(self):
@@ -107,40 +112,47 @@ class TestMergeSingleRoute(unittest.TestCase):
         new_route = _routes(merged)[-1]
         self.assertEqual("EGRESS_TOKEN_1", new_route["token_env"])
 
-    def test_existing_host_merges_path_allowlist_as_union(self):
+    def test_existing_host_merges_match_paths_as_union(self):
         base = (
             'routes:\n'
             '  - host: "github.com"\n'
-            '    path_allowlist:\n'
-            '      - "/a/"\n'
+            '    matches:\n'
+            '      - paths:\n'
+            '          - value: "/a/"\n'
         )
         merged = _merge_single_route(base, {
             "host": "github.com",
-            "path_allowlist": ["/b/"],
+            "matches": [{"paths": [{"value": "/b/"}]}],
         })
         routes = _routes(merged)
-        self.assertEqual(1, len(routes))  # not duplicated
-        self.assertEqual(["/a/", "/b/"], routes[0]["path_allowlist"])
+        self.assertEqual(1, len(routes))
+        all_paths: list[str] = []
+        for me in routes[0].get("matches", []):
+            for p in me.get("paths", []):
+                all_paths.append(p["value"])
+        self.assertIn("/a/", all_paths)
+        self.assertIn("/b/", all_paths)
 
-    def test_existing_host_dedup_path_allowlist(self):
+    def test_existing_host_dedup_match_paths(self):
         base = (
             'routes:\n'
             '  - host: "github.com"\n'
-            '    path_allowlist:\n'
-            '      - "/a/"\n'
+            '    matches:\n'
+            '      - paths:\n'
+            '          - value: "/a/"\n'
         )
         merged = _merge_single_route(base, {
             "host": "github.com",
-            "path_allowlist": ["/a/", "/b/"],
+            "matches": [{"paths": [{"value": "/a/"}, {"value": "/b/"}]}],
         })
-        self.assertEqual(
-            ["/a/", "/b/"],
-            _routes(merged)[0]["path_allowlist"],
-        )
+        all_paths: list[str] = []
+        for me in _routes(merged)[0].get("matches", []):
+            for p in me.get("paths", []):
+                all_paths.append(p["value"])
+        self.assertEqual(1, all_paths.count("/a/"))
+        self.assertIn("/b/", all_paths)
 
     def test_existing_host_preserves_existing_auth_ignores_proposed(self):
-        # Tool docs: auth on an existing host is operator-controlled,
-        # not agent-controlled. The merge must not overwrite.
         base = (
             'routes:\n'
             '  - host: "api.github.com"\n'
@@ -159,11 +171,10 @@ class TestMergeSingleRoute(unittest.TestCase):
         base = 'routes:\n  - host: "GitHub.com"\n'
         merged = _merge_single_route(base, {
             "host": "github.com",
-            "path_allowlist": ["/x/"],
+            "matches": [{"paths": [{"value": "/x/"}]}],
         })
         routes = _routes(merged)
         self.assertEqual(1, len(routes))
-        self.assertEqual(["/x/"], routes[0]["path_allowlist"])
 
     def test_missing_host_raises(self):
         with self.assertRaises(EgressApplyError):

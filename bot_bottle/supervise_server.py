@@ -137,21 +137,18 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
         "name": _sv.TOOL_EGRESS_BLOCK,
         "description": (
             "Call when egress refused your HTTPS request — host "
-            "without a matching route, or a path outside the route's "
-            "path_allowlist (typically a 403 from the proxy). Propose "
-            "a SINGLE route to add: the host you need + (optionally) "
-            "a path_allowlist + (optionally) an auth block. The "
-            "supervisor merges the route into the live table at "
-            "approval time — you do NOT need to see or reproduce the "
-            "existing routes, and you do not pass a full routes file. "
-            "If the host already has a route, the proposed "
-            "path_allowlist entries are unioned with the existing "
-            "ones (host stays single-route). The operator approves "
-            "or rejects in the supervise TUI. On approval the "
-            "supervisor writes the merged routes.yaml, SIGHUPs "
-            "egress (atomic swap, no dropped connections), and "
-            "writes the merged routes.yaml and SIGHUPs egress "
-            "(atomic swap, no dropped connections)."
+            "without a matching route, or a request that did not match "
+            "the route's matches rules (typically a 403 from the "
+            "proxy). Propose a SINGLE route to add: the host you "
+            "need + (optionally) a path_allowlist of path prefixes + "
+            "(optionally) an auth block. The supervisor merges the "
+            "route into the live table at approval time — you do NOT "
+            "need to see or reproduce the existing routes. If the "
+            "host already has a route, the proposed paths are unioned "
+            "with the existing ones (host stays single-route). The "
+            "operator approves or rejects in the supervise TUI. On "
+            "approval the supervisor writes the merged routes.yaml "
+            "and SIGHUPs egress (no dropped connections)."
         ),
         "inputSchema": {
             "type": "object",
@@ -169,7 +166,8 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
                     "description": (
                         "Optional URL path prefixes the route permits. "
                         "Each must start with '/'. Omit to allow all "
-                        "paths under this host (bare-pass route)."
+                        "paths under this host (bare-pass route). "
+                        "Internally converted to matches entries."
                     ),
                 },
                 "auth": {
@@ -203,7 +201,7 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
         "description": (
             "List the current egress route table — the bottle's "
             "allowlist. Returns JSON with one entry per allowed host, "
-            "each carrying its path_allowlist (if any) and whether "
+            "each carrying its matches rules (if any) and whether "
             "the proxy injects Authorization for the route. Use this "
             "before composing an `egress-block` proposal so the new "
             "routes file extends the live one rather than replacing it."

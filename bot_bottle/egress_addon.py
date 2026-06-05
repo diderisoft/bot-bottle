@@ -1,28 +1,7 @@
-"""mitmproxy addon entrypoint for the egress sidecar (PRD 0017).
+"""mitmproxy addon entrypoint for the egress sidecar (PRD 0017, PRD 0053).
 
 Loaded by `mitmdump -s /app/egress_addon.py` inside the
-egress container. Wraps the pure logic from
-`egress_addon_core` with mitmproxy's HTTPFlow API:
-
-  - At startup, read `EGRESS_ROUTES` (default
-    `/etc/egress/routes.yaml`, JSON content) → routes table.
-  - SIGHUP re-reads the file and atomically swaps the in-memory
-    table. A parse error keeps the old table in place — better to
-    keep serving the old config than to leave the proxy with no
-    routes after a typo.
-  - On each `request`: strip the inbound Authorization header, then
-    consult `decide()` for forward / block / inject-auth and apply
-    the decision to the flow.
-
-This file imports `mitmproxy` and is never imported on the host —
-mitmproxy is a container-only dependency. The host's tests target
-`egress_addon_core`.
-
-Dockerfile.sidecars copies both this file and
-`egress_addon_core.py` flat into `/app/`; the absolute import
-below works because mitmdump runs with `/app` on its sys.path. The
-parallel file in the package source tree (bot_bottle/) is the
-build input — not a module the host imports."""
+egress container."""
 
 from __future__ import annotations
 
@@ -35,35 +14,23 @@ from pathlib import Path
 
 from mitmproxy import http  # type: ignore[import-not-found]
 
-# Absolute import (NOT `from .egress_addon_core`) — the
-# container drops both files flat into /app/ so they are sibling
-# top-level modules to mitmdump's loader, not a package.
 from egress_addon_core import (  # type: ignore[import-not-found]
     Route,
     decide,
     is_git_push_request,
     load_routes,
+    match_route,
+    scan_inbound,
+    scan_outbound,
 )
 
 
 DEFAULT_ROUTES_PATH = "/etc/egress/routes.yaml"
 
-# Magic hostname the addon recognises as an introspection target.
-# Requests through the proxy for `_egress.local/<path>` are
-# intercepted and answered with synthetic responses (the addon's
-# `request` hook sets `flow.response` before any upstream connection).
-# The hostname is not in DNS — only clients dialing through this
-# specific egress can reach it, and only via HTTP (no TLS).
-# Used by the supervise sidecar's `list-egress-routes` MCP
-# tool to surface the live route table to the agent.
 INTROSPECT_HOST = "_egress.local"
 
 
 class EgressAddon:
-    """The mitmproxy addon. One instance per `mitmdump` process; the
-    request hook is invoked on every CONNECT-decapsulated HTTP/HTTPS
-    request the agent makes."""
-
     def __init__(self) -> None:
         self.routes_path = os.environ.get("EGRESS_ROUTES", DEFAULT_ROUTES_PATH)
         self.routes: tuple[Route, ...] = ()
@@ -80,9 +47,6 @@ class EgressAddon:
                 f"egress: {tag} load failed: {e}\n"
             )
             if initial:
-                # No baseline to fall back on; serve nothing rather
-                # than masquerade as a proxy with a route table the
-                # operator never declared.
                 self.routes = ()
             return
         self.routes = new_routes
@@ -102,11 +66,6 @@ class EgressAddon:
         signal.signal(signal.SIGHUP, handler)
 
     def _serve_introspection(self, flow: http.HTTPFlow, path: str) -> None:
-        """Synthesize a response for `_egress.local` requests.
-        Currently supports `/allowlist` which returns the in-memory
-        route table as JSON (host, path_allowlist, auth_scheme,
-        token_env per route — no token VALUES, those live in the
-        container's environ)."""
         if path == "/allowlist":
             payload = json.dumps(
                 {"routes": [dataclasses.asdict(r) for r in self.routes]},
@@ -123,32 +82,34 @@ class EgressAddon:
             {"Content-Type": "text/plain; charset=utf-8"},
         )
 
-    # mitmproxy's addon API: this method name + signature is how
-    # mitmdump discovers the request hook.
     def request(self, flow: http.HTTPFlow) -> None:
         request_path, _, query = flow.request.path.partition("?")
 
-        # Introspection: requests to the magic `_egress.local`
-        # host are answered locally with a synthetic response. Check
-        # before the strip-auth + route logic — these requests aren't
-        # real upstream traffic, the agent isn't injecting auth, and
-        # the addon's own decide() would 403 the magic host (it's
-        # never in the routes table).
         if flow.request.pretty_host == INTROSPECT_HOST:
             self._serve_introspection(flow, request_path)
             return
 
-        # Inbound Authorization is always stripped — the agent cannot
-        # smuggle a stolen token through the proxy. If the matched
-        # route declares an auth pair, a fresh header is injected
-        # below.
+        # DLP outbound scan BEFORE stripping auth — catches tokens the
+        # agent tried to smuggle in the Authorization header.
+        route = match_route(self.routes, flow.request.pretty_host)
+        if route is not None:
+            body = flow.request.get_text(strict=False) or ""
+            auth_header = flow.request.headers.get("authorization", "")
+            scan_text = body
+            if auth_header:
+                scan_text = auth_header + "\n" + body
+            dlp_result = scan_outbound(route, scan_text, os.environ)
+            if dlp_result is not None and dlp_result.severity == "block":
+                flow.response = http.Response.make(
+                    403,
+                    f"egress DLP: {dlp_result.reason}".encode("utf-8"),
+                    {"Content-Type": "text/plain; charset=utf-8"},
+                )
+                return
+
+        # Strip inbound Authorization — agent cannot smuggle tokens.
         flow.request.headers.pop("authorization", None)
 
-        # Universal HTTPS git-push block. Defense-in-depth: git-gate
-        # (PRD 0008) is the only sanctioned outbound path for git
-        # writes — its pre-receive runs gitleaks. Letting HTTPS push
-        # through egress + auth injection would route around
-        # that scan, so we 403 before any route logic.
         if is_git_push_request(request_path, query):
             flow.response = http.Response.make(
                 403,
@@ -161,11 +122,16 @@ class EgressAddon:
             )
             return
 
+        # Build headers mapping for match evaluation
+        req_headers = {k.lower(): v for k, v in flow.request.headers.items()}
+
         decision = decide(
             self.routes,
             flow.request.pretty_host,
             request_path,
             os.environ,
+            request_method=flow.request.method,
+            request_headers=req_headers,
         )
 
         if decision.action == "block":
@@ -178,6 +144,28 @@ class EgressAddon:
 
         if decision.inject_authorization is not None:
             flow.request.headers["authorization"] = decision.inject_authorization
+
+    def response(self, flow: http.HTTPFlow) -> None:
+        """DLP inbound scan on response bodies (PRD 0053)."""
+        route = match_route(self.routes, flow.request.pretty_host)
+        if route is None:
+            return
+        if flow.response is None:
+            return
+        body = flow.response.get_text(strict=False) or ""
+        if not body:
+            return
+        result = scan_inbound(route, body)
+        if result is None:
+            return
+        if result.severity == "block":
+            flow.response = http.Response.make(
+                403,
+                f"egress DLP: {result.reason}".encode("utf-8"),
+                {"Content-Type": "text/plain; charset=utf-8"},
+            )
+        elif result.severity == "warn":
+            sys.stderr.write(f"egress DLP warn: {result.reason}\n")
 
 
 addons = [EgressAddon()]
