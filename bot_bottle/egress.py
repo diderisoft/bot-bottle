@@ -186,14 +186,6 @@ def _route_to_yaml_fields(r: Route) -> dict[str, object]:
     return fields
 
 
-def _yaml_scalar(v: object) -> str:
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if isinstance(v, str):
-        return f'"{v}"'
-    return str(v)
-
-
 def egress_render_routes(
     routes: tuple[EgressRoute, ...],
 ) -> str:

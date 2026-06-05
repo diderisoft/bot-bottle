@@ -183,8 +183,6 @@ def _merge_single_route(
                                 new_paths.append(val)
                                 existing_paths.add(val)
                 if new_paths:
-                    if not isinstance(existing_matches, list):
-                        existing_matches = []
                     existing_matches.append(
                         {"paths": [{"value": p} for p in new_paths]}
                     )
