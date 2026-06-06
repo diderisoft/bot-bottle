@@ -87,11 +87,7 @@ jobs:
           else
             echo "Badge changes detected, committing..."
             git add README.md
-            git commit -m "chore: update quality badges
-
-- Pylint: ${{ steps.pylint.outputs.score }}
-- Pyright: ${{ steps.pyright.outputs.errors }} errors
-
-[skip ci]"
+            MSG="chore: update quality badges"$'\n\n'"- Pylint: ${{ steps.pylint.outputs.score }}"$'\n'"- Pyright: ${{ steps.pyright.outputs.errors }} errors"$'\n\n'"[skip ci]"
+            git commit -m "$MSG"
             git push
           fi
