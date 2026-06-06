@@ -120,11 +120,10 @@ class TestSandboxEscape(unittest.TestCase):
                     # is intentionally unreachable — the pre-receive
                     # gitleaks hook must reject BEFORE git-gate
                     # attempts the upstream push.
-                    "git": {"remotes": {
-                        "unreachable.invalid": {
-                            "Name": "throwaway",
-                            "Upstream": "ssh://git@unreachable.invalid:22/throwaway.git",
-                            "IdentityFile": str(cls._key_path),
+                    "git-gate": {"repos": {
+                        "throwaway": {
+                            "url": "ssh://git@unreachable.invalid:22/throwaway.git",
+                            "identity": str(cls._key_path),
                         },
                     }},
                 },

@@ -110,10 +110,10 @@ class TestSmolmachinesLaunch(unittest.TestCase):
         # (high-numbered) so we're confirming TSI refusal, not
         # just "no service listening."
         r = self.bottle.exec(
-            "wget -T 3 -t 1 -O - http://127.0.0.1:9 2>&1 || true"
+            "curl -s --show-error --max-time 3 http://127.0.0.1:9 2>&1 || true"
         )
-        # `wget` to a denied destination produces a connect error.
-        # The exact phrasing varies (busybox vs gnu); we assert
+        # `curl` to a denied destination produces a connect error.
+        # The exact phrasing varies by curl version; we assert
         # the response is NOT the body of any real service.
         self.assertNotIn("hello-from-vm", r.stdout)
         self.assertTrue(
@@ -126,10 +126,10 @@ class TestSmolmachinesLaunch(unittest.TestCase):
 
     def test_prompt_file_lands_in_guest(self):
         # provision_prompt copies the host-side prompt.txt into the
-        # guest at /root/.bot-bottle-prompt.txt. The content
+        # guest at /home/node/.bot-bottle-prompt.txt. The content
         # must match what the manifest declared so claude-code's
         # --append-system-prompt-file reads the right text.
-        r = self.bottle.exec("cat /root/.bot-bottle-prompt.txt")
+        r = self.bottle.exec("cat /home/node/.bot-bottle-prompt.txt")
         self.assertEqual(0, r.returncode, msg=r.stderr)
         self.assertEqual(_AGENT_PROMPT, r.stdout.rstrip("\n"))
 
@@ -143,7 +143,7 @@ class TestSmolmachinesLaunch(unittest.TestCase):
         # connect fails, which is the property chunk 3 will
         # preserve once egress is actually running.
         r = self.bottle.exec(
-            f"wget -T 3 -t 1 -O - http://{self.plan.bundle_ip}:9099 "
+            f"curl -s --show-error --max-time 3 http://{self.plan.bundle_ip}:9099 "
             "2>&1 || true"
         )
         self.assertTrue(
