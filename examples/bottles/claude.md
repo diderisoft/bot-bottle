@@ -5,10 +5,15 @@ agent_provider:
 egress:
   routes:
     - host: api.anthropic.com
-      role: claude_code_oauth
+      role: claude_code_oauth    # wires Claude Code OAuth; do not change
       auth:
         scheme: Bearer
         token_ref: BOT_BOTTLE_CLAUDE_OAUTH_TOKEN
+      # dlp is omitted → all detectors on by default (token_patterns,
+      # known_secrets outbound; naive_injection_detection inbound).
+      # To disable inbound scanning for this route:
+      #   dlp:
+      #     inbound_detectors: false
 ---
 
 Common Claude provider boundary. Drop this file into

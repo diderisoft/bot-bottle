@@ -14,7 +14,7 @@
 
 ## Features
 
-- **Per-bottle egress allowlist** — TLS-bumped HTTP/HTTPS chokepoint with a per-manifest host allowlist and request-body DLP scanner; DoH and arbitrary hosts blocked by default.
+- **Per-bottle egress allowlist** — TLS-bumped HTTP/HTTPS chokepoint with a per-manifest host allowlist; per-route path/method/header `matches` filtering; outbound DLP scanning for known tokens and secrets, inbound DLP scanning for prompt-injection attempts; DoH and arbitrary hosts blocked by default.
 - **Tokens the agent never sees** — host secrets live in a sidecar; the agent dials `http://sidecar:9099/<path>` and the proxy strips inbound `Authorization` and injects the real token before forwarding. `printenv` in the agent shows proxy URLs only.
 - **Gitleaks-scanned push (git-gate)** — `bottle.git` remotes route through a per-bottle `git daemon` that gitleaks-scans incoming refs pre-receive and forwards clean refs upstream over SSH. The agent never holds the upstream credential.
 - **Manifest-scoped skills + secrets** — each bottle declares its skills, env, git identity, remotes, and egress routes; unknown keys die at load.
@@ -106,8 +106,15 @@ egress:
   routes:
     - host: gitea.dideric.is
       auth:
-        scheme: token
+        scheme: token        # Bearer | token
         token_ref: BOT_BOTTLE_GITEA_TOKEN
+      matches:               # optional — restrict to specific paths/methods/headers
+        - paths:
+            - {type: prefix, value: /api/v1/}
+          methods: [GET, POST, PATCH, DELETE]
+      dlp:                   # optional — per-route detector overrides (default: all on)
+        outbound_detectors: [token_patterns, known_secrets]
+        inbound_detectors: false   # disable response scanning for this host
 ---
 
 The `gitea-dev` bottle. Provider auth via the inherited Claude route;
@@ -125,6 +132,21 @@ skills:
 
 You help maintain Gitea-hosted projects.
 ````
+
+**Egress route fields:**
+
+| Field | Required | Description |
+|---|---|---|
+| `host` | yes | Hostname to allowlist. One entry per host. |
+| `auth.scheme` | when `auth` present | `Bearer` or `token`. Injected by the proxy; the agent never sees the value. |
+| `auth.token_ref` | when `auth` present | Env-var name holding the secret on the host. |
+| `matches` | no | Array of `{paths, methods, headers}` filters. A request must match at least one entry (if any are given) to be forwarded. |
+| `matches[].paths` | no | Array of `{type, value}`. `type` is `prefix` (default), `exact`, or `regex`. |
+| `matches[].methods` | no | Array of HTTP method strings, e.g. `[GET, POST]`. |
+| `matches[].headers` | no | Array of `{name, value, type}`. `type` is `exact` (default) or `regex`. |
+| `dlp` | no | Per-route DLP overrides. Omit to use defaults (all detectors on). |
+| `dlp.outbound_detectors` | no | `false` disables outbound scanning; list restricts to named detectors (`token_patterns`, `known_secrets`). |
+| `dlp.inbound_detectors` | no | `false` disables inbound scanning; list restricts to named detectors (`naive_injection_detection`). |
 
 More examples in `examples/`. Full design lives under `docs/prds/`; the trust-boundary rationale is in `docs/prds/0011-per-file-md-manifest.md`.
 
