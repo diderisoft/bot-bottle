@@ -22,7 +22,6 @@ from bot_bottle.egress_addon_core import (
     MatchEntry,
     PathMatch,
     Route,
-    ScanResult,
     build_outbound_scan_text,
     decide,
     evaluate_matches,
@@ -739,16 +738,22 @@ class TestGitPushBlockFailFast(unittest.TestCase):
 
 
 class TestBuildOutboundScanText(unittest.TestCase):
-    def _build(self, **kwargs):
-        defaults = dict(
-            host="api.example.com",
-            path="/v1/data",
-            query="",
-            headers={},
-            body="",
+    def _build(
+        self,
+        *,
+        host: str = "api.example.com",
+        path: str = "/v1/data",
+        query: str = "",
+        headers: dict[str, str] | None = None,
+        body: str = "",
+    ) -> str:
+        return build_outbound_scan_text(
+            host=host,
+            path=path,
+            query=query,
+            headers=headers or {},
+            body=body,
         )
-        defaults.update(kwargs)
-        return build_outbound_scan_text(**defaults)
 
     def test_host_appears(self):
         text = self._build(host="secret.attacker.com")
