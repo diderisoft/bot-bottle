@@ -346,21 +346,44 @@ class TestConfigShape(unittest.TestCase):
                                      "bottle": "dev"}},
             })
 
-    def test_log_defaults_false(self):
+    def test_log_defaults_zero(self):
         b = _bottle([])
-        self.assertFalse(b.egress.Log)
+        self.assertEqual(0, b.egress.Log)
 
-    def test_log_true_accepted(self):
+    def test_log_level_1_accepted(self):
         b = Manifest.from_json_obj({
-            "bottles": {"dev": {"egress": {"log": True, "routes": []}}},
+            "bottles": {"dev": {"egress": {"log": 1, "routes": []}}},
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
         }).bottles["dev"]
-        self.assertTrue(b.egress.Log)
+        self.assertEqual(1, b.egress.Log)
 
-    def test_log_non_bool_rejected(self):
+    def test_log_level_2_accepted(self):
+        b = Manifest.from_json_obj({
+            "bottles": {"dev": {"egress": {"log": 2, "routes": []}}},
+            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        }).bottles["dev"]
+        self.assertEqual(2, b.egress.Log)
+
+    def test_log_invalid_level_rejected(self):
         with self.assertRaises(ManifestError):
             Manifest.from_json_obj({
-                "bottles": {"dev": {"egress": {"log": "yes"}}},
+                "bottles": {"dev": {"egress": {"log": 3}}},
+                "agents": {"demo": {"skills": [], "prompt": "",
+                                     "bottle": "dev"}},
+            })
+
+    def test_log_bool_rejected(self):
+        with self.assertRaises(ManifestError):
+            Manifest.from_json_obj({
+                "bottles": {"dev": {"egress": {"log": True}}},
+                "agents": {"demo": {"skills": [], "prompt": "",
+                                     "bottle": "dev"}},
+            })
+
+    def test_log_string_rejected(self):
+        with self.assertRaises(ManifestError):
+            Manifest.from_json_obj({
+                "bottles": {"dev": {"egress": {"log": "full"}}},
                 "agents": {"demo": {"skills": [], "prompt": "",
                                      "bottle": "dev"}},
             })

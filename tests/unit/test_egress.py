@@ -324,43 +324,45 @@ class TestRenderRoutes(unittest.TestCase):
         self.assertEqual(("token_patterns",), addon_routes[0].outbound_detectors)
         self.assertEqual((), addon_routes[0].inbound_detectors)
 
-    def test_log_false_omitted_from_render(self):
+    def test_log_zero_omitted_from_render(self):
         b = _bottle([{"host": "x.example"}])
         routes = egress_routes_for_bottle(b)
-        rendered = egress_render_routes(routes, log=False)
+        rendered = egress_render_routes(routes, log=0)
         self.assertNotIn("log:", rendered)
 
-    def test_log_true_emitted_at_top_level(self):
+    def test_log_level_emitted_at_top_level(self):
         b = _bottle([{"host": "x.example"}])
         routes = egress_routes_for_bottle(b)
-        rendered = egress_render_routes(routes, log=True)
-        self.assertTrue(rendered.startswith("log: true\n"))
+        for level in (1, 2):
+            with self.subTest(level=level):
+                rendered = egress_render_routes(routes, log=level)
+                self.assertTrue(rendered.startswith(f"log: {level}\n"))
 
-    def test_log_true_round_trips_to_addon_core(self):
-        from bot_bottle.egress_addon_core import load_config
+    def test_log_level_round_trips_to_addon_core(self):
+        from bot_bottle.egress_addon_core import load_config, LOG_FULL
         b = _bottle([{"host": "x.example"}])
         routes = egress_routes_for_bottle(b)
-        rendered = egress_render_routes(routes, log=True)
+        rendered = egress_render_routes(routes, log=LOG_FULL)
         cfg = load_config(rendered)
-        self.assertTrue(cfg.log)
+        self.assertEqual(LOG_FULL, cfg.log)
         self.assertEqual("x.example", cfg.routes[0].host)
 
     def test_log_via_manifest_flows_to_render(self):
         from bot_bottle.manifest import Manifest
-        from bot_bottle.egress_addon_core import load_config
+        from bot_bottle.egress_addon_core import load_config, LOG_BLOCKS
         m = Manifest.from_json_obj({
             "bottles": {"dev": {"egress": {
-                "log": True,
+                "log": 1,
                 "routes": [{"host": "x.example"}],
             }}},
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
         })
         bottle = m.bottles["dev"]
-        self.assertTrue(bottle.egress.Log)
+        self.assertEqual(LOG_BLOCKS, bottle.egress.Log)
         routes = egress_routes_for_bottle(bottle)
         rendered = egress_render_routes(routes, log=bottle.egress.Log)
         cfg = load_config(rendered)
-        self.assertTrue(cfg.log)
+        self.assertEqual(LOG_BLOCKS, cfg.log)
 
 
 class TestResolveTokenValues(unittest.TestCase):

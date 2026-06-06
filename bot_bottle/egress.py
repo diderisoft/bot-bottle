@@ -62,7 +62,7 @@ class EgressPlan:
     egress_network: str = ""
     mitmproxy_ca_host_path: Path = Path()
     mitmproxy_ca_cert_only_host_path: Path = Path()
-    log: bool = False
+    log: int = 0
 
 
 def egress_manifest_routes(
@@ -192,11 +192,11 @@ def _route_to_yaml_fields(r: Route) -> dict[str, object]:
 def egress_render_routes(
     routes: tuple[EgressRoute, ...],
     *,
-    log: bool = False,
+    log: int = 0,
 ) -> str:
     lines: list[str] = []
     if log:
-        lines.append("log: true")
+        lines.append(f"log: {log}")
     lines.append("routes:")
     if not routes:
         lines[-1] = "routes: []"

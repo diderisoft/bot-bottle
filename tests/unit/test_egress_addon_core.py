@@ -13,6 +13,9 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from bot_bottle.egress_addon_core import (
+    LOG_BLOCKS,
+    LOG_FULL,
+    LOG_OFF,
     Config,
     Decision,
     HeaderMatch,
@@ -278,23 +281,34 @@ class TestLoadRoutes(unittest.TestCase):
 
 
 class TestLoadConfig(unittest.TestCase):
-    def test_log_defaults_to_false(self):
+    def test_log_defaults_to_off(self):
         cfg = load_config('routes:\n  - host: "api.example"\n')
-        self.assertFalse(cfg.log)
+        self.assertEqual(LOG_OFF, cfg.log)
         self.assertEqual(1, len(cfg.routes))
 
-    def test_log_true_parsed(self):
-        cfg = load_config('log: true\nroutes:\n  - host: "api.example"\n')
-        self.assertTrue(cfg.log)
-        self.assertEqual(1, len(cfg.routes))
+    def test_log_level_1_parsed(self):
+        cfg = load_config('log: 1\nroutes:\n  - host: "api.example"\n')
+        self.assertEqual(LOG_BLOCKS, cfg.log)
 
-    def test_log_false_explicit(self):
-        cfg = load_config('log: false\nroutes:\n  - host: "api.example"\n')
-        self.assertFalse(cfg.log)
+    def test_log_level_2_parsed(self):
+        cfg = load_config('log: 2\nroutes:\n  - host: "api.example"\n')
+        self.assertEqual(LOG_FULL, cfg.log)
 
-    def test_log_non_bool_rejected(self):
+    def test_log_level_0_explicit(self):
+        cfg = load_config('log: 0\nroutes:\n  - host: "api.example"\n')
+        self.assertEqual(LOG_OFF, cfg.log)
+
+    def test_log_invalid_level_rejected(self):
         with self.assertRaises(ValueError):
-            load_config('log: "yes"\nroutes: []\n')
+            load_config('log: 3\nroutes: []\n')
+
+    def test_log_bool_rejected(self):
+        with self.assertRaises(ValueError):
+            load_config('log: true\nroutes: []\n')
+
+    def test_log_string_rejected(self):
+        with self.assertRaises(ValueError):
+            load_config('log: "full"\nroutes: []\n')
 
     def test_routes_accessible_via_config(self):
         cfg = load_config('routes:\n  - host: "x.example"\n')

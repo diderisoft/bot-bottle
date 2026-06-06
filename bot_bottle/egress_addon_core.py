@@ -70,10 +70,15 @@ class Route:
     inbound_detectors: tuple[str, ...] | None = None
 
 
+LOG_OFF = 0    # no logging
+LOG_BLOCKS = 1  # log block/warn events with request context
+LOG_FULL = 2    # log block/warn events + full request and response bodies
+
+
 @dataclass(frozen=True)
 class Config:
     routes: tuple[Route, ...]
-    log: bool = False
+    log: int = LOG_OFF
 
 
 @dataclass(frozen=True)
@@ -341,14 +346,17 @@ def load_routes(text: str) -> tuple[Route, ...]:
 
 
 def parse_config(payload: object) -> "Config":
-    """Parse a full egress config payload (top-level log flag + routes)."""
+    """Parse a full egress config payload (top-level log level + routes)."""
     if not isinstance(payload, dict):
         raise ValueError("routes payload: top-level must be an object")
     payload_dict: dict[str, object] = typing.cast(dict[str, object], payload)
 
-    log_raw: object = payload_dict.get("log", False)
-    if not isinstance(log_raw, bool):
-        raise ValueError("routes payload: 'log' must be true or false")
+    log_raw: object = payload_dict.get("log", LOG_OFF)
+    if log_raw is True or log_raw is False or not isinstance(log_raw, int) \
+            or log_raw not in (LOG_OFF, LOG_BLOCKS, LOG_FULL):
+        raise ValueError(
+            f"routes payload: 'log' must be {LOG_OFF}, {LOG_BLOCKS}, or {LOG_FULL}"
+        )
 
     routes = parse_routes(payload)
     return Config(routes=routes, log=log_raw)
@@ -564,6 +572,9 @@ def scan_inbound(
 
 
 __all__ = [
+    "LOG_BLOCKS",
+    "LOG_FULL",
+    "LOG_OFF",
     "Config",
     "Decision",
     "HeaderMatch",
