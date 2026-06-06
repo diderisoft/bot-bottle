@@ -346,6 +346,25 @@ class TestConfigShape(unittest.TestCase):
                                      "bottle": "dev"}},
             })
 
+    def test_log_defaults_false(self):
+        b = _bottle([])
+        self.assertFalse(b.egress.Log)
+
+    def test_log_true_accepted(self):
+        b = Manifest.from_json_obj({
+            "bottles": {"dev": {"egress": {"log": True, "routes": []}}},
+            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        }).bottles["dev"]
+        self.assertTrue(b.egress.Log)
+
+    def test_log_non_bool_rejected(self):
+        with self.assertRaises(ManifestError):
+            Manifest.from_json_obj({
+                "bottles": {"dev": {"egress": {"log": "yes"}}},
+                "agents": {"demo": {"skills": [], "prompt": "",
+                                     "bottle": "dev"}},
+            })
+
 
 if __name__ == "__main__":
     unittest.main()

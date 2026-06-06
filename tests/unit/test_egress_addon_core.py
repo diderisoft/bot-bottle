@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from bot_bottle.egress_addon_core import (
+    Config,
     Decision,
     HeaderMatch,
     MatchEntry,
@@ -21,8 +22,10 @@ from bot_bottle.egress_addon_core import (
     decide,
     evaluate_matches,
     is_git_push_request,
+    load_config,
     load_routes,
     match_route,
+    parse_config,
     parse_routes,
 )
 
@@ -269,6 +272,34 @@ class TestLoadRoutes(unittest.TestCase):
     def test_invalid_yaml_raises_value_error(self):
         with self.assertRaises(ValueError):
             load_routes("routes:\n\t- host: x\n")
+
+
+# --- load_config / parse_config ------------------------------------------
+
+
+class TestLoadConfig(unittest.TestCase):
+    def test_log_defaults_to_false(self):
+        cfg = load_config('routes:\n  - host: "api.example"\n')
+        self.assertFalse(cfg.log)
+        self.assertEqual(1, len(cfg.routes))
+
+    def test_log_true_parsed(self):
+        cfg = load_config('log: true\nroutes:\n  - host: "api.example"\n')
+        self.assertTrue(cfg.log)
+        self.assertEqual(1, len(cfg.routes))
+
+    def test_log_false_explicit(self):
+        cfg = load_config('log: false\nroutes:\n  - host: "api.example"\n')
+        self.assertFalse(cfg.log)
+
+    def test_log_non_bool_rejected(self):
+        with self.assertRaises(ValueError):
+            load_config('log: "yes"\nroutes: []\n')
+
+    def test_routes_accessible_via_config(self):
+        cfg = load_config('routes:\n  - host: "x.example"\n')
+        self.assertIsInstance(cfg, Config)
+        self.assertEqual("x.example", cfg.routes[0].host)
 
 
 # --- evaluate_matches ---------------------------------------------------

@@ -349,6 +349,7 @@ def _parse_dlp_block(
 @dataclass(frozen=True)
 class EgressConfig:
     routes: tuple[EgressRoute, ...] = ()
+    Log: bool = False
 
     @classmethod
     def from_dict(cls, bottle_name: str, raw: object) -> "EgressConfig":
@@ -367,10 +368,15 @@ class EgressConfig:
                 for i, entry in enumerate(routes_list)
             )
             validate_egress_routes(bottle_name, routes)
+        log_raw = d.get("log", False)
+        if not isinstance(log_raw, bool):
+            raise ManifestError(
+                f"bottle '{bottle_name}' egress.log must be true or false"
+            )
         for k in d:
-            if k != "routes":
+            if k not in ("routes", "log"):
                 raise ManifestError(
                     f"bottle '{bottle_name}' egress has unknown key {k!r}; "
-                    f"only 'routes' is accepted"
+                    f"accepted keys are 'routes', 'log'"
                 )
-        return cls(routes=routes)
+        return cls(routes=routes, Log=log_raw)

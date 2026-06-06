@@ -62,6 +62,7 @@ class EgressPlan:
     egress_network: str = ""
     mitmproxy_ca_host_path: Path = Path()
     mitmproxy_ca_cert_only_host_path: Path = Path()
+    log: bool = False
 
 
 def egress_manifest_routes(
@@ -190,10 +191,15 @@ def _route_to_yaml_fields(r: Route) -> dict[str, object]:
 
 def egress_render_routes(
     routes: tuple[EgressRoute, ...],
+    *,
+    log: bool = False,
 ) -> str:
-    lines: list[str] = ["routes:"]
+    lines: list[str] = []
+    if log:
+        lines.append("log: true")
+    lines.append("routes:")
     if not routes:
-        lines[0] = "routes: []"
+        lines[-1] = "routes: []"
         return "\n".join(lines) + "\n"
     for r in routes:
         f = _route_to_yaml_fields(r)
@@ -279,14 +285,16 @@ class Egress(ABC):
         provider_routes: tuple[EgressRoute, ...] = (),
     ) -> EgressPlan:
         routes = egress_routes_for_bottle(bottle, provider_routes)
+        log = bottle.egress.Log
         routes_path = stage_dir / "egress_routes.yaml"
-        routes_path.write_text(egress_render_routes(routes))
+        routes_path.write_text(egress_render_routes(routes, log=log))
         routes_path.chmod(0o600)
         return EgressPlan(
             slug=slug,
             routes_path=routes_path,
             routes=routes,
             token_env_map=egress_token_env_map(routes),
+            log=log,
         )
 
 __all__ = [

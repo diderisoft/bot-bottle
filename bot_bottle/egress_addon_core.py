@@ -71,6 +71,12 @@ class Route:
 
 
 @dataclass(frozen=True)
+class Config:
+    routes: tuple[Route, ...]
+    log: bool = False
+
+
+@dataclass(frozen=True)
 class Decision:
     action: str  # "forward" or "block"
     reason: str = ""
@@ -334,6 +340,29 @@ def load_routes(text: str) -> tuple[Route, ...]:
     return parse_routes(payload)
 
 
+def parse_config(payload: object) -> "Config":
+    """Parse a full egress config payload (top-level log flag + routes)."""
+    if not isinstance(payload, dict):
+        raise ValueError("routes payload: top-level must be an object")
+    payload_dict: dict[str, object] = typing.cast(dict[str, object], payload)
+
+    log_raw: object = payload_dict.get("log", False)
+    if not isinstance(log_raw, bool):
+        raise ValueError("routes payload: 'log' must be true or false")
+
+    routes = parse_routes(payload)
+    return Config(routes=routes, log=log_raw)
+
+
+def load_config(text: str) -> "Config":
+    """Parse YAML text → Config (routes + log flag)."""
+    try:
+        payload = parse_yaml_subset(text)
+    except YamlSubsetError as e:
+        raise ValueError(f"routes payload: invalid YAML: {e}") from e
+    return parse_config(payload)
+
+
 # ---------------------------------------------------------------------------
 # Match evaluation
 # ---------------------------------------------------------------------------
@@ -535,6 +564,7 @@ def scan_inbound(
 
 
 __all__ = [
+    "Config",
     "Decision",
     "HeaderMatch",
     "MatchEntry",
@@ -544,8 +574,10 @@ __all__ = [
     "decide",
     "evaluate_matches",
     "is_git_push_request",
+    "load_config",
     "load_routes",
     "match_route",
+    "parse_config",
     "parse_routes",
     "scan_inbound",
     "scan_outbound",

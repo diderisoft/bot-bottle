@@ -324,6 +324,44 @@ class TestRenderRoutes(unittest.TestCase):
         self.assertEqual(("token_patterns",), addon_routes[0].outbound_detectors)
         self.assertEqual((), addon_routes[0].inbound_detectors)
 
+    def test_log_false_omitted_from_render(self):
+        b = _bottle([{"host": "x.example"}])
+        routes = egress_routes_for_bottle(b)
+        rendered = egress_render_routes(routes, log=False)
+        self.assertNotIn("log:", rendered)
+
+    def test_log_true_emitted_at_top_level(self):
+        b = _bottle([{"host": "x.example"}])
+        routes = egress_routes_for_bottle(b)
+        rendered = egress_render_routes(routes, log=True)
+        self.assertTrue(rendered.startswith("log: true\n"))
+
+    def test_log_true_round_trips_to_addon_core(self):
+        from bot_bottle.egress_addon_core import load_config
+        b = _bottle([{"host": "x.example"}])
+        routes = egress_routes_for_bottle(b)
+        rendered = egress_render_routes(routes, log=True)
+        cfg = load_config(rendered)
+        self.assertTrue(cfg.log)
+        self.assertEqual("x.example", cfg.routes[0].host)
+
+    def test_log_via_manifest_flows_to_render(self):
+        from bot_bottle.manifest import Manifest
+        from bot_bottle.egress_addon_core import load_config
+        m = Manifest.from_json_obj({
+            "bottles": {"dev": {"egress": {
+                "log": True,
+                "routes": [{"host": "x.example"}],
+            }}},
+            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        })
+        bottle = m.bottles["dev"]
+        self.assertTrue(bottle.egress.Log)
+        routes = egress_routes_for_bottle(bottle)
+        rendered = egress_render_routes(routes, log=bottle.egress.Log)
+        cfg = load_config(rendered)
+        self.assertTrue(cfg.log)
+
 
 class TestResolveTokenValues(unittest.TestCase):
     def test_reads_host_env(self):

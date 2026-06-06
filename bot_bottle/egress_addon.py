@@ -15,10 +15,11 @@ from pathlib import Path
 from mitmproxy import http  # type: ignore[import-not-found]
 
 from egress_addon_core import (  # type: ignore[import-not-found]
+    Config,
     Route,
     decide,
     is_git_push_request,
-    load_routes,
+    load_config,
     match_route,
     scan_inbound,
     scan_outbound,
@@ -33,26 +34,27 @@ INTROSPECT_HOST = "_egress.local"
 class EgressAddon:
     def __init__(self) -> None:
         self.routes_path = os.environ.get("EGRESS_ROUTES", DEFAULT_ROUTES_PATH)
-        self.routes: tuple[Route, ...] = ()
+        self.config: Config = Config(routes=())
         self._reload(initial=True)
         self._install_sighup()
 
     def _reload(self, *, initial: bool = False) -> None:
         try:
             text = Path(self.routes_path).read_text(encoding="utf-8")
-            new_routes = load_routes(text)
+            new_config = load_config(text)
         except (OSError, ValueError) as e:
             tag = "boot" if initial else "SIGHUP"
             sys.stderr.write(
                 f"egress: {tag} load failed: {e}\n"
             )
             if initial:
-                self.routes = ()
+                self.config = Config(routes=())
             return
-        self.routes = new_routes
+        self.config = new_config
         sys.stderr.write(
-            f"egress: loaded {len(self.routes)} route(s): "
-            f"{', '.join(r.host for r in self.routes)}\n"
+            f"egress: loaded {len(self.config.routes)} route(s): "
+            f"{', '.join(r.host for r in self.config.routes)}"
+            f"{' [log=on]' if self.config.log else ''}\n"
         )
 
     def _install_sighup(self) -> None:
@@ -68,7 +70,7 @@ class EgressAddon:
     def _serve_introspection(self, flow: http.HTTPFlow, path: str) -> None:
         if path == "/allowlist":
             payload = json.dumps(
-                {"routes": [dataclasses.asdict(r) for r in self.routes]},
+                {"routes": [dataclasses.asdict(r) for r in self.config.routes]},
                 indent=2,
             ).encode("utf-8")
             flow.response = http.Response.make(
@@ -90,6 +92,31 @@ class EgressAddon:
             {"Content-Type": "text/plain; charset=utf-8"},
         )
 
+    def _log_request(self, flow: http.HTTPFlow) -> None:
+        sys.stderr.write(
+            json.dumps({
+                "event": "egress_request",
+                "host": flow.request.pretty_host,
+                "method": flow.request.method,
+                "path": flow.request.path,
+                "headers": dict(flow.request.headers),
+                "body": flow.request.get_text(strict=False) or "",
+            })
+            + "\n"
+        )
+
+    def _log_response(self, flow: http.HTTPFlow) -> None:
+        sys.stderr.write(
+            json.dumps({
+                "event": "egress_response",
+                "host": flow.request.pretty_host,
+                "status": flow.response.status_code,
+                "headers": dict(flow.response.headers),
+                "body": flow.response.get_text(strict=False) or "",
+            })
+            + "\n"
+        )
+
     def request(self, flow: http.HTTPFlow) -> None:
         request_path, _, query = flow.request.path.partition("?")
 
@@ -99,7 +126,7 @@ class EgressAddon:
 
         # DLP outbound scan BEFORE stripping auth — catches tokens the
         # agent tried to smuggle in the Authorization header.
-        route = match_route(self.routes, flow.request.pretty_host)
+        route = match_route(self.config.routes, flow.request.pretty_host)
         if route is not None:
             body = flow.request.get_text(strict=False) or ""
             auth_header = flow.request.headers.get("authorization", "")
@@ -127,7 +154,7 @@ class EgressAddon:
         req_headers = {k.lower(): v for k, v in flow.request.headers.items()}
 
         decision = decide(
-            self.routes,
+            self.config.routes,
             flow.request.pretty_host,
             request_path,
             os.environ,
@@ -142,13 +169,18 @@ class EgressAddon:
         if decision.inject_authorization is not None:
             flow.request.headers["authorization"] = decision.inject_authorization
 
+        if self.config.log:
+            self._log_request(flow)
+
     def response(self, flow: http.HTTPFlow) -> None:
         """DLP inbound scan on response bodies (PRD 0053)."""
-        route = match_route(self.routes, flow.request.pretty_host)
+        route = match_route(self.config.routes, flow.request.pretty_host)
         if route is None:
             return
         if flow.response is None:
             return
+        if self.config.log:
+            self._log_response(flow)
         body = flow.response.get_text(strict=False) or ""
         if not body:
             return
