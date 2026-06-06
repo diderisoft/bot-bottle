@@ -27,7 +27,7 @@
 
 ## Architecture
 
-A bottle is two containers per agent: an `agent` container, and a `sidecars` container that bundles pipelock + cred-proxy + git-gate + supervise behind a Python init supervisor. They share a per-agent Docker `--internal` network; the agent has no default route off-box.
+A bottle is two containers per agent: an `agent` container, and a `sidecars` container that bundles egress + git-gate + supervise behind a Python init supervisor. They share a per-agent Docker `--internal` network; the agent has no default route off-box.
 
 ```
                             host  ( ./cli.py )
@@ -36,31 +36,25 @@ A bottle is two containers per agent: an `agent` container, and a `sidecars` con
                                   ▼
    ┌─────────────────────────── bottle ──────────────────────────────────┐
    │                                                                     │
-   │   ┌──────────────────┐                   ┌──────────────┐           │
-   │   │ agent image      │   HTTP(S) proxy   │ cred-proxy   │           │
-   │   │ (claude-code,    │ ─────────────────►│ (strips/inj  │           │
-   │   │  codex, etc)     │                   │  Authoriz.)  │           │
-   │   │                  │                   └──────┬───────┘           │
-   │   │ environ: URLs    │                          │                   │
-   │   │ only, no real    │                          ▼                   │
-   │   │ tokens           │                  ┌────────────────┐          │  HTTPS to
-   │   │                  │                  │ pipelock image │──────────┼──►  allowlisted
-   │   │                  │                  │ (TLS bump, DLP │          │     hosts (incl.
-   │   │                  │                  │  body scan,    │          │      cred-proxy
-   │   │                  │                  │  allowlist)    │          │      upstreams)
-   │   │                  │                  └────────────────┘          │
-   │   │                  │                                              │
+   │   ┌──────────────────┐                   ┌──────────────────────┐   │
+   │   │ agent image      │   HTTP(S) proxy   │ egress image         │   │
+   │   │ (claude-code,    │ ─────────────────►│ (mitmproxy; TLS bump │   │  HTTPS to
+   │   │  codex, etc)     │                   │  DLP scan, path      │───┼──►  allowlisted
+   │   │                  │                   │  matching, auth      │   │     hosts
+   │   │ environ: proxy   │                   │  injection)          │   │
+   │   │ URLs only, no    │                   └──────────────────────┘   │
+   │   │ real tokens      │                                              │
    │   │                  │    git proxy     ┌────────────────┐          │  SSH push/fetch
    │   │                  │ ────────────────►│ git-gate image │──────────┼──►  to bottle.git
    │   │                  │                  │ (gitleaks +    │          │      upstreams
    │   └──────────────────┘                  │  git daemon)   │          │     (direct — not
-   │                                         └────────────────┘          │      via pipelock)
+   │                                         └────────────────┘          │      via egress)
    │                                                                     │
-   │   agent on internal network (no default route); pipelock,           │
-   │   cred-proxy, and git-gate straddle internal + egress networks.     │
-   │   pipelock is the single HTTP/HTTPS chokepoint — cred-proxy's       │
-   │   outbound traverses it too. git-gate's SSH egress is direct        │
-   │   because pipelock is HTTP-only.                                    │
+   │   agent on internal network (no default route); egress and          │
+   │   git-gate straddle internal + egress networks.                     │
+   │   egress is the single HTTP/HTTPS chokepoint — all agent HTTP/HTTPS │
+   │   traffic flows through it. git-gate's SSH egress is direct         │
+   │   because egress is HTTP-only.                                      │
    └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -104,8 +98,6 @@ egress:
       auth:
         scheme: token
         token_ref: BOT_BOTTLE_GITEA_TOKEN
-      pipelock:
-        ssrf_ip_allowlist: [192.0.2.10/32]
 ---
 
 The `gitea-dev` bottle. Provider auth via the inherited Claude route;

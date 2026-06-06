@@ -14,8 +14,7 @@ import os
 
 # Bundle image. Defaults to a built-locally tag (built from the
 # repo's Dockerfile.sidecars via compose `build:`). Operators
-# pinning to a published digest can override via env, matching
-# the existing `BOT_BOTTLE_PIPELOCK_IMAGE` shape.
+# pinning to a published digest can override via env.
 SIDECAR_BUNDLE_IMAGE = os.environ.get(
     "BOT_BOTTLE_SIDECAR_IMAGE",
     "bot-bottle-sidecars:latest",

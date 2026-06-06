@@ -22,7 +22,9 @@ mounted in. That topology breaks two assumptions those tests make:
   `http://127.0.0.1:<host_port>` from inside the job time out.
 
 The affected tests (`test_orphan_cleanup.test_create_and_remove`,
-`test_pipelock_sidecar_smoke.test_smoke`) still run locally where the
-test process and Docker daemon share a host. Making them work in CI
-is a follow-up: either re-write them to discover container IPs via
-`docker inspect`, or reconfigure the runner with host networking.
+`test_sidecar_bundle_image.TestSidecarBundleImage`,
+`test_sidecar_bundle_compose.TestSidecarBundleCompose`) still run
+locally where the test process and Docker daemon share a host.
+Making them work in CI is a follow-up: either re-write them to
+discover container IPs via `docker inspect`, or reconfigure the
+runner with host networking.
