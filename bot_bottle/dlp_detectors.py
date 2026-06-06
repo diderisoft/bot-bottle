@@ -14,6 +14,7 @@ import base64
 import gzip
 import re
 import typing
+import unicodedata
 from urllib.parse import quote as url_quote
 
 try:
@@ -38,7 +39,24 @@ def _snippet(text: str, start: int, end: int) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Token patterns detector (Phase 1a)
+# Unicode normalization (defeats confusable-char and combining-mark evasion)
+# ---------------------------------------------------------------------------
+
+def _normalize_text(text: str) -> str:
+    # NFKD separates base characters from combining marks and resolves
+    # compatibility equivalents (fullwidth ASCII, ligatures, etc.)
+    decomposed = unicodedata.normalize("NFKD", text)
+    return "".join(
+        ch for ch in decomposed
+        # Strip combining marks inserted between chars to break patterns
+        if unicodedata.category(ch) != "Mn"
+        # Strip control chars; keep common whitespace (\n \r \t)
+        and (unicodedata.category(ch) != "Cc" or ch in "\n\r\t")
+    )
+
+
+# ---------------------------------------------------------------------------
+# Token patterns detector
 # ---------------------------------------------------------------------------
 
 TOKEN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -50,12 +68,20 @@ TOKEN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("OpenAI project API key", re.compile(r"sk-proj-[A-Za-z0-9_\-]{48,}")),
     ("Stripe live key", re.compile(r"sk_live_[A-Za-z0-9]{24}")),
     ("Generic Bearer JWT", re.compile(r"Bearer\s+[A-Za-z0-9._\-]{50,}")),
+    ("HuggingFace token", re.compile(r"hf_[A-Za-z0-9]{34,}")),
+    ("Databricks token", re.compile(r"dapi[A-Za-z0-9]{32}")),
+    ("Slack token", re.compile(r"xox[baprs]-[A-Za-z0-9]+-[A-Za-z0-9]+-[A-Za-z0-9]{24,}")),
+    ("npm token", re.compile(r"npm_[A-Za-z0-9]{36}")),
+    ("SendGrid API key", re.compile(r"SG\.[A-Za-z0-9_\-]{22}\.[A-Za-z0-9_\-]{43}")),
+    ("PyPI token", re.compile(r"pypi-[A-Za-z0-9_\-]{80,}")),
+    ("HashiCorp Vault token", re.compile(r"hvs\.[A-Za-z0-9_\-]{24,}")),
 )
 
 
 def scan_token_patterns(text: str, *, location: str = "body") -> ScanResult | None:
+    normalized = _normalize_text(text)
     for name, pattern in TOKEN_PATTERNS:
-        m = pattern.search(text)
+        m = pattern.search(normalized)
         if m is not None:
             return ScanResult(
                 severity="block",
@@ -229,11 +255,36 @@ def scan_naive_injection(text: str) -> ScanResult | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# CRLF injection detector
+# ---------------------------------------------------------------------------
+
+# URL-encoded CRLF is never legitimate in a request URL or header value.
+_CRLF_ENCODED_RE = re.compile(r"%0[dD]%0[aA]", re.ASCII)
+# Literal CRLF followed by a header-name pattern indicates header injection.
+_CRLF_HEADER_INJECT_RE = re.compile(r"\r\n[A-Za-z][A-Za-z0-9\-]+\s*:", re.ASCII)
+
+
+def scan_crlf_injection(text: str) -> ScanResult | None:
+    if _CRLF_ENCODED_RE.search(text):
+        return ScanResult(
+            severity="block",
+            reason="URL-encoded CRLF (%0d%0a) in outbound request",
+        )
+    if _CRLF_HEADER_INJECT_RE.search(text):
+        return ScanResult(
+            severity="block",
+            reason="CRLF header injection pattern in outbound request",
+        )
+    return None
+
+
 __all__ = [
     "REDACT",
     "SNIPPET_CONTEXT",
     "TOKEN_PATTERNS",
     "redact_tokens",
+    "scan_crlf_injection",
     "scan_known_secrets",
     "scan_naive_injection",
     "scan_token_patterns",

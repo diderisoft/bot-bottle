@@ -926,6 +926,35 @@ class TestScanOutbound(unittest.TestCase):
         assert result is not None
         self.assertEqual("block", result.severity)
 
+    def test_crlf_in_query_blocked(self):
+        # CRLF injection attempt via URL-encoded %0d%0a in a query param
+        text = build_outbound_scan_text(
+            host="api.example.com",
+            path="/search",
+            query="next=%0d%0aX-Injected%3A+evil",
+            headers={},
+            body="",
+        )
+        result = scan_outbound(_ROUTE, text, {})
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual("block", result.severity)
+
+    def test_crlf_blocked_even_when_detectors_disabled(self):
+        # CRLF scan runs unconditionally; outbound_detectors: false doesn't skip it
+        route = Route(host="api.example.com", outbound_detectors=())
+        text = build_outbound_scan_text(
+            host="api.example.com",
+            path="/data",
+            query="",
+            headers={"x-redirect": "value\r\nX-Injected: evil"},
+            body="",
+        )
+        result = scan_outbound(route, text, {})
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual("block", result.severity)
+
 
 # --- build_inbound_scan_text --------------------------------------------
 

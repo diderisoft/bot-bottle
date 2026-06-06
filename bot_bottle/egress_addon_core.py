@@ -574,14 +574,24 @@ def scan_outbound(
     # at import time (the sidecar copies it flat alongside this file).
     try:
         from dlp_detectors import (  # type: ignore[import-not-found]
-            scan_token_patterns, scan_known_secrets,
+            scan_crlf_injection,
+            scan_known_secrets,
+            scan_token_patterns,
         )
     except ImportError:  # pragma: no cover - host-side path
         from .dlp_detectors import (  # type: ignore[import-not-found]
-            scan_token_patterns, scan_known_secrets,
+            scan_crlf_injection,
+            scan_known_secrets,
+            scan_token_patterns,
         )
 
     text = body if isinstance(body, str) else body.decode("utf-8", errors="replace")
+
+    # CRLF injection is never legitimate — runs unconditionally, not gated
+    # by outbound_detectors config.
+    result = scan_crlf_injection(text)
+    if result is not None:
+        return result
 
     if _detector_enabled(route.outbound_detectors, "token_patterns"):
         result = scan_token_patterns(text, location="body")
