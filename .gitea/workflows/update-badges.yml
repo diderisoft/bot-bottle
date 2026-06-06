@@ -50,16 +50,14 @@ jobs:
           PYLINT_SCORE="${{ steps.pylint.outputs.score }}"
           PYRIGHT_ERRORS="${{ steps.pyright.outputs.errors }}"
 
-          # Escape / for sed
-          PYLINT_SCORE_ESCAPED=$(echo "$PYLINT_SCORE" | sed 's/\//\\\//g')
+          PYLINT_SCORE_ENCODED=$(echo "$PYLINT_SCORE" | sed 's|/|%2F|g')
 
-          # Create badge URLs with proper encoding
-          PYLINT_BADGE="[![pylint](https://img.shields.io/badge/pylint-${PYLINT_SCORE}%25-brightgreen)](https://github.com/PyCQA/pylint)"
-          PYRIGHT_BADGE="[![pyright](https://img.shields.io/badge/pyright-${PYRIGHT_ERRORS}%20errors-brightgreen)](https://github.com/microsoft/pyright)"
-
-          # Update README with new badges
-          sed -i "s|\[\!\[pylint\].*pylint)\]|${PYLINT_BADGE}|g" README.md
-          sed -i "s|\[\!\[pyright\].*pyright)\]|${PYRIGHT_BADGE}|g" README.md
+          if [ -n "$PYLINT_SCORE_ENCODED" ]; then
+            sed -i "s|/badge/pylint-[^)]*|/badge/pylint-${PYLINT_SCORE_ENCODED}-brightgreen|" README.md
+          fi
+          if [ -n "$PYRIGHT_ERRORS" ]; then
+            sed -i "s|/badge/pyright-[^)]*|/badge/pyright-${PYRIGHT_ERRORS}%20errors-brightgreen|" README.md
+          fi
 
           echo "Updated badges:"
           grep -E "pylint|pyright" README.md | head -2
