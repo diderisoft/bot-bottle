@@ -31,6 +31,7 @@ jobs:
 
       - name: Run pylint and extract score
         id: pylint
+        continue-on-error: true
         run: |
           # Run pylint and capture the score
           PYLINT_OUTPUT=$(python -m pylint bot_bottle/ 2>&1 | tail -1)
@@ -45,6 +46,7 @@ jobs:
 
       - name: Run pyright and check errors
         id: pyright
+        continue-on-error: true
         run: |
           # Run pyright and check for errors
           PYRIGHT_OUTPUT=$(python -m pyright 2>&1 | tail -1)
