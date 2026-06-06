@@ -532,8 +532,6 @@ def scan_outbound(
     route: Route,
     body: str | bytes,
     environ: typing.Mapping[str, str],
-    *,
-    auth_header: str = "",
 ) -> ScanResult | None:
     # Lazy import to avoid circular deps and keep dlp_detectors optional
     # at import time (the sidecar copies it flat alongside this file).
@@ -549,19 +547,11 @@ def scan_outbound(
     text = body if isinstance(body, str) else body.decode("utf-8", errors="replace")
 
     if _detector_enabled(route.outbound_detectors, "token_patterns"):
-        if auth_header:
-            result = scan_token_patterns(auth_header, location="authorization header")
-            if result is not None:
-                return result
         result = scan_token_patterns(text, location="body")
         if result is not None:
             return result
 
     if _detector_enabled(route.outbound_detectors, "known_secrets"):
-        if auth_header:
-            result = scan_known_secrets(auth_header, location="authorization header", env=environ)
-            if result is not None:
-                return result
         result = scan_known_secrets(text, location="body", env=environ)
         if result is not None:
             return result

@@ -147,22 +147,22 @@ class EgressAddon:
             self._serve_introspection(flow, request_path)
             return
 
-        # DLP outbound scan BEFORE stripping auth — catches tokens the
-        # agent tried to smuggle in the Authorization header.
+        # Strip inbound Authorization before DLP and matching; the agent cannot
+        # smuggle tokens, and the route may inject sidecar-owned auth later.
+        flow.request.headers.pop("authorization", None)
+
+        # DLP outbound scan after auth stripping so placeholder or attempted
+        # agent auth headers do not become part of the scanned payload.
         route = match_route(self.config.routes, flow.request.pretty_host)
         if route is not None:
             body = flow.request.get_text(strict=False) or ""
-            auth_header = flow.request.headers.get("authorization", "")
-            dlp_result = scan_outbound(route, body, os.environ, auth_header=auth_header)
+            dlp_result = scan_outbound(route, body, os.environ)
             if dlp_result is not None and dlp_result.severity == "block":
                 ctx = self._req_ctx(flow)
                 if dlp_result.context:
                     ctx = {**ctx, "context": dlp_result.context}
                 self._block(flow, f"egress DLP: {dlp_result.reason}", ctx=ctx)
                 return
-
-        # Strip inbound Authorization — agent cannot smuggle tokens.
-        flow.request.headers.pop("authorization", None)
 
         if is_git_push_request(request_path, query):
             self._block(

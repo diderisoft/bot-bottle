@@ -30,6 +30,7 @@ from bot_bottle.egress_addon_core import (
     match_route,
     parse_config,
     parse_routes,
+    scan_outbound,
 )
 
 
@@ -597,6 +598,22 @@ class TestDecisionDefaults(unittest.TestCase):
         d = Decision(action="forward")
         self.assertEqual("", d.reason)
         self.assertIsNone(d.inject_authorization)
+
+
+# --- scan_outbound -------------------------------------------------------
+
+
+class TestScanOutbound(unittest.TestCase):
+    def test_body_token_patterns_still_block(self):
+        result = scan_outbound(
+            Route(host="chatgpt.com"),
+            "leak sk-" + "A" * 48,
+            {},
+        )
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual("body", result.location)
+        self.assertIn("OpenAI API key", result.reason)
 
 
 # --- is_git_push_request ------------------------------------------------
