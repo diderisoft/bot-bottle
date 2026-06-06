@@ -27,6 +27,11 @@ from egress_addon_core import (  # type: ignore[import-not-found]
     scan_outbound,
 )
 
+try:
+    from dlp_detectors import redact_tokens  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover - host-side path
+    from bot_bottle.dlp_detectors import redact_tokens  # type: ignore[import-not-found]
+
 
 DEFAULT_ROUTES_PATH = "/etc/egress/routes.yaml"
 
@@ -89,9 +94,9 @@ class EgressAddon:
 
     def _req_ctx(self, flow: http.HTTPFlow) -> dict[str, object]:
         return {
-            "host": flow.request.pretty_host,
+            "host": redact_tokens(flow.request.pretty_host, env=os.environ),
             "method": flow.request.method,
-            "path": flow.request.path,
+            "path": redact_tokens(flow.request.path, env=os.environ),
         }
 
     def _block(
@@ -115,9 +120,9 @@ class EgressAddon:
         sys.stderr.write(
             json.dumps({
                 "event": "egress_request",
-                "host": flow.request.pretty_host,
+                "host": redact_tokens(flow.request.pretty_host, env=os.environ),
                 "method": flow.request.method,
-                "path": flow.request.path,
+                "path": redact_tokens(flow.request.path, env=os.environ),
                 "headers": dict(flow.request.headers),
                 "body": flow.request.get_text(strict=False) or "",
             })
@@ -149,16 +154,12 @@ class EgressAddon:
         if route is not None:
             body = flow.request.get_text(strict=False) or ""
             auth_header = flow.request.headers.get("authorization", "")
-            scan_text = body
-            if auth_header:
-                scan_text = auth_header + "\n" + body
-            dlp_result = scan_outbound(route, scan_text, os.environ)
+            dlp_result = scan_outbound(route, body, os.environ, auth_header=auth_header)
             if dlp_result is not None and dlp_result.severity == "block":
-                self._block(
-                    flow,
-                    f"egress DLP: {dlp_result.reason}",
-                    ctx=self._req_ctx(flow),
-                )
+                ctx = self._req_ctx(flow)
+                if dlp_result.context:
+                    ctx = {**ctx, "context": dlp_result.context}
+                self._block(flow, f"egress DLP: {dlp_result.reason}", ctx=ctx)
                 return
 
         # Strip inbound Authorization — agent cannot smuggle tokens.
@@ -211,7 +212,12 @@ class EgressAddon:
         result = scan_inbound(route, body)
         if result is None:
             return
-        resp_ctx = {**self._req_ctx(flow), "response_status": flow.response.status_code}
+        resp_ctx: dict[str, object] = {
+            **self._req_ctx(flow),
+            "response_status": flow.response.status_code,
+        }
+        if result.context:
+            resp_ctx = {**resp_ctx, "context": result.context}
         if result.severity == "block":
             self._block(flow, f"egress DLP: {result.reason}", ctx=resp_ctx)
         elif result.severity == "warn" and self.config.log >= LOG_BLOCKS:

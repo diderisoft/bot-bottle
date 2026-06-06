@@ -22,6 +22,21 @@ except ImportError:  # pragma: no cover - host-side path
 
 
 # ---------------------------------------------------------------------------
+# Snippet helpers
+# ---------------------------------------------------------------------------
+
+SNIPPET_CONTEXT = 40  # chars of surrounding text to include on each side
+REDACT = "********"   # fixed-width replacement for the matched sensitive value
+
+
+def _snippet(text: str, start: int, end: int) -> str:
+    """Return context around a match with the matched span replaced by REDACT."""
+    before = text[max(0, start - SNIPPET_CONTEXT):start].replace("\n", " ").replace("\r", " ")
+    after = text[end:end + SNIPPET_CONTEXT].replace("\n", " ").replace("\r", " ")
+    return f"{before}{REDACT}{after}"
+
+
+# ---------------------------------------------------------------------------
 # Token patterns detector (Phase 1a)
 # ---------------------------------------------------------------------------
 
@@ -36,14 +51,33 @@ TOKEN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 
-def scan_token_patterns(text: str) -> ScanResult | None:
+def scan_token_patterns(text: str, *, location: str = "body") -> ScanResult | None:
     for name, pattern in TOKEN_PATTERNS:
-        if pattern.search(text):
+        m = pattern.search(text)
+        if m is not None:
             return ScanResult(
                 severity="block",
-                reason=f"outbound request contains {name}",
+                reason=f"{name} found in {location}",
+                location=location,
+                context=_snippet(text, m.start(), m.end()),
             )
     return None
+
+
+def redact_tokens(
+    text: str,
+    *,
+    env: typing.Mapping[str, str] | None = None,
+) -> str:
+    """Replace token pattern matches and (if env given) provisioned secrets with REDACT."""
+    for _, pattern in TOKEN_PATTERNS:
+        text = pattern.sub(REDACT, text)
+    if env is not None:
+        for key, value in env.items():
+            if key.startswith("EGRESS_TOKEN_") and value:
+                for variant in _encoded_variants(value):
+                    text = text.replace(variant, REDACT)
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -69,6 +103,7 @@ def _encoded_variants(secret: str) -> list[str]:
 def scan_known_secrets(
     text: str,
     *,
+    location: str = "body",
     env: typing.Mapping[str, str] | None = None,
 ) -> ScanResult | None:
     if env is None:
@@ -77,13 +112,13 @@ def scan_known_secrets(
         if not key.startswith("EGRESS_TOKEN_") or not value:
             continue
         for variant in _encoded_variants(value):
-            if variant in text:
+            pos = text.find(variant)
+            if pos >= 0:
                 return ScanResult(
                     severity="block",
-                    reason=(
-                        f"outbound request contains provisioned secret "
-                        f"from {key}"
-                    ),
+                    reason=f"provisioned secret from {key} found in {location}",
+                    location=location,
+                    context=_snippet(text, pos, pos + len(variant)),
                 )
     return None
 
@@ -128,38 +163,69 @@ def _min_distance(
     return best
 
 
+def _closest_pair(
+    a_matches: list[re.Match[str]],
+    b_matches: list[re.Match[str]],
+) -> tuple[re.Match[str], re.Match[str]] | None:
+    """Return the pair (a, b) with the smallest character gap, or None."""
+    best: tuple[re.Match[str], re.Match[str]] | None = None
+    best_gap: int | None = None
+    for a in a_matches:
+        for b in b_matches:
+            gap = max(0, max(a.start(), b.start()) - min(a.end(), b.end()))
+            if best_gap is None or gap < best_gap:
+                best_gap = gap
+                best = (a, b)
+    return best
+
+
 def scan_naive_injection(text: str) -> ScanResult | None:
+    location = "response body"
     disclosure_hits = [m for p in DISCLOSURE_PHRASES for m in p.finditer(text)]
     jailbreak_hits = [m for p in JAILBREAK_PHRASES for m in p.finditer(text)]
 
     if disclosure_hits and jailbreak_hits:
-        dist = _min_distance(disclosure_hits, jailbreak_hits)
-        if dist is not None and dist <= PROXIMITY_CHARS:
-            return ScanResult(
-                severity="block",
-                reason=(
-                    f"disclosure and jailbreak phrases within "
-                    f"{dist} chars in response"
-                ),
-            )
+        pair = _closest_pair(disclosure_hits, jailbreak_hits)
+        if pair is not None:
+            dist = max(0, max(pair[0].start(), pair[1].start()) - min(pair[0].end(), pair[1].end()))
+            if dist <= PROXIMITY_CHARS:
+                first = pair[0] if pair[0].start() <= pair[1].start() else pair[1]
+                return ScanResult(
+                    severity="block",
+                    reason=(
+                        f"disclosure and jailbreak phrases within "
+                        f"{dist} chars in {location}"
+                    ),
+                    location=location,
+                    context=_snippet(text, first.start(), first.end()),
+                )
 
     if disclosure_hits:
+        m = disclosure_hits[0]
         return ScanResult(
             severity="warn",
-            reason="prompt disclosure phrase detected in response",
+            reason=f"prompt disclosure phrase detected in {location}",
+            location=location,
+            context=_snippet(text, m.start(), m.end()),
         )
 
     if jailbreak_hits:
+        m = jailbreak_hits[0]
         return ScanResult(
             severity="warn",
-            reason="jailbreak phrase detected in response",
+            reason=f"jailbreak phrase detected in {location}",
+            location=location,
+            context=_snippet(text, m.start(), m.end()),
         )
 
     return None
 
 
 __all__ = [
+    "REDACT",
+    "SNIPPET_CONTEXT",
     "TOKEN_PATTERNS",
+    "redact_tokens",
     "scan_known_secrets",
     "scan_naive_injection",
     "scan_token_patterns",
