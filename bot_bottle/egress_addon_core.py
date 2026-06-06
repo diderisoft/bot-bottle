@@ -517,6 +517,27 @@ def decide(
 # DLP scan dispatch (PRD 0053)
 # ---------------------------------------------------------------------------
 
+def build_outbound_scan_text(
+    host: str,
+    path: str,
+    query: str,
+    headers: typing.Mapping[str, str],
+    body: str,
+) -> str:
+    """Assemble all outbound request surfaces into one string for DLP scanning.
+
+    Covers hostname (DNS tunnelling), path, query params, all headers, body.
+    """
+    parts: list[str] = [host, path]
+    if query:
+        parts.append(query)
+    for name, value in headers.items():
+        parts.append(f"{name}: {value}")
+    if body:
+        parts.append(body)
+    return "\n".join(parts)
+
+
 def _detector_enabled(
     configured: tuple[str, ...] | None,
     name: str,
@@ -589,6 +610,7 @@ __all__ = [
     "PathMatch",
     "Route",
     "ScanResult",
+    "build_outbound_scan_text",
     "decide",
     "evaluate_matches",
     "is_git_push_request",

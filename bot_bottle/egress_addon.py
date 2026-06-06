@@ -18,6 +18,7 @@ from egress_addon_core import (  # type: ignore[import-not-found]  # pylint: dis
     LOG_BLOCKS,
     LOG_FULL,
     Config,
+    build_outbound_scan_text,
     decide,
     is_git_push_request,
     load_config,
@@ -147,16 +148,20 @@ class EgressAddon:
             self._serve_introspection(flow, request_path)
             return
 
-        # Strip inbound Authorization before DLP and matching; the agent cannot
-        # smuggle tokens, and the route may inject sidecar-owned auth later.
-        flow.request.headers.pop("authorization", None)
-
-        # DLP outbound scan after auth stripping so placeholder or attempted
-        # agent auth headers do not become part of the scanned payload.
+        # DLP outbound scan BEFORE stripping auth — catches tokens the
+        # agent tried to smuggle in any header, path, query param, or body.
+        # Hostname is included to catch DNS-tunnelling exfiltration attempts.
         route = match_route(self.config.routes, flow.request.pretty_host)
         if route is not None:
             body = flow.request.get_text(strict=False) or ""
-            dlp_result = scan_outbound(route, body, os.environ)
+            scan_text = build_outbound_scan_text(
+                flow.request.pretty_host,
+                request_path,
+                query,
+                dict(flow.request.headers),
+                body,
+            )
+            dlp_result = scan_outbound(route, scan_text, os.environ)
             if dlp_result is not None and dlp_result.severity == "block":
                 ctx = self._req_ctx(flow)
                 if dlp_result.context:
@@ -173,6 +178,10 @@ class EgressAddon:
                 ctx=self._req_ctx(flow),
             )
             return
+
+        # Strip agent-set Authorization after DLP scan so smuggled tokens
+        # are caught above; the route may inject sidecar-owned auth below.
+        flow.request.headers.pop("authorization", None)
 
         # Build headers mapping for match evaluation
         req_headers = {k.lower(): v for k, v in flow.request.headers.items()}
