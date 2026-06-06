@@ -18,6 +18,7 @@ from egress_addon_core import (  # type: ignore[import-not-found]  # pylint: dis
     LOG_BLOCKS,
     LOG_FULL,
     Config,
+    build_inbound_scan_text,
     build_outbound_scan_text,
     decide,
     is_git_push_request,
@@ -206,7 +207,7 @@ class EgressAddon:
             self._log_request(flow)
 
     def response(self, flow: http.HTTPFlow) -> None:
-        """DLP inbound scan on response bodies (PRD 0053)."""
+        """DLP inbound scan on response headers and body."""
         route = match_route(self.config.routes, flow.request.pretty_host)
         if route is None:
             return
@@ -214,10 +215,12 @@ class EgressAddon:
             return
         if self.config.log >= LOG_FULL:
             self._log_response(flow)
+        resp_headers = {k.lower(): v for k, v in flow.response.headers.items()}
         body = flow.response.get_text(strict=False) or ""
-        if not body:
+        scan_text = build_inbound_scan_text(resp_headers, body)
+        if not scan_text:
             return
-        result = scan_inbound(route, body)
+        result = scan_inbound(route, scan_text)
         if result is None:
             return
         resp_ctx: dict[str, object] = {
@@ -237,6 +240,35 @@ class EgressAddon:
                 })
                 + "\n"
             )
+
+    def websocket_message(self, flow: http.HTTPFlow) -> None:
+        """DLP scan on WebSocket frames.
+
+        Outbound frames (from_client) are scanned for credential leakage;
+        inbound frames are scanned for prompt injection.  On a block the
+        entire connection is killed — there is no HTTP response surface to
+        write to after the upgrade.
+        """
+        if flow.websocket is None:  # type: ignore[union-attr]
+            return
+        route = match_route(self.routes, flow.request.pretty_host)
+        if route is None:
+            return
+        message = flow.websocket.messages[-1]  # type: ignore[union-attr]
+        content = message.content.decode("utf-8", errors="replace")
+        if message.from_client:
+            result = scan_outbound(route, content, os.environ)
+            if result is not None and result.severity == "block":
+                sys.stderr.write(f"egress DLP: {result.reason}\n")
+                flow.kill()  # type: ignore[union-attr]
+        else:
+            result = scan_inbound(route, content)
+            if result is not None:
+                if result.severity == "block":
+                    sys.stderr.write(f"egress DLP: {result.reason}\n")
+                    flow.kill()  # type: ignore[union-attr]
+                elif result.severity == "warn":
+                    sys.stderr.write(f"egress DLP warn: {result.reason}\n")
 
 
 addons = [EgressAddon()]

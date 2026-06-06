@@ -538,6 +538,22 @@ def build_outbound_scan_text(
     return "\n".join(parts)
 
 
+def build_inbound_scan_text(
+    headers: typing.Mapping[str, str],
+    body: str,
+) -> str:
+    """Assemble inbound response surfaces into one string for DLP scanning.
+
+    Covers all response headers plus body.
+    """
+    parts: list[str] = []
+    for name, value in headers.items():
+        parts.append(f"{name}: {value}")
+    if body:
+        parts.append(body)
+    return "\n".join(parts)
+
+
 def _detector_enabled(
     configured: tuple[str, ...] | None,
     name: str,
@@ -610,6 +626,7 @@ __all__ = [
     "PathMatch",
     "Route",
     "ScanResult",
+    "build_inbound_scan_text",
     "build_outbound_scan_text",
     "decide",
     "evaluate_matches",

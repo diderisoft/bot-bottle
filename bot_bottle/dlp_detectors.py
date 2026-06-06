@@ -11,6 +11,7 @@ the same try/except import shim pattern.
 from __future__ import annotations
 
 import base64
+import gzip
 import re
 import typing
 from urllib.parse import quote as url_quote
@@ -46,6 +47,7 @@ TOKEN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("GitHub fine-grained token", re.compile(r"github_pat_[A-Za-z0-9_]{82}")),
     ("Anthropic API key", re.compile(r"sk-ant-[A-Za-z0-9\-_]{93}")),
     ("OpenAI API key", re.compile(r"sk-[A-Za-z0-9]{48}")),
+    ("OpenAI project API key", re.compile(r"sk-proj-[A-Za-z0-9_\-]{48,}")),
     ("Stripe live key", re.compile(r"sk_live_[A-Za-z0-9]{24}")),
     ("Generic Bearer JWT", re.compile(r"Bearer\s+[A-Za-z0-9._\-]{50,}")),
 )
@@ -85,18 +87,40 @@ def redact_tokens(
 # ---------------------------------------------------------------------------
 
 def _encoded_variants(secret: str) -> list[str]:
-    """Return the secret plus base64, URL-encoded, and hex variants."""
-    variants = [secret]
+    """Return the secret plus common encoded variants for exfil detection."""
+    seen: set[str] = {secret}
+    variants: list[str] = [secret]
+
+    def _add(v: str) -> None:
+        if v not in seen:
+            seen.add(v)
+            variants.append(v)
+
     secret_bytes = secret.encode("utf-8")
+
+    # Standard base64 — with and without padding
     b64 = base64.b64encode(secret_bytes).decode("ascii")
-    if b64 != secret:
-        variants.append(b64)
-    url_enc = url_quote(secret, safe="")
-    if url_enc != secret:
-        variants.append(url_enc)
-    hex_enc = secret_bytes.hex()
-    if hex_enc != secret:
-        variants.append(hex_enc)
+    _add(b64)
+    _add(b64.rstrip("="))
+
+    # URL-safe base64 (JWT/OAuth use -_ alphabet) — with and without padding
+    b64url = base64.urlsafe_b64encode(secret_bytes).decode("ascii")
+    _add(b64url)
+    _add(b64url.rstrip("="))
+
+    # URL percent-encoding
+    _add(url_quote(secret, safe=""))
+
+    # Hex — lowercase and uppercase
+    _add(secret_bytes.hex())
+    _add(secret_bytes.hex().upper())
+
+    # Base32 (TOTP seeds, some DNS-exfil channels)
+    _add(base64.b32encode(secret_bytes).decode("ascii"))
+
+    # gzip + base64 (deterministic: mtime=0); recognisable by H4sI prefix
+    _add(base64.b64encode(gzip.compress(secret_bytes, mtime=0)).decode("ascii"))
+
     return variants
 
 

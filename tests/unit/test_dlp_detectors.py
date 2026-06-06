@@ -3,10 +3,13 @@
 Tests for token pattern scanning, known secret detection, and
 naive prompt injection detection."""
 
+import base64
+import gzip
 import unittest
 
 from bot_bottle.dlp_detectors import (
     REDACT,
+    _encoded_variants,
     redact_tokens,
     scan_known_secrets,
     scan_naive_injection,
@@ -62,6 +65,13 @@ class TestScanTokenPatterns(unittest.TestCase):
         )
         assert result is not None
         self.assertIn("Bearer JWT", result.reason)
+
+    def test_openai_project_key(self):
+        result = scan_token_patterns(
+            "key=sk-proj-" + "A" * 48,
+        )
+        assert result is not None
+        self.assertIn("OpenAI project", result.reason)
 
     def test_clean_text_returns_none(self):
         self.assertIsNone(scan_token_patterns("hello world"))
@@ -242,6 +252,86 @@ class TestRedactTokens(unittest.TestCase):
         text = "path?key=supersecret"
         out = redact_tokens(text)
         self.assertEqual(text, out)
+
+
+class TestEncodedVariants(unittest.TestCase):
+    SECRET = "my-provisioned-secret"
+
+    def _variants(self) -> list[str]:
+        return _encoded_variants(self.SECRET)
+
+    def test_raw_always_first(self):
+        self.assertEqual(self.SECRET, self._variants()[0])
+
+    def test_standard_b64_present(self):
+        expected = base64.b64encode(self.SECRET.encode()).decode()
+        self.assertIn(expected, self._variants())
+
+    def test_standard_b64_nopad_present(self):
+        expected = base64.b64encode(self.SECRET.encode()).decode().rstrip("=")
+        self.assertIn(expected, self._variants())
+
+    def test_urlsafe_b64_present(self):
+        expected = base64.urlsafe_b64encode(self.SECRET.encode()).decode()
+        self.assertIn(expected, self._variants())
+
+    def test_urlsafe_b64_nopad_present(self):
+        expected = base64.urlsafe_b64encode(self.SECRET.encode()).decode().rstrip("=")
+        self.assertIn(expected, self._variants())
+
+    def test_hex_lower_present(self):
+        self.assertIn(self.SECRET.encode().hex(), self._variants())
+
+    def test_hex_upper_present(self):
+        self.assertIn(self.SECRET.encode().hex().upper(), self._variants())
+
+    def test_base32_present(self):
+        expected = base64.b32encode(self.SECRET.encode()).decode()
+        self.assertIn(expected, self._variants())
+
+    def test_gzip_b64_present(self):
+        expected = base64.b64encode(
+            gzip.compress(self.SECRET.encode(), mtime=0)
+        ).decode()
+        self.assertIn(expected, self._variants())
+
+    def test_no_duplicates(self):
+        v = self._variants()
+        self.assertEqual(len(v), len(set(v)))
+
+
+class TestKnownSecretsNewVariants(unittest.TestCase):
+    SECRET = "super-secret-token"
+    ENV = {"EGRESS_TOKEN_0": SECRET}
+
+    def test_urlsafe_b64_blocked(self):
+        encoded = base64.urlsafe_b64encode(self.SECRET.encode()).decode()
+        result = scan_known_secrets(f"data={encoded}", env=self.ENV)
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual("block", result.severity)
+
+    def test_urlsafe_b64_nopad_blocked(self):
+        encoded = base64.urlsafe_b64encode(self.SECRET.encode()).decode().rstrip("=")
+        result = scan_known_secrets(f"token={encoded}", env=self.ENV)
+        self.assertIsNotNone(result)
+
+    def test_base32_blocked(self):
+        encoded = base64.b32encode(self.SECRET.encode()).decode()
+        result = scan_known_secrets(f"seed={encoded}", env=self.ENV)
+        self.assertIsNotNone(result)
+
+    def test_hex_upper_blocked(self):
+        encoded = self.SECRET.encode().hex().upper()
+        result = scan_known_secrets(f"raw={encoded}", env=self.ENV)
+        self.assertIsNotNone(result)
+
+    def test_gzip_b64_blocked(self):
+        encoded = base64.b64encode(
+            gzip.compress(self.SECRET.encode(), mtime=0)
+        ).decode()
+        result = scan_known_secrets(f"blob={encoded}", env=self.ENV)
+        self.assertIsNotNone(result)
 
 
 if __name__ == "__main__":
