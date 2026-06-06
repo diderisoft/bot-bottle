@@ -31,31 +31,17 @@ jobs:
 
       - name: Run pylint and extract score
         id: pylint
-        continue-on-error: true
         run: |
-          # Run pylint and capture the score
-          PYLINT_OUTPUT=$(python -m pylint bot_bottle/ 2>&1 | tail -1)
-          echo "Output: $PYLINT_OUTPUT"
-          # Extract score (e.g., "9.92/10")
-          SCORE=$(echo "$PYLINT_OUTPUT" | grep -oP '\d+\.\d+/10' | head -1)
-          if [ -z "$SCORE" ]; then
-            SCORE="9.92/10"
-          fi
+          PYLINT_OUTPUT=$(python -m pylint bot_bottle/ 2>&1) || true
+          SCORE=$(echo "$PYLINT_OUTPUT" | grep -oP '(?<=rated at )\d+\.\d+/10' | head -1)
           echo "score=$SCORE" >> $GITHUB_OUTPUT
           echo "Pylint score: $SCORE"
 
       - name: Run pyright and check errors
         id: pyright
-        continue-on-error: true
         run: |
-          # Run pyright and check for errors
-          PYRIGHT_OUTPUT=$(python -m pyright 2>&1 | tail -1)
-          echo "Output: $PYRIGHT_OUTPUT"
-          # Extract error count
-          ERRORS=$(echo "$PYRIGHT_OUTPUT" | grep -oP '^\d+' | head -1)
-          if [ -z "$ERRORS" ]; then
-            ERRORS="0"
-          fi
+          PYRIGHT_OUTPUT=$(python -m pyright 2>&1) || true
+          ERRORS=$(echo "$PYRIGHT_OUTPUT" | grep -oP '\d+(?= error)' | head -1)
           echo "errors=$ERRORS" >> $GITHUB_OUTPUT
           echo "Pyright errors: $ERRORS"
 
