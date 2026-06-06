@@ -1,12 +1,10 @@
-"""Unit: supervise headless paths (PRD 0013 phase 4, PRD 0014).
+"""Unit: supervise headless paths (PRD 0013 phase 4, PRD 0016).
 
 The curses TUI itself isn't exercised here — these tests cover the
-discovery + approve/reject + audit-write paths that the TUI's key
-handlers call into.
+discovery + approve/reject paths that the TUI's key handlers call into.
 
-add_route is stubbed at the supervise CLI module level so the tests
-don't need a running egress sidecar; the real docker exec/cp/SIGHUP
-plumbing is covered by the integration test.
+egress-block (add_route) was removed in issue #198; the TestEgressApplyWiring
+class and all stubs for add_route have been dropped accordingly.
 """
 
 import os
@@ -17,7 +15,6 @@ from pathlib import Path
 
 from bot_bottle import supervise
 from bot_bottle.backend.docker.capability_apply import CapabilityApplyError
-from bot_bottle.backend.docker.egress_apply import EgressApplyError
 from bot_bottle.cli import supervise as supervise_cli
 from bot_bottle.supervise import (
     Proposal,
@@ -25,7 +22,6 @@ from bot_bottle.supervise import (
     STATUS_MODIFIED,
     STATUS_REJECTED,
     TOOL_CAPABILITY_BLOCK,
-    TOOL_EGRESS_BLOCK,
     read_audit_entries,
     read_response,
     sha256_hex,
@@ -35,9 +31,8 @@ from bot_bottle.supervise import (
 FIXED = datetime(2026, 5, 25, 12, 0, 0, tzinfo=timezone.utc)
 
 
-def _proposal(slug: str = "dev", tool: str = TOOL_EGRESS_BLOCK) -> Proposal:
+def _proposal(slug: str = "dev", tool: str = TOOL_CAPABILITY_BLOCK) -> Proposal:
     payloads = {
-        TOOL_EGRESS_BLOCK: '{"routes": []}\n',
         TOOL_CAPABILITY_BLOCK: "FROM python:3.13\n",
     }
     payload = payloads.get(tool, "")
@@ -88,14 +83,14 @@ class TestDiscoverPending(_FakeHomeMixin, unittest.TestCase):
 
     def test_sorted_by_arrival_across_bottles(self):
         early = Proposal.new(
-            bottle_slug="api", tool=TOOL_EGRESS_BLOCK,
-            proposed_file="{}", justification="early",
+            bottle_slug="api", tool=TOOL_CAPABILITY_BLOCK,
+            proposed_file="FROM python:3.13\n", justification="early",
             current_file_hash="h",
             now=datetime(2026, 5, 25, 10, 0, 0, tzinfo=timezone.utc),
         )
         late = Proposal.new(
-            bottle_slug="dev", tool=TOOL_EGRESS_BLOCK,
-            proposed_file="{}", justification="late",
+            bottle_slug="dev", tool=TOOL_CAPABILITY_BLOCK,
+            proposed_file="FROM python:3.13\n", justification="late",
             current_file_hash="h",
             now=datetime(2026, 5, 25, 14, 0, 0, tzinfo=timezone.utc),
         )
@@ -120,48 +115,38 @@ class TestDiscoverPending(_FakeHomeMixin, unittest.TestCase):
 class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
     def setUp(self):
         self._setup_fake_home()
-        self._original_add_route = supervise_cli.add_route
         self._original_apply_capability = supervise_cli.apply_capability_change
-        # Default stubs: succeed with deterministic before/after so the
-        # audit log shows a non-empty diff.
-        supervise_cli.add_route = lambda slug, content: (  # type: ignore
-            '{"routes": []}\n', '{"routes": [{"host": "x"}]}\n',
-        )
         supervise_cli.apply_capability_change = lambda slug, content: (  # type: ignore
             "FROM old\n", content,
         )
 
     def tearDown(self):
-        supervise_cli.add_route = self._original_add_route
         supervise_cli.apply_capability_change = self._original_apply_capability
         self._teardown_fake_home()
 
-    def _enqueue(self, tool: str = TOOL_EGRESS_BLOCK):
+    def _enqueue(self, tool: str = TOOL_CAPABILITY_BLOCK):
         p = _proposal(tool=tool)
         qdir = supervise.queue_dir_for_slug("dev")
         qdir.mkdir(parents=True, exist_ok=True)
         supervise.write_proposal(qdir, p)
         return supervise_cli.QueuedProposal(proposal=p, queue_dir=qdir)
 
-    def test_approve_writes_response_and_audit(self):
+    def test_approve_writes_response(self):
         qp = self._enqueue()
         supervise_cli.approve(qp)
-        resp = read_response(qp.queue_dir, qp.proposal.id)
+        # capability-block is archived on approve, so the response file
+        # moves to processed/ before the caller can read it.
+        resp = read_response(qp.queue_dir / "processed", qp.proposal.id)
         self.assertEqual(STATUS_APPROVED, resp.status)
         self.assertIsNone(resp.final_file)
-        entries = read_audit_entries("egress", "dev")
-        self.assertEqual(1, len(entries))
-        self.assertEqual("approved", entries[0].operator_action)
 
     def test_approve_with_final_file_marks_modified(self):
         qp = self._enqueue()
-        supervise_cli.approve(qp, final_file='{"routes": [{"path": "/x/"}]}\n', notes="tweaked")
-        resp = read_response(qp.queue_dir, qp.proposal.id)
+        supervise_cli.approve(qp, final_file="FROM bookworm\n", notes="tweaked")
+        resp = read_response(qp.queue_dir / "processed", qp.proposal.id)
         self.assertEqual(STATUS_MODIFIED, resp.status)
-        self.assertEqual('{"routes": [{"path": "/x/"}]}\n', resp.final_file)
+        self.assertEqual("FROM bookworm\n", resp.final_file)
         self.assertEqual("tweaked", resp.notes)
-        entries = read_audit_entries("egress", "dev")
-        self.assertEqual("modified", entries[0].operator_action)
 
     def test_reject_writes_rejection(self):
         qp = self._enqueue()
@@ -169,111 +154,11 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
         resp = read_response(qp.queue_dir, qp.proposal.id)
         self.assertEqual(STATUS_REJECTED, resp.status)
         self.assertEqual("nope", resp.notes)
-        entries = read_audit_entries("egress", "dev")
-        self.assertEqual("rejected", entries[0].operator_action)
-        self.assertEqual("nope", entries[0].operator_notes)
 
-    def test_capability_block_skips_audit_log(self):
+    def test_no_audit_log_for_capability_block(self):
         qp = self._enqueue(tool=TOOL_CAPABILITY_BLOCK)
         supervise_cli.approve(qp)
-        # No audit log for capability-block (per PRD 0013 / 0016).
         self.assertEqual([], read_audit_entries("egress", "dev"))
-
-
-class TestEgressApplyWiring(_FakeHomeMixin, unittest.TestCase):
-    """PRD 0017 chunk 3: approve() on an egress-block proposal
-    must call add_route (single-route merge) with the right args
-    and surface its failures."""
-
-    def setUp(self):
-        self._setup_fake_home()
-        self._original_add_route = supervise_cli.add_route
-
-    def tearDown(self):
-        supervise_cli.add_route = self._original_add_route
-        self._teardown_fake_home()
-
-    def _enqueue_egress(self, proposed: str = '{"host": "x.example"}\n'):
-        p = Proposal.new(
-            bottle_slug="dev", tool=TOOL_EGRESS_BLOCK,
-            proposed_file=proposed,
-            justification="need a route",
-            current_file_hash=sha256_hex(proposed),
-            now=FIXED,
-        )
-        qdir = supervise.queue_dir_for_slug("dev")
-        qdir.mkdir(parents=True, exist_ok=True)
-        supervise.write_proposal(qdir, p)
-        return supervise_cli.QueuedProposal(proposal=p, queue_dir=qdir)
-
-    def test_egress_block_calls_add_route_with_proposed_json(self):
-        calls = []
-        supervise_cli.add_route = lambda slug, content: (  # type: ignore
-            calls.append((slug, content)) or ("before", "after")
-        )
-        qp = self._enqueue_egress(
-            proposed='{"host": "new.example", "path_allowlist": ["/x/"]}\n'
-        )
-        supervise_cli.approve(qp)
-        self.assertEqual(1, len(calls))
-        slug, content = calls[0]
-        self.assertEqual("dev", slug)
-        # The single-route JSON the agent proposed reaches add_route
-        # unchanged — add_route fetches current state + merges.
-        self.assertEqual(
-            '{"host": "new.example", "path_allowlist": ["/x/"]}\n',
-            content,
-        )
-
-    def test_modify_passes_final_file_to_add_route(self):
-        calls = []
-        supervise_cli.add_route = lambda slug, content: (  # type: ignore
-            calls.append(content) or ("before", "after")
-        )
-        qp = self._enqueue_egress()
-        supervise_cli.approve(
-            qp,
-            final_file='{"host": "edited.example"}\n',
-            notes="tweaked",
-        )
-        self.assertEqual(['{"host": "edited.example"}\n'], calls)
-
-    def test_apply_failure_blocks_response_and_audit(self):
-        supervise_cli.add_route = lambda slug, content: (_ for _ in ()).throw(  # type: ignore
-            EgressApplyError("docker exec failed")
-        )
-        qp = self._enqueue_egress()
-        with self.assertRaises(EgressApplyError):
-            supervise_cli.approve(qp)
-        # No response file (proposal stays pending).
-        self.assertEqual(
-            [qp.proposal.id],
-            [p.id for p in supervise.list_pending_proposals(qp.queue_dir)],
-        )
-        # No audit entry.
-        self.assertEqual([], read_audit_entries("egress", "dev"))
-
-    def test_real_diff_lands_in_audit(self):
-        supervise_cli.add_route = lambda slug, content: (  # type: ignore
-            '{"routes": []}\n',  # before
-            '{"routes": [{"host": "new.example"}]}\n',  # after
-        )
-        qp = self._enqueue_egress(proposed='{"host": "new.example"}\n')
-        supervise_cli.approve(qp)
-        entries = read_audit_entries("egress", "dev")
-        self.assertEqual(1, len(entries))
-        self.assertIn('+{"routes": [{"host": "new.example"}]}', entries[0].diff)
-        self.assertIn('-{"routes": []}', entries[0].diff)
-
-    def test_reject_does_not_call_apply(self):
-        qp = self._enqueue_egress()
-        supervise_cli.reject(qp, reason="no thanks")
-        # Reject still writes a response + audit entry with empty diff.
-        resp = read_response(qp.queue_dir, qp.proposal.id)
-        self.assertEqual(STATUS_REJECTED, resp.status)
-        entries = read_audit_entries("egress", "dev")
-        self.assertEqual(1, len(entries))
-        self.assertEqual("", entries[0].diff)
 
 
 class TestCapabilityApplyWiring(_FakeHomeMixin, unittest.TestCase):
@@ -328,17 +213,12 @@ class TestCapabilityApplyWiring(_FakeHomeMixin, unittest.TestCase):
         supervise_cli.apply_capability_change = lambda slug, content: ("FROM old\n", content)  # type: ignore
         qp = self._enqueue_capability()
         supervise_cli.approve(qp)
-        # capability-block has no audit log per PRD 0013 — its record
-        # lives in the per-bottle Dockerfile + transcript state.
         self.assertEqual([], read_audit_entries("egress", "dev"))
 
     def test_proposal_archived_after_apply(self):
         supervise_cli.apply_capability_change = lambda slug, content: ("FROM old\n", content)  # type: ignore
         qp = self._enqueue_capability()
         supervise_cli.approve(qp)
-        # Sidecar would normally archive after delivering the response,
-        # but it's gone by then. The supervise TUI archives so
-        # discover_pending stops surfacing the resolved proposal.
         self.assertEqual([], supervise.list_pending_proposals(qp.queue_dir))
         processed = list((qp.queue_dir / "processed").glob("*.json"))
         self.assertEqual(2, len(processed))
@@ -346,20 +226,8 @@ class TestCapabilityApplyWiring(_FakeHomeMixin, unittest.TestCase):
 
 class TestEditInEditor(unittest.TestCase):
     def test_runs_editor_returns_edited_content(self):
-        # Fake "editor" is /bin/sh -c 'cat <<EOF > $1 ... EOF'
         original_editor = os.environ.get("EDITOR")
         try:
-            # Use a fake editor that overwrites the file with a known
-            # marker. EDITOR is split with shlex equivalence by
-            # subprocess.run when invoked as a list — keep it as a
-            # single program path that takes the file as argv[1].
-            os.environ["EDITOR"] = (
-                "/bin/sh -c 'printf %s \"edited\" > \"$0\"'"
-            )
-            # subprocess.run with the str as the first list element
-            # would try to find a binary literally named "/bin/sh -c ..."
-            # — that won't work. Use shell mode trick: wrap in a script.
-            # Easier: build a tiny helper script.
             with tempfile.NamedTemporaryFile(
                 mode="w", suffix=".sh", delete=False, prefix="fake-editor.",
             ) as script:
@@ -381,7 +249,6 @@ class TestEditInEditor(unittest.TestCase):
     def test_returns_none_when_unchanged(self):
         original_editor = os.environ.get("EDITOR")
         try:
-            # No-op editor: touch the file (leaves it unchanged).
             with tempfile.NamedTemporaryFile(
                 mode="w", suffix=".sh", delete=False, prefix="noop-editor.",
             ) as script:
@@ -445,7 +312,6 @@ class TestCapabilityBlockSmolmachinesGuard(_FakeHomeMixin, unittest.TestCase):
         supervise_cli.approve(qp)  # must not raise
 
     def test_no_metadata_falls_through_to_docker_path(self):
-        # No metadata at all → assume Docker (backward-compatible).
         qp = self._enqueue_capability("dev")
         supervise_cli.approve(qp)  # must not raise
 

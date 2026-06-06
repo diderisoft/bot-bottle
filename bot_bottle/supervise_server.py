@@ -1,8 +1,10 @@
 """Supervise sidecar HTTP server (PRD 0013).
 
-Per-bottle MCP server exposing two tools — `egress-block`,
-`capability-block` — that the agent calls to propose config changes
-when stuck. Each tool call:
+Per-bottle MCP server exposing tools the agent calls to propose config
+changes when stuck. The egress-block tool was removed in issue #198;
+the remaining tools are `capability-block` and `list-egress-routes`.
+
+Each queued tool call:
 
   1. Validates the proposed file syntactically.
   2. Writes a Proposal to /run/supervise/queue/ (bind-mounted from
@@ -134,69 +136,6 @@ def jsonrpc_error(request_id: object, code: int, message: str) -> bytes:
 
 TOOL_DEFINITIONS: list[dict[str, object]] = [
     {
-        "name": _sv.TOOL_EGRESS_BLOCK,
-        "description": (
-            "Call when egress refused your HTTPS request — host "
-            "without a matching route, or a request that did not match "
-            "the route's matches rules (typically a 403 from the "
-            "proxy). Propose a SINGLE route to add: the host you "
-            "need + (optionally) a path_allowlist of path prefixes + "
-            "(optionally) an auth block. The supervisor merges the "
-            "route into the live table at approval time — you do NOT "
-            "need to see or reproduce the existing routes. If the "
-            "host already has a route, the proposed paths are unioned "
-            "with the existing ones (host stays single-route). The "
-            "operator approves or rejects in the supervise TUI. On "
-            "approval the supervisor writes the merged routes.yaml "
-            "and SIGHUPs egress (no dropped connections)."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "host": {
-                    "type": "string",
-                    "description": (
-                        "The hostname to allow (e.g. 'api.github.com'). "
-                        "Case-insensitive on match."
-                    ),
-                },
-                "path_allowlist": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": (
-                        "Optional URL path prefixes the route permits. "
-                        "Each must start with '/'. Omit to allow all "
-                        "paths under this host (bare-pass route). "
-                        "Internally converted to matches entries."
-                    ),
-                },
-                "auth": {
-                    "type": "object",
-                    "description": (
-                        "Optional credential injection. {scheme, "
-                        "token_ref}: scheme is 'Bearer' or 'token'; "
-                        "token_ref names the host env var holding the "
-                        "secret value. Omit to add a host without "
-                        "credential injection. Ignored if the host "
-                        "already has a route (operator decides auth "
-                        "changes, not the agent)."
-                    ),
-                    "properties": {
-                        "scheme": {"type": "string"},
-                        "token_ref": {"type": "string"},
-                    },
-                    "required": ["scheme", "token_ref"],
-                    "additionalProperties": False,
-                },
-                "justification": {
-                    "type": "string",
-                    "description": "Why this host needs to be allowed.",
-                },
-            },
-            "required": ["host", "justification"],
-        },
-    },
-    {
         "name": _sv.TOOL_LIST_EGRESS_ROUTES,
         "description": (
             "List the current egress route table — the bottle's "
@@ -254,11 +193,6 @@ PROPOSED_FILE_FIELD: dict[str, str] = {
 # --- Validation ------------------------------------------------------------
 
 
-# Auth schemes accepted on egress-block proposals — match the
-# manifest-side EGRESS_AUTH_SCHEMES.
-_AUTH_SCHEMES = ("Bearer", "token")
-
-
 def validate_proposed_file(tool: str, content: str) -> None:
     """Syntactic validation. The operator is the real gate; this just
     catches obvious paste-errors / wrong-tool selections before they
@@ -271,70 +205,6 @@ def validate_proposed_file(tool: str, content: str) -> None:
         pass
     else:
         raise _RpcError(ERR_INVALID_PARAMS, f"unknown tool {tool!r}")
-
-
-def _validate_and_bundle_egress_route(
-    args: dict[str, object],
-) -> str:
-    """Validate egress-block input fields and bundle them into
-    a JSON string that becomes the Proposal.proposed_file. Raises
-    _RpcError on bad input — the agent retries with a fixed shape."""
-    tool = _sv.TOOL_EGRESS_BLOCK
-    host = args.get("host")
-    if not isinstance(host, str) or not host.strip():
-        raise _RpcError(
-            ERR_INVALID_PARAMS,
-            f"{tool}: 'host' is required and must be a non-empty string",
-        )
-    payload: dict[str, object] = {"host": host}
-
-    path_allow_raw = args.get("path_allowlist")
-    if path_allow_raw is not None:
-        if not isinstance(path_allow_raw, list):
-            raise _RpcError(
-                ERR_INVALID_PARAMS,
-                f"{tool}: 'path_allowlist' must be an array of strings",
-            )
-        prefixes: list[str] = []
-        for i, p in enumerate(path_allow_raw):
-            if not isinstance(p, str):
-                raise _RpcError(
-                    ERR_INVALID_PARAMS,
-                    f"{tool}: path_allowlist[{i}] must be a string",
-                )
-            if not p.startswith("/"):
-                raise _RpcError(
-                    ERR_INVALID_PARAMS,
-                    f"{tool}: path_allowlist[{i}] {p!r} must start with '/'",
-                )
-            prefixes.append(p)
-        if prefixes:
-            payload["path_allowlist"] = prefixes
-
-    auth_raw = args.get("auth")
-    if auth_raw is not None:
-        if not isinstance(auth_raw, dict):
-            raise _RpcError(
-                ERR_INVALID_PARAMS,
-                f"{tool}: 'auth' must be an object with 'scheme' and 'token_ref'",
-            )
-        scheme = auth_raw.get("scheme")
-        token_ref = auth_raw.get("token_ref")
-        if not isinstance(scheme, str) or scheme not in _AUTH_SCHEMES:
-            raise _RpcError(
-                ERR_INVALID_PARAMS,
-                f"{tool}: auth.scheme must be one of "
-                f"{', '.join(_AUTH_SCHEMES)} (got {scheme!r})",
-            )
-        if not isinstance(token_ref, str) or not token_ref:
-            raise _RpcError(
-                ERR_INVALID_PARAMS,
-                f"{tool}: auth.token_ref must be a non-empty string "
-                f"naming the host env var holding the token",
-            )
-        payload["auth"] = {"scheme": scheme, "token_ref": token_ref}
-
-    return json.dumps(payload, indent=2) + "\n"
 
 
 # --- MCP handlers ----------------------------------------------------------
@@ -422,13 +292,7 @@ def handle_tools_call(
             f"{name}: 'justification' is required and must be a non-empty string",
         )
 
-    if name == _sv.TOOL_EGRESS_BLOCK:
-        # Structured input → JSON bundle on Proposal.proposed_file.
-        # The dashboard's apply step (egress_apply.add_route)
-        # parses this JSON, fetches the current routes, merges in
-        # the new one, and writes the merged file.
-        proposed_file = _validate_and_bundle_egress_route(args_raw)
-    elif name in PROPOSED_FILE_FIELD:
+    if name in PROPOSED_FILE_FIELD:
         file_field = PROPOSED_FILE_FIELD[name]
         proposed_file = args_raw.get(file_field)
         if not isinstance(proposed_file, str):

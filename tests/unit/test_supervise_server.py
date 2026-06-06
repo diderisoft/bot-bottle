@@ -141,7 +141,6 @@ class TestHandleToolsList(unittest.TestCase):
         names = [t["name"] for t in result["tools"]]  # type: ignore[index]
         self.assertEqual(
             sorted([
-                _sv.TOOL_EGRESS_BLOCK,
                 _sv.TOOL_CAPABILITY_BLOCK,
                 _sv.TOOL_LIST_EGRESS_ROUTES,
             ]),
@@ -206,10 +205,10 @@ class TestHandleToolsCall(unittest.TestCase):
         try:
             result = handle_tools_call(
                 {
-                    "name": _sv.TOOL_EGRESS_BLOCK,
+                    "name": _sv.TOOL_CAPABILITY_BLOCK,
                     "arguments": {
-                        "host": "example.com",
-                        "justification": "need a route",
+                        "dockerfile": "FROM python:3.13\n",
+                        "justification": "need git",
                     },
                 },
                 self.config,
@@ -250,8 +249,8 @@ class TestHandleToolsCall(unittest.TestCase):
         with self.assertRaises(_RpcError):
             handle_tools_call(
                 {
-                    "name": _sv.TOOL_EGRESS_BLOCK,
-                    "arguments": {"host": "example.com"},
+                    "name": _sv.TOOL_CAPABILITY_BLOCK,
+                    "arguments": {"dockerfile": "FROM python:3.13\n"},
                 },
                 self.config,
             )
@@ -261,9 +260,9 @@ class TestHandleToolsCall(unittest.TestCase):
         try:
             handle_tools_call(
                 {
-                    "name": _sv.TOOL_EGRESS_BLOCK,
+                    "name": _sv.TOOL_CAPABILITY_BLOCK,
                     "arguments": {
-                        "host": "example.com",
+                        "dockerfile": "FROM python:3.13\n",
                         "justification": "x",
                     },
                 },
@@ -285,10 +284,10 @@ class TestHandleToolsCall(unittest.TestCase):
         )
         result = handle_tools_call(
             {
-                "name": _sv.TOOL_EGRESS_BLOCK,
+                "name": _sv.TOOL_CAPABILITY_BLOCK,
                 "arguments": {
-                    "host": "example.com",
-                    "justification": "need a route",
+                    "dockerfile": "FROM python:3.13\n",
+                    "justification": "need a capability",
                 },
             },
             config,
@@ -412,7 +411,8 @@ class TestHttpEndToEnd(unittest.TestCase):
         self.assertEqual("2.0", result["jsonrpc"])
         self.assertEqual(1, result["id"])
         names = [t["name"] for t in result["result"]["tools"]]  # type: ignore[index]
-        self.assertIn(_sv.TOOL_EGRESS_BLOCK, names)
+        self.assertIn(_sv.TOOL_CAPABILITY_BLOCK, names)
+        self.assertNotIn("egress-block", names)
 
     def test_unknown_method_returns_jsonrpc_error(self):
         result = self._post_jsonrpc(

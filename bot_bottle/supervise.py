@@ -48,11 +48,9 @@ from pathlib import Path
 SUPERVISE_HOSTNAME = "supervise"
 SUPERVISE_PORT = 9100
 
-TOOL_EGRESS_BLOCK = "egress-block"
 TOOL_CAPABILITY_BLOCK = "capability-block"
 TOOL_LIST_EGRESS_ROUTES = "list-egress-routes"
 TOOLS: tuple[str, ...] = (
-    TOOL_EGRESS_BLOCK,
     TOOL_CAPABILITY_BLOCK,
     TOOL_LIST_EGRESS_ROUTES,
 )
@@ -70,10 +68,8 @@ EGRESS_INTROSPECT_URL = "http://_egress.local/allowlist"
 # capability-block has no on-disk config the operator edits in place
 # (the Dockerfile is rebuilt, not patched), so it has no audit log
 # here — those changes are captured by git history + the rebuild
-# record laid down in PRD 0016.
-COMPONENT_FOR_TOOL: dict[str, str] = {
-    TOOL_EGRESS_BLOCK: "egress",
-}
+# record laid down in PRD 0016. egress-block was removed in issue #198.
+COMPONENT_FOR_TOOL: dict[str, str] = {}
 
 STATUS_APPROVED = "approved"
 STATUS_MODIFIED = "modified"
@@ -555,7 +551,6 @@ __all__ = [
     "EGRESS_FORWARD_PROXY",
     "EGRESS_INTROSPECT_URL",
     "TOOL_CAPABILITY_BLOCK",
-    "TOOL_EGRESS_BLOCK",
     "TOOL_LIST_EGRESS_ROUTES",
     "archive_proposal",
     "audit_dir",

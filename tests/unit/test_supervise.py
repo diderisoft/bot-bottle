@@ -17,7 +17,6 @@ from bot_bottle.supervise import (
     STATUS_MODIFIED,
     STATUS_REJECTED,
     TOOL_CAPABILITY_BLOCK,
-    TOOL_EGRESS_BLOCK,
     archive_proposal,
     audit_log_path,
     list_pending_proposals,
@@ -37,16 +36,16 @@ FIXED_TS = datetime(2026, 5, 25, 12, 0, 0, tzinfo=timezone.utc)
 
 
 def _proposal(
-    tool: str = TOOL_EGRESS_BLOCK,
-    proposed: str = "{}",
-    justification: str = "need a route",
+    tool: str = TOOL_CAPABILITY_BLOCK,
+    proposed: str = "FROM python:3.13\n",
+    justification: str = "need a capability",
 ) -> Proposal:
     return Proposal.new(
         bottle_slug="dev",
         tool=tool,
         proposed_file=proposed,
         justification=justification,
-        current_file_hash=sha256_hex("{}"),
+        current_file_hash=sha256_hex(proposed),
         now=FIXED_TS,
     )
 
@@ -57,7 +56,7 @@ class TestProposalRoundtrip(unittest.TestCase):
         self.assertTrue(p.id)
         self.assertEqual("2026-05-25T12:00:00+00:00", p.arrival_timestamp)
         self.assertEqual("dev", p.bottle_slug)
-        self.assertEqual(TOOL_EGRESS_BLOCK, p.tool)
+        self.assertEqual(TOOL_CAPABILITY_BLOCK, p.tool)
 
     def test_to_from_dict_roundtrip(self):
         p = _proposal()
@@ -142,14 +141,14 @@ class TestQueueIO(unittest.TestCase):
     def test_list_pending_sorted_by_arrival(self):
         # Fabricate two with explicit timestamps.
         a = Proposal.new(
-            bottle_slug="dev", tool=TOOL_EGRESS_BLOCK,
-            proposed_file="{}", justification="early",
+            bottle_slug="dev", tool=TOOL_CAPABILITY_BLOCK,
+            proposed_file="FROM python:3.13\n", justification="early",
             current_file_hash="x",
             now=datetime(2026, 5, 25, 10, 0, 0, tzinfo=timezone.utc),
         )
         b = Proposal.new(
-            bottle_slug="dev", tool=TOOL_EGRESS_BLOCK,
-            proposed_file="{}", justification="late",
+            bottle_slug="dev", tool=TOOL_CAPABILITY_BLOCK,
+            proposed_file="FROM python:3.13\n", justification="late",
             current_file_hash="x",
             now=datetime(2026, 5, 25, 14, 0, 0, tzinfo=timezone.utc),
         )
@@ -318,16 +317,15 @@ class TestToolConstants(unittest.TestCase):
     def test_tools_tuple_matches_individual_constants(self):
         self.assertEqual(
             (
-                TOOL_EGRESS_BLOCK,
                 TOOL_CAPABILITY_BLOCK,
                 supervise.TOOL_LIST_EGRESS_ROUTES,
             ),
             supervise.TOOLS,
         )
 
-    def test_component_map_covers_egress_remediation_only(self):
-        self.assertIn(TOOL_EGRESS_BLOCK, supervise.COMPONENT_FOR_TOOL)
-        self.assertNotIn(TOOL_CAPABILITY_BLOCK, supervise.COMPONENT_FOR_TOOL)
+    def test_component_map_has_no_entries(self):
+        # egress-block removed in issue #198; capability-block never had one.
+        self.assertEqual({}, supervise.COMPONENT_FOR_TOOL)
 
 
 class _StubSupervise(supervise.Supervise):
