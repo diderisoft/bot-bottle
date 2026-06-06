@@ -135,6 +135,7 @@ class EgressAddon:
         )
 
         if decision.action == "block":
+            sys.stderr.write(f"{decision.reason}\n")
             flow.response = http.Response.make(
                 403,
                 decision.reason.encode("utf-8"),
