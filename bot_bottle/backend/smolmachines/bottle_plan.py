@@ -83,6 +83,14 @@ class SmolmachinesBottlePlan(BottlePlan):
     agent_supervise_url: str = ""
 
     @property
+    def git_gate_insteadof_host(self) -> str:
+        return self.agent_git_gate_host
+
+    @property
+    def git_gate_insteadof_scheme(self) -> str:
+        return "http"
+
+    @property
     def agent_command(self) -> str:
         return self.agent_provision.command
 

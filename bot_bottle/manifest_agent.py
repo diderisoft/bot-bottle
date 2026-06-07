@@ -49,11 +49,6 @@ class AgentProvider:
                 f"bottle '{bottle_name}' agent_provider.template must be a "
                 f"non-empty string"
             )
-        if template not in PROVIDER_TEMPLATES:
-            raise ManifestError(
-                f"bottle '{bottle_name}' agent_provider.template {template!r} "
-                f"is not one of {', '.join(sorted(PROVIDER_TEMPLATES))}"
-            )
         dockerfile = d.get("dockerfile", "")
         if not isinstance(dockerfile, str):
             raise ManifestError(
@@ -66,6 +61,12 @@ class AgentProvider:
                 f"bottle '{bottle_name}' agent_provider.auth_token must be a "
                 f"string (was {type(auth_token).__name__})"
             )
+        if auth_token and template not in PROVIDER_TEMPLATES:
+            raise ManifestError(
+                f"bottle '{bottle_name}' agent_provider.auth_token is only "
+                f"supported for built-in templates "
+                f"({', '.join(sorted(PROVIDER_TEMPLATES))})"
+            )
         if auth_token and template != "claude":
             raise ManifestError(
                 f"bottle '{bottle_name}' agent_provider.auth_token is only "
@@ -76,6 +77,12 @@ class AgentProvider:
             raise ManifestError(
                 f"bottle '{bottle_name}' agent_provider.forward_host_credentials "
                 f"must be a boolean (was {type(forward_host_credentials).__name__})"
+            )
+        if forward_host_credentials and template not in PROVIDER_TEMPLATES:
+            raise ManifestError(
+                f"bottle '{bottle_name}' agent_provider.forward_host_credentials "
+                f"is only supported for built-in templates "
+                f"({', '.join(sorted(PROVIDER_TEMPLATES))})"
             )
         if forward_host_credentials and template != "codex":
             raise ManifestError(

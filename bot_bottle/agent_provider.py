@@ -19,6 +19,10 @@ Per PRD 0050 the per-provider implementations live under
 
 from __future__ import annotations
 
+import importlib.util
+import os
+import shlex
+import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -174,13 +178,130 @@ class AgentProvider(ABC):
         the supervise sidecar is reachable. No-op when
         `plan.supervise_plan is None`."""
 
+    def provision_ca(self, bottle: "Bottle", plan: "BottlePlan") -> None:
+        """Install the egress MITM CA into the agent's trust store.
+
+        Default: Debian-style — cp the cert to the standard source path,
+        run update-ca-certificates, log the fingerprint. Override for
+        non-Debian base images or non-standard trust mechanisms."""
+        from .backend.util import AGENT_CA_PATH, log_ca_fingerprint, select_ca_cert
+        from .log import die
+        cert_host_path, label = select_ca_cert(plan.egress_plan)
+        bottle.cp_in(str(cert_host_path), AGENT_CA_PATH)
+        r = bottle.exec(
+            f"chmod 644 {AGENT_CA_PATH} && update-ca-certificates",
+            user="root",
+        )
+        if r.returncode != 0:
+            die(
+                f"update-ca-certificates failed (exit {r.returncode}): "
+                f"stdout={(r.stdout or '').strip()!r} "
+                f"stderr={(r.stderr or '').strip()!r}"
+            )
+        log_ca_fingerprint(cert_host_path, label)
+
+    def provision_git(self, bottle: "Bottle", plan: "BottlePlan") -> None:
+        """Configure git inside the agent container.
+
+        Default: Debian/node — copies .git when --cwd is set, writes the
+        git-gate insteadOf gitconfig, sets user.name/email as node.
+        Override for images that run as a different user or use a
+        non-standard home directory."""
+        from .log import info
+        workspace = plan.workspace_plan
+        if workspace.enabled and workspace.copy_git and workspace.has_host_git_dir:
+            guest_workspace_git = f"{workspace.guest_path}/.git"
+            host_git = str(workspace.host_path / ".git")
+            info(f"copying {host_git} -> {bottle.name}:{guest_workspace_git}")
+            bottle.exec(f"mkdir -p {shlex.quote(workspace.guest_path)}", user="root")
+            bottle.cp_in(host_git, guest_workspace_git)
+            bottle.exec(
+                f"chown -R {shlex.quote(workspace.owner)} "
+                f"{shlex.quote(guest_workspace_git)}",
+                user="root",
+            )
+
+        manifest_bottle = plan.spec.manifest.bottle_for(plan.spec.agent_name)
+        if manifest_bottle.git:
+            from .git_gate import GIT_GATE_HOSTNAME, git_gate_render_gitconfig
+            gate_host = getattr(plan, "git_gate_insteadof_host", GIT_GATE_HOSTNAME)
+            gate_scheme = getattr(plan, "git_gate_insteadof_scheme", "git")
+            content = git_gate_render_gitconfig(
+                manifest_bottle.git, gate_host, scheme=gate_scheme,
+            )
+            guest_gitconfig = f"{plan.guest_home}/.gitconfig"
+            with tempfile.NamedTemporaryFile(
+                "w", dir=str(plan.stage_dir), prefix="gitconfig.", delete=False,
+            ) as f:
+                f.write(content)
+                config_file = Path(f.name)
+            os.chmod(config_file, 0o600)
+            info(
+                f"writing {guest_gitconfig} with "
+                f"{len(manifest_bottle.git)} insteadOf rule(s)"
+            )
+            bottle.cp_in(str(config_file), guest_gitconfig)
+            bottle.exec(
+                f"chown node:node {shlex.quote(guest_gitconfig)} && "
+                f"chmod 644 {shlex.quote(guest_gitconfig)}",
+                user="root",
+            )
+
+        gu = manifest_bottle.git_user
+        if not gu.is_empty():
+            if gu.name:
+                info(f"git config --global user.name = {gu.name!r}")
+                bottle.exec(
+                    f"git config --global user.name {shlex.quote(gu.name)}",
+                    user="node",
+                )
+            if gu.email:
+                info(f"git config --global user.email = {gu.email!r}")
+                bottle.exec(
+                    f"git config --global user.email {shlex.quote(gu.email)}",
+                    user="node",
+                )
+
+
+def _load_user_plugin(template: str) -> AgentProvider | None:
+    """Check ~/.bot-bottle/contrib/<template>/agent_provider.py for a
+    user-defined AgentProvider subclass. Returns an instance if found,
+    None if the plugin directory doesn't exist, raises ValueError if
+    the file exists but exports no AgentProvider subclass."""
+    plugin_path = (
+        Path.home() / ".bot-bottle" / "contrib" / template / "agent_provider.py"
+    )
+    if not plugin_path.exists():
+        return None
+    spec = importlib.util.spec_from_file_location(
+        f"_user_contrib_{template}.agent_provider", plugin_path
+    )
+    if spec is None or spec.loader is None:
+        raise ValueError(f"user plugin at {plugin_path} could not be loaded")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    for obj in vars(mod).values():
+        if (
+            isinstance(obj, type)
+            and issubclass(obj, AgentProvider)
+            and obj is not AgentProvider
+        ):
+            return obj()
+    raise ValueError(
+        f"user plugin at {plugin_path} defines no AgentProvider subclass"
+    )
+
 
 def get_provider(template: str) -> AgentProvider:
     """Resolve a provider template name to its plugin instance.
 
-    Lazy-imports the contrib module so importing this module doesn't
-    pull provider-specific code paths in. Mirrors the contrib
-    convention PRD 0048 established for deploy key provisioners."""
+    Checks ~/.bot-bottle/contrib/<template>/agent_provider.py first so
+    users can shadow a built-in for local testing. Falls through to the
+    built-in registry; raises ValueError for unknown names with no
+    matching user plugin."""
+    user_plugin = _load_user_plugin(template)
+    if user_plugin is not None:
+        return user_plugin
     if template == PROVIDER_CLAUDE:
         from .contrib.claude.agent_provider import ClaudeAgentProvider
         return ClaudeAgentProvider()

@@ -14,26 +14,48 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from bot_bottle.agent_provider import (
+    AgentProvider,
+    AgentProviderRuntime,
     AgentProvisionCommand,
     AgentProvisionDir,
     AgentProvisionFile,
     AgentProvisionPlan,
 )
 from bot_bottle.backend import Bottle, BottleSpec, ExecResult
+from bot_bottle.backend.smolmachines.bottle import SmolmachinesBottle
 from bot_bottle.backend.smolmachines.bottle_plan import (
     SmolmachinesBottlePlan,
 )
 from bot_bottle.backend.smolmachines.provision import (
-    ca as _ca,
-    git as _git,
     workspace as _workspace,
 )
 from bot_bottle.backend.smolmachines.launch import _bundle_launch_spec
+from bot_bottle.backend.util import AGENT_CA_PATH
 from bot_bottle.egress import EgressPlan, EgressRoute
 from bot_bottle.git_gate import GitGatePlan, GitGateUpstream
 from bot_bottle.manifest import GitEntry, Manifest
 from bot_bottle.supervise import SupervisePlan
 from bot_bottle.workspace import workspace_plan
+
+
+class _Provider(AgentProvider):
+    """Minimal concrete subclass for testing the default provision_ca/provision_git."""
+    @property
+    def runtime(self) -> AgentProviderRuntime:
+        return AgentProviderRuntime(
+            template="test", command="test", image="", dockerfile="",
+            prompt_mode="append_file", bypass_args=(), resume_args=(),
+            remote_control_args=(),
+        )
+    def provision_plan(self, **kwargs):  # type: ignore[override]
+        raise NotImplementedError
+    def provision_skills(self, plan, bottle): ...  # type: ignore[override]
+    def provision_prompt(self, plan, bottle): ...  # type: ignore[override]
+    def provision(self, plan, bottle): ...  # type: ignore[override]
+    def provision_supervise_mcp(self, plan, bottle, supervise_url): ...  # type: ignore[override]
+
+
+_PROVIDER = _Provider()
 
 
 def _make_bottle(
@@ -252,10 +274,10 @@ class TestProvisionCA(unittest.TestCase):
     def test_egress_ca_always_installed(self):
         plan = _plan(egress_ca_path=self.egress_ca)
         bottle = _make_bottle(exec_result=self._UPDATE_OK)
-        _ca.provision_ca(plan, bottle)
+        _PROVIDER.provision_ca(bottle, plan)
         bottle.cp_in.assert_called_once_with(
             str(self.egress_ca),
-            _ca.AGENT_CA_PATH,
+            AGENT_CA_PATH,
         )
         bottle.exec.assert_called_once()
         script = bottle.exec.call_args.args[0]
@@ -263,28 +285,59 @@ class TestProvisionCA(unittest.TestCase):
         self.assertIn("update-ca-certificates", script)
         self.assertEqual("root", bottle.exec.call_args.kwargs.get("user"))
 
-    def test_retries_smolvm_sigkill_during_update_ca(self):
-        plan = _plan(egress_ca_path=self.egress_ca)
-        killed = ExecResult(
-            returncode=137,
-            stdout="Updating certificates in /etc/ssl/certs...\n",
-            stderr="",
-        )
-        bottle = _make_bottle()
-        bottle.exec.side_effect = [killed, self._UPDATE_OK]
-        with patch(
-            "bot_bottle.backend.smolmachines.provision.ca.time.sleep"
-        ) as sleep:
-            _ca.provision_ca(plan, bottle)
-
-        self.assertEqual(2, bottle.exec.call_count)
-        sleep.assert_called_once_with(1.0)
-
     def test_dies_when_egress_cert_missing(self):
         plan = _plan(egress_ca_path=self.tmp / "does-not-exist.pem")
         bottle = _make_bottle()
         with self.assertRaises(SystemExit):
-            _ca.provision_ca(plan, bottle)
+            _PROVIDER.provision_ca(bottle, plan)
+
+
+class TestSmolmachinesBottleExec(unittest.TestCase):
+    """SmolmachinesBottle.exec retries once on SIGKILL (exit 137)."""
+
+    _SIGKILL = subprocess.CompletedProcess(
+        args=[], returncode=137, stdout="", stderr="",
+    )
+    _SUCCESS = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="done", stderr="",
+    )
+
+    def test_retries_on_sigkill(self):
+        bottle = SmolmachinesBottle("test-machine")
+        with patch(
+            "bot_bottle.backend.smolmachines.bottle.subprocess.run",
+            side_effect=[self._SIGKILL, self._SUCCESS],
+        ) as mock_run, patch(
+            "bot_bottle.backend.smolmachines.bottle.time.sleep"
+        ) as mock_sleep:
+            result = bottle.exec("echo hi")
+
+        self.assertEqual(0, result.returncode)
+        self.assertEqual(2, mock_run.call_count)
+        mock_sleep.assert_called_once_with(1.0)
+
+    def test_no_retry_on_success(self):
+        bottle = SmolmachinesBottle("test-machine")
+        with patch(
+            "bot_bottle.backend.smolmachines.bottle.subprocess.run",
+            return_value=self._SUCCESS,
+        ) as mock_run:
+            result = bottle.exec("echo hi")
+
+        self.assertEqual(0, result.returncode)
+        self.assertEqual(1, mock_run.call_count)
+
+    def test_no_retry_on_other_error(self):
+        fail = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="err")
+        bottle = SmolmachinesBottle("test-machine")
+        with patch(
+            "bot_bottle.backend.smolmachines.bottle.subprocess.run",
+            return_value=fail,
+        ) as mock_run:
+            result = bottle.exec("bad-cmd")
+
+        self.assertEqual(1, result.returncode)
+        self.assertEqual(1, mock_run.call_count)
 
 
 class TestProvisionGit(unittest.TestCase):
@@ -301,20 +354,20 @@ class TestProvisionGit(unittest.TestCase):
 
     def test_noop_when_no_cwd_and_no_git_entries(self):
         bottle = _make_bottle()
-        _git.provision_git(_plan(stage_dir=self.stage), bottle)
+        _PROVIDER.provision_git(bottle, _plan(stage_dir=self.stage))
         bottle.cp_in.assert_not_called()
         bottle.exec.assert_not_called()
 
     def test_copies_cwd_git_when_copy_cwd_and_git_present(self):
         # Stage a fake host .git dir under user_cwd so the path-
-        # check in _provision_cwd_git fires.
+        # check in provision_git fires.
         cwd = self.stage / "cwd"
         (cwd / ".git").mkdir(parents=True)
         plan = _plan(
             copy_cwd=True, user_cwd=str(cwd), stage_dir=self.stage,
         )
         bottle = _make_bottle()
-        _git.provision_git(plan, bottle)
+        _PROVIDER.provision_git(bottle, plan)
         bottle.cp_in.assert_called_once_with(
             f"{cwd}/.git",
             "/home/node/workspace/.git",
@@ -330,7 +383,7 @@ class TestProvisionGit(unittest.TestCase):
     def test_skips_cwd_when_copy_cwd_false(self):
         plan = _plan(copy_cwd=False, stage_dir=self.stage)
         bottle = _make_bottle()
-        _git.provision_git(plan, bottle)
+        _PROVIDER.provision_git(bottle, plan)
         bottle.cp_in.assert_not_called()
 
     def test_writes_gitconfig_with_ip_port_form_for_smolmachines(self):
@@ -348,7 +401,7 @@ class TestProvisionGit(unittest.TestCase):
             agent_git_gate_host="127.0.0.1:9418",
         )
         bottle = _make_bottle()
-        _git.provision_git(plan, bottle)
+        _PROVIDER.provision_git(bottle, plan)
         # The staged gitconfig path is whatever NamedTemporaryFile
         # picked; we read its contents.
         cp_call = bottle.cp_in.call_args
@@ -392,7 +445,7 @@ class TestBundleLaunchSpec(unittest.TestCase):
 
 
 class TestProvisionGitUser(unittest.TestCase):
-    """`_provision_git_user` runs `git config --global` inside the
+    """`provision_git` runs `git config --global` inside the
     guest as the node user. SmolmachinesBottle.exec sets HOME and
     USER automatically for the requested user, so --global lands
     in /home/node/.gitconfig. No-op when the bottle didn't declare
@@ -411,7 +464,7 @@ class TestProvisionGitUser(unittest.TestCase):
 
     def test_noop_when_no_git_user(self):
         bottle = _make_bottle()
-        _git._provision_git_user(_plan(), bottle)
+        _PROVIDER.provision_git(bottle, _plan())
         self.assertEqual([], self._git_config_calls(bottle))
 
     def test_sets_name_and_email_as_node(self):
@@ -420,7 +473,7 @@ class TestProvisionGitUser(unittest.TestCase):
             "email": "eric@dideric.is",
         })
         bottle = _make_bottle()
-        _git._provision_git_user(plan, bottle)
+        _PROVIDER.provision_git(bottle, plan)
         calls = self._git_config_calls(bottle)
         self.assertEqual(2, len(calls))
         # Both run as node so SmolmachinesBottle.exec sets HOME=/home/node
@@ -436,7 +489,7 @@ class TestProvisionGitUser(unittest.TestCase):
     def test_name_only(self):
         plan = _plan(git_user={"name": "Bot"})
         bottle = _make_bottle()
-        _git._provision_git_user(plan, bottle)
+        _PROVIDER.provision_git(bottle, plan)
         calls = self._git_config_calls(bottle)
         self.assertEqual(1, len(calls))
         self.assertIn("user.name", calls[0][0])
@@ -445,7 +498,7 @@ class TestProvisionGitUser(unittest.TestCase):
     def test_email_only(self):
         plan = _plan(git_user={"email": "bot@example.com"})
         bottle = _make_bottle()
-        _git._provision_git_user(plan, bottle)
+        _PROVIDER.provision_git(bottle, plan)
         calls = self._git_config_calls(bottle)
         self.assertEqual(1, len(calls))
         self.assertIn("user.email", calls[0][0])

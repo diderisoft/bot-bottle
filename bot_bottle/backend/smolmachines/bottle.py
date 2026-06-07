@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import time
 from typing import Mapping, cast
 
 from ...agent_provider import PromptMode, prompt_args
@@ -131,6 +132,11 @@ class SmolmachinesBottle(Bottle):
             self.agent_argv(argv, tty=tty), check=False,
         ).returncode
 
+    # smolvm/libkrun can SIGKILL an otherwise-normal exec during
+    # early-VM provisioning. Retry once after a short settle so
+    # callers (provision_ca, etc.) don't have to handle it themselves.
+    _SIGKILL_EXIT = 128 + 9
+
     def exec(self, script: str, *, user: str = "node") -> ExecResult:
         """Run a POSIX shell script as `user` (default `node`) and
         capture the result. Matches the docker backend's `exec`,
@@ -141,14 +147,22 @@ class SmolmachinesBottle(Bottle):
 
         `runuser -u <user> -- env ... /bin/sh -c <script>` switches UID
         without invoking a login shell, then sets HOME / USER and the
-        bottle env in the child process."""
+        bottle env in the child process.
+
+        Retries once on SIGKILL (exit 137) — libkrun occasionally
+        kills short-lived execs during VM bring-up."""
+        r = self._exec_raw(script, user=user)
+        if r.returncode == self._SIGKILL_EXIT:
+            time.sleep(1.0)
+            r = self._exec_raw(script, user=user)
+        return r
+
+    def _exec_raw(self, script: str, *, user: str = "node") -> ExecResult:
         argv = [
             "--", "runuser", "-u", user, "--",
             "env", *_env_assignments_for(user, self._guest_env),
             "/bin/sh", "-c", script,
         ]
-        # Call smolvm directly because this path needs the host-side
-        # subprocess capture shape used by the Docker backend.
         r = subprocess.run(
             ["smolvm", "machine", "exec", "--name", self.name] + argv,
             capture_output=True, text=True, check=False,

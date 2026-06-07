@@ -1,10 +1,9 @@
-"""Unit: docker backend `_provision_git_user` (issue #86).
+"""Unit: AgentProvider.provision_git — git-user and cwd .git copy (issue #86).
 
-Mocks `bottle.exec` / `bottle.cp_in` and asserts on the script
-strings and user parameter. The cwd + git-gate passes are covered
-indirectly by the existing integration-shaped tests in
-test_smolmachines_provision; this file targets just the git_user
-pass."""
+Mocks bottle.exec / bottle.cp_in and asserts on the dispatched script
+shape. provision_git is now a method on AgentProvider (default impl);
+the internal passes (_provision_cwd_git, _provision_git_gate_config,
+_provision_git_user) are no longer exposed as separate helpers."""
 
 from __future__ import annotations
 
@@ -13,14 +12,37 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from bot_bottle.agent_provider import AgentProvisionPlan
+from bot_bottle.agent_provider import (
+    AgentProvider,
+    AgentProvisionPlan,
+    AgentProviderRuntime,
+)
 from bot_bottle.backend import Bottle, BottleSpec, ExecResult
 from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
-from bot_bottle.backend.docker.provision import git as _git
 from bot_bottle.egress import EgressPlan
 from bot_bottle.git_gate import GitGatePlan
 from bot_bottle.manifest import Manifest
 from bot_bottle.workspace import workspace_plan
+
+
+class _Provider(AgentProvider):
+    """Minimal concrete subclass for testing the default provision_git."""
+    @property
+    def runtime(self) -> AgentProviderRuntime:
+        return AgentProviderRuntime(
+            template="test", command="test", image="", dockerfile="",
+            prompt_mode="append_file", bypass_args=(), resume_args=(),
+            remote_control_args=(),
+        )
+    def provision_plan(self, **kwargs):  # type: ignore[override]
+        raise NotImplementedError
+    def provision_skills(self, plan, bottle): ...  # type: ignore[override]
+    def provision_prompt(self, plan, bottle): ...  # type: ignore[override]
+    def provision(self, plan, bottle): ...  # type: ignore[override]
+    def provision_supervise_mcp(self, plan, bottle, supervise_url): ...  # type: ignore[override]
+
+
+_PROVIDER = _Provider()
 
 
 def _plan(*, git_user: dict | None = None,  # type: ignore
@@ -87,8 +109,6 @@ def _make_bottle(name: str = "bot-bottle-demo-abc12") -> MagicMock:
 
 
 def _git_config_exec_calls(bottle: MagicMock) -> list[tuple[str, str]]:
-    """Filter bottle.exec calls to git-config invocations.
-    Returns list of (script, user) tuples."""
     out = []
     for c in bottle.exec.call_args_list:
         script = c.args[0] if c.args else c.kwargs.get("script", "")
@@ -108,7 +128,7 @@ class TestProvisionGitUser(unittest.TestCase):
 
     def test_noop_when_no_git_user(self):
         bottle = _make_bottle()
-        _git._provision_git_user(_plan(stage_dir=self.stage), bottle)
+        _PROVIDER.provision_git(bottle, _plan(stage_dir=self.stage))
         self.assertEqual([], _git_config_exec_calls(bottle))
 
     def test_copies_cwd_git_to_workspace_plan_path(self):
@@ -116,7 +136,7 @@ class TestProvisionGitUser(unittest.TestCase):
         (cwd / ".git").mkdir(parents=True)
         plan = _plan(copy_cwd=True, user_cwd=str(cwd), stage_dir=self.stage)
         bottle = _make_bottle()
-        _git._provision_cwd_git(plan, bottle)
+        _PROVIDER.provision_git(bottle, plan)
 
         bottle.cp_in.assert_called_once_with(
             f"{cwd}/.git",
@@ -125,10 +145,10 @@ class TestProvisionGitUser(unittest.TestCase):
         chown_calls = [
             c for c in bottle.exec.call_args_list
             if "chown" in (c.args[0] if c.args else "")
+            and "/home/node/workspace/.git" in (c.args[0] if c.args else "")
         ]
         self.assertEqual(1, len(chown_calls))
         self.assertIn("node:node", chown_calls[0].args[0])
-        self.assertIn("/home/node/workspace/.git", chown_calls[0].args[0])
 
     def test_sets_name_and_email(self):
         plan = _plan(
@@ -136,7 +156,7 @@ class TestProvisionGitUser(unittest.TestCase):
             stage_dir=self.stage,
         )
         bottle = _make_bottle()
-        _git._provision_git_user(plan, bottle)
+        _PROVIDER.provision_git(bottle, plan)
         calls = _git_config_exec_calls(bottle)
         self.assertEqual(2, len(calls))
         for script, user in calls:
@@ -150,7 +170,7 @@ class TestProvisionGitUser(unittest.TestCase):
     def test_name_only_sets_only_name(self):
         plan = _plan(git_user={"name": "Bot"}, stage_dir=self.stage)
         bottle = _make_bottle()
-        _git._provision_git_user(plan, bottle)
+        _PROVIDER.provision_git(bottle, plan)
         calls = _git_config_exec_calls(bottle)
         self.assertEqual(1, len(calls))
         self.assertIn("user.name", calls[0][0])
@@ -161,7 +181,7 @@ class TestProvisionGitUser(unittest.TestCase):
             git_user={"email": "bot@example.com"}, stage_dir=self.stage,
         )
         bottle = _make_bottle()
-        _git._provision_git_user(plan, bottle)
+        _PROVIDER.provision_git(bottle, plan)
         calls = _git_config_exec_calls(bottle)
         self.assertEqual(1, len(calls))
         self.assertIn("user.email", calls[0][0])

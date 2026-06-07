@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from dataclasses import replace
 from pathlib import Path
 
-from ...agent_provider import agent_provision_plan, runtime_for
+from ...agent_provider import PROVIDER_TEMPLATES, agent_provision_plan, runtime_for
 from ...egress import Egress
 from ...env import ResolvedEnv, resolve_env
 from ...git_gate import GitGate
@@ -100,6 +100,15 @@ def resolve_plan(
     elif provider_runtime.dockerfile:
         image_default = provider_runtime.image
         dockerfile_path = provider_runtime.dockerfile
+    elif provider.template not in PROVIDER_TEMPLATES:
+        user_dockerfile = (
+            Path.home() / ".bot-bottle" / "contrib" / provider.template / "Dockerfile"
+        )
+        if user_dockerfile.is_file():
+            image_default = f"bot-bottle-{provider.template}:{slug}"
+            dockerfile_path = str(user_dockerfile)
+        else:
+            image_default = provider_runtime.image
     else:
         image_default = provider_runtime.image
     image = os.environ.get("BOT_BOTTLE_IMAGE", image_default)

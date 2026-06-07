@@ -78,6 +78,20 @@ class BottlePlan(ABC):
     stage_dir: Path
     guest_home: str
     git_gate_plan: GitGatePlan
+
+    @property
+    def git_gate_insteadof_host(self) -> str:
+        """Host (and optional port) used in git-gate insteadOf URLs.
+        Docker uses the compose-network DNS alias; smolmachines
+        overrides with a loopback IP:port since TSI has no DNS."""
+        return "git-gate"
+
+    @property
+    def git_gate_insteadof_scheme(self) -> str:
+        """URL scheme for git-gate insteadOf rewrites. 'git' for
+        Docker (git daemon); 'http' for smolmachines (HTTP proxy
+        over a published host port)."""
+        return "git"
     egress_plan: EgressPlan
     supervise_plan: SupervisePlan | None
     agent_provision: AgentProvisionPlan
@@ -339,35 +353,21 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         HTTPS_PROXY (claude-code, git over HTTPS, npm, curl) is
         intercepted without per-tool reconfiguration."""
         provider = get_provider(plan.agent_provision.template)
-        self.provision_ca(plan, bottle)
+        provider.provision_ca(bottle, plan)
         prompt_path = provider.provision_prompt(plan, bottle)
         provider.provision(plan, bottle)
         provider.provision_skills(plan, bottle)
         self.provision_workspace(plan, bottle)
-        self.provision_git(plan, bottle)
+        provider.provision_git(bottle, plan)
         provider.provision_supervise_mcp(
             plan, bottle, self.supervise_mcp_url(plan),
         )
         return prompt_path
 
-    def provision_ca(self, plan: PlanT, bottle: "Bottle") -> None:
-        """Install the per-bottle CA into the agent's trust store so
-        the agent trusts the bumped CONNECT cert egress presents.
-        Default impl is a no-op so
-        backends that don't yet support TLS interception (every backend
-        except Docker today) aren't forced to implement it. The Docker
-        backend overrides to docker-cp the cert in and run
-        `update-ca-certificates`."""
-
     def provision_workspace(self, plan: PlanT, bottle: "Bottle") -> None:
         """Copy the operator workspace into the running bottle when
         the backend cannot bake it into the agent image. Default is
         no-op for backends like Docker that handle this before launch."""
-
-    @abstractmethod
-    def provision_git(self, plan: PlanT, bottle: "Bottle") -> None:
-        """Copy the host's cwd `.git` directory into the running
-        bottle if the user requested --cwd. No-op otherwise."""
 
     def supervise_mcp_url(self, plan: PlanT) -> str:
         """Return the agent-side URL of the per-bottle supervise

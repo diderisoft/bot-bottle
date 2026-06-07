@@ -33,10 +33,6 @@ from . import prepare as _prepare
 from .bottle import DockerBottle
 from .bottle_cleanup_plan import DockerBottleCleanupPlan
 from .bottle_plan import DockerBottlePlan
-from .provision import ca as _ca
-from .provision import git as _git
-
-
 class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanupPlan"]):
     """Docker backend implementation. Selected by BOT_BOTTLE_BACKEND
     (default)."""
@@ -59,12 +55,6 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
     def launch(self, plan: DockerBottlePlan) -> Generator[DockerBottle, None, None]:
         with _launch.launch(plan, provision=self.provision) as bottle:
             yield bottle
-
-    def provision_ca(self, plan: DockerBottlePlan, bottle: Bottle) -> None:
-        _ca.provision_ca(plan, bottle)
-
-    def provision_git(self, plan: DockerBottlePlan, bottle: Bottle) -> None:
-        _git.provision_git(plan, bottle)
 
     def supervise_mcp_url(self, plan: DockerBottlePlan) -> str:
         """Docker bottles reach the supervise sidecar via the
