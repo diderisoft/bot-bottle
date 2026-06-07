@@ -4,12 +4,16 @@
 #   1. Finds the next available NNNN number by scanning existing PRDs.
 #   2. Renames each prd-new-*.md to NNNN-<slug>.md.
 #   3. Updates the title header (# PRD prd-new: → # PRD NNNN:).
-#   4. Flips Status: Draft → Active when the merge commit also touched
-#      files outside docs/prds/ (i.e. the implementation shipped together
-#      with the PRD).
+#   4. Flips Status: Draft → Active when the push touched files outside
+#      docs/prds/ anywhere in its commit range (i.e. the implementation
+#      shipped together with the PRD).
 #   5. Commits the renaming back to main.
 #
-# No-op if the push contained no prd-new-*.md files.
+# No-op if the working tree contains no prd-new-*.md files.
+#
+# NOTE: The workflow scans the working tree (not just HEAD~1..HEAD) because
+# PRs land as multi-commit pushes and the prd-new file is often added in an
+# earlier commit on the branch, not in the final squash/merge commit.
 
 name: prd-number
 
@@ -30,7 +34,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
@@ -54,22 +58,20 @@ jobs:
 
           prds_dir = Path("docs/prds")
 
-          # Files added in the latest commit (HEAD vs HEAD~1).
-          result = subprocess.run(
-              ["git", "diff", "--name-only", "--diff-filter=A", "HEAD~1", "HEAD"],
-              capture_output=True, text=True, check=True,
-          )
-          added = [Path(p) for p in result.stdout.splitlines()]
-          new_prds = [p for p in added if p.parent == prds_dir
-                      and re.match(r"prd-new-.+\.md$", p.name)]
+          # Scan the working tree — prd-new files may have landed in any
+          # commit of a multi-commit push, not just HEAD.
+          new_prds = sorted(prds_dir.glob("prd-new-*.md"))
 
           if not new_prds:
-              print("No prd-new-*.md files added in this commit — nothing to do.")
+              print("No prd-new-*.md files found — nothing to do.")
               sys.exit(0)
 
-          # Determine whether non-PRD files were also changed (for Status flip).
+          # Determine whether non-PRD files were also changed anywhere in
+          # the push range (BEFORE_SHA → HEAD).  Falls back to HEAD~1 when
+          # the env var isn't set (e.g. local act runs).
+          before_sha = os.environ.get("GITHUB_EVENT_BEFORE", "HEAD~1")
           all_changed = subprocess.run(
-              ["git", "diff", "--name-only", "HEAD~1", "HEAD"],
+              ["git", "diff", "--name-only", before_sha, "HEAD"],
               capture_output=True, text=True, check=True,
           ).stdout.splitlines()
           non_prd_changed = any(
