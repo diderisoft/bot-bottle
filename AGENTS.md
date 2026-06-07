@@ -36,10 +36,11 @@ the container lifecycle and the copying of skills and env vars into it.
 
 - Three kinds of doc, each with its own conventions in-folder; see
   `docs/README.md` for when to write which:
-  - **PRDs** (`docs/prds/`) — one feature per file, numbered
-    `NNNN-kebab.md`. A `Status:` line tracks lifecycle: Draft → Active
-    (shipped to `main`) → Superseded/Retargeted. Format in
-    `docs/prds/README.md`.
+  - **PRDs** (`docs/prds/`) — one feature per file. While a PR is open
+    the file is named `prd-new-<kebab>.md`; CI assigns a sequential
+    number on merge to `main` and renames it. A `Status:` line tracks
+    lifecycle: Draft → Active (shipped to `main`) →
+    Superseded/Retargeted. Format in `docs/prds/README.md`.
   - **Research notes** (`docs/research/`) — opinionated investigations;
     unnumbered kebab-case, freeform and verdict-first. See
     `docs/research/README.md`.
