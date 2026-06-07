@@ -120,7 +120,7 @@ def _git_config_exec_calls(bottle: MagicMock) -> list[tuple[str, str]]:
 
 class TestProvisionGitUser(unittest.TestCase):
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory(prefix="cb-prov-git-user.")
+        self._tmp = tempfile.TemporaryDirectory(prefix="cb-prov-git-user.")  # pylint: disable=consider-using-with
         self.stage = Path(self._tmp.name)
 
     def tearDown(self):

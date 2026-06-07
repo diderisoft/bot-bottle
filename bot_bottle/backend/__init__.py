@@ -411,8 +411,8 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
 # Import concrete backend classes AFTER the base types are defined, so
 # each backend module can pull BottleSpec / BottlePlan / BottleBackend
 # via `from . import ...` without hitting a partially-initialized module.
-from .docker import DockerBottleBackend  # noqa: E402
-from .smolmachines import SmolmachinesBottleBackend  # noqa: E402
+from .docker import DockerBottleBackend  # noqa: E402  # pylint: disable=wrong-import-position
+from .smolmachines import SmolmachinesBottleBackend  # noqa: E402  # pylint: disable=wrong-import-position
 
 
 # The dict is heterogeneous: each value is a BottleBackend specialized

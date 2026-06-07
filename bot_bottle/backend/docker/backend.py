@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Generator, Sequence
 
 from ...supervise import SUPERVISE_HOSTNAME, SUPERVISE_PORT
-from .. import ActiveAgent, Bottle, BottleBackend, BottleSpec
+from .. import ActiveAgent, BottleBackend, BottleSpec
 from . import cleanup as _cleanup
 from . import enumerate as _enumerate
 from . import launch as _launch

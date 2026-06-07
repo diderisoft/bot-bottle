@@ -254,7 +254,7 @@ class TestProvisionCA(unittest.TestCase):
     cp_in + exec in the right order."""
 
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory(prefix="cb-prov-ca.")
+        self._tmp = tempfile.TemporaryDirectory(prefix="cb-prov-ca.")  # pylint: disable=consider-using-with
         self.tmp = Path(self._tmp.name)
         self.egress_ca = self.tmp / "egress-ca.pem"
         _write_self_signed_cert(self.egress_ca)
@@ -346,7 +346,7 @@ class TestProvisionGit(unittest.TestCase):
     when its condition doesn't hold."""
 
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory(prefix="cb-prov-git.")
+        self._tmp = tempfile.TemporaryDirectory(prefix="cb-prov-git.")  # pylint: disable=consider-using-with
         self.stage = Path(self._tmp.name)
 
     def tearDown(self):
@@ -407,7 +407,7 @@ class TestProvisionGit(unittest.TestCase):
         cp_call = bottle.cp_in.call_args
         staged_path = Path(cp_call.args[0])
         self.assertEqual(self.stage, staged_path.parent)
-        content = staged_path.read_text()
+        content = staged_path.read_text(encoding="utf-8")
         self.assertIn(
             '[url "http://127.0.0.1:9418/bot-bottle.git"]', content,
         )
@@ -507,7 +507,7 @@ class TestProvisionGitUser(unittest.TestCase):
 
 class TestProvisionWorkspace(unittest.TestCase):
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory(prefix="cb-prov-workspace.")
+        self._tmp = tempfile.TemporaryDirectory(prefix="cb-prov-workspace.")  # pylint: disable=consider-using-with
         self.stage = Path(self._tmp.name)
 
     def tearDown(self):
