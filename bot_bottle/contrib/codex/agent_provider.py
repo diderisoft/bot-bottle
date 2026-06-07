@@ -76,8 +76,10 @@ class CodexAgentProvider(AgentProvider):
         forward_host_credentials: bool = False,
         host_env: dict[str, str] | None = None,
         trusted_project_path: str = "",
+        label: str = "",
+        color: str = "",
     ) -> AgentProvisionPlan:
-        del auth_token  # Claude-only knob
+        del auth_token, label, color  # Claude-only knobs
         resolved_guest_env = dict(guest_env or {})
         trusted_path = trusted_project_path or guest_home
 

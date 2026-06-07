@@ -139,6 +139,8 @@ class AgentProvider(ABC):
         forward_host_credentials: bool = False,
         host_env: dict[str, str] | None = None,
         trusted_project_path: str = "",
+        label: str = "",
+        color: str = "",
     ) -> AgentProvisionPlan:
         """Build the declarative AgentProvisionPlan for one launch.
         Backends call this during `prepare` and consume the result as
@@ -326,6 +328,8 @@ def agent_provision_plan(
     forward_host_credentials: bool = False,
     host_env: dict[str, str] | None = None,
     trusted_project_path: str = "",
+    label: str = "",
+    color: str = "",
 ) -> AgentProvisionPlan:
     """Back-compat shim — `prepare` callers stay the same; the work
     now lives on the provider plugin."""
@@ -338,6 +342,8 @@ def agent_provision_plan(
         forward_host_credentials=forward_host_credentials,
         host_env=host_env,
         trusted_project_path=trusted_project_path,
+        label=label,
+        color=color,
     )
 
 

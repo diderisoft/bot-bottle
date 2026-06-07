@@ -68,6 +68,8 @@ class ClaudeAgentProvider(AgentProvider):
         forward_host_credentials: bool = False,
         host_env: dict[str, str] | None = None,
         trusted_project_path: str = "",
+        label: str = "",
+        color: str = "",
     ) -> AgentProvisionPlan:
         del forward_host_credentials, host_env  # Codex-only knobs
         resolved_guest_env = dict(guest_env or {})
@@ -80,12 +82,17 @@ class ClaudeAgentProvider(AgentProvider):
         claude_config = state_dir / "claude.json"
         claude_projects = {guest_home: {"hasTrustDialogAccepted": True}}
         claude_projects[trusted_path] = {"hasTrustDialogAccepted": True}
-        claude_config.write_text(json.dumps({
+        payload: dict[str, object] = {
             "hasCompletedOnboarding": True,
             "theme": "dark",
             "bypassPermissionsModeAccepted": True,
             "projects": claude_projects,
-        }, indent=2) + "\n")
+        }
+        if label:
+            payload["name"] = label
+        if color:
+            payload["color"] = color
+        claude_config.write_text(json.dumps(payload, indent=2) + "\n")
         claude_config.chmod(0o600)
         files = (
             AgentProvisionFile(claude_config, f"{guest_home}/.claude.json"),

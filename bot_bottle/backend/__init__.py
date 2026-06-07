@@ -67,6 +67,8 @@ class BottleSpec:
     # (`cli.py resume <identity>`) sets this to continue an existing
     # bottle's state. Empty string for a fresh `start`.
     identity: str = ""
+    label: str = ""
+    color: str = ""
 
 
 @dataclass(frozen=True)
@@ -189,6 +191,8 @@ class ActiveAgent:
     agent_name: str       # from metadata.json; "?" if missing
     started_at: str       # ISO 8601 from metadata.json; "" if missing
     services: tuple[str, ...]  # alphabetical
+    label: str = ""
+    color: str = ""
 
 
 class Bottle(ABC):

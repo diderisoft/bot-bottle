@@ -80,6 +80,8 @@ def resolve_plan(
         started_at=datetime.now(timezone.utc).isoformat(),
         compose_project=f"bot-bottle-{slug}",
         backend="docker",
+        label=spec.label,
+        color=spec.color,
     ))
     # Clear any leftover preserve marker from a prior capability-block
     # so this fresh launch can be cleaned up at session-end unless
@@ -191,6 +193,8 @@ def resolve_plan(
         auth_token=provider.auth_token,
         host_env=dict(os.environ),
         trusted_project_path=workspace_plan.workdir,
+        label=spec.label,
+        color=spec.color,
     )
     guest_env = dict(agent_provision.guest_env)
     for key, val in agent_provision.env_vars.items():

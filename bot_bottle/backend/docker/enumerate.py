@@ -39,6 +39,8 @@ def enumerate_active() -> list[ActiveAgent]:
             agent_name=metadata.agent_name if metadata else "?",
             started_at=metadata.started_at if metadata else "",
             services=tuple(sorted(services)),
+            label=metadata.label if metadata else "",
+            color=metadata.color if metadata else "",
         ))
     return out
 

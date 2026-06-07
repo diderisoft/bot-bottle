@@ -109,6 +109,8 @@ class BottleMetadata:
     # for state dirs written before PRD 0040; callers default to "docker"
     # for backward compatibility.
     backend: str = ""
+    label: str = ""
+    color: str = ""
 
 
 def metadata_path(identity: str) -> Path:
@@ -144,6 +146,8 @@ def read_metadata(identity: str) -> BottleMetadata | None:
         started_at=str(raw_typed.get("started_at", "")),
         compose_project=str(raw_typed.get("compose_project", "")),
         backend=str(raw_typed.get("backend", "")),
+        label=str(raw_typed.get("label", "")),
+        color=str(raw_typed.get("color", "")),
     )
 
 

@@ -64,6 +64,8 @@ def enumerate_active() -> list[ActiveAgent]:
             agent_name=metadata.agent_name if metadata else "?",
             started_at=metadata.started_at if metadata else "",
             services=services_by_slug.get(slug, ()),
+            label=metadata.label if metadata else "",
+            color=metadata.color if metadata else "",
         ))
     return out
 

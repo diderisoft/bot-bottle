@@ -3,6 +3,7 @@
 Exposed surface:
 
   filter_select(items, *, title="", tty_path="/dev/tty") -> str | None
+  name_color_modal(default_label, *, tty_path="/dev/tty") -> (str, str)
 
 Opens /dev/tty directly so the picker works even when stdout/stdin are
 redirected.  Returns the selected item or None on cancel.
@@ -218,3 +219,219 @@ def _addstr_safe(screen: Any, row: int, col: int, text: str, attr: int = curses.
         screen.addstr(row, col, text, attr)
     except curses.error:
         pass
+
+
+# ---------------------------------------------------------------------------
+# name_color_modal — two-step label + color picker
+# ---------------------------------------------------------------------------
+
+_ANSI_COLORS = [
+    "red", "green", "blue", "yellow", "magenta", "cyan", "white", "black",
+    "bright-red", "bright-green", "bright-blue", "bright-yellow",
+    "bright-magenta", "bright-cyan", "bright-white", "bright-black",
+]
+
+_CURSES_COLOR_MAP: dict[str, int] = {
+    "black": curses.COLOR_BLACK,
+    "red": curses.COLOR_RED,
+    "green": curses.COLOR_GREEN,
+    "yellow": curses.COLOR_YELLOW,
+    "blue": curses.COLOR_BLUE,
+    "magenta": curses.COLOR_MAGENTA,
+    "cyan": curses.COLOR_CYAN,
+    "white": curses.COLOR_WHITE,
+}
+
+_COLOR_NONE = "(none)"
+
+
+def name_color_modal(
+    default_label: str,
+    *,
+    tty_path: str = "/dev/tty",
+) -> tuple[str, str]:
+    """Present a two-step curses modal: first edit the agent label,
+    then optionally pick a color.
+
+    Returns ``(label, color)`` where ``color`` is one of the 16 ANSI
+    color name strings or ``""`` for no color. Falls back to
+    ``(default_label, "")`` on any error (terminal too small, not a tty).
+    """
+    try:
+        tty_fd = open(tty_path, "r+b", buffering=0)  # pylint: disable=consider-using-with
+    except OSError:
+        return default_label, ""
+
+    try:
+        fd_dup = os.dup(tty_fd.fileno())
+        return _run_name_color(default_label, tty_fd=fd_dup)
+    except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        return default_label, ""
+    finally:
+        tty_fd.close()
+
+
+def _run_name_color(default_label: str, *, tty_fd: int) -> tuple[str, str]:
+    import io
+    orig_stdin = sys.__stdin__
+    orig_stdout = sys.__stdout__
+    try:
+        tty_text = io.TextIOWrapper(io.FileIO(tty_fd, mode="r+"), write_through=True)
+        sys.__stdin__ = tty_text   # type: ignore[assignment]
+        sys.__stdout__ = tty_text  # type: ignore[assignment]
+        os.environ.setdefault("TERM", "xterm-256color")
+
+        screen = curses.initscr()
+        curses.noecho()
+        curses.cbreak()
+        screen.keypad(True)
+        try:
+            label = _label_step(screen, default_label)
+            color = _color_step(screen, label)
+        finally:
+            screen.keypad(False)
+            curses.nocbreak()
+            curses.echo()
+            curses.endwin()
+    finally:
+        sys.__stdin__ = orig_stdin    # type: ignore[assignment]
+        sys.__stdout__ = orig_stdout  # type: ignore[assignment]
+    return label, color
+
+
+def _label_step(screen: Any, default_label: str) -> str:
+    """Step 1: edit the label. First printable key replaces the
+    pre-fill; subsequent keys append. Enter confirms."""
+    text = default_label
+    replaced = False  # True once the user has typed their first char
+
+    while True:
+        _render_label(screen, text)
+        try:
+            key = screen.getch()
+        except KeyboardInterrupt:
+            return default_label
+
+        if key in (curses.KEY_ENTER, _KEY_ENTER_ALT, ord("\r")):
+            return text.strip() or default_label
+
+        if key in (curses.KEY_BACKSPACE, _KEY_BACKSPACE_WIN, 127):
+            if replaced:
+                text = text[:-1]
+            else:
+                text = ""
+                replaced = True
+
+        elif 32 <= key <= 126:
+            if not replaced:
+                text = chr(key)
+                replaced = True
+            else:
+                text += chr(key)
+
+
+def _render_label(screen: Any, text: str) -> None:
+    screen.erase()
+    rows, cols = screen.getmaxyx()
+    sep = "─" * min(cols - 1, 40)
+    _addstr_safe(screen, 0, 0, "Name agent", curses.A_BOLD)
+    _addstr_safe(screen, 1, 0, sep)
+    _addstr_safe(screen, 2, 0, text[:cols - 1], curses.A_REVERSE)
+    _addstr_safe(screen, 3, 0, sep)
+    if rows > 5:
+        _addstr_safe(screen, 5, 0, "[any key] edit  [Enter] confirm", curses.A_DIM)
+    screen.refresh()
+
+
+def _color_step(screen: Any, confirmed_label: str) -> str:
+    """Step 2: pick a color from the list, or skip."""
+    items = [_COLOR_NONE] + _ANSI_COLORS
+    cursor = 0
+
+    # Initialise color pairs once; index 0 = none, 1..16 = palette.
+    color_attrs = _init_color_pairs()
+
+    while True:
+        _render_color(screen, items, cursor, confirmed_label, color_attrs)
+        try:
+            key = screen.getch()
+        except KeyboardInterrupt:
+            return ""
+
+        if key in (ord("q"), _KEY_ESC):
+            return ""
+
+        if key in (curses.KEY_ENTER, _KEY_ENTER_ALT, ord("\r")):
+            chosen = items[cursor]
+            return "" if chosen == _COLOR_NONE else chosen
+
+        if key in (curses.KEY_UP, ord("k")) and cursor > 0:
+            cursor -= 1
+        elif key in (curses.KEY_DOWN, ord("j")) and cursor < len(items) - 1:
+            cursor += 1
+
+
+def _init_color_pairs() -> dict[str, int]:
+    """Return {color_name: curses_attr} for the palette items."""
+    attrs: dict[str, int] = {_COLOR_NONE: curses.A_NORMAL}
+    try:
+        curses.start_color()
+        curses.use_default_colors()
+        pair_idx = 2  # pair 1 reserved for other uses
+        for name in _ANSI_COLORS:
+            base = name.replace("bright-", "")
+            fg = _CURSES_COLOR_MAP.get(base, curses.COLOR_WHITE)
+            try:
+                curses.init_pair(pair_idx, fg, -1)
+                attr = curses.color_pair(pair_idx)
+                if name.startswith("bright-"):
+                    attr |= curses.A_BOLD
+                attrs[name] = attr
+                pair_idx += 1
+            except curses.error:
+                attrs[name] = curses.A_NORMAL
+    except curses.error:
+        for name in _ANSI_COLORS:
+            attrs[name] = curses.A_NORMAL
+    return attrs
+
+
+def _render_color(
+    screen: Any,
+    items: list[str],
+    cursor: int,
+    confirmed_label: str,
+    color_attrs: dict[str, int],
+) -> None:
+    screen.erase()
+    rows, cols = screen.getmaxyx()
+    sep = "─" * min(cols - 1, 40)
+    _addstr_safe(screen, 0, 0, "Name agent", curses.A_BOLD)
+    _addstr_safe(screen, 1, 0, sep)
+    _addstr_safe(screen, 2, 0, confirmed_label[:cols - 1])
+    _addstr_safe(screen, 3, 0, sep)
+    _addstr_safe(screen, 4, 0, "Color (optional)", curses.A_BOLD)
+
+    list_start = 5
+    list_rows = rows - list_start - 2
+    scroll = max(0, cursor - list_rows + 1)
+    visible = items[scroll: scroll + list_rows]
+
+    for idx, name in enumerate(visible):
+        abs_idx = scroll + idx
+        row = list_start + idx
+        if row >= rows - 2:
+            break
+        prefix = "> " if abs_idx == cursor else "  "
+        attr = color_attrs.get(name, curses.A_NORMAL)
+        if abs_idx == cursor:
+            attr |= curses.A_REVERSE
+        _addstr_safe(screen, row, 0, (prefix + name)[:cols - 1], attr)
+
+    _addstr_safe(screen, rows - 2, 0, sep)
+    _addstr_safe(
+        screen, rows - 1, 0,
+        "[↑↓/jk] move  [Enter] select  [Esc/q] skip",
+        curses.A_DIM,
+    )
+    screen.refresh()

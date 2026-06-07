@@ -73,6 +73,8 @@ def resolve_plan(
         started_at=datetime.now(timezone.utc).isoformat(),
         compose_project="",
         backend="smolmachines",
+        label=spec.label,
+        color=spec.color,
     ))
 
     subnet, gateway, bundle_ip = smolmachines_bundle_subnet(slug)
@@ -136,6 +138,8 @@ def resolve_plan(
         auth_token=provider.auth_token,
         host_env=dict(os.environ),
         trusted_project_path=workspace_plan.workdir,
+        label=spec.label,
+        color=spec.color,
     )
     merged_guest_env = dict(agent_provision.guest_env)
     for key, val in agent_provision.env_vars.items():

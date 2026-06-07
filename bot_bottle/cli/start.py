@@ -80,11 +80,15 @@ def cmd_start(argv: list[str]) -> int:
         if backend_name is None:
             return 0
 
+    label, color = tui.name_color_modal(default_label=agent_name)
+
     spec = BottleSpec(
         manifest=manifest,
         agent_name=agent_name,
         copy_cwd=args.cwd,
         user_cwd=USER_CWD,
+        label=label,
+        color=color,
     )
     return _launch_bottle(
         spec,
