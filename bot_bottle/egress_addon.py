@@ -251,7 +251,7 @@ class EgressAddon:
         """
         if flow.websocket is None:  # type: ignore[union-attr]
             return
-        route = match_route(self.routes, flow.request.pretty_host)
+        route = match_route(self.config.routes, flow.request.pretty_host)
         if route is None:
             return
         message = flow.websocket.messages[-1]  # type: ignore[union-attr]

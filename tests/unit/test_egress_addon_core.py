@@ -606,7 +606,7 @@ class TestDecisionDefaults(unittest.TestCase):
 # --- scan_outbound -------------------------------------------------------
 
 
-class TestScanOutbound(unittest.TestCase):
+class TestScanOutboundBody(unittest.TestCase):
     def test_body_token_patterns_still_block(self):
         result = scan_outbound(
             Route(host="chatgpt.com"),
