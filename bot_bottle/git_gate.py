@@ -37,7 +37,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .log import info
-from .manifest import Bottle, GitEntry
+from .manifest import ManifestBottle, ManifestGitEntry
 
 
 # Short network alias for git-gate inside the sidecar bundle. The
@@ -96,9 +96,9 @@ class GitGatePlan:
     egress_network: str = ""
 
 
-def git_gate_upstreams_for_bottle(bottle: Bottle) -> tuple[GitGateUpstream, ...]:
+def git_gate_upstreams_for_bottle(bottle: ManifestBottle) -> tuple[GitGateUpstream, ...]:
     """Lift each `bottle.git` entry into a GitGateUpstream. Unique-Name
-    validation already ran in `manifest.Bottle.from_dict`."""
+    validation already ran in `manifest.ManifestBottle.from_dict`."""
     return tuple(
         GitGateUpstream(
             name=e.Name,
@@ -113,7 +113,7 @@ def git_gate_upstreams_for_bottle(bottle: Bottle) -> tuple[GitGateUpstream, ...]
 
 
 def git_gate_render_gitconfig(
-    entries: tuple[GitEntry, ...], gate_host: str, *, scheme: str = "git",
+    entries: tuple[ManifestGitEntry, ...], gate_host: str, *, scheme: str = "git",
 ) -> str:
     """Render the agent's ~/.gitconfig content for git-gate
     `insteadOf` rewrites. Pure host-side, no docker / smolvm;
@@ -361,7 +361,7 @@ exit 0
 
 
 def _provision_dynamic_key(
-    entry: GitEntry,
+    entry: ManifestGitEntry,
     slug: str,
     stage_dir: Path,
 ) -> str:
@@ -402,7 +402,7 @@ def _provision_dynamic_key(
     return str(key_file)
 
 
-def revoke_git_gate_provisioned_keys(bottle: Bottle, stage_dir: Path) -> None:
+def revoke_git_gate_provisioned_keys(bottle: ManifestBottle, stage_dir: Path) -> None:
     """Revoke all deploy keys provisioned for `bottle` during prepare.
 
     Called at teardown after containers stop. Raises if any revocation
@@ -440,7 +440,7 @@ class GitGate(ABC):
     start/stop lifecycle is backend-specific and lives on concrete
     subclasses."""
 
-    def prepare(self, bottle: Bottle, slug: str, stage_dir: Path) -> GitGatePlan:
+    def prepare(self, bottle: ManifestBottle, slug: str, stage_dir: Path) -> GitGatePlan:
         """Compute the upstream table from `bottle.git` and write the
         entrypoint, pre-receive hook, and access-hook scripts (mode
         600) under `stage_dir`. Pure host-side, no docker subprocess.

@@ -24,7 +24,7 @@ INBOUND_DETECTOR_NAMES = frozenset({"naive_injection_detection"})
 
 def validate_egress_routes(
     bottle_name: str,
-    routes: tuple[EgressRoute, ...],
+    routes: tuple[ManifestEgressRoute, ...],
 ) -> None:
     seen_hosts: dict[str, None] = {}
     for r in routes:
@@ -38,29 +38,29 @@ def validate_egress_routes(
 
 
 @dataclass(frozen=True)
-class PathMatch:
+class ManifestPathMatch:
     Type: str = "prefix"
     Value: str = ""
 
 
 @dataclass(frozen=True)
-class HeaderMatch:
+class ManifestHeaderMatch:
     Name: str = ""
     Value: str = ""
     Type: str = "exact"
 
 
 @dataclass(frozen=True)
-class MatchEntry:
-    Paths: tuple[PathMatch, ...] = ()
+class ManifestMatchEntry:
+    Paths: tuple[ManifestPathMatch, ...] = ()
     Methods: tuple[str, ...] = ()
-    Headers: tuple[HeaderMatch, ...] = ()
+    Headers: tuple[ManifestHeaderMatch, ...] = ()
 
 
 @dataclass(frozen=True)
-class EgressRoute:
+class ManifestEgressRoute:
     Host: str
-    Matches: tuple[MatchEntry, ...] = ()
+    Matches: tuple[ManifestMatchEntry, ...] = ()
     AuthScheme: str = ""
     TokenRef: str = ""
     Role: tuple[str, ...] = ()
@@ -68,7 +68,7 @@ class EgressRoute:
     InboundDetectors: tuple[str, ...] | None = None
 
     @classmethod
-    def from_dict(cls, bottle_name: str, idx: int, raw: object) -> "EgressRoute":
+    def from_dict(cls, bottle_name: str, idx: int, raw: object) -> "ManifestEgressRoute":
         label = f"bottle '{bottle_name}' egress.routes[{idx}]"
         d = as_json_object(raw, label)
         host = d.get("host")
@@ -76,7 +76,7 @@ class EgressRoute:
             raise ManifestError(f"{label} missing required string field 'host'")
 
         # --- matches ---
-        matches: tuple[MatchEntry, ...] = ()
+        matches: tuple[ManifestMatchEntry, ...] = ()
         matches_raw = d.get("matches")
         if matches_raw is not None:
             if not isinstance(matches_raw, list):
@@ -85,7 +85,7 @@ class EgressRoute:
                     f"(was {type(matches_raw).__name__})"
                 )
             matches_list = cast(list[object], matches_raw)
-            entries: list[MatchEntry] = []
+            entries: list[ManifestMatchEntry] = []
             for k, entry_raw in enumerate(matches_list):
                 entries.append(
                     _parse_match_entry(label, k, entry_raw)
@@ -185,17 +185,17 @@ class EgressRoute:
 
 def _parse_match_entry(
     route_label: str, k: int, raw: object,
-) -> MatchEntry:
+) -> ManifestMatchEntry:
     label = f"{route_label} matches[{k}]"
     d = as_json_object(raw, label)
 
-    paths: tuple[PathMatch, ...] = ()
+    paths: tuple[ManifestPathMatch, ...] = ()
     paths_raw = d.get("paths")
     if paths_raw is not None:
         if not isinstance(paths_raw, list):
             raise ManifestError(f"{label} paths must be an array")
         paths_list = cast(list[object], paths_raw)
-        parsed_paths: list[PathMatch] = []
+        parsed_paths: list[ManifestPathMatch] = []
         for j, p_raw in enumerate(paths_list):
             parsed_paths.append(_parse_path_match(label, j, p_raw))
         paths = tuple(parsed_paths)
@@ -220,13 +220,13 @@ def _parse_match_entry(
             normalised.append(upper)
         methods = tuple(normalised)
 
-    headers: tuple[HeaderMatch, ...] = ()
+    headers: tuple[ManifestHeaderMatch, ...] = ()
     headers_raw = d.get("headers")
     if headers_raw is not None:
         if not isinstance(headers_raw, list):
             raise ManifestError(f"{label} headers must be an array")
         headers_list = cast(list[object], headers_raw)
-        parsed_headers: list[HeaderMatch] = []
+        parsed_headers: list[ManifestHeaderMatch] = []
         for j, h_raw in enumerate(headers_list):
             parsed_headers.append(_parse_header_match(label, j, h_raw))
         headers = tuple(parsed_headers)
@@ -235,12 +235,12 @@ def _parse_match_entry(
         if key not in ("paths", "methods", "headers"):
             raise ManifestError(f"{label} has unknown key {key!r}")
 
-    return MatchEntry(Paths=paths, Methods=methods, Headers=headers)
+    return ManifestMatchEntry(Paths=paths, Methods=methods, Headers=headers)
 
 
 def _parse_path_match(
     entry_label: str, j: int, raw: object,
-) -> PathMatch:
+) -> ManifestPathMatch:
     label = f"{entry_label} paths[{j}]"
     d = as_json_object(raw, label)
     ptype = d.get("type", "prefix")
@@ -266,12 +266,12 @@ def _parse_path_match(
     for k in d:
         if k not in ("type", "value"):
             raise ManifestError(f"{label} has unknown key {k!r}")
-    return PathMatch(Type=ptype, Value=value)
+    return ManifestPathMatch(Type=ptype, Value=value)
 
 
 def _parse_header_match(
     entry_label: str, j: int, raw: object,
-) -> HeaderMatch:
+) -> ManifestHeaderMatch:
     label = f"{entry_label} headers[{j}]"
     d = as_json_object(raw, label)
     name = d.get("name")
@@ -296,7 +296,7 @@ def _parse_header_match(
     for k in d:
         if k not in ("name", "value", "type"):
             raise ManifestError(f"{label} has unknown key {k!r}")
-    return HeaderMatch(Name=name, Value=value, Type=htype)
+    return ManifestHeaderMatch(Name=name, Value=value, Type=htype)
 
 
 def _parse_dlp_block(
@@ -350,15 +350,15 @@ LOG_LEVELS = frozenset({0, 1, 2})
 
 
 @dataclass(frozen=True)
-class EgressConfig:
-    routes: tuple[EgressRoute, ...] = ()
+class ManifestEgressConfig:
+    routes: tuple[ManifestEgressRoute, ...] = ()
     Log: int = 0
 
     @classmethod
-    def from_dict(cls, bottle_name: str, raw: object) -> "EgressConfig":
+    def from_dict(cls, bottle_name: str, raw: object) -> "ManifestEgressConfig":
         d = as_json_object(raw, f"bottle '{bottle_name}' egress")
         routes_raw = d.get("routes")
-        routes: tuple[EgressRoute, ...] = ()
+        routes: tuple[ManifestEgressRoute, ...] = ()
         if routes_raw is not None:
             if not isinstance(routes_raw, list):
                 raise ManifestError(
@@ -367,7 +367,7 @@ class EgressConfig:
                 )
             routes_list = cast(list[object], routes_raw)
             routes = tuple(
-                EgressRoute.from_dict(bottle_name, i, entry)
+                ManifestEgressRoute.from_dict(bottle_name, i, entry)
                 for i, entry in enumerate(routes_list)
             )
             validate_egress_routes(bottle_name, routes)

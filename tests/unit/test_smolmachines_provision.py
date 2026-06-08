@@ -33,7 +33,7 @@ from bot_bottle.backend.smolmachines.launch import _bundle_launch_spec
 from bot_bottle.backend.util import AGENT_CA_PATH
 from bot_bottle.egress import EgressPlan, EgressRoute
 from bot_bottle.git_gate import GitGatePlan, GitGateUpstream
-from bot_bottle.manifest import GitEntry, Manifest
+from bot_bottle.manifest import ManifestGitEntry, Manifest
 from bot_bottle.supervise import SupervisePlan
 from bot_bottle.workspace import workspace_plan
 
@@ -85,7 +85,7 @@ def _plan(
     *,
     agent_prompt: str = "",
     skills: list[str] | None = None,
-    git: list[GitEntry] = (),  # type: ignore
+    git: list[ManifestGitEntry] = (),  # type: ignore
     git_user: dict | None = None,  # type: ignore
     copy_cwd: bool = False,
     user_cwd: str = "/tmp/x",
@@ -392,7 +392,7 @@ class TestProvisionGit(unittest.TestCase):
         # git HTTP port is published on host loopback at launch
         # time, and the plan carries the discovered host port.
         plan = _plan(
-            git=[GitEntry(
+            git=[ManifestGitEntry(
                 Name="bot-bottle",
                 Upstream="ssh://git@host/repo.git",
                 IdentityFile="~/.ssh/id_ed25519",

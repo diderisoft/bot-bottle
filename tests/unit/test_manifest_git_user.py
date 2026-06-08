@@ -2,7 +2,7 @@
 
 import unittest
 
-from bot_bottle.manifest import ManifestError, GitUser, Manifest
+from bot_bottle.manifest import ManifestError, ManifestGitUser, Manifest
 
 
 def _error_message(callable_, *args, **kwargs) -> str:  # type: ignore
@@ -99,13 +99,13 @@ class TestGitUserDirect(unittest.TestCase):
     """Direct GitUser dataclass exercises (no manifest wrapper)."""
 
     def test_is_empty_default(self):
-        self.assertTrue(GitUser().is_empty())
+        self.assertTrue(ManifestGitUser().is_empty())
 
     def test_is_empty_false_when_name_set(self):
-        self.assertFalse(GitUser(name="x").is_empty())
+        self.assertFalse(ManifestGitUser(name="x").is_empty())
 
     def test_is_empty_false_when_email_set(self):
-        self.assertFalse(GitUser(email="x@y").is_empty())
+        self.assertFalse(ManifestGitUser(email="x@y").is_empty())
 
 
 if __name__ == "__main__":

@@ -7,12 +7,12 @@ from typing import cast
 
 from .agent_provider import PROVIDER_TEMPLATES
 from .manifest_util import ManifestError, as_json_object
-from .manifest_git import GitUser
+from .manifest_git import ManifestGitUser
 from .manifest_schema import AGENT_MODEL_KEYS
 
 
 @dataclass(frozen=True)
-class AgentProvider:
+class ManifestAgentProvider:
     """Provider/template for the agent process inside a bottle.
 
     `template` selects a built-in launch/runtime contract. `dockerfile`
@@ -35,7 +35,7 @@ class AgentProvider:
     forward_host_credentials: bool = False
 
     @classmethod
-    def from_dict(cls, bottle_name: str, raw: object) -> "AgentProvider":
+    def from_dict(cls, bottle_name: str, raw: object) -> "ManifestAgentProvider":
         d = as_json_object(raw, f"bottle '{bottle_name}' agent_provider")
         for k in d:
             if k not in {"template", "dockerfile", "auth_token", "forward_host_credentials"}:
@@ -98,7 +98,7 @@ class AgentProvider:
 
 
 @dataclass(frozen=True)
-class Agent:
+class ManifestAgent:
     bottle: str
     skills: tuple[str, ...] = ()
     prompt: str = ""
@@ -106,10 +106,10 @@ class Agent:
     # bottle's git-gate.user per-field at `Manifest.bottle_for`. Only
     # `user` is allowed at the agent level; `repos` stays bottle-only
     # because it carries credentials and host trust.
-    git_user: GitUser = GitUser()
+    git_user: ManifestGitUser = ManifestGitUser()
 
     @classmethod
-    def from_dict(cls, name: str, raw: object, bottle_names: set[str]) -> "Agent":
+    def from_dict(cls, name: str, raw: object, bottle_names: set[str]) -> "ManifestAgent":
         d = as_json_object(raw, f"agent '{name}'")
         unknown = set(d.keys()) - AGENT_MODEL_KEYS
         if unknown:
@@ -164,7 +164,7 @@ class Agent:
 
         # git-gate: agents may declare only `git-gate.user` (name/email).
         # `git-gate.repos` is bottle-only — it carries credentials and host trust.
-        git_user = GitUser()
+        git_user = ManifestGitUser()
         git_raw = d.get("git-gate")
         if git_raw is not None:
             gd = as_json_object(git_raw, f"agent '{name}' git-gate")
@@ -177,6 +177,6 @@ class Agent:
                         f"(it carries credentials and host trust)."
                     )
             if "user" in gd:
-                git_user = GitUser.from_dict(name, gd["user"])
+                git_user = ManifestGitUser.from_dict(name, gd["user"])
 
         return cls(bottle=bottle, skills=skills, prompt=prompt, git_user=git_user)

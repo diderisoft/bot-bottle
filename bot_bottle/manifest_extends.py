@@ -5,12 +5,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .manifest import Bottle, GitEntry
+    from .manifest import ManifestBottle, ManifestGitEntry
 
 
-def resolve_bottles(raws: dict[str, dict[str, object]]) -> dict[str, Bottle]:
-    """Apply `extends:` chains and return resolved Bottle objects."""
-    cache: dict[str, Bottle] = {}
+def resolve_bottles(raws: dict[str, dict[str, object]]) -> dict[str, ManifestBottle]:
+    """Apply `extends:` chains and return resolved ManifestBottle objects."""
+    cache: dict[str, ManifestBottle] = {}
     for name in raws:
         if name not in cache:
             _resolve_one_bottle(name, raws, cache, ())
@@ -20,10 +20,10 @@ def resolve_bottles(raws: dict[str, dict[str, object]]) -> dict[str, Bottle]:
 def _resolve_one_bottle(
     name: str,
     raws: dict[str, dict[str, object]],
-    cache: dict[str, Bottle],
+    cache: dict[str, ManifestBottle],
     seen: tuple[str, ...],
-) -> Bottle:
-    from .manifest import Bottle, ManifestError
+) -> ManifestBottle:
+    from .manifest import ManifestBottle, ManifestError
 
     if name in cache:
         return cache[name]
@@ -32,13 +32,13 @@ def _resolve_one_bottle(
         raise ManifestError(f"bottle '{name}' is in an extends cycle: {chain}")
     raw = raws[name]
     parent_name_raw = raw.get("extends")
-    # Strip `extends:` before passing to Bottle.from_dict so it
-    # is not accidentally treated as a real Bottle field by future
+    # Strip `extends:` before passing to ManifestBottle.from_dict so it
+    # is not accidentally treated as a real ManifestBottle field by future
     # schema additions. It is only meaningful here.
     child_raw = {k: v for k, v in raw.items() if k != "extends"}
 
     if parent_name_raw is None:
-        bottle = Bottle.from_dict(name, child_raw)
+        bottle = ManifestBottle.from_dict(name, child_raw)
         cache[name] = bottle
         return bottle
 
@@ -66,27 +66,27 @@ def _resolve_one_bottle(
 
 
 def _merge_bottles(
-    parent: Bottle,
+    parent: ManifestBottle,
     child_raw: dict[str, object],
     name: str,
-) -> Bottle:
+) -> ManifestBottle:
     """Apply PRD 0025 merge rules."""
-    from .manifest import Bottle, GitUser
+    from .manifest import ManifestBottle, ManifestGitUser
     from .manifest_egress import validate_egress_routes
 
-    # Parse the child's declared fields into a Bottle (with the
+    # Parse the child's declared fields into a ManifestBottle (with the
     # usual defaults for anything missing). Validation runs the same
     # way it would for a leaf bottle: typos / wrong types die here.
-    child = Bottle.from_dict(name, child_raw)
+    child = ManifestBottle.from_dict(name, child_raw)
 
     # env: dict merge, child wins on collision.
     merged_env = {**parent.env, **child.env}
 
     # git-gate.user: per-field overlay. Each non-empty field on child
-    # wins; empties fall through to parent. The default GitUser()
+    # wins; empties fall through to parent. The default ManifestGitUser()
     # is two empty strings, so a child that omits git-gate.user
     # inherits the parent's user verbatim.
-    merged_git_user = GitUser(
+    merged_git_user = ManifestGitUser(
         name=child.git_user.name or parent.git_user.name,
         email=child.git_user.email or parent.git_user.email,
     )
@@ -112,7 +112,7 @@ def _merge_bottles(
     )
     validate_egress_routes(name, merged_egress.routes)
 
-    return Bottle(
+    return ManifestBottle(
         env=merged_env,
         agent_provider=merged_agent_provider,
         git=merged_git,
@@ -133,9 +133,9 @@ def _child_declares_git_gate_repos(child_raw: dict[str, object]) -> bool:
 
 
 def _merge_git_remotes(
-    parent: tuple[GitEntry, ...],
-    child: tuple[GitEntry, ...],
-) -> tuple[GitEntry, ...]:
+    parent: tuple[ManifestGitEntry, ...],
+    child: tuple[ManifestGitEntry, ...],
+) -> tuple[ManifestGitEntry, ...]:
     by_host = {entry.UpstreamHost: entry for entry in parent}
     for entry in child:
         by_host[entry.UpstreamHost] = entry

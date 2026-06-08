@@ -57,7 +57,7 @@ def parse_git_upstream(url: str, label: str) -> tuple[str, str, str, str]:
     return (user, host, port, path)
 
 
-def validate_unique_git_names(bottle_name: str, git: tuple[GitEntry, ...]) -> None:
+def validate_unique_git_names(bottle_name: str, git: tuple[ManifestGitEntry, ...]) -> None:
     seen: dict[str, None] = {}
     for g in git:
         if g.Name in seen:
@@ -69,7 +69,7 @@ def validate_unique_git_names(bottle_name: str, git: tuple[GitEntry, ...]) -> No
 
 
 @dataclass(frozen=True)
-class ProvisionedKeyConfig:
+class ManifestProvisionedKeyConfig:
     """Configuration for automatic deploy-key lifecycle management
     (PRD 0048). Used when a git-gate.repos entry opts out of a
     static identity file and instead wants a fresh SSH keypair
@@ -87,7 +87,7 @@ class ProvisionedKeyConfig:
 
 
 @dataclass(frozen=True)
-class GitEntry:
+class ManifestGitEntry:
     """One upstream the per-agent git-gate (PRD 0008) is allowed to
     talk to. `Upstream` is the real remote URL the agent would push to
     if there were no gate; the gate hosts a bare repo at /git/<Name>.git
@@ -107,7 +107,7 @@ class GitEntry:
     Upstream: str
     IdentityFile: str = ""
     KnownHostKey: str = ""
-    ProvisionedKey: Optional[ProvisionedKeyConfig] = None
+    ProvisionedKey: Optional[ManifestProvisionedKeyConfig] = None
     RemoteKey: str = ""
     UpstreamUser: str = ""
     UpstreamHost: str = ""
@@ -117,7 +117,7 @@ class GitEntry:
     @classmethod
     def from_repos_entry(
         cls, bottle_name: str, repo_name: str, raw: object
-    ) -> "GitEntry":
+    ) -> "ManifestGitEntry":
         """Parse one entry from `git-gate.repos.<repo_name>`.
 
         YAML keys: `url` (required), exactly one of `identity` or
@@ -160,7 +160,7 @@ class GitEntry:
             )
 
         ident = ""
-        provisioned_key: Optional[ProvisionedKeyConfig] = None
+        provisioned_key: Optional[ManifestProvisionedKeyConfig] = None
         if has_identity:
             raw_ident = d.get("identity")
             if not isinstance(raw_ident, str) or not raw_ident:
@@ -196,7 +196,7 @@ class GitEntry:
 
 def _parse_provisioned_key_config(
     bottle_name: str, label: str, raw: object
-) -> ProvisionedKeyConfig:
+) -> ManifestProvisionedKeyConfig:
     d = as_json_object(raw, f"bottle '{bottle_name}' {label}.provisioned_key")
     for k in d:
         if k not in {"provider", "token_env", "api_url"}:
@@ -221,7 +221,7 @@ def _parse_provisioned_key_config(
         raise ManifestError(
             f"bottle '{bottle_name}' {label}.provisioned_key 'api_url' must be a string"
         )
-    return ProvisionedKeyConfig(
+    return ManifestProvisionedKeyConfig(
         provider=provider,
         token_env=token_env,
         api_url=api_url_raw,
@@ -229,7 +229,7 @@ def _parse_provisioned_key_config(
 
 
 @dataclass(frozen=True)
-class GitUser:
+class ManifestGitUser:
     """Per-bottle `git config --global user.name` / `user.email`
     pair (issue #86). The agent's commits inside the bottle are
     attributed to this identity rather than the agent image's
@@ -244,7 +244,7 @@ class GitUser:
     email: str = ""
 
     @classmethod
-    def from_dict(cls, bottle_name: str, raw: object) -> "GitUser":
+    def from_dict(cls, bottle_name: str, raw: object) -> "ManifestGitUser":
         d = as_json_object(raw, f"bottle '{bottle_name}' git-gate.user")
         for k in d:
             if k not in {"name", "email"}:
@@ -279,7 +279,7 @@ class GitUser:
 def parse_git_gate_config(
     bottle_name: str,
     raw: object,
-) -> tuple[tuple[GitEntry, ...], GitUser]:
+) -> tuple[tuple[ManifestGitEntry, ...], ManifestGitUser]:
     d = as_json_object(raw, f"bottle '{bottle_name}' git-gate")
     for k in d:
         if k not in {"user", "repos"}:
@@ -289,17 +289,17 @@ def parse_git_gate_config(
             )
 
     git_user = (
-        GitUser.from_dict(bottle_name, d["user"])
+        ManifestGitUser.from_dict(bottle_name, d["user"])
         if "user" in d
-        else GitUser()
+        else ManifestGitUser()
     )
 
-    git: tuple[GitEntry, ...] = ()
+    git: tuple[ManifestGitEntry, ...] = ()
     repos_raw = d.get("repos")
     if repos_raw is not None:
         repos = as_json_object(repos_raw, f"bottle '{bottle_name}' git-gate.repos")
         git = tuple(
-            GitEntry.from_repos_entry(bottle_name, name, entry)
+            ManifestGitEntry.from_repos_entry(bottle_name, name, entry)
             for name, entry in repos.items()
         )
         validate_unique_git_names(bottle_name, git)

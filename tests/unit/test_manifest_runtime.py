@@ -7,7 +7,7 @@ silently ignoring."""
 import unittest
 from typing import Any
 
-from bot_bottle.manifest import ManifestError, Bottle, Manifest
+from bot_bottle.manifest import ManifestError, ManifestBottle, Manifest
 
 
 def _manifest_with_runtime(value: object) -> dict[str, Any]:
@@ -26,7 +26,7 @@ class TestManifestRuntimeRemoved(unittest.TestCase):
         self.assertIn("dev", m.bottles)
 
     def test_bottle_dataclass_has_no_runtime_attribute(self):
-        self.assertFalse(hasattr(Bottle(), "runtime"))
+        self.assertFalse(hasattr(ManifestBottle(), "runtime"))
 
     def test_any_runtime_value_is_rejected(self):
         for value in ("runsc", "runc", "kata-runtime", "", 42, None):

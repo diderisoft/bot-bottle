@@ -43,7 +43,7 @@ from ..agent_provider import AgentProvisionPlan, get_provider
 from ..egress import EgressPlan
 from ..git_gate import GitGatePlan
 from ..log import die, info
-from ..manifest import GitEntry, Manifest
+from ..manifest import ManifestGitEntry, Manifest
 from ..supervise import SupervisePlan
 from ..util import expand_tilde
 from ..workspace import WorkspacePlan
@@ -297,7 +297,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
                     f"Create it under ~/.claude/skills/, then re-run."
                 )
 
-    def _validate_git_entries(self, entries: Sequence[GitEntry]) -> None:
+    def _validate_git_entries(self, entries: Sequence[ManifestGitEntry]) -> None:
         """Each entry's IdentityFile must exist on the host (after
         expanding leading ~) — the git-gate copies it in at start time
         to authenticate the upstream push (PRD 0008). Shape is already

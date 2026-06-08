@@ -50,26 +50,26 @@ from pathlib import Path
 from typing import Mapping
 
 from .manifest_util import ManifestError, as_json_object
-from .manifest_agent import Agent, AgentProvider
+from .manifest_agent import ManifestAgent, ManifestAgentProvider
 from .manifest_egress import (
     EGRESS_AUTH_SCHEMES,
-    EgressConfig,
-    EgressRoute,
+    ManifestEgressConfig,
+    ManifestEgressRoute,
 )
-from .manifest_git import GitEntry, GitUser, parse_git_gate_config
+from .manifest_git import ManifestGitEntry, ManifestGitUser, parse_git_gate_config
 from .manifest_schema import BOTTLE_KEYS
 
 # Re-export everything that callers currently import from this module.
 __all__ = [
     "ManifestError",
-    "GitEntry",
-    "GitUser",
-    "AgentProvider",
+    "ManifestGitEntry",
+    "ManifestGitUser",
+    "ManifestAgentProvider",
     "EGRESS_AUTH_SCHEMES",
-    "EgressRoute",
-    "EgressConfig",
-    "Agent",
-    "Bottle",
+    "ManifestEgressRoute",
+    "ManifestEgressConfig",
+    "ManifestAgent",
+    "ManifestBottle",
     "Manifest",
 ]
 
@@ -86,16 +86,16 @@ def _section_dict(value: object, label: str) -> dict[str, object]:
 
 
 @dataclass(frozen=True)
-class Bottle:
+class ManifestBottle:
     env: Mapping[str, str] = field(default_factory=_empty_str_dict)
-    agent_provider: AgentProvider = field(default_factory=AgentProvider)
-    git: tuple[GitEntry, ...] = ()
+    agent_provider: ManifestAgentProvider = field(default_factory=ManifestAgentProvider)
+    git: tuple[ManifestGitEntry, ...] = ()
     # Per-bottle git identity (issue #86). Empty default — bottles
     # that don't set `git-gate.user:` in the manifest skip the
     # `git config --global` step entirely. A bottle can declare a user
     # identity without any git-gate.repos upstreams, and vice versa.
-    git_user: GitUser = field(default_factory=GitUser)
-    egress: EgressConfig = field(default_factory=EgressConfig)
+    git_user: ManifestGitUser = field(default_factory=ManifestGitUser)
+    egress: ManifestEgressConfig = field(default_factory=ManifestEgressConfig)
     # Opt-in per-bottle stuck-recovery sidecar (PRD 0013). When true,
     # the launch step brings up a supervise sidecar that exposes MCP
     # tools to the agent (egress-block, capability-block) plus mounts
@@ -105,7 +105,7 @@ class Bottle:
     supervise: bool = False
 
     @classmethod
-    def from_dict(cls, name: str, raw: object) -> "Bottle":
+    def from_dict(cls, name: str, raw: object) -> "ManifestBottle":
         d = as_json_object(raw, f"bottle '{name}'")
 
         if "runtime" in d:
@@ -157,22 +157,22 @@ class Bottle:
                     )
                 env[var] = value
 
-        git: tuple[GitEntry, ...] = ()
-        git_user = GitUser()
+        git: tuple[ManifestGitEntry, ...] = ()
+        git_user = ManifestGitUser()
         git_raw = d.get("git-gate")
         if git_raw is not None:
             git, git_user = parse_git_gate_config(name, git_raw)
 
         agent_provider = (
-            AgentProvider.from_dict(name, d["agent_provider"])
+            ManifestAgentProvider.from_dict(name, d["agent_provider"])
             if "agent_provider" in d
-            else AgentProvider()
+            else ManifestAgentProvider()
         )
 
         egress = (
-            EgressConfig.from_dict(name, d["egress"])
+            ManifestEgressConfig.from_dict(name, d["egress"])
             if "egress" in d
-            else EgressConfig()
+            else ManifestEgressConfig()
         )
 
         supervise_raw = d.get("supervise", False)
@@ -190,8 +190,8 @@ class Bottle:
 
 @dataclass(frozen=True)
 class Manifest:
-    bottles: Mapping[str, Bottle]
-    agents: Mapping[str, Agent]
+    bottles: Mapping[str, ManifestBottle]
+    agents: Mapping[str, ManifestAgent]
 
     @classmethod
     def resolve(cls, cwd: str, *, missing_ok: bool = False) -> "Manifest":
@@ -305,8 +305,8 @@ class Manifest:
         bottles = resolve_bottles(raw_bottles)
 
         bottle_names = set(bottles.keys())
-        agents: dict[str, Agent] = {
-            n: Agent.from_dict(n, a, bottle_names) for n, a in raw_agents.items()
+        agents: dict[str, ManifestAgent] = {
+            n: ManifestAgent.from_dict(n, a, bottle_names) for n, a in raw_agents.items()
         }
         return cls(bottles=bottles, agents=agents)
 
@@ -338,7 +338,7 @@ class Manifest:
             )
         raise ManifestError(f"bottle '{name}' not defined in bot-bottle.json (no bottles defined).")
 
-    def _effective_git_user(self, agent_name: str) -> GitUser:
+    def _effective_git_user(self, agent_name: str) -> ManifestGitUser:
         """Merge the agent's git.user over the referenced bottle's,
         per-field, agent-wins-on-non-empty (issue #94). Same overlay
         the `extends:` resolver applies between bottles
@@ -348,12 +348,12 @@ class Manifest:
         over = agent.git_user
         if over.is_empty():
             return base
-        return GitUser(
+        return ManifestGitUser(
             name=over.name or base.name,
             email=over.email or base.email,
         )
 
-    def bottle_for(self, agent_name: str) -> Bottle:
+    def bottle_for(self, agent_name: str) -> ManifestBottle:
         """Resolve the Bottle the named agent references, with the
         agent's git.user overlaid on top. The validator guarantees both
         lookups succeed for a manifest built via from_json_obj.

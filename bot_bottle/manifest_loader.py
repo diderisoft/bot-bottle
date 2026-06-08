@@ -14,7 +14,7 @@ from .manifest_schema import (
 from .yaml_subset import YamlSubsetError, parse_frontmatter
 
 if TYPE_CHECKING:
-    from .manifest import Agent, Bottle
+    from .manifest import ManifestAgent, ManifestBottle
 
 
 def check_stale_json(dir_path: Path, md_dir: Path, label: str) -> None:
@@ -34,7 +34,7 @@ def check_stale_json(dir_path: Path, md_dir: Path, label: str) -> None:
         )
 
 
-def load_bottles_from_dir(bottles_dir: Path) -> dict[str, Bottle]:
+def load_bottles_from_dir(bottles_dir: Path) -> dict[str, ManifestBottle]:
     """Walk `<bottles_dir>/*.md`, parse each as a bottle, and return
     `{name: Bottle}`. Missing dir returns an empty dict."""
     from .manifest import ManifestError
@@ -67,13 +67,13 @@ def load_agents_from_dir(
     bottle_names: set[str],
     *,
     source: str,  # noqa: F841 — unused, but required by interface
-) -> dict[str, Agent]:
+) -> dict[str, ManifestAgent]:
     """Walk `<agents_dir>/*.md`, parse each as an agent, and return
     `{name: Agent}`. The Markdown body becomes the agent's prompt.
     Missing dir returns an empty dict."""
-    from .manifest import Agent, ManifestError
+    from .manifest import ManifestAgent, ManifestError
 
-    out: dict[str, Agent] = {}
+    out: dict[str, ManifestAgent] = {}
     if not agents_dir.is_dir():
         return out
     for path in sorted(agents_dir.glob("*.md")):
@@ -101,5 +101,5 @@ def load_agents_from_dir(
         }
         if "git-gate" in fm:
             agent_dict["git-gate"] = fm["git-gate"]
-        out[name] = Agent.from_dict(name, agent_dict, bottle_names)
+        out[name] = ManifestAgent.from_dict(name, agent_dict, bottle_names)
     return out

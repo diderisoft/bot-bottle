@@ -24,7 +24,7 @@ from .egress_addon_core import (
 from .log import die
 
 if TYPE_CHECKING:
-    from .manifest import Bottle
+    from .manifest import ManifestBottle
 
 CODEX_HOST_CREDENTIAL_TOKEN_REF = "BOT_BOTTLE_CODEX_HOST_ACCESS_TOKEN"
 
@@ -66,7 +66,7 @@ class EgressPlan:
 
 
 def egress_manifest_routes(
-    bottle: Bottle,
+    bottle: ManifestBottle,
 ) -> tuple[EgressRoute, ...]:
     out: list[EgressRoute] = []
     for r in bottle.egress.routes:
@@ -98,7 +98,7 @@ def egress_manifest_routes(
 
 
 def egress_routes_for_bottle(
-    bottle: Bottle,
+    bottle: ManifestBottle,
     provider_routes: tuple[EgressRoute, ...] = (),
 ) -> tuple[EgressRoute, ...]:
     manifest = egress_manifest_routes(bottle)
@@ -280,7 +280,7 @@ def egress_resolve_token_values(
 class Egress(ABC):
     def prepare(
         self,
-        bottle: Bottle,
+        bottle: ManifestBottle,
         slug: str,
         stage_dir: Path,
         provider_routes: tuple[EgressRoute, ...] = (),
