@@ -31,7 +31,7 @@ from ... import supervise as _supervise
 from ...log import info, warn
 from . import util as docker_mod
 from .bottle_cleanup_plan import DockerBottleCleanupPlan
-from .bottle_state import bottle_state_dir, is_preserved
+from ...bottle_state import bottle_state_dir, is_preserved
 from .compose import COMPOSE_PROJECT_PREFIX, list_compose_projects
 
 

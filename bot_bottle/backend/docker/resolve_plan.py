@@ -25,7 +25,7 @@ from ...workspace import workspace_plan as resolve_workspace_plan
 from .. import BottleSpec
 from . import util as docker_mod
 from .bottle_plan import DockerBottlePlan
-from .bottle_state import (
+from ...bottle_state import (
     BottleMetadata,
     agent_state_dir,
     bottle_identity,

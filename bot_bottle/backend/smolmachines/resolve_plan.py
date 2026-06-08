@@ -17,7 +17,7 @@ from pathlib import Path
 
 from ...agent_provider import PROVIDER_TEMPLATES, agent_provision_plan, get_provider
 from ...backend import BottleSpec
-from ...backend.docker.bottle_state import (
+from ...bottle_state import (
     BottleMetadata,
     agent_state_dir,
     bottle_identity,

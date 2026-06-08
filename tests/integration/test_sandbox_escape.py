@@ -29,7 +29,7 @@ import unittest
 from pathlib import Path
 
 from bot_bottle.backend import BottleSpec, get_bottle_backend
-from bot_bottle.backend.docker.bottle_state import cleanup_state
+from bot_bottle.bottle_state import cleanup_state
 from bot_bottle.manifest import Manifest
 from tests._docker import skip_unless_docker
 

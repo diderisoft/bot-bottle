@@ -15,7 +15,7 @@ from __future__ import annotations
 import subprocess
 
 from .. import ActiveAgent
-from .bottle_state import read_metadata
+from ...bottle_state import read_metadata
 from .compose import compose_project_name, list_active_slugs
 
 

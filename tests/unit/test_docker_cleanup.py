@@ -16,7 +16,7 @@ import unittest
 from pathlib import Path
 
 from bot_bottle import supervise
-from bot_bottle.backend.docker import bottle_state
+from bot_bottle import bottle_state
 from bot_bottle.backend.docker.cleanup import _list_orphan_state_dirs
 
 

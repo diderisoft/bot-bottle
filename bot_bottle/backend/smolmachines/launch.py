@@ -41,7 +41,7 @@ from ..docker.git_gate import (
 )
 from ...git_gate import revoke_git_gate_provisioned_keys
 from ...log import warn
-from ..docker.bottle_state import egress_state_dir, git_gate_state_dir
+from ...bottle_state import egress_state_dir, git_gate_state_dir
 from . import loopback_alias as _loopback
 from . import sidecar_bundle as _bundle
 from . import smolvm as _smolvm

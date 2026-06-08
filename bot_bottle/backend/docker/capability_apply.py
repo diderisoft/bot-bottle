@@ -36,7 +36,7 @@ from pathlib import Path
 
 from ...agent_provider import get_provider
 from ...log import info, warn
-from .bottle_state import (
+from ...bottle_state import (
     mark_preserved,
     per_bottle_dockerfile,
     transcript_snapshot_dir,

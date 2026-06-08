@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import supervise as _supervise
-from ..backend.docker.bottle_state import read_metadata
+from ..bottle_state import read_metadata
 from ..backend.docker.capability_apply import (
     CapabilityApplyError,
     apply_capability_change,

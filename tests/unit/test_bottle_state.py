@@ -7,8 +7,8 @@ import unittest
 from pathlib import Path
 
 from bot_bottle import supervise
-from bot_bottle.backend.docker import bottle_state
-from bot_bottle.backend.docker.bottle_state import (
+from bot_bottle import bottle_state
+from bot_bottle.bottle_state import (
     BottleMetadata,
     read_metadata,
     write_metadata,
@@ -260,7 +260,7 @@ class TestBottleMetadataBackend(_FakeHomeMixin, unittest.TestCase):
     def test_missing_backend_field_defaults_to_empty(self):
         # Old state dirs written before PRD 0040 have no backend key.
         import json
-        from bot_bottle.backend.docker import bottle_state as bs
+        from bot_bottle import bottle_state as bs
         path = bs.metadata_path("dev-b3")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({

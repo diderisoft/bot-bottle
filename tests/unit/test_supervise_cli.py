@@ -289,7 +289,7 @@ class TestCapabilityBlockSmolmachinesGuard(_FakeHomeMixin, unittest.TestCase):
         return supervise_cli.QueuedProposal(proposal=p, queue_dir=qdir)
 
     def _write_metadata(self, slug: str, compose_project: str) -> None:
-        from bot_bottle.backend.docker.bottle_state import BottleMetadata, write_metadata
+        from bot_bottle.bottle_state import BottleMetadata, write_metadata
         write_metadata(BottleMetadata(
             identity=slug,
             agent_name="myagent",

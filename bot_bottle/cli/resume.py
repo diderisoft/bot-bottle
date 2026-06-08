@@ -18,7 +18,7 @@ from __future__ import annotations
 import argparse
 
 from ..backend import BottleSpec
-from ..backend.docker.bottle_state import read_metadata
+from ..bottle_state import read_metadata
 from ..log import die
 from ..manifest import Manifest
 from ._common import PROG, USER_CWD

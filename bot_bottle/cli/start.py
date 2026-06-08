@@ -24,7 +24,7 @@ from ..backend import (
     known_backend_names,
 )
 from ..backend.docker.bottle_plan import DockerBottlePlan
-from ..backend.docker.bottle_state import (
+from ..bottle_state import (
     cleanup_state,
     is_preserved,
     mark_preserved,

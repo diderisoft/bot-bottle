@@ -43,7 +43,7 @@ from . import network as network_mod
 from . import util as docker_mod
 from .bottle import DockerBottle
 from .bottle_plan import DockerBottlePlan
-from .bottle_state import (
+from ...bottle_state import (
     bottle_state_dir,
     egress_state_dir,
     git_gate_state_dir,

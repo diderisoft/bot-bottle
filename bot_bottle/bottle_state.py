@@ -37,8 +37,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from ... import supervise as _supervise
-from . import util as docker_mod
+from . import supervise as _supervise
+from .backend.docker import util as docker_mod
 
 
 # Directory layout: ~/.bot-bottle/state/<identity>/...

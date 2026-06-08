@@ -23,7 +23,7 @@ import json
 import subprocess
 
 from .. import ActiveAgent
-from ..docker.bottle_state import read_metadata
+from ...bottle_state import read_metadata
 from . import sidecar_bundle as _bundle
 
 
