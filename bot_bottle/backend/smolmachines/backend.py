@@ -17,7 +17,7 @@ from .. import ActiveAgent, Bottle, BottleBackend, BottleSpec
 from . import cleanup as _cleanup
 from . import enumerate as _enumerate
 from . import launch as _launch
-from . import prepare as _prepare
+from . import resolve_plan as _resolve_plan
 from . import smolvm as _smolvm
 from .bottle import SmolmachinesBottle
 from .bottle_cleanup_plan import SmolmachinesBottleCleanupPlan
@@ -44,7 +44,7 @@ class SmolmachinesBottleBackend(
     def _resolve_plan(
         self, spec: BottleSpec, *, stage_dir: Path
     ) -> SmolmachinesBottlePlan:
-        return _prepare.resolve_plan(spec, stage_dir=stage_dir)
+        return _resolve_plan.resolve_plan(spec, stage_dir=stage_dir)
 
     @contextmanager
     def launch(

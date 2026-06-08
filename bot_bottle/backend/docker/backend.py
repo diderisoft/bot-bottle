@@ -29,7 +29,7 @@ from .. import ActiveAgent, BottleBackend, BottleSpec
 from . import cleanup as _cleanup
 from . import enumerate as _enumerate
 from . import launch as _launch
-from . import prepare as _prepare
+from . import resolve_plan as _resolve_plan
 from .bottle import DockerBottle
 from .bottle_cleanup_plan import DockerBottleCleanupPlan
 from .bottle_plan import DockerBottlePlan
@@ -49,7 +49,7 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
         return shutil.which("docker") is not None
 
     def _resolve_plan(self, spec: BottleSpec, *, stage_dir: Path) -> DockerBottlePlan:
-        return _prepare.resolve_plan(spec, stage_dir=stage_dir)
+        return _resolve_plan.resolve_plan(spec, stage_dir=stage_dir)
 
     @contextmanager
     def launch(self, plan: DockerBottlePlan) -> Generator[DockerBottle, None, None]:

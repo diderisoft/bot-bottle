@@ -50,16 +50,16 @@ class TestSmolmachinesResolveEnv(unittest.TestCase):
 
             try:
                 with (
-                    patch("bot_bottle.backend.smolmachines.prepare.resolve_env",
+                    patch("bot_bottle.backend.smolmachines.resolve_plan.resolve_env",
                           return_value=resolved) as mock_resolve,
-                    patch("bot_bottle.backend.smolmachines.prepare.smolmachines_preflight"),
-                    patch("bot_bottle.backend.smolmachines.prepare.smolmachines_bundle_subnet",
+                    patch("bot_bottle.backend.smolmachines.resolve_plan.smolmachines_preflight"),
+                    patch("bot_bottle.backend.smolmachines.resolve_plan.smolmachines_bundle_subnet",
                           return_value=("10.99.0.0/24", "10.99.0.1", "10.99.0.2")),
-                    patch("bot_bottle.backend.smolmachines.prepare.GitGate") as mock_gg,
-                    patch("bot_bottle.backend.smolmachines.prepare.Egress") as mock_eg,
-                    patch("bot_bottle.backend.smolmachines.prepare.Supervise"),
+                    patch("bot_bottle.backend.smolmachines.resolve_plan.GitGate") as mock_gg,
+                    patch("bot_bottle.backend.smolmachines.resolve_plan.Egress") as mock_eg,
+                    patch("bot_bottle.backend.smolmachines.resolve_plan.Supervise"),
                     patch(
-                        "bot_bottle.backend.smolmachines.prepare.agent_provision_plan"
+                        "bot_bottle.backend.smolmachines.resolve_plan.agent_provision_plan"
                     ) as mock_app,
                 ):
                     mock_gg.return_value.prepare.return_value = MagicMock()
@@ -75,7 +75,7 @@ class TestSmolmachinesResolveEnv(unittest.TestCase):
                         )
                     mock_app.side_effect = lambda **kw: _make_provision(**kw)  # type: ignore
 
-                    from bot_bottle.backend.smolmachines.prepare import resolve_plan
+                    from bot_bottle.backend.smolmachines.resolve_plan import resolve_plan
                     plan = resolve_plan(spec, stage_dir=stage)
 
                 mock_resolve.assert_called_once_with(manifest, "myagent")
