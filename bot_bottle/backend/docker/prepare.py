@@ -110,7 +110,7 @@ def resolve_plan(
             dockerfile_path = str(p_dockerfile)
         else:
             image_default = provider_runtime.image
-    image = os.environ.get("BOT_BOTTLE_IMAGE", image_default)
+    image = image_default
     derived_image = ""
     runtime_image = image
     if spec.copy_cwd:

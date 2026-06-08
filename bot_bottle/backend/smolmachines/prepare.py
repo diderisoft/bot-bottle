@@ -116,9 +116,6 @@ def resolve_plan(
     prompt_file.chmod(0o600)
 
     machine_name = f"bot-bottle-{slug}"
-    # Stash the agent image ref — `launch.launch` runs the
-    # build → pack pipeline at bringup. Honors BOT_BOTTLE_IMAGE
-    # to match the docker backend's `resolve_plan` default.
     agent_dockerfile_path = ""
     if provider.dockerfile:
         agent_dockerfile_path = _resolve_manifest_dockerfile(provider.dockerfile, spec)
@@ -133,7 +130,7 @@ def resolve_plan(
                 image_default = f"bot-bottle-{provider.template}:{slug}"
         else:
             image_default = provider_runtime.image
-    agent_image_ref = os.environ.get("BOT_BOTTLE_IMAGE", image_default)
+    agent_image_ref = image_default
     agent_provision = agent_provision_plan(
         template=provider.template,
         dockerfile=agent_dockerfile_path,
