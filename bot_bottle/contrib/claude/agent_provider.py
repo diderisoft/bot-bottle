@@ -42,7 +42,6 @@ _RUNTIME = AgentProviderRuntime(
     template="claude",
     command="claude",
     image="bot-bottle-claude:latest",
-    dockerfile=str(Path(__file__).resolve().parent / "Dockerfile"),
     prompt_mode="append_file",
     bypass_args=("--dangerously-skip-permissions",),
     resume_args=("--continue",),

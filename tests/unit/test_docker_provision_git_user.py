@@ -30,7 +30,7 @@ class _Provider(AgentProvider):
     @property
     def runtime(self) -> AgentProviderRuntime:
         return AgentProviderRuntime(
-            template="test", command="test", image="", dockerfile="",
+            template="test", command="test", image="",
             prompt_mode="append_file", bypass_args=(), resume_args=(),
             remote_control_args=(),
         )

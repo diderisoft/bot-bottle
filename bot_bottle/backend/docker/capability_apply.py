@@ -34,6 +34,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from ...agent_provider import get_provider
 from ...log import info, warn
 from .bottle_state import (
     mark_preserved,
@@ -93,11 +94,11 @@ def fetch_current_dockerfile(slug: str) -> str:
     override = per_bottle_dockerfile(slug)
     if override is not None:
         return override
-    repo_dockerfile = _repo_dockerfile_path()
-    if repo_dockerfile.is_file():
+    repo_dockerfile = get_provider("claude").dockerfile
+    if repo_dockerfile is not None and repo_dockerfile.is_file():
         return repo_dockerfile.read_text()
     raise CapabilityApplyError(
-        f"no per-bottle Dockerfile for {slug} and no repo Dockerfile at "
+        f"no per-bottle Dockerfile for {slug} and no provider Dockerfile at "
         f"{repo_dockerfile}"
     )
 
@@ -124,12 +125,6 @@ def apply_capability_change(slug: str, new_dockerfile: str) -> tuple[str, str]:
 
 # --- Internals -------------------------------------------------------------
 
-
-def _repo_dockerfile_path() -> Path:
-    """Path to the Claude provider Dockerfile. Resolved at call time so
-    the path is correct regardless of where this module is imported from."""
-    # bot_bottle/backend/docker/ -> bot_bottle/ -> contrib/claude/Dockerfile
-    return Path(__file__).resolve().parent.parent.parent / "contrib" / "claude" / "Dockerfile"
 
 
 def snapshot_transcript(slug: str) -> None:

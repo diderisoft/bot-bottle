@@ -50,7 +50,6 @@ _RUNTIME = AgentProviderRuntime(
     template="codex",
     command="codex",
     image="bot-bottle-codex:latest",
-    dockerfile=str(Path(__file__).resolve().parent / "Dockerfile"),
     prompt_mode="read_prompt_file",
     bypass_args=("--dangerously-bypass-approvals-and-sandbox",),
     resume_args=("resume", "--last"),

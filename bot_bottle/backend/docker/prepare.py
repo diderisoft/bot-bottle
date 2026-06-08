@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from dataclasses import replace
 from pathlib import Path
 
-from ...agent_provider import PROVIDER_TEMPLATES, agent_provision_plan, runtime_for
+from ...agent_provider import PROVIDER_TEMPLATES, agent_provision_plan, get_provider
 from ...egress import Egress
 from ...env import ResolvedEnv, resolve_env
 from ...git_gate import GitGate
@@ -59,7 +59,8 @@ def resolve_plan(
     agent = manifest.agents[spec.agent_name]
     bottle = manifest.bottle_for(spec.agent_name)
     provider = bottle.agent_provider
-    provider_runtime = runtime_for(provider.template)
+    provider_obj = get_provider(provider.template)
+    provider_runtime = provider_obj.runtime
     guest_home = "/home/node"
     workspace_plan = resolve_workspace_plan(spec, guest_home=guest_home)
 
@@ -99,20 +100,16 @@ def resolve_plan(
     elif provider.dockerfile:
         image_default = f"bot-bottle-{provider.template}:{slug}"
         dockerfile_path = _resolve_manifest_dockerfile(provider.dockerfile, spec)
-    elif provider_runtime.dockerfile:
-        image_default = provider_runtime.image
-        dockerfile_path = provider_runtime.dockerfile
-    elif provider.template not in PROVIDER_TEMPLATES:
-        user_dockerfile = (
-            Path.home() / ".bot-bottle" / "contrib" / provider.template / "Dockerfile"
-        )
-        if user_dockerfile.is_file():
-            image_default = f"bot-bottle-{provider.template}:{slug}"
-            dockerfile_path = str(user_dockerfile)
+    else:
+        p_dockerfile = provider_obj.dockerfile
+        if p_dockerfile is not None:
+            if provider.template in PROVIDER_TEMPLATES:
+                image_default = provider_runtime.image
+            else:
+                image_default = f"bot-bottle-{provider.template}:{slug}"
+            dockerfile_path = str(p_dockerfile)
         else:
             image_default = provider_runtime.image
-    else:
-        image_default = provider_runtime.image
     image = os.environ.get("BOT_BOTTLE_IMAGE", image_default)
     derived_image = ""
     runtime_image = image
@@ -216,13 +213,11 @@ def resolve_plan(
         # moved it behind the `list-egress-routes` MCP tool so the
         # agent gets live state rather than a launch-time snapshot.)
         supervise_dockerfile_path = (
-            Path(dockerfile_path)
-            if dockerfile_path
-            else Path(__file__).resolve().parent.parent.parent / "contrib" / "claude" / "Dockerfile"
+            Path(dockerfile_path) if dockerfile_path else provider_obj.dockerfile
         )
         dockerfile_content = (
             supervise_dockerfile_path.read_text(encoding="utf-8")
-            if supervise_dockerfile_path.is_file()
+            if supervise_dockerfile_path is not None and supervise_dockerfile_path.is_file()
             else ""
         )
         supervise_dir = supervise_state_dir(slug)

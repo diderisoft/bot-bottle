@@ -61,7 +61,6 @@ class TestSmolmachinesResolveEnv(unittest.TestCase):
                     patch(
                         "bot_bottle.backend.smolmachines.prepare.agent_provision_plan"
                     ) as mock_app,
-                    patch("bot_bottle.backend.smolmachines.prepare.runtime_for"),
                 ):
                     mock_gg.return_value.prepare.return_value = MagicMock()
                     mock_eg.return_value.prepare.return_value = MagicMock()

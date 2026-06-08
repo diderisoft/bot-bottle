@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from dataclasses import replace
 from pathlib import Path
 
-from ...agent_provider import agent_provision_plan, runtime_for
+from ...agent_provider import PROVIDER_TEMPLATES, agent_provision_plan, get_provider
 from ...backend import BottleSpec
 from ...backend.docker.bottle_state import (
     BottleMetadata,
@@ -57,7 +57,8 @@ def resolve_plan(
     manifest = spec.manifest
     bottle = manifest.bottle_for(spec.agent_name)
     provider = bottle.agent_provider
-    provider_runtime = runtime_for(provider.template)
+    provider_obj = get_provider(provider.template)
+    provider_runtime = provider_obj.runtime
     guest_home = "/home/node"
     workspace_plan = resolve_workspace_plan(spec, guest_home=guest_home)
 
@@ -122,11 +123,16 @@ def resolve_plan(
     if provider.dockerfile:
         agent_dockerfile_path = _resolve_manifest_dockerfile(provider.dockerfile, spec)
         image_default = f"bot-bottle-{provider.template}:{slug}"
-    elif provider_runtime.dockerfile:
-        agent_dockerfile_path = provider_runtime.dockerfile
-        image_default = provider_runtime.image
     else:
-        image_default = provider_runtime.image
+        p_dockerfile = provider_obj.dockerfile
+        if p_dockerfile is not None:
+            agent_dockerfile_path = str(p_dockerfile)
+            if provider.template in PROVIDER_TEMPLATES:
+                image_default = provider_runtime.image
+            else:
+                image_default = f"bot-bottle-{provider.template}:{slug}"
+        else:
+            image_default = provider_runtime.image
     agent_image_ref = os.environ.get("BOT_BOTTLE_IMAGE", image_default)
     agent_provision = agent_provision_plan(
         template=provider.template,

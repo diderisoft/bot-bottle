@@ -20,6 +20,7 @@ Per PRD 0050 the per-provider implementations live under
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import os
 import shlex
 import tempfile
@@ -51,7 +52,6 @@ class AgentProviderRuntime:
     template: str
     command: str
     image: str
-    dockerfile: str
     prompt_mode: PromptMode
     bypass_args: tuple[str, ...]
     resume_args: tuple[str, ...]
@@ -126,6 +126,18 @@ class AgentProvider(ABC):
     def runtime(self) -> AgentProviderRuntime:
         """The static command / image / prompt-mode table for this
         template."""
+
+    @property
+    def dockerfile(self) -> Path | None:
+        """Path to the provider's Dockerfile, or None if no Dockerfile
+        is declared.
+
+        Default: looks for a `Dockerfile` file next to this provider's
+        `agent_provider.py` module. Override to point at a non-standard
+        path, or return None to signal that no Dockerfile exists (the
+        provider relies on a pre-built image)."""
+        path = Path(inspect.getfile(type(self))).parent / "Dockerfile"
+        return path if path.is_file() else None
 
     @abstractmethod
     def provision_plan(
