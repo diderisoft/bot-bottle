@@ -22,20 +22,31 @@ class DockerBottlePlan(BottlePlan):
     `agent_provision` from BottlePlan."""
 
     slug: str
-    container_name: str
-    image: str
-    # Absolute path to the Dockerfile that builds `image`. Empty means
-    # use the repo's default Dockerfile. Populated to a per-bottle
-    # state file (~/.bot-bottle/state/<slug>/Dockerfile) after a
-    # capability-block remediation (PRD 0016).
-    dockerfile_path: str
     # name -> value for vars forwarded into the docker-run child process
     # via subprocess env (so values never land on argv or in a file).
     # repr=False keeps secret/interpolated/OAuth values out of any
     # accidental log of the plan dataclass.
     forwarded_env: dict[str, str] = field(repr=False)
-    prompt_file: Path
     use_runsc: bool
+
+    @property
+    def container_name(self) -> str:
+        return self.agent_provision.instance_name
+
+    @property
+    def image(self) -> str:
+        return self.agent_provision.image
+
+    @property
+    def dockerfile_path(self) -> str:
+        """Absolute path to the Dockerfile that builds `image`. Sourced
+        from the agent provision plan — the manifest may override per
+        bottle; otherwise the provider plugin's bundled Dockerfile."""
+        return self.agent_provision.dockerfile
+
+    @property
+    def prompt_file(self) -> Path:
+        return self.agent_provision.prompt_file
 
     @property
     def agent_command(self) -> str:

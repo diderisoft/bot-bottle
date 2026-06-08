@@ -79,11 +79,7 @@ def _plan(
         spec=spec,
         stage_dir=Path("/tmp/stage"),
         slug="demo-abc12",
-        container_name="bot-bottle-demo-abc12",
-        image="bot-bottle-claude:latest",
-        dockerfile_path="",
         forwarded_env={},
-        prompt_file=Path("/tmp/state/demo-abc12/agent/prompt.txt"),
         git_gate_plan=GitGatePlan(
             slug="demo-abc12",
             entrypoint_script=Path("/tmp/git-gate-entrypoint.sh"),
@@ -101,7 +97,11 @@ def _plan(
         use_runsc=False,
         agent_provision=agent_provision or AgentProvisionPlan(
             template="claude", command="claude", prompt_mode="append_file",
-            image="", dockerfile="", guest_home="/home/node", guest_env={},
+            image="bot-bottle-claude:latest", dockerfile="",
+            guest_home="/home/node",
+            instance_name="bot-bottle-demo-abc12",
+            prompt_file=Path("/tmp/state/demo-abc12/agent/prompt.txt"),
+            guest_env={},
         ),
     )
 
@@ -205,7 +205,10 @@ class TestClaudeProvision(unittest.TestCase):
     def test_copies_files_and_chowns(self):
         provision = AgentProvisionPlan(
             template="claude", command="claude", prompt_mode="append_file",
-            image="", dockerfile="", guest_home="/home/node", guest_env={},
+            image="", dockerfile="", guest_home="/home/node",
+            instance_name="bot-bottle-demo-abc12",
+            prompt_file=Path("/tmp/prompt.txt"),
+            guest_env={},
             files=(AgentProvisionFile(
                 Path("/tmp/claude.json"), "/home/node/.claude.json",
             ),),
@@ -228,7 +231,10 @@ class TestClaudeProvision(unittest.TestCase):
     def test_dies_when_file_chown_fails(self):
         provision = AgentProvisionPlan(
             template="claude", command="claude", prompt_mode="append_file",
-            image="", dockerfile="", guest_home="/home/node", guest_env={},
+            image="", dockerfile="", guest_home="/home/node",
+            instance_name="bot-bottle-demo-abc12",
+            prompt_file=Path("/tmp/prompt.txt"),
+            guest_env={},
             files=(AgentProvisionFile(
                 Path("/tmp/claude.json"), "/home/node/.claude.json",
             ),),
@@ -244,7 +250,10 @@ class TestClaudeProvision(unittest.TestCase):
     def test_runs_verify_commands(self):
         provision = AgentProvisionPlan(
             template="claude", command="claude", prompt_mode="append_file",
-            image="", dockerfile="", guest_home="/home/node", guest_env={},
+            image="", dockerfile="", guest_home="/home/node",
+            instance_name="bot-bottle-demo-abc12",
+            prompt_file=Path("/tmp/prompt.txt"),
+            guest_env={},
             verify=(AgentProvisionCommand(
                 ("/usr/bin/true",), "verify failed",
             ),),

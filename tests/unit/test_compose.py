@@ -152,11 +152,7 @@ def _plan(
         spec=spec,
         stage_dir=STAGE,
         slug=SLUG,
-        container_name=f"bot-bottle-{SLUG}",
-        image="bot-bottle-claude:latest",
-        dockerfile_path="",
         forwarded_env={"CLAUDE_CODE_OAUTH_TOKEN": "x"},
-        prompt_file=STAGE / "prompt",
         git_gate_plan=_git_gate_plan(upstreams),
         egress_plan=_egress_plan(routes),
         supervise_plan=_supervise_plan() if supervise else None,
@@ -168,6 +164,8 @@ def _plan(
             image="bot-bottle-claude:latest",
             dockerfile="",
             guest_home="/home/node",
+            instance_name=f"bot-bottle-{SLUG}",
+            prompt_file=STAGE / "prompt",
             guest_env={},
         ),
     )
@@ -248,6 +246,8 @@ class TestAgentAlwaysPresent(unittest.TestCase):
             image="bot-bottle-codex:latest",
             dockerfile="",
             guest_home="/home/node",
+            instance_name=f"bot-bottle-{SLUG}",
+            prompt_file=STAGE / "prompt",
             guest_env={"CODEX_HOME": "/home/node/.codex"},
         )
         plan = type(plan)(**{**vars(plan), "agent_provision": provision})  # type: ignore

@@ -79,14 +79,16 @@ def _egress_plan(tmp: str) -> EgressPlan:
     )
 
 
-def _agent_provision() -> AgentProvisionPlan:
+def _agent_provision(tmp: str) -> AgentProvisionPlan:
     return AgentProvisionPlan(
         template="claude",
         command="claude",
         prompt_mode="append_file",
-        image="",
+        image="bot-bottle-claude:latest",
         dockerfile="",
         guest_home="/home/node",
+        instance_name="bot-bottle-test-00001",
+        prompt_file=Path(tmp) / "prompt.txt",
         guest_env={"HTTPS_PROXY": "http://127.0.0.1:9999"},
     )
 
@@ -99,13 +101,9 @@ def _docker_plan(spec: BottleSpec, tmp: str) -> DockerBottlePlan:
         git_gate_plan=_git_gate_plan(tmp),
         egress_plan=_egress_plan(tmp),
         supervise_plan=None,
-        agent_provision=_agent_provision(),
+        agent_provision=_agent_provision(tmp),
         slug="test-00001",
-        container_name="bot-bottle-test-00001",
-        image="bot-bottle-claude:latest",
-        dockerfile_path="",
         forwarded_env={},
-        prompt_file=stage / "prompt.txt",
         use_runsc=False,
     )
 
@@ -118,15 +116,12 @@ def _smolmachines_plan(spec: BottleSpec, tmp: str) -> SmolmachinesBottlePlan:
         git_gate_plan=_git_gate_plan(tmp),
         egress_plan=_egress_plan(tmp),
         supervise_plan=None,
-        agent_provision=_agent_provision(),
+        agent_provision=_agent_provision(tmp),
         slug="test-00001",
         bundle_subnet="10.99.0.0/24",
         bundle_gateway="10.99.0.1",
         bundle_ip="10.99.0.2",
-        machine_name="bot-bottle-test-00001",
-        agent_image="bot-bottle-claude:latest",
         guest_env={"HTTPS_PROXY": "http://127.0.0.1:9999"},
-        prompt_file=stage / "prompt.txt",
     )
 
 

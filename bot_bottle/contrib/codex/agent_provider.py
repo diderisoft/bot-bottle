@@ -67,7 +67,8 @@ class CodexAgentProvider(AgentProvider):
         *,
         dockerfile: str,
         state_dir: Path,
-        guest_home: str,
+        instance_name: str,
+        prompt_file: Path,
         guest_env: dict[str, str] | None = None,
         auth_token: str = "",
         forward_host_credentials: bool = False,
@@ -78,6 +79,7 @@ class CodexAgentProvider(AgentProvider):
     ) -> AgentProvisionPlan:
         del auth_token, label, color  # Claude-only knobs
         resolved_guest_env = dict(guest_env or {})
+        guest_home = self.guest_home
         trusted_path = trusted_project_path or guest_home
 
         env_vars: dict[str, str] = {
@@ -148,6 +150,8 @@ class CodexAgentProvider(AgentProvider):
             image=_RUNTIME.image,
             dockerfile=dockerfile,
             guest_home=guest_home,
+            instance_name=instance_name,
+            prompt_file=prompt_file,
             env_vars=env_vars,
             guest_env=resolved_guest_env,
             dirs=tuple(dirs),

@@ -80,11 +80,7 @@ def _plan(
         spec=spec,
         stage_dir=Path("/tmp/stage"),
         slug="demo-abc12",
-        container_name="bot-bottle-demo-abc12",
-        image="bot-bottle-codex:latest",
-        dockerfile_path="",
         forwarded_env={},
-        prompt_file=Path("/tmp/state/demo-abc12/agent/prompt.txt"),
         git_gate_plan=GitGatePlan(
             slug="demo-abc12",
             entrypoint_script=Path("/tmp/git-gate-entrypoint.sh"),
@@ -102,7 +98,11 @@ def _plan(
         use_runsc=False,
         agent_provision=agent_provision or AgentProvisionPlan(
             template="codex", command="codex", prompt_mode="read_prompt_file",
-            image="", dockerfile="", guest_home="/home/node", guest_env={},
+            image="bot-bottle-codex:latest", dockerfile="",
+            guest_home="/home/node",
+            instance_name="bot-bottle-demo-abc12",
+            prompt_file=Path("/tmp/state/demo-abc12/agent/prompt.txt"),
+            guest_env={},
         ),
     )
 
@@ -171,7 +171,10 @@ class TestCodexProvision(unittest.TestCase):
         provision = AgentProvisionPlan(
             template="codex", command="codex",
             prompt_mode="read_prompt_file",
-            image="", dockerfile="", guest_home="/home/node", guest_env={},
+            image="", dockerfile="", guest_home="/home/node",
+            instance_name="bot-bottle-demo-abc12",
+            prompt_file=Path("/tmp/prompt.txt"),
+            guest_env={},
             dirs=(AgentProvisionDir("/home/node/.codex"),),
             files=(AgentProvisionFile(
                 Path("/tmp/codex-config.toml"),
@@ -195,7 +198,10 @@ class TestCodexProvision(unittest.TestCase):
         provision = AgentProvisionPlan(
             template="codex", command="codex",
             prompt_mode="read_prompt_file",
-            image="", dockerfile="", guest_home="/home/node", guest_env={},
+            image="", dockerfile="", guest_home="/home/node",
+            instance_name="bot-bottle-demo-abc12",
+            prompt_file=Path("/tmp/prompt.txt"),
+            guest_env={},
             pre_copy=(AgentProvisionCommand(
                 ("find", "/home/node/.codex", "-name", "*.sqlite", "-delete"),
                 "could not reset runtime db files",
@@ -217,7 +223,10 @@ class TestCodexProvision(unittest.TestCase):
         provision = AgentProvisionPlan(
             template="codex", command="codex",
             prompt_mode="read_prompt_file",
-            image="", dockerfile="", guest_home="/home/node", guest_env={},
+            image="", dockerfile="", guest_home="/home/node",
+            instance_name="bot-bottle-demo-abc12",
+            prompt_file=Path("/tmp/prompt.txt"),
+            guest_env={},
             dirs=(AgentProvisionDir("/home/node/.codex"),),
         )
         bottle = _make_bottle(exec_result=ExecResult(1, "", "mkdir: nope\n"))

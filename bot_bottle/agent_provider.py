@@ -104,6 +104,8 @@ class AgentProvisionPlan:
     image: str
     dockerfile: str
     guest_home: str
+    instance_name: str
+    prompt_file: Path
     guest_env: dict[str, str]
     env_vars: dict[str, str] = field(default_factory=dict)
     dirs: tuple[AgentProvisionDir, ...] = ()
@@ -129,6 +131,14 @@ class AgentProvider(ABC):
         template."""
 
     @property
+    def guest_home(self) -> str:
+        """In-guest home directory for the agent user. Defaults to
+        `/home/node` to match the Debian-based bot-bottle-* images
+        (USER node). Override for plugins whose image runs as a
+        different user."""
+        return "/home/node"
+
+    @property
     def dockerfile(self) -> Path:
         """Path to the provider's Dockerfile.
 
@@ -143,7 +153,8 @@ class AgentProvider(ABC):
         *,
         dockerfile: str,
         state_dir: Path,
-        guest_home: str,
+        instance_name: str,
+        prompt_file: Path,
         guest_env: dict[str, str] | None = None,
         auth_token: str = "",
         forward_host_credentials: bool = False,
@@ -333,7 +344,8 @@ def build_agent_provision_plan(
     template: str,
     dockerfile: str,
     state_dir: Path,
-    guest_home: str,
+    instance_name: str,
+    prompt_file: Path,
     guest_env: dict[str, str] | None = None,
     auth_token: str = "",
     forward_host_credentials: bool = False,
@@ -347,7 +359,8 @@ def build_agent_provision_plan(
     return get_provider(template).provision_plan(
         dockerfile=dockerfile,
         state_dir=state_dir,
-        guest_home=guest_home,
+        instance_name=instance_name,
+        prompt_file=prompt_file,
         guest_env=guest_env,
         auth_token=auth_token,
         forward_host_credentials=forward_host_credentials,

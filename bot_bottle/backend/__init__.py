@@ -292,7 +292,6 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         manifest_bottle = manifest.bottle_for(spec.agent_name)
         manfiest_agent_provider = manifest_bottle.agent_provider
         agent_provider = get_provider(manfiest_agent_provider.template)
-        agent_image = agent_provider.runtime.image
         resolved_env = resolve_env(manifest, spec.agent_name)
 
         slug = mint_slug(spec)
@@ -307,7 +306,6 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
             )
         else:
             agent_dockerfile_path = str(agent_provider.dockerfile)
-        instance_name = f"bot-bottle-{slug}"
 
         agent_dir, prompt_file = prepare_agent_state_dir(slug, spec)
 
@@ -315,7 +313,8 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
             template=manfiest_agent_provider.template,
             dockerfile=agent_dockerfile_path,
             state_dir=agent_dir,
-            guest_home="/home/node", # FIXME: should be coming from the agent plan
+            instance_name=f"bot-bottle-{slug}",
+            prompt_file=prompt_file,
             guest_env=self._build_guest_env(resolved_env),
             forward_host_credentials=manfiest_agent_provider.forward_host_credentials,
             auth_token=manfiest_agent_provider.auth_token,
@@ -333,10 +332,6 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
             spec,
             slug=slug,
             resolved_env=resolved_env,
-            instance_name=instance_name, # FIXME: move to agent provision plan
-            agent_image=agent_image, # FIXME: move to agent provision plan
-            prompt_file=prompt_file, # FIXME: move to agent provision plan
-            agent_dockerfile_path=agent_dockerfile_path, # FIXME: move to agent provision plan
             agent_provision_plan=agent_provision_plan,
             egress_plan=egress_plan,
             supervise_plan=supervise_plan,
@@ -408,18 +403,16 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
                       *,
                       slug: str,
                       resolved_env: ResolvedEnv,
-                      instance_name: str,
-                      agent_image: str,
-                      prompt_file: Path,
                       agent_provision_plan: AgentProvisionPlan,
-                      agent_dockerfile_path: str,
                       egress_plan: EgressPlan,
                       git_gate_plan: GitGatePlan,
                       supervise_plan: SupervisePlan | None,
                       stage_dir: Path) -> PlanT:
         """Backend-specific plan resolution: image/container names,
         env-file, prompt-file, proxy plan, runtime detection. Called by
-        `prepare` after `_validate` succeeds."""
+        `prepare` after `_validate` succeeds. Instance name, image,
+        prompt file, Dockerfile path, and guest home all live on
+        `agent_provision_plan` — the source of truth."""
 
     @abstractmethod
     def launch(self, plan: PlanT) -> AbstractContextManager[Bottle]:

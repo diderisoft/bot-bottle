@@ -29,27 +29,6 @@ class SmolmachinesBottlePlan(BottlePlan):
     bundle_subnet: str
     bundle_gateway: str
     bundle_ip: str
-    # smolvm machine name + agent image source. machine_create
-    # boots from a packed `.smolmachine` artifact (pre-baked at
-    # prepare time via `smolvm pack create`); using `--from`
-    # instead of `--image` avoids the registry-pull race we hit
-    # when machine_start tried to fetch on-demand and the libkrun
-    # agent's network attempt got refused by macOS.
-    #
-    # Chunk 2d ships with a public placeholder image (alpine)
-    # since bot-bottle-claude:latest lives in the operator's local
-    # docker daemon and smolvm's crane backend can't read from
-    # there; chunk 4 resolves the agent-image-conversion gap
-    # (push to a registry first, or smolvm grows a docker-daemon
-    # transport).
-    machine_name: str
-    # Agent image ref (docker tag). `launch` runs the
-    # build → save → registry push → smolvm pack pipeline against
-    # this and feeds the resulting `.smolmachine` artifact to
-    # `machine_create --from`. The pipeline runs at launch time
-    # (not prepare time) so the docker build output doesn't garble
-    # the dashboard's preflight modal.
-    agent_image: str
     # In-guest env vars (HTTPS_PROXY etc) — IP-literal URLs since
     # the guest has no DNS resolver inside the TSI allowlist.
     # Passed to `smolvm machine create` as `-e K=V` flags.
@@ -57,11 +36,6 @@ class SmolmachinesBottlePlan(BottlePlan):
     # `--smolfile` is mutually exclusive with `--from`, and
     # `--from` is the path that avoids the registry-pull race).
     guest_env: dict[str, str]
-    # Path to the agent's prompt file on the host. Always written
-    # (mode 0o600) so the in-VM path always exists; the file is
-    # empty when the agent has no prompt — claude-code reads it
-    # via --append-system-prompt-file only when non-empty.
-    prompt_file: Path
     # Inner Plans for the sidecar bundle daemons. The same shape the
     # docker backend uses — same `.prepare()` calls produced
     # them — but our launch step doesn't populate the
@@ -81,6 +55,34 @@ class SmolmachinesBottlePlan(BottlePlan):
     agent_proxy_url: str = ""
     agent_git_gate_host: str = ""
     agent_supervise_url: str = ""
+
+    @property
+    def machine_name(self) -> str:
+        """smolvm machine name. `machine_create` boots from a packed
+        `.smolmachine` artifact (pre-baked at prepare time via
+        `smolvm pack create`); using `--from` instead of `--image`
+        avoids the registry-pull race we hit when machine_start tried
+        to fetch on-demand and the libkrun agent's network attempt
+        got refused by macOS."""
+        return self.agent_provision.instance_name
+
+    @property
+    def agent_image(self) -> str:
+        """Agent image ref (docker tag). `launch` runs the
+        build → save → registry push → smolvm pack pipeline against
+        this and feeds the resulting `.smolmachine` artifact to
+        `machine_create --from`. The pipeline runs at launch time
+        (not prepare time) so the docker build output doesn't garble
+        the dashboard's preflight modal."""
+        return self.agent_provision.image
+
+    @property
+    def prompt_file(self) -> Path:
+        """Path to the agent's prompt file on the host. Always written
+        (mode 0o600) so the in-VM path always exists; the file is
+        empty when the agent has no prompt — claude-code reads it
+        via --append-system-prompt-file only when non-empty."""
+        return self.agent_provision.prompt_file
 
     @property
     def git_gate_insteadof_host(self) -> str:

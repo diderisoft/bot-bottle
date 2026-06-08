@@ -64,11 +64,7 @@ def _plan(*, git_user: dict | None = None,  # type: ignore
         spec=spec,
         stage_dir=stage_dir or Path("/tmp/stage"),
         slug="demo-abc12",
-        container_name="bot-bottle-demo-abc12",
-        image="bot-bottle-claude:latest",
-        dockerfile_path="",
         forwarded_env={},
-        prompt_file=Path("/tmp/prompt.txt"),
         git_gate_plan=GitGatePlan(
             slug="demo-abc12",
             entrypoint_script=Path("/tmp/git-gate-entrypoint.sh"),
@@ -91,6 +87,8 @@ def _plan(*, git_user: dict | None = None,  # type: ignore
             image="bot-bottle-claude:latest",
             dockerfile="",
             guest_home="/home/node",
+            instance_name="bot-bottle-demo-abc12",
+            prompt_file=Path("/tmp/prompt.txt"),
             guest_env={},
         ),
     )

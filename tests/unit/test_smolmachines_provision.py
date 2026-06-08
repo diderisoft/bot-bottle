@@ -146,10 +146,7 @@ def _plan(
         bundle_subnet="192.168.50.0/24",
         bundle_gateway="192.168.50.1",
         bundle_ip=bundle_ip,
-        machine_name="bot-bottle-demo-abc12",
-        agent_image="bot-bottle-claude:latest",
         guest_env=dict(guest_env or {}),
-        prompt_file=Path("/tmp/state/demo-abc12/agent/prompt.txt"),
         git_gate_plan=GitGatePlan(
             slug="demo-abc12",
             entrypoint_script=Path("/tmp/git-gate-entrypoint.sh"),
@@ -186,9 +183,11 @@ def _agent_provision(
             template=template,
             command=template,
             prompt_mode="append_file",
-            image="",
+            image="bot-bottle-claude:latest",
             dockerfile="",
             guest_home="/home/node",
+            instance_name="bot-bottle-demo-abc12",
+            prompt_file=Path("/tmp/state/demo-abc12/agent/prompt.txt"),
             guest_env=dict(guest_env or {}),
         )
     auth_dir = (guest_env or {}).get("CODEX_HOME", "/home/node/.codex")
@@ -227,6 +226,8 @@ def _agent_provision(
         image="bot-bottle-codex:latest",
         dockerfile="",
         guest_home="/home/node",
+        instance_name="bot-bottle-demo-abc12",
+        prompt_file=Path("/tmp/state/demo-abc12/agent/prompt.txt"),
         guest_env=dict(guest_env or {}),
         dirs=(AgentProvisionDir(auth_dir),),
         files=tuple(files),
