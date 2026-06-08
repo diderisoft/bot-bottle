@@ -538,6 +538,27 @@ def build_outbound_scan_text(
     return "\n".join(parts)
 
 
+def outbound_scan_headers(
+    route: Route,
+    headers: typing.Mapping[str, str],
+) -> dict[str, str]:
+    """Return request headers that should be included in outbound DLP.
+
+    Routes that inject sidecar-owned auth always strip the agent's
+    Authorization header before forwarding. Scanning that header first
+    creates false positives for provider clients that insist on sending
+    their own bearer-shaped placeholder, while still not changing what
+    reaches the upstream.
+    """
+    out: dict[str, str] = {}
+    skip_auth = bool(route.auth_scheme and route.token_env)
+    for name, value in headers.items():
+        if skip_auth and name.lower() == "authorization":
+            continue
+        out[name] = value
+    return out
+
+
 def build_inbound_scan_text(
     headers: typing.Mapping[str, str],
     body: str,
@@ -644,6 +665,7 @@ __all__ = [
     "load_config",
     "load_routes",
     "match_route",
+    "outbound_scan_headers",
     "parse_config",
     "parse_routes",
     "scan_inbound",

@@ -24,6 +24,7 @@ from egress_addon_core import (  # type: ignore[import-not-found]  # pylint: dis
     is_git_push_request,
     load_config,
     match_route,
+    outbound_scan_headers,
     scan_inbound,
     scan_outbound,
 )
@@ -159,7 +160,7 @@ class EgressAddon:
                 flow.request.pretty_host,
                 request_path,
                 query,
-                dict(flow.request.headers),
+                outbound_scan_headers(route, dict(flow.request.headers)),
                 body,
             )
             dlp_result = scan_outbound(route, scan_text, os.environ)
