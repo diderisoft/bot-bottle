@@ -315,6 +315,16 @@ class TestLoadConfig(unittest.TestCase):
         self.assertIsInstance(cfg, Config)
         self.assertEqual("x.example", cfg.routes[0].host)
 
+    def test_parse_config_accepts_dict(self):
+        cfg = parse_config({"routes": [{"host": "x.example"}], "log": 1})
+        self.assertIsInstance(cfg, Config)
+        self.assertEqual(LOG_BLOCKS, cfg.log)
+        self.assertEqual("x.example", cfg.routes[0].host)
+
+    def test_parse_config_rejects_non_dict(self):
+        with self.assertRaises(ValueError):
+            parse_config("not a dict")
+
 
 # --- evaluate_matches ---------------------------------------------------
 
