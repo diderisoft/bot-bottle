@@ -116,18 +116,14 @@ def resolve_plan(
     prompt_file.chmod(0o600)
 
     machine_name = f"bot-bottle-{slug}"
-    agent_dockerfile_path = ""
-    if provider.dockerfile:
-        agent_dockerfile_path = _resolve_manifest_dockerfile(provider.dockerfile, spec)
-        image_default = f"bot-bottle-{provider.template}:{slug}"
+    if provider.template in PROVIDER_TEMPLATES:
+        agent_image_ref = provider_runtime.image
     else:
-        p_dockerfile = provider_obj.dockerfile
-        agent_dockerfile_path = str(p_dockerfile)
-        if provider.template in PROVIDER_TEMPLATES:
-            image_default = provider_runtime.image
-        else:
-            image_default = f"bot-bottle-{provider.template}:{slug}"
-    agent_image_ref = image_default
+        agent_image_ref = f"bot-bottle-{provider.template}:{slug}"
+    agent_dockerfile_path = str(provider_obj.dockerfile)
+    if provider.dockerfile:
+        agent_image_ref = f"bot-bottle-{provider.template}:{slug}"
+        agent_dockerfile_path = _resolve_manifest_dockerfile(provider.dockerfile, spec)
     agent_provision = agent_provision_plan(
         template=provider.template,
         dockerfile=agent_dockerfile_path,

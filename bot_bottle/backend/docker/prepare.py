@@ -93,21 +93,17 @@ def resolve_plan(
     # written (via apply_capability_change), the base image becomes
     # per_bottle_image_tag(slug) built from that file. --cwd still
     # layers a derived image on top.
-    dockerfile_path = ""
+    if provider.template in PROVIDER_TEMPLATES:
+        image = provider_runtime.image
+    else:
+        image = f"bot-bottle-{provider.template}:{slug}"
+    dockerfile_path = str(provider_obj.dockerfile)
     if per_bottle_dockerfile(slug) is not None:
-        image_default = per_bottle_image_tag(slug)
+        image = per_bottle_image_tag(slug)
         dockerfile_path = str(per_bottle_dockerfile_path(slug))
     elif provider.dockerfile:
-        image_default = f"bot-bottle-{provider.template}:{slug}"
+        image = f"bot-bottle-{provider.template}:{slug}"
         dockerfile_path = _resolve_manifest_dockerfile(provider.dockerfile, spec)
-    else:
-        p_dockerfile = provider_obj.dockerfile
-        if provider.template in PROVIDER_TEMPLATES:
-            image_default = provider_runtime.image
-        else:
-            image_default = f"bot-bottle-{provider.template}:{slug}"
-        dockerfile_path = str(p_dockerfile)
-    image = image_default
     derived_image = ""
     runtime_image = image
     if spec.copy_cwd:
