@@ -48,8 +48,36 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
         launch."""
         return shutil.which("docker") is not None
 
-    def _resolve_plan(self, spec: BottleSpec, *, stage_dir: Path) -> DockerBottlePlan:
-        return _resolve_plan.resolve_plan(spec, stage_dir=stage_dir)
+    def _resolve_plan(
+        self,
+        spec: BottleSpec,
+        *,
+        slug: str,
+        resolved_env,
+        instance_name: str,
+        agent_image: str,
+        prompt_file: Path,
+        agent_provision_plan,
+        agent_dockerfile_path: str,
+        egress_plan,
+        git_gate_plan,
+        supervise_plan,
+        stage_dir: Path,
+    ) -> DockerBottlePlan:
+        return _resolve_plan.resolve_plan(
+            spec,
+            slug=slug,
+            resolved_env=resolved_env,
+            instance_name=instance_name,
+            agent_image=agent_image,
+            agent_dockerfile_path=agent_dockerfile_path,
+            prompt_file=prompt_file,
+            agent_provision_plan=agent_provision_plan,
+            egress_plan=egress_plan,
+            supervise_plan=supervise_plan,
+            git_gate_plan=git_gate_plan,
+            stage_dir=stage_dir,
+        )
 
     @contextmanager
     def launch(self, plan: DockerBottlePlan) -> Generator[DockerBottle, None, None]:

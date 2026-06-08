@@ -323,6 +323,8 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
 
         return self._resolve_plan(
             spec,
+            slug=slug,
+            resolved_env=resolved_env,
             instance_name=instance_name, # FIXME: move to agent provision plan
             agent_image=agent_image, # FIXME: move to agent provision plan
             prompt_file=prompt_file, # FIXME: move to agent provision plan
@@ -331,7 +333,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
             egress_plan=egress_plan,
             supervise_plan=supervise_plan,
             git_gate_plan=git_gate_plan,
-            stage_dir=stage_dir
+            stage_dir=stage_dir,
         )
 
     def _build_guest_env(self, resolved_env: ResolvedEnv) -> dict[str, str]:
@@ -395,6 +397,9 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
     @abstractmethod
     def _resolve_plan(self,
                       spec: BottleSpec,
+                      *,
+                      slug: str,
+                      resolved_env: ResolvedEnv,
                       instance_name: str,
                       agent_image: str,
                       prompt_file: Path,
