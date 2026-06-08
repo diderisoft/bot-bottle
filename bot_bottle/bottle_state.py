@@ -38,7 +38,6 @@ from pathlib import Path
 from typing import cast
 
 from . import supervise as _supervise
-from .backend.docker import util as docker_mod
 
 
 # Directory layout: ~/.bot-bottle/state/<identity>/...
@@ -82,6 +81,7 @@ def bottle_identity(agent_name: str) -> str:
     To continue an existing bottle's state, use the recorded
     identity from BottleMetadata via `cli.py resume <identity>`,
     not this function."""
+    from .backend.docker import util as docker_mod
     slug = docker_mod.slugify(agent_name)
     suffix = "".join(secrets.choice(_SUFFIX_ALPHABET) for _ in range(_RANDOM_SUFFIX_LEN))
     return f"{slug}-{suffix}"

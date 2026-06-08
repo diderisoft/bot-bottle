@@ -359,25 +359,19 @@ class TestSupervisePrepare(unittest.TestCase):
         return lambda: setattr(supervise, "bot_bottle_root", original)
 
     def test_prepare_creates_queue_and_current_config(self):
-        plan = _StubSupervise().prepare(
-            "dev", self.stage_dir,
-            dockerfile_content="FROM python:3.13\n",
-        )
+        plan = _StubSupervise().prepare("dev", self.stage_dir)
         self.assertTrue(plan.queue_dir.is_dir())
         self.assertTrue(plan.current_config_dir.is_dir())
-        self.assertEqual(
-            "FROM python:3.13\n",
-            (plan.current_config_dir / "Dockerfile").read_text(),
-        )
         self.assertEqual("dev", plan.slug)
         self.assertEqual("", plan.internal_network)
 
-    def test_prepare_only_writes_dockerfile_to_current_config(self):
+    def test_prepare_writes_no_files_to_current_config(self):
+        # dockerfile_content is no longer accepted by prepare.
         # routes.yaml + allowlist live behind the
-        # `list-egress-routes` MCP tool now (PRD 0017 chunk 3).
+        # `list-egress-routes` MCP tool (PRD 0017 chunk 3).
         plan = _StubSupervise().prepare("dev", self.stage_dir)
         files = sorted(p.name for p in plan.current_config_dir.iterdir())
-        self.assertEqual(["Dockerfile"], files)
+        self.assertEqual([], files)
 
 
 if __name__ == "__main__":

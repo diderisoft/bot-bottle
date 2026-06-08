@@ -20,7 +20,7 @@ from bot_bottle.backend.smolmachines.bottle_plan import SmolmachinesBottlePlan
 from bot_bottle.egress import EgressPlan, EgressRoute
 from bot_bottle.git_gate import GitGatePlan, GitGateUpstream
 from bot_bottle.manifest import Manifest
-from bot_bottle.workspace import workspace_plan
+# from bot_bottle.workspace import workspace_plan
 
 
 def _manifest() -> Manifest:
@@ -100,15 +100,10 @@ def _docker_plan(spec: BottleSpec, tmp: str) -> DockerBottlePlan:
         egress_plan=_egress_plan(tmp),
         supervise_plan=None,
         agent_provision=_agent_provision(),
-        workspace_plan=workspace_plan(spec, guest_home="/home/node"),
         slug="test-00001",
         container_name="bot-bottle-test-00001",
-        container_name_pinned=False,
         image="bot-bottle-claude:latest",
-        derived_image="",
-        agent_image="bot-bottle-claude:latest",
         dockerfile_path="",
-        env_file=stage / "env",
         forwarded_env={},
         prompt_file=stage / "prompt.txt",
         use_runsc=False,
@@ -124,7 +119,6 @@ def _smolmachines_plan(spec: BottleSpec, tmp: str) -> SmolmachinesBottlePlan:
         egress_plan=_egress_plan(tmp),
         supervise_plan=None,
         agent_provision=_agent_provision(),
-        workspace_plan=workspace_plan(spec, guest_home="/home/node"),
         slug="test-00001",
         bundle_subnet="10.99.0.0/24",
         bundle_gateway="10.99.0.1",

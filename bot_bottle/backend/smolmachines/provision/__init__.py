@@ -10,4 +10,5 @@ The module left in this subpackage handles the remaining backend-
 specific step:
 
   - workspace.py — copy the operator workspace into the guest
+    (currently commented out — workspace planning is disabled)
 """

@@ -24,7 +24,7 @@ from bot_bottle.egress import EgressPlan
 from bot_bottle.git_gate import GitGatePlan
 from bot_bottle.manifest import Manifest
 from bot_bottle.supervise import SupervisePlan
-from bot_bottle.workspace import workspace_plan
+# from bot_bottle.workspace import workspace_plan
 
 
 _URL = "http://supervise:9100/"
@@ -80,12 +80,8 @@ def _plan(
         stage_dir=Path("/tmp/stage"),
         slug="demo-abc12",
         container_name="bot-bottle-demo-abc12",
-        container_name_pinned=False,
         image="bot-bottle-claude:latest",
-        derived_image="",
-        agent_image="bot-bottle-claude:latest",
         dockerfile_path="",
-        env_file=Path("/tmp/agent.env"),
         forwarded_env={},
         prompt_file=Path("/tmp/state/demo-abc12/agent/prompt.txt"),
         git_gate_plan=GitGatePlan(
@@ -107,7 +103,6 @@ def _plan(
             template="claude", command="claude", prompt_mode="append_file",
             image="", dockerfile="", guest_home="/home/node", guest_env={},
         ),
-        workspace_plan=workspace_plan(spec, guest_home="/home/node"),
     )
 
 

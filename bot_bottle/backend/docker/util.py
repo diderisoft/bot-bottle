@@ -11,7 +11,7 @@ import tempfile
 from typing import Iterable, Iterator
 
 from ...log import die, info
-from ...workspace import WorkspacePlan
+# from ...workspace import WorkspacePlan
 
 
 # Cap on the suffix the container-name conflict logic will try before
@@ -118,39 +118,39 @@ def build_image(ref: str, context: str, *, dockerfile: str = "") -> None:
     subprocess.run(args, check=True)
 
 
-def build_image_with_cwd(
-    derived: str,
-    base: str,
-    workspace: WorkspacePlan,
-) -> None:
-    """Build a thin derived image that copies the workspace into
-    the plan's guest path and sets the plan's workdir."""
-    import os
-
-    cwd = str(workspace.host_path)
-    if not os.path.isdir(cwd):
-        die(f"cwd not found at {cwd}")
-    info(f"building image {derived} from {base} with {cwd} -> {workspace.guest_path}")
-    with tempfile.TemporaryDirectory(prefix="bot-bottle-cwd.") as tmp:
-        context_dir = os.path.join(tmp, "context")
-        staged_workspace = os.path.join(context_dir, "workspace")
-        shutil.copytree(
-            cwd,
-            staged_workspace,
-            symlinks=True,
-            ignore=shutil.ignore_patterns(".git"),
-        )
-        dockerfile = (
-            f"FROM {base}\n"
-            f"COPY --chown=node:node workspace/. {workspace.guest_path}\n"
-            f"WORKDIR {workspace.workdir}\n"
-        )
-        subprocess.run(
-            ["docker", "build", "-t", derived, "-f", "-", context_dir],
-            input=dockerfile,
-            text=True,
-            check=True,
-        )
+# def build_image_with_cwd(
+#     derived: str,
+#     base: str,
+#     workspace: "WorkspacePlan",
+# ) -> None:
+#     """Build a thin derived image that copies the workspace into
+#     the plan's guest path and sets the plan's workdir."""
+#     import os
+#
+#     cwd = str(workspace.host_path)
+#     if not os.path.isdir(cwd):
+#         die(f"cwd not found at {cwd}")
+#     info(f"building image {derived} from {base} with {cwd} -> {workspace.guest_path}")
+#     with tempfile.TemporaryDirectory(prefix="bot-bottle-cwd.") as tmp:
+#         context_dir = os.path.join(tmp, "context")
+#         staged_workspace = os.path.join(context_dir, "workspace")
+#         shutil.copytree(
+#             cwd,
+#             staged_workspace,
+#             symlinks=True,
+#             ignore=shutil.ignore_patterns(".git"),
+#         )
+#         dockerfile = (
+#             f"FROM {base}\n"
+#             f"COPY --chown=node:node workspace/. {workspace.guest_path}\n"
+#             f"WORKDIR {workspace.workdir}\n"
+#         )
+#         subprocess.run(
+#             ["docker", "build", "-t", derived, "-f", "-", context_dir],
+#             input=dockerfile,
+#             text=True,
+#             check=True,
+#         )
 
 
 def image_id(ref: str) -> str:

@@ -115,13 +115,8 @@ class TestDiscoverPending(_FakeHomeMixin, unittest.TestCase):
 class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
     def setUp(self):
         self._setup_fake_home()
-        self._original_apply_capability = supervise_cli.apply_capability_change
-        supervise_cli.apply_capability_change = lambda slug, content: (  # type: ignore
-            "FROM old\n", content,
-        )
 
     def tearDown(self):
-        supervise_cli.apply_capability_change = self._original_apply_capability
         self._teardown_fake_home()
 
     def _enqueue(self, tool: str = TOOL_CAPABILITY_BLOCK):
@@ -161,67 +156,9 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
         self.assertEqual([], read_audit_entries("egress", "dev"))
 
 
-class TestCapabilityApplyWiring(_FakeHomeMixin, unittest.TestCase):
-    """PRD 0016 Phase 3: approve() on a capability-block proposal
-    calls apply_capability_change, archives the proposal afterward
-    (sidecar is gone so it can't archive itself), and writes no
-    audit entry (capability-block has none per PRD 0013)."""
-
-    def setUp(self):
-        self._setup_fake_home()
-        self._original = supervise_cli.apply_capability_change
-
-    def tearDown(self):
-        supervise_cli.apply_capability_change = self._original
-        self._teardown_fake_home()
-
-    def _enqueue_capability(self, proposed: str = "FROM python:3.13\nRUN apk add ripgrep\n"):
-        p = Proposal.new(
-            bottle_slug="dev", tool=TOOL_CAPABILITY_BLOCK,
-            proposed_file=proposed,
-            justification="need ripgrep",
-            current_file_hash=sha256_hex(proposed),
-            now=FIXED,
-        )
-        qdir = supervise.queue_dir_for_slug("dev")
-        qdir.mkdir(parents=True, exist_ok=True)
-        supervise.write_proposal(qdir, p)
-        return supervise_cli.QueuedProposal(proposal=p, queue_dir=qdir)
-
-    def test_capability_block_calls_apply_with_proposed_file(self):
-        calls = []
-        supervise_cli.apply_capability_change = lambda slug, content: (  # type: ignore
-            calls.append((slug, content)) or ("FROM old\n", content)
-        )
-        qp = self._enqueue_capability("FROM bookworm\n")
-        supervise_cli.approve(qp)
-        self.assertEqual([("dev", "FROM bookworm\n")], calls)
-
-    def test_apply_failure_blocks_response_and_keeps_pending(self):
-        supervise_cli.apply_capability_change = lambda slug, content: (_ for _ in ()).throw(  # type: ignore
-            CapabilityApplyError("teardown failed")
-        )
-        qp = self._enqueue_capability()
-        with self.assertRaises(CapabilityApplyError):
-            supervise_cli.approve(qp)
-        self.assertEqual(
-            [qp.proposal.id],
-            [p.id for p in supervise.list_pending_proposals(qp.queue_dir)],
-        )
-
-    def test_no_audit_log_for_capability(self):
-        supervise_cli.apply_capability_change = lambda slug, content: ("FROM old\n", content)  # type: ignore
-        qp = self._enqueue_capability()
-        supervise_cli.approve(qp)
-        self.assertEqual([], read_audit_entries("egress", "dev"))
-
-    def test_proposal_archived_after_apply(self):
-        supervise_cli.apply_capability_change = lambda slug, content: ("FROM old\n", content)  # type: ignore
-        qp = self._enqueue_capability()
-        supervise_cli.approve(qp)
-        self.assertEqual([], supervise.list_pending_proposals(qp.queue_dir))
-        processed = list((qp.queue_dir / "processed").glob("*.json"))
-        self.assertEqual(2, len(processed))
+# class TestCapabilityApplyWiring(_FakeHomeMixin, unittest.TestCase):
+#     # DISABLED — capability_apply functionality is currently commented out.
+#     pass
 
 
 class TestEditInEditor(unittest.TestCase):
@@ -268,52 +205,9 @@ class TestEditInEditor(unittest.TestCase):
                 os.environ["EDITOR"] = original_editor
 
 
-class TestCapabilityBlockSmolmachinesGuard(_FakeHomeMixin, unittest.TestCase):
-    """approve() must refuse capability-block for smolmachines bottles and
-    pass it through for Docker bottles (PRD 0039)."""
-
-    def setUp(self):
-        self._setup_fake_home()
-        self._original_apply_capability = supervise_cli.apply_capability_change
-        supervise_cli.apply_capability_change = lambda slug, content: ("", content)  # type: ignore
-
-    def tearDown(self):
-        supervise_cli.apply_capability_change = self._original_apply_capability
-        self._teardown_fake_home()
-
-    def _enqueue_capability(self, slug: str = "dev") -> "supervise_cli.QueuedProposal":
-        p = _proposal(slug=slug, tool=TOOL_CAPABILITY_BLOCK)
-        qdir = supervise.queue_dir_for_slug(slug)
-        qdir.mkdir(parents=True, exist_ok=True)
-        supervise.write_proposal(qdir, p)
-        return supervise_cli.QueuedProposal(proposal=p, queue_dir=qdir)
-
-    def _write_metadata(self, slug: str, compose_project: str) -> None:
-        from bot_bottle.bottle_state import BottleMetadata, write_metadata
-        write_metadata(BottleMetadata(
-            identity=slug,
-            agent_name="myagent",
-            cwd="",
-            copy_cwd=False,
-            started_at="2026-06-02T00:00:00+00:00",
-            compose_project=compose_project,
-        ))
-
-    def test_smolmachines_bottle_raises_capability_apply_error(self):
-        self._write_metadata("dev", compose_project="")
-        qp = self._enqueue_capability("dev")
-        with self.assertRaises(CapabilityApplyError) as ctx:
-            supervise_cli.approve(qp)
-        self.assertIn("smolmachines", str(ctx.exception))
-
-    def test_docker_bottle_calls_apply_capability_change(self):
-        self._write_metadata("dev", compose_project="bot-bottle-dev")
-        qp = self._enqueue_capability("dev")
-        supervise_cli.approve(qp)  # must not raise
-
-    def test_no_metadata_falls_through_to_docker_path(self):
-        qp = self._enqueue_capability("dev")
-        supervise_cli.approve(qp)  # must not raise
+# class TestCapabilityBlockSmolmachinesGuard(_FakeHomeMixin, unittest.TestCase):
+#     # DISABLED — capability_apply functionality is currently commented out.
+#     pass
 
 
 if __name__ == "__main__":

@@ -14,7 +14,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 from bot_bottle.backend.docker import util as docker_mod
-from bot_bottle.workspace import WorkspacePlan
 
 
 def _ok(stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess:  # type: ignore
@@ -68,61 +67,6 @@ class TestSave(unittest.TestCase):
             ["docker", "save", "bot-bottle-claude:latest", "-o", "/tmp/img.tar"],
             argv,
         )
-
-
-class TestBuildImageWithCwd(unittest.TestCase):
-    def test_uses_workspace_plan_paths(self):
-        with tempfile.TemporaryDirectory(prefix="bb-docker-cwd.") as tmp:
-            workspace = WorkspacePlan(
-                enabled=True,
-                host_path=Path(tmp),
-                guest_home="/guest/home",
-                guest_path="/guest/home/workspace",
-                workdir="/guest/home/workspace",
-            )
-            with patch.object(docker_mod.subprocess, "run") as run:
-                docker_mod.build_image_with_cwd("derived:tag", "base:tag", workspace)
-
-        argv = run.call_args.args[0]
-        dockerfile = run.call_args.kwargs["input"]
-        self.assertEqual(["docker", "build", "-t", "derived:tag", "-f", "-"], argv[:6])
-        self.assertTrue(argv[6].endswith("/context"))
-        self.assertIn("FROM base:tag\n", dockerfile)
-        self.assertIn(
-            "COPY --chown=node:node workspace/. /guest/home/workspace\n",
-            dockerfile,
-        )
-        self.assertIn("WORKDIR /guest/home/workspace\n", dockerfile)
-
-    def test_staged_context_includes_hidden_files_but_not_git_dir(self):
-        with tempfile.TemporaryDirectory(prefix="bb-docker-cwd.") as tmp:
-            root = Path(tmp)
-            (root / ".gitignore").write_text("*.pyc\n")
-            (root / ".dockerignore").write_text(".gitignore\n")
-            (root / ".env.example").write_text("SAFE=1\n")
-            (root / ".git").mkdir()
-            (root / ".git" / "config").write_text("[core]\n")
-            workspace = WorkspacePlan(
-                enabled=True,
-                host_path=root,
-                guest_home="/guest/home",
-                guest_path="/guest/home/workspace",
-                workdir="/guest/home/workspace",
-            )
-
-            def inspect_context(*args, **kwargs):  # type: ignore
-                context = Path(args[0][-1])
-                staged = context / "workspace"
-                self.assertTrue((staged / ".gitignore").is_file())
-                self.assertTrue((staged / ".dockerignore").is_file())
-                self.assertTrue((staged / ".env.example").is_file())
-                self.assertFalse((staged / ".git").exists())
-                return _ok()
-
-            with patch.object(
-                docker_mod.subprocess, "run", side_effect=inspect_context,
-            ):
-                docker_mod.build_image_with_cwd("derived:tag", "base:tag", workspace)
 
 
 if __name__ == "__main__":

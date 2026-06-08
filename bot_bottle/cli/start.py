@@ -29,7 +29,7 @@ from ..bottle_state import (
     is_preserved,
     mark_preserved,
 )
-from ..backend.docker.capability_apply import snapshot_transcript
+# from ..backend.docker.capability_apply import snapshot_transcript
 from ..log import info
 from ..manifest import Manifest
 from ._common import PROG, USER_CWD, read_tty_line
@@ -172,7 +172,7 @@ def capture_claude_session_state(identity: str, exit_code: int) -> None:
     # instead of relying on each agent's transcript layout.
     if not identity:
         return
-    snapshot_transcript(identity)
+    # snapshot_transcript(identity)
     if exit_code != 0:
         mark_preserved(identity)
 

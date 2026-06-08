@@ -29,29 +29,20 @@ class _FakeHomeMixin:
 
 
 class TestCaptureSessionState(_FakeHomeMixin, unittest.TestCase):
+    # snapshot_transcript is commented out (capability_apply is disabled);
+    # capture_claude_session_state now only handles the preserve marker.
     def setUp(self):
         self._setup_fake_home()
-        # Stub the docker-dependent snapshot call so this stays a
-        # unit test. apply_capability_change's integration test
-        # covers the real docker cp path.
-        self._snap_calls: list[str] = []
-        self._orig_snap = start_mod.snapshot_transcript
-        start_mod.snapshot_transcript = lambda identity: (  # type: ignore
-            self._snap_calls.append(identity)
-        )
 
     def tearDown(self):
-        start_mod.snapshot_transcript = self._orig_snap
         self._teardown_fake_home()
 
-    def test_clean_exit_snapshots_but_does_not_mark(self):
+    def test_clean_exit_does_not_mark(self):
         start_mod.capture_claude_session_state("dev-abc", exit_code=0)
-        self.assertEqual(["dev-abc"], self._snap_calls)
         self.assertFalse(bottle_state.is_preserved("dev-abc"))
 
-    def test_crash_snapshots_and_marks(self):
+    def test_crash_marks_preserved(self):
         start_mod.capture_claude_session_state("dev-abc", exit_code=137)
-        self.assertEqual(["dev-abc"], self._snap_calls)
         self.assertTrue(bottle_state.is_preserved("dev-abc"))
 
     def test_ctrl_c_treated_as_crash(self):
@@ -64,7 +55,7 @@ class TestCaptureSessionState(_FakeHomeMixin, unittest.TestCase):
         # Backends without an identity field shouldn't crash this
         # path (the _identity_from_plan helper falls back to "").
         start_mod.capture_claude_session_state("", exit_code=137)
-        self.assertEqual([], self._snap_calls)
+        self.assertFalse(bottle_state.is_preserved(""))
 
 
 class TestSettleState(_FakeHomeMixin, unittest.TestCase):

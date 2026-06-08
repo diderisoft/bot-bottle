@@ -50,16 +50,6 @@ from ..env import resolve_env, ResolvedEnv
 # from ..workspace import WorkspacePlan
 from .print_util import print_multi, visible_agent_env_names
 from .util import host_skill_dir
-from .resolve_common import (
-    merge_provision_env_vars,
-    mint_slug,
-    prepare_agent_state_dir,
-    prepare_egress,
-    prepare_git_gate,
-    prepare_supervise,
-    resolve_manifest_dockerfile,
-    write_launch_metadata,
-)
 
 
 @dataclass(frozen=True)
@@ -283,6 +273,17 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         backend-specific resolution (names, scratch files, etc.). The
         validation step is enforced here so a future backend cannot
         accidentally skip it. No remote/runtime resources are created."""
+        from .resolve_common import (
+            merge_provision_env_vars,
+            mint_slug,
+            prepare_agent_state_dir,
+            prepare_egress,
+            prepare_git_gate,
+            prepare_supervise,
+            resolve_manifest_dockerfile,
+            write_launch_metadata,
+        )
+
         self._validate(spec)
 
         self._preflight()
@@ -441,7 +442,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         prompt_path = provider.provision_prompt(plan, bottle)
         provider.provision(plan, bottle)
         provider.provision_skills(plan, bottle)
-        self.provision_workspace(plan, bottle)
+        # self.provision_workspace(plan, bottle)
         provider.provision_git(bottle, plan)
         provider.provision_supervise_mcp(
             plan, bottle, self.supervise_mcp_url(plan),

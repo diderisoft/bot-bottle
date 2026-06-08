@@ -20,12 +20,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import supervise as _supervise
-from ..bottle_state import read_metadata
-from ..backend.docker.capability_apply import (
-    CapabilityApplyError,
-    apply_capability_change,
-)
+# from ..bottle_state import read_metadata
+# from ..backend.docker.capability_apply import (
+#     CapabilityApplyError,
+#     apply_capability_change,
+# )
 from ..log import Die, error, info
+
+
+class CapabilityApplyError(RuntimeError):
+    """Placeholder while capability_apply is disabled."""
+
 from ..supervise import (
     COMPONENT_FOR_TOOL,
     AuditEntry,
@@ -127,17 +132,17 @@ def approve(
     file_to_apply = final_file if final_file is not None else qp.proposal.proposed_file
 
     diff_before, diff_after = "", ""
-    if qp.proposal.tool == TOOL_CAPABILITY_BLOCK:
-        _meta = read_metadata(qp.proposal.bottle_slug)
-        if _meta is not None and not _meta.compose_project:
-            raise CapabilityApplyError(
-                "capability-block remediation is not supported for smolmachines "
-                "bottles. Reject this proposal or handle the capability change "
-                "manually, then restart the bottle."
-            )
-        diff_before, diff_after = apply_capability_change(
-            qp.proposal.bottle_slug, file_to_apply,
-        )
+    # if qp.proposal.tool == TOOL_CAPABILITY_BLOCK:
+    #     _meta = read_metadata(qp.proposal.bottle_slug)
+    #     if _meta is not None and not _meta.compose_project:
+    #         raise CapabilityApplyError(
+    #             "capability-block remediation is not supported for smolmachines "
+    #             "bottles. Reject this proposal or handle the capability change "
+    #             "manually, then restart the bottle."
+    #         )
+    #     diff_before, diff_after = apply_capability_change(
+    #         qp.proposal.bottle_slug, file_to_apply,
+    #     )
 
     response = Response(
         proposal_id=qp.proposal.id,

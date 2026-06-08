@@ -22,7 +22,7 @@ from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
 from bot_bottle.egress import EgressPlan
 from bot_bottle.git_gate import GitGatePlan
 from bot_bottle.manifest import Manifest
-from bot_bottle.workspace import workspace_plan
+# from bot_bottle.workspace import workspace_plan
 
 
 def _manifest() -> Manifest:
@@ -68,15 +68,10 @@ def _plan(tmp: str) -> DockerBottlePlan:
             guest_home="/home/node",
             guest_env={},
         ),
-        workspace_plan=workspace_plan(spec, guest_home="/home/node"),
         slug="test-teardown-00001",
         container_name="bot-bottle-test-teardown-abc",
-        container_name_pinned=False,
         image="bot-bottle-claude:latest",
-        derived_image="",
-        agent_image="bot-bottle-claude:latest",
         dockerfile_path="",
-        env_file=stage / "env",
         forwarded_env={},
         prompt_file=stage / "prompt.txt",
         use_runsc=False,

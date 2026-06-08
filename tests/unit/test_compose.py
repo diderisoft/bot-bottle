@@ -33,7 +33,7 @@ from bot_bottle.egress import (
 from bot_bottle.git_gate import GitGatePlan, GitGateUpstream
 from bot_bottle.manifest import Manifest
 from bot_bottle.supervise import SupervisePlan
-from bot_bottle.workspace import workspace_plan
+# from bot_bottle.workspace import workspace_plan
 
 
 SLUG = "demo-abc12"
@@ -153,12 +153,8 @@ def _plan(
         stage_dir=STAGE,
         slug=SLUG,
         container_name=f"bot-bottle-{SLUG}",
-        container_name_pinned=False,
         image="bot-bottle-claude:latest",
-        derived_image="",
-        agent_image="bot-bottle-claude:latest",
         dockerfile_path="",
-        env_file=Path("/dev/null"),  # exists, size 0 → renderer skips env_file
         forwarded_env={"CLAUDE_CODE_OAUTH_TOKEN": "x"},
         prompt_file=STAGE / "prompt",
         git_gate_plan=_git_gate_plan(upstreams),
@@ -174,7 +170,6 @@ def _plan(
             guest_home="/home/node",
             guest_env={},
         ),
-        workspace_plan=workspace_plan(spec, guest_home="/home/node"),
     )
 
 
@@ -210,7 +205,7 @@ class TestAgentAlwaysPresent(unittest.TestCase):
     def test_agent_image_uses_runtime_image(self):
         plan = _plan()
         s = bottle_plan_to_compose(plan)["services"]["agent"]
-        self.assertEqual(plan.agent_image, s["image"])
+        self.assertEqual(plan.image, s["image"])
 
     def test_agent_only_on_internal_network(self):
         s = bottle_plan_to_compose(_plan())["services"]["agent"]
