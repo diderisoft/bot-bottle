@@ -147,22 +147,6 @@ JAILBREAK_PHRASES: tuple[re.Pattern[str], ...] = (
 PROXIMITY_CHARS = 500
 
 
-def _min_distance(
-    a_matches: list[re.Match[str]],
-    b_matches: list[re.Match[str]],
-) -> int | None:
-    """Smallest char distance between any pair of matches."""
-    if not a_matches or not b_matches:
-        return None
-    best = None
-    for a in a_matches:
-        for b in b_matches:
-            gap = max(0, max(a.start(), b.start()) - min(a.end(), b.end()))
-            if best is None or gap < best:
-                best = gap
-    return best
-
-
 def _closest_pair(
     a_matches: list[re.Match[str]],
     b_matches: list[re.Match[str]],

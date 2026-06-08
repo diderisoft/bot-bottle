@@ -189,6 +189,37 @@ def _route_to_yaml_fields(r: Route) -> dict[str, object]:
     return fields
 
 
+def _render_match_entry(entry: dict[str, object]) -> list[str]:
+    lines: list[str] = []
+    first_key = True
+    if "paths" in entry:
+        lines.append("      - paths:")
+        first_key = False
+        for pd in entry["paths"]:  # type: ignore[union-attr]
+            pd_dict: dict[str, str] = pd  # type: ignore[assignment]
+            if "type" in pd_dict:
+                lines.append(f'          - type: "{pd_dict["type"]}"')
+                lines.append(f'            value: "{pd_dict["value"]}"')
+            else:
+                lines.append(f'          - value: "{pd_dict["value"]}"')
+    if "methods" in entry:
+        methods_str = ", ".join(f'"{m}"' for m in entry["methods"])  # type: ignore[union-attr]
+        prefix = "      - " if first_key else "        "
+        lines.append(f'{prefix}methods: [{methods_str}]')
+        first_key = False
+    if "headers" in entry:
+        prefix = "      - " if first_key else "        "
+        lines.append(f"{prefix}headers:")
+        first_key = False
+        for hd in entry["headers"]:  # type: ignore[union-attr]
+            hd_dict: dict[str, str] = hd  # type: ignore[assignment]
+            lines.append(f'          - name: "{hd_dict["name"]}"')
+            lines.append(f'            value: "{hd_dict["value"]}"')
+    if first_key:
+        lines.append("      - {}")
+    return lines
+
+
 def egress_render_routes(
     routes: tuple[EgressRoute, ...],
     *,
@@ -209,38 +240,8 @@ def egress_render_routes(
             lines.append(f'    token_env: "{f["token_env"]}"')
         if "matches" in f:
             lines.append("    matches:")
-            for entry in f["matches"]:  # type: ignore
-                entry_dict: dict[str, object] = entry  # type: ignore
-                first_key = True
-                if "paths" in entry_dict:
-                    lines.append("      - paths:")
-                    first_key = False
-                    for pd in entry_dict["paths"]:  # type: ignore
-                        pd_dict: dict[str, str] = pd  # type: ignore
-                        if "type" in pd_dict:
-                            lines.append(f'          - type: "{pd_dict["type"]}"')
-                            lines.append(f'            value: "{pd_dict["value"]}"')
-                        else:
-                            lines.append(f'          - value: "{pd_dict["value"]}"')
-                if "methods" in entry_dict:
-                    methods_str = ", ".join(
-                        f'"{m}"' for m in entry_dict["methods"]  # type: ignore
-                    )
-                    prefix = "      - " if first_key else "        "
-                    lines.append(f'{prefix}methods: [{methods_str}]')
-                    first_key = False
-                if "headers" in entry_dict:
-                    prefix = "      - " if first_key else "        "
-                    lines.append(f"{prefix}headers:")
-                    first_key = False
-                    for hd in entry_dict["headers"]:  # type: ignore
-                        hd_dict: dict[str, str] = hd  # type: ignore
-                        lines.append(f'          - name: "{hd_dict["name"]}"')
-                        lines.append(f'            value: "{hd_dict["value"]}"')
-                        if "type" in hd_dict:
-                            lines.append(f'            type: "{hd_dict["type"]}"')
-                if first_key:
-                    lines.append("      - {}")
+            for entry in f["matches"]:  # type: ignore[union-attr]
+                lines.extend(_render_match_entry(entry))  # type: ignore[arg-type]
         if "dlp" in f:
             dlp_dict: dict[str, object] = f["dlp"]  # type: ignore
             lines.append("    dlp:")

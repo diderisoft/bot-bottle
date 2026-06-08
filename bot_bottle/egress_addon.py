@@ -12,13 +12,12 @@ import signal
 import sys
 from pathlib import Path
 
-from mitmproxy import http  # type: ignore[import-not-found]
+from mitmproxy import http  # type: ignore[import-not-found]  # pylint: disable=import-error
 
-from egress_addon_core import (  # type: ignore[import-not-found]
+from egress_addon_core import (  # type: ignore[import-not-found]  # pylint: disable=import-error
     LOG_BLOCKS,
     LOG_FULL,
     Config,
-    Route,
     decide,
     is_git_push_request,
     load_config,

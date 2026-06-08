@@ -470,6 +470,7 @@ def decide(
     request_host: str,
     request_path: str,
     environ: typing.Mapping[str, str],
+    *,
     request_method: str = "GET",
     request_headers: typing.Mapping[str, str] | None = None,
 ) -> Decision:
@@ -537,9 +538,13 @@ def scan_outbound(
     # Lazy import to avoid circular deps and keep dlp_detectors optional
     # at import time (the sidecar copies it flat alongside this file).
     try:
-        from dlp_detectors import scan_token_patterns, scan_known_secrets  # type: ignore[import-not-found]
+        from dlp_detectors import (  # type: ignore[import-not-found]
+            scan_token_patterns, scan_known_secrets,
+        )
     except ImportError:  # pragma: no cover - host-side path
-        from .dlp_detectors import scan_token_patterns, scan_known_secrets  # type: ignore[import-not-found]
+        from .dlp_detectors import (  # type: ignore[import-not-found]
+            scan_token_patterns, scan_known_secrets,
+        )
 
     text = body if isinstance(body, str) else body.decode("utf-8", errors="replace")
 
