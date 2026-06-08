@@ -11,32 +11,30 @@ via the base class's `prepare` template before this is called.
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
-from dataclasses import replace
 from pathlib import Path
 
 from ...agent_provider import PROVIDER_TEMPLATES, agent_provision_plan, get_provider
-from ...egress import Egress
 from ...env import ResolvedEnv, resolve_env
-from ...git_gate import GitGate
 from ...log import die
-from ...supervise import Supervise
 from ...workspace import workspace_plan as resolve_workspace_plan
 from .. import BottleSpec
+from ..resolve_common import (
+    merge_provision_env_vars,
+    mint_slug,
+    prepare_agent_state_dir,
+    prepare_egress,
+    prepare_git_gate,
+    prepare_supervise,
+    resolve_manifest_dockerfile,
+    write_launch_metadata,
+)
 from . import util as docker_mod
 from .bottle_plan import DockerBottlePlan
 from ...bottle_state import (
-    BottleMetadata,
-    agent_state_dir,
-    bottle_identity,
     clear_preserve_marker,
-    egress_state_dir,
-    git_gate_state_dir,
     per_bottle_dockerfile,
     per_bottle_dockerfile_path,
     per_bottle_image_tag,
-    supervise_state_dir,
-    write_metadata,
 )
 from .sidecar_bundle import sidecar_bundle_container_name
 
@@ -51,12 +49,7 @@ def resolve_plan(
     validation already ran in the base class."""
     docker_mod.require_docker()
 
-    git_gate = GitGate()
-    egress = Egress()
-    supervise = Supervise()
-
     manifest = spec.manifest
-    agent = manifest.agents[spec.agent_name]
     bottle = manifest.bottle_for(spec.agent_name)
     provider = bottle.agent_provider
     provider_obj = get_provider(provider.template)
@@ -64,26 +57,8 @@ def resolve_plan(
     guest_home = "/home/node"
     workspace_plan = resolve_workspace_plan(spec, guest_home=guest_home)
 
-    # PRD 0016 follow-up: identity, not bare slug. A fresh `start`
-    # mints a random-suffixed identity (so parallel runs of the same
-    # agent in the same cwd don't collide on container/network
-    # names); a `resume` passes the recorded identity in via
-    # spec.identity to continue an existing bottle's state.
-    slug = spec.identity or bottle_identity(spec.agent_name)
-    # Record the launch metadata so `cli.py resume <identity>` can
-    # reconstruct the spec. Idempotent — re-writes on resume with a
-    # refreshed started_at.
-    write_metadata(BottleMetadata(
-        identity=slug,
-        agent_name=spec.agent_name,
-        cwd=spec.user_cwd if spec.copy_cwd else "",
-        copy_cwd=spec.copy_cwd,
-        started_at=datetime.now(timezone.utc).isoformat(),
-        compose_project=f"bot-bottle-{slug}",
-        backend="docker",
-        label=spec.label,
-        color=spec.color,
-    ))
+    slug = mint_slug(spec)
+    write_launch_metadata(slug, spec, compose_project=f"bot-bottle-{slug}", backend="docker")
     # Clear any leftover preserve marker from a prior capability-block
     # so this fresh launch can be cleaned up at session-end unless
     # the agent triggers another capability-block.
@@ -103,7 +78,7 @@ def resolve_plan(
         dockerfile_path = str(per_bottle_dockerfile_path(slug))
     elif provider.dockerfile:
         image = f"bot-bottle-{provider.template}:{slug}"
-        dockerfile_path = _resolve_manifest_dockerfile(provider.dockerfile, spec)
+        dockerfile_path = resolve_manifest_dockerfile(provider.dockerfile, spec)
     derived_image = ""
     runtime_image = image
     if spec.copy_cwd:
@@ -149,29 +124,14 @@ def resolve_plan(
             f"retry."
         )
 
-    # PRD 0018 chunk 2: prepare-time scratch files live under
-    # ~/.bot-bottle/state/<slug>/<service>/ so chunk 3's compose
-    # bind-mounts can point at stable paths. The state subdirs are
-    # cleaned up by start.py's session-end teardown unless something
-    # explicitly preserves the state dir (capability-block, crash).
-    agent_dir = agent_state_dir(slug)
-    agent_dir.mkdir(parents=True, exist_ok=True)
+    agent_dir, prompt_file = prepare_agent_state_dir(slug, spec)
     env_file = agent_dir / "agent.env"
-    prompt_file = agent_dir / "prompt.txt"
-    prompt_file.write_text("")
-    prompt_file.chmod(0o600)
 
-    git_gate_dir = git_gate_state_dir(slug)
-    git_gate_dir.mkdir(parents=True, exist_ok=True)
-    git_gate_plan = git_gate.prepare(bottle, slug, git_gate_dir)
+    git_gate_plan = prepare_git_gate(bottle, slug)
 
     resolved = resolve_env(manifest, spec.agent_name)
-    # Everything that should reach the bottle by-name (so its value
-    # never lands on argv or in env_file) goes into one dict. Nothing
-    # mutates the host os.environ.
     forwarded_env: dict[str, str] = dict(resolved.forwarded)
     _write_env_file(resolved, env_file)
-    prompt_file.write_text(agent.prompt)
 
     use_runsc = docker_mod.runsc_available()
     agent_provision = agent_provision_plan(
@@ -186,39 +146,25 @@ def resolve_plan(
         label=spec.label,
         color=spec.color,
     )
-    guest_env = dict(agent_provision.guest_env)
-    for key, val in agent_provision.env_vars.items():
-        guest_env.setdefault(key, val)
-    agent_provision = replace(agent_provision, guest_env=guest_env)
+    agent_provision = merge_provision_env_vars(agent_provision)
 
-    egress_dir = egress_state_dir(slug)
-    egress_dir.mkdir(parents=True, exist_ok=True)
-    egress_plan = egress.prepare(
-        bottle, slug, egress_dir, agent_provision.egress_routes,
+    egress_plan = prepare_egress(bottle, slug, agent_provision)
+
+    # Current Dockerfile for the agent image. For `--cwd` derived
+    # images the base Dockerfile is what the agent should propose
+    # changes against (the derived layer is just a workspace copy).
+    # (routes.yaml used to land here too but PRD 0017 chunk 3
+    # moved it behind the `list-egress-routes` MCP tool so the
+    # agent gets live state rather than a launch-time snapshot.)
+    supervise_dockerfile_path = (
+        Path(dockerfile_path) if dockerfile_path else provider_obj.dockerfile
     )
-
-    supervise_plan = None
-    if bottle.supervise:
-        # Current Dockerfile for the agent image. For `--cwd` derived
-        # images the base Dockerfile is what the agent should propose
-        # changes against (the derived layer is just a workspace copy).
-        # (routes.yaml used to land here too but PRD 0017 chunk 3
-        # moved it behind the `list-egress-routes` MCP tool so the
-        # agent gets live state rather than a launch-time snapshot.)
-        supervise_dockerfile_path = (
-            Path(dockerfile_path) if dockerfile_path else provider_obj.dockerfile
-        )
-        dockerfile_content = (
-            supervise_dockerfile_path.read_text(encoding="utf-8")
-            if supervise_dockerfile_path.is_file()
-            else ""
-        )
-        supervise_dir = supervise_state_dir(slug)
-        supervise_dir.mkdir(parents=True, exist_ok=True)
-        supervise_plan = supervise.prepare(
-            slug, supervise_dir,
-            dockerfile_content=dockerfile_content,
-        )
+    dockerfile_content = (
+        supervise_dockerfile_path.read_text(encoding="utf-8")
+        if supervise_dockerfile_path.is_file()
+        else ""
+    )
+    supervise_plan = prepare_supervise(bottle, slug, dockerfile_content=dockerfile_content)
 
     return DockerBottlePlan(
         spec=spec,
@@ -260,8 +206,3 @@ def _write_env_file(resolved: ResolvedEnv, env_file: Path) -> None:
     env_file.chmod(0o600)
 
 
-def _resolve_manifest_dockerfile(path_value: str, spec: BottleSpec) -> str:
-    path = Path(os.path.expanduser(path_value))
-    if not path.is_absolute():
-        path = Path(spec.user_cwd) / path
-    return str(path)

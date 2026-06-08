@@ -11,26 +11,22 @@ No VM bringup — that's `launch.launch`'s job."""
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
-from dataclasses import replace
 from pathlib import Path
 
 from ...agent_provider import PROVIDER_TEMPLATES, agent_provision_plan, get_provider
 from ...backend import BottleSpec
-from ...bottle_state import (
-    BottleMetadata,
-    agent_state_dir,
-    bottle_identity,
-    egress_state_dir,
-    git_gate_state_dir,
-    supervise_state_dir,
-    write_metadata,
-)
-from ...egress import Egress
 from ...env import resolve_env
-from ...git_gate import GitGate
-from ...supervise import Supervise
 from ...workspace import workspace_plan as resolve_workspace_plan
+from ..resolve_common import (
+    merge_provision_env_vars,
+    mint_slug,
+    prepare_agent_state_dir,
+    prepare_egress,
+    prepare_git_gate,
+    prepare_supervise,
+    resolve_manifest_dockerfile,
+    write_launch_metadata,
+)
 from .bottle_plan import SmolmachinesBottlePlan
 from .util import smolmachines_bundle_subnet, smolmachines_preflight
 
@@ -62,21 +58,8 @@ def resolve_plan(
     guest_home = "/home/node"
     workspace_plan = resolve_workspace_plan(spec, guest_home=guest_home)
 
-    slug = spec.identity or bottle_identity(spec.agent_name)
-
-    # Record minimal metadata so `cli.py resume` can recover the
-    # slug. Same schema as the docker backend.
-    write_metadata(BottleMetadata(
-        identity=slug,
-        agent_name=spec.agent_name,
-        cwd=spec.user_cwd if spec.copy_cwd else "",
-        copy_cwd=spec.copy_cwd,
-        started_at=datetime.now(timezone.utc).isoformat(),
-        compose_project="",
-        backend="smolmachines",
-        label=spec.label,
-        color=spec.color,
-    ))
+    slug = mint_slug(spec)
+    write_launch_metadata(slug, spec, compose_project="", backend="smolmachines")
 
     subnet, gateway, bundle_ip = smolmachines_bundle_subnet(slug)
 
@@ -98,22 +81,8 @@ def resolve_plan(
         "REQUESTS_CA_BUNDLE":  "/etc/ssl/certs/ca-certificates.crt",
     }
 
-    git_gate_dir = git_gate_state_dir(slug)
-    git_gate_dir.mkdir(parents=True, exist_ok=True)
-    git_gate_plan = GitGate().prepare(bottle, slug, git_gate_dir)
-
-    # Prompt file is always written (mode 0o600) so the in-VM
-    # path always exists. Content is the agent's `prompt`
-    # field (markdown body) — empty for agents with no prompt.
-    # claude-code reads it via --append-system-prompt-file only
-    # when non-empty, but the file must exist either way to
-    # match the docker backend's contract.
-    agent_dir = agent_state_dir(slug)
-    agent_dir.mkdir(parents=True, exist_ok=True)
-    prompt_file = agent_dir / "prompt.txt"
-    agent = manifest.agents[spec.agent_name]
-    prompt_file.write_text(agent.prompt or "")
-    prompt_file.chmod(0o600)
+    git_gate_plan = prepare_git_gate(bottle, slug)
+    agent_dir, prompt_file = prepare_agent_state_dir(slug, spec)
 
     machine_name = f"bot-bottle-{slug}"
     if provider.template in PROVIDER_TEMPLATES:
@@ -123,7 +92,7 @@ def resolve_plan(
     agent_dockerfile_path = str(provider_obj.dockerfile)
     if provider.dockerfile:
         agent_image_ref = f"bot-bottle-{provider.template}:{slug}"
-        agent_dockerfile_path = _resolve_manifest_dockerfile(provider.dockerfile, spec)
+        agent_dockerfile_path = resolve_manifest_dockerfile(provider.dockerfile, spec)
     agent_provision = agent_provision_plan(
         template=provider.template,
         dockerfile=agent_dockerfile_path,
@@ -137,22 +106,10 @@ def resolve_plan(
         label=spec.label,
         color=spec.color,
     )
-    merged_guest_env = dict(agent_provision.guest_env)
-    for key, val in agent_provision.env_vars.items():
-        merged_guest_env.setdefault(key, val)
-    agent_provision = replace(agent_provision, guest_env=merged_guest_env)
+    agent_provision = merge_provision_env_vars(agent_provision)
 
-    egress_dir = egress_state_dir(slug)
-    egress_dir.mkdir(parents=True, exist_ok=True)
-    egress_plan = Egress().prepare(
-        bottle, slug, egress_dir, agent_provision.egress_routes,
-    )
-
-    supervise_plan = None
-    if bottle.supervise:
-        supervise_dir = supervise_state_dir(slug)
-        supervise_dir.mkdir(parents=True, exist_ok=True)
-        supervise_plan = Supervise().prepare(slug, supervise_dir)
+    egress_plan = prepare_egress(bottle, slug, agent_provision)
+    supervise_plan = prepare_supervise(bottle, slug)
 
     return SmolmachinesBottlePlan(
         spec=spec,
@@ -172,10 +129,3 @@ def resolve_plan(
         agent_provision=agent_provision,
         workspace_plan=workspace_plan,
     )
-
-
-def _resolve_manifest_dockerfile(path_value: str, spec: BottleSpec) -> str:
-    path = Path(os.path.expanduser(path_value))
-    if not path.is_absolute():
-        path = Path(spec.user_cwd) / path
-    return str(path)

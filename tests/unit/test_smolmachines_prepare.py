@@ -55,9 +55,9 @@ class TestSmolmachinesResolveEnv(unittest.TestCase):
                     patch("bot_bottle.backend.smolmachines.resolve_plan.smolmachines_preflight"),
                     patch("bot_bottle.backend.smolmachines.resolve_plan.smolmachines_bundle_subnet",
                           return_value=("10.99.0.0/24", "10.99.0.1", "10.99.0.2")),
-                    patch("bot_bottle.backend.smolmachines.resolve_plan.GitGate") as mock_gg,
-                    patch("bot_bottle.backend.smolmachines.resolve_plan.Egress") as mock_eg,
-                    patch("bot_bottle.backend.smolmachines.resolve_plan.Supervise"),
+                    patch("bot_bottle.backend.resolve_common.GitGate") as mock_gg,
+                    patch("bot_bottle.backend.resolve_common.Egress") as mock_eg,
+                    patch("bot_bottle.backend.resolve_common.Supervise"),
                     patch(
                         "bot_bottle.backend.smolmachines.resolve_plan.agent_provision_plan"
                     ) as mock_app,
