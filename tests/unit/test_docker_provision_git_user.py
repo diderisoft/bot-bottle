@@ -61,7 +61,6 @@ def _plan(*, git_user: dict | None = None,  # type: ignore
         copy_cwd=copy_cwd, user_cwd=user_cwd,
     )
     return DockerBottlePlan(
-        guest_home="/home/node",
         spec=spec,
         stage_dir=stage_dir or Path("/tmp/stage"),
         slug="demo-abc12",
@@ -95,6 +94,7 @@ def _plan(*, git_user: dict | None = None,  # type: ignore
             prompt_mode="append_file",
             image="bot-bottle-claude:latest",
             dockerfile="",
+            guest_home="/home/node",
             guest_env={},
         ),
         workspace_plan=workspace_plan(spec, guest_home="/home/node"),

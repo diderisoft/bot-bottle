@@ -86,6 +86,7 @@ def _agent_provision() -> AgentProvisionPlan:
         prompt_mode="append_file",
         image="",
         dockerfile="",
+        guest_home="/home/node",
         guest_env={"HTTPS_PROXY": "http://127.0.0.1:9999"},
     )
 
@@ -93,7 +94,6 @@ def _agent_provision() -> AgentProvisionPlan:
 def _docker_plan(spec: BottleSpec, tmp: str) -> DockerBottlePlan:
     stage = Path(tmp)
     return DockerBottlePlan(
-        guest_home="/home/node",
         spec=spec,
         stage_dir=stage,
         git_gate_plan=_git_gate_plan(tmp),
@@ -118,7 +118,6 @@ def _docker_plan(spec: BottleSpec, tmp: str) -> DockerBottlePlan:
 def _smolmachines_plan(spec: BottleSpec, tmp: str) -> SmolmachinesBottlePlan:
     stage = Path(tmp)
     return SmolmachinesBottlePlan(
-        guest_home="/home/node",
         spec=spec,
         stage_dir=stage,
         git_gate_plan=_git_gate_plan(tmp),

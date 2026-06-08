@@ -78,8 +78,11 @@ class BottlePlan(ABC):
 
     spec: BottleSpec
     stage_dir: Path
-    guest_home: str
     git_gate_plan: GitGatePlan
+
+    @property
+    def guest_home(self) -> str:
+        return self.agent_provision.guest_home
 
     @property
     def git_gate_insteadof_host(self) -> str:

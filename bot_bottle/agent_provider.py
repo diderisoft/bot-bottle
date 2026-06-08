@@ -103,6 +103,7 @@ class AgentProvisionPlan:
     prompt_mode: PromptMode
     image: str
     dockerfile: str
+    guest_home: str
     guest_env: dict[str, str]
     env_vars: dict[str, str] = field(default_factory=dict)
     dirs: tuple[AgentProvisionDir, ...] = ()

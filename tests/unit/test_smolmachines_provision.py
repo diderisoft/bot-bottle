@@ -140,7 +140,6 @@ def _plan(
             current_config_dir=Path("/tmp/current-config"),
         )
     return SmolmachinesBottlePlan(
-        guest_home="/home/node",
         spec=spec,
         stage_dir=stage_dir or Path("/tmp/stage"),
         slug="demo-abc12",
@@ -190,6 +189,7 @@ def _agent_provision(
             prompt_mode="append_file",
             image="",
             dockerfile="",
+            guest_home="/home/node",
             guest_env=dict(guest_env or {}),
         )
     auth_dir = (guest_env or {}).get("CODEX_HOME", "/home/node/.codex")
@@ -227,6 +227,7 @@ def _agent_provision(
         prompt_mode="read_prompt_file",
         image="bot-bottle-codex:latest",
         dockerfile="",
+        guest_home="/home/node",
         guest_env=dict(guest_env or {}),
         dirs=(AgentProvisionDir(auth_dir),),
         files=tuple(files),

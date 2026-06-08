@@ -71,6 +71,7 @@ class TestSmolmachinesResolveEnv(unittest.TestCase):
                             prompt_mode="append_file",
                             dockerfile="",
                             image="bot-bottle-claude:latest",
+                            guest_home="/home/node",
                             guest_env=dict(kwargs.get("guest_env") or {}),
                         )
                     mock_app.side_effect = lambda **kw: _make_provision(**kw)  # type: ignore

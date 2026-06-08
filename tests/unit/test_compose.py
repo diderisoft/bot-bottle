@@ -149,7 +149,6 @@ def _plan(
 
     spec = _spec(supervise=supervise, with_git=with_git, with_egress=with_egress)
     return DockerBottlePlan(
-        guest_home="/home/node",
         spec=spec,
         stage_dir=STAGE,
         slug=SLUG,
@@ -172,6 +171,7 @@ def _plan(
             prompt_mode="append_file",
             image="bot-bottle-claude:latest",
             dockerfile="",
+            guest_home="/home/node",
             guest_env={},
         ),
         workspace_plan=workspace_plan(spec, guest_home="/home/node"),
@@ -252,6 +252,7 @@ class TestAgentAlwaysPresent(unittest.TestCase):
             prompt_mode="read_prompt_file",
             image="bot-bottle-codex:latest",
             dockerfile="",
+            guest_home="/home/node",
             guest_env={"CODEX_HOME": "/home/node/.codex"},
         )
         plan = type(plan)(**{**vars(plan), "agent_provision": provision})  # type: ignore

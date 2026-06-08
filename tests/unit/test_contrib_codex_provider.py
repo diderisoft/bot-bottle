@@ -77,7 +77,6 @@ def _plan(
             current_config_dir=Path("/tmp/current-config"),
         )
     return DockerBottlePlan(
-        guest_home="/home/node",
         spec=spec,
         stage_dir=Path("/tmp/stage"),
         slug="demo-abc12",
@@ -107,7 +106,7 @@ def _plan(
         use_runsc=False,
         agent_provision=agent_provision or AgentProvisionPlan(
             template="codex", command="codex", prompt_mode="read_prompt_file",
-            image="", dockerfile="", guest_env={},
+            image="", dockerfile="", guest_home="/home/node", guest_env={},
         ),
         workspace_plan=workspace_plan(spec, guest_home="/home/node"),
     )
@@ -177,7 +176,7 @@ class TestCodexProvision(unittest.TestCase):
         provision = AgentProvisionPlan(
             template="codex", command="codex",
             prompt_mode="read_prompt_file",
-            image="", dockerfile="", guest_env={},
+            image="", dockerfile="", guest_home="/home/node", guest_env={},
             dirs=(AgentProvisionDir("/home/node/.codex"),),
             files=(AgentProvisionFile(
                 Path("/tmp/codex-config.toml"),
@@ -201,7 +200,7 @@ class TestCodexProvision(unittest.TestCase):
         provision = AgentProvisionPlan(
             template="codex", command="codex",
             prompt_mode="read_prompt_file",
-            image="", dockerfile="", guest_env={},
+            image="", dockerfile="", guest_home="/home/node", guest_env={},
             pre_copy=(AgentProvisionCommand(
                 ("find", "/home/node/.codex", "-name", "*.sqlite", "-delete"),
                 "could not reset runtime db files",
@@ -223,7 +222,7 @@ class TestCodexProvision(unittest.TestCase):
         provision = AgentProvisionPlan(
             template="codex", command="codex",
             prompt_mode="read_prompt_file",
-            image="", dockerfile="", guest_env={},
+            image="", dockerfile="", guest_home="/home/node", guest_env={},
             dirs=(AgentProvisionDir("/home/node/.codex"),),
         )
         bottle = _make_bottle(exec_result=ExecResult(1, "", "mkdir: nope\n"))

@@ -76,7 +76,6 @@ def _plan(
             current_config_dir=Path("/tmp/current-config"),
         )
     return DockerBottlePlan(
-        guest_home="/home/node",
         spec=spec,
         stage_dir=Path("/tmp/stage"),
         slug="demo-abc12",
@@ -106,7 +105,7 @@ def _plan(
         use_runsc=False,
         agent_provision=agent_provision or AgentProvisionPlan(
             template="claude", command="claude", prompt_mode="append_file",
-            image="", dockerfile="", guest_env={},
+            image="", dockerfile="", guest_home="/home/node", guest_env={},
         ),
         workspace_plan=workspace_plan(spec, guest_home="/home/node"),
     )
@@ -211,7 +210,7 @@ class TestClaudeProvision(unittest.TestCase):
     def test_copies_files_and_chowns(self):
         provision = AgentProvisionPlan(
             template="claude", command="claude", prompt_mode="append_file",
-            image="", dockerfile="", guest_env={},
+            image="", dockerfile="", guest_home="/home/node", guest_env={},
             files=(AgentProvisionFile(
                 Path("/tmp/claude.json"), "/home/node/.claude.json",
             ),),
@@ -234,7 +233,7 @@ class TestClaudeProvision(unittest.TestCase):
     def test_dies_when_file_chown_fails(self):
         provision = AgentProvisionPlan(
             template="claude", command="claude", prompt_mode="append_file",
-            image="", dockerfile="", guest_env={},
+            image="", dockerfile="", guest_home="/home/node", guest_env={},
             files=(AgentProvisionFile(
                 Path("/tmp/claude.json"), "/home/node/.claude.json",
             ),),
@@ -250,7 +249,7 @@ class TestClaudeProvision(unittest.TestCase):
     def test_runs_verify_commands(self):
         provision = AgentProvisionPlan(
             template="claude", command="claude", prompt_mode="append_file",
-            image="", dockerfile="", guest_env={},
+            image="", dockerfile="", guest_home="/home/node", guest_env={},
             verify=(AgentProvisionCommand(
                 ("/usr/bin/true",), "verify failed",
             ),),

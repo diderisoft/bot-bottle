@@ -43,7 +43,6 @@ def _plan(tmp: str) -> DockerBottlePlan:
         identity="test-teardown-00001",
     )
     return DockerBottlePlan(
-        guest_home="/home/node",
         spec=spec,
         stage_dir=stage,
         git_gate_plan=GitGatePlan(
@@ -66,6 +65,7 @@ def _plan(tmp: str) -> DockerBottlePlan:
             prompt_mode="append_file",
             image="",
             dockerfile="",
+            guest_home="/home/node",
             guest_env={},
         ),
         workspace_plan=workspace_plan(spec, guest_home="/home/node"),

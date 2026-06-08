@@ -147,6 +147,7 @@ class CodexAgentProvider(AgentProvider):
             prompt_mode=_RUNTIME.prompt_mode,
             image=_RUNTIME.image,
             dockerfile=dockerfile,
+            guest_home=guest_home,
             env_vars=env_vars,
             guest_env=resolved_guest_env,
             dirs=tuple(dirs),
