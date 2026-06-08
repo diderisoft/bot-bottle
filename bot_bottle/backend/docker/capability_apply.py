@@ -126,11 +126,10 @@ def apply_capability_change(slug: str, new_dockerfile: str) -> tuple[str, str]:
 
 
 def _repo_dockerfile_path() -> Path:
-    """Path to the repo's Claude Dockerfile (one dir above this module's
-    package root). Resolved at call time so the path is correct
-    regardless of where this module is imported from."""
-    # bot_bottle/backend/docker/capability_apply.py -> repo root
-    return Path(__file__).resolve().parent.parent.parent.parent / "Dockerfile.claude"
+    """Path to the Claude provider Dockerfile. Resolved at call time so
+    the path is correct regardless of where this module is imported from."""
+    # bot_bottle/backend/docker/ -> bot_bottle/ -> contrib/claude/Dockerfile
+    return Path(__file__).resolve().parent.parent.parent / "contrib" / "claude" / "Dockerfile"
 
 
 def snapshot_transcript(slug: str) -> None:

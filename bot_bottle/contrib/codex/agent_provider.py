@@ -32,8 +32,6 @@ if TYPE_CHECKING:
     from ...backend import Bottle, BottlePlan
 
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-
 _SUPERVISE_MCP_NAME = "supervise"
 
 
@@ -52,7 +50,7 @@ _RUNTIME = AgentProviderRuntime(
     template="codex",
     command="codex",
     image="bot-bottle-codex:latest",
-    dockerfile=str(_REPO_ROOT / "Dockerfile.codex"),
+    dockerfile=str(Path(__file__).resolve().parent / "Dockerfile"),
     prompt_mode="read_prompt_file",
     bypass_args=("--dangerously-bypass-approvals-and-sandbox",),
     resume_args=("resume", "--last"),

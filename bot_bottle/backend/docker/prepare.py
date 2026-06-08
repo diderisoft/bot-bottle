@@ -209,17 +209,16 @@ def resolve_plan(
 
     supervise_plan = None
     if bottle.supervise:
-        # Current Dockerfile for the agent image. Read from the repo
-        # root; for `--cwd` derived images the base Dockerfile is what
-        # the agent should propose changes against (the derived layer
-        # is just a workspace copy).
+        # Current Dockerfile for the agent image. For `--cwd` derived
+        # images the base Dockerfile is what the agent should propose
+        # changes against (the derived layer is just a workspace copy).
         # (routes.yaml used to land here too but PRD 0017 chunk 3
         # moved it behind the `list-egress-routes` MCP tool so the
         # agent gets live state rather than a launch-time snapshot.)
         supervise_dockerfile_path = (
             Path(dockerfile_path)
             if dockerfile_path
-            else Path(__file__).resolve().parent.parent.parent.parent / "Dockerfile.claude"
+            else Path(__file__).resolve().parent.parent.parent / "contrib" / "claude" / "Dockerfile"
         )
         dockerfile_content = (
             supervise_dockerfile_path.read_text(encoding="utf-8")
