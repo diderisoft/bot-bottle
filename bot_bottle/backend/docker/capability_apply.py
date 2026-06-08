@@ -95,7 +95,7 @@ def fetch_current_dockerfile(slug: str) -> str:
     if override is not None:
         return override
     repo_dockerfile = get_provider("claude").dockerfile
-    if repo_dockerfile is not None and repo_dockerfile.is_file():
+    if repo_dockerfile.is_file():
         return repo_dockerfile.read_text()
     raise CapabilityApplyError(
         f"no per-bottle Dockerfile for {slug} and no provider Dockerfile at "

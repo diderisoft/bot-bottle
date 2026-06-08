@@ -102,14 +102,11 @@ def resolve_plan(
         dockerfile_path = _resolve_manifest_dockerfile(provider.dockerfile, spec)
     else:
         p_dockerfile = provider_obj.dockerfile
-        if p_dockerfile is not None:
-            if provider.template in PROVIDER_TEMPLATES:
-                image_default = provider_runtime.image
-            else:
-                image_default = f"bot-bottle-{provider.template}:{slug}"
-            dockerfile_path = str(p_dockerfile)
-        else:
+        if provider.template in PROVIDER_TEMPLATES:
             image_default = provider_runtime.image
+        else:
+            image_default = f"bot-bottle-{provider.template}:{slug}"
+        dockerfile_path = str(p_dockerfile)
     image = image_default
     derived_image = ""
     runtime_image = image
@@ -217,7 +214,7 @@ def resolve_plan(
         )
         dockerfile_content = (
             supervise_dockerfile_path.read_text(encoding="utf-8")
-            if supervise_dockerfile_path is not None and supervise_dockerfile_path.is_file()
+            if supervise_dockerfile_path.is_file()
             else ""
         )
         supervise_dir = supervise_state_dir(slug)

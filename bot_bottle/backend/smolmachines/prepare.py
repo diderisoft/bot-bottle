@@ -122,14 +122,11 @@ def resolve_plan(
         image_default = f"bot-bottle-{provider.template}:{slug}"
     else:
         p_dockerfile = provider_obj.dockerfile
-        if p_dockerfile is not None:
-            agent_dockerfile_path = str(p_dockerfile)
-            if provider.template in PROVIDER_TEMPLATES:
-                image_default = provider_runtime.image
-            else:
-                image_default = f"bot-bottle-{provider.template}:{slug}"
-        else:
+        agent_dockerfile_path = str(p_dockerfile)
+        if provider.template in PROVIDER_TEMPLATES:
             image_default = provider_runtime.image
+        else:
+            image_default = f"bot-bottle-{provider.template}:{slug}"
     agent_image_ref = image_default
     agent_provision = agent_provision_plan(
         template=provider.template,

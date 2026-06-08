@@ -128,16 +128,13 @@ class AgentProvider(ABC):
         template."""
 
     @property
-    def dockerfile(self) -> Path | None:
-        """Path to the provider's Dockerfile, or None if no Dockerfile
-        is declared.
+    def dockerfile(self) -> Path:
+        """Path to the provider's Dockerfile.
 
-        Default: looks for a `Dockerfile` file next to this provider's
+        Default: the `Dockerfile` file next to this provider's
         `agent_provider.py` module. Override to point at a non-standard
-        path, or return None to signal that no Dockerfile exists (the
-        provider relies on a pre-built image)."""
-        path = Path(inspect.getfile(type(self))).parent / "Dockerfile"
-        return path if path.is_file() else None
+        path."""
+        return Path(inspect.getfile(type(self))).parent / "Dockerfile"
 
     @abstractmethod
     def provision_plan(
