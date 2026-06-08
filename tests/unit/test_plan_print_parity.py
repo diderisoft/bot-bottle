@@ -106,7 +106,7 @@ def _docker_plan(spec: BottleSpec, tmp: str) -> DockerBottlePlan:
         container_name_pinned=False,
         image="bot-bottle-claude:latest",
         derived_image="",
-        runtime_image="bot-bottle-claude:latest",
+        agent_image="bot-bottle-claude:latest",
         dockerfile_path="",
         env_file=stage / "env",
         forwarded_env={},
@@ -130,7 +130,7 @@ def _smolmachines_plan(spec: BottleSpec, tmp: str) -> SmolmachinesBottlePlan:
         bundle_gateway="10.99.0.1",
         bundle_ip="10.99.0.2",
         machine_name="bot-bottle-test-00001",
-        agent_image_ref="bot-bottle-claude:latest",
+        agent_image="bot-bottle-claude:latest",
         guest_env={"HTTPS_PROXY": "http://127.0.0.1:9999"},
         prompt_file=stage / "prompt.txt",
     )

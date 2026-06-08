@@ -23,16 +23,12 @@ class DockerBottlePlan(BottlePlan):
 
     slug: str
     container_name: str
-    container_name_pinned: bool
     image: str
-    derived_image: str           # "" -> no derived image
-    runtime_image: str           # image actually launched (derived or base)
     # Absolute path to the Dockerfile that builds `image`. Empty means
     # use the repo's default Dockerfile. Populated to a per-bottle
     # state file (~/.bot-bottle/state/<slug>/Dockerfile) after a
     # capability-block remediation (PRD 0016).
     dockerfile_path: str
-    env_file: Path               # docker --env-file: NAME=VALUE literals
     # name -> value for vars forwarded into the docker-run child process
     # via subprocess env (so values never land on argv or in a file).
     # repr=False keeps secret/interpolated/OAuth values out of any

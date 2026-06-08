@@ -222,7 +222,7 @@ def _agent_service(plan: DockerBottlePlan) -> dict[str, Any]:
         env.append(name)
 
     service: dict[str, Any] = {
-        "image": plan.runtime_image,
+        "image": plan.image,
         "container_name": plan.container_name,
         "command": ["sleep", "infinity"],
         "networks": {"internal": None},
@@ -230,8 +230,6 @@ def _agent_service(plan: DockerBottlePlan) -> dict[str, Any]:
     }
     if plan.use_runsc:
         service["runtime"] = "runsc"
-    if plan.env_file and plan.env_file.exists() and plan.env_file.stat().st_size > 0:
-        service["env_file"] = [str(plan.env_file)]
 
     volumes: list[dict[str, Any]] = []
     if plan.supervise_plan is not None:

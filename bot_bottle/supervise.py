@@ -465,8 +465,6 @@ class Supervise(ABC):
         self,
         slug: str,
         stage_dir: Path,
-        *,
-        dockerfile_content: str = "",
     ) -> SupervisePlan:
         """Stage the per-bottle queue dir on the host and the
         current-config dir under `stage_dir`. Returns the plan;
@@ -476,9 +474,6 @@ class Supervise(ABC):
         queue_dir.mkdir(parents=True, exist_ok=True)
         current_config_dir = stage_dir / "current-config"
         current_config_dir.mkdir(parents=True, exist_ok=True)
-        dockerfile_path = current_config_dir / CURRENT_CONFIG_DOCKERFILE
-        dockerfile_path.write_text(dockerfile_content)
-        dockerfile_path.chmod(0o644)
         return SupervisePlan(
             slug=slug,
             queue_dir=queue_dir,

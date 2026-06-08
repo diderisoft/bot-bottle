@@ -97,10 +97,6 @@ def launch(
             plan.image, _REPO_DIR,
             dockerfile=plan.dockerfile_path,
         )
-        if plan.derived_image:
-            docker_mod.build_image_with_cwd(
-                plan.derived_image, plan.image, plan.workspace_plan
-            )
 
         internal_network = network_mod.network_name_for_slug(plan.slug)
         egress_network = network_mod.network_egress_name_for_slug(plan.slug)

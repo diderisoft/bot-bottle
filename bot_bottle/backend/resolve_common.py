@@ -83,16 +83,14 @@ def prepare_egress(
     return Egress().prepare(bottle, slug, egress_dir, provision.egress_routes)
 
 
-def prepare_supervise(
-    bottle: ManifestBottle, slug: str, *, dockerfile_content: str = "",
-) -> SupervisePlan | None:
+def prepare_supervise(bottle: ManifestBottle, slug: str) -> SupervisePlan | None:
     """Prepare the supervise sidecar state dir. Returns None when
     bottle.supervise is falsy."""
     if not bottle.supervise:
         return None
     supervise_dir = supervise_state_dir(slug)
     supervise_dir.mkdir(parents=True, exist_ok=True)
-    return Supervise().prepare(slug, supervise_dir, dockerfile_content=dockerfile_content)
+    return Supervise().prepare(slug, supervise_dir)
 
 
 def merge_provision_env_vars(provision: AgentProvisionPlan) -> AgentProvisionPlan:

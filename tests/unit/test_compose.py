@@ -156,7 +156,7 @@ def _plan(
         container_name_pinned=False,
         image="bot-bottle-claude:latest",
         derived_image="",
-        runtime_image="bot-bottle-claude:latest",
+        agent_image="bot-bottle-claude:latest",
         dockerfile_path="",
         env_file=Path("/dev/null"),  # exists, size 0 → renderer skips env_file
         forwarded_env={"CLAUDE_CODE_OAUTH_TOKEN": "x"},
@@ -210,7 +210,7 @@ class TestAgentAlwaysPresent(unittest.TestCase):
     def test_agent_image_uses_runtime_image(self):
         plan = _plan()
         s = bottle_plan_to_compose(plan)["services"]["agent"]
-        self.assertEqual(plan.runtime_image, s["image"])
+        self.assertEqual(plan.agent_image, s["image"])
 
     def test_agent_only_on_internal_network(self):
         s = bottle_plan_to_compose(_plan())["services"]["agent"]

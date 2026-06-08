@@ -147,7 +147,7 @@ def _plan(
         bundle_gateway="192.168.50.1",
         bundle_ip=bundle_ip,
         machine_name="bot-bottle-demo-abc12",
-        agent_image_ref="bot-bottle-claude:latest",
+        agent_image="bot-bottle-claude:latest",
         guest_env=dict(guest_env or {}),
         prompt_file=Path("/tmp/state/demo-abc12/agent/prompt.txt"),
         git_gate_plan=GitGatePlan(

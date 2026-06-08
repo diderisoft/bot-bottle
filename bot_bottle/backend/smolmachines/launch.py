@@ -90,7 +90,7 @@ def launch(
         # here, not in prepare, so the docker-build output doesn't
         # garble the dashboard's preflight modal.
         agent_from_path = _ensure_smolmachine(
-            plan.agent_image_ref,
+            plan.agent_image,
             dockerfile=plan.agent_dockerfile_path,
         )
 

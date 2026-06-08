@@ -220,18 +220,19 @@ class AgentProvider(ABC):
         Override for images that run as a different user or use a
         non-standard home directory."""
         from .log import info
-        workspace = plan.workspace_plan
-        if workspace.enabled and workspace.copy_git and workspace.has_host_git_dir:
-            guest_workspace_git = f"{workspace.guest_path}/.git"
-            host_git = str(workspace.host_path / ".git")
-            info(f"copying {host_git} -> {bottle.name}:{guest_workspace_git}")
-            bottle.exec(f"mkdir -p {shlex.quote(workspace.guest_path)}", user="root")
-            bottle.cp_in(host_git, guest_workspace_git)
-            bottle.exec(
-                f"chown -R {shlex.quote(workspace.owner)} "
-                f"{shlex.quote(guest_workspace_git)}",
-                user="root",
-            )
+        # FIXME: re-enable workspace planning
+        # workspace = plan.workspace_plan
+        # if workspace.enabled and workspace.copy_git and workspace.has_host_git_dir:
+        #     guest_workspace_git = f"{workspace.guest_path}/.git"
+        #     host_git = str(workspace.host_path / ".git")
+        #     info(f"copying {host_git} -> {bottle.name}:{guest_workspace_git}")
+        #     bottle.exec(f"mkdir -p {shlex.quote(workspace.guest_path)}", user="root")
+        #     bottle.cp_in(host_git, guest_workspace_git)
+        #     bottle.exec(
+        #         f"chown -R {shlex.quote(workspace.owner)} "
+        #         f"{shlex.quote(guest_workspace_git)}",
+        #         user="root",
+        #     )
 
         manifest_bottle = plan.spec.manifest.bottle_for(plan.spec.agent_name)
         if manifest_bottle.git:
@@ -327,7 +328,7 @@ def runtime_for(template: str) -> AgentProviderRuntime:
     return get_provider(template).runtime
 
 
-def agent_provision_plan(
+def build_agent_provision_plan(
     *,
     template: str,
     dockerfile: str,

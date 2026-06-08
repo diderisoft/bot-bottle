@@ -49,7 +49,7 @@ class SmolmachinesBottlePlan(BottlePlan):
     # `machine_create --from`. The pipeline runs at launch time
     # (not prepare time) so the docker build output doesn't garble
     # the dashboard's preflight modal.
-    agent_image_ref: str
+    agent_image: str
     # In-guest env vars (HTTPS_PROXY etc) — IP-literal URLs since
     # the guest has no DNS resolver inside the TSI allowlist.
     # Passed to `smolvm machine create` as `-e K=V` flags.

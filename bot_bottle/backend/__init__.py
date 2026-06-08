@@ -39,16 +39,27 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Generic, Sequence, TypeVar
 
-from ..agent_provider import AgentProvisionPlan, get_provider
+from ..agent_provider import AgentProvisionPlan, get_provider, build_agent_provision_plan
 from ..egress import EgressPlan
 from ..git_gate import GitGatePlan
 from ..log import die, info
 from ..manifest import ManifestGitEntry, Manifest
 from ..supervise import SupervisePlan
 from ..util import expand_tilde
-from ..workspace import WorkspacePlan
+from ..env import resolve_env, ResolvedEnv
+# from ..workspace import WorkspacePlan
 from .print_util import print_multi, visible_agent_env_names
 from .util import host_skill_dir
+from .resolve_common import (
+    merge_provision_env_vars,
+    mint_slug,
+    prepare_agent_state_dir,
+    prepare_egress,
+    prepare_git_gate,
+    prepare_supervise,
+    resolve_manifest_dockerfile,
+    write_launch_metadata,
+)
 
 
 @dataclass(frozen=True)
@@ -100,7 +111,7 @@ class BottlePlan(ABC):
     egress_plan: EgressPlan
     supervise_plan: SupervisePlan | None
     agent_provision: AgentProvisionPlan
-    workspace_plan: WorkspacePlan
+    # workspace_plan: WorkspacePlan
 
     def print(self, *, remote_control: bool) -> None:
         """Render the y/N preflight summary to stderr."""
@@ -266,14 +277,70 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
 
     name: str
 
-    def prepare(self, spec: BottleSpec, *, stage_dir: Path) -> PlanT:
+    def prepare(self, spec: BottleSpec, stage_dir: Path) -> PlanT:
         """Template method: run cross-backend host-side validation, then
         delegate to the subclass's `_resolve_plan` for the
         backend-specific resolution (names, scratch files, etc.). The
         validation step is enforced here so a future backend cannot
         accidentally skip it. No remote/runtime resources are created."""
         self._validate(spec)
-        return self._resolve_plan(spec, stage_dir=stage_dir)
+
+        self._preflight()
+
+        manifest = spec.manifest
+        manifest_bottle = manifest.bottle_for(spec.agent_name)
+        manfiest_agent_provider = manifest_bottle.agent_provider
+        agent_provider = get_provider(manfiest_agent_provider.template)
+        agent_image = agent_provider.runtime.image
+        resolved_env = resolve_env(manifest, spec.agent_name)
+
+        slug = mint_slug(spec)
+        write_launch_metadata(slug, spec, compose_project="", backend="smolmachines")
+
+        agent_dockerfile_path = resolve_manifest_dockerfile(manfiest_agent_provider.dockerfile, spec)
+        instance_name = f"bot-bottle-{slug}"
+
+        agent_dir, prompt_file = prepare_agent_state_dir(slug, spec)
+
+        agent_provision_plan = build_agent_provision_plan(
+            template=manfiest_agent_provider.template,
+            dockerfile=agent_dockerfile_path,
+            state_dir=agent_dir,
+            guest_home="/home/node", # FIXME: should be coming from the agent plan
+            guest_env=self._build_guest_env(resolved_env),
+            forward_host_credentials=manfiest_agent_provider.forward_host_credentials,
+            auth_token=manfiest_agent_provider.auth_token,
+            host_env=dict(os.environ),
+            # trusted_project_path=workspace_plan.workdir,
+            label=spec.label,
+            color=spec.color,
+        )
+        agent_provision_plan = merge_provision_env_vars(agent_provision_plan)
+        egress_plan = prepare_egress(manifest_bottle, slug, agent_provision_plan)
+        supervise_plan = prepare_supervise(manifest_bottle, slug)
+        git_gate_plan = prepare_git_gate(manifest_bottle, slug)
+
+        return self._resolve_plan(
+            spec,
+            instance_name=instance_name, # FIXME: move to agent provision plan
+            agent_image=agent_image, # FIXME: move to agent provision plan
+            prompt_file=prompt_file, # FIXME: move to agent provision plan
+            agent_dockerfile_path=agent_dockerfile_path, # FIXME: move to agent provision plan
+            agent_provision_plan=agent_provision_plan,
+            egress_plan=egress_plan,
+            supervise_plan=supervise_plan,
+            git_gate_plan=git_gate_plan,
+            stage_dir=stage_dir
+        )
+
+    def _build_guest_env(self, resolved_env: ResolvedEnv) -> dict[str, str]:
+        return {}
+
+    def _preflight(self) -> None:
+        """
+        tasks to do before resolving a plan
+        """
+        pass
 
     def _validate(self, spec: BottleSpec) -> None:
         """Cross-backend pre-launch checks. Confirms the agent exists,
@@ -325,7 +392,17 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
             )
 
     @abstractmethod
-    def _resolve_plan(self, spec: BottleSpec, *, stage_dir: Path) -> PlanT:
+    def _resolve_plan(self,
+                      spec: BottleSpec,
+                      instance_name: str,
+                      agent_image: str,
+                      prompt_file: Path,
+                      agent_provision_plan: AgentProvisionPlan,
+                      agent_dockerfile_path: str,
+                      egress_plan: EgressPlan,
+                      git_gate_plan: GitGatePlan,
+                      supervise_plan: SupervisePlan | None,
+                      stage_dir: Path) -> PlanT:
         """Backend-specific plan resolution: image/container names,
         env-file, prompt-file, proxy plan, runtime detection. Called by
         `prepare` after `_validate` succeeds."""

@@ -83,7 +83,7 @@ def _plan(
         container_name_pinned=False,
         image="bot-bottle-claude:latest",
         derived_image="",
-        runtime_image="bot-bottle-claude:latest",
+        agent_image="bot-bottle-claude:latest",
         dockerfile_path="",
         env_file=Path("/tmp/agent.env"),
         forwarded_env={},
