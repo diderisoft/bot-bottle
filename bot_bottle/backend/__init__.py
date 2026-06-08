@@ -298,7 +298,15 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         slug = mint_slug(spec)
         write_launch_metadata(slug, spec, compose_project="", backend="smolmachines")
 
-        agent_dockerfile_path = resolve_manifest_dockerfile(manfiest_agent_provider.dockerfile, spec)
+        # Manifest may override the Dockerfile per-bottle; otherwise fall
+        # back to the provider plugin's bundled Dockerfile (next to its
+        # agent_provider.py module).
+        if manfiest_agent_provider.dockerfile:
+            agent_dockerfile_path = resolve_manifest_dockerfile(
+                manfiest_agent_provider.dockerfile, spec,
+            )
+        else:
+            agent_dockerfile_path = str(agent_provider.dockerfile)
         instance_name = f"bot-bottle-{slug}"
 
         agent_dir, prompt_file = prepare_agent_state_dir(slug, spec)
