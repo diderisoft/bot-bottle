@@ -2,16 +2,17 @@
 round trip + the acceptance probes.
 
 The smoke confirms the launch flow (per-bottle docker bridge →
-sidecar bundle with pinned IP → smolvm guest with TSI allowlist →
-exec) plumbs together end to end. The two probes confirm the
+sidecar bundle with host-loopback published ports → smolvm guest
+with TSI allowlist → exec) plumbs together end to end. The probes confirm the
 security properties the design pivot was about:
 
   - **localhost-reach probe** — guest tries to dial a service
-    bound on the host's `127.0.0.1`. TSI's `<bundle-ip>/32`
-    allowlist must refuse the connect. (PRD 0023's first draft
-    worried about `--outbound-localhost-only` opening the whole
-    `127.0.0.0/8`; with `--allow-cidr <bundle-ip>/32` instead,
-    the gap closes.)
+    bound on the host's `127.0.0.1`. TSI's per-bottle loopback
+    alias allowlist must refuse the connect.
+
+  - **egress proxy probe** — guest reaches the egress proxy through
+    the injected `HTTPS_PROXY`/`HTTP_PROXY` URL on the per-bottle
+    loopback alias, while direct egress with proxy vars unset fails.
 
   - **egress-port-bypass probe** — guest tries to dial
     `<bundle-ip>:9099` (egress's port). TSI permits the IP but
@@ -43,7 +44,15 @@ _AGENT_PROMPT = "You are demo. Be brief."
 
 def _minimal_manifest() -> Manifest:
     return Manifest.from_json_obj({
-        "bottles": {"dev": {}},
+        "bottles": {
+            "dev": {
+                "egress": {
+                    "routes": [
+                        {"host": "example.com"},
+                    ],
+                },
+            },
+        },
         "agents": {
             "demo": {
                 "skills": [],
@@ -122,6 +131,56 @@ class TestSmolmachinesLaunch(unittest.TestCase):
             or "unreachable" in r.stdout.lower()
             or "failed" in r.stdout.lower(),
             f"expected a connect-refusal message; got: {r.stdout!r}",
+        )
+
+    def test_egress_proxy_reachable_through_tsi_loopback_alias(self):
+        self.assertTrue(
+            self.plan.agent_proxy_url.startswith("http://127."),
+            self.plan.agent_proxy_url,
+        )
+        r = self.bottle.exec(
+            "printf '%s\n' \"$HTTPS_PROXY\" \"$HTTP_PROXY\""
+        )
+        self.assertEqual(0, r.returncode, msg=r.stderr)
+        proxies = [line.strip() for line in r.stdout.splitlines()]
+        self.assertEqual(
+            [self.plan.agent_proxy_url, self.plan.agent_proxy_url],
+            proxies,
+        )
+
+        r = self.bottle.exec(
+            "curl -fsS --max-time 20 https://example.com >/dev/null && echo OK"
+        )
+        self.assertEqual(0, r.returncode, msg=r.stderr + r.stdout)
+        self.assertIn("OK", r.stdout)
+
+    def test_direct_egress_bypass_without_proxy_fails(self):
+        r = self.bottle.exec(
+            "env -u HTTPS_PROXY -u HTTP_PROXY -u https_proxy -u http_proxy "
+            "curl -s --show-error --max-time 5 https://example.com 2>&1 || true"
+        )
+        self.assertTrue(
+            "refused" in r.stdout.lower()
+            or "timed out" in r.stdout.lower()
+            or "unreachable" in r.stdout.lower()
+            or "failed" in r.stdout.lower()
+            or "could not resolve" in r.stdout.lower()
+            or "connection reset" in r.stdout.lower(),
+            f"expected direct egress to fail; got: {r.stdout!r}",
+        )
+
+    def test_non_allowlisted_host_fails_through_proxy(self):
+        r = self.bottle.exec(
+            "curl -s --show-error --max-time 10 https://iana.org 2>&1 || true"
+        )
+        self.assertTrue(
+            "403" in r.stdout
+            or "502" in r.stdout
+            or "blocked" in r.stdout.lower()
+            or "not allowed" in r.stdout.lower()
+            or "forbidden" in r.stdout.lower()
+            or "failed" in r.stdout.lower(),
+            f"expected non-allowlisted proxy request to fail; got: {r.stdout!r}",
         )
 
     def test_prompt_file_lands_in_guest(self):
