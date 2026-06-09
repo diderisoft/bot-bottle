@@ -130,6 +130,7 @@ class TestRuntimeWorkspaceProvisioning(_FakeStateMixin, unittest.TestCase):
         bottle.cp_in.assert_called_once_with(str(self.tmp), "/home/node/workspace")
         metadata = bottle_state.read_metadata("demo-smol-work")
         self.assertIsNotNone(metadata)
+        assert metadata is not None
         self.assertEqual("smolmachines", metadata.backend)
 
 

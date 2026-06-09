@@ -82,6 +82,7 @@ class TestDockerPrepare(_FakeStateMixin, unittest.TestCase):
         require_docker.assert_called_once_with()
         metadata = bottle_state.read_metadata("demo-docker")
         self.assertIsNotNone(metadata)
+        assert metadata is not None
         self.assertEqual("docker", metadata.backend)
         self.assertEqual({"FORWARDED_ENV": "secret-value"}, plan.forwarded_env)
         self.assertEqual("literal-value", plan.agent_provision.guest_env["LITERAL_ENV"])
@@ -104,6 +105,7 @@ class TestSmolmachinesPrepare(_FakeStateMixin, unittest.TestCase):
         preflight.assert_called_once_with()
         metadata = bottle_state.read_metadata("demo-smol")
         self.assertIsNotNone(metadata)
+        assert metadata is not None
         self.assertEqual("smolmachines", metadata.backend)
         self.assertEqual("literal-value", plan.guest_env["LITERAL_ENV"])
         self.assertEqual("secret-value", plan.guest_env["FORWARDED_ENV"])
