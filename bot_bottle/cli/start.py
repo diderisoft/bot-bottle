@@ -72,13 +72,6 @@ def cmd_start(argv: list[str]) -> int:
             return 0
 
     backend_name: str | None = args.backend
-    if backend_name is None and "BOT_BOTTLE_BACKEND" not in os.environ:
-        backend_name = tui.filter_select(
-            list(known_backend_names()),
-            title="Select backend",
-        )
-        if backend_name is None:
-            return 0
 
     label, color = tui.name_color_modal(default_label=agent_name)
 

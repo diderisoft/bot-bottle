@@ -1,7 +1,7 @@
 """Unit: cmd_start selector dispatch (PRD 0051).
 
-Tests that cmd_start calls filter_select when name / backend are absent,
-skips them when both are explicit, and returns 0 on cancel.
+Tests that cmd_start calls filter_select only when the agent name is
+absent, skips it when the agent is explicit, and returns 0 on cancel.
 
 All actual launch work is stubbed so no container is created.
 """
@@ -45,7 +45,8 @@ class TestCmdStartSelector(unittest.TestCase):
         self._tui_patch = patch.object(tui_mod, "filter_select")
         self._tui_mock = self._tui_patch.start()
 
-        # Ensure BOT_BOTTLE_BACKEND is absent so the backend picker fires.
+        # Ensure BOT_BOTTLE_BACKEND is absent so omitted --backend
+        # flows through to the resolver default.
         self._env_patch = patch.dict(os.environ, {}, clear=False)
         self._env_patch.start()
         os.environ.pop("BOT_BOTTLE_BACKEND", None)
@@ -89,22 +90,16 @@ class TestCmdStartSelector(unittest.TestCase):
         self._launch_mock.assert_not_called()
 
     # ------------------------------------------------------------------
-    # Agent explicit, backend absent → backend picker fires
+    # Agent explicit, backend absent → no picker
     # ------------------------------------------------------------------
 
-    def test_backend_absent_shows_backend_picker(self):
-        self._tui_mock.return_value = "docker"
+    def test_backend_absent_uses_default_without_picker(self):
         rc = start_mod.cmd_start(["researcher"])
         self.assertEqual(0, rc)
-        self._tui_mock.assert_called_once()
-        call_kwargs = self._tui_mock.call_args
-        self.assertIn("backend", call_kwargs[1]["title"].lower())
-
-    def test_backend_picker_cancel_returns_0(self):
-        self._tui_mock.return_value = None
-        rc = start_mod.cmd_start(["researcher"])
-        self.assertEqual(0, rc)
-        self._launch_mock.assert_not_called()
+        self._tui_mock.assert_not_called()
+        self._launch_mock.assert_called_once()
+        _, kwargs = self._launch_mock.call_args
+        self.assertIsNone(kwargs["backend_name"])
 
     def test_bot_bottle_backend_env_skips_backend_picker(self):
         os.environ["BOT_BOTTLE_BACKEND"] = "docker"
@@ -116,18 +111,19 @@ class TestCmdStartSelector(unittest.TestCase):
         self._tui_mock.assert_not_called()
 
     # ------------------------------------------------------------------
-    # Both absent → agent picker then backend picker
+    # Both absent → only agent picker
     # ------------------------------------------------------------------
 
-    def test_both_absent_shows_both_pickers_in_order(self):
-        self._tui_mock.side_effect = ["researcher", "docker"]
+    def test_both_absent_shows_only_agent_picker(self):
+        self._tui_mock.return_value = "researcher"
         rc = start_mod.cmd_start([])
         self.assertEqual(0, rc)
-        self.assertEqual(2, self._tui_mock.call_count)
-        first_title = self._tui_mock.call_args_list[0][1]["title"].lower()
-        second_title = self._tui_mock.call_args_list[1][1]["title"].lower()
-        self.assertIn("agent", first_title)
-        self.assertIn("backend", second_title)
+        self._tui_mock.assert_called_once()
+        title = self._tui_mock.call_args[1]["title"].lower()
+        self.assertIn("agent", title)
+        self._launch_mock.assert_called_once()
+        _, kwargs = self._launch_mock.call_args
+        self.assertIsNone(kwargs["backend_name"])
 
     def test_both_absent_agent_cancel_skips_backend_picker(self):
         self._tui_mock.side_effect = [None]
