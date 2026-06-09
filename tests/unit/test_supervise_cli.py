@@ -14,7 +14,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from bot_bottle import supervise
-from bot_bottle.backend.docker.capability_apply import CapabilityApplyError
 from bot_bottle.cli import supervise as supervise_cli
 from bot_bottle.supervise import (
     Proposal,

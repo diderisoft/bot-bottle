@@ -36,7 +36,7 @@ def resolve_plan(
     resolved_env: ResolvedEnv,
     agent_provision_plan: AgentProvisionPlan,
     egress_plan: EgressPlan,
-    supervise_plan: SupervisePlan,
+    supervise_plan: SupervisePlan | None,
     git_gate_plan: GitGatePlan,
     stage_dir: Path,
 ) -> DockerBottlePlan:
@@ -59,5 +59,4 @@ def resolve_plan(
         agent_provision=agent_provision_plan,
         # workspace_plan=workspace_plan,
     )
-
 

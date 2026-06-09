@@ -8,9 +8,7 @@ integration smoke."""
 from __future__ import annotations
 
 import subprocess
-import tempfile
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
 from bot_bottle.backend.docker import util as docker_mod

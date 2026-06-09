@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-from pathlib import Path
 
 from ...agent_provider import get_provider
 from ...log import info, warn

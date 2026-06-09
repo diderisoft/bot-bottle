@@ -129,7 +129,6 @@ def approve(
 ) -> None:
     """Apply the proposal, write the waiting response, and audit it."""
     status = STATUS_MODIFIED if final_file is not None else STATUS_APPROVED
-    file_to_apply = final_file if final_file is not None else qp.proposal.proposed_file
 
     diff_before, diff_after = "", ""
     # if qp.proposal.tool == TOOL_CAPABILITY_BLOCK:

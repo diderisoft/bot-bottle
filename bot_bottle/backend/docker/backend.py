@@ -25,6 +25,11 @@ from pathlib import Path
 from typing import Generator, Sequence
 
 from ...supervise import SUPERVISE_HOSTNAME, SUPERVISE_PORT
+from ...agent_provider import AgentProvisionPlan
+from ...egress import EgressPlan
+from ...env import ResolvedEnv
+from ...git_gate import GitGatePlan
+from ...supervise import SupervisePlan
 from .. import ActiveAgent, BottleBackend, BottleSpec
 from . import cleanup as _cleanup
 from . import enumerate as _enumerate
@@ -53,11 +58,11 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
         spec: BottleSpec,
         *,
         slug: str,
-        resolved_env,
-        agent_provision_plan,
-        egress_plan,
-        git_gate_plan,
-        supervise_plan,
+        resolved_env: ResolvedEnv,
+        agent_provision_plan: AgentProvisionPlan,
+        egress_plan: EgressPlan,
+        git_gate_plan: GitGatePlan,
+        supervise_plan: SupervisePlan | None,
         stage_dir: Path,
     ) -> DockerBottlePlan:
         return _resolve_plan.resolve_plan(

@@ -71,11 +71,6 @@ def _make_bottle(
     return bottle
 
 
-def _exec_scripts(bottle: MagicMock) -> list[str]:
-    """All script strings passed to bottle.exec, in call order."""
-    return [c.args[0] for c in bottle.exec.call_args_list]
-
-
 def _exec_users(bottle: MagicMock) -> list[str]:  # type: ignore
     """user= kwarg from each bottle.exec call, in order."""
     return [c.kwargs.get("user", "node") for c in bottle.exec.call_args_list]

@@ -19,8 +19,6 @@ from ...egress import EgressPlan
 from ...supervise import SupervisePlan
 from ...git_gate import GitGatePlan
 
-from ...backend import BottleSpec
-from ...env import ResolvedEnv
 # from ...workspace import workspace_plan as resolve_workspace_plan
 from .bottle_plan import SmolmachinesBottlePlan
 from .util import smolmachines_bundle_subnet, smolmachines_preflight
@@ -53,7 +51,7 @@ def resolve_plan(
     resolved_env: ResolvedEnv,
     agent_provision_plan: AgentProvisionPlan,
     egress_plan: EgressPlan,
-    supervise_plan: SupervisePlan,
+    supervise_plan: SupervisePlan | None,
     git_gate_plan: GitGatePlan,
     stage_dir: Path,
 ) -> SmolmachinesBottlePlan:
