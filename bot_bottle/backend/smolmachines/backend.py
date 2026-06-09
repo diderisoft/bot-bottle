@@ -46,6 +46,12 @@ class SmolmachinesBottleBackend(
         runtime check happens at `prepare`."""
         return _smolvm.is_available()
 
+    def _preflight(self) -> None:
+        _resolve_plan.preflight()
+
+    def _build_guest_env(self, resolved_env: ResolvedEnv) -> dict[str, str]:
+        return _resolve_plan.build_guest_env(resolved_env)
+
     def _resolve_plan(
         self,
         spec: BottleSpec,

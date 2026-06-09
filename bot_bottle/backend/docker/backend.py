@@ -2,10 +2,10 @@
 
 This module is a thin façade. The real work lives in four siblings:
 
-  - prepare.py    — host-side resolution into a DockerBottlePlan
-  - launch.py     — bring-up + teardown context manager
-  - cleanup.py    — orphan enumeration + removal
-  - enumerate.py  — active-agent listing
+  - resolve_plan.py — Docker-specific resolution into a DockerBottlePlan
+  - launch.py       — bring-up + teardown context manager
+  - cleanup.py      — orphan enumeration + removal
+  - enumerate.py    — active-agent listing
 
 The base class's `prepare` template runs cross-backend host-side
 validation before calling `_resolve_plan` here.
@@ -52,6 +52,12 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
         broken daemon will surface its own error during prepare /
         launch."""
         return shutil.which("docker") is not None
+
+    def _preflight(self) -> None:
+        _resolve_plan.preflight()
+
+    def _build_guest_env(self, resolved_env: ResolvedEnv) -> dict[str, str]:
+        return _resolve_plan.build_guest_env(resolved_env)
 
     def _resolve_plan(
         self,

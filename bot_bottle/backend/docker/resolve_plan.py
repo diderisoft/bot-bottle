@@ -21,12 +21,11 @@ from ...egress import EgressPlan
 from ...supervise import SupervisePlan
 from ...git_gate import GitGatePlan
 
-def preflight():
+def preflight() -> None:
     docker_mod.require_docker()
 
-def build_guest_env(resolved_env: ResolvedEnv):
-    # resolved = resolve_env(spec.manifest, spec.agent_name)
-    # forwarded_env: dict[str, str] = dict(resolved.forwarded)
+
+def build_guest_env(resolved_env: ResolvedEnv) -> dict[str, str]:
     return dict(resolved_env.literals)
 
 
@@ -59,4 +58,3 @@ def resolve_plan(
         agent_provision=agent_provision_plan,
         # workspace_plan=workspace_plan,
     )
-

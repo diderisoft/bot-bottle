@@ -23,10 +23,11 @@ from ...git_gate import GitGatePlan
 from .bottle_plan import SmolmachinesBottlePlan
 from .util import smolmachines_bundle_subnet, smolmachines_preflight
 
-def preflight():
+def preflight() -> None:
     smolmachines_preflight()
 
-def build_guest_env(resolved_env: ResolvedEnv):
+
+def build_guest_env(resolved_env: ResolvedEnv) -> dict[str, str]:
     # Agent's env: resolve through resolve_env() so ?prompt entries
     # are prompted and ${HOST_VAR} entries are interpolated — matching
     # the Docker backend's contract. Forwarded (secret/interpolated)

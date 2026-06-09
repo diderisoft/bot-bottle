@@ -290,19 +290,19 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
 
         manifest = spec.manifest
         manifest_bottle = manifest.bottle_for(spec.agent_name)
-        manfiest_agent_provider = manifest_bottle.agent_provider
-        agent_provider = get_provider(manfiest_agent_provider.template)
+        manifest_agent_provider = manifest_bottle.agent_provider
+        agent_provider = get_provider(manifest_agent_provider.template)
         resolved_env = resolve_env(manifest, spec.agent_name)
 
         slug = mint_slug(spec)
-        write_launch_metadata(slug, spec, compose_project="", backend="smolmachines")
+        write_launch_metadata(slug, spec, compose_project="", backend=self.name)
 
         # Manifest may override the Dockerfile per-bottle; otherwise fall
         # back to the provider plugin's bundled Dockerfile (next to its
         # agent_provider.py module).
-        if manfiest_agent_provider.dockerfile:
+        if manifest_agent_provider.dockerfile:
             agent_dockerfile_path = resolve_manifest_dockerfile(
-                manfiest_agent_provider.dockerfile, spec,
+                manifest_agent_provider.dockerfile, spec,
             )
         else:
             agent_dockerfile_path = str(agent_provider.dockerfile)
@@ -310,14 +310,14 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         agent_dir, prompt_file = prepare_agent_state_dir(slug, spec)
 
         agent_provision_plan = build_agent_provision_plan(
-            template=manfiest_agent_provider.template,
+            template=manifest_agent_provider.template,
             dockerfile=agent_dockerfile_path,
             state_dir=agent_dir,
             instance_name=f"bot-bottle-{slug}",
             prompt_file=prompt_file,
             guest_env=self._build_guest_env(resolved_env),
-            forward_host_credentials=manfiest_agent_provider.forward_host_credentials,
-            auth_token=manfiest_agent_provider.auth_token,
+            forward_host_credentials=manifest_agent_provider.forward_host_credentials,
+            auth_token=manifest_agent_provider.auth_token,
             host_env=dict(os.environ),
             # trusted_project_path=workspace_plan.workdir,
             label=spec.label,
