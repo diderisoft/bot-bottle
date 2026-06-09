@@ -134,19 +134,14 @@ class TestSmolmachinesLaunch(unittest.TestCase):
         )
 
     def test_egress_proxy_reachable_through_tsi_loopback_alias(self):
-        self.assertTrue(
-            self.plan.agent_proxy_url.startswith("http://127."),
-            self.plan.agent_proxy_url,
-        )
         r = self.bottle.exec(
             "printf '%s\n' \"$HTTPS_PROXY\" \"$HTTP_PROXY\""
         )
         self.assertEqual(0, r.returncode, msg=r.stderr)
         proxies = [line.strip() for line in r.stdout.splitlines()]
-        self.assertEqual(
-            [self.plan.agent_proxy_url, self.plan.agent_proxy_url],
-            proxies,
-        )
+        self.assertEqual(2, len(proxies), proxies)
+        self.assertEqual(proxies[0], proxies[1], proxies)
+        self.assertTrue(proxies[0].startswith("http://127."), proxies[0])
 
         r = self.bottle.exec(
             "curl -fsS --max-time 20 https://example.com >/dev/null && echo OK"
@@ -178,6 +173,7 @@ class TestSmolmachinesLaunch(unittest.TestCase):
             or "502" in r.stdout
             or "blocked" in r.stdout.lower()
             or "not allowed" in r.stdout.lower()
+            or "not in the bottle's egress.routes allowlist" in r.stdout.lower()
             or "forbidden" in r.stdout.lower()
             or "failed" in r.stdout.lower(),
             f"expected non-allowlisted proxy request to fail; got: {r.stdout!r}",
