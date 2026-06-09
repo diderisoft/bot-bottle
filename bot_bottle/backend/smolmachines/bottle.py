@@ -20,7 +20,6 @@ from __future__ import annotations
 import subprocess
 import sys
 import time
-import shlex
 from typing import Mapping, cast
 
 from ...agent_provider import PromptMode, prompt_args

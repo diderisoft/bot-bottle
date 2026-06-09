@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import subprocess
-import shlex
 from typing import Callable
 
 from typing import cast
