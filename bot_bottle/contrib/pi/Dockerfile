@@ -5,7 +5,13 @@
 FROM node:22-slim
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends git ca-certificates curl \
+  && apt-get install -y --no-install-recommends \
+    git \
+    ca-certificates \
+    curl \
+    fd-find \
+    ripgrep \
+  && ln -s /usr/bin/fdfind /usr/local/bin/fd \
   && rm -rf /var/lib/apt/lists/*
 
 RUN apt-get update \
