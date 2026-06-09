@@ -25,7 +25,7 @@ backend exposes five methods:
       agents pane) to render a row.
 
 Selection is driven by `--backend` on `start` or
-BOT_BOTTLE_BACKEND (env var; default "docker"). Per PRD 0003 the
+BOT_BOTTLE_BACKEND (env var; default "smolmachines"). Per PRD 0003 the
 manifest does not carry a backend field; the host picks.
 """
 
@@ -550,11 +550,11 @@ def get_bottle_backend(
     `name` precedence:
       1. explicit arg (CLI `--backend=<name>` passes through here)
       2. BOT_BOTTLE_BACKEND env var
-      3. default `docker`
+      3. default `smolmachines`
 
     Dies with a pointer at the known backends if the chosen name
     isn't implemented."""
-    resolved = name or os.environ.get("BOT_BOTTLE_BACKEND") or "docker"
+    resolved = name or os.environ.get("BOT_BOTTLE_BACKEND") or "smolmachines"
     if resolved not in _BACKENDS:
         known = ", ".join(sorted(_BACKENDS))
         die(f"unknown backend {resolved!r}; known backends: {known}")

@@ -13,4 +13,6 @@ egress:
 
 Common Claude provider boundary. Drop this file into
 `~/.bot-bottle/bottles/claude.md`, then extend it from task-specific
-bottles.
+bottles. The default smolmachines backend keeps DNS resolution under
+the VM-layer egress policy; use `BOT_BOTTLE_BACKEND=docker` only for
+legacy Docker-backed runs.

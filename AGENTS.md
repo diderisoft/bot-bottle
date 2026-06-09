@@ -2,11 +2,15 @@
 
 ## What this is
 
-bot-bottle spins up an isolated container for running AI coding agents with a
-curated set of skills and env vars. The point is to run agents with broad
-permissions inside a sandbox, so a misbehaving agent cannot reach the host.
-A Python CLI (entry point `cli.py`, package `bot_bottle/`) orchestrates
-the container lifecycle and the copying of skills and env vars into it.
+bot-bottle spins up an isolated backend runtime for running AI coding agents
+with a curated set of skills and env vars. The point is to run agents with
+broad permissions inside a sandbox, so a misbehaving agent cannot reach the
+host. A Python CLI (entry point `cli.py`, package `bot_bottle/`) orchestrates
+the runtime lifecycle and the copying of skills and env vars into it.
+The default backend is smolmachines on macOS: agents run in a libkrun
+micro-VM, while the sidecar bundle still uses Docker. The legacy Docker
+backend remains available with `BOT_BOTTLE_BACKEND=docker` or
+`--backend=docker`.
 
 ## Goals
 
@@ -17,7 +21,7 @@ the container lifecycle and the copying of skills and env vars into it.
 ## Non-goals
 
 - Communicating between agents directly
-- Self hosted VMs (v1 uses local Docker containers, not VMs)
+- Removing the Docker backend
 - Advanced agent auditing (lean on git history for auditing)
 
 ## Repository layout

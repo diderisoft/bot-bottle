@@ -39,7 +39,7 @@ class TestStartBackendFlag(unittest.TestCase):
         self.assertEqual("smolmachines", args.backend)
         self.assertEqual("researcher", args.name)
 
-    def test_flag_default_none_means_env_or_docker(self):
+    def test_flag_default_none_means_env_or_default_backend(self):
         args = self._build_parser().parse_args(["researcher"])
         self.assertIsNone(args.backend)
 

@@ -32,10 +32,10 @@ class TestGetBottleBackend(unittest.TestCase):
             b = get_bottle_backend()
         self.assertEqual("smolmachines", b.name)
 
-    def test_default_docker(self):
+    def test_default_smolmachines(self):
         with patch.dict(os.environ, {}, clear=True):
             b = get_bottle_backend()
-        self.assertEqual("docker", b.name)
+        self.assertEqual("smolmachines", b.name)
 
     def test_unknown_dies(self):
         with patch.object(backend_mod, "die", side_effect=SystemExit("die")):

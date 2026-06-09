@@ -21,7 +21,9 @@ def smolmachines_preflight() -> None:
     die(
         "BOT_BOTTLE_BACKEND=smolmachines requires `smolvm` on "
         "PATH. Install with: "
-        "curl -sSL https://smolmachines.com/install.sh | sh"
+        "curl -sSL https://smolmachines.com/install.sh | sh. "
+        "To use the legacy Docker backend instead, set "
+        "BOT_BOTTLE_BACKEND=docker or pass --backend=docker."
     )
 
 

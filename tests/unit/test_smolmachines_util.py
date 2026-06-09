@@ -85,6 +85,7 @@ class TestPreflight(unittest.TestCase):
             msg = captured.getvalue()
             self.assertIn("smolvm", msg)
             self.assertIn("smolmachines.com/install.sh", msg)
+            self.assertIn("BOT_BOTTLE_BACKEND=docker", msg)
 
 
 if __name__ == "__main__":

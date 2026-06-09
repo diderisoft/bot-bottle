@@ -56,7 +56,7 @@ class TestSidecarBundleCompose(unittest.TestCase):
         stage_dir = Path(tempfile.mkdtemp(prefix="cb-bundle-smoke."))
         try:
             with patch.dict(os.environ, {"BOT_BOTTLE_SIDECAR_BUNDLE": "1"}):
-                backend = get_bottle_backend()
+                backend = get_bottle_backend("docker")
                 spec = BottleSpec(
                     manifest=_manifest(),
                     agent_name="demo",

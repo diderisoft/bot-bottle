@@ -40,7 +40,7 @@ from .bottle_cleanup_plan import DockerBottleCleanupPlan
 from .bottle_plan import DockerBottlePlan
 class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanupPlan"]):
     """Docker backend implementation. Selected by BOT_BOTTLE_BACKEND
-    (default)."""
+    when set to `docker`; retained as a legacy/example backend."""
 
     name = "docker"
 

@@ -20,14 +20,19 @@
 - **Manifest-scoped skills + secrets** — each bottle declares its skills, env, git identity, remotes, and egress routes; unknown keys die at load.
 - **Trust boundary at `$HOME`** — bottles (credentials, egress, remotes) live only under `~/.bot-bottle/bottles/`. Repos may ship agents but not bottles, so a cloned repo can't redirect an env var to an attacker host.
 - **Composable bottles (`extends:`)** — keep provider/runtime policy in one base bottle (e.g. `claude.md`) and overlay task bottles on top.
-- **Parallel, isolated bottles** — each bottle is its own per-agent Docker `--internal` network; bottles don't share state or talk to each other.
+- **Parallel, isolated bottles** — each bottle runs in its own backend-owned isolation boundary; bottles don't share state or talk to each other.
 - **Provider templates (Claude, Codex)** — `Dockerfile.claude` / `Dockerfile.codex`, or a bottle-supplied Dockerfile. Claude auth via long-lived OAuth token; Codex via opt-in host device-auth forwarding.
 - **gVisor auto-detect** — on Linux hosts where `runsc` is registered with Docker, every bottle launches under it for a userspace syscall barrier; no manifest config required.
-- **Smolmachines backend (macOS)** — opt-in `BOT_BOTTLE_BACKEND=smolmachines` runs the agent in a libkrun micro-VM with the sidecar bundle still in Docker.
+- **Smolmachines backend (macOS default)** — runs the agent in a libkrun micro-VM while the sidecar bundle stays in Docker. TSI and smolmachines DNS filtering close the raw DNS exfiltration gap that exists in the legacy Docker backend.
+- **Legacy Docker backend** — still available for examples, CI, and hosts without smolvm via `BOT_BOTTLE_BACKEND=docker` or `--backend=docker`.
 
 ## Architecture
 
-A bottle is two containers per agent: an `agent` container, and a `sidecars` container that bundles egress + git-gate + supervise behind a Python init supervisor. They share a per-agent Docker `--internal` network; the agent has no default route off-box.
+On the default smolmachines backend, a bottle is an agent micro-VM plus a Docker sidecar bundle for egress, git-gate, and supervise. The VM reaches the sidecars through a per-bottle loopback alias allowed by TSI; smolmachines handles DNS filtering below the guest OS.
+
+On the legacy Docker backend, the same logical bottle is two containers per agent: an `agent` container and a `sidecars` container. They share a per-agent Docker `--internal` network; the agent has no default route off-box.
+
+The Docker topology looks like this:
 
 ```
                             host  ( ./cli.py )
@@ -62,7 +67,9 @@ When the agent exits, `cli.py` tears down every sidecar and both networks; nothi
 
 ## Quickstart
 
-Requires Docker on the host and a long-lived Claude Code OAuth token (`claude setup-token`) exported as `BOT_BOTTLE_CLAUDE_OAUTH_TOKEN`.
+Requires Docker on the host for the sidecar bundle, smolvm on macOS for the default backend, and a long-lived Claude Code OAuth token (`claude setup-token`) exported as `BOT_BOTTLE_CLAUDE_OAUTH_TOKEN`.
+
+Use `BOT_BOTTLE_BACKEND=docker ./cli.py start <agent>` on hosts where smolvm is not installed.
 
 ```sh
 ./cli.py start <agent>   # builds the image on first run, drops you into claude

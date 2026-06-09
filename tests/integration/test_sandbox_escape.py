@@ -11,8 +11,9 @@ asserts each one is blocked:
   5. Secret exfil via README link pushed through git-gate
 
 The suite is backend-agnostic — it goes through `get_bottle_backend()`
-so a future smolmachines backend can be tested by setting
-`BOT_BOTTLE_BACKEND=smolmachines` without touching this file.
+so smolmachines can be tested by setting `BOT_BOTTLE_BACKEND=smolmachines`.
+When unset, this integration test pins Docker explicitly to preserve
+the Docker-backed CI path.
 
 PRD 0022 chunk 1 (this commit): fixture + setUpClass +
 tearDownClass + preflight tool check. Attack tests land in
@@ -146,7 +147,7 @@ class TestSandboxEscape(unittest.TestCase):
 
         cls._stage_dir = Path(tempfile.mkdtemp(prefix="sandbox-escape-stage."))
         try:
-            backend = get_bottle_backend()
+            backend = get_bottle_backend(backend_name)
             plan = backend.prepare(spec, stage_dir=cls._stage_dir)
             cls._identity = plan.slug
 

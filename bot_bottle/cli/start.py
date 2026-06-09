@@ -47,7 +47,7 @@ def cmd_start(argv: list[str]) -> int:
         default=None,
         help=(
             "backend to launch the bottle on (default: $BOT_BOTTLE_BACKEND "
-            "or 'docker'). Overrides the env var when set."
+            "or 'smolmachines'). Overrides the env var when set."
         ),
     )
     parser.add_argument(
@@ -114,7 +114,7 @@ def prepare_with_preflight(
     injected callable, prompt y/N via the injected callable.
 
     `backend_name` selects which backend prepares the plan
-    (`None` → `$BOT_BOTTLE_BACKEND` → `docker`). The CLI passes
+    (`None` → `$BOT_BOTTLE_BACKEND` → `smolmachines`). The CLI passes
     whatever `--backend` resolved to.
 
     Returns `(plan, identity)`. `plan` is None on dry-run or
