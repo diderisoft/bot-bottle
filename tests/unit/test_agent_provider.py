@@ -62,7 +62,7 @@ class TestAgentProviderRuntime(unittest.TestCase):
             config = Path(tmp, "codex-config.toml").read_text()
         self.assertIn('[projects."/home/node/workspace"]', config)
 
-    def test_codex_injects_name_and_color_into_prompt(self):
+    def test_codex_writes_tui_settings_without_mutating_prompt(self):
         with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
             prompt_file = Path(tmp) / "prompt.txt"
             prompt_file.write_text("Existing instructions.\n")
@@ -76,11 +76,12 @@ class TestAgentProviderRuntime(unittest.TestCase):
                 color="bright-cyan",
             )
             prompt = prompt_file.read_text()
+            config = Path(tmp, "codex-config.toml").read_text()
         self.assertTrue(plan.has_prompt)
-        self.assertIn("Bot-bottle agent display identity:", prompt)
-        self.assertIn("Name: review-api", prompt)
-        self.assertIn("Color: bright-cyan", prompt)
-        self.assertTrue(prompt.endswith("Existing instructions.\n"))
+        self.assertEqual("Existing instructions.\n", prompt)
+        self.assertIn("[tui]", config)
+        self.assertIn('status_line = ["model", "cwd"]', config)
+        self.assertIn('terminal_title = ["spinner", "project"]', config)
 
     def test_codex_forward_host_credentials_adds_auth_and_verify(self):
         with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
@@ -146,7 +147,7 @@ class TestAgentProviderRuntime(unittest.TestCase):
         self.assertIn("/home/node", config["projects"])
         self.assertIn("/home/node/workspace", config["projects"])
 
-    def test_claude_injects_name_and_color_into_prompt(self):
+    def test_claude_writes_statusline_and_theme_without_mutating_prompt(self):
         with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
             prompt_file = Path(tmp) / "prompt.txt"
             prompt_file.write_text("Existing instructions.\n")
@@ -160,11 +161,11 @@ class TestAgentProviderRuntime(unittest.TestCase):
                 color="green",
             )
             prompt = prompt_file.read_text()
+            settings = json.loads(Path(tmp, "claude-settings.json").read_text())
         self.assertTrue(plan.has_prompt)
-        self.assertIn("Bot-bottle agent display identity:", prompt)
-        self.assertIn("Name: research-ui", prompt)
-        self.assertIn("Color: green", prompt)
-        self.assertTrue(prompt.endswith("Existing instructions.\n"))
+        self.assertEqual("Existing instructions.\n", prompt)
+        self.assertEqual("~/.claude/statusline.sh", settings["statusLine"]["command"])
+        self.assertEqual("custom:bot-bottle-research-ui", settings["theme"])
 
     def test_codex_forward_host_credentials_populates_egress_routes(self):
         with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:

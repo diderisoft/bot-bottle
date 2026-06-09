@@ -18,8 +18,8 @@ from ...agent_provider import (
     CODEX_HOST_CREDENTIAL_HOSTS,
     AgentProvider,
     AgentProviderRuntime,
-    AgentProvisionCommand,
     AgentProvisionDir,
+    AgentProvisionCommand,
     AgentProvisionFile,
     AgentProvisionPlan,
 )
@@ -45,26 +45,6 @@ def _skills_dir(guest_home: str) -> str:
 
 def _prompt_path(guest_home: str) -> str:
     return f"{guest_home}/.bot-bottle-prompt.txt"
-
-
-def _display_identity_prompt(label: str, color: str) -> str:
-    lines: list[str] = []
-    if label:
-        lines.append(f"Name: {label}")
-    if color:
-        lines.append(f"Color: {color}")
-    if not lines:
-        return ""
-    return "Bot-bottle agent display identity:\n" + "\n".join(lines)
-
-
-def _prepend_display_identity(prompt_file: Path, label: str, color: str) -> bool:
-    identity = _display_identity_prompt(label, color)
-    original = prompt_file.read_text() if prompt_file.exists() else ""
-    if not identity:
-        return bool(original)
-    prompt_file.write_text(f"{identity}\n\n{original}" if original else f"{identity}\n")
-    return True
 
 
 _RUNTIME = AgentProviderRuntime(
@@ -98,7 +78,7 @@ class CodexAgentProvider(AgentProvider):
         label: str = "",
         color: str = "",
     ) -> AgentProvisionPlan:
-        del auth_token  # Claude-only knob
+        del auth_token, label, color  # Claude-only / title-only knobs
         resolved_guest_env = dict(guest_env or {})
         guest_home = self.guest_home
         trusted_path = trusted_project_path or guest_home
@@ -122,6 +102,11 @@ class CodexAgentProvider(AgentProvider):
         config_file.write_text(
             f'[projects."{toml_path}"]\n'
             'trust_level = "trusted"\n'
+            "\n"
+            "[tui]\n"
+            'status_line = ["model", "cwd"]\n'
+            'terminal_title = ["spinner", "project"]\n'
+            'theme = "dark-ansi"\n'
         )
         config_file.chmod(0o600)
         files.append(AgentProvisionFile(config_file, config_path))
@@ -164,7 +149,7 @@ class CodexAgentProvider(AgentProvider):
                 "guest, but Codex did not accept it"
             )))
 
-        has_prompt = _prepend_display_identity(prompt_file, label, color)
+        has_prompt = prompt_file.exists() and bool(prompt_file.read_text())
         return AgentProvisionPlan(
             template=_RUNTIME.template,
             command=_RUNTIME.command,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import shlex
 from typing import Callable
 
 from typing import cast
@@ -22,12 +23,14 @@ class DockerBottle(Bottle):
         *,
         agent_command: str = "claude",
         agent_prompt_mode: PromptMode = "append_file",
+        terminal_title: str = "",
     ):
         self.name = container
         self._teardown = teardown
         self.prompt_path = prompt_path_in_container
         self._agent_prompt_mode = agent_prompt_mode
         self.agent_command = agent_command
+        self.terminal_title = terminal_title
         self.agent_provider_template = (
             "codex" if agent_command == "codex" else "claude"
         )
@@ -47,9 +50,14 @@ class DockerBottle(Bottle):
         return cmd
 
     def exec_agent(self, argv: list[str], *, tty: bool = True) -> int:
-        return subprocess.run(
-            self.agent_argv(argv, tty=tty), check=False,
-        ).returncode
+        agent_argv = self.agent_argv(argv, tty=tty)
+        if self.terminal_title and tty:
+            shell_script = (
+                f"printf '\\033]0;%s\\007' {shlex.quote(self.terminal_title)}; "
+                f"exec {shlex.join(agent_argv)}"
+            )
+            return subprocess.run(["sh", "-lc", shell_script], check=False).returncode
+        return subprocess.run(agent_argv, check=False).returncode
 
     def exec(self, script: str, *, user: str = "node") -> ExecResult:
         # Pipe via stdin to `sh -s` so the caller never has to worry

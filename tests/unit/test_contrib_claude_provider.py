@@ -8,6 +8,8 @@ either side are expected to diverge the implementations."""
 
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -127,7 +129,7 @@ class TestClaudeProvisionPrompt(unittest.TestCase):
         self.assertIsNone(r)
         bottle.cp_in.assert_called_once()
 
-    def test_returns_path_when_provider_prompt_has_identity(self):
+    def test_returns_path_when_provider_prompt_exists(self):
         bottle = _make_bottle()
         provision = AgentProvisionPlan(
             template="claude", command="claude", prompt_mode="append_file",
@@ -260,6 +262,35 @@ class TestClaudeProvision(unittest.TestCase):
             ClaudeAgentProvider().provision(
                 _plan(agent_provision=provision), bottle,
             )
+
+
+class TestClaudeUiProvision(unittest.TestCase):
+    def test_writes_statusline_and_custom_theme_files(self):
+        with tempfile.TemporaryDirectory(prefix="bb-claude-ui.") as tmp:
+            state_dir = Path(tmp)
+            prompt_file = state_dir / "prompt.txt"
+            prompt_file.write_text("Existing instructions.\n")
+            plan = ClaudeAgentProvider().provision_plan(
+                dockerfile="",
+                state_dir=state_dir,
+                instance_name="bot-bottle-demo-abc12",
+                prompt_file=prompt_file,
+                label="research-ui",
+                color="bright-cyan",
+            )
+            settings = json.loads((state_dir / "claude-settings.json").read_text())
+            statusline = (state_dir / "claude-statusline.sh").read_text()
+            theme = json.loads((state_dir / "bot-bottle-research-ui.json").read_text())
+            prompt_text = prompt_file.read_text()
+        self.assertTrue(plan.has_prompt)
+        self.assertEqual("Existing instructions.\n", prompt_text)
+        self.assertEqual("command", settings["statusLine"]["type"])
+        self.assertEqual("~/.claude/statusline.sh", settings["statusLine"]["command"])
+        self.assertEqual("custom:bot-bottle-research-ui", settings["theme"])
+        self.assertIn("research-ui", statusline)
+        self.assertIn("\x1b[96m", statusline)
+        self.assertEqual("dark", theme["base"])
+        self.assertEqual("ansi:cyanBright", theme["overrides"]["claude"])
 
     def test_runs_verify_commands(self):
         provision = AgentProvisionPlan(

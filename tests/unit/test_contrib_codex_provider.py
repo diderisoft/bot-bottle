@@ -9,6 +9,7 @@ no claude equivalent."""
 from __future__ import annotations
 
 import unittest
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -130,7 +131,7 @@ class TestCodexProvisionPrompt(unittest.TestCase):
         self.assertIsNone(r)
         bottle.cp_in.assert_called_once()
 
-    def test_returns_path_when_provider_prompt_has_identity(self):
+    def test_returns_path_when_provider_prompt_exists(self):
         bottle = _make_bottle()
         provision = AgentProvisionPlan(
             template="codex", command="codex",
@@ -145,6 +146,28 @@ class TestCodexProvisionPrompt(unittest.TestCase):
             _plan(agent_prompt="", agent_provision=provision), bottle,
         )
         self.assertEqual("/home/node/.bot-bottle-prompt.txt", r)
+
+    def test_writes_tui_settings_into_codex_config(self):
+        with tempfile.TemporaryDirectory(prefix="bb-codex-ui.") as tmp:
+            state_dir = Path(tmp)
+            prompt_file = state_dir / "prompt.txt"
+            prompt_file.write_text("Existing instructions.\n")
+            plan = CodexAgentProvider().provision_plan(
+                dockerfile="",
+                state_dir=state_dir,
+                instance_name="bot-bottle-demo-abc12",
+                prompt_file=prompt_file,
+                label="research-ui",
+                color="bright-cyan",
+            )
+            config = (state_dir / "codex-config.toml").read_text()
+            prompt_text = prompt_file.read_text()
+        self.assertTrue(plan.has_prompt)
+        self.assertEqual("Existing instructions.\n", prompt_text)
+        self.assertIn("[tui]", config)
+        self.assertIn('status_line = ["model", "cwd"]', config)
+        self.assertIn('terminal_title = ["spinner", "project"]', config)
+        self.assertIn('theme = "dark-ansi"', config)
 
 
 class TestCodexProvisionSkills(unittest.TestCase):

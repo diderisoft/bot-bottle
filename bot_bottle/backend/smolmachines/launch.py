@@ -103,6 +103,7 @@ def launch(
             guest_env=plan.guest_env,
             agent_command=plan.agent_command,
             agent_prompt_mode=plan.agent_prompt_mode,
+            terminal_title=plan.spec.label or plan.spec.agent_name,
         )
         bottle.prompt_path = provision(plan, bottle)
 
