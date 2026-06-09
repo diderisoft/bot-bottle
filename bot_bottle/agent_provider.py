@@ -38,13 +38,14 @@ if TYPE_CHECKING:
 
 PROVIDER_CLAUDE = "claude"
 PROVIDER_CODEX = "codex"
-PROVIDER_TEMPLATES = frozenset({PROVIDER_CLAUDE, PROVIDER_CODEX})
+PROVIDER_PI = "pi"
+PROVIDER_TEMPLATES = frozenset({PROVIDER_CLAUDE, PROVIDER_CODEX, PROVIDER_PI})
 
 # Hosts that egress injects the host ChatGPT bearer on when Codex
 # forward_host_credentials is enabled. Pipelock must pass these through
 # (no TLS MITM) or its header DLP blocks the injected JWT.
 CODEX_HOST_CREDENTIAL_HOSTS = ("api.openai.com", "chatgpt.com")
-PromptMode = Literal["append_file", "read_prompt_file"]
+PromptMode = Literal["append_file", "read_prompt_file", "print_read_prompt_file"]
 
 
 @dataclass(frozen=True)
@@ -163,6 +164,7 @@ class AgentProvider(ABC):
         trusted_project_path: str = "",
         label: str = "",
         color: str = "",
+        provider_settings: dict[str, object] | None = None,
     ) -> AgentProvisionPlan:
         """Build the declarative AgentProvisionPlan for one launch.
         Backends call this during `prepare` and consume the result as
@@ -319,6 +321,9 @@ def get_provider(template: str) -> AgentProvider:
     if template == PROVIDER_CODEX:
         from .contrib.codex.agent_provider import CodexAgentProvider
         return CodexAgentProvider()
+    if template == PROVIDER_PI:
+        from .contrib.pi.agent_provider import PiAgentProvider
+        return PiAgentProvider()
     raise ValueError(f"unknown agent provider template: {template!r}")
 
 
@@ -340,6 +345,7 @@ def build_agent_provision_plan(
     trusted_project_path: str = "",
     label: str = "",
     color: str = "",
+    provider_settings: dict[str, object] | None = None,
 ) -> AgentProvisionPlan:
     """Back-compat shim — `prepare` callers stay the same; the work
     now lives on the provider plugin."""
@@ -355,6 +361,7 @@ def build_agent_provision_plan(
         trusted_project_path=trusted_project_path,
         label=label,
         color=color,
+        provider_settings=provider_settings,
     )
 
 
@@ -372,4 +379,6 @@ def prompt_args(
         if argv and "resume" in argv:
             return []
         return [f"Read and follow the instructions in {prompt_path}."]
+    if prompt_mode == "print_read_prompt_file":
+        return ["-p", f"Read and follow the instructions in {prompt_path}."]
     raise ValueError(f"unknown provider prompt mode: {prompt_mode}")

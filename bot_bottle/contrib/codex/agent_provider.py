@@ -77,8 +77,9 @@ class CodexAgentProvider(AgentProvider):
         trusted_project_path: str = "",
         label: str = "",
         color: str = "",
+        provider_settings: dict[str, object] | None = None,
     ) -> AgentProvisionPlan:
-        del auth_token, label, color  # Claude-only / title-only knobs
+        del auth_token, label, color, provider_settings
         resolved_guest_env = dict(guest_env or {})
         guest_home = self.guest_home
         trusted_path = trusted_project_path or guest_home

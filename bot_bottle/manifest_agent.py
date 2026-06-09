@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import cast
 
 from .agent_provider import PROVIDER_TEMPLATES
@@ -33,15 +33,23 @@ class ManifestAgentProvider:
     dockerfile: str = ""
     auth_token: str = ""
     forward_host_credentials: bool = False
+    settings: dict[str, object] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, bottle_name: str, raw: object) -> "ManifestAgentProvider":
         d = as_json_object(raw, f"bottle '{bottle_name}' agent_provider")
         for k in d:
-            if k not in {"template", "dockerfile", "auth_token", "forward_host_credentials"}:
+            if k not in {
+                "template",
+                "dockerfile",
+                "auth_token",
+                "forward_host_credentials",
+                "settings",
+            }:
                 raise ManifestError(
                     f"bottle '{bottle_name}' agent_provider has unknown key {k!r}; "
-                    f"allowed: template, dockerfile, auth_token, forward_host_credentials"
+                    "allowed: template, dockerfile, auth_token, "
+                    "forward_host_credentials, settings"
                 )
         template = d.get("template", "claude")
         if not isinstance(template, str) or not template:
@@ -89,11 +97,13 @@ class ManifestAgentProvider:
                 f"bottle '{bottle_name}' agent_provider.forward_host_credentials "
                 "is currently only supported for template 'codex'"
             )
+        settings = _parse_provider_settings(bottle_name, template, d.get("settings"))
         return cls(
             template=template,
             dockerfile=dockerfile,
             auth_token=auth_token,
             forward_host_credentials=forward_host_credentials,
+            settings=settings,
         )
 
 
@@ -180,3 +190,60 @@ class ManifestAgent:
                 git_user = ManifestGitUser.from_dict(name, gd["user"])
 
         return cls(bottle=bottle, skills=skills, prompt=prompt, git_user=git_user)
+
+
+def _parse_provider_settings(
+    bottle_name: str,
+    template: str,
+    raw: object,
+) -> dict[str, object]:
+    if raw is None:
+        return {}
+    if template != "pi":
+        raise ManifestError(
+            f"bottle '{bottle_name}' agent_provider.settings is only "
+            "supported for template 'pi'"
+        )
+    settings = as_json_object(raw, f"bottle '{bottle_name}' agent_provider.settings")
+    allowed = {
+        "base_url",
+        "api",
+        "api_key",
+        "models",
+        "supports_developer_role",
+        "supports_reasoning_effort",
+    }
+    for key in settings:
+        if key not in allowed:
+            raise ManifestError(
+                f"bottle '{bottle_name}' agent_provider.settings has unknown "
+                f"key {key!r}; allowed: {', '.join(sorted(allowed))}"
+            )
+    for key in ("base_url", "api", "api_key"):
+        value = settings.get(key)
+        if value is not None and (not isinstance(value, str) or not value):
+            raise ManifestError(
+                f"bottle '{bottle_name}' agent_provider.settings.{key} must "
+                "be a non-empty string"
+            )
+    models = settings.get("models")
+    if models is not None:
+        if not isinstance(models, list) or not models:
+            raise ManifestError(
+                f"bottle '{bottle_name}' agent_provider.settings.models must "
+                "be a non-empty array of strings"
+            )
+        for i, model in enumerate(models):
+            if not isinstance(model, str) or not model:
+                raise ManifestError(
+                    f"bottle '{bottle_name}' agent_provider.settings.models[{i}] "
+                    "must be a non-empty string"
+                )
+    for key in ("supports_developer_role", "supports_reasoning_effort"):
+        value = settings.get(key)
+        if value is not None and not isinstance(value, bool):
+            raise ManifestError(
+                f"bottle '{bottle_name}' agent_provider.settings.{key} must "
+                f"be a boolean (was {type(value).__name__})"
+            )
+    return dict(settings)

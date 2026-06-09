@@ -327,6 +327,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
             trusted_project_path=workspace.workdir,
             label=spec.label,
             color=spec.color,
+            provider_settings=manifest_agent_provider.settings,
         )
         agent_provision_plan = merge_provision_env_vars(agent_provision_plan)
         egress_plan = prepare_egress(manifest_bottle, slug, agent_provision_plan)

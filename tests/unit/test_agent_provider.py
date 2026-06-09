@@ -11,6 +11,7 @@ from pathlib import Path
 from bot_bottle.agent_provider import (
     CODEX_HOST_CREDENTIAL_HOSTS,
     build_agent_provision_plan,
+    prompt_args,
 )
 from bot_bottle.egress import CODEX_HOST_CREDENTIAL_TOKEN_REF
 
@@ -259,6 +260,73 @@ class TestAgentProviderRuntime(unittest.TestCase):
                 forward_host_credentials=False,
             )
         self.assertEqual({}, plan.provisioned_env)
+
+    def test_pi_plan_writes_default_ollama_models(self):
+        with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
+            plan = build_agent_provision_plan(
+                template="pi",
+                dockerfile="/tmp/Dockerfile.pi",
+                state_dir=Path(tmp),
+                instance_name="bot-bottle-test",
+                prompt_file=Path(tmp) / "prompt.txt",
+            )
+            models = json.loads(Path(tmp, "pi-models.json").read_text())
+        self.assertEqual("pi", plan.template)
+        self.assertEqual("pi", plan.command)
+        self.assertEqual("print_read_prompt_file", plan.prompt_mode)
+        self.assertEqual("/tmp/Dockerfile.pi", plan.dockerfile)
+        self.assertEqual("bot-bottle-pi:latest", plan.image)
+        self.assertEqual(
+            ("/home/node/.pi/agent",),
+            tuple(d.guest_path for d in plan.dirs),
+        )
+        self.assertEqual(
+            ("/home/node/.pi/agent/models.json",),
+            tuple(f.guest_path for f in plan.files),
+        )
+        provider = models["providers"]["ollama"]
+        self.assertEqual("http://ollama:11434/v1", provider["baseUrl"])
+        self.assertEqual("openai-completions", provider["api"])
+        self.assertEqual("ollama", provider["apiKey"])
+        self.assertEqual([{"id": "qwen2.5-coder:7b"}], provider["models"])
+        self.assertEqual("ollama", plan.egress_routes[0].host)
+        self.assertEqual("", plan.egress_routes[0].auth_scheme)
+        self.assertEqual("", plan.egress_routes[0].token_ref)
+
+    def test_pi_plan_uses_provider_settings(self):
+        with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
+            build_agent_provision_plan(
+                template="pi",
+                dockerfile="",
+                state_dir=Path(tmp),
+                instance_name="bot-bottle-test",
+                prompt_file=Path(tmp) / "prompt.txt",
+                provider_settings={
+                    "base_url": "http://host.docker.internal:11434/v1",
+                    "api": "openai-responses",
+                    "api_key": "local",
+                    "models": ["gpt-oss:20b", "qwen3:14b"],
+                    "supports_developer_role": True,
+                    "supports_reasoning_effort": True,
+                },
+            )
+            models = json.loads(Path(tmp, "pi-models.json").read_text())
+        provider = models["providers"]["ollama"]
+        self.assertEqual("http://host.docker.internal:11434/v1", provider["baseUrl"])
+        self.assertEqual("openai-responses", provider["api"])
+        self.assertEqual("local", provider["apiKey"])
+        self.assertEqual(
+            [{"id": "gpt-oss:20b"}, {"id": "qwen3:14b"}],
+            provider["models"],
+        )
+        self.assertTrue(provider["compat"]["supportsDeveloperRole"])
+        self.assertTrue(provider["compat"]["supportsReasoningEffort"])
+
+    def test_pi_prompt_mode_uses_print_flag(self):
+        self.assertEqual(
+            ["-p", "Read and follow the instructions in /home/node/.bot-bottle-prompt.txt."],
+            prompt_args("print_read_prompt_file", "/home/node/.bot-bottle-prompt.txt"),
+        )
 
 
 if __name__ == "__main__":

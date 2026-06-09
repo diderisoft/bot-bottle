@@ -111,6 +111,51 @@ class TestAgentProviderHostCredentials(unittest.TestCase):
                 "auth_token": "SOME_TOKEN",
             })
 
+    def test_settings_allowed_for_pi(self):
+        b = _provider_config_bottle({
+            "template": "pi",
+            "settings": {
+                "base_url": "http://ollama:11434/v1",
+                "api": "openai-completions",
+                "api_key": "ollama",
+                "models": ["qwen2.5-coder:7b"],
+                "supports_developer_role": False,
+                "supports_reasoning_effort": False,
+            },
+        })
+        self.assertEqual(
+            {
+                "base_url": "http://ollama:11434/v1",
+                "api": "openai-completions",
+                "api_key": "ollama",
+                "models": ["qwen2.5-coder:7b"],
+                "supports_developer_role": False,
+                "supports_reasoning_effort": False,
+            },
+            b.agent_provider.settings,
+        )
+
+    def test_settings_rejected_for_claude(self):
+        with self.assertRaises(ManifestError):
+            _provider_config_bottle({
+                "template": "claude",
+                "settings": {"models": ["qwen2.5-coder:7b"]},
+            })
+
+    def test_settings_models_must_be_non_empty_string_array(self):
+        with self.assertRaises(ManifestError):
+            _provider_config_bottle({
+                "template": "pi",
+                "settings": {"models": []},
+            })
+
+    def test_settings_boolean_flags_must_be_boolean(self):
+        with self.assertRaises(ManifestError):
+            _provider_config_bottle({
+                "template": "pi",
+                "settings": {"supports_developer_role": "no"},
+            })
+
 
 class TestMatches(unittest.TestCase):
     def test_optional(self):
