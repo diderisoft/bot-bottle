@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
 _DEFAULT_BASE_URL = "http://ollama:11434/v1"
 _DEFAULT_MODEL = "qwen2.5-coder:7b"
-_PROVIDER_NAME = "ollama"
+_DEFAULT_PROVIDER_NAME = "ollama"
 
 
 def _skills_dir(guest_home: str) -> str:
@@ -56,10 +56,16 @@ def _settings_value(
     return default if value is None else value
 
 
-def _pi_models_json(settings: dict[str, object]) -> tuple[dict[str, object], str]:
+def _pi_models_json(
+    settings: dict[str, object],
+) -> tuple[dict[str, object], str, str]:
+    provider_name = str(
+        _settings_value(settings, "provider", _DEFAULT_PROVIDER_NAME)
+    )
     base_url = str(_settings_value(settings, "base_url", _DEFAULT_BASE_URL))
     api = str(_settings_value(settings, "api", "openai-completions"))
-    api_key = str(_settings_value(settings, "api_key", "ollama"))
+    api_key = settings.get("api_key")
+    api_key_env = str(settings.get("api_key_env", ""))
     models_raw = _settings_value(settings, "models", [_DEFAULT_MODEL])
     models = [str(model) for model in models_raw]  # type: ignore[union-attr]
     supports_developer_role = bool(
@@ -68,21 +74,27 @@ def _pi_models_json(settings: dict[str, object]) -> tuple[dict[str, object], str
     supports_reasoning_effort = bool(
         _settings_value(settings, "supports_reasoning_effort", False)
     )
+    provider: dict[str, object] = {
+        "baseUrl": base_url,
+        "api": api,
+        "compat": {
+            "supportsDeveloperRole": supports_developer_role,
+            "supportsReasoningEffort": supports_reasoning_effort,
+        },
+        "models": [{"id": model} for model in models],
+    }
+    if api_key is not None:
+        provider["apiKey"] = str(api_key)
+    elif api_key_env:
+        provider["apiKey"] = "egress-placeholder"
+    elif provider_name == _DEFAULT_PROVIDER_NAME:
+        provider["apiKey"] = "ollama"
     payload: dict[str, object] = {
         "providers": {
-            _PROVIDER_NAME: {
-                "baseUrl": base_url,
-                "api": api,
-                "apiKey": api_key,
-                "compat": {
-                    "supportsDeveloperRole": supports_developer_role,
-                    "supportsReasoningEffort": supports_reasoning_effort,
-                },
-                "models": [{"id": model} for model in models],
-            }
+            provider_name: provider,
         }
     }
-    return payload, base_url
+    return payload, base_url, api_key_env
 
 
 def _route_host(base_url: str) -> str:
@@ -133,12 +145,13 @@ class PiAgentProvider(AgentProvider):
         guest_home = self.guest_home
         settings = dict(provider_settings or {})
 
-        models_payload, base_url = _pi_models_json(settings)
+        models_payload, base_url, api_key_env = _pi_models_json(settings)
         models_file = state_dir / "pi-models.json"
         models_file.write_text(json.dumps(models_payload, indent=2) + "\n")
         models_file.chmod(0o600)
 
         has_prompt = prompt_file.exists() and bool(prompt_file.read_text())
+        auth_scheme = "Bearer" if api_key_env else ""
         return AgentProvisionPlan(
             template=_RUNTIME.template,
             command=_RUNTIME.command,
@@ -152,7 +165,11 @@ class PiAgentProvider(AgentProvider):
             has_prompt=has_prompt,
             dirs=(AgentProvisionDir(f"{guest_home}/.pi/agent"),),
             files=(AgentProvisionFile(models_file, _models_path(guest_home)),),
-            egress_routes=(EgressRoute(host=_route_host(base_url)),),
+            egress_routes=(EgressRoute(
+                host=_route_host(base_url),
+                auth_scheme=auth_scheme,
+                token_ref=api_key_env,
+            ),),
         )
 
     def provision_skills(self, plan: "BottlePlan", bottle: "Bottle") -> None:

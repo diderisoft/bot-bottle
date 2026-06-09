@@ -115,6 +115,7 @@ class TestAgentProviderHostCredentials(unittest.TestCase):
         b = _provider_config_bottle({
             "template": "pi",
             "settings": {
+                "provider": "ollama",
                 "base_url": "http://ollama:11434/v1",
                 "api": "openai-completions",
                 "api_key": "ollama",
@@ -125,6 +126,7 @@ class TestAgentProviderHostCredentials(unittest.TestCase):
         })
         self.assertEqual(
             {
+                "provider": "ollama",
                 "base_url": "http://ollama:11434/v1",
                 "api": "openai-completions",
                 "api_key": "ollama",
@@ -134,6 +136,29 @@ class TestAgentProviderHostCredentials(unittest.TestCase):
             },
             b.agent_provider.settings,
         )
+
+    def test_settings_allowed_for_pi_api_key_env(self):
+        b = _provider_config_bottle({
+            "template": "pi",
+            "settings": {
+                "provider": "openrouter",
+                "base_url": "https://openrouter.ai/api/v1",
+                "api": "openai-completions",
+                "api_key_env": "OPENROUTER_API_KEY",
+                "models": ["google/gemma-4-26b-a4b-it:free"],
+            },
+        })
+        self.assertEqual("OPENROUTER_API_KEY", b.agent_provider.settings["api_key_env"])
+
+    def test_settings_rejects_api_key_and_api_key_env_together(self):
+        with self.assertRaises(ManifestError):
+            _provider_config_bottle({
+                "template": "pi",
+                "settings": {
+                    "api_key": "literal",
+                    "api_key_env": "OPENROUTER_API_KEY",
+                },
+            })
 
     def test_settings_rejected_for_claude(self):
         with self.assertRaises(ManifestError):

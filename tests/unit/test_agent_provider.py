@@ -322,6 +322,38 @@ class TestAgentProviderRuntime(unittest.TestCase):
         self.assertTrue(provider["compat"]["supportsDeveloperRole"])
         self.assertTrue(provider["compat"]["supportsReasoningEffort"])
 
+    def test_pi_plan_can_target_openrouter_with_egress_injected_api_key(self):
+        with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
+            plan = build_agent_provision_plan(
+                template="pi",
+                dockerfile="",
+                state_dir=Path(tmp),
+                instance_name="bot-bottle-test",
+                prompt_file=Path(tmp) / "prompt.txt",
+                provider_settings={
+                    "provider": "openrouter",
+                    "base_url": "https://openrouter.ai/api/v1",
+                    "api": "openai-completions",
+                    "api_key_env": "OPENROUTER_API_KEY",
+                    "models": ["google/gemma-4-26b-a4b-it:free"],
+                    "supports_reasoning_effort": True,
+                },
+            )
+            models = json.loads(Path(tmp, "pi-models.json").read_text())
+        provider = models["providers"]["openrouter"]
+        self.assertEqual("https://openrouter.ai/api/v1", provider["baseUrl"])
+        self.assertEqual("openai-completions", provider["api"])
+        self.assertEqual("egress-placeholder", provider["apiKey"])
+        self.assertEqual(
+            [{"id": "google/gemma-4-26b-a4b-it:free"}],
+            provider["models"],
+        )
+        self.assertEqual("openrouter.ai", plan.egress_routes[0].host)
+        self.assertEqual("Bearer", plan.egress_routes[0].auth_scheme)
+        self.assertEqual("OPENROUTER_API_KEY", plan.egress_routes[0].token_ref)
+        self.assertNotIn("OPENROUTER_API_KEY", plan.guest_env)
+        self.assertTrue(provider["compat"]["supportsReasoningEffort"])
+
     def test_pi_prompt_mode_uses_print_flag(self):
         self.assertEqual(
             ["-p", "Read and follow the instructions in /home/node/.bot-bottle-prompt.txt."],

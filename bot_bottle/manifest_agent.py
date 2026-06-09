@@ -206,9 +206,11 @@ def _parse_provider_settings(
         )
     settings = as_json_object(raw, f"bottle '{bottle_name}' agent_provider.settings")
     allowed = {
+        "provider",
         "base_url",
         "api",
         "api_key",
+        "api_key_env",
         "models",
         "supports_developer_role",
         "supports_reasoning_effort",
@@ -219,13 +221,18 @@ def _parse_provider_settings(
                 f"bottle '{bottle_name}' agent_provider.settings has unknown "
                 f"key {key!r}; allowed: {', '.join(sorted(allowed))}"
             )
-    for key in ("base_url", "api", "api_key"):
+    for key in ("provider", "base_url", "api", "api_key", "api_key_env"):
         value = settings.get(key)
         if value is not None and (not isinstance(value, str) or not value):
             raise ManifestError(
                 f"bottle '{bottle_name}' agent_provider.settings.{key} must "
                 "be a non-empty string"
             )
+    if settings.get("api_key") is not None and settings.get("api_key_env") is not None:
+        raise ManifestError(
+            f"bottle '{bottle_name}' agent_provider.settings may set either "
+            "api_key or api_key_env, not both"
+        )
     models = settings.get("models")
     if models is not None:
         if not isinstance(models, list) or not models:
