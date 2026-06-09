@@ -107,6 +107,7 @@ class AgentProvisionPlan:
     instance_name: str
     prompt_file: Path
     guest_env: dict[str, str]
+    has_prompt: bool = False
     env_vars: dict[str, str] = field(default_factory=dict)
     dirs: tuple[AgentProvisionDir, ...] = ()
     files: tuple[AgentProvisionFile, ...] = ()

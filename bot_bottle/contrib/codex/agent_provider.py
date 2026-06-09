@@ -46,6 +46,27 @@ def _skills_dir(guest_home: str) -> str:
 def _prompt_path(guest_home: str) -> str:
     return f"{guest_home}/.bot-bottle-prompt.txt"
 
+
+def _display_identity_prompt(label: str, color: str) -> str:
+    lines: list[str] = []
+    if label:
+        lines.append(f"Name: {label}")
+    if color:
+        lines.append(f"Color: {color}")
+    if not lines:
+        return ""
+    return "Bot-bottle agent display identity:\n" + "\n".join(lines)
+
+
+def _prepend_display_identity(prompt_file: Path, label: str, color: str) -> bool:
+    identity = _display_identity_prompt(label, color)
+    original = prompt_file.read_text() if prompt_file.exists() else ""
+    if not identity:
+        return bool(original)
+    prompt_file.write_text(f"{identity}\n\n{original}" if original else f"{identity}\n")
+    return True
+
+
 _RUNTIME = AgentProviderRuntime(
     template="codex",
     command="codex",
@@ -77,7 +98,7 @@ class CodexAgentProvider(AgentProvider):
         label: str = "",
         color: str = "",
     ) -> AgentProvisionPlan:
-        del auth_token, label, color  # Claude-only knobs
+        del auth_token  # Claude-only knob
         resolved_guest_env = dict(guest_env or {})
         guest_home = self.guest_home
         trusted_path = trusted_project_path or guest_home
@@ -143,6 +164,7 @@ class CodexAgentProvider(AgentProvider):
                 "guest, but Codex did not accept it"
             )))
 
+        has_prompt = _prepend_display_identity(prompt_file, label, color)
         return AgentProvisionPlan(
             template=_RUNTIME.template,
             command=_RUNTIME.command,
@@ -154,6 +176,7 @@ class CodexAgentProvider(AgentProvider):
             prompt_file=prompt_file,
             env_vars=env_vars,
             guest_env=resolved_guest_env,
+            has_prompt=has_prompt,
             dirs=tuple(dirs),
             files=tuple(files),
             pre_copy=tuple(pre_copy),
@@ -198,7 +221,7 @@ class CodexAgentProvider(AgentProvider):
             user="root",
         )
         agent = plan.spec.manifest.agents[plan.spec.agent_name]
-        return prompt_path if agent.prompt else None
+        return prompt_path if plan.agent_provision.has_prompt or agent.prompt else None
 
     def provision(self, plan: "BottlePlan", bottle: "Bottle") -> None:
         """Apply the codex-side declarative provision steps from

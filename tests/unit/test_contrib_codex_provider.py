@@ -130,6 +130,22 @@ class TestCodexProvisionPrompt(unittest.TestCase):
         self.assertIsNone(r)
         bottle.cp_in.assert_called_once()
 
+    def test_returns_path_when_provider_prompt_has_identity(self):
+        bottle = _make_bottle()
+        provision = AgentProvisionPlan(
+            template="codex", command="codex",
+            prompt_mode="read_prompt_file",
+            image="", dockerfile="", guest_home="/home/node",
+            instance_name="bot-bottle-demo-abc12",
+            prompt_file=Path("/tmp/prompt.txt"),
+            guest_env={},
+            has_prompt=True,
+        )
+        r = CodexAgentProvider().provision_prompt(
+            _plan(agent_prompt="", agent_provision=provision), bottle,
+        )
+        self.assertEqual("/home/node/.bot-bottle-prompt.txt", r)
+
 
 class TestCodexProvisionSkills(unittest.TestCase):
     def test_noop_when_agent_has_no_skills(self):

@@ -127,6 +127,21 @@ class TestClaudeProvisionPrompt(unittest.TestCase):
         self.assertIsNone(r)
         bottle.cp_in.assert_called_once()
 
+    def test_returns_path_when_provider_prompt_has_identity(self):
+        bottle = _make_bottle()
+        provision = AgentProvisionPlan(
+            template="claude", command="claude", prompt_mode="append_file",
+            image="", dockerfile="", guest_home="/home/node",
+            instance_name="bot-bottle-demo-abc12",
+            prompt_file=Path("/tmp/prompt.txt"),
+            guest_env={},
+            has_prompt=True,
+        )
+        r = ClaudeAgentProvider().provision_prompt(
+            _plan(agent_prompt="", agent_provision=provision), bottle,
+        )
+        self.assertEqual("/home/node/.bot-bottle-prompt.txt", r)
+
     def test_chowns_to_node_after_copy(self):
         bottle = _make_bottle()
         ClaudeAgentProvider().provision_prompt(_plan(), bottle)
