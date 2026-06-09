@@ -69,12 +69,6 @@ class YamlSubsetError(ValueError):
     egress sidecar's addon) handle it as a normal exception."""
 
 
-def die(msg: str) -> None:
-    """Module-local helper so the parser body reads cleanly. Just
-    raises YamlSubsetError — the `bot-bottle: error: ` prefix
-    is added by the boundary `die` in `bot_bottle.log`."""
-    raise YamlSubsetError(msg)
-
 
 # --- Tokenizer / line preprocessing ----------------------------------------
 
@@ -119,7 +113,7 @@ def _tokenize(text: str) -> list[_Line]:
         # editors render them differently and the spec says spaces.
         leading = len(raw) - len(raw.lstrip(" \t"))
         if "\t" in raw[:leading]:
-            die(f"yaml-subset: tab character in indent on line {n}")
+            raise YamlSubsetError(f"yaml-subset: tab character in indent on line {n}")
         stripped = raw.strip()
         if not stripped:
             continue
@@ -169,14 +163,14 @@ def _parse_scalar(s: str, lineno: int) -> object:
         s.startswith("'") and s.endswith("'")
     ):
         if len(s) < 2:
-            die(f"yaml-subset: unterminated quoted string on line {lineno}")
+            raise YamlSubsetError(f"yaml-subset: unterminated quoted string on line {lineno}")
         body = s[1:-1]
         if s.startswith('"'):
             # JSON-style escapes for double quotes.
             try:
                 return body.encode("utf-8").decode("unicode_escape")
             except UnicodeDecodeError as e:
-                die(f"yaml-subset: bad escape on line {lineno}: {e}")
+                raise YamlSubsetError(f"yaml-subset: bad escape on line {lineno}: {e}")
         else:
             # Single quotes: only '' → ' (standard YAML); no other escapes.
             return body.replace("''", "'")
@@ -186,7 +180,7 @@ def _parse_scalar(s: str, lineno: int) -> object:
     if s in _RESERVED_BOOL_LIKE:
         if s in ("true", "false"):
             return s == "true"
-        die(
+        raise YamlSubsetError(
             f"yaml-subset: bare {s!r} on line {lineno} is ambiguous "
             f"(use literal `true` / `false`, or quote it as a string)"
         )
@@ -203,22 +197,22 @@ def _parse_scalar(s: str, lineno: int) -> object:
 
     # Look-alikes that we reject to keep the user in control.
     if _DATE_RX.match(s):
-        die(
+        raise YamlSubsetError(
             f"yaml-subset: bare {s!r} on line {lineno} looks like a "
             f"date — quote it as a string or use an explicit int"
         )
     if _OCTAL_RX.match(s):
-        die(
+        raise YamlSubsetError(
             f"yaml-subset: bare {s!r} on line {lineno} looks like an "
             f"octal/0-prefixed integer — quote it as a string"
         )
     if _HEX_RX.match(s):
-        die(
+        raise YamlSubsetError(
             f"yaml-subset: bare {s!r} on line {lineno} looks like a "
             f"hex integer — quote it as a string"
         )
     if _FLOAT_RX.match(s):
-        die(
+        raise YamlSubsetError(
             f"yaml-subset: floats not supported (line {lineno}, "
             f"value {s!r}); use an int or quote as a string"
         )
@@ -241,7 +235,7 @@ def _parse_inline(s: str, lineno: int) -> object:
     s = s.strip()
     if s.startswith("["):
         if not s.endswith("]"):
-            die(f"yaml-subset: unterminated `[` on line {lineno}")
+            raise YamlSubsetError(f"yaml-subset: unterminated `[` on line {lineno}")
         body = s[1:-1].strip()
         if not body:
             return []
@@ -252,21 +246,21 @@ def _parse_inline(s: str, lineno: int) -> object:
         return items
     if s.startswith("{"):
         if not s.endswith("}"):
-            die(f"yaml-subset: unterminated `{{` on line {lineno}")
+            raise YamlSubsetError(f"yaml-subset: unterminated `{{` on line {lineno}")
         body = s[1:-1].strip()
         if not body:
             return {}
         out: dict[str, object] = {}
         for raw in _split_flow(body, lineno, "dict"):
             if ":" not in raw:
-                die(
+                raise YamlSubsetError(
                     f"yaml-subset: inline dict entry on line {lineno} "
                     f"missing `:` ({raw!r})"
                 )
             k, _, v = raw.partition(":")
             k = k.strip()
             if not _BARE_RX.match(k):
-                die(
+                raise YamlSubsetError(
                     f"yaml-subset: inline dict key on line {lineno} "
                     f"must be a bare identifier ({k!r})"
                 )
@@ -296,7 +290,7 @@ def _split_flow(body: str, lineno: int, kind: str) -> list[str]:
             elif ch in "]}":
                 depth_b -= 1
             if depth_b > 0:
-                die(
+                raise YamlSubsetError(
                     f"yaml-subset: nested flow {kind} on line "
                     f"{lineno} (only one level of flow allowed)"
                 )
@@ -330,7 +324,7 @@ def _split_key_value(content: str, lineno: int) -> tuple[str, str]:
             # ambiguous with URLs etc.).
             if i + 1 >= len(content) or content[i + 1] in (" ", "\t"):
                 return content[:i].strip(), content[i + 1:].lstrip()
-    die(f"yaml-subset: line {lineno} missing `: ` separator: {content!r}")
+    raise YamlSubsetError(f"yaml-subset: line {lineno} missing `: ` separator: {content!r}")
     return "", ""  # unreachable, but needed for type checker
 
 
@@ -341,15 +335,15 @@ def _parse_block(
     to live at `base_indent`. Returns (value, new_idx) where
     `new_idx` is the index of the first unconsumed line."""
     if idx >= len(lines):
-        die("yaml-subset: unexpected end of document")
+        raise YamlSubsetError("yaml-subset: unexpected end of document")
     first = lines[idx]
     if first.indent < base_indent:
-        die(
+        raise YamlSubsetError(
             f"yaml-subset: line {first.lineno} indented less than "
             f"expected (got {first.indent}, expected >= {base_indent})"
         )
     if first.indent > base_indent:
-        die(
+        raise YamlSubsetError(
             f"yaml-subset: line {first.lineno} indented more than "
             f"expected (got {first.indent}, expected {base_indent})"
         )
@@ -366,18 +360,18 @@ def _parse_block_mapping(
     while idx < len(lines) and lines[idx].indent == base_indent:
         line = lines[idx]
         if line.content.startswith("- "):
-            die(
+            raise YamlSubsetError(
                 f"yaml-subset: line {line.lineno} unexpected list "
                 f"item at mapping indent (got `-`, expected `key:`)"
             )
         key, value_text = _split_key_value(line.content, line.lineno)
         if not _BARE_RX.match(key):
-            die(
+            raise YamlSubsetError(
                 f"yaml-subset: line {line.lineno} key {key!r} is not "
                 f"a bare identifier"
             )
         if key in out:
-            die(
+            raise YamlSubsetError(
                 f"yaml-subset: line {line.lineno} duplicate key {key!r}"
             )
         if value_text:
@@ -417,7 +411,7 @@ def _parse_block_list(
             content_col = base_indent + 2
             first_key, first_value_text = _split_key_value(rest, line.lineno)
             if not _BARE_RX.match(first_key):
-                die(
+                raise YamlSubsetError(
                     f"yaml-subset: line {line.lineno} key {first_key!r} "
                     f"is not a bare identifier"
                 )
@@ -440,12 +434,12 @@ def _parse_block_list(
                     break  # next list item, not a sibling key
                 k, v_text = _split_key_value(ln.content, ln.lineno)
                 if not _BARE_RX.match(k):
-                    die(
+                    raise YamlSubsetError(
                         f"yaml-subset: line {ln.lineno} key {k!r} is "
                         f"not a bare identifier"
                     )
                 if k in item:
-                    die(f"yaml-subset: line {ln.lineno} duplicate key {k!r}")
+                    raise YamlSubsetError(f"yaml-subset: line {ln.lineno} duplicate key {k!r}")
                 if v_text:
                     item[k] = _parse_inline(v_text, ln.lineno)
                     idx += 1
@@ -501,7 +495,7 @@ def parse_yaml_subset(text: str) -> dict[str, object]:
     for n, raw in enumerate(text.splitlines(), start=1):
         s = raw.strip()
         if s.startswith("|") or s.startswith(">") or s.startswith("- |") or s.startswith("- >"):
-            die(
+            raise YamlSubsetError(
                 f"yaml-subset: line {n} uses a multi-line block "
                 f"scalar (`|` / `>`) — not supported. Use a quoted "
                 f"single-line string instead."
@@ -511,12 +505,12 @@ def parse_yaml_subset(text: str) -> dict[str, object]:
             # not when it's inside a quoted string. Cheap check: any
             # bare `&foo:` / `*foo` at the start of a value position.
             if re.search(r"(^|\s)[&*][A-Za-z0-9_]+", s):
-                die(
+                raise YamlSubsetError(
                     f"yaml-subset: line {n} uses anchors / aliases "
                     f"(`&` / `*`) — not supported."
                 )
         if "!!" in s and not (s.count("'") % 2 or s.count('"') % 2):
-            die(
+            raise YamlSubsetError(
                 f"yaml-subset: line {n} uses a YAML tag (`!!`) — not "
                 f"supported."
             )
@@ -526,18 +520,18 @@ def parse_yaml_subset(text: str) -> dict[str, object]:
         return {}
     base_indent = lines[0].indent
     if base_indent != 0:
-        die(
+        raise YamlSubsetError(
             f"yaml-subset: top-level content must start in column 0 "
             f"(got column {base_indent} on line {lines[0].lineno})"
         )
     value, consumed = _parse_block(lines, 0, 0)
     if consumed < len(lines):
-        die(
+        raise YamlSubsetError(
             f"yaml-subset: trailing content starting on line "
             f"{lines[consumed].lineno}"
         )
     if not isinstance(value, dict):
-        die("yaml-subset: top-level value must be a mapping")
+        raise YamlSubsetError("yaml-subset: top-level value must be a mapping")
     return cast(dict[str, object], value)
 
 
@@ -576,7 +570,7 @@ def parse_frontmatter(text: str) -> tuple[dict[str, object], str]:
             fm_end_lineno = line_idx
             break
     if body_start < 0:
-        die("frontmatter: opening `---` has no matching closing `---`")
+        raise YamlSubsetError("frontmatter: opening `---` has no matching closing `---`")
 
     fm_text = text[line_starts[1]:line_starts[fm_end_lineno]] if fm_end_lineno > 1 else ""
     fm = parse_yaml_subset(fm_text)
