@@ -273,7 +273,7 @@ class TestAgentProviderRuntime(unittest.TestCase):
             models = json.loads(Path(tmp, "pi-models.json").read_text())
         self.assertEqual("pi", plan.template)
         self.assertEqual("pi", plan.command)
-        self.assertEqual("print_read_prompt_file", plan.prompt_mode)
+        self.assertEqual("append_system_prompt", plan.prompt_mode)
         self.assertEqual("/tmp/Dockerfile.pi", plan.dockerfile)
         self.assertEqual("bot-bottle-pi:latest", plan.image)
         self.assertEqual(
@@ -354,10 +354,10 @@ class TestAgentProviderRuntime(unittest.TestCase):
         self.assertNotIn("OPENROUTER_API_KEY", plan.guest_env)
         self.assertTrue(provider["compat"]["supportsReasoningEffort"])
 
-    def test_pi_prompt_mode_uses_print_flag(self):
+    def test_pi_prompt_mode_appends_system_prompt_interactively(self):
         self.assertEqual(
-            ["-p", "Read and follow the instructions in /home/node/.bot-bottle-prompt.txt."],
-            prompt_args("print_read_prompt_file", "/home/node/.bot-bottle-prompt.txt"),
+            ["--append-system-prompt", "/home/node/.bot-bottle-prompt.txt"],
+            prompt_args("append_system_prompt", "/home/node/.bot-bottle-prompt.txt"),
         )
 
 

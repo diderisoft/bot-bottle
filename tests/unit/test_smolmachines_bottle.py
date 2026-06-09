@@ -28,6 +28,15 @@ def _bottle(prompt_path: str | None = None, **env: str) -> SmolmachinesBottle:
     )
 
 
+def _pi_bottle(prompt_path: str | None = None) -> SmolmachinesBottle:
+    return SmolmachinesBottle(
+        "bot-bottle-dev-abc",
+        prompt_path=prompt_path,
+        agent_command="pi",
+        agent_prompt_mode="append_system_prompt",
+    )
+
+
 def _unwrap(argv: list[str]) -> list[str]:
     """Strip the pty_resize wrapper from the front of a TTY-mode
     argv, return the inner smolvm argv. Mirrors what the kernel
@@ -121,6 +130,16 @@ class TestClaudeArgvWrapped(unittest.TestCase):
             ["runuser", "-u", "node", "--", "env"],
             argv[agent_idx - 7:agent_idx - 2],
         )
+
+    def test_pi_provider_appends_system_prompt_without_print_mode(self):
+        argv = _unwrap(
+            _pi_bottle("/home/node/.bot-bottle-prompt.txt").agent_argv([])
+        )
+        self.assertEqual(
+            ["pi", "--append-system-prompt", "/home/node/.bot-bottle-prompt.txt"],
+            argv[argv.index("pi"):],
+        )
+        self.assertNotIn("-p", argv)
 
 
 class TestClaudeArgvNoTTY(unittest.TestCase):

@@ -31,6 +31,16 @@ def _codex_bottle(prompt_path: str | None = None) -> DockerBottle:
     )
 
 
+def _pi_bottle(prompt_path: str | None = None) -> DockerBottle:
+    return DockerBottle(
+        container="bot-bottle-dev-abc",
+        teardown=lambda: None,
+        prompt_path_in_container=prompt_path,
+        agent_command="pi",
+        agent_prompt_mode="append_system_prompt",
+    )
+
+
 class TestClaudeArgv(unittest.TestCase):
     def test_minimal_argv_no_prompt(self):
         argv = _bottle().agent_argv([])
@@ -116,6 +126,15 @@ class TestClaudeArgv(unittest.TestCase):
              "--dangerously-bypass-approvals-and-sandbox", "resume", "--last"],
             argv,
         )
+
+    def test_pi_provider_appends_system_prompt_without_print_mode(self):
+        argv = _pi_bottle("/home/node/.bot-bottle-prompt.txt").agent_argv([])
+        self.assertEqual(
+            ["docker", "exec", "-it", "bot-bottle-dev-abc", "pi",
+             "--append-system-prompt", "/home/node/.bot-bottle-prompt.txt"],
+            argv,
+        )
+        self.assertNotIn("-p", argv)
 
 
 if __name__ == "__main__":

@@ -45,7 +45,12 @@ PROVIDER_TEMPLATES = frozenset({PROVIDER_CLAUDE, PROVIDER_CODEX, PROVIDER_PI})
 # forward_host_credentials is enabled. Pipelock must pass these through
 # (no TLS MITM) or its header DLP blocks the injected JWT.
 CODEX_HOST_CREDENTIAL_HOSTS = ("api.openai.com", "chatgpt.com")
-PromptMode = Literal["append_file", "read_prompt_file", "print_read_prompt_file"]
+PromptMode = Literal[
+    "append_file",
+    "read_prompt_file",
+    "print_read_prompt_file",
+    "append_system_prompt",
+]
 
 
 @dataclass(frozen=True)
@@ -381,4 +386,6 @@ def prompt_args(
         return [f"Read and follow the instructions in {prompt_path}."]
     if prompt_mode == "print_read_prompt_file":
         return ["-p", f"Read and follow the instructions in {prompt_path}."]
+    if prompt_mode == "append_system_prompt":
+        return ["--append-system-prompt", prompt_path]
     raise ValueError(f"unknown provider prompt mode: {prompt_mode}")
