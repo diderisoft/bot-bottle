@@ -165,9 +165,9 @@ class TestCodexProvisionPrompt(unittest.TestCase):
         self.assertTrue(plan.has_prompt)
         self.assertEqual("Existing instructions.\n", prompt_text)
         self.assertIn("[tui]", config)
-        self.assertIn('status_line = ["model", "cwd"]', config)
+        self.assertIn('status_line = ["model-with-reasoning"]', config)
         self.assertIn('terminal_title = ["spinner", "project"]', config)
-        self.assertIn('theme = "dark-ansi"', config)
+        self.assertIn('theme = "ansi"', config)
 
 
 class TestCodexProvisionSkills(unittest.TestCase):

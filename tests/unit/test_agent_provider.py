@@ -80,7 +80,7 @@ class TestAgentProviderRuntime(unittest.TestCase):
         self.assertTrue(plan.has_prompt)
         self.assertEqual("Existing instructions.\n", prompt)
         self.assertIn("[tui]", config)
-        self.assertIn('status_line = ["model", "cwd"]', config)
+        self.assertIn('status_line = ["model-with-reasoning"]', config)
         self.assertIn('terminal_title = ["spinner", "project"]', config)
 
     def test_codex_forward_host_credentials_adds_auth_and_verify(self):

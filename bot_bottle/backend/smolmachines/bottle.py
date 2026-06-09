@@ -25,6 +25,7 @@ from typing import Mapping, cast
 
 from ...agent_provider import PromptMode, prompt_args
 from .. import Bottle, ExecResult
+from ..terminal import exec_shell_script
 from . import pty_resize as _pty_resize
 from . import smolvm as _smolvm
 
@@ -70,6 +71,7 @@ class SmolmachinesBottle(Bottle):
         agent_command: str = "claude",
         agent_prompt_mode: PromptMode = "append_file",
         terminal_title: str = "",
+        terminal_color: str = "",
     ) -> None:
         self.name = machine_name
         # In-VM path to the agent's prompt file. None when the
@@ -84,6 +86,7 @@ class SmolmachinesBottle(Bottle):
         self._agent_prompt_mode = agent_prompt_mode
         self.agent_command = agent_command
         self.terminal_title = terminal_title
+        self.terminal_color = terminal_color
         self.agent_provider_template = (
             "codex" if agent_command == "codex" else "claude"
         )
@@ -132,13 +135,10 @@ class SmolmachinesBottle(Bottle):
         avoid login-shell wiring. HOME / USER come from `smolvm
         -e` instead, which sets them on the process env."""
         agent_argv = self.agent_argv(argv, tty=tty)
-        if self.terminal_title and tty:
-            shell_script = (
-                f"printf '\\033]0;%s\\007' {shlex.quote(self.terminal_title)}; "
-                f"exec {shlex.join(agent_argv)}"
-            )
-            return subprocess.run(["sh", "-lc", shell_script], check=False).returncode
-        return subprocess.run(agent_argv, check=False).returncode
+        script = exec_shell_script(agent_argv, self.terminal_title, self.terminal_color) if tty else None
+        if script is None:
+            return subprocess.run(agent_argv, check=False).returncode
+        return subprocess.run(["sh", "-lc", script], check=False).returncode
 
     # smolvm/libkrun can SIGKILL an otherwise-normal exec during
     # early-VM provisioning. Retry once after a short settle so

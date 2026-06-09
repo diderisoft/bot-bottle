@@ -104,9 +104,9 @@ class CodexAgentProvider(AgentProvider):
             'trust_level = "trusted"\n'
             "\n"
             "[tui]\n"
-            'status_line = ["model", "cwd"]\n'
+            'status_line = ["model-with-reasoning"]\n'
             'terminal_title = ["spinner", "project"]\n'
-            'theme = "dark-ansi"\n'
+            'theme = "ansi"\n'
         )
         config_file.chmod(0o600)
         files.append(AgentProvisionFile(config_file, config_path))
