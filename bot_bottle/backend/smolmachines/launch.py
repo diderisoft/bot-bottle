@@ -103,6 +103,7 @@ def launch(
             guest_env=plan.guest_env,
             agent_command=plan.agent_command,
             agent_prompt_mode=plan.agent_prompt_mode,
+            agent_provider_template=plan.agent_provider_template,
             terminal_title=plan.spec.label or plan.spec.agent_name,
             terminal_color=plan.spec.color,
         )

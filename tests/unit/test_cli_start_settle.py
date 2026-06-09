@@ -80,5 +80,28 @@ class TestSettleState(_FakeHomeMixin, unittest.TestCase):
         start_mod.settle_state("")  # should not raise
 
 
+class TestAttachAgent(unittest.TestCase):
+    def test_passes_provider_startup_args(self):
+        class Bottle:
+            argv: list[str] = []
+
+            def exec_agent(self, argv: list[str], *, tty: bool = True) -> int:
+                self.argv = list(argv)
+                return 0
+
+        bottle = Bottle()
+        exit_code = start_mod.attach_agent(
+            bottle,  # type: ignore[arg-type]
+            agent_provider_template="pi",
+            startup_args=("--models", "openrouter/google/gemma"),
+        )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(
+            ["--models", "openrouter/google/gemma"],
+            bottle.argv,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

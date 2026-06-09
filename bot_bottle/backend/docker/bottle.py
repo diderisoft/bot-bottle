@@ -23,6 +23,7 @@ class DockerBottle(Bottle):
         *,
         agent_command: str = "claude",
         agent_prompt_mode: PromptMode = "append_file",
+        agent_provider_template: str = "claude",
         terminal_title: str = "",
         terminal_color: str = "",
     ):
@@ -33,9 +34,7 @@ class DockerBottle(Bottle):
         self.agent_command = agent_command
         self.terminal_title = terminal_title
         self.terminal_color = terminal_color
-        self.agent_provider_template = (
-            "codex" if agent_command == "codex" else "claude"
-        )
+        self.agent_provider_template = agent_provider_template
         self._closed = False
 
     def agent_argv(

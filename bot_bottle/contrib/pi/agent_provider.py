@@ -58,7 +58,7 @@ def _settings_value(
 
 def _pi_models_json(
     settings: dict[str, object],
-) -> tuple[dict[str, object], str, str]:
+) -> tuple[dict[str, object], str, str, list[str], str]:
     provider_name = str(
         _settings_value(settings, "provider", _DEFAULT_PROVIDER_NAME)
     )
@@ -94,7 +94,7 @@ def _pi_models_json(
             provider_name: provider,
         }
     }
-    return payload, base_url, api_key_env
+    return payload, base_url, api_key_env, models, provider_name
 
 
 def _route_host(base_url: str) -> str:
@@ -145,7 +145,9 @@ class PiAgentProvider(AgentProvider):
         guest_home = self.guest_home
         settings = dict(provider_settings or {})
 
-        models_payload, base_url, api_key_env = _pi_models_json(settings)
+        models_payload, base_url, api_key_env, models, provider_name = (
+            _pi_models_json(settings)
+        )
         models_file = state_dir / "pi-models.json"
         models_file.write_text(json.dumps(models_payload, indent=2) + "\n")
         models_file.chmod(0o600)
@@ -163,6 +165,10 @@ class PiAgentProvider(AgentProvider):
             prompt_file=prompt_file,
             guest_env=resolved_guest_env,
             has_prompt=has_prompt,
+            startup_args=(
+                "--models",
+                ",".join(f"{provider_name}/{model}" for model in models),
+            ),
             dirs=(AgentProvisionDir(f"{guest_home}/.pi/agent"),),
             files=(AgentProvisionFile(models_file, _models_path(guest_home)),),
             egress_routes=(EgressRoute(

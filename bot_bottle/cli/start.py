@@ -133,6 +133,7 @@ def prepare_with_preflight(
 def attach_agent(
     bottle: Bottle, *, remote_control: bool = False, resume: bool = False,
     agent_provider_template: str = "claude",
+    startup_args: tuple[str, ...] = (),
 ) -> int:
     """Run the selected provider CLI inside `bottle` as an
     interactive session. Blocks until the session ends; returns the
@@ -151,6 +152,7 @@ def attach_agent(
     agent_args = list(runtime.bypass_args)
     if remote_control:
         agent_args.extend(runtime.remote_control_args)
+    agent_args.extend(startup_args)
     if resume:
         agent_args.extend(runtime.resume_args)
     return bottle.exec_agent(agent_args, tty=True)
@@ -235,6 +237,7 @@ def _launch_bottle(
                 bottle,
                 remote_control=remote_control,
                 agent_provider_template=agent_provider_template,
+                startup_args=plan.agent_provision.startup_args,
             )
             info(
                 f"session ended (exit {exit_code}); "

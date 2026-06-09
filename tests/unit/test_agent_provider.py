@@ -284,6 +284,7 @@ class TestAgentProviderRuntime(unittest.TestCase):
             ("/home/node/.pi/agent/models.json",),
             tuple(f.guest_path for f in plan.files),
         )
+        self.assertEqual(("--models", "ollama/qwen2.5-coder:7b"), plan.startup_args)
         provider = models["providers"]["ollama"]
         self.assertEqual("http://ollama:11434/v1", provider["baseUrl"])
         self.assertEqual("openai-completions", provider["api"])
@@ -347,6 +348,10 @@ class TestAgentProviderRuntime(unittest.TestCase):
         self.assertEqual(
             [{"id": "google/gemma-4-26b-a4b-it:free"}],
             provider["models"],
+        )
+        self.assertEqual(
+            ("--models", "openrouter/google/gemma-4-26b-a4b-it:free"),
+            plan.startup_args,
         )
         self.assertEqual("openrouter.ai", plan.egress_routes[0].host)
         self.assertEqual("Bearer", plan.egress_routes[0].auth_scheme)
