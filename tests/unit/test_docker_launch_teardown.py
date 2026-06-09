@@ -22,7 +22,6 @@ from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
 from bot_bottle.egress import EgressPlan
 from bot_bottle.git_gate import GitGatePlan
 from bot_bottle.manifest import Manifest
-# from bot_bottle.workspace import workspace_plan
 
 
 def _manifest() -> Manifest:

@@ -35,7 +35,6 @@ from bot_bottle.egress import EgressPlan, EgressRoute
 from bot_bottle.git_gate import GitGatePlan, GitGateUpstream
 from bot_bottle.manifest import ManifestGitEntry, Manifest
 from bot_bottle.supervise import SupervisePlan
-# from bot_bottle.workspace import workspace_plan
 
 
 class _Provider(AgentProvider):
@@ -337,9 +336,7 @@ class TestSmolmachinesBottleExec(unittest.TestCase):
 
 
 class TestProvisionGit(unittest.TestCase):
-    """provision_git dispatches two independent passes (cwd .git
-    copy + gitconfig insteadOf write); each no-ops on its own
-    when its condition doesn't hold."""
+    """provision_git writes gitconfig insteadOf rules when configured."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory(prefix="cb-prov-git.")  # pylint: disable=consider-using-with
@@ -353,14 +350,6 @@ class TestProvisionGit(unittest.TestCase):
         _PROVIDER.provision_git(bottle, _plan(stage_dir=self.stage))
         bottle.cp_in.assert_not_called()
         bottle.exec.assert_not_called()
-
-    # def test_copies_cwd_git_when_copy_cwd_and_git_present(self):
-    #     # DISABLED — workspace planning is currently commented out.
-    #     pass
-
-    # def test_skips_cwd_when_copy_cwd_false(self):
-    #     # DISABLED — workspace planning is currently commented out.
-    #     pass
 
     def test_writes_gitconfig_with_ip_port_form_for_smolmachines(self):
         # Smolmachines's TSI-allowlisted guest dials git-gate via
@@ -479,11 +468,6 @@ class TestProvisionGitUser(unittest.TestCase):
         self.assertEqual(1, len(calls))
         self.assertIn("user.email", calls[0][0])
         self.assertIn("bot@example.com", calls[0][0])
-
-
-# class TestProvisionWorkspace(unittest.TestCase):
-#     # DISABLED — workspace planning / provision_workspace are commented out.
-#     pass
 
 
 if __name__ == "__main__":

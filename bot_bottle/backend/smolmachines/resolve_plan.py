@@ -18,8 +18,6 @@ from ...agent_provider import AgentProvisionPlan
 from ...egress import EgressPlan
 from ...supervise import SupervisePlan
 from ...git_gate import GitGatePlan
-
-# from ...workspace import workspace_plan as resolve_workspace_plan
 from .bottle_plan import SmolmachinesBottlePlan
 from .util import smolmachines_bundle_subnet, smolmachines_preflight
 
@@ -79,5 +77,4 @@ def resolve_plan(
         egress_plan=egress_plan,
         supervise_plan=supervise_plan,
         agent_provision=agent_provision_plan,
-        # workspace_plan=workspace_plan,
     )

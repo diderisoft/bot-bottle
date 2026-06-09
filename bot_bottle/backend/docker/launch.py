@@ -4,8 +4,8 @@ PRD 0018 chunk 3: each instance is one `docker compose` project.
 
 The flow is:
 
-  1. Build the agent's base + derived image (compose builds the
-     sidecar images via the `build:` directive on first up).
+  1. Build the agent image from the provider Dockerfile (compose
+     builds the sidecar images via the `build:` directive on first up).
   2. Mint the per-bottle egress CA (chunk 2 writes it under
      state/<slug>/egress/).
   3. Populate the inner plans with launch-time fields so the
@@ -15,8 +15,8 @@ The flow is:
   7. `docker compose up -d` (token + OAuth values flow into the
      compose subprocess env so `environment: [NAME]` bare-name
      entries inherit without rendering values into the file).
-  8. Provision (CA install, prompt copy, skills, git, supervise
-     config) — unchanged, uses `docker exec`.
+  8. Provision (CA install, prompt copy, skills, workspace, git,
+     supervise config) — unchanged, uses `docker exec` / `docker cp`.
   9. Yield a DockerBottle handle. `exec_agent` runs claude via
      `docker exec -it` exactly like the pre-compose world.
 

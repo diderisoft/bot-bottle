@@ -56,5 +56,4 @@ def resolve_plan(
         supervise_plan=supervise_plan,
         use_runsc=use_runsc,
         agent_provision=agent_provision_plan,
-        # workspace_plan=workspace_plan,
     )

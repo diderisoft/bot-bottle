@@ -20,7 +20,6 @@ from bot_bottle.backend.smolmachines.bottle_plan import SmolmachinesBottlePlan
 from bot_bottle.egress import EgressPlan, EgressRoute
 from bot_bottle.git_gate import GitGatePlan, GitGateUpstream
 from bot_bottle.manifest import Manifest
-# from bot_bottle.workspace import workspace_plan
 
 
 def _manifest() -> Manifest:

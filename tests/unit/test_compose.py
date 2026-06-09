@@ -33,7 +33,6 @@ from bot_bottle.egress import (
 from bot_bottle.git_gate import GitGatePlan, GitGateUpstream
 from bot_bottle.manifest import Manifest
 from bot_bottle.supervise import SupervisePlan
-# from bot_bottle.workspace import workspace_plan
 
 
 SLUG = "demo-abc12"

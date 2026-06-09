@@ -6,9 +6,7 @@ the `AgentProvider` plugin under `bot_bottle/contrib/`. CA and git
 provisioning also moved to the AgentProvider ABC (with Debian/node
 defaults); user plugins override them for non-standard images.
 
-The module left in this subpackage handles the remaining backend-
-specific step:
-
-  - workspace.py — copy the operator workspace into the guest
-    (currently commented out — workspace planning is disabled)
+No modules remain in this subpackage. Workspace copying now runs
+through `BottleBackend.provision_workspace` against the running
+bottle for every backend.
 """

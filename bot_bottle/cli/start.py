@@ -39,7 +39,7 @@ from . import tui
 def cmd_start(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog=f"{PROG} start", add_help=True)
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--cwd", action="store_true", help="copy host cwd into a derived image")
+    parser.add_argument("--cwd", action="store_true", help="copy host cwd into the running bottle")
     parser.add_argument("--remote-control", action="store_true")
     parser.add_argument(
         "--backend",

@@ -22,7 +22,6 @@ from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
 from bot_bottle.egress import EgressPlan
 from bot_bottle.git_gate import GitGatePlan
 from bot_bottle.manifest import Manifest
-# from bot_bottle.workspace import workspace_plan
 
 
 class _Provider(AgentProvider):
@@ -123,10 +122,6 @@ class TestProvisionGitUser(unittest.TestCase):
         bottle = _make_bottle()
         _PROVIDER.provision_git(bottle, _plan(stage_dir=self.stage))
         self.assertEqual([], _git_config_exec_calls(bottle))
-
-    # def test_copies_cwd_git_to_workspace_plan_path(self):
-    #     # DISABLED — workspace planning is currently commented out.
-    #     pass
 
     def test_sets_name_and_email(self):
         plan = _plan(

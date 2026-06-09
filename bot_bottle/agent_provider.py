@@ -226,24 +226,10 @@ class AgentProvider(ABC):
     def provision_git(self, bottle: "Bottle", plan: "BottlePlan") -> None:
         """Configure git inside the agent container.
 
-        Default: Debian/node — copies .git when --cwd is set, writes the
-        git-gate insteadOf gitconfig, sets user.name/email as node.
-        Override for images that run as a different user or use a
-        non-standard home directory."""
+        Default: Debian/node — writes the git-gate insteadOf gitconfig
+        and sets user.name/email as node. Workspace copy runs through
+        BottleBackend.provision_workspace against the running bottle."""
         from .log import info
-        # FIXME: re-enable workspace planning
-        # workspace = plan.workspace_plan
-        # if workspace.enabled and workspace.copy_git and workspace.has_host_git_dir:
-        #     guest_workspace_git = f"{workspace.guest_path}/.git"
-        #     host_git = str(workspace.host_path / ".git")
-        #     info(f"copying {host_git} -> {bottle.name}:{guest_workspace_git}")
-        #     bottle.exec(f"mkdir -p {shlex.quote(workspace.guest_path)}", user="root")
-        #     bottle.cp_in(host_git, guest_workspace_git)
-        #     bottle.exec(
-        #         f"chown -R {shlex.quote(workspace.owner)} "
-        #         f"{shlex.quote(guest_workspace_git)}",
-        #         user="root",
-        #     )
 
         manifest_bottle = plan.spec.manifest.bottle_for(plan.spec.agent_name)
         if manifest_bottle.git:

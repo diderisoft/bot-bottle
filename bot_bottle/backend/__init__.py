@@ -32,6 +32,7 @@ manifest does not carry a backend field; the host picks.
 from __future__ import annotations
 
 import os
+import shlex
 import sys
 from abc import ABC, abstractmethod
 from contextlib import AbstractContextManager
@@ -47,7 +48,7 @@ from ..manifest import ManifestGitEntry, Manifest
 from ..supervise import SupervisePlan
 from ..util import expand_tilde
 from ..env import resolve_env, ResolvedEnv
-# from ..workspace import WorkspacePlan
+from ..workspace import WorkspacePlan, workspace_plan
 from .print_util import print_multi, visible_agent_env_names
 from .util import host_skill_dir
 
@@ -101,7 +102,10 @@ class BottlePlan(ABC):
     egress_plan: EgressPlan
     supervise_plan: SupervisePlan | None
     agent_provision: AgentProvisionPlan
-    # workspace_plan: WorkspacePlan
+
+    @property
+    def workspace_plan(self) -> WorkspacePlan:
+        return workspace_plan(self.spec, guest_home=self.guest_home)
 
     def print(self, *, remote_control: bool) -> None:
         """Render the y/N preflight summary to stderr."""
@@ -293,6 +297,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         manifest_agent_provider = manifest_bottle.agent_provider
         agent_provider = get_provider(manifest_agent_provider.template)
         resolved_env = resolve_env(manifest, spec.agent_name)
+        workspace = workspace_plan(spec, guest_home=agent_provider.guest_home)
 
         slug = mint_slug(spec)
         write_launch_metadata(slug, spec, compose_project="", backend=self.name)
@@ -319,7 +324,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
             forward_host_credentials=manifest_agent_provider.forward_host_credentials,
             auth_token=manifest_agent_provider.auth_token,
             host_env=dict(os.environ),
-            # trusted_project_path=workspace_plan.workdir,
+            trusted_project_path=workspace.workdir,
             label=spec.label,
             color=spec.color,
         )
@@ -448,7 +453,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         prompt_path = provider.provision_prompt(plan, bottle)
         provider.provision(plan, bottle)
         provider.provision_skills(plan, bottle)
-        # self.provision_workspace(plan, bottle)
+        self.provision_workspace(plan, bottle)
         provider.provision_git(bottle, plan)
         provider.provision_supervise_mcp(
             plan, bottle, self.supervise_mcp_url(plan),
@@ -456,9 +461,30 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         return prompt_path
 
     def provision_workspace(self, plan: PlanT, bottle: "Bottle") -> None:
-        """Copy the operator workspace into the running bottle when
-        the backend cannot bake it into the agent image. Default is
-        no-op for backends like Docker that handle this before launch."""
+        """Copy the operator workspace into the running bottle.
+
+        This is the only supported workspace-provisioning path: Docker
+        does not build a derived image containing the current
+        workspace."""
+        workspace = plan.workspace_plan
+        if not (workspace.enabled and workspace.copy_contents):
+            return
+
+        guest_parent = workspace.guest_path.rsplit("/", 1)[0] or "/"
+        guest_path = shlex.quote(workspace.guest_path)
+        guest_parent = shlex.quote(guest_parent)
+        owner = shlex.quote(workspace.owner)
+        mode = shlex.quote(workspace.mode)
+        info(f"copying {workspace.host_path} -> {bottle.name}:{workspace.guest_path}")
+        bottle.exec(
+            f"rm -rf {guest_path} && mkdir -p {guest_parent}",
+            user="root",
+        )
+        bottle.cp_in(str(workspace.host_path), workspace.guest_path)
+        bottle.exec(
+            f"chown -R {owner} {guest_path} && chmod {mode} {guest_path}",
+            user="root",
+        )
 
     def supervise_mcp_url(self, plan: PlanT) -> str:
         """Return the agent-side URL of the per-bottle supervise

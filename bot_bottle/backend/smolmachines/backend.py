@@ -27,7 +27,6 @@ from . import smolvm as _smolvm
 from .bottle import SmolmachinesBottle
 from .bottle_cleanup_plan import SmolmachinesBottleCleanupPlan
 from .bottle_plan import SmolmachinesBottlePlan
-# from .provision import workspace as _workspace
 
 
 class SmolmachinesBottleBackend(
@@ -81,11 +80,6 @@ class SmolmachinesBottleBackend(
     ) -> Generator[SmolmachinesBottle, None, None]:
         with _launch.launch(plan, provision=self.provision) as bottle:
             yield bottle
-
-    # def provision_workspace(
-    #     self, plan: SmolmachinesBottlePlan, bottle: Bottle
-    # ) -> None:
-    #     _workspace.provision_workspace(plan, bottle)
 
     def supervise_mcp_url(self, plan: SmolmachinesBottlePlan) -> str:
         """The smolmachines guest reaches the supervise sidecar via a
