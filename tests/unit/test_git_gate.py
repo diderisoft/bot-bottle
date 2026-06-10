@@ -98,6 +98,9 @@ class TestEntrypointRender(unittest.TestCase):
         # Smart HTTP receive-pack uses the same bare repos and hooks
         # as git-daemon, so repos must opt in to HTTP pushes too.
         self.assertIn("http.receivepack true", script)
+        # The gate must advertise push-option support so clients can
+        # pass forge-specific options through to the pre-receive hook.
+        self.assertIn("receive.advertisePushOptions true", script)
         # The access-hook is what makes fetch a mirror operation
         # against the upstream (PRD 0008 v1.1).
         self.assertIn("--access-hook=/etc/git-gate/access-hook", script)
@@ -153,7 +156,8 @@ class TestHookRender(unittest.TestCase):
         hook = git_gate_render_hook()
         # Phase 1: gitleaks. Phase 2: forward to origin.
         self.assertIn("gitleaks git", hook)
-        self.assertIn("git push origin", hook)
+        self.assertIn("git push", hook)
+        self.assertIn("origin \"$refspec\"", hook)
         # KnownHostKey absence is fail-closed.
         self.assertIn("refusing to push", hook)
         # Stdin is buffered to a tempfile so both phases can re-read.
@@ -176,6 +180,17 @@ class TestHookRender(unittest.TestCase):
         hook = git_gate_render_hook()
         self.assertIn("BatchMode=yes", hook)
         self.assertIn("ConnectTimeout=", hook)
+
+    def test_forward_preserves_push_options(self):
+        # Git exposes push options to pre-receive hooks as
+        # GIT_PUSH_OPTION_COUNT + indexed GIT_PUSH_OPTION_N variables.
+        # Forward them as first-class argv entries so spaces and shell
+        # metacharacters inside option values remain data.
+        hook = git_gate_render_hook()
+        self.assertIn("push_option_count=${GIT_PUSH_OPTION_COUNT:-0}", hook)
+        self.assertIn('opt=$(printenv "GIT_PUSH_OPTION_$i" || :)', hook)
+        self.assertIn('set -- "$@" --push-option="$opt"', hook)
+        self.assertIn('git push "$@" origin "$refspec"', hook)
 
 
 class TestAccessHookRender(unittest.TestCase):

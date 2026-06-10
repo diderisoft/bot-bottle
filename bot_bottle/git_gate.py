@@ -204,6 +204,7 @@ def git_gate_render_entrypoint(upstreams: tuple[GitGateUpstream, ...]) -> str:
         "  git -C \"$repo\" config git-gate.identityFile \"$keyfile\"",
         "  git -C \"$repo\" config git-gate.knownHosts \"$hostsfile\"",
         "  git -C \"$repo\" config receive.denyCurrentBranch ignore",
+        "  git -C \"$repo\" config receive.advertisePushOptions true",
         "  git -C \"$repo\" config http.receivepack true",
         "  install -m 755 /etc/git-gate/pre-receive \"$repo/hooks/pre-receive\"",
         "}",
@@ -280,6 +281,21 @@ if [ ! -f "$hostsfile" ]; then
 fi
 ssh_cmd="ssh -i $keyfile -o UserKnownHostsFile=$hostsfile -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10"
 
+push_option_count=${GIT_PUSH_OPTION_COUNT:-0}
+case "$push_option_count" in
+  ''|*[!0-9]*)
+    echo "git-gate: invalid GIT_PUSH_OPTION_COUNT=$push_option_count" >&2
+    exit 1
+    ;;
+esac
+set --
+i=0
+while [ "$i" -lt "$push_option_count" ]; do
+  opt=$(printenv "GIT_PUSH_OPTION_$i" || :)
+  set -- "$@" --push-option="$opt"
+  i=$((i + 1))
+done
+
 while IFS=' ' read -r old new ref; do
   [ -z "$ref" ] && continue
   if [ "$new" = "$zero" ]; then
@@ -288,7 +304,7 @@ while IFS=' ' read -r old new ref; do
     refspec="$new:$ref"
   fi
   echo "git-gate: forwarding $ref to origin" >&2
-  if ! GIT_SSH_COMMAND="$ssh_cmd" git push origin "$refspec" 1>&2; then
+  if ! GIT_SSH_COMMAND="$ssh_cmd" git push "$@" origin "$refspec" 1>&2; then
     echo "git-gate: upstream push failed for $ref" >&2
     exit 1
   fi
