@@ -6,7 +6,7 @@
 
 [![test](https://gitea.dideric.is/didericis/bot-bottle/actions/workflows/test.yml/badge.svg?branch=main)](https://gitea.dideric.is/didericis/bot-bottle/actions?workflow=test.yml)
 [![pylint](https://img.shields.io/badge/pylint-9.94%2F10-brightgreen)](https://github.com/PyCQA/pylint)
-[![pyright](https://img.shields.io/badge/pyright-0%20errors-brightgreen)](https://github.com/microsoft/pyright)
+[![pyright](https://img.shields.io/badge/pyright-4%20errors-brightgreen)](https://github.com/microsoft/pyright)
 
 **Problem:** Developer wants to run a coding agent without supervision, but they don't want a prompt injected or misbehaving agent wrecking their environment or exfiltrating sensitive data.
 
