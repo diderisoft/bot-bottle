@@ -26,6 +26,7 @@ class DockerBottle(Bottle):
         agent_provider_template: str = "claude",
         terminal_title: str = "",
         terminal_color: str = "",
+        agent_workdir: str = "/home/node",
     ):
         self.name = container
         self._teardown = teardown
@@ -35,6 +36,7 @@ class DockerBottle(Bottle):
         self.terminal_title = terminal_title
         self.terminal_color = terminal_color
         self.agent_provider_template = agent_provider_template
+        self.agent_workdir = agent_workdir
         self._closed = False
 
     def agent_argv(
@@ -47,6 +49,8 @@ class DockerBottle(Bottle):
         cmd = ["docker", "exec"]
         if tty:
             cmd.append("-it")
+        if self.agent_workdir and self.agent_workdir != "/home/node":
+            cmd.extend(["-w", self.agent_workdir])
         cmd.extend([self.name, self.agent_command, *full_argv])
         return cmd
 

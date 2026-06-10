@@ -212,6 +212,9 @@ def _parse_provider_settings(
         "api_key",
         "api_key_env",
         "models",
+        "context_window",
+        "max_tokens_field",
+        "max_tokens",
         "supports_developer_role",
         "supports_reasoning_effort",
     }
@@ -228,6 +231,14 @@ def _parse_provider_settings(
                 f"bottle '{bottle_name}' agent_provider.settings.{key} must "
                 "be a non-empty string"
             )
+    max_tokens_field = settings.get("max_tokens_field")
+    if max_tokens_field is not None and max_tokens_field not in (
+        "max_tokens", "max_completion_tokens",
+    ):
+        raise ManifestError(
+            f"bottle '{bottle_name}' agent_provider.settings.max_tokens_field "
+            "must be 'max_tokens' or 'max_completion_tokens'"
+        )
     if settings.get("api_key") is not None and settings.get("api_key_env") is not None:
         raise ManifestError(
             f"bottle '{bottle_name}' agent_provider.settings may set either "
@@ -252,5 +263,14 @@ def _parse_provider_settings(
             raise ManifestError(
                 f"bottle '{bottle_name}' agent_provider.settings.{key} must "
                 f"be a boolean (was {type(value).__name__})"
+            )
+    for key in ("context_window", "max_tokens"):
+        value = settings.get(key)
+        if value is not None and (
+            not isinstance(value, int) or isinstance(value, bool) or value <= 0
+        ):
+            raise ManifestError(
+                f"bottle '{bottle_name}' agent_provider.settings.{key} must "
+                f"be a positive integer (was {type(value).__name__})"
             )
     return dict(settings)

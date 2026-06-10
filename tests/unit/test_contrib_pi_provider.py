@@ -20,6 +20,7 @@ from bot_bottle.manifest import Manifest
 
 
 _URL = "http://supervise:9100/"
+_PI_DOCKERFILE = Path(__file__).resolve().parents[2] / "bot_bottle/contrib/pi/Dockerfile"
 
 
 def _make_bottle(exec_result: ExecResult | None = None) -> MagicMock:
@@ -93,7 +94,7 @@ class TestPiProvisionPrompt(unittest.TestCase):
         result = PiAgentProvider().provision_prompt(
             _plan(agent_prompt="hello"), bottle,
         )
-        self.assertEqual("/home/node/.bot-bottle-prompt.txt", result)
+        self.assertIsNone(result)
         bottle.cp_in.assert_called_once_with(
             "/tmp/state/demo-abc12/agent/prompt.txt",
             "/home/node/.bot-bottle-prompt.txt",
@@ -102,6 +103,12 @@ class TestPiProvisionPrompt(unittest.TestCase):
         self.assertTrue(
             any("chown node:node" in s
                 and "/home/node/.bot-bottle-prompt.txt" in s
+                and "/home/node/.pi/agent/APPEND_SYSTEM.md" in s
+                for s in scripts)
+        )
+        self.assertTrue(
+            any("cp /home/node/.bot-bottle-prompt.txt" in s
+                and "/home/node/.pi/agent/APPEND_SYSTEM.md" in s
                 for s in scripts)
         )
 
@@ -166,6 +173,14 @@ class TestPiProvision(unittest.TestCase):
             any("mkdir -p" in s and "/home/node/.pi/agent" in s for s in scripts)
         )
         self.assertTrue(
+            any("/home/node/.pi/context-mode/sessions" in s
+                and "/tmp/pi-subagents-uid-1000" in s
+                and "chown node:node /home/node" in s
+                and "chown -R node:node /home/node/.pi /tmp" in s
+                and "chmod 755 /home/node" in s
+                for s in scripts)
+        )
+        self.assertTrue(
             any("chown" in s and "/home/node/.pi/agent/models.json" in s
                 for s in scripts)
         )
@@ -189,6 +204,21 @@ class TestPiSuperviseMcp(unittest.TestCase):
         bottle = _make_bottle()
         PiAgentProvider().provision_supervise_mcp(_plan(), bottle, _URL)
         bottle.exec.assert_not_called()
+
+
+class TestPiDockerfile(unittest.TestCase):
+    def test_installs_pi_cwd_at_build_time(self):
+        dockerfile = _PI_DOCKERFILE.read_text()
+        self.assertIn("pi install npm:@harms-haus/pi-cwd", dockerfile)
+
+    def test_prepares_pi_extension_state_dirs_and_tmp_for_node(self):
+        dockerfile = _PI_DOCKERFILE.read_text()
+        self.assertIn("/home/node/.pi/context-mode/sessions", dockerfile)
+        self.assertIn("/tmp/pi-subagents-uid-1000", dockerfile)
+        self.assertIn("chown -R node:node /home/node/.pi /tmp", dockerfile)
+        self.assertIn("chmod -R u+rwX /tmp", dockerfile)
+        self.assertIn("chown root:root /tmp /var/tmp", dockerfile)
+        self.assertIn("chmod 1777 /tmp /var/tmp", dockerfile)
 
 
 if __name__ == "__main__":

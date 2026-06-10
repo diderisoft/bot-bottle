@@ -289,7 +289,16 @@ class TestAgentProviderRuntime(unittest.TestCase):
         self.assertEqual("http://ollama:11434/v1", provider["baseUrl"])
         self.assertEqual("openai-completions", provider["api"])
         self.assertEqual("ollama", provider["apiKey"])
-        self.assertEqual([{"id": "qwen2.5-coder:7b"}], provider["models"])
+        self.assertEqual("max_tokens", provider["compat"]["maxTokensField"])
+        self.assertEqual(
+            [{
+                "id": "qwen2.5-coder:7b",
+                "name": "qwen2.5-coder:7b",
+                "contextWindow": 3072,
+                "maxTokens": 1024,
+            }],
+            provider["models"],
+        )
         self.assertEqual("ollama", plan.egress_routes[0].host)
         self.assertEqual("", plan.egress_routes[0].auth_scheme)
         self.assertEqual("", plan.egress_routes[0].token_ref)
@@ -307,6 +316,9 @@ class TestAgentProviderRuntime(unittest.TestCase):
                     "api": "openai-responses",
                     "api_key": "local",
                     "models": ["gpt-oss:20b", "qwen3:14b"],
+                    "context_window": 65536,
+                    "max_tokens_field": "max_completion_tokens",
+                    "max_tokens": 12000,
                     "supports_developer_role": True,
                     "supports_reasoning_effort": True,
                 },
@@ -317,11 +329,28 @@ class TestAgentProviderRuntime(unittest.TestCase):
         self.assertEqual("openai-responses", provider["api"])
         self.assertEqual("local", provider["apiKey"])
         self.assertEqual(
-            [{"id": "gpt-oss:20b"}, {"id": "qwen3:14b"}],
+            [
+                {
+                    "id": "gpt-oss:20b",
+                    "name": "gpt-oss:20b",
+                    "contextWindow": 53536,
+                    "maxTokens": 12000,
+                },
+                {
+                    "id": "qwen3:14b",
+                    "name": "qwen3:14b",
+                    "contextWindow": 53536,
+                    "maxTokens": 12000,
+                },
+            ],
             provider["models"],
         )
         self.assertTrue(provider["compat"]["supportsDeveloperRole"])
         self.assertTrue(provider["compat"]["supportsReasoningEffort"])
+        self.assertEqual(
+            "max_completion_tokens",
+            provider["compat"]["maxTokensField"],
+        )
 
     def test_pi_plan_can_target_openrouter_with_egress_injected_api_key(self):
         with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
@@ -345,8 +374,14 @@ class TestAgentProviderRuntime(unittest.TestCase):
         self.assertEqual("https://openrouter.ai/api/v1", provider["baseUrl"])
         self.assertEqual("openai-completions", provider["api"])
         self.assertEqual("egress-placeholder", provider["apiKey"])
+        self.assertEqual("max_tokens", provider["compat"]["maxTokensField"])
         self.assertEqual(
-            [{"id": "google/gemma-4-26b-a4b-it:free"}],
+            [{
+                "id": "google/gemma-4-26b-a4b-it:free",
+                "name": "google/gemma-4-26b-a4b-it:free",
+                "contextWindow": 3072,
+                "maxTokens": 1024,
+            }],
             provider["models"],
         )
         self.assertEqual(

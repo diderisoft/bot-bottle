@@ -20,6 +20,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import time
+import shlex
 from typing import Mapping, cast
 
 from ...agent_provider import PromptMode, prompt_args
@@ -72,6 +73,7 @@ class SmolmachinesBottle(Bottle):
         agent_provider_template: str = "claude",
         terminal_title: str = "",
         terminal_color: str = "",
+        agent_workdir: str = "/home/node",
     ) -> None:
         self.name = machine_name
         # In-VM path to the agent's prompt file. None when the
@@ -88,6 +90,7 @@ class SmolmachinesBottle(Bottle):
         self.terminal_title = terminal_title
         self.terminal_color = terminal_color
         self.agent_provider_template = agent_provider_template
+        self.agent_workdir = agent_workdir
 
     def agent_argv(
         self, argv: list[str], *, tty: bool = True,
@@ -95,8 +98,14 @@ class SmolmachinesBottle(Bottle):
         flags = ["smolvm", "machine", "exec", "--name", self.name]
         if tty:
             flags += ["-i", "-t"]
-        agent_tail = ["env", *_env_assignments_for("node", self._guest_env),
-                      self.agent_command]
+        agent_tail = ["env", *_env_assignments_for("node", self._guest_env)]
+        if self.agent_workdir and self.agent_workdir != _HOME_FOR["node"]:
+            agent_tail += [
+                "sh", "-lc",
+                f"cd {shlex.quote(self.agent_workdir)} && exec \"$@\"",
+                "bot-bottle-agent",
+            ]
+        agent_tail.append(self.agent_command)
         provider_prompt_args = prompt_args(
             cast(PromptMode, self._agent_prompt_mode), self.prompt_path, argv=argv,
         )

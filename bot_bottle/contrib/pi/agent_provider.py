@@ -33,6 +33,8 @@ if TYPE_CHECKING:
 _DEFAULT_BASE_URL = "http://ollama:11434/v1"
 _DEFAULT_MODEL = "qwen2.5-coder:7b"
 _DEFAULT_PROVIDER_NAME = "ollama"
+_DEFAULT_CONTEXT_WINDOW = 4096
+_DEFAULT_MAX_TOKENS = 1024
 
 
 def _skills_dir(guest_home: str) -> str:
@@ -43,8 +45,27 @@ def _prompt_path(guest_home: str) -> str:
     return f"{guest_home}/.bot-bottle-prompt.txt"
 
 
+def _append_system_path(guest_home: str) -> str:
+    return f"{guest_home}/.pi/agent/APPEND_SYSTEM.md"
+
+
 def _models_path(guest_home: str) -> str:
     return f"{guest_home}/.pi/agent/models.json"
+
+
+def _runtime_state_repair_script(guest_home: str) -> str:
+    home = shlex.quote(guest_home)
+    pi_home = shlex.quote(f"{guest_home}/.pi")
+    context_sessions = shlex.quote(f"{guest_home}/.pi/context-mode/sessions")
+    return (
+        f"mkdir -p {context_sessions} /tmp/pi-subagents-uid-1000 && "
+        f"chown node:node {home} && "
+        f"chown -R node:node {pi_home} /tmp && "
+        "chmod -R u+rwX /tmp && "
+        f"chmod 755 {home} && "
+        "chown root:root /tmp /var/tmp && "
+        "chmod 1777 /tmp /var/tmp"
+    )
 
 
 def _settings_value(
@@ -74,14 +95,33 @@ def _pi_models_json(
     supports_reasoning_effort = bool(
         _settings_value(settings, "supports_reasoning_effort", False)
     )
+    max_tokens_field = str(
+        _settings_value(settings, "max_tokens_field", "max_tokens")
+    )
+    context_window = int(_settings_value(
+        settings, "context_window", _DEFAULT_CONTEXT_WINDOW,
+    ))
+    max_tokens = int(_settings_value(
+        settings, "max_tokens", _DEFAULT_MAX_TOKENS,
+    ))
+    input_context_window = max(1, context_window - max_tokens)
     provider: dict[str, object] = {
         "baseUrl": base_url,
         "api": api,
         "compat": {
             "supportsDeveloperRole": supports_developer_role,
             "supportsReasoningEffort": supports_reasoning_effort,
+            "maxTokensField": max_tokens_field,
         },
-        "models": [{"id": model} for model in models],
+        "models": [
+            {
+                "id": model,
+                "name": model,
+                "contextWindow": input_context_window,
+                "maxTokens": max_tokens,
+            }
+            for model in models
+        ],
     }
     if api_key is not None:
         provider["apiKey"] = str(api_key)
@@ -201,16 +241,28 @@ class PiAgentProvider(AgentProvider):
 
     def provision_prompt(self, plan: "BottlePlan", bottle: "Bottle") -> str | None:
         prompt_path = _prompt_path(plan.guest_home)
+        append_system_path = _append_system_path(plan.guest_home)
         bottle.cp_in(str(plan.prompt_file), prompt_path)  # type: ignore
         bottle.exec(
-            f"chown node:node {prompt_path} && chmod 600 {prompt_path}",
+            f"mkdir -p {shlex.quote(plan.guest_home)}/.pi/agent && "
+            f"cp {shlex.quote(prompt_path)} {shlex.quote(append_system_path)} && "
+            f"chown node:node {shlex.quote(prompt_path)} "
+            f"{shlex.quote(append_system_path)} && "
+            f"chmod 600 {shlex.quote(prompt_path)} "
+            f"{shlex.quote(append_system_path)}",
             user="root",
         )
-        agent = plan.spec.manifest.agents[plan.spec.agent_name]
-        return prompt_path if plan.agent_provision.has_prompt or agent.prompt else None
+        # Pi's `--append-system-prompt` takes literal text, not a file path.
+        # Use its documented APPEND_SYSTEM.md discovery path instead.
+        return None
 
     def provision(self, plan: "BottlePlan", bottle: "Bottle") -> None:
         provision = plan.agent_provision
+        _exec(
+            bottle,
+            _runtime_state_repair_script(plan.guest_home),
+            "could not prepare pi runtime state",
+        )
         for d in provision.dirs:
             path = shlex.quote(d.guest_path)
             _exec(bottle, f"mkdir -p {path}", f"could not create {d.guest_path}")

@@ -37,6 +37,14 @@ def _pi_bottle(prompt_path: str | None = None) -> SmolmachinesBottle:
     )
 
 
+def _workspace_bottle() -> SmolmachinesBottle:
+    return SmolmachinesBottle(
+        "bot-bottle-dev-abc",
+        prompt_path=None,
+        agent_workdir="/home/node/workspace",
+    )
+
+
 def _unwrap(argv: list[str]) -> list[str]:
     """Strip the pty_resize wrapper from the front of a TTY-mode
     argv, return the inner smolvm argv. Mirrors what the kernel
@@ -140,6 +148,19 @@ class TestClaudeArgvWrapped(unittest.TestCase):
             argv[argv.index("pi"):],
         )
         self.assertNotIn("-p", argv)
+
+    def test_workspace_workdir_wraps_agent_command(self):
+        argv = _unwrap(_workspace_bottle().agent_argv([]))
+        agent_idx = argv.index("claude")
+        self.assertEqual(
+            [
+                "sh", "-lc",
+                "cd /home/node/workspace && exec \"$@\"",
+                "bot-bottle-agent",
+                "claude",
+            ],
+            argv[agent_idx - 4:agent_idx + 1],
+        )
 
 
 class TestClaudeArgvNoTTY(unittest.TestCase):

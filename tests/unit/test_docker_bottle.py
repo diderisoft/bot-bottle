@@ -41,6 +41,15 @@ def _pi_bottle(prompt_path: str | None = None) -> DockerBottle:
     )
 
 
+def _workspace_bottle() -> DockerBottle:
+    return DockerBottle(
+        container="bot-bottle-dev-abc",
+        teardown=lambda: None,
+        prompt_path_in_container=None,
+        agent_workdir="/home/node/workspace",
+    )
+
+
 class TestClaudeArgv(unittest.TestCase):
     def test_minimal_argv_no_prompt(self):
         argv = _bottle().agent_argv([])
@@ -86,6 +95,16 @@ class TestClaudeArgv(unittest.TestCase):
         argv = _bottle().agent_argv([], tty=False)
         self.assertEqual(
             ["docker", "exec", "bot-bottle-dev-abc", "claude"],
+            argv,
+        )
+
+    def test_workspace_workdir_is_used_when_set(self):
+        argv = _workspace_bottle().agent_argv([])
+        self.assertEqual(
+            [
+                "docker", "exec", "-it", "-w", "/home/node/workspace",
+                "bot-bottle-dev-abc", "claude",
+            ],
             argv,
         )
 
