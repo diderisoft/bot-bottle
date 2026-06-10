@@ -19,8 +19,8 @@ from urllib.parse import urlsplit
 
 DEFAULT_PORT = 9420
 
-# Body-size cap matching supervise_server.py's 1 MiB limit.
-MAX_BODY_BYTES = 1 * 1024 * 1024
+# Bound memory use while still allowing ordinary git push packfiles.
+MAX_BODY_BYTES = 100 * 1024 * 1024
 
 
 class GitHttpHandler(BaseHTTPRequestHandler):

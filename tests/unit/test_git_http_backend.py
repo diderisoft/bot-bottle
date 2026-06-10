@@ -9,7 +9,7 @@ import urllib.request
 from pathlib import Path
 from unittest import mock
 
-from bot_bottle.git_http_backend import GitHttpHandler
+from bot_bottle.git_http_backend import GitHttpHandler, MAX_BODY_BYTES
 
 
 class TestGitHttpBackend(unittest.TestCase):
@@ -305,9 +305,8 @@ class TestContentLengthBounds(unittest.TestCase):
         self.assertEqual(400, status)
 
     def test_oversized_content_length_returns_413(self):
-        # Declare 2 MiB — over the 1 MiB cap.
         status = self._post("/repo.git/git-receive-pack",
-                            content_length_header=str(2 * 1024 * 1024))
+                            content_length_header=str(MAX_BODY_BYTES + 1))
         self.assertEqual(413, status)
 
     def test_valid_small_body_passes_through(self):
