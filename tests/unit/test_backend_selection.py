@@ -44,8 +44,11 @@ class TestGetBottleBackend(unittest.TestCase):
 
 
 class TestKnownBackendNames(unittest.TestCase):
-    def test_returns_both_backends_sorted(self):
-        self.assertEqual(("docker", "smolmachines"), known_backend_names())
+    def test_returns_backends_sorted(self):
+        self.assertEqual(
+            ("docker", "macos-container", "smolmachines"),
+            known_backend_names(),
+        )
 
 
 class TestEnumerateActiveAgents(unittest.TestCase):

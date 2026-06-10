@@ -1,0 +1,117 @@
+"""Host-side primitives for Apple's `container` CLI."""
+
+from __future__ import annotations
+
+import platform
+import shutil
+import subprocess
+from typing import Iterable
+
+from ...log import die, info
+
+
+_CONTAINER = "container"
+
+
+def is_macos() -> bool:
+    return platform.system() == "Darwin"
+
+
+def is_available() -> bool:
+    return is_macos() and shutil.which(_CONTAINER) is not None
+
+
+def require_container() -> None:
+    """Fail with an install pointer if Apple Container is unavailable."""
+    if not is_macos():
+        info("BOT_BOTTLE_BACKEND=macos-container requires macOS.")
+        die("macos-container backend is only supported on macOS")
+    if shutil.which(_CONTAINER) is None:
+        info("Apple Container is required but was not found on PATH.")
+        info("Install: https://github.com/apple/container/releases")
+        die("container not found")
+
+
+def build_image(ref: str, context: str, *, dockerfile: str = "") -> None:
+    """Build an OCI image with Apple's BuildKit-backed `container build`."""
+    info(
+        f"building image {ref} from {context} with Apple Container "
+        "(layer cache keeps repeat builds fast)"
+    )
+    args = [_CONTAINER, "build", "-t", ref]
+    if dockerfile:
+        args.extend(["-f", dockerfile])
+    args.append(context)
+    subprocess.run(args, check=True)
+
+
+def image_exists(ref: str) -> bool:
+    return _silent_run([_CONTAINER, "image", "inspect", ref]) == 0
+
+
+def container_exists(name: str) -> bool:
+    result = subprocess.run(
+        [_CONTAINER, "list", "--all", "--quiet"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return False
+    return name in {line.strip() for line in result.stdout.splitlines()}
+
+
+def force_remove_container(name: str) -> None:
+    if container_exists(name):
+        subprocess.run(
+            [_CONTAINER, "delete", "--force", name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+
+
+def image_id(ref: str) -> str:
+    """Return the image digest/ID from `container image inspect`.
+
+    The command returns JSON on current Apple Container releases. Keep
+    parsing narrow and fatal so callers do not cache on an empty key.
+    """
+    import json
+
+    result = subprocess.run(
+        [_CONTAINER, "image", "inspect", ref],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        die(
+            f"container image inspect for {ref!r} failed: "
+            f"{(result.stderr or '').strip() or '<no stderr>'}"
+        )
+    try:
+        data = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        die(f"container image inspect for {ref!r} returned malformed JSON: {exc}")
+    if isinstance(data, list) and data:
+        data = data[0]
+    if isinstance(data, dict):
+        value = data.get("id") or data.get("digest") or data.get("ID")
+        if value:
+            return str(value)
+    die(f"container image inspect for {ref!r} did not include an image id")
+    raise AssertionError("unreachable")
+
+
+def save(ref: str, output: str) -> None:
+    subprocess.run([_CONTAINER, "image", "save", ref, "-o", output], check=True)
+
+
+def _silent_run(cmd: Iterable[str]) -> int:
+    return subprocess.run(
+        list(cmd),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    ).returncode

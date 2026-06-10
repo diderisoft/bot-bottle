@@ -190,7 +190,7 @@ class ActiveAgent:
     of sidecar daemons currently up for this bottle (`egress`,
     `git-gate`, `supervise`); the dashboard uses it to
     gate edit verbs. `backend_name` is the matching key in
-    `_BACKENDS` (`docker` / `smolmachines`) — used by the active-
+    `_BACKENDS` (`docker` / `smolmachines` / `macos-container`) — used by the active-
     list rendering to disambiguate and by the dashboard's
     re-attach path."""
 
@@ -530,6 +530,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
 # each backend module can pull BottleSpec / BottlePlan / BottleBackend
 # via `from . import ...` without hitting a partially-initialized module.
 from .docker import DockerBottleBackend  # noqa: E402  # pylint: disable=wrong-import-position
+from .macos_container import MacosContainerBottleBackend  # noqa: E402  # pylint: disable=wrong-import-position
 from .smolmachines import SmolmachinesBottleBackend  # noqa: E402  # pylint: disable=wrong-import-position
 
 
@@ -539,6 +540,7 @@ from .smolmachines import SmolmachinesBottleBackend  # noqa: E402  # pylint: dis
 # unparameterized methods (prepare → plan → launch(plan), cleanup, etc.).
 _BACKENDS: dict[str, BottleBackend[Any, Any]] = {
     "docker": DockerBottleBackend(),
+    "macos-container": MacosContainerBottleBackend(),
     "smolmachines": SmolmachinesBottleBackend(),
 }
 

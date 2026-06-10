@@ -1,0 +1,70 @@
+"""Cleanup for the macOS Apple Container backend."""
+
+from __future__ import annotations
+
+import subprocess
+
+from ...log import info, warn
+from . import util as container_mod
+from .bottle_cleanup_plan import MacosContainerBottleCleanupPlan
+
+_PREFIX = "bot-bottle-"
+_BUNDLE_PREFIX = "bot-bottle-sidecars-"
+
+
+def _list_prefixed_containers() -> list[str]:
+    result = subprocess.run(
+        ["container", "list", "--all", "--quiet"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        warn(f"container list failed: {result.stderr.strip()}")
+        return []
+    return sorted(
+        name for name in (line.strip() for line in result.stdout.splitlines())
+        if name.startswith(_PREFIX) or name.startswith(_BUNDLE_PREFIX)
+    )
+
+
+def _list_prefixed_networks() -> list[str]:
+    result = subprocess.run(
+        ["container", "network", "list", "--quiet"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return []
+    return sorted(
+        name for name in (line.strip() for line in result.stdout.splitlines())
+        if name.startswith(_PREFIX)
+    )
+
+
+def prepare_cleanup() -> MacosContainerBottleCleanupPlan:
+    container_mod.require_container()
+    return MacosContainerBottleCleanupPlan(
+        containers=tuple(_list_prefixed_containers()),
+        networks=tuple(_list_prefixed_networks()),
+    )
+
+
+def cleanup(plan: MacosContainerBottleCleanupPlan) -> None:
+    for name in plan.containers:
+        info(f"container delete --force {name}")
+        subprocess.run(
+            ["container", "delete", "--force", name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    for name in plan.networks:
+        info(f"container network delete {name}")
+        subprocess.run(
+            ["container", "network", "delete", name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )

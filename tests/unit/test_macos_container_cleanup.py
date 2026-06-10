@@ -1,0 +1,67 @@
+"""Unit: Apple Container cleanup/enumeration helpers."""
+
+from __future__ import annotations
+
+import unittest
+from unittest.mock import patch
+
+from bot_bottle.backend.macos_container import cleanup, enumerate as enum_mod
+from bot_bottle.backend.macos_container.bottle_cleanup_plan import (
+    MacosContainerBottleCleanupPlan,
+)
+
+
+class TestMacosContainerCleanup(unittest.TestCase):
+    def test_lists_prefixed_containers(self):
+        completed = cleanup.subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="bot-bottle-a\nbot-bottle-sidecars-a\nother\n",
+            stderr="",
+        )
+        with patch.object(cleanup.subprocess, "run", return_value=completed):
+            self.assertEqual(
+                ["bot-bottle-a", "bot-bottle-sidecars-a"],
+                cleanup._list_prefixed_containers(),
+            )
+
+    def test_cleanup_deletes_containers_and_networks(self):
+        plan = MacosContainerBottleCleanupPlan(
+            containers=("bot-bottle-a",),
+            networks=("bot-bottle-net-a",),
+        )
+        with patch.object(cleanup.subprocess, "run") as run:
+            cleanup.cleanup(plan)
+        self.assertEqual(
+            ["container", "delete", "--force", "bot-bottle-a"],
+            run.call_args_list[0].args[0],
+        )
+        self.assertEqual(
+            ["container", "network", "delete", "bot-bottle-net-a"],
+            run.call_args_list[1].args[0],
+        )
+
+
+class TestMacosContainerEnumerate(unittest.TestCase):
+    def test_enumerate_active_reads_metadata(self):
+        completed = enum_mod.subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="bot-bottle-a\nother\n", stderr="",
+        )
+
+        class _Metadata:
+            agent_name = "impl"
+            started_at = "2026-06-10T00:00:00Z"
+            label = "Implement"
+            color = "blue"
+
+        with patch.object(enum_mod.subprocess, "run", return_value=completed), \
+             patch.object(enum_mod, "read_metadata", return_value=_Metadata()):
+            agents = enum_mod.enumerate_active()
+        self.assertEqual(1, len(agents))
+        self.assertEqual("macos-container", agents[0].backend_name)
+        self.assertEqual("a", agents[0].slug)
+        self.assertEqual("impl", agents[0].agent_name)
+
+
+if __name__ == "__main__":
+    unittest.main()
