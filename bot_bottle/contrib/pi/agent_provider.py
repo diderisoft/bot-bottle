@@ -77,6 +77,19 @@ def _settings_value(
     return default if value is None else value
 
 
+def _settings_int(
+    settings: dict[str, object],
+    key: str,
+    default: int,
+) -> int:
+    value = _settings_value(settings, key, default)
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, str)):
+        return int(value)
+    return default
+
+
 def _pi_models_json(
     settings: dict[str, object],
 ) -> tuple[dict[str, object], str, str, list[str], str]:
@@ -98,12 +111,10 @@ def _pi_models_json(
     max_tokens_field = str(
         _settings_value(settings, "max_tokens_field", "max_tokens")
     )
-    context_window = int(_settings_value(
+    context_window = _settings_int(
         settings, "context_window", _DEFAULT_CONTEXT_WINDOW,
-    ))
-    max_tokens = int(_settings_value(
-        settings, "max_tokens", _DEFAULT_MAX_TOKENS,
-    ))
+    )
+    max_tokens = _settings_int(settings, "max_tokens", _DEFAULT_MAX_TOKENS)
     input_context_window = max(1, context_window - max_tokens)
     provider: dict[str, object] = {
         "baseUrl": base_url,
