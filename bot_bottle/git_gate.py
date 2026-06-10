@@ -247,6 +247,164 @@ cat > "$refs_file"
 
 zero=0000000000000000000000000000000000000000
 
+supervise_gitleaks_allow() {
+  log_opts=$1
+  ref=$2
+  report_file=$(mktemp)
+  if ! gitleaks git \
+      --log-opts="$log_opts" \
+      --no-banner \
+      --redact \
+      --ignore-gitleaks-allow \
+      --report-format=json \
+      --report-path="$report_file" \
+      --exit-code 0 \
+      1>&2; then
+    rm -f "$report_file"
+    echo "git-gate: gitleaks inline-suppression scan failed for $ref" >&2
+    return 1
+  fi
+
+  proposal_id=$(
+    GITLEAKS_ALLOW_REF="$ref" python3 - "$report_file" <<'PY'
+import datetime
+import hashlib
+import json
+import os
+import sys
+import uuid
+from pathlib import Path
+
+report_path = Path(sys.argv[1])
+queue_dir = os.environ.get("SUPERVISE_QUEUE_DIR", "")
+slug = os.environ.get("SUPERVISE_BOTTLE_SLUG", "")
+if not queue_dir or not slug:
+    sys.exit(2)
+
+try:
+    raw = json.loads(report_path.read_text() or "[]")
+except json.JSONDecodeError:
+    sys.exit(3)
+if not isinstance(raw, list):
+    sys.exit(3)
+if not raw:
+    sys.exit(0)
+
+ref = os.environ.get("GITLEAKS_ALLOW_REF", "")
+lines = [
+    "gitleaks inline suppression requires supervisor approval",
+    f"ref: {ref}",
+    "",
+]
+for i, finding in enumerate(raw, 1):
+    if not isinstance(finding, dict):
+        continue
+    file_path = finding.get("File", "")
+    line_no = finding.get("StartLine", finding.get("Line", ""))
+    rule_id = finding.get("RuleID", "")
+    commit = finding.get("Commit", "")
+    line = finding.get("Line", "")
+    lines.extend([
+        f"finding {i}:",
+        f"  file: {file_path}",
+        f"  line: {line_no}",
+        f"  rule: {rule_id}",
+        f"  commit: {commit}",
+        f"  code: {line}",
+        "",
+    ])
+
+payload = "\n".join(lines).rstrip() + "\n"
+proposal_id = str(uuid.uuid4())
+proposal = {
+    "id": proposal_id,
+    "bottle_slug": slug,
+    "tool": "gitleaks-allow",
+    "proposed_file": payload,
+    "justification": (
+        "git-gate found gitleaks findings hidden by # gitleaks:allow; "
+        "approve only for dummy test fixtures or confirmed false positives"
+    ),
+    "arrival_timestamp": datetime.datetime.now(
+        datetime.timezone.utc
+    ).isoformat(),
+    "current_file_hash": hashlib.sha256(payload.encode("utf-8")).hexdigest(),
+}
+queue = Path(queue_dir)
+queue.mkdir(parents=True, exist_ok=True)
+path = queue / f"{proposal_id}.proposal.json"
+tmp = path.with_suffix(path.suffix + ".tmp")
+with tmp.open("w", encoding="utf-8") as f:
+    json.dump(proposal, f, indent=2)
+    f.write("\n")
+os.chmod(tmp, 0o600)
+os.replace(tmp, path)
+print(proposal_id)
+PY
+  )
+  rc=$?
+  rm -f "$report_file"
+  if [ "$rc" -eq 0 ] && [ -z "$proposal_id" ]; then
+    return 0
+  fi
+  if [ "$rc" -ne 0 ]; then
+    echo "git-gate: cannot route # gitleaks:allow finding to supervisor; refusing push" >&2
+    return 1
+  fi
+
+  queue_dir=${SUPERVISE_QUEUE_DIR:-}
+  response_file="$queue_dir/${proposal_id}.response.json"
+  timeout=${SUPERVISE_GITLEAKS_ALLOW_TIMEOUT_SECONDS:-300}
+  case "$timeout" in
+    ''|*[!0-9]*)
+      echo "git-gate: invalid SUPERVISE_GITLEAKS_ALLOW_TIMEOUT_SECONDS=$timeout" >&2
+      return 1
+      ;;
+  esac
+  echo "git-gate: queued # gitleaks:allow supervisor approval $proposal_id" >&2
+  echo "git-gate: approve with './cli.py supervise' to continue this push" >&2
+  waited=0
+  while [ "$waited" -lt "$timeout" ]; do
+    if [ -f "$response_file" ]; then
+      status=$(python3 - "$response_file" <<'PY'
+import json
+import sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        raw = json.load(f)
+except (OSError, json.JSONDecodeError):
+    sys.exit(1)
+status = raw.get("status")
+if not isinstance(status, str):
+    sys.exit(1)
+print(status)
+PY
+      ) || status=""
+      case "$status" in
+        approved|modified)
+          mkdir -p "$queue_dir/processed"
+          mv -f "$queue_dir/${proposal_id}.proposal.json" "$queue_dir/processed/" 2>/dev/null || true
+          mv -f "$queue_dir/${proposal_id}.response.json" "$queue_dir/processed/" 2>/dev/null || true
+          echo "git-gate: supervisor approved # gitleaks:allow for $ref" >&2
+          return 0
+          ;;
+        rejected)
+          echo "git-gate: supervisor rejected # gitleaks:allow for $ref" >&2
+          return 1
+          ;;
+        *)
+          echo "git-gate: invalid supervisor response for # gitleaks:allow" >&2
+          return 1
+          ;;
+      esac
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  echo "git-gate: supervisor approval timed out for # gitleaks:allow; refusing push" >&2
+  return 1
+}
+
 # Phase 1: gitleaks scan each ref's incoming commits.
 while IFS=' ' read -r old new ref; do
   [ -z "$ref" ] && continue
@@ -266,6 +424,9 @@ while IFS=' ' read -r old new ref; do
   echo "git-gate: gitleaks scanning $ref ($log_opts)" >&2
   if ! gitleaks git --log-opts="$log_opts" --no-banner --redact 1>&2; then
     echo "git-gate: gitleaks rejected push to $ref" >&2
+    exit 1
+  fi
+  if ! supervise_gitleaks_allow "$log_opts" "$ref"; then
     exit 1
   fi
 done < "$refs_file"

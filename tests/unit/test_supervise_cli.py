@@ -19,6 +19,7 @@ from bot_bottle.supervise import (
     STATUS_MODIFIED,
     STATUS_REJECTED,
     TOOL_CAPABILITY_BLOCK,
+    TOOL_GITLEAKS_ALLOW,
     read_audit_entries,
     read_response,
     sha256_hex,
@@ -33,6 +34,7 @@ def _proposal(slug: str = "dev", tool: str = TOOL_CAPABILITY_BLOCK) -> Proposal:
         TOOL_CAPABILITY_BLOCK: "FROM python:3.13\n",
         supervise.TOOL_ALLOW: "routes:\n  - host: example.com\n",
         supervise.TOOL_EGRESS_BLOCK: "routes:\n  - host: example.com\n",
+        TOOL_GITLEAKS_ALLOW: "file: tests/test_fixture.py\nline: 3\n",
     }
     payload = payloads.get(tool, "")
     return Proposal.new(
@@ -169,6 +171,28 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
         self.assertEqual(1, len(entries))
         self.assertEqual(STATUS_APPROVED, entries[0].operator_action)
         self.assertEqual("needed for dev", entries[0].justification)
+
+    def test_approve_archives_gitleaks_allow(self):
+        qp = self._enqueue(tool=TOOL_GITLEAKS_ALLOW)
+        supervise_cli.approve(qp, notes="dummy fixture")
+        resp = read_response(qp.queue_dir / "processed", qp.proposal.id)
+        self.assertEqual(STATUS_APPROVED, resp.status)
+        self.assertEqual("dummy fixture", resp.notes)
+
+    def test_tui_gitleaks_allow_requires_reason(self):
+        qp = self._enqueue(tool=TOOL_GITLEAKS_ALLOW)
+        with patch.object(supervise_cli, "_prompt", return_value=""):
+            status = supervise_cli._approve_from_tui(None, qp)  # type: ignore[arg-type]
+        self.assertEqual("approve aborted (empty reason)", status)
+        self.assertFalse((qp.queue_dir / "processed").exists())
+
+    def test_tui_gitleaks_allow_writes_reason(self):
+        qp = self._enqueue(tool=TOOL_GITLEAKS_ALLOW)
+        with patch.object(supervise_cli, "_prompt", return_value="test fixture"):
+            status = supervise_cli._approve_from_tui(None, qp)  # type: ignore[arg-type]
+        self.assertIn("approved gitleaks-allow", status)
+        resp = read_response(qp.queue_dir / "processed", qp.proposal.id)
+        self.assertEqual("test fixture", resp.notes)
 
 
 # class TestCapabilityApplyWiring(_FakeHomeMixin, unittest.TestCase):

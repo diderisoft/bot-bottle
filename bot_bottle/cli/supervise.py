@@ -53,6 +53,7 @@ from ..supervise import (
     TOOL_CAPABILITY_BLOCK,
     TOOL_ALLOW,
     TOOL_EGRESS_BLOCK,
+    TOOL_GITLEAKS_ALLOW,
     archive_proposal,
     list_pending_proposals,
     render_diff,
@@ -140,6 +141,8 @@ def _suffix_for_tool(tool: str) -> str:
         return ".dockerfile"
     if tool in (TOOL_ALLOW, TOOL_EGRESS_BLOCK):
         return ".yaml"
+    if tool == TOOL_GITLEAKS_ALLOW:
+        return ".txt"
     return ".txt"
 
 
@@ -185,7 +188,7 @@ def approve(
         qp, action=status, notes=notes,
         diff_before=diff_before, diff_after=diff_after,
     )
-    if qp.proposal.tool == TOOL_CAPABILITY_BLOCK:
+    if qp.proposal.tool in (TOOL_CAPABILITY_BLOCK, TOOL_GITLEAKS_ALLOW):
         archive_proposal(qp.queue_dir, qp.proposal.id)
 
 
@@ -199,6 +202,23 @@ def reject(qp: QueuedProposal, *, reason: str) -> None:
     )
     write_response(qp.queue_dir, response)
     _write_audit(qp, action=STATUS_REJECTED, notes=reason, diff_before="", diff_after="")
+
+
+def _approve_from_tui(
+    stdscr: "curses._CursesWindow",  # type: ignore
+    qp: QueuedProposal,
+    *,
+    final_file: str | None = None,
+    notes: str = "",
+) -> str:
+    """Approve from curses, prompting for any tool-specific audit note."""
+    if qp.proposal.tool == TOOL_GITLEAKS_ALLOW and final_file is None:
+        notes = _prompt(stdscr, "allow reason (test fixture/false positive): ")
+        if not notes:
+            return "approve aborted (empty reason)"
+    approve(qp, final_file=final_file, notes=notes)
+    verb = "modified+approved" if final_file is not None else "approved"
+    return _approval_status(qp, verb)
 
 
 def _write_audit(
@@ -384,18 +404,22 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:  # type: ignore
             _detail_view(stdscr, qp, green_attr=green_attr)
         elif key == ord("a"):
             try:
-                approve(qp)
-                status_line = _approval_status(qp, "approved")
+                status_line = _approve_from_tui(stdscr, qp)
             except ApplyError as e:
                 status_line = f"apply failed: {e}"
         elif key == ord("m"):
+            if qp.proposal.tool == TOOL_GITLEAKS_ALLOW:
+                status_line = "modify unavailable for gitleaks-allow"
+                continue
             edited = _modify(stdscr, qp)
             if edited is None:
                 status_line = "modify aborted (no change)"
             else:
                 try:
-                    approve(qp, final_file=edited, notes="operator modified before approving")
-                    status_line = _approval_status(qp, "modified+approved")
+                    status_line = _approve_from_tui(
+                        stdscr, qp, final_file=edited,
+                        notes="operator modified before approving",
+                    )
                 except ApplyError as e:
                     status_line = f"apply failed: {e}"
         elif key == ord("r"):
@@ -493,15 +517,20 @@ def _detail_view(
             offset = max(0, len(lines) - 1)
         elif key == ord("a"):
             try:
-                approve(qp)
+                _approve_from_tui(stdscr, qp)
             except ApplyError:
                 pass
             return
         elif key == ord("m"):
+            if qp.proposal.tool == TOOL_GITLEAKS_ALLOW:
+                return
             edited = _modify(stdscr, qp)
             if edited is not None:
                 try:
-                    approve(qp, final_file=edited, notes="operator modified before approving")
+                    _approve_from_tui(
+                        stdscr, qp, final_file=edited,
+                        notes="operator modified before approving",
+                    )
                 except ApplyError:
                     pass
             return

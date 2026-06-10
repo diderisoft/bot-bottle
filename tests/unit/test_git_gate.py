@@ -199,6 +199,30 @@ class TestHookRender(unittest.TestCase):
         self.assertIn('set -- "$@" --push-option="$opt"', hook)
         self.assertIn('git push "$@" origin "$refspec"', hook)
 
+    def test_inline_gitleaks_allow_routes_to_supervisor(self):
+        hook = git_gate_render_hook()
+        # First gitleaks runs normally; only if that passes does the
+        # hook ask gitleaks to ignore inline allow comments and report
+        # the suppressed findings for human approval.
+        self.assertIn("--ignore-gitleaks-allow", hook)
+        self.assertIn("--report-format=json", hook)
+        self.assertIn('"tool": "gitleaks-allow"', hook)
+        self.assertIn("SUPERVISE_QUEUE_DIR", hook)
+        self.assertIn("SUPERVISE_BOTTLE_SLUG", hook)
+        self.assertIn("supervisor approved # gitleaks:allow", hook)
+        self.assertIn("supervisor rejected # gitleaks:allow", hook)
+
+    def test_inline_gitleaks_allow_fails_closed_without_supervisor(self):
+        hook = git_gate_render_hook()
+        self.assertIn(
+            "cannot route # gitleaks:allow finding to supervisor; refusing push",
+            hook,
+        )
+        self.assertIn(
+            "supervisor approval timed out for # gitleaks:allow; refusing push",
+            hook,
+        )
+
 
 class TestAccessHookRender(unittest.TestCase):
     def test_access_hook_refreshes_origin_on_upload_pack(self):

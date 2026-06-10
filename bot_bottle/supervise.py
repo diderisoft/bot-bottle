@@ -51,11 +51,13 @@ SUPERVISE_PORT = 9100
 TOOL_CAPABILITY_BLOCK = "capability-block"
 TOOL_EGRESS_BLOCK = "egress-block"
 TOOL_ALLOW = "allow"
+TOOL_GITLEAKS_ALLOW = "gitleaks-allow"
 TOOL_LIST_EGRESS_ROUTES = "list-egress-routes"
 TOOLS: tuple[str, ...] = (
     TOOL_ALLOW,
     TOOL_CAPABILITY_BLOCK,
     TOOL_EGRESS_BLOCK,
+    TOOL_GITLEAKS_ALLOW,
     TOOL_LIST_EGRESS_ROUTES,
 )
 
