@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .manifest import ManifestBottle, ManifestGitEntry
+    from .manifest_egress import ManifestEgressConfig
 
 
 def resolve_bottles(raws: dict[str, dict[str, object]]) -> dict[str, ManifestBottle]:
@@ -99,9 +100,16 @@ def _merge_bottles(
     else:
         merged_git = parent.git
 
-    # Presence-driven full-replace for the remaining list-valued +
-    # scalar fields.
-    merged_egress = child.egress if "egress" in child_raw else parent.egress
+    # egress.routes: missing means inherit; otherwise parent and child
+    # route lists concatenate. Other egress scalar fields remain
+    # presence-driven overlays.
+    merged_egress = (
+        _merge_egress(parent.egress, child.egress, child_raw)
+        if "egress" in child_raw
+        else parent.egress
+    )
+
+    # Presence-driven full-replace for the remaining scalar fields.
     merged_agent_provider = (
         child.agent_provider
         if "agent_provider" in child_raw
@@ -140,3 +148,17 @@ def _merge_git_remotes(
     for entry in child:
         by_host[entry.UpstreamHost] = entry
     return tuple(by_host.values())
+
+
+def _merge_egress(
+    parent: ManifestEgressConfig,
+    child: ManifestEgressConfig,
+    child_raw: dict[str, object],
+) -> ManifestEgressConfig:
+    from .manifest_egress import ManifestEgressConfig
+    from .manifest_util import as_json_object
+
+    child_egress_raw = as_json_object(child_raw.get("egress"), "child egress")
+    routes = parent.routes + child.routes
+    log = child.Log if "log" in child_egress_raw else parent.Log
+    return ManifestEgressConfig(routes=routes, Log=log)
