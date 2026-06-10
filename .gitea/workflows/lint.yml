@@ -26,7 +26,7 @@ jobs:
       - name: Run pylint
         run: |
           # Run pylint on all Python files in the repo
-          find . -name '*.py' -not -path './.venv/*' -not -path './.git/*' | xargs pylint --fail-under=8.0 || true
+          find . -name '*.py' -not -path './.venv/*' -not -path './.git/*' | xargs pylint --fail-under=8.0
 
       - name: Run pyright
         run: |
