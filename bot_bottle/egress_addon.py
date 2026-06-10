@@ -21,6 +21,8 @@ from egress_addon_core import (  # type: ignore[import-not-found]  # pylint: dis
     build_inbound_scan_text,
     build_outbound_scan_text,
     decide,
+    decide_git_fetch,
+    is_git_fetch_request,
     is_git_push_request,
     load_config,
     match_route,
@@ -180,6 +182,18 @@ class EgressAddon:
                 ctx=self._req_ctx(flow),
             )
             return
+
+        if is_git_fetch_request(request_path, query):
+            git_decision = decide_git_fetch(
+                self.config.routes, flow.request.pretty_host,
+            )
+            if git_decision.action == "block":
+                self._block(
+                    flow,
+                    git_decision.reason,
+                    ctx=self._req_ctx(flow),
+                )
+                return
 
         # Strip agent-set Authorization after DLP scan so smuggled tokens
         # are caught above; the route may inject sidecar-owned auth below.

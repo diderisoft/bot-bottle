@@ -2,7 +2,8 @@
 
 The route shape uses Gateway API HTTPRoute match vocabulary:
 `host` (required), optional `matches` (paths/methods/headers),
-optional nested `auth: { scheme, token_ref }`, optional `dlp`.
+optional nested `auth: { scheme, token_ref }`, optional `dlp`,
+optional `git: { fetch: true }`.
 Validation rules per PRD 0017/0053: empty `auth: {}` is an error,
 partial `auth` is an error, auth omission means unauthenticated."""
 
@@ -300,6 +301,32 @@ class TestDlp(unittest.TestCase):
             _bottle([{"host": "x.example", "dlp": {
                 "bogus": True,
             }}])
+
+
+class TestGitPolicy(unittest.TestCase):
+    def test_omitted_means_https_git_fetch_disabled(self):
+        b = _bottle([{"host": "github.com"}])
+        self.assertFalse(b.egress.routes[0].GitFetch)
+
+    def test_fetch_true_allowed(self):
+        b = _bottle([{"host": "github.com", "git": {"fetch": True}}])
+        self.assertTrue(b.egress.routes[0].GitFetch)
+
+    def test_fetch_false_allowed(self):
+        b = _bottle([{"host": "github.com", "git": {"fetch": False}}])
+        self.assertFalse(b.egress.routes[0].GitFetch)
+
+    def test_git_must_be_object(self):
+        with self.assertRaises(ManifestError):
+            _bottle([{"host": "github.com", "git": True}])
+
+    def test_fetch_must_be_boolean(self):
+        with self.assertRaises(ManifestError):
+            _bottle([{"host": "github.com", "git": {"fetch": "yes"}}])
+
+    def test_unknown_git_key_rejected(self):
+        with self.assertRaises(ManifestError):
+            _bottle([{"host": "github.com", "git": {"push": True}}])
 
 
 class TestAuth(unittest.TestCase):

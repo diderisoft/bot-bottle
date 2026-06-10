@@ -91,6 +91,7 @@ def egress_manifest_routes(
             auth_scheme=r.AuthScheme,
             token_ref=r.TokenRef,
             roles=r.Role,
+            git_fetch=r.GitFetch,
             outbound_detectors=r.OutboundDetectors,
             inbound_detectors=r.InboundDetectors,
         ))
@@ -173,6 +174,8 @@ def _route_to_yaml_fields(r: Route) -> dict[str, object]:
                 entry_data["headers"] = headers_data
             matches_data.append(entry_data)
         fields["matches"] = matches_data
+    if r.git_fetch:
+        fields["git"] = {"fetch": True}
     if r.outbound_detectors is not None or r.inbound_detectors is not None:
         dlp: dict[str, object] = {}
         if r.outbound_detectors is not None:
@@ -242,6 +245,11 @@ def egress_render_routes(
             lines.append("    matches:")
             for entry in f["matches"]:  # type: ignore[union-attr]
                 lines.extend(_render_match_entry(entry))  # type: ignore[arg-type]
+        if "git" in f:
+            git_dict: dict[str, object] = f["git"]  # type: ignore
+            lines.append("    git:")
+            if git_dict.get("fetch") is True:
+                lines.append("      fetch: true")
         if "dlp" in f:
             dlp_dict: dict[str, object] = f["dlp"]  # type: ignore
             lines.append("    dlp:")

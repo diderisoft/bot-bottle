@@ -64,6 +64,7 @@ class ManifestEgressRoute:
     AuthScheme: str = ""
     TokenRef: str = ""
     Role: tuple[str, ...] = ()
+    GitFetch: bool = False
     OutboundDetectors: tuple[str, ...] | None = None
     InboundDetectors: tuple[str, ...] | None = None
 
@@ -165,11 +166,30 @@ class ManifestEgressRoute:
                 label, d.get("dlp"),
             )
 
+        # --- git-over-HTTPS policy ---
+        git_fetch = False
+        if "git" in d:
+            git_d = as_json_object(d.get("git"), f"{label} git")
+            raw_fetch = git_d.get("fetch", False)
+            if isinstance(raw_fetch, bool):
+                git_fetch = raw_fetch
+            else:
+                raise ManifestError(
+                    f"{label} git.fetch must be a boolean "
+                    f"(was {type(raw_fetch).__name__})"
+                )
+            for k in git_d:
+                if k != "fetch":
+                    raise ManifestError(
+                        f"{label} git has unknown key {k!r}; "
+                        f"only 'fetch' is accepted"
+                    )
+
         for k in d:
-            if k not in ("host", "matches", "auth", "role", "dlp"):
+            if k not in ("host", "matches", "auth", "role", "dlp", "git"):
                 raise ManifestError(
                     f"{label} has unknown key {k!r}; accepted keys are "
-                    f"'host', 'matches', 'auth', 'role', 'dlp'"
+                    f"'host', 'matches', 'auth', 'role', 'dlp', 'git'"
                 )
 
         return cls(
@@ -178,6 +198,7 @@ class ManifestEgressRoute:
             AuthScheme=auth_scheme,
             TokenRef=token_ref,
             Role=roles,
+            GitFetch=git_fetch,
             OutboundDetectors=outbound_detectors,
             InboundDetectors=inbound_detectors,
         )

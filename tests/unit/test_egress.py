@@ -86,6 +86,11 @@ class TestManifestRouteLift(unittest.TestCase):
         self.assertEqual(("token_patterns",), r.outbound_detectors)
         self.assertEqual((), r.inbound_detectors)
 
+    def test_git_fetch_policy_lifted(self):
+        b = _bottle([{"host": "github.com", "git": {"fetch": True}}])
+        routes = egress_manifest_routes(b)
+        self.assertTrue(routes[0].git_fetch)
+
 
 class TestSlotAssignment(unittest.TestCase):
     """Slot assignment happens in egress_routes_for_bottle."""
@@ -323,6 +328,15 @@ class TestRenderRoutes(unittest.TestCase):
         addon_routes = load_routes(rendered)
         self.assertEqual(("token_patterns",), addon_routes[0].outbound_detectors)
         self.assertEqual((), addon_routes[0].inbound_detectors)
+
+    def test_git_fetch_policy_round_trips(self):
+        from bot_bottle.egress_addon_core import load_routes
+        b = _bottle([{"host": "github.com", "git": {"fetch": True}}])
+        routes = egress_routes_for_bottle(b)
+        rendered = egress_render_routes(routes)
+        self.assertEqual({"fetch": True}, self._parsed(routes)[0]["git"])
+        addon_routes = load_routes(rendered)
+        self.assertTrue(addon_routes[0].git_fetch)
 
     def test_log_zero_omitted_from_render(self):
         b = _bottle([{"host": "x.example"}])

@@ -66,6 +66,7 @@ class Route:
     matches: tuple[MatchEntry, ...] = ()
     auth_scheme: str = ""
     token_env: str = ""
+    git_fetch: bool = False
     outbound_detectors: tuple[str, ...] | None = None
     inbound_detectors: tuple[str, ...] | None = None
 
@@ -316,16 +317,35 @@ def _parse_one(idx: int, raw: object) -> Route:
             f"token_env={token_env!r})"
         )
 
+    # git-over-HTTPS policy
+    git_fetch = False
+    git_raw = raw_dict.get("git")
+    if git_raw is not None:
+        if not isinstance(git_raw, dict):
+            raise ValueError(f"{label} ({host}): 'git' must be an object")
+        git_dict: dict[str, object] = typing.cast(dict[str, object], git_raw)
+        fetch_raw = git_dict.get("fetch", False)
+        if fetch_raw is True or fetch_raw is False:
+            git_fetch = fetch_raw
+        else:
+            raise ValueError(f"{label} ({host}): 'git.fetch' must be a boolean")
+        for k in git_dict:
+            if k != "fetch":
+                raise ValueError(
+                    f"{label} ({host}): git has unknown key {k!r}; "
+                    "accepted key is 'fetch'"
+                )
+
     # dlp detectors
     outbound_detectors, inbound_detectors = _parse_detectors(
         idx, host, raw_dict,
     )
 
     for k in raw_dict:
-        if k not in ("host", "matches", "auth_scheme", "token_env", "dlp"):
+        if k not in ("host", "matches", "auth_scheme", "token_env", "dlp", "git"):
             raise ValueError(
                 f"{label} ({host}): unknown key {k!r}; accepted keys "
-                f"are 'host', 'matches', 'auth_scheme', 'token_env', 'dlp'"
+                f"are 'host', 'matches', 'auth_scheme', 'token_env', 'dlp', 'git'"
             )
 
     return Route(
@@ -333,6 +353,7 @@ def _parse_one(idx: int, raw: object) -> Route:
         matches=matches,
         auth_scheme=auth_scheme,
         token_env=token_env,
+        git_fetch=git_fetch,
         outbound_detectors=outbound_detectors,
         inbound_detectors=inbound_detectors,
     )
@@ -450,6 +471,17 @@ def is_git_push_request(path: str, query: str) -> bool:
     return False
 
 
+def is_git_fetch_request(path: str, query: str) -> bool:
+    if path.endswith("/git-upload-pack"):
+        return True
+    if path.endswith("/info/refs"):
+        for pair in query.split("&"):
+            k, _, v = pair.partition("=")
+            if k == "service" and v == "git-upload-pack":
+                return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Route lookup + decision
 # ---------------------------------------------------------------------------
@@ -511,6 +543,24 @@ def decide(
         )
 
     return Decision(action="forward")
+
+
+def decide_git_fetch(
+    routes: typing.Sequence[Route],
+    request_host: str,
+) -> Decision:
+    route = match_route(routes, request_host)
+    if route is not None and route.git_fetch:
+        return Decision(action="forward")
+    return Decision(
+        action="block",
+        reason=(
+            "egress: git fetch/clone over HTTPS is not allowed by default; "
+            "use git-gate for declared repos or set "
+            "egress.routes[].git.fetch=true for explicit read-only "
+            "HTTPS Git access."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -660,8 +710,10 @@ __all__ = [
     "build_inbound_scan_text",
     "build_outbound_scan_text",
     "decide",
+    "decide_git_fetch",
     "evaluate_matches",
     "is_git_push_request",
+    "is_git_fetch_request",
     "load_config",
     "load_routes",
     "match_route",

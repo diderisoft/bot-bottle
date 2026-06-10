@@ -25,7 +25,9 @@ from bot_bottle.egress_addon_core import (
     build_inbound_scan_text,
     build_outbound_scan_text,
     decide,
+    decide_git_fetch,
     evaluate_matches,
+    is_git_fetch_request,
     is_git_push_request,
     load_config,
     load_routes,
@@ -66,6 +68,31 @@ class TestParseRoutes(unittest.TestCase):
         self.assertEqual("/repos/x/", r.matches[0].paths[0].value)
         self.assertEqual("Bearer", r.auth_scheme)
         self.assertEqual("EGRESS_TOKEN_0", r.token_env)
+
+    def test_git_fetch_defaults_false(self):
+        routes = parse_routes({"routes": [{"host": "github.com"}]})
+        self.assertFalse(routes[0].git_fetch)
+
+    def test_git_fetch_true(self):
+        routes = parse_routes({"routes": [{
+            "host": "github.com",
+            "git": {"fetch": True},
+        }]})
+        self.assertTrue(routes[0].git_fetch)
+
+    def test_git_fetch_must_be_boolean(self):
+        with self.assertRaises(ValueError):
+            parse_routes({"routes": [{
+                "host": "github.com",
+                "git": {"fetch": "yes"},
+            }]})
+
+    def test_unknown_git_key_rejected(self):
+        with self.assertRaises(ValueError):
+            parse_routes({"routes": [{
+                "host": "github.com",
+                "git": {"push": True},
+            }]})
 
     def test_order_preserved(self):
         routes = parse_routes({"routes": [
@@ -604,6 +631,24 @@ class TestDecisionDefaults(unittest.TestCase):
         self.assertIsNone(d.inject_authorization)
 
 
+class TestDecideGitFetch(unittest.TestCase):
+    def test_blocks_when_host_not_allowlisted(self):
+        d = decide_git_fetch((), "github.com")
+        self.assertEqual("block", d.action)
+        self.assertIn("git fetch/clone over HTTPS", d.reason)
+
+    def test_blocks_when_route_does_not_opt_in(self):
+        d = decide_git_fetch((Route(host="github.com"),), "github.com")
+        self.assertEqual("block", d.action)
+
+    def test_forwards_when_route_opts_in(self):
+        d = decide_git_fetch(
+            (Route(host="github.com", git_fetch=True),),
+            "github.com",
+        )
+        self.assertEqual("forward", d.action)
+
+
 # --- scan_outbound -------------------------------------------------------
 
 
@@ -620,7 +665,7 @@ class TestScanOutboundBody(unittest.TestCase):
         self.assertIn("OpenAI API key", result.reason)
 
 
-# --- is_git_push_request ------------------------------------------------
+# --- HTTPS Git request detection ----------------------------------------
 
 
 class TestIsGitPushRequest(unittest.TestCase):
@@ -643,7 +688,7 @@ class TestIsGitPushRequest(unittest.TestCase):
             "service=git-receive-pack&foo=bar",
         ))
 
-    def test_fetch_endpoints_not_blocked(self):
+    def test_fetch_endpoints_are_not_push(self):
         self.assertFalse(is_git_push_request(
             "/owner/repo.git/info/refs",
             "service=git-upload-pack",
@@ -659,6 +704,37 @@ class TestIsGitPushRequest(unittest.TestCase):
         self.assertFalse(is_git_push_request("/repos/owner/repo", ""))
         self.assertFalse(is_git_push_request("/v1/messages", ""))
         self.assertFalse(is_git_push_request("/", ""))
+
+
+class TestIsGitFetchRequest(unittest.TestCase):
+    def test_post_git_upload_pack_endpoint(self):
+        self.assertTrue(is_git_fetch_request("/owner/repo.git/git-upload-pack", ""))
+
+    def test_info_refs_with_upload_pack_service(self):
+        self.assertTrue(is_git_fetch_request(
+            "/owner/repo.git/info/refs",
+            "service=git-upload-pack",
+        ))
+
+    def test_info_refs_with_extra_query_params(self):
+        self.assertTrue(is_git_fetch_request(
+            "/owner/repo.git/info/refs",
+            "foo=bar&service=git-upload-pack&z=1",
+        ))
+
+    def test_push_endpoints_are_not_fetch(self):
+        self.assertFalse(is_git_fetch_request(
+            "/owner/repo.git/info/refs",
+            "service=git-receive-pack",
+        ))
+        self.assertFalse(is_git_fetch_request(
+            "/owner/repo.git/git-receive-pack", "",
+        ))
+
+    def test_unrelated_paths_not_fetch(self):
+        self.assertFalse(is_git_fetch_request("/repos/owner/repo", ""))
+        self.assertFalse(is_git_fetch_request("/v1/messages", ""))
+        self.assertFalse(is_git_fetch_request("/", ""))
 
 
 class TestGitPushBlockFailFast(unittest.TestCase):
