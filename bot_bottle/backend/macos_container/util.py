@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import platform
 import shutil
 import subprocess
@@ -69,6 +70,81 @@ def force_remove_container(name: str) -> None:
             stderr=subprocess.DEVNULL,
             check=False,
         )
+
+
+def create_network(name: str, *, internal: bool = False) -> None:
+    args = [
+        _CONTAINER, "network", "create",
+        "--label", "bot-bottle.backend=macos-container",
+    ]
+    if internal:
+        args.append("--internal")
+    args.append(name)
+    result = subprocess.run(
+        args, capture_output=True, text=True, check=False,
+    )
+    if result.returncode == 0:
+        return
+    if "already exists" in (result.stderr or "").lower():
+        return
+    die(
+        f"container network create {name} failed: "
+        f"{(result.stderr or '').strip() or '<no stderr>'}"
+    )
+
+
+def remove_network(name: str) -> None:
+    result = subprocess.run(
+        [_CONTAINER, "network", "delete", name],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if result.returncode != 0:
+        return
+
+
+def inspect_container(name: str) -> dict[str, object]:
+    result = subprocess.run(
+        [_CONTAINER, "inspect", name],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        die(
+            f"container inspect {name} failed: "
+            f"{(result.stderr or '').strip() or '<no stderr>'}"
+        )
+    try:
+        data = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError as exc:
+        die(f"container inspect {name} returned malformed JSON: {exc}")
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        return data[0]
+    if isinstance(data, dict):
+        return data
+    die(f"container inspect {name} returned an unexpected shape")
+    raise AssertionError("unreachable")
+
+
+def container_ipv4_on_network(name: str, network: str) -> str:
+    data = inspect_container(name)
+    status = data.get("status")
+    networks = status.get("networks") if isinstance(status, dict) else None
+    if not isinstance(networks, list):
+        die(f"container inspect {name} did not include status.networks")
+    for entry in networks:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("network") != network:
+            continue
+        raw = entry.get("ipv4Address")
+        if not isinstance(raw, str) or not raw:
+            die(f"container {name} has no IPv4 address on {network}")
+        return raw.split("/", 1)[0]
+    die(f"container {name} is not attached to network {network}")
+    raise AssertionError("unreachable")
 
 
 def image_id(ref: str) -> str:

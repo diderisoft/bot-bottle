@@ -45,7 +45,10 @@ class TestMacosContainerCleanup(unittest.TestCase):
 class TestMacosContainerEnumerate(unittest.TestCase):
     def test_enumerate_active_reads_metadata(self):
         completed = enum_mod.subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="bot-bottle-a\nother\n", stderr="",
+            args=[],
+            returncode=0,
+            stdout="bot-bottle-a\nbot-bottle-sidecars-a\nother\n",
+            stderr="",
         )
 
         class _Metadata:

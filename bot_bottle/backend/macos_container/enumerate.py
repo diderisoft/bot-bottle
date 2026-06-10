@@ -8,6 +8,7 @@ from ...bottle_state import read_metadata
 from .. import ActiveAgent
 
 _PREFIX = "bot-bottle-"
+_SIDECAR_PREFIX = "bot-bottle-sidecars-"
 
 
 def enumerate_active() -> list[ActiveAgent]:
@@ -22,6 +23,8 @@ def enumerate_active() -> list[ActiveAgent]:
     out: list[ActiveAgent] = []
     for name in sorted(line.strip() for line in result.stdout.splitlines()):
         if not name.startswith(_PREFIX):
+            continue
+        if name.startswith(_SIDECAR_PREFIX):
             continue
         slug = name[len(_PREFIX):]
         metadata = read_metadata(slug)

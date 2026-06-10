@@ -55,6 +55,29 @@ class TestMacosContainerCommands(unittest.TestCase):
         with patch.object(util.subprocess, "run", return_value=completed):
             self.assertEqual("sha256:abc", util.image_id("demo:latest"))
 
+    def test_container_ipv4_on_network_reads_inspect_json(self):
+        payload = """[{
+          "status": {
+            "networks": [
+              {
+                "network": "bot-bottle-net-demo",
+                "ipv4Address": "192.168.128.2/24"
+              }
+            ]
+          }
+        }]"""
+        completed = util.subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=payload, stderr="",
+        )
+        with patch.object(util.subprocess, "run", return_value=completed):
+            self.assertEqual(
+                "192.168.128.2",
+                util.container_ipv4_on_network(
+                    "bot-bottle-sidecars-demo",
+                    "bot-bottle-net-demo",
+                ),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

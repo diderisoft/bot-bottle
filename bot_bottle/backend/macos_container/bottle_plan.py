@@ -13,6 +13,9 @@ from .. import BottlePlan
 class MacosContainerBottlePlan(BottlePlan):
     slug: str
     forwarded_env: dict[str, str] = field(repr=False)
+    agent_proxy_url: str = ""
+    agent_git_gate_url: str = ""
+    agent_supervise_url: str = ""
 
     @property
     def container_name(self) -> str:
