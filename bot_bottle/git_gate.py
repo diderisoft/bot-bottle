@@ -300,6 +300,8 @@ while IFS=' ' read -r old new ref; do
   [ -z "$ref" ] && continue
   if [ "$new" = "$zero" ]; then
     refspec=":$ref"
+  elif [ "$old" != "$zero" ] && ! git merge-base --is-ancestor "$old" "$new" 2>/dev/null; then
+    refspec="+$new:$ref"
   else
     refspec="$new:$ref"
   fi

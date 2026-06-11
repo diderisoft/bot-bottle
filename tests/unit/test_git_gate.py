@@ -181,6 +181,13 @@ class TestHookRender(unittest.TestCase):
         self.assertIn("BatchMode=yes", hook)
         self.assertIn("ConnectTimeout=", hook)
 
+    def test_force_push_uses_plus_refspec(self):
+        # A non-fast-forward push (old != zero, new not a descendant of old)
+        # must forward +$new:$ref so the upstream accepts the force push.
+        hook = git_gate_render_hook()
+        self.assertIn('git merge-base --is-ancestor "$old" "$new"', hook)
+        self.assertIn('refspec="+$new:$ref"', hook)
+
     def test_forward_preserves_push_options(self):
         # Git exposes push options to pre-receive hooks as
         # GIT_PUSH_OPTION_COUNT + indexed GIT_PUSH_OPTION_N variables.
