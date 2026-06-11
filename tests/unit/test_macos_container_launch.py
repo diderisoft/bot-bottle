@@ -34,16 +34,26 @@ def _plan(
         token_env_map={"EGRESS_TOKEN_0": "HOST_TOKEN"},
     )
     if git:
+        key_path = stage_dir / "origin-key"
+        key_path.write_text("key\n", encoding="utf-8")
+        known_hosts_path = stage_dir / "origin-known-hosts"
+        known_hosts_path.write_text("example.com ssh-ed25519 AAAA\n", encoding="utf-8")
+        entrypoint = stage_dir / "git_gate_entrypoint.sh"
+        entrypoint.write_text("#!/bin/sh\n", encoding="utf-8")
+        hook = stage_dir / "git_gate_pre_receive.sh"
+        hook.write_text("#!/bin/sh\n", encoding="utf-8")
+        access_hook = stage_dir / "git_gate_access_hook.sh"
+        access_hook.write_text("#!/bin/sh\n", encoding="utf-8")
         upstream = SimpleNamespace(
             name="origin",
-            identity_file="/host/key",
-            known_hosts_file=Path("/host/known_hosts"),
+            identity_file=str(key_path),
+            known_hosts_file=known_hosts_path,
         )
         git_gate_plan = SimpleNamespace(
             upstreams=(upstream,),
-            entrypoint_script=Path("/state/git/entrypoint.sh"),
-            hook_script=Path("/state/git/pre-receive"),
-            access_hook_script=Path("/state/git/access.sh"),
+            entrypoint_script=entrypoint,
+            hook_script=hook,
+            access_hook_script=access_hook,
         )
     else:
         git_gate_plan = SimpleNamespace(upstreams=())
@@ -56,6 +66,7 @@ def _plan(
         provisioned_env={"CODEX_HOME": "/run/codex-home"},
     )
     return cast(MacosContainerBottlePlan, SimpleNamespace(
+        spec=SimpleNamespace(),
         stage_dir=stage_dir,
         slug="dev-abc",
         container_name="bot-bottle-dev-abc",
@@ -152,11 +163,99 @@ class TestMacosContainerLaunchArgv(unittest.TestCase):
         self.assertNotIn("bot-bottle-egress-dev-abc", argv)
         self.assertEqual(["bot-bottle-agent:latest", "sleep", "2147483647"], argv[-3:])
 
-    def test_git_gate_is_blocked_until_safe_key_delivery_exists(self):
+    def test_git_gate_daemons_are_ready_gated(self):
         plan = _plan(stage_dir=self.stage_dir, git=True)
-        with patch.object(launch, "die", side_effect=SystemExit("die")):
-            with self.assertRaises(SystemExit):
-                launch._validate_supported_plan(plan)
+        self.assertEqual(
+            ("egress", "git-gate", "git-http"),
+            launch._sidecar_daemons(plan),
+        )
+        self.assertIn(
+            "BOT_BOTTLE_GIT_GATE_READY_FILE=/run/git-gate/ready",
+            launch._sidecar_env_entries(plan),
+        )
+
+    def test_stamp_agent_urls_includes_git_http_when_git_gate_exists(self):
+        plan = _plan(stage_dir=self.stage_dir, git=True, supervise=True)
+        with patch.object(launch.dataclasses, "replace") as replace:
+            launch._stamp_agent_urls(plan, "192.168.128.2")
+        replace.assert_called_once_with(
+            plan,
+            agent_proxy_url="http://192.168.128.2:9099",
+            agent_git_gate_url="http://192.168.128.2:9420",
+            agent_supervise_url="http://192.168.128.2:9100/",
+        )
+
+    def test_macos_plan_uses_http_git_gate_rewrites(self):
+        base = _plan(
+            stage_dir=self.stage_dir,
+            git=True,
+            agent_git_gate_url="http://192.168.128.2:9420",
+        )
+        plan = MacosContainerBottlePlan(
+            spec=base.spec,
+            stage_dir=base.stage_dir,
+            git_gate_plan=base.git_gate_plan,
+            egress_plan=base.egress_plan,
+            supervise_plan=base.supervise_plan,
+            agent_provision=base.agent_provision,
+            slug=base.slug,
+            forwarded_env=base.forwarded_env,
+            agent_git_gate_url=base.agent_git_gate_url,
+        )
+        self.assertEqual(
+            "192.168.128.2:9420",
+            plan.git_gate_insteadof_host,
+        )
+        self.assertEqual("http", plan.git_gate_insteadof_scheme)
+
+    def test_stage_git_gate_copies_files_and_releases_ready_marker(self):
+        plan = _plan(stage_dir=self.stage_dir, git=True)
+        with (
+            patch.object(launch.container_mod, "exec_container") as exec_container,
+            patch.object(launch.container_mod, "copy_into_container") as copy_in,
+        ):
+            launch._stage_git_gate(plan, "sidecar")
+
+        exec_container.assert_any_call(
+            "sidecar",
+            [
+                "mkdir",
+                "-p",
+                "/etc/git-gate",
+                "/git-gate/creds",
+                "/git",
+                "/run/git-gate",
+            ],
+        )
+        copied = [call.args for call in copy_in.call_args_list]
+        self.assertIn(
+            (
+                "sidecar",
+                str(self.stage_dir / "git_gate_entrypoint.sh"),
+                "/git-gate-entrypoint.sh",
+            ),
+            copied,
+        )
+        self.assertIn(
+            (
+                "sidecar",
+                str(self.stage_dir / "origin-key"),
+                "/git-gate/creds/origin-key",
+            ),
+            copied,
+        )
+        self.assertIn(
+            (
+                "sidecar",
+                str(self.stage_dir / "origin-known-hosts"),
+                "/git-gate/creds/origin-known_hosts",
+            ),
+            copied,
+        )
+        self.assertIn(
+            "touch /run/git-gate/ready",
+            exec_container.call_args_list[-1].args[1][-1],
+        )
 
 
 if __name__ == "__main__":

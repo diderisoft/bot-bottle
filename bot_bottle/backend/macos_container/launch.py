@@ -23,7 +23,14 @@ from ...egress import EGRESS_ROUTES_IN_CONTAINER, egress_resolve_token_values
 from ...git_gate import revoke_git_gate_provisioned_keys
 from ...log import die, info, warn
 from ...supervise import QUEUE_DIR_IN_CONTAINER, SUPERVISE_PORT
+from ...util import expand_tilde
 from ..docker.egress import EGRESS_CA_IN_CONTAINER, EGRESS_PORT
+from ..docker.git_gate import (
+    GIT_GATE_ACCESS_HOOK_IN_CONTAINER,
+    GIT_GATE_CREDS_DIR_IN_CONTAINER,
+    GIT_GATE_ENTRYPOINT_IN_CONTAINER,
+    GIT_GATE_HOOK_IN_CONTAINER,
+)
 from ..docker.sidecar_bundle import (
     SIDECAR_BUNDLE_DOCKERFILE,
     SIDECAR_BUNDLE_IMAGE,
@@ -37,6 +44,8 @@ from .bottle_plan import MacosContainerBottlePlan
 
 _REPO_DIR = str(Path(__file__).resolve().parent.parent.parent.parent)
 _AGENT_SLEEP_SECONDS = "2147483647"
+_GIT_HTTP_PORT = 9420
+_GIT_GATE_READY_FILE = "/run/git-gate/ready"
 
 
 def internal_network_name(slug: str) -> str:
@@ -74,7 +83,6 @@ def launch(
             raise teardown_exc
 
     try:
-        _validate_supported_plan(plan)
         plan = _mint_certs(plan)
         _build_images(plan)
 
@@ -86,6 +94,7 @@ def launch(
         container_mod.force_remove_container(sidecar_name)
         _start_sidecar_bundle(plan, sidecar_name, internal_network, egress_network)
         stack.callback(container_mod.force_remove_container, sidecar_name)
+        _stage_git_gate(plan, sidecar_name)
 
         sidecar_ip = container_mod.container_ipv4_on_network(
             sidecar_name, internal_network,
@@ -124,17 +133,6 @@ def _mint_certs(plan: MacosContainerBottlePlan) -> MacosContainerBottlePlan:
         mitmproxy_ca_cert_only_host_path=egress_ca_cert_only,
     )
     return dataclasses.replace(plan, egress_plan=egress_plan)
-
-
-def _validate_supported_plan(plan: MacosContainerBottlePlan) -> None:
-    if plan.git_gate_plan.upstreams:
-        die(
-            "macos-container backend launch does not support bottle.git yet: "
-            "Apple Container cannot bind-mount individual SSH key files, "
-            "and this backend will not mount broad host key directories. "
-            "Use docker/smolmachines for git-gate bottles until a safe key "
-            "delivery path lands."
-        )
 
 
 def _build_images(plan: MacosContainerBottlePlan) -> None:
@@ -213,12 +211,74 @@ def _stamp_agent_urls(
     supervise_url = ""
     if plan.supervise_plan is not None:
         supervise_url = f"http://{sidecar_ip}:{SUPERVISE_PORT}/"
+    git_gate_url = ""
+    if plan.git_gate_plan.upstreams:
+        git_gate_url = f"http://{sidecar_ip}:{_GIT_HTTP_PORT}"
     return dataclasses.replace(
         plan,
         agent_proxy_url=proxy_url,
-        agent_git_gate_url="",
+        agent_git_gate_url=git_gate_url,
         agent_supervise_url=supervise_url,
     )
+
+
+def _stage_git_gate(plan: MacosContainerBottlePlan, sidecar_name: str) -> None:
+    gp = plan.git_gate_plan
+    if not gp.upstreams:
+        return
+
+    container_mod.exec_container(
+        sidecar_name,
+        [
+            "mkdir",
+            "-p",
+            str(Path(GIT_GATE_HOOK_IN_CONTAINER).parent),
+            GIT_GATE_CREDS_DIR_IN_CONTAINER,
+            "/git",
+            str(Path(_GIT_GATE_READY_FILE).parent),
+        ],
+    )
+
+    for host_path, container_path in _git_gate_files(plan):
+        container_mod.copy_into_container(
+            sidecar_name, host_path, container_path,
+        )
+
+    container_mod.exec_container(
+        sidecar_name,
+        [
+            "sh",
+            "-c",
+            "chmod 755 "
+            f"{GIT_GATE_ENTRYPOINT_IN_CONTAINER} "
+            f"{GIT_GATE_HOOK_IN_CONTAINER} "
+            f"{GIT_GATE_ACCESS_HOOK_IN_CONTAINER} && "
+            f"chmod 600 {GIT_GATE_CREDS_DIR_IN_CONTAINER}/* && "
+            f"touch {_GIT_GATE_READY_FILE}",
+        ],
+    )
+
+
+def _git_gate_files(
+    plan: MacosContainerBottlePlan,
+) -> tuple[tuple[str, str], ...]:
+    gp = plan.git_gate_plan
+    files: list[tuple[str, str]] = [
+        (str(gp.entrypoint_script), GIT_GATE_ENTRYPOINT_IN_CONTAINER),
+        (str(gp.hook_script), GIT_GATE_HOOK_IN_CONTAINER),
+        (str(gp.access_hook_script), GIT_GATE_ACCESS_HOOK_IN_CONTAINER),
+    ]
+    for upstream in gp.upstreams:
+        files.append((
+            expand_tilde(upstream.identity_file),
+            f"{GIT_GATE_CREDS_DIR_IN_CONTAINER}/{upstream.name}-key",
+        ))
+        if upstream.known_hosts_file:
+            files.append((
+                str(upstream.known_hosts_file),
+                f"{GIT_GATE_CREDS_DIR_IN_CONTAINER}/{upstream.name}-known_hosts",
+            ))
+    return tuple(files)
 
 
 def _sidecar_run_argv(
@@ -269,6 +329,8 @@ def _sidecar_dns() -> str:
 
 def _sidecar_daemons(plan: MacosContainerBottlePlan) -> tuple[str, ...]:
     daemons = ["egress"]
+    if plan.git_gate_plan.upstreams:
+        daemons += ["git-gate", "git-http"]
     if plan.supervise_plan is not None:
         daemons.append("supervise")
     return tuple(daemons)
@@ -278,6 +340,8 @@ def _sidecar_env_entries(plan: MacosContainerBottlePlan) -> tuple[str, ...]:
     env: list[str] = []
     if plan.egress_plan.routes:
         env.extend(sorted(plan.egress_plan.token_env_map.keys()))
+    if plan.git_gate_plan.upstreams:
+        env.append(f"BOT_BOTTLE_GIT_GATE_READY_FILE={_GIT_GATE_READY_FILE}")
     if plan.supervise_plan is not None:
         env += [
             f"SUPERVISE_BOTTLE_SLUG={plan.slug}",

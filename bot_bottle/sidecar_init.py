@@ -59,6 +59,7 @@ class _DaemonSpec:
 # reads to inject `Authorization` headers on configured routes;
 # no other daemon in the bundle should see these values.
 _EGRESS_ONLY_ENV_PREFIXES: tuple[str, ...] = ("EGRESS_TOKEN_",)
+_READY_GATED_DAEMONS: tuple[str, ...] = ("git-gate", "git-http")
 
 
 def _env_for_daemon(name: str, base_env: dict[str, str]) -> dict[str, str]:
@@ -80,6 +81,22 @@ _DAEMONS: tuple[_DaemonSpec, ...] = (
     _DaemonSpec("git-http", ("python3", "/app/git_http_backend.py")),
     _DaemonSpec("supervise", ("python3", "/app/supervise_server.py")),
 )
+
+
+def _argv_for_daemon(name: str, argv: Sequence[str], env: dict[str, str]) -> list[str]:
+    ready_file = env.get("BOT_BOTTLE_GIT_GATE_READY_FILE", "").strip()
+    if name not in _READY_GATED_DAEMONS or not ready_file:
+        return list(argv)
+    return [
+        "/bin/sh",
+        "-c",
+        "while [ ! -f \"$BOT_BOTTLE_GIT_GATE_READY_FILE\" ]; do "
+        "sleep 0.1; "
+        "done; "
+        "exec \"$@\"",
+        name,
+        *argv,
+    ]
 
 
 def _selected_daemons(
@@ -118,12 +135,13 @@ def _pump(name: str, stream: IO[bytes]) -> None:
 
 
 def _spawn(spec: _DaemonSpec) -> subprocess.Popen[bytes]:
+    env = _env_for_daemon(spec.name, dict(os.environ))
     proc = subprocess.Popen(
-        list(spec.argv),
+        _argv_for_daemon(spec.name, spec.argv, env),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         bufsize=0,
-        env=_env_for_daemon(spec.name, dict(os.environ)),
+        env=env,
     )
     threading.Thread(
         target=_pump, args=(spec.name, proc.stdout), daemon=True

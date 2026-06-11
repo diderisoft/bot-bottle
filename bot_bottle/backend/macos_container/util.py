@@ -8,6 +8,7 @@ import ipaddress
 import platform
 import shutil
 import subprocess
+import time
 from typing import Iterable
 
 from ...log import die, info
@@ -211,6 +212,45 @@ def force_remove_container(name: str) -> None:
             stderr=subprocess.DEVNULL,
             check=False,
         )
+
+
+def copy_into_container(name: str, host_path: str, container_path: str) -> None:
+    cmd = [_CONTAINER, "cp", host_path, f"{name}:{container_path}"]
+    result = _run_container_op(cmd)
+    if result.returncode != 0:
+        die(
+            f"container cp into {name}:{container_path} failed: "
+            f"{(result.stderr or '').strip() or '<no stderr>'}"
+        )
+
+
+def exec_container(name: str, argv: list[str]) -> None:
+    result = _run_container_op([_CONTAINER, "exec", name, *argv])
+    if result.returncode != 0:
+        die(
+            f"container exec in {name} failed: "
+            f"{(result.stderr or '').strip() or '<no stderr>'}"
+        )
+
+
+def _run_container_op(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    for _ in range(19):
+        if result.returncode == 0:
+            return result
+        time.sleep(0.1)
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    return result
 
 
 def create_network(name: str, *, internal: bool = False) -> None:

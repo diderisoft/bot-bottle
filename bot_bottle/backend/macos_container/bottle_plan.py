@@ -44,3 +44,15 @@ class MacosContainerBottlePlan(BottlePlan):
     @property
     def agent_provider_template(self) -> str:
         return self.agent_provision.template
+
+    @property
+    def git_gate_insteadof_host(self) -> str:
+        if self.agent_git_gate_url.startswith("http://"):
+            return self.agent_git_gate_url.removeprefix("http://").rstrip("/")
+        return super().git_gate_insteadof_host
+
+    @property
+    def git_gate_insteadof_scheme(self) -> str:
+        if self.agent_git_gate_url.startswith("http://"):
+            return "http"
+        return super().git_gate_insteadof_scheme

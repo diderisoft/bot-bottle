@@ -21,6 +21,7 @@ from unittest.mock import patch
 from bot_bottle.sidecar_init import (
     _DaemonSpec,
     _Supervisor,
+    _argv_for_daemon,
     _env_for_daemon,
     _selected_daemons,
 )
@@ -118,6 +119,28 @@ class TestSelectedDaemons(unittest.TestCase):
             all_daemons=self._DAEMONS,
         )
         self.assertEqual([d.name for d in got], ["egress", "git-gate"])
+
+
+class TestDaemonArgv(unittest.TestCase):
+    def test_git_daemons_wait_for_ready_marker_when_configured(self):
+        argv = _argv_for_daemon(
+            "git-gate",
+            ("/bin/sh", "/git-gate-entrypoint.sh"),
+            {"BOT_BOTTLE_GIT_GATE_READY_FILE": "/run/git-gate/ready"},
+        )
+        self.assertEqual("/bin/sh", argv[0])
+        self.assertEqual("-c", argv[1])
+        self.assertIn("BOT_BOTTLE_GIT_GATE_READY_FILE", argv[2])
+        self.assertEqual("git-gate", argv[3])
+        self.assertEqual(["/bin/sh", "/git-gate-entrypoint.sh"], argv[4:])
+
+    def test_non_git_daemon_does_not_wait_for_ready_marker(self):
+        argv = _argv_for_daemon(
+            "egress",
+            ("/bin/sh", "/app/egress-entrypoint.sh"),
+            {"BOT_BOTTLE_GIT_GATE_READY_FILE": "/run/git-gate/ready"},
+        )
+        self.assertEqual(["/bin/sh", "/app/egress-entrypoint.sh"], argv)
 
 
 class TestSupervisor(unittest.TestCase):
