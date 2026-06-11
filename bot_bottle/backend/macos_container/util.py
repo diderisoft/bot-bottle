@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import platform
 import shutil
 import subprocess
@@ -12,6 +13,7 @@ from ...log import die, info
 
 
 _CONTAINER = "container"
+_DEFAULT_DNS = "1.1.1.1"
 
 
 def is_macos() -> bool:
@@ -33,13 +35,17 @@ def require_container() -> None:
         die("container not found")
 
 
+def dns_server() -> str:
+    return os.environ.get("BOT_BOTTLE_MACOS_CONTAINER_DNS", _DEFAULT_DNS)
+
+
 def build_image(ref: str, context: str, *, dockerfile: str = "") -> None:
     """Build an OCI image with Apple's BuildKit-backed `container build`."""
     info(
         f"building image {ref} from {context} with Apple Container "
         "(layer cache keeps repeat builds fast)"
     )
-    args = [_CONTAINER, "build", "-t", ref]
+    args = [_CONTAINER, "build", "-t", ref, "--dns", dns_server()]
     if dockerfile:
         args.extend(["-f", dockerfile])
     args.append(context)

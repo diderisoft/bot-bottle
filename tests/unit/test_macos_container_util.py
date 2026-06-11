@@ -29,12 +29,15 @@ class TestMacosContainerAvailability(unittest.TestCase):
 
 class TestMacosContainerCommands(unittest.TestCase):
     def test_build_image(self):
-        with patch.object(util.subprocess, "run") as run:
+        with patch.object(util.subprocess, "run") as run, \
+             patch.object(util.os, "environ", {
+                 "BOT_BOTTLE_MACOS_CONTAINER_DNS": "9.9.9.9",
+             }):
             util.build_image("bot-bottle-agent:latest", "/repo", dockerfile="/repo/Dockerfile")
         self.assertEqual(
             [
                 "container", "build", "-t", "bot-bottle-agent:latest",
-                "-f", "/repo/Dockerfile", "/repo",
+                "--dns", "9.9.9.9", "-f", "/repo/Dockerfile", "/repo",
             ],
             run.call_args.args[0],
         )

@@ -264,7 +264,7 @@ def _agent_run_argv(
 
 
 def _sidecar_dns() -> str:
-    return os.environ.get("BOT_BOTTLE_MACOS_CONTAINER_DNS", "1.1.1.1")
+    return container_mod.dns_server()
 
 
 def _sidecar_daemons(plan: MacosContainerBottlePlan) -> tuple[str, ...]:
