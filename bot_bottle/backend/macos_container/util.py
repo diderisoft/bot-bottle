@@ -40,7 +40,7 @@ def require_container() -> None:
 
 def _require_container_service() -> None:
     result = subprocess.run(
-        [_CONTAINER, "system", "info"],
+        [_CONTAINER, "system", "status"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         check=False,
