@@ -28,6 +28,27 @@ class TestMacosContainerAvailability(unittest.TestCase):
 
 
 class TestMacosContainerCommands(unittest.TestCase):
+    def test_dns_server_prefers_direct_host_ipv4_resolver(self):
+        scutil = util.subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="""
+resolver #1
+  nameserver[0] : 100.100.100.100
+  reach    : 0x00000003 (Reachable,Transient Connection)
+
+resolver #2
+  nameserver[0] : 2600:4041:5c43:b900::1
+  nameserver[1] : 192.168.1.1
+  reach    : 0x00020002 (Reachable,Directly Reachable Address)
+""",
+            stderr="",
+        )
+        with patch.object(util.os, "environ", {}), \
+             patch.object(util.platform, "system", return_value="Darwin"), \
+             patch.object(util.subprocess, "run", return_value=scutil):
+            self.assertEqual("192.168.1.1", util.dns_server())
+
     def test_build_image(self):
         status = util.subprocess.CompletedProcess(
             args=[],
@@ -79,6 +100,64 @@ class TestMacosContainerCommands(unittest.TestCase):
                 "--dns", "9.9.9.9", "/repo",
             ],
             calls[-1],
+        )
+
+    def test_build_image_leaves_working_builder_with_different_dns_alone(self):
+        status = util.subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=(
+                '[{"status":{"state":"running"},'
+                '"configuration":{"dns":{"nameservers":["8.8.8.8"]}}}]'
+            ),
+            stderr="",
+        )
+        probe = util.subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr="",
+        )
+        build = util.subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr="",
+        )
+        with patch.object(util, "dns_server", return_value="192.168.1.1"), \
+             patch.object(util.os, "environ", {}), \
+             patch.object(util.subprocess, "run", side_effect=[status, probe, build]) as run:
+            util.build_image("bot-bottle-agent:latest", "/repo")
+        calls = [c.args[0] for c in run.call_args_list]
+        self.assertNotIn(["container", "builder", "stop"], calls)
+        self.assertNotIn(
+            ["container", "builder", "start", "--dns", "192.168.1.1"],
+            calls,
+        )
+
+    def test_build_image_restarts_builder_when_dns_probe_fails(self):
+        status = util.subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=(
+                '[{"status":{"state":"running"},'
+                '"configuration":{"dns":{"nameservers":["8.8.8.8"]}}}]'
+            ),
+            stderr="",
+        )
+        failed_probe = util.subprocess.CompletedProcess(
+            args=[], returncode=2, stdout="", stderr="",
+        )
+        ok = util.subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr="",
+        )
+        with patch.object(util, "dns_server", return_value="192.168.1.1"), \
+             patch.object(util.os, "environ", {}), \
+             patch.object(
+                 util.subprocess,
+                 "run",
+                 side_effect=[status, failed_probe, ok, ok, ok],
+             ) as run:
+            util.build_image("bot-bottle-agent:latest", "/repo")
+        calls = [c.args[0] for c in run.call_args_list]
+        self.assertIn(["container", "builder", "stop"], calls)
+        self.assertIn(
+            ["container", "builder", "start", "--dns", "192.168.1.1"],
+            calls,
         )
 
     def test_container_exists_parses_quiet_list(self):

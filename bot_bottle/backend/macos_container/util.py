@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import ipaddress
 import platform
 import shutil
 import subprocess
@@ -36,7 +37,10 @@ def require_container() -> None:
 
 
 def dns_server() -> str:
-    return os.environ.get("BOT_BOTTLE_MACOS_CONTAINER_DNS", _DEFAULT_DNS)
+    override = os.environ.get("BOT_BOTTLE_MACOS_CONTAINER_DNS", "").strip()
+    if override:
+        return override
+    return _host_ipv4_dns() or _DEFAULT_DNS
 
 
 def build_image(ref: str, context: str, *, dockerfile: str = "") -> None:
@@ -55,8 +59,16 @@ def build_image(ref: str, context: str, *, dockerfile: str = "") -> None:
 
 def _ensure_builder_dns() -> None:
     dns = dns_server()
-    if _builder_has_dns(dns):
+    status = _builder_status()
+    override = os.environ.get("BOT_BOTTLE_MACOS_CONTAINER_DNS", "").strip()
+    if _builder_running(status) and _builder_resolves_build_hosts():
+        if override and not _builder_has_dns(status, dns):
+            _restart_builder_with_dns(dns)
         return
+    _restart_builder_with_dns(dns)
+
+
+def _restart_builder_with_dns(dns: str) -> None:
     subprocess.run(
         [_CONTAINER, "builder", "stop"],
         stdout=subprocess.DEVNULL,
@@ -69,7 +81,55 @@ def _ensure_builder_dns() -> None:
     )
 
 
-def _builder_has_dns(dns: str) -> bool:
+def _host_ipv4_dns() -> str:
+    if not is_macos():
+        return ""
+    result = subprocess.run(
+        ["scutil", "--dns"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return ""
+    blocks: list[list[str]] = []
+    current: list[str] = []
+    for line in result.stdout.splitlines():
+        if line.startswith("resolver #") and current:
+            blocks.append(current)
+            current = []
+        current.append(line)
+    if current:
+        blocks.append(current)
+    for direct_only in (True, False):
+        for block in blocks:
+            text = "\n".join(block)
+            if direct_only and "Directly Reachable Address" not in text:
+                continue
+            for line in block:
+                if "nameserver[" not in line or ":" not in line:
+                    continue
+                candidate = line.split(":", 1)[1].strip()
+                if _usable_ipv4(candidate):
+                    return candidate
+    return ""
+
+
+def _usable_ipv4(value: str) -> bool:
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return (
+        address.version == 4
+        and not address.is_loopback
+        and not address.is_link_local
+        and not address.is_multicast
+        and not address.is_unspecified
+    )
+
+
+def _builder_status() -> list[dict[str, object]]:
     result = subprocess.run(
         [_CONTAINER, "builder", "status", "--format", "json"],
         capture_output=True,
@@ -77,18 +137,29 @@ def _builder_has_dns(dns: str) -> bool:
         check=False,
     )
     if result.returncode != 0:
-        return False
+        return []
     try:
         data = json.loads(result.stdout or "[]")
     except json.JSONDecodeError:
-        return False
-    entries = data if isinstance(data, list) else [data]
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        status = entry.get("status")
-        if isinstance(status, dict) and status.get("state") != "running":
-            continue
+        return []
+    if isinstance(data, list):
+        return [entry for entry in data if isinstance(entry, dict)]
+    if isinstance(data, dict):
+        return [data]
+    return []
+
+
+def _builder_running(status: list[dict[str, object]]) -> bool:
+    for entry in status:
+        entry_status = entry.get("status")
+        if isinstance(entry_status, dict) and entry_status.get("state") == "running":
+            return True
+    return False
+
+
+def _builder_dns_nameservers(status: list[dict[str, object]]) -> list[str]:
+    out: list[str] = []
+    for entry in status:
         config = entry.get("configuration")
         config_dns = config.get("dns") if isinstance(config, dict) else None
         nameservers = (
@@ -96,9 +167,24 @@ def _builder_has_dns(dns: str) -> bool:
             if isinstance(config_dns, dict)
             else None
         )
-        if isinstance(nameservers, list) and dns in nameservers:
-            return True
-    return False
+        if not isinstance(nameservers, list):
+            continue
+        out.extend(name for name in nameservers if isinstance(name, str))
+    return out
+
+
+def _builder_has_dns(status: list[dict[str, object]], dns: str) -> bool:
+    return dns in _builder_dns_nameservers(status)
+
+
+def _builder_resolves_build_hosts() -> bool:
+    result = subprocess.run(
+        [_CONTAINER, "exec", "buildkit", "getent", "hosts", "deb.debian.org"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return result.returncode == 0
 
 
 def image_exists(ref: str) -> bool:
