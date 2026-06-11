@@ -36,7 +36,7 @@ RUN apt-get update \
 # build (`claude --version` returns 2.1.126). Bump deliberately when
 # rolling forward; an unpinned install would mean rebuilds silently pick
 # up new behavior.
-RUN npm install -g --no-fund --no-audit @anthropic-ai/claude-code@2.1.126 \
+RUN npm install -g --no-fund --no-audit @anthropic-ai/claude-code@2.1.172 \
   && npm cache clean --force
 
 # Run as a non-root user. The node image already provides a `node` user
