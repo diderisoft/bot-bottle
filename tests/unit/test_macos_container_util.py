@@ -29,7 +29,16 @@ class TestMacosContainerAvailability(unittest.TestCase):
 
 class TestMacosContainerCommands(unittest.TestCase):
     def test_build_image(self):
-        with patch.object(util.subprocess, "run") as run, \
+        status = util.subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=(
+                '[{"status":{"state":"running"},'
+                '"configuration":{"dns":{"nameservers":["9.9.9.9"]}}}]'
+            ),
+            stderr="",
+        )
+        with patch.object(util.subprocess, "run", return_value=status) as run, \
              patch.object(util.os, "environ", {
                  "BOT_BOTTLE_MACOS_CONTAINER_DNS": "9.9.9.9",
              }):
@@ -39,9 +48,38 @@ class TestMacosContainerCommands(unittest.TestCase):
                 "container", "build", "-t", "bot-bottle-agent:latest",
                 "--dns", "9.9.9.9", "-f", "/repo/Dockerfile", "/repo",
             ],
-            run.call_args.args[0],
+            run.call_args_list[-1].args[0],
         )
-        self.assertTrue(run.call_args.kwargs["check"])
+        self.assertTrue(run.call_args_list[-1].kwargs["check"])
+
+    def test_build_image_restarts_builder_when_dns_mismatches(self):
+        status = util.subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=(
+                '[{"status":{"state":"running"},'
+                '"configuration":{"dns":{"nameservers":[]}}}]'
+            ),
+            stderr="",
+        )
+        with patch.object(util.subprocess, "run", return_value=status) as run, \
+             patch.object(util.os, "environ", {
+                 "BOT_BOTTLE_MACOS_CONTAINER_DNS": "9.9.9.9",
+             }):
+            util.build_image("bot-bottle-agent:latest", "/repo")
+        calls = [c.args[0] for c in run.call_args_list]
+        self.assertIn(["container", "builder", "stop"], calls)
+        self.assertIn(
+            ["container", "builder", "start", "--dns", "9.9.9.9"],
+            calls,
+        )
+        self.assertEqual(
+            [
+                "container", "build", "-t", "bot-bottle-agent:latest",
+                "--dns", "9.9.9.9", "/repo",
+            ],
+            calls[-1],
+        )
 
     def test_container_exists_parses_quiet_list(self):
         completed = util.subprocess.CompletedProcess(

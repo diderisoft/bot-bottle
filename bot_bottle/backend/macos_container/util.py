@@ -45,11 +45,60 @@ def build_image(ref: str, context: str, *, dockerfile: str = "") -> None:
         f"building image {ref} from {context} with Apple Container "
         "(layer cache keeps repeat builds fast)"
     )
+    _ensure_builder_dns()
     args = [_CONTAINER, "build", "-t", ref, "--dns", dns_server()]
     if dockerfile:
         args.extend(["-f", dockerfile])
     args.append(context)
     subprocess.run(args, check=True)
+
+
+def _ensure_builder_dns() -> None:
+    dns = dns_server()
+    if _builder_has_dns(dns):
+        return
+    subprocess.run(
+        [_CONTAINER, "builder", "stop"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    subprocess.run(
+        [_CONTAINER, "builder", "start", "--dns", dns],
+        check=True,
+    )
+
+
+def _builder_has_dns(dns: str) -> bool:
+    result = subprocess.run(
+        [_CONTAINER, "builder", "status", "--format", "json"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return False
+    try:
+        data = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError:
+        return False
+    entries = data if isinstance(data, list) else [data]
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        status = entry.get("status")
+        if isinstance(status, dict) and status.get("state") != "running":
+            continue
+        config = entry.get("configuration")
+        config_dns = config.get("dns") if isinstance(config, dict) else None
+        nameservers = (
+            config_dns.get("nameservers")
+            if isinstance(config_dns, dict)
+            else None
+        )
+        if isinstance(nameservers, list) and dns in nameservers:
+            return True
+    return False
 
 
 def image_exists(ref: str) -> bool:
