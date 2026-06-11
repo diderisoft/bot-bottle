@@ -36,7 +36,7 @@ from .bottle_plan import MacosContainerBottlePlan
 
 
 _REPO_DIR = str(Path(__file__).resolve().parent.parent.parent.parent)
-_SIDECAR_SLEEP_SECONDS = "2147483647"
+_AGENT_SLEEP_SECONDS = "2147483647"
 
 
 def internal_network_name(slug: str) -> str:
@@ -259,7 +259,7 @@ def _agent_run_argv(
     ]
     for entry in _agent_env_entries(plan, sidecar_ip):
         argv += ["--env", entry]
-    argv += [plan.image, "sleep", _SIDECAR_SLEEP_SECONDS]
+    argv += [plan.image, "sleep", _AGENT_SLEEP_SECONDS]
     return argv
 
 

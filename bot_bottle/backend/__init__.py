@@ -24,9 +24,10 @@ backend exposes five methods:
       enough metadata for callers (CLI `list active`, dashboard
       agents pane) to render a row.
 
-Selection is driven by `--backend` on `start` or
-BOT_BOTTLE_BACKEND (env var; default "smolmachines"). Per PRD 0003 the
-manifest does not carry a backend field; the host picks.
+Selection is driven by `--backend` on `start` or BOT_BOTTLE_BACKEND
+(env var). When neither is set, compatible macOS hosts default to
+`macos-container`; other hosts default to `smolmachines`. Per PRD 0003
+the manifest does not carry a backend field; the host picks.
 """
 
 from __future__ import annotations
@@ -553,15 +554,22 @@ def get_bottle_backend(
     `name` precedence:
       1. explicit arg (CLI `--backend=<name>` passes through here)
       2. BOT_BOTTLE_BACKEND env var
-      3. default `smolmachines`
+      3. `macos-container` on compatible macOS hosts
+      4. default `smolmachines`
 
     Dies with a pointer at the known backends if the chosen name
     isn't implemented."""
-    resolved = name or os.environ.get("BOT_BOTTLE_BACKEND") or "smolmachines"
+    resolved = name or os.environ.get("BOT_BOTTLE_BACKEND") or _default_backend_name()
     if resolved not in _BACKENDS:
         known = ", ".join(sorted(_BACKENDS))
         die(f"unknown backend {resolved!r}; known backends: {known}")
     return _BACKENDS[resolved]
+
+
+def _default_backend_name() -> str:
+    if has_backend("macos-container"):
+        return "macos-container"
+    return "smolmachines"
 
 
 def known_backend_names() -> tuple[str, ...]:

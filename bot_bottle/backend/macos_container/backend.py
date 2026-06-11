@@ -25,7 +25,7 @@ from .bottle_plan import MacosContainerBottlePlan
 class MacosContainerBottleBackend(
     BottleBackend["MacosContainerBottlePlan", "MacosContainerBottleCleanupPlan"]
 ):
-    """Experimental Apple Container backend. Selected by
+    """Apple Container backend. Selected by
     `BOT_BOTTLE_BACKEND=macos-container` or
     `--backend=macos-container`."""
 

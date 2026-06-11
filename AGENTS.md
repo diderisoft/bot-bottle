@@ -7,10 +7,13 @@ with a curated set of skills and env vars. The point is to run agents with
 broad permissions inside a sandbox, so a misbehaving agent cannot reach the
 host. A Python CLI (entry point `cli.py`, package `bot_bottle/`) orchestrates
 the runtime lifecycle and the copying of skills and env vars into it.
-The default backend is smolmachines on macOS: agents run in a libkrun
-micro-VM, while the sidecar bundle still uses Docker. The legacy Docker
-backend remains available with `BOT_BOTTLE_BACKEND=docker` or
-`--backend=docker`.
+The default backend on compatible macOS hosts is macos-container:
+agents and sidecar bundles run through Apple's `container` CLI without
+requiring Docker. The smolmachines backend remains available with
+`BOT_BOTTLE_BACKEND=smolmachines` or `--backend=smolmachines`; agents
+run in a libkrun micro-VM, while the sidecar bundle still uses Docker.
+The legacy Docker backend remains available with `BOT_BOTTLE_BACKEND=docker`
+or `--backend=docker`.
 
 ## Goals
 

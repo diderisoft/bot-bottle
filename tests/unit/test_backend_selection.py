@@ -32,8 +32,35 @@ class TestGetBottleBackend(unittest.TestCase):
             b = get_bottle_backend()
         self.assertEqual("smolmachines", b.name)
 
-    def test_default_smolmachines(self):
-        with patch.dict(os.environ, {}, clear=True):
+    def test_default_macos_container_when_available(self):
+        class _FakeBackend:
+            name = "macos-container"
+
+            def is_available(self) -> bool:
+                return True
+
+        with patch.dict(os.environ, {}, clear=True), \
+             patch.object(backend_mod, "_BACKENDS", {
+                 "macos-container": _FakeBackend(),
+                 "smolmachines": _FakeBackend(),
+             }):
+            b = get_bottle_backend()
+        self.assertEqual("macos-container", b.name)
+
+    def test_default_smolmachines_when_macos_container_unavailable(self):
+        class _FakeBackend:
+            def __init__(self, name: str, available: bool) -> None:
+                self.name = name
+                self._available = available
+
+            def is_available(self) -> bool:
+                return self._available
+
+        with patch.dict(os.environ, {}, clear=True), \
+             patch.object(backend_mod, "_BACKENDS", {
+                 "macos-container": _FakeBackend("macos-container", False),
+                 "smolmachines": _FakeBackend("smolmachines", False),
+             }):
             b = get_bottle_backend()
         self.assertEqual("smolmachines", b.name)
 
