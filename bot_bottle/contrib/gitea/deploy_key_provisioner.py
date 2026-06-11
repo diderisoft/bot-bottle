@@ -2,7 +2,13 @@
 
 Generates ed25519 keypairs via `ssh-keygen` and registers / deletes
 them using the Gitea deploy-key HTTP API. No new Python dependencies —
-only stdlib `urllib.request` and `subprocess`."""
+only stdlib `urllib.request` and `subprocess`.
+
+Required token permissions (Gitea "Applications" → "Generate Token"):
+  - Repository: Read & Write
+    Grants POST /api/v1/repos/{owner}/{repo}/keys (create deploy key)
+    and DELETE /api/v1/repos/{owner}/{repo}/keys/{id} (revoke deploy key).
+    No other scopes are needed."""
 
 from __future__ import annotations
 
