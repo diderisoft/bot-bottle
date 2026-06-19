@@ -451,6 +451,14 @@ def revoke_git_gate_provisioned_keys(bottle: ManifestBottle, stage_dir: Path) ->
         info(f"revoked deploy key {key_id} for git-gate.repos[{entry.Name!r}]")
 
 
+def _resolve_identity_file(entry: ManifestGitEntry, slug: str, stage_dir: Path) -> str:
+    """Return the host-side SSH identity file path for this entry.
+    For gitea entries, provisions a fresh deploy key first."""
+    if entry.Key.provider == "gitea":
+        return _provision_dynamic_key(entry, slug, stage_dir)
+    return entry.IdentityFile
+
+
 class GitGate(ABC):
     """The per-agent git-gate. Encapsulates the host-side prepare
     (upstream lift + entrypoint/hook render); the sidecar's
@@ -471,11 +479,10 @@ class GitGate(ABC):
         before passing the plan to `.start`."""
         upstreams_list = list(git_gate_upstreams_for_bottle(bottle))
         for i, entry in enumerate(bottle.git):
-            if entry.Key.provider == "gitea":
-                key_file = _provision_dynamic_key(entry, slug, stage_dir)
-                upstreams_list[i] = dataclasses.replace(
-                    upstreams_list[i], identity_file=key_file
-                )
+            upstreams_list[i] = dataclasses.replace(
+                upstreams_list[i],
+                identity_file=_resolve_identity_file(entry, slug, stage_dir),
+            )
         upstreams = tuple(upstreams_list)
         entrypoint = stage_dir / "git_gate_entrypoint.sh"
         entrypoint.write_text(git_gate_render_entrypoint(upstreams))
