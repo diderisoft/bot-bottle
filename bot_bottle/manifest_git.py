@@ -78,14 +78,14 @@ class ManifestKeyConfig:
 
     For `static`: `path` is the host-side absolute path to the SSH private key.
 
-    For `gitea`: `provisioner_token` is the name of a host-side env var
+    For `gitea`: `forge_token_env` is the name of a host-side env var
     carrying the Gitea API token; the value is read at provision time,
     never stored on the plan. `api_url` is the forge's HTTP API root; if
     empty, it is derived from the upstream URL's host at provision time."""
 
     provider: str
     path: str = ""
-    provisioner_token: str = ""
+    forge_token_env: str = ""
     api_url: str = ""
 
 
@@ -212,16 +212,16 @@ def _parse_key_config(
 
     # provider == "gitea"
     for k in d:
-        if k not in {"provider", "provisioner_token", "api_url"}:
+        if k not in {"provider", "forge_token_env", "api_url"}:
             raise ManifestError(
                 f"bottle '{bottle_name}' {label}.key has unknown key {k!r} "
-                f"for provider 'gitea'; allowed: provider, provisioner_token, api_url"
+                f"for provider 'gitea'; allowed: provider, forge_token_env, api_url"
             )
-    provisioner_token = d.get("provisioner_token")
-    if not isinstance(provisioner_token, str) or not provisioner_token:
+    forge_token_env = d.get("forge_token_env")
+    if not isinstance(forge_token_env, str) or not forge_token_env:
         raise ManifestError(
             f"bottle '{bottle_name}' {label}.key missing required "
-            f"string field 'provisioner_token' for provider 'gitea'"
+            f"string field 'forge_token_env' for provider 'gitea'"
         )
     api_url_raw = d.get("api_url", "")
     if not isinstance(api_url_raw, str):
@@ -230,7 +230,7 @@ def _parse_key_config(
         )
     return ManifestKeyConfig(
         provider=provider,
-        provisioner_token=provisioner_token,
+        forge_token_env=forge_token_env,
         api_url=api_url_raw,
     )
 

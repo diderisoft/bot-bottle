@@ -296,14 +296,14 @@ class TestGiteaKey(unittest.TestCase):
                 "url": "ssh://git@gitea.dideric.is:30009/didericis/bot-bottle.git",
                 "key": {
                     "provider": "gitea",
-                    "provisioner_token": "GITEA_TOKEN",
+                    "forge_token_env": "GITEA_TOKEN",
                 },
             },
         }))
         e = m.bottles["dev"].git[0]
         self.assertEqual("bot-bottle", e.Name)
         self.assertEqual("gitea", e.Key.provider)
-        self.assertEqual("GITEA_TOKEN", e.Key.provisioner_token)
+        self.assertEqual("GITEA_TOKEN", e.Key.forge_token_env)
         self.assertEqual("", e.Key.api_url)
         self.assertEqual("", e.IdentityFile)
 
@@ -313,7 +313,7 @@ class TestGiteaKey(unittest.TestCase):
                 "url": "ssh://git@gitea.example.com/org/repo.git",
                 "key": {
                     "provider": "gitea",
-                    "provisioner_token": "MY_TOKEN",
+                    "forge_token_env": "MY_TOKEN",
                     "api_url": "https://gitea.example.com",
                 },
             },
@@ -324,12 +324,12 @@ class TestGiteaKey(unittest.TestCase):
         m = Manifest.from_json_obj(_manifest({
             "foo": {
                 "url": "ssh://git@github.com/didericis/foo.git",
-                "key": {"provider": "gitea", "provisioner_token": "T"},
+                "key": {"provider": "gitea", "forge_token_env": "T"},
             },
         }))
         self.assertEqual("", m.bottles["dev"].git[0].IdentityFile)
 
-    def test_gitea_key_missing_provisioner_token_dies(self):
+    def test_gitea_key_missing_forge_token_env_dies(self):
         with self.assertRaises(ManifestError):
             Manifest.from_json_obj(_manifest({
                 "foo": {
@@ -345,7 +345,7 @@ class TestGiteaKey(unittest.TestCase):
                     "url": "ssh://git@github.com/foo.git",
                     "key": {
                         "provider": "gitea",
-                        "provisioner_token": "T",
+                        "forge_token_env": "T",
                         "key_type": "rsa",  # not allowed
                     },
                 },

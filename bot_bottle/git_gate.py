@@ -390,11 +390,11 @@ def _provision_dynamic_key(
     can inject it into the GitGateUpstream as `identity_file`."""
     from .deploy_key_provisioner import get_provisioner
     pk = entry.Key
-    token = os.environ.get(pk.provisioner_token)
+    token = os.environ.get(pk.forge_token_env)
     if token is None:
         raise RuntimeError(
-            f"git-gate.repos[{entry.Name!r}] key.provisioner_token"
-            f" = {pk.provisioner_token!r}: env var is not set"
+            f"git-gate.repos[{entry.Name!r}] key.forge_token_env"
+            f" = {pk.forge_token_env!r}: env var is not set"
         )
     api_url = pk.api_url or f"https://{entry.UpstreamHost}"
     provisioner = get_provisioner(pk.provider, token, api_url)
@@ -434,11 +434,11 @@ def revoke_git_gate_provisioned_keys(bottle: ManifestBottle, stage_dir: Path) ->
         if not id_file.exists():
             continue
         key_id = id_file.read_text().strip()
-        token = os.environ.get(pk.provisioner_token)
+        token = os.environ.get(pk.forge_token_env)
         if token is None:
             raise RuntimeError(
-                f"git-gate.repos[{entry.Name!r}] key.provisioner_token"
-                f" = {pk.provisioner_token!r}: env var is not set;"
+                f"git-gate.repos[{entry.Name!r}] key.forge_token_env"
+                f" = {pk.forge_token_env!r}: env var is not set;"
                 f" cannot revoke deploy key {key_id}"
             )
         api_url = pk.api_url or f"https://{entry.UpstreamHost}"
