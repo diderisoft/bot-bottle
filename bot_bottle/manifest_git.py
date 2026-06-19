@@ -195,44 +195,44 @@ def _parse_key_config(
             f"allowed: {', '.join(sorted(_KEY_PROVIDERS))}"
         )
 
-    if provider == "static":
+    if provider == "gitea":
         for k in d:
-            if k not in {"provider", "path"}:
+            if k not in {"provider", "forge_token_env", "api_url"}:
                 raise ManifestError(
                     f"bottle '{bottle_name}' {label}.key has unknown key {k!r} "
-                    f"for provider 'static'; allowed: provider, path"
+                    f"for provider 'gitea'; allowed: provider, forge_token_env, api_url"
                 )
-        path = d.get("path")
-        if not isinstance(path, str) or not path:
+        forge_token_env = d.get("forge_token_env")
+        if not isinstance(forge_token_env, str) or not forge_token_env:
             raise ManifestError(
                 f"bottle '{bottle_name}' {label}.key missing required "
-                f"string field 'path' for provider 'static'"
+                f"string field 'forge_token_env' for provider 'gitea'"
             )
-        return ManifestKeyConfig(provider=provider, path=path)
+        api_url_raw = d.get("api_url", "")
+        if not isinstance(api_url_raw, str):
+            raise ManifestError(
+                f"bottle '{bottle_name}' {label}.key 'api_url' must be a string"
+            )
+        return ManifestKeyConfig(
+            provider=provider,
+            forge_token_env=forge_token_env,
+            api_url=api_url_raw,
+        )
 
-    # provider == "gitea"
+    # provider == "static"
     for k in d:
-        if k not in {"provider", "forge_token_env", "api_url"}:
+        if k not in {"provider", "path"}:
             raise ManifestError(
                 f"bottle '{bottle_name}' {label}.key has unknown key {k!r} "
-                f"for provider 'gitea'; allowed: provider, forge_token_env, api_url"
+                f"for provider 'static'; allowed: provider, path"
             )
-    forge_token_env = d.get("forge_token_env")
-    if not isinstance(forge_token_env, str) or not forge_token_env:
+    path = d.get("path")
+    if not isinstance(path, str) or not path:
         raise ManifestError(
             f"bottle '{bottle_name}' {label}.key missing required "
-            f"string field 'forge_token_env' for provider 'gitea'"
+            f"string field 'path' for provider 'static'"
         )
-    api_url_raw = d.get("api_url", "")
-    if not isinstance(api_url_raw, str):
-        raise ManifestError(
-            f"bottle '{bottle_name}' {label}.key 'api_url' must be a string"
-        )
-    return ManifestKeyConfig(
-        provider=provider,
-        forge_token_env=forge_token_env,
-        api_url=api_url_raw,
-    )
+    return ManifestKeyConfig(provider=provider, path=path)
 
 
 @dataclass(frozen=True)
