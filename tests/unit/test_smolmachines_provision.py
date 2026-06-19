@@ -33,7 +33,7 @@ from bot_bottle.backend.smolmachines.launch import _bundle_launch_spec
 from bot_bottle.backend.util import AGENT_CA_PATH
 from bot_bottle.egress import EgressPlan, EgressRoute
 from bot_bottle.git_gate import GitGatePlan, GitGateUpstream
-from bot_bottle.manifest import ManifestGitEntry, Manifest
+from bot_bottle.manifest import ManifestGitEntry, ManifestKeyConfig, Manifest
 from bot_bottle.supervise import SupervisePlan
 
 
@@ -100,7 +100,7 @@ def _plan(
         git_gate_json["repos"] = {
             g.Name: {
                 "url": g.Upstream,
-                "identity": g.IdentityFile,
+                "key": {"provider": g.Key.provider or "static", "path": g.Key.path or g.IdentityFile},
             }
             for g in git
         }
@@ -360,6 +360,7 @@ class TestProvisionGit(unittest.TestCase):
             git=[ManifestGitEntry(
                 Name="bot-bottle",
                 Upstream="ssh://git@host/repo.git",
+                Key=ManifestKeyConfig(provider="static", path="~/.ssh/id_ed25519"),
                 IdentityFile="~/.ssh/id_ed25519",
             )],
             stage_dir=self.stage,

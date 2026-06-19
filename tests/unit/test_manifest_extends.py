@@ -116,8 +116,8 @@ class TestExtendsGitMerge(unittest.TestCase):
     """git-gate.user overlays by field; git-gate.repos merges by upstream
     host, with child entries replacing duplicate hosts."""
 
-    _GIT_ENTRY_A = {"url": "ssh://git@host-a/a.git", "identity": "/dev/null"}
-    _GIT_ENTRY_B = {"url": "ssh://git@host-b/b.git", "identity": "/dev/null"}
+    _GIT_ENTRY_A = {"url": "ssh://git@host-a/a.git", "key": {"provider": "static", "path": "/dev/null"}}
+    _GIT_ENTRY_B = {"url": "ssh://git@host-b/b.git", "key": {"provider": "static", "path": "/dev/null"}}
 
     def test_child_git_repos_merge_with_parent(self):
         m = _build(
@@ -131,7 +131,7 @@ class TestExtendsGitMerge(unittest.TestCase):
         self.assertEqual(["a", "b"], names)
 
     def test_child_git_repo_replaces_same_host(self):
-        replacement = {"url": "ssh://git@host-a/replacement.git", "identity": "/dev/null"}
+        replacement = {"url": "ssh://git@host-a/replacement.git", "key": {"provider": "static", "path": "/dev/null"}}
         m = _build(
             base={"git-gate": {"repos": {"a": self._GIT_ENTRY_A}}},
             child={

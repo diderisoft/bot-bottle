@@ -389,13 +389,12 @@ def _provision_dynamic_key(
     Returns the host-side path to the private key file so the caller
     can inject it into the GitGateUpstream as `identity_file`."""
     from .deploy_key_provisioner import get_provisioner
-    pk = entry.ProvisionedKey
-    assert pk is not None
-    token = os.environ.get(pk.token_env)
+    pk = entry.Key
+    token = os.environ.get(pk.provisioner_token)
     if token is None:
         raise RuntimeError(
-            f"git-gate.repos[{entry.Name!r}] provisioned_key.token_env"
-            f" = {pk.token_env!r}: env var is not set"
+            f"git-gate.repos[{entry.Name!r}] key.provisioner_token"
+            f" = {pk.provisioner_token!r}: env var is not set"
         )
     api_url = pk.api_url or f"https://{entry.UpstreamHost}"
     provisioner = get_provisioner(pk.provider, token, api_url)
@@ -428,18 +427,18 @@ def revoke_git_gate_provisioned_keys(bottle: ManifestBottle, stage_dir: Path) ->
     address manually."""
     from .deploy_key_provisioner import get_provisioner
     for entry in bottle.git:
-        if entry.ProvisionedKey is None:
+        if entry.Key.provider != "gitea":
             continue
-        pk = entry.ProvisionedKey
+        pk = entry.Key
         id_file = stage_dir / f"{entry.Name}-deploy-key-id"
         if not id_file.exists():
             continue
         key_id = id_file.read_text().strip()
-        token = os.environ.get(pk.token_env)
+        token = os.environ.get(pk.provisioner_token)
         if token is None:
             raise RuntimeError(
-                f"git-gate.repos[{entry.Name!r}] provisioned_key.token_env"
-                f" = {pk.token_env!r}: env var is not set;"
+                f"git-gate.repos[{entry.Name!r}] key.provisioner_token"
+                f" = {pk.provisioner_token!r}: env var is not set;"
                 f" cannot revoke deploy key {key_id}"
             )
         api_url = pk.api_url or f"https://{entry.UpstreamHost}"
@@ -463,7 +462,7 @@ class GitGate(ABC):
         entrypoint, pre-receive hook, and access-hook scripts (mode
         600) under `stage_dir`. Pure host-side, no docker subprocess.
 
-        For `provisioned_key` entries, also generates and registers
+        For `gitea` key entries, also generates and registers
         a fresh deploy key via the forge API and writes the private key
         + key ID to `stage_dir`.
 
@@ -472,7 +471,7 @@ class GitGate(ABC):
         before passing the plan to `.start`."""
         upstreams_list = list(git_gate_upstreams_for_bottle(bottle))
         for i, entry in enumerate(bottle.git):
-            if entry.ProvisionedKey is not None:
+            if entry.Key.provider == "gitea":
                 key_file = _provision_dynamic_key(entry, slug, stage_dir)
                 upstreams_list[i] = dataclasses.replace(
                     upstreams_list[i], identity_file=key_file

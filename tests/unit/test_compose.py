@@ -51,7 +51,7 @@ def _manifest(*, supervise: bool, with_git: bool, with_egress: bool) -> Manifest
         bottle["git-gate"] = {"repos": {
             "upstream": {
                 "url": "ssh://git@example.com:22/x/y.git",
-                "identity": "/etc/hostname",  # any existing file
+                "key": {"provider": "static", "path": "/etc/hostname"},
             },
         }}
     if with_egress:

@@ -76,7 +76,7 @@ class TestGitGateGitconfigRender(unittest.TestCase):
             "bottles": {"dev": {"git-gate": {"repos": {
                 "bot-bottle": {
                     "url": "ssh://git@192.0.2.10:30009/didericis/bot-bottle.git",
-                    "identity": "/dev/null",
+                    "key": {"provider": "static", "path": "/dev/null"},
                 },
             }}}},
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},

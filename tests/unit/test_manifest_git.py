@@ -17,7 +17,7 @@ class TestGitEntryParsing(unittest.TestCase):
         m = Manifest.from_json_obj(_manifest({
             "bot-bottle": {
                 "url": "ssh://git@gitea.dideric.is:30009/didericis/bot-bottle.git",
-                "identity": "/dev/null",
+                "key": {"provider": "static", "path": "/dev/null"},
             },
         }))
         entries = m.bottles["dev"].git
@@ -33,7 +33,7 @@ class TestGitEntryParsing(unittest.TestCase):
         m = Manifest.from_json_obj(_manifest({
             "foo": {
                 "url": "ssh://git@github.com/didericis/foo.git",
-                "identity": "/dev/null",
+                "key": {"provider": "static", "path": "/dev/null"},
             },
         }))
         e = m.bottles["dev"].git[0]
@@ -44,7 +44,7 @@ class TestGitEntryParsing(unittest.TestCase):
         m = Manifest.from_json_obj(_manifest({
             "foo": {
                 "url": "ssh://git@github.com/foo.git",
-                "identity": "/dev/null",
+                "key": {"provider": "static", "path": "/dev/null"},
             },
         }))
         self.assertEqual("", m.bottles["dev"].git[0].KnownHostKey)
@@ -53,7 +53,7 @@ class TestGitEntryParsing(unittest.TestCase):
         m = Manifest.from_json_obj(_manifest({
             "foo": {
                 "url": "ssh://git@github.com/foo.git",
-                "identity": "/dev/null",
+                "key": {"provider": "static", "path": "/dev/null"},
                 "host_key": "ssh-ed25519 AAAA",
             },
         }))
@@ -63,7 +63,7 @@ class TestGitEntryParsing(unittest.TestCase):
         m = Manifest.from_json_obj(_manifest({
             "my-repo": {
                 "url": "ssh://git@github.com/foo.git",
-                "identity": "/dev/null",
+                "key": {"provider": "static", "path": "/dev/null"},
             },
         }))
         self.assertEqual("my-repo", m.bottles["dev"].git[0].Name)
@@ -71,10 +71,10 @@ class TestGitEntryParsing(unittest.TestCase):
     def test_missing_url_dies(self):
         with self.assertRaises(ManifestError):
             Manifest.from_json_obj(_manifest({
-                "foo": {"identity": "/dev/null"},
+                "foo": {"key": {"provider": "static", "path": "/dev/null"}},
             }))
 
-    def test_missing_identity_dies(self):
+    def test_missing_key_block_dies(self):
         with self.assertRaises(ManifestError):
             Manifest.from_json_obj(_manifest({
                 "foo": {"url": "ssh://git@github.com/foo.git"},
@@ -85,7 +85,7 @@ class TestGitEntryParsing(unittest.TestCase):
             Manifest.from_json_obj(_manifest({
                 "foo": {
                     "url": "ssh://git@github.com/foo.git",
-                    "identity": "/dev/null",
+                    "key": {"provider": "static", "path": "/dev/null"},
                     "IdentityFile": "/dev/null",  # old PascalCase key
                 },
             }))
@@ -95,7 +95,7 @@ class TestGitEntryParsing(unittest.TestCase):
             Manifest.from_json_obj(_manifest({
                 "foo": {
                     "url": "https://github.com/didericis/foo.git",
-                    "identity": "/dev/null",
+                    "key": {"provider": "static", "path": "/dev/null"},
                 },
             }))
 
@@ -104,7 +104,7 @@ class TestGitEntryParsing(unittest.TestCase):
             Manifest.from_json_obj(_manifest({
                 "foo": {
                     "url": "git@github.com:didericis/foo.git",
-                    "identity": "/dev/null",
+                    "key": {"provider": "static", "path": "/dev/null"},
                 },
             }))
 
@@ -113,7 +113,7 @@ class TestGitEntryParsing(unittest.TestCase):
             Manifest.from_json_obj(_manifest({
                 "foo": {
                     "url": "ssh://github.com/foo.git",
-                    "identity": "/dev/null",
+                    "key": {"provider": "static", "path": "/dev/null"},
                 },
             }))
 
@@ -122,7 +122,7 @@ class TestGitEntryParsing(unittest.TestCase):
             Manifest.from_json_obj(_manifest({
                 "foo": {
                     "url": "ssh://git@github.com",
-                    "identity": "/dev/null",
+                    "key": {"provider": "static", "path": "/dev/null"},
                 },
             }))
 
@@ -131,7 +131,7 @@ class TestGitEntryParsing(unittest.TestCase):
             Manifest.from_json_obj(_manifest({
                 "foo": {
                     "url": "ssh://git@github.com:notaport/foo.git",
-                    "identity": "/dev/null",
+                    "key": {"provider": "static", "path": "/dev/null"},
                 },
             }))
 
@@ -139,7 +139,7 @@ class TestGitEntryParsing(unittest.TestCase):
         m = Manifest.from_json_obj(_manifest({
             "bot-bottle": {
                 "url": "ssh://git@192.0.2.10:30009/didericis/bot-bottle.git",
-                "identity": "/dev/null",
+                "key": {"provider": "static", "path": "/dev/null"},
             },
         }))
         e = m.bottles["dev"].git[0]
@@ -156,11 +156,11 @@ class TestGitEntryCrossValidation(unittest.TestCase):
             "bottles": {"dev": {"git-gate": {"repos": {
                 "foo": {
                     "url": "ssh://git@a.example/x.git",
-                    "identity": "/dev/null",
+                    "key": {"provider": "static", "path": "/dev/null"},
                 },
                 "bar": {
                     "url": "ssh://git@b.example/y.git",
-                    "identity": "/dev/null",
+                    "key": {"provider": "static", "path": "/dev/null"},
                 },
             }}}},
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
@@ -190,7 +190,7 @@ class TestGitEntryCrossValidation(unittest.TestCase):
             Manifest.from_json_obj(_manifest({
                 "o'reilly": {
                     "url": "ssh://git@github.com/foo.git",
-                    "identity": "/dev/null",
+                    "key": {"provider": "static", "path": "/dev/null"},
                 },
             }))
 
@@ -199,7 +199,7 @@ class TestGitEntryCrossValidation(unittest.TestCase):
             Manifest.from_json_obj(_manifest({
                 "my repo": {
                     "url": "ssh://git@github.com/foo.git",
-                    "identity": "/dev/null",
+                    "key": {"provider": "static", "path": "/dev/null"},
                 },
             }))
 
@@ -208,7 +208,7 @@ class TestGitEntryCrossValidation(unittest.TestCase):
             Manifest.from_json_obj(_manifest({
                 "foo;bar": {
                     "url": "ssh://git@github.com/foo.git",
-                    "identity": "/dev/null",
+                    "key": {"provider": "static", "path": "/dev/null"},
                 },
             }))
 
@@ -217,7 +217,7 @@ class TestGitEntryCrossValidation(unittest.TestCase):
             Manifest.from_json_obj(_manifest({
                 "foo$bar": {
                     "url": "ssh://git@github.com/foo.git",
-                    "identity": "/dev/null",
+                    "key": {"provider": "static", "path": "/dev/null"},
                 },
             }))
 
@@ -225,7 +225,7 @@ class TestGitEntryCrossValidation(unittest.TestCase):
         m = Manifest.from_json_obj(_manifest({
             "my.repo-name_1": {
                 "url": "ssh://git@github.com/foo.git",
-                "identity": "/dev/null",
+                "key": {"provider": "static", "path": "/dev/null"},
             },
         }))
         self.assertEqual("my.repo-name_1", m.bottles["dev"].git[0].Name)
@@ -243,111 +243,141 @@ class TestGitEntryCrossValidation(unittest.TestCase):
         self.assertIn("PRD 0047", msg)
 
 
-class TestProvisionedKey(unittest.TestCase):
-    """git-gate.repos entries that use provisioned_key (PRD 0048)."""
+class TestStaticKey(unittest.TestCase):
+    """git-gate.repos entries with key.provider = "static"."""
 
-    def test_provisioned_key_minimal(self):
+    def test_static_key_minimal(self):
         m = Manifest.from_json_obj(_manifest({
             "bot-bottle": {
                 "url": "ssh://git@gitea.dideric.is:30009/didericis/bot-bottle.git",
-                "provisioned_key": {
+                "key": {"provider": "static", "path": "/home/user/.ssh/id_ed25519"},
+            },
+        }))
+        e = m.bottles["dev"].git[0]
+        self.assertEqual("bot-bottle", e.Name)
+        self.assertEqual("static", e.Key.provider)
+        self.assertEqual("/home/user/.ssh/id_ed25519", e.Key.path)
+        self.assertEqual("/home/user/.ssh/id_ed25519", e.IdentityFile)
+
+    def test_static_key_sets_identity_file_at_parse_time(self):
+        m = Manifest.from_json_obj(_manifest({
+            "foo": {
+                "url": "ssh://git@github.com/foo.git",
+                "key": {"provider": "static", "path": "/dev/null"},
+            },
+        }))
+        self.assertEqual("/dev/null", m.bottles["dev"].git[0].IdentityFile)
+
+    def test_static_key_missing_path_dies(self):
+        with self.assertRaises(ManifestError):
+            Manifest.from_json_obj(_manifest({
+                "foo": {
+                    "url": "ssh://git@github.com/foo.git",
+                    "key": {"provider": "static"},
+                },
+            }))
+
+    def test_static_key_unknown_field_dies(self):
+        with self.assertRaises(ManifestError):
+            Manifest.from_json_obj(_manifest({
+                "foo": {
+                    "url": "ssh://git@github.com/foo.git",
+                    "key": {"provider": "static", "path": "/dev/null", "api_url": "x"},
+                },
+            }))
+
+
+class TestGiteaKey(unittest.TestCase):
+    """git-gate.repos entries with key.provider = "gitea"."""
+
+    def test_gitea_key_minimal(self):
+        m = Manifest.from_json_obj(_manifest({
+            "bot-bottle": {
+                "url": "ssh://git@gitea.dideric.is:30009/didericis/bot-bottle.git",
+                "key": {
                     "provider": "gitea",
-                    "token_env": "GITEA_TOKEN",
+                    "provisioner_token": "GITEA_TOKEN",
                 },
             },
         }))
         e = m.bottles["dev"].git[0]
         self.assertEqual("bot-bottle", e.Name)
-        self.assertIsNotNone(e.ProvisionedKey)
-        assert e.ProvisionedKey is not None
-        self.assertEqual("gitea", e.ProvisionedKey.provider)
-        self.assertEqual("GITEA_TOKEN", e.ProvisionedKey.token_env)
-        self.assertEqual("", e.ProvisionedKey.api_url)
+        self.assertEqual("gitea", e.Key.provider)
+        self.assertEqual("GITEA_TOKEN", e.Key.provisioner_token)
+        self.assertEqual("", e.Key.api_url)
         self.assertEqual("", e.IdentityFile)
 
-    def test_provisioned_key_with_api_url(self):
+    def test_gitea_key_with_api_url(self):
         m = Manifest.from_json_obj(_manifest({
             "repo": {
                 "url": "ssh://git@gitea.example.com/org/repo.git",
-                "provisioned_key": {
+                "key": {
                     "provider": "gitea",
-                    "token_env": "MY_TOKEN",
+                    "provisioner_token": "MY_TOKEN",
                     "api_url": "https://gitea.example.com",
                 },
             },
         }))
-        pk = m.bottles["dev"].git[0].ProvisionedKey
-        assert pk is not None
-        self.assertEqual("https://gitea.example.com", pk.api_url)
+        self.assertEqual("https://gitea.example.com", m.bottles["dev"].git[0].Key.api_url)
 
-    def test_both_identity_and_provisioned_key_dies(self):
-        with self.assertRaises(ManifestError) as ctx:
-            Manifest.from_json_obj(_manifest({
-                "foo": {
-                    "url": "ssh://git@github.com/foo.git",
-                    "identity": "/dev/null",
-                    "provisioned_key": {"provider": "gitea", "token_env": "T"},
-                },
-            }))
-        self.assertIn("exactly one of", str(ctx.exception))
-        self.assertIn("got both", str(ctx.exception))
+    def test_gitea_key_has_no_identity_file_at_parse_time(self):
+        m = Manifest.from_json_obj(_manifest({
+            "foo": {
+                "url": "ssh://git@github.com/didericis/foo.git",
+                "key": {"provider": "gitea", "provisioner_token": "T"},
+            },
+        }))
+        self.assertEqual("", m.bottles["dev"].git[0].IdentityFile)
 
-    def test_neither_identity_nor_provisioned_key_dies(self):
-        with self.assertRaises(ManifestError) as ctx:
-            Manifest.from_json_obj(_manifest({
-                "foo": {"url": "ssh://git@github.com/foo.git"},
-            }))
-        self.assertIn("exactly one of", str(ctx.exception))
-        self.assertIn("got neither", str(ctx.exception))
-
-    def test_unknown_key_in_provisioned_key_block_dies(self):
+    def test_gitea_key_missing_provisioner_token_dies(self):
         with self.assertRaises(ManifestError):
             Manifest.from_json_obj(_manifest({
                 "foo": {
                     "url": "ssh://git@github.com/foo.git",
-                    "provisioned_key": {
+                    "key": {"provider": "gitea"},
+                },
+            }))
+
+    def test_gitea_key_unknown_field_dies(self):
+        with self.assertRaises(ManifestError):
+            Manifest.from_json_obj(_manifest({
+                "foo": {
+                    "url": "ssh://git@github.com/foo.git",
+                    "key": {
                         "provider": "gitea",
-                        "token_env": "T",
+                        "provisioner_token": "T",
                         "key_type": "rsa",  # not allowed
                     },
                 },
             }))
+
+
+class TestKeyBlockValidation(unittest.TestCase):
+    """Validation rules on the key block shared across providers."""
 
     def test_missing_provider_dies(self):
         with self.assertRaises(ManifestError):
             Manifest.from_json_obj(_manifest({
                 "foo": {
                     "url": "ssh://git@github.com/foo.git",
-                    "provisioned_key": {"token_env": "T"},
+                    "key": {"path": "/dev/null"},
                 },
             }))
 
-    def test_missing_token_env_dies(self):
+    def test_unknown_provider_dies(self):
         with self.assertRaises(ManifestError):
             Manifest.from_json_obj(_manifest({
                 "foo": {
                     "url": "ssh://git@github.com/foo.git",
-                    "provisioned_key": {"provider": "gitea"},
+                    "key": {"provider": "github"},
                 },
             }))
 
-    def test_provisioned_key_entry_has_no_identity_file(self):
-        m = Manifest.from_json_obj(_manifest({
-            "foo": {
-                "url": "ssh://git@github.com/didericis/foo.git",
-                "provisioned_key": {"provider": "gitea", "token_env": "T"},
-            },
-        }))
-        self.assertEqual("", m.bottles["dev"].git[0].IdentityFile)
-
-    def test_identity_entry_has_no_provisioned_key(self):
-        m = Manifest.from_json_obj(_manifest({
-            "foo": {
-                "url": "ssh://git@github.com/foo.git",
-                "identity": "/dev/null",
-            },
-        }))
-        self.assertIsNone(m.bottles["dev"].git[0].ProvisionedKey)
+    def test_missing_key_block_dies(self):
+        with self.assertRaises(ManifestError):
+            Manifest.from_json_obj(_manifest({
+                "foo": {"url": "ssh://git@github.com/foo.git"},
+            }))
 
 
 class TestEmptyGitGateField(unittest.TestCase):

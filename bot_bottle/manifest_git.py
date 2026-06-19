@@ -13,6 +13,8 @@ from .manifest_util import ManifestError, as_json_object
 # defence; this regex is belt-and-suspenders and documents intent).
 _GIT_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
+_KEY_PROVIDERS = {"static", "gitea"}
+
 
 def _opt_str(value: object, label: str) -> str:
     if value is None:
@@ -69,20 +71,22 @@ def validate_unique_git_names(bottle_name: str, git: tuple[ManifestGitEntry, ...
 
 
 @dataclass(frozen=True)
-class ManifestProvisionedKeyConfig:
-    """Configuration for automatic deploy-key lifecycle management
-    (PRD 0048). Used when a git-gate.repos entry opts out of a
-    static identity file and instead wants a fresh SSH keypair
-    generated at spin-up and revoked at teardown.
+class ManifestKeyConfig:
+    """Configuration for a repo's SSH key in git-gate.repos.
 
-    `provider` names the contrib sub-package to load (e.g. `gitea`).
-    `token_env` is the name of a host-side env var carrying the API
-    token; the value is read at provision time, never stored on the
-    plan. `api_url` is the forge's HTTP API root; if empty, it is
-    derived from the upstream URL's host at provision time."""
+    `provider` is either `"static"` (a pre-existing key on the host) or
+    `"gitea"` (automatic deploy-key lifecycle via the Gitea API).
+
+    For `static`: `path` is the host-side absolute path to the SSH private key.
+
+    For `gitea`: `provisioner_token` is the name of a host-side env var
+    carrying the Gitea API token; the value is read at provision time,
+    never stored on the plan. `api_url` is the forge's HTTP API root; if
+    empty, it is derived from the upstream URL's host at provision time."""
 
     provider: str
-    token_env: str
+    path: str = ""
+    provisioner_token: str = ""
     api_url: str = ""
 
 
@@ -99,15 +103,16 @@ class ManifestGitEntry:
     stashed in the `Upstream*` fields so the git-gate render step
     doesn't have to re-parse.
 
-    Manifest source: `git-gate.repos.<Name>` (PRD 0047/0048). Exactly
-    one of `identity` (static key path) or `provisioned_key` (automatic
-    lifecycle) must be present. The internal field names are stable."""
+    Manifest source: `git-gate.repos.<Name>` (PRD 0047/0048). A `key`
+    block is required; `key.provider` is `"static"` or `"gitea"`. For
+    `static`, `IdentityFile` is populated at parse time from `key.path`.
+    For `gitea`, `IdentityFile` is populated at provision time."""
 
     Name: str
     Upstream: str
+    Key: ManifestKeyConfig = ManifestKeyConfig(provider="")
     IdentityFile: str = ""
     KnownHostKey: str = ""
-    ProvisionedKey: Optional[ManifestProvisionedKeyConfig] = None
     RemoteKey: str = ""
     UpstreamUser: str = ""
     UpstreamHost: str = ""
@@ -120,8 +125,8 @@ class ManifestGitEntry:
     ) -> "ManifestGitEntry":
         """Parse one entry from `git-gate.repos.<repo_name>`.
 
-        YAML keys: `url` (required), exactly one of `identity` or
-        `provisioned_key` (required), `host_key` (optional).
+        YAML keys: `url` (required), `key` (required object with
+        `provider`, and provider-specific fields), `host_key` (optional).
         The repo_name becomes `Name`."""
         if not repo_name:
             raise ManifestError(
@@ -135,10 +140,10 @@ class ManifestGitEntry:
         label = f"git-gate.repos[{repo_name!r}]"
         d = as_json_object(raw, f"bottle '{bottle_name}' {label}")
         for k in d:
-            if k not in {"url", "identity", "provisioned_key", "host_key"}:
+            if k not in {"url", "key", "host_key"}:
                 raise ManifestError(
                     f"bottle '{bottle_name}' {label} has unknown key {k!r}; "
-                    f"allowed: url, identity, provisioned_key, host_key"
+                    f"allowed: url, key, host_key"
                 )
         upstream = d.get("url")
         if not isinstance(upstream, str) or not upstream:
@@ -146,32 +151,13 @@ class ManifestGitEntry:
                 f"bottle '{bottle_name}' {label} missing required string field 'url'"
             )
 
-        has_identity = "identity" in d
-        has_provisioned = "provisioned_key" in d
-        if has_identity and has_provisioned:
+        if "key" not in d:
             raise ManifestError(
-                f"bottle '{bottle_name}' {label} must set exactly one of "
-                f"'identity' or 'provisioned_key'; got both."
+                f"bottle '{bottle_name}' {label} missing required 'key' block"
             )
-        if not has_identity and not has_provisioned:
-            raise ManifestError(
-                f"bottle '{bottle_name}' {label} must set exactly one of "
-                f"'identity' or 'provisioned_key'; got neither."
-            )
+        key_config = _parse_key_config(bottle_name, label, d["key"])
 
-        ident = ""
-        provisioned_key: Optional[ManifestProvisionedKeyConfig] = None
-        if has_identity:
-            raw_ident = d.get("identity")
-            if not isinstance(raw_ident, str) or not raw_ident:
-                raise ManifestError(
-                    f"bottle '{bottle_name}' {label} 'identity' must be a non-empty string"
-                )
-            ident = raw_ident
-        else:
-            provisioned_key = _parse_provisioned_key_config(
-                bottle_name, label, d["provisioned_key"]
-            )
+        ident = key_config.path if key_config.provider == "static" else ""
 
         khk = _opt_str(
             d.get("host_key"),
@@ -183,9 +169,9 @@ class ManifestGitEntry:
         return cls(
             Name=repo_name,
             Upstream=upstream,
+            Key=key_config,
             IdentityFile=ident,
             KnownHostKey=khk,
-            ProvisionedKey=provisioned_key,
             RemoteKey=host,
             UpstreamUser=user,
             UpstreamHost=host,
@@ -194,36 +180,58 @@ class ManifestGitEntry:
         )
 
 
-def _parse_provisioned_key_config(
+def _parse_key_config(
     bottle_name: str, label: str, raw: object
-) -> ManifestProvisionedKeyConfig:
-    d = as_json_object(raw, f"bottle '{bottle_name}' {label}.provisioned_key")
-    for k in d:
-        if k not in {"provider", "token_env", "api_url"}:
-            raise ManifestError(
-                f"bottle '{bottle_name}' {label}.provisioned_key has unknown key {k!r}; "
-                f"allowed: provider, token_env, api_url"
-            )
+) -> ManifestKeyConfig:
+    d = as_json_object(raw, f"bottle '{bottle_name}' {label}.key")
     provider = d.get("provider")
     if not isinstance(provider, str) or not provider:
         raise ManifestError(
-            f"bottle '{bottle_name}' {label}.provisioned_key missing required "
+            f"bottle '{bottle_name}' {label}.key missing required "
             f"string field 'provider'"
         )
-    token_env = d.get("token_env")
-    if not isinstance(token_env, str) or not token_env:
+    if provider not in _KEY_PROVIDERS:
         raise ManifestError(
-            f"bottle '{bottle_name}' {label}.provisioned_key missing required "
-            f"string field 'token_env'"
+            f"bottle '{bottle_name}' {label}.key provider {provider!r} is unknown; "
+            f"allowed: {', '.join(sorted(_KEY_PROVIDERS))}"
+        )
+
+    if provider == "static":
+        for k in d:
+            if k not in {"provider", "path"}:
+                raise ManifestError(
+                    f"bottle '{bottle_name}' {label}.key has unknown key {k!r} "
+                    f"for provider 'static'; allowed: provider, path"
+                )
+        path = d.get("path")
+        if not isinstance(path, str) or not path:
+            raise ManifestError(
+                f"bottle '{bottle_name}' {label}.key missing required "
+                f"string field 'path' for provider 'static'"
+            )
+        return ManifestKeyConfig(provider=provider, path=path)
+
+    # provider == "gitea"
+    for k in d:
+        if k not in {"provider", "provisioner_token", "api_url"}:
+            raise ManifestError(
+                f"bottle '{bottle_name}' {label}.key has unknown key {k!r} "
+                f"for provider 'gitea'; allowed: provider, provisioner_token, api_url"
+            )
+    provisioner_token = d.get("provisioner_token")
+    if not isinstance(provisioner_token, str) or not provisioner_token:
+        raise ManifestError(
+            f"bottle '{bottle_name}' {label}.key missing required "
+            f"string field 'provisioner_token' for provider 'gitea'"
         )
     api_url_raw = d.get("api_url", "")
     if not isinstance(api_url_raw, str):
         raise ManifestError(
-            f"bottle '{bottle_name}' {label}.provisioned_key 'api_url' must be a string"
+            f"bottle '{bottle_name}' {label}.key 'api_url' must be a string"
         )
-    return ManifestProvisionedKeyConfig(
+    return ManifestKeyConfig(
         provider=provider,
-        token_env=token_env,
+        provisioner_token=provisioner_token,
         api_url=api_url_raw,
     )
 

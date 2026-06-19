@@ -56,7 +56,7 @@ from .manifest_egress import (
     ManifestEgressConfig,
     ManifestEgressRoute,
 )
-from .manifest_git import ManifestGitEntry, ManifestGitUser, parse_git_gate_config
+from .manifest_git import ManifestGitEntry, ManifestGitUser, ManifestKeyConfig, parse_git_gate_config
 from .manifest_schema import BOTTLE_KEYS
 
 # Re-export everything that callers currently import from this module.
@@ -64,6 +64,7 @@ __all__ = [
     "ManifestError",
     "ManifestGitEntry",
     "ManifestGitUser",
+    "ManifestKeyConfig",
     "ManifestAgentProvider",
     "EGRESS_AUTH_SCHEMES",
     "ManifestEgressRoute",

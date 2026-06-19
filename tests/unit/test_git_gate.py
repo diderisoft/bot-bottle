@@ -284,7 +284,7 @@ class TestPrepare(unittest.TestCase):
             "bottles": {"dev": {"git-gate": {"repos": {
                 "foo": {
                     "url": "ssh://git@github.com/didericis/foo.git",
-                    "identity": "/dev/null",
+                    "key": {"provider": "static", "path": "/dev/null"},
                 },
             }}}},
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},

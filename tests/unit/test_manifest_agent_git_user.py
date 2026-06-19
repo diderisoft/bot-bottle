@@ -112,7 +112,7 @@ class TestAgentGitUserOverlay(unittest.TestCase):
 class TestAgentGitUserRejections(unittest.TestCase):
     def test_agent_repos_dies_bottle_only(self):
         msg = _error_message(_manifest, agent_git={
-            "repos": {"r": {"url": "ssh://git@x/y.git", "identity": "/dev/null"}},
+            "repos": {"r": {"url": "ssh://git@x/y.git", "key": {"provider": "static", "path": "/dev/null"}}},
         })
         self.assertIn("git-gate.repos", msg)
         self.assertIn("bottle-only", msg)

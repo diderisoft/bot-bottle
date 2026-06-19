@@ -46,12 +46,12 @@ def fixture_with_git_dict() -> dict[str, Any]:
                     "repos": {
                         "bot-bottle": {
                             "url": "ssh://git@gitea.dideric.is:30009/didericis/bot-bottle.git",
-                            "identity": "/dev/null",
+                            "key": {"provider": "static", "path": "/dev/null"},
                             "host_key": "ssh-ed25519 AAAA...",
                         },
                         "foo": {
                             "url": "ssh://git@github.com/didericis/foo.git",
-                            "identity": "/dev/null",
+                            "key": {"provider": "static", "path": "/dev/null"},
                             "host_key": "ssh-ed25519 BBBB...",
                         },
                     },
