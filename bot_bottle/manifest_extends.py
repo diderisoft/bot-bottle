@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .manifest_util import ManifestError
+
 if TYPE_CHECKING:
     from .manifest import ManifestBottle
     from .manifest_egress import ManifestEgressConfig
@@ -31,8 +33,6 @@ def resolve_bottles_partial(
     collected in `broken` rather than raising, so unrelated bottles remain
     usable. Errors for parent bottles propagate to all children that extend
     them."""
-    from .manifest import ManifestError
-
     cache: dict[str, ManifestBottle] = {}
     broken: dict[str, ManifestError] = {}
     for name in raws:
@@ -48,7 +48,7 @@ def _resolve_one_bottle(
     repos_cache: dict[str, dict[str, object]],
     seen: tuple[str, ...],
 ) -> ManifestBottle:
-    from .manifest import ManifestBottle, ManifestError
+    from .manifest import ManifestBottle
 
     if name in cache:
         return cache[name]
@@ -239,7 +239,7 @@ def _resolve_one_bottle_partial(
     seen: tuple[str, ...],
 ) -> None:
     """Error-tolerant variant: on failure, adds to `broken` instead of raising."""
-    from .manifest import ManifestBottle, ManifestError
+    from .manifest import ManifestBottle
 
     if name in cache or name in broken:
         return
