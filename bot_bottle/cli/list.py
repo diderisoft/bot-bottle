@@ -41,7 +41,7 @@ def cmd_list(argv: list[str]) -> int:
 
     if args.scope == "available":
         manifest = Manifest.resolve(USER_CWD)
-        for name in manifest.agents.keys():
+        for name in manifest.all_agent_names:
             print(name)
         return 0
 

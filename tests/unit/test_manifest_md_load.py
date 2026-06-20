@@ -77,12 +77,12 @@ class _ResolveCase(unittest.TestCase):
 
 class TestBottleFileParses(_ResolveCase):
     """SC #1: a bottle file under $HOME/.bot-bottle/bottles/
-    parses into the expected Bottle shape."""
+    parses into the expected Bottle shape via load_for_agent."""
 
     def test_loads(self):
         _write(self.home_cb / "bottles" / "dev.md", _BOTTLE_DEV)
         _write(self.home_cb / "agents" / "implementer.md", _AGENT_IMPL)
-        m = self.resolve()
+        m = self.resolve().load_for_agent("implementer")
         self.assertIn("dev", m.bottles)
         routes = m.bottles["dev"].egress.routes
         self.assertEqual(2, len(routes))
@@ -94,13 +94,13 @@ class TestBottleFileParses(_ResolveCase):
 
 class TestAgentFileParses(_ResolveCase):
     """SC #2: an agent file under $HOME/.bot-bottle/agents/
-    parses, the body becomes the prompt, the frontmatter fields
-    map to Agent fields."""
+    parses via load_for_agent; the body becomes the prompt, the
+    frontmatter fields map to Agent fields."""
 
     def test_loads(self):
         _write(self.home_cb / "bottles" / "dev.md", _BOTTLE_DEV)
         _write(self.home_cb / "agents" / "implementer.md", _AGENT_IMPL)
-        m = self.resolve()
+        m = self.resolve().load_for_agent("implementer")
         a = m.agents["implementer"]
         self.assertEqual("dev", a.bottle)
         self.assertEqual(("init-prd",), a.skills)
@@ -128,7 +128,7 @@ class TestCwdAgentOverridesHome(_ResolveCase):
             CWD-OVERRIDE-PROMPT
             """,
         )
-        m = self.resolve()
+        m = self.resolve().load_for_agent("implementer")
         self.assertIn("CWD-OVERRIDE-PROMPT", m.agents["implementer"].prompt)
         # Home bottle still present
         self.assertEqual(2, len(m.bottles["dev"].egress.routes))
@@ -155,7 +155,7 @@ class TestCwdBottlesIgnored(_ResolveCase):
             ---
             """,
         )
-        m = self.resolve()
+        m = self.resolve().load_for_agent("implementer")
         # Home value wins because cwd bottles are ignored entirely.
         self.assertEqual(
             "api.anthropic.com",
@@ -215,7 +215,7 @@ class TestAgentFileDoublesAsClaudeCodeSubagent(_ResolveCase):
             Agent prompt body.
             """,
         )
-        m = self.resolve()
+        m = self.resolve().load_for_agent("implementer")
         self.assertEqual("dev", m.agents["implementer"].bottle)
         self.assertEqual(("init-prd",), m.agents["implementer"].skills)
 
@@ -228,7 +228,7 @@ class TestManifestEntryPointParity(_ResolveCase):
         _write(self.home_cb / "bottles" / "dev.md", _BOTTLE_DEV)
         _write(self.home_cb / "agents" / "implementer.md", _AGENT_IMPL)
 
-        md_manifest = self.resolve()
+        md_manifest = self.resolve().load_for_agent("implementer")
         json_manifest = Manifest.from_json_obj({
             "bottles": {
                 "dev": {
@@ -294,35 +294,12 @@ class TestManifestEntryPointParity(_ResolveCase):
         self.assertEqual("dev", manifest.agents["implementer"].bottle)
 
 
-class TestUnknownAgentKeyDefersToBroken(_ResolveCase):
-    """A typo'd / unknown frontmatter key on an agent file is deferred
-    into broken_agents rather than crashing the whole manifest load.
-    The error surfaces when that specific agent is selected for launch."""
+class TestBrokenAgentOnlyFailsAtPreflight(_ResolveCase):
+    """A typo'd / unknown frontmatter key on an agent file does NOT crash
+    resolve(). The agent appears in all_agent_names for the selector.
+    The error surfaces only when load_for_agent is called for that agent."""
 
-    def test_broken_agent_deferred(self):
-        _write(self.home_cb / "bottles" / "dev.md", _BOTTLE_DEV)
-        _write(
-            self.home_cb / "agents" / "bad.md",
-            """
-            ---
-            bottle: dev
-            skillz: [init-prd]
-            ---
-
-            ...
-            """,
-        )
-        _write(self.home_cb / "agents" / "implementer.md", _AGENT_IMPL)
-        m = self.resolve()
-        # The broken agent is NOT in the valid agents dict…
-        self.assertNotIn("bad", m.agents)
-        # …but it IS captured in broken_agents.
-        self.assertIn("bad", m.broken_agents)
-        self.assertIsInstance(m.broken_agents["bad"], ManifestError)
-        # Unrelated agent still loads fine.
-        self.assertIn("implementer", m.agents)
-
-    def test_broken_agent_appears_in_all_agent_names(self):
+    def test_resolve_succeeds_despite_broken_agent(self):
         _write(self.home_cb / "bottles" / "dev.md", _BOTTLE_DEV)
         _write(
             self.home_cb / "agents" / "bad.md",
@@ -335,10 +312,11 @@ class TestUnknownAgentKeyDefersToBroken(_ResolveCase):
         )
         _write(self.home_cb / "agents" / "implementer.md", _AGENT_IMPL)
         m = self.resolve()
+        # Resolve itself does not raise; broken agent appears in the name list.
         self.assertIn("bad", m.all_agent_names)
         self.assertIn("implementer", m.all_agent_names)
 
-    def test_broken_agent_raises_at_preflight(self):
+    def test_load_for_agent_raises_for_broken_agent(self):
         _write(self.home_cb / "bottles" / "dev.md", _BOTTLE_DEV)
         _write(
             self.home_cb / "agents" / "bad.md",
@@ -351,17 +329,11 @@ class TestUnknownAgentKeyDefersToBroken(_ResolveCase):
         )
         m = self.resolve()
         with self.assertRaises(ManifestError):
-            m.require_agent("bad")
-        with self.assertRaises(ManifestError):
-            m.bottle_for("bad")
+            m.load_for_agent("bad")
 
-
-class TestUnknownBottleKeyDefersToBroken(_ResolveCase):
-    """A typo'd / unknown frontmatter key on a bottle file is deferred
-    into broken_agents for agents referencing that bottle, rather than
-    crashing the whole manifest load."""
-
-    def test_broken_bottle_defers_agent(self):
+    def test_broken_bottle_only_fails_at_preflight(self):
+        """A broken bottle does not crash resolve; only load_for_agent for
+        an agent that references it raises. Unrelated agents still work."""
         _write(
             self.home_cb / "bottles" / "bad.md",
             """
@@ -382,13 +354,15 @@ class TestUnknownBottleKeyDefersToBroken(_ResolveCase):
             """,
         )
         m = self.resolve()
-        # Good bottle and agent still load.
-        self.assertIn("dev", m.bottles)
-        self.assertIn("implementer", m.agents)
-        # Broken bottle's agent is deferred.
-        self.assertNotIn("bad", m.bottles)
-        self.assertNotIn("broken-agent", m.agents)
-        self.assertIn("broken-agent", m.broken_agents)
+        # Both agents appear in the name list at resolve time.
+        self.assertIn("implementer", m.all_agent_names)
+        self.assertIn("broken-agent", m.all_agent_names)
+        # Valid agent loads fine.
+        full = m.load_for_agent("implementer")
+        self.assertIn("implementer", full.agents)
+        # Broken bottle's agent raises at preflight.
+        with self.assertRaises(ManifestError):
+            m.load_for_agent("broken-agent")
 
 
 class TestStaleJsonDies(_ResolveCase):
@@ -416,11 +390,11 @@ class TestNoManifestDies(_ResolveCase):
         self.assertEqual({}, dict(m.agents))
 
 
-class TestUnknownBottleReferenceDefersToBroken(_ResolveCase):
-    """An agent file naming a bottle that doesn't exist on disk is
-    deferred into broken_agents; other agents still load."""
+class TestUnknownBottleReferenceFailsAtPreflight(_ResolveCase):
+    """An agent file naming a non-existent bottle appears in all_agent_names
+    at resolve time; the error only surfaces when load_for_agent is called."""
 
-    def test_stray_bottle_reference_deferred(self):
+    def test_stray_bottle_reference_fails_at_preflight(self):
         _write(self.home_cb / "bottles" / "dev.md", _BOTTLE_DEV)
         _write(
             self.home_cb / "agents" / "stray.md",
@@ -432,9 +406,15 @@ class TestUnknownBottleReferenceDefersToBroken(_ResolveCase):
         )
         _write(self.home_cb / "agents" / "implementer.md", _AGENT_IMPL)
         m = self.resolve()
-        self.assertNotIn("stray", m.agents)
-        self.assertIn("stray", m.broken_agents)
-        self.assertIn("implementer", m.agents)
+        # Both names visible at resolve time.
+        self.assertIn("stray", m.all_agent_names)
+        self.assertIn("implementer", m.all_agent_names)
+        # Valid agent loads fine.
+        full = m.load_for_agent("implementer")
+        self.assertIn("implementer", full.agents)
+        # Stray agent fails at preflight.
+        with self.assertRaises(ManifestError):
+            m.load_for_agent("stray")
 
 
 class TestFilenameValidation(_ResolveCase):
@@ -448,9 +428,9 @@ class TestFilenameValidation(_ResolveCase):
         # This file should be skipped — capital letters not allowed.
         _write(self.home_cb / "agents" / "BadName.md", _AGENT_IMPL)
         m = self.resolve()
-        self.assertIn("implementer", m.agents)
-        self.assertNotIn("BadName", m.agents)
-        self.assertNotIn("badname", m.agents)
+        self.assertIn("implementer", m.all_agent_names)
+        self.assertNotIn("BadName", m.all_agent_names)
+        self.assertNotIn("badname", m.all_agent_names)
 
 
 if __name__ == "__main__":

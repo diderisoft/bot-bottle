@@ -37,7 +37,7 @@ import shlex
 import sys
 from abc import ABC, abstractmethod
 from contextlib import AbstractContextManager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Generic, Sequence, TypeVar
 
@@ -289,7 +289,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
             write_launch_metadata,
         )
 
-        self._validate(spec)
+        spec = self._validate(spec)
 
         self._preflight()
 
@@ -355,16 +355,21 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         """
         pass
 
-    def _validate(self, spec: BottleSpec) -> None:
-        """Cross-backend pre-launch checks. Confirms the agent exists
-        and the named skills are present on the host. Subclasses with
-        additional preconditions should override and call
-        `super()._validate(spec)` first."""
-        manifest = spec.manifest
-        manifest.require_agent(spec.agent_name)
+    def _validate(self, spec: BottleSpec) -> BottleSpec:
+        """Cross-backend pre-launch checks. Parses the selected agent and
+        its bottle (raising ManifestError on invalid content), confirms
+        skills are present on the host, and every git IdentityFile resolves.
+
+        Returns a new BottleSpec whose manifest is fully loaded for the
+        selected agent. Subclasses with additional preconditions should
+        override and call `super()._validate(spec)` first, using the
+        returned spec for further checks."""
+        manifest = spec.manifest.load_for_agent(spec.agent_name)
+        spec = replace(spec, manifest=manifest)
         agent = manifest.agents[spec.agent_name]
         self._validate_skills(agent.skills)
         self._validate_agent_provider_dockerfile(spec)
+        return spec
 
     def _validate_skills(self, skills: Sequence[str]) -> None:
         """Each named skill must be a directory under the host's

@@ -193,9 +193,10 @@ class ManifestBottle:
 class Manifest:
     bottles: Mapping[str, ManifestBottle]
     agents: Mapping[str, ManifestAgent]
-    # Agents (and agents referencing broken bottles) that failed to load.
-    # Their errors are deferred to preflight rather than raised at load time.
-    broken_agents: Mapping[str, ManifestError] = field(default_factory=dict)
+    # Set by from_md_dirs; empty in from_json_obj (test/programmatic) mode.
+    # Stores the manifest root dirs so load_for_agent can locate files later.
+    home_md: Path | None = field(default=None)
+    cwd_md: Path | None = field(default=None)
 
     @classmethod
     def resolve(cls, cwd: str, *, missing_ok: bool = False) -> "Manifest":
@@ -252,31 +253,15 @@ class Manifest:
         home_dir: Path,
         cwd_dir: Path | None,
     ) -> "Manifest":
-        """Programmatic entry point. Loads bottles from
-        `<home_dir>/bottles/`, home agents from `<home_dir>/agents/`,
-        and (if `cwd_dir` is passed) cwd agents from
-        `<cwd_dir>/agents/`. Cwd agents override home agents on
-        name collision. A `bottles/` subdir under `cwd_dir` is
-        logged as a warning and ignored.
+        """Return a names-only Manifest. No file content is read; only
+        filenames are scanned for the agent selector.  Full parsing happens
+        later, per-agent, via `load_for_agent`.
 
-        Per-file parse errors are deferred into `broken_agents` rather
-        than raised, so a broken bottle or agent only fails at preflight
-        when that specific agent is selected for launch.
+        A `bottles/` subdir under `cwd_dir` is logged as a warning and
+        ignored — the filesystem layout IS the trust boundary.
 
         Used by tests to build a Manifest from fixture directories
         without touching `os.environ`."""
-        bottles_dir = home_dir / "bottles"
-        from .manifest_loader import load_agents_from_dir, load_bottles_from_dir
-
-        bottles, broken_bottle_errors = load_bottles_from_dir(bottles_dir)
-
-        bottle_names = set(bottles.keys())
-        agents_dir = home_dir / "agents"
-        agents, broken_agents = load_agents_from_dir(
-            agents_dir, bottle_names, source="$HOME",
-            broken_bottle_errors=broken_bottle_errors,
-        )
-
         if cwd_dir is not None:
             stale_bottles = cwd_dir / "bottles"
             if stale_bottles.is_dir():
@@ -290,15 +275,7 @@ class Manifest:
                         f"live under $HOME/.bot-bottle/bottles/ "
                         f"(PRD 0011). Move them or delete."
                     )
-            cwd_agents_dir = cwd_dir / "agents"
-            cwd_agents, cwd_broken = load_agents_from_dir(
-                cwd_agents_dir, bottle_names, source="$CWD",
-                broken_bottle_errors=broken_bottle_errors,
-            )
-            agents = {**agents, **cwd_agents}
-            broken_agents = {**broken_agents, **cwd_broken}
-
-        return cls(bottles=bottles, agents=agents, broken_agents=broken_agents)
+        return cls(bottles={}, agents={}, home_md=home_dir, cwd_md=cwd_dir)
 
     @classmethod
     def from_json_obj(cls, obj: object) -> "Manifest":
@@ -325,27 +302,111 @@ class Manifest:
 
     @property
     def all_agent_names(self) -> list[str]:
-        """Sorted list of all agent names, including broken ones.
+        """Sorted list of all discoverable agent names.
 
-        Broken agents appear in the CLI selector so users can select any
-        agent — the error surfaces only at preflight when launch is
-        attempted."""
-        return sorted(set(self.agents.keys()) | set(self.broken_agents.keys()))
+        In names-only mode (from resolve/from_md_dirs) this scans agent
+        filenames without reading their content. In eager mode (from
+        from_json_obj) it returns the pre-parsed agents' names."""
+        if self.home_md is not None:
+            from .manifest_loader import scan_agent_names
+            home_names = set(scan_agent_names(self.home_md / "agents").keys())
+            cwd_names: set[str] = set()
+            if self.cwd_md is not None:
+                cwd_names = set(scan_agent_names(self.cwd_md / "agents").keys())
+            return sorted(home_names | cwd_names)
+        return sorted(self.agents.keys())
+
+    def load_for_agent(self, agent_name: str) -> "Manifest":
+        """Parse and return a full Manifest for `agent_name` and its bottle.
+
+        Only the selected agent's file and the bottle files in its extends
+        chain are read. Raises ManifestError if the agent or bottle is
+        invalid. Must be called on a names-only manifest (from resolve).
+        Backends call this at preflight to upgrade the spec's manifest."""
+        if self.home_md is None:
+            # Eager manifest (from_json_obj): already fully loaded; just validate name.
+            if agent_name not in self.agents:
+                available = ", ".join(sorted(self.agents.keys())) or "(none)"
+                raise ManifestError(
+                    f"agent '{agent_name}' not defined. Available: {available}"
+                )
+            return self
+        from .manifest_loader import load_bottle_chain_from_dir, scan_agent_names
+        from .manifest_schema import validate_agent_frontmatter_keys
+        from .yaml_subset import YamlSubsetError, parse_frontmatter
+
+        # Locate the agent file; cwd wins over home on name collision.
+        home_agents = scan_agent_names(self.home_md / "agents")
+        cwd_agents: dict[str, Path] = {}
+        if self.cwd_md is not None:
+            cwd_agents = scan_agent_names(self.cwd_md / "agents")
+        merged = {**home_agents, **cwd_agents}
+
+        if agent_name not in merged:
+            available = ", ".join(sorted(merged.keys())) or "(none)"
+            raise ManifestError(
+                f"agent '{agent_name}' not defined. Available: {available}"
+            )
+
+        agent_path = merged[agent_name]
+        try:
+            fm, body = parse_frontmatter(agent_path.read_text())
+        except OSError as e:
+            raise ManifestError(f"could not read {agent_path}: {e}") from e
+        except YamlSubsetError as e:
+            raise ManifestError(f"{agent_path}: {e}") from e
+
+        validate_agent_frontmatter_keys(agent_path, fm.keys())
+
+        bottle_name = fm.get("bottle")
+        if not isinstance(bottle_name, str) or not bottle_name:
+            raise ManifestError(
+                f"agent '{agent_name}' must declare a 'bottle' field "
+                f"naming a defined bottle"
+            )
+
+        # Load the bottle chain (may raise ManifestError).
+        bottles_dir = self.home_md / "bottles"
+        bottle = load_bottle_chain_from_dir(bottle_name, bottles_dir)
+
+        # Build and validate the full ManifestAgent.
+        agent_dict: dict[str, object] = {
+            "bottle": bottle_name,
+            "skills": fm.get("skills", []),
+            "prompt": body.strip(),
+        }
+        if "git-gate" in fm:
+            agent_dict["git-gate"] = fm["git-gate"]
+        agent = ManifestAgent.from_dict(agent_name, agent_dict, {bottle_name})
+
+        return Manifest(
+            bottles={bottle_name: bottle},
+            agents={agent_name: agent},
+            home_md=self.home_md,
+            cwd_md=self.cwd_md,
+        )
 
     def has_agent(self, name: str) -> bool:
         return name in self.agents
 
     def require_agent(self, name: str) -> None:
-        if name in self.broken_agents:
-            raise self.broken_agents[name]
+        """Check that `name` is a discoverable agent. In names-only mode
+        this checks whether the .md file exists; in eager mode it checks
+        the pre-parsed agents dict. Does NOT parse file content."""
         if self.has_agent(name):
             return
-        available = ", ".join(self.agents.keys())
-        if available:
-            msg = f"agent '{name}' not defined in bot-bottle.json. Available: {available}"
-            raise ManifestError(msg)
+        if self.home_md is not None:
+            # Names-only mode: check file existence without parsing.
+            home_path = self.home_md / "agents" / f"{name}.md"
+            cwd_path = (
+                self.cwd_md / "agents" / f"{name}.md"
+                if self.cwd_md else None
+            )
+            if home_path.is_file() or (cwd_path and cwd_path.is_file()):
+                return
+        available = ", ".join(self.all_agent_names) or "(none)"
         raise ManifestError(
-            f"agent '{name}' not defined in bot-bottle.json (manifest is empty)."
+            f"agent '{name}' not defined. Available: {available}"
         )
 
     def has_bottle(self, name: str) -> bool:
@@ -379,16 +440,11 @@ class Manifest:
 
     def bottle_for(self, agent_name: str) -> ManifestBottle:
         """Resolve the Bottle the named agent references, with the
-        agent's git.user overlaid on top. The validator guarantees both
-        lookups succeed for a manifest built via from_json_obj.
+        agent's git.user overlaid on top.
 
         The overlay lives here, the single point both backends call to
         resolve an agent's bottle, so the docker / smolmachines git
-        provisioners pick up the merged identity unchanged.
-
-        Raises the stored ManifestError for agents that failed to load."""
-        if agent_name in self.broken_agents:
-            raise self.broken_agents[agent_name]
+        provisioners pick up the merged identity unchanged."""
         bottle = self.bottles[self.agents[agent_name].bottle]
         merged = self._effective_git_user(agent_name)
         if merged == bottle.git_user:

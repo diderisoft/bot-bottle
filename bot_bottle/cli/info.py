@@ -14,8 +14,9 @@ def cmd_info(argv: list[str]) -> int:
     parser.add_argument("name", help="agent name defined in bot-bottle.json")
     args = parser.parse_args(argv)
 
-    manifest = Manifest.resolve(USER_CWD)
-    manifest.require_agent(args.name)
+    names = Manifest.resolve(USER_CWD)
+    names.require_agent(args.name)
+    manifest = names.load_for_agent(args.name)
 
     agent = manifest.agents[args.name]
     bottle = manifest.bottle_for(args.name)

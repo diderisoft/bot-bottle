@@ -217,7 +217,7 @@ class TestAgentGitUserMdLoader(unittest.TestCase):
     def test_md_agent_git_user_overlays_bottle(self):
         self._write("bottles/dev.md", _BOTTLE_DEV)
         self._write("agents/impl.md", _AGENT_WITH_GIT)
-        m = Manifest.resolve(str(self.home))
+        m = Manifest.resolve(str(self.home)).load_for_agent("impl")
         u = m.bottle_for("impl").git_user
         self.assertEqual("agent-name", u.name)
         self.assertEqual("bottle@example.com", u.email)
@@ -226,16 +226,17 @@ class TestAgentGitUserMdLoader(unittest.TestCase):
             m.git_identity_summary("impl"),
         )
 
-    def test_md_agent_repos_deferred(self):
-        """git-gate.repos on an agent is an error, but deferred into
-        broken_agents rather than raised at resolve time, so other agents
-        remain accessible."""
+    def test_md_agent_repos_fails_at_preflight(self):
+        """git-gate.repos on an agent is an error; resolve() still succeeds
+        so other agents remain accessible, but load_for_agent raises."""
         self._write("bottles/dev.md", _BOTTLE_DEV)
         self._write("agents/impl.md", _AGENT_WITH_REPOS)
-        m = Manifest.resolve(str(self.home))
-        self.assertNotIn("impl", m.agents)
-        self.assertIn("impl", m.broken_agents)
-        msg = str(m.broken_agents["impl"])
+        from bot_bottle.manifest import ManifestError
+        names = Manifest.resolve(str(self.home))
+        self.assertIn("impl", names.all_agent_names)
+        with self.assertRaises(ManifestError) as ctx:
+            names.load_for_agent("impl")
+        msg = str(ctx.exception)
         self.assertIn("git-gate.repos", msg)
         self.assertIn("bottle-only", msg)
 
