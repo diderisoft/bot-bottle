@@ -22,6 +22,25 @@ def resolve_bottles(raws: dict[str, dict[str, object]]) -> dict[str, ManifestBot
     return cache
 
 
+def resolve_bottles_partial(
+    raws: dict[str, dict[str, object]],
+) -> tuple[dict[str, ManifestBottle], dict[str, ManifestError]]:
+    """Apply `extends:` chains and return `(good, broken)`.
+
+    Bottles that fail validation (schema errors, bad extends, cycles) are
+    collected in `broken` rather than raising, so unrelated bottles remain
+    usable. Errors for parent bottles propagate to all children that extend
+    them."""
+    from .manifest import ManifestError
+
+    cache: dict[str, ManifestBottle] = {}
+    broken: dict[str, ManifestError] = {}
+    for name in raws:
+        if name not in cache and name not in broken:
+            _resolve_one_bottle_partial(name, raws, cache, broken, ())
+    return cache, broken
+
+
 def _resolve_one_bottle(
     name: str,
     raws: dict[str, dict[str, object]],
@@ -210,3 +229,67 @@ def _merge_egress(
     routes = parent.routes + child.routes
     log = child.Log if "log" in child_egress_raw else parent.Log
     return ManifestEgressConfig(routes=routes, Log=log)
+
+
+def _resolve_one_bottle_partial(
+    name: str,
+    raws: dict[str, dict[str, object]],
+    cache: dict[str, ManifestBottle],
+    broken: dict[str, ManifestError],
+    seen: tuple[str, ...],
+) -> None:
+    """Error-tolerant variant: on failure, adds to `broken` instead of raising."""
+    from .manifest import ManifestBottle, ManifestError
+
+    if name in cache or name in broken:
+        return
+    if name in seen:
+        chain = " -> ".join(seen + (name,))
+        broken[name] = ManifestError(
+            f"bottle '{name}' is in an extends cycle: {chain}"
+        )
+        return
+
+    raw = raws[name]
+    parent_name_raw = raw.get("extends")
+    child_raw = {k: v for k, v in raw.items() if k != "extends"}
+
+    try:
+        if parent_name_raw is None:
+            cache[name] = ManifestBottle.from_dict(name, child_raw)
+            return
+
+        if not isinstance(parent_name_raw, str):
+            broken[name] = ManifestError(
+                f"bottle '{name}' extends must be a string "
+                f"(was {type(parent_name_raw).__name__})"
+            )
+            return
+
+        parent_name: str = parent_name_raw
+        if parent_name == name:
+            broken[name] = ManifestError(
+                f"bottle '{name}' extends itself; remove the self-reference"
+            )
+            return
+
+        if parent_name not in raws:
+            avail = ", ".join(sorted(raws.keys())) or "(none)"
+            broken[name] = ManifestError(
+                f"bottle '{name}' extends '{parent_name}' which is not "
+                f"defined. Available bottles: {avail}"
+            )
+            return
+
+        _resolve_one_bottle_partial(parent_name, raws, cache, broken, seen + (name,))
+        if parent_name in broken:
+            broken[name] = ManifestError(
+                f"bottle '{name}' extends '{parent_name}' which failed to load: "
+                f"{broken[parent_name]}"
+            )
+            return
+
+        parent = cache[parent_name]
+        cache[name] = _merge_bottles(parent, child_raw, name)
+    except ManifestError as exc:
+        broken[name] = exc

@@ -226,10 +226,16 @@ class TestAgentGitUserMdLoader(unittest.TestCase):
             m.git_identity_summary("impl"),
         )
 
-    def test_md_agent_repos_dies(self):
+    def test_md_agent_repos_deferred(self):
+        """git-gate.repos on an agent is an error, but deferred into
+        broken_agents rather than raised at resolve time, so other agents
+        remain accessible."""
         self._write("bottles/dev.md", _BOTTLE_DEV)
         self._write("agents/impl.md", _AGENT_WITH_REPOS)
-        msg = _error_message(Manifest.resolve, str(self.home))
+        m = Manifest.resolve(str(self.home))
+        self.assertNotIn("impl", m.agents)
+        self.assertIn("impl", m.broken_agents)
+        msg = str(m.broken_agents["impl"])
         self.assertIn("git-gate.repos", msg)
         self.assertIn("bottle-only", msg)
 

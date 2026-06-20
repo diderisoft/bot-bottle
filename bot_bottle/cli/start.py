@@ -67,7 +67,7 @@ def cmd_start(argv: list[str]) -> int:
     agent_name: str | None = args.name
     if agent_name is None:
         agent_name = tui.filter_select(
-            sorted(manifest.agents.keys()),
+            manifest.all_agent_names,
             title="Select agent",
         )
         if agent_name is None:

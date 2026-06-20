@@ -11,6 +11,7 @@ from .manifest_schema import (
     validate_agent_frontmatter_keys,
     validate_bottle_frontmatter_keys,
 )
+from .manifest_util import ManifestError
 from .yaml_subset import YamlSubsetError, parse_frontmatter
 
 if TYPE_CHECKING:
@@ -21,8 +22,6 @@ def check_stale_json(dir_path: Path, md_dir: Path, label: str) -> None:
     """Die if `<dir_path>/bot-bottle.json` exists but `md_dir` does
     not. The manifest format changed in PRD 0011 and we do not want
     to silently leave the JSON content unused."""
-    from .manifest import ManifestError
-
     legacy = dir_path / "bot-bottle.json"
     if legacy.is_file() and not md_dir.exists():
         raise ManifestError(
@@ -34,15 +33,20 @@ def check_stale_json(dir_path: Path, md_dir: Path, label: str) -> None:
         )
 
 
-def load_bottles_from_dir(bottles_dir: Path) -> dict[str, ManifestBottle]:
+def load_bottles_from_dir(
+    bottles_dir: Path,
+) -> tuple[dict[str, ManifestBottle], dict[str, ManifestError]]:
     """Walk `<bottles_dir>/*.md`, parse each as a bottle, and return
-    `{name: Bottle}`. Missing dir returns an empty dict."""
-    from .manifest import ManifestError
-    from .manifest_extends import resolve_bottles
+    `({name: Bottle}, {name: error})`. Missing dir returns empty dicts.
+
+    Per-file errors are collected in the second dict rather than raised,
+    so an invalid bottle file does not block unrelated bottles or agents."""
+    from .manifest_extends import resolve_bottles_partial
 
     raws: dict[str, dict[str, object]] = {}
+    broken: dict[str, ManifestError] = {}
     if not bottles_dir.is_dir():
-        return {}
+        return {}, {}
     for path in sorted(bottles_dir.glob("*.md")):
         name = entity_name_from_path(path)
         if name is None:
@@ -54,12 +58,21 @@ def load_bottles_from_dir(bottles_dir: Path) -> dict[str, ManifestBottle]:
         try:
             fm, _body = parse_frontmatter(path.read_text())
         except OSError as e:
-            raise ManifestError(f"could not read {path}: {e}") from e
+            broken[name] = ManifestError(f"could not read {path}: {e}")
+            continue
         except YamlSubsetError as e:
-            raise ManifestError(f"{path}: {e}") from e
-        validate_bottle_frontmatter_keys(path, fm.keys())
+            broken[name] = ManifestError(f"{path}: {e}")
+            continue
+        try:
+            validate_bottle_frontmatter_keys(path, fm.keys())
+        except ManifestError as e:
+            broken[name] = e
+            continue
         raws[name] = fm
-    return resolve_bottles(raws)
+
+    good, resolve_broken = resolve_bottles_partial(raws)
+    broken.update(resolve_broken)
+    return good, broken
 
 
 def load_agents_from_dir(
@@ -67,15 +80,26 @@ def load_agents_from_dir(
     bottle_names: set[str],
     *,
     source: str,  # noqa: F841 — unused, but required by interface
-) -> dict[str, ManifestAgent]:
+    broken_bottle_errors: dict[str, ManifestError] | None = None,
+) -> tuple[dict[str, ManifestAgent], dict[str, ManifestError]]:
     """Walk `<agents_dir>/*.md`, parse each as an agent, and return
-    `{name: Agent}`. The Markdown body becomes the agent's prompt.
-    Missing dir returns an empty dict."""
-    from .manifest import ManifestAgent, ManifestError
+    `({name: Agent}, {name: error})`. The Markdown body becomes the
+    agent's prompt. Missing dir returns empty dicts.
+
+    Per-file errors are collected in the second dict rather than raised.
+    Agents referencing a broken bottle are also moved to the error dict
+    so their error surfaces at preflight rather than manifest load time."""
+    from .manifest import ManifestAgent
+
+    broken_bottles = broken_bottle_errors or {}
+    # Agents may reference bottles that failed to resolve; accept those names
+    # during structural parsing so we can detect the broken-bottle case below.
+    all_known_bottles = bottle_names | set(broken_bottles.keys())
 
     out: dict[str, ManifestAgent] = {}
+    broken: dict[str, ManifestError] = {}
     if not agents_dir.is_dir():
-        return out
+        return out, broken
     for path in sorted(agents_dir.glob("*.md")):
         name = entity_name_from_path(path)
         if name is None:
@@ -87,19 +111,33 @@ def load_agents_from_dir(
         try:
             fm, body = parse_frontmatter(path.read_text())
         except OSError as e:
-            raise ManifestError(f"could not read {path}: {e}") from e
+            broken[name] = ManifestError(f"could not read {path}: {e}")
+            continue
         except YamlSubsetError as e:
-            raise ManifestError(f"{path}: {e}") from e
-        validate_agent_frontmatter_keys(path, fm.keys())
-        # Build the dict Agent.from_dict expects. The body becomes
-        # prompt; Claude Code passthrough fields stay in fm and get
-        # ignored by Agent.from_dict (reads bottle/skills/git-gate/prompt).
-        agent_dict: dict[str, object] = {
-            "bottle": fm.get("bottle"),
-            "skills": fm.get("skills", []),
-            "prompt": body.strip(),
-        }
-        if "git-gate" in fm:
-            agent_dict["git-gate"] = fm["git-gate"]
-        out[name] = ManifestAgent.from_dict(name, agent_dict, bottle_names)
-    return out
+            broken[name] = ManifestError(f"{path}: {e}")
+            continue
+        try:
+            validate_agent_frontmatter_keys(path, fm.keys())
+            agent_dict: dict[str, object] = {
+                "bottle": fm.get("bottle"),
+                "skills": fm.get("skills", []),
+                "prompt": body.strip(),
+            }
+            if "git-gate" in fm:
+                agent_dict["git-gate"] = fm["git-gate"]
+            agent = ManifestAgent.from_dict(name, agent_dict, all_known_bottles)
+        except ManifestError as e:
+            broken[name] = e
+            continue
+
+        # Agent parsed fine but its bottle may have failed to resolve.
+        bottle_ref = agent.bottle
+        if bottle_ref in broken_bottles:
+            broken[name] = ManifestError(
+                f"agent '{name}' references bottle '{bottle_ref}' which "
+                f"failed to load: {broken_bottles[bottle_ref]}"
+            )
+            continue
+
+        out[name] = agent
+    return out, broken

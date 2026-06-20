@@ -193,6 +193,9 @@ class ManifestBottle:
 class Manifest:
     bottles: Mapping[str, ManifestBottle]
     agents: Mapping[str, ManifestAgent]
+    # Agents (and agents referencing broken bottles) that failed to load.
+    # Their errors are deferred to preflight rather than raised at load time.
+    broken_agents: Mapping[str, ManifestError] = field(default_factory=dict)
 
     @classmethod
     def resolve(cls, cwd: str, *, missing_ok: bool = False) -> "Manifest":
@@ -256,16 +259,23 @@ class Manifest:
         name collision. A `bottles/` subdir under `cwd_dir` is
         logged as a warning and ignored.
 
+        Per-file parse errors are deferred into `broken_agents` rather
+        than raised, so a broken bottle or agent only fails at preflight
+        when that specific agent is selected for launch.
+
         Used by tests to build a Manifest from fixture directories
         without touching `os.environ`."""
         bottles_dir = home_dir / "bottles"
         from .manifest_loader import load_agents_from_dir, load_bottles_from_dir
 
-        bottles = load_bottles_from_dir(bottles_dir)
+        bottles, broken_bottle_errors = load_bottles_from_dir(bottles_dir)
 
         bottle_names = set(bottles.keys())
         agents_dir = home_dir / "agents"
-        agents = load_agents_from_dir(agents_dir, bottle_names, source="$HOME")
+        agents, broken_agents = load_agents_from_dir(
+            agents_dir, bottle_names, source="$HOME",
+            broken_bottle_errors=broken_bottle_errors,
+        )
 
         if cwd_dir is not None:
             stale_bottles = cwd_dir / "bottles"
@@ -281,12 +291,14 @@ class Manifest:
                         f"(PRD 0011). Move them or delete."
                     )
             cwd_agents_dir = cwd_dir / "agents"
-            cwd_agents = load_agents_from_dir(
-                cwd_agents_dir, bottle_names, source="$CWD"
+            cwd_agents, cwd_broken = load_agents_from_dir(
+                cwd_agents_dir, bottle_names, source="$CWD",
+                broken_bottle_errors=broken_bottle_errors,
             )
             agents = {**agents, **cwd_agents}
+            broken_agents = {**broken_agents, **cwd_broken}
 
-        return cls(bottles=bottles, agents=agents)
+        return cls(bottles=bottles, agents=agents, broken_agents=broken_agents)
 
     @classmethod
     def from_json_obj(cls, obj: object) -> "Manifest":
@@ -311,10 +323,21 @@ class Manifest:
         }
         return cls(bottles=bottles, agents=agents)
 
+    @property
+    def all_agent_names(self) -> list[str]:
+        """Sorted list of all agent names, including broken ones.
+
+        Broken agents appear in the CLI selector so users can select any
+        agent — the error surfaces only at preflight when launch is
+        attempted."""
+        return sorted(set(self.agents.keys()) | set(self.broken_agents.keys()))
+
     def has_agent(self, name: str) -> bool:
         return name in self.agents
 
     def require_agent(self, name: str) -> None:
+        if name in self.broken_agents:
+            raise self.broken_agents[name]
         if self.has_agent(name):
             return
         available = ", ".join(self.agents.keys())
@@ -361,7 +384,11 @@ class Manifest:
 
         The overlay lives here, the single point both backends call to
         resolve an agent's bottle, so the docker / smolmachines git
-        provisioners pick up the merged identity unchanged."""
+        provisioners pick up the merged identity unchanged.
+
+        Raises the stored ManifestError for agents that failed to load."""
+        if agent_name in self.broken_agents:
+            raise self.broken_agents[agent_name]
         bottle = self.bottles[self.agents[agent_name].bottle]
         merged = self._effective_git_user(agent_name)
         if merged == bottle.git_user:

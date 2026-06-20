@@ -294,14 +294,15 @@ class TestManifestEntryPointParity(_ResolveCase):
         self.assertEqual("dev", manifest.agents["implementer"].bottle)
 
 
-class TestUnknownAgentKeyDies(_ResolveCase):
-    """A typo'd / unknown frontmatter key on an agent file dies
-    rather than silently ignoring."""
+class TestUnknownAgentKeyDefersToBroken(_ResolveCase):
+    """A typo'd / unknown frontmatter key on an agent file is deferred
+    into broken_agents rather than crashing the whole manifest load.
+    The error surfaces when that specific agent is selected for launch."""
 
-    def test_dies(self):
+    def test_broken_agent_deferred(self):
         _write(self.home_cb / "bottles" / "dev.md", _BOTTLE_DEV)
         _write(
-            self.home_cb / "agents" / "implementer.md",
+            self.home_cb / "agents" / "bad.md",
             """
             ---
             bottle: dev
@@ -311,17 +312,58 @@ class TestUnknownAgentKeyDies(_ResolveCase):
             ...
             """,
         )
-        with self.assertRaises(ManifestError):
-            self.resolve()
+        _write(self.home_cb / "agents" / "implementer.md", _AGENT_IMPL)
+        m = self.resolve()
+        # The broken agent is NOT in the valid agents dict…
+        self.assertNotIn("bad", m.agents)
+        # …but it IS captured in broken_agents.
+        self.assertIn("bad", m.broken_agents)
+        self.assertIsInstance(m.broken_agents["bad"], ManifestError)
+        # Unrelated agent still loads fine.
+        self.assertIn("implementer", m.agents)
 
-
-class TestUnknownBottleKeyDies(_ResolveCase):
-    """A typo'd / unknown frontmatter key on a bottle file dies
-    rather than silently ignoring."""
-
-    def test_dies(self):
+    def test_broken_agent_appears_in_all_agent_names(self):
+        _write(self.home_cb / "bottles" / "dev.md", _BOTTLE_DEV)
         _write(
-            self.home_cb / "bottles" / "dev.md",
+            self.home_cb / "agents" / "bad.md",
+            """
+            ---
+            bottle: dev
+            skillz: [init-prd]
+            ---
+            """,
+        )
+        _write(self.home_cb / "agents" / "implementer.md", _AGENT_IMPL)
+        m = self.resolve()
+        self.assertIn("bad", m.all_agent_names)
+        self.assertIn("implementer", m.all_agent_names)
+
+    def test_broken_agent_raises_at_preflight(self):
+        _write(self.home_cb / "bottles" / "dev.md", _BOTTLE_DEV)
+        _write(
+            self.home_cb / "agents" / "bad.md",
+            """
+            ---
+            bottle: dev
+            skillz: [init-prd]
+            ---
+            """,
+        )
+        m = self.resolve()
+        with self.assertRaises(ManifestError):
+            m.require_agent("bad")
+        with self.assertRaises(ManifestError):
+            m.bottle_for("bad")
+
+
+class TestUnknownBottleKeyDefersToBroken(_ResolveCase):
+    """A typo'd / unknown frontmatter key on a bottle file is deferred
+    into broken_agents for agents referencing that bottle, rather than
+    crashing the whole manifest load."""
+
+    def test_broken_bottle_defers_agent(self):
+        _write(
+            self.home_cb / "bottles" / "bad.md",
             """
             ---
             credproxy:
@@ -329,9 +371,24 @@ class TestUnknownBottleKeyDies(_ResolveCase):
             ---
             """,
         )
+        _write(self.home_cb / "bottles" / "dev.md", _BOTTLE_DEV)
         _write(self.home_cb / "agents" / "implementer.md", _AGENT_IMPL)
-        with self.assertRaises(ManifestError):
-            self.resolve()
+        _write(
+            self.home_cb / "agents" / "broken-agent.md",
+            """
+            ---
+            bottle: bad
+            ---
+            """,
+        )
+        m = self.resolve()
+        # Good bottle and agent still load.
+        self.assertIn("dev", m.bottles)
+        self.assertIn("implementer", m.agents)
+        # Broken bottle's agent is deferred.
+        self.assertNotIn("bad", m.bottles)
+        self.assertNotIn("broken-agent", m.agents)
+        self.assertIn("broken-agent", m.broken_agents)
 
 
 class TestStaleJsonDies(_ResolveCase):
@@ -359,11 +416,11 @@ class TestNoManifestDies(_ResolveCase):
         self.assertEqual({}, dict(m.agents))
 
 
-class TestUnknownBottleReferenceDies(_ResolveCase):
-    """An agent file naming a bottle that doesn't exist on disk
-    dies with the existing "bottle not defined" error."""
+class TestUnknownBottleReferenceDefersToBroken(_ResolveCase):
+    """An agent file naming a bottle that doesn't exist on disk is
+    deferred into broken_agents; other agents still load."""
 
-    def test_dies(self):
+    def test_stray_bottle_reference_deferred(self):
         _write(self.home_cb / "bottles" / "dev.md", _BOTTLE_DEV)
         _write(
             self.home_cb / "agents" / "stray.md",
@@ -373,8 +430,11 @@ class TestUnknownBottleReferenceDies(_ResolveCase):
             ---
             """,
         )
-        with self.assertRaises(ManifestError):
-            self.resolve()
+        _write(self.home_cb / "agents" / "implementer.md", _AGENT_IMPL)
+        m = self.resolve()
+        self.assertNotIn("stray", m.agents)
+        self.assertIn("stray", m.broken_agents)
+        self.assertIn("implementer", m.agents)
 
 
 class TestFilenameValidation(_ResolveCase):

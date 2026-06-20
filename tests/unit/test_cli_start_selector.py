@@ -20,6 +20,7 @@ from bot_bottle.backend import ActiveAgent
 def _make_manifest(agent_names: list[str]):
     manifest = MagicMock()
     manifest.agents = {name: MagicMock() for name in agent_names}
+    manifest.all_agent_names = sorted(agent_names)
     return manifest
 
 
