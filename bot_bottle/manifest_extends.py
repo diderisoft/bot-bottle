@@ -5,16 +5,20 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .manifest import ManifestBottle, ManifestGitEntry
+    from .manifest import ManifestBottle
     from .manifest_egress import ManifestEgressConfig
 
 
 def resolve_bottles(raws: dict[str, dict[str, object]]) -> dict[str, ManifestBottle]:
     """Apply `extends:` chains and return resolved ManifestBottle objects."""
     cache: dict[str, ManifestBottle] = {}
+    # Per-bottle effective git-gate.repos, as raw dicts keyed by repo name.
+    # Threaded alongside `cache` so a child can field-merge against its
+    # parent's repos without reconstructing them from parsed entries.
+    repos_cache: dict[str, dict[str, object]] = {}
     for name in raws:
         if name not in cache:
-            _resolve_one_bottle(name, raws, cache, ())
+            _resolve_one_bottle(name, raws, cache, repos_cache, ())
     return cache
 
 
@@ -22,6 +26,7 @@ def _resolve_one_bottle(
     name: str,
     raws: dict[str, dict[str, object]],
     cache: dict[str, ManifestBottle],
+    repos_cache: dict[str, dict[str, object]],
     seen: tuple[str, ...],
 ) -> ManifestBottle:
     from .manifest import ManifestBottle, ManifestError
@@ -41,6 +46,7 @@ def _resolve_one_bottle(
     if parent_name_raw is None:
         bottle = ManifestBottle.from_dict(name, child_raw)
         cache[name] = bottle
+        repos_cache[name] = _resolve_repos_raw({}, child_raw)
         return bottle
 
     if not isinstance(parent_name_raw, str):
@@ -60,26 +66,33 @@ def _resolve_one_bottle(
             f"bottle '{name}' extends '{parent_name}' which is not "
             f"defined. Available bottles: {avail}"
         )
-    parent = _resolve_one_bottle(parent_name, raws, cache, seen + (name,))
-    bottle = _merge_bottles(parent, child_raw, name)
+    parent = _resolve_one_bottle(
+        parent_name, raws, cache, repos_cache, seen + (name,)
+    )
+    merged_repos_raw = _resolve_repos_raw(repos_cache[parent_name], child_raw)
+    bottle = _merge_bottles(parent, child_raw, merged_repos_raw, name)
     cache[name] = bottle
+    repos_cache[name] = merged_repos_raw
     return bottle
 
 
 def _merge_bottles(
     parent: ManifestBottle,
     child_raw: dict[str, object],
+    merged_repos_raw: dict[str, object],
     name: str,
 ) -> ManifestBottle:
     """Apply PRD 0025 merge rules."""
     from .manifest import ManifestBottle, ManifestGitUser
     from .manifest_egress import validate_egress_routes
+    from .manifest_util import as_json_object
 
-    # git-gate.repos: union merge at the raw level so child entries can
-    # omit fields present on the same-named parent entry (issue #237).
-    # After this, child.git already contains the fully merged repo set.
+    # git-gate.repos: when the child declares repos, inject the already
+    # name-merged repo set (computed by _resolve_repos_raw) so the child
+    # parses with the full inherited+overridden list (issue #237).
     if _child_declares_git_gate_repos(child_raw):
-        child_raw = _merge_git_repos_raw(parent.git, child_raw)
+        git_raw = as_json_object(child_raw.get("git-gate", {}), "child git-gate")
+        child_raw = {**child_raw, "git-gate": {**git_raw, "repos": merged_repos_raw}}
 
     # Parse the child's declared fields into a ManifestBottle (with the
     # usual defaults for anything missing). Validation runs the same
@@ -98,10 +111,9 @@ def _merge_bottles(
         email=child.git_user.email or parent.git_user.email,
     )
 
-    # git-gate.repos: raw union merge already applied above; child.git
-    # has the result. An explicit empty repos dict ({}) still clears
-    # parent (the raw merge returns early for that case, so child.git
-    # stays empty).
+    # git-gate.repos: when declared, child.git already holds the merged
+    # set (an explicit empty dict clears parent, leaving child.git empty).
+    # When omitted, the parent's entries are inherited verbatim.
     if _child_declares_git_gate_repos(child_raw):
         merged_git = child.git
     else:
@@ -137,44 +149,43 @@ def _merge_bottles(
     )
 
 
-def _entry_to_raw(entry: "ManifestGitEntry") -> dict[str, object]:
-    """Convert a ManifestGitEntry back to its YAML-equivalent raw dict."""
-    raw: dict[str, object] = {"url": entry.Upstream}
-    if entry.KnownHostKey:
-        raw["host_key"] = entry.KnownHostKey
-    key: dict[str, object] = {"provider": entry.Key.provider}
-    if entry.Key.provider == "static":
-        key["path"] = entry.Key.path
-    else:
-        key["forge_token_env"] = entry.Key.forge_token_env
-        if entry.Key.api_url:
-            key["api_url"] = entry.Key.api_url
-    raw["key"] = key
-    return raw
-
-
-def _merge_git_repos_raw(
-    parent: "tuple[ManifestGitEntry, ...]",
+def _resolve_repos_raw(
+    parent_repos: dict[str, object],
     child_raw: dict[str, object],
 ) -> dict[str, object]:
-    """Union-merge parent and child git-gate repos at the raw dict level.
+    """Compute a bottle's effective git-gate.repos as raw dicts.
 
-    For repos present in both, parent fields provide defaults and child
-    fields win. Repos present in only one side pass through unchanged.
-    An empty child repos dict is returned as-is to preserve the
-    "clear parent repos" semantics."""
+    Repos are keyed by name. When the child omits git-gate.repos it
+    inherits the parent's set verbatim; an explicit empty dict clears it.
+    Otherwise parent and child unite by name, with same-name entries
+    field-merged (parent fields are defaults, child fields win)."""
     from .manifest_util import as_json_object
 
-    git_raw = as_json_object(child_raw.get("git-gate", {}), "child git-gate")
-    child_repos = as_json_object(git_raw.get("repos", {}), "child git-gate.repos")
+    if not _child_declares_git_gate_repos(child_raw):
+        return parent_repos
+    child_repos = _declared_repos_raw(child_raw)
     if not child_repos:
-        return child_raw
-    parent_repos = {e.Name: _entry_to_raw(e) for e in parent}
-    merged_repos: dict[str, object] = {
-        n: {**parent_repos.get(n, {}), **child_repos.get(n, {})}
-        for n in set(child_repos) | set(parent_repos)
+        return {}
+    # Parent entries keep their order; child-only names are appended.
+    names = list(parent_repos) + [n for n in child_repos if n not in parent_repos]
+    return {
+        name: {
+            **as_json_object(parent_repos.get(name, {}), "parent git-gate repo"),
+            **as_json_object(child_repos.get(name, {}), "child git-gate repo"),
+        }
+        for name in names
     }
-    return {**child_raw, "git-gate": {**git_raw, "repos": merged_repos}}
+
+
+def _declared_repos_raw(child_raw: dict[str, object]) -> dict[str, object]:
+    """Return the child's explicitly declared git-gate.repos as raw dicts,
+    or an empty dict when none are declared."""
+    from .manifest_util import as_json_object
+
+    if not _child_declares_git_gate_repos(child_raw):
+        return {}
+    git_raw = as_json_object(child_raw.get("git-gate", {}), "child git-gate")
+    return as_json_object(git_raw.get("repos", {}), "child git-gate.repos")
 
 
 def _child_declares_git_gate_repos(child_raw: dict[str, object]) -> bool:
