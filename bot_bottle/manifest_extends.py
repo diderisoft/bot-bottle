@@ -75,10 +75,11 @@ def _merge_bottles(
     from .manifest import ManifestBottle, ManifestGitUser
     from .manifest_egress import validate_egress_routes
 
-    # Before parsing the child, fill any git-gate repos that share a name
-    # with a parent repo: parent fields provide the default, child fields
-    # win on any field they declare (issue #237).
-    child_raw = _pre_merge_git_repos(parent.git, child_raw)
+    # git-gate.repos: union merge at the raw level so child entries can
+    # omit fields present on the same-named parent entry (issue #237).
+    # After this, child.git already contains the fully merged repo set.
+    if _child_declares_git_gate_repos(child_raw):
+        child_raw = _merge_git_repos_raw(parent.git, child_raw)
 
     # Parse the child's declared fields into a ManifestBottle (with the
     # usual defaults for anything missing). Validation runs the same
@@ -97,11 +98,12 @@ def _merge_bottles(
         email=child.git_user.email or parent.git_user.email,
     )
 
-    # git-gate.repos: missing means inherit; an explicit empty object
-    # clears; otherwise parent and child merge by UpstreamHost with
-    # child entries replacing duplicate hosts.
+    # git-gate.repos: raw union merge already applied above; child.git
+    # has the result. An explicit empty repos dict ({}) still clears
+    # parent (the raw merge returns early for that case, so child.git
+    # stays empty).
     if _child_declares_git_gate_repos(child_raw):
-        merged_git = _merge_git_remotes(parent.git, child.git) if child.git else ()
+        merged_git = child.git
     else:
         merged_git = parent.git
 
@@ -136,7 +138,7 @@ def _merge_bottles(
 
 
 def _entry_to_raw(entry: "ManifestGitEntry") -> dict[str, object]:
-    """Convert a ManifestGitEntry back to its raw YAML-equivalent dict."""
+    """Convert a ManifestGitEntry back to its YAML-equivalent raw dict."""
     raw: dict[str, object] = {"url": entry.Upstream}
     if entry.KnownHostKey:
         raw["host_key"] = entry.KnownHostKey
@@ -151,50 +153,28 @@ def _entry_to_raw(entry: "ManifestGitEntry") -> dict[str, object]:
     return raw
 
 
-def _pre_merge_git_repos(
-    parent_git: "tuple[ManifestGitEntry, ...]",
+def _merge_git_repos_raw(
+    parent: "tuple[ManifestGitEntry, ...]",
     child_raw: dict[str, object],
 ) -> dict[str, object]:
-    """Fill missing fields in same-named child git-gate repos from parent entries.
+    """Union-merge parent and child git-gate repos at the raw dict level.
 
-    Returns a (potentially modified) copy of child_raw. For each repo in
-    child_raw that shares a name with a parent entry, the parent entry's
-    fields serve as defaults; child-declared fields win. Repos that appear
-    only in the parent or only in the child are left unchanged."""
+    For repos present in both, parent fields provide defaults and child
+    fields win. Repos present in only one side pass through unchanged.
+    An empty child repos dict is returned as-is to preserve the
+    "clear parent repos" semantics."""
     from .manifest_util import as_json_object
 
-    git_raw = child_raw.get("git-gate")
-    if git_raw is None:
+    git_raw = as_json_object(child_raw.get("git-gate", {}), "child git-gate")
+    child_repos = as_json_object(git_raw.get("repos", {}), "child git-gate.repos")
+    if not child_repos:
         return child_raw
-    try:
-        git_obj = as_json_object(git_raw, "child git-gate")
-        repos_raw = git_obj.get("repos")
-        if repos_raw is None:
-            return child_raw
-        repos_obj = as_json_object(repos_raw, "child git-gate.repos")
-    except Exception:
-        return child_raw
-
-    parent_by_name = {entry.Name: entry for entry in parent_git}
-    if not any(rname in parent_by_name for rname in repos_obj):
-        return child_raw
-
-    merged_repos: dict[str, object] = {}
-    for repo_name, child_entry_raw in repos_obj.items():
-        if repo_name in parent_by_name:
-            parent_raw = _entry_to_raw(parent_by_name[repo_name])
-            try:
-                child_entry_obj = as_json_object(
-                    child_entry_raw, f"git-gate.repos[{repo_name!r}]"
-                )
-            except Exception:
-                merged_repos[repo_name] = child_entry_raw
-                continue
-            merged_repos[repo_name] = {**parent_raw, **child_entry_obj}
-        else:
-            merged_repos[repo_name] = child_entry_raw
-
-    return {**child_raw, "git-gate": {**git_obj, "repos": merged_repos}}
+    parent_repos = {e.Name: _entry_to_raw(e) for e in parent}
+    merged_repos: dict[str, object] = {
+        n: {**parent_repos.get(n, {}), **child_repos.get(n, {})}
+        for n in set(child_repos) | set(parent_repos)
+    }
+    return {**child_raw, "git-gate": {**git_raw, "repos": merged_repos}}
 
 
 def _child_declares_git_gate_repos(child_raw: dict[str, object]) -> bool:
@@ -205,16 +185,6 @@ def _child_declares_git_gate_repos(child_raw: dict[str, object]) -> bool:
         return False
     git_obj = as_json_object(git_raw, "child git-gate")
     return "repos" in git_obj
-
-
-def _merge_git_remotes(
-    parent: tuple[ManifestGitEntry, ...],
-    child: tuple[ManifestGitEntry, ...],
-) -> tuple[ManifestGitEntry, ...]:
-    by_name = {entry.Name: entry for entry in parent}
-    for entry in child:
-        by_name[entry.Name] = entry
-    return tuple(by_name.values())
 
 
 def _merge_egress(
