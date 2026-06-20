@@ -113,8 +113,8 @@ class TestExtendsEnvMerge(unittest.TestCase):
 
 
 class TestExtendsGitMerge(unittest.TestCase):
-    """git-gate.user overlays by field; git-gate.repos merges by upstream
-    host, with child entries replacing duplicate hosts."""
+    """git-gate.user overlays by field; git-gate.repos merges by name,
+    with same-name child entries merging field-by-field (child wins)."""
 
     _GIT_ENTRY_A = {"url": "ssh://git@host-a/a.git", "key": {"provider": "static", "path": "/dev/null"}}
     _GIT_ENTRY_B = {"url": "ssh://git@host-b/b.git", "key": {"provider": "static", "path": "/dev/null"}}
@@ -130,19 +130,21 @@ class TestExtendsGitMerge(unittest.TestCase):
         names = [e.Name for e in m.bottles["child"].git]
         self.assertEqual(["a", "b"], names)
 
-    def test_child_git_repo_replaces_same_host(self):
-        replacement = {"url": "ssh://git@host-a/replacement.git", "key": {"provider": "static", "path": "/dev/null"}}
+    def test_child_git_repo_different_name_same_host_coexists(self):
+        # Repos are keyed by Name, not UpstreamHost: two repos with
+        # different names on the same host both survive the merge.
+        same_host_b = {"url": "ssh://git@host-a/b.git", "key": {"provider": "static", "path": "/dev/null"}}
         m = _build(
             base={"git-gate": {"repos": {"a": self._GIT_ENTRY_A}}},
             child={
                 "extends": "base",
-                "git-gate": {"repos": {"a2": replacement}},
+                "git-gate": {"repos": {"a2": same_host_b}},
             },
         )
         entries = m.bottles["child"].git
-        self.assertEqual(1, len(entries))
-        self.assertEqual("a2", entries[0].Name)
-        self.assertEqual("replacement.git", entries[0].UpstreamPath)
+        self.assertEqual(2, len(entries))
+        names = {e.Name for e in entries}
+        self.assertEqual({"a", "a2"}, names)
 
     def test_child_omits_git_gate_inherits_full_list(self):
         m = _build(
@@ -163,6 +165,77 @@ class TestExtendsGitMerge(unittest.TestCase):
             child={"extends": "base", "git-gate": {"repos": {}}},
         )
         self.assertEqual((), m.bottles["child"].git)
+
+    def test_child_same_name_repo_merges_key_field(self):
+        # Issue #237: child repo with same name as parent should merge
+        # field-by-field. Child overrides only `key`; parent's url and
+        # host_key are preserved.
+        parent_entry = {
+            "url": "ssh://git@host-a/repo.git",
+            "host_key": "ecdsa-sha2-nistp256 AAAA",
+            "key": {"provider": "static", "path": "/keys/id_rsa"},
+        }
+        m = _build(
+            base={"git-gate": {"repos": {"repo": parent_entry}}},
+            child={
+                "extends": "base",
+                "git-gate": {"repos": {"repo": {
+                    "key": {"provider": "gitea", "forge_token_env": "GITEA_TOKEN"},
+                }}},
+            },
+        )
+        entries = m.bottles["child"].git
+        self.assertEqual(1, len(entries))
+        e = entries[0]
+        self.assertEqual("repo", e.Name)
+        self.assertEqual("ssh://git@host-a/repo.git", e.Upstream)
+        self.assertEqual("ecdsa-sha2-nistp256 AAAA", e.KnownHostKey)
+        self.assertEqual("gitea", e.Key.provider)
+        self.assertEqual("GITEA_TOKEN", e.Key.forge_token_env)
+
+    def test_child_same_name_repo_overrides_url(self):
+        # Child can override url on a same-name repo; other parent fields
+        # fall through.
+        parent_entry = {
+            "url": "ssh://git@host-a/old.git",
+            "key": {"provider": "static", "path": "/keys/id_rsa"},
+        }
+        m = _build(
+            base={"git-gate": {"repos": {"repo": parent_entry}}},
+            child={
+                "extends": "base",
+                "git-gate": {"repos": {"repo": {
+                    "url": "ssh://git@host-b/new.git",
+                    "key": {"provider": "static", "path": "/keys/id_rsa"},
+                }}},
+            },
+        )
+        entries = m.bottles["child"].git
+        self.assertEqual(1, len(entries))
+        self.assertEqual("ssh://git@host-b/new.git", entries[0].Upstream)
+
+    def test_child_same_name_plus_new_repo(self):
+        # Same-name repo is field-merged; a distinct new name in child
+        # is appended.
+        parent_entry = {
+            "url": "ssh://git@host-a/repo.git",
+            "key": {"provider": "static", "path": "/keys/id_rsa"},
+        }
+        m = _build(
+            base={"git-gate": {"repos": {"repo": parent_entry}}},
+            child={
+                "extends": "base",
+                "git-gate": {"repos": {
+                    "repo": {"key": {"provider": "gitea", "forge_token_env": "TOK"}},
+                    "other": self._GIT_ENTRY_B,
+                }},
+            },
+        )
+        child = m.bottles["child"]
+        names = {e.Name for e in child.git}
+        self.assertEqual({"repo", "other"}, names)
+        repo_entry = next(e for e in child.git if e.Name == "repo")
+        self.assertEqual("gitea", repo_entry.Key.provider)
 
     def test_child_git_user_inherits_parent_repos(self):
         m = _build(
