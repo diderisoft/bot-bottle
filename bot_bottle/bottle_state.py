@@ -43,6 +43,7 @@ from . import supervise as _supervise
 # Directory layout: ~/.bot-bottle/state/<identity>/...
 _STATE_SUBDIR = "state"
 _PER_BOTTLE_DOCKERFILE_NAME = "Dockerfile"
+_COMMITTED_IMAGE_NAME = "committed-image"
 _TRANSCRIPT_SUBDIR = "transcript"
 # Per-sidecar scratch subdirs. PRD 0018 chunk 2: bind-mount sources
 # live here so chunk 3's `docker compose up` can find them at stable
@@ -177,6 +178,32 @@ def write_per_bottle_dockerfile(identity: str, content: str) -> Path:
     p.write_text(content)
     p.chmod(0o644)
     return p
+
+
+def committed_image_path(identity: str) -> Path:
+    return bottle_state_dir(identity) / _COMMITTED_IMAGE_NAME
+
+
+def write_committed_image(identity: str, image_tag: str) -> Path:
+    """Persist the committed image tag for `identity`. The next
+    `cli.py resume <identity>` will boot from this image instead of
+    rebuilding from the Dockerfile."""
+    path = committed_image_path(identity)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(image_tag.strip() + "\n")
+    path.chmod(0o644)
+    return path
+
+
+def read_committed_image(identity: str) -> str | None:
+    """Return the committed image tag for `identity`, or None if no
+    commit has been recorded. Used by the Docker launch step to skip
+    the Dockerfile build when a committed snapshot exists."""
+    path = committed_image_path(identity)
+    if not path.is_file():
+        return None
+    tag = path.read_text().strip()
+    return tag or None
 
 
 def per_bottle_image_tag(identity: str) -> str:
@@ -314,6 +341,7 @@ __all__ = [
     "bottle_state_dir",
     "cleanup_state",
     "clear_preserve_marker",
+    "committed_image_path",
     "egress_state_dir",
     "git_gate_state_dir",
     "is_preserved",
@@ -323,9 +351,11 @@ __all__ = [
     "per_bottle_dockerfile_path",
     "per_bottle_image_tag",
     "preserve_marker_path",
+    "read_committed_image",
     "read_metadata",
     "supervise_state_dir",
     "transcript_snapshot_dir",
+    "write_committed_image",
     "write_metadata",
     "write_per_bottle_dockerfile",
 ]

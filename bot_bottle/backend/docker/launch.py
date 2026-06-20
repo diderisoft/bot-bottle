@@ -47,6 +47,7 @@ from ...bottle_state import (
     bottle_state_dir,
     egress_state_dir,
     git_gate_state_dir,
+    read_committed_image,
 )
 from .compose import (
     bottle_plan_to_compose,
@@ -91,12 +92,22 @@ def launch(
         )
 
     try:
-        # Step 1: agent image build. Sidecar images get built lazily by
-        # `docker compose up` via the renderer's `build:` directives.
-        docker_mod.build_image(
-            plan.image, _REPO_DIR,
-            dockerfile=plan.dockerfile_path,
-        )
+        # Step 1: agent image. Use a committed snapshot when one exists
+        # and is present in the local daemon; otherwise build from the
+        # Dockerfile. Sidecar images get built lazily by `docker compose
+        # up` via the renderer's `build:` directives.
+        committed = read_committed_image(plan.slug)
+        if committed and docker_mod.image_exists(committed):
+            info(f"using committed image {committed!r}")
+            plan = dataclasses.replace(
+                plan,
+                agent_provision=dataclasses.replace(plan.agent_provision, image=committed),
+            )
+        else:
+            docker_mod.build_image(
+                plan.image, _REPO_DIR,
+                dockerfile=plan.dockerfile_path,
+            )
 
         internal_network = network_mod.network_name_for_slug(plan.slug)
         egress_network = network_mod.network_egress_name_for_slug(plan.slug)

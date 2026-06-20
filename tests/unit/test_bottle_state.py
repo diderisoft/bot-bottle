@@ -277,5 +277,56 @@ class TestBottleMetadataBackend(_FakeHomeMixin, unittest.TestCase):
         self.assertEqual("", loaded.backend)
 
 
+class TestCommittedImage(_FakeHomeMixin, unittest.TestCase):
+    """write_committed_image / read_committed_image round-trip."""
+
+    def setUp(self):
+        self._setup_fake_home()
+
+    def tearDown(self):
+        self._teardown_fake_home()
+
+    def test_returns_none_when_absent(self):
+        self.assertIsNone(bottle_state.read_committed_image("dev"))
+
+    def test_write_then_read_roundtrip(self):
+        bottle_state.write_committed_image("dev", "bot-bottle-committed-dev:latest")
+        self.assertEqual(
+            "bot-bottle-committed-dev:latest",
+            bottle_state.read_committed_image("dev"),
+        )
+
+    def test_strips_trailing_newline_on_read(self):
+        path = bottle_state.committed_image_path("dev")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("bot-bottle-committed-dev:latest\n\n")
+        self.assertEqual(
+            "bot-bottle-committed-dev:latest",
+            bottle_state.read_committed_image("dev"),
+        )
+
+    def test_isolated_per_slug(self):
+        bottle_state.write_committed_image("dev", "bot-bottle-committed-dev:latest")
+        bottle_state.write_committed_image("api", "bot-bottle-committed-api:latest")
+        self.assertEqual(
+            "bot-bottle-committed-dev:latest",
+            bottle_state.read_committed_image("dev"),
+        )
+        self.assertEqual(
+            "bot-bottle-committed-api:latest",
+            bottle_state.read_committed_image("api"),
+        )
+
+    def test_path_under_state_dir(self):
+        path = bottle_state.committed_image_path("dev")
+        self.assertTrue(str(path).endswith("/.bot-bottle/state/dev/committed-image"))
+
+    def test_empty_content_returns_none(self):
+        path = bottle_state.committed_image_path("dev")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("   \n")
+        self.assertIsNone(bottle_state.read_committed_image("dev"))
+
+
 if __name__ == "__main__":
     unittest.main()

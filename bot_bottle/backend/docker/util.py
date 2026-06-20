@@ -152,6 +152,21 @@ def build_image(ref: str, context: str, *, dockerfile: str = "") -> None:
 #         )
 
 
+def commit_container(container_name: str, image_tag: str) -> None:
+    """Run `docker commit <container_name> <image_tag>` to snapshot the
+    running container's filesystem state as a local Docker image."""
+    result = subprocess.run(
+        ["docker", "commit", container_name, image_tag],
+        capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        die(
+            f"docker commit {container_name!r} → {image_tag!r} failed: "
+            f"{(result.stderr or '').strip() or '<no stderr>'}"
+        )
+    info(f"committed {container_name!r} → {image_tag!r}")
+
+
 def image_id(ref: str) -> str:
     """Return the content-addressed image ID (e.g.
     `sha256:abcd...`) for `ref`. The smolmachines backend keys its

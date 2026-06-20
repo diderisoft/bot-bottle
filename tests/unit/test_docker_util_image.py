@@ -67,5 +67,46 @@ class TestSave(unittest.TestCase):
         )
 
 
+class TestCommitContainer(unittest.TestCase):
+    def test_runs_docker_commit(self):
+        with patch.object(
+            docker_mod.subprocess, "run", return_value=_ok(),
+        ) as run, patch.object(docker_mod, "info"):
+            docker_mod.commit_container(
+                "bot-bottle-dev-abc12",
+                "bot-bottle-committed-dev-abc12:latest",
+            )
+        argv = run.call_args.args[0]
+        self.assertEqual(
+            [
+                "docker", "commit",
+                "bot-bottle-dev-abc12",
+                "bot-bottle-committed-dev-abc12:latest",
+            ],
+            argv,
+        )
+
+    def test_dies_on_docker_commit_failure(self):
+        with patch.object(
+            docker_mod.subprocess, "run", return_value=_fail("No such container"),
+        ), patch.object(
+            docker_mod, "die", side_effect=SystemExit("die"),
+        ) as die:
+            with self.assertRaises(SystemExit):
+                docker_mod.commit_container("missing-container", "some:tag")
+        die.assert_called_once()
+        self.assertIn("missing-container", die.call_args.args[0])
+
+    def test_die_message_includes_image_tag(self):
+        with patch.object(
+            docker_mod.subprocess, "run", return_value=_fail("boom"),
+        ), patch.object(
+            docker_mod, "die", side_effect=SystemExit("die"),
+        ) as die:
+            with self.assertRaises(SystemExit):
+                docker_mod.commit_container("ctr", "my-tag:v1")
+        self.assertIn("my-tag:v1", die.call_args.args[0])
+
+
 if __name__ == "__main__":
     unittest.main()
