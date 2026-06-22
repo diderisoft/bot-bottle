@@ -317,12 +317,15 @@ class Manifest:
         return sorted(self.agents.keys())
 
     def load_for_agent(self, agent_name: str) -> "Manifest":
-        """Parse and return a full Manifest for `agent_name` and its bottle.
+        """Return a Manifest containing exactly one agent and its bottle.
 
-        Only the selected agent's file and the bottle files in its extends
-        chain are read. Raises ManifestError if the agent or bottle is
-        invalid. Must be called on a names-only manifest (from resolve).
-        Backends call this at preflight to upgrade the spec's manifest."""
+        In lazy mode (from resolve/from_md_dirs) the agent file and its
+        bottle chain are read from disk for the first time here.  In eager
+        mode (from_json_obj) the data is already parsed; this just filters
+        down to the requested agent and its bottle.
+
+        Always raises ManifestError if the agent is unknown or invalid.
+        Backends call this at preflight inside _validate."""
         if self.home_md is None:
             # Eager manifest (from_json_obj): data already parsed; filter to
             # the one requested agent and its bottle so the returned manifest
