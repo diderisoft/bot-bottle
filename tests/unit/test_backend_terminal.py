@@ -26,7 +26,7 @@ class TestPalettePrintf(unittest.TestCase):
 
     def test_all_named_colors_produce_output(self):
         colors = [
-            "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+            "red", "green", "yellow", "blue", "magenta",
         ]
         for color in colors:
             with self.subTest(color=color):
@@ -62,7 +62,7 @@ class TestExecShellScript(unittest.TestCase):
         self.assertFalse(agent_part.startswith("exec "))
 
     def test_title_and_color_both_appear(self):
-        script = exec_shell_script(self._ARGV, terminal_title="bot", terminal_color="cyan")
+        script = exec_shell_script(self._ARGV, terminal_title="bot", terminal_color="magenta")
         assert script is not None
         self.assertIn("bot", script)
         self.assertIn("\\033]4;", script)

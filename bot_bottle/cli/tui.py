@@ -226,7 +226,7 @@ def _addstr_safe(screen: Any, row: int, col: int, text: str, attr: int = curses.
 # ---------------------------------------------------------------------------
 
 _ANSI_COLORS = [
-    "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+    "red", "green", "yellow", "blue", "magenta",
 ]
 
 _CURSES_COLOR_MAP: dict[str, int] = {
@@ -235,8 +235,6 @@ _CURSES_COLOR_MAP: dict[str, int] = {
     "yellow": curses.COLOR_YELLOW,
     "blue": curses.COLOR_BLUE,
     "magenta": curses.COLOR_MAGENTA,
-    "cyan": curses.COLOR_CYAN,
-    "white": curses.COLOR_WHITE,
 }
 
 _COLOR_NONE = "(none)"

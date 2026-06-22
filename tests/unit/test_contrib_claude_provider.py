@@ -276,7 +276,7 @@ class TestClaudeUiProvision(unittest.TestCase):
                 instance_name="bot-bottle-demo-abc12",
                 prompt_file=prompt_file,
                 label="research-ui",
-                color="cyan",
+                color="blue",
             )
             settings = json.loads((state_dir / "claude-settings.json").read_text())
             statusline = (state_dir / "claude-statusline.sh").read_text()
@@ -288,9 +288,9 @@ class TestClaudeUiProvision(unittest.TestCase):
         self.assertEqual("~/.claude/statusline.sh", settings["statusLine"]["command"])
         self.assertEqual("custom:bot-bottle-research-ui", settings["theme"])
         self.assertIn("research-ui", statusline)
-        self.assertIn("\x1b[96m", statusline)
+        self.assertIn("\x1b[94m", statusline)
         self.assertEqual("dark", theme["base"])
-        self.assertEqual("ansi:cyanBright", theme["overrides"]["claude"])
+        self.assertEqual("ansi:blueBright", theme["overrides"]["claude"])
 
     def test_runs_verify_commands(self):
         provision = AgentProvisionPlan(

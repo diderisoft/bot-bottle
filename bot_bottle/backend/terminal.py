@@ -17,8 +17,6 @@ _COLORS: dict[str, tuple[int, str, int, str, str]] = {
     "yellow":  (11, "#f1c40f", 3,  "#d4ac0d", "#201808"),
     "blue":    (12, "#3498db", 4,  "#2471a3", "#080820"),
     "magenta": (13, "#9b59b6", 5,  "#7d3c98", "#160820"),
-    "cyan":    (14, "#1abc9c", 6,  "#148f77", "#082020"),
-    "white":   (15, "#ecf0f1", 7,  "#bdc3c7", "#151515"),
 }
 
 # OSC 104 resets all indexed palette entries; OSC 111 resets default background.

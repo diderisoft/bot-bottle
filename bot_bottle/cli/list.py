@@ -16,8 +16,6 @@ _ANSI_COLOR_CODES: dict[str, str] = {
     "yellow": "\033[93m",
     "blue": "\033[94m",
     "magenta": "\033[95m",
-    "cyan": "\033[96m",
-    "white": "\033[97m",
 }
 _ANSI_RESET = "\033[0m"
 
