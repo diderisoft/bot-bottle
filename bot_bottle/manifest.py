@@ -324,13 +324,20 @@ class Manifest:
         invalid. Must be called on a names-only manifest (from resolve).
         Backends call this at preflight to upgrade the spec's manifest."""
         if self.home_md is None:
-            # Eager manifest (from_json_obj): already fully loaded; just validate name.
+            # Eager manifest (from_json_obj): data already parsed; filter to
+            # the one requested agent and its bottle so the returned manifest
+            # always contains exactly one agent and one bottle regardless of path.
             if agent_name not in self.agents:
                 available = ", ".join(sorted(self.agents.keys())) or "(none)"
                 raise ManifestError(
                     f"agent '{agent_name}' not defined. Available: {available}"
                 )
-            return self
+            agent = self.agents[agent_name]
+            bottle_name = agent.bottle
+            return Manifest(
+                bottles={bottle_name: self.bottles[bottle_name]},
+                agents={agent_name: agent},
+            )
         from .manifest_loader import load_bottle_chain_from_dir, scan_agent_names
         from .manifest_schema import validate_agent_frontmatter_keys
         from .yaml_subset import YamlSubsetError, parse_frontmatter
