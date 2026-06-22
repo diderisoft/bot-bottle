@@ -169,7 +169,7 @@ class TestCmdStartLabelCollision(unittest.TestCase):
         collision_agent = _active_agent("researcher")
         call_count = 0
 
-        def _modal(default_label, *, disclaimer="", **_kw):
+        def _modal(default_label: str, *, disclaimer: str = "", **_kw: object) -> tuple[str, str]:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
