@@ -20,9 +20,11 @@ from ..agent_provider import runtime_for
 from ..backend import (
     Bottle,
     BottleSpec,
+    enumerate_active_agents,
     get_bottle_backend,
     known_backend_names,
 )
+from ..backend.docker import util as docker_mod
 from ..backend.docker.bottle_plan import DockerBottlePlan
 from ..bottle_state import (
     cleanup_state,
@@ -74,6 +76,7 @@ def cmd_start(argv: list[str]) -> int:
     backend_name: str | None = args.backend
 
     label, color = tui.name_color_modal(default_label=agent_name)
+    label, color = _resolve_unique_label(label, color)
 
     spec = BottleSpec(
         manifest=manifest,
@@ -189,6 +192,21 @@ def _identity_from_plan(plan: object) -> str:
     identity attribute; for now we duck-type to keep this layer
     backend-agnostic."""
     return getattr(plan, "slug", "")
+
+
+def _resolve_unique_label(label: str, color: str) -> tuple[str, str]:
+    """Re-prompt with a disclaimer until the label's slug is not already
+    in use among running bottles.  Passes through unchanged when no
+    collision is found on the first check."""
+    while True:
+        slug_candidate = docker_mod.slugify(label)
+        active_slugs = {a.slug for a in enumerate_active_agents()}
+        if slug_candidate not in active_slugs:
+            return label, color
+        label, color = tui.name_color_modal(
+            default_label=label,
+            disclaimer=f'"{label}" is already in use',
+        )
 
 
 def _text_prompt_yes() -> bool:

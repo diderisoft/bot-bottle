@@ -33,9 +33,18 @@ from . import BottleSpec
 
 def mint_slug(spec: BottleSpec) -> str:
     """Return the bottle identity: the recorded identity for a resume,
-    or a freshly minted one for a new start."""
-    name = spec.label or spec.agent_name
-    return spec.identity or bottle_identity(name)
+    or a freshly minted one for a new start.
+
+    When a label is provided it becomes the full slug (no random suffix),
+    so two launches with the same label collide by design.  When no label
+    is given the identity is minted with a random suffix to avoid
+    collisions between anonymous launches of the same agent."""
+    if spec.identity:
+        return spec.identity
+    if spec.label:
+        from .docker import util as docker_mod
+        return docker_mod.slugify(spec.label)
+    return bottle_identity(spec.agent_name)
 
 
 def write_launch_metadata(

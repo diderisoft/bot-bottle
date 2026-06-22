@@ -128,17 +128,19 @@ class TestMintSlug(unittest.TestCase):
             identity=identity,
         )
 
-    def test_no_label_uses_agent_name_as_prefix(self) -> None:
+    def test_no_label_uses_agent_name_with_random_suffix(self) -> None:
         slug = mint_slug(self._spec(label=""))
         self.assertTrue(slug.startswith("demo-"), slug)
+        # random suffix present — slug is longer than just "demo"
+        self.assertGreater(len(slug), len("demo-"))
 
-    def test_label_used_as_slug_prefix(self) -> None:
+    def test_label_becomes_exact_slug(self) -> None:
         slug = mint_slug(self._spec(label="my-run"))
-        self.assertTrue(slug.startswith("my-run-"), slug)
+        self.assertEqual("my-run", slug)
 
-    def test_label_with_spaces_slugified(self) -> None:
+    def test_label_with_spaces_slugified_no_suffix(self) -> None:
         slug = mint_slug(self._spec(label="My Feature Run"))
-        self.assertTrue(slug.startswith("my-feature-run-"), slug)
+        self.assertEqual("my-feature-run", slug)
 
     def test_identity_takes_precedence_over_label(self) -> None:
         slug = mint_slug(self._spec(label="my-run", identity="fixed-id"))

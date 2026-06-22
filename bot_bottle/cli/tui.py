@@ -243,10 +243,14 @@ _COLOR_NONE = "(none)"
 def name_color_modal(
     default_label: str,
     *,
+    disclaimer: str = "",
     tty_path: str = "/dev/tty",
 ) -> tuple[str, str]:
     """Present a two-step curses modal: first edit the agent label,
     then optionally pick a color.
+
+    ``disclaimer`` is shown below the input field — use it to surface
+    an error from a previous attempt (e.g. name already in use).
 
     Returns ``(label, color)`` where ``color`` is one of the 16 ANSI
     color name strings or ``""`` for no color. Falls back to
@@ -259,14 +263,14 @@ def name_color_modal(
 
     try:
         fd_dup = os.dup(tty_fd.fileno())
-        return _run_name_color(default_label, tty_fd=fd_dup)
+        return _run_name_color(default_label, tty_fd=fd_dup, disclaimer=disclaimer)
     except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         return default_label, ""
     finally:
         tty_fd.close()
 
 
-def _run_name_color(default_label: str, *, tty_fd: int) -> tuple[str, str]:
+def _run_name_color(default_label: str, *, tty_fd: int, disclaimer: str = "") -> tuple[str, str]:
     import io
     orig_stdin = sys.__stdin__
     orig_stdout = sys.__stdout__
@@ -281,7 +285,7 @@ def _run_name_color(default_label: str, *, tty_fd: int) -> tuple[str, str]:
         curses.cbreak()
         screen.keypad(True)
         try:
-            label = _label_step(screen, default_label)
+            label = _label_step(screen, default_label, disclaimer=disclaimer)
             color = _color_step(screen, label)
         finally:
             screen.keypad(False)
@@ -294,14 +298,14 @@ def _run_name_color(default_label: str, *, tty_fd: int) -> tuple[str, str]:
     return label, color
 
 
-def _label_step(screen: Any, default_label: str) -> str:
+def _label_step(screen: Any, default_label: str, *, disclaimer: str = "") -> str:
     """Step 1: edit the label. First printable key replaces the
     pre-fill; subsequent keys append. Enter confirms."""
     text = default_label
     replaced = False  # True once the user has typed their first char
 
     while True:
-        _render_label(screen, text)
+        _render_label(screen, text, disclaimer=disclaimer)
         try:
             key = screen.getch()
         except KeyboardInterrupt:
@@ -325,7 +329,7 @@ def _label_step(screen: Any, default_label: str) -> str:
                 text += chr(key)
 
 
-def _render_label(screen: Any, text: str) -> None:
+def _render_label(screen: Any, text: str, *, disclaimer: str = "") -> None:
     screen.erase()
     rows, cols = screen.getmaxyx()
     sep = "─" * min(cols - 1, 40)
@@ -333,8 +337,12 @@ def _render_label(screen: Any, text: str) -> None:
     _addstr_safe(screen, 1, 0, sep)
     _addstr_safe(screen, 2, 0, text[:cols - 1], curses.A_REVERSE)
     _addstr_safe(screen, 3, 0, sep)
-    if rows > 5:
-        _addstr_safe(screen, 5, 0, "[any key] edit  [Enter] confirm", curses.A_DIM)
+    row = 4
+    if disclaimer and rows > row + 1:
+        _addstr_safe(screen, row, 0, disclaimer[:cols - 1], curses.A_BOLD)
+        row += 1
+    if rows > row + 1:
+        _addstr_safe(screen, row, 0, "[any key] edit  [Enter] confirm", curses.A_DIM)
     screen.refresh()
 
 
