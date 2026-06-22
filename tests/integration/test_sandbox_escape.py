@@ -92,10 +92,9 @@ class TestSandboxEscape(unittest.TestCase):
                     "on PATH: curl -sSL https://smolmachines.com/install.sh | sh"
                 )
 
-        # Throwaway "identity file" so the manifest's _validate_git_entries
-        # passes (it only checks `os.path.isfile`, not that the content is
-        # a real SSH key). Test 5 reaches gitleaks before any SSH attempt
-        # anyway.
+        # Throwaway "identity file" for the git-gate's `identity` field.
+        # It need not be a real SSH key: test 5 reaches gitleaks before
+        # any SSH attempt anyway.
         fd, kp = tempfile.mkstemp(prefix="sandbox-test-key.")
         os.close(fd)
         cls._key_path = Path(kp)

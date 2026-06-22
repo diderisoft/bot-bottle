@@ -45,7 +45,7 @@ from ..agent_provider import AgentProvisionPlan, get_provider, build_agent_provi
 from ..egress import EgressPlan
 from ..git_gate import GitGatePlan
 from ..log import die, info
-from ..manifest import ManifestGitEntry, Manifest
+from ..manifest import Manifest
 from ..supervise import SupervisePlan
 from ..util import expand_tilde
 from ..env import resolve_env, ResolvedEnv
@@ -356,16 +356,14 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         pass
 
     def _validate(self, spec: BottleSpec) -> None:
-        """Cross-backend pre-launch checks. Confirms the agent exists,
-        the named skills are present on the host, and every git
-        IdentityFile resolves. Subclasses with additional preconditions
-        should override and call `super()._validate(spec)` first."""
+        """Cross-backend pre-launch checks. Confirms the agent exists
+        and the named skills are present on the host. Subclasses with
+        additional preconditions should override and call
+        `super()._validate(spec)` first."""
         manifest = spec.manifest
         manifest.require_agent(spec.agent_name)
         agent = manifest.agents[spec.agent_name]
-        bottle = manifest.bottle_for(spec.agent_name)
         self._validate_skills(agent.skills)
-        self._validate_git_entries(bottle.git)
         self._validate_agent_provider_dockerfile(spec)
 
     def _validate_skills(self, skills: Sequence[str]) -> None:
@@ -379,22 +377,6 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
                     f"skill '{name}' not found on host at {path}. "
                     f"Create it under ~/.claude/skills/, then re-run."
                 )
-
-    def _validate_git_entries(self, entries: Sequence[ManifestGitEntry]) -> None:
-        """Each `static`-provider entry's IdentityFile must exist on the
-        host (after expanding leading ~) — the git-gate copies it in at
-        start time to authenticate the upstream push (PRD 0008). Shape is
-        already enforced by Manifest validation; this only checks presence.
-
-        `gitea`-provider entries (PRD 0047/0048) carry no host key:
-        IdentityFile is empty at parse time and the deploy key is created
-        at provision time, so there is nothing to check here."""
-        for entry in entries:
-            if entry.Key.provider != "static":
-                continue
-            key = expand_tilde(entry.IdentityFile)
-            if not os.path.isfile(key):
-                die(f"git upstream key file not found for '{entry.Name}': {key}")
 
     def _validate_agent_provider_dockerfile(self, spec: BottleSpec) -> None:
         bottle = spec.manifest.bottle_for(spec.agent_name)
