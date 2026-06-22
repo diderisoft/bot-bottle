@@ -138,6 +138,7 @@ You help maintain Gitea-hosted projects.
 | Field | Required | Description |
 |---|---|---|
 | `host` | yes | Hostname to allowlist. One entry per host. |
+| `role` | no | Provider-specific role string (e.g. `claude_code_oauth`). Wires built-in auth flows; set by provider templates, not manually. |
 | `auth.scheme` | when `auth` present | `Bearer` or `token`. Injected by the proxy; the agent never sees the value. |
 | `auth.token_ref` | when `auth` present | Env-var name holding the secret on the host. |
 | `matches` | no | Array of `{paths, methods, headers}` filters. A request must match at least one entry (if any are given) to be forwarded. |
@@ -147,6 +148,7 @@ You help maintain Gitea-hosted projects.
 | `dlp` | no | Per-route DLP overrides. Omit to use defaults (all detectors on). |
 | `dlp.outbound_detectors` | no | `false` disables outbound scanning; list restricts to named detectors (`token_patterns`, `known_secrets`). |
 | `dlp.inbound_detectors` | no | `false` disables inbound scanning; list restricts to named detectors (`naive_injection_detection`). |
+| `git.fetch` | no | `true` permits smart HTTP clone/fetch (`git-upload-pack`) for this host. Push (`git-receive-pack`) remains blocked. |
 
 More examples in `examples/`. Full design lives under `docs/prds/`; the trust-boundary rationale is in `docs/prds/0011-per-file-md-manifest.md`.
 
