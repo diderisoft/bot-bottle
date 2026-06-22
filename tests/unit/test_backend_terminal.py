@@ -11,14 +11,14 @@ class TestPalettePrintf(unittest.TestCase):
     def test_known_color_returns_printf(self):
         cmd = palette_printf("red")
         self.assertTrue(cmd.startswith("printf '"))
-        self.assertIn("\\033]4;1;", cmd)   # normal red
-        self.assertIn("\\033]4;9;", cmd)   # bright red
+        self.assertIn("\\033]4;9;", cmd)   # bright-red slot
+        self.assertIn("\\033]4;1;", cmd)   # normal-red slot
         self.assertIn("\\033]11;", cmd)    # default background tint
 
-    def test_bright_variant_sets_both_slots(self):
-        cmd = palette_printf("bright-blue")
-        self.assertIn("\\033]4;12;", cmd)  # bright-blue
-        self.assertIn("\\033]4;4;", cmd)   # blue
+    def test_color_sets_both_palette_slots(self):
+        cmd = palette_printf("blue")
+        self.assertIn("\\033]4;12;", cmd)  # bright-blue slot
+        self.assertIn("\\033]4;4;", cmd)   # normal-blue slot
 
     def test_unknown_color_returns_empty(self):
         self.assertEqual("", palette_printf(""))
@@ -26,10 +26,7 @@ class TestPalettePrintf(unittest.TestCase):
 
     def test_all_named_colors_produce_output(self):
         colors = [
-            "black", "red", "green", "yellow",
-            "blue", "magenta", "cyan", "white",
-            "bright-black", "bright-red", "bright-green", "bright-yellow",
-            "bright-blue", "bright-magenta", "bright-cyan", "bright-white",
+            "red", "green", "yellow", "blue", "magenta", "cyan", "white",
         ]
         for color in colors:
             with self.subTest(color=color):

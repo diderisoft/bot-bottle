@@ -74,7 +74,7 @@ class TestAgentProviderRuntime(unittest.TestCase):
                 instance_name="bot-bottle-test",
                 prompt_file=prompt_file,
                 label="review-api",
-                color="bright-cyan",
+                color="cyan",
             )
             prompt = prompt_file.read_text()
             config = Path(tmp, "codex-config.toml").read_text()

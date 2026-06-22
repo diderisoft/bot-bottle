@@ -276,7 +276,7 @@ class TestClaudeUiProvision(unittest.TestCase):
                 instance_name="bot-bottle-demo-abc12",
                 prompt_file=prompt_file,
                 label="research-ui",
-                color="bright-cyan",
+                color="cyan",
             )
             settings = json.loads((state_dir / "claude-settings.json").read_text())
             statusline = (state_dir / "claude-statusline.sh").read_text()

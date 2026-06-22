@@ -158,7 +158,7 @@ class TestCodexProvisionPrompt(unittest.TestCase):
                 instance_name="bot-bottle-demo-abc12",
                 prompt_file=prompt_file,
                 label="research-ui",
-                color="bright-cyan",
+                color="cyan",
             )
             config = (state_dir / "codex-config.toml").read_text()
             prompt_text = prompt_file.read_text()

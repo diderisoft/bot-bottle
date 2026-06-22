@@ -12,22 +12,13 @@ import shlex
 # uses true/24-bit colors for its own chrome, which would otherwise bypass
 # the palette entirely.
 _COLORS: dict[str, tuple[int, str, int, str, str]] = {
-    "black":          (0,  "#2d2d2d", 8,  "#5c5c5c", "#0a0a0a"),
-    "red":            (1,  "#c0392b", 9,  "#e74c3c", "#1a0707"),
-    "green":          (2,  "#27ae60", 10, "#2ecc71", "#071a09"),
-    "yellow":         (3,  "#d4ac0d", 11, "#f1c40f", "#1a1507"),
-    "blue":           (4,  "#2471a3", 12, "#3498db", "#07071a"),
-    "magenta":        (5,  "#7d3c98", 13, "#9b59b6", "#12071a"),
-    "cyan":           (6,  "#148f77", 14, "#1abc9c", "#071a1a"),
-    "white":          (7,  "#bdc3c7", 15, "#ecf0f1", "#111111"),
-    "bright-black":   (8,  "#5c5c5c", 0,  "#2d2d2d", "#111111"),
-    "bright-red":     (9,  "#e74c3c", 1,  "#c0392b", "#200808"),
-    "bright-green":   (10, "#2ecc71", 2,  "#27ae60", "#082008"),
-    "bright-yellow":  (11, "#f1c40f", 3,  "#d4ac0d", "#201808"),
-    "bright-blue":    (12, "#3498db", 4,  "#2471a3", "#080820"),
-    "bright-magenta": (13, "#9b59b6", 5,  "#7d3c98", "#160820"),
-    "bright-cyan":    (14, "#1abc9c", 6,  "#148f77", "#082020"),
-    "bright-white":   (15, "#ecf0f1", 7,  "#bdc3c7", "#151515"),
+    "red":     (9,  "#e74c3c", 1,  "#c0392b", "#200808"),
+    "green":   (10, "#2ecc71", 2,  "#27ae60", "#082008"),
+    "yellow":  (11, "#f1c40f", 3,  "#d4ac0d", "#201808"),
+    "blue":    (12, "#3498db", 4,  "#2471a3", "#080820"),
+    "magenta": (13, "#9b59b6", 5,  "#7d3c98", "#160820"),
+    "cyan":    (14, "#1abc9c", 6,  "#148f77", "#082020"),
+    "white":   (15, "#ecf0f1", 7,  "#bdc3c7", "#151515"),
 }
 
 # OSC 104 resets all indexed palette entries; OSC 111 resets default background.

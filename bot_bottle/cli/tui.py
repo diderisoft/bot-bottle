@@ -226,13 +226,10 @@ def _addstr_safe(screen: Any, row: int, col: int, text: str, attr: int = curses.
 # ---------------------------------------------------------------------------
 
 _ANSI_COLORS = [
-    "red", "green", "blue", "yellow", "magenta", "cyan", "white", "black",
-    "bright-red", "bright-green", "bright-blue", "bright-yellow",
-    "bright-magenta", "bright-cyan", "bright-white", "bright-black",
+    "red", "green", "yellow", "blue", "magenta", "cyan", "white",
 ]
 
 _CURSES_COLOR_MAP: dict[str, int] = {
-    "black": curses.COLOR_BLACK,
     "red": curses.COLOR_RED,
     "green": curses.COLOR_GREEN,
     "yellow": curses.COLOR_YELLOW,
@@ -379,13 +376,10 @@ def _init_color_pairs() -> dict[str, int]:
         curses.use_default_colors()
         pair_idx = 2  # pair 1 reserved for other uses
         for name in _ANSI_COLORS:
-            base = name.replace("bright-", "")
-            fg = _CURSES_COLOR_MAP.get(base, curses.COLOR_WHITE)
+            fg = _CURSES_COLOR_MAP.get(name, curses.COLOR_WHITE)
             try:
                 curses.init_pair(pair_idx, fg, -1)
-                attr = curses.color_pair(pair_idx)
-                if name.startswith("bright-"):
-                    attr |= curses.A_BOLD
+                attr = curses.color_pair(pair_idx) | curses.A_BOLD
                 attrs[name] = attr
                 pair_idx += 1
             except curses.error:
