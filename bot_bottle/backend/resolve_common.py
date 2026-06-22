@@ -34,7 +34,8 @@ from . import BottleSpec
 def mint_slug(spec: BottleSpec) -> str:
     """Return the bottle identity: the recorded identity for a resume,
     or a freshly minted one for a new start."""
-    return spec.identity or bottle_identity(spec.agent_name)
+    name = spec.label or spec.agent_name
+    return spec.identity or bottle_identity(name)
 
 
 def write_launch_metadata(

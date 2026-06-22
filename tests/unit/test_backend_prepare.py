@@ -16,6 +16,7 @@ from bot_bottle import bottle_state
 from bot_bottle import supervise
 from bot_bottle.backend import BottleSpec
 from bot_bottle.backend.docker import DockerBottleBackend
+from bot_bottle.backend.resolve_common import mint_slug
 from bot_bottle.backend.smolmachines import SmolmachinesBottleBackend
 from bot_bottle.manifest import Manifest
 
@@ -113,6 +114,35 @@ class TestSmolmachinesPrepare(_FakeStateMixin, unittest.TestCase):
             "/etc/ssl/certs/ca-certificates.crt",
             plan.guest_env["SSL_CERT_FILE"],
         )
+
+
+class TestMintSlug(unittest.TestCase):
+    def _spec(self, *, label: str = "", identity: str = "") -> BottleSpec:
+        manifest = _manifest()
+        return BottleSpec(
+            manifest=manifest,
+            agent_name="demo",
+            copy_cwd=False,
+            user_cwd="/tmp",
+            label=label,
+            identity=identity,
+        )
+
+    def test_no_label_uses_agent_name_as_prefix(self) -> None:
+        slug = mint_slug(self._spec(label=""))
+        self.assertTrue(slug.startswith("demo-"), slug)
+
+    def test_label_used_as_slug_prefix(self) -> None:
+        slug = mint_slug(self._spec(label="my-run"))
+        self.assertTrue(slug.startswith("my-run-"), slug)
+
+    def test_label_with_spaces_slugified(self) -> None:
+        slug = mint_slug(self._spec(label="My Feature Run"))
+        self.assertTrue(slug.startswith("my-feature-run-"), slug)
+
+    def test_identity_takes_precedence_over_label(self) -> None:
+        slug = mint_slug(self._spec(label="my-run", identity="fixed-id"))
+        self.assertEqual("fixed-id", slug)
 
 
 if __name__ == "__main__":
