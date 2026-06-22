@@ -381,11 +381,17 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
                 )
 
     def _validate_git_entries(self, entries: Sequence[ManifestGitEntry]) -> None:
-        """Each entry's IdentityFile must exist on the host (after
-        expanding leading ~) — the git-gate copies it in at start time
-        to authenticate the upstream push (PRD 0008). Shape is already
-        enforced by Manifest validation; this only checks presence."""
+        """Each `static`-provider entry's IdentityFile must exist on the
+        host (after expanding leading ~) — the git-gate copies it in at
+        start time to authenticate the upstream push (PRD 0008). Shape is
+        already enforced by Manifest validation; this only checks presence.
+
+        `gitea`-provider entries (PRD 0047/0048) carry no host key:
+        IdentityFile is empty at parse time and the deploy key is created
+        at provision time, so there is nothing to check here."""
         for entry in entries:
+            if entry.Key.provider != "static":
+                continue
             key = expand_tilde(entry.IdentityFile)
             if not os.path.isfile(key):
                 die(f"git upstream key file not found for '{entry.Name}': {key}")
