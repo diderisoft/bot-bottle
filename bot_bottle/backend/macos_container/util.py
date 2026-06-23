@@ -252,6 +252,36 @@ def container_exists(name: str) -> bool:
     return name in {line.strip() for line in result.stdout.splitlines()}
 
 
+def container_is_running(name: str) -> bool:
+    """Return True if the named container is currently running.
+
+    `container list` without `--all` lists only running containers."""
+    result = subprocess.run(
+        [_CONTAINER, "list", "--quiet"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return False
+    return name in {line.strip() for line in result.stdout.splitlines()}
+
+
+def stop_container(name: str) -> None:
+    """Stop the named container without deleting it."""
+    result = subprocess.run(
+        [_CONTAINER, "stop", name],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        die(
+            f"container stop {name!r} failed: "
+            f"{(result.stderr or '').strip() or '<no stderr>'}"
+        )
+
+
 def force_remove_container(name: str) -> None:
     if container_exists(name):
         subprocess.run(

@@ -143,6 +143,8 @@ class TestCmdCommitSlugArg(_FakeHomeMixin, unittest.TestCase):
             "bot_bottle.cli.commit.macos_commit_container",
         ) as mock_commit, patch(
             "bot_bottle.cli.commit.info",
+        ), patch(
+            "bot_bottle.cli.commit.macos_container_is_running", return_value=False,
         ):
             rc = cmd_commit([slug])
 
@@ -151,6 +153,57 @@ class TestCmdCommitSlugArg(_FakeHomeMixin, unittest.TestCase):
             f"bot-bottle-{slug}",
             f"bot-bottle-committed-{slug}:latest",
         )
+
+    def test_running_macos_container_stops_then_commits_on_yes(self):
+        slug = "dev-abc12"
+        bottle_state.write_metadata(bottle_state.BottleMetadata(
+            identity=slug, agent_name="dev", cwd="", copy_cwd=False,
+            started_at="t", backend="macos-container",
+        ))
+
+        with patch(
+            "bot_bottle.cli.commit.macos_container_is_running", return_value=True,
+        ), patch(
+            "bot_bottle.cli.commit.read_tty_line", return_value="y",
+        ), patch(
+            "bot_bottle.cli.commit.macos_stop_container",
+        ) as mock_stop, patch(
+            "bot_bottle.cli.commit.macos_commit_container",
+        ) as mock_commit, patch(
+            "bot_bottle.cli.commit.info",
+        ):
+            rc = cmd_commit([slug])
+
+        self.assertEqual(0, rc)
+        mock_stop.assert_called_once_with(f"bot-bottle-{slug}")
+        mock_commit.assert_called_once_with(
+            f"bot-bottle-{slug}",
+            f"bot-bottle-committed-{slug}:latest",
+        )
+
+    def test_running_macos_container_aborts_on_no(self):
+        slug = "dev-abc12"
+        bottle_state.write_metadata(bottle_state.BottleMetadata(
+            identity=slug, agent_name="dev", cwd="", copy_cwd=False,
+            started_at="t", backend="macos-container",
+        ))
+
+        with patch(
+            "bot_bottle.cli.commit.macos_container_is_running", return_value=True,
+        ), patch(
+            "bot_bottle.cli.commit.read_tty_line", return_value="n",
+        ), patch(
+            "bot_bottle.cli.commit.macos_stop_container",
+        ) as mock_stop, patch(
+            "bot_bottle.cli.commit.macos_commit_container",
+        ) as mock_commit, patch(
+            "bot_bottle.cli.commit.info",
+        ):
+            rc = cmd_commit([slug])
+
+        self.assertEqual(0, rc)
+        mock_stop.assert_not_called()
+        mock_commit.assert_not_called()
 
 
 class TestCmdCommitSmolmachinesBackend(_FakeHomeMixin, unittest.TestCase):

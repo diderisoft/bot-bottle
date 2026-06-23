@@ -11,16 +11,19 @@ snapshot instead of rebuilding from the Dockerfile.
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from ..backend import enumerate_active_agents
 from ..backend.docker.util import commit_container as docker_commit_container
 from ..backend.macos_container.util import commit_container as macos_commit_container
+from ..backend.macos_container.util import container_is_running as macos_container_is_running
+from ..backend.macos_container.util import stop_container as macos_stop_container
 from ..backend.smolmachines.smolvm import pack_create_from_vm
 from ..bottle_state import bottle_state_dir
 from ..bottle_state import mark_preserved, read_metadata, write_committed_image
 from ..log import die, info
-from ._common import PROG
+from ._common import PROG, read_tty_line
 from . import tui
 
 
@@ -90,6 +93,17 @@ def cmd_commit(argv: list[str]) -> int:
     if backend == _MACOS_CONTAINER_BACKEND:
         container = _agent_container_name(slug)
         image_tag = _committed_image_tag(slug)
+
+        if macos_container_is_running(container):
+            sys.stderr.write(
+                f"bot-bottle: bottle {slug!r} is running; "
+                "commit will stop it. Continue? [y/N] "
+            )
+            sys.stderr.flush()
+            reply = read_tty_line().strip().lower()
+            if reply not in ("y", "yes"):
+                return 0
+            macos_stop_container(container)
 
         macos_commit_container(container, image_tag)
         write_committed_image(slug, image_tag)
