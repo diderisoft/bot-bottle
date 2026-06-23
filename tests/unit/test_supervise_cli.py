@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from bot_bottle import supervise
 from bot_bottle.cli import supervise as supervise_cli
@@ -155,7 +156,15 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
 
     def test_approve_egress_block_writes_audit_log(self):
         qp = self._enqueue(tool=supervise.TOOL_EGRESS_BLOCK)
-        supervise_cli.approve(qp)
+        with patch(
+            "bot_bottle.cli.supervise.apply_routes_change",
+            return_value=("routes: []\n", "routes:\n  - host: example.com\n"),
+        ) as apply_routes_change:
+            supervise_cli.approve(qp)
+        apply_routes_change.assert_called_once_with(
+            "dev",
+            "routes:\n  - host: example.com\n",
+        )
         entries = read_audit_entries("egress", "dev")
         self.assertEqual(1, len(entries))
         self.assertEqual(STATUS_APPROVED, entries[0].operator_action)

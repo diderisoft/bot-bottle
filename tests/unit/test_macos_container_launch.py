@@ -125,14 +125,9 @@ class TestMacosContainerLaunchArgv(unittest.TestCase):
             f"type=bind,source={self.stage_dir / 'egress-ca'},target=/home/mitmproxy/.mitmproxy",
             argv,
         )
-        routes_dir = self.stage_dir / "macos-container-egress"
         self.assertIn(
-            f"type=bind,source={routes_dir},target=/etc/egress,readonly",
+            f"type=bind,source={self.stage_dir / 'source-routes.yaml'},target=/etc/egress/routes.yaml,readonly",
             argv,
-        )
-        self.assertEqual(
-            "routes: []\n",
-            (routes_dir / "routes.yaml").read_text(encoding="utf-8"),
         )
         self.assertIn(
             "type=bind,source=/state/supervise/queue,target=/run/supervise/queue",

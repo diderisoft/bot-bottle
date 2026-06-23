@@ -2,10 +2,16 @@
 add_route removed; docker exec / cp / kill paths are covered by the
 integration test)."""
 
+import tempfile
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
+from bot_bottle import supervise
 from bot_bottle.backend.docker.egress_apply import (
     EgressApplyError,
+    apply_routes_change,
     validate_routes_content,
 )
 
@@ -50,6 +56,46 @@ class TestValidateRoutesContent(unittest.TestCase):
                 '  - host: "x.example"\n'
                 '    auth_scheme: "Bearer"\n'
             )
+
+
+class TestApplyRoutesChange(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory(prefix="egress-apply-test.")
+        original = supervise.bot_bottle_root
+
+        def fake_root() -> Path:
+            return Path(self._tmp.name) / ".bot-bottle"
+
+        supervise.bot_bottle_root = fake_root  # type: ignore[assignment]
+        self.addCleanup(lambda: setattr(supervise, "bot_bottle_root", original))
+        self.addCleanup(self._tmp.cleanup)
+
+    def test_writes_live_routes_and_signals_reload(self):
+        calls: list[list[str]] = []
+
+        def fake_run(argv, **kwargs):
+            calls.append(list(argv))
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with patch(
+            "bot_bottle.backend.docker.egress_apply.subprocess.run",
+            side_effect=fake_run,
+        ):
+            before, after = apply_routes_change(
+                "dev",
+                "routes:\n  - host: google.com\n",
+            )
+
+        self.assertEqual("", before)
+        self.assertEqual("routes:\n  - host: google.com\n", after)
+        self.assertEqual(
+            "routes:\n  - host: google.com\n",
+            (Path(self._tmp.name) / ".bot-bottle/state/dev/egress/egress_routes.yaml").read_text(encoding="utf-8"),
+        )
+        self.assertEqual(
+            ["docker", "kill", "--signal", "HUP", "bot-bottle-sidecars-dev"],
+            calls[0],
+        )
 
 
 if __name__ == "__main__":

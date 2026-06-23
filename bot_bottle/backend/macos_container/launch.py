@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import dataclasses
 import os
-import shutil
 import subprocess
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
@@ -364,8 +363,8 @@ def _sidecar_mounts(
     ))
     if ep.routes:
         mounts.append((
-            str(_stage_routes_dir(plan)),
-            str(Path(EGRESS_ROUTES_IN_CONTAINER).parent),
+            str(ep.routes_path),
+            EGRESS_ROUTES_IN_CONTAINER,
             True,
         ))
 
@@ -374,17 +373,6 @@ def _sidecar_mounts(
         mounts.append((str(sp.queue_dir), QUEUE_DIR_IN_CONTAINER, False))
 
     return tuple(mounts)
-
-
-def _stage_routes_dir(plan: MacosContainerBottlePlan) -> Path:
-    routes_dir = plan.stage_dir / "macos-container-egress"
-    routes_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(
-        plan.egress_plan.routes_path,
-        routes_dir / Path(EGRESS_ROUTES_IN_CONTAINER).name,
-    )
-    return routes_dir
-
 
 def _mount_spec(host_path: str, container_path: str, read_only: bool) -> str:
     spec = f"type=bind,source={host_path},target={container_path}"

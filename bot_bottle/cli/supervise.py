@@ -26,6 +26,10 @@ from .. import supervise as _supervise
 #     CapabilityApplyError,
 #     apply_capability_change,
 # )
+from ..backend.docker.egress_apply import (
+    EgressApplyError,
+    apply_routes_change,
+)
 from ..log import Die, error, info
 
 
@@ -66,7 +70,7 @@ class QueuedProposal:
 # Errors any remediation engine may raise. Caught by the TUI key
 # handlers and surfaced in the status line so a failed apply keeps
 # the proposal pending rather than crashing curses.
-ApplyError = (CapabilityApplyError,)
+ApplyError = (CapabilityApplyError, EgressApplyError)
 
 
 def discover_pending() -> list[QueuedProposal]:
@@ -134,6 +138,7 @@ def approve(
 ) -> None:
     """Apply the proposal, write the waiting response, and audit it."""
     status = STATUS_MODIFIED if final_file is not None else STATUS_APPROVED
+    file_to_apply = final_file if final_file is not None else qp.proposal.proposed_file
 
     diff_before, diff_after = "", ""
     # if qp.proposal.tool == TOOL_CAPABILITY_BLOCK:
@@ -147,6 +152,11 @@ def approve(
     #     diff_before, diff_after = apply_capability_change(
     #         qp.proposal.bottle_slug, file_to_apply,
     #     )
+    if qp.proposal.tool in (TOOL_ALLOW, TOOL_EGRESS_BLOCK):
+        diff_before, diff_after = apply_routes_change(
+            qp.proposal.bottle_slug,
+            file_to_apply,
+        )
 
     response = Response(
         proposal_id=qp.proposal.id,
