@@ -145,7 +145,12 @@ class SmolmachinesBottle(Bottle):
         script = exec_shell_script(agent_argv, self.terminal_title, self.terminal_color) if tty else None
         if script is None:
             return subprocess.run(agent_argv, check=False).returncode
-        return subprocess.run(["sh", "-lc", script], check=False).returncode
+        # Use sh -c (not -lc) so the script inherits PATH from the calling
+        # process. sh -l sources login-shell init files (e.g. /etc/profile)
+        # which may NOT include smolvm's location when it was installed via
+        # homebrew. The calling process (./cli.py) already has smolvm on PATH
+        # (provision steps succeed), so -c is sufficient.
+        return subprocess.run(["sh", "-c", script], check=False).returncode
 
     # smolvm/libkrun can SIGKILL an otherwise-normal exec during
     # early-VM provisioning. Retry once after a short settle so
