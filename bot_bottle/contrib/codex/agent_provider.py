@@ -261,8 +261,8 @@ class CodexAgentProvider(AgentProvider):
             return
         info(f"registering supervise MCP server in agent codex config → {supervise_url}")
         r = bottle.exec(
-            f"codex mcp add --transport http "
-            f"{_SUPERVISE_MCP_NAME} {supervise_url}",
+            f"codex mcp add {_SUPERVISE_MCP_NAME} --url "
+            f"{shlex.quote(supervise_url)}",
             user="node",
         )
         if r.returncode != 0:
@@ -270,7 +270,7 @@ class CodexAgentProvider(AgentProvider):
                 f"`codex mcp add supervise` failed (exit {r.returncode}): "
                 f"{(r.stderr or r.stdout or '').strip()}. Inside the bottle, "
                 f"register manually with: "
-                f"codex mcp add --transport http supervise {supervise_url}"
+                f"codex mcp add supervise --url {shlex.quote(supervise_url)}"
             )
 
 

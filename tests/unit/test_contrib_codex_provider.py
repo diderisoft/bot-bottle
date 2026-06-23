@@ -292,10 +292,10 @@ class TestCodexSuperviseMcp(unittest.TestCase):
         bottle.exec.assert_called_once()
         script = bottle.exec.call_args.args[0]
         self.assertEqual("node", bottle.exec.call_args.kwargs.get("user"))
-        self.assertIn("codex mcp add", script)
-        self.assertIn("--transport http", script)
-        self.assertIn("supervise", script)
-        self.assertIn(_URL, script)
+        self.assertEqual(
+            f"codex mcp add supervise --url {_URL}",
+            script,
+        )
 
     def test_logs_warning_on_failure_but_does_not_raise(self):
         bottle = _make_bottle(
