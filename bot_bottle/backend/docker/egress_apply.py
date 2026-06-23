@@ -58,12 +58,7 @@ def validate_routes_content(content: str) -> None:
 
 
 def _routes_path(slug: str) -> Path:
-    state_dir = egress_state_dir(slug)
-    routes_path = state_dir / EGRESS_ROUTES_FILENAME
-    legacy_path = state_dir / "egress_routes.yaml"
-    if legacy_path.exists() and not routes_path.exists():
-        return legacy_path
-    return routes_path
+    return egress_state_dir(slug) / EGRESS_ROUTES_FILENAME
 
 
 def _signal_bundle_reload(slug: str) -> None:
