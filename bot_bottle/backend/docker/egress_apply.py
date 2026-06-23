@@ -11,7 +11,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from ...bottle_state import egress_state_dir, read_metadata
+from ...bottle_state import egress_state_dir
 from ...egress import EGRESS_ROUTES_FILENAME, EGRESS_ROUTES_IN_CONTAINER
 from ...egress_addon_core import load_routes
 from ...log import warn
@@ -63,46 +63,20 @@ def _routes_path(slug: str) -> Path:
 
 def _signal_bundle_reload(slug: str) -> None:
     container = sidecar_bundle_container_name(slug)
-    backend = ""
-    metadata = read_metadata(slug)
-    if metadata is not None:
-        backend = metadata.backend
-
-    candidates: list[list[str]]
-    if backend == "macos-container":
-        candidates = [["container", "kill", "--signal", "HUP", container]]
-    elif backend:
-        candidates = [["docker", "kill", "--signal", "HUP", container]]
-    else:
-        candidates = [
-            ["docker", "kill", "--signal", "HUP", container],
-            ["container", "kill", "--signal", "HUP", container],
-        ]
-
-    last_error = ""
-    for argv in candidates:
-        try:
-            result = subprocess.run(
-                argv,
-                capture_output=True,
-                text=True,
-                check=False,
-                env=os.environ,
-            )
-        except FileNotFoundError as e:
-            last_error = str(e)
-            continue
-        if result.returncode == 0:
-            return
+    result = subprocess.run(
+        ["docker", "kill", "--signal", "HUP", container],
+        capture_output=True, text=True, check=False, env=os.environ,
+    )
+    if result.returncode != 0:
         last_error = (result.stderr or "").strip() or (result.stdout or "").strip()
-    warn(
-        f"egress: routes updated on disk for {slug}, but bundle reload failed: "
-        f"{last_error or 'no reload command succeeded'}"
-    )
-    raise EgressApplyError(
-        f"could not reload egress bundle {container}: "
-        f"{last_error or 'no reload command succeeded'}"
-    )
+        warn(
+            f"egress: routes updated on disk for {slug}, but bundle reload failed: "
+            f"{last_error or 'docker kill failed'}"
+        )
+        raise EgressApplyError(
+            f"could not reload egress bundle {container}: "
+            f"{last_error or 'docker kill failed'}"
+        )
 
 
 __all__ = [

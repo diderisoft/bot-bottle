@@ -21,14 +21,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import supervise as _supervise
-# from ..bottle_state import read_metadata
+from ..bottle_state import read_metadata
 # from ..backend.docker.capability_apply import (
 #     CapabilityApplyError,
 #     apply_capability_change,
 # )
 from ..backend.docker.egress_apply import (
     EgressApplyError,
-    apply_routes_change,
+    apply_routes_change as _docker_apply_routes_change,
+)
+from ..backend.macos_container.egress_apply import (
+    apply_routes_change as _macos_apply_routes_change,
 )
 from ..log import Die, error, info
 
@@ -71,6 +74,13 @@ class QueuedProposal:
 # handlers and surfaced in the status line so a failed apply keeps
 # the proposal pending rather than crashing curses.
 ApplyError = (CapabilityApplyError, EgressApplyError)
+
+
+def apply_routes_change(slug: str, content: str) -> tuple[str, str]:
+    meta = read_metadata(slug)
+    if meta is not None and meta.backend == "macos-container":
+        return _macos_apply_routes_change(slug, content)
+    return _docker_apply_routes_change(slug, content)
 
 
 def discover_pending() -> list[QueuedProposal]:
