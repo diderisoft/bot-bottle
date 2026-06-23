@@ -5,15 +5,11 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from bot_bottle import supervise, bottle_state
 from bot_bottle.backend import ActiveAgent
-from bot_bottle.backend.freeze import (
-    CommitCancelled,
-    Freezer,
-    get_freezer,
-)
+from bot_bottle.backend.freeze import get_freezer
 from bot_bottle.backend.docker.freezer import DockerFreezer
 from bot_bottle.backend.macos_container.freezer import MacosContainerFreezer
 from bot_bottle.backend.smolmachines.freezer import SmolmachinesFreezer
@@ -157,15 +153,14 @@ class TestMacosContainerFreezer(_FakeHomeMixin, unittest.TestCase):
             started_at="t", backend="macos-container",
         ))
 
-    def test_commits_stopped_container(self):
+    def test_commits_running_container_without_stopping(self):
+        """Commit should exec-tar the running container, not stop it."""
         slug = "dev-abc12"
         self._write_meta(slug)
         freezer = MacosContainerFreezer()
         agent = _make_agent(slug, "macos-container")
 
-        with patch("bot_bottle.backend.macos_container.freezer.container_is_running",
-                   return_value=False), \
-             patch("bot_bottle.backend.macos_container.freezer.commit_container") as mock_commit, \
+        with patch("bot_bottle.backend.macos_container.freezer.commit_container") as mock_commit, \
              patch("bot_bottle.backend.freeze.info"), \
              patch("bot_bottle.backend.macos_container.freezer.info"):
             freezer.commit(agent)
@@ -174,43 +169,11 @@ class TestMacosContainerFreezer(_FakeHomeMixin, unittest.TestCase):
             f"bot-bottle-{slug}",
             f"bot-bottle-committed-{slug}:latest",
         )
-
-    def test_stops_running_container_on_yes(self):
-        slug = "dev-abc12"
-        self._write_meta(slug)
-        freezer = MacosContainerFreezer()
-        agent = _make_agent(slug, "macos-container")
-
-        with patch("bot_bottle.backend.macos_container.freezer.container_is_running",
-                   return_value=True), \
-             patch("bot_bottle.backend.macos_container.freezer._read_tty_line",
-                   return_value="y"), \
-             patch("bot_bottle.backend.macos_container.freezer.stop_container") as mock_stop, \
-             patch("bot_bottle.backend.macos_container.freezer.commit_container") as mock_commit, \
-             patch("bot_bottle.backend.freeze.info"), \
-             patch("bot_bottle.backend.macos_container.freezer.info"):
-            freezer.commit(agent)
-
-        mock_stop.assert_called_once_with(f"bot-bottle-{slug}")
-        mock_commit.assert_called_once()
-
-    def test_raises_commit_cancelled_on_no(self):
-        slug = "dev-abc12"
-        self._write_meta(slug)
-        freezer = MacosContainerFreezer()
-        agent = _make_agent(slug, "macos-container")
-
-        with patch("bot_bottle.backend.macos_container.freezer.container_is_running",
-                   return_value=True), \
-             patch("bot_bottle.backend.macos_container.freezer._read_tty_line",
-                   return_value="n"), \
-             patch("bot_bottle.backend.macos_container.freezer.stop_container") as mock_stop, \
-             patch("bot_bottle.backend.macos_container.freezer.commit_container") as mock_commit:
-            with self.assertRaises(CommitCancelled):
-                freezer.commit(agent)
-
-        mock_stop.assert_not_called()
-        mock_commit.assert_not_called()
+        self.assertEqual(
+            f"bot-bottle-committed-{slug}:latest",
+            bottle_state.read_committed_image(slug),
+        )
+        self.assertTrue(bottle_state.is_preserved(slug))
 
 
 class TestSmolmachinesFreezer(_FakeHomeMixin, unittest.TestCase):

@@ -76,24 +76,38 @@ def build_image(ref: str, context: str, *, dockerfile: str = "") -> None:
 def commit_container(container_name: str, image_tag: str) -> None:
     """Snapshot a running Apple Container as a local image.
 
-    Apple Container exposes filesystem export rather than Docker's
-    `commit` verb. Bot-bottle supplies command and environment at
-    launch time, so preserving the root filesystem is sufficient for a
-    resumable committed bottle image.
+    `container export` requires a stopped container, but Apple Container
+    removes containers when they stop, making stop-then-export impossible.
+    Instead, exec into the running container as root and stream the root
+    filesystem out via tar, then build a new image from that archive.
+    The bottle continues running after commit.
     """
     with tempfile.TemporaryDirectory(prefix="bot-bottle-container-commit.") as tmp:
         rootfs_tar = os.path.join(tmp, "rootfs.tar")
         dockerfile = os.path.join(tmp, "Dockerfile")
-        result = subprocess.run(
-            [_CONTAINER, "export", "-o", rootfs_tar, container_name],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        with open(rootfs_tar, "wb") as tar_out:
+            result = subprocess.run(
+                [
+                    _CONTAINER, "exec",
+                    "--user", "root",
+                    container_name,
+                    "tar", "--create",
+                    "--exclude=./proc",
+                    "--exclude=./sys",
+                    "--exclude=./dev",
+                    "--exclude=./run",
+                    "--file=-",
+                    "--directory=/",
+                    ".",
+                ],
+                stdout=tar_out,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
         if result.returncode != 0:
             die(
-                f"container export {container_name!r} failed: "
-                f"{(result.stderr or '').strip() or '<no stderr>'}"
+                f"container exec tar {container_name!r} failed: "
+                f"{(result.stderr or b'').decode().strip() or '<no stderr>'}"
             )
         with open(dockerfile, "w", encoding="utf-8") as f:
             f.write(
