@@ -177,7 +177,7 @@ class CodexAgentProvider(AgentProvider):
         skills."""
         from ...backend.util import host_skill_dir
 
-        agent = plan.spec.manifest.agents[plan.spec.agent_name]
+        agent = plan.spec.manifest.agent
         if not agent.skills:
             return
         skills_dir = _skills_dir(plan.guest_home)
@@ -206,7 +206,7 @@ class CodexAgentProvider(AgentProvider):
             f"chown node:node {prompt_path} && chmod 600 {prompt_path}",
             user="root",
         )
-        agent = plan.spec.manifest.agents[plan.spec.agent_name]
+        agent = plan.spec.manifest.agent
         return prompt_path if plan.agent_provision.has_prompt or agent.prompt else None
 
     def provision(self, plan: "BottlePlan", bottle: "Bottle") -> None:

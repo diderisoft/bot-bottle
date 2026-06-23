@@ -21,14 +21,17 @@ from bot_bottle.backend.docker import launch as launch_mod
 from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
 from bot_bottle.egress import EgressPlan
 from bot_bottle.git_gate import GitGatePlan
-from bot_bottle.manifest import Manifest
+from bot_bottle.manifest import ManifestIndex
+
+
+from bot_bottle.manifest import Manifest, ManifestIndex
 
 
 def _manifest() -> Manifest:
-    return Manifest.from_json_obj({
+    return ManifestIndex.from_json_obj({
         "bottles": {"dev": {}},
         "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
-    })
+    }).load_for_agent("demo")
 
 
 def _plan(tmp: str) -> DockerBottlePlan:

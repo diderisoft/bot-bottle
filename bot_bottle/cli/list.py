@@ -7,7 +7,7 @@ import os
 import sys
 
 from ..backend import enumerate_active_agents
-from ..manifest import Manifest
+from ..manifest import ManifestIndex
 from ._common import PROG, USER_CWD
 
 _ANSI_COLOR_CODES: dict[str, str] = {
@@ -40,7 +40,7 @@ def cmd_list(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     if args.scope == "available":
-        manifest = Manifest.resolve(USER_CWD)
+        manifest = ManifestIndex.resolve(USER_CWD)
         for name in manifest.all_agent_names:
             print(name)
         return 0

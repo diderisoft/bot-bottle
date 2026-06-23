@@ -31,7 +31,7 @@ from pathlib import Path
 
 from bot_bottle.backend import BottleSpec, get_bottle_backend
 from bot_bottle.bottle_state import cleanup_state
-from bot_bottle.manifest import Manifest
+from bot_bottle.manifest import ManifestIndex
 from tests._docker import skip_unless_docker
 
 
@@ -101,7 +101,7 @@ class TestSandboxEscape(unittest.TestCase):
         cls._key_path.write_text("placeholder\n")
         cls._key_path.chmod(0o600)
 
-        manifest = Manifest.from_json_obj({
+        manifest = ManifestIndex.from_json_obj({
             "bottles": {
                 "dev": {
                     # Three fake secrets — different shapes — land

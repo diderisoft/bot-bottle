@@ -24,7 +24,7 @@ from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
 from bot_bottle.contrib.codex.agent_provider import CodexAgentProvider
 from bot_bottle.egress import EgressPlan
 from bot_bottle.git_gate import GitGatePlan
-from bot_bottle.manifest import Manifest
+from bot_bottle.manifest import Manifest, ManifestIndex
 from bot_bottle.supervise import SupervisePlan
 
 
@@ -55,7 +55,7 @@ def _plan(
     bottle_json: dict = {"agent_provider": {"template": "codex"}}  # type: ignore
     if supervise:
         bottle_json["supervise"] = True
-    manifest = Manifest.from_json_obj({
+    manifest = ManifestIndex.from_json_obj({
         "bottles": {"dev": bottle_json},
         "agents": {
             "demo": {
@@ -64,7 +64,7 @@ def _plan(
                 "bottle": "dev",
             },
         },
-    })
+    }).load_for_agent("demo")
     spec = BottleSpec(
         manifest=manifest, agent_name="demo",
         copy_cwd=False, user_cwd="/tmp/x",

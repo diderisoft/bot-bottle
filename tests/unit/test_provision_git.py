@@ -10,7 +10,7 @@ from bot_bottle.git_gate import (
     GIT_GATE_HOSTNAME,
     git_gate_render_gitconfig,
 )
-from bot_bottle.manifest import Manifest
+from bot_bottle.manifest import ManifestIndex
 from tests.fixtures import fixture_minimal, fixture_with_git
 
 
@@ -72,7 +72,7 @@ class TestGitGateGitconfigRender(unittest.TestCase):
     def test_ip_upstream_emits_single_insteadof(self):
         # In the new format the dict key is the repo name, not a host
         # alias, so there is only one insteadOf rule — for the IP URL.
-        m = Manifest.from_json_obj({
+        m = ManifestIndex.from_json_obj({
             "bottles": {"dev": {"git-gate": {"repos": {
                 "bot-bottle": {
                     "url": "ssh://git@192.0.2.10:30009/didericis/bot-bottle.git",

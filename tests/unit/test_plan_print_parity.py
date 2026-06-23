@@ -19,14 +19,14 @@ from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
 from bot_bottle.backend.smolmachines.bottle_plan import SmolmachinesBottlePlan
 from bot_bottle.egress import EgressPlan, EgressRoute
 from bot_bottle.git_gate import GitGatePlan, GitGateUpstream
-from bot_bottle.manifest import Manifest
+from bot_bottle.manifest import Manifest, ManifestIndex
 
 
 def _manifest() -> Manifest:
-    return Manifest.from_json_obj({
+    return ManifestIndex.from_json_obj({
         "bottles": {"dev": {}},
         "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
-    })
+    }).load_for_agent("demo")
 
 
 def _spec(manifest: Manifest, tmp: str) -> BottleSpec:

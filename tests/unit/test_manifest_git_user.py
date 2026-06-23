@@ -2,7 +2,7 @@
 
 import unittest
 
-from bot_bottle.manifest import ManifestError, ManifestGitUser, Manifest
+from bot_bottle.manifest import ManifestError, ManifestGitUser, ManifestIndex
 
 
 def _error_message(callable_, *args, **kwargs) -> str:  # type: ignore
@@ -23,7 +23,7 @@ def _manifest(git_user):  # type: ignore
 
 class TestGitUserParsing(unittest.TestCase):
     def test_parses_both_fields(self):
-        m = Manifest.from_json_obj(_manifest({
+        m = ManifestIndex.from_json_obj(_manifest({
             "name": "Eric Bauerfeld",
             "email": "eric+claude@dideric.is",
         }))
@@ -33,13 +33,13 @@ class TestGitUserParsing(unittest.TestCase):
         self.assertFalse(u.is_empty())
 
     def test_name_only(self):
-        m = Manifest.from_json_obj(_manifest({"name": "Bot"}))
+        m = ManifestIndex.from_json_obj(_manifest({"name": "Bot"}))
         u = m.bottles["dev"].git_user
         self.assertEqual("Bot", u.name)
         self.assertEqual("", u.email)
 
     def test_email_only(self):
-        m = Manifest.from_json_obj(_manifest({"email": "bot@example.com"}))
+        m = ManifestIndex.from_json_obj(_manifest({"email": "bot@example.com"}))
         u = m.bottles["dev"].git_user
         self.assertEqual("", u.name)
         self.assertEqual("bot@example.com", u.email)
@@ -47,7 +47,7 @@ class TestGitUserParsing(unittest.TestCase):
     def test_omitted_defaults_to_empty(self):
         # No git.user block at all → empty GitUser, is_empty True →
         # provisioner skips the `git config` step entirely.
-        m = Manifest.from_json_obj({
+        m = ManifestIndex.from_json_obj({
             "bottles": {"dev": {}},
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
         })
@@ -59,13 +59,13 @@ class TestGitUserParsing(unittest.TestCase):
         # /  half-finished edit; fail loudly rather than silently
         # no-op (the operator clearly meant to configure something).
         msg = _error_message(
-            Manifest.from_json_obj, _manifest({"name": "", "email": ""}),
+            ManifestIndex.from_json_obj, _manifest({"name": "", "email": ""}),
         )
         self.assertIn("neither name nor email", msg)
 
     def test_unknown_key_dies(self):
         msg = _error_message(
-            Manifest.from_json_obj,
+            ManifestIndex.from_json_obj,
             _manifest({"name": "Bot", "username": "bot"}),
         )
         self.assertIn("unknown key", msg)
@@ -73,19 +73,19 @@ class TestGitUserParsing(unittest.TestCase):
 
     def test_non_string_name_dies(self):
         msg = _error_message(
-            Manifest.from_json_obj, _manifest({"name": 42}),
+            ManifestIndex.from_json_obj, _manifest({"name": 42}),
         )
         self.assertIn("git-gate.user.name must be a string", msg)
 
     def test_non_string_email_dies(self):
         msg = _error_message(
-            Manifest.from_json_obj, _manifest({"email": ["x@y.z"]}),
+            ManifestIndex.from_json_obj, _manifest({"email": ["x@y.z"]}),
         )
         self.assertIn("git-gate.user.email must be a string", msg)
 
     def test_legacy_top_level_git_user_dies(self):
         msg = _error_message(
-            Manifest.from_json_obj,
+            ManifestIndex.from_json_obj,
             {
                 "bottles": {"dev": {"git_user": {"name": "Bot"}}},
                 "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},

@@ -18,11 +18,11 @@ from bot_bottle.backend import BottleSpec
 from bot_bottle.backend.docker import DockerBottleBackend
 from bot_bottle.backend.resolve_common import mint_slug
 from bot_bottle.backend.smolmachines import SmolmachinesBottleBackend
-from bot_bottle.manifest import Manifest
+from bot_bottle.manifest import ManifestIndex
 
 
-def _manifest() -> Manifest:
-    return Manifest.from_json_obj({
+def _manifest() -> ManifestIndex:
+    return ManifestIndex.from_json_obj({
         "bottles": {
             "dev": {
                 "env": {

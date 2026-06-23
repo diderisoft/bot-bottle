@@ -13,12 +13,12 @@ from bot_bottle.egress import (
     egress_token_env_map,
 )
 from bot_bottle.log import Die
-from bot_bottle.manifest import Manifest
+from bot_bottle.manifest import ManifestIndex
 from bot_bottle.yaml_subset import parse_yaml_subset
 
 
 def _bottle(routes):  # type: ignore
-    return Manifest.from_json_obj({
+    return ManifestIndex.from_json_obj({
         "bottles": {"dev": {"egress": {"routes": routes}}},
         "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
     }).bottles["dev"]
@@ -362,9 +362,9 @@ class TestRenderRoutes(unittest.TestCase):
         self.assertEqual("x.example", cfg.routes[0].host)
 
     def test_log_via_manifest_flows_to_render(self):
-        from bot_bottle.manifest import Manifest
+        from bot_bottle.manifest import ManifestIndex
         from bot_bottle.egress_addon_core import load_config, LOG_BLOCKS
-        m = Manifest.from_json_obj({
+        m = ManifestIndex.from_json_obj({
             "bottles": {"dev": {"egress": {
                 "log": 1,
                 "routes": [{"host": "x.example"}],

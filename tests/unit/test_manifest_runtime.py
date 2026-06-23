@@ -7,7 +7,7 @@ silently ignoring."""
 import unittest
 from typing import Any
 
-from bot_bottle.manifest import ManifestError, ManifestBottle, Manifest
+from bot_bottle.manifest import ManifestError, ManifestBottle, ManifestIndex
 
 
 def _manifest_with_runtime(value: object) -> dict[str, Any]:
@@ -19,7 +19,7 @@ def _manifest_with_runtime(value: object) -> dict[str, Any]:
 
 class TestManifestRuntimeRemoved(unittest.TestCase):
     def test_loads_when_runtime_absent(self):
-        m = Manifest.from_json_obj({
+        m = ManifestIndex.from_json_obj({
             "bottles": {"dev": {}},
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
         })
@@ -32,7 +32,7 @@ class TestManifestRuntimeRemoved(unittest.TestCase):
         for value in ("runsc", "runc", "kata-runtime", "", 42, None):
             with self.subTest(value=value):
                 with self.assertRaises(ManifestError):
-                    Manifest.from_json_obj(_manifest_with_runtime(value))
+                    ManifestIndex.from_json_obj(_manifest_with_runtime(value))
 
 
 if __name__ == "__main__":

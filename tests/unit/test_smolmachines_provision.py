@@ -33,7 +33,7 @@ from bot_bottle.backend.smolmachines.launch import _bundle_launch_spec
 from bot_bottle.backend.util import AGENT_CA_PATH
 from bot_bottle.egress import EgressPlan, EgressRoute
 from bot_bottle.git_gate import GitGatePlan, GitGateUpstream
-from bot_bottle.manifest import ManifestGitEntry, ManifestKeyConfig, Manifest
+from bot_bottle.manifest import ManifestGitEntry, ManifestKeyConfig, Manifest, ManifestIndex
 from bot_bottle.supervise import SupervisePlan
 
 
@@ -110,7 +110,7 @@ def _plan(
         bottle_json["git-gate"] = git_gate_json
     if supervise:
         bottle_json["supervise"] = True
-    manifest = Manifest.from_json_obj({
+    manifest = ManifestIndex.from_json_obj({
         "bottles": {"dev": bottle_json},
         "agents": {
             "demo": {
@@ -119,7 +119,7 @@ def _plan(
                 "bottle": "dev",
             },
         },
-    })
+    }).load_for_agent("demo")
     spec = BottleSpec(
         manifest=manifest,
         agent_name="demo",

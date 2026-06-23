@@ -36,10 +36,23 @@ Bottles can ONLY live under $HOME. A bottles/ dir under $CWD is a
 warn at load time and contributes nothing. The trust boundary is
 expressed as filesystem layout rather than resolver logic.
 
-Validation runs once at load. Manifest.from_json_obj is preserved
-as a programmatic entry point (used by tests) that takes a dict
-with the same field names — useful for building manifests without
-on-disk files.
+Two types are exported:
+
+  ManifestIndex  — the multi-agent/bottle collection returned by
+                   resolve() and from_json_obj(). Used for agent
+                   selection (all_agent_names), validation
+                   (require_agent), and lazy loading (load_for_agent).
+                   This is the pre-preflight form.
+
+  Manifest       — a single-agent/bottle value type holding exactly
+                   one agent: ManifestAgent and one bottle:
+                   ManifestBottle (with the agent's git-gate.user
+                   already overlaid). Returned by load_for_agent().
+                   This is the post-preflight form passed to backends.
+
+ManifestIndex.from_json_obj is preserved as a programmatic entry
+point (used by tests) that takes a dict with the same field names —
+useful for building manifests without on-disk files.
 """
 
 from __future__ import annotations
@@ -71,6 +84,7 @@ __all__ = [
     "ManifestEgressConfig",
     "ManifestAgent",
     "ManifestBottle",
+    "ManifestIndex",
     "Manifest",
 ]
 
@@ -189,18 +203,64 @@ class ManifestBottle:
         )
 
 
+def _merge_git_user(
+    agent_user: ManifestGitUser, base_user: ManifestGitUser
+) -> ManifestGitUser:
+    """Merge the agent's git.user over the bottle's, agent-wins-on-non-empty."""
+    if agent_user.is_empty():
+        return base_user
+    return ManifestGitUser(
+        name=agent_user.name or base_user.name,
+        email=agent_user.email or base_user.email,
+    )
+
+
 @dataclass(frozen=True)
 class Manifest:
+    """Single-agent/bottle value type. Returned by ManifestIndex.load_for_agent().
+
+    `bottle` is the effective bottle with the agent's git-gate.user already
+    overlaid per-field (agent wins on non-empty). Backends and provisioners
+    use this directly — no agent_name lookup needed."""
+
+    agent: ManifestAgent
+    bottle: ManifestBottle
+
+    def git_identity_summary(self) -> str | None:
+        """One-line effective git identity with per-field provenance, e.g.
+        `name=claude (agent), email=eric@dideric.is (bottle)`.
+        Returns None when neither agent nor bottle sets an identity."""
+        over = self.agent.git_user        # agent's declared git_user (pre-merge)
+        merged = self.bottle.git_user     # effective git_user (post-merge)
+        if merged.is_empty():
+            return None
+        parts: list[str] = []
+        if merged.name:
+            parts.append(f"name={merged.name} ({'agent' if over.name else 'bottle'})")
+        if merged.email:
+            parts.append(f"email={merged.email} ({'agent' if over.email else 'bottle'})")
+        return ", ".join(parts)
+
+
+@dataclass(frozen=True)
+class ManifestIndex:
+    """Multi-agent/bottle collection. The pre-preflight form.
+
+    In lazy mode (from resolve()/from_md_dirs()) only filenames are scanned;
+    no file content is read. In eager mode (from from_json_obj()) all agents
+    and bottles are pre-parsed. Call load_for_agent() to get a single-value
+    Manifest ready for backend use."""
+
     bottles: Mapping[str, ManifestBottle]
     agents: Mapping[str, ManifestAgent]
-    # Set by from_md_dirs; empty in from_json_obj (test/programmatic) mode.
+    # Set by from_md_dirs; None in from_json_obj (test/programmatic) mode.
     # Stores the manifest root dirs so load_for_agent can locate files later.
     home_md: Path | None = field(default=None)
     cwd_md: Path | None = field(default=None)
 
     @classmethod
-    def resolve(cls, cwd: str, *, missing_ok: bool = False) -> "Manifest":
-        """Walk the per-file manifest tree and build a Manifest.
+    def resolve(cls, cwd: str, *, missing_ok: bool = False) -> "ManifestIndex":
+        """Walk the per-file manifest tree and build a ManifestIndex.
 
         Layout (PRD 0011):
           $HOME/.bot-bottle/bottles/<name>.md  — bottles (home-only)
@@ -213,7 +273,7 @@ class Manifest:
         boundary.
 
         If `missing_ok` is true, a missing `$HOME/.bot-bottle/`
-        returns an empty manifest instead of dying. This is for
+        returns an empty index instead of dying. This is for
         passive UI surfaces like the dashboard, which can still
         monitor already-running agents without launch config.
 
@@ -252,15 +312,15 @@ class Manifest:
         cls,
         home_dir: Path,
         cwd_dir: Path | None,
-    ) -> "Manifest":
-        """Return a names-only Manifest. No file content is read; only
+    ) -> "ManifestIndex":
+        """Return a names-only ManifestIndex. No file content is read; only
         filenames are scanned for the agent selector.  Full parsing happens
         later, per-agent, via `load_for_agent`.
 
         A `bottles/` subdir under `cwd_dir` is logged as a warning and
         ignored — the filesystem layout IS the trust boundary.
 
-        Used by tests to build a Manifest from fixture directories
+        Used by tests to build a ManifestIndex from fixture directories
         without touching `os.environ`."""
         if cwd_dir is not None:
             stale_bottles = cwd_dir / "bottles"
@@ -278,8 +338,8 @@ class Manifest:
         return cls(bottles={}, agents={}, home_md=home_dir, cwd_md=cwd_dir)
 
     @classmethod
-    def from_json_obj(cls, obj: object) -> "Manifest":
-        """Validate and build a Manifest from a raw JSON-like dict."""
+    def from_json_obj(cls, obj: object) -> "ManifestIndex":
+        """Validate and build a ManifestIndex from a raw JSON-like dict."""
         d = as_json_object(obj, "manifest")
         raw_bottles_obj = _section_dict(d.get("bottles"), "manifest 'bottles'")
         raw_agents = _section_dict(d.get("agents"), "manifest 'agents'")
@@ -317,30 +377,33 @@ class Manifest:
         return sorted(self.agents.keys())
 
     def load_for_agent(self, agent_name: str) -> "Manifest":
-        """Return a Manifest containing exactly one agent and its bottle.
+        """Parse the named agent and its bottle; return a single-value Manifest.
 
         In lazy mode (from resolve/from_md_dirs) the agent file and its
         bottle chain are read from disk for the first time here.  In eager
         mode (from_json_obj) the data is already parsed; this just filters
         down to the requested agent and its bottle.
 
+        The returned Manifest.bottle has the agent's git-gate.user already
+        overlaid (agent wins on non-empty, per-field).
+
         Always raises ManifestError if the agent is unknown or invalid.
         Backends call this at preflight inside _validate."""
         if self.home_md is None:
             # Eager manifest (from_json_obj): data already parsed; filter to
-            # the one requested agent and its bottle so the returned manifest
-            # always contains exactly one agent and one bottle regardless of path.
+            # the one requested agent and its bottle so the returned Manifest
+            # always holds exactly one agent and one bottle regardless of path.
             if agent_name not in self.agents:
                 available = ", ".join(sorted(self.agents.keys())) or "(none)"
                 raise ManifestError(
                     f"agent '{agent_name}' not defined. Available: {available}"
                 )
             agent = self.agents[agent_name]
-            bottle_name = agent.bottle
-            return Manifest(
-                bottles={bottle_name: self.bottles[bottle_name]},
-                agents={agent_name: agent},
-            )
+            raw_bottle = self.bottles[agent.bottle]
+            merged = _merge_git_user(agent.git_user, raw_bottle.git_user)
+            bottle = raw_bottle if merged == raw_bottle.git_user else replace(raw_bottle, git_user=merged)
+            return Manifest(agent=agent, bottle=bottle)
+
         from .manifest_loader import load_bottle_chain_from_dir, scan_agent_names
         from .manifest_schema import validate_agent_frontmatter_keys
         from .yaml_subset import YamlSubsetError, parse_frontmatter
@@ -350,15 +413,15 @@ class Manifest:
         cwd_agents: dict[str, Path] = {}
         if self.cwd_md is not None:
             cwd_agents = scan_agent_names(self.cwd_md / "agents")
-        merged = {**home_agents, **cwd_agents}
+        merged_agents = {**home_agents, **cwd_agents}
 
-        if agent_name not in merged:
-            available = ", ".join(sorted(merged.keys())) or "(none)"
+        if agent_name not in merged_agents:
+            available = ", ".join(sorted(merged_agents.keys())) or "(none)"
             raise ManifestError(
                 f"agent '{agent_name}' not defined. Available: {available}"
             )
 
-        agent_path = merged[agent_name]
+        agent_path = merged_agents[agent_name]
         try:
             fm, body = parse_frontmatter(agent_path.read_text())
         except OSError as e:
@@ -377,7 +440,7 @@ class Manifest:
 
         # Load the bottle chain (may raise ManifestError).
         bottles_dir = self.home_md / "bottles"
-        bottle = load_bottle_chain_from_dir(bottle_name, bottles_dir)
+        raw_bottle = load_bottle_chain_from_dir(bottle_name, bottles_dir)
 
         # Build and validate the full ManifestAgent.
         agent_dict: dict[str, object] = {
@@ -389,12 +452,9 @@ class Manifest:
             agent_dict["git-gate"] = fm["git-gate"]
         agent = ManifestAgent.from_dict(agent_name, agent_dict, {bottle_name})
 
-        return Manifest(
-            bottles={bottle_name: bottle},
-            agents={agent_name: agent},
-            home_md=self.home_md,
-            cwd_md=self.cwd_md,
-        )
+        merged_user = _merge_git_user(agent.git_user, raw_bottle.git_user)
+        bottle = raw_bottle if merged_user == raw_bottle.git_user else replace(raw_bottle, git_user=merged_user)
+        return Manifest(agent=agent, bottle=bottle)
 
     def has_agent(self, name: str) -> bool:
         return name in self.agents
@@ -418,61 +478,3 @@ class Manifest:
         raise ManifestError(
             f"agent '{name}' not defined. Available: {available}"
         )
-
-    def has_bottle(self, name: str) -> bool:
-        return name in self.bottles
-
-    def require_bottle(self, name: str) -> None:
-        if self.has_bottle(name):
-            return
-        available = ", ".join(self.bottles.keys())
-        if available:
-            raise ManifestError(
-                f"bottle '{name}' not defined in bot-bottle.json. "
-                f"Available bottles: {available}"
-            )
-        raise ManifestError(f"bottle '{name}' not defined in bot-bottle.json (no bottles defined).")
-
-    def _effective_git_user(self, agent_name: str) -> ManifestGitUser:
-        """Merge the agent's git.user over the referenced bottle's,
-        per-field, agent-wins-on-non-empty (issue #94). Same overlay
-        the `extends:` resolver applies between bottles
-        (`_merge_bottles`)."""
-        agent = self.agents[agent_name]
-        base = self.bottles[agent.bottle].git_user
-        over = agent.git_user
-        if over.is_empty():
-            return base
-        return ManifestGitUser(
-            name=over.name or base.name,
-            email=over.email or base.email,
-        )
-
-    def bottle_for(self, agent_name: str) -> ManifestBottle:
-        """Resolve the Bottle the named agent references, with the
-        agent's git.user overlaid on top.
-
-        The overlay lives here, the single point both backends call to
-        resolve an agent's bottle, so the docker / smolmachines git
-        provisioners pick up the merged identity unchanged."""
-        bottle = self.bottles[self.agents[agent_name].bottle]
-        merged = self._effective_git_user(agent_name)
-        if merged == bottle.git_user:
-            return bottle
-        return replace(bottle, git_user=merged)
-
-    def git_identity_summary(self, agent_name: str) -> str | None:
-        """One-line effective git identity with per-field provenance
-        for launch summaries, e.g.
-        `name=claude (agent), email=eric@dideric.is (bottle)`.
-        Returns None when neither agent nor bottle sets an identity."""
-        over = self.agents[agent_name].git_user
-        merged = self._effective_git_user(agent_name)
-        if merged.is_empty():
-            return None
-        parts: list[str] = []
-        if merged.name:
-            parts.append(f"name={merged.name} ({'agent' if over.name else 'bottle'})")
-        if merged.email:
-            parts.append(f"email={merged.email} ({'agent' if over.email else 'bottle'})")
-        return ", ".join(parts)

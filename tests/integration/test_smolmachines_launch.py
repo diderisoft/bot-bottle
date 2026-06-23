@@ -35,15 +35,15 @@ from pathlib import Path
 
 from bot_bottle.backend import BottleSpec, get_bottle_backend
 from bot_bottle.backend.smolmachines.smolvm import is_available as _smolvm_available
-from bot_bottle.manifest import Manifest
+from bot_bottle.manifest import ManifestIndex
 from tests._docker import skip_unless_docker
 
 
 _AGENT_PROMPT = "You are demo. Be brief."
 
 
-def _minimal_manifest() -> Manifest:
-    return Manifest.from_json_obj({
+def _minimal_manifest() -> ManifestIndex:
+    return ManifestIndex.from_json_obj({
         "bottles": {
             "dev": {
                 "egress": {

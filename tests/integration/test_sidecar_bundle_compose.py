@@ -22,15 +22,15 @@ from pathlib import Path
 from unittest.mock import patch
 
 from bot_bottle.backend import BottleSpec, get_bottle_backend
-from bot_bottle.manifest import Manifest
+from bot_bottle.manifest import ManifestIndex
 from tests._docker import skip_unless_docker
 
 
-def _manifest() -> Manifest:
+def _manifest() -> ManifestIndex:
     """Bottle with supervise on so the bundle exercises egress +
     supervise. Git is off because a meaningful git-gate test needs
     a real upstream and SSH keys — out of scope for a bundle smoke."""
-    return Manifest.from_json_obj({
+    return ManifestIndex.from_json_obj({
         "bottles": {
             "dev": {
                 "supervise": True,

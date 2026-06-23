@@ -21,7 +21,7 @@ from bot_bottle.backend import Bottle, BottleSpec, ExecResult
 from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
 from bot_bottle.egress import EgressPlan
 from bot_bottle.git_gate import GitGatePlan
-from bot_bottle.manifest import Manifest
+from bot_bottle.manifest import Manifest, ManifestIndex
 
 
 class _Provider(AgentProvider):
@@ -51,10 +51,10 @@ def _plan(*, git_user: dict | None = None,  # type: ignore
     bottle_json: dict = {}  # type: ignore
     if git_user is not None:
         bottle_json["git-gate"] = {"user": git_user}
-    manifest = Manifest.from_json_obj({
+    manifest = ManifestIndex.from_json_obj({
         "bottles": {"dev": bottle_json},
         "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
-    })
+    }).load_for_agent("demo")
     spec = BottleSpec(
         manifest=manifest, agent_name="demo",
         copy_cwd=copy_cwd, user_cwd=user_cwd,

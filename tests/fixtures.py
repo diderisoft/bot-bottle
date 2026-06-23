@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
-from bot_bottle.manifest import Manifest
+from bot_bottle.manifest import ManifestIndex
 
 
 def fixture_minimal_dict() -> dict[str, Any]:
@@ -62,16 +62,16 @@ def fixture_with_git_dict() -> dict[str, Any]:
     }
 
 
-def fixture_minimal() -> Manifest:
-    return Manifest.from_json_obj(fixture_minimal_dict())
+def fixture_minimal() -> ManifestIndex:
+    return ManifestIndex.from_json_obj(fixture_minimal_dict())
 
 
-def fixture_with_egress() -> Manifest:
-    return Manifest.from_json_obj(fixture_with_egress_dict())
+def fixture_with_egress() -> ManifestIndex:
+    return ManifestIndex.from_json_obj(fixture_with_egress_dict())
 
 
-def fixture_with_git() -> Manifest:
-    return Manifest.from_json_obj(fixture_with_git_dict())
+def fixture_with_git() -> ManifestIndex:
+    return ManifestIndex.from_json_obj(fixture_with_git_dict())
 
 
 def write_fixture(fn: Callable[[], dict[str, Any]]) -> Path:

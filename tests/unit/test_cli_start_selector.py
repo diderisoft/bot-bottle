@@ -31,7 +31,7 @@ class TestCmdStartSelector(unittest.TestCase):
         # Stub Manifest.resolve so no on-disk manifest is needed.
         self._manifest = _make_manifest(["researcher", "implementer"])
         self._resolve_patch = patch(
-            "bot_bottle.cli.start.Manifest.resolve",
+            "bot_bottle.cli.start.ManifestIndex.resolve",
             return_value=self._manifest,
         )
         self._resolve_patch.start()
@@ -150,7 +150,7 @@ class TestCmdStartLabelCollision(unittest.TestCase):
 
     def setUp(self):
         self._manifest = _make_manifest(["researcher"])
-        patch("bot_bottle.cli.start.Manifest.resolve", return_value=self._manifest).start()
+        patch("bot_bottle.cli.start.ManifestIndex.resolve", return_value=self._manifest).start()
         self._launch_mock = patch(
             "bot_bottle.cli.start._launch_bottle", return_value=0,
         ).start()

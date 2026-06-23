@@ -29,7 +29,7 @@ from bot_bottle.backend.macos_container.util import (
     dns_server as _container_dns_server,
     is_available as _container_available,
 )
-from bot_bottle.manifest import Manifest
+from bot_bottle.manifest import ManifestIndex
 
 
 _AGENT_PROMPT = "You are a launch smoke-test agent. Be brief."
@@ -52,8 +52,8 @@ def _minimal_agent_dockerfile(path: Path) -> None:
     )
 
 
-def _minimal_manifest(dockerfile: Path) -> Manifest:
-    return Manifest.from_json_obj({
+def _minimal_manifest(dockerfile: Path) -> ManifestIndex:
+    return ManifestIndex.from_json_obj({
         "bottles": {
             "dev": {
                 "agent_provider": {

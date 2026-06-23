@@ -33,7 +33,7 @@ from ..bottle_state import (
 )
 # from ..backend.docker.capability_apply import snapshot_transcript
 from ..log import info
-from ..manifest import Manifest
+from ..manifest import ManifestIndex
 from ._common import PROG, USER_CWD, read_tty_line
 from . import tui
 
@@ -62,7 +62,7 @@ def cmd_start(argv: list[str]) -> int:
 
     dry_run = args.dry_run or os.environ.get("BOT_BOTTLE_DRY_RUN") == "1"
 
-    manifest = Manifest.resolve(USER_CWD)
+    manifest = ManifestIndex.resolve(USER_CWD)
 
     agent_name: str | None = args.name
     if agent_name is None:

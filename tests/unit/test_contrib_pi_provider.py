@@ -16,7 +16,7 @@ from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
 from bot_bottle.contrib.pi.agent_provider import PiAgentProvider
 from bot_bottle.egress import EgressPlan
 from bot_bottle.git_gate import GitGatePlan
-from bot_bottle.manifest import Manifest
+from bot_bottle.manifest import Manifest, ManifestIndex
 
 
 _URL = "http://supervise:9100/"
@@ -43,7 +43,7 @@ def _plan(
     skills: list[str] | None = None,
     agent_provision: AgentProvisionPlan | None = None,
 ) -> DockerBottlePlan:
-    manifest = Manifest.from_json_obj({
+    manifest = ManifestIndex.from_json_obj({
         "bottles": {"dev": {"agent_provider": {"template": "pi"}}},
         "agents": {
             "demo": {
@@ -52,7 +52,7 @@ def _plan(
                 "bottle": "dev",
             },
         },
-    })
+    }).load_for_agent("demo")
     spec = BottleSpec(
         manifest=manifest, agent_name="demo",
         copy_cwd=False, user_cwd="/tmp/x",

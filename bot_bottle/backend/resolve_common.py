@@ -69,8 +69,8 @@ def write_launch_metadata(
 def prepare_agent_state_dir(slug: str, spec: BottleSpec) -> tuple[Path, Path]:
     """Create the agent state subdir, write the prompt file.
     Returns (agent_dir, prompt_file)."""
-    manifest = spec.manifest
-    agent = manifest.agents[spec.agent_name]
+    manifest = spec.manifest  # type: ignore[assignment]
+    agent = manifest.agent
     agent_dir = agent_state_dir(slug)
     agent_dir.mkdir(parents=True, exist_ok=True)
     prompt_file = agent_dir / "prompt.txt"

@@ -15,7 +15,7 @@ from bot_bottle.git_gate import (
     git_gate_render_hook,
     git_gate_upstreams_for_bottle,
 )
-from bot_bottle.manifest import Manifest
+from bot_bottle.manifest import ManifestIndex
 from tests.fixtures import fixture_minimal, fixture_with_git
 
 
@@ -280,7 +280,7 @@ class TestPrepare(unittest.TestCase):
         self.assertEqual(0o600, os.stat(upstream.known_hosts_file).st_mode & 0o777)
 
     def test_prepare_skips_known_hosts_file_when_key_missing(self):
-        manifest = Manifest.from_json_obj({
+        manifest = ManifestIndex.from_json_obj({
             "bottles": {"dev": {"git-gate": {"repos": {
                 "foo": {
                     "url": "ssh://git@github.com/didericis/foo.git",

@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 
 from ..log import info
-from ..manifest import Manifest
+from ..manifest import ManifestIndex
 from ._common import PROG, USER_CWD
 
 
@@ -14,12 +14,12 @@ def cmd_info(argv: list[str]) -> int:
     parser.add_argument("name", help="agent name defined in bot-bottle.json")
     args = parser.parse_args(argv)
 
-    names = Manifest.resolve(USER_CWD)
+    names = ManifestIndex.resolve(USER_CWD)
     names.require_agent(args.name)
     manifest = names.load_for_agent(args.name)
 
-    agent = manifest.agents[args.name]
-    bottle = manifest.bottle_for(args.name)
+    agent = manifest.agent
+    bottle = manifest.bottle
     env_names = list(bottle.env.keys())
     prompt_first_line = agent.prompt.splitlines()[0] if agent.prompt else ""
 
@@ -32,7 +32,7 @@ def cmd_info(argv: list[str]) -> int:
         f"first line: {prompt_first_line or '(empty)'}"
     )
     info(f"bottle             : {agent.bottle}")
-    identity = manifest.git_identity_summary(args.name)
+    identity = manifest.git_identity_summary()
     if identity:
         info(f"  git identity  : {identity}")
     if bottle.git:

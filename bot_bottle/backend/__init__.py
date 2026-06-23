@@ -45,7 +45,7 @@ from ..agent_provider import AgentProvisionPlan, get_provider, build_agent_provi
 from ..egress import EgressPlan
 from ..git_gate import GitGatePlan
 from ..log import die, info
-from ..manifest import Manifest
+from ..manifest import Manifest, ManifestIndex
 from ..supervise import SupervisePlan
 from ..util import expand_tilde
 from ..env import resolve_env, ResolvedEnv
@@ -61,7 +61,7 @@ class BottleSpec:
     Resolved values (image names, container name, scratch paths, runsc
     availability) live on the plan, not the spec."""
 
-    manifest: Manifest
+    manifest: ManifestIndex | Manifest
     agent_name: str
     copy_cwd: bool
     user_cwd: str
@@ -112,9 +112,9 @@ class BottlePlan(ABC):
         """Render the y/N preflight summary to stderr."""
         del remote_control
         spec = self.spec
-        manifest = spec.manifest
-        agent = manifest.agents[spec.agent_name]
-        bottle = manifest.bottle_for(spec.agent_name)
+        manifest = spec.manifest  # type: ignore[assignment]
+        agent = manifest.agent
+        bottle = manifest.bottle
 
         env_names = visible_agent_env_names(
             sorted(
@@ -131,7 +131,7 @@ class BottlePlan(ABC):
         print_multi("skills          ", list(agent.skills))
         info(f"bottle          : {agent.bottle}")
 
-        identity = manifest.git_identity_summary(spec.agent_name)
+        identity = manifest.git_identity_summary()
         if identity:
             info(f"  git identity  : {identity}")
 
@@ -293,11 +293,11 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
 
         self._preflight()
 
-        manifest = spec.manifest
-        manifest_bottle = manifest.bottle_for(spec.agent_name)
+        manifest = spec.manifest  # type: ignore[assignment]
+        manifest_bottle = manifest.bottle
         manifest_agent_provider = manifest_bottle.agent_provider
         agent_provider = get_provider(manifest_agent_provider.template)
-        resolved_env = resolve_env(manifest, spec.agent_name)
+        resolved_env = resolve_env(manifest)
         workspace = workspace_plan(spec, guest_home=agent_provider.guest_home)
 
         slug = mint_slug(spec)
@@ -364,9 +364,9 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         selected agent. Subclasses with additional preconditions should
         override and call `super()._validate(spec)` first, using the
         returned spec for further checks."""
-        manifest = spec.manifest.load_for_agent(spec.agent_name)
+        manifest = spec.manifest.load_for_agent(spec.agent_name)  # type: ignore[union-attr]
         spec = replace(spec, manifest=manifest)
-        agent = manifest.agents[spec.agent_name]
+        agent = manifest.agent
         self._validate_skills(agent.skills)
         self._validate_agent_provider_dockerfile(spec)
         return spec
@@ -384,7 +384,8 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
                 )
 
     def _validate_agent_provider_dockerfile(self, spec: BottleSpec) -> None:
-        bottle = spec.manifest.bottle_for(spec.agent_name)
+        manifest = spec.manifest  # type: ignore[assignment]
+        bottle = manifest.bottle
         dockerfile = bottle.agent_provider.dockerfile
         if not dockerfile:
             return
@@ -394,7 +395,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         if not path.is_file():
             die(
                 f"agent_provider.dockerfile for bottle "
-                f"'{spec.manifest.agents[spec.agent_name].bottle}' not found: {path}"
+                f"'{manifest.agent.bottle}' not found: {path}"
             )
 
     @abstractmethod

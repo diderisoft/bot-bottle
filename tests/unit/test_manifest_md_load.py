@@ -11,7 +11,7 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from bot_bottle.manifest import ManifestError, Manifest
+from bot_bottle.manifest import ManifestError, Manifest, ManifestIndex
 
 
 def _write(p: Path, text: str) -> None:
@@ -45,7 +45,7 @@ _AGENT_IMPL = """
 
 
 class _ResolveCase(unittest.TestCase):
-    """Drives `Manifest.resolve(cwd)` against a temp $HOME and a
+    """Drives `ManifestIndex.resolve(cwd)` against a temp $HOME and a
     temp cwd. Subclasses lay down fixture files in setUp."""
 
     def setUp(self) -> None:
@@ -71,8 +71,8 @@ class _ResolveCase(unittest.TestCase):
     def cwd_cb(self) -> Path:
         return self.cwd_root / ".bot-bottle"
 
-    def resolve(self) -> Manifest:
-        return Manifest.resolve(str(self.cwd_root))
+    def resolve(self) -> ManifestIndex:
+        return ManifestIndex.resolve(str(self.cwd_root))
 
 
 class TestBottleFileParses(_ResolveCase):
@@ -83,8 +83,7 @@ class TestBottleFileParses(_ResolveCase):
         _write(self.home_cb / "bottles" / "dev.md", _BOTTLE_DEV)
         _write(self.home_cb / "agents" / "implementer.md", _AGENT_IMPL)
         m = self.resolve().load_for_agent("implementer")
-        self.assertIn("dev", m.bottles)
-        routes = m.bottles["dev"].egress.routes
+        routes = m.bottle.egress.routes
         self.assertEqual(2, len(routes))
         self.assertEqual("api.anthropic.com", routes[0].Host)
         self.assertEqual("Bearer", routes[0].AuthScheme)
@@ -101,7 +100,7 @@ class TestAgentFileParses(_ResolveCase):
         _write(self.home_cb / "bottles" / "dev.md", _BOTTLE_DEV)
         _write(self.home_cb / "agents" / "implementer.md", _AGENT_IMPL)
         m = self.resolve().load_for_agent("implementer")
-        a = m.agents["implementer"]
+        a = m.agent
         self.assertEqual("dev", a.bottle)
         self.assertEqual(("init-prd",), a.skills)
         # Body became the prompt; whitespace stripped.
@@ -129,9 +128,9 @@ class TestCwdAgentOverridesHome(_ResolveCase):
             """,
         )
         m = self.resolve().load_for_agent("implementer")
-        self.assertIn("CWD-OVERRIDE-PROMPT", m.agents["implementer"].prompt)
-        # Home bottle still present
-        self.assertEqual(2, len(m.bottles["dev"].egress.routes))
+        self.assertIn("CWD-OVERRIDE-PROMPT", m.agent.prompt)
+        # Home bottle still present with its two egress routes
+        self.assertEqual(2, len(m.bottle.egress.routes))
 
 
 class TestCwdBottlesIgnored(_ResolveCase):
@@ -159,7 +158,7 @@ class TestCwdBottlesIgnored(_ResolveCase):
         # Home value wins because cwd bottles are ignored entirely.
         self.assertEqual(
             "api.anthropic.com",
-            m.bottles["dev"].egress.routes[0].Host,
+            m.bottle.egress.routes[0].Host,
         )
 
 
@@ -176,12 +175,12 @@ class TestStdlibOnly(unittest.TestCase):
 
 
 class TestExistingFromJsonObjStillWorks(unittest.TestCase):
-    """SC #6: `Manifest.from_json_obj` continues to work as a
+    """SC #6: `ManifestIndex.from_json_obj` continues to work as a
     programmatic entry point even though disk loading moved to the
     MD layout."""
 
     def test_from_json_obj(self):
-        m = Manifest.from_json_obj({
+        m = ManifestIndex.from_json_obj({
             "bottles": {"dev": {}},
             "agents": {"demo": {"skills": [], "prompt": "hi",
                                 "bottle": "dev"}},
@@ -216,8 +215,8 @@ class TestAgentFileDoublesAsClaudeCodeSubagent(_ResolveCase):
             """,
         )
         m = self.resolve().load_for_agent("implementer")
-        self.assertEqual("dev", m.agents["implementer"].bottle)
-        self.assertEqual(("init-prd",), m.agents["implementer"].skills)
+        self.assertEqual("dev", m.agent.bottle)
+        self.assertEqual(("init-prd",), m.agent.skills)
 
 
 class TestManifestEntryPointParity(_ResolveCase):
@@ -229,7 +228,7 @@ class TestManifestEntryPointParity(_ResolveCase):
         _write(self.home_cb / "agents" / "implementer.md", _AGENT_IMPL)
 
         md_manifest = self.resolve().load_for_agent("implementer")
-        json_manifest = Manifest.from_json_obj({
+        json_index = ManifestIndex.from_json_obj({
             "bottles": {
                 "dev": {
                     "egress": {
@@ -256,17 +255,17 @@ class TestManifestEntryPointParity(_ResolveCase):
         })
 
         self.assertEqual(
-            md_manifest.agents["implementer"],
-            json_manifest.agents["implementer"],
+            md_manifest.agent,
+            json_index.agents["implementer"],
         )
         self.assertEqual(
-            md_manifest.bottles["dev"].egress.routes,
-            json_manifest.bottles["dev"].egress.routes,
+            md_manifest.bottle.egress.routes,
+            json_index.bottles["dev"].egress.routes,
         )
 
     def test_json_agent_rejects_unknown_keys(self):
         with self.assertRaises(ManifestError):
-            Manifest.from_json_obj({
+            ManifestIndex.from_json_obj({
                 "bottles": {"dev": {}},
                 "agents": {
                     "implementer": {
@@ -277,7 +276,7 @@ class TestManifestEntryPointParity(_ResolveCase):
             })
 
     def test_json_agent_accepts_claude_code_passthrough_keys(self):
-        manifest = Manifest.from_json_obj({
+        index = ManifestIndex.from_json_obj({
             "bottles": {"dev": {}},
             "agents": {
                 "implementer": {
@@ -291,7 +290,7 @@ class TestManifestEntryPointParity(_ResolveCase):
             },
         })
 
-        self.assertEqual("dev", manifest.agents["implementer"].bottle)
+        self.assertEqual("dev", index.agents["implementer"].bottle)
 
 
 class TestBrokenAgentOnlyFailsAtPreflight(_ResolveCase):
@@ -359,7 +358,7 @@ class TestBrokenAgentOnlyFailsAtPreflight(_ResolveCase):
         self.assertIn("broken-agent", m.all_agent_names)
         # Valid agent loads fine.
         full = m.load_for_agent("implementer")
-        self.assertIn("implementer", full.agents)
+        self.assertEqual("dev", full.agent.bottle)
         # Broken bottle's agent raises at preflight.
         with self.assertRaises(ManifestError):
             m.load_for_agent("broken-agent")
@@ -385,7 +384,7 @@ class TestNoManifestDies(_ResolveCase):
             self.resolve()
 
     def test_missing_ok_returns_empty_manifest(self):
-        m = Manifest.resolve(str(self.cwd_root), missing_ok=True)
+        m = ManifestIndex.resolve(str(self.cwd_root), missing_ok=True)
         self.assertEqual({}, dict(m.bottles))
         self.assertEqual({}, dict(m.agents))
 
@@ -411,7 +410,7 @@ class TestUnknownBottleReferenceFailsAtPreflight(_ResolveCase):
         self.assertIn("implementer", m.all_agent_names)
         # Valid agent loads fine.
         full = m.load_for_agent("implementer")
-        self.assertIn("implementer", full.agents)
+        self.assertEqual("dev", full.agent.bottle)
         # Stray agent fails at preflight.
         with self.assertRaises(ManifestError):
             m.load_for_agent("stray")
@@ -431,7 +430,3 @@ class TestFilenameValidation(_ResolveCase):
         self.assertIn("implementer", m.all_agent_names)
         self.assertNotIn("BadName", m.all_agent_names)
         self.assertNotIn("badname", m.all_agent_names)
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -20,7 +20,7 @@ import argparse
 from ..backend import BottleSpec
 from ..bottle_state import read_metadata
 from ..log import die
-from ..manifest import Manifest
+from ..manifest import ManifestIndex
 from ._common import PROG, USER_CWD
 from .start import _launch_bottle
 
@@ -42,7 +42,7 @@ def cmd_resume(argv: list[str]) -> int:
             f"check ~/.bot-bottle/state/ or run `cli.py start` to create a new bottle"
         )
 
-    manifest = Manifest.resolve(USER_CWD)
+    manifest = ManifestIndex.resolve(USER_CWD)
     manifest.require_agent(metadata.agent_name)
 
     spec = BottleSpec(

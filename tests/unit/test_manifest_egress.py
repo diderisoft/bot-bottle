@@ -9,18 +9,18 @@ partial `auth` is an error, auth omission means unauthenticated."""
 
 import unittest
 
-from bot_bottle.manifest import ManifestError, Manifest
+from bot_bottle.manifest import ManifestError, ManifestIndex
 
 
 def _bottle(routes):  # type: ignore
-    return Manifest.from_json_obj({
+    return ManifestIndex.from_json_obj({
         "bottles": {"dev": {"egress": {"routes": routes}}},
         "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
     }).bottles["dev"]
 
 
 def _provider_bottle(provider, routes):  # type: ignore
-    return Manifest.from_json_obj({
+    return ManifestIndex.from_json_obj({
         "bottles": {
             "dev": {
                 "agent_provider": {"template": provider},
@@ -32,7 +32,7 @@ def _provider_bottle(provider, routes):  # type: ignore
 
 
 def _provider_config_bottle(agent_provider):  # type: ignore
-    return Manifest.from_json_obj({
+    return ManifestIndex.from_json_obj({
         "bottles": {"dev": {"agent_provider": agent_provider}},
         "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
     }).bottles["dev"]
@@ -433,7 +433,7 @@ class TestRouteValidation(unittest.TestCase):
         self.assertEqual((), b.egress.routes)
 
     def test_no_egress_block_means_empty(self):
-        b = Manifest.from_json_obj({
+        b = ManifestIndex.from_json_obj({
             "bottles": {"dev": {}},
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
         }).bottles["dev"]
@@ -443,7 +443,7 @@ class TestRouteValidation(unittest.TestCase):
 class TestConfigShape(unittest.TestCase):
     def test_unknown_egress_key_rejected(self):
         with self.assertRaises(ManifestError):
-            Manifest.from_json_obj({
+            ManifestIndex.from_json_obj({
                 "bottles": {"dev": {"egress": {"wat": []}}},
                 "agents": {"demo": {"skills": [], "prompt": "",
                                      "bottle": "dev"}},
@@ -454,14 +454,14 @@ class TestConfigShape(unittest.TestCase):
         self.assertEqual(0, b.egress.Log)
 
     def test_log_level_1_accepted(self):
-        b = Manifest.from_json_obj({
+        b = ManifestIndex.from_json_obj({
             "bottles": {"dev": {"egress": {"log": 1, "routes": []}}},
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
         }).bottles["dev"]
         self.assertEqual(1, b.egress.Log)
 
     def test_log_level_2_accepted(self):
-        b = Manifest.from_json_obj({
+        b = ManifestIndex.from_json_obj({
             "bottles": {"dev": {"egress": {"log": 2, "routes": []}}},
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
         }).bottles["dev"]
@@ -469,7 +469,7 @@ class TestConfigShape(unittest.TestCase):
 
     def test_log_invalid_level_rejected(self):
         with self.assertRaises(ManifestError):
-            Manifest.from_json_obj({
+            ManifestIndex.from_json_obj({
                 "bottles": {"dev": {"egress": {"log": 3}}},
                 "agents": {"demo": {"skills": [], "prompt": "",
                                      "bottle": "dev"}},
@@ -477,7 +477,7 @@ class TestConfigShape(unittest.TestCase):
 
     def test_log_bool_rejected(self):
         with self.assertRaises(ManifestError):
-            Manifest.from_json_obj({
+            ManifestIndex.from_json_obj({
                 "bottles": {"dev": {"egress": {"log": True}}},
                 "agents": {"demo": {"skills": [], "prompt": "",
                                      "bottle": "dev"}},
@@ -485,7 +485,7 @@ class TestConfigShape(unittest.TestCase):
 
     def test_log_string_rejected(self):
         with self.assertRaises(ManifestError):
-            Manifest.from_json_obj({
+            ManifestIndex.from_json_obj({
                 "bottles": {"dev": {"egress": {"log": "full"}}},
                 "agents": {"demo": {"skills": [], "prompt": "",
                                      "bottle": "dev"}},

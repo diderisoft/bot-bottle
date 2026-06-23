@@ -114,7 +114,7 @@ def _read_secret_silent(name: str, prompt_body: str) -> str:
     return value
 
 
-def resolve_env(manifest: Manifest, agent: str) -> ResolvedEnv:
+def resolve_env(manifest: Manifest) -> ResolvedEnv:
     """Iterate the agent's env entries:
       - secret:       prompt at runtime; carry value in forwarded
       - interpolated: read $HOST_VAR from os.environ; carry value in forwarded
@@ -124,7 +124,7 @@ def resolve_env(manifest: Manifest, agent: str) -> ResolvedEnv:
     backend injects forwarded values via its launcher's env parameter."""
     forwarded: dict[str, str] = {}
     literals: dict[str, str] = {}
-    bottle = manifest.bottle_for(agent)
+    bottle = manifest.bottle
     for name, raw in bottle.env.items():
         if not name:
             continue

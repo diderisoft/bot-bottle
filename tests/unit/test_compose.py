@@ -31,7 +31,7 @@ from bot_bottle.egress import (
     EgressRoute,
 )
 from bot_bottle.git_gate import GitGatePlan, GitGateUpstream
-from bot_bottle.manifest import Manifest
+from bot_bottle.manifest import ManifestIndex
 from bot_bottle.supervise import SupervisePlan
 
 
@@ -40,7 +40,7 @@ STAGE = Path("/tmp/cb-stage")
 STATE = Path("/tmp/cb-state")
 
 
-def _manifest(*, supervise: bool, with_git: bool, with_egress: bool) -> Manifest:
+def _manifest(*, supervise: bool, with_git: bool, with_egress: bool) -> ManifestIndex:
     """Minimal manifest with the toggles the chunk-1 matrix needs.
     The renderer only reads from the plan, not the manifest, so this
     is just here to back BottleSpec."""
@@ -61,7 +61,7 @@ def _manifest(*, supervise: bool, with_git: bool, with_egress: bool) -> Manifest
                 "auth": {"scheme": "Bearer", "token_ref": "TOK"},
             }],
         }
-    return Manifest.from_json_obj({
+    return ManifestIndex.from_json_obj({
         "bottles": {"dev": bottle},
         "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
     })
