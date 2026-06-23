@@ -555,6 +555,7 @@ __all__ = [
     "EGRESS_FORWARD_PROXY",
     "EGRESS_INTROSPECT_URL",
     "TOOL_CAPABILITY_BLOCK",
+    "TOOL_GITLEAKS_ALLOW",
     "TOOL_LIST_EGRESS_ROUTES",
     "archive_proposal",
     "audit_dir",
