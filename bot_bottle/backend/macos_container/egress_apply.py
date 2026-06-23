@@ -33,11 +33,7 @@ class MacOSContainerEgressApplicator(EgressApplicator):
             )
 
 
-_applicator = MacOSContainerEgressApplicator()
+applicator = MacOSContainerEgressApplicator()
 
 
-def apply_routes_change(slug: str, content: str) -> tuple[str, str]:
-    return _applicator.apply_routes_change(slug, content)
-
-
-__all__ = ["MacOSContainerEgressApplicator", "EgressApplyError", "apply_routes_change"]
+__all__ = ["MacOSContainerEgressApplicator", "EgressApplyError", "applicator"]

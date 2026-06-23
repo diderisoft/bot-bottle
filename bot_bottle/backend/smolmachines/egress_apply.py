@@ -7,15 +7,15 @@ so egress signalling is identical to the docker backend.
 from __future__ import annotations
 
 from ..docker.egress_apply import (  # noqa: F401
+    DockerEgressApplicator,
     EgressApplyError,
-    apply_routes_change,
+    applicator,
     fetch_current_routes,
-    validate_routes_content,
 )
 
 __all__ = [
+    "DockerEgressApplicator",
     "EgressApplyError",
-    "apply_routes_change",
+    "applicator",
     "fetch_current_routes",
-    "validate_routes_content",
 ]

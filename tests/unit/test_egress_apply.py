@@ -9,11 +9,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from bot_bottle import supervise
-from bot_bottle.backend.docker.egress_apply import (
-    EgressApplyError,
-    apply_routes_change,
-    validate_routes_content,
-)
+from bot_bottle.backend.egress_apply import EgressApplyError
+from bot_bottle.backend.docker.egress_apply import applicator
 
 
 _ROUTES_EMPTY = "routes: []\n"
@@ -22,11 +19,11 @@ _ROUTES_ONE = 'routes:\n  - host: "api.anthropic.com"\n'
 
 class TestValidateRoutesContent(unittest.TestCase):
     def test_accepts_minimal_route_table(self):
-        validate_routes_content(_ROUTES_EMPTY)
-        validate_routes_content(_ROUTES_ONE)
+        applicator.validate_routes_content(_ROUTES_EMPTY)
+        applicator.validate_routes_content(_ROUTES_ONE)
 
     def test_accepts_full_route_with_matches(self):
-        validate_routes_content(
+        applicator.validate_routes_content(
             'routes:\n'
             '  - host: "api.github.com"\n'
             '    auth_scheme: "Bearer"\n'
@@ -38,20 +35,20 @@ class TestValidateRoutesContent(unittest.TestCase):
 
     def test_rejects_bad_yaml(self):
         with self.assertRaises(EgressApplyError) as cm:
-            validate_routes_content("routes:\n\t- host: x\n")
+            applicator.validate_routes_content("routes:\n\t- host: x\n")
         self.assertIn("not valid", str(cm.exception))
 
     def test_rejects_missing_routes_key(self):
         with self.assertRaises(EgressApplyError):
-            validate_routes_content("other: []\n")
+            applicator.validate_routes_content("other: []\n")
 
     def test_rejects_non_list_routes(self):
         with self.assertRaises(EgressApplyError):
-            validate_routes_content('routes: "not a list"\n')
+            applicator.validate_routes_content('routes: "not a list"\n')
 
     def test_rejects_partial_auth_pair(self):
         with self.assertRaises(EgressApplyError):
-            validate_routes_content(
+            applicator.validate_routes_content(
                 'routes:\n'
                 '  - host: "x.example"\n'
                 '    auth_scheme: "Bearer"\n'
@@ -81,7 +78,7 @@ class TestApplyRoutesChange(unittest.TestCase):
             "bot_bottle.backend.docker.egress_apply.subprocess.run",
             side_effect=fake_run,
         ):
-            before, after = apply_routes_change(
+            before, after = applicator.apply_routes_change(
                 "dev",
                 "routes:\n  - host: google.com\n",
             )

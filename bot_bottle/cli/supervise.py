@@ -28,13 +28,13 @@ from ..bottle_state import read_metadata
 # )
 from ..backend.docker.egress_apply import (
     EgressApplyError,
-    apply_routes_change as _docker_apply_routes_change,
+    applicator as _docker_applicator,
 )
 from ..backend.macos_container.egress_apply import (
-    apply_routes_change as _macos_apply_routes_change,
+    applicator as _macos_applicator,
 )
 from ..backend.smolmachines.egress_apply import (
-    apply_routes_change as _smolmachines_apply_routes_change,
+    applicator as _smolmachines_applicator,
 )
 from ..log import Die, error, info
 
@@ -83,10 +83,10 @@ def apply_routes_change(slug: str, content: str) -> tuple[str, str]:
     meta = read_metadata(slug)
     backend = meta.backend if meta is not None else ""
     if backend == "macos-container":
-        return _macos_apply_routes_change(slug, content)
+        return _macos_applicator.apply_routes_change(slug, content)
     if backend == "smolmachines":
-        return _smolmachines_apply_routes_change(slug, content)
-    return _docker_apply_routes_change(slug, content)
+        return _smolmachines_applicator.apply_routes_change(slug, content)
+    return _docker_applicator.apply_routes_change(slug, content)
 
 
 def discover_pending() -> list[QueuedProposal]:

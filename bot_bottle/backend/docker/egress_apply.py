@@ -49,20 +49,12 @@ class DockerEgressApplicator(EgressApplicator):
             )
 
 
-_applicator = DockerEgressApplicator()
-
-
-def apply_routes_change(slug: str, content: str) -> tuple[str, str]:
-    return _applicator.apply_routes_change(slug, content)
-
-
-validate_routes_content = EgressApplicator.validate_routes_content
+applicator = DockerEgressApplicator()
 
 
 __all__ = [
     "DockerEgressApplicator",
     "EgressApplyError",
-    "apply_routes_change",
+    "applicator",
     "fetch_current_routes",
-    "validate_routes_content",
 ]
