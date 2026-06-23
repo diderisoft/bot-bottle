@@ -42,7 +42,9 @@ class TestArgvParsing(unittest.TestCase):
             run.return_value.returncode = 0
             rc = pty_forward.main(["--", "container", "exec"])
         self.assertEqual(0, rc)
-        run.assert_called_once_with(["container", "exec"], check=False)
+        run.assert_called_once()
+        self.assertEqual(["container", "exec"], run.call_args.args[0])
+        self.assertFalse(run.call_args.kwargs["check"])
 
 
 class TestNonTtyFallback(unittest.TestCase):
@@ -57,10 +59,12 @@ class TestNonTtyFallback(unittest.TestCase):
                 ["--", "container", "exec", "--interactive", "--tty", "c", "claude"]
             )
         self.assertEqual(42, rc)
-        run.assert_called_once_with(
+        run.assert_called_once()
+        self.assertEqual(
             ["container", "exec", "--interactive", "--tty", "c", "claude"],
-            check=False,
+            run.call_args.args[0],
         )
+        self.assertFalse(run.call_args.kwargs["check"])
 
     def test_fileno_error_runs_inner_directly(self):
         bad_stdin = MagicMock()
@@ -71,7 +75,9 @@ class TestNonTtyFallback(unittest.TestCase):
         ):
             run.return_value.returncode = 0
             rc = pty_forward.main(["--", "container", "exec"])
-        run.assert_called_once_with(["container", "exec"], check=False)
+        run.assert_called_once()
+        self.assertEqual(["container", "exec"], run.call_args.args[0])
+        self.assertFalse(run.call_args.kwargs["check"])
         self.assertEqual(0, rc)
 
 
@@ -128,8 +134,25 @@ class TestRawModeSetupAndRestore(unittest.TestCase):
             rc = pty_forward.main(["--", "container", "exec"])
 
         setraw.assert_not_called()
-        run.assert_called_once_with(["container", "exec"], check=False)
+        run.assert_called_once()
+        self.assertEqual(["container", "exec"], run.call_args.args[0])
+        self.assertFalse(run.call_args.kwargs["check"])
         self.assertEqual(0, rc)
+
+    def test_inner_run_sets_term_default_without_mutating_process_env(self):
+        with (
+            patch.dict(pty_forward.os.environ, {}, clear=True),
+            patch.object(pty_forward.subprocess, "run") as run,
+        ):
+            run.return_value.returncode = 0
+            rc = pty_forward._run_inner(["container", "exec"])
+
+            self.assertNotIn("TERM", pty_forward.os.environ)
+
+        self.assertEqual(0, rc)
+        child_env = run.call_args.kwargs["env"]
+        self.assertEqual(["TERM"], sorted(child_env.keys()))
+        self.assertEqual("xterm-256color", child_env["TERM"])
 
 
 if __name__ == "__main__":

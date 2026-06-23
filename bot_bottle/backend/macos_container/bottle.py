@@ -14,6 +14,29 @@ from . import pty_forward as _pty_forward
 
 
 _PTY_FORWARD_SCRIPT = _pty_forward.__file__
+_TERMINAL_ENV_NAMES = (
+    "TERM",
+    "COLORTERM",
+    "TERM_PROGRAM",
+    "TERM_PROGRAM_VERSION",
+    "KITTY_WINDOW_ID",
+    "KITTY_PID",
+    "WEZTERM_PANE",
+    "WEZTERM_UNIX_SOCKET",
+    "GHOSTTY_BIN_DIR",
+    "GHOSTTY_RESOURCES_DIR",
+    "ITERM_SESSION_ID",
+    "VTE_VERSION",
+    "KONSOLE_VERSION",
+    "ALACRITTY_WINDOW_ID",
+)
+
+
+def _terminal_env_names() -> tuple[str, ...]:
+    return tuple(
+        name for name in _TERMINAL_ENV_NAMES
+        if name == "TERM" or os.environ.get(name)
+    )
 
 
 class MacosContainerBottle(Bottle):
@@ -53,12 +76,11 @@ class MacosContainerBottle(Bottle):
         container_exec = ["container", "exec"]
         if tty:
             container_exec.extend(["--interactive", "--tty"])
-            # Forward TERM so Claude Code can enable modifier-key protocols
-            # (e.g. modifyOtherKeys / kitty protocol). Without it the inner
-            # PTY session has no terminal-type context and Shift+Enter is
-            # indistinguishable from plain Enter.
-            term = os.environ.get("TERM", "xterm-256color")
-            container_exec.extend(["--env", f"TERM={term}"])
+            # Forward terminal capability hints so TUIs can enable modified-key
+            # protocols. Use bare env names: values stay in the child env, not
+            # on argv, and pty_forward supplies a TERM fallback when needed.
+            for name in _terminal_env_names():
+                container_exec.extend(["--env", name])
         if self.agent_workdir and self.agent_workdir != "/home/node":
             container_exec.extend(["--workdir", self.agent_workdir])
         container_exec.extend([self.name, self.agent_command, *full_argv])

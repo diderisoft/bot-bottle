@@ -27,6 +27,16 @@ import termios
 import tty
 
 
+def _inner_env() -> dict[str, str]:
+    env = dict(os.environ)
+    env.setdefault("TERM", "xterm-256color")
+    return env
+
+
+def _run_inner(inner: list[str]) -> int:
+    return subprocess.run(inner, check=False, env=_inner_env()).returncode
+
+
 def main(argv: list[str]) -> int:
     """Entry point.  ``argv`` shape: ``-- <inner-argv...>``."""
     if len(argv) < 2 or argv[0] != "--":
@@ -39,19 +49,19 @@ def main(argv: list[str]) -> int:
     try:
         fd = sys.stdin.fileno()
     except OSError:
-        return subprocess.run(inner, check=False).returncode
+        return _run_inner(inner)
 
     if not os.isatty(fd):
-        return subprocess.run(inner, check=False).returncode
+        return _run_inner(inner)
 
     try:
         old = termios.tcgetattr(fd)
     except termios.error:
-        return subprocess.run(inner, check=False).returncode
+        return _run_inner(inner)
 
     try:
         tty.setraw(fd)
-        return subprocess.run(inner, check=False).returncode
+        return _run_inner(inner)
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
 

@@ -18,13 +18,13 @@ class TestMacosContainerBottle(unittest.TestCase):
             None,
             agent_command="codex",
         )
-        with patch.dict(bottle_mod.os.environ, {"TERM": "xterm-256color"}, clear=False):
+        with patch.dict(bottle_mod.os.environ, {}, clear=True):
             argv = bottle.agent_argv(["run"])
         self.assertEqual(
             [
                 sys.executable, _PTY_FORWARD_SCRIPT, "--",
                 "container", "exec", "--interactive", "--tty",
-                "--env", "TERM=xterm-256color",
+                "--env", "TERM",
                 "bot-bottle-dev-abc", "codex", "run",
             ],
             argv,
@@ -37,31 +37,45 @@ class TestMacosContainerBottle(unittest.TestCase):
             None,
             agent_workdir="/home/node/workspace",
         )
-        with patch.dict(bottle_mod.os.environ, {"TERM": "xterm-256color"}, clear=False):
+        with patch.dict(bottle_mod.os.environ, {}, clear=True):
             argv = bottle.agent_argv([])
         self.assertEqual(
             [
                 sys.executable, _PTY_FORWARD_SCRIPT, "--",
                 "container", "exec", "--interactive", "--tty",
-                "--env", "TERM=xterm-256color",
+                "--env", "TERM",
                 "--workdir", "/home/node/workspace",
                 "bot-bottle-dev-abc", "claude",
             ],
             argv,
         )
 
-    def test_agent_argv_uses_host_term_value(self):
+    def test_agent_argv_forwards_terminal_env_names_without_values(self):
         bottle = MacosContainerBottle("bot-bottle-dev-abc", lambda: None, None)
-        with patch.dict(bottle_mod.os.environ, {"TERM": "screen-256color"}, clear=False):
+        with patch.dict(
+            bottle_mod.os.environ,
+            {
+                "TERM": "screen-256color",
+                "TERM_PROGRAM": "WezTerm",
+                "WEZTERM_PANE": "pane-id",
+                "SHELL": "/bin/zsh",
+            },
+            clear=True,
+        ):
             argv = bottle.agent_argv([])
-        self.assertIn("TERM=screen-256color", argv)
+        self.assertIn("TERM", argv)
+        self.assertIn("TERM_PROGRAM", argv)
+        self.assertIn("WEZTERM_PANE", argv)
+        self.assertNotIn("SHELL", argv)
+        self.assertNotIn("TERM=screen-256color", argv)
+        self.assertNotIn("TERM_PROGRAM=WezTerm", argv)
+        self.assertNotIn("WEZTERM_PANE=pane-id", argv)
 
-    def test_agent_argv_term_falls_back_to_xterm_256color(self):
+    def test_agent_argv_always_forwards_term_name(self):
         bottle = MacosContainerBottle("bot-bottle-dev-abc", lambda: None, None)
-        env_without_term = {k: v for k, v in bottle_mod.os.environ.items() if k != "TERM"}
-        with patch.object(bottle_mod.os, "environ", env_without_term):
+        with patch.dict(bottle_mod.os.environ, {}, clear=True):
             argv = bottle.agent_argv([])
-        self.assertIn("TERM=xterm-256color", argv)
+        self.assertIn("TERM", argv)
 
     def test_agent_argv_no_tty_omits_wrapper_and_tty_flags(self):
         bottle = MacosContainerBottle("bot-bottle-dev-abc", lambda: None, None)
