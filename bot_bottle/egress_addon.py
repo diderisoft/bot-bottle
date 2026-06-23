@@ -5,7 +5,6 @@ egress container."""
 
 from __future__ import annotations
 
-import dataclasses
 import json
 import os
 import signal
@@ -27,6 +26,7 @@ from egress_addon_core import (  # type: ignore[import-not-found]  # pylint: dis
     load_config,
     match_route,
     outbound_scan_headers,
+    route_to_yaml_dict,
     scan_inbound,
     scan_outbound,
 )
@@ -82,7 +82,7 @@ class EgressAddon:
     def _serve_introspection(self, flow: http.HTTPFlow, path: str) -> None:
         if path == "/allowlist":
             payload = json.dumps(
-                {"routes": [dataclasses.asdict(r) for r in self.config.routes]},
+                {"routes": [route_to_yaml_dict(r) for r in self.config.routes]},
                 indent=2,
             ).encode("utf-8")
             flow.response = http.Response.make(

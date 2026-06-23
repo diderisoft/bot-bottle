@@ -217,11 +217,15 @@ def _discover_urls(
         agent_supervise_url = f"http://{loopback_ip}:{supervise_host_port}/"
 
     existing_no_proxy = plan.guest_env.get("NO_PROXY", "localhost,127.0.0.1")
+    no_proxy = f"{existing_no_proxy},{loopback_ip}"
     guest_env = {
         **plan.guest_env,
         "HTTPS_PROXY": agent_proxy_url,
         "HTTP_PROXY":  agent_proxy_url,
-        "NO_PROXY":    f"{existing_no_proxy},{loopback_ip}",
+        "https_proxy": agent_proxy_url,
+        "http_proxy":  agent_proxy_url,
+        "NO_PROXY":    no_proxy,
+        "no_proxy":    no_proxy,
     }
     if agent_git_gate_host:
         guest_env["GIT_GATE_URL"] = f"http://{agent_git_gate_host}"

@@ -359,6 +359,56 @@ def _parse_one(idx: int, raw: object) -> Route:
     )
 
 
+def _path_match_to_dict(pm: PathMatch) -> dict[str, object]:
+    d: dict[str, object] = {"value": pm.value}
+    if pm.type != "prefix":
+        d["type"] = pm.type
+    return d
+
+
+def _header_match_to_dict(hm: HeaderMatch) -> dict[str, object]:
+    d: dict[str, object] = {"name": hm.name, "value": hm.value}
+    if hm.type != "exact":
+        d["type"] = hm.type
+    return d
+
+
+def _match_entry_to_dict(me: MatchEntry) -> dict[str, object]:
+    d: dict[str, object] = {}
+    if me.paths:
+        d["paths"] = [_path_match_to_dict(p) for p in me.paths]
+    if me.methods:
+        d["methods"] = list(me.methods)
+    if me.headers:
+        d["headers"] = [_header_match_to_dict(h) for h in me.headers]
+    return d
+
+
+def route_to_yaml_dict(r: Route) -> dict[str, object]:
+    """Serialize a Route to YAML-schema-compatible dict.
+
+    Uses the same field names the YAML parser accepts, so the output
+    can be round-tripped directly into an `allow` or `egress-block`
+    proposal without translation. Fields that are empty/default are
+    omitted so the agent doesn't copy irrelevant keys."""
+    d: dict[str, object] = {"host": r.host}
+    if r.auth_scheme:
+        d["auth_scheme"] = r.auth_scheme
+        d["token_env"] = r.token_env
+    if r.matches:
+        d["matches"] = [_match_entry_to_dict(m) for m in r.matches]
+    if r.git_fetch:
+        d["git"] = {"fetch": True}
+    dlp: dict[str, object] = {}
+    if r.outbound_detectors is not None:
+        dlp["outbound_detectors"] = list(r.outbound_detectors)
+    if r.inbound_detectors is not None:
+        dlp["inbound_detectors"] = list(r.inbound_detectors)
+    if dlp:
+        d["dlp"] = dlp
+    return d
+
+
 def load_routes(text: str) -> tuple[Route, ...]:
     """Parse YAML text → routes."""
     try:
@@ -698,6 +748,7 @@ def scan_inbound(
 
 __all__ = [
     "LOG_BLOCKS",
+    "route_to_yaml_dict",
     "LOG_FULL",
     "LOG_OFF",
     "Config",

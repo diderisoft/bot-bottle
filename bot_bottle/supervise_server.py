@@ -172,7 +172,24 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
             "properties": {
                 "routes_yaml": {
                     "type": "string",
-                    "description": "Full proposed /etc/egress/routes.yaml content.",
+                    "description": (
+                        "Full proposed /etc/egress/routes.yaml content. "
+                        "Each route entry accepts these keys:\n"
+                        "  host: <hostname>  (required)\n"
+                        "  auth_scheme: Bearer|token  (must pair with token_env)\n"
+                        "  token_env: <ENV_VAR_NAME>  (must pair with auth_scheme)\n"
+                        "  matches:  (optional list of match entries)\n"
+                        "    - paths: [{type: prefix|exact|regex, value: /...}]\n"
+                        "      methods: [GET, POST, ...]\n"
+                        "      headers: [{name: X-Hdr, value: val, type: exact|regex}]\n"
+                        "  git:  (optional; omit to block git clone/fetch)\n"
+                        "    fetch: true\n"
+                        "  dlp:  (optional DLP scanner overrides)\n"
+                        "    outbound_detectors: [token_patterns, known_secrets]\n"
+                        "    inbound_detectors: [naive_injection_detection]\n"
+                        "Omit any key that should use its default. "
+                        "`list-egress-routes` returns routes in this same format."
+                    ),
                 },
                 "justification": {
                     "type": "string",
@@ -196,7 +213,24 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
             "properties": {
                 "routes_yaml": {
                     "type": "string",
-                    "description": "Full proposed /etc/egress/routes.yaml content.",
+                    "description": (
+                        "Full proposed /etc/egress/routes.yaml content. "
+                        "Each route entry accepts these keys:\n"
+                        "  host: <hostname>  (required)\n"
+                        "  auth_scheme: Bearer|token  (must pair with token_env)\n"
+                        "  token_env: <ENV_VAR_NAME>  (must pair with auth_scheme)\n"
+                        "  matches:  (optional list of match entries)\n"
+                        "    - paths: [{type: prefix|exact|regex, value: /...}]\n"
+                        "      methods: [GET, POST, ...]\n"
+                        "      headers: [{name: X-Hdr, value: val, type: exact|regex}]\n"
+                        "  git:  (optional; omit to block git clone/fetch)\n"
+                        "    fetch: true\n"
+                        "  dlp:  (optional DLP scanner overrides)\n"
+                        "    outbound_detectors: [token_patterns, known_secrets]\n"
+                        "    inbound_detectors: [naive_injection_detection]\n"
+                        "Omit any key that should use its default. "
+                        "`list-egress-routes` returns routes in this same format."
+                    ),
                 },
                 "justification": {
                     "type": "string",
