@@ -12,7 +12,7 @@ import subprocess
 from pathlib import Path
 
 from ...bottle_state import egress_state_dir, read_metadata
-from ...egress import EGRESS_ROUTES_IN_CONTAINER
+from ...egress import EGRESS_ROUTES_FILENAME, EGRESS_ROUTES_IN_CONTAINER
 from ...egress_addon_core import load_routes
 from ...log import warn
 from .sidecar_bundle import sidecar_bundle_container_name
@@ -58,7 +58,12 @@ def validate_routes_content(content: str) -> None:
 
 
 def _routes_path(slug: str) -> Path:
-    return egress_state_dir(slug) / "egress_routes.yaml"
+    state_dir = egress_state_dir(slug)
+    routes_path = state_dir / EGRESS_ROUTES_FILENAME
+    legacy_path = state_dir / "egress_routes.yaml"
+    if legacy_path.exists() and not routes_path.exists():
+        return legacy_path
+    return routes_path
 
 
 def _signal_bundle_reload(slug: str) -> None:

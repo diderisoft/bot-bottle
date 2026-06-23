@@ -27,7 +27,7 @@ def _plan(
     agent_git_gate_url: str = "",
     agent_supervise_url: str = "",
 ) -> MacosContainerBottlePlan:
-    routes_path = stage_dir / "source-routes.yaml"
+    routes_path = stage_dir / "routes.yaml"
     routes_path.write_text("routes: []\n", encoding="utf-8")
     ca_dir = stage_dir / "egress-ca"
     ca_dir.mkdir(exist_ok=True)
@@ -126,7 +126,7 @@ class TestMacosContainerLaunchArgv(unittest.TestCase):
             argv,
         )
         self.assertIn(
-            f"type=bind,source={self.stage_dir / 'source-routes.yaml'},target=/etc/egress/routes.yaml,readonly",
+            f"type=bind,source={self.stage_dir},target=/etc/egress,readonly",
             argv,
         )
         self.assertIn(

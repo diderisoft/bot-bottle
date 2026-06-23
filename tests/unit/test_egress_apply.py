@@ -90,11 +90,38 @@ class TestApplyRoutesChange(unittest.TestCase):
         self.assertEqual("routes:\n  - host: google.com\n", after)
         self.assertEqual(
             "routes:\n  - host: google.com\n",
-            (Path(self._tmp.name) / ".bot-bottle/state/dev/egress/egress_routes.yaml").read_text(encoding="utf-8"),
+            (Path(self._tmp.name) / ".bot-bottle/state/dev/egress/routes.yaml").read_text(encoding="utf-8"),
         )
         self.assertEqual(
             ["docker", "kill", "--signal", "HUP", "bot-bottle-sidecars-dev"],
             calls[0],
+        )
+
+    def test_updates_legacy_routes_file_when_existing_bottle_mounted_it(self):
+        legacy_path = (
+            Path(self._tmp.name)
+            / ".bot-bottle/state/dev/egress/egress_routes.yaml"
+        )
+        legacy_path.parent.mkdir(parents=True)
+        legacy_path.write_text("routes: []\n", encoding="utf-8")
+
+        with patch(
+            "bot_bottle.backend.docker.egress_apply.subprocess.run",
+            return_value=SimpleNamespace(returncode=0, stdout="", stderr=""),
+        ):
+            before, after = apply_routes_change(
+                "dev",
+                "routes:\n  - host: google.com\n",
+            )
+
+        self.assertEqual("routes: []\n", before)
+        self.assertEqual("routes:\n  - host: google.com\n", after)
+        self.assertEqual(
+            "routes:\n  - host: google.com\n",
+            legacy_path.read_text(encoding="utf-8"),
+        )
+        self.assertFalse(
+            (Path(self._tmp.name) / ".bot-bottle/state/dev/egress/routes.yaml").exists(),
         )
 
 

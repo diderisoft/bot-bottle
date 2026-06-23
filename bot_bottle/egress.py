@@ -31,6 +31,7 @@ CODEX_HOST_CREDENTIAL_TOKEN_REF = "BOT_BOTTLE_CODEX_HOST_ACCESS_TOKEN"
 EGRESS_HOSTNAME = "egress"
 
 EGRESS_ROUTES_IN_CONTAINER = "/etc/egress/routes.yaml"
+EGRESS_ROUTES_FILENAME = Path(EGRESS_ROUTES_IN_CONTAINER).name
 
 
 @dataclass(frozen=True)
@@ -295,7 +296,7 @@ class Egress(ABC):
     ) -> EgressPlan:
         routes = egress_routes_for_bottle(bottle, provider_routes)
         log = bottle.egress.Log
-        routes_path = stage_dir / "egress_routes.yaml"
+        routes_path = stage_dir / EGRESS_ROUTES_FILENAME
         routes_path.write_text(egress_render_routes(routes, log=log))
         routes_path.chmod(0o600)
         return EgressPlan(
@@ -309,6 +310,7 @@ class Egress(ABC):
 __all__ = [
     "CODEX_HOST_CREDENTIAL_TOKEN_REF",
     "EGRESS_HOSTNAME",
+    "EGRESS_ROUTES_FILENAME",
     "EGRESS_ROUTES_IN_CONTAINER",
     "Egress",
     "EgressPlan",

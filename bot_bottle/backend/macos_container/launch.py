@@ -363,8 +363,8 @@ def _sidecar_mounts(
     ))
     if ep.routes:
         mounts.append((
-            str(ep.routes_path),
-            EGRESS_ROUTES_IN_CONTAINER,
+            str(ep.routes_path.parent),
+            str(Path(EGRESS_ROUTES_IN_CONTAINER).parent),
             True,
         ))
 
