@@ -97,7 +97,7 @@ class TestFreezerBaseCommit(_FakeHomeMixin, unittest.TestCase):
         freezer = get_freezer("docker")
         captured = {}
 
-        def capture_freeze(agent):
+        def capture_freeze(agent: ActiveAgent) -> str:
             captured["slug"] = agent.slug
             return "some-ref"
 

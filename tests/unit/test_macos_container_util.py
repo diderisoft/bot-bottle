@@ -73,9 +73,10 @@ resolver #2
         )
         self.assertTrue(run.call_args_list[-1].kwargs["check"])
 
-    def test_commit_container_exports_rootfs_and_builds_image(self):
+    def test_commit_container_execs_tar_and_builds_image(self):
+        # stderr is bytes because subprocess.run uses stderr=PIPE without text=True
         completed = util.subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="", stderr="",
+            args=[], returncode=0, stdout=b"", stderr=b"",
         )
         dockerfile_text = ""
 
@@ -94,10 +95,10 @@ resolver #2
 
         argv = run.call_args.args[0]
         self.assertEqual("container", argv[0])
-        self.assertEqual("export", argv[1])
-        self.assertEqual("-o", argv[2])
-        self.assertTrue(argv[3].endswith("/rootfs.tar"))
-        self.assertEqual("bot-bottle-dev-abc12", argv[4])
+        self.assertEqual("exec", argv[1])
+        self.assertIn("bot-bottle-dev-abc12", argv)
+        self.assertIn("tar", argv)
+        self.assertIn("--directory=/", argv)
         build_image.assert_called_once()
         self.assertEqual(
             "bot-bottle-committed-dev-abc12:latest",
@@ -107,9 +108,9 @@ resolver #2
         self.assertIn("USER node\n", dockerfile_text)
         self.assertIn("WORKDIR /home/node\n", dockerfile_text)
 
-    def test_commit_container_dies_on_export_failure(self):
+    def test_commit_container_dies_on_exec_tar_failure(self):
         failed = util.subprocess.CompletedProcess(
-            args=[], returncode=1, stdout="", stderr="No such container",
+            args=[], returncode=1, stdout=b"", stderr=b"No such container",
         )
         with patch.object(util.subprocess, "run", return_value=failed), \
              patch.object(util, "die", side_effect=SystemExit("die")) as die:
