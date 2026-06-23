@@ -172,12 +172,14 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
         self.assertEqual(STATUS_APPROVED, entries[0].operator_action)
         self.assertEqual("needed for dev", entries[0].justification)
 
-    def test_approve_archives_gitleaks_allow(self):
+    def test_approve_gitleaks_allow_leaves_response_for_gate(self):
         qp = self._enqueue(tool=TOOL_GITLEAKS_ALLOW)
         supervise_cli.approve(qp, notes="dummy fixture")
-        resp = read_response(qp.queue_dir / "processed", qp.proposal.id)
+        # Gate polls the queue dir for the response; TUI must not archive it.
+        resp = read_response(qp.queue_dir, qp.proposal.id)
         self.assertEqual(STATUS_APPROVED, resp.status)
         self.assertEqual("dummy fixture", resp.notes)
+        self.assertFalse((qp.queue_dir / "processed").exists())
 
     def test_tui_gitleaks_allow_requires_reason(self):
         qp = self._enqueue(tool=TOOL_GITLEAKS_ALLOW)
@@ -191,7 +193,7 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
         with patch.object(supervise_cli, "_prompt", return_value="test fixture"):
             status = supervise_cli._approve_from_tui(None, qp)  # type: ignore[arg-type]
         self.assertIn("approved gitleaks-allow", status)
-        resp = read_response(qp.queue_dir / "processed", qp.proposal.id)
+        resp = read_response(qp.queue_dir, qp.proposal.id)
         self.assertEqual("test fixture", resp.notes)
 
 

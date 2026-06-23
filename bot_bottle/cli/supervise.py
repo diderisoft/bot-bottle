@@ -188,7 +188,7 @@ def approve(
         qp, action=status, notes=notes,
         diff_before=diff_before, diff_after=diff_after,
     )
-    if qp.proposal.tool in (TOOL_CAPABILITY_BLOCK, TOOL_GITLEAKS_ALLOW):
+    if qp.proposal.tool == TOOL_CAPABILITY_BLOCK:
         archive_proposal(qp.queue_dir, qp.proposal.id)
 
 
