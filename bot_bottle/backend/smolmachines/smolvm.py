@@ -25,6 +25,7 @@ smolvm binary."""
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import time
@@ -151,6 +152,21 @@ def machine_create(
             args += ["-e", f"{k}={v}"]
     args.append(name)
     _smolvm(*args)
+
+
+def machine_is_running(name: str) -> bool:
+    """Return True if the named VM is in the 'running' state."""
+    result = _smolvm("machine", "ls", "--json", check=False)
+    if result.returncode != 0:
+        return False
+    try:
+        machines = json.loads(result.stdout or "[]")
+    except ValueError:
+        return False
+    return any(
+        isinstance(m, dict) and m.get("name") == name and m.get("state") == "running"
+        for m in machines
+    )
 
 
 def machine_start(name: str) -> None:
