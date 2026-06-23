@@ -5,6 +5,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
+from bot_bottle.backend.macos_container import bottle as bottle_mod
 from bot_bottle.backend.macos_container.bottle import MacosContainerBottle
 
 
@@ -16,12 +17,15 @@ class TestMacosContainerBottle(unittest.TestCase):
             None,
             agent_command="codex",
         )
+        with patch.dict(bottle_mod.os.environ, {"TERM": "xterm-256color"}, clear=False):
+            argv = bottle.agent_argv(["run"])
         self.assertEqual(
             [
                 "container", "exec", "--interactive", "--tty",
+                "--env", "TERM=xterm-256color",
                 "bot-bottle-dev-abc", "codex", "run",
             ],
-            bottle.agent_argv(["run"]),
+            argv,
         )
 
     def test_agent_argv_includes_workdir(self):
@@ -31,14 +35,37 @@ class TestMacosContainerBottle(unittest.TestCase):
             None,
             agent_workdir="/home/node/workspace",
         )
+        with patch.dict(bottle_mod.os.environ, {"TERM": "xterm-256color"}, clear=False):
+            argv = bottle.agent_argv([])
         self.assertEqual(
             [
                 "container", "exec", "--interactive", "--tty",
+                "--env", "TERM=xterm-256color",
                 "--workdir", "/home/node/workspace",
                 "bot-bottle-dev-abc", "claude",
             ],
-            bottle.agent_argv([]),
+            argv,
         )
+
+    def test_agent_argv_uses_host_term_value(self):
+        bottle = MacosContainerBottle("bot-bottle-dev-abc", lambda: None, None)
+        with patch.dict(bottle_mod.os.environ, {"TERM": "screen-256color"}, clear=False):
+            argv = bottle.agent_argv([])
+        self.assertIn("--env", argv)
+        self.assertIn("TERM=screen-256color", argv)
+
+    def test_agent_argv_term_falls_back_to_xterm_256color(self):
+        bottle = MacosContainerBottle("bot-bottle-dev-abc", lambda: None, None)
+        env_without_term = {k: v for k, v in bottle_mod.os.environ.items() if k != "TERM"}
+        with patch.object(bottle_mod.os, "environ", env_without_term):
+            argv = bottle.agent_argv([])
+        self.assertIn("TERM=xterm-256color", argv)
+
+    def test_agent_argv_no_tty_omits_term(self):
+        bottle = MacosContainerBottle("bot-bottle-dev-abc", lambda: None, None)
+        argv = bottle.agent_argv([], tty=False)
+        self.assertNotIn("--tty", argv)
+        self.assertNotIn("--env", argv)
 
     def test_exec_pipes_script_to_shell(self):
         bottle = MacosContainerBottle("bot-bottle-dev-abc", lambda: None, None)

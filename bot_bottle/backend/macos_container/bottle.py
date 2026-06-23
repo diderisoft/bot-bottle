@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from typing import Callable, cast
 
@@ -47,6 +48,11 @@ class MacosContainerBottle(Bottle):
         cmd = ["container", "exec"]
         if tty:
             cmd.extend(["--interactive", "--tty"])
+            # Forward TERM so Claude Code can enable modifier-key protocols
+            # (e.g. modifyOtherKeys). Without it the inner PTY session has no
+            # TERM and Shift+Enter is indistinguishable from plain Enter.
+            term = os.environ.get("TERM", "xterm-256color")
+            cmd.extend(["--env", f"TERM={term}"])
         if self.agent_workdir and self.agent_workdir != "/home/node":
             cmd.extend(["--workdir", self.agent_workdir])
         cmd.extend([self.name, self.agent_command, *full_argv])
