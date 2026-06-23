@@ -33,6 +33,9 @@ from ..backend.docker.egress_apply import (
 from ..backend.macos_container.egress_apply import (
     apply_routes_change as _macos_apply_routes_change,
 )
+from ..backend.smolmachines.egress_apply import (
+    apply_routes_change as _smolmachines_apply_routes_change,
+)
 from ..log import Die, error, info
 
 
@@ -78,8 +81,11 @@ ApplyError = (CapabilityApplyError, EgressApplyError)
 
 def apply_routes_change(slug: str, content: str) -> tuple[str, str]:
     meta = read_metadata(slug)
-    if meta is not None and meta.backend == "macos-container":
+    backend = meta.backend if meta is not None else ""
+    if backend == "macos-container":
         return _macos_apply_routes_change(slug, content)
+    if backend == "smolmachines":
+        return _smolmachines_apply_routes_change(slug, content)
     return _docker_apply_routes_change(slug, content)
 
 
