@@ -9,7 +9,7 @@ from __future__ import annotations
 import io
 import termios
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 from bot_bottle.backend.macos_container import pty_forward
 
@@ -98,7 +98,7 @@ class TestRawModeSetupAndRestore(unittest.TestCase):
         self.assertEqual(0, rc)
         setraw.assert_called_once()
         tcsetattr.assert_called_once_with(
-            unittest.mock.ANY, termios.TCSADRAIN, saved_attrs,
+            ANY, termios.TCSADRAIN, saved_attrs,
         )
 
     def test_tty_restores_on_subprocess_nonzero_exit(self):
@@ -116,7 +116,7 @@ class TestRawModeSetupAndRestore(unittest.TestCase):
 
         self.assertEqual(1, rc)
         tcsetattr.assert_called_once_with(
-            unittest.mock.ANY, termios.TCSADRAIN, saved_attrs,
+            ANY, termios.TCSADRAIN, saved_attrs,
         )
 
     def test_tcgetattr_error_falls_back_to_bare_run(self):
