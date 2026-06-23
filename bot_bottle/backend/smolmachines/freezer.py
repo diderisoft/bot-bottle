@@ -2,34 +2,39 @@
 
 `smolvm pack create --from-vm` requires the VM to be stopped, and smolvm
 removes VMs when stopped (same issue as Apple Container). Instead, exec
-into the running VM as root and stream the root filesystem via tar, build
-a Docker image from the archive, convert it to a smolmachine artifact via
-the existing registry pipeline, and record the sidecar path. The VM stays
-running throughout."""
+into the running VM as root to write a gzip-compressed tar of the root
+filesystem to /var/tmp, then copy it to the host with `smolvm machine cp`,
+build a Docker image from the archive, convert it to a smolmachine artifact
+via the existing registry pipeline, and record the sidecar path. The VM
+stays running throughout."""
 
 from __future__ import annotations
 
-import shutil
-import subprocess
 import tempfile
-import threading
 from pathlib import Path
 
 from .. import ActiveAgent
 from ..freeze import Freezer
 from ..docker import util as docker_mod
 from .local_registry import crane_push_tarball, ephemeral_registry
-from .smolvm import pack_create
+from .smolvm import machine_cp, machine_exec, pack_create
 from ...bottle_state import bottle_state_dir
 from ...log import die, info
+
+
+# Temp file written inside the VM during commit. Lives in /var/tmp
+# (on-disk, unlike tmpfs /tmp) to survive for machine_cp.
+_VM_COMMIT_TAR = "/var/tmp/.bot-bottle-commit.tar.gz"
 
 
 class SmolmachinesFreezer(Freezer):
     """Freezes a smolmachines bottle via exec-tar + Docker image + smolmachine pack.
 
-    The VM is NOT stopped. smolvm machine exec streams the root filesystem
-    via tar; we build a Docker image from it and run the same image→registry→
-    pack_create pipeline that _ensure_smolmachine uses for fresh builds."""
+    The VM is NOT stopped. We exec into the running VM to write a compressed
+    tar of the root filesystem to /var/tmp, copy it to the host with
+    machine_cp, build a Docker image (Docker's ADD decompresses .tar.gz
+    automatically), then run the same image→registry→pack_create pipeline
+    that _ensure_smolmachine uses for fresh builds."""
 
     backend_name = "smolmachines"
 
@@ -55,14 +60,16 @@ def _snapshot_running_vm(machine: str, image_ref: str, binary: Path) -> None:
     """
     with tempfile.TemporaryDirectory(prefix="bot-bottle-vm-commit.") as tmp:
         tmp_path = Path(tmp)
-        rootfs_tar = tmp_path / "rootfs.tar"
+        # Use .tar.gz — Docker ADD decompresses automatically and the
+        # compressed archive fits in the VM's /var/tmp more easily.
+        rootfs_tar_gz = tmp_path / "rootfs.tar.gz"
         dockerfile = tmp_path / "Dockerfile"
 
-        _exec_tar_to_file(machine, rootfs_tar)
+        _exec_tar_to_file(machine, rootfs_tar_gz)
 
         dockerfile.write_text(
             "FROM scratch\n"
-            "ADD rootfs.tar /\n"
+            "ADD rootfs.tar.gz /\n"
             "USER node\n"
             "WORKDIR /home/node\n"
         )
@@ -82,47 +89,50 @@ def _snapshot_running_vm(machine: str, image_ref: str, binary: Path) -> None:
 
 
 def _exec_tar_to_file(machine: str, dest: Path) -> None:
-    """Stream the VM root filesystem as a tar archive to `dest`.
+    """Snapshot the running VM's root filesystem to dest (.tar.gz).
 
-    smolvm machine exec requires stdout to be a pipe, not a regular file.
-    We use Popen with stdout=PIPE and drain stderr in a background thread
-    to avoid deadlock if either buffer fills while we're writing the other."""
-    proc = subprocess.Popen(
+    Writes a gzip-compressed tar to _VM_COMMIT_TAR inside the VM via
+    machine_exec (same mechanism as provisioning), then copies it to the
+    host with machine_cp. This avoids binary-stdout piping through the
+    smolvm exec channel, which does not reliably handle large binary output.
+
+    A connectivity probe (machine_exec true) runs first so a concurrent-exec
+    limitation (smolvm may reject a second exec while -i -t is active) is
+    reported clearly rather than as a silent failure."""
+    # Connectivity probe — if smolvm rejects concurrent exec while an
+    # interactive session is running, fail clearly here.
+    probe = machine_exec(machine, ["true"])
+    if probe.returncode != 0:
+        die(
+            f"smolvm exec is not available for {machine!r} "
+            f"(exit {probe.returncode}: {probe.stderr.strip() or probe.stdout.strip() or '<no output>'}). "
+            f"If an interactive session is active, smolvm may not support concurrent exec."
+        )
+
+    # Create the compressed tar inside the VM.
+    # tar exits 1 when files change during archiving (normal for a live
+    # filesystem); only treat exit > 1 as fatal.
+    tar_result = machine_exec(
+        machine,
         [
-            "smolvm", "machine", "exec",
-            "--name", machine, "--",
-            "tar", "--create",
+            "tar", "--create", "--gzip",
             "--exclude=./proc",
             "--exclude=./sys",
             "--exclude=./dev",
             "--exclude=./run",
-            "--file=-",
+            f"--file={_VM_COMMIT_TAR}",
             "--directory=/",
             ".",
         ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
     )
-
-    stderr_chunks: list[bytes] = []
-
-    def _drain_stderr() -> None:
-        assert proc.stderr is not None
-        stderr_chunks.append(proc.stderr.read())
-
-    t = threading.Thread(target=_drain_stderr, daemon=True)
-    t.start()
-
-    assert proc.stdout is not None
-    with open(dest, "wb") as out:
-        shutil.copyfileobj(proc.stdout, out, length=65536)
-
-    t.join()
-    returncode = proc.wait()
-    stderr = b"".join(stderr_chunks).decode(errors="replace").strip()
-
-    if returncode != 0:
+    if tar_result.returncode > 1:
         die(
-            f"smolvm exec tar {machine!r} failed: "
-            f"{stderr or '<no stderr>'}"
+            f"smolvm exec tar {machine!r} failed (exit {tar_result.returncode}): "
+            f"{tar_result.stderr.strip() or tar_result.stdout.strip() or '<no output>'}"
         )
+
+    # Copy from VM to host, then clean up.
+    try:
+        machine_cp(f"{machine}:{_VM_COMMIT_TAR}", str(dest))
+    finally:
+        machine_exec(machine, ["rm", "-f", _VM_COMMIT_TAR])
