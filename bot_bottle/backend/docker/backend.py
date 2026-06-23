@@ -30,6 +30,7 @@ from ...egress import EgressPlan
 from ...env import ResolvedEnv
 from ...git_gate import GitGatePlan
 from ...supervise import SupervisePlan
+from ...manifest import Manifest
 from .. import ActiveAgent, BottleBackend, BottleSpec
 from . import cleanup as _cleanup
 from . import enumerate as _enumerate
@@ -63,6 +64,7 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
         self,
         spec: BottleSpec,
         *,
+        manifest: Manifest,
         slug: str,
         resolved_env: ResolvedEnv,
         agent_provision_plan: AgentProvisionPlan,
@@ -73,6 +75,7 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
     ) -> DockerBottlePlan:
         return _resolve_plan.resolve_plan(
             spec,
+            manifest=manifest,
             slug=slug,
             resolved_env=resolved_env,
             agent_provision_plan=agent_provision_plan,

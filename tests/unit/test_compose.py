@@ -67,16 +67,6 @@ def _manifest(*, supervise: bool, with_git: bool, with_egress: bool) -> Manifest
     })
 
 
-def _spec(*, supervise: bool, with_git: bool, with_egress: bool) -> BottleSpec:
-    return BottleSpec(
-        manifest=_manifest(
-            supervise=supervise, with_git=with_git, with_egress=with_egress,
-        ),
-        agent_name="demo",
-        copy_cwd=False,
-        user_cwd="/tmp/x",
-    )
-
 
 def _git_gate_plan(upstreams: tuple[GitGateUpstream, ...] = ()) -> GitGatePlan:
     return GitGatePlan(
@@ -146,9 +136,16 @@ def _plan(
             roles=(),
         ),)
 
-    spec = _spec(supervise=supervise, with_git=with_git, with_egress=with_egress)
+    index = _manifest(supervise=supervise, with_git=with_git, with_egress=with_egress)
+    spec = BottleSpec(
+        manifest=index,
+        agent_name="demo",
+        copy_cwd=False,
+        user_cwd="/tmp/x",
+    )
     return DockerBottlePlan(
         spec=spec,
+        manifest=index.load_for_agent("demo"),
         stage_dir=STAGE,
         slug=SLUG,
         forwarded_env={"CLAUDE_CODE_OAUTH_TOKEN": "x"},

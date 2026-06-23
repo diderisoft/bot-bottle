@@ -26,7 +26,7 @@ from ..bottle_state import (
 )
 from ..egress import Egress, EgressPlan
 from ..git_gate import GitGate, GitGatePlan
-from ..manifest import ManifestBottle
+from ..manifest import Manifest, ManifestBottle
 from ..supervise import Supervise, SupervisePlan
 from . import BottleSpec
 
@@ -66,10 +66,10 @@ def write_launch_metadata(
     ))
 
 
-def prepare_agent_state_dir(slug: str, spec: BottleSpec) -> tuple[Path, Path]:
+def prepare_agent_state_dir(slug: str, manifest: Manifest) -> tuple[Path, Path]:
     """Create the agent state subdir, write the prompt file.
     Returns (agent_dir, prompt_file)."""
-    agent = spec.loaded_manifest.agent
+    agent = manifest.agent
     agent_dir = agent_state_dir(slug)
     agent_dir.mkdir(parents=True, exist_ok=True)
     prompt_file = agent_dir / "prompt.txt"

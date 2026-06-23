@@ -9,6 +9,7 @@ from ...egress import EgressPlan
 from ...env import ResolvedEnv
 from ...git_gate import GitGatePlan
 from ...supervise import SupervisePlan
+from ...manifest import Manifest
 from .. import BottleSpec
 from . import util as container_mod
 from .bottle_plan import MacosContainerBottlePlan
@@ -24,6 +25,7 @@ def build_guest_env(resolved_env: ResolvedEnv) -> dict[str, str]:
 
 def resolve_plan(
     spec: BottleSpec,
+    manifest: Manifest,
     slug: str,
     resolved_env: ResolvedEnv,
     agent_provision_plan: AgentProvisionPlan,
@@ -34,6 +36,7 @@ def resolve_plan(
 ) -> MacosContainerBottlePlan:
     return MacosContainerBottlePlan(
         spec=spec,
+        manifest=manifest,
         stage_dir=stage_dir,
         slug=slug,
         forwarded_env=dict(resolved_env.forwarded),

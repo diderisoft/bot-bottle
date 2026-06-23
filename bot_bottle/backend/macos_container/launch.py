@@ -68,7 +68,7 @@ def launch(
 ) -> Generator[MacosContainerBottle, None, None]:
     """Build, run, provision, and yield an Apple Container bottle."""
     stack = ExitStack()
-    bottle_for_revoke = plan.spec.loaded_manifest.bottle
+    bottle_for_revoke = plan.manifest.bottle
     git_gate_dir_for_revoke = git_gate_state_dir(plan.slug)
 
     def teardown() -> None:

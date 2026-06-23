@@ -37,7 +37,7 @@ import shlex
 import sys
 from abc import ABC, abstractmethod
 from contextlib import AbstractContextManager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Generic, Sequence, TypeVar
 
@@ -61,17 +61,10 @@ class BottleSpec:
     Resolved values (image names, container name, scratch paths, runsc
     availability) live on the plan, not the spec."""
 
-    manifest: ManifestIndex | Manifest
+    manifest: ManifestIndex
     agent_name: str
     copy_cwd: bool
     user_cwd: str
-
-    @property
-    def loaded_manifest(self) -> Manifest:
-        assert isinstance(self.manifest, Manifest), (
-            "spec.manifest is still a ManifestIndex — call _validate() first"
-        )
-        return self.manifest
     # PRD 0016 follow-up: when set, the backend's prepare step uses
     # this identity instead of minting a fresh one — the resume path
     # (`cli.py resume <identity>`) sets this to continue an existing
@@ -87,6 +80,7 @@ class BottlePlan(ABC):
     (e.g. DockerBottlePlan) add backend-specific resolved fields."""
 
     spec: BottleSpec
+    manifest: Manifest
     stage_dir: Path
     git_gate_plan: GitGatePlan
 
@@ -119,7 +113,7 @@ class BottlePlan(ABC):
         """Render the y/N preflight summary to stderr."""
         del remote_control
         spec = self.spec
-        manifest = spec.loaded_manifest
+        manifest = self.manifest
         agent = manifest.agent
         bottle = manifest.bottle
 
@@ -296,11 +290,10 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
             write_launch_metadata,
         )
 
-        spec = self._validate(spec)
+        manifest = self._validate(spec)
 
         self._preflight()
 
-        manifest = spec.loaded_manifest
         manifest_bottle = manifest.bottle
         manifest_agent_provider = manifest_bottle.agent_provider
         agent_provider = get_provider(manifest_agent_provider.template)
@@ -320,7 +313,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         else:
             agent_dockerfile_path = str(agent_provider.dockerfile)
 
-        agent_dir, prompt_file = prepare_agent_state_dir(slug, spec)
+        agent_dir, prompt_file = prepare_agent_state_dir(slug, manifest)
 
         agent_provision_plan = build_agent_provision_plan(
             template=manifest_agent_provider.template,
@@ -344,6 +337,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
 
         return self._resolve_plan(
             spec,
+            manifest=manifest,
             slug=slug,
             resolved_env=resolved_env,
             agent_provision_plan=agent_provision_plan,
@@ -362,24 +356,18 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         """
         pass
 
-    def _validate(self, spec: BottleSpec) -> BottleSpec:
+    def _validate(self, spec: BottleSpec) -> Manifest:
         """Cross-backend pre-launch checks. Parses the selected agent and
         its bottle (raising ManifestError on invalid content), confirms
         skills are present on the host, and every git IdentityFile resolves.
 
-        Returns a new BottleSpec whose manifest is fully loaded for the
-        selected agent. Subclasses with additional preconditions should
-        override and call `super()._validate(spec)` first, using the
-        returned spec for further checks."""
-        assert isinstance(spec.manifest, ManifestIndex), (
-            "_validate() called on a spec whose manifest is already loaded"
-        )
+        Returns the loaded Manifest for the selected agent. Subclasses with
+        additional preconditions should override and call
+        `super()._validate(spec)` first."""
         manifest = spec.manifest.load_for_agent(spec.agent_name)
-        spec = replace(spec, manifest=manifest)
-        agent = manifest.agent
-        self._validate_skills(agent.skills)
-        self._validate_agent_provider_dockerfile(spec)
-        return spec
+        self._validate_skills(manifest.agent.skills)
+        self._validate_agent_provider_dockerfile(spec, manifest)
+        return manifest
 
     def _validate_skills(self, skills: Sequence[str]) -> None:
         """Each named skill must be a directory under the host's
@@ -393,8 +381,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
                     f"Create it under ~/.claude/skills/, then re-run."
                 )
 
-    def _validate_agent_provider_dockerfile(self, spec: BottleSpec) -> None:
-        manifest = spec.loaded_manifest
+    def _validate_agent_provider_dockerfile(self, spec: BottleSpec, manifest: Manifest) -> None:
         bottle = manifest.bottle
         dockerfile = bottle.agent_provider.dockerfile
         if not dockerfile:
@@ -412,6 +399,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
     def _resolve_plan(self,
                       spec: BottleSpec,
                       *,
+                      manifest: Manifest,
                       slug: str,
                       resolved_env: ResolvedEnv,
                       agent_provision_plan: AgentProvisionPlan,

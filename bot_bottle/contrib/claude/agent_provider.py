@@ -211,7 +211,7 @@ class ClaudeAgentProvider(AgentProvider):
         when the agent has no skills."""
         from ...backend.util import host_skill_dir
 
-        agent = plan.spec.loaded_manifest.agent
+        agent = plan.manifest.agent
         if not agent.skills:
             return
         skills_dir = _skills_dir(plan.guest_home)
@@ -240,7 +240,7 @@ class ClaudeAgentProvider(AgentProvider):
             f"chown node:node {prompt_path} && chmod 600 {prompt_path}",
             user="root",
         )
-        agent = plan.spec.loaded_manifest.agent
+        agent = plan.manifest.agent
         return prompt_path if plan.agent_provision.has_prompt or agent.prompt else None
 
     def provision(self, plan: "BottlePlan", bottle: "Bottle") -> None:

@@ -51,16 +51,18 @@ def _plan(*, git_user: dict | None = None,  # type: ignore
     bottle_json: dict = {}  # type: ignore
     if git_user is not None:
         bottle_json["git-gate"] = {"user": git_user}
-    manifest = ManifestIndex.from_json_obj({
+    index = ManifestIndex.from_json_obj({
         "bottles": {"dev": bottle_json},
         "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
-    }).load_for_agent("demo")
+    })
+    manifest = index.load_for_agent("demo")
     spec = BottleSpec(
-        manifest=manifest, agent_name="demo",
+        manifest=index, agent_name="demo",
         copy_cwd=copy_cwd, user_cwd=user_cwd,
     )
     return DockerBottlePlan(
         spec=spec,
+        manifest=manifest,
         stage_dir=stage_dir or Path("/tmp/stage"),
         slug="demo-abc12",
         forwarded_env={},

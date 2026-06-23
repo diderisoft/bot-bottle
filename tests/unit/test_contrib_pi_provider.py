@@ -43,7 +43,7 @@ def _plan(
     skills: list[str] | None = None,
     agent_provision: AgentProvisionPlan | None = None,
 ) -> DockerBottlePlan:
-    manifest = ManifestIndex.from_json_obj({
+    index = ManifestIndex.from_json_obj({
         "bottles": {"dev": {"agent_provider": {"template": "pi"}}},
         "agents": {
             "demo": {
@@ -52,13 +52,15 @@ def _plan(
                 "bottle": "dev",
             },
         },
-    }).load_for_agent("demo")
+    })
+    manifest = index.load_for_agent("demo")
     spec = BottleSpec(
-        manifest=manifest, agent_name="demo",
+        manifest=index, agent_name="demo",
         copy_cwd=False, user_cwd="/tmp/x",
     )
     return DockerBottlePlan(
         spec=spec,
+        manifest=manifest,
         stage_dir=Path("/tmp/stage"),
         slug="demo-abc12",
         forwarded_env={},

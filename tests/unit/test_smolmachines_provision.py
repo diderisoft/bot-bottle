@@ -110,7 +110,7 @@ def _plan(
         bottle_json["git-gate"] = git_gate_json
     if supervise:
         bottle_json["supervise"] = True
-    manifest = ManifestIndex.from_json_obj({
+    index = ManifestIndex.from_json_obj({
         "bottles": {"dev": bottle_json},
         "agents": {
             "demo": {
@@ -119,9 +119,10 @@ def _plan(
                 "bottle": "dev",
             },
         },
-    }).load_for_agent("demo")
+    })
+    manifest = index.load_for_agent("demo")
     spec = BottleSpec(
-        manifest=manifest,
+        manifest=index,
         agent_name="demo",
         copy_cwd=copy_cwd,
         user_cwd=user_cwd,
@@ -135,6 +136,7 @@ def _plan(
         )
     return SmolmachinesBottlePlan(
         spec=spec,
+        manifest=manifest,
         stage_dir=stage_dir or Path("/tmp/stage"),
         slug="demo-abc12",
         bundle_subnet="192.168.50.0/24",

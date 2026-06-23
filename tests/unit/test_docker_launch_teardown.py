@@ -23,22 +23,17 @@ from bot_bottle.egress import EgressPlan
 from bot_bottle.git_gate import GitGatePlan
 from bot_bottle.manifest import ManifestIndex
 
-
-from bot_bottle.manifest import Manifest, ManifestIndex
-
-
-def _manifest() -> Manifest:
-    return ManifestIndex.from_json_obj({
-        "bottles": {"dev": {}},
-        "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
-    }).load_for_agent("demo")
+_INDEX = ManifestIndex.from_json_obj({
+    "bottles": {"dev": {}},
+    "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+})
 
 
 def _plan(tmp: str) -> DockerBottlePlan:
     stage = Path(tmp)
-    manifest = _manifest()
+    manifest = _INDEX.load_for_agent("demo")
     spec = BottleSpec(
-        manifest=manifest,
+        manifest=_INDEX,
         agent_name="demo",
         copy_cwd=False,
         user_cwd=tmp,
@@ -46,6 +41,7 @@ def _plan(tmp: str) -> DockerBottlePlan:
     )
     return DockerBottlePlan(
         spec=spec,
+        manifest=manifest,
         stage_dir=stage,
         git_gate_plan=GitGatePlan(
             slug="test-teardown-00001",

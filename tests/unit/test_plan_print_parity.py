@@ -22,16 +22,15 @@ from bot_bottle.git_gate import GitGatePlan, GitGateUpstream
 from bot_bottle.manifest import Manifest, ManifestIndex
 
 
-def _manifest() -> Manifest:
-    return ManifestIndex.from_json_obj({
-        "bottles": {"dev": {}},
-        "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
-    }).load_for_agent("demo")
+_INDEX = ManifestIndex.from_json_obj({
+    "bottles": {"dev": {}},
+    "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+})
 
 
-def _spec(manifest: Manifest, tmp: str) -> BottleSpec:
+def _spec(index: ManifestIndex, tmp: str) -> BottleSpec:
     return BottleSpec(
-        manifest=manifest,
+        manifest=index,
         agent_name="demo",
         copy_cwd=False,
         user_cwd=tmp,
@@ -92,10 +91,11 @@ def _agent_provision(tmp: str) -> AgentProvisionPlan:
     )
 
 
-def _docker_plan(spec: BottleSpec, tmp: str) -> DockerBottlePlan:
+def _docker_plan(spec: BottleSpec, manifest: Manifest, tmp: str) -> DockerBottlePlan:
     stage = Path(tmp)
     return DockerBottlePlan(
         spec=spec,
+        manifest=manifest,
         stage_dir=stage,
         git_gate_plan=_git_gate_plan(tmp),
         egress_plan=_egress_plan(tmp),
@@ -107,10 +107,11 @@ def _docker_plan(spec: BottleSpec, tmp: str) -> DockerBottlePlan:
     )
 
 
-def _smolmachines_plan(spec: BottleSpec, tmp: str) -> SmolmachinesBottlePlan:
+def _smolmachines_plan(spec: BottleSpec, manifest: Manifest, tmp: str) -> SmolmachinesBottlePlan:
     stage = Path(tmp)
     return SmolmachinesBottlePlan(
         spec=spec,
+        manifest=manifest,
         stage_dir=stage,
         git_gate_plan=_git_gate_plan(tmp),
         egress_plan=_egress_plan(tmp),
@@ -140,10 +141,10 @@ class TestGitGatePrintParity(unittest.TestCase):
 
     def setUp(self) -> None:
         self._tmp = tempfile.mkdtemp(prefix="plan-print-parity-")
-        manifest = _manifest()
-        spec = _spec(manifest, self._tmp)
-        self._docker_lines = _capture_print(_docker_plan(spec, self._tmp))
-        self._smol_lines = _capture_print(_smolmachines_plan(spec, self._tmp))
+        manifest = _INDEX.load_for_agent("demo")
+        spec = _spec(_INDEX, self._tmp)
+        self._docker_lines = _capture_print(_docker_plan(spec, manifest, self._tmp))
+        self._smol_lines = _capture_print(_smolmachines_plan(spec, manifest, self._tmp))
 
     def _git_gate_lines(self, lines: list[str]) -> list[str]:
         return [ln for ln in lines if "git gate" in ln]
@@ -170,10 +171,10 @@ class TestEgressPrintParity(unittest.TestCase):
 
     def setUp(self) -> None:
         self._tmp = tempfile.mkdtemp(prefix="plan-print-parity-")
-        manifest = _manifest()
-        spec = _spec(manifest, self._tmp)
-        self._docker_lines = _capture_print(_docker_plan(spec, self._tmp))
-        self._smol_lines = _capture_print(_smolmachines_plan(spec, self._tmp))
+        manifest = _INDEX.load_for_agent("demo")
+        spec = _spec(_INDEX, self._tmp)
+        self._docker_lines = _capture_print(_docker_plan(spec, manifest, self._tmp))
+        self._smol_lines = _capture_print(_smolmachines_plan(spec, manifest, self._tmp))
 
     def _egress_section(self, lines: list[str]) -> list[str]:
         """Return lines from the egress label through the last route entry.

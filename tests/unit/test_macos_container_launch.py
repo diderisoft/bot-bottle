@@ -11,6 +11,12 @@ from unittest.mock import patch
 
 from bot_bottle.backend.macos_container import launch
 from bot_bottle.backend.macos_container.bottle_plan import MacosContainerBottlePlan
+from bot_bottle.manifest import ManifestIndex
+
+_MANIFEST = ManifestIndex.from_json_obj({
+    "bottles": {"dev": {}},
+    "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+}).load_for_agent("demo")
 
 
 def _plan(
@@ -67,6 +73,7 @@ def _plan(
     )
     return cast(MacosContainerBottlePlan, SimpleNamespace(
         spec=SimpleNamespace(),
+        manifest=_MANIFEST,
         stage_dir=stage_dir,
         slug="dev-abc",
         container_name="bot-bottle-dev-abc",
@@ -193,6 +200,7 @@ class TestMacosContainerLaunchArgv(unittest.TestCase):
         )
         plan = MacosContainerBottlePlan(
             spec=base.spec,
+            manifest=base.manifest,
             stage_dir=base.stage_dir,
             git_gate_plan=base.git_gate_plan,
             egress_plan=base.egress_plan,

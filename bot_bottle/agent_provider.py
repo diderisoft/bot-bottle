@@ -240,7 +240,7 @@ class AgentProvider(ABC):
         BottleBackend.provision_workspace against the running bottle."""
         from .log import info
 
-        manifest_bottle = plan.spec.loaded_manifest.bottle
+        manifest_bottle = plan.manifest.bottle
         if manifest_bottle.git:
             from .git_gate import GIT_GATE_HOSTNAME, git_gate_render_gitconfig
             gate_host = getattr(plan, "git_gate_insteadof_host", GIT_GATE_HOSTNAME)

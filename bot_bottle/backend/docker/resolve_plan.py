@@ -18,6 +18,7 @@ from .. import BottleSpec
 from ...env import ResolvedEnv
 from ...agent_provider import AgentProvisionPlan
 from ...egress import EgressPlan
+from ...manifest import Manifest
 from ...supervise import SupervisePlan
 from ...git_gate import GitGatePlan
 
@@ -31,6 +32,7 @@ def build_guest_env(resolved_env: ResolvedEnv) -> dict[str, str]:
 
 def resolve_plan(
     spec: BottleSpec,
+    manifest: Manifest,
     slug: str,
     resolved_env: ResolvedEnv,
     agent_provision_plan: AgentProvisionPlan,
@@ -48,6 +50,7 @@ def resolve_plan(
 
     return DockerBottlePlan(
         spec=spec,
+        manifest=manifest,
         stage_dir=stage_dir,
         slug=slug,
         forwarded_env=dict(resolved_env.forwarded),

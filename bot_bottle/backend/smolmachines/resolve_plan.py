@@ -13,6 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .. import BottleSpec
+from ...manifest import Manifest
 from ...env import ResolvedEnv
 from ...agent_provider import AgentProvisionPlan
 from ...egress import EgressPlan
@@ -46,6 +47,7 @@ def build_guest_env(resolved_env: ResolvedEnv) -> dict[str, str]:
 
 def resolve_plan(
     spec: BottleSpec,
+    manifest: Manifest,
     slug: str,
     resolved_env: ResolvedEnv,
     agent_provision_plan: AgentProvisionPlan,
@@ -67,6 +69,7 @@ def resolve_plan(
 
     return SmolmachinesBottlePlan(
         spec=spec,
+        manifest=manifest,
         stage_dir=stage_dir,
         slug=slug,
         bundle_subnet=subnet,

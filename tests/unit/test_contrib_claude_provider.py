@@ -55,7 +55,7 @@ def _plan(
     bottle_json: dict = {"agent_provider": {"template": "claude"}}  # type: ignore
     if supervise:
         bottle_json["supervise"] = True
-    manifest = ManifestIndex.from_json_obj({
+    index = ManifestIndex.from_json_obj({
         "bottles": {"dev": bottle_json},
         "agents": {
             "demo": {
@@ -64,9 +64,10 @@ def _plan(
                 "bottle": "dev",
             },
         },
-    }).load_for_agent("demo")
+    })
+    manifest = index.load_for_agent("demo")
     spec = BottleSpec(
-        manifest=manifest, agent_name="demo",
+        manifest=index, agent_name="demo",
         copy_cwd=False, user_cwd="/tmp/x",
     )
     supervise_plan = None
@@ -78,6 +79,7 @@ def _plan(
         )
     return DockerBottlePlan(
         spec=spec,
+        manifest=manifest,
         stage_dir=Path("/tmp/stage"),
         slug="demo-abc12",
         forwarded_env={},
