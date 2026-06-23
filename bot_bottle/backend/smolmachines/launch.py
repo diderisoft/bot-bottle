@@ -276,10 +276,16 @@ def _init_vm(plan: SmolmachinesBottlePlan) -> None:
     All folded into one sh -c to avoid back-to-back exec calls
     immediately after machine_start (libkrun exec-channel race).
 
+    mkdir -p guards: when booting from a committed snapshot, /tmp and
+    /var/tmp are excluded from the archive (they're ephemeral and their
+    stale contents would have wrong uid after smolvm's uid remap). The
+    directories must be created before chown/chmod can set permissions.
+
     wait_exec_ready polls until the exec channel is ready for the
     subsequent provision calls, replacing the empirical sleep."""
     _smolvm.machine_exec(plan.machine_name, [
         "sh", "-c",
+        "mkdir -p /tmp /var/tmp && "
         "chown -R node:node /home/node && "
         "chown root:root /tmp /var/tmp && "
         "chmod 1777 /tmp /var/tmp",

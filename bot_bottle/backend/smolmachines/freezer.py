@@ -120,6 +120,13 @@ def _exec_tar_to_file(machine: str, dest: Path) -> None:
             "--exclude=./sys",
             "--exclude=./dev",
             "--exclude=./run",
+            # /tmp and /var/tmp are ephemeral. Their stale contents
+            # (e.g. /tmp/claude-<uid>) have uid remapped by smolvm's
+            # pack process, causing Claude Code to refuse to use them
+            # on resume. Exclude both; _init_vm recreates them with
+            # mkdir -p + correct ownership on every boot.
+            "--exclude=./tmp",
+            "--exclude=./var/tmp",
             f"--file={_VM_COMMIT_TAR}",
             "--directory=/",
             ".",
