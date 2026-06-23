@@ -3,7 +3,8 @@ act on them (approve / modify / reject).
 
 Curses-based TUI; modify-then-approve shells out to $EDITOR. The
 approval handler wires to PRD 0016 (capability-block), which rebuilds
-the bottle Dockerfile. The egress-block tool was removed in issue #198.
+the bottle Dockerfile. Egress proposals are queued for operator review
+as full routes.yaml updates.
 """
 
 from __future__ import annotations
@@ -40,6 +41,8 @@ from ..supervise import (
     STATUS_MODIFIED,
     STATUS_REJECTED,
     TOOL_CAPABILITY_BLOCK,
+    TOOL_ALLOW,
+    TOOL_EGRESS_BLOCK,
     archive_proposal,
     list_pending_proposals,
     render_diff,
@@ -115,6 +118,8 @@ def _detail_lines(
 def _suffix_for_tool(tool: str) -> str:
     if tool == TOOL_CAPABILITY_BLOCK:
         return ".dockerfile"
+    if tool in (TOOL_ALLOW, TOOL_EGRESS_BLOCK):
+        return ".yaml"
     return ".txt"
 
 

@@ -317,15 +317,22 @@ class TestToolConstants(unittest.TestCase):
     def test_tools_tuple_matches_individual_constants(self):
         self.assertEqual(
             (
+                supervise.TOOL_ALLOW,
                 TOOL_CAPABILITY_BLOCK,
+                supervise.TOOL_EGRESS_BLOCK,
                 supervise.TOOL_LIST_EGRESS_ROUTES,
             ),
             supervise.TOOLS,
         )
 
-    def test_component_map_has_no_entries(self):
-        # egress-block removed in issue #198; capability-block never had one.
-        self.assertEqual({}, supervise.COMPONENT_FOR_TOOL)
+    def test_component_map_has_egress_entries(self):
+        self.assertEqual(
+            {
+                supervise.TOOL_ALLOW: "egress",
+                supervise.TOOL_EGRESS_BLOCK: "egress",
+            },
+            supervise.COMPONENT_FOR_TOOL,
+        )
 
 
 class _StubSupervise(supervise.Supervise):

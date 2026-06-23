@@ -1,8 +1,8 @@
 """Supervise sidecar HTTP server (PRD 0013).
 
 Per-bottle MCP server exposing tools the agent calls to propose config
-changes when stuck. The egress-block tool was removed in issue #198;
-the remaining tools are `capability-block` and `list-egress-routes`.
+changes when stuck. The tools are `allow`, `egress-block`,
+`capability-block`, and `list-egress-routes`.
 
 Each queued tool call:
 
@@ -44,9 +44,15 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-# Same-directory import inside the bundle container; `supervise.py`
-# is COPYed alongside this file by Dockerfile.sidecars.
-import supervise as _sv
+try:
+    # Same-directory imports inside the bundle container; these files are
+    # COPYed flat under /app by Dockerfile.sidecars.
+    from egress_addon_core import load_routes
+    import supervise as _sv
+except ModuleNotFoundError:
+    # Package imports for host-side tests and tooling.
+    from .egress_addon_core import load_routes
+    from . import supervise as _sv
 
 
 # --- JSON-RPC / MCP plumbing ----------------------------------------------
@@ -142,13 +148,62 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
             "allowlist. Returns JSON with one entry per allowed host, "
             "each carrying its matches rules (if any) and whether "
             "the proxy injects Authorization for the route. Use this "
-            "before composing an `egress-block` proposal so the new "
-            "routes file extends the live one rather than replacing it."
+            "before composing an `allow` or `egress-block` proposal so "
+            "the new routes file extends the live one rather than "
+            "replacing it."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {},
             "additionalProperties": False,
+        },
+    },
+    {
+        "name": _sv.TOOL_ALLOW,
+        "description": (
+            "Request operator approval to change the bottle's egress "
+            "allowlist. Pass the full proposed routes.yaml content, not "
+            "just the new host, plus a justification. Use "
+            "`list-egress-routes` first so the proposal preserves existing "
+            "routes."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "routes_yaml": {
+                    "type": "string",
+                    "description": "Full proposed /etc/egress/routes.yaml content.",
+                },
+                "justification": {
+                    "type": "string",
+                    "description": "Why this egress route is needed.",
+                },
+            },
+            "required": ["routes_yaml", "justification"],
+        },
+    },
+    {
+        "name": _sv.TOOL_EGRESS_BLOCK,
+        "description": (
+            "Request operator approval to change the bottle's egress "
+            "allowlist after a blocked outbound request. Pass the full "
+            "proposed routes.yaml content plus a justification. Use "
+            "`list-egress-routes` first so the proposal preserves existing "
+            "routes."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "routes_yaml": {
+                    "type": "string",
+                    "description": "Full proposed /etc/egress/routes.yaml content.",
+                },
+                "justification": {
+                    "type": "string",
+                    "description": "Why this egress route is needed.",
+                },
+            },
+            "required": ["routes_yaml", "justification"],
         },
     },
     {
@@ -182,11 +237,12 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
 ]
 
 
-# Map each non-egress tool to the input field that carries the agent's
-# payload (stored in Proposal.proposed_file). egress-block builds its
-# payload from structured input fields in `handle_egress_block`.
+# Map each proposal tool to the input field that carries the agent's
+# payload (stored in Proposal.proposed_file).
 PROPOSED_FILE_FIELD: dict[str, str] = {
+    _sv.TOOL_ALLOW: "routes_yaml",
     _sv.TOOL_CAPABILITY_BLOCK: "dockerfile",
+    _sv.TOOL_EGRESS_BLOCK: "routes_yaml",
 }
 
 
@@ -203,6 +259,14 @@ def validate_proposed_file(tool: str, content: str) -> None:
         # Dockerfiles are too varied to validate syntactically beyond
         # non-empty. The operator reads the diff in the TUI.
         pass
+    elif tool in (_sv.TOOL_ALLOW, _sv.TOOL_EGRESS_BLOCK):
+        try:
+            load_routes(content)
+        except ValueError as e:
+            raise _RpcError(
+                ERR_INVALID_PARAMS,
+                f"{tool}: proposed routes.yaml is not valid: {e}",
+            ) from e
     else:
         raise _RpcError(ERR_INVALID_PARAMS, f"unknown tool {tool!r}")
 

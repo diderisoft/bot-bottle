@@ -2,9 +2,6 @@
 
 The curses TUI itself isn't exercised here — these tests cover the
 discovery + approve/reject paths that the TUI's key handlers call into.
-
-egress-block (add_route) was removed in issue #198; the TestEgressApplyWiring
-class and all stubs for add_route have been dropped accordingly.
 """
 
 import os
@@ -33,6 +30,8 @@ FIXED = datetime(2026, 5, 25, 12, 0, 0, tzinfo=timezone.utc)
 def _proposal(slug: str = "dev", tool: str = TOOL_CAPABILITY_BLOCK) -> Proposal:
     payloads = {
         TOOL_CAPABILITY_BLOCK: "FROM python:3.13\n",
+        supervise.TOOL_ALLOW: "routes:\n  - host: example.com\n",
+        supervise.TOOL_EGRESS_BLOCK: "routes:\n  - host: example.com\n",
     }
     payload = payloads.get(tool, "")
     return Proposal.new(
@@ -153,6 +152,14 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
         qp = self._enqueue(tool=TOOL_CAPABILITY_BLOCK)
         supervise_cli.approve(qp)
         self.assertEqual([], read_audit_entries("egress", "dev"))
+
+    def test_approve_egress_block_writes_audit_log(self):
+        qp = self._enqueue(tool=supervise.TOOL_EGRESS_BLOCK)
+        supervise_cli.approve(qp)
+        entries = read_audit_entries("egress", "dev")
+        self.assertEqual(1, len(entries))
+        self.assertEqual(STATUS_APPROVED, entries[0].operator_action)
+        self.assertEqual("needed for dev", entries[0].justification)
 
 
 # class TestCapabilityApplyWiring(_FakeHomeMixin, unittest.TestCase):

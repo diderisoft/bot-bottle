@@ -5,7 +5,7 @@ queue/audit support. The sidecar (bot_bottle.supervise_server)
 sits on the bottle's internal network and exposes three MCP tools the
 agent calls when it hits a stuck-recovery category:
 
-  * egress-block — agent proposes a new routes.yaml
+  * egress-block / allow — agent proposes a new routes.yaml
   * capability-block — agent proposes a new agent Dockerfile
 
 Each tool call: the agent passes the full proposed file plus a
@@ -49,27 +49,34 @@ SUPERVISE_HOSTNAME = "supervise"
 SUPERVISE_PORT = 9100
 
 TOOL_CAPABILITY_BLOCK = "capability-block"
+TOOL_EGRESS_BLOCK = "egress-block"
+TOOL_ALLOW = "allow"
 TOOL_LIST_EGRESS_ROUTES = "list-egress-routes"
 TOOLS: tuple[str, ...] = (
+    TOOL_ALLOW,
     TOOL_CAPABILITY_BLOCK,
+    TOOL_EGRESS_BLOCK,
     TOOL_LIST_EGRESS_ROUTES,
 )
 
 # The supervise sidecar uses these to query egress's
 # introspection endpoint for the `list-egress-routes` MCP
 # tool. The hostname + port match egress's docker network
-# alias + listen port (see bot_bottle.egress.EGRESS_HOSTNAME
-# and backend.docker.egress.EGRESS_PORT — the values
-# are inlined here so the in-container supervise_server doesn't
-# need to import the egress package).
-EGRESS_FORWARD_PROXY = "http://egress:9099"
+# listen port (see backend.docker.egress.EGRESS_PORT). The supervise
+# daemon runs inside the sidecar bundle alongside egress, so loopback
+# is the stable address across docker, smolmachines, and Apple
+# Container backends.
+EGRESS_FORWARD_PROXY = "http://127.0.0.1:9099"
 EGRESS_INTROSPECT_URL = "http://_egress.local/allowlist"
 
 # capability-block has no on-disk config the operator edits in place
 # (the Dockerfile is rebuilt, not patched), so it has no audit log
-# here — those changes are captured by git history + the rebuild
-# record laid down in PRD 0016. egress-block was removed in issue #198.
-COMPONENT_FOR_TOOL: dict[str, str] = {}
+# here — those changes are captured by git history + the rebuild record
+# laid down in PRD 0016.
+COMPONENT_FOR_TOOL: dict[str, str] = {
+    TOOL_ALLOW: "egress",
+    TOOL_EGRESS_BLOCK: "egress",
+}
 
 STATUS_APPROVED = "approved"
 STATUS_MODIFIED = "modified"
@@ -431,9 +438,9 @@ def sha256_hex(content: str) -> str:
 # Dockerfile and propose modifications.
 #
 # routes.yaml + allowlist used to live here too; PRD 0017 chunk 3
-# moved them behind the `list-egress-routes` MCP tool (live
-# state from egress's introspection endpoint) so the agent
-# always sees current data rather than a launch-time snapshot.
+# moved them behind the `list-egress-routes` MCP tool (live state
+# from egress's introspection endpoint) so the agent always sees
+# current data rather than a launch-time snapshot.
 CURRENT_CONFIG_DOCKERFILE = "Dockerfile"
 
 

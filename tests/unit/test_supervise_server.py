@@ -54,12 +54,18 @@ class TestValidation(unittest.TestCase):
         )
 
     def test_empty_proposed_file_rejected_for_tools_with_file_field(self):
-        # egress-block has structured input (validated in
-        # _validate_and_bundle_egress_route, not here) and
-        # list-egress-routes takes no input. Only capability-block
-        # goes through `validate_proposed_file`.
         with self.assertRaises(_RpcError):
             validate_proposed_file(_sv.TOOL_CAPABILITY_BLOCK, "   \n\t")
+
+    def test_egress_routes_yaml_is_validated(self):
+        validate_proposed_file(
+            _sv.TOOL_ALLOW,
+            "routes:\n  - host: example.com\n",
+        )
+
+    def test_invalid_egress_routes_yaml_rejected(self):
+        with self.assertRaises(_RpcError):
+            validate_proposed_file(_sv.TOOL_EGRESS_BLOCK, "routes: nope\n")
 
 
 # --- JSON-RPC parsing ------------------------------------------------------
@@ -141,7 +147,9 @@ class TestHandleToolsList(unittest.TestCase):
         names = [t["name"] for t in result["tools"]]  # type: ignore[index]
         self.assertEqual(
             sorted([
+                _sv.TOOL_ALLOW,
                 _sv.TOOL_CAPABILITY_BLOCK,
+                _sv.TOOL_EGRESS_BLOCK,
                 _sv.TOOL_LIST_EGRESS_ROUTES,
             ]),
             sorted(names),
@@ -171,6 +179,17 @@ class TestHandleToolsList(unittest.TestCase):
         self.assertEqual({}, schema.get("properties"))  # type: ignore[union-attr]
         # No `required` array because no inputs are required.
         self.assertNotIn("required", schema)  # type: ignore[operator]
+
+    def test_egress_tools_take_routes_yaml_and_justification(self):
+        for tool_name in (_sv.TOOL_ALLOW, _sv.TOOL_EGRESS_BLOCK):
+            with self.subTest(tool_name=tool_name):
+                tool = next(t for t in TOOL_DEFINITIONS if t["name"] == tool_name)
+                schema = tool["inputSchema"]
+                self.assertEqual("object", schema["type"])  # type: ignore[index]
+                self.assertEqual(
+                    ["routes_yaml", "justification"],
+                    schema["required"],  # type: ignore[index]
+                )
 
 
 class TestHandleToolsCall(unittest.TestCase):
@@ -219,6 +238,26 @@ class TestHandleToolsCall(unittest.TestCase):
         text = result["content"][0]["text"]  # type: ignore[index]
         self.assertIn("status: approved", text)
         self.assertIn("notes: lgtm", text)
+
+    def test_allow_round_trips_through_queue(self):
+        responder = self._respond_when_proposal_appears(_sv.STATUS_APPROVED, notes="ok")
+        try:
+            result = handle_tools_call(
+                {
+                    "name": _sv.TOOL_ALLOW,
+                    "arguments": {
+                        "routes_yaml": "routes:\n  - host: example.com\n",
+                        "justification": "need example.com",
+                    },
+                },
+                self.config,
+            )
+        finally:
+            responder.join()
+        self.assertFalse(result["isError"])  # type: ignore[index]
+        text = result["content"][0]["text"]  # type: ignore[index]
+        self.assertIn("status: approved", text)
+        self.assertIn("notes: ok", text)
 
     def test_rejected_response_sets_isError(self):
         responder = self._respond_when_proposal_appears(_sv.STATUS_REJECTED, notes="nope")
@@ -412,7 +451,8 @@ class TestHttpEndToEnd(unittest.TestCase):
         self.assertEqual(1, result["id"])
         names = [t["name"] for t in result["result"]["tools"]]  # type: ignore[index]
         self.assertIn(_sv.TOOL_CAPABILITY_BLOCK, names)
-        self.assertNotIn("egress-block", names)
+        self.assertIn(_sv.TOOL_ALLOW, names)
+        self.assertIn(_sv.TOOL_EGRESS_BLOCK, names)
 
     def test_unknown_method_returns_jsonrpc_error(self):
         result = self._post_jsonrpc(
