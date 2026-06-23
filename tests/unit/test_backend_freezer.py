@@ -189,60 +189,27 @@ class TestSmolmachinesFreezer(_FakeHomeMixin, unittest.TestCase):
             started_at="t", backend="smolmachines",
         ))
 
-    def test_packs_stopped_vm_directly(self):
+    def test_snapshots_running_vm_without_stopping(self):
+        """Commit should exec-tar the running VM, not stop it."""
         slug = "dev-abc12"
         self._write_meta(slug)
         freezer = SmolmachinesFreezer()
         agent = _make_agent(slug, "smolmachines")
 
-        with patch("bot_bottle.backend.smolmachines.freezer.machine_is_running",
-                   return_value=False), \
-             patch("bot_bottle.backend.smolmachines.freezer.pack_create_from_vm") as mock_pack, \
+        with patch("bot_bottle.backend.smolmachines.freezer._snapshot_running_vm") as mock_snap, \
              patch("bot_bottle.backend.freeze.info"), \
              patch("bot_bottle.backend.smolmachines.freezer.info"):
             freezer.commit(agent)
 
-        expected_output = bottle_state.bottle_state_dir(slug) / "committed-smolmachine"
-        mock_pack.assert_called_once_with(f"bot-bottle-{slug}", expected_output)
-        expected_artifact = str(expected_output.with_name("committed-smolmachine.smolmachine"))
-        self.assertEqual(expected_artifact, bottle_state.read_committed_image(slug))
+        expected_binary = bottle_state.bottle_state_dir(slug) / "committed-smolmachine"
+        mock_snap.assert_called_once_with(
+            f"bot-bottle-{slug}",
+            f"bot-bottle-committed-{slug}:latest",
+            expected_binary,
+        )
+        expected_sidecar = str(expected_binary.with_suffix(".smolmachine"))
+        self.assertEqual(expected_sidecar, bottle_state.read_committed_image(slug))
         self.assertTrue(bottle_state.is_preserved(slug))
-
-    def test_stops_running_vm_on_yes(self):
-        slug = "dev-abc12"
-        self._write_meta(slug)
-        freezer = SmolmachinesFreezer()
-        agent = _make_agent(slug, "smolmachines")
-
-        with patch("bot_bottle.backend.smolmachines.freezer.machine_is_running",
-                   return_value=True), \
-             patch("bot_bottle.backend.smolmachines.freezer._read_tty_line", return_value="y"), \
-             patch("bot_bottle.backend.smolmachines.freezer.machine_stop") as mock_stop, \
-             patch("bot_bottle.backend.smolmachines.freezer.pack_create_from_vm") as mock_pack, \
-             patch("bot_bottle.backend.freeze.info"), \
-             patch("bot_bottle.backend.smolmachines.freezer.info"):
-            freezer.commit(agent)
-
-        mock_stop.assert_called_once_with(f"bot-bottle-{slug}")
-        mock_pack.assert_called_once()
-
-    def test_raises_commit_cancelled_on_no(self):
-        slug = "dev-abc12"
-        self._write_meta(slug)
-        freezer = SmolmachinesFreezer()
-        agent = _make_agent(slug, "smolmachines")
-
-        with patch("bot_bottle.backend.smolmachines.freezer.machine_is_running",
-                   return_value=True), \
-             patch("bot_bottle.backend.smolmachines.freezer._read_tty_line", return_value="n"), \
-             patch("bot_bottle.backend.smolmachines.freezer.machine_stop") as mock_stop, \
-             patch("bot_bottle.backend.smolmachines.freezer.pack_create_from_vm") as mock_pack:
-            from bot_bottle.backend.freeze import CommitCancelled
-            with self.assertRaises(CommitCancelled):
-                freezer.commit(agent)
-
-        mock_stop.assert_not_called()
-        mock_pack.assert_not_called()
 
 
 if __name__ == "__main__":
