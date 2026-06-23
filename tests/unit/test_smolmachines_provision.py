@@ -33,7 +33,7 @@ from bot_bottle.backend.smolmachines.launch import _bundle_launch_spec
 from bot_bottle.backend.util import AGENT_CA_PATH
 from bot_bottle.egress import EgressPlan, EgressRoute
 from bot_bottle.git_gate import GitGatePlan, GitGateUpstream
-from bot_bottle.manifest import ManifestGitEntry, ManifestKeyConfig, Manifest, ManifestIndex
+from bot_bottle.manifest import ManifestGitEntry, ManifestKeyConfig, ManifestIndex
 from bot_bottle.supervise import SupervisePlan
 
 

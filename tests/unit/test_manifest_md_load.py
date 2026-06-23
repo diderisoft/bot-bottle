@@ -11,7 +11,7 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from bot_bottle.manifest import ManifestError, Manifest, ManifestIndex
+from bot_bottle.manifest import ManifestError, ManifestIndex
 
 
 def _write(p: Path, text: str) -> None:

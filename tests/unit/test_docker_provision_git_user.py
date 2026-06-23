@@ -21,7 +21,7 @@ from bot_bottle.backend import Bottle, BottleSpec, ExecResult
 from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
 from bot_bottle.egress import EgressPlan
 from bot_bottle.git_gate import GitGatePlan
-from bot_bottle.manifest import Manifest, ManifestIndex
+from bot_bottle.manifest import ManifestIndex
 
 
 class _Provider(AgentProvider):

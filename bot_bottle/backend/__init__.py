@@ -65,6 +65,13 @@ class BottleSpec:
     agent_name: str
     copy_cwd: bool
     user_cwd: str
+
+    @property
+    def loaded_manifest(self) -> Manifest:
+        assert isinstance(self.manifest, Manifest), (
+            "spec.manifest is still a ManifestIndex — call _validate() first"
+        )
+        return self.manifest
     # PRD 0016 follow-up: when set, the backend's prepare step uses
     # this identity instead of minting a fresh one — the resume path
     # (`cli.py resume <identity>`) sets this to continue an existing
@@ -112,7 +119,7 @@ class BottlePlan(ABC):
         """Render the y/N preflight summary to stderr."""
         del remote_control
         spec = self.spec
-        manifest = spec.manifest  # type: ignore[assignment]
+        manifest = spec.loaded_manifest
         agent = manifest.agent
         bottle = manifest.bottle
 
@@ -293,7 +300,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
 
         self._preflight()
 
-        manifest = spec.manifest  # type: ignore[assignment]
+        manifest = spec.loaded_manifest
         manifest_bottle = manifest.bottle
         manifest_agent_provider = manifest_bottle.agent_provider
         agent_provider = get_provider(manifest_agent_provider.template)
@@ -364,7 +371,10 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         selected agent. Subclasses with additional preconditions should
         override and call `super()._validate(spec)` first, using the
         returned spec for further checks."""
-        manifest = spec.manifest.load_for_agent(spec.agent_name)  # type: ignore[union-attr]
+        assert isinstance(spec.manifest, ManifestIndex), (
+            "_validate() called on a spec whose manifest is already loaded"
+        )
+        manifest = spec.manifest.load_for_agent(spec.agent_name)
         spec = replace(spec, manifest=manifest)
         agent = manifest.agent
         self._validate_skills(agent.skills)
@@ -384,7 +394,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
                 )
 
     def _validate_agent_provider_dockerfile(self, spec: BottleSpec) -> None:
-        manifest = spec.manifest  # type: ignore[assignment]
+        manifest = spec.loaded_manifest
         bottle = manifest.bottle
         dockerfile = bottle.agent_provider.dockerfile
         if not dockerfile:

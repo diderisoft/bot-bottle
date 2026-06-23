@@ -75,7 +75,7 @@ def launch(
     Teardown on exit."""
     stack = ExitStack()
 
-    _bottle_for_revoke = plan.spec.manifest.bottle
+    _bottle_for_revoke = plan.spec.loaded_manifest.bottle
     _git_gate_dir_for_revoke = git_gate_state_dir(plan.slug)
 
     def teardown() -> None:

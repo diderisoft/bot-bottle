@@ -130,7 +130,7 @@ def _teardown_smolmachines(
     except BaseException as exc:  # noqa: W0718 — teardown must not fail
         teardown_exc = exc
         warn(f"smolmachines teardown failed: {exc!r}")
-    bottle = plan.spec.manifest.bottle
+    bottle = plan.spec.loaded_manifest.bottle
     revoke_git_gate_provisioned_keys(bottle, git_gate_state_dir(plan.slug))
     if teardown_exc is not None:
         raise teardown_exc

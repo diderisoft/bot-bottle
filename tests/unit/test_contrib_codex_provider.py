@@ -24,7 +24,7 @@ from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
 from bot_bottle.contrib.codex.agent_provider import CodexAgentProvider
 from bot_bottle.egress import EgressPlan
 from bot_bottle.git_gate import GitGatePlan
-from bot_bottle.manifest import Manifest, ManifestIndex
+from bot_bottle.manifest import ManifestIndex
 from bot_bottle.supervise import SupervisePlan
 
 

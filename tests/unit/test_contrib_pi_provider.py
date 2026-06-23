@@ -16,7 +16,7 @@ from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
 from bot_bottle.contrib.pi.agent_provider import PiAgentProvider
 from bot_bottle.egress import EgressPlan
 from bot_bottle.git_gate import GitGatePlan
-from bot_bottle.manifest import Manifest, ManifestIndex
+from bot_bottle.manifest import ManifestIndex
 
 
 _URL = "http://supervise:9100/"

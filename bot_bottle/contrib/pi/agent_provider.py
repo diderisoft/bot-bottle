@@ -232,7 +232,7 @@ class PiAgentProvider(AgentProvider):
     def provision_skills(self, plan: "BottlePlan", bottle: "Bottle") -> None:
         from ...backend.util import host_skill_dir
 
-        agent = plan.spec.manifest.agent
+        agent = plan.spec.loaded_manifest.agent
         if not agent.skills:
             return
         skills_dir = _skills_dir(plan.guest_home)

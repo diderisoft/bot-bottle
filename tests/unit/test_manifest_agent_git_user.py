@@ -45,7 +45,7 @@ def _manifest(*, bottle_user=None, agent_git=None) -> Manifest:  # type: ignore
     }).load_for_agent("impl")
 
 
-def _index(*, bottle_user=None, agent_git=None) -> ManifestIndex:
+def _index(*, bottle_user: dict[str, object] | None = None, agent_git: dict[str, object] | None = None) -> ManifestIndex:
     """Build an index with one agent 'impl' without loading it."""
     bottle: dict = {}  # type: ignore
     if bottle_user is not None:
