@@ -73,6 +73,52 @@ resolver #2
         )
         self.assertTrue(run.call_args_list[-1].kwargs["check"])
 
+    def test_commit_container_exports_rootfs_and_builds_image(self):
+        completed = util.subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr="",
+        )
+        dockerfile_text = ""
+
+        def fake_build_image(image_tag, context, *, dockerfile=""):
+            nonlocal dockerfile_text
+            with open(dockerfile, encoding="utf-8") as f:
+                dockerfile_text = f.read()
+
+        with patch.object(util.subprocess, "run", return_value=completed) as run, \
+             patch.object(util, "build_image", side_effect=fake_build_image) as build_image, \
+             patch.object(util, "info"):
+            util.commit_container(
+                "bot-bottle-dev-abc12",
+                "bot-bottle-committed-dev-abc12:latest",
+            )
+
+        argv = run.call_args.args[0]
+        self.assertEqual("container", argv[0])
+        self.assertEqual("export", argv[1])
+        self.assertEqual("-o", argv[2])
+        self.assertTrue(argv[3].endswith("/rootfs.tar"))
+        self.assertEqual("bot-bottle-dev-abc12", argv[4])
+        build_image.assert_called_once()
+        self.assertEqual(
+            "bot-bottle-committed-dev-abc12:latest",
+            build_image.call_args.args[0],
+        )
+        self.assertIn("ADD rootfs.tar /\n", dockerfile_text)
+        self.assertIn("USER node\n", dockerfile_text)
+        self.assertIn("WORKDIR /home/node\n", dockerfile_text)
+
+    def test_commit_container_dies_on_export_failure(self):
+        failed = util.subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="No such container",
+        )
+        with patch.object(util.subprocess, "run", return_value=failed), \
+             patch.object(util, "die", side_effect=SystemExit("die")) as die:
+            with self.assertRaises(SystemExit):
+                util.commit_container("missing-container", "some:tag")
+
+        die.assert_called_once()
+        self.assertIn("missing-container", die.call_args.args[0])
+
     def test_build_image_restarts_builder_when_dns_mismatches(self):
         status = util.subprocess.CompletedProcess(
             args=[],

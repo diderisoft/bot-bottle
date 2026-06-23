@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from typing import cast
 from unittest.mock import patch
 
+from bot_bottle.agent_provider import AgentProvisionPlan
 from bot_bottle.backend.macos_container import launch
 from bot_bottle.backend.macos_container.bottle_plan import MacosContainerBottlePlan
 from bot_bottle.manifest import ManifestIndex
@@ -259,6 +260,81 @@ class TestMacosContainerLaunchArgv(unittest.TestCase):
             "touch /run/git-gate/ready",
             exec_container.call_args_list[-1].args[1][-1],
         )
+
+
+def _build_plan(stage_dir: Path) -> MacosContainerBottlePlan:
+    return MacosContainerBottlePlan(
+        spec=SimpleNamespace(),
+        manifest=_MANIFEST,
+        stage_dir=stage_dir,
+        git_gate_plan=SimpleNamespace(upstreams=()),
+        egress_plan=SimpleNamespace(),
+        supervise_plan=None,
+        agent_provision=AgentProvisionPlan(
+            template="claude",
+            command="claude",
+            prompt_mode="append_file",
+            image="bot-bottle-agent:latest",
+            dockerfile="/repo/Dockerfile",
+            guest_home="/home/node",
+            instance_name="bot-bottle-dev-abc",
+            prompt_file=stage_dir / "prompt.txt",
+            guest_env={},
+        ),
+        slug="dev-abc",
+        forwarded_env={},
+    )
+
+
+class TestMacosContainerLaunchCommittedImage(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.stage_dir = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_build_images_uses_committed_image_when_present(self):
+        plan = _build_plan(self.stage_dir)
+        calls = []
+
+        def fake_build(image, context, *, dockerfile=""):
+            calls.append((image, context, dockerfile))
+
+        with patch.object(
+            launch, "read_committed_image",
+            return_value="bot-bottle-committed-dev-abc:latest",
+        ), patch.object(
+            launch.container_mod, "image_exists", return_value=True,
+        ), patch.object(
+            launch.container_mod, "build_image", side_effect=fake_build,
+        ), patch.object(launch, "info"):
+            updated = launch._build_images(plan)
+
+        self.assertEqual("bot-bottle-committed-dev-abc:latest", updated.image)
+        self.assertEqual(1, len(calls))
+        self.assertEqual(launch.SIDECAR_BUNDLE_IMAGE, calls[0][0])
+
+    def test_build_images_builds_agent_when_committed_image_missing(self):
+        plan = _build_plan(self.stage_dir)
+        calls = []
+
+        def fake_build(image, context, *, dockerfile=""):
+            calls.append((image, context, dockerfile))
+
+        with patch.object(
+            launch, "read_committed_image",
+            return_value="bot-bottle-committed-dev-abc:latest",
+        ), patch.object(
+            launch.container_mod, "image_exists", return_value=False,
+        ), patch.object(
+            launch.container_mod, "build_image", side_effect=fake_build,
+        ):
+            updated = launch._build_images(plan)
+
+        self.assertEqual("bot-bottle-agent:latest", updated.image)
+        self.assertEqual(2, len(calls))
+        self.assertEqual("bot-bottle-agent:latest", calls[1][0])
 
 
 if __name__ == "__main__":

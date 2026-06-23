@@ -1,10 +1,11 @@
 """commit: freeze a running bottle's state to a resumable artifact.
 
-Docker bottles are committed to a local Docker image. Smolmachines
-bottles are packed from the running VM into a `.smolmachine` artifact.
-The resulting reference is stored in per-bottle state so the next
-`./cli.py resume <slug>` boots from the snapshot instead of rebuilding
-from the Dockerfile.
+Docker bottles are committed to a local Docker image. Macos-container
+bottles are exported and rebuilt as a local Apple Container image.
+Smolmachines bottles are packed from the running VM into a
+`.smolmachine` artifact. The resulting reference is stored in
+per-bottle state so the next `./cli.py resume <slug>` boots from the
+snapshot instead of rebuilding from the Dockerfile.
 """
 
 from __future__ import annotations
@@ -13,7 +14,8 @@ import argparse
 from pathlib import Path
 
 from ..backend import enumerate_active_agents
-from ..backend.docker.util import commit_container
+from ..backend.docker.util import commit_container as docker_commit_container
+from ..backend.macos_container.util import commit_container as macos_commit_container
 from ..backend.smolmachines.smolvm import pack_create_from_vm
 from ..bottle_state import bottle_state_dir
 from ..bottle_state import mark_preserved, read_metadata, write_committed_image
@@ -24,6 +26,7 @@ from . import tui
 
 _COMMITTED_IMAGE_PREFIX = "bot-bottle-committed-"
 _DOCKER_BACKENDS = {"docker", ""}
+_MACOS_CONTAINER_BACKEND = "macos-container"
 _SMOLMACHINES_BACKEND = "smolmachines"
 
 
@@ -77,11 +80,25 @@ def cmd_commit(argv: list[str]) -> int:
         container = _agent_container_name(slug)
         image_tag = _committed_image_tag(slug)
 
-        commit_container(container, image_tag)
+        docker_commit_container(container, image_tag)
         write_committed_image(slug, image_tag)
         mark_preserved(slug)
         info(f"to resume from this snapshot: ./cli.py resume {slug}")
         info(f"to export for migration:      docker save {image_tag} -o {slug}.tar")
+        return 0
+
+    if backend == _MACOS_CONTAINER_BACKEND:
+        container = _agent_container_name(slug)
+        image_tag = _committed_image_tag(slug)
+
+        macos_commit_container(container, image_tag)
+        write_committed_image(slug, image_tag)
+        mark_preserved(slug)
+        info(f"to resume from this snapshot: ./cli.py resume {slug}")
+        info(
+            f"to export for migration:      "
+            f"container image save {image_tag} -o {slug}.tar"
+        )
         return 0
 
     if backend == _SMOLMACHINES_BACKEND:
@@ -98,7 +115,8 @@ def cmd_commit(argv: list[str]) -> int:
 
     if backend:
         die(
-            f"commit is only supported for the docker and smolmachines backends; "
+            f"commit is only supported for docker, macos-container, and "
+            f"smolmachines; "
             f"bottle {slug!r} uses {backend!r}"
         )
     die(f"commit cannot determine the backend for bottle {slug!r}")

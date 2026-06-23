@@ -17,7 +17,11 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Callable, Generator
 
-from ...bottle_state import egress_state_dir, git_gate_state_dir
+from ...bottle_state import (
+    egress_state_dir,
+    git_gate_state_dir,
+    read_committed_image,
+)
 from ...egress import EGRESS_ROUTES_IN_CONTAINER, egress_resolve_token_values
 from ...git_gate import revoke_git_gate_provisioned_keys
 from ...log import die, info, warn
@@ -83,7 +87,7 @@ def launch(
 
     try:
         plan = _mint_certs(plan)
-        _build_images(plan)
+        plan = _build_images(plan)
 
         internal_network = internal_network_name(plan.slug)
         egress_network = egress_network_name(plan.slug)
@@ -134,17 +138,28 @@ def _mint_certs(plan: MacosContainerBottlePlan) -> MacosContainerBottlePlan:
     return dataclasses.replace(plan, egress_plan=egress_plan)
 
 
-def _build_images(plan: MacosContainerBottlePlan) -> None:
+def _build_images(plan: MacosContainerBottlePlan) -> MacosContainerBottlePlan:
     container_mod.build_image(
         SIDECAR_BUNDLE_IMAGE,
         _REPO_DIR,
         dockerfile=SIDECAR_BUNDLE_DOCKERFILE,
     )
+    committed = read_committed_image(plan.slug)
+    if committed and container_mod.image_exists(committed):
+        info(f"using committed image {committed!r}")
+        return dataclasses.replace(
+            plan,
+            agent_provision=dataclasses.replace(
+                plan.agent_provision,
+                image=committed,
+            ),
+        )
     container_mod.build_image(
         plan.image,
         _REPO_DIR,
         dockerfile=plan.dockerfile_path,
     )
+    return plan
 
 
 def _create_networks(

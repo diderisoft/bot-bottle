@@ -8,6 +8,7 @@ import ipaddress
 import platform
 import shutil
 import subprocess
+import tempfile
 import time
 from typing import Iterable
 
@@ -70,6 +71,39 @@ def build_image(ref: str, context: str, *, dockerfile: str = "") -> None:
         args.extend(["-f", dockerfile])
     args.append(context)
     subprocess.run(args, check=True)
+
+
+def commit_container(container_name: str, image_tag: str) -> None:
+    """Snapshot a running Apple Container as a local image.
+
+    Apple Container exposes filesystem export rather than Docker's
+    `commit` verb. Bot-bottle supplies command and environment at
+    launch time, so preserving the root filesystem is sufficient for a
+    resumable committed bottle image.
+    """
+    with tempfile.TemporaryDirectory(prefix="bot-bottle-container-commit.") as tmp:
+        rootfs_tar = os.path.join(tmp, "rootfs.tar")
+        dockerfile = os.path.join(tmp, "Dockerfile")
+        result = subprocess.run(
+            [_CONTAINER, "export", "-o", rootfs_tar, container_name],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            die(
+                f"container export {container_name!r} failed: "
+                f"{(result.stderr or '').strip() or '<no stderr>'}"
+            )
+        with open(dockerfile, "w", encoding="utf-8") as f:
+            f.write(
+                "FROM scratch\n"
+                "ADD rootfs.tar /\n"
+                "USER node\n"
+                "WORKDIR /home/node\n"
+            )
+        build_image(image_tag, tmp, dockerfile=dockerfile)
+    info(f"committed {container_name!r} → {image_tag!r}")
 
 
 def _ensure_builder_dns() -> None:

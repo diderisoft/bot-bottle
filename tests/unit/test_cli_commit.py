@@ -76,7 +76,7 @@ class TestCmdCommitSlugArg(_FakeHomeMixin, unittest.TestCase):
         ))
 
         with patch(
-            "bot_bottle.cli.commit.commit_container",
+            "bot_bottle.cli.commit.docker_commit_container",
         ) as mock_commit, patch(
             "bot_bottle.cli.commit.info",
         ):
@@ -95,7 +95,7 @@ class TestCmdCommitSlugArg(_FakeHomeMixin, unittest.TestCase):
             started_at="t", backend="docker",
         ))
 
-        with patch("bot_bottle.cli.commit.commit_container"), \
+        with patch("bot_bottle.cli.commit.docker_commit_container"), \
              patch("bot_bottle.cli.commit.info"):
             cmd_commit([slug])
 
@@ -111,7 +111,7 @@ class TestCmdCommitSlugArg(_FakeHomeMixin, unittest.TestCase):
             started_at="t", backend="docker",
         ))
 
-        with patch("bot_bottle.cli.commit.commit_container"), \
+        with patch("bot_bottle.cli.commit.docker_commit_container"), \
              patch("bot_bottle.cli.commit.info"):
             cmd_commit([slug])
 
@@ -125,12 +125,32 @@ class TestCmdCommitSlugArg(_FakeHomeMixin, unittest.TestCase):
             started_at="t", backend="",
         ))
 
-        with patch("bot_bottle.cli.commit.commit_container") as mock_commit, \
+        with patch("bot_bottle.cli.commit.docker_commit_container") as mock_commit, \
              patch("bot_bottle.cli.commit.info"):
             rc = cmd_commit([slug])
 
         self.assertEqual(0, rc)
         mock_commit.assert_called_once()
+
+    def test_commits_macos_container_bottle(self):
+        slug = "dev-abc12"
+        bottle_state.write_metadata(bottle_state.BottleMetadata(
+            identity=slug, agent_name="dev", cwd="", copy_cwd=False,
+            started_at="t", backend="macos-container",
+        ))
+
+        with patch(
+            "bot_bottle.cli.commit.macos_commit_container",
+        ) as mock_commit, patch(
+            "bot_bottle.cli.commit.info",
+        ):
+            rc = cmd_commit([slug])
+
+        self.assertEqual(0, rc)
+        mock_commit.assert_called_once_with(
+            f"bot-bottle-{slug}",
+            f"bot-bottle-committed-{slug}:latest",
+        )
 
 
 class TestCmdCommitSmolmachinesBackend(_FakeHomeMixin, unittest.TestCase):
@@ -172,22 +192,6 @@ class TestCmdCommitUnsupportedBackend(_FakeHomeMixin, unittest.TestCase):
 
     def tearDown(self):
         self._teardown_fake_home()
-
-    def test_dies_for_macos_container_backend(self):
-        slug = "dev-abc12"
-        bottle_state.write_metadata(bottle_state.BottleMetadata(
-            identity=slug, agent_name="dev", cwd="", copy_cwd=False,
-            started_at="t", backend="macos-container",
-        ))
-
-        with patch(
-            "bot_bottle.cli.commit.die", side_effect=SystemExit("die"),
-        ) as mock_die:
-            with self.assertRaises(SystemExit):
-                cmd_commit([slug])
-
-        mock_die.assert_called_once()
-        self.assertIn("macos-container", mock_die.call_args.args[0])
 
 
 class TestCmdCommitNoActiveBottles(_FakeHomeMixin, unittest.TestCase):
