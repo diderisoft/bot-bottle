@@ -9,17 +9,11 @@ from __future__ import annotations
 
 import os
 import subprocess
-from pathlib import Path
 
-from ...bottle_state import egress_state_dir
-from ...egress import EGRESS_ROUTES_FILENAME, EGRESS_ROUTES_IN_CONTAINER
-from ...egress_addon_core import load_routes
+from ...egress import EGRESS_ROUTES_IN_CONTAINER
 from ...log import warn
+from ..egress_apply import EgressApplicator, EgressApplyError
 from .sidecar_bundle import sidecar_bundle_container_name
-
-
-class EgressApplyError(RuntimeError):
-    pass
 
 
 def fetch_current_routes(slug: str) -> str:
@@ -32,54 +26,41 @@ def fetch_current_routes(slug: str) -> str:
         raise EgressApplyError(
             f"could not read routes.yaml from {container}: "
             f"{(r.stderr or '').strip() or 'container not running?'}"
-    )
+        )
     return r.stdout
 
 
+class DockerEgressApplicator(EgressApplicator):
+    def _signal_bundle_reload(self, slug: str) -> None:
+        container = sidecar_bundle_container_name(slug)
+        result = subprocess.run(
+            ["docker", "kill", "--signal", "HUP", container],
+            capture_output=True, text=True, check=False, env=os.environ,
+        )
+        if result.returncode != 0:
+            last_error = (result.stderr or "").strip() or (result.stdout or "").strip()
+            warn(
+                f"egress: routes updated on disk for {slug}, but bundle reload failed: "
+                f"{last_error or 'docker kill failed'}"
+            )
+            raise EgressApplyError(
+                f"could not reload egress bundle {container}: "
+                f"{last_error or 'docker kill failed'}"
+            )
+
+
+_applicator = DockerEgressApplicator()
+
+
 def apply_routes_change(slug: str, content: str) -> tuple[str, str]:
-    """Persist `content` to the live routes file and reload egress."""
-    validate_routes_content(content)
-    routes_path = _routes_path(slug)
-    routes_path.parent.mkdir(parents=True, exist_ok=True)
-    before = routes_path.read_text(encoding="utf-8") if routes_path.exists() else ""
-    routes_path.write_text(content, encoding="utf-8")
-    routes_path.chmod(0o600)
-    _signal_bundle_reload(slug)
-    return before, content
+    return _applicator.apply_routes_change(slug, content)
 
 
-def validate_routes_content(content: str) -> None:
-    try:
-        load_routes(content)
-    except ValueError as e:
-        raise EgressApplyError(
-            f"proposed routes.yaml is not valid: {e}"
-        ) from e
-
-
-def _routes_path(slug: str) -> Path:
-    return egress_state_dir(slug) / EGRESS_ROUTES_FILENAME
-
-
-def _signal_bundle_reload(slug: str) -> None:
-    container = sidecar_bundle_container_name(slug)
-    result = subprocess.run(
-        ["docker", "kill", "--signal", "HUP", container],
-        capture_output=True, text=True, check=False, env=os.environ,
-    )
-    if result.returncode != 0:
-        last_error = (result.stderr or "").strip() or (result.stdout or "").strip()
-        warn(
-            f"egress: routes updated on disk for {slug}, but bundle reload failed: "
-            f"{last_error or 'docker kill failed'}"
-        )
-        raise EgressApplyError(
-            f"could not reload egress bundle {container}: "
-            f"{last_error or 'docker kill failed'}"
-        )
+validate_routes_content = EgressApplicator.validate_routes_content
 
 
 __all__ = [
+    "DockerEgressApplicator",
     "EgressApplyError",
     "apply_routes_change",
     "fetch_current_routes",
