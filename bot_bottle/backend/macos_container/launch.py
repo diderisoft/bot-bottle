@@ -328,7 +328,6 @@ def _agent_run_argv(
         "container", "run",
         "--name", plan.container_name,
         "--detach",
-        "--rm",
         "--network", internal_network,
     ]
     for entry in _agent_env_entries(plan, sidecar_ip):
