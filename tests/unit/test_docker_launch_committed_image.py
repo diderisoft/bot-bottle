@@ -16,25 +16,23 @@ from bot_bottle.backend.docker import launch as launch_mod
 from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
 from bot_bottle.egress import EgressPlan
 from bot_bottle.git_gate import GitGatePlan
-from bot_bottle.manifest import Manifest
+from bot_bottle.manifest import ManifestIndex
 
 
 _SLUG = "dev-abc12"
 _COMMITTED_TAG = f"bot-bottle-committed-{_SLUG}:latest"
 _DEFAULT_IMAGE = "bot-bottle-claude:latest"
 
-
-def _manifest() -> Manifest:
-    return Manifest.from_json_obj({
-        "bottles": {"dev": {}},
-        "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
-    })
+_IDX = ManifestIndex.from_json_obj({
+    "bottles": {"dev": {}},
+    "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+})
 
 
 def _plan(tmp: str) -> DockerBottlePlan:
     stage = Path(tmp)
     spec = BottleSpec(
-        manifest=_manifest(),
+        manifest=_IDX,
         agent_name="demo",
         copy_cwd=False,
         user_cwd=tmp,
@@ -42,6 +40,7 @@ def _plan(tmp: str) -> DockerBottlePlan:
     )
     return DockerBottlePlan(
         spec=spec,
+        manifest=_IDX.load_for_agent("demo"),
         stage_dir=stage,
         git_gate_plan=GitGatePlan(
             slug=_SLUG,

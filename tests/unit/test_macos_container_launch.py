@@ -10,8 +10,11 @@ from typing import cast
 from unittest.mock import patch
 
 from bot_bottle.agent_provider import AgentProvisionPlan
+from bot_bottle.backend import BottleSpec
 from bot_bottle.backend.macos_container import launch
 from bot_bottle.backend.macos_container.bottle_plan import MacosContainerBottlePlan
+from bot_bottle.egress import EgressPlan
+from bot_bottle.git_gate import GitGatePlan
 from bot_bottle.manifest import ManifestIndex
 
 _MANIFEST = ManifestIndex.from_json_obj({
@@ -264,11 +267,11 @@ class TestMacosContainerLaunchArgv(unittest.TestCase):
 
 def _build_plan(stage_dir: Path) -> MacosContainerBottlePlan:
     return MacosContainerBottlePlan(
-        spec=SimpleNamespace(),
+        spec=cast(BottleSpec, SimpleNamespace()),
         manifest=_MANIFEST,
         stage_dir=stage_dir,
-        git_gate_plan=SimpleNamespace(upstreams=()),
-        egress_plan=SimpleNamespace(),
+        git_gate_plan=cast(GitGatePlan, SimpleNamespace(upstreams=())),
+        egress_plan=cast(EgressPlan, SimpleNamespace()),
         supervise_plan=None,
         agent_provision=AgentProvisionPlan(
             template="claude",
@@ -298,7 +301,7 @@ class TestMacosContainerLaunchCommittedImage(unittest.TestCase):
         plan = _build_plan(self.stage_dir)
         calls = []
 
-        def fake_build(image, context, *, dockerfile=""):
+        def fake_build(image: str, context: str, *, dockerfile: str = "") -> None:
             calls.append((image, context, dockerfile))
 
         with patch.object(
@@ -319,7 +322,7 @@ class TestMacosContainerLaunchCommittedImage(unittest.TestCase):
         plan = _build_plan(self.stage_dir)
         calls = []
 
-        def fake_build(image, context, *, dockerfile=""):
+        def fake_build(image: str, context: str, *, dockerfile: str = "") -> None:
             calls.append((image, context, dockerfile))
 
         with patch.object(

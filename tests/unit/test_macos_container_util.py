@@ -79,7 +79,7 @@ resolver #2
         )
         dockerfile_text = ""
 
-        def fake_build_image(image_tag, context, *, dockerfile=""):
+        def fake_build_image(image_tag: str, context: str, *, dockerfile: str = "") -> None:
             nonlocal dockerfile_text
             with open(dockerfile, encoding="utf-8") as f:
                 dockerfile_text = f.read()
