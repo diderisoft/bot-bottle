@@ -9,8 +9,10 @@ running throughout."""
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
 
 from .. import ActiveAgent
@@ -56,29 +58,7 @@ def _snapshot_running_vm(machine: str, image_ref: str, binary: Path) -> None:
         rootfs_tar = tmp_path / "rootfs.tar"
         dockerfile = tmp_path / "Dockerfile"
 
-        with open(rootfs_tar, "wb") as tar_out:
-            result = subprocess.run(
-                [
-                    "smolvm", "machine", "exec",
-                    "--name", machine, "--",
-                    "tar", "--create",
-                    "--exclude=./proc",
-                    "--exclude=./sys",
-                    "--exclude=./dev",
-                    "--exclude=./run",
-                    "--file=-",
-                    "--directory=/",
-                    ".",
-                ],
-                stdout=tar_out,
-                stderr=subprocess.PIPE,
-                check=False,
-            )
-        if result.returncode != 0:
-            die(
-                f"smolvm exec tar {machine!r} failed: "
-                f"{(result.stderr or b'').decode().strip() or '<no stderr>'}"
-            )
+        _exec_tar_to_file(machine, rootfs_tar)
 
         dockerfile.write_text(
             "FROM scratch\n"
@@ -99,3 +79,50 @@ def _snapshot_running_vm(machine: str, image_ref: str, binary: Path) -> None:
             pack_create(pack_ref, binary)
     finally:
         image_tarball.unlink(missing_ok=True)
+
+
+def _exec_tar_to_file(machine: str, dest: Path) -> None:
+    """Stream the VM root filesystem as a tar archive to `dest`.
+
+    smolvm machine exec requires stdout to be a pipe, not a regular file.
+    We use Popen with stdout=PIPE and drain stderr in a background thread
+    to avoid deadlock if either buffer fills while we're writing the other."""
+    proc = subprocess.Popen(
+        [
+            "smolvm", "machine", "exec",
+            "--name", machine, "--",
+            "tar", "--create",
+            "--exclude=./proc",
+            "--exclude=./sys",
+            "--exclude=./dev",
+            "--exclude=./run",
+            "--file=-",
+            "--directory=/",
+            ".",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    stderr_chunks: list[bytes] = []
+
+    def _drain_stderr() -> None:
+        assert proc.stderr is not None
+        stderr_chunks.append(proc.stderr.read())
+
+    t = threading.Thread(target=_drain_stderr, daemon=True)
+    t.start()
+
+    assert proc.stdout is not None
+    with open(dest, "wb") as out:
+        shutil.copyfileobj(proc.stdout, out, length=65536)
+
+    t.join()
+    returncode = proc.wait()
+    stderr = b"".join(stderr_chunks).decode(errors="replace").strip()
+
+    if returncode != 0:
+        die(
+            f"smolvm exec tar {machine!r} failed: "
+            f"{stderr or '<no stderr>'}"
+        )
