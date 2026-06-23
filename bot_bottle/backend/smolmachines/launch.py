@@ -40,8 +40,12 @@ from ..docker.git_gate import (
     GIT_GATE_HOOK_IN_CONTAINER,
 )
 from ...git_gate import revoke_git_gate_provisioned_keys
-from ...log import warn
-from ...bottle_state import egress_state_dir, git_gate_state_dir
+from ...log import info, warn
+from ...bottle_state import (
+    egress_state_dir,
+    git_gate_state_dir,
+    read_committed_image,
+)
 from . import loopback_alias as _loopback
 from . import sidecar_bundle as _bundle
 from . import smolvm as _smolvm
@@ -85,14 +89,7 @@ def launch(
         plan = _start_bundle(plan, network, loopback_ip, stack)
         plan = _discover_urls(plan, loopback_ip)
 
-        # Build the agent image and pack it into a `.smolmachine`
-        # artifact (or hit the per-Dockerfile-digest cache). Runs
-        # here, not in prepare, so the docker-build output doesn't
-        # garble the dashboard's preflight modal.
-        agent_from_path = _ensure_smolmachine(
-            plan.agent_image,
-            dockerfile=plan.agent_dockerfile_path,
-        )
+        agent_from_path = _agent_from_path(plan)
 
         _launch_vm(plan, agent_from_path, loopback_ip, stack)
         _init_vm(plan)
@@ -384,6 +381,30 @@ def _resolve_token_env(
     `-e NAME` inheritance. Empty when no routes declare auth."""
     effective_env = {**host_env, **plan.agent_provision.provisioned_env}
     return egress_resolve_token_values(plan.egress_plan.token_env_map, effective_env)
+
+
+def _agent_from_path(plan: SmolmachinesBottlePlan) -> Path:
+    """Return the `.smolmachine` artifact used for `machine create --from`.
+
+    Prefer a committed VM artifact when one is recorded and still
+    present. If the file was removed, fall back to the normal image
+    build + pack cache path.
+    """
+    committed = read_committed_image(plan.slug)
+    if committed:
+        committed_path = Path(committed)
+        if committed_path.is_file():
+            info(f"using committed smolmachine {str(committed_path)!r}")
+            return committed_path
+
+    # Build the agent image and pack it into a `.smolmachine`
+    # artifact (or hit the per-Dockerfile-digest cache). Runs here,
+    # not in prepare, so the docker-build output doesn't garble the
+    # dashboard's preflight modal.
+    return _ensure_smolmachine(
+        plan.agent_image,
+        dockerfile=plan.agent_dockerfile_path,
+    )
 
 
 def _ensure_smolmachine(image_ref: str, *, dockerfile: str = "") -> Path:

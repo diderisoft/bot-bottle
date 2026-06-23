@@ -94,6 +94,16 @@ def pack_create(image: str, output: Path) -> None:
     _smolvm("pack", "create", "--image", image, "-o", str(output))
 
 
+def pack_create_from_vm(name: str, output: Path) -> None:
+    """`smolvm pack create --from-vm <name> -o <output>`.
+
+    Snapshots an existing persistent VM into a pack artifact. As
+    with `pack_create`, smolvm writes a launcher at `output` and the
+    bootable sidecar at `output.smolmachine`.
+    """
+    _smolvm("pack", "create", "--from-vm", name, "-o", str(output))
+
+
 # --- Machine lifecycle ---------------------------------------------------
 
 

@@ -24,6 +24,7 @@ from bot_bottle.backend.smolmachines.smolvm import (
     machine_start,
     machine_stop,
     pack_create,
+    pack_create_from_vm,
     wait_exec_ready,
 )
 
@@ -60,6 +61,17 @@ class TestArgvShapes(unittest.TestCase):
             ["smolvm", "pack", "create",
              "--image", "bot-bottle-claude:latest",
              "-o", "/tmp/agent.smolmachine"],
+            argv,
+        )
+
+    def test_pack_create_from_vm_argv(self):
+        with self._patch_run() as m:
+            pack_create_from_vm("bot-bottle-dev-abc12", Path("/tmp/committed"))
+        argv = m.call_args.args[0]
+        self.assertEqual(
+            ["smolvm", "pack", "create",
+             "--from-vm", "bot-bottle-dev-abc12",
+             "-o", "/tmp/committed"],
             argv,
         )
 
@@ -192,6 +204,14 @@ class TestErrorPath(unittest.TestCase):
         ):
             with self.assertRaises(SmolvmError):
                 pack_create("missing:tag", Path("/tmp/out"))
+
+    def test_pack_create_from_vm_failure_raises(self):
+        with patch(
+            "bot_bottle.backend.smolmachines.smolvm.subprocess.run",
+            return_value=_fail("pack failed"),
+        ):
+            with self.assertRaises(SmolvmError):
+                pack_create_from_vm("bot-bottle-dev-abc12", Path("/tmp/out"))
 
     def test_exec_failure_returns_result(self):
         # The in-VM command's exit code is what Bottle.exec sees;

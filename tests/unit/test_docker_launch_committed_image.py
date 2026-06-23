@@ -7,6 +7,7 @@ import io
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 from bot_bottle.agent_provider import AgentProvisionPlan
@@ -73,36 +74,28 @@ def _plan(tmp: str) -> DockerBottlePlan:
     )
 
 
-def _std_mocks(test, plan):
-    """Context manager providing the standard launch-step mocks needed to
-    get through the non-image parts of `launch()` without real Docker."""
-    return mock.patch.multiple(
-        launch_mod,
-        egress_tls_init=mock.DEFAULT,
-        network_mod=mock.DEFAULT,
-        bottle_plan_to_compose=mock.DEFAULT,
-        write_compose_file=mock.DEFAULT,
-        compose_up=mock.DEFAULT,
-        compose_dump_logs=mock.DEFAULT,
-        compose_down=mock.DEFAULT,
-    )
-
-
 class TestLaunchCommittedImage(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self._tmp = tempfile.mkdtemp(prefix="launch-committed-test.")
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         import shutil
         shutil.rmtree(self._tmp, ignore_errors=True)
 
-    def _run_launch(self, plan, *, committed_tag=None, image_present=True):
+    def _run_launch(
+        self,
+        plan: DockerBottlePlan,
+        *,
+        committed_tag: str | None = None,
+        image_present: bool = True,
+    ) -> list[str]:
         """Drive launch() through its full sequence with the committed-image
         behaviour controlled by the arguments. Returns the images that were
         passed to `build_image` (empty list if it was never called)."""
-        built = []
+        built: list[str] = []
 
-        def fake_build(image, ctx, *, dockerfile=""):
+        def fake_build(image: str, ctx: str, *, dockerfile: str = "") -> None:
+            del ctx, dockerfile
             built.append(image)
 
         with mock.patch.object(
@@ -136,19 +129,19 @@ class TestLaunchCommittedImage(unittest.TestCase):
 
         return built
 
-    def test_skips_build_when_committed_image_present(self):
+    def test_skips_build_when_committed_image_present(self) -> None:
         plan = _plan(self._tmp)
         built = self._run_launch(plan, committed_tag=_COMMITTED_TAG, image_present=True)
         self.assertEqual([], built, "build_image should not be called when committed image exists")
 
-    def test_uses_committed_image_in_compose_spec(self):
+    def test_uses_committed_image_in_compose_spec(self) -> None:
         """The compose spec renderer receives the committed image tag via
         plan.image — captured here by checking what bottle_plan_to_compose
         was called with."""
         plan = _plan(self._tmp)
-        captured_plans = []
+        captured_plans: list[DockerBottlePlan] = []
 
-        def fake_compose(p):
+        def fake_compose(p: DockerBottlePlan) -> dict[str, Any]:
             captured_plans.append(p)
             return {"services": {"agent": {}}}
 
@@ -183,12 +176,12 @@ class TestLaunchCommittedImage(unittest.TestCase):
         self.assertEqual(1, len(captured_plans))
         self.assertEqual(_COMMITTED_TAG, captured_plans[0].image)
 
-    def test_falls_back_to_build_when_no_committed_image(self):
+    def test_falls_back_to_build_when_no_committed_image(self) -> None:
         plan = _plan(self._tmp)
         built = self._run_launch(plan, committed_tag=None)
         self.assertEqual([_DEFAULT_IMAGE], built)
 
-    def test_falls_back_to_build_when_committed_image_missing_from_daemon(self):
+    def test_falls_back_to_build_when_committed_image_missing_from_daemon(self) -> None:
         plan = _plan(self._tmp)
         built = self._run_launch(
             plan, committed_tag=_COMMITTED_TAG, image_present=False,

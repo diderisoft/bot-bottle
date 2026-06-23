@@ -16,6 +16,8 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import patch
 
 from bot_bottle.backend.smolmachines import launch as _launch_mod
@@ -139,6 +141,47 @@ class TestEnsureSmolmachine(unittest.TestCase):
             f"localhost:54321/bot-bottle:{digest}", pack_args[0],
         )
         self.assertTrue(str(pack_args[1]).endswith(f"{digest}.smolmachine"))
+
+
+class TestAgentFromPath(unittest.TestCase):
+    def _plan(self) -> Any:
+        return cast(Any, SimpleNamespace(
+            slug="dev-abc12",
+            agent_image="bot-bottle-claude:latest",
+            agent_dockerfile_path="/repo/Dockerfile",
+        ))
+
+    def test_uses_committed_artifact_when_present(self):
+        with tempfile.TemporaryDirectory(prefix="committed-smolmachine.") as tmp:
+            artifact = Path(tmp) / "committed-smolmachine.smolmachine"
+            artifact.write_text("")
+            with patch.object(
+                _launch_mod, "read_committed_image", return_value=str(artifact),
+            ), patch.object(
+                _launch_mod, "_ensure_smolmachine",
+            ) as ensure, patch.object(
+                _launch_mod, "info",
+            ):
+                result = _launch_mod._agent_from_path(self._plan())
+
+        self.assertEqual(artifact, result)
+        ensure.assert_not_called()
+
+    def test_falls_back_when_committed_artifact_missing(self):
+        packed = Path("/cache/agent.smolmachine")
+        with patch.object(
+            _launch_mod, "read_committed_image",
+            return_value="/missing/committed.smolmachine",
+        ), patch.object(
+            _launch_mod, "_ensure_smolmachine", return_value=packed,
+        ) as ensure:
+            result = _launch_mod._agent_from_path(self._plan())
+
+        self.assertEqual(packed, result)
+        ensure.assert_called_once_with(
+            "bot-bottle-claude:latest",
+            dockerfile="/repo/Dockerfile",
+        )
 
 
 if __name__ == "__main__":

@@ -5,9 +5,15 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
-from bot_bottle.cli.commit import cmd_commit, _committed_image_tag, _agent_container_name
+from bot_bottle.cli.commit import (
+    cmd_commit,
+    _agent_container_name,
+    _committed_image_tag,
+    _committed_smolmachine_artifact,
+    _committed_smolmachine_output,
+)
 from bot_bottle import supervise
 from bot_bottle import bottle_state
 
@@ -40,6 +46,16 @@ class TestCommitHelpers(unittest.TestCase):
             "bot-bottle-dev-abc12",
             _agent_container_name("dev-abc12"),
         )
+
+    def test_committed_smolmachine_paths(self):
+        output = _committed_smolmachine_output("dev-abc12")
+        artifact = _committed_smolmachine_artifact("dev-abc12")
+        self.assertTrue(str(output).endswith(
+            "/.bot-bottle/state/dev-abc12/committed-smolmachine"
+        ))
+        self.assertTrue(str(artifact).endswith(
+            "/.bot-bottle/state/dev-abc12/committed-smolmachine.smolmachine"
+        ))
 
 
 class TestCmdCommitSlugArg(_FakeHomeMixin, unittest.TestCase):
@@ -117,14 +133,14 @@ class TestCmdCommitSlugArg(_FakeHomeMixin, unittest.TestCase):
         mock_commit.assert_called_once()
 
 
-class TestCmdCommitNonDockerBackend(_FakeHomeMixin, unittest.TestCase):
+class TestCmdCommitSmolmachinesBackend(_FakeHomeMixin, unittest.TestCase):
     def setUp(self):
         self._setup_fake_home()
 
     def tearDown(self):
         self._teardown_fake_home()
 
-    def test_dies_for_smolmachines_backend(self):
+    def test_packs_smolmachines_bottle(self):
         slug = "dev-abc12"
         bottle_state.write_metadata(bottle_state.BottleMetadata(
             identity=slug, agent_name="dev", cwd="", copy_cwd=False,
@@ -132,13 +148,30 @@ class TestCmdCommitNonDockerBackend(_FakeHomeMixin, unittest.TestCase):
         ))
 
         with patch(
-            "bot_bottle.cli.commit.die", side_effect=SystemExit("die"),
-        ) as mock_die:
-            with self.assertRaises(SystemExit):
-                cmd_commit([slug])
+            "bot_bottle.cli.commit.pack_create_from_vm",
+        ) as mock_pack, patch(
+            "bot_bottle.cli.commit.info",
+        ):
+            rc = cmd_commit([slug])
 
-        mock_die.assert_called_once()
-        self.assertIn("smolmachines", mock_die.call_args.args[0])
+        self.assertEqual(0, rc)
+        mock_pack.assert_called_once_with(
+            f"bot-bottle-{slug}",
+            _committed_smolmachine_output(slug),
+        )
+        self.assertEqual(
+            str(_committed_smolmachine_artifact(slug)),
+            bottle_state.read_committed_image(slug),
+        )
+        self.assertTrue(bottle_state.is_preserved(slug))
+
+
+class TestCmdCommitUnsupportedBackend(_FakeHomeMixin, unittest.TestCase):
+    def setUp(self):
+        self._setup_fake_home()
+
+    def tearDown(self):
+        self._teardown_fake_home()
 
     def test_dies_for_macos_container_backend(self):
         slug = "dev-abc12"
