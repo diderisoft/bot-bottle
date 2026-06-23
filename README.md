@@ -138,7 +138,7 @@ You help maintain Gitea-hosted projects.
 | Field | Required | Description |
 |---|---|---|
 | `host` | yes | Hostname to allowlist. One entry per host. |
-| `role` | no | Provider-specific role string (e.g. `claude_code_oauth`). Wires built-in auth flows; set by provider templates, not manually. |
+| `role` | no | Reserved for future use. The key is recognised but any value is currently rejected at load. Provider auth routes (e.g. Claude's `api.anthropic.com`) are injected automatically from `agent_provider.auth_token`, not via `role`. |
 | `auth.scheme` | when `auth` present | `Bearer` or `token`. Injected by the proxy; the agent never sees the value. |
 | `auth.token_ref` | when `auth` present | Env-var name holding the secret on the host. |
 | `matches` | no | Array of `{paths, methods, headers}` filters. A request must match at least one entry (if any are given) to be forwarded. |
