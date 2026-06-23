@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+import sys
 import unittest
 from unittest.mock import patch
 
 from bot_bottle.backend.macos_container import bottle as bottle_mod
-from bot_bottle.backend.macos_container.bottle import MacosContainerBottle
+from bot_bottle.backend.macos_container.bottle import MacosContainerBottle, _PTY_FORWARD_SCRIPT
 
 
 class TestMacosContainerBottle(unittest.TestCase):
-    def test_agent_argv_uses_container_exec(self):
+    def test_agent_argv_uses_pty_forward_and_container_exec(self):
         bottle = MacosContainerBottle(
             "bot-bottle-dev-abc",
             lambda: None,
@@ -21,6 +22,7 @@ class TestMacosContainerBottle(unittest.TestCase):
             argv = bottle.agent_argv(["run"])
         self.assertEqual(
             [
+                sys.executable, _PTY_FORWARD_SCRIPT, "--",
                 "container", "exec", "--interactive", "--tty",
                 "--env", "TERM=xterm-256color",
                 "bot-bottle-dev-abc", "codex", "run",
@@ -39,6 +41,7 @@ class TestMacosContainerBottle(unittest.TestCase):
             argv = bottle.agent_argv([])
         self.assertEqual(
             [
+                sys.executable, _PTY_FORWARD_SCRIPT, "--",
                 "container", "exec", "--interactive", "--tty",
                 "--env", "TERM=xterm-256color",
                 "--workdir", "/home/node/workspace",
@@ -51,7 +54,6 @@ class TestMacosContainerBottle(unittest.TestCase):
         bottle = MacosContainerBottle("bot-bottle-dev-abc", lambda: None, None)
         with patch.dict(bottle_mod.os.environ, {"TERM": "screen-256color"}, clear=False):
             argv = bottle.agent_argv([])
-        self.assertIn("--env", argv)
         self.assertIn("TERM=screen-256color", argv)
 
     def test_agent_argv_term_falls_back_to_xterm_256color(self):
@@ -61,11 +63,13 @@ class TestMacosContainerBottle(unittest.TestCase):
             argv = bottle.agent_argv([])
         self.assertIn("TERM=xterm-256color", argv)
 
-    def test_agent_argv_no_tty_omits_term(self):
+    def test_agent_argv_no_tty_omits_wrapper_and_tty_flags(self):
         bottle = MacosContainerBottle("bot-bottle-dev-abc", lambda: None, None)
         argv = bottle.agent_argv([], tty=False)
         self.assertNotIn("--tty", argv)
         self.assertNotIn("--env", argv)
+        self.assertNotIn(_PTY_FORWARD_SCRIPT, argv)
+        self.assertEqual(["container", "exec", "bot-bottle-dev-abc", "claude"], argv)
 
     def test_exec_pipes_script_to_shell(self):
         bottle = MacosContainerBottle("bot-bottle-dev-abc", lambda: None, None)

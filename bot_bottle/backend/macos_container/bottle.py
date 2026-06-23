@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from typing import Callable, cast
 
 from ...agent_provider import PromptMode, prompt_args
 from .. import Bottle, ExecResult
 from ..terminal import exec_shell_script
+from . import pty_forward as _pty_forward
+
+
+_PTY_FORWARD_SCRIPT = _pty_forward.__file__
 
 
 class MacosContainerBottle(Bottle):
@@ -45,18 +50,25 @@ class MacosContainerBottle(Bottle):
                 argv=full_argv,
             )
         )
-        cmd = ["container", "exec"]
+        container_exec = ["container", "exec"]
         if tty:
-            cmd.extend(["--interactive", "--tty"])
+            container_exec.extend(["--interactive", "--tty"])
             # Forward TERM so Claude Code can enable modifier-key protocols
-            # (e.g. modifyOtherKeys). Without it the inner PTY session has no
-            # TERM and Shift+Enter is indistinguishable from plain Enter.
+            # (e.g. modifyOtherKeys / kitty protocol). Without it the inner
+            # PTY session has no terminal-type context and Shift+Enter is
+            # indistinguishable from plain Enter.
             term = os.environ.get("TERM", "xterm-256color")
-            cmd.extend(["--env", f"TERM={term}"])
+            container_exec.extend(["--env", f"TERM={term}"])
         if self.agent_workdir and self.agent_workdir != "/home/node":
-            cmd.extend(["--workdir", self.agent_workdir])
-        cmd.extend([self.name, self.agent_command, *full_argv])
-        return cmd
+            container_exec.extend(["--workdir", self.agent_workdir])
+        container_exec.extend([self.name, self.agent_command, *full_argv])
+        if tty:
+            # Wrap with the raw-mode forwarder: container exec does not put
+            # the host terminal into raw mode itself, so the line discipline
+            # buffers modifier-key sequences until CR.  The wrapper sets raw
+            # mode before exec and restores it on exit.
+            return [sys.executable, _PTY_FORWARD_SCRIPT, "--", *container_exec]
+        return container_exec
 
     def exec_agent(self, argv: list[str], *, tty: bool = True) -> int:
         agent_argv = self.agent_argv(argv, tty=tty)
