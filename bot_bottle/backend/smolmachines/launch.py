@@ -308,7 +308,7 @@ def _bundle_launch_spec(
     ep = plan.egress_plan
     volumes.append((str(ep.mitmproxy_ca_host_path), EGRESS_CA_IN_CONTAINER, True))
     if ep.routes:
-        volumes.append((str(ep.routes_path), EGRESS_ROUTES_IN_CONTAINER, True))
+        volumes.append((str(ep.routes_path.parent), str(Path(EGRESS_ROUTES_IN_CONTAINER).parent), True))
         # Bare-name entries for upstream-token slots. Their values
         # come from the docker-run subprocess env (inherited from
         # the operator's shell), never landing on argv.

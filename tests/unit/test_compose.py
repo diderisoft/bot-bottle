@@ -392,7 +392,7 @@ class TestSidecarBundleShape(unittest.TestCase):
             "services"]["sidecars"]
         targets = {v["target"] for v in sc["volumes"]}
         self.assertIn("/home/mitmproxy/.mitmproxy/mitmproxy-ca.pem", targets)
-        self.assertIn("/etc/egress/routes.yaml", targets)
+        self.assertIn("/etc/egress", targets)
         self.assertIn("/git-gate-entrypoint.sh", targets)
         self.assertIn("/git-gate/creds/upstream-known_hosts", targets)
         self.assertTrue(any("supervise/queue" in t or t.startswith("/run/supervise")

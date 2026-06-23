@@ -134,7 +134,7 @@ def _sidecar_bundle_service(plan: DockerBottlePlan) -> dict[str, Any]:
     ep = plan.egress_plan
     volumes.append(_bind(ep.mitmproxy_ca_host_path, EGRESS_CA_IN_CONTAINER))
     if ep.routes:
-        volumes.append(_bind(ep.routes_path, EGRESS_ROUTES_IN_CONTAINER))
+        volumes.append(_bind(ep.routes_path.parent, str(Path(EGRESS_ROUTES_IN_CONTAINER).parent)))
         for token_env in sorted(ep.token_env_map.keys()):
             env.append(token_env)
 
