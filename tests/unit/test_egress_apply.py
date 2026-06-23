@@ -73,7 +73,7 @@ class TestApplyRoutesChange(unittest.TestCase):
     def test_writes_live_routes_and_signals_reload(self):
         calls: list[list[str]] = []
 
-        def fake_run(argv, **kwargs):
+        def fake_run(argv: list[str], **kwargs: object) -> SimpleNamespace:
             calls.append(list(argv))
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
