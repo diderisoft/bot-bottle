@@ -55,7 +55,7 @@ def cmd_list(argv: list[str]) -> int:
     # Tab-separated keeps the format stable for shell pipelines.
     for b in active:
         services = ",".join(b.services) if b.services else "-"
-        display_name = b.label if b.label else b.agent_name
+        display_name = f"{b.label} ({b.agent_name})" if b.label else b.agent_name
         colored_name = _ansi_label(display_name, b.color)
         print(f"{b.backend_name}\t{b.slug}\t{colored_name}\t{services}")
     return 0
