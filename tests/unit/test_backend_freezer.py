@@ -5,14 +5,13 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 from bot_bottle import supervise, bottle_state
 from bot_bottle.backend import ActiveAgent
 from bot_bottle.backend.freeze import (
     CommitCancelled,
     Freezer,
-    _NamedBottle,
     get_freezer,
 )
 from bot_bottle.backend.docker.freezer import DockerFreezer
@@ -44,10 +43,6 @@ def _make_agent(slug: str, backend: str = "docker") -> ActiveAgent:
         started_at="t",
         services=(),
     )
-
-
-def _make_bottle(slug: str) -> _NamedBottle:
-    return _NamedBottle(f"bot-bottle-{slug}")
 
 
 class TestGetFreezer(unittest.TestCase):
@@ -85,12 +80,11 @@ class TestFreezerBaseCommit(_FakeHomeMixin, unittest.TestCase):
             started_at="t", backend="docker",
         ))
         freezer = get_freezer("docker")
-        agent = _make_agent(slug, "docker")
-        bottle = _make_bottle(slug)
+        agent = _make_agent(slug)
 
         with patch.object(freezer, "_freeze", return_value="bot-bottle-committed-dev-abc12:latest"), \
              patch("bot_bottle.backend.freeze.info"):
-            freezer.commit(agent, bottle)
+            freezer.commit(agent)
 
         self.assertEqual(
             "bot-bottle-committed-dev-abc12:latest",
@@ -98,7 +92,7 @@ class TestFreezerBaseCommit(_FakeHomeMixin, unittest.TestCase):
         )
         self.assertTrue(bottle_state.is_preserved(slug))
 
-    def test_commit_slug_builds_correct_bottle_name(self):
+    def test_commit_slug_passes_correct_slug_to_freeze(self):
         slug = "dev-abc12"
         bottle_state.write_metadata(bottle_state.BottleMetadata(
             identity=slug, agent_name="dev", cwd="", copy_cwd=False,
@@ -107,15 +101,15 @@ class TestFreezerBaseCommit(_FakeHomeMixin, unittest.TestCase):
         freezer = get_freezer("docker")
         captured = {}
 
-        def capture_freeze(agent, bottle):
-            captured["bottle_name"] = bottle.name
+        def capture_freeze(agent):
+            captured["slug"] = agent.slug
             return "some-ref"
 
         with patch.object(freezer, "_freeze", side_effect=capture_freeze), \
              patch("bot_bottle.backend.freeze.info"):
             freezer.commit_slug(slug)
 
-        self.assertEqual(f"bot-bottle-{slug}", captured["bottle_name"])
+        self.assertEqual(slug, captured["slug"])
 
 
 class TestDockerFreezer(_FakeHomeMixin, unittest.TestCase):
@@ -125,20 +119,19 @@ class TestDockerFreezer(_FakeHomeMixin, unittest.TestCase):
     def tearDown(self):
         self._teardown_fake_home()
 
-    def test_commits_container_and_returns_image_tag(self):
+    def test_commits_container_and_records_image(self):
         slug = "dev-abc12"
+        bottle_state.write_metadata(bottle_state.BottleMetadata(
+            identity=slug, agent_name="dev", cwd="", copy_cwd=False,
+            started_at="t", backend="docker",
+        ))
         freezer = DockerFreezer()
         agent = _make_agent(slug)
-        bottle = _make_bottle(slug)
 
         with patch("bot_bottle.backend.docker.freezer.commit_container") as mock_commit, \
              patch("bot_bottle.backend.freeze.info"), \
              patch("bot_bottle.backend.docker.freezer.info"):
-            bottle_state.write_metadata(bottle_state.BottleMetadata(
-                identity=slug, agent_name="dev", cwd="", copy_cwd=False,
-                started_at="t", backend="docker",
-            ))
-            freezer.commit(agent, bottle)
+            freezer.commit(agent)
 
         mock_commit.assert_called_once_with(
             f"bot-bottle-{slug}",
@@ -169,14 +162,13 @@ class TestMacosContainerFreezer(_FakeHomeMixin, unittest.TestCase):
         self._write_meta(slug)
         freezer = MacosContainerFreezer()
         agent = _make_agent(slug, "macos-container")
-        bottle = _make_bottle(slug)
 
         with patch("bot_bottle.backend.macos_container.freezer.container_is_running",
                    return_value=False), \
              patch("bot_bottle.backend.macos_container.freezer.commit_container") as mock_commit, \
              patch("bot_bottle.backend.freeze.info"), \
              patch("bot_bottle.backend.macos_container.freezer.info"):
-            freezer.commit(agent, bottle)
+            freezer.commit(agent)
 
         mock_commit.assert_called_once_with(
             f"bot-bottle-{slug}",
@@ -188,7 +180,6 @@ class TestMacosContainerFreezer(_FakeHomeMixin, unittest.TestCase):
         self._write_meta(slug)
         freezer = MacosContainerFreezer()
         agent = _make_agent(slug, "macos-container")
-        bottle = _make_bottle(slug)
 
         with patch("bot_bottle.backend.macos_container.freezer.container_is_running",
                    return_value=True), \
@@ -198,7 +189,7 @@ class TestMacosContainerFreezer(_FakeHomeMixin, unittest.TestCase):
              patch("bot_bottle.backend.macos_container.freezer.commit_container") as mock_commit, \
              patch("bot_bottle.backend.freeze.info"), \
              patch("bot_bottle.backend.macos_container.freezer.info"):
-            freezer.commit(agent, bottle)
+            freezer.commit(agent)
 
         mock_stop.assert_called_once_with(f"bot-bottle-{slug}")
         mock_commit.assert_called_once()
@@ -208,7 +199,6 @@ class TestMacosContainerFreezer(_FakeHomeMixin, unittest.TestCase):
         self._write_meta(slug)
         freezer = MacosContainerFreezer()
         agent = _make_agent(slug, "macos-container")
-        bottle = _make_bottle(slug)
 
         with patch("bot_bottle.backend.macos_container.freezer.container_is_running",
                    return_value=True), \
@@ -217,7 +207,7 @@ class TestMacosContainerFreezer(_FakeHomeMixin, unittest.TestCase):
              patch("bot_bottle.backend.macos_container.freezer.stop_container") as mock_stop, \
              patch("bot_bottle.backend.macos_container.freezer.commit_container") as mock_commit:
             with self.assertRaises(CommitCancelled):
-                freezer.commit(agent, bottle)
+                freezer.commit(agent)
 
         mock_stop.assert_not_called()
         mock_commit.assert_not_called()
@@ -238,12 +228,11 @@ class TestSmolmachinesFreezer(_FakeHomeMixin, unittest.TestCase):
         ))
         freezer = SmolmachinesFreezer()
         agent = _make_agent(slug, "smolmachines")
-        bottle = _make_bottle(slug)
 
         with patch("bot_bottle.backend.smolmachines.freezer.pack_create_from_vm") as mock_pack, \
              patch("bot_bottle.backend.freeze.info"), \
              patch("bot_bottle.backend.smolmachines.freezer.info"):
-            freezer.commit(agent, bottle)
+            freezer.commit(agent)
 
         expected_output = bottle_state.bottle_state_dir(slug) / "committed-smolmachine"
         mock_pack.assert_called_once_with(f"bot-bottle-{slug}", expected_output)

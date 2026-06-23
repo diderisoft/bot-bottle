@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sys
 
-from .. import ActiveAgent, Bottle
+from .. import ActiveAgent
 from ..freeze import CommitCancelled, Freezer
 from .util import commit_container, container_is_running, stop_container
 from ...log import info
@@ -19,9 +19,10 @@ class MacosContainerFreezer(Freezer):
 
     backend_name = "macos-container"
 
-    def _freeze(self, agent: ActiveAgent, bottle: Bottle) -> str:
+    def _freeze(self, agent: ActiveAgent) -> str:
+        container = f"bot-bottle-{agent.slug}"
         image_tag = f"bot-bottle-committed-{agent.slug}:latest"
-        if container_is_running(bottle.name):
+        if container_is_running(container):
             sys.stderr.write(
                 f"bot-bottle: bottle {agent.slug!r} is running; "
                 "commit will stop it. Continue? [y/N] "
@@ -30,8 +31,8 @@ class MacosContainerFreezer(Freezer):
             reply = _read_tty_line().strip().lower()
             if reply not in ("y", "yes"):
                 raise CommitCancelled
-            stop_container(bottle.name)
-        commit_container(bottle.name, image_tag)
+            stop_container(container)
+        commit_container(container, image_tag)
         return image_tag
 
     def _export_hint(self, slug: str, image_ref: str) -> None:

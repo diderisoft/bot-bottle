@@ -6,16 +6,16 @@ print resume hint) and backend-specific subclasses in their respective
 backend directories.
 
 Entry points:
-  Freezer.commit(agent, bottle)   — for use within a live launch context
-  Freezer.commit_slug(slug)       — for cmd_commit when no live Bottle exists
-  get_freezer(backend_name)       — factory
+  Freezer.commit(agent)      — freeze by ActiveAgent
+  Freezer.commit_slug(slug)  — convenience wrapper for cmd_commit
+  get_freezer(backend_name)  — factory
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from . import ActiveAgent, Bottle, ExecResult
+from . import ActiveAgent
 from ..bottle_state import mark_preserved, write_committed_image
 from ..log import die, info
 
@@ -38,8 +38,8 @@ class Freezer(ABC):
 
     backend_name: str
 
-    def commit(self, agent: ActiveAgent, bottle: Bottle) -> None:
-        """Freeze `bottle` to a resumable artifact.
+    def commit(self, agent: ActiveAgent) -> None:
+        """Freeze the bottle for `agent` to a resumable artifact.
 
         Calls _freeze for the backend-specific snapshot, then writes the
         committed image reference to per-bottle state and marks the bottle
@@ -48,14 +48,14 @@ class Freezer(ABC):
         Raises CommitCancelled if the user declines an interactive
         confirmation prompt (e.g. the macos-container stop prompt).
         """
-        image_ref = self._freeze(agent, bottle)
+        image_ref = self._freeze(agent)
         write_committed_image(agent.slug, image_ref)
         mark_preserved(agent.slug)
         info(f"to resume from this snapshot: ./cli.py resume {agent.slug}")
         self._export_hint(agent.slug, image_ref)
 
     @abstractmethod
-    def _freeze(self, agent: ActiveAgent, bottle: Bottle) -> str:
+    def _freeze(self, agent: ActiveAgent) -> str:
         """Backend-specific snapshot. Returns the image tag or artifact path
         stored by write_committed_image. Raises CommitCancelled if the user
         declines a stop-confirmation prompt."""
@@ -65,11 +65,7 @@ class Freezer(ABC):
         Overridden by backends that provide a meaningful export command."""
 
     def commit_slug(self, slug: str) -> None:
-        """Convenience entry for cmd_commit when no live Bottle is available.
-
-        Constructs a minimal ActiveAgent from per-bottle state and a
-        name-only Bottle stub, then delegates to commit(). Freezer
-        subclasses must not call exec / exec_agent / cp_in on the stub."""
+        """Convenience entry for cmd_commit when only a slug is available."""
         from ..bottle_state import read_metadata
         metadata = read_metadata(slug)
         agent = ActiveAgent(
@@ -79,34 +75,7 @@ class Freezer(ABC):
             started_at=metadata.started_at if metadata else "",
             services=(),
         )
-        bottle: Bottle = _NamedBottle(f"bot-bottle-{slug}")
-        self.commit(agent, bottle)
-
-
-class _NamedBottle(Bottle):
-    """Name-only Bottle stub for Freezer.commit_slug.
-
-    Only `name` is meaningful. All runtime operations raise
-    NotImplementedError — Freezer._freeze implementations must only
-    access bottle.name."""
-
-    def __init__(self, name: str) -> None:
-        self.name = name
-
-    def agent_argv(self, argv: list[str], *, tty: bool = True) -> list[str]:
-        raise NotImplementedError
-
-    def exec_agent(self, argv: list[str], *, tty: bool = True) -> int:
-        raise NotImplementedError
-
-    def exec(self, script: str, *, user: str = "node") -> ExecResult:
-        raise NotImplementedError
-
-    def cp_in(self, host_path: str, container_path: str) -> None:
-        raise NotImplementedError
-
-    def close(self) -> None:
-        pass
+        self.commit(agent)
 
 
 def get_freezer(backend_name: str) -> Freezer:

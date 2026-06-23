@@ -526,9 +526,9 @@ from .docker import DockerBottleBackend  # noqa: E402  # pylint: disable=wrong-i
 from .macos_container import MacosContainerBottleBackend  # noqa: E402  # pylint: disable=wrong-import-position
 from .smolmachines import SmolmachinesBottleBackend  # noqa: E402  # pylint: disable=wrong-import-position
 
-# Freezer is imported after the backend classes for the same reason —
-# Freezer.commit_slug constructs ActiveAgent, so the dataclass must be
-# fully defined first.
+# Freezer is imported after the backend classes for the same reason:
+# Freezer.commit_slug constructs ActiveAgent, which must be fully
+# defined first.
 from .freeze import CommitCancelled, Freezer, get_freezer  # noqa: E402  # pylint: disable=wrong-import-position
 
 

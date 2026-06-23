@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .. import ActiveAgent, Bottle
+from .. import ActiveAgent
 from ..freeze import Freezer
 from .smolvm import pack_create_from_vm
 from ...bottle_state import bottle_state_dir
@@ -14,10 +14,11 @@ class SmolmachinesFreezer(Freezer):
 
     backend_name = "smolmachines"
 
-    def _freeze(self, agent: ActiveAgent, bottle: Bottle) -> str:
+    def _freeze(self, agent: ActiveAgent) -> str:
+        machine = f"bot-bottle-{agent.slug}"
         output = bottle_state_dir(agent.slug) / "committed-smolmachine"
         output.parent.mkdir(parents=True, exist_ok=True)
-        pack_create_from_vm(bottle.name, output)
+        pack_create_from_vm(machine, output)
         artifact = output.with_name(f"{output.name}.smolmachine")
         return str(artifact)
 
