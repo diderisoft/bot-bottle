@@ -526,6 +526,11 @@ from .docker import DockerBottleBackend  # noqa: E402  # pylint: disable=wrong-i
 from .macos_container import MacosContainerBottleBackend  # noqa: E402  # pylint: disable=wrong-import-position
 from .smolmachines import SmolmachinesBottleBackend  # noqa: E402  # pylint: disable=wrong-import-position
 
+# Freezer is imported after the backend classes for the same reason —
+# Freezer.commit_slug constructs ActiveAgent, so the dataclass must be
+# fully defined first.
+from .freeze import CommitCancelled, Freezer, get_freezer  # noqa: E402  # pylint: disable=wrong-import-position
+
 
 # The dict is heterogeneous: each value is a BottleBackend specialized
 # over its own plan type. Concrete plan types are erased here because
@@ -613,9 +618,12 @@ __all__ = [
     "BottleCleanupPlan",
     "BottlePlan",
     "BottleSpec",
+    "CommitCancelled",
     "ExecResult",
+    "Freezer",
     "enumerate_active_agents",
     "get_bottle_backend",
+    "get_freezer",
     "has_backend",
     "known_backend_names",
 ]

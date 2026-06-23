@@ -1,0 +1,131 @@
+"""Freezer — snapshot a running bottle to a resumable artifact.
+
+Follows the same pattern as BottleBackend: a shared base class with
+common post-freeze steps (write committed-image path, mark preserved,
+print resume hint) and backend-specific subclasses in their respective
+backend directories.
+
+Entry points:
+  Freezer.commit(agent, bottle)   — for use within a live launch context
+  Freezer.commit_slug(slug)       — for cmd_commit when no live Bottle exists
+  get_freezer(backend_name)       — factory
+"""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+
+from . import ActiveAgent, Bottle, ExecResult
+from ..bottle_state import mark_preserved, write_committed_image
+from ..log import die, info
+
+
+class CommitCancelled(Exception):
+    """Raised by Freezer._freeze when the user declines a confirmation prompt."""
+
+
+class Freezer(ABC):
+    """Freezes a running bottle to a resumable artifact.
+
+    The base class owns the shared post-commit steps:
+      - write_committed_image  — records the artifact path in per-bottle state
+      - mark_preserved         — prevents teardown from removing the state dir
+      - resume hint            — printed to stderr after the snapshot
+
+    Subclasses implement _freeze with the backend-specific snapshot
+    operation and optionally override _export_hint for migration hints.
+    """
+
+    backend_name: str
+
+    def commit(self, agent: ActiveAgent, bottle: Bottle) -> None:
+        """Freeze `bottle` to a resumable artifact.
+
+        Calls _freeze for the backend-specific snapshot, then writes the
+        committed image reference to per-bottle state and marks the bottle
+        preserved so the next `./cli.py resume` boots from the snapshot.
+
+        Raises CommitCancelled if the user declines an interactive
+        confirmation prompt (e.g. the macos-container stop prompt).
+        """
+        image_ref = self._freeze(agent, bottle)
+        write_committed_image(agent.slug, image_ref)
+        mark_preserved(agent.slug)
+        info(f"to resume from this snapshot: ./cli.py resume {agent.slug}")
+        self._export_hint(agent.slug, image_ref)
+
+    @abstractmethod
+    def _freeze(self, agent: ActiveAgent, bottle: Bottle) -> str:
+        """Backend-specific snapshot. Returns the image tag or artifact path
+        stored by write_committed_image. Raises CommitCancelled if the user
+        declines a stop-confirmation prompt."""
+
+    def _export_hint(self, slug: str, image_ref: str) -> None:
+        """Optionally print an export-for-migration hint after committing.
+        Overridden by backends that provide a meaningful export command."""
+
+    def commit_slug(self, slug: str) -> None:
+        """Convenience entry for cmd_commit when no live Bottle is available.
+
+        Constructs a minimal ActiveAgent from per-bottle state and a
+        name-only Bottle stub, then delegates to commit(). Freezer
+        subclasses must not call exec / exec_agent / cp_in on the stub."""
+        from ..bottle_state import read_metadata
+        metadata = read_metadata(slug)
+        agent = ActiveAgent(
+            backend_name=self.backend_name,
+            slug=slug,
+            agent_name=metadata.agent_name if metadata else "",
+            started_at=metadata.started_at if metadata else "",
+            services=(),
+        )
+        bottle: Bottle = _NamedBottle(f"bot-bottle-{slug}")
+        self.commit(agent, bottle)
+
+
+class _NamedBottle(Bottle):
+    """Name-only Bottle stub for Freezer.commit_slug.
+
+    Only `name` is meaningful. All runtime operations raise
+    NotImplementedError — Freezer._freeze implementations must only
+    access bottle.name."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def agent_argv(self, argv: list[str], *, tty: bool = True) -> list[str]:
+        raise NotImplementedError
+
+    def exec_agent(self, argv: list[str], *, tty: bool = True) -> int:
+        raise NotImplementedError
+
+    def exec(self, script: str, *, user: str = "node") -> ExecResult:
+        raise NotImplementedError
+
+    def cp_in(self, host_path: str, container_path: str) -> None:
+        raise NotImplementedError
+
+    def close(self) -> None:
+        pass
+
+
+def get_freezer(backend_name: str) -> Freezer:
+    """Return the Freezer for the named backend.
+
+    backend_name "" is treated as "docker" for backward compatibility
+    with state dirs written before the backend field was added."""
+    resolved = backend_name or "docker"
+    if resolved == "docker":
+        from .docker.freezer import DockerFreezer
+        return DockerFreezer()
+    if resolved == "macos-container":
+        from .macos_container.freezer import MacosContainerFreezer
+        return MacosContainerFreezer()
+    if resolved == "smolmachines":
+        from .smolmachines.freezer import SmolmachinesFreezer
+        return SmolmachinesFreezer()
+    die(
+        f"commit is only supported for docker, macos-container, and "
+        f"smolmachines; backend {backend_name!r} has no freezer"
+    )
+    raise AssertionError("unreachable")
