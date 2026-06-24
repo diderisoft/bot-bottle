@@ -292,7 +292,10 @@ def cmd_supervise(argv: list[str]) -> int:
         return e.code if isinstance(e.code, int) else 1
     except Exception as e:  # noqa: W0718 — catch supervise crash for logging
         log_path = _write_crash_log(e)
-        error(f"supervise crashed: {type(e).__name__}: {e}")
+        error(
+            f"supervise crashed: {type(e).__name__}: {e}",
+            context={"error_type": type(e).__name__, "crash_log": str(log_path)},
+        )
         error(f"full traceback written to {log_path}")
         return 1
     return 0
