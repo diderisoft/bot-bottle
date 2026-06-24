@@ -37,6 +37,15 @@ VALID_METHODS = frozenset({
 OUTBOUND_DETECTOR_NAMES = frozenset({"token_patterns", "known_secrets"})
 INBOUND_DETECTOR_NAMES = frozenset({"naive_injection_detection"})
 
+# Per-route policy for what the proxy does when an outbound DLP detector
+# matches a token (PRD 0062).
+ON_MATCH_BLOCK = "block"          # hard 403, never overridable
+ON_MATCH_REDACT = "redact"        # scrub the matched value, forward the request
+ON_MATCH_SUPERVISE = "supervise"  # queue for operator approval, hold the request
+OUTBOUND_ON_MATCH_VALUES = (ON_MATCH_BLOCK, ON_MATCH_REDACT, ON_MATCH_SUPERVISE)
+# Unset resolves to supervise (fall back to block when supervise is not wired).
+DEFAULT_OUTBOUND_ON_MATCH = ON_MATCH_SUPERVISE
+
 
 @dataclass(frozen=True)
 class PathMatch:
@@ -69,6 +78,8 @@ class Route:
     git_fetch: bool = False
     outbound_detectors: tuple[str, ...] | None = None
     inbound_detectors: tuple[str, ...] | None = None
+    # "" means unset → DEFAULT_OUTBOUND_ON_MATCH. See OUTBOUND_ON_MATCH_VALUES.
+    outbound_on_match: str = ""
 
 
 LOG_OFF = 0    # no logging
@@ -223,12 +234,12 @@ def _parse_detectors(
     idx: int,
     host: str,
     raw_dict: dict[str, object],
-) -> tuple[tuple[str, ...] | None, tuple[str, ...] | None]:
+) -> tuple[tuple[str, ...] | None, tuple[str, ...] | None, str]:
     """Parse the optional `dlp` block on a route, returning
-    (outbound_detectors, inbound_detectors)."""
+    (outbound_detectors, inbound_detectors, outbound_on_match)."""
     dlp_raw = raw_dict.get("dlp")
     if dlp_raw is None:
-        return None, None
+        return None, None, ""
     label = f"route[{idx}] ({host})"
     if not isinstance(dlp_raw, dict):
         raise ValueError(f"{label}: 'dlp' must be an object")
@@ -265,13 +276,24 @@ def _parse_detectors(
     outbound = _parse_detector_field("outbound_detectors", OUTBOUND_DETECTOR_NAMES)
     inbound = _parse_detector_field("inbound_detectors", INBOUND_DETECTOR_NAMES)
 
+    on_match = ""
+    on_match_raw = dlp.get("outbound_on_match")
+    if on_match_raw is not None:
+        if not isinstance(on_match_raw, str) or on_match_raw not in OUTBOUND_ON_MATCH_VALUES:
+            raise ValueError(
+                f"{label}: dlp.outbound_on_match must be one of "
+                f"{', '.join(OUTBOUND_ON_MATCH_VALUES)} (got {on_match_raw!r})"
+            )
+        on_match = on_match_raw
+
     for k in dlp:
-        if k not in ("outbound_detectors", "inbound_detectors"):
+        if k not in ("outbound_detectors", "inbound_detectors", "outbound_on_match"):
             raise ValueError(
                 f"{label}: dlp has unknown key {k!r}; accepted keys "
-                f"are 'outbound_detectors', 'inbound_detectors'"
+                f"are 'outbound_detectors', 'inbound_detectors', "
+                f"'outbound_on_match'"
             )
-    return outbound, inbound
+    return outbound, inbound, on_match
 
 
 def parse_routes(payload: object) -> tuple[Route, ...]:
@@ -342,7 +364,7 @@ def _parse_one(idx: int, raw: object) -> Route:
                 )
 
     # dlp detectors
-    outbound_detectors, inbound_detectors = _parse_detectors(
+    outbound_detectors, inbound_detectors, outbound_on_match = _parse_detectors(
         idx, host, raw_dict,
     )
 
@@ -361,6 +383,7 @@ def _parse_one(idx: int, raw: object) -> Route:
         git_fetch=git_fetch,
         outbound_detectors=outbound_detectors,
         inbound_detectors=inbound_detectors,
+        outbound_on_match=outbound_on_match,
     )
 
 
@@ -409,6 +432,8 @@ def route_to_yaml_dict(r: Route) -> dict[str, object]:
         dlp["outbound_detectors"] = list(r.outbound_detectors)
     if r.inbound_detectors is not None:
         dlp["inbound_detectors"] = list(r.inbound_detectors)
+    if r.outbound_on_match:
+        dlp["outbound_on_match"] = r.outbound_on_match
     if dlp:
         d["dlp"] = dlp
     return d
@@ -781,6 +806,11 @@ __all__ = [
     "route_to_yaml_dict",
     "LOG_FULL",
     "LOG_OFF",
+    "ON_MATCH_BLOCK",
+    "ON_MATCH_REDACT",
+    "ON_MATCH_SUPERVISE",
+    "OUTBOUND_ON_MATCH_VALUES",
+    "DEFAULT_OUTBOUND_ON_MATCH",
     "Config",
     "Decision",
     "HeaderMatch",

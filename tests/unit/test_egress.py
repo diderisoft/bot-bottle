@@ -329,6 +329,23 @@ class TestRenderRoutes(unittest.TestCase):
         self.assertEqual(("token_patterns",), addon_routes[0].outbound_detectors)
         self.assertEqual((), addon_routes[0].inbound_detectors)
 
+    def test_outbound_on_match_round_trips(self):
+        from bot_bottle.egress_addon_core import load_routes
+        b = _bottle([{"host": "logs.example", "dlp": {
+            "outbound_on_match": "redact",
+        }}])
+        routes = egress_routes_for_bottle(b)
+        rendered = egress_render_routes(routes)
+        self.assertIn('outbound_on_match: "redact"', rendered)
+        addon_routes = load_routes(rendered)
+        self.assertEqual("redact", addon_routes[0].outbound_on_match)
+
+    def test_outbound_on_match_default_omitted_from_render(self):
+        b = _bottle([{"host": "x.example"}])
+        routes = egress_routes_for_bottle(b)
+        rendered = egress_render_routes(routes)
+        self.assertNotIn("outbound_on_match", rendered)
+
     def test_git_fetch_policy_round_trips(self):
         from bot_bottle.egress_addon_core import load_routes
         b = _bottle([{"host": "github.com", "git": {"fetch": True}}])

@@ -302,6 +302,24 @@ class TestDlp(unittest.TestCase):
                 "bogus": True,
             }}])
 
+    def test_outbound_on_match_omitted_is_empty(self):
+        b = _bottle([{"host": "x.example"}])
+        self.assertEqual("", b.egress.routes[0].OutboundOnMatch)
+
+    def test_outbound_on_match_accepts_policies(self):
+        for policy in ("block", "redact", "supervise"):
+            with self.subTest(policy=policy):
+                b = _bottle([{"host": "x.example", "dlp": {
+                    "outbound_on_match": policy,
+                }}])
+                self.assertEqual(policy, b.egress.routes[0].OutboundOnMatch)
+
+    def test_outbound_on_match_rejects_unknown_value(self):
+        with self.assertRaises(ManifestError):
+            _bottle([{"host": "x.example", "dlp": {
+                "outbound_on_match": "allow",
+            }}])
+
 
 class TestGitPolicy(unittest.TestCase):
     def test_omitted_means_https_git_fetch_disabled(self):

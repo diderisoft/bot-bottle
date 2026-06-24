@@ -95,6 +95,7 @@ def egress_manifest_routes(
             git_fetch=r.GitFetch,
             outbound_detectors=r.OutboundDetectors,
             inbound_detectors=r.InboundDetectors,
+            outbound_on_match=r.OutboundOnMatch,
         ))
     return tuple(out)
 
@@ -177,7 +178,11 @@ def _route_to_yaml_fields(r: Route) -> dict[str, object]:
         fields["matches"] = matches_data
     if r.git_fetch:
         fields["git"] = {"fetch": True}
-    if r.outbound_detectors is not None or r.inbound_detectors is not None:
+    if (
+        r.outbound_detectors is not None
+        or r.inbound_detectors is not None
+        or r.outbound_on_match
+    ):
         dlp: dict[str, object] = {}
         if r.outbound_detectors is not None:
             dlp["outbound_detectors"] = (
@@ -189,6 +194,8 @@ def _route_to_yaml_fields(r: Route) -> dict[str, object]:
                 False if not r.inbound_detectors
                 else list(r.inbound_detectors)
             )
+        if r.outbound_on_match:
+            dlp["outbound_on_match"] = r.outbound_on_match
         fields["dlp"] = dlp
     return fields
 
@@ -260,6 +267,8 @@ def egress_render_routes(
                 elif isinstance(dv, list):
                     items_str = ", ".join(f'"{x}"' for x in dv)
                     lines.append(f"      {dk}: [{items_str}]")
+                elif isinstance(dv, str):
+                    lines.append(f'      {dk}: "{dv}"')
     return "\n".join(lines) + "\n"
 
 

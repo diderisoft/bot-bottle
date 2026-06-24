@@ -269,6 +269,25 @@ class TestParseDlp(unittest.TestCase):
                 "dlp": {"wat": True},
             }]})
 
+    def test_outbound_on_match_default_empty(self):
+        routes = parse_routes({"routes": [{"host": "x.example"}]})
+        self.assertEqual("", routes[0].outbound_on_match)
+
+    def test_outbound_on_match_parsed(self):
+        for policy in ("block", "redact", "supervise"):
+            routes = parse_routes({"routes": [{
+                "host": "x.example",
+                "dlp": {"outbound_on_match": policy},
+            }]})
+            self.assertEqual(policy, routes[0].outbound_on_match)
+
+    def test_outbound_on_match_invalid_rejected(self):
+        with self.assertRaises(ValueError):
+            parse_routes({"routes": [{
+                "host": "x.example",
+                "dlp": {"outbound_on_match": "nope"},
+            }]})
+
 
 # --- load_routes ---------------------------------------------------------
 

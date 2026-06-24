@@ -187,6 +187,7 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
                         "  dlp:  (optional DLP scanner overrides)\n"
                         "    outbound_detectors: [token_patterns, known_secrets]\n"
                         "    inbound_detectors: [naive_injection_detection]\n"
+                        "    outbound_on_match: block|redact|supervise  (default supervise)\n"
                         "Omit any key that should use its default. "
                         "`list-egress-routes` returns routes in this same format."
                     ),
@@ -228,6 +229,7 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
                         "  dlp:  (optional DLP scanner overrides)\n"
                         "    outbound_detectors: [token_patterns, known_secrets]\n"
                         "    inbound_detectors: [naive_injection_detection]\n"
+                        "    outbound_on_match: block|redact|supervise  (default supervise)\n"
                         "Omit any key that should use its default. "
                         "`list-egress-routes` returns routes in this same format."
                     ),

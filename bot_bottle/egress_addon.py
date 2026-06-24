@@ -17,7 +17,11 @@ from mitmproxy import http  # type: ignore[import-not-found]  # pylint: disable=
 from egress_addon_core import (  # type: ignore[import-not-found]  # pylint: disable=import-error
     LOG_BLOCKS,
     LOG_FULL,
+    DEFAULT_OUTBOUND_ON_MATCH,
+    ON_MATCH_BLOCK,
+    ON_MATCH_REDACT,
     Config,
+    Route,
     ScanResult,
     build_inbound_scan_text,
     build_outbound_scan_text,
@@ -189,37 +193,11 @@ class EgressAddon:
         # Hostname is included to catch DNS-tunnelling exfiltration attempts.
         route = match_route(self.config.routes, flow.request.pretty_host)
         if route is not None:
-            body = flow.request.get_text(strict=False) or ""
-            # Re-scan after each operator approval so a second, un-approved
-            # token in the same request is still caught (PRD 0062).
-            while True:
-                scan_text = build_outbound_scan_text(
-                    flow.request.pretty_host,
-                    request_path,
-                    query,
-                    outbound_scan_headers(route, dict(flow.request.headers)),
-                    body,
-                )
-                dlp_result = scan_outbound(
-                    route, scan_text, os.environ, safe_tokens=self.safe_tokens,
-                )
-                if dlp_result is None or dlp_result.severity != "block":
-                    break
-                # Token blocks (a match with a safelist-able value) can be
-                # routed to the operator; structural blocks (CRLF, matched="")
-                # and any block when supervise is disabled stay hard 403s.
-                if dlp_result.matched and self._supervise_available():
-                    approved = await self._supervise_token_block(
-                        flow, request_path, dlp_result,
-                    )
-                    if approved:
-                        continue  # re-scan; matched value now in safe_tokens
-                    return  # _supervise_token_block wrote the 403 response
-                ctx = self._req_ctx(flow)
-                if dlp_result.context:
-                    ctx = {**ctx, "context": dlp_result.context}
-                self._block(flow, f"egress DLP: {dlp_result.reason}", ctx=ctx)
+            if not await self._handle_outbound_dlp(flow, route):
                 return
+            # The redact policy may have rewritten the request line; recompute
+            # the path/query the git checks below rely on.
+            request_path, _, query = flow.request.path.partition("?")
 
         if is_git_push_request(request_path, query):
             self._block(
@@ -268,6 +246,110 @@ class EgressAddon:
 
         if self.config.log >= LOG_FULL:
             self._log_request(flow)
+
+    def _block_dlp(self, flow: http.HTTPFlow, result: ScanResult) -> None:
+        ctx = self._req_ctx(flow)
+        if result.context:
+            ctx = {**ctx, "context": result.context}
+        self._block(flow, f"egress DLP: {result.reason}", ctx=ctx)
+
+    async def _handle_outbound_dlp(
+        self,
+        flow: http.HTTPFlow,
+        route: Route,
+    ) -> bool:
+        """Scan the outbound request and apply the route's on-match policy
+        (PRD 0062). Returns True if the request may be forwarded, False if a
+        403 response has been written to `flow`.
+
+        Loops so the supervise policy can re-scan after each approval — a
+        second, un-approved token in the same request is still caught."""
+        while True:
+            request_path, _, query = flow.request.path.partition("?")
+            body = flow.request.get_text(strict=False) or ""
+            scan_text = build_outbound_scan_text(
+                flow.request.pretty_host,
+                request_path,
+                query,
+                outbound_scan_headers(route, dict(flow.request.headers)),
+                body,
+            )
+            result = scan_outbound(
+                route, scan_text, os.environ, safe_tokens=self.safe_tokens,
+            )
+            if result is None or result.severity != "block":
+                return True
+
+            # Structural blocks (CRLF, no safelist-able value) are always a
+            # hard 403, regardless of the route's on-match policy.
+            if not result.matched:
+                self._block_dlp(flow, result)
+                return False
+
+            policy = route.outbound_on_match or DEFAULT_OUTBOUND_ON_MATCH
+
+            if policy == ON_MATCH_REDACT:
+                if self._redact_outbound(flow, route):
+                    if self.config.log >= LOG_BLOCKS:
+                        sys.stderr.write(json.dumps({
+                            "event": "egress_redacted",
+                            "reason": f"egress DLP: {result.reason}",
+                            **self._req_ctx(flow),
+                        }) + "\n")
+                    return True
+                self._block(
+                    flow,
+                    f"egress DLP: {result.reason}; redaction could not remove "
+                    "all matches (e.g. a match in the hostname)",
+                    ctx=self._req_ctx(flow),
+                )
+                return False
+
+            if policy == ON_MATCH_BLOCK:
+                self._block_dlp(flow, result)
+                return False
+
+            # supervise (default): hold the request for operator approval.
+            # Fall back to a hard 403 when supervise isn't wired for the bottle.
+            if not self._supervise_available():
+                self._block_dlp(flow, result)
+                return False
+            approved = await self._supervise_token_block(flow, request_path, result)
+            if not approved:
+                return False  # _supervise_token_block wrote the 403 response
+            # loop: the approved value is now in safe_tokens; re-scan.
+
+    def _redact_outbound(self, flow: http.HTTPFlow, route: Route) -> bool:
+        """Scrub detected tokens from the mutable request surfaces (body,
+        headers, path/query) and re-scan. Returns True if the request is now
+        clean; False if a block-severity match remains on a surface redaction
+        cannot rewrite (the hostname) so the caller fails closed."""
+        body = flow.request.get_text(strict=False)
+        if body:
+            redacted_body = redact_tokens(body, env=os.environ)
+            if redacted_body != body:
+                flow.request.text = redacted_body
+        for name, value in list(flow.request.headers.items()):
+            if name.lower() == "host":
+                continue  # routing-critical; never a legitimate token
+            redacted = redact_tokens(value, env=os.environ)
+            if redacted != value:
+                flow.request.headers[name] = redacted
+        redacted_path = redact_tokens(flow.request.path, env=os.environ)
+        if redacted_path != flow.request.path:
+            flow.request.path = redacted_path
+
+        request_path, _, query = flow.request.path.partition("?")
+        new_body = flow.request.get_text(strict=False) or ""
+        scan_text = build_outbound_scan_text(
+            flow.request.pretty_host,
+            request_path,
+            query,
+            outbound_scan_headers(route, dict(flow.request.headers)),
+            new_body,
+        )
+        result = scan_outbound(route, scan_text, os.environ)
+        return result is None or result.severity != "block"
 
     async def _supervise_token_block(
         self,

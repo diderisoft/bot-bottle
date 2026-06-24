@@ -21,6 +21,9 @@ VALID_METHODS = frozenset({
 OUTBOUND_DETECTOR_NAMES = frozenset({"token_patterns", "known_secrets"})
 INBOUND_DETECTOR_NAMES = frozenset({"naive_injection_detection"})
 
+# What the proxy does on an outbound token match (PRD 0062).
+OUTBOUND_ON_MATCH_VALUES = ("block", "redact", "supervise")
+
 
 def validate_egress_routes(
     bottle_name: str,
@@ -67,6 +70,7 @@ class ManifestEgressRoute:
     GitFetch: bool = False
     OutboundDetectors: tuple[str, ...] | None = None
     InboundDetectors: tuple[str, ...] | None = None
+    OutboundOnMatch: str = ""
 
     @classmethod
     def from_dict(cls, bottle_name: str, idx: int, raw: object) -> "ManifestEgressRoute":
@@ -161,8 +165,9 @@ class ManifestEgressRoute:
         # --- dlp ---
         outbound_detectors: tuple[str, ...] | None = None
         inbound_detectors: tuple[str, ...] | None = None
+        outbound_on_match = ""
         if "dlp" in d:
-            outbound_detectors, inbound_detectors = _parse_dlp_block(
+            outbound_detectors, inbound_detectors, outbound_on_match = _parse_dlp_block(
                 label, d.get("dlp"),
             )
 
@@ -201,6 +206,7 @@ class ManifestEgressRoute:
             GitFetch=git_fetch,
             OutboundDetectors=outbound_detectors,
             InboundDetectors=inbound_detectors,
+            OutboundOnMatch=outbound_on_match,
         )
 
 
@@ -323,7 +329,7 @@ def _parse_header_match(
 def _parse_dlp_block(
     route_label: str,
     raw: object,
-) -> tuple[tuple[str, ...] | None, tuple[str, ...] | None]:
+) -> tuple[tuple[str, ...] | None, tuple[str, ...] | None, str]:
     label = f"{route_label} dlp"
     d = as_json_object(raw, label)
 
@@ -358,13 +364,24 @@ def _parse_dlp_block(
     outbound = _parse_field("outbound_detectors", OUTBOUND_DETECTOR_NAMES)
     inbound = _parse_field("inbound_detectors", INBOUND_DETECTOR_NAMES)
 
+    on_match = ""
+    on_match_raw = d.get("outbound_on_match")
+    if on_match_raw is not None:
+        if not isinstance(on_match_raw, str) or on_match_raw not in OUTBOUND_ON_MATCH_VALUES:
+            raise ManifestError(
+                f"{label} outbound_on_match must be one of "
+                f"{', '.join(OUTBOUND_ON_MATCH_VALUES)} (got {on_match_raw!r})"
+            )
+        on_match = on_match_raw
+
     for k in d:
-        if k not in ("outbound_detectors", "inbound_detectors"):
+        if k not in ("outbound_detectors", "inbound_detectors", "outbound_on_match"):
             raise ManifestError(
                 f"{label} has unknown key {k!r}; accepted keys are "
-                f"'outbound_detectors', 'inbound_detectors'"
+                f"'outbound_detectors', 'inbound_detectors', "
+                f"'outbound_on_match'"
             )
-    return outbound, inbound
+    return outbound, inbound, on_match
 
 
 LOG_LEVELS = frozenset({0, 1, 2})
