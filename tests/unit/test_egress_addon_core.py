@@ -22,8 +22,10 @@ from bot_bottle.egress_addon_core import (
     MatchEntry,
     PathMatch,
     Route,
+    ScanResult,
     build_inbound_scan_text,
     build_outbound_scan_text,
+    build_token_allow_payload,
     decide,
     decide_git_fetch,
     evaluate_matches,
@@ -1165,6 +1167,56 @@ class TestScanInbound(unittest.TestCase):
         self.assertIsNotNone(result)
         assert result is not None
         self.assertEqual("block", result.severity)
+
+
+class TestScanOutboundSafeTokens(unittest.TestCase):
+    """PRD 0062: scan_outbound threads the supervisor-approved safe-tokens
+    set into the token detectors."""
+
+    def test_safe_token_allows_request(self):
+        text = build_outbound_scan_text(
+            host="api.example.com", path="/v1/data", query="",
+            headers={}, body=f"key={_AWS_KEY}",
+        )
+        self.assertIsNone(
+            scan_outbound(_ROUTE, text, {}, safe_tokens={_AWS_KEY})
+        )
+
+    def test_unrelated_safe_token_still_blocks(self):
+        text = build_outbound_scan_text(
+            host="api.example.com", path="/v1/data", query="",
+            headers={}, body=f"key={_AWS_KEY}",
+        )
+        result = scan_outbound(_ROUTE, text, {}, safe_tokens={"ghp_" + "A" * 36})
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(_AWS_KEY, result.matched)
+
+
+class TestBuildTokenAllowPayload(unittest.TestCase):
+    def test_payload_includes_context_and_no_raw_token(self):
+        result = ScanResult(
+            severity="block",
+            reason="AWS access key found in body",
+            location="body",
+            context="key=******** tail",
+            matched=_AWS_KEY,
+        )
+        payload = build_token_allow_payload(
+            "api.example.com", "POST", "/v1/ingest", result,
+        )
+        self.assertIn("host: api.example.com", payload)
+        self.assertIn("method: POST", payload)
+        self.assertIn("path: /v1/ingest", payload)
+        self.assertIn("AWS access key found in body", payload)
+        self.assertIn("key=******** tail", payload)
+        # The raw matched value must never appear in the proposal file.
+        self.assertNotIn(_AWS_KEY, payload)
+
+    def test_payload_omits_context_line_when_empty(self):
+        result = ScanResult(severity="block", reason="r", matched="x")
+        payload = build_token_allow_payload("h", "GET", "/", result)
+        self.assertNotIn("context:", payload)
 
 
 if __name__ == "__main__":

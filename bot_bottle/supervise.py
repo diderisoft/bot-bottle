@@ -52,12 +52,16 @@ TOOL_CAPABILITY_BLOCK = "capability-block"
 TOOL_EGRESS_BLOCK = "egress-block"
 TOOL_ALLOW = "allow"
 TOOL_GITLEAKS_ALLOW = "gitleaks-allow"
+# Written directly by the egress addon (not an agent-facing MCP tool) when an
+# outbound DLP token block is routed to the operator for override (PRD 0062).
+TOOL_EGRESS_TOKEN_ALLOW = "egress-token-allow"
 TOOL_LIST_EGRESS_ROUTES = "list-egress-routes"
 TOOLS: tuple[str, ...] = (
     TOOL_ALLOW,
     TOOL_CAPABILITY_BLOCK,
     TOOL_EGRESS_BLOCK,
     TOOL_GITLEAKS_ALLOW,
+    TOOL_EGRESS_TOKEN_ALLOW,
     TOOL_LIST_EGRESS_ROUTES,
 )
 
@@ -556,6 +560,7 @@ __all__ = [
     "EGRESS_INTROSPECT_URL",
     "TOOL_CAPABILITY_BLOCK",
     "TOOL_GITLEAKS_ALLOW",
+    "TOOL_EGRESS_TOKEN_ALLOW",
     "TOOL_LIST_EGRESS_ROUTES",
     "archive_proposal",
     "audit_dir",

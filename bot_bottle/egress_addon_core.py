@@ -95,6 +95,11 @@ class ScanResult:
     reason: str
     location: str = ""  # where the match was found, e.g. "body", "authorization header"
     context: str = ""   # surrounding text with the match replaced by REDACT
+    # Raw substring the detector matched. Used inside the sidecar to key the
+    # supervisor-approved "safe tokens" set (PRD 0062); never logged or written
+    # to a proposal file. Empty for structural detectors (CRLF) that carry no
+    # safelist-able value.
+    matched: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -690,6 +695,8 @@ def scan_outbound(
     route: Route,
     body: str | bytes,
     environ: typing.Mapping[str, str],
+    *,
+    safe_tokens: typing.AbstractSet[str] | None = None,
 ) -> ScanResult | None:
     # Lazy import to avoid circular deps and keep dlp_detectors optional
     # at import time (the sidecar copies it flat alongside this file).
@@ -709,22 +716,45 @@ def scan_outbound(
     text = body if isinstance(body, str) else body.decode("utf-8", errors="replace")
 
     # CRLF injection is never legitimate — runs unconditionally, not gated
-    # by outbound_detectors config.
+    # by outbound_detectors config, and never override-able by safe_tokens.
     result = scan_crlf_injection(text)
     if result is not None:
         return result
 
     if _detector_enabled(route.outbound_detectors, "token_patterns"):
-        result = scan_token_patterns(text, location="body")
+        result = scan_token_patterns(text, location="body", safe_tokens=safe_tokens)
         if result is not None:
             return result
 
     if _detector_enabled(route.outbound_detectors, "known_secrets"):
-        result = scan_known_secrets(text, location="body", env=environ)
+        result = scan_known_secrets(
+            text, location="body", env=environ, safe_tokens=safe_tokens,
+        )
         if result is not None:
             return result
 
     return None
+
+
+def build_token_allow_payload(
+    host: str,
+    method: str,
+    path: str,
+    result: ScanResult,
+) -> str:
+    """Render the human-readable supervisor proposal body for an outbound
+    token block (PRD 0062). Carries the host/method/path, the detector
+    reason, and the redacted context snippet — never the raw token value."""
+    lines = [
+        "egress blocked an outbound request carrying a detected token",
+        f"host: {host}",
+        f"method: {method}",
+        f"path: {path}",
+        f"detector: {result.reason}",
+    ]
+    if result.context:
+        lines.append(f"context: {result.context}")
+    return "\n".join(lines) + "\n"
 
 
 def scan_inbound(
@@ -760,6 +790,7 @@ __all__ = [
     "ScanResult",
     "build_inbound_scan_text",
     "build_outbound_scan_text",
+    "build_token_allow_payload",
     "decide",
     "decide_git_fetch",
     "evaluate_matches",

@@ -54,6 +54,7 @@ from ..supervise import (
     TOOL_ALLOW,
     TOOL_EGRESS_BLOCK,
     TOOL_GITLEAKS_ALLOW,
+    TOOL_EGRESS_TOKEN_ALLOW,
     archive_proposal,
     list_pending_proposals,
     render_diff,
@@ -64,6 +65,11 @@ from ._common import PROG
 
 
 _REFRESH_INTERVAL_MS = 1000
+
+# Proposal tools whose payload is a read-only report, not a file the operator
+# edits: modify is unavailable and approval requires a recorded reason for the
+# audit trail.
+_REPORT_ONLY_TOOLS: tuple[str, ...] = (TOOL_GITLEAKS_ALLOW, TOOL_EGRESS_TOKEN_ALLOW)
 
 
 @dataclass(frozen=True)
@@ -141,7 +147,7 @@ def _suffix_for_tool(tool: str) -> str:
         return ".dockerfile"
     if tool in (TOOL_ALLOW, TOOL_EGRESS_BLOCK):
         return ".yaml"
-    if tool == TOOL_GITLEAKS_ALLOW:
+    if tool in (TOOL_GITLEAKS_ALLOW, TOOL_EGRESS_TOKEN_ALLOW):
         return ".txt"
     return ".txt"
 
@@ -212,8 +218,8 @@ def _approve_from_tui(
     notes: str = "",
 ) -> str:
     """Approve from curses, prompting for any tool-specific audit note."""
-    if qp.proposal.tool == TOOL_GITLEAKS_ALLOW and final_file is None:
-        notes = _prompt(stdscr, "allow reason (test fixture/false positive): ")
+    if qp.proposal.tool in _REPORT_ONLY_TOOLS and final_file is None:
+        notes = _prompt(stdscr, "allow reason (false positive / legitimately needed): ")
         if not notes:
             return "approve aborted (empty reason)"
     approve(qp, final_file=final_file, notes=notes)
@@ -411,8 +417,8 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:  # type: ignore
             except ApplyError as e:
                 status_line = f"apply failed: {e}"
         elif key == ord("m"):
-            if qp.proposal.tool == TOOL_GITLEAKS_ALLOW:
-                status_line = "modify unavailable for gitleaks-allow"
+            if qp.proposal.tool in _REPORT_ONLY_TOOLS:
+                status_line = f"modify unavailable for {qp.proposal.tool}"
                 continue
             edited = _modify(stdscr, qp)
             if edited is None:
@@ -525,7 +531,7 @@ def _detail_view(
                 pass
             return
         elif key == ord("m"):
-            if qp.proposal.tool == TOOL_GITLEAKS_ALLOW:
+            if qp.proposal.tool in _REPORT_ONLY_TOOLS:
                 return
             edited = _modify(stdscr, qp)
             if edited is not None:

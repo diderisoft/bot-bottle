@@ -322,10 +322,21 @@ class TestToolConstants(unittest.TestCase):
                 TOOL_CAPABILITY_BLOCK,
                 supervise.TOOL_EGRESS_BLOCK,
                 TOOL_GITLEAKS_ALLOW,
+                supervise.TOOL_EGRESS_TOKEN_ALLOW,
                 supervise.TOOL_LIST_EGRESS_ROUTES,
             ),
             supervise.TOOLS,
         )
+
+    def test_token_allow_proposal_roundtrips(self):
+        p = Proposal.new(
+            bottle_slug="dev",
+            tool=supervise.TOOL_EGRESS_TOKEN_ALLOW,
+            proposed_file="host: api.example.com\n",
+            justification="false positive",
+            current_file_hash="h",
+        )
+        self.assertEqual(p, Proposal.from_dict(p.to_dict()))
 
     def test_component_map_has_egress_entries(self):
         self.assertEqual(

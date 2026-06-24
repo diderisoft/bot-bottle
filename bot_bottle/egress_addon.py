@@ -5,6 +5,7 @@ egress container."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import signal
@@ -17,8 +18,10 @@ from egress_addon_core import (  # type: ignore[import-not-found]  # pylint: dis
     LOG_BLOCKS,
     LOG_FULL,
     Config,
+    ScanResult,
     build_inbound_scan_text,
     build_outbound_scan_text,
+    build_token_allow_payload,
     decide,
     decide_git_fetch,
     is_git_fetch_request,
@@ -36,18 +39,47 @@ try:
 except ImportError:  # pragma: no cover - host-side path
     from bot_bottle.dlp_detectors import redact_tokens  # type: ignore[import-not-found]
 
+try:
+    import supervise as _sv  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover - host-side path
+    from bot_bottle import supervise as _sv  # type: ignore[import-not-found]
+
 
 DEFAULT_ROUTES_PATH = "/etc/egress/routes.yaml"
 
 INTROSPECT_HOST = "_egress.local"
+
+# Seconds the egress proxy holds a token-blocked request open waiting for the
+# operator's supervisor decision (PRD 0062), overridable via env.
+DEFAULT_TOKEN_ALLOW_TIMEOUT_SECONDS = 300.0
+# Filesystem poll cadence while awaiting the operator's response.
+TOKEN_ALLOW_POLL_INTERVAL_SECONDS = 0.5
+
+# Fixed operator guidance attached to every token-allow proposal.
+_TOKEN_ALLOW_JUSTIFICATION = (
+    "egress DLP blocked an outbound request carrying a detected token. "
+    "Approve only if this value is a false positive or a credential this "
+    "request legitimately needs; the value is then allowed for the life of "
+    "this bottle's egress proxy."
+)
 
 
 class EgressAddon:
     def __init__(self) -> None:
         self.routes_path = os.environ.get("EGRESS_ROUTES", DEFAULT_ROUTES_PATH)
         self.config: Config = Config(routes=())
+        # Tokens the operator has approved this session (PRD 0062). In-memory
+        # only — a restart re-prompts. Mutated only from the asyncio loop that
+        # runs the addon hooks, so no lock is needed.
+        self.safe_tokens: set[str] = set()
+        self._supervise_queue_dir = os.environ.get("SUPERVISE_QUEUE_DIR", "").strip()
+        self._supervise_slug = os.environ.get("SUPERVISE_BOTTLE_SLUG", "").strip()
+        self._token_allow_timeout = _token_allow_timeout_from_env(os.environ)
         self._reload(initial=True)
         self._install_sighup()
+
+    def _supervise_available(self) -> bool:
+        return bool(self._supervise_queue_dir and self._supervise_slug)
 
     def _reload(self, *, initial: bool = False) -> None:
         try:
@@ -145,7 +177,7 @@ class EgressAddon:
             + "\n"
         )
 
-    def request(self, flow: http.HTTPFlow) -> None:
+    async def request(self, flow: http.HTTPFlow) -> None:
         request_path, _, query = flow.request.path.partition("?")
 
         if flow.request.pretty_host == INTROSPECT_HOST:
@@ -158,15 +190,31 @@ class EgressAddon:
         route = match_route(self.config.routes, flow.request.pretty_host)
         if route is not None:
             body = flow.request.get_text(strict=False) or ""
-            scan_text = build_outbound_scan_text(
-                flow.request.pretty_host,
-                request_path,
-                query,
-                outbound_scan_headers(route, dict(flow.request.headers)),
-                body,
-            )
-            dlp_result = scan_outbound(route, scan_text, os.environ)
-            if dlp_result is not None and dlp_result.severity == "block":
+            # Re-scan after each operator approval so a second, un-approved
+            # token in the same request is still caught (PRD 0062).
+            while True:
+                scan_text = build_outbound_scan_text(
+                    flow.request.pretty_host,
+                    request_path,
+                    query,
+                    outbound_scan_headers(route, dict(flow.request.headers)),
+                    body,
+                )
+                dlp_result = scan_outbound(
+                    route, scan_text, os.environ, safe_tokens=self.safe_tokens,
+                )
+                if dlp_result is None or dlp_result.severity != "block":
+                    break
+                # Token blocks (a match with a safelist-able value) can be
+                # routed to the operator; structural blocks (CRLF, matched="")
+                # and any block when supervise is disabled stay hard 403s.
+                if dlp_result.matched and self._supervise_available():
+                    approved = await self._supervise_token_block(
+                        flow, request_path, dlp_result,
+                    )
+                    if approved:
+                        continue  # re-scan; matched value now in safe_tokens
+                    return  # _supervise_token_block wrote the 403 response
                 ctx = self._req_ctx(flow)
                 if dlp_result.context:
                     ctx = {**ctx, "context": dlp_result.context}
@@ -221,6 +269,95 @@ class EgressAddon:
         if self.config.log >= LOG_FULL:
             self._log_request(flow)
 
+    async def _supervise_token_block(
+        self,
+        flow: http.HTTPFlow,
+        request_path: str,
+        result: ScanResult,
+    ) -> bool:
+        """Route a token DLP block to the operator's supervisor queue and wait.
+
+        Returns True if the operator approved (the matched value is added to
+        `self.safe_tokens` and the caller re-scans); False if the request must
+        be blocked (a 403 response has been written to `flow`)."""
+        host = flow.request.pretty_host
+        payload = build_token_allow_payload(
+            redact_tokens(host, env=os.environ),
+            flow.request.method,
+            redact_tokens(request_path, env=os.environ),
+            result,
+        )
+        proposal = _sv.Proposal.new(
+            bottle_slug=self._supervise_slug,
+            tool=_sv.TOOL_EGRESS_TOKEN_ALLOW,
+            proposed_file=payload,
+            justification=_TOKEN_ALLOW_JUSTIFICATION,
+            current_file_hash=_sv.sha256_hex(payload),
+        )
+        queue_dir = Path(self._supervise_queue_dir)
+        try:
+            _sv.write_proposal(queue_dir, proposal)
+        except OSError as e:
+            sys.stderr.write(
+                f"egress: could not queue token-allow proposal: {e}; "
+                "blocking request\n"
+            )
+            self._block(flow, f"egress DLP: {result.reason}", ctx=self._req_ctx(flow))
+            return False
+
+        sys.stderr.write(json.dumps({
+            "event": "egress_token_supervise",
+            "reason": f"egress DLP: {result.reason}",
+            "proposal": proposal.id,
+            **self._req_ctx(flow),
+        }) + "\n")
+
+        response = await self._await_token_response(queue_dir, proposal.id)
+        _sv.archive_proposal(queue_dir, proposal.id)
+
+        if response is not None and response.status in (
+            _sv.STATUS_APPROVED, _sv.STATUS_MODIFIED,
+        ):
+            self.safe_tokens.add(result.matched)
+            if self.config.log >= LOG_BLOCKS:
+                sys.stderr.write(json.dumps({
+                    "event": "egress_token_allowed",
+                    "reason": f"egress DLP: {result.reason}",
+                    "proposal": proposal.id,
+                    **self._req_ctx(flow),
+                }) + "\n")
+            return True
+
+        if response is None:
+            reason = (
+                f"egress DLP: {result.reason}; supervisor approval timed out "
+                f"after {self._token_allow_timeout:g}s"
+            )
+        else:
+            reason = f"egress DLP: {result.reason}; supervisor rejected the request"
+        self._block(flow, reason, ctx=self._req_ctx(flow))
+        return False
+
+    async def _await_token_response(
+        self,
+        queue_dir: Path,
+        proposal_id: str,
+    ) -> "_sv.Response | None":
+        """Poll the queue dir for the operator's response without blocking the
+        proxy event loop. Returns the Response, or None on timeout."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._token_allow_timeout
+        while True:
+            try:
+                return _sv.read_response(queue_dir, proposal_id)
+            except (OSError, ValueError, KeyError):
+                # Not written yet, or a partial/malformed write — retry until
+                # the deadline, then fail closed.
+                pass
+            if loop.time() >= deadline:
+                return None
+            await asyncio.sleep(TOKEN_ALLOW_POLL_INTERVAL_SECONDS)
+
     def response(self, flow: http.HTTPFlow) -> None:
         """DLP inbound scan on response headers and body."""
         route = match_route(self.config.routes, flow.request.pretty_host)
@@ -272,7 +409,9 @@ class EgressAddon:
         message = flow.websocket.messages[-1]  # type: ignore[union-attr]
         content = message.content.decode("utf-8", errors="replace")
         if message.from_client:
-            result = scan_outbound(route, content, os.environ)
+            result = scan_outbound(
+                route, content, os.environ, safe_tokens=self.safe_tokens,
+            )
             if result is not None and result.severity == "block":
                 sys.stderr.write(f"egress DLP: {result.reason}\n")
                 flow.kill()  # type: ignore[union-attr]
@@ -284,6 +423,25 @@ class EgressAddon:
                     flow.kill()  # type: ignore[union-attr]
                 elif result.severity == "warn":
                     sys.stderr.write(f"egress DLP warn: {result.reason}\n")
+
+
+def _token_allow_timeout_from_env(env: "os._Environ[str]") -> float:
+    """Read EGRESS_TOKEN_ALLOW_TIMEOUT_SECONDS; fall back to the default on an
+    unset or invalid value (a bad value should not wedge egress at boot)."""
+    raw = env.get("EGRESS_TOKEN_ALLOW_TIMEOUT_SECONDS", "").strip()
+    if not raw:
+        return DEFAULT_TOKEN_ALLOW_TIMEOUT_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        value = 0.0
+    if value <= 0:
+        sys.stderr.write(
+            "egress: invalid EGRESS_TOKEN_ALLOW_TIMEOUT_SECONDS="
+            f"{raw!r}; using default {DEFAULT_TOKEN_ALLOW_TIMEOUT_SECONDS:g}s\n"
+        )
+        return DEFAULT_TOKEN_ALLOW_TIMEOUT_SECONDS
+    return value
 
 
 addons = [EgressAddon()]

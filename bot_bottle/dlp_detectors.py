@@ -78,16 +78,27 @@ TOKEN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 
-def scan_token_patterns(text: str, *, location: str = "body") -> ScanResult | None:
+def scan_token_patterns(
+    text: str,
+    *,
+    location: str = "body",
+    safe_tokens: typing.AbstractSet[str] | None = None,
+) -> ScanResult | None:
     normalized = _normalize_text(text)
     for name, pattern in TOKEN_PATTERNS:
-        m = pattern.search(normalized)
-        if m is not None:
+        for m in pattern.finditer(normalized):
+            value = m.group(0)
+            # A value the supervisor has approved (PRD 0062) is no longer a
+            # block — keep scanning so a second, un-approved token in the
+            # same request is still caught.
+            if safe_tokens is not None and value in safe_tokens:
+                continue
             return ScanResult(
                 severity="block",
                 reason=f"{name} found in {location}",
                 location=location,
-                context=_snippet(text, m.start(), m.end()),
+                context=_snippet(normalized, m.start(), m.end()),
+                matched=value,
             )
     return None
 
@@ -155,6 +166,7 @@ def scan_known_secrets(
     *,
     location: str = "body",
     env: typing.Mapping[str, str] | None = None,
+    safe_tokens: typing.AbstractSet[str] | None = None,
 ) -> ScanResult | None:
     if env is None:
         return None
@@ -164,11 +176,17 @@ def scan_known_secrets(
         for variant in _encoded_variants(value):
             pos = text.find(variant)
             if pos >= 0:
+                # The supervisor approves the exact encoded variant found
+                # (PRD 0062); a different encoding of the same secret is a
+                # fresh block.
+                if safe_tokens is not None and variant in safe_tokens:
+                    continue
                 return ScanResult(
                     severity="block",
                     reason=f"provisioned secret from {key} found in {location}",
                     location=location,
                     context=_snippet(text, pos, pos + len(variant)),
+                    matched=variant,
                 )
     return None
 

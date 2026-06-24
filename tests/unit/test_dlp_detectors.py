@@ -445,5 +445,47 @@ class TestKnownSecretsNewVariants(unittest.TestCase):
         self.assertIsNotNone(result)
 
 
+class TestMatchedAndSafeTokens(unittest.TestCase):
+    """PRD 0062: detectors carry the raw matched value, and a safelisted
+    value is skipped so the supervisor can approve a specific token."""
+
+    def test_token_pattern_sets_matched(self):
+        token = "ghp_" + "A" * 36
+        result = scan_token_patterns(f"token: {token}")
+        assert result is not None
+        self.assertEqual(token, result.matched)
+
+    def test_safe_token_is_skipped(self):
+        token = "ghp_" + "A" * 36
+        self.assertIsNone(
+            scan_token_patterns(f"token: {token}", safe_tokens={token})
+        )
+
+    def test_safe_token_does_not_mask_other_token(self):
+        safe = "ghp_" + "A" * 36
+        other = "AKIAIOSFODNN7EXAMPLE"
+        result = scan_token_patterns(
+            f"a={safe} b={other}", safe_tokens={safe},
+        )
+        assert result is not None
+        self.assertEqual(other, result.matched)
+        self.assertIn("AWS", result.reason)
+
+    def test_known_secret_sets_matched_and_safelist_skips(self):
+        secret = "supersecretvalue123"
+        env = {"EGRESS_TOKEN_FOO": secret}
+        result = scan_known_secrets(f"x={secret}", env=env)
+        assert result is not None
+        self.assertEqual(secret, result.matched)
+        self.assertIsNone(
+            scan_known_secrets(f"x={secret}", env=env, safe_tokens={secret})
+        )
+
+    def test_crlf_block_has_no_matched_value(self):
+        result = scan_crlf_injection("path%0d%0aHost: evil")
+        assert result is not None
+        self.assertEqual("", result.matched)
+
+
 if __name__ == "__main__":
     unittest.main()

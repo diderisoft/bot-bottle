@@ -20,6 +20,7 @@ from bot_bottle.supervise import (
     STATUS_REJECTED,
     TOOL_CAPABILITY_BLOCK,
     TOOL_GITLEAKS_ALLOW,
+    TOOL_EGRESS_TOKEN_ALLOW,
     read_audit_entries,
     read_response,
     sha256_hex,
@@ -35,6 +36,7 @@ def _proposal(slug: str = "dev", tool: str = TOOL_CAPABILITY_BLOCK) -> Proposal:
         supervise.TOOL_ALLOW: "routes:\n  - host: example.com\n",
         supervise.TOOL_EGRESS_BLOCK: "routes:\n  - host: example.com\n",
         TOOL_GITLEAKS_ALLOW: "file: tests/test_fixture.py\nline: 3\n",
+        TOOL_EGRESS_TOKEN_ALLOW: "host: api.example.com\ndetector: token\n",
     }
     payload = payloads.get(tool, "")
     return Proposal.new(
@@ -195,6 +197,39 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
         self.assertIn("approved gitleaks-allow", status)
         resp = read_response(qp.queue_dir, qp.proposal.id)
         self.assertEqual("test fixture", resp.notes)
+
+    def test_approve_token_allow_leaves_response_for_egress(self):
+        qp = self._enqueue(tool=TOOL_EGRESS_TOKEN_ALLOW)
+        supervise_cli.approve(qp, notes="false positive")
+        # The egress addon polls the queue dir for the response; the TUI must
+        # not archive it (the addon archives after reading).
+        resp = read_response(qp.queue_dir, qp.proposal.id)
+        self.assertEqual(STATUS_APPROVED, resp.status)
+        self.assertEqual("false positive", resp.notes)
+        self.assertFalse((qp.queue_dir / "processed").exists())
+
+    def test_token_allow_writes_no_audit_log(self):
+        qp = self._enqueue(tool=TOOL_EGRESS_TOKEN_ALLOW)
+        supervise_cli.approve(qp, notes="false positive")
+        self.assertEqual([], read_audit_entries("egress", "dev"))
+
+    def test_tui_token_allow_requires_reason(self):
+        qp = self._enqueue(tool=TOOL_EGRESS_TOKEN_ALLOW)
+        with patch.object(supervise_cli, "_prompt", return_value=""):
+            status = supervise_cli._approve_from_tui(None, qp)  # type: ignore[arg-type]
+        self.assertEqual("approve aborted (empty reason)", status)
+        self.assertFalse((qp.queue_dir / "processed").exists())
+
+    def test_tui_token_allow_writes_reason(self):
+        qp = self._enqueue(tool=TOOL_EGRESS_TOKEN_ALLOW)
+        with patch.object(supervise_cli, "_prompt", return_value="legit"):
+            status = supervise_cli._approve_from_tui(None, qp)  # type: ignore[arg-type]
+        self.assertIn("approved egress-token-allow", status)
+        resp = read_response(qp.queue_dir, qp.proposal.id)
+        self.assertEqual("legit", resp.notes)
+
+    def test_suffix_for_token_allow_is_txt(self):
+        self.assertEqual(".txt", supervise_cli._suffix_for_tool(TOOL_EGRESS_TOKEN_ALLOW))
 
 
 # class TestCapabilityApplyWiring(_FakeHomeMixin, unittest.TestCase):
