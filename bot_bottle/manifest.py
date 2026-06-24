@@ -19,7 +19,7 @@ Bottle schema (frontmatter):
     repos:      { <name>: <git-gate-entry>, ... }  # optional
   egress: { routes: [ <egress-route>, ... ] }
     # route keys: host, matches, auth, role, dlp
-  supervise:    <bool>                          # optional
+  supervise:    <bool>                          # optional (default true)
 
 Agent schema (frontmatter):
   bottle:        <bottle-name>          # required
@@ -111,13 +111,13 @@ class ManifestBottle:
     # identity without any git-gate.repos upstreams, and vice versa.
     git_user: ManifestGitUser = field(default_factory=ManifestGitUser)
     egress: ManifestEgressConfig = field(default_factory=ManifestEgressConfig)
-    # Opt-in per-bottle stuck-recovery sidecar (PRD 0013). When true,
-    # the launch step brings up a supervise sidecar that exposes MCP
-    # tools to the agent (egress-block, capability-block) plus mounts
-    # the current-config dir read-only into the agent at
-    # /etc/bot-bottle/current-config. False (the default) skips the
-    # sidecar and mount.
-    supervise: bool = False
+    # Per-bottle stuck-recovery sidecar (PRD 0013). When true (the
+    # default, issue #249), the launch step brings up a supervise
+    # sidecar that exposes MCP tools to the agent (egress-block,
+    # capability-block) plus mounts the current-config dir read-only
+    # into the agent at /etc/bot-bottle/current-config. Set
+    # `supervise: false` to skip the sidecar and mount.
+    supervise: bool = True
 
     @classmethod
     def from_dict(cls, name: str, raw: object) -> "ManifestBottle":
@@ -190,7 +190,7 @@ class ManifestBottle:
             else ManifestEgressConfig()
         )
 
-        supervise_raw = d.get("supervise", False)
+        supervise_raw = d.get("supervise", True)
         if not isinstance(supervise_raw, bool):
             raise ManifestError(
                 f"bottle '{name}' supervise must be a boolean "
