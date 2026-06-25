@@ -4,3 +4,4 @@
 
 pylint>=3.0.0
 pyright>=1.1.300
+coverage>=7.0.0
