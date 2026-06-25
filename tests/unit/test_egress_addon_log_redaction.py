@@ -12,6 +12,7 @@ import sys
 import types
 import unittest
 from io import StringIO
+from typing import Any
 from unittest.mock import patch
 
 
@@ -23,7 +24,7 @@ def _ensure_shims() -> None:
     if "mitmproxy" not in sys.modules:
         _mm = types.ModuleType("mitmproxy")
         _mh = types.ModuleType("mitmproxy.http")
-        _mm.http = _mh
+        setattr(_mm, "http", _mh)
         sys.modules["mitmproxy"] = _mm
         sys.modules["mitmproxy.http"] = _mh
     if "egress_addon_core" not in sys.modules:
@@ -104,14 +105,14 @@ class _Flow:
         self.response = response or _Response()
 
 
-def _log_request(addon: EgressAddon, flow: _Flow) -> dict:
+def _log_request(addon: EgressAddon, flow: _Flow) -> dict[str, Any]:
     buf = StringIO()
     with patch("sys.stderr", buf):
         addon._log_request(flow)  # type: ignore[arg-type]
     return json.loads(buf.getvalue())
 
 
-def _log_response(addon: EgressAddon, flow: _Flow) -> dict:
+def _log_response(addon: EgressAddon, flow: _Flow) -> dict[str, Any]:
     buf = StringIO()
     with patch("sys.stderr", buf):
         addon._log_response(flow)  # type: ignore[arg-type]
