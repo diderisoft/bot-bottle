@@ -50,10 +50,11 @@ def _resolve_one_bottle(
         return bottle
 
     # Normalize to list, accepting both str and list[str].
+    raw_list: list[object]
     if isinstance(parent_name_raw, str):
-        parent_names: list[str] = [parent_name_raw]
+        raw_list = [parent_name_raw]
     elif isinstance(parent_name_raw, list):
-        parent_names = parent_name_raw  # type: ignore[assignment]
+        raw_list = parent_name_raw
     else:
         raise ManifestError(
             f"bottle '{name}' extends must be a string or list of strings "
@@ -61,12 +62,14 @@ def _resolve_one_bottle(
         )
 
     # Validate each entry before resolving any of them.
-    for i, pname in enumerate(parent_names):
+    parent_names: list[str] = []
+    for i, pname in enumerate(raw_list):
         if not isinstance(pname, str):
             raise ManifestError(
                 f"bottle '{name}' extends[{i}] must be a string "
                 f"(was {type(pname).__name__})"
             )
+        parent_names.append(pname)
         if pname == name:
             raise ManifestError(
                 f"bottle '{name}' extends itself; remove the self-reference"
