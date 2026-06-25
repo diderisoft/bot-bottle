@@ -364,6 +364,23 @@ class TestHandleToolsCall(unittest.TestCase):
                 self.config,
             )
 
+    def test_missing_name_raises(self):
+        with self.assertRaises(_RpcError) as cm:
+            handle_tools_call({"arguments": {}}, self.config)
+        self.assertEqual(ERR_INVALID_PARAMS, cm.exception.code)
+
+    def test_arguments_must_be_object(self):
+        with self.assertRaises(_RpcError) as cm:
+            handle_tools_call(
+                {
+                    "name": _sv.TOOL_EGRESS_ALLOW,
+                    "arguments": [],
+                },
+                self.config,
+            )
+        self.assertEqual(ERR_INVALID_PARAMS, cm.exception.code)
+        self.assertIn("must be an object", cm.exception.message)
+
     def test_capability_block_call_raises_unknown_tool(self):
         with self.assertRaises(_RpcError) as cm:
             handle_tools_call(
@@ -426,6 +443,31 @@ class TestHandleToolsCall(unittest.TestCase):
 
 
 class TestHandleListEgressRoutes(unittest.TestCase):
+    def test_success_returns_body_text(self):
+        class _Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b"[{\"host\": \"example.com\"}]"
+
+        class _Opener:
+            def open(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003  # type: ignore
+                return _Resp()
+
+        with patch.object(supervise_server.urllib.request, "build_opener", return_value=_Opener()):
+            result = handle_list_egress_routes(
+                {},
+                ServerConfig(bottle_slug="dev", queue_dir=Path("/unused")),
+            )
+
+        self.assertFalse(result["isError"])  # type: ignore[index]
+        text = result["content"][0]["text"]  # type: ignore[index]
+        self.assertIn("example.com", text)
+
     def test_url_error_returns_tool_error(self):
         class _Opener:
             def open(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003  # type: ignore
@@ -483,6 +525,13 @@ class TestFormatResponseText(unittest.TestCase):
         ))
         self.assertIn("status: modified", text)
         self.assertIn("the operator modified", text.lower())
+
+
+class TestFormatPendingResponseText(unittest.TestCase):
+    def test_formats_timeout_message(self):
+        text = supervise_server.format_pending_response_text(12.5)
+        self.assertIn("status: pending", text)
+        self.assertIn("12.5s", text)
 
 
 # --- End-to-end HTTP sanity ------------------------------------------------

@@ -4,6 +4,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from bot_bottle.git_gate import (
     GitGate,
@@ -13,6 +14,8 @@ from bot_bottle.git_gate import (
     git_gate_render_access_hook,
     git_gate_render_entrypoint,
     git_gate_render_hook,
+    revoke_git_gate_provisioned_keys,
+    _resolve_identity_file,
     git_gate_upstreams_for_bottle,
 )
 from bot_bottle.manifest import ManifestIndex
@@ -326,6 +329,68 @@ class TestPrepare(unittest.TestCase):
         content = plan.entrypoint_script.read_text()
         self.assertNotIn("init_repo '", content)
         self.assertIn("exec git daemon", content)
+
+
+class TestDynamicKeyProvisioning(unittest.TestCase):
+    def setUp(self):
+        self.stage = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        import shutil
+
+        shutil.rmtree(self.stage, ignore_errors=True)
+
+    def _gitea_manifest(self):
+        return ManifestIndex.from_json_obj({
+            "bottles": {
+                "dev": {
+                    "git-gate": {
+                        "repos": {
+                            "repo": {
+                                "url": "ssh://git@gitea.example.com/org/repo.git",
+                                "key": {
+                                    "provider": "gitea",
+                                    "forge_token_env": "GITEA_TOKEN",
+                                },
+                                "host_key": "ssh-ed25519 AAAA...",
+                            },
+                        },
+                    }
+                }
+            },
+            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        })
+
+    def test_resolve_identity_file_static_uses_entry_path(self):
+        entry = fixture_with_git().bottles["dev"].git[0]
+        self.assertEqual(entry.IdentityFile, _resolve_identity_file(entry, "demo", self.stage))
+
+    def test_resolve_identity_file_gitea_provisions_key(self):
+        entry = self._gitea_manifest().bottles["dev"].git[0]
+        with patch("bot_bottle.git_gate._provision_dynamic_key", return_value="/tmp/provisioned-key") as mock_provision:
+            self.assertEqual("/tmp/provisioned-key", _resolve_identity_file(entry, "demo", self.stage))
+        mock_provision.assert_called_once()
+
+    def test_revoke_skips_non_gitea_and_missing_id_file(self):
+        revoke_git_gate_provisioned_keys(fixture_with_git().bottles["dev"], self.stage)
+
+    def test_revoke_calls_delete_for_gitea_entry(self):
+        bottle = self._gitea_manifest().bottles["dev"]
+        (self.stage / "repo-deploy-key-id").write_text("123\n")
+        with patch.dict("os.environ", {"GITEA_TOKEN": "token"}), patch(
+            "bot_bottle.deploy_key_provisioner.get_provisioner"
+        ) as mock_get_provisioner:
+            provisioner = mock_get_provisioner.return_value
+            revoke_git_gate_provisioned_keys(bottle, self.stage)
+        mock_get_provisioner.assert_called_once()
+        provisioner.delete.assert_called_once_with("org/repo", "123")
+
+    def test_revoke_missing_token_raises(self):
+        bottle = self._gitea_manifest().bottles["dev"]
+        (self.stage / "repo-deploy-key-id").write_text("123\n")
+        with patch.dict("os.environ", {}, clear=True), self.assertRaises(RuntimeError) as cm:
+            revoke_git_gate_provisioned_keys(bottle, self.stage)
+        self.assertIn("env var is not set", str(cm.exception))
 
 
 class TestShellEscaping(unittest.TestCase):
