@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import unittest
+from collections.abc import Mapping, Sequence
 from unittest.mock import MagicMock, patch
 
 import bot_bottle.cli.start as start_mod
@@ -306,12 +307,16 @@ class TestBottleLineage(unittest.TestCase):
 class TestManifestToYaml(unittest.TestCase):
     """Unit tests for _manifest_to_yaml."""
 
-    def _make_manifest_obj(self, *, skills=(), env=None, supervise=True,
-                           agent_provider_template="claude"):
+    def _make_manifest_obj(
+        self,
+        *,
+        skills: Sequence[str] = (),
+        env: Mapping[str, str] | None = None,
+        supervise: bool = True,
+        agent_provider_template: str = "claude",
+    ):
         from bot_bottle.manifest import Manifest, ManifestBottle
         from bot_bottle.manifest_agent import ManifestAgent, ManifestAgentProvider
-        from bot_bottle.manifest_egress import ManifestEgressConfig
-        from bot_bottle.manifest_git import ManifestGitUser
 
         agent = ManifestAgent(skills=tuple(skills))
         bottle = ManifestBottle(
