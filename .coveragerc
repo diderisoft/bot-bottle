@@ -4,6 +4,5 @@ source = .
 
 [report]
 omit =
-    bot_bottle/egress_addon.py
     bot_bottle/cli/tui.py
     tests/*
