@@ -301,6 +301,44 @@ def _run_multiselect(
     return result
 
 
+def _toggle_membership(items: list[str], item: str) -> None:
+    """Add `item` if absent, remove it if present (in place)."""
+    if item in items:
+        items.remove(item)
+    else:
+        items.append(item)
+
+
+def _handle_order_key(key: int, selected: list[str], order_cursor: int) -> int:
+    """Apply a keypress in 'order' focus: navigate, reorder, or remove the
+    item at `order_cursor`. Mutates `selected` in place and returns the new
+    order cursor."""
+    if key in (curses.KEY_UP, ord("k")):
+        if order_cursor > 0:
+            order_cursor -= 1
+    elif key in (curses.KEY_DOWN, ord("j")):
+        if order_cursor < len(selected) - 1:
+            order_cursor += 1
+    elif key == ord("K"):
+        # Move selected item up (earlier in order).
+        if order_cursor > 0:
+            i = order_cursor
+            selected[i - 1], selected[i] = selected[i], selected[i - 1]
+            order_cursor -= 1
+    elif key == ord("J"):
+        # Move selected item down (later in order).
+        if order_cursor < len(selected) - 1:
+            i = order_cursor
+            selected[i], selected[i + 1] = selected[i + 1], selected[i]
+            order_cursor += 1
+    elif key in (curses.KEY_ENTER, _KEY_ENTER_ALT, ord("\r"), _KEY_SPACE):
+        # Remove item from selection while in order mode.
+        del selected[order_cursor]
+        if order_cursor >= len(selected) and order_cursor > 0:
+            order_cursor -= 1
+    return order_cursor
+
+
 def _multiselect_loop(
     screen: Any, items: list[str], *, title: str, initial: list[str]
 ) -> Optional[list[str]]:
@@ -362,11 +400,7 @@ def _multiselect_loop(
 
             elif key == _KEY_SPACE:
                 if filtered:
-                    item = filtered[cursor]
-                    if item in selected:
-                        selected.remove(item)
-                    else:
-                        selected.append(item)
+                    _toggle_membership(selected, filtered[cursor])
 
             elif key in (curses.KEY_UP, ord("k")):
                 if cursor > 0:
@@ -387,33 +421,7 @@ def _multiselect_loop(
                 cursor = 0
 
         else:  # focus == "order"
-            if key in (curses.KEY_UP, ord("k")):
-                if order_cursor > 0:
-                    order_cursor -= 1
-
-            elif key in (curses.KEY_DOWN, ord("j")):
-                if order_cursor < len(selected) - 1:
-                    order_cursor += 1
-
-            elif key == ord("K"):
-                # Move selected item up (earlier in order).
-                if order_cursor > 0:
-                    i = order_cursor
-                    selected[i - 1], selected[i] = selected[i], selected[i - 1]
-                    order_cursor -= 1
-
-            elif key == ord("J"):
-                # Move selected item down (later in order).
-                if order_cursor < len(selected) - 1:
-                    i = order_cursor
-                    selected[i], selected[i + 1] = selected[i + 1], selected[i]
-                    order_cursor += 1
-
-            elif key in (curses.KEY_ENTER, _KEY_ENTER_ALT, ord("\r"), _KEY_SPACE):
-                # Remove item from selection while in order mode.
-                del selected[order_cursor]
-                if order_cursor >= len(selected) and order_cursor > 0:
-                    order_cursor -= 1
+            order_cursor = _handle_order_key(key, selected, order_cursor)
 
 
 def _render_multiselect(
