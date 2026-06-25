@@ -306,6 +306,10 @@ def _multiselect_loop(
     query = ""
     cursor = 0
     selected: list[str] = [s for s in initial if s in items]
+    # focus = "filter": navigate + toggle items in the filterable list
+    # focus = "order":  navigate + reorder items in the selected list
+    focus = "filter"
+    order_cursor = 0
 
     while True:
         filtered = _filter_items(items, query)
@@ -315,8 +319,19 @@ def _multiselect_loop(
         elif cursor >= len(filtered):
             cursor = len(filtered) - 1
 
+        if not selected:
+            order_cursor = 0
+            if focus == "order":
+                focus = "filter"
+        elif order_cursor >= len(selected):
+            order_cursor = len(selected) - 1
+
         try:
-            _render_multiselect(screen, filtered, cursor, query=query, title=title, selected=selected)
+            _render_multiselect(
+                screen, filtered, cursor,
+                query=query, title=title, selected=selected,
+                focus=focus, order_cursor=order_cursor,
+            )
         except curses.error:
             return None
 
@@ -331,31 +346,70 @@ def _multiselect_loop(
         if key == _KEY_CTRL_D:
             return list(selected)
 
-        if key in (curses.KEY_ENTER, _KEY_ENTER_ALT, ord("\r"), _KEY_SPACE):
-            if filtered:
-                item = filtered[cursor]
-                if item in selected:
-                    selected.remove(item)
-                else:
-                    selected.append(item)
+        # Tab toggles between filter and order focus.
+        if key == ord("\t"):
+            if focus == "filter" and selected:
+                focus = "order"
+                order_cursor = 0
+            else:
+                focus = "filter"
+            continue
 
-        elif key in (curses.KEY_UP, ord("k")):
-            if cursor > 0:
-                cursor -= 1
+        if focus == "filter":
+            if key in (curses.KEY_ENTER, _KEY_ENTER_ALT, ord("\r"), _KEY_SPACE):
+                if filtered:
+                    item = filtered[cursor]
+                    if item in selected:
+                        selected.remove(item)
+                    else:
+                        selected.append(item)
 
-        elif key in (curses.KEY_DOWN, ord("j")):
-            if cursor < len(filtered) - 1:
-                cursor += 1
+            elif key in (curses.KEY_UP, ord("k")):
+                if cursor > 0:
+                    cursor -= 1
 
-        elif key in (curses.KEY_BACKSPACE, _KEY_BACKSPACE_WIN, 127):
-            query = query[:-1]
-            new_filtered = _filter_items(items, query)
-            if cursor >= len(new_filtered):
-                cursor = max(0, len(new_filtered) - 1)
+            elif key in (curses.KEY_DOWN, ord("j")):
+                if cursor < len(filtered) - 1:
+                    cursor += 1
 
-        elif 32 <= key <= 126 and key != _KEY_SPACE:
-            query += chr(key)
-            cursor = 0
+            elif key in (curses.KEY_BACKSPACE, _KEY_BACKSPACE_WIN, 127):
+                query = query[:-1]
+                new_filtered = _filter_items(items, query)
+                if cursor >= len(new_filtered):
+                    cursor = max(0, len(new_filtered) - 1)
+
+            elif 32 <= key <= 126 and key != _KEY_SPACE:
+                query += chr(key)
+                cursor = 0
+
+        else:  # focus == "order"
+            if key in (curses.KEY_UP, ord("k")):
+                if order_cursor > 0:
+                    order_cursor -= 1
+
+            elif key in (curses.KEY_DOWN, ord("j")):
+                if order_cursor < len(selected) - 1:
+                    order_cursor += 1
+
+            elif key == ord("K"):
+                # Move selected item up (earlier in order).
+                if order_cursor > 0:
+                    i = order_cursor
+                    selected[i - 1], selected[i] = selected[i], selected[i - 1]
+                    order_cursor -= 1
+
+            elif key == ord("J"):
+                # Move selected item down (later in order).
+                if order_cursor < len(selected) - 1:
+                    i = order_cursor
+                    selected[i], selected[i + 1] = selected[i + 1], selected[i]
+                    order_cursor += 1
+
+            elif key in (curses.KEY_ENTER, _KEY_ENTER_ALT, ord("\r"), _KEY_SPACE):
+                # Remove item from selection while in order mode.
+                del selected[order_cursor]
+                if order_cursor >= len(selected) and order_cursor > 0:
+                    order_cursor -= 1
 
 
 def _render_multiselect(
@@ -366,6 +420,8 @@ def _render_multiselect(
     query: str,
     title: str,
     selected: list[str],
+    focus: str = "filter",
+    order_cursor: int = 0,
 ) -> None:
     screen.erase()
     rows, cols = screen.getmaxyx()
@@ -374,56 +430,79 @@ def _render_multiselect(
     if rows < min_rows:
         raise curses.error("terminal too small")
 
+    sep = "─" * min(cols - 1, 40)
     row = 0
 
     if title and row < rows - 1:
         _addstr_safe(screen, row, 0, title[:cols - 1], curses.A_BOLD)
         row += 1
 
+    # Filter line — dim when focus is on the order panel.
     filter_label = f"Filter: {query}"
+    filter_hint = "  [Tab: reorder]" if focus == "filter" and selected else ""
+    filter_attr = curses.A_DIM if focus == "order" else curses.A_NORMAL
     if row < rows - 1:
-        _addstr_safe(screen, row, 0, filter_label[:cols - 1])
+        _addstr_safe(screen, row, 0, (filter_label + filter_hint)[:cols - 1], filter_attr)
         row += 1
 
-    sep = "─" * min(cols - 1, 40)
     if row < rows - 1:
         _addstr_safe(screen, row, 0, sep)
         row += 1
 
-    # Reserve rows for: sep + selected-line + sep + help-line = 4
+    # Compute how many rows the bottom order panel needs.
+    # Cap the visible selected list to keep the filter list legible.
+    order_rows = min(len(selected), max(1, (rows - row) // 3)) if selected else 0
+    # Bottom reserved: sep + order_rows + sep + help = order_rows + 3
+    bottom_reserved = order_rows + 3
+
     list_start = row
-    list_rows = rows - list_start - 4
+    list_rows = rows - list_start - bottom_reserved
     if list_rows < 1:
-        return
+        list_rows = 1
 
     selected_set = set(selected)
+    filter_dim = focus == "order"
     scroll = max(0, cursor - list_rows + 1)
     visible = filtered[scroll: scroll + list_rows]
 
     for idx, item in enumerate(visible):
         abs_idx = scroll + idx
         mark = "[*]" if item in selected_set else "[ ]"
-        prefix = "> " if abs_idx == cursor else "  "
+        prefix = "> " if (abs_idx == cursor and focus == "filter") else "  "
         line = (prefix + mark + " " + item)[:cols - 1]
-        attr = curses.A_REVERSE if abs_idx == cursor else curses.A_NORMAL
-        if row < rows - 4:
-            _addstr_safe(screen, row, 0, line, attr)
+        item_attr = curses.A_DIM if filter_dim else (
+            curses.A_REVERSE if abs_idx == cursor else curses.A_NORMAL
+        )
+        if row < rows - bottom_reserved:
+            _addstr_safe(screen, row, 0, line, item_attr)
         row += 1
 
-    if row < rows - 3:
+    # Separator before the order panel.
+    if row < rows - (order_rows + 2):
         _addstr_safe(screen, row, 0, sep)
         row += 1
 
-    selected_summary = "Selected (in order): " + (", ".join(selected) if selected else "(none)")
-    if row < rows - 2:
-        _addstr_safe(screen, row, 0, selected_summary[:cols - 1])
+    # Order panel.
+    order_scroll = max(0, order_cursor - order_rows + 1)
+    order_visible = selected[order_scroll: order_scroll + order_rows]
+    for idx, item in enumerate(order_visible):
+        abs_idx = order_scroll + idx
+        is_active = focus == "order" and abs_idx == order_cursor
+        prefix = "> " if is_active else "  "
+        line = (prefix + item)[:cols - 1]
+        attr = curses.A_REVERSE if is_active else curses.A_NORMAL
+        if row < rows - 2:
+            _addstr_safe(screen, row, 0, line, attr)
         row += 1
 
     if row < rows - 1:
         _addstr_safe(screen, row, 0, sep)
         row += 1
 
-    help_line = "[↑↓/jk] move  [Space/Enter] toggle  [Ctrl-D] done  [Esc/q] cancel"
+    if focus == "filter":
+        help_line = "[↑↓/jk] move  [Space/Enter] toggle  [Tab] reorder  [Ctrl-D] done  [Esc/q] cancel"
+    else:
+        help_line = "[↑↓/jk] cursor  [K/J] reorder  [Space/Enter] remove  [Tab] back  [Ctrl-D] done"
     if row < rows:
         _addstr_safe(screen, min(rows - 1, row), 0, help_line[:cols - 1])
 
