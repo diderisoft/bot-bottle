@@ -10,10 +10,12 @@ from bot_bottle.egress import (
     Egress,
     EgressPlan,
     EgressRoute,
+    egress_agent_env_entries,
     egress_manifest_routes,
     egress_render_routes,
     egress_resolve_token_values,
     egress_routes_for_bottle,
+    egress_sidecar_env_entries,
     egress_token_env_map,
 )
 from bot_bottle.log import Die
@@ -510,6 +512,55 @@ class TestCanaryGeneration(unittest.TestCase):
         )
         self.assertEqual("", plan.canary)
         self.assertEqual("", plan.canary_env)
+
+
+class TestEgressEnvEntries(unittest.TestCase):
+    def test_sidecar_entries_include_route_tokens_and_canary_scan_prefix(self):
+        plan = EgressPlan(
+            slug="s",
+            routes_path=Path("/tmp/r.yaml"),
+            routes=(EgressRoute(host="api.example"),),
+            token_env_map={"EGRESS_TOKEN_1": "T1", "EGRESS_TOKEN_0": "T0"},
+            canary="fake-canary-value",
+            canary_env="CANON_ALPHA_SECRET",
+        )
+
+        self.assertEqual(
+            (
+                "EGRESS_TOKEN_0",
+                "EGRESS_TOKEN_1",
+                "CANON_ALPHA_SECRET=fake-canary-value",
+                "BOT_BOTTLE_SENSITIVE_PREFIXES=CANON_ALPHA_SECRET",
+            ),
+            egress_sidecar_env_entries(plan),
+        )
+
+    def test_agent_entries_include_only_canary_bait(self):
+        plan = EgressPlan(
+            slug="s",
+            routes_path=Path("/tmp/r.yaml"),
+            routes=(),
+            token_env_map={},
+            canary="fake-canary-value",
+            canary_env="CANON_ALPHA_SECRET",
+        )
+
+        self.assertEqual(
+            ("CANON_ALPHA_SECRET=fake-canary-value",),
+            egress_agent_env_entries(plan),
+        )
+
+    def test_canary_entries_omitted_when_name_missing(self):
+        plan = EgressPlan(
+            slug="s",
+            routes_path=Path("/tmp/r.yaml"),
+            routes=(),
+            token_env_map={},
+            canary="fake-canary-value",
+        )
+
+        self.assertEqual((), egress_sidecar_env_entries(plan))
+        self.assertEqual((), egress_agent_env_entries(plan))
 
 
 if __name__ == "__main__":

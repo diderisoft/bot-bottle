@@ -62,6 +62,24 @@ def _random_canary_env() -> str:
     return f"{first}_{second}_SECRET"
 
 
+def egress_sidecar_env_entries(plan: "EgressPlan") -> tuple[str, ...]:
+    """Return sidecar env entries needed by egress across all backends."""
+    env: list[str] = []
+    if plan.routes:
+        env.extend(sorted(plan.token_env_map.keys()))
+    if plan.canary and plan.canary_env:
+        env.append(f"{plan.canary_env}={plan.canary}")
+        env.append(f"BOT_BOTTLE_SENSITIVE_PREFIXES={plan.canary_env}")
+    return tuple(env)
+
+
+def egress_agent_env_entries(plan: "EgressPlan") -> tuple[str, ...]:
+    """Return agent-visible egress env entries shared by all backends."""
+    if plan.canary and plan.canary_env:
+        return (f"{plan.canary_env}={plan.canary}",)
+    return ()
+
+
 @dataclass(frozen=True)
 class EgressRoute(Route):
     """Host-side extension of the addon's `Route`.
@@ -379,5 +397,7 @@ __all__ = [
     "egress_render_routes",
     "egress_resolve_token_values",
     "egress_routes_for_bottle",
+    "egress_agent_env_entries",
+    "egress_sidecar_env_entries",
     "egress_token_env_map",
 ]

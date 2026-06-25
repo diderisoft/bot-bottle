@@ -28,6 +28,8 @@ from typing import Any
 from ...egress import (
     EGRESS_HOSTNAME,
     EGRESS_ROUTES_IN_CONTAINER,
+    egress_agent_env_entries,
+    egress_sidecar_env_entries,
 )
 from ...git_gate import GIT_GATE_HOSTNAME
 from ...log import die, warn
@@ -135,13 +137,7 @@ def _sidecar_bundle_service(plan: DockerBottlePlan) -> dict[str, Any]:
     volumes.append(_bind(ep.mitmproxy_ca_host_path, EGRESS_CA_IN_CONTAINER))
     if ep.routes:
         volumes.append(_bind(ep.routes_path.parent, str(Path(EGRESS_ROUTES_IN_CONTAINER).parent)))
-        for token_env in sorted(ep.token_env_map.keys()):
-            env.append(token_env)
-    if ep.canary and ep.canary_env:
-        # Inject the fake secret as a literal NAME=VALUE (not a bare name) and
-        # tell the sidecar to scan that exact env var as sensitive.
-        env.append(f"{ep.canary_env}={ep.canary}")
-        env.append(f"BOT_BOTTLE_SENSITIVE_PREFIXES={ep.canary_env}")
+    env.extend(egress_sidecar_env_entries(ep))
 
     # --- git-gate -----------------------------------------------------
     gp = plan.git_gate_plan
@@ -225,10 +221,7 @@ def _agent_service(plan: DockerBottlePlan) -> dict[str, Any]:
     # never lands on argv or in the compose file.
     for name in sorted(plan.forwarded_env.keys()):
         env.append(name)
-    # Canary token: visible to the agent as a fake secret so that any
-    # outbound appearance of this value is a zero-FP exfil signal.
-    if plan.egress_plan.canary and plan.egress_plan.canary_env:
-        env.append(f"{plan.egress_plan.canary_env}={plan.egress_plan.canary}")
+    env.extend(egress_agent_env_entries(plan.egress_plan))
 
     service: dict[str, Any] = {
         "image": plan.image,

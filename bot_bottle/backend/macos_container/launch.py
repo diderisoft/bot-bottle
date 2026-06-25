@@ -22,7 +22,12 @@ from ...bottle_state import (
     git_gate_state_dir,
     read_committed_image,
 )
-from ...egress import EGRESS_ROUTES_IN_CONTAINER, egress_resolve_token_values
+from ...egress import (
+    EGRESS_ROUTES_IN_CONTAINER,
+    egress_agent_env_entries,
+    egress_resolve_token_values,
+    egress_sidecar_env_entries,
+)
 from ...git_gate import revoke_git_gate_provisioned_keys
 from ...log import die, info, warn
 from ...supervise import QUEUE_DIR_IN_CONTAINER, SUPERVISE_PORT
@@ -350,12 +355,7 @@ def _sidecar_daemons(plan: MacosContainerBottlePlan) -> tuple[str, ...]:
 
 
 def _sidecar_env_entries(plan: MacosContainerBottlePlan) -> tuple[str, ...]:
-    env: list[str] = []
-    if plan.egress_plan.routes:
-        env.extend(sorted(plan.egress_plan.token_env_map.keys()))
-    if plan.egress_plan.canary and plan.egress_plan.canary_env:
-        env.append(f"{plan.egress_plan.canary_env}={plan.egress_plan.canary}")
-        env.append(f"BOT_BOTTLE_SENSITIVE_PREFIXES={plan.egress_plan.canary_env}")
+    env: list[str] = list(egress_sidecar_env_entries(plan.egress_plan))
     if plan.git_gate_plan.upstreams:
         env.append(f"BOT_BOTTLE_GIT_GATE_READY_FILE={_GIT_GATE_READY_FILE}")
     if plan.supervise_plan is not None:
@@ -423,8 +423,7 @@ def _agent_env_entries(
         env.append(f"{name}={value}")
     for name in sorted(plan.forwarded_env.keys()):
         env.append(name)
-    if plan.egress_plan.canary and plan.egress_plan.canary_env:
-        env.append(f"{plan.egress_plan.canary_env}={plan.egress_plan.canary}")
+    env.extend(egress_agent_env_entries(plan.egress_plan))
     return tuple(env)
 
 

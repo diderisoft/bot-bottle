@@ -23,7 +23,9 @@ from typing import Callable, Generator
 
 from ...egress import (
     EGRESS_ROUTES_IN_CONTAINER,
+    egress_agent_env_entries,
     egress_resolve_token_values,
+    egress_sidecar_env_entries,
 )
 from ...supervise import QUEUE_DIR_IN_CONTAINER, SUPERVISE_PORT
 from ...util import expand_tilde
@@ -228,8 +230,9 @@ def _discover_urls(
         guest_env["GIT_GATE_URL"] = f"http://{agent_git_gate_host}"
     if agent_supervise_url:
         guest_env["MCP_SUPERVISE_URL"] = agent_supervise_url
-    if plan.egress_plan.canary and plan.egress_plan.canary_env:
-        guest_env[plan.egress_plan.canary_env] = plan.egress_plan.canary
+    for entry in egress_agent_env_entries(plan.egress_plan):
+        name, value = entry.split("=", 1)
+        guest_env[name] = value
 
     return dataclasses.replace(
         plan,
@@ -318,14 +321,7 @@ def _bundle_launch_spec(
     volumes.append((str(ep.mitmproxy_ca_host_path), EGRESS_CA_IN_CONTAINER, True))
     if ep.routes:
         volumes.append((str(ep.routes_path.parent), str(Path(EGRESS_ROUTES_IN_CONTAINER).parent), True))
-        # Bare-name entries for upstream-token slots. Their values
-        # come from the docker-run subprocess env (inherited from
-        # the operator's shell), never landing on argv.
-        for token_env in sorted(ep.token_env_map.keys()):
-            env.append(token_env)
-    if ep.canary and ep.canary_env:
-        env.append(f"{ep.canary_env}={ep.canary}")
-        env.append(f"BOT_BOTTLE_SENSITIVE_PREFIXES={ep.canary_env}")
+    env.extend(egress_sidecar_env_entries(ep))
 
     # --- git-gate ---------------------------------------------
     gp = plan.git_gate_plan
