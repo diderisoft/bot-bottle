@@ -228,6 +228,8 @@ def _discover_urls(
         guest_env["GIT_GATE_URL"] = f"http://{agent_git_gate_host}"
     if agent_supervise_url:
         guest_env["MCP_SUPERVISE_URL"] = agent_supervise_url
+    if plan.egress_plan.canary and plan.egress_plan.canary_env:
+        guest_env[plan.egress_plan.canary_env] = plan.egress_plan.canary
 
     return dataclasses.replace(
         plan,
@@ -321,6 +323,9 @@ def _bundle_launch_spec(
         # the operator's shell), never landing on argv.
         for token_env in sorted(ep.token_env_map.keys()):
             env.append(token_env)
+    if ep.canary and ep.canary_env:
+        env.append(f"{ep.canary_env}={ep.canary}")
+        env.append(f"BOT_BOTTLE_SENSITIVE_PREFIXES={ep.canary_env}")
 
     # --- git-gate ---------------------------------------------
     gp = plan.git_gate_plan

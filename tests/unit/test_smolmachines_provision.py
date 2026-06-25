@@ -26,9 +26,7 @@ from bot_bottle.backend.smolmachines.bottle import SmolmachinesBottle
 from bot_bottle.backend.smolmachines.bottle_plan import (
     SmolmachinesBottlePlan,
 )
-# from bot_bottle.backend.smolmachines.provision import (
-#     workspace as _workspace,
-# )
+from bot_bottle.backend.smolmachines import launch as _launch
 from bot_bottle.backend.smolmachines.launch import _bundle_launch_spec
 from bot_bottle.backend.util import AGENT_CA_PATH
 from bot_bottle.egress import EgressPlan, EgressRoute
@@ -86,6 +84,7 @@ def _plan(
     stage_dir: Path | None = None,
     egress_routes: tuple[EgressRoute, ...] = (),
     egress_ca_path: Path = Path(),
+    canary: bool = False,
     supervise: bool = False,
     bundle_ip: str = "192.168.50.2",
     agent_git_gate_host: str = "127.0.0.1:55555",
@@ -156,6 +155,8 @@ def _plan(
             routes=egress_routes,
             token_env_map={},
             mitmproxy_ca_cert_only_host_path=egress_ca_path,
+            canary="fake-canary-value" if canary else "",
+            canary_env="CANON_ALPHA_SECRET" if canary else "",
         ),
         supervise_plan=supervise_plan,
         agent_git_gate_host=agent_git_gate_host,
@@ -410,6 +411,31 @@ class TestBundleLaunchSpec(unittest.TestCase):
         )
         self.assertIn(9420, spec.ports_to_publish)
         self.assertNotIn(9418, spec.ports_to_publish)
+
+    def test_canary_env_registered_as_sensitive_in_bundle(self):
+        plan = _plan(canary=True)
+
+        spec = _bundle_launch_spec(plan, "net", "127.0.0.16")
+
+        self.assertIn("CANON_ALPHA_SECRET=fake-canary-value", spec.environment)
+        self.assertIn(
+            "BOT_BOTTLE_SENSITIVE_PREFIXES=CANON_ALPHA_SECRET",
+            spec.environment,
+        )
+
+    def test_canary_env_visible_to_smolvm_guest(self):
+        plan = _plan(canary=True)
+        with patch.object(
+            _launch._bundle,
+            "bundle_host_port",
+            return_value="65000",
+        ):
+            stamped = _launch._discover_urls(plan, "127.0.0.16")
+
+        self.assertEqual(
+            "fake-canary-value",
+            stamped.guest_env["CANON_ALPHA_SECRET"],
+        )
 
 
 class TestProvisionGitUser(unittest.TestCase):
