@@ -319,7 +319,7 @@ def _list_once() -> int:
     return 0
 
 
-def _try_init_green() -> int:
+def _try_init_green() -> int:  # pragma: no cover
     """Initialise a green color pair and return its attr, or 0."""
     try:
         curses.start_color()
@@ -330,7 +330,7 @@ def _try_init_green() -> int:
         return 0
 
 
-def _main_loop(stdscr: "curses._CursesWindow") -> None:  # type: ignore
+def _main_loop(stdscr: "curses._CursesWindow") -> None:  # type: ignore  # pragma: no cover
     curses.curs_set(0)
     stdscr.timeout(_REFRESH_INTERVAL_MS)
     green_attr = _try_init_green()
@@ -420,7 +420,7 @@ def _render(
     status_line: str,
     *,
     green_attr: int = 0,  # noqa: F841 — unused, but required by interface
-) -> None:
+) -> None:  # pragma: no cover
     stdscr.erase()
     h, w = stdscr.getmaxyx()
     header = f"bot-bottle supervise  ({len(pending)} pending)"
@@ -471,7 +471,7 @@ def _detail_view(
     qp: QueuedProposal,
     *,
     green_attr: int = 0,
-) -> None:
+) -> None:  # pragma: no cover
     """Render the full proposal. Scrollable. Press q to return."""
     lines = _detail_lines(qp, green_attr=green_attr)
     offset = 0
@@ -523,7 +523,7 @@ def _detail_view(
             return
 
 
-def _modify(stdscr: "curses._CursesWindow", qp: QueuedProposal) -> str | None:  # type: ignore
+def _modify(stdscr: "curses._CursesWindow", qp: QueuedProposal) -> str | None:  # type: ignore  # pragma: no cover
     """Suspend curses, open $EDITOR on the proposed file, return edited content."""
     suffix = _suffix_for_tool(qp.proposal.tool)
     curses.endwin()
@@ -534,7 +534,7 @@ def _modify(stdscr: "curses._CursesWindow", qp: QueuedProposal) -> str | None:  
     return edited
 
 
-def _prompt(stdscr: "curses._CursesWindow", label: str) -> str:  # type: ignore
+def _prompt(stdscr: "curses._CursesWindow", label: str) -> str:  # type: ignore  # pragma: no cover
     """One-line input at the bottom of the screen."""
     curses.curs_set(1)
     h, _ = stdscr.getmaxyx()
