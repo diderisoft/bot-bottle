@@ -167,11 +167,38 @@ class TestAgentProviderHostCredentials(unittest.TestCase):
                 },
             })
 
-    def test_settings_rejected_for_claude(self):
+    def test_startup_args_allowed_for_claude(self):
+        b = _provider_config_bottle({
+            "template": "claude",
+            "settings": {"startup_args": ["--model", "opus"]},
+        })
+        self.assertEqual(
+            {"startup_args": ["--model", "opus"]},
+            b.agent_provider.settings,
+        )
+
+    def test_startup_args_allowed_for_codex(self):
+        b = _provider_config_bottle({
+            "template": "codex",
+            "settings": {"startup_args": ["--model", "gpt-5-codex"]},
+        })
+        self.assertEqual(
+            {"startup_args": ["--model", "gpt-5-codex"]},
+            b.agent_provider.settings,
+        )
+
+    def test_provider_specific_settings_still_rejected_for_claude(self):
         with self.assertRaises(ManifestError):
             _provider_config_bottle({
                 "template": "claude",
                 "settings": {"models": ["qwen2.5-coder:7b"]},
+            })
+
+    def test_startup_args_must_be_string_array(self):
+        with self.assertRaises(ManifestError):
+            _provider_config_bottle({
+                "template": "codex",
+                "settings": {"startup_args": ["--model", 42]},
             })
 
     def test_settings_models_must_be_non_empty_string_array(self):

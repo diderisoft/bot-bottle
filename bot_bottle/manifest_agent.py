@@ -199,13 +199,10 @@ def _parse_provider_settings(
 ) -> dict[str, object]:
     if raw is None:
         return {}
-    if template != "pi":
-        raise ManifestError(
-            f"bottle '{bottle_name}' agent_provider.settings is only "
-            "supported for template 'pi'"
-        )
     settings = as_json_object(raw, f"bottle '{bottle_name}' agent_provider.settings")
-    allowed = {
+
+    common_allowed = {"startup_args"}
+    pi_allowed = {
         "provider",
         "base_url",
         "api",
@@ -218,12 +215,37 @@ def _parse_provider_settings(
         "supports_developer_role",
         "supports_reasoning_effort",
     }
+    if template == "pi":
+        allowed = common_allowed | pi_allowed
+    elif template in ("claude", "codex"):
+        allowed = common_allowed
+    elif template not in PROVIDER_TEMPLATES:
+        return dict(settings)
+    else:
+        allowed = common_allowed
+
     for key in settings:
         if key not in allowed:
             raise ManifestError(
                 f"bottle '{bottle_name}' agent_provider.settings has unknown "
                 f"key {key!r}; allowed: {', '.join(sorted(allowed))}"
             )
+    startup_args = settings.get("startup_args")
+    if startup_args is not None:
+        if not isinstance(startup_args, list):
+            raise ManifestError(
+                f"bottle '{bottle_name}' agent_provider.settings.startup_args "
+                f"must be an array of strings"
+            )
+        for i, arg in enumerate(startup_args):
+            if not isinstance(arg, str) or not arg:
+                raise ManifestError(
+                    f"bottle '{bottle_name}' agent_provider.settings."
+                    f"startup_args[{i}] must be a non-empty string"
+                )
+    if template != "pi":
+        return dict(settings)
+
     for key in ("provider", "base_url", "api", "api_key", "api_key_env"):
         value = settings.get(key)
         if value is not None and (not isinstance(value, str) or not value):

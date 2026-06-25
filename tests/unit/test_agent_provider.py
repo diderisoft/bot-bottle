@@ -168,6 +168,34 @@ class TestAgentProviderRuntime(unittest.TestCase):
         self.assertEqual("~/.claude/statusline.sh", settings["statusLine"]["command"])
         self.assertEqual("custom:bot-bottle-research-ui", settings["theme"])
 
+    def test_claude_plan_uses_startup_args_from_provider_settings(self):
+        with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
+            plan = build_agent_provision_plan(
+                template="claude",
+                dockerfile="",
+                state_dir=Path(tmp),
+                instance_name="bot-bottle-test",
+                prompt_file=Path(tmp) / "prompt.txt",
+                provider_settings={
+                    "startup_args": ["--model", "opus"],
+                },
+            )
+        self.assertEqual(("--model", "opus"), plan.startup_args)
+
+    def test_codex_plan_uses_startup_args_from_provider_settings(self):
+        with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
+            plan = build_agent_provision_plan(
+                template="codex",
+                dockerfile="",
+                state_dir=Path(tmp),
+                instance_name="bot-bottle-test",
+                prompt_file=Path(tmp) / "prompt.txt",
+                provider_settings={
+                    "startup_args": ["--model", "gpt-5-codex"],
+                },
+            )
+        self.assertEqual(("--model", "gpt-5-codex"), plan.startup_args)
+
     def test_codex_forward_host_credentials_populates_egress_routes(self):
         with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
             home = Path(tmp) / "host-codex"
@@ -393,6 +421,24 @@ class TestAgentProviderRuntime(unittest.TestCase):
         self.assertEqual("OPENROUTER_API_KEY", plan.egress_routes[0].token_ref)
         self.assertNotIn("OPENROUTER_API_KEY", plan.guest_env)
         self.assertTrue(provider["compat"]["supportsReasoningEffort"])
+
+    def test_pi_plan_appends_startup_args_from_provider_settings(self):
+        with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
+            plan = build_agent_provision_plan(
+                template="pi",
+                dockerfile="",
+                state_dir=Path(tmp),
+                instance_name="bot-bottle-test",
+                prompt_file=Path(tmp) / "prompt.txt",
+                provider_settings={
+                    "models": ["qwen3:14b"],
+                    "startup_args": ["--no-stream"],
+                },
+            )
+        self.assertEqual(
+            ("--models", "ollama/qwen3:14b", "--no-stream"),
+            plan.startup_args,
+        )
 
     def test_pi_prompt_mode_appends_system_prompt_interactively(self):
         self.assertEqual(

@@ -21,6 +21,7 @@ from ...agent_provider import (
     AgentProvisionDir,
     AgentProvisionFile,
     AgentProvisionPlan,
+    provider_startup_args,
 )
 from ...egress import EgressRoute
 from ...log import die, info
@@ -199,6 +200,7 @@ class PiAgentProvider(AgentProvider):
         models_payload, base_url, api_key_env, models, provider_name = (
             _pi_models_json(settings)
         )
+        extra_startup_args = provider_startup_args(provider_settings)
         models_file = state_dir / "pi-models.json"
         models_file.write_text(json.dumps(models_payload, indent=2) + "\n")
         models_file.chmod(0o600)
@@ -219,6 +221,7 @@ class PiAgentProvider(AgentProvider):
             startup_args=(
                 "--models",
                 ",".join(f"{provider_name}/{model}" for model in models),
+                *extra_startup_args,
             ),
             dirs=(AgentProvisionDir(f"{guest_home}/.pi/agent"),),
             files=(AgentProvisionFile(models_file, _models_path(guest_home)),),

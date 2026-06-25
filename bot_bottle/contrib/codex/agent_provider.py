@@ -22,6 +22,7 @@ from ...agent_provider import (
     AgentProvisionCommand,
     AgentProvisionFile,
     AgentProvisionPlan,
+    provider_startup_args,
 )
 from .codex_auth import codex_host_access_token, write_codex_dummy_auth_file
 from ...egress import CODEX_HOST_CREDENTIAL_TOKEN_REF, EgressRoute
@@ -79,8 +80,9 @@ class CodexAgentProvider(AgentProvider):
         color: str = "",
         provider_settings: dict[str, object] | None = None,
     ) -> AgentProvisionPlan:
-        del auth_token, label, color, provider_settings
+        del auth_token, label, color
         resolved_guest_env = dict(guest_env or {})
+        startup_args = provider_startup_args(provider_settings)
         guest_home = self.guest_home
         trusted_path = trusted_project_path or guest_home
 
@@ -163,6 +165,7 @@ class CodexAgentProvider(AgentProvider):
             env_vars=env_vars,
             guest_env=resolved_guest_env,
             has_prompt=has_prompt,
+            startup_args=startup_args,
             dirs=tuple(dirs),
             files=tuple(files),
             pre_copy=tuple(pre_copy),

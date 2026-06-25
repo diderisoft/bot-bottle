@@ -371,6 +371,15 @@ def build_agent_provision_plan(
     )
 
 
+def provider_startup_args(
+    provider_settings: dict[str, object] | None,
+) -> tuple[str, ...]:
+    raw = (provider_settings or {}).get("startup_args", ())
+    if not isinstance(raw, (list, tuple)):
+        return ()
+    return tuple(arg for arg in raw if isinstance(arg, str))
+
+
 def prompt_args(
     prompt_mode: PromptMode,
     prompt_path: str | None,

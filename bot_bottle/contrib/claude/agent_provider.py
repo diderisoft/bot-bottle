@@ -20,6 +20,7 @@ from ...agent_provider import (
     AgentProvisionDir,
     AgentProvisionFile,
     AgentProvisionPlan,
+    provider_startup_args,
 )
 from ...backend.docker import util as docker_mod
 from ...egress import EgressRoute
@@ -115,8 +116,9 @@ class ClaudeAgentProvider(AgentProvider):
         color: str = "",
         provider_settings: dict[str, object] | None = None,
     ) -> AgentProvisionPlan:
-        del forward_host_credentials, host_env, provider_settings
+        del forward_host_credentials, host_env
         resolved_guest_env = dict(guest_env or {})
+        startup_args = provider_startup_args(provider_settings)
         guest_home = self.guest_home
         trusted_path = trusted_project_path or guest_home
 
@@ -199,6 +201,7 @@ class ClaudeAgentProvider(AgentProvider):
             env_vars=env_vars,
             guest_env=resolved_guest_env,
             has_prompt=has_prompt,
+            startup_args=startup_args,
             dirs=dirs,
             files=tuple(files),
             egress_routes=egress_routes,
