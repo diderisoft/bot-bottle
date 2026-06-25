@@ -9,7 +9,6 @@ import unittest
 
 from bot_bottle.dlp_detectors import (
     ENTROPY_BLOCK_THRESHOLD,
-    ENTROPY_WINDOW,
     PARTIAL_MATCH_MIN_LEN,
     REDACT,
     _alnum_projection,
