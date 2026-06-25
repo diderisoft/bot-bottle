@@ -487,5 +487,21 @@ class TestMatchedAndSafeTokens(unittest.TestCase):
         self.assertEqual("", result.matched)
 
 
+class TestStripCrlf(unittest.TestCase):
+    def test_removes_url_encoded_crlf(self):
+        from bot_bottle.dlp_detectors import strip_crlf
+        out = strip_crlf("next=%0d%0aX-Injected: evil")
+        self.assertNotRegex(out, r"%0[dD]%0[aA]")
+
+    def test_removes_literal_header_injection(self):
+        from bot_bottle.dlp_detectors import strip_crlf
+        out = strip_crlf("value\r\nX-Injected: evil")
+        self.assertIsNone(scan_crlf_injection(out))
+
+    def test_leaves_clean_text_unchanged(self):
+        from bot_bottle.dlp_detectors import strip_crlf
+        self.assertEqual("/api/v1/data?q=hello", strip_crlf("/api/v1/data?q=hello"))
+
+
 if __name__ == "__main__":
     unittest.main()

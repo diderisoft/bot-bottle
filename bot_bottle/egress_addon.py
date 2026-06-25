@@ -39,9 +39,12 @@ from egress_addon_core import (  # type: ignore[import-not-found]  # pylint: dis
 )
 
 try:
-    from dlp_detectors import redact_tokens  # type: ignore[import-not-found]
+    from dlp_detectors import redact_tokens, strip_crlf  # type: ignore[import-not-found]
 except ImportError:  # pragma: no cover - host-side path
-    from bot_bottle.dlp_detectors import redact_tokens  # type: ignore[import-not-found]
+    from bot_bottle.dlp_detectors import (  # type: ignore[import-not-found]
+        redact_tokens,
+        strip_crlf,
+    )
 
 try:
     import supervise as _sv  # type: ignore[import-not-found]
@@ -267,27 +270,26 @@ class EgressAddon:
         while True:
             request_path, _, query = flow.request.path.partition("?")
             body = flow.request.get_text(strict=False) or ""
+            headers = outbound_scan_headers(route, dict(flow.request.headers))
             scan_text = build_outbound_scan_text(
-                flow.request.pretty_host,
-                request_path,
-                query,
-                outbound_scan_headers(route, dict(flow.request.headers)),
-                body,
+                flow.request.pretty_host, request_path, query, headers, body,
+            )
+            # CRLF is scanned only over the request line + headers, never the
+            # body (see scan_outbound) — a body is not an injection vector.
+            crlf_text = build_outbound_scan_text(
+                flow.request.pretty_host, request_path, query, headers, "",
             )
             result = scan_outbound(
-                route, scan_text, os.environ, safe_tokens=self.safe_tokens,
+                route, scan_text, os.environ,
+                safe_tokens=self.safe_tokens, crlf_text=crlf_text,
             )
             if result is None or result.severity != "block":
                 return True
 
-            # Structural blocks (CRLF, no safelist-able value) are always a
-            # hard 403, regardless of the route's on-match policy.
-            if not result.matched:
-                self._block_dlp(flow, result)
-                return False
-
             policy = route.outbound_on_match or DEFAULT_OUTBOUND_ON_MATCH
 
+            # redact scrubs every detection (tokens and structural CRLF) and
+            # forwards; it fails closed only if a match survives the scrub.
             if policy == ON_MATCH_REDACT:
                 if self._redact_outbound(flow, route):
                     if self.config.log >= LOG_BLOCKS:
@@ -305,7 +307,10 @@ class EgressAddon:
                 )
                 return False
 
-            if policy == ON_MATCH_BLOCK:
+            # Structural blocks (CRLF, no safelist-able value) cannot be
+            # supervised — there is nothing to approve and remember — so under
+            # block/supervise they are a hard 403.
+            if policy == ON_MATCH_BLOCK or not result.matched:
                 self._block_dlp(flow, result)
                 return False
 
@@ -320,10 +325,11 @@ class EgressAddon:
             # loop: the approved value is now in safe_tokens; re-scan.
 
     def _redact_outbound(self, flow: http.HTTPFlow, route: Route) -> bool:
-        """Scrub detected tokens from the mutable request surfaces (body,
-        headers, path/query) and re-scan. Returns True if the request is now
-        clean; False if a block-severity match remains on a surface redaction
-        cannot rewrite (the hostname) so the caller fails closed."""
+        """Scrub detected tokens (and CRLF injection sequences) from the mutable
+        request surfaces (body, headers, path/query) and re-scan. Returns True
+        if the request is now clean; False if a block-severity match remains on
+        a surface redaction cannot rewrite (the hostname) so the caller fails
+        closed."""
         body = flow.request.get_text(strict=False)
         if body:
             redacted_body = redact_tokens(body, env=os.environ)
@@ -332,23 +338,23 @@ class EgressAddon:
         for name, value in list(flow.request.headers.items()):
             if name.lower() == "host":
                 continue  # routing-critical; never a legitimate token
-            redacted = redact_tokens(value, env=os.environ)
+            redacted = strip_crlf(redact_tokens(value, env=os.environ))
             if redacted != value:
                 flow.request.headers[name] = redacted
-        redacted_path = redact_tokens(flow.request.path, env=os.environ)
+        redacted_path = strip_crlf(redact_tokens(flow.request.path, env=os.environ))
         if redacted_path != flow.request.path:
             flow.request.path = redacted_path
 
         request_path, _, query = flow.request.path.partition("?")
         new_body = flow.request.get_text(strict=False) or ""
+        headers = outbound_scan_headers(route, dict(flow.request.headers))
         scan_text = build_outbound_scan_text(
-            flow.request.pretty_host,
-            request_path,
-            query,
-            outbound_scan_headers(route, dict(flow.request.headers)),
-            new_body,
+            flow.request.pretty_host, request_path, query, headers, new_body,
         )
-        result = scan_outbound(route, scan_text, os.environ)
+        crlf_text = build_outbound_scan_text(
+            flow.request.pretty_host, request_path, query, headers, "",
+        )
+        result = scan_outbound(route, scan_text, os.environ, crlf_text=crlf_text)
         return result is None or result.severity != "block"
 
     async def _supervise_token_block(
@@ -491,8 +497,11 @@ class EgressAddon:
         message = flow.websocket.messages[-1]  # type: ignore[union-attr]
         content = message.content.decode("utf-8", errors="replace")
         if message.from_client:
+            # A WebSocket data frame is not an HTTP request line, so CRLF is
+            # not an injection vector here — scan only for credential leakage.
             result = scan_outbound(
-                route, content, os.environ, safe_tokens=self.safe_tokens,
+                route, content, os.environ,
+                safe_tokens=self.safe_tokens, crlf_text="",
             )
             if result is not None and result.severity == "block":
                 sys.stderr.write(f"egress DLP: {result.reason}\n")

@@ -283,6 +283,14 @@ _CRLF_ENCODED_RE = re.compile(r"%0[dD]%0[aA]", re.ASCII)
 _CRLF_HEADER_INJECT_RE = re.compile(r"\r\n[A-Za-z][A-Za-z0-9\-]+\s*:", re.ASCII)
 
 
+def strip_crlf(text: str) -> str:
+    """Remove URL-encoded and literal CRLF injection sequences from a request
+    surface (PRD 0062 redact policy). Used to scrub the request line / headers
+    so the request can be forwarded instead of hard-blocked."""
+    text = _CRLF_ENCODED_RE.sub("", text)
+    return _CRLF_HEADER_INJECT_RE.sub(lambda m: m.group(0)[2:], text)
+
+
 def scan_crlf_injection(text: str) -> ScanResult | None:
     if _CRLF_ENCODED_RE.search(text):
         return ScanResult(
@@ -306,4 +314,5 @@ __all__ = [
     "scan_known_secrets",
     "scan_naive_injection",
     "scan_token_patterns",
+    "strip_crlf",
 ]

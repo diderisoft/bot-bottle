@@ -722,6 +722,7 @@ def scan_outbound(
     environ: typing.Mapping[str, str],
     *,
     safe_tokens: typing.AbstractSet[str] | None = None,
+    crlf_text: str | None = None,
 ) -> ScanResult | None:
     # Lazy import to avoid circular deps and keep dlp_detectors optional
     # at import time (the sidecar copies it flat alongside this file).
@@ -740,9 +741,14 @@ def scan_outbound(
 
     text = body if isinstance(body, str) else body.decode("utf-8", errors="replace")
 
-    # CRLF injection is never legitimate — runs unconditionally, not gated
-    # by outbound_detectors config, and never override-able by safe_tokens.
-    result = scan_crlf_injection(text)
+    # CRLF injection is only an attack in the request line + headers, never the
+    # body: an HTTP body is delimited by Content-Length, so CRLF bytes there
+    # cannot split the request. Scanning the body produces false positives on
+    # legitimate form-encoded / multi-line content. Callers pass the
+    # body-excluded surfaces as `crlf_text`; `None` falls back to the full text
+    # for backward-compatible callers (host-side tests, websocket frames).
+    crlf_target = text if crlf_text is None else crlf_text
+    result = scan_crlf_injection(crlf_target)
     if result is not None:
         return result
 

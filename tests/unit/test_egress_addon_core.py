@@ -1212,6 +1212,43 @@ class TestScanOutboundSafeTokens(unittest.TestCase):
         self.assertEqual(_AWS_KEY, result.matched)
 
 
+class TestScanOutboundCrlfText(unittest.TestCase):
+    """PRD 0062: CRLF is scanned only over the request line + headers
+    (crlf_text), never the body — a body is not an injection vector."""
+
+    def test_body_crlf_not_flagged_when_crlf_text_excludes_body(self):
+        # A form-encoded multi-line body legitimately contains %0d%0a.
+        body = "comment=line1%0d%0aline2"
+        full = build_outbound_scan_text(
+            host="api.example.com", path="/submit", query="",
+            headers={}, body=body,
+        )
+        crlf_text = build_outbound_scan_text(
+            host="api.example.com", path="/submit", query="",
+            headers={}, body="",
+        )
+        self.assertIsNone(scan_outbound(_ROUTE, full, {}, crlf_text=crlf_text))
+
+    def test_request_line_crlf_still_flagged(self):
+        full = build_outbound_scan_text(
+            host="api.example.com", path="/p", query="next=%0d%0aX:evil",
+            headers={}, body="",
+        )
+        crlf_text = full
+        result = scan_outbound(_ROUTE, full, {}, crlf_text=crlf_text)
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual("block", result.severity)
+
+    def test_default_crlf_text_scans_full_blob(self):
+        # Backward compatibility: crlf_text=None scans everything (body too).
+        full = build_outbound_scan_text(
+            host="api.example.com", path="/submit", query="",
+            headers={}, body="x=%0d%0aX:evil",
+        )
+        self.assertIsNotNone(scan_outbound(_ROUTE, full, {}))
+
+
 class TestBuildTokenAllowPayload(unittest.TestCase):
     def test_payload_includes_context_and_no_raw_token(self):
         result = ScanResult(
