@@ -148,7 +148,13 @@ class GitHttpHandler(BaseHTTPRequestHandler):
             key, _, value = line.decode("latin1").partition(":")
             value = value.strip()
             if key.lower() == "status":
-                status = int(value.split()[0])
+                try:
+                    status = int(value.split()[0])
+                except (ValueError, IndexError):
+                    self.log_message(
+                        "malformed CGI Status header %r; using 500", value,
+                    )
+                    status = 500
             else:
                 headers.append((key, value))
         self.send_response(status)

@@ -256,6 +256,57 @@ class TestGitHttpBackend(unittest.TestCase):
             os.environ["GIT_GATE_ACCESS_HOOK"] = value
 
 
+class TestMalformedStatusHeader(unittest.TestCase):
+    """Malformed CGI Status: headers must not propagate as unhandled exceptions;
+    the handler should fall back to HTTP 500."""
+
+    def setUp(self):
+        from http.server import ThreadingHTTPServer
+        import tempfile
+        self._tmp = tempfile.mkdtemp()
+        os.environ["GIT_PROJECT_ROOT"] = self._tmp
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), GitHttpHandler)
+        self._thread = threading.Thread(
+            target=self._server.serve_forever, daemon=True,
+        )
+        self._thread.start()
+        self._port = self._server.server_port
+
+    def tearDown(self):
+        self._server.shutdown()
+        self._server.server_close()
+        os.environ.pop("GIT_PROJECT_ROOT", None)
+        import shutil
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def _get_with_backend_response(self, cgi_response: bytes) -> int:
+        with mock.patch(
+            "bot_bottle.git_http_backend.subprocess.run",
+            return_value=mock.Mock(returncode=0, stdout=cgi_response),
+        ):
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{self._port}/repo.git/info/refs",
+                method="GET",
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=3) as resp:
+                    return resp.status
+            except urllib.error.HTTPError as e:  # type: ignore
+                return e.code
+
+    def test_empty_status_value_returns_500(self):
+        status = self._get_with_backend_response(
+            b"Status: \r\nContent-Type: text/plain\r\n\r\n"
+        )
+        self.assertEqual(500, status)
+
+    def test_non_numeric_status_returns_500(self):
+        status = self._get_with_backend_response(
+            b"Status: bad\r\nContent-Type: text/plain\r\n\r\n"
+        )
+        self.assertEqual(500, status)
+
+
 class TestContentLengthBounds(unittest.TestCase):
     """PRD 0041: malformed or oversized Content-Length is rejected before
     git http-backend is invoked."""
