@@ -1,4 +1,4 @@
-"""Unit: DLP detectors (PRD 0053, prd-new).
+"""Unit: DLP detectors (PRD 0053).
 
 Tests for token pattern scanning, known secret detection, fragmentation-
 resistant matching, entropy scoring, and naive prompt injection detection."""

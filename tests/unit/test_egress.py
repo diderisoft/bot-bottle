@@ -1,5 +1,5 @@
 """Unit: Egress route lift + routes.yaml render + token
-resolution (PRD 0017, PRD 0053, prd-new)."""
+resolution (PRD 0017, PRD 0053)."""
 
 import tempfile
 import unittest
@@ -450,7 +450,7 @@ class TestResolveTokenValues(unittest.TestCase):
 
 
 class TestCanaryGeneration(unittest.TestCase):
-    """Egress.prepare() generates a unique canary token per session (prd-new)."""
+    """Egress.prepare() generates a unique canary token per session."""
 
     def _bottle_obj(self):
         return ManifestIndex.from_json_obj({

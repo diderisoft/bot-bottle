@@ -1274,7 +1274,7 @@ class TestBuildTokenAllowPayload(unittest.TestCase):
         payload = build_token_allow_payload("h", "GET", "/", result)
         self.assertNotIn("context:", payload)
 class TestScanOutboundEnhanced(unittest.TestCase):
-    """scan_outbound changes from prd-new: binary decode, entropy detector,
+    """scan_outbound changes: binary decode, entropy detector,
     broadened known-value prefixes, fragmentation resistance."""
 
     _ROUTE = Route(host="api.example.com")

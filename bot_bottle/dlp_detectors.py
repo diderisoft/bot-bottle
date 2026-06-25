@@ -1,4 +1,4 @@
-"""DLP detectors for the egress proxy (PRD 0053, prd-new).
+"""DLP detectors for the egress proxy (PRD 0053).
 
 Pure Python, no mitmproxy dependency. Each detector is a module-level
 function returning `ScanResult | None`.
@@ -123,7 +123,7 @@ def redact_tokens(
 
 
 # ---------------------------------------------------------------------------
-# Known secrets detector (Phase 1b, prd-new)
+# Known secrets detector
 # ---------------------------------------------------------------------------
 
 def _encoded_variants(secret: str) -> list[str]:
@@ -165,7 +165,7 @@ def _encoded_variants(secret: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Fragmentation-resistant helpers (prd-new)
+# Fragmentation-resistant helpers
 # ---------------------------------------------------------------------------
 
 # Minimum length of alnum projection for projection-based checks to run.
@@ -283,7 +283,7 @@ def scan_known_secrets(
 
 
 # ---------------------------------------------------------------------------
-# Entropy detector (warn-only, prd-new)
+# Entropy detector (warn-only)
 # ---------------------------------------------------------------------------
 
 # Sliding window size and step for the entropy scan.
