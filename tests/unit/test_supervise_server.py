@@ -448,7 +448,7 @@ class TestHandleListEgressRoutes(unittest.TestCase):
             def __enter__(self):
                 return self
 
-            def __exit__(self, exc_type, exc, tb):
+            def __exit__(self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: object) -> bool:
                 return False
 
             def read(self):
