@@ -32,7 +32,6 @@ from bot_bottle.egress_addon_core import (
     is_git_fetch_request,
     is_git_push_request,
     load_config,
-    load_routes,
     match_route,
     outbound_scan_headers,
     parse_config,
@@ -289,47 +288,6 @@ class TestParseDlp(unittest.TestCase):
             }]})
 
 
-# --- load_routes ---------------------------------------------------------
-
-
-class TestLoadRoutes(unittest.TestCase):
-    def test_yaml_text_round_trip(self):
-        routes = load_routes(
-            'routes:\n'
-            '  - host: "api.example"\n'
-        )
-        self.assertEqual(1, len(routes))
-        self.assertEqual("api.example", routes[0].host)
-
-    def test_full_route_shape_parses(self):
-        routes = load_routes(
-            'routes:\n'
-            '  - host: "api.example"\n'
-            '    auth_scheme: "Bearer"\n'
-            '    token_env: "EGRESS_TOKEN_0"\n'
-            '    matches:\n'
-            '      - paths:\n'
-            '          - value: "/v1/"\n'
-            '          - type: "exact"\n'
-            '            value: "/messages"\n'
-        )
-        self.assertEqual(1, len(routes))
-        r = routes[0]
-        self.assertEqual("api.example", r.host)
-        self.assertEqual("Bearer", r.auth_scheme)
-        self.assertEqual("EGRESS_TOKEN_0", r.token_env)
-        self.assertEqual(1, len(r.matches))
-        self.assertEqual(2, len(r.matches[0].paths))
-
-    def test_empty_routes_list(self):
-        routes = load_routes("routes: []\n")
-        self.assertEqual((), routes)
-
-    def test_invalid_yaml_raises_value_error(self):
-        with self.assertRaises(ValueError):
-            load_routes("routes:\n\t- host: x\n")
-
-
 # --- load_config / parse_config ------------------------------------------
 
 
@@ -377,6 +335,33 @@ class TestLoadConfig(unittest.TestCase):
     def test_parse_config_rejects_non_dict(self):
         with self.assertRaises(ValueError):
             parse_config("not a dict")
+
+    def test_empty_routes_list(self):
+        cfg = load_config("routes: []\n")
+        self.assertEqual((), cfg.routes)
+
+    def test_full_route_shape_parses(self):
+        cfg = load_config(
+            'routes:\n'
+            '  - host: "api.example"\n'
+            '    auth_scheme: "Bearer"\n'
+            '    token_env: "EGRESS_TOKEN_0"\n'
+            '    matches:\n'
+            '      - paths:\n'
+            '          - value: "/v1/"\n'
+            '          - type: "exact"\n'
+            '            value: "/messages"\n'
+        )
+        r = cfg.routes[0]
+        self.assertEqual("api.example", r.host)
+        self.assertEqual("Bearer", r.auth_scheme)
+        self.assertEqual("EGRESS_TOKEN_0", r.token_env)
+        self.assertEqual(1, len(r.matches))
+        self.assertEqual(2, len(r.matches[0].paths))
+
+    def test_invalid_yaml_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            load_config("routes:\n\t- host: x\n")
 
 
 # --- evaluate_matches ---------------------------------------------------

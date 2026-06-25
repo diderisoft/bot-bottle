@@ -439,15 +439,6 @@ def route_to_yaml_dict(r: Route) -> dict[str, object]:
     return d
 
 
-def load_routes(text: str) -> tuple[Route, ...]:
-    """Parse YAML text → routes."""
-    try:
-        payload = parse_yaml_subset(text)
-    except YamlSubsetError as e:
-        raise ValueError(f"routes payload: invalid YAML: {e}") from e
-    return parse_routes(payload)
-
-
 def parse_config(payload: object) -> "Config":
     """Parse a full egress config payload (top-level log level + routes)."""
     if not isinstance(payload, dict):
@@ -862,7 +853,6 @@ __all__ = [
     "is_git_push_request",
     "is_git_fetch_request",
     "load_config",
-    "load_routes",
     "match_route",
     "outbound_scan_headers",
     "parse_config",

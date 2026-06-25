@@ -322,7 +322,7 @@ class TestRenderRoutes(unittest.TestCase):
         self.assertEqual([], parse_yaml_subset(rendered)["routes"])
 
     def test_round_trip_through_addon_core(self):
-        from bot_bottle.egress_addon_core import load_routes
+        from bot_bottle.egress_addon_core import load_config
         b = _bottle([
             {"host": "api.github.com",
              "auth": {"scheme": "Bearer", "token_ref": "GH_PAT"},
@@ -333,7 +333,7 @@ class TestRenderRoutes(unittest.TestCase):
             {"host": "api.anthropic.com"},
         ])
         routes = egress_routes_for_bottle(b)
-        addon_routes = load_routes(egress_render_routes(routes))
+        addon_routes = load_config(egress_render_routes(routes)).routes
         self.assertEqual(3, len(addon_routes))
         self.assertEqual("Bearer", addon_routes[0].auth_scheme)
         self.assertEqual("EGRESS_TOKEN_0", addon_routes[0].token_env)
@@ -341,26 +341,26 @@ class TestRenderRoutes(unittest.TestCase):
         self.assertEqual("", addon_routes[2].auth_scheme)
 
     def test_dlp_round_trips(self):
-        from bot_bottle.egress_addon_core import load_routes
+        from bot_bottle.egress_addon_core import load_config
         b = _bottle([{"host": "x.example", "dlp": {
             "outbound_detectors": ["token_patterns"],
             "inbound_detectors": False,
         }}])
         routes = egress_routes_for_bottle(b)
         rendered = egress_render_routes(routes)
-        addon_routes = load_routes(rendered)
+        addon_routes = load_config(rendered).routes
         self.assertEqual(("token_patterns",), addon_routes[0].outbound_detectors)
         self.assertEqual((), addon_routes[0].inbound_detectors)
 
     def test_outbound_on_match_round_trips(self):
-        from bot_bottle.egress_addon_core import load_routes
+        from bot_bottle.egress_addon_core import load_config
         b = _bottle([{"host": "logs.example", "dlp": {
             "outbound_on_match": "redact",
         }}])
         routes = egress_routes_for_bottle(b)
         rendered = egress_render_routes(routes)
         self.assertIn('outbound_on_match: "redact"', rendered)
-        addon_routes = load_routes(rendered)
+        addon_routes = load_config(rendered).routes
         self.assertEqual("redact", addon_routes[0].outbound_on_match)
 
     def test_outbound_on_match_default_omitted_from_render(self):
@@ -370,12 +370,12 @@ class TestRenderRoutes(unittest.TestCase):
         self.assertNotIn("outbound_on_match", rendered)
 
     def test_git_fetch_policy_round_trips(self):
-        from bot_bottle.egress_addon_core import load_routes
+        from bot_bottle.egress_addon_core import load_config
         b = _bottle([{"host": "github.com", "git": {"fetch": True}}])
         routes = egress_routes_for_bottle(b)
         rendered = egress_render_routes(routes)
         self.assertEqual({"fetch": True}, self._parsed(routes)[0]["git"])
-        addon_routes = load_routes(rendered)
+        addon_routes = load_config(rendered).routes
         self.assertTrue(addon_routes[0].git_fetch)
 
     def test_log_zero_omitted_from_render(self):
