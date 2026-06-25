@@ -144,10 +144,12 @@ def _allocate_resources(
 ) -> tuple[str, str]:
     """Reserve a loopback alias and create the per-bottle docker bridge.
 
-    macOS only routes 127.0.0.1 by default; the per-bottle alias
-    scopes TSI's allowlist to this bottle's published ports so the
-    agent can't reach other bottles' or host services' ports on
-    loopback. No-op on Linux."""
+    The per-bottle alias scopes TSI's allowlist to this bottle's
+    published ports so the agent can't reach other bottles' or host
+    services' ports on loopback. On macOS `ensure_pool` first
+    sudo-aliases the pool on `lo0`; on Linux that's a no-op since
+    all of 127.0.0.0/8 is already loopback, but the per-bottle
+    allocation runs on both."""
     _loopback.ensure_pool()
     loopback_ip = _loopback.allocate(plan.slug)
     network = _bundle.bundle_network_name(plan.slug)
@@ -207,9 +209,11 @@ def _discover_urls(
     return the plan with URLs + guest_env stamped in.
 
     Docker container IPs (192.168.x.x in the daemon's bridge)
-    aren't reachable from the smolvm guest on macOS — TSI uses
-    macOS networking, and macOS sees the daemon's bridge via the
-    published-port loopback forward only.
+    aren't reachable from the smolvm guest — TSI proxies the
+    guest's connects through the host, and the host reaches the
+    bundle only via its published-port loopback forward (the
+    daemon's bridge isn't on the TSI allowlist). The agent dials
+    the published port on the per-bottle loopback alias.
 
     NO_PROXY includes the per-bottle loopback alias so the
     supervise + git-gate URLs bypass HTTPS_PROXY."""
@@ -269,10 +273,11 @@ def _launch_vm(
     """Create, patch, and start the smolvm VM; register teardown.
 
     --allow-cidr is the per-bottle loopback alias so the guest can
-    only reach this bottle's bundle ports. force_allowlist patches
-    smolvm 0.8.0's silent-drop of --allow-cidr when combined with
-    --from. Smolfile isn't usable here — smolvm 0.8.0 makes --from
-    and --smolfile mutually exclusive."""
+    only reach this bottle's bundle ports. force_allowlist then
+    confirms the allowlist persisted (patching smolvm 0.8.0's
+    silent-drop of --allow-cidr when combined with --from) and
+    fails closed if it can't. Smolfile isn't usable here — smolvm
+    0.8.0 makes --from and --smolfile mutually exclusive."""
     _smolvm.machine_create(
         plan.machine_name,
         from_path=agent_from_path,
@@ -280,9 +285,10 @@ def _launch_vm(
         env=plan.guest_env,
     )
     stack.callback(_smolvm.machine_delete, plan.machine_name)
-    # Workaround smolvm 0.8.0: `--allow-cidr` is silently dropped
-    # when combined with `--from`. Patch the persisted state DB
-    # before start so the booted VM's TSI actually enforces.
+    # Confirm the booted VM's TSI allowlist will actually enforce the
+    # /32 before start (smolvm 0.8.0 silently drops `--allow-cidr`
+    # with `--from`, so the persisted state DB is patched if needed).
+    # Fails closed if enforcement can't be confirmed.
     _loopback.force_allowlist(plan.machine_name, [f"{loopback_ip}/32"])
     _smolvm.machine_start(plan.machine_name)
     stack.callback(_smolvm.machine_stop, plan.machine_name)
@@ -292,7 +298,9 @@ def _init_vm(plan: SmolmachinesBottlePlan) -> None:
     """Repair filesystem ownership and wait for exec channel readiness.
 
     Ownership repair: smolvm's pack process remaps files to the host
-    invoker's uid (501 on macOS). /home/node must be node:node so
+    invoker's uid (e.g. 501 on macOS, 1000 on Linux). The chowns use
+    names not numbers so they're correct on either. /home/node must
+    be node:node so
     Claude Code can write ~/.claude.json; /tmp + /var/tmp need root
     mode 1777 so non-root processes can create per-uid scratch dirs.
     All folded into one sh -c to avoid back-to-back exec calls

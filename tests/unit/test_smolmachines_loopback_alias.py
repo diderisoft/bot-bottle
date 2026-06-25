@@ -8,6 +8,7 @@ inspecting running bundle containers' port bindings."""
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import subprocess
 import tempfile
@@ -112,9 +113,16 @@ class TestEnsurePool(unittest.TestCase):
 
 
 class TestAllocate(unittest.TestCase):
-    def test_returns_loopback_on_linux(self):
-        with patch.object(loopback_alias, "_is_macos", return_value=False):
-            self.assertEqual("127.0.0.1", loopback_alias.allocate("demo"))
+    def test_per_bottle_alias_on_linux(self):
+        # Linux gets the same per-bottle scoping as macOS (127/8 is
+        # already loopback, so no ifconfig is needed). A fresh host
+        # with no running bundles allocates the first pool entry.
+        with tempfile.TemporaryDirectory() as tmp:
+            lock_path = Path(tmp) / "smolmachines.lock"
+            with patch.object(loopback_alias, "_is_macos", return_value=False), \
+                 patch.object(loopback_alias, "_ALLOC_LOCK_PATH", lock_path), \
+                 patch.object(loopback_alias, "_aliases_in_use", return_value=set()):
+                self.assertEqual("127.0.0.16", loopback_alias.allocate("demo"))
 
     def test_picks_lowest_unused_on_macos(self):
         # No bundles running -> first pool entry.
@@ -166,12 +174,25 @@ class TestAllocateLock(unittest.TestCase):
 
         self.assertIn(fcntl_mod.LOCK_EX, flock_calls)
 
-    def test_no_lock_on_linux(self):
-        # Linux early-returns before touching the lock file.
-        with patch.object(loopback_alias, "_is_macos", return_value=False), \
-             patch.object(loopback_alias.fcntl, "flock") as flock:
-            loopback_alias.allocate("demo")
-        flock.assert_not_called()
+    def test_acquires_exclusive_lock_on_linux(self):
+        # Linux allocates per-bottle too, so it must take the same
+        # lock to serialise concurrent launches.
+        import fcntl as fcntl_mod
+        flock_calls: list[int] = []
+
+        def record_flock(fd, op):  # type: ignore
+            flock_calls.append(op)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            lock_path = Path(tmp) / "smolmachines.lock"
+            with patch.object(loopback_alias, "_is_macos", return_value=False), \
+                 patch.object(loopback_alias, "_ALLOC_LOCK_PATH", lock_path), \
+                 patch.object(loopback_alias, "_aliases_in_use", return_value=set()), \
+                 patch.object(loopback_alias.fcntl, "flock",
+                              side_effect=record_flock):
+                loopback_alias.allocate("demo")
+
+        self.assertIn(fcntl_mod.LOCK_EX, flock_calls)
 
     def test_sequential_allocations_with_shared_lock_are_serialised(self):
         # Two sequential calls share the same lock file. The second
@@ -241,10 +262,12 @@ class TestAliasInUseDetection(unittest.TestCase):
 
 
 class TestForceAllowlist(unittest.TestCase):
-    """Smolvm 0.8.0 silently drops `--allow-cidr` with `--from`,
-    so `force_allowlist` opens the state DB directly and sets
-    the row's `allowed_cidrs` field. Round-trip tests against a
-    real SQLite DB to lock down the BLOB encoding."""
+    """Smolvm 0.8.0 silently drops `--allow-cidr` with `--from`, so
+    `force_allowlist` opens the state DB directly and sets the row's
+    `allowed_cidrs` field — on both macOS and Linux. It is
+    fail-closed: it dies rather than launching a VM whose allowlist
+    it can't confirm. Round-trip tests against a real SQLite DB to
+    lock down the BLOB encoding."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory(prefix="smolvm-db.")
@@ -290,17 +313,67 @@ class TestForceAllowlist(unittest.TestCase):
         self.assertEqual(4, cfg["cpus"])
         self.assertTrue(cfg["network"])
 
-    def test_noop_on_linux(self):
+    def test_patches_on_linux_too(self):
+        # force_allowlist no longer no-ops on Linux — the TSI
+        # allowlist must be enforced there as well.
         with patch.object(loopback_alias, "_is_macos", return_value=False), \
              patch.object(loopback_alias, "_SMOLVM_DB_PATH", self.db):
             loopback_alias.force_allowlist("demo-vm", ["127.0.0.16/32"])
-        # DB row should be untouched.
         con = sqlite3.connect(str(self.db))
         cfg = json.loads(con.execute(
             "SELECT data FROM vms WHERE name='demo-vm'",
         ).fetchone()[0])
         con.close()
-        self.assertIsNone(cfg["allowed_cidrs"])
+        self.assertEqual(["127.0.0.16/32"], cfg["allowed_cidrs"])
+
+    def test_skips_write_when_already_matching(self):
+        # A newer smolvm that honors --allow-cidr at create leaves the
+        # row already correct; force_allowlist must not rewrite it. We
+        # detect a no-write by comparing the raw BLOB byte-for-byte
+        # (a rewrite re-serialises the JSON, changing key order/bytes
+        # is not guaranteed, but mtime/identity isn't observable — so
+        # we assert the stored bytes are exactly what we pre-seeded).
+        seeded = json.dumps({
+            "name": "demo-vm", "cpus": 4, "mem": 8192,
+            "network": True, "allowed_cidrs": ["127.0.0.16/32"],
+        }).encode()
+        con = sqlite3.connect(str(self.db))
+        con.execute(
+            "UPDATE vms SET data=? WHERE name='demo-vm'",
+            (sqlite3.Binary(seeded),),
+        )
+        con.commit()
+        con.close()
+
+        with patch.object(loopback_alias, "_is_macos", return_value=True), \
+             patch.object(loopback_alias, "_SMOLVM_DB_PATH", self.db):
+            loopback_alias.force_allowlist("demo-vm", ["127.0.0.16/32"])
+
+        con = sqlite3.connect(str(self.db))
+        stored = con.execute(
+            "SELECT data FROM vms WHERE name='demo-vm'").fetchone()[0]
+        con.close()
+        self.assertEqual(seeded, bytes(stored))
+
+    def test_dies_when_patch_does_not_take(self):
+        # If the persisted allowlist still doesn't match after the
+        # patch (e.g. wrong schema / smolvm stores it elsewhere),
+        # force_allowlist must fail closed rather than boot the VM.
+        original = loopback_alias._read_machine_cfg
+
+        def stale_cfg(con, name):
+            # Always report the un-patched row so the post-write
+            # verification never sees the requested cidrs.
+            cfg = original(con, name)
+            cfg["allowed_cidrs"] = None
+            return cfg
+
+        with patch.object(loopback_alias, "_is_macos", return_value=True), \
+             patch.object(loopback_alias, "_SMOLVM_DB_PATH", self.db), \
+             patch.object(loopback_alias, "_read_machine_cfg", side_effect=stale_cfg), \
+             patch.object(loopback_alias, "die", side_effect=SystemExit("die")):
+            with self.assertRaises(SystemExit):
+                loopback_alias.force_allowlist("demo-vm", ["127.0.0.16/32"])
 
     def test_dies_on_missing_db(self):
         with patch.object(loopback_alias, "_is_macos", return_value=True), \
@@ -321,6 +394,36 @@ class TestForceAllowlist(unittest.TestCase):
              ):
             with self.assertRaises(SystemExit):
                 loopback_alias.force_allowlist("not-in-db", ["127.0.0.16/32"])
+
+
+class TestSmolvmDbPath(unittest.TestCase):
+    """The smolvm state-DB path is platform-derived: Application
+    Support on macOS, XDG data dir on Linux."""
+
+    def test_macos_path(self):
+        with patch.object(loopback_alias.platform, "system", return_value="Darwin"):
+            p = loopback_alias._smolvm_db_path()
+        self.assertEqual(
+            ("Library", "Application Support", "smolvm", "server", "smolvm.db"),
+            p.parts[-5:],
+        )
+
+    def test_linux_default_xdg_path(self):
+        env = {k: v for k, v in os.environ.items() if k != "XDG_DATA_HOME"}
+        with patch.object(loopback_alias.platform, "system", return_value="Linux"), \
+             patch.dict(loopback_alias.os.environ, env, clear=True):
+            p = loopback_alias._smolvm_db_path()
+        self.assertEqual(
+            (".local", "share", "smolvm", "server", "smolvm.db"),
+            p.parts[-5:],
+        )
+
+    def test_linux_respects_xdg_data_home(self):
+        with patch.object(loopback_alias.platform, "system", return_value="Linux"), \
+             patch.dict(loopback_alias.os.environ,
+                        {"XDG_DATA_HOME": "/custom/data"}, clear=False):
+            p = loopback_alias._smolvm_db_path()
+        self.assertEqual(Path("/custom/data/smolvm/server/smolvm.db"), p)
 
 
 if __name__ == "__main__":

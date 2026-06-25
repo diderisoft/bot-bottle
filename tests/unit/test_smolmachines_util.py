@@ -56,9 +56,14 @@ class TestBundleSubnet(unittest.TestCase):
 
 class TestPreflight(unittest.TestCase):
     def test_smolvm_present_returns_none(self):
+        # Pin macOS so the Linux KVM gate doesn't fire on a CI runner
+        # (ubuntu, no /dev/kvm) — this test isolates the PATH check.
         with patch(
             "bot_bottle.backend.smolmachines.util.shutil.which",
             return_value="/usr/local/bin/smolvm",
+        ), patch(
+            "bot_bottle.backend.smolmachines.util.platform.system",
+            return_value="Darwin",
         ):
             self.assertIsNone(smolmachines_preflight())
 
@@ -86,6 +91,64 @@ class TestPreflight(unittest.TestCase):
             self.assertIn("smolvm", msg)
             self.assertIn("smolmachines.com/install.sh", msg)
             self.assertIn("BOT_BOTTLE_BACKEND=docker", msg)
+
+
+class TestKvmPreflight(unittest.TestCase):
+    """Linux-only KVM gate: smolvm needs /dev/kvm present and
+    accessible. macOS skips this entirely (Hypervisor.framework)."""
+
+    def _run(self, *, system, exists, access):
+        with patch(
+            "bot_bottle.backend.smolmachines.util.shutil.which",
+            return_value="/usr/bin/smolvm",
+        ), patch(
+            "bot_bottle.backend.smolmachines.util.platform.system",
+            return_value=system,
+        ), patch(
+            "bot_bottle.backend.smolmachines.util.os.path.exists",
+            return_value=exists,
+        ), patch(
+            "bot_bottle.backend.smolmachines.util.os.access",
+            return_value=access,
+        ):
+            return smolmachines_preflight()
+
+    def test_macos_skips_kvm_check(self):
+        # Even with /dev/kvm absent, macOS must not run the gate.
+        self.assertIsNone(self._run(system="Darwin", exists=False, access=False))
+
+    def test_linux_ok_returns_none(self):
+        self.assertIsNone(self._run(system="Linux", exists=True, access=True))
+
+    def test_linux_missing_device_dies(self):
+        with self.assertRaises(SystemExit):
+            self._run(system="Linux", exists=False, access=False)
+
+    def test_linux_no_access_dies(self):
+        with self.assertRaises(SystemExit):
+            self._run(system="Linux", exists=True, access=False)
+
+    def test_linux_missing_device_message(self):
+        import io
+        import sys
+        captured = io.StringIO()
+        with patch.object(sys, "stderr", captured):
+            with self.assertRaises(SystemExit):
+                self._run(system="Linux", exists=False, access=False)
+        msg = captured.getvalue()
+        self.assertIn("/dev/kvm", msg)
+        self.assertIn("kvm-intel", msg)
+
+    def test_linux_no_access_message(self):
+        import io
+        import sys
+        captured = io.StringIO()
+        with patch.object(sys, "stderr", captured):
+            with self.assertRaises(SystemExit):
+                self._run(system="Linux", exists=True, access=False)
+        msg = captured.getvalue()
+        self.assertIn("kvm", msg)
+        self.assertIn("group", msg)
 
 
 if __name__ == "__main__":

@@ -33,10 +33,13 @@ sudo-add the missing pool on first use per boot — the aliases
 persist on `lo0` until reboot, so subsequent launches don't
 prompt.
 
-Linux native daemons share the host's network namespace; the
-whole `127.0.0.0/8` is reachable by default and aliases are
-unnecessary. The pool logic detects native-Linux and skips sudo
-entirely; the DB patch is also gated on macOS.
+On Linux the whole `127.0.0.0/8` is already routed to `lo`, so
+docker can publish a bundle's ports directly on `127.0.0.<N>`
+with no `ifconfig`/sudo step. `ensure_pool` is therefore a no-op
+on Linux, but per-bottle alias *allocation* and the TSI allowlist
+DB patch run on both platforms — the isolation property is
+identical, it's just cheaper to set up on Linux. The state-DB
+path differs per platform (see `_smolvm_db_path`).
 
 Allocation is coordinated by inspecting running bundle
 containers' published host IPs — each bottle's bundle owns the
@@ -47,6 +50,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import os
 import platform
 import re
 import sqlite3
@@ -57,20 +61,34 @@ from typing import Iterable
 from ...log import die, info
 
 
-# smolvm's persistent VM state on macOS — a SQLite DB whose `vms`
-# table holds one JSON BLOB per machine. The Linux path is
-# different, but smolmachines is macOS-only in v1 (PRD 0023) so
-# we hard-code this. If the file moves under us we'll see a
-# clear FileNotFoundError; not worth defensive cross-platform
-# detection until the backend actually needs Linux.
-_SMOLVM_DB_PATH = (
-    Path.home()
-    / "Library"
-    / "Application Support"
-    / "smolvm"
-    / "server"
-    / "smolvm.db"
-)
+def _smolvm_db_path() -> Path:
+    """smolvm's persistent VM state — a SQLite DB whose `vms` table
+    holds one JSON BLOB per machine. macOS stores it under
+    `Application Support`; Linux follows the XDG base-dir spec
+    (`$XDG_DATA_HOME`, default `~/.local/share`).
+
+    NOTE: the Linux location is inferred from smolvm's documented
+    `~/.local/share` install layout and must be confirmed against a
+    real Linux smolvm install. If it's wrong, `force_allowlist`'s
+    fail-closed check turns it into a clear launch-time error rather
+    than a silent escape."""
+    if platform.system() == "Darwin":
+        return (
+            Path.home()
+            / "Library"
+            / "Application Support"
+            / "smolvm"
+            / "server"
+            / "smolvm.db"
+        )
+    xdg_data = os.environ.get("XDG_DATA_HOME")
+    base = Path(xdg_data) if xdg_data else Path.home() / ".local" / "share"
+    return base / "smolvm" / "server" / "smolvm.db"
+
+
+# Resolved once at import: the host platform doesn't change within a
+# process. Tests patch this attribute directly.
+_SMOLVM_DB_PATH = _smolvm_db_path()
 
 
 # Sixteen aliases by default. Tunable for hosts that want more
@@ -131,49 +149,72 @@ def ensure_pool() -> None:
 
 
 def force_allowlist(machine_name: str, allowed_cidrs: list[str]) -> None:
-    """Patch smolvm's persistent VM-state DB to set the machine's
-    `allowed_cidrs` to the given list. Workaround for smolvm
-    0.8.0's silent-drop of `--allow-cidr` when used with `--from`.
+    """Ensure the machine's persisted TSI allowlist equals
+    `allowed_cidrs`, failing **closed** if that can't be confirmed.
 
-    Must run AFTER `smolvm machine create` (the row has to
-    exist) and BEFORE `smolvm machine start` (smolvm reads the
-    row on start; in-flight VMs don't pick up changes). Once
-    smolvm honors the CLI flag upstream this whole function is
-    redundant — flag-respecting create + remove this call from
-    launch.
+    Runs on both macOS and Linux. It exists because smolvm 0.8.0
+    silently drops `--allow-cidr` when combined with `--from`, so
+    the allowlist has to be written into smolvm's persistent state
+    DB before `machine start`. Rather than assume the flag was
+    dropped, we read the persisted row and only patch when it
+    doesn't already match — so a newer smolvm that honors the flag
+    is left untouched.
 
-    No-op on non-macOS — the DB path differs and the Linux
-    smolmachines code path isn't exercised in v1."""
-    if not _is_macos():
-        return
+    Must run AFTER `smolvm machine create` (the row has to exist)
+    and BEFORE `smolvm machine start` (smolvm reads the row on
+    start; in-flight VMs don't pick up changes).
+
+    Fail-closed: if the state DB is missing, the row is missing, or
+    the allowlist still doesn't match after patching, we `die()`
+    rather than boot a VM whose egress confinement we can't verify
+    — an unconfirmed allowlist is a sandbox-escape risk (the agent
+    VM could reach all of host loopback)."""
+    want = list(allowed_cidrs)
     if not _SMOLVM_DB_PATH.is_file():
         die(
-            f"smolvm state DB not found at {_SMOLVM_DB_PATH}. "
-            f"smolvm 0.8.0 expected? `smolvm --version` to check."
+            f"smolvm state DB not found at {_SMOLVM_DB_PATH}; cannot "
+            f"confirm the TSI allowlist is enforced. Refusing to launch "
+            f"(fail-closed). Check `smolvm --version` and the DB "
+            f"location for your platform."
         )
     con = sqlite3.connect(str(_SMOLVM_DB_PATH))
     try:
-        cur = con.cursor()
-        row = cur.execute(
-            "SELECT data FROM vms WHERE name = ?", (machine_name,),
-        ).fetchone()
-        if row is None:
-            die(
-                f"smolvm DB has no row for machine {machine_name!r} — "
-                f"machine_create must run before force_allowlist."
+        cfg = _read_machine_cfg(con, machine_name)
+        if cfg.get("allowed_cidrs") != want:
+            cfg["allowed_cidrs"] = want
+            # Write as BLOB (the column type smolvm uses) — passing a
+            # plain str makes sqlite store it as Text and smolvm then
+            # fails to read it.
+            con.execute(
+                "UPDATE vms SET data = ? WHERE name = ?",
+                (sqlite3.Binary(json.dumps(cfg).encode()), machine_name),
             )
-        cfg = json.loads(row[0])
-        cfg["allowed_cidrs"] = list(allowed_cidrs)
-        # Write as BLOB (the column type smolvm uses) — passing a
-        # plain str makes sqlite store it as Text and smolvm then
-        # fails to read it.
-        cur.execute(
-            "UPDATE vms SET data = ? WHERE name = ?",
-            (sqlite3.Binary(json.dumps(cfg).encode()), machine_name),
-        )
-        con.commit()
+            con.commit()
+            cfg = _read_machine_cfg(con, machine_name)
+        if cfg.get("allowed_cidrs") != want:
+            die(
+                f"could not enforce TSI allowlist {want!r} for machine "
+                f"{machine_name!r} (persisted value is "
+                f"{cfg.get('allowed_cidrs')!r}). Refusing to launch "
+                f"(fail-closed)."
+            )
     finally:
         con.close()
+
+
+def _read_machine_cfg(con: sqlite3.Connection, machine_name: str) -> dict[str, object]:
+    """Read + JSON-decode a machine's `data` BLOB from the smolvm
+    state DB. Dies (fail-closed) if the row is missing — the caller
+    can't confirm enforcement without it."""
+    row = con.execute(
+        "SELECT data FROM vms WHERE name = ?", (machine_name,),
+    ).fetchone()
+    if row is None:
+        die(
+            f"smolvm DB has no row for machine {machine_name!r} — "
+            f"machine_create must run before force_allowlist."
+        )
+    return json.loads(row[0])
 
 
 def allocate(_slug: str) -> str:
@@ -184,16 +225,17 @@ def allocate(_slug: str) -> str:
     used (no on-disk reservation, allocation is purely
     docker-state-driven).
 
-    On non-macOS the whole `127.0.0.0/8` is loopback by default;
-    `127.0.0.1` is fine to share and we skip the alias dance.
-    This still returns a deterministic address so launch.py's
-    callers don't have to branch on platform.
+    Runs on both platforms: the allocation logic (docker-state
+    inspection + the file lock) is platform-independent. macOS
+    needs `ensure_pool` to have aliased the addresses on `lo0`
+    first; on Linux all of `127.0.0.0/8` is already loopback, so
+    docker can publish on the chosen `127.0.0.<N>` with no setup.
+    Per-bottle scoping (so the agent can't reach other bottles' or
+    host services' loopback ports) therefore holds on both.
 
     An exclusive file lock serialises concurrent calls so two
     simultaneous launches don't read the same docker state and
     claim the same alias."""
-    if not _is_macos():
-        return "127.0.0.1"
     _ALLOC_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(_ALLOC_LOCK_PATH, "w", encoding="utf-8") as lf:
         fcntl.flock(lf, fcntl.LOCK_EX)
