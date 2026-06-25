@@ -68,6 +68,11 @@ def build_image(ref: str, context: str, *, dockerfile: str = "") -> None:
     _ensure_builder_dns()
     args = [_CONTAINER, "build", "-t", ref, "--dns", dns_server()]
     if dockerfile:
+        # `container build` resolves -f relative to the current working
+        # directory, not the build context. Anchor a relative Dockerfile to
+        # the context so builds work from any cwd.
+        if not os.path.isabs(dockerfile):
+            dockerfile = os.path.join(context, dockerfile)
         args.extend(["-f", dockerfile])
     args.append(context)
     subprocess.run(args, check=True)

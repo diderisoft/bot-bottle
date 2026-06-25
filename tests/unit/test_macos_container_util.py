@@ -73,6 +73,33 @@ resolver #2
         )
         self.assertTrue(run.call_args_list[-1].kwargs["check"])
 
+    def test_build_image_anchors_relative_dockerfile_to_context(self):
+        status = util.subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=(
+                '[{"status":{"state":"running"},'
+                '"configuration":{"dns":{"nameservers":["9.9.9.9"]}}}]'
+            ),
+            stderr="",
+        )
+        with patch.object(util.subprocess, "run", return_value=status) as run, \
+             patch.object(util.os, "environ", {
+                 "BOT_BOTTLE_MACOS_CONTAINER_DNS": "9.9.9.9",
+             }):
+            util.build_image(
+                "bot-bottle-sidecars:latest",
+                "/repo",
+                dockerfile="Dockerfile.sidecars",
+            )
+        self.assertEqual(
+            [
+                "container", "build", "-t", "bot-bottle-sidecars:latest",
+                "--dns", "9.9.9.9", "-f", "/repo/Dockerfile.sidecars", "/repo",
+            ],
+            run.call_args_list[-1].args[0],
+        )
+
     def test_commit_container_execs_tar_and_builds_image(self):
         # stderr is bytes because subprocess.run uses stderr=PIPE without text=True
         completed = util.subprocess.CompletedProcess(
