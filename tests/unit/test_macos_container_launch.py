@@ -30,6 +30,7 @@ def _plan(
     supervise: bool = False,
     agent_git_gate_url: str = "",
     agent_supervise_url: str = "",
+    canary: bool = False,
 ) -> MacosContainerBottlePlan:
     routes_path = stage_dir / "routes.yaml"
     routes_path.write_text("routes: []\n", encoding="utf-8")
@@ -42,7 +43,8 @@ def _plan(
         routes_path=routes_path,
         routes=("route",),
         token_env_map={"EGRESS_TOKEN_0": "HOST_TOKEN"},
-        canary="",
+        canary="fake-canary-value" if canary else "",
+        canary_env="CANON_ALPHA_SECRET" if canary else "",
     )
     if git:
         key_path = stage_dir / "origin-key"
@@ -138,6 +140,26 @@ class TestMacosContainerLaunchArgv(unittest.TestCase):
             "type=bind,source=/state/supervise/queue,target=/run/supervise/queue",
             argv,
         )
+
+    def test_sidecar_argv_registers_canary_env_as_sensitive(self):
+        plan = _plan(stage_dir=self.stage_dir, canary=True)
+        argv = launch._sidecar_run_argv(
+            plan,
+            "bot-bottle-sidecars-dev-abc",
+            "bot-bottle-net-dev-abc",
+            "bot-bottle-egress-dev-abc",
+        )
+        self.assertIn("CANON_ALPHA_SECRET=fake-canary-value", argv)
+        self.assertIn("BOT_BOTTLE_SENSITIVE_PREFIXES=CANON_ALPHA_SECRET", argv)
+
+    def test_agent_argv_receives_canary_env(self):
+        plan = _plan(stage_dir=self.stage_dir, canary=True)
+        argv = launch._agent_run_argv(
+            plan,
+            "bot-bottle-net-dev-abc",
+            "192.0.2.10",
+        )
+        self.assertIn("CANON_ALPHA_SECRET=fake-canary-value", argv)
 
     def test_agent_env_points_proxy_at_sidecar_ip(self):
         plan = _plan(

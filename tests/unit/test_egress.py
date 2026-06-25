@@ -470,6 +470,7 @@ class TestCanaryGeneration(unittest.TestCase):
         plan = self._make_plan()
         self.assertIsInstance(plan.canary, str)
         self.assertGreater(len(plan.canary), 0)
+        self.assertRegex(plan.canary_env, r"^[A-Z]+_[A-Z]+_SECRET$")
 
     def test_canary_is_unique_per_session(self):
         with tempfile.TemporaryDirectory() as td:
@@ -487,12 +488,16 @@ class TestCanaryGeneration(unittest.TestCase):
         from bot_bottle.dlp_detectors import scan_known_secrets
 
         plan = self._make_plan()
-        env = {"EGRESS_TOKEN_CANARY": plan.canary}
-        result = scan_known_secrets(f"exfil={plan.canary}", env=env)
+        env = {plan.canary_env: plan.canary}
+        result = scan_known_secrets(
+            f"exfil={plan.canary}",
+            env=env,
+            sensitive_prefixes=(plan.canary_env,),
+        )
         self.assertIsNotNone(result)
         assert result is not None
         self.assertEqual("block", result.severity)
-        self.assertIn("EGRESS_TOKEN_CANARY", result.reason)
+        self.assertIn(plan.canary_env, result.reason)
 
     def test_egress_plan_canary_field_default_empty(self):
         # Verify EgressPlan can be constructed with an empty canary (backward compat).
@@ -504,6 +509,7 @@ class TestCanaryGeneration(unittest.TestCase):
             token_env_map={},
         )
         self.assertEqual("", plan.canary)
+        self.assertEqual("", plan.canary_env)
 
 
 if __name__ == "__main__":

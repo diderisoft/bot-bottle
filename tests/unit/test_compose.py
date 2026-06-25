@@ -80,7 +80,11 @@ def _git_gate_plan(upstreams: tuple[GitGateUpstream, ...] = ()) -> GitGatePlan:
     )
 
 
-def _egress_plan(routes: tuple[EgressRoute, ...] = ()) -> EgressPlan:
+def _egress_plan(
+    routes: tuple[EgressRoute, ...] = (),
+    *,
+    canary: bool = False,
+) -> EgressPlan:
     token_env_map = {
         r.token_env: r.token_ref
         for r in routes
@@ -95,6 +99,8 @@ def _egress_plan(routes: tuple[EgressRoute, ...] = ()) -> EgressPlan:
         egress_network=f"bot-bottle-egress-{SLUG}",
         mitmproxy_ca_host_path=STATE / "egress-ca" / "mitmproxy-ca.pem",
         mitmproxy_ca_cert_only_host_path=STATE / "egress-ca" / "ca.pem",
+        canary="fake-canary-value" if canary else "",
+        canary_env="CANON_ALPHA_SECRET" if canary else "",
     )
 
 
@@ -112,6 +118,7 @@ def _plan(
     with_git: bool = False,
     with_egress: bool = False,
     supervise: bool = False,
+    canary: bool = False,
 ) -> DockerBottlePlan:
     """Build a fully-resolved DockerBottlePlan. Toggles cover the
     matrix the renderer's conditional-service logic branches on."""
@@ -150,7 +157,7 @@ def _plan(
         slug=SLUG,
         forwarded_env={"CLAUDE_CODE_OAUTH_TOKEN": "x"},
         git_gate_plan=_git_gate_plan(upstreams),
-        egress_plan=_egress_plan(routes),
+        egress_plan=_egress_plan(routes, canary=canary),
         supervise_plan=_supervise_plan() if supervise else None,
         use_runsc=False,
         agent_provision=AgentProvisionPlan(
@@ -374,6 +381,20 @@ class TestSidecarBundleShape(unittest.TestCase):
         sc = self._render()["services"]["sidecars"]
         env_strings = sc["environment"]
         self.assertNotIn("EGRESS_TOKEN_0", env_strings)
+
+    def test_canary_env_registered_as_sensitive_in_sidecar(self):
+        sc = self._render(canary=True)["services"]["sidecars"]
+        env_strings = sc["environment"]
+        self.assertIn("CANON_ALPHA_SECRET=fake-canary-value", env_strings)
+        self.assertIn(
+            "BOT_BOTTLE_SENSITIVE_PREFIXES=CANON_ALPHA_SECRET",
+            env_strings,
+        )
+
+    def test_canary_env_visible_to_agent(self):
+        agent = self._render(canary=True)["services"]["agent"]
+        env_strings = agent["environment"]
+        self.assertIn("CANON_ALPHA_SECRET=fake-canary-value", env_strings)
 
     def test_supervise_env_present_when_active(self):
         sc = self._render(supervise=True)["services"]["sidecars"]

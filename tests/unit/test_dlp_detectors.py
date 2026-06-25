@@ -593,11 +593,15 @@ class TestFragmentationResistantMatching(unittest.TestCase):
 
     def test_canary_prefix_detected(self):
         canary_value = "canary-fake-secret-value-xyz"
-        env = {"EGRESS_TOKEN_CANARY": canary_value}
-        result = scan_known_secrets(f"x={canary_value}", env=env)
+        env = {"CANON_ALPHA_SECRET": canary_value}
+        result = scan_known_secrets(
+            f"x={canary_value}",
+            env=env,
+            sensitive_prefixes=("CANON_ALPHA_SECRET",),
+        )
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertIn("EGRESS_TOKEN_CANARY", result.reason)
+        self.assertIn("CANON_ALPHA_SECRET", result.reason)
 
 
 class TestRedactTokensBroadenedPrefixes(unittest.TestCase):

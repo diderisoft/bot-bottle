@@ -1338,20 +1338,27 @@ class TestScanOutboundEnhanced(unittest.TestCase):
         result = scan_outbound(self._ROUTE, f"auth={secret}", env)
         self.assertIsNotNone(result)
 
-    def test_canary_detected_via_egress_token_canary(self):
-        # The canary (injected as EGRESS_TOKEN_CANARY) is caught by known_secrets.
+    def test_canary_detected_via_random_secret_env_name(self):
+        # The fake secret uses a randomized env name that the sidecar marks
+        # as sensitive through BOT_BOTTLE_SENSITIVE_PREFIXES.
         canary = "canaryvalue12345abcdef"
-        env = {"EGRESS_TOKEN_CANARY": canary}
+        env = {
+            "CANON_ALPHA_SECRET": canary,
+            "BOT_BOTTLE_SENSITIVE_PREFIXES": "CANON_ALPHA_SECRET",
+        }
         result = scan_outbound(self._ROUTE, f"data={canary}", env)
         self.assertIsNotNone(result)
         assert result is not None
         self.assertEqual("block", result.severity)
-        self.assertIn("EGRESS_TOKEN_CANARY", result.reason)
+        self.assertIn("CANON_ALPHA_SECRET", result.reason)
 
     def test_fragmented_canary_blocked(self):
         # Canary with separators injected is still caught.
         canary = "supersecretcanary99"
-        env = {"EGRESS_TOKEN_CANARY": canary}
+        env = {
+            "CANON_ALPHA_SECRET": canary,
+            "BOT_BOTTLE_SENSITIVE_PREFIXES": "CANON_ALPHA_SECRET",
+        }
         fragmented = "-".join(canary)
         result = scan_outbound(self._ROUTE, f"x={fragmented}", env)
         self.assertIsNotNone(result)

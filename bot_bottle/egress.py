@@ -35,6 +35,32 @@ EGRESS_HOSTNAME = "egress"
 EGRESS_ROUTES_IN_CONTAINER = "/etc/egress/routes.yaml"
 EGRESS_ROUTES_FILENAME = Path(EGRESS_ROUTES_IN_CONTAINER).name
 
+_CANARY_ENV_WORDS = (
+    "ACCORD",
+    "ANCHOR",
+    "ATLAS",
+    "CANON",
+    "CIPHER",
+    "EMBER",
+    "FALCON",
+    "HARBOR",
+    "LANTERN",
+    "MARBLE",
+    "NOVA",
+    "ORBIT",
+    "PIVOT",
+    "RADIUS",
+    "SUMMIT",
+    "VECTOR",
+)
+
+
+def _random_canary_env() -> str:
+    first = secrets.choice(_CANARY_ENV_WORDS)
+    remaining = tuple(word for word in _CANARY_ENV_WORDS if word != first)
+    second = secrets.choice(remaining)
+    return f"{first}_{second}_SECRET"
+
 
 @dataclass(frozen=True)
 class EgressRoute(Route):
@@ -67,6 +93,7 @@ class EgressPlan:
     mitmproxy_ca_cert_only_host_path: Path = Path()
     log: int = 0
     canary: str = ""
+    canary_env: str = ""
 
 
 def egress_manifest_routes(
@@ -326,9 +353,9 @@ class Egress(ABC):
         routes_path = stage_dir / EGRESS_ROUTES_FILENAME
         routes_path.write_text(egress_render_routes(routes, log=log))
         routes_path.chmod(0o600)
-        # Generate a per-session canary token.  The sidecar receives it as
-        # EGRESS_TOKEN_CANARY (scanned by the existing known-secrets detector);
-        # the agent receives it as BOT_BOTTLE_CANARY (a visible fake secret).
+        # Generate a per-session fake secret under a plausible random env name.
+        # The sidecar marks that exact env name as sensitive for known-secret
+        # scanning; the agent receives the same name/value as exfil bait.
         canary = secrets.token_urlsafe(32)
         return EgressPlan(
             slug=slug,
@@ -337,6 +364,7 @@ class Egress(ABC):
             token_env_map=egress_token_env_map(routes),
             log=log,
             canary=canary,
+            canary_env=_random_canary_env(),
         )
 
 __all__ = [
