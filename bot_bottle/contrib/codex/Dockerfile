@@ -6,7 +6,7 @@
 FROM node:22-slim
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends git ca-certificates curl procps \
+  && apt-get install -y --no-install-recommends git ca-certificates curl procps ripgrep \
   && rm -rf /var/lib/apt/lists/*
 
 # App-specific deps. Python isn't required by codex itself
