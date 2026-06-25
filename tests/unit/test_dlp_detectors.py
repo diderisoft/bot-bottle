@@ -24,61 +24,36 @@ from bot_bottle.dlp_detectors import (
 )
 
 
+# (case id, sample body carrying the token, substring expected in the reason).
+# One row per known token shape; all are block-severity credential matches.
+# `# gitleaks:allow` marks the synthetic tokens so a source scan won't flag them.
+_TOKEN_PATTERN_CASES: list[tuple[str, str, str]] = [
+    ("aws_access_key", "key=AKIAIOSFODNN7EXAMPLE", "AWS access key"),
+    ("github_classic", "token: ghp_" + "A" * 36, "GitHub token"),  # gitleaks:allow
+    ("github_fine_grained", "pat=github_pat_" + "A" * 82, "fine-grained"),  # gitleaks:allow
+    ("anthropic", "auth: sk-ant-" + "A" * 93, "Anthropic"),  # gitleaks:allow
+    ("openai", "key=sk-" + "A" * 48, "OpenAI"),  # gitleaks:allow
+    ("stripe_live", "stripe: sk_live_" + "A" * 24, "Stripe"),  # gitleaks:allow
+    ("bearer_jwt", "Authorization: Bearer " + "A" * 60, "Bearer JWT"),  # gitleaks:allow
+    ("openai_project", "key=sk-proj-" + "A" * 48, "OpenAI project"),  # gitleaks:allow
+    ("huggingface", "token=hf_" + "A" * 34, "HuggingFace"),  # gitleaks:allow
+    ("databricks", "dapi" + "a" * 32, "Databricks"),  # gitleaks:allow
+    ("slack_bot", "xoxb-00000000000-00000000000-" + "A" * 24, "Slack"),  # gitleaks:allow
+    ("npm", "npm_" + "A" * 36, "npm"),  # gitleaks:allow
+    ("sendgrid", "SG." + "A" * 22 + "." + "B" * 43, "SendGrid"),  # gitleaks:allow
+    ("pypi", "pypi-" + "A" * 80, "PyPI"),  # gitleaks:allow
+    ("vault", "hvs." + "A" * 24, "Vault"),  # gitleaks:allow
+]
+
+
 class TestScanTokenPatterns(unittest.TestCase):
-    def test_aws_access_key(self):
-        result = scan_token_patterns("key=AKIAIOSFODNN7EXAMPLE")
-        assert result is not None
-        self.assertEqual("block", result.severity)
-        self.assertIn("AWS access key", result.reason)
-
-    def test_github_classic_token(self):
-        result = scan_token_patterns(
-            "token: ghp_" + "A" * 36,
-        )
-        assert result is not None
-        self.assertIn("GitHub token", result.reason)
-
-    def test_github_fine_grained_token(self):
-        result = scan_token_patterns(
-            "pat=github_pat_" + "A" * 82,
-        )
-        assert result is not None
-        self.assertIn("fine-grained", result.reason)
-
-    def test_anthropic_api_key(self):
-        result = scan_token_patterns(
-            "auth: sk-ant-" + "A" * 93,
-        )
-        assert result is not None
-        self.assertIn("Anthropic", result.reason)
-
-    def test_openai_api_key(self):
-        result = scan_token_patterns(
-            "key=sk-" + "A" * 48,
-        )
-        assert result is not None
-        self.assertIn("OpenAI", result.reason)
-
-    def test_stripe_live_key(self):
-        result = scan_token_patterns(
-            "stripe: sk_live_" + "A" * 24,
-        )
-        assert result is not None
-        self.assertIn("Stripe", result.reason)
-
-    def test_bearer_jwt(self):
-        result = scan_token_patterns(
-            "Authorization: Bearer " + "A" * 60,
-        )
-        assert result is not None
-        self.assertIn("Bearer JWT", result.reason)
-
-    def test_openai_project_key(self):
-        result = scan_token_patterns(
-            "key=sk-proj-" + "A" * 48,
-        )
-        assert result is not None
-        self.assertIn("OpenAI project", result.reason)
+    def test_detects_each_token_pattern(self):
+        for case_id, sample, expected in _TOKEN_PATTERN_CASES:
+            with self.subTest(case_id):
+                result = scan_token_patterns(sample)
+                assert result is not None
+                self.assertEqual("block", result.severity)
+                self.assertIn(expected, result.reason)
 
     def test_clean_text_returns_none(self):
         self.assertIsNone(scan_token_patterns("hello world"))
@@ -305,44 +280,6 @@ class TestEncodedVariants(unittest.TestCase):
     def test_no_duplicates(self):
         v = self._variants()
         self.assertEqual(len(v), len(set(v)))
-
-
-class TestScanTokenPatternsExtended(unittest.TestCase):
-    def test_huggingface_token(self):
-        result = scan_token_patterns("token=hf_" + "A" * 34)  # gitleaks:allow
-        assert result is not None
-        self.assertIn("HuggingFace", result.reason)
-
-    def test_databricks_token(self):
-        result = scan_token_patterns("dapi" + "a" * 32)  # gitleaks:allow
-        assert result is not None
-        self.assertIn("Databricks", result.reason)
-
-    def test_slack_bot_token(self):
-        # Use all-zero numeric segments to keep entropy low
-        result = scan_token_patterns("xoxb-00000000000-00000000000-" + "A" * 24)  # gitleaks:allow
-        assert result is not None
-        self.assertIn("Slack", result.reason)
-
-    def test_npm_token(self):
-        result = scan_token_patterns("npm_" + "A" * 36)  # gitleaks:allow
-        assert result is not None
-        self.assertIn("npm", result.reason)
-
-    def test_sendgrid_key(self):
-        result = scan_token_patterns("SG." + "A" * 22 + "." + "B" * 43)  # gitleaks:allow
-        assert result is not None
-        self.assertIn("SendGrid", result.reason)
-
-    def test_pypi_token(self):
-        result = scan_token_patterns("pypi-" + "A" * 80)  # gitleaks:allow
-        assert result is not None
-        self.assertIn("PyPI", result.reason)
-
-    def test_vault_token(self):
-        result = scan_token_patterns("hvs." + "A" * 24)  # gitleaks:allow
-        assert result is not None
-        self.assertIn("Vault", result.reason)
 
 
 class TestUnicodeNormalization(unittest.TestCase):
