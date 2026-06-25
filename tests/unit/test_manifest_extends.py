@@ -423,9 +423,182 @@ class TestExtendsErrors(unittest.TestCase):
         )
         self.assertIn("extends cycle", msg)
 
-    def test_non_string_extends_dies(self):
-        msg = _error_message(_build, child={"extends": ["base"]})
-        self.assertIn("extends must be a string", msg)
+    def test_non_string_non_list_extends_dies(self):
+        msg = _error_message(_build, child={"extends": 123})
+        self.assertIn("extends must be a string or list of strings", msg)
+
+    def test_list_entry_non_string_dies(self):
+        msg = _error_message(_build, child={"extends": [123]})
+        self.assertIn("extends[0] must be a string", msg)
+
+
+class TestExtendsMultiParent(unittest.TestCase):
+    """extends: [p1, p2, ...] — multi-parent composition (issue #268)."""
+
+    _GIT_A = {"url": "ssh://git@host-a/a.git", "key": {"provider": "static", "path": "/k"}}
+    _GIT_B = {"url": "ssh://git@host-b/b.git", "key": {"provider": "static", "path": "/k"}}
+
+    def test_single_element_list_same_as_string(self):
+        m = _build(
+            base={"env": {"X": "1"}},
+            child={"extends": ["base"]},
+        )
+        self.assertEqual({"X": "1"}, dict(m.bottles["child"].env))
+
+    def test_two_parents_env_union(self):
+        m = _build(
+            p1={"env": {"A": "1"}},
+            p2={"env": {"B": "2"}},
+            child={"extends": ["p1", "p2"]},
+        )
+        self.assertEqual({"A": "1", "B": "2"}, dict(m.bottles["child"].env))
+
+    def test_two_parents_env_last_wins_on_collision(self):
+        m = _build(
+            p1={"env": {"X": "from-p1"}},
+            p2={"env": {"X": "from-p2"}},
+            child={"extends": ["p1", "p2"]},
+        )
+        self.assertEqual("from-p2", m.bottles["child"].env["X"])
+
+    def test_child_wins_over_all_parents(self):
+        m = _build(
+            p1={"env": {"X": "from-p1"}},
+            p2={"env": {"X": "from-p2"}},
+            child={"extends": ["p1", "p2"], "env": {"X": "from-child"}},
+        )
+        self.assertEqual("from-child", m.bottles["child"].env["X"])
+
+    def test_two_parents_supervise_last_wins(self):
+        m = _build(
+            p1={"supervise": False},
+            p2={"supervise": True},
+            child={"extends": ["p1", "p2"]},
+        )
+        self.assertTrue(m.bottles["child"].supervise)
+
+    def test_child_supervise_overrides_all_parents(self):
+        m = _build(
+            p1={"supervise": True},
+            p2={"supervise": True},
+            child={"extends": ["p1", "p2"], "supervise": False},
+        )
+        self.assertFalse(m.bottles["child"].supervise)
+
+    def test_two_parents_egress_routes_concatenated(self):
+        m = _build(
+            p1={"egress": {"routes": [{"host": "a.example.com"}]}},
+            p2={"egress": {"routes": [{"host": "b.example.com"}]}},
+            child={"extends": ["p1", "p2"]},
+        )
+        hosts = [r.Host for r in m.bottles["child"].egress.routes]
+        self.assertEqual(["a.example.com", "b.example.com"], hosts)
+
+    def test_child_egress_appends_after_combined_parents(self):
+        m = _build(
+            p1={"egress": {"routes": [{"host": "a.example.com"}]}},
+            p2={"egress": {"routes": [{"host": "b.example.com"}]}},
+            child={
+                "extends": ["p1", "p2"],
+                "egress": {"routes": [{"host": "c.example.com"}]},
+            },
+        )
+        hosts = [r.Host for r in m.bottles["child"].egress.routes]
+        self.assertEqual(["a.example.com", "b.example.com", "c.example.com"], hosts)
+
+    def test_two_parents_git_repos_union(self):
+        m = _build(
+            p1={"git-gate": {"repos": {"a": self._GIT_A}}},
+            p2={"git-gate": {"repos": {"b": self._GIT_B}}},
+            child={"extends": ["p1", "p2"]},
+        )
+        names = {e.Name for e in m.bottles["child"].git}
+        self.assertEqual({"a", "b"}, names)
+
+    def test_two_parents_git_same_name_later_wins_per_field(self):
+        # Both parents declare the same repo name. p2's `key` wins; p1's
+        # `host_key` is preserved because p2 doesn't override it.
+        p1_entry = {
+            "url": "ssh://git@host-a/repo.git",
+            "host_key": "ecdsa AAAA",
+            "key": {"provider": "static", "path": "/k1"},
+        }
+        p2_entry = {
+            "url": "ssh://git@host-a/repo.git",  # required, same url
+            "key": {"provider": "gitea", "forge_token_env": "TOK"},
+        }
+        m = _build(
+            p1={"git-gate": {"repos": {"repo": p1_entry}}},
+            p2={"git-gate": {"repos": {"repo": p2_entry}}},
+            child={"extends": ["p1", "p2"]},
+        )
+        entries = m.bottles["child"].git
+        self.assertEqual(1, len(entries))
+        e = entries[0]
+        self.assertEqual("ssh://git@host-a/repo.git", e.Upstream)
+        self.assertEqual("ecdsa AAAA", e.KnownHostKey)
+        self.assertEqual("gitea", e.Key.provider)
+
+    def test_p1_repos_preserved_when_p2_has_none(self):
+        m = _build(
+            p1={"git-gate": {"repos": {"a": self._GIT_A}}},
+            p2={"env": {"X": "1"}},
+            child={"extends": ["p1", "p2"]},
+        )
+        names = [e.Name for e in m.bottles["child"].git]
+        self.assertEqual(["a"], names)
+
+    def test_diamond_shared_ancestor_resolved_once(self):
+        # a <- b, a <- c; child extends [b, c]
+        # `a` must be resolved once and cached.
+        m = _build(
+            a={"env": {"FROM_A": "1"}, "supervise": False},
+            b={"extends": "a", "env": {"FROM_B": "1"}},
+            c={"extends": "a", "env": {"FROM_C": "1"}},
+            child={"extends": ["b", "c"]},
+        )
+        child = m.bottles["child"]
+        self.assertEqual("1", child.env["FROM_A"])
+        self.assertEqual("1", child.env["FROM_B"])
+        self.assertEqual("1", child.env["FROM_C"])
+        # supervise=False from `a` threads through both b and c; c is the
+        # later parent so its effective supervise (False) wins.
+        self.assertFalse(child.supervise)
+
+    def test_three_parents_env_fold_order(self):
+        m = _build(
+            p1={"env": {"X": "1", "A": "a"}},
+            p2={"env": {"X": "2", "B": "b"}},
+            p3={"env": {"X": "3", "C": "c"}},
+            child={"extends": ["p1", "p2", "p3"]},
+        )
+        env = dict(m.bottles["child"].env)
+        self.assertEqual("3", env["X"])
+        self.assertEqual("a", env["A"])
+        self.assertEqual("b", env["B"])
+        self.assertEqual("c", env["C"])
+
+    def test_undefined_bottle_in_list_dies(self):
+        msg = _error_message(
+            _build,
+            base={"env": {}},
+            child={"extends": ["base", "ghost"]},
+        )
+        self.assertIn("extends 'ghost'", msg)
+        self.assertIn("not defined", msg)
+
+    def test_self_reference_in_list_dies(self):
+        msg = _error_message(_build, child={"extends": ["child"]})
+        self.assertIn("extends itself", msg)
+
+    def test_cycle_through_multi_parent_edge_dies(self):
+        msg = _error_message(
+            _build,
+            a={"extends": ["b", "c"]},
+            b={},
+            c={"extends": "a"},
+        )
+        self.assertIn("extends cycle", msg)
 
 
 class TestExtendsAvailableInBottleKeys(unittest.TestCase):

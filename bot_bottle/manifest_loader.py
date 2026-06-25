@@ -87,5 +87,7 @@ def load_bottle_chain_from_dir(
         parent = fm.get("extends")
         if isinstance(parent, str):
             to_load.append(parent)
+        elif isinstance(parent, list):
+            to_load.extend(p for p in parent if isinstance(p, str))
 
     return resolve_bottles(raws)[bottle_name]

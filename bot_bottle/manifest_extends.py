@@ -49,31 +49,132 @@ def _resolve_one_bottle(
         repos_cache[name] = _resolve_repos_raw({}, child_raw)
         return bottle
 
-    if not isinstance(parent_name_raw, str):
+    # Normalize to list, accepting both str and list[str].
+    if isinstance(parent_name_raw, str):
+        parent_names: list[str] = [parent_name_raw]
+    elif isinstance(parent_name_raw, list):
+        parent_names = parent_name_raw  # type: ignore[assignment]
+    else:
         raise ManifestError(
-            f"bottle '{name}' extends must be a string "
+            f"bottle '{name}' extends must be a string or list of strings "
             f"(was {type(parent_name_raw).__name__})"
         )
-    parent_name: str = parent_name_raw
-    if parent_name == name:
-        raise ManifestError(
-            f"bottle '{name}' extends itself; remove the "
-            f"self-reference"
+
+    # Validate each entry before resolving any of them.
+    for i, pname in enumerate(parent_names):
+        if not isinstance(pname, str):
+            raise ManifestError(
+                f"bottle '{name}' extends[{i}] must be a string "
+                f"(was {type(pname).__name__})"
+            )
+        if pname == name:
+            raise ManifestError(
+                f"bottle '{name}' extends itself; remove the self-reference"
+            )
+        if pname not in raws:
+            avail = ", ".join(sorted(raws.keys())) or "(none)"
+            raise ManifestError(
+                f"bottle '{name}' extends '{pname}' which is not "
+                f"defined. Available bottles: {avail}"
+            )
+
+    if len(parent_names) == 1:
+        parent_name = parent_names[0]
+        parent = _resolve_one_bottle(
+            parent_name, raws, cache, repos_cache, seen + (name,)
         )
-    if parent_name not in raws:
-        avail = ", ".join(sorted(raws.keys())) or "(none)"
-        raise ManifestError(
-            f"bottle '{name}' extends '{parent_name}' which is not "
-            f"defined. Available bottles: {avail}"
-        )
-    parent = _resolve_one_bottle(
-        parent_name, raws, cache, repos_cache, seen + (name,)
+        merged_repos_raw = _resolve_repos_raw(repos_cache[parent_name], child_raw)
+        bottle = _merge_bottles(parent, child_raw, merged_repos_raw, name)
+        cache[name] = bottle
+        repos_cache[name] = merged_repos_raw
+        return bottle
+
+    # Multiple parents: fold left-to-right into a combined parent.
+    combined_parent, combined_repos_raw = _fold_parents(
+        parent_names, raws, cache, repos_cache, seen + (name,)
     )
-    merged_repos_raw = _resolve_repos_raw(repos_cache[parent_name], child_raw)
-    bottle = _merge_bottles(parent, child_raw, merged_repos_raw, name)
+    merged_repos_raw = _resolve_repos_raw(combined_repos_raw, child_raw)
+    bottle = _merge_bottles(combined_parent, child_raw, merged_repos_raw, name)
     cache[name] = bottle
     repos_cache[name] = merged_repos_raw
     return bottle
+
+
+def _fold_parents(
+    parent_names: list[str],
+    raws: dict[str, dict[str, object]],
+    cache: dict[str, ManifestBottle],
+    repos_cache: dict[str, dict[str, object]],
+    seen: tuple[str, ...],
+) -> tuple[ManifestBottle, dict[str, object]]:
+    """Resolve each parent and fold them left-to-right.
+
+    Later parents win over earlier ones on conflict.  The `seen` tuple
+    carries the current bottle's name so cycle detection works across
+    every parent edge in the multi-parent graph."""
+    first = parent_names[0]
+    effective = _resolve_one_bottle(first, raws, cache, repos_cache, seen)
+    effective_repos_raw = repos_cache[first]
+    for pname in parent_names[1:]:
+        later = _resolve_one_bottle(pname, raws, cache, repos_cache, seen)
+        later_repos_raw = repos_cache[pname]
+        effective, effective_repos_raw = _fold_two_bottles(
+            effective, effective_repos_raw, later, later_repos_raw
+        )
+    return effective, effective_repos_raw
+
+
+def _fold_two_bottles(
+    earlier: ManifestBottle,
+    earlier_repos_raw: dict[str, object],
+    later: ManifestBottle,
+    later_repos_raw: dict[str, object],
+) -> tuple[ManifestBottle, dict[str, object]]:
+    """Combine two resolved parent bottles; later wins over earlier."""
+    from .manifest import ManifestBottle, ManifestGitUser
+    from .manifest_egress import ManifestEgressConfig
+    from .manifest_git import parse_git_gate_config
+    from .manifest_util import as_json_object
+
+    merged_env = {**earlier.env, **later.env}
+
+    merged_git_user = ManifestGitUser(
+        name=later.git_user.name or earlier.git_user.name,
+        email=later.git_user.email or earlier.git_user.email,
+    )
+
+    # Repos: union by name; for same-name entries, later wins per-field.
+    # Unlike _resolve_repos_raw, an empty later_repos_raw means "no repos
+    # declared" — it does NOT clear the earlier parent's repos.
+    names = list(earlier_repos_raw) + [
+        n for n in later_repos_raw if n not in earlier_repos_raw
+    ]
+    merged_repos_raw: dict[str, object] = {
+        n: {
+            **as_json_object(earlier_repos_raw.get(n, {}), "earlier parent repo"),
+            **as_json_object(later_repos_raw.get(n, {}), "later parent repo"),
+        }
+        for n in names
+    }
+    if merged_repos_raw:
+        merged_git, _ = parse_git_gate_config("_fold", {"repos": merged_repos_raw})
+    else:
+        merged_git = ()
+
+    # Egress: routes concatenate; scalar fields use last-wins.
+    merged_egress = ManifestEgressConfig(
+        routes=earlier.egress.routes + later.egress.routes,
+        Log=later.egress.Log,
+    )
+
+    return ManifestBottle(
+        env=merged_env,
+        agent_provider=later.agent_provider,
+        git=merged_git,
+        git_user=merged_git_user,
+        egress=merged_egress,
+        supervise=later.supervise,
+    ), merged_repos_raw
 
 
 def _merge_bottles(
