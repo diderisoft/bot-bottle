@@ -222,6 +222,7 @@ def scan_known_secrets(
             continue
 
         # Pass 1: exact match across encoded variants (original behaviour).
+        approved_exact = False
         for variant in _encoded_variants(value):
             pos = text.find(variant)
             if pos >= 0:
@@ -229,6 +230,7 @@ def scan_known_secrets(
                 # (PRD 0062); a different encoding of the same secret is a
                 # fresh block.
                 if safe_tokens is not None and variant in safe_tokens:
+                    approved_exact = True
                     continue
                 return ScanResult(
                     severity="block",
@@ -237,6 +239,10 @@ def scan_known_secrets(
                     context=_snippet(text, pos, pos + len(variant)),
                     matched=variant,
                 )
+        if approved_exact:
+            # Exact match was found and approved; projection passes would
+            # fire on the same value, so skip them for this secret.
+            continue
 
         # Pass 2 & 3: fragmentation-resistant projection checks.
         secret_alnum = _alnum_projection(value)
