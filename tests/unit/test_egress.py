@@ -202,6 +202,23 @@ class TestProviderRouteMerge(unittest.TestCase):
         self.assertEqual((), routes[0].matches)
         self.assertEqual({}, egress_token_env_map(routes))
 
+    def test_provider_route_defaults_to_redact_on_match(self):
+        b = _bottle([])
+        pr = EgressRoute(host="api.anthropic.com")
+        routes = egress_routes_for_bottle(b, (pr,))
+        self.assertEqual("redact", routes[0].outbound_on_match)
+
+    def test_provider_route_explicit_on_match_preserved(self):
+        b = _bottle([])
+        pr = EgressRoute(host="api.anthropic.com", outbound_on_match="supervise")
+        routes = egress_routes_for_bottle(b, (pr,))
+        self.assertEqual("supervise", routes[0].outbound_on_match)
+
+    def test_manifest_route_does_not_get_redact_default(self):
+        b = _bottle([{"host": "api.example.com"}])
+        routes = egress_routes_for_bottle(b)
+        self.assertEqual("", routes[0].outbound_on_match)
+
     def test_two_provider_routes_with_same_token_ref_share_slot(self):
         b = _bottle([])
         routes = egress_routes_for_bottle(b, (

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .egress_addon_core import (
+    ON_MATCH_REDACT,
     HeaderMatch as CoreHeaderMatch,
     MatchEntry as CoreMatchEntry,
     PathMatch as CorePathMatch,
@@ -106,10 +107,25 @@ def egress_routes_for_bottle(
 ) -> tuple[EgressRoute, ...]:
     manifest = egress_manifest_routes(bottle)
     provisioned_hosts = {pr.host.lower() for pr in provider_routes}
-    merged = list(provider_routes) + [
+    merged = list(_default_provider_on_match(provider_routes)) + [
         r for r in manifest if r.host.lower() not in provisioned_hosts
     ]
     return _assign_token_slots(merged)
+
+
+def _default_provider_on_match(
+    provider_routes: tuple[EgressRoute, ...],
+) -> tuple[EgressRoute, ...]:
+    """Provider routes (the agent talking to its own LLM API) default to the
+    `redact` on-match policy (PRD 0062): high-volume conversation payloads are
+    the worst source of token-shaped false positives, so a match is scrubbed
+    and forwarded rather than hard-blocked or queued for the operator. A
+    provider that sets `outbound_on_match` explicitly keeps its choice."""
+    return tuple(
+        r if r.outbound_on_match
+        else dataclasses.replace(r, outbound_on_match=ON_MATCH_REDACT)
+        for r in provider_routes
+    )
 
 
 def _assign_token_slots(
