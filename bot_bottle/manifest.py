@@ -486,7 +486,7 @@ class ManifestIndex:
             bottle = raw_bottle if merged == raw_bottle.git_user else replace(raw_bottle, git_user=merged)
             return Manifest(agent=agent, bottle=bottle)
 
-        from .manifest_loader import load_bottle_chain_from_dir, scan_agent_names
+        from .manifest_loader import scan_agent_names
         from .manifest_schema import validate_agent_frontmatter_keys
         from .yaml_subset import YamlSubsetError, parse_frontmatter
 

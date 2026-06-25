@@ -48,7 +48,7 @@ def _merge_two_bottles_runtime(base: "ManifestBottle", override: "ManifestBottle
         for n in merged_repos_names
     )
 
-    merged_routes: tuple[ManifestEgressRoute, ...] = base.egress.routes + override.egress.routes
+    merged_routes = base.egress.routes + override.egress.routes
     merged_egress = ManifestEgressConfig(routes=merged_routes, Log=override.egress.Log)
 
     return ManifestBottle(

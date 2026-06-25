@@ -17,11 +17,11 @@ from bot_bottle.manifest import ManifestBottle, ManifestError, ManifestIndex
 from bot_bottle.manifest_extends import merge_bottles_runtime
 
 
-def _index(bottles: dict, agents: dict) -> ManifestIndex:
+def _index(bottles: dict[str, object], agents: dict[str, object]) -> ManifestIndex:
     return ManifestIndex.from_json_obj({"bottles": bottles, "agents": agents})
 
 
-def _bottle(**kwargs) -> ManifestBottle:
+def _bottle(**kwargs: object) -> ManifestBottle:
     return ManifestBottle.from_dict("test", kwargs)
 
 

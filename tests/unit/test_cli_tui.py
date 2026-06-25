@@ -8,8 +8,12 @@ a real curses session (which requires a TTY).
 from __future__ import annotations
 
 import unittest
+from typing import Any, Optional
 
 from bot_bottle.cli.tui import _filter_items, _multiselect_loop, filter_multiselect, filter_select
+
+_KEY_ESC = 27
+_KEY_CTRL_D = 4
 
 
 class TestFilterItems(unittest.TestCase):
@@ -68,18 +72,15 @@ class TestMultiselectLoopReordering(unittest.TestCase):
 
     def _run(self, keys: list[int], items: list[str], initial: list[str]) -> Optional[list[str]]:
         """Run _multiselect_loop with a synthetic screen feeding `keys`."""
-        import curses as _curses
-
         key_iter = iter(keys)
 
         class FakeScreen:
-            def erase(self): pass
-            def getmaxyx(self): return (40, 80)
-            def refresh(self): pass
-            def getch(self):
-                return next(key_iter)
-            def addstr(self, *a, **kw): pass
-            def keypad(self, *a): pass
+            def erase(self) -> None: pass
+            def getmaxyx(self) -> tuple[int, int]: return (40, 80)
+            def refresh(self) -> None: pass
+            def getch(self) -> int: return next(key_iter)
+            def addstr(self, *a: Any) -> None: pass
+            def keypad(self, *a: Any) -> None: pass
 
         return _multiselect_loop(FakeScreen(), items, title="", initial=initial)  # type: ignore[arg-type]
 
@@ -144,9 +145,6 @@ class TestMultiselectLoopReordering(unittest.TestCase):
         self.assertEqual(["a", "b"], result)
 
 
-from typing import Optional
-_KEY_ESC = 27
-_KEY_CTRL_D = 4
 
 
 if __name__ == "__main__":
