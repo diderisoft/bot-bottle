@@ -160,26 +160,37 @@ class EgressAddon:
         )
 
     def _log_request(self, flow: http.HTTPFlow) -> None:
+        headers = {
+            k: redact_tokens(v, env=os.environ)
+            for k, v in flow.request.headers.items()
+            if k.lower() != "authorization"
+        }
+        body = redact_tokens(flow.request.get_text(strict=False) or "", env=os.environ)
         sys.stderr.write(
             json.dumps({
                 "event": "egress_request",
                 "host": redact_tokens(flow.request.pretty_host, env=os.environ),
                 "method": flow.request.method,
                 "path": redact_tokens(flow.request.path, env=os.environ),
-                "headers": dict(flow.request.headers),
-                "body": flow.request.get_text(strict=False) or "",
+                "headers": headers,
+                "body": body,
             })
             + "\n"
         )
 
     def _log_response(self, flow: http.HTTPFlow) -> None:
+        headers = {
+            k: redact_tokens(v, env=os.environ)
+            for k, v in flow.response.headers.items()
+        }
+        body = redact_tokens(flow.response.get_text(strict=False) or "", env=os.environ)
         sys.stderr.write(
             json.dumps({
                 "event": "egress_response",
                 "host": flow.request.pretty_host,
                 "status": flow.response.status_code,
-                "headers": dict(flow.response.headers),
-                "body": flow.response.get_text(strict=False) or "",
+                "headers": headers,
+                "body": body,
             })
             + "\n"
         )
