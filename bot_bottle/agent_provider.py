@@ -61,7 +61,6 @@ class AgentProviderRuntime:
     prompt_mode: PromptMode
     bypass_args: tuple[str, ...]
     resume_args: tuple[str, ...]
-    remote_control_args: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -391,7 +390,7 @@ def prompt_args(
     if prompt_mode == "append_file":
         return ["--append-system-prompt-file", prompt_path]
     if prompt_mode == "read_prompt_file":
-        if argv and "resume" in argv:
+        if argv and ("resume" in argv or "remote-control" in argv):
             return []
         return [f"Read and follow the instructions in {prompt_path}."]
     if prompt_mode == "print_read_prompt_file":

@@ -136,6 +136,16 @@ class TestClaudeArgv(unittest.TestCase):
             argv,
         )
 
+    def test_codex_remote_control_startup_arg_does_not_receive_initial_prompt(self):
+        argv = _codex_bottle("/home/node/.bot-bottle-prompt.txt").agent_argv(
+            ["--dangerously-bypass-approvals-and-sandbox", "remote-control"],
+        )
+        self.assertEqual(
+            ["docker", "exec", "-it", "bot-bottle-dev-abc", "codex",
+             "--dangerously-bypass-approvals-and-sandbox", "remote-control"],
+            argv,
+        )
+
     def test_codex_resume_does_not_append_initial_prompt(self):
         argv = _codex_bottle("/home/node/.bot-bottle-prompt.txt").agent_argv(
             ["--dangerously-bypass-approvals-and-sandbox", "resume", "--last"],

@@ -102,6 +102,27 @@ class TestAttachAgent(unittest.TestCase):
             bottle.argv,
         )
 
+    def test_remote_control_is_provider_startup_arg(self):
+        class Bottle:
+            argv: list[str] = []
+
+            def exec_agent(self, argv: list[str], *, tty: bool = True) -> int:
+                self.argv = list(argv)
+                return 0
+
+        bottle = Bottle()
+        exit_code = start_mod.attach_agent(
+            bottle,  # type: ignore[arg-type]
+            agent_provider_template="codex",
+            startup_args=("remote-control",),
+        )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(
+            ["--dangerously-bypass-approvals-and-sandbox", "remote-control"],
+            bottle.argv,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

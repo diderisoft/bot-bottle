@@ -91,7 +91,6 @@ _RUNTIME = AgentProviderRuntime(
     prompt_mode="append_file",
     bypass_args=("--dangerously-skip-permissions",),
     resume_args=("--continue",),
-    remote_control_args=("--remote-control",),
 )
 
 

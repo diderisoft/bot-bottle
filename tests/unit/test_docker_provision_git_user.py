@@ -31,7 +31,6 @@ class _Provider(AgentProvider):
         return AgentProviderRuntime(
             template="test", command="test", image="",
             prompt_mode="append_file", bypass_args=(), resume_args=(),
-            remote_control_args=(),
         )
     def provision_plan(self, **kwargs):  # type: ignore[override]
         raise NotImplementedError

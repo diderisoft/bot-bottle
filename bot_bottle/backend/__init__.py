@@ -109,9 +109,8 @@ class BottlePlan(ABC):
     def workspace_plan(self) -> WorkspacePlan:
         return workspace_plan(self.spec, guest_home=self.guest_home)
 
-    def print(self, *, remote_control: bool) -> None:
+    def print(self) -> None:
         """Render the y/N preflight summary to stderr."""
-        del remote_control
         spec = self.spec
         manifest = self.manifest
         agent = manifest.agent

@@ -42,7 +42,6 @@ def cmd_start(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog=f"{PROG} start", add_help=True)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--cwd", action="store_true", help="copy host cwd into the running bottle")
-    parser.add_argument("--remote-control", action="store_true")
     parser.add_argument(
         "--backend",
         choices=known_backend_names(),
@@ -89,7 +88,6 @@ def cmd_start(argv: list[str]) -> int:
     return _launch_bottle(
         spec,
         dry_run=dry_run,
-        remote_control=args.remote_control,
         backend_name=backend_name,
     )
 
@@ -134,7 +132,7 @@ def prepare_with_preflight(
 
 
 def attach_agent(
-    bottle: Bottle, *, remote_control: bool = False, resume: bool = False,
+    bottle: Bottle, *, resume: bool = False,
     agent_provider_template: str = "claude",
     startup_args: tuple[str, ...] = (),
 ) -> int:
@@ -153,8 +151,6 @@ def attach_agent(
         "(Ctrl-D or 'exit' to leave; container will be removed)"
     )
     agent_args = list(runtime.bypass_args)
-    if remote_control:
-        agent_args.extend(runtime.remote_control_args)
     agent_args.extend(startup_args)
     if resume:
         agent_args.extend(runtime.resume_args)
@@ -218,9 +214,9 @@ def _text_prompt_yes() -> bool:
     return reply in ("y", "Y", "yes", "YES")
 
 
-def _text_render_preflight(*, remote_control: bool):
+def _text_render_preflight():
     def _render(plan: DockerBottlePlan) -> None:
-        plan.print(remote_control=remote_control)
+        plan.print()
     return _render
 
 
@@ -228,7 +224,6 @@ def _launch_bottle(
     spec: BottleSpec,
     *,
     dry_run: bool,
-    remote_control: bool,
     backend_name: str | None = None,
 ) -> int:
     """Shared launch core for `start` and `resume`. Builds the plan,
@@ -240,7 +235,7 @@ def _launch_bottle(
         plan, identity = prepare_with_preflight(
             spec,
             stage_dir=stage_dir,
-            render_preflight=_text_render_preflight(remote_control=remote_control),
+            render_preflight=_text_render_preflight(),
             prompt_yes=_text_prompt_yes,
             dry_run=dry_run,
             backend_name=backend_name,
@@ -253,7 +248,6 @@ def _launch_bottle(
             agent_provider_template = getattr(plan, "agent_provider_template", "claude")
             exit_code = attach_agent(
                 bottle,
-                remote_control=remote_control,
                 agent_provider_template=agent_provider_template,
                 startup_args=plan.agent_provision.startup_args,
             )

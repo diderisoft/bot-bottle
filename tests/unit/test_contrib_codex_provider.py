@@ -29,6 +29,9 @@ from bot_bottle.supervise import SupervisePlan
 
 
 _URL = "http://supervise:9100/"
+_CODEX_DOCKERFILE = (
+    Path(__file__).resolve().parents[2] / "bot_bottle/contrib/codex/Dockerfile"
+)
 
 
 def _make_bottle(exec_result: ExecResult | None = None) -> MagicMock:
@@ -274,6 +277,12 @@ class TestCodexProvision(unittest.TestCase):
             CodexAgentProvider().provision(
                 _plan(agent_provision=provision), bottle,
             )
+
+
+class TestCodexDockerfile(unittest.TestCase):
+    def test_installs_procps_for_remote_control_pid_management(self):
+        dockerfile = _CODEX_DOCKERFILE.read_text()
+        self.assertIn("procps", dockerfile)
 
 
 class TestCodexSuperviseMcp(unittest.TestCase):

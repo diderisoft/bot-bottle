@@ -1,12 +1,12 @@
 # bot-bottle Codex provider image.
 #
 # Mirrors the default Claude image shape: Node LTS, git/network tooling,
-# non-root node user, and the provider CLI installed globally.
+# non-root node user, and the provider CLI installed for that user.
 
 FROM node:22-slim
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends git ca-certificates curl \
+  && apt-get install -y --no-install-recommends git ca-certificates curl procps \
   && rm -rf /var/lib/apt/lists/*
 
 # App-specific deps. Python isn't required by codex itself
@@ -17,12 +17,15 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 python3-pip python3-venv \
   && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g --no-fund --no-audit @openai/codex@0.136.0 \
-  && npm cache clean --force
-
 USER node
 WORKDIR /home/node
 
-RUN mkdir -p /home/node/.codex
+ENV PATH="/home/node/.local/bin:${PATH}"
+
+# Remote-control support requires the standalone Codex install layout
+# under ~/.codex/packages/standalone/current. The npm package can run
+# the TUI, but remote-control commands expect this installer-owned path.
+RUN mkdir -p /home/node/.codex \
+  && curl -fsSL https://chatgpt.com/codex/install.sh | sh
 
 CMD ["codex"]

@@ -130,7 +130,7 @@ def _capture_print(plan: DockerBottlePlan | SmolmachinesBottlePlan) -> list[str]
     orig = sys.stderr
     sys.stderr = buf
     try:
-        plan.print(remote_control=False)
+        plan.print()
     finally:
         sys.stderr = orig
     return buf.getvalue().splitlines()

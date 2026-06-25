@@ -166,7 +166,6 @@ _RUNTIME = AgentProviderRuntime(
     prompt_mode="append_system_prompt",
     bypass_args=(),
     resume_args=(),
-    remote_control_args=(),
 )
 
 
