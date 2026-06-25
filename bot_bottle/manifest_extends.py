@@ -81,18 +81,6 @@ def _resolve_one_bottle(
                 f"defined. Available bottles: {avail}"
             )
 
-    if len(parent_names) == 1:
-        parent_name = parent_names[0]
-        parent = _resolve_one_bottle(
-            parent_name, raws, cache, repos_cache, seen + (name,)
-        )
-        merged_repos_raw = _resolve_repos_raw(repos_cache[parent_name], child_raw)
-        bottle = _merge_bottles(parent, child_raw, merged_repos_raw, name)
-        cache[name] = bottle
-        repos_cache[name] = merged_repos_raw
-        return bottle
-
-    # Multiple parents: fold left-to-right into a combined parent.
     combined_parent, combined_repos_raw = _fold_parents(
         parent_names, raws, cache, repos_cache, seen + (name,)
     )
