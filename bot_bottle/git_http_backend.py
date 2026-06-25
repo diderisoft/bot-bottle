@@ -22,6 +22,12 @@ DEFAULT_PORT = 9420
 # Bound memory use while still allowing ordinary git push packfiles.
 MAX_BODY_BYTES = 100 * 1024 * 1024
 
+# Timeout for the access-hook subprocess and git http-backend CGI subprocess.
+# Mirrors GIT_GATE_DAEMON_TIMEOUT_SECS so both HTTP and daemon paths share the
+# same bound: a hung upstream fetch in the access-hook or a stalled CGI child
+# cannot wedge the sidecar indefinitely.
+GIT_HTTP_BACKEND_TIMEOUT_SECS = 30
+
 
 class GitHttpHandler(BaseHTTPRequestHandler):
     server_version = "bot-bottle-git-http/1"
@@ -47,6 +53,7 @@ class GitHttpHandler(BaseHTTPRequestHandler):
                 [hook_path, "upload-pack", str(repo_dir), peer, peer],
                 capture_output=True,
                 check=False,
+                timeout=GIT_HTTP_BACKEND_TIMEOUT_SECS,
             )
             if hook.returncode != 0:
                 detail = (hook.stderr or hook.stdout).decode(
@@ -110,6 +117,7 @@ class GitHttpHandler(BaseHTTPRequestHandler):
             env=env,
             capture_output=True,
             check=False,
+            timeout=GIT_HTTP_BACKEND_TIMEOUT_SECS,
         )
         self._write_cgi_response(proc.stdout)
 

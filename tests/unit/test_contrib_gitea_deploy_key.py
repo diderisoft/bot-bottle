@@ -10,6 +10,8 @@ from unittest.mock import MagicMock, patch
 
 from bot_bottle.contrib.gitea.deploy_key_provisioner import (
     GiteaDeployKeyProvisioner,
+    _API_TIMEOUT_SECS,
+    _KEYGEN_TIMEOUT_SECS,
     _split_owner_repo,
 )
 from bot_bottle.deploy_key_provisioner import DeployKeyCollisionError
@@ -83,6 +85,25 @@ class TestCreate(unittest.TestCase):
         self.assertEqual(str(fake_key_id), key_id)
         self.assertEqual(fake_private, private_bytes)
 
+    def test_create_passes_timeout_to_ssh_keygen_and_urlopen(self):
+        provisioner = _provisioner()
+        with patch(
+            "bot_bottle.contrib.gitea.deploy_key_provisioner.subprocess.run"
+        ) as mock_run, patch(
+            "bot_bottle.contrib.gitea.deploy_key_provisioner.urllib.request.urlopen"
+        ) as mock_urlopen, patch(
+            "bot_bottle.contrib.gitea.deploy_key_provisioner.Path.read_bytes",
+            return_value=b"PRIVATE",
+        ), patch(
+            "bot_bottle.contrib.gitea.deploy_key_provisioner.Path.read_text",
+            return_value="ssh-ed25519 AAAA\n",
+        ):
+            mock_urlopen.return_value = _urlopen_response({"id": 1})
+            provisioner.create("owner/repo", "title")
+
+        self.assertEqual(_KEYGEN_TIMEOUT_SECS, mock_run.call_args.kwargs.get("timeout"))
+        self.assertEqual(_API_TIMEOUT_SECS, mock_urlopen.call_args.kwargs.get("timeout"))
+
     def test_create_raises_on_http_error(self):
         provisioner = _provisioner()
         with patch(
@@ -138,6 +159,16 @@ class TestDelete(unittest.TestCase):
         req = mock_urlopen.call_args.args[0]
         self.assertIn("/api/v1/repos/didericis/bot-bottle/keys/99", req.full_url)
         self.assertEqual("DELETE", req.get_method())
+
+    def test_delete_passes_timeout_to_urlopen(self):
+        provisioner = _provisioner()
+        with patch(
+            "bot_bottle.contrib.gitea.deploy_key_provisioner.urllib.request.urlopen"
+        ) as mock_urlopen:
+            mock_urlopen.return_value = _urlopen_response({})
+            provisioner.delete("owner/repo", "7")
+
+        self.assertEqual(_API_TIMEOUT_SECS, mock_urlopen.call_args.kwargs.get("timeout"))
 
     def test_delete_tolerates_404(self):
         provisioner = _provisioner()

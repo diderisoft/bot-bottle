@@ -9,7 +9,11 @@ import urllib.request
 from pathlib import Path
 from unittest import mock
 
-from bot_bottle.git_http_backend import GitHttpHandler, MAX_BODY_BYTES
+from bot_bottle.git_http_backend import (
+    GIT_HTTP_BACKEND_TIMEOUT_SECS,
+    GitHttpHandler,
+    MAX_BODY_BYTES,
+)
 
 
 class TestGitHttpBackend(unittest.TestCase):
@@ -149,6 +153,61 @@ class TestGitHttpBackend(unittest.TestCase):
                 env["HTTP_ACCEPT"],
             )
             self.assertEqual("git/test", env["HTTP_USER_AGENT"])
+
+    def test_subprocess_calls_include_timeout(self):
+        """Both subprocess.run calls (access-hook and git http-backend) must
+        pass timeout= so a hung upstream cannot wedge the sidecar."""
+        from http.server import ThreadingHTTPServer
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "repo.git").mkdir()
+
+            old_root = os.environ.get("GIT_PROJECT_ROOT")
+            os.environ["GIT_PROJECT_ROOT"] = str(root)
+            self.addCleanup(self._restore_env, old_root)
+            old_hook = os.environ.get("GIT_GATE_ACCESS_HOOK")
+            hook = root / "access-hook"
+            hook.write_text("#!/bin/sh\nexit 0\n")
+            hook.chmod(0o700)
+            os.environ["GIT_GATE_ACCESS_HOOK"] = str(hook)
+            self.addCleanup(self._restore_hook, old_hook)
+
+            server = ThreadingHTTPServer(("127.0.0.1", 0), GitHttpHandler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            self.addCleanup(server.shutdown)
+            self.addCleanup(server.server_close)
+
+            backend_response = (
+                b"Status: 200 OK\r\n"
+                b"Content-Type: application/x-git-upload-pack-result\r\n"
+                b"\r\n"
+                b"0000"
+            )
+            calls = [
+                subprocess.CompletedProcess(["hook"], 0, b"", b""),
+                subprocess.CompletedProcess(["git"], 0, backend_response, b""),
+            ]
+            with mock.patch(
+                "bot_bottle.git_http_backend.subprocess.run",
+                side_effect=calls,
+            ) as run:
+                req = urllib.request.Request(
+                    f"http://127.0.0.1:{server.server_port}"
+                    "/repo.git/git-upload-pack",
+                    data=b"",
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=5):
+                    pass
+
+            for call in run.call_args_list:
+                self.assertEqual(
+                    GIT_HTTP_BACKEND_TIMEOUT_SECS,
+                    call.kwargs.get("timeout"),
+                    f"subprocess.run call missing timeout: {call}",
+                )
 
     def test_access_hook_denial_is_logged_to_stdout(self):
         """When the access-hook exits non-zero we still return 403 to the

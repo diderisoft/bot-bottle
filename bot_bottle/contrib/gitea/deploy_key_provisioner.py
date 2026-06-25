@@ -21,6 +21,11 @@ from pathlib import Path
 
 from ...deploy_key_provisioner import DeployKeyCollisionError, DeployKeyProvisioner
 
+# Timeout for ssh-keygen and Gitea API HTTP calls. A hung Gitea instance at
+# prepare time would stall bottle launch indefinitely without this bound.
+_API_TIMEOUT_SECS = 30
+_KEYGEN_TIMEOUT_SECS = 10
+
 
 class GiteaDeployKeyProvisioner(DeployKeyProvisioner):
     """Manages deploy keys on a Gitea instance."""
@@ -46,6 +51,7 @@ class GiteaDeployKeyProvisioner(DeployKeyProvisioner):
                 check=True,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                timeout=_KEYGEN_TIMEOUT_SECS,
             )
             private_key = key_path.read_bytes()
             public_key = key_path.with_suffix(".pub").read_text().strip()
@@ -67,7 +73,7 @@ class GiteaDeployKeyProvisioner(DeployKeyProvisioner):
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req) as resp:
+            with urllib.request.urlopen(req, timeout=_API_TIMEOUT_SECS) as resp:
                 body = json.loads(resp.read())
         except urllib.error.HTTPError as exc:
             _body = _read_error_body(exc)
@@ -98,7 +104,7 @@ class GiteaDeployKeyProvisioner(DeployKeyProvisioner):
             method="DELETE",
         )
         try:
-            with urllib.request.urlopen(req):
+            with urllib.request.urlopen(req, timeout=_API_TIMEOUT_SECS):
                 pass
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
