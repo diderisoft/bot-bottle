@@ -29,8 +29,8 @@ class _FakeHomeMixin:
 
 
 class TestCaptureSessionState(_FakeHomeMixin, unittest.TestCase):
-    # snapshot_transcript is commented out (capability_apply is disabled);
-    # capture_claude_session_state now only handles the preserve marker.
+    # capture_claude_session_state handles the preserve marker for
+    # non-zero agent exits.
     def setUp(self):
         self._setup_fake_home()
 

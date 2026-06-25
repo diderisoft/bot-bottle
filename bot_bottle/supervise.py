@@ -2,11 +2,10 @@
 
 The supervise plane is the per-bottle MCP sidecar plus its host-side
 queue/audit support. The sidecar (bot_bottle.supervise_server)
-sits on the bottle's internal network and exposes three MCP tools the
-agent calls when it hits a stuck-recovery category:
+sits on the bottle's internal network and exposes MCP tools the agent
+calls when it needs an operator-reviewed egress change:
 
   * egress-block / allow — agent proposes a new routes.yaml
-  * capability-block — agent proposes a new agent Dockerfile
 
 Each tool call: the agent passes the full proposed file plus a
 justification text. The sidecar validates the proposal syntactically,
@@ -48,7 +47,6 @@ from pathlib import Path
 SUPERVISE_HOSTNAME = "supervise"
 SUPERVISE_PORT = 9100
 
-TOOL_CAPABILITY_BLOCK = "capability-block"
 TOOL_EGRESS_BLOCK = "egress-block"
 TOOL_EGRESS_ALLOW = "egress-allow"
 TOOL_GITLEAKS_ALLOW = "gitleaks-allow"
@@ -58,7 +56,6 @@ TOOL_EGRESS_TOKEN_ALLOW = "egress-token-allow"
 TOOL_LIST_EGRESS_ROUTES = "list-egress-routes"
 TOOLS: tuple[str, ...] = (
     TOOL_EGRESS_ALLOW,
-    TOOL_CAPABILITY_BLOCK,
     TOOL_EGRESS_BLOCK,
     TOOL_GITLEAKS_ALLOW,
     TOOL_EGRESS_TOKEN_ALLOW,
@@ -75,10 +72,6 @@ TOOLS: tuple[str, ...] = (
 EGRESS_FORWARD_PROXY = "http://127.0.0.1:9099"
 EGRESS_INTROSPECT_URL = "http://_egress.local/allowlist"
 
-# capability-block has no on-disk config the operator edits in place
-# (the Dockerfile is rebuilt, not patched), so it has no audit log
-# here — those changes are captured by git history + the rebuild record
-# laid down in PRD 0016.
 COMPONENT_FOR_TOOL: dict[str, str] = {
     TOOL_EGRESS_ALLOW: "egress",
     TOOL_EGRESS_BLOCK: "egress",
@@ -94,8 +87,6 @@ STATUSES: tuple[str, ...] = (STATUS_APPROVED, STATUS_MODIFIED, STATUS_REJECTED)
 ACTION_OPERATOR_EDIT = "operator-edit"
 
 QUEUE_DIR_IN_CONTAINER = "/run/supervise/queue"
-CURRENT_CONFIG_DIR_IN_AGENT = "/etc/bot-bottle/current-config"
-
 DEFAULT_POLL_INTERVAL_SEC = 0.5
 
 
@@ -438,59 +429,39 @@ def sha256_hex(content: str) -> str:
 # --- Sidecar plan + abstract lifecycle -------------------------------------
 
 
-# Filename of the staged Dockerfile inside the agent's read-only
-# current-config mount. The capability-block tool's description
-# points the agent at this exact path so it can read the current
-# Dockerfile and propose modifications.
-#
-# routes.yaml + allowlist used to live here too; PRD 0017 chunk 3
-# moved them behind the `list-egress-routes` MCP tool (live state
-# from egress's introspection endpoint) so the agent always sees
-# current data rather than a launch-time snapshot.
-CURRENT_CONFIG_DOCKERFILE = "Dockerfile"
-
-
 @dataclass(frozen=True)
 class SupervisePlan:
     """Output of Supervise.prepare; consumed by .start.
 
     `queue_dir` is the host directory bind-mounted into the sidecar
-    at /run/supervise/queue. `current_config_dir` is the host
-    directory bind-mounted (read-only) into the *agent* container
-    at /etc/bot-bottle/current-config — currently holds only the
-    Dockerfile snapshot (routes.yaml + allowlist moved to the
-    `list-egress-routes` MCP tool). `internal_network` is
-    empty at prepare time; the backend's launch step fills it via
-    dataclasses.replace before calling .start."""
+    at /run/supervise/queue. `internal_network` is empty at prepare
+    time; the backend's launch step fills it via dataclasses.replace
+    before calling .start."""
 
     slug: str
     queue_dir: Path
-    current_config_dir: Path
     internal_network: str = ""
 
 
 class Supervise(ABC):
     """Per-bottle supervise sidecar. Encapsulates the host-side
-    prepare (queue dir + current-config staging); the sidecar's
-    start/stop lifecycle is backend-specific."""
+    prepare (queue dir staging); the sidecar's start/stop lifecycle
+    is backend-specific."""
 
     def prepare(
         self,
         slug: str,
         stage_dir: Path,
     ) -> SupervisePlan:
-        """Stage the per-bottle queue dir on the host and the
-        current-config dir under `stage_dir`. Returns the plan;
-        `internal_network` must be set by the launch step before
+        """Stage the per-bottle queue dir on the host. Returns the
+        plan; `internal_network` must be set by the launch step before
         .start runs."""
+        del stage_dir
         queue_dir = queue_dir_for_slug(slug)
         queue_dir.mkdir(parents=True, exist_ok=True)
-        current_config_dir = stage_dir / "current-config"
-        current_config_dir.mkdir(parents=True, exist_ok=True)
         return SupervisePlan(
             slug=slug,
             queue_dir=queue_dir,
-            current_config_dir=current_config_dir,
         )
 
 # --- Helpers ---------------------------------------------------------------
@@ -541,8 +512,6 @@ __all__ = [
     "ACTION_OPERATOR_EDIT",
     "AuditEntry",
     "COMPONENT_FOR_TOOL",
-    "CURRENT_CONFIG_DIR_IN_AGENT",
-    "CURRENT_CONFIG_DOCKERFILE",
     "DEFAULT_POLL_INTERVAL_SEC",
     "Proposal",
     "QUEUE_DIR_IN_CONTAINER",
@@ -558,7 +527,6 @@ __all__ = [
     "TOOLS",
     "EGRESS_FORWARD_PROXY",
     "EGRESS_INTROSPECT_URL",
-    "TOOL_CAPABILITY_BLOCK",
     "TOOL_EGRESS_ALLOW",
     "TOOL_EGRESS_BLOCK",
     "TOOL_GITLEAKS_ALLOW",

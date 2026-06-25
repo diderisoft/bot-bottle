@@ -4,13 +4,12 @@ Reads ~/.bot-bottle/state/<identity>/metadata.json to recover the
 (agent_name, cwd, copy_cwd) the bottle was originally started with,
 then runs the same launch core as `start` — but pinned to the
 recorded identity so the new bottle picks up any per-bottle Dockerfile
-(from capability-block apply) and transcript snapshot under the same
-state dir.
+override and transcript snapshot under the same state dir.
 
-Use case: an agent calls capability-block, the dashboard approves
-and tears down the bottle, the operator runs
+Use case: an interrupted or preserved bottle needs to be relaunched;
+the operator runs
     ./cli.py resume <identity>
-to bring up the replacement with the new capabilities baked in.
+to bring up the replacement from the recorded state.
 """
 
 from __future__ import annotations

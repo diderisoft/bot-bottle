@@ -113,10 +113,8 @@ class ManifestBottle:
     egress: ManifestEgressConfig = field(default_factory=ManifestEgressConfig)
     # Per-bottle stuck-recovery sidecar (PRD 0013). When true (the
     # default, issue #249), the launch step brings up a supervise
-    # sidecar that exposes MCP tools to the agent (egress-block,
-    # capability-block) plus mounts the current-config dir read-only
-    # into the agent at /etc/bot-bottle/current-config. Set
-    # `supervise: false` to skip the sidecar and mount.
+    # sidecar that exposes egress MCP tools to the agent. Set
+    # `supervise: false` to skip the sidecar.
     supervise: bool = True
 
     @classmethod

@@ -16,7 +16,7 @@ from bot_bottle.supervise import (
     STATUS_APPROVED,
     STATUS_MODIFIED,
     STATUS_REJECTED,
-    TOOL_CAPABILITY_BLOCK,
+    TOOL_EGRESS_ALLOW,
     TOOL_GITLEAKS_ALLOW,
     archive_proposal,
     audit_log_path,
@@ -37,9 +37,9 @@ FIXED_TS = datetime(2026, 5, 25, 12, 0, 0, tzinfo=timezone.utc)
 
 
 def _proposal(
-    tool: str = TOOL_CAPABILITY_BLOCK,
-    proposed: str = "FROM python:3.13\n",
-    justification: str = "need a capability",
+    tool: str = TOOL_EGRESS_ALLOW,
+    proposed: str = "routes:\n  - host: example.com\n",
+    justification: str = "need egress",
 ) -> Proposal:
     return Proposal.new(
         bottle_slug="dev",
@@ -57,7 +57,7 @@ class TestProposalRoundtrip(unittest.TestCase):
         self.assertTrue(p.id)
         self.assertEqual("2026-05-25T12:00:00+00:00", p.arrival_timestamp)
         self.assertEqual("dev", p.bottle_slug)
-        self.assertEqual(TOOL_CAPABILITY_BLOCK, p.tool)
+        self.assertEqual(TOOL_EGRESS_ALLOW, p.tool)
 
     def test_to_from_dict_roundtrip(self):
         p = _proposal()
@@ -142,14 +142,14 @@ class TestQueueIO(unittest.TestCase):
     def test_list_pending_sorted_by_arrival(self):
         # Fabricate two with explicit timestamps.
         a = Proposal.new(
-            bottle_slug="dev", tool=TOOL_CAPABILITY_BLOCK,
-            proposed_file="FROM python:3.13\n", justification="early",
+            bottle_slug="dev", tool=TOOL_EGRESS_ALLOW,
+            proposed_file="routes:\n  - host: early.example.com\n", justification="early",
             current_file_hash="x",
             now=datetime(2026, 5, 25, 10, 0, 0, tzinfo=timezone.utc),
         )
         b = Proposal.new(
-            bottle_slug="dev", tool=TOOL_CAPABILITY_BLOCK,
-            proposed_file="FROM python:3.13\n", justification="late",
+            bottle_slug="dev", tool=TOOL_EGRESS_ALLOW,
+            proposed_file="routes:\n  - host: late.example.com\n", justification="late",
             current_file_hash="x",
             now=datetime(2026, 5, 25, 14, 0, 0, tzinfo=timezone.utc),
         )
@@ -319,7 +319,6 @@ class TestToolConstants(unittest.TestCase):
         self.assertEqual(
             (
                 supervise.TOOL_EGRESS_ALLOW,
-                TOOL_CAPABILITY_BLOCK,
                 supervise.TOOL_EGRESS_BLOCK,
                 TOOL_GITLEAKS_ALLOW,
                 supervise.TOOL_EGRESS_TOKEN_ALLOW,
@@ -378,20 +377,16 @@ class TestSupervisePrepare(unittest.TestCase):
         supervise.bot_bottle_root = fake_root  # type: ignore[assignment]
         return lambda: setattr(supervise, "bot_bottle_root", original)
 
-    def test_prepare_creates_queue_and_current_config(self):
+    def test_prepare_creates_queue(self):
         plan = _StubSupervise().prepare("dev", self.stage_dir)
         self.assertTrue(plan.queue_dir.is_dir())
-        self.assertTrue(plan.current_config_dir.is_dir())
         self.assertEqual("dev", plan.slug)
         self.assertEqual("", plan.internal_network)
 
-    def test_prepare_writes_no_files_to_current_config(self):
-        # dockerfile_content is no longer accepted by prepare.
-        # routes.yaml + allowlist live behind the
-        # `list-egress-routes` MCP tool (PRD 0017 chunk 3).
+    def test_prepare_does_not_create_current_config_dir(self):
         plan = _StubSupervise().prepare("dev", self.stage_dir)
-        files = sorted(p.name for p in plan.current_config_dir.iterdir())
-        self.assertEqual([], files)
+        self.assertFalse((self.stage_dir / "current-config").exists())
+        self.assertFalse(hasattr(plan, "current_config_dir"))
 
 
 if __name__ == "__main__":

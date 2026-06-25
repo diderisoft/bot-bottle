@@ -50,15 +50,15 @@ from bot_bottle.supervise_server import (
 
 
 class TestValidation(unittest.TestCase):
-    def test_capability_block_accepts_anything_nonempty(self):
-        validate_proposed_file(
-            _sv.TOOL_CAPABILITY_BLOCK,
-            "FROM python:3.13\nRUN apk add git\n",
-        )
-
     def test_empty_proposed_file_rejected_for_tools_with_file_field(self):
         with self.assertRaises(_RpcError):
-            validate_proposed_file(_sv.TOOL_CAPABILITY_BLOCK, "   \n\t")
+            validate_proposed_file(_sv.TOOL_EGRESS_ALLOW, "   \n\t")
+
+    def test_capability_block_rejected_as_unknown_tool(self):
+        with self.assertRaises(_RpcError) as cm:
+            validate_proposed_file("capability-block", "FROM python:3.13\n")
+        self.assertEqual(ERR_INVALID_PARAMS, cm.exception.code)
+        self.assertIn("unknown tool", cm.exception.message)
 
     def test_egress_routes_yaml_is_validated(self):
         validate_proposed_file(
@@ -127,9 +127,9 @@ class TestRpcInternalErrorOnIoFailure(unittest.TestCase):
         with self.assertRaises(_RpcInternalError) as cm:
             handle_tools_call(
                 {
-                    "name": _sv.TOOL_CAPABILITY_BLOCK,
+                    "name": _sv.TOOL_EGRESS_ALLOW,
                     "arguments": {
-                        "dockerfile": "FROM python:3.13\n",
+                        "routes_yaml": "routes:\n  - host: example.com\n",
                         "justification": "x",
                     },
                 },
@@ -219,7 +219,6 @@ class TestHandleToolsList(unittest.TestCase):
         self.assertEqual(
             sorted([
                 _sv.TOOL_EGRESS_ALLOW,
-                _sv.TOOL_CAPABILITY_BLOCK,
                 _sv.TOOL_EGRESS_BLOCK,
                 _sv.TOOL_LIST_EGRESS_ROUTES,
             ]),
@@ -295,10 +294,10 @@ class TestHandleToolsCall(unittest.TestCase):
         try:
             result = handle_tools_call(
                 {
-                    "name": _sv.TOOL_CAPABILITY_BLOCK,
+                    "name": _sv.TOOL_EGRESS_BLOCK,
                     "arguments": {
-                        "dockerfile": "FROM python:3.13\n",
-                        "justification": "need git",
+                        "routes_yaml": "routes:\n  - host: example.com\n",
+                        "justification": "need example.com",
                     },
                 },
                 self.config,
@@ -335,9 +334,9 @@ class TestHandleToolsCall(unittest.TestCase):
         try:
             result = handle_tools_call(
                 {
-                    "name": _sv.TOOL_CAPABILITY_BLOCK,
+                    "name": _sv.TOOL_EGRESS_ALLOW,
                     "arguments": {
-                        "dockerfile": "FROM python:3.13\n",
+                        "routes_yaml": "routes:\n  - host: example.com\n",
                         "justification": "needed for tests",
                     },
                 },
@@ -359,20 +358,35 @@ class TestHandleToolsCall(unittest.TestCase):
         with self.assertRaises(_RpcError):
             handle_tools_call(
                 {
-                    "name": _sv.TOOL_CAPABILITY_BLOCK,
-                    "arguments": {"dockerfile": "FROM python:3.13\n"},
+                    "name": _sv.TOOL_EGRESS_ALLOW,
+                    "arguments": {"routes_yaml": "routes:\n  - host: example.com\n"},
                 },
                 self.config,
             )
+
+    def test_capability_block_call_raises_unknown_tool(self):
+        with self.assertRaises(_RpcError) as cm:
+            handle_tools_call(
+                {
+                    "name": "capability-block",
+                    "arguments": {
+                        "dockerfile": "FROM python:3.13\n",
+                        "justification": "need git",
+                    },
+                },
+                self.config,
+            )
+        self.assertEqual(ERR_INVALID_PARAMS, cm.exception.code)
+        self.assertIn("unknown tool", cm.exception.message)
 
     def test_archives_proposal_after_response(self):
         responder = self._respond_when_proposal_appears(_sv.STATUS_APPROVED)
         try:
             handle_tools_call(
                 {
-                    "name": _sv.TOOL_CAPABILITY_BLOCK,
+                    "name": _sv.TOOL_EGRESS_ALLOW,
                     "arguments": {
-                        "dockerfile": "FROM python:3.13\n",
+                        "routes_yaml": "routes:\n  - host: example.com\n",
                         "justification": "x",
                     },
                 },
@@ -394,10 +408,10 @@ class TestHandleToolsCall(unittest.TestCase):
         )
         result = handle_tools_call(
             {
-                "name": _sv.TOOL_CAPABILITY_BLOCK,
+                "name": _sv.TOOL_EGRESS_ALLOW,
                 "arguments": {
-                    "dockerfile": "FROM python:3.13\n",
-                    "justification": "need a capability",
+                    "routes_yaml": "routes:\n  - host: example.com\n",
+                    "justification": "need egress",
                 },
             },
             config,
@@ -521,7 +535,7 @@ class TestHttpEndToEnd(unittest.TestCase):
         self.assertEqual("2.0", result["jsonrpc"])
         self.assertEqual(1, result["id"])
         names = [t["name"] for t in result["result"]["tools"]]  # type: ignore[index]
-        self.assertIn(_sv.TOOL_CAPABILITY_BLOCK, names)
+        self.assertNotIn("capability-block", names)
         self.assertIn(_sv.TOOL_EGRESS_ALLOW, names)
         self.assertIn(_sv.TOOL_EGRESS_BLOCK, names)
 
@@ -541,9 +555,9 @@ class TestHttpEndToEnd(unittest.TestCase):
                 "id": 99,
                 "method": "tools/call",
                 "params": {
-                    "name": _sv.TOOL_CAPABILITY_BLOCK,
+                    "name": _sv.TOOL_EGRESS_ALLOW,
                     "arguments": {
-                        "dockerfile": "FROM python:3.13\n",
+                        "routes_yaml": "routes:\n  - host: example.com\n",
                         "justification": "x",
                     },
                 },

@@ -31,7 +31,6 @@ from ..bottle_state import (
     is_preserved,
     mark_preserved,
 )
-# from ..backend.docker.capability_apply import snapshot_transcript
 from ..log import info
 from ..manifest import ManifestIndex
 from ._common import PROG, USER_CWD, read_tty_line
@@ -257,12 +256,8 @@ def _launch_bottle(
             )
             # While the container is still alive: always snapshot the
             # transcript and — if the agent exited non-zero — mark
-            # the state for preservation. Capability-block already
-            # did both before triggering teardown from the dashboard;
-            # this picks up crashes / Ctrl-Cs / OOM kills the same
-            # way. snapshot_transcript is best-effort so the
-            # capability-block path's prior snapshot isn't clobbered
-            # when the container is already gone.
+            # the state for preservation. This picks up crashes /
+            # Ctrl-Cs / OOM kills before cleanup removes the state dir.
             if agent_provider_template == "claude":
                 capture_claude_session_state(identity, exit_code)
         return 0

@@ -34,7 +34,6 @@ from ...egress import (
 from ...git_gate import GIT_GATE_HOSTNAME
 from ...log import die, warn
 from ...supervise import (
-    CURRENT_CONFIG_DIR_IN_AGENT,
     QUEUE_DIR_IN_CONTAINER,
     SUPERVISE_HOSTNAME,
     SUPERVISE_PORT,
@@ -232,15 +231,6 @@ def _agent_service(plan: DockerBottlePlan) -> dict[str, Any]:
     }
     if plan.use_runsc:
         service["runtime"] = "runsc"
-
-    volumes: list[dict[str, Any]] = []
-    if plan.supervise_plan is not None:
-        volumes.append(_bind(
-            plan.supervise_plan.current_config_dir,
-            CURRENT_CONFIG_DIR_IN_AGENT,
-        ))
-    if volumes:
-        service["volumes"] = volumes
 
     # The init supervisor inside the bundle owns intra-bundle
     # daemon ordering, so the agent only waits for the bundle

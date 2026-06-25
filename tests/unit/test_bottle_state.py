@@ -115,8 +115,8 @@ class TestBottleIdentity(unittest.TestCase):
 
 
 class TestPreserveMarker(_FakeHomeMixin, unittest.TestCase):
-    """The .preserve marker is how capability_apply tells cli.py's
-    session-end cleanup to keep the state dir instead of removing it."""
+    """The .preserve marker tells cli.py's session-end cleanup to keep
+    the state dir instead of removing it."""
 
     def setUp(self):
         self._setup_fake_home()

@@ -2,9 +2,8 @@
 act on them (approve / modify / reject).
 
 Curses-based TUI; modify-then-approve shells out to $EDITOR. The
-approval handler wires to PRD 0016 (capability-block), which rebuilds
-the bottle Dockerfile. Egress proposals are queued for operator review
-as full routes.yaml updates.
+Egress proposals are queued for operator review as full routes.yaml
+updates.
 """
 
 from __future__ import annotations
@@ -22,10 +21,6 @@ from pathlib import Path
 
 from .. import supervise as _supervise
 from ..bottle_state import read_metadata
-# from ..backend.docker.capability_apply import (
-#     CapabilityApplyError,
-#     apply_capability_change,
-# )
 from ..backend.docker.egress_apply import (
     EgressApplyError,
     applicator as _docker_applicator,
@@ -38,10 +33,6 @@ from ..backend.smolmachines.egress_apply import (
 )
 from ..log import Die, error, info
 
-
-class CapabilityApplyError(RuntimeError):
-    """Placeholder while capability_apply is disabled."""
-
 from ..supervise import (
     COMPONENT_FOR_TOOL,
     AuditEntry,
@@ -50,7 +41,6 @@ from ..supervise import (
     STATUS_APPROVED,
     STATUS_MODIFIED,
     STATUS_REJECTED,
-    TOOL_CAPABILITY_BLOCK,
     TOOL_EGRESS_ALLOW,
     TOOL_EGRESS_BLOCK,
     TOOL_GITLEAKS_ALLOW,
@@ -83,7 +73,7 @@ class QueuedProposal:
 # Errors any remediation engine may raise. Caught by the TUI key
 # handlers and surfaced in the status line so a failed apply keeps
 # the proposal pending rather than crashing curses.
-ApplyError = (CapabilityApplyError, EgressApplyError)
+ApplyError = (EgressApplyError,)
 
 
 def apply_routes_change(slug: str, content: str) -> tuple[str, str]:
@@ -143,8 +133,6 @@ def _detail_lines(
 
 
 def _suffix_for_tool(tool: str) -> str:
-    if tool == TOOL_CAPABILITY_BLOCK:
-        return ".dockerfile"
     if tool in (TOOL_EGRESS_ALLOW, TOOL_EGRESS_BLOCK):
         return ".yaml"
     if tool in (TOOL_GITLEAKS_ALLOW, TOOL_EGRESS_TOKEN_ALLOW):
@@ -166,17 +154,6 @@ def approve(
     file_to_apply = final_file if final_file is not None else qp.proposal.proposed_file
 
     diff_before, diff_after = "", ""
-    # if qp.proposal.tool == TOOL_CAPABILITY_BLOCK:
-    #     _meta = read_metadata(qp.proposal.bottle_slug)
-    #     if _meta is not None and not _meta.compose_project:
-    #         raise CapabilityApplyError(
-    #             "capability-block remediation is not supported for smolmachines "
-    #             "bottles. Reject this proposal or handle the capability change "
-    #             "manually, then restart the bottle."
-    #         )
-    #     diff_before, diff_after = apply_capability_change(
-    #         qp.proposal.bottle_slug, file_to_apply,
-    #     )
     if qp.proposal.tool in (TOOL_EGRESS_ALLOW, TOOL_EGRESS_BLOCK):
         diff_before, diff_after = apply_routes_change(
             qp.proposal.bottle_slug,
@@ -194,9 +171,6 @@ def approve(
         qp, action=status, notes=notes,
         diff_before=diff_before, diff_after=diff_after,
     )
-    if qp.proposal.tool == TOOL_CAPABILITY_BLOCK:
-        archive_proposal(qp.queue_dir, qp.proposal.id)
-
 
 def reject(qp: QueuedProposal, *, reason: str) -> None:
     """Write a rejection response and an audit entry."""

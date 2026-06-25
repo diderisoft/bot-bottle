@@ -18,7 +18,7 @@ from bot_bottle.supervise import (
     STATUS_APPROVED,
     STATUS_MODIFIED,
     STATUS_REJECTED,
-    TOOL_CAPABILITY_BLOCK,
+    TOOL_EGRESS_ALLOW,
     TOOL_GITLEAKS_ALLOW,
     TOOL_EGRESS_TOKEN_ALLOW,
     read_audit_entries,
@@ -30,9 +30,8 @@ from bot_bottle.supervise import (
 FIXED = datetime(2026, 5, 25, 12, 0, 0, tzinfo=timezone.utc)
 
 
-def _proposal(slug: str = "dev", tool: str = TOOL_CAPABILITY_BLOCK) -> Proposal:
+def _proposal(slug: str = "dev", tool: str = TOOL_EGRESS_ALLOW) -> Proposal:
     payloads = {
-        TOOL_CAPABILITY_BLOCK: "FROM python:3.13\n",
         supervise.TOOL_EGRESS_ALLOW: "routes:\n  - host: example.com\n",
         supervise.TOOL_EGRESS_BLOCK: "routes:\n  - host: example.com\n",
         TOOL_GITLEAKS_ALLOW: "file: tests/test_fixture.py\nline: 3\n",
@@ -86,14 +85,14 @@ class TestDiscoverPending(_FakeHomeMixin, unittest.TestCase):
 
     def test_sorted_by_arrival_across_bottles(self):
         early = Proposal.new(
-            bottle_slug="api", tool=TOOL_CAPABILITY_BLOCK,
-            proposed_file="FROM python:3.13\n", justification="early",
+            bottle_slug="api", tool=TOOL_EGRESS_ALLOW,
+            proposed_file="routes:\n  - host: early.example.com\n", justification="early",
             current_file_hash="h",
             now=datetime(2026, 5, 25, 10, 0, 0, tzinfo=timezone.utc),
         )
         late = Proposal.new(
-            bottle_slug="dev", tool=TOOL_CAPABILITY_BLOCK,
-            proposed_file="FROM python:3.13\n", justification="late",
+            bottle_slug="dev", tool=TOOL_EGRESS_ALLOW,
+            proposed_file="routes:\n  - host: late.example.com\n", justification="late",
             current_file_hash="h",
             now=datetime(2026, 5, 25, 14, 0, 0, tzinfo=timezone.utc),
         )
@@ -122,7 +121,7 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
     def tearDown(self):
         self._teardown_fake_home()
 
-    def _enqueue(self, tool: str = TOOL_CAPABILITY_BLOCK):
+    def _enqueue(self, tool: str = TOOL_EGRESS_ALLOW):
         p = _proposal(tool=tool)
         qdir = supervise.queue_dir_for_slug("dev")
         qdir.mkdir(parents=True, exist_ok=True)
@@ -131,19 +130,29 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
 
     def test_approve_writes_response(self):
         qp = self._enqueue()
-        supervise_cli.approve(qp)
-        # capability-block is archived on approve, so the response file
-        # moves to processed/ before the caller can read it.
-        resp = read_response(qp.queue_dir / "processed", qp.proposal.id)
+        with patch(
+            "bot_bottle.cli.supervise.apply_routes_change",
+            return_value=("routes: []\n", "routes:\n  - host: example.com\n"),
+        ):
+            supervise_cli.approve(qp)
+        resp = read_response(qp.queue_dir, qp.proposal.id)
         self.assertEqual(STATUS_APPROVED, resp.status)
         self.assertIsNone(resp.final_file)
 
     def test_approve_with_final_file_marks_modified(self):
         qp = self._enqueue()
-        supervise_cli.approve(qp, final_file="FROM bookworm\n", notes="tweaked")
-        resp = read_response(qp.queue_dir / "processed", qp.proposal.id)
+        with patch(
+            "bot_bottle.cli.supervise.apply_routes_change",
+            return_value=("routes: []\n", "routes:\n  - host: edited.example.com\n"),
+        ):
+            supervise_cli.approve(
+                qp,
+                final_file="routes:\n  - host: edited.example.com\n",
+                notes="tweaked",
+            )
+        resp = read_response(qp.queue_dir, qp.proposal.id)
         self.assertEqual(STATUS_MODIFIED, resp.status)
-        self.assertEqual("FROM bookworm\n", resp.final_file)
+        self.assertEqual("routes:\n  - host: edited.example.com\n", resp.final_file)
         self.assertEqual("tweaked", resp.notes)
 
     def test_reject_writes_rejection(self):
@@ -152,11 +161,6 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
         resp = read_response(qp.queue_dir, qp.proposal.id)
         self.assertEqual(STATUS_REJECTED, resp.status)
         self.assertEqual("nope", resp.notes)
-
-    def test_no_audit_log_for_capability_block(self):
-        qp = self._enqueue(tool=TOOL_CAPABILITY_BLOCK)
-        supervise_cli.approve(qp)
-        self.assertEqual([], read_audit_entries("egress", "dev"))
 
     def test_approve_egress_block_writes_audit_log(self):
         qp = self._enqueue(tool=supervise.TOOL_EGRESS_BLOCK)
@@ -232,11 +236,6 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
         self.assertEqual(".txt", supervise_cli._suffix_for_tool(TOOL_EGRESS_TOKEN_ALLOW))
 
 
-# class TestCapabilityApplyWiring(_FakeHomeMixin, unittest.TestCase):
-#     # DISABLED — capability_apply functionality is currently commented out.
-#     pass
-
-
 class TestEditInEditor(unittest.TestCase):
     def test_runs_editor_returns_edited_content(self):
         original_editor = os.environ.get("EDITOR")
@@ -279,11 +278,6 @@ class TestEditInEditor(unittest.TestCase):
                 os.environ.pop("EDITOR", None)
             else:
                 os.environ["EDITOR"] = original_editor
-
-
-# class TestCapabilityBlockSmolmachinesGuard(_FakeHomeMixin, unittest.TestCase):
-#     # DISABLED — capability_apply functionality is currently commented out.
-#     pass
 
 
 if __name__ == "__main__":

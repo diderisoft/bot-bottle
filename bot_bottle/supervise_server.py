@@ -1,8 +1,8 @@
 """Supervise sidecar HTTP server (PRD 0013).
 
-Per-bottle MCP server exposing tools the agent calls to propose config
-changes when stuck. The tools are `allow`, `egress-block`,
-`capability-block`, and `list-egress-routes`.
+Per-bottle MCP server exposing tools the agent calls to propose egress
+config changes when stuck. The tools are `egress-allow`,
+`egress-block`, and `list-egress-routes`.
 
 Each queued tool call:
 
@@ -253,34 +253,6 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
             "required": ["routes_yaml", "justification"],
         },
     },
-    {
-        "name": _sv.TOOL_CAPABILITY_BLOCK,
-        "description": (
-            "Call when the bottle is missing a tool, skill, permission, "
-            "or env var you need — something that lives in the agent "
-            "Dockerfile rather than in the egress routes. "
-            "Read the current Dockerfile from "
-            "/etc/bot-bottle/current-config/Dockerfile, compose a "
-            "modified version, and pass the full new file plus a "
-            "justification. On approval the supervisor rebuilds the "
-            "bottle from the new Dockerfile and starts a replacement on "
-            "the same branch (wired in PRD 0016; v1 acknowledges only)."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "dockerfile": {
-                    "type": "string",
-                    "description": "Full proposed Dockerfile content.",
-                },
-                "justification": {
-                    "type": "string",
-                    "description": "Why this capability is needed.",
-                },
-            },
-            "required": ["dockerfile", "justification"],
-        },
-    },
 ]
 
 
@@ -288,7 +260,6 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
 # payload (stored in Proposal.proposed_file).
 PROPOSED_FILE_FIELD: dict[str, str] = {
     _sv.TOOL_EGRESS_ALLOW: "routes_yaml",
-    _sv.TOOL_CAPABILITY_BLOCK: "dockerfile",
     _sv.TOOL_EGRESS_BLOCK: "routes_yaml",
 }
 
@@ -302,11 +273,7 @@ def validate_proposed_file(tool: str, content: str) -> None:
     enter the queue."""
     if not content.strip():
         raise _RpcClientError(ERR_INVALID_PARAMS, f"{tool}: proposed file is empty")
-    if tool == _sv.TOOL_CAPABILITY_BLOCK:
-        # Dockerfiles are too varied to validate syntactically beyond
-        # non-empty. The operator reads the diff in the TUI.
-        pass
-    elif tool in (_sv.TOOL_EGRESS_ALLOW, _sv.TOOL_EGRESS_BLOCK):
+    if tool in (_sv.TOOL_EGRESS_ALLOW, _sv.TOOL_EGRESS_BLOCK):
         try:
             config = load_config(content)
         except ValueError as e:
@@ -487,9 +454,8 @@ def format_pending_response_text(timeout_seconds: float) -> str:
 # --- HTTP transport --------------------------------------------------------
 
 
-# Max request body the server accepts. Generous because Dockerfile
-# proposals can be a few KB; routes.json is small. 1 MB is well above
-# any realistic config file.
+# Max request body the server accepts. 1 MB is well above any realistic
+# routes.yaml proposal.
 MAX_BODY_BYTES = 1 * 1024 * 1024
 
 

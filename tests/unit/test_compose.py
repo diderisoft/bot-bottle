@@ -108,7 +108,6 @@ def _supervise_plan() -> SupervisePlan:
     return SupervisePlan(
         slug=SLUG,
         queue_dir=STATE / "supervise" / "queue",
-        current_config_dir=STATE / "supervise" / "current-config",
         internal_network=f"bot-bottle-net-{SLUG}",
     )
 
@@ -271,18 +270,11 @@ class TestAgentAlwaysPresent(unittest.TestCase):
                 s = bottle_plan_to_compose(_plan(**kwargs))["services"]["agent"]
                 self.assertEqual(["sidecars"], s["depends_on"])
 
-    def test_agent_current_config_mount_only_with_supervise(self):
+    def test_agent_has_no_current_config_mount_with_supervise(self):
         with_sv = bottle_plan_to_compose(_plan(supervise=True))["services"]["agent"]
-        self.assertTrue(any(
-            v["target"] == "/etc/bot-bottle/current-config"
-            for v in with_sv.get("volumes", [])
-        ))
+        self.assertNotIn("volumes", with_sv)
         without_sv = bottle_plan_to_compose(_plan(supervise=False))["services"]["agent"]
-        # Either no volumes key at all, or no current-config target.
-        self.assertFalse(any(
-            v["target"] == "/etc/bot-bottle/current-config"
-            for v in without_sv.get("volumes", [])
-        ))
+        self.assertNotIn("volumes", without_sv)
 
 
 class TestSidecarBundleShape(unittest.TestCase):

@@ -65,8 +65,8 @@ class TestOrphanStateDirs(_FakeHomeMixin, unittest.TestCase):
         )
 
     def test_preserve_marker_skips_dir(self):
-        # Preserve marker = capability-block or crash auto-preserve;
-        # the user explicitly wanted this dir kept for `resume`.
+        # Preserve marker means the user explicitly wanted this dir
+        # kept for `resume`.
         bottle_state.write_per_bottle_dockerfile("kept-ccc", "FROM x\n")
         bottle_state.mark_preserved("kept-ccc")
         self.assertEqual(

@@ -13,9 +13,8 @@ dirs are shared layout, so docker is the single owner of that
 bucket.
 
 State dirs with `.preserve` are intentionally never touched — they
-hold capability-block rebuilds or crash snapshots the operator may
-want to `resume`. Manual `rm -rf ~/.bot-bottle/state/<identity>`
-is the path for those.
+hold preserved sessions the operator may want to `resume`. Manual
+`rm -rf ~/.bot-bottle/state/<identity>` is the path for those.
 """
 
 from __future__ import annotations

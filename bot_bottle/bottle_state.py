@@ -1,8 +1,7 @@
-"""Per-bottle persistent state (PRD 0016).
+"""Per-bottle persistent state.
 
-Holds the per-bottle Dockerfile override that capability-block
-remediation writes, the transcript snapshot the state-preservation
-helper saves before teardown, and the launch metadata that lets
+Holds optional per-bottle Dockerfile overrides, the transcript snapshot
+the state-preservation helper saves before teardown, and the launch metadata that lets
 `cli.py resume <identity>` reconstruct a bottle's spec. State
 lives at:
 
@@ -61,7 +60,7 @@ _METADATA_NAME = "metadata.json"
 _LIVE_CONFIG_SUBDIR = "live-config"
 LIVE_CONFIG_ROUTES_NAME = "routes.yaml"
 LIVE_CONFIG_ALLOWLIST_NAME = "allowlist"
-# Empty marker file. capability_apply writes it before teardown so
+# Empty marker file. Session preservation writes it before teardown so
 # cli.py's session-end cleanup knows to preserve the state dir for
 # `cli.py resume <identity>`. Absent = clean up.
 _PRESERVE_MARKER = ".preserve"
@@ -164,8 +163,7 @@ def per_bottle_dockerfile_path(identity: str) -> Path:
 
 def per_bottle_dockerfile(identity: str) -> str | None:
     """Return the per-bottle Dockerfile content if present, else
-    None. None means: use the repo's Dockerfile (the original
-    pre-capability-block behavior)."""
+    None. None means: use the provider or manifest Dockerfile."""
     p = per_bottle_dockerfile_path(identity)
     if p.is_file():
         return p.read_text()
@@ -249,9 +247,7 @@ def write_live_config(
 
 
 def transcript_snapshot_dir(identity: str) -> Path:
-    """Where capability_apply stashes the agent's transcript before
-    teardown, so the next `cli.py start <agent>` can offer to
-    resume from it."""
+    """Where agent session snapshots are kept for resume flows."""
     return bottle_state_dir(identity) / _TRANSCRIPT_SUBDIR
 
 
@@ -278,8 +274,7 @@ def git_gate_state_dir(identity: str) -> Path:
 
 
 def supervise_state_dir(identity: str) -> Path:
-    """State subdir for the supervise sidecar's current-config dir
-    (bind-mounted into the agent at /etc/bot-bottle/current-config).
+    """State subdir reserved for supervise sidecar bind-mount sources.
     The queue dir is intentionally NOT under here — it lives at
     ~/.bot-bottle/queue/<slug>/ alongside the audit logs, so it
     survives state-dir cleanup."""
@@ -301,9 +296,8 @@ def preserve_marker_path(identity: str) -> Path:
 
 def mark_preserved(identity: str) -> Path:
     """Mark this bottle's state for preservation across session
-    teardown. Written by capability_apply.apply_capability_change so
-    cli.py's session-end cleanup leaves the state dir intact for a
-    subsequent `cli.py resume`."""
+    teardown so cli.py's session-end cleanup leaves the state dir
+    intact for a subsequent `cli.py resume`."""
     path = preserve_marker_path(identity)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.touch()
@@ -316,7 +310,7 @@ def is_preserved(identity: str) -> bool:
 
 def clear_preserve_marker(identity: str) -> None:
     """Idempotent removal. Called at fresh launch (start or resume)
-    so a marker left from a prior capability-block doesn't keep
+    so a marker left from a prior preserved session doesn't keep
     state alive past the next normal session-end."""
     try:
         preserve_marker_path(identity).unlink()
