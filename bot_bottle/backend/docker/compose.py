@@ -137,6 +137,10 @@ def _sidecar_bundle_service(plan: DockerBottlePlan) -> dict[str, Any]:
         volumes.append(_bind(ep.routes_path.parent, str(Path(EGRESS_ROUTES_IN_CONTAINER).parent)))
         for token_env in sorted(ep.token_env_map.keys()):
             env.append(token_env)
+    if ep.canary:
+        # Inject canary as a literal NAME=VALUE (not a bare name) — the
+        # value is a fake secret so it need not be hidden from the compose file.
+        env.append(f"EGRESS_TOKEN_CANARY={ep.canary}")
 
     # --- git-gate -----------------------------------------------------
     gp = plan.git_gate_plan
@@ -220,6 +224,10 @@ def _agent_service(plan: DockerBottlePlan) -> dict[str, Any]:
     # never lands on argv or in the compose file.
     for name in sorted(plan.forwarded_env.keys()):
         env.append(name)
+    # Canary token: visible to the agent as a fake secret so that any
+    # outbound appearance of this value is a zero-FP exfil signal.
+    if plan.egress_plan.canary:
+        env.append(f"BOT_BOTTLE_CANARY={plan.egress_plan.canary}")
 
     service: dict[str, Any] = {
         "image": plan.image,

@@ -10,6 +10,7 @@ specific and lives on concrete subclasses (see
 from __future__ import annotations
 
 import dataclasses
+import secrets
 from abc import ABC
 from dataclasses import dataclass
 from pathlib import Path
@@ -65,6 +66,7 @@ class EgressPlan:
     mitmproxy_ca_host_path: Path = Path()
     mitmproxy_ca_cert_only_host_path: Path = Path()
     log: int = 0
+    canary: str = ""
 
 
 def egress_manifest_routes(
@@ -324,12 +326,17 @@ class Egress(ABC):
         routes_path = stage_dir / EGRESS_ROUTES_FILENAME
         routes_path.write_text(egress_render_routes(routes, log=log))
         routes_path.chmod(0o600)
+        # Generate a per-session canary token.  The sidecar receives it as
+        # EGRESS_TOKEN_CANARY (scanned by the existing known-secrets detector);
+        # the agent receives it as BOT_BOTTLE_CANARY (a visible fake secret).
+        canary = secrets.token_urlsafe(32)
         return EgressPlan(
             slug=slug,
             routes_path=routes_path,
             routes=routes,
             token_env_map=egress_token_env_map(routes),
             log=log,
+            canary=canary,
         )
 
 __all__ = [

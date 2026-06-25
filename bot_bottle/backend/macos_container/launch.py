@@ -353,6 +353,8 @@ def _sidecar_env_entries(plan: MacosContainerBottlePlan) -> tuple[str, ...]:
     env: list[str] = []
     if plan.egress_plan.routes:
         env.extend(sorted(plan.egress_plan.token_env_map.keys()))
+    if plan.egress_plan.canary:
+        env.append(f"EGRESS_TOKEN_CANARY={plan.egress_plan.canary}")
     if plan.git_gate_plan.upstreams:
         env.append(f"BOT_BOTTLE_GIT_GATE_READY_FILE={_GIT_GATE_READY_FILE}")
     if plan.supervise_plan is not None:
@@ -420,6 +422,8 @@ def _agent_env_entries(
         env.append(f"{name}={value}")
     for name in sorted(plan.forwarded_env.keys()):
         env.append(name)
+    if plan.egress_plan.canary:
+        env.append(f"BOT_BOTTLE_CANARY={plan.egress_plan.canary}")
     return tuple(env)
 
 

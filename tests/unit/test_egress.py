@@ -1,10 +1,14 @@
 """Unit: Egress route lift + routes.yaml render + token
-resolution (PRD 0017, PRD 0053)."""
+resolution (PRD 0017, PRD 0053, prd-new)."""
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from bot_bottle.egress import (
     CODEX_HOST_CREDENTIAL_TOKEN_REF,
+    Egress,
+    EgressPlan,
     EgressRoute,
     egress_manifest_routes,
     egress_render_routes,
@@ -441,6 +445,65 @@ class TestResolveTokenValues(unittest.TestCase):
             {CODEX_HOST_CREDENTIAL_TOKEN_REF: "codex-access-token"},
         )
         self.assertEqual({"EGRESS_TOKEN_0": "codex-access-token"}, out)
+
+
+class TestCanaryGeneration(unittest.TestCase):
+    """Egress.prepare() generates a unique canary token per session (prd-new)."""
+
+    def _bottle_obj(self):
+        return ManifestIndex.from_json_obj({
+            "bottles": {"dev": {"egress": {"routes": []}}},
+            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        }).bottles["dev"]
+
+    def _make_plan(self) -> EgressPlan:
+        # Use a concrete no-op subclass so we can call prepare() without
+        # a real backend.
+        class _TestEgress(Egress):
+            pass
+
+        e = _TestEgress()
+        with tempfile.TemporaryDirectory() as td:
+            return e.prepare(self._bottle_obj(), "test-slug", Path(td))
+
+    def test_canary_is_non_empty(self):
+        plan = self._make_plan()
+        self.assertIsInstance(plan.canary, str)
+        self.assertGreater(len(plan.canary), 0)
+
+    def test_canary_is_unique_per_session(self):
+        with tempfile.TemporaryDirectory() as td:
+            bottle = self._bottle_obj()
+
+            class _TestEgress(Egress):
+                pass
+
+            e = _TestEgress()
+            plan_a = e.prepare(bottle, "slug-a", Path(td))
+            plan_b = e.prepare(bottle, "slug-b", Path(td))
+        self.assertNotEqual(plan_a.canary, plan_b.canary)
+
+    def test_canary_detected_by_scan_known_secrets(self):
+        from bot_bottle.dlp_detectors import scan_known_secrets
+
+        plan = self._make_plan()
+        env = {"EGRESS_TOKEN_CANARY": plan.canary}
+        result = scan_known_secrets(f"exfil={plan.canary}", env=env)
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual("block", result.severity)
+        self.assertIn("EGRESS_TOKEN_CANARY", result.reason)
+
+    def test_egress_plan_canary_field_default_empty(self):
+        # Verify EgressPlan can be constructed with an empty canary (backward compat).
+        from pathlib import Path
+        plan = EgressPlan(
+            slug="s",
+            routes_path=Path("/tmp/r.yaml"),
+            routes=(),
+            token_env_map={},
+        )
+        self.assertEqual("", plan.canary)
 
 
 if __name__ == "__main__":
