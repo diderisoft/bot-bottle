@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from .git_gate import GIT_GATE_DAEMON_TIMEOUT_SECS
+from .git_gate import GIT_GATE_TIMEOUT_SECS
 
 
 DEFAULT_PORT = 9420
@@ -49,7 +49,7 @@ class GitHttpHandler(BaseHTTPRequestHandler):
                 [hook_path, "upload-pack", str(repo_dir), peer, peer],
                 capture_output=True,
                 check=False,
-                timeout=GIT_GATE_DAEMON_TIMEOUT_SECS,
+                timeout=GIT_GATE_TIMEOUT_SECS,
             )
             if hook.returncode != 0:
                 detail = (hook.stderr or hook.stdout).decode(
@@ -113,7 +113,7 @@ class GitHttpHandler(BaseHTTPRequestHandler):
             env=env,
             capture_output=True,
             check=False,
-            timeout=GIT_GATE_DAEMON_TIMEOUT_SECS,
+            timeout=GIT_GATE_TIMEOUT_SECS,
         )
         self._write_cgi_response(proc.stdout)
 
