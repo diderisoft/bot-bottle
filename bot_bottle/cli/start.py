@@ -274,7 +274,7 @@ def _bottle_lineage(manifest: ManifestIndex) -> dict[str, str]:
     """Return {bottle_name: lineage_label} for bottles that have an extends chain.
 
     Bottles without a parent are omitted (the caller falls back to the bare name).
-    Labels show the chain root-first: e.g. 'claude-dev <- bot-bottle-dev <- dev'."""
+    Labels show the chain root-first: e.g. 'dev -> bot-bottle-dev -> claude-dev'."""
     if manifest.home_md is None:
         return {}
     bottles_dir = manifest.home_md / "bottles"
@@ -305,7 +305,7 @@ def _bottle_lineage(manifest: ManifestIndex) -> dict[str, str]:
             chain.append(par)
             seen.add(par)
             cur = par
-        labels[name] = " <- ".join(reversed(chain))
+        labels[name] = " -> ".join(reversed(chain))
 
     return labels
 

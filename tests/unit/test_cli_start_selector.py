@@ -280,8 +280,8 @@ class TestBottleLineage(unittest.TestCase):
             result = start_mod._bottle_lineage(manifest)
 
         self.assertNotIn("base", result)          # no parent → not in map
-        self.assertEqual("base <- mid", result["mid"])
-        self.assertEqual("base <- mid <- leaf", result["leaf"])
+        self.assertEqual("base -> mid", result["mid"])
+        self.assertEqual("base -> mid -> leaf", result["leaf"])
 
     def test_cycle_protection(self):
         import tempfile
@@ -301,7 +301,7 @@ class TestBottleLineage(unittest.TestCase):
         # Cycle must not hang; each should get a two-element chain.
         for name in ("a", "b"):
             self.assertIn(name, result)
-            self.assertIn("<-", result[name])
+            self.assertIn("->", result[name])
 
 
 class TestManifestToYaml(unittest.TestCase):
