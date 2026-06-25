@@ -90,19 +90,19 @@ def parse_jsonrpc(body: bytes) -> JsonRpcRequest:
     try:
         raw = json.loads(body)
     except json.JSONDecodeError as e:
-        raise _RpcError(ERR_PARSE, f"parse error: {e}") from e
+        raise _RpcClientError(ERR_PARSE, f"parse error: {e}") from e
     if not isinstance(raw, dict):
-        raise _RpcError(ERR_INVALID_REQUEST, "request must be a JSON object")
+        raise _RpcClientError(ERR_INVALID_REQUEST, "request must be a JSON object")
     if raw.get("jsonrpc") != JSONRPC_VERSION:
-        raise _RpcError(ERR_INVALID_REQUEST, "jsonrpc field must be '2.0'")
+        raise _RpcClientError(ERR_INVALID_REQUEST, "jsonrpc field must be '2.0'")
     method = raw.get("method")
     if not isinstance(method, str):
-        raise _RpcError(ERR_INVALID_REQUEST, "method must be a string")
+        raise _RpcClientError(ERR_INVALID_REQUEST, "method must be a string")
     params = raw.get("params", {})
     if params is None:
         params = {}
     if not isinstance(params, dict):
-        raise _RpcError(ERR_INVALID_PARAMS, "params must be an object")
+        raise _RpcClientError(ERR_INVALID_PARAMS, "params must be an object")
     rpc_id = raw.get("id", _NO_ID)
     is_notification = rpc_id is _NO_ID
     return JsonRpcRequest(
@@ -117,10 +117,21 @@ _NO_ID = object()
 
 
 class _RpcError(Exception):
+    """Base class for all typed RPC errors that surface as JSON-RPC error responses."""
     def __init__(self, code: int, message: str):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+class _RpcClientError(_RpcError):
+    """Caller sent a bad request; returned verbatim, no server-side logging."""
+
+
+class _RpcInternalError(_RpcError):
+    """Server-side fault; logged at ERROR with cause, always returns ERR_INTERNAL."""
+    def __init__(self, message: str) -> None:
+        super().__init__(ERR_INTERNAL, message)
 
 
 def jsonrpc_result(request_id: object, result: object) -> bytes:
@@ -290,7 +301,7 @@ def validate_proposed_file(tool: str, content: str) -> None:
     catches obvious paste-errors / wrong-tool selections before they
     enter the queue."""
     if not content.strip():
-        raise _RpcError(ERR_INVALID_PARAMS, f"{tool}: proposed file is empty")
+        raise _RpcClientError(ERR_INVALID_PARAMS, f"{tool}: proposed file is empty")
     if tool == _sv.TOOL_CAPABILITY_BLOCK:
         # Dockerfiles are too varied to validate syntactically beyond
         # non-empty. The operator reads the diff in the TUI.
@@ -299,17 +310,17 @@ def validate_proposed_file(tool: str, content: str) -> None:
         try:
             config = load_config(content)
         except ValueError as e:
-            raise _RpcError(
+            raise _RpcClientError(
                 ERR_INVALID_PARAMS,
                 f"{tool}: proposed routes.yaml is not valid: {e}",
             ) from e
         if config.log != LOG_OFF:
-            raise _RpcError(
+            raise _RpcClientError(
                 ERR_INVALID_PARAMS,
                 f"{tool}: proposed routes.yaml must not change egress logging",
             )
     else:
-        raise _RpcError(ERR_INVALID_PARAMS, f"unknown tool {tool!r}")
+        raise _RpcClientError(ERR_INVALID_PARAMS, f"unknown tool {tool!r}")
 
 
 # --- MCP handlers ----------------------------------------------------------
@@ -382,17 +393,17 @@ def handle_tools_call(
     doesn't need operator approval."""
     name = params.get("name")
     if not isinstance(name, str):
-        raise _RpcError(ERR_INVALID_PARAMS, "tools/call missing 'name'")
+        raise _RpcClientError(ERR_INVALID_PARAMS, "tools/call missing 'name'")
     if name == _sv.TOOL_LIST_EGRESS_ROUTES:
         return handle_list_egress_routes(typing.cast(dict[str, object], params.get("arguments", {})), config)
 
     args_raw = params.get("arguments", {})
     if not isinstance(args_raw, dict):
-        raise _RpcError(ERR_INVALID_PARAMS, "tools/call 'arguments' must be an object")
+        raise _RpcClientError(ERR_INVALID_PARAMS, "tools/call 'arguments' must be an object")
 
     justification = args_raw.get("justification")
     if not isinstance(justification, str) or not justification.strip():
-        raise _RpcError(
+        raise _RpcClientError(
             ERR_INVALID_PARAMS,
             f"{name}: 'justification' is required and must be a non-empty string",
         )
@@ -401,13 +412,13 @@ def handle_tools_call(
         file_field = PROPOSED_FILE_FIELD[name]
         proposed_file = args_raw.get(file_field)
         if not isinstance(proposed_file, str):
-            raise _RpcError(
+            raise _RpcClientError(
                 ERR_INVALID_PARAMS,
                 f"{name}: '{file_field}' is required and must be a string",
             )
         validate_proposed_file(name, proposed_file)
     else:
-        raise _RpcError(ERR_INVALID_PARAMS, f"unknown tool {name!r}")
+        raise _RpcClientError(ERR_INVALID_PARAMS, f"unknown tool {name!r}")
 
     proposal = _sv.Proposal.new(
         bottle_slug=config.bottle_slug,
@@ -416,7 +427,10 @@ def handle_tools_call(
         justification=justification,
         current_file_hash=_sv.sha256_hex(proposed_file),
     )
-    _sv.write_proposal(config.queue_dir, proposal)
+    try:
+        _sv.write_proposal(config.queue_dir, proposal)
+    except OSError as e:
+        raise _RpcInternalError(f"failed to write proposal to queue: {e}") from e
     sys.stderr.write(
         f"supervise: queued proposal {proposal.id} ({name}) "
         f"for bottle {config.bottle_slug}; waiting for operator...\n"
@@ -436,7 +450,10 @@ def handle_tools_call(
             "content": [{"type": "text", "text": text}],
             "isError": False,
         }
-    _sv.archive_proposal(config.queue_dir, proposal.id)
+    try:
+        _sv.archive_proposal(config.queue_dir, proposal.id)
+    except OSError as e:
+        raise _RpcInternalError(f"failed to archive proposal: {e}") from e
 
     text = format_response_text(response)
     return {
@@ -512,7 +529,7 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
 
         try:
             req = parse_jsonrpc(body)
-        except _RpcError as e:
+        except _RpcClientError as e:
             self._write_jsonrpc(jsonrpc_error(None, e.code, e.message))
             return
 
@@ -520,11 +537,19 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
 
         try:
             result = self._dispatch(req, config)
-        except _RpcError as e:
+        except _RpcClientError as e:
             self._write_jsonrpc(jsonrpc_error(req.id, e.code, e.message))
             return
-        except Exception as e:  # noqa: W0718 — catch-all for RPC dispatch errors
-            sys.stderr.write(f"supervise: internal error: {e}\n")
+        except _RpcInternalError as e:
+            cause = e.__cause__
+            detail = f": {cause}" if cause else ""
+            sys.stderr.write(f"supervise: internal error: {e.message}{detail}\n")
+            sys.stderr.flush()
+            self._write_jsonrpc(jsonrpc_error(req.id, ERR_INTERNAL, "internal error"))
+            return
+        except Exception as e:  # noqa: W0718 — unexpected errors
+            sys.stderr.write(f"supervise: unexpected error: {type(e).__name__}: {e}\n")
+            sys.stderr.flush()
             self._write_jsonrpc(jsonrpc_error(req.id, ERR_INTERNAL, "internal error"))
             return
 
@@ -543,7 +568,7 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
             return handle_tools_list(req.params)
         if method == "tools/call":
             return handle_tools_call(req.params, config)
-        raise _RpcError(ERR_METHOD_NOT_FOUND, f"method not found: {method}")
+        raise _RpcClientError(ERR_METHOD_NOT_FOUND, f"method not found: {method}")
 
     def _write_jsonrpc(self, body: bytes) -> None:
         self.send_response(200)

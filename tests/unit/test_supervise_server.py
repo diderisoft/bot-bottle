@@ -20,6 +20,7 @@ import supervise as _sv  # noqa: E402  # type: ignore
 
 from bot_bottle import supervise_server  # noqa: E402
 from bot_bottle.supervise_server import (
+    ERR_INTERNAL,
     ERR_INVALID_PARAMS,
     ERR_INVALID_REQUEST,
     ERR_METHOD_NOT_FOUND,
@@ -29,7 +30,9 @@ from bot_bottle.supervise_server import (
     PROPOSED_FILE_FIELD,
     ServerConfig,
     TOOL_DEFINITIONS,
+    _RpcClientError,
     _RpcError,
+    _RpcInternalError,
     _response_timeout_from_env,
     format_response_text,
     handle_initialize,
@@ -75,6 +78,65 @@ class TestValidation(unittest.TestCase):
             )
         self.assertEqual(ERR_INVALID_PARAMS, cm.exception.code)
         self.assertIn("must not change egress logging", cm.exception.message)
+
+
+# --- Error taxonomy --------------------------------------------------------
+
+
+class TestRpcErrorTaxonomy(unittest.TestCase):
+    def test_rpc_client_error_is_rpc_error(self):
+        e = _RpcClientError(ERR_INVALID_PARAMS, "bad param")
+        self.assertIsInstance(e, _RpcError)
+        self.assertEqual(ERR_INVALID_PARAMS, e.code)
+        self.assertEqual("bad param", e.message)
+
+    def test_rpc_internal_error_is_rpc_error(self):
+        e = _RpcInternalError("disk full")
+        self.assertIsInstance(e, _RpcError)
+        self.assertEqual(ERR_INTERNAL, e.code)
+        self.assertEqual("disk full", e.message)
+
+    def test_rpc_internal_error_preserves_cause(self):
+        cause = OSError("no space left on device")
+        try:
+            raise _RpcInternalError("failed to write") from cause
+        except _RpcInternalError as e:
+            self.assertIs(cause, e.__cause__)
+
+    def test_parse_error_is_client_error(self):
+        with self.assertRaises(_RpcClientError):
+            parse_jsonrpc(b"{bad json")
+
+    def test_validation_error_is_client_error(self):
+        with self.assertRaises(_RpcClientError):
+            validate_proposed_file(_sv.TOOL_EGRESS_ALLOW, "routes: nope\n")
+
+    def test_unknown_tool_in_tools_call_is_client_error(self):
+        config = ServerConfig(bottle_slug="dev", queue_dir=Path("/unused"))
+        with self.assertRaises(_RpcClientError) as cm:
+            handle_tools_call({"name": "no-such-tool", "arguments": {}}, config)
+        self.assertEqual(ERR_INVALID_PARAMS, cm.exception.code)
+
+
+class TestRpcInternalErrorOnIoFailure(unittest.TestCase):
+    def test_write_proposal_os_error_raises_internal(self):
+        config = ServerConfig(
+            bottle_slug="dev",
+            queue_dir=Path("/dev/null/cannot-exist"),
+        )
+        with self.assertRaises(_RpcInternalError) as cm:
+            handle_tools_call(
+                {
+                    "name": _sv.TOOL_CAPABILITY_BLOCK,
+                    "arguments": {
+                        "dockerfile": "FROM python:3.13\n",
+                        "justification": "x",
+                    },
+                },
+                config,
+            )
+        self.assertEqual(ERR_INTERNAL, cm.exception.code)
+        self.assertIsNotNone(cm.exception.__cause__)
 
 
 # --- JSON-RPC parsing ------------------------------------------------------
@@ -468,6 +530,26 @@ class TestHttpEndToEnd(unittest.TestCase):
             {"jsonrpc": "2.0", "id": 2, "method": "does/not/exist"},
         )
         self.assertEqual(ERR_METHOD_NOT_FOUND, result["error"]["code"])  # type: ignore[index]
+
+    def test_internal_error_returns_err_internal_over_http(self):
+        with patch.object(
+            supervise_server._sv, "write_proposal",
+            side_effect=OSError("disk full"),
+        ):
+            result = self._post_jsonrpc({
+                "jsonrpc": "2.0",
+                "id": 99,
+                "method": "tools/call",
+                "params": {
+                    "name": _sv.TOOL_CAPABILITY_BLOCK,
+                    "arguments": {
+                        "dockerfile": "FROM python:3.13\n",
+                        "justification": "x",
+                    },
+                },
+            })
+        self.assertIn("error", result)
+        self.assertEqual(ERR_INTERNAL, result["error"]["code"])  # type: ignore[index]
 
     def test_health_endpoint(self):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
