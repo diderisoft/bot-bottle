@@ -9,11 +9,8 @@ import urllib.request
 from pathlib import Path
 from unittest import mock
 
-from bot_bottle.git_http_backend import (
-    GIT_HTTP_BACKEND_TIMEOUT_SECS,
-    GitHttpHandler,
-    MAX_BODY_BYTES,
-)
+from bot_bottle.git_gate import GIT_GATE_DAEMON_TIMEOUT_SECS
+from bot_bottle.git_http_backend import GitHttpHandler, MAX_BODY_BYTES
 
 
 class TestGitHttpBackend(unittest.TestCase):
@@ -204,7 +201,7 @@ class TestGitHttpBackend(unittest.TestCase):
 
             for call in run.call_args_list:
                 self.assertEqual(
-                    GIT_HTTP_BACKEND_TIMEOUT_SECS,
+                    GIT_GATE_DAEMON_TIMEOUT_SECS,
                     call.kwargs.get("timeout"),
                     f"subprocess.run call missing timeout: {call}",
                 )
