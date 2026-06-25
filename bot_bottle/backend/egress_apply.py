@@ -11,7 +11,7 @@ from pathlib import Path
 
 from ..bottle_state import egress_state_dir
 from ..egress import EGRESS_ROUTES_FILENAME
-from ..egress_addon_core import load_routes
+from ..egress_addon_core import LOG_OFF, load_config
 
 
 class EgressApplyError(RuntimeError):
@@ -33,11 +33,15 @@ class EgressApplicator(ABC):
     @staticmethod
     def validate_routes_content(content: str) -> None:
         try:
-            load_routes(content)
+            config = load_config(content)
         except ValueError as e:
             raise EgressApplyError(
                 f"proposed routes.yaml is not valid: {e}"
             ) from e
+        if config.log != LOG_OFF:
+            raise EgressApplyError(
+                "proposed routes.yaml must not change egress logging"
+            )
 
     @staticmethod
     def _routes_path(slug: str) -> Path:

@@ -54,6 +54,15 @@ class TestValidateRoutesContent(unittest.TestCase):
                 '    auth_scheme: "Bearer"\n'
             )
 
+    def test_rejects_log_full(self):
+        with self.assertRaises(EgressApplyError) as cm:
+            applicator.validate_routes_content(
+                'log: 2\n'
+                'routes:\n'
+                '  - host: "x.example"\n'
+            )
+        self.assertIn("must not change egress logging", str(cm.exception))
+
 
 class TestApplyRoutesChange(unittest.TestCase):
     def setUp(self):

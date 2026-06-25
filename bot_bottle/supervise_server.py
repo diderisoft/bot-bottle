@@ -47,11 +47,11 @@ from pathlib import Path
 try:
     # Same-directory imports inside the bundle container; these files are
     # COPYed flat under /app by Dockerfile.sidecars.
-    from egress_addon_core import load_routes
+    from egress_addon_core import LOG_OFF, load_config
     import supervise as _sv
 except ModuleNotFoundError:
     # Package imports for host-side tests and tooling.
-    from .egress_addon_core import load_routes
+    from .egress_addon_core import LOG_OFF, load_config
     from . import supervise as _sv
 
 
@@ -297,12 +297,17 @@ def validate_proposed_file(tool: str, content: str) -> None:
         pass
     elif tool in (_sv.TOOL_EGRESS_ALLOW, _sv.TOOL_EGRESS_BLOCK):
         try:
-            load_routes(content)
+            config = load_config(content)
         except ValueError as e:
             raise _RpcError(
                 ERR_INVALID_PARAMS,
                 f"{tool}: proposed routes.yaml is not valid: {e}",
             ) from e
+        if config.log != LOG_OFF:
+            raise _RpcError(
+                ERR_INVALID_PARAMS,
+                f"{tool}: proposed routes.yaml must not change egress logging",
+            )
     else:
         raise _RpcError(ERR_INVALID_PARAMS, f"unknown tool {tool!r}")
 

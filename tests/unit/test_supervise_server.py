@@ -67,6 +67,15 @@ class TestValidation(unittest.TestCase):
         with self.assertRaises(_RpcError):
             validate_proposed_file(_sv.TOOL_EGRESS_BLOCK, "routes: nope\n")
 
+    def test_egress_routes_yaml_rejects_log_full(self):
+        with self.assertRaises(_RpcError) as cm:
+            validate_proposed_file(
+                _sv.TOOL_EGRESS_ALLOW,
+                "log: 2\nroutes:\n  - host: example.com\n",
+            )
+        self.assertEqual(ERR_INVALID_PARAMS, cm.exception.code)
+        self.assertIn("must not change egress logging", cm.exception.message)
+
 
 # --- JSON-RPC parsing ------------------------------------------------------
 
