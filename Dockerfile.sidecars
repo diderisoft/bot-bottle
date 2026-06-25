@@ -62,6 +62,7 @@ COPY --from=gitleaks-src /usr/bin/gitleaks /usr/bin/gitleaks
 # top-level siblings (absolute imports), matching the prior
 # Dockerfile.egress / Dockerfile.supervise layout.
 COPY bot_bottle/egress_addon_core.py /app/egress_addon_core.py
+COPY bot_bottle/egress_dlp_config.py /app/egress_dlp_config.py
 COPY bot_bottle/egress_addon.py      /app/egress_addon.py
 COPY bot_bottle/dlp_detectors.py     /app/dlp_detectors.py
 COPY bot_bottle/yaml_subset.py       /app/yaml_subset.py
