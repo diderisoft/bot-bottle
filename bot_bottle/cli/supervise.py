@@ -45,7 +45,6 @@ from ..supervise import (
     TOOL_EGRESS_BLOCK,
     TOOL_GITLEAKS_ALLOW,
     TOOL_EGRESS_TOKEN_ALLOW,
-    archive_proposal,
     list_pending_proposals,
     render_diff,
     write_audit_entry,
