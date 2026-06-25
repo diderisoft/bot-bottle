@@ -11,6 +11,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 
+class DeployKeyCollisionError(RuntimeError):
+    """Raised when a deploy key title or public key already exists on the repo."""
+
+
 class DeployKeyProvisioner(ABC):
     """Manages a single deploy-key lifecycle on a remote forge."""
 

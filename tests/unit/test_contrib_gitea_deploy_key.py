@@ -12,6 +12,7 @@ from bot_bottle.contrib.gitea.deploy_key_provisioner import (
     GiteaDeployKeyProvisioner,
     _split_owner_repo,
 )
+from bot_bottle.deploy_key_provisioner import DeployKeyCollisionError
 
 
 def _provisioner() -> GiteaDeployKeyProvisioner:
@@ -99,6 +100,30 @@ class TestCreate(unittest.TestCase):
             with self.assertRaises(RuntimeError) as ctx:
                 provisioner.create("owner/repo", "title")
         self.assertIn("403", str(ctx.exception))
+
+    def test_create_raises_collision_error_on_422(self):
+        provisioner = _provisioner()
+        collision_body = json.dumps({
+            "errors": ["Key content already exists on this repository"],
+            "message": "422 Unprocessable Entity",
+        })
+        with patch(
+            "bot_bottle.contrib.gitea.deploy_key_provisioner.subprocess.run"
+        ), patch(
+            "bot_bottle.contrib.gitea.deploy_key_provisioner.urllib.request.urlopen",
+            side_effect=_http_error(422, collision_body),
+        ), patch(
+            "bot_bottle.contrib.gitea.deploy_key_provisioner.Path.read_bytes",
+            return_value=b"pk",
+        ), patch(
+            "bot_bottle.contrib.gitea.deploy_key_provisioner.Path.read_text",
+            return_value="ssh-ed25519 AAAA\n",
+        ):
+            with self.assertRaises(DeployKeyCollisionError) as ctx:
+                provisioner.create("owner/repo", "my-title")
+        msg = str(ctx.exception)
+        self.assertIn("owner/repo", msg)
+        self.assertIn("my-title", msg)
 
 
 class TestDelete(unittest.TestCase):

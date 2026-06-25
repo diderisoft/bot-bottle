@@ -19,7 +19,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from ...deploy_key_provisioner import DeployKeyProvisioner
+from ...deploy_key_provisioner import DeployKeyCollisionError, DeployKeyProvisioner
 
 
 class GiteaDeployKeyProvisioner(DeployKeyProvisioner):
@@ -71,6 +71,11 @@ class GiteaDeployKeyProvisioner(DeployKeyProvisioner):
                 body = json.loads(resp.read())
         except urllib.error.HTTPError as exc:
             _body = _read_error_body(exc)
+            if exc.code == 422:
+                raise DeployKeyCollisionError(
+                    f"deploy key collision for {owner_repo!r} "
+                    f"(title={title!r}): key title or content already registered — {_body}"
+                ) from exc
             raise RuntimeError(
                 f"failed to create deploy key for {owner_repo}: "
                 f"HTTP {exc.code} — {_body}"
