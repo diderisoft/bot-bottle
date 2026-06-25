@@ -33,7 +33,7 @@ FIXED = datetime(2026, 5, 25, 12, 0, 0, tzinfo=timezone.utc)
 def _proposal(slug: str = "dev", tool: str = TOOL_CAPABILITY_BLOCK) -> Proposal:
     payloads = {
         TOOL_CAPABILITY_BLOCK: "FROM python:3.13\n",
-        supervise.TOOL_ALLOW: "routes:\n  - host: example.com\n",
+        supervise.TOOL_EGRESS_ALLOW: "routes:\n  - host: example.com\n",
         supervise.TOOL_EGRESS_BLOCK: "routes:\n  - host: example.com\n",
         TOOL_GITLEAKS_ALLOW: "file: tests/test_fixture.py\nline: 3\n",
         TOOL_EGRESS_TOKEN_ALLOW: "host: api.example.com\ndetector: token\n",

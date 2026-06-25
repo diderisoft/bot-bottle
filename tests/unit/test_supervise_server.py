@@ -59,7 +59,7 @@ class TestValidation(unittest.TestCase):
 
     def test_egress_routes_yaml_is_validated(self):
         validate_proposed_file(
-            _sv.TOOL_ALLOW,
+            _sv.TOOL_EGRESS_ALLOW,
             "routes:\n  - host: example.com\n",
         )
 
@@ -147,7 +147,7 @@ class TestHandleToolsList(unittest.TestCase):
         names = [t["name"] for t in result["tools"]]  # type: ignore[index]
         self.assertEqual(
             sorted([
-                _sv.TOOL_ALLOW,
+                _sv.TOOL_EGRESS_ALLOW,
                 _sv.TOOL_CAPABILITY_BLOCK,
                 _sv.TOOL_EGRESS_BLOCK,
                 _sv.TOOL_LIST_EGRESS_ROUTES,
@@ -181,7 +181,7 @@ class TestHandleToolsList(unittest.TestCase):
         self.assertNotIn("required", schema)  # type: ignore[operator]
 
     def test_egress_tools_take_routes_yaml_and_justification(self):
-        for tool_name in (_sv.TOOL_ALLOW, _sv.TOOL_EGRESS_BLOCK):
+        for tool_name in (_sv.TOOL_EGRESS_ALLOW, _sv.TOOL_EGRESS_BLOCK):
             with self.subTest(tool_name=tool_name):
                 tool = next(t for t in TOOL_DEFINITIONS if t["name"] == tool_name)
                 schema = tool["inputSchema"]
@@ -244,7 +244,7 @@ class TestHandleToolsCall(unittest.TestCase):
         try:
             result = handle_tools_call(
                 {
-                    "name": _sv.TOOL_ALLOW,
+                    "name": _sv.TOOL_EGRESS_ALLOW,
                     "arguments": {
                         "routes_yaml": "routes:\n  - host: example.com\n",
                         "justification": "need example.com",
@@ -451,7 +451,7 @@ class TestHttpEndToEnd(unittest.TestCase):
         self.assertEqual(1, result["id"])
         names = [t["name"] for t in result["result"]["tools"]]  # type: ignore[index]
         self.assertIn(_sv.TOOL_CAPABILITY_BLOCK, names)
-        self.assertIn(_sv.TOOL_ALLOW, names)
+        self.assertIn(_sv.TOOL_EGRESS_ALLOW, names)
         self.assertIn(_sv.TOOL_EGRESS_BLOCK, names)
 
     def test_unknown_method_returns_jsonrpc_error(self):

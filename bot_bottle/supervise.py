@@ -50,14 +50,14 @@ SUPERVISE_PORT = 9100
 
 TOOL_CAPABILITY_BLOCK = "capability-block"
 TOOL_EGRESS_BLOCK = "egress-block"
-TOOL_ALLOW = "allow"
+TOOL_EGRESS_ALLOW = "egress-allow"
 TOOL_GITLEAKS_ALLOW = "gitleaks-allow"
 # Written directly by the egress addon (not an agent-facing MCP tool) when an
 # outbound DLP token block is routed to the operator for override (PRD 0062).
 TOOL_EGRESS_TOKEN_ALLOW = "egress-token-allow"
 TOOL_LIST_EGRESS_ROUTES = "list-egress-routes"
 TOOLS: tuple[str, ...] = (
-    TOOL_ALLOW,
+    TOOL_EGRESS_ALLOW,
     TOOL_CAPABILITY_BLOCK,
     TOOL_EGRESS_BLOCK,
     TOOL_GITLEAKS_ALLOW,
@@ -80,7 +80,7 @@ EGRESS_INTROSPECT_URL = "http://_egress.local/allowlist"
 # here — those changes are captured by git history + the rebuild record
 # laid down in PRD 0016.
 COMPONENT_FOR_TOOL: dict[str, str] = {
-    TOOL_ALLOW: "egress",
+    TOOL_EGRESS_ALLOW: "egress",
     TOOL_EGRESS_BLOCK: "egress",
 }
 
@@ -559,6 +559,8 @@ __all__ = [
     "EGRESS_FORWARD_PROXY",
     "EGRESS_INTROSPECT_URL",
     "TOOL_CAPABILITY_BLOCK",
+    "TOOL_EGRESS_ALLOW",
+    "TOOL_EGRESS_BLOCK",
     "TOOL_GITLEAKS_ALLOW",
     "TOOL_EGRESS_TOKEN_ALLOW",
     "TOOL_LIST_EGRESS_ROUTES",

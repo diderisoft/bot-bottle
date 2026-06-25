@@ -318,7 +318,7 @@ class TestToolConstants(unittest.TestCase):
     def test_tools_tuple_matches_individual_constants(self):
         self.assertEqual(
             (
-                supervise.TOOL_ALLOW,
+                supervise.TOOL_EGRESS_ALLOW,
                 TOOL_CAPABILITY_BLOCK,
                 supervise.TOOL_EGRESS_BLOCK,
                 TOOL_GITLEAKS_ALLOW,
@@ -341,7 +341,7 @@ class TestToolConstants(unittest.TestCase):
     def test_component_map_has_egress_entries(self):
         self.assertEqual(
             {
-                supervise.TOOL_ALLOW: "egress",
+                supervise.TOOL_EGRESS_ALLOW: "egress",
                 supervise.TOOL_EGRESS_BLOCK: "egress",
             },
             supervise.COMPONENT_FOR_TOOL,

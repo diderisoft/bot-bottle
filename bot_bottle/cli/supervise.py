@@ -51,7 +51,7 @@ from ..supervise import (
     STATUS_MODIFIED,
     STATUS_REJECTED,
     TOOL_CAPABILITY_BLOCK,
-    TOOL_ALLOW,
+    TOOL_EGRESS_ALLOW,
     TOOL_EGRESS_BLOCK,
     TOOL_GITLEAKS_ALLOW,
     TOOL_EGRESS_TOKEN_ALLOW,
@@ -145,7 +145,7 @@ def _detail_lines(
 def _suffix_for_tool(tool: str) -> str:
     if tool == TOOL_CAPABILITY_BLOCK:
         return ".dockerfile"
-    if tool in (TOOL_ALLOW, TOOL_EGRESS_BLOCK):
+    if tool in (TOOL_EGRESS_ALLOW, TOOL_EGRESS_BLOCK):
         return ".yaml"
     if tool in (TOOL_GITLEAKS_ALLOW, TOOL_EGRESS_TOKEN_ALLOW):
         return ".txt"
@@ -177,7 +177,7 @@ def approve(
     #     diff_before, diff_after = apply_capability_change(
     #         qp.proposal.bottle_slug, file_to_apply,
     #     )
-    if qp.proposal.tool in (TOOL_ALLOW, TOOL_EGRESS_BLOCK):
+    if qp.proposal.tool in (TOOL_EGRESS_ALLOW, TOOL_EGRESS_BLOCK):
         diff_before, diff_after = apply_routes_change(
             qp.proposal.bottle_slug,
             file_to_apply,

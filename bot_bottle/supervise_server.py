@@ -148,7 +148,7 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
             "allowlist. Returns JSON with one entry per allowed host, "
             "each carrying its matches rules (if any) and whether "
             "the proxy injects Authorization for the route. Use this "
-            "before composing an `allow` or `egress-block` proposal so "
+            "before composing an `egress-allow` or `egress-block` proposal so "
             "the new routes file extends the live one rather than "
             "replacing it."
         ),
@@ -159,7 +159,7 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
         },
     },
     {
-        "name": _sv.TOOL_ALLOW,
+        "name": _sv.TOOL_EGRESS_ALLOW,
         "description": (
             "Request operator approval to change the bottle's egress "
             "allowlist. Pass the full proposed routes.yaml content, not "
@@ -276,7 +276,7 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
 # Map each proposal tool to the input field that carries the agent's
 # payload (stored in Proposal.proposed_file).
 PROPOSED_FILE_FIELD: dict[str, str] = {
-    _sv.TOOL_ALLOW: "routes_yaml",
+    _sv.TOOL_EGRESS_ALLOW: "routes_yaml",
     _sv.TOOL_CAPABILITY_BLOCK: "dockerfile",
     _sv.TOOL_EGRESS_BLOCK: "routes_yaml",
 }
@@ -295,7 +295,7 @@ def validate_proposed_file(tool: str, content: str) -> None:
         # Dockerfiles are too varied to validate syntactically beyond
         # non-empty. The operator reads the diff in the TUI.
         pass
-    elif tool in (_sv.TOOL_ALLOW, _sv.TOOL_EGRESS_BLOCK):
+    elif tool in (_sv.TOOL_EGRESS_ALLOW, _sv.TOOL_EGRESS_BLOCK):
         try:
             load_routes(content)
         except ValueError as e:
