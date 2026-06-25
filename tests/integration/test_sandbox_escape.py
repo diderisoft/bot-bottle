@@ -92,9 +92,9 @@ class TestSandboxEscape(unittest.TestCase):
                     "on PATH: curl -sSL https://smolmachines.com/install.sh | sh"
                 )
 
-        # Throwaway "identity file" for the git-gate's `identity` field.
-        # It need not be a real SSH key: test 5 reaches gitleaks before
-        # any SSH attempt anyway.
+        # Throwaway static key for the git-gate fixture. It need not
+        # be a real SSH key: test 5 reaches gitleaks before any SSH
+        # attempt anyway.
         fd, kp = tempfile.mkstemp(prefix="sandbox-test-key.")
         os.close(fd)
         cls._key_path = Path(kp)
@@ -123,7 +123,10 @@ class TestSandboxEscape(unittest.TestCase):
                     "git-gate": {"repos": {
                         "throwaway": {
                             "url": "ssh://git@unreachable.invalid:22/throwaway.git",
-                            "identity": str(cls._key_path),
+                            "key": {
+                                "provider": "static",
+                                "path": str(cls._key_path),
+                            },
                         },
                     }},
                 },

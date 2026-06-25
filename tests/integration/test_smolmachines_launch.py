@@ -198,6 +198,7 @@ class TestSmolmachinesLaunch(unittest.TestCase):
         # connect fails, which is the property chunk 3 will
         # preserve once egress is actually running.
         r = self.bottle.exec(
+            "env -u HTTPS_PROXY -u HTTP_PROXY -u https_proxy -u http_proxy "
             f"curl -s --show-error --max-time 3 http://{self.plan.bundle_ip}:9099 "
             "2>&1 || true"
         )
