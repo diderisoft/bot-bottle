@@ -29,7 +29,8 @@ def filter_multiselect(
     Returns the ordered list of selected items, or ``None`` if the user
     cancelled (Esc / ``q`` / Ctrl-C / Ctrl-D with no items).
 
-    Press Space or Enter to toggle the item under the cursor.
+    Press Space to toggle the item under the cursor.
+    Press Enter to confirm the current selection.
     Press Ctrl-D to confirm the current selection (returns even if empty).
     Press Esc/q to cancel (returns None).
 
@@ -356,7 +357,10 @@ def _multiselect_loop(
             continue
 
         if focus == "filter":
-            if key in (curses.KEY_ENTER, _KEY_ENTER_ALT, ord("\r"), _KEY_SPACE):
+            if key in (curses.KEY_ENTER, _KEY_ENTER_ALT, ord("\r")):
+                return list(selected)
+
+            elif key == _KEY_SPACE:
                 if filtered:
                     item = filtered[cursor]
                     if item in selected:
@@ -500,7 +504,7 @@ def _render_multiselect(
         row += 1
 
     if focus == "filter":
-        help_line = "[↑↓/jk] move  [Space/Enter] toggle  [Tab] reorder  [Ctrl-D] done  [Esc/q] cancel"
+        help_line = "[↑↓/jk] move  [Space] toggle  [Enter] confirm  [Tab] reorder  [Esc/q] cancel"
     else:
         help_line = "[↑↓/jk] cursor  [K/J] reorder  [Space/Enter] remove  [Tab] back  [Ctrl-D] done"
     if row < rows:

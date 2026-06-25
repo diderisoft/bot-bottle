@@ -253,5 +253,103 @@ class TestCmdStartLabelCollision(unittest.TestCase):
         self.assertIn("already in use", second_call_kwargs.get("disclaimer", ""))
 
 
+class TestBottleLineage(unittest.TestCase):
+    """Unit tests for _bottle_lineage."""
+
+    def test_returns_empty_in_eager_mode(self):
+        manifest = _make_manifest(["agent"], ["base", "dev"])
+        # home_md is None in eager mode → no file reads, returns {}
+        result = start_mod._bottle_lineage(manifest)
+        self.assertEqual({}, result)
+
+    def test_reads_extends_chain_from_files(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            bottles_dir = Path(tmp) / "bottles"
+            bottles_dir.mkdir()
+            (bottles_dir / "base.md").write_text("---\n{}\n---\n")
+            (bottles_dir / "mid.md").write_text("---\nextends: base\n---\n")
+            (bottles_dir / "leaf.md").write_text("---\nextends: mid\n---\n")
+
+            manifest = MagicMock()
+            manifest.home_md = Path(tmp)
+
+            result = start_mod._bottle_lineage(manifest)
+
+        self.assertNotIn("base", result)          # no parent → not in map
+        self.assertEqual("base <- mid", result["mid"])
+        self.assertEqual("base <- mid <- leaf", result["leaf"])
+
+    def test_cycle_protection(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            bottles_dir = Path(tmp) / "bottles"
+            bottles_dir.mkdir()
+            (bottles_dir / "a.md").write_text("---\nextends: b\n---\n")
+            (bottles_dir / "b.md").write_text("---\nextends: a\n---\n")
+
+            manifest = MagicMock()
+            manifest.home_md = Path(tmp)
+
+            result = start_mod._bottle_lineage(manifest)
+
+        # Cycle must not hang; each should get a two-element chain.
+        for name in ("a", "b"):
+            self.assertIn(name, result)
+            self.assertIn("<-", result[name])
+
+
+class TestManifestToYaml(unittest.TestCase):
+    """Unit tests for _manifest_to_yaml."""
+
+    def _make_manifest_obj(self, *, skills=(), env=None, supervise=True,
+                           agent_provider_template="claude"):
+        from bot_bottle.manifest import Manifest, ManifestBottle
+        from bot_bottle.manifest_agent import ManifestAgent, ManifestAgentProvider
+        from bot_bottle.manifest_egress import ManifestEgressConfig
+        from bot_bottle.manifest_git import ManifestGitUser
+
+        agent = ManifestAgent(skills=tuple(skills))
+        bottle = ManifestBottle(
+            env=env or {},
+            supervise=supervise,
+            agent_provider=ManifestAgentProvider(template=agent_provider_template),
+        )
+        return Manifest(agent=agent, bottle=bottle)
+
+    def test_includes_agent_section(self):
+        m = self._make_manifest_obj(skills=["researcher"])
+        yaml = start_mod._manifest_to_yaml(m)
+        self.assertIn("agent:", yaml)
+        self.assertIn("- researcher", yaml)
+
+    def test_includes_bottle_section(self):
+        m = self._make_manifest_obj(env={"FOO": "bar"})
+        yaml = start_mod._manifest_to_yaml(m)
+        self.assertIn("bottle:", yaml)
+        self.assertIn("FOO: bar", yaml)
+
+    def test_supervise_rendered(self):
+        m_true = self._make_manifest_obj(supervise=True)
+        m_false = self._make_manifest_obj(supervise=False)
+        self.assertIn("supervise: true", start_mod._manifest_to_yaml(m_true))
+        self.assertIn("supervise: false", start_mod._manifest_to_yaml(m_false))
+
+    def test_non_claude_provider_shown(self):
+        m = self._make_manifest_obj(agent_provider_template="codex")
+        yaml = start_mod._manifest_to_yaml(m)
+        self.assertIn("agent_provider:", yaml)
+        self.assertIn("template: codex", yaml)
+
+    def test_default_claude_provider_omitted(self):
+        m = self._make_manifest_obj(agent_provider_template="claude")
+        yaml = start_mod._manifest_to_yaml(m)
+        self.assertNotIn("agent_provider:", yaml)
+
+
 if __name__ == "__main__":
     unittest.main()

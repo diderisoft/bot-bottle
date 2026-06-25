@@ -12,6 +12,9 @@ from typing import Any, Optional
 
 from bot_bottle.cli.tui import _filter_items, _multiselect_loop, filter_multiselect, filter_select
 
+_KEY_SPACE = 32
+_KEY_ENTER = 10
+
 _KEY_ESC = 27
 _KEY_CTRL_D = 4
 
@@ -144,7 +147,29 @@ class TestMultiselectLoopReordering(unittest.TestCase):
         )
         self.assertEqual(["a", "b"], result)
 
+    def test_space_toggles_item_on(self):
+        # Space on an unselected item selects it; Ctrl-D confirms.
+        result = self._run([_KEY_SPACE, _KEY_CTRL_D], ["a", "b"], [])
+        self.assertEqual(["a"], result)
 
+    def test_space_toggles_item_off(self):
+        # Space on a selected item deselects it; Ctrl-D confirms empty.
+        result = self._run([_KEY_SPACE, _KEY_CTRL_D], ["a", "b"], ["a"])
+        self.assertEqual([], result)
+
+    def test_enter_confirms_without_toggle(self):
+        # Enter immediately confirms the current selection without toggling.
+        result = self._run([_KEY_ENTER], ["a", "b"], ["a"])
+        self.assertEqual(["a"], result)
+
+    def test_enter_confirms_empty_selection(self):
+        result = self._run([_KEY_ENTER], ["a", "b"], [])
+        self.assertEqual([], result)
+
+    def test_space_then_enter_confirms(self):
+        # Space selects "a", Enter confirms.
+        result = self._run([_KEY_SPACE, _KEY_ENTER], ["a", "b"], [])
+        self.assertEqual(["a"], result)
 
 
 if __name__ == "__main__":

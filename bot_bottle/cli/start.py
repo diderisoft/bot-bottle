@@ -32,7 +32,7 @@ from ..bottle_state import (
     mark_preserved,
 )
 from ..log import info
-from ..manifest import ManifestIndex
+from ..manifest import Manifest, ManifestIndex
 from ._common import PROG, USER_CWD, read_tty_line
 from . import tui
 
@@ -76,16 +76,19 @@ def cmd_start(argv: list[str]) -> int:
     # Bottle multiselect: always show after agent selection so operators
     # can compose bottles at launch time without editing agent manifests.
     available_bottles = manifest.all_bottle_names
+    lineage_map = _bottle_lineage(manifest)
+    display_labels = [lineage_map.get(n, n) for n in available_bottles]
+    label_to_name = {lineage_map.get(n, n): n for n in available_bottles}
     initial_bottle = _peek_agent_bottle(manifest, agent_name)
-    initial_bottles = [initial_bottle] if initial_bottle else []
-    selected_bottles = tui.filter_multiselect(
-        available_bottles,
+    initial_labels = [lineage_map.get(initial_bottle, initial_bottle)] if initial_bottle else []
+    selected_labels = tui.filter_multiselect(
+        display_labels,
         title="Select bottles",
-        initial=initial_bottles,
+        initial=initial_labels,
     )
-    if selected_bottles is None:
+    if selected_labels is None:
         return 0
-    bottle_names = tuple(selected_bottles)
+    bottle_names = tuple(label_to_name.get(lbl, lbl) for lbl in selected_labels)
 
     label, color = tui.name_color_modal(default_label=agent_name)
     label, color = _resolve_unique_label(label, color)
@@ -262,8 +265,110 @@ def _text_prompt_yes() -> bool:
 
 def _text_render_preflight():
     def _render(plan: DockerBottlePlan) -> None:
-        plan.print()
+        print(file=sys.stderr)
+        print(_manifest_to_yaml(plan.manifest), file=sys.stderr)
     return _render
+
+
+def _bottle_lineage(manifest: ManifestIndex) -> dict[str, str]:
+    """Return {bottle_name: lineage_label} for bottles that have an extends chain.
+
+    Bottles without a parent are omitted (the caller falls back to the bare name).
+    Labels show the chain root-first: e.g. 'claude-dev <- bot-bottle-dev <- dev'."""
+    if manifest.home_md is None:
+        return {}
+    bottles_dir = manifest.home_md / "bottles"
+    if not bottles_dir.is_dir():
+        return {}
+
+    from ..yaml_subset import YamlSubsetError, parse_frontmatter
+
+    extends_of: dict[str, str] = {}
+    for path in bottles_dir.glob("*.md"):
+        try:
+            fm, _ = parse_frontmatter(path.read_text())
+            parent = fm.get("extends", "")
+            if isinstance(parent, str) and parent:
+                extends_of[path.stem] = parent
+        except (OSError, YamlSubsetError):
+            pass
+
+    labels: dict[str, str] = {}
+    for name in extends_of:
+        chain = [name]
+        seen = {name}
+        cur = name
+        while cur in extends_of:
+            par = extends_of[cur]
+            if par in seen:
+                break
+            chain.append(par)
+            seen.add(par)
+            cur = par
+        labels[name] = " <- ".join(reversed(chain))
+
+    return labels
+
+
+def _manifest_to_yaml(manifest: Manifest) -> str:
+    """Serialize the resolved Manifest to a YAML string for preflight display."""
+    lines: list[str] = []
+
+    agent = manifest.agent
+    lines.append("agent:")
+    if agent.skills:
+        lines.append("  skills:")
+        for s in agent.skills:
+            lines.append(f"    - {s}")
+    if not agent.git_user.is_empty():
+        lines.append("  git-gate:")
+        lines.append("    user:")
+        if agent.git_user.name:
+            lines.append(f"      name: {agent.git_user.name}")
+        if agent.git_user.email:
+            lines.append(f"      email: {agent.git_user.email}")
+
+    bottle = manifest.bottle
+    lines.append("bottle:")
+
+    if bottle.agent_provider.template != "claude" or bottle.agent_provider.dockerfile:
+        lines.append("  agent_provider:")
+        lines.append(f"    template: {bottle.agent_provider.template}")
+        if bottle.agent_provider.dockerfile:
+            lines.append(f"    dockerfile: {bottle.agent_provider.dockerfile}")
+
+    if bottle.env:
+        lines.append("  env:")
+        for k, v in sorted(bottle.env.items()):
+            lines.append(f"    {k}: {v}")
+
+    has_git_gate = not bottle.git_user.is_empty() or bottle.git
+    if has_git_gate:
+        lines.append("  git-gate:")
+        if not bottle.git_user.is_empty():
+            lines.append("    user:")
+            if bottle.git_user.name:
+                lines.append(f"      name: {bottle.git_user.name}")
+            if bottle.git_user.email:
+                lines.append(f"      email: {bottle.git_user.email}")
+        if bottle.git:
+            lines.append("    repos:")
+            for entry in bottle.git:
+                lines.append(f"      {entry.Name}:")
+                lines.append(f"        url: {entry.Upstream}")
+
+    if bottle.egress.routes:
+        lines.append("  egress:")
+        lines.append("    routes:")
+        for r in bottle.egress.routes:
+            lines.append(f"      - host: {r.Host}")
+            if r.AuthScheme:
+                lines.append(f"        auth:")
+                lines.append(f"          scheme: {r.AuthScheme}")
+
+    lines.append(f"  supervise: {'true' if bottle.supervise else 'false'}")
+
+    return "\n".join(lines)
 
 
 def _launch_bottle(
