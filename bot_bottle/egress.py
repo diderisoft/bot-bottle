@@ -210,6 +210,17 @@ def egress_token_env_map(
     return out
 
 
+def _yaml_str_escape(s: str) -> str:
+    """Escape a string for use inside a YAML double-quoted scalar."""
+    return (
+        s.replace("\\", "\\\\")
+         .replace('"', '\\"')
+         .replace("\n", "\\n")
+         .replace("\r", "\\r")
+         .replace("\t", "\\t")
+    )
+
+
 def _route_to_yaml_fields(r: Route) -> dict[str, object]:
     fields: dict[str, object] = {"host": r.host}
     if r.auth_scheme and r.token_env:
@@ -272,12 +283,12 @@ def _render_match_entry(entry: dict[str, object]) -> list[str]:
         for pd in entry["paths"]:  # type: ignore[union-attr]
             pd_dict: dict[str, str] = pd  # type: ignore[assignment]
             if "type" in pd_dict:
-                lines.append(f'          - type: "{pd_dict["type"]}"')
-                lines.append(f'            value: "{pd_dict["value"]}"')
+                lines.append(f'          - type: "{_yaml_str_escape(pd_dict["type"])}"')
+                lines.append(f'            value: "{_yaml_str_escape(pd_dict["value"])}"')
             else:
-                lines.append(f'          - value: "{pd_dict["value"]}"')
+                lines.append(f'          - value: "{_yaml_str_escape(pd_dict["value"])}"')
     if "methods" in entry:
-        methods_str = ", ".join(f'"{m}"' for m in entry["methods"])  # type: ignore[union-attr]
+        methods_str = ", ".join(f'"{_yaml_str_escape(m)}"' for m in entry["methods"])  # type: ignore[union-attr]
         prefix = "      - " if first_key else "        "
         lines.append(f'{prefix}methods: [{methods_str}]')
         first_key = False
@@ -287,8 +298,8 @@ def _render_match_entry(entry: dict[str, object]) -> list[str]:
         first_key = False
         for hd in entry["headers"]:  # type: ignore[union-attr]
             hd_dict: dict[str, str] = hd  # type: ignore[assignment]
-            lines.append(f'          - name: "{hd_dict["name"]}"')
-            lines.append(f'            value: "{hd_dict["value"]}"')
+            lines.append(f'          - name: "{_yaml_str_escape(hd_dict["name"])}"')
+            lines.append(f'            value: "{_yaml_str_escape(hd_dict["value"])}"')
     if first_key:
         lines.append("      - {}")
     return lines
@@ -308,10 +319,10 @@ def egress_render_routes(
         return "\n".join(lines) + "\n"
     for r in routes:
         f = _route_to_yaml_fields(r)
-        lines.append(f'  - host: "{f["host"]}"')
+        lines.append(f'  - host: "{_yaml_str_escape(str(f["host"]))}"')
         if "auth_scheme" in f:
-            lines.append(f'    auth_scheme: "{f["auth_scheme"]}"')
-            lines.append(f'    token_env: "{f["token_env"]}"')
+            lines.append(f'    auth_scheme: "{_yaml_str_escape(str(f["auth_scheme"]))}"')
+            lines.append(f'    token_env: "{_yaml_str_escape(str(f["token_env"]))}"')
         if "matches" in f:
             lines.append("    matches:")
             for entry in f["matches"]:  # type: ignore[union-attr]
@@ -331,7 +342,7 @@ def egress_render_routes(
                     items_str = ", ".join(f'"{x}"' for x in dv)
                     lines.append(f"      {dk}: [{items_str}]")
                 elif isinstance(dv, str):
-                    lines.append(f'      {dk}: "{dv}"')
+                    lines.append(f'      {dk}: "{_yaml_str_escape(dv)}"')
     return "\n".join(lines) + "\n"
 
 

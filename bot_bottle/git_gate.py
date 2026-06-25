@@ -112,6 +112,15 @@ def git_gate_upstreams_for_bottle(bottle: ManifestBottle) -> tuple[GitGateUpstre
     )
 
 
+def _gitconfig_validate_value(field: str, value: str) -> None:
+    """Raise ValueError if value contains characters that break gitconfig line syntax."""
+    if "\n" in value or "\r" in value:
+        raise ValueError(
+            f"git-gate: {field} contains a newline, which would inject "
+            f"arbitrary gitconfig keys; rejecting manifest entry"
+        )
+
+
 def git_gate_render_gitconfig(
     entries: tuple[ManifestGitEntry, ...], gate_host: str, *, scheme: str = "git",
 ) -> str:
@@ -136,6 +145,7 @@ def git_gate_render_gitconfig(
         "# fetch-from-upstream-before-every-upload-pack via access-hook).\n",
     ]
     for entry in entries:
+        _gitconfig_validate_value(f"repos[{entry.Name!r}].url", entry.Upstream)
         out.append(f'[url "{scheme}://{gate_host}/{entry.Name}.git"]\n')
         out.append(f"\tinsteadOf = {entry.Upstream}\n")
         if entry.RemoteKey and entry.RemoteKey != entry.UpstreamHost:
@@ -148,6 +158,7 @@ def git_gate_render_gitconfig(
                 f"ssh://{entry.UpstreamUser}@{entry.RemoteKey}{port}/"
                 f"{entry.UpstreamPath}"
             )
+            _gitconfig_validate_value(f"repos[{entry.Name!r}].url (resolved alias)", alias)
             out.append(f"\tinsteadOf = {alias}\n")
     return "".join(out)
 

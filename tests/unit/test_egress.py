@@ -10,6 +10,7 @@ from bot_bottle.egress import (
     Egress,
     EgressPlan,
     EgressRoute,
+    _yaml_str_escape,
     egress_agent_env_entries,
     egress_manifest_routes,
     egress_render_routes,
@@ -417,6 +418,76 @@ class TestRenderRoutes(unittest.TestCase):
         rendered = egress_render_routes(routes, log=bottle.egress.Log)
         cfg = load_config(rendered)
         self.assertEqual(LOG_BLOCKS, cfg.log)
+
+
+class TestYamlStrEscape(unittest.TestCase):
+    """_yaml_str_escape produces safe YAML double-quoted scalar content."""
+
+    def test_plain_string_unchanged(self):
+        self.assertEqual("api.example.com", _yaml_str_escape("api.example.com"))
+
+    def test_double_quote_escaped(self):
+        self.assertEqual('\\"', _yaml_str_escape('"'))
+
+    def test_backslash_escaped(self):
+        self.assertEqual("\\\\", _yaml_str_escape("\\"))
+
+    def test_newline_escaped(self):
+        self.assertEqual("\\n", _yaml_str_escape("\n"))
+
+    def test_carriage_return_escaped(self):
+        self.assertEqual("\\r", _yaml_str_escape("\r"))
+
+    def test_tab_escaped(self):
+        self.assertEqual("\\t", _yaml_str_escape("\t"))
+
+    def test_combined(self):
+        self.assertEqual('\\"\\n\\\\', _yaml_str_escape('"\n\\'))
+
+
+class TestRenderRoutesEscaping(unittest.TestCase):
+    """Stray quotes/newlines in manifest strings do not corrupt routes.yaml."""
+
+    @staticmethod
+    def _parsed(routes) -> list[dict]:  # type: ignore
+        return parse_yaml_subset(egress_render_routes(routes))["routes"]  # type: ignore
+
+    def test_host_with_double_quote_round_trips(self):
+        routes = (EgressRoute(host='bad"host.example'),)
+        parsed = self._parsed(routes)
+        self.assertEqual('bad"host.example', parsed[0]["host"])
+
+    def test_host_with_newline_round_trips(self):
+        routes = (EgressRoute(host="host\nextra.example"),)
+        parsed = self._parsed(routes)
+        self.assertEqual("host\nextra.example", parsed[0]["host"])
+
+    def test_auth_scheme_with_double_quote_round_trips(self):
+        routes = (EgressRoute(
+            host="api.example",
+            auth_scheme='Bear"er',
+            token_env="EGRESS_TOKEN_0",
+        ),)
+        parsed = self._parsed(routes)
+        self.assertEqual('Bear"er', parsed[0]["auth_scheme"])
+
+    def test_path_value_with_double_quote_round_trips(self):
+        from bot_bottle.egress_addon_core import PathMatch, MatchEntry
+        routes = (EgressRoute(
+            host="api.example",
+            matches=(MatchEntry(paths=(PathMatch(type="prefix", value='/v1/"quoted"/'),)),),
+        ),)
+        parsed = self._parsed(routes)
+        self.assertEqual('/v1/"quoted"/', parsed[0]["matches"][0]["paths"][0]["value"])
+
+    def test_header_value_with_double_quote_round_trips(self):
+        from bot_bottle.egress_addon_core import HeaderMatch, MatchEntry
+        routes = (EgressRoute(
+            host="api.example",
+            matches=(MatchEntry(headers=(HeaderMatch(name="x-h", value='val"ue'),)),),
+        ),)
+        parsed = self._parsed(routes)
+        self.assertEqual('val"ue', parsed[0]["matches"][0]["headers"][0]["value"])
 
 
 class TestResolveTokenValues(unittest.TestCase):
