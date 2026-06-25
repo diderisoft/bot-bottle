@@ -1,4 +1,4 @@
-"""DLP detectors for the egress proxy (PRD 0053).
+"""DLP detectors for the egress proxy (PRD 0053, prd-new).
 
 Pure Python, no mitmproxy dependency. Each detector is a module-level
 function returning `ScanResult | None`.
@@ -15,6 +15,8 @@ import gzip
 import re
 import typing
 import unicodedata
+from math import log2
+from collections import Counter
 from urllib.parse import quote as url_quote
 
 try:
@@ -107,20 +109,21 @@ def redact_tokens(
     text: str,
     *,
     env: typing.Mapping[str, str] | None = None,
+    sensitive_prefixes: tuple[str, ...] = ("EGRESS_TOKEN_",),
 ) -> str:
     """Replace token pattern matches and (if env given) provisioned secrets with REDACT."""
     for _, pattern in TOKEN_PATTERNS:
         text = pattern.sub(REDACT, text)
     if env is not None:
         for key, value in env.items():
-            if key.startswith("EGRESS_TOKEN_") and value:
+            if any(key.startswith(p) for p in sensitive_prefixes) and value:
                 for variant in _encoded_variants(value):
                     text = text.replace(variant, REDACT)
     return text
 
 
 # ---------------------------------------------------------------------------
-# Known secrets detector (Phase 1b)
+# Known secrets detector (Phase 1b, prd-new)
 # ---------------------------------------------------------------------------
 
 def _encoded_variants(secret: str) -> list[str]:
@@ -161,18 +164,64 @@ def _encoded_variants(secret: str) -> list[str]:
     return variants
 
 
+# ---------------------------------------------------------------------------
+# Fragmentation-resistant helpers (prd-new)
+# ---------------------------------------------------------------------------
+
+# Minimum length of alnum projection for projection-based checks to run.
+# Short secrets produce too many false positives in projection space.
+_ALNUM_MIN_LEN = 8
+
+# Minimum window length for the partial-substring sliding scan.
+PARTIAL_MATCH_MIN_LEN = 12
+
+
+def _alnum_projection(text: str) -> str:
+    """Return text with every non-alphanumeric character stripped.
+
+    Used for fragmentation-resistant matching: separator-injected secrets
+    (spaces, hyphens, dots inserted between characters) are identical to
+    their originals in alnum projection space.
+    """
+    return "".join(c for c in text if c.isalnum())
+
+
+def _find_partial_window(secret_alnum: str, text_alnum: str, min_len: int) -> int | None:
+    """Return the position in text_alnum where any min_len-char window of
+    secret_alnum first appears, or None.
+
+    Slides a window of width min_len across secret_alnum and searches for
+    each window in text_alnum.  The first hit position is returned.
+    """
+    if len(secret_alnum) < min_len or len(text_alnum) < min_len:
+        return None
+    for i in range(len(secret_alnum) - min_len + 1):
+        window = secret_alnum[i:i + min_len]
+        pos = text_alnum.find(window)
+        if pos >= 0:
+            return pos
+    return None
+
+
 def scan_known_secrets(
     text: str,
     *,
     location: str = "body",
     env: typing.Mapping[str, str] | None = None,
+    sensitive_prefixes: tuple[str, ...] = ("EGRESS_TOKEN_",),
     safe_tokens: typing.AbstractSet[str] | None = None,
 ) -> ScanResult | None:
     if env is None:
         return None
+
+    # Pre-compute alnum projection of the scan text once; reused per secret.
+    text_alnum: str | None = None
+
     for key, value in env.items():
-        if not key.startswith("EGRESS_TOKEN_") or not value:
+        if not any(key.startswith(p) for p in sensitive_prefixes) or not value:
             continue
+
+        # Pass 1: exact match across encoded variants (original behaviour).
         for variant in _encoded_variants(value):
             pos = text.find(variant)
             if pos >= 0:
@@ -188,6 +237,100 @@ def scan_known_secrets(
                     context=_snippet(text, pos, pos + len(variant)),
                     matched=variant,
                 )
+
+        # Pass 2 & 3: fragmentation-resistant projection checks.
+        secret_alnum = _alnum_projection(value)
+        if len(secret_alnum) < _ALNUM_MIN_LEN:
+            continue
+
+        if text_alnum is None:
+            text_alnum = _alnum_projection(text)
+
+        # Pass 2: full alnum-projection exact match (catches separator injection).
+        pos2 = text_alnum.find(secret_alnum)
+        if pos2 >= 0:
+            return ScanResult(
+                severity="block",
+                reason=(
+                    f"provisioned secret from {key} found in {location} "
+                    f"(fragmented match — separator injection)"
+                ),
+                location=location,
+                context=_snippet(text_alnum, pos2, pos2 + len(secret_alnum)),
+            )
+
+        # Pass 3: sliding-window partial match (catches chunked-substring leaks).
+        pos3 = _find_partial_window(secret_alnum, text_alnum, PARTIAL_MATCH_MIN_LEN)
+        if pos3 is not None:
+            return ScanResult(
+                severity="block",
+                reason=(
+                    f"provisioned secret from {key} found in {location} "
+                    f"(partial match — at least {PARTIAL_MATCH_MIN_LEN} consecutive "
+                    f"alphanumeric chars)"
+                ),
+                location=location,
+                context=_snippet(text_alnum, pos3, pos3 + PARTIAL_MATCH_MIN_LEN),
+            )
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Entropy detector (warn-only, prd-new)
+# ---------------------------------------------------------------------------
+
+# Sliding window size and step for the entropy scan.
+ENTROPY_WINDOW = 64
+ENTROPY_STEP = 32
+
+# Bits-per-character threshold.  Random ASCII printable ≈ 6.6 bits; random
+# lowercase hex ≈ 4 bits; random base64url ≈ 6 bits.  5.5 sits above
+# typical structured data (JSON, URLs) while staying below truly random
+# content.
+ENTROPY_BLOCK_THRESHOLD = 5.5
+
+
+def _shannon_entropy(text: str) -> float:
+    if not text:
+        return 0.0
+    counts = Counter(text)
+    n = len(text)
+    return -sum((c / n) * log2(c / n) for c in counts.values())
+
+
+def scan_entropy(
+    text: str,
+    *,
+    location: str = "body",
+    window: int = ENTROPY_WINDOW,
+    threshold: float = ENTROPY_BLOCK_THRESHOLD,
+) -> ScanResult | None:
+    """Warn-only detector: flag windows of `window` chars with Shannon entropy
+    above `threshold` bits per character.
+
+    Never blocks; always returns severity='warn'.  Disabled by default —
+    routes must opt in via dlp.outbound_detectors=['entropy'].
+    """
+    if not text:
+        return None
+    step = max(1, window // 2)
+    end = len(text)
+    # Scan overlapping windows; also check the final tail if shorter than window.
+    positions = list(range(0, end - window + 1, step))
+    if end < window:
+        positions = [0]
+    elif (end - window) % step != 0:
+        positions.append(end - window)
+    for i in positions:
+        chunk = text[i:i + window]
+        if _shannon_entropy(chunk) >= threshold:
+            return ScanResult(
+                severity="warn",
+                reason=f"high-entropy content in {location} (possible encrypted exfil)",
+                location=location,
+                context=_snippet(text, i, i + len(chunk)),
+            )
     return None
 
 
@@ -306,11 +449,18 @@ def scan_crlf_injection(text: str) -> ScanResult | None:
 
 
 __all__ = [
+    "ENTROPY_BLOCK_THRESHOLD",
+    "ENTROPY_WINDOW",
+    "ENTROPY_STEP",
+    "PARTIAL_MATCH_MIN_LEN",
     "REDACT",
     "SNIPPET_CONTEXT",
     "TOKEN_PATTERNS",
+    "_alnum_projection",
+    "_shannon_entropy",
     "redact_tokens",
     "scan_crlf_injection",
+    "scan_entropy",
     "scan_known_secrets",
     "scan_naive_injection",
     "scan_token_patterns",

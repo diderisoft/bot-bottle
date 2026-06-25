@@ -1273,6 +1273,102 @@ class TestBuildTokenAllowPayload(unittest.TestCase):
         result = ScanResult(severity="block", reason="r", matched="x")
         payload = build_token_allow_payload("h", "GET", "/", result)
         self.assertNotIn("context:", payload)
+class TestScanOutboundEnhanced(unittest.TestCase):
+    """scan_outbound changes from prd-new: binary decode, entropy detector,
+    broadened known-value prefixes, fragmentation resistance."""
+
+    _ROUTE = Route(host="api.example.com")
+    _ROUTE_ENTROPY = Route(
+        host="api.example.com",
+        outbound_detectors=("entropy",),
+    )
+
+    def test_binary_body_latin1_decode_finds_ascii_secret(self):
+        # Body contains valid ASCII secret surrounded by non-UTF-8 bytes.
+        secret = "supersecrettoken99"
+        env = {"EGRESS_TOKEN_0": secret}
+        # Wrap the secret in bytes that are invalid UTF-8.
+        body = b"\x80\x81" + secret.encode("ascii") + b"\xff"
+        result = scan_outbound(self._ROUTE, body, env)
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual("block", result.severity)
+
+    def test_binary_body_valid_utf8_decoded_correctly(self):
+        env = {"EGRESS_TOKEN_0": "mysecret"}
+        # Valid UTF-8 body — should be decoded as UTF-8, not latin-1.
+        body = "clean body with mysecret".encode("utf-8")
+        result = scan_outbound(self._ROUTE, body, env)
+        self.assertIsNotNone(result)
+
+    def test_entropy_detector_off_by_default(self):
+        import string
+        # High-entropy content should NOT warn if the route has no entropy detector.
+        alphabet = (string.ascii_letters + string.digits + "+/")[:64]
+        result = scan_outbound(self._ROUTE, alphabet, {})
+        self.assertIsNone(result)
+
+    def test_entropy_detector_warns_when_enabled(self):
+        import string
+        alphabet = (string.ascii_letters + string.digits + "+/")[:64]
+        result = scan_outbound(self._ROUTE_ENTROPY, alphabet, {})
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual("warn", result.severity)
+
+    def test_bot_bottle_sensitive_prefixes_env_var(self):
+        # When the sidecar env contains BOT_BOTTLE_SENSITIVE_PREFIXES,
+        # scan_outbound should scan those additional prefixes.
+        secret = "extra-sensitive-value-abc"
+        env = {
+            "MY_CRED_KEY": secret,
+            "BOT_BOTTLE_SENSITIVE_PREFIXES": "MY_CRED_",
+        }
+        result = scan_outbound(self._ROUTE, f"x={secret}", env)
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual("block", result.severity)
+
+    def test_bot_bottle_sensitive_prefixes_multiple(self):
+        secret = "my-api-key-value-xyz"
+        env = {
+            "ANTHROPIC_API_0": secret,
+            "BOT_BOTTLE_SENSITIVE_PREFIXES": "ANTHROPIC_API_,OTHER_",
+        }
+        result = scan_outbound(self._ROUTE, f"auth={secret}", env)
+        self.assertIsNotNone(result)
+
+    def test_canary_detected_via_egress_token_canary(self):
+        # The canary (injected as EGRESS_TOKEN_CANARY) is caught by known_secrets.
+        canary = "canaryvalue12345abcdef"
+        env = {"EGRESS_TOKEN_CANARY": canary}
+        result = scan_outbound(self._ROUTE, f"data={canary}", env)
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual("block", result.severity)
+        self.assertIn("EGRESS_TOKEN_CANARY", result.reason)
+
+    def test_fragmented_canary_blocked(self):
+        # Canary with separators injected is still caught.
+        canary = "supersecretcanary99"
+        env = {"EGRESS_TOKEN_CANARY": canary}
+        fragmented = "-".join(canary)
+        result = scan_outbound(self._ROUTE, f"x={fragmented}", env)
+        self.assertIsNotNone(result)
+
+
+class TestOutboundDetectorNames(unittest.TestCase):
+    def test_entropy_in_outbound_detector_names(self):
+        from bot_bottle.egress_addon_core import OUTBOUND_DETECTOR_NAMES
+        self.assertIn("entropy", OUTBOUND_DETECTOR_NAMES)
+
+    def test_known_secrets_in_outbound_detector_names(self):
+        from bot_bottle.egress_addon_core import OUTBOUND_DETECTOR_NAMES
+        self.assertIn("known_secrets", OUTBOUND_DETECTOR_NAMES)
+
+    def test_token_patterns_in_outbound_detector_names(self):
+        from bot_bottle.egress_addon_core import OUTBOUND_DETECTOR_NAMES
+        self.assertIn("token_patterns", OUTBOUND_DETECTOR_NAMES)
 
 
 if __name__ == "__main__":

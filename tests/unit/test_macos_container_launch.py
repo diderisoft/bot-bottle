@@ -42,6 +42,7 @@ def _plan(
         routes_path=routes_path,
         routes=("route",),
         token_env_map={"EGRESS_TOKEN_0": "HOST_TOKEN"},
+        canary="",
     )
     if git:
         key_path = stage_dir / "origin-key"
@@ -271,7 +272,7 @@ def _build_plan(stage_dir: Path) -> MacosContainerBottlePlan:
         manifest=_MANIFEST,
         stage_dir=stage_dir,
         git_gate_plan=cast(GitGatePlan, SimpleNamespace(upstreams=())),
-        egress_plan=cast(EgressPlan, SimpleNamespace()),
+        egress_plan=cast(EgressPlan, SimpleNamespace(canary="")),
         supervise_plan=None,
         agent_provision=AgentProvisionPlan(
             template="claude",

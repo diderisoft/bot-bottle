@@ -34,7 +34,7 @@ VALID_METHODS = frozenset({
     "CONNECT",
 })
 
-OUTBOUND_DETECTOR_NAMES = frozenset({"token_patterns", "known_secrets"})
+OUTBOUND_DETECTOR_NAMES = frozenset({"token_patterns", "known_secrets", "entropy"})
 INBOUND_DETECTOR_NAMES = frozenset({"naive_injection_detection"})
 
 # Per-route policy for what the proxy does when an outbound DLP detector
@@ -729,17 +729,28 @@ def scan_outbound(
     try:
         from dlp_detectors import (  # type: ignore[import-not-found]
             scan_crlf_injection,
+            scan_entropy,
             scan_known_secrets,
             scan_token_patterns,
         )
     except ImportError:  # pragma: no cover - host-side path
         from .dlp_detectors import (  # type: ignore[import-not-found]
             scan_crlf_injection,
+            scan_entropy,
             scan_known_secrets,
             scan_token_patterns,
         )
 
-    text = body if isinstance(body, str) else body.decode("utf-8", errors="replace")
+    # Binary bodies: latin-1 is a bijective byte↔codepoint mapping that
+    # preserves every byte value, so ASCII-range secret strings remain
+    # findable by str.find / regex.  Prefer strict UTF-8 for valid text bodies.
+    if isinstance(body, bytes):
+        try:
+            text = body.decode("utf-8")
+        except UnicodeDecodeError:
+            text = body.decode("latin-1")
+    else:
+        text = body
 
     # CRLF injection is only an attack in the request line + headers, never the
     # body: an HTTP body is delimited by Content-Length, so CRLF bytes there
@@ -758,9 +769,27 @@ def scan_outbound(
             return result
 
     if _detector_enabled(route.outbound_detectors, "known_secrets"):
+        # BOT_BOTTLE_SENSITIVE_PREFIXES lets operators add extra env prefixes
+        # beyond EGRESS_TOKEN_* without changing the manifest schema.
+        extra_raw = environ.get("BOT_BOTTLE_SENSITIVE_PREFIXES", "")
+        extra = tuple(p for p in extra_raw.split(",") if p)
+        sensitive_prefixes = ("EGRESS_TOKEN_",) + extra
         result = scan_known_secrets(
-            text, location="body", env=environ, safe_tokens=safe_tokens,
+            text, location="body", env=environ,
+            sensitive_prefixes=sensitive_prefixes, safe_tokens=safe_tokens,
         )
+        if result is not None:
+            return result
+
+    # Entropy scanning requires explicit opt-in: it is NOT part of the
+    # default "all detectors" set because it produces false positives on
+    # legitimate base64 / binary payloads.  Routes must list "entropy" in
+    # dlp.outbound_detectors to enable it.
+    if (
+        route.outbound_detectors is not None
+        and "entropy" in route.outbound_detectors
+    ):
+        result = scan_entropy(text, location="body")
         if result is not None:
             return result
 
