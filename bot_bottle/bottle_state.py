@@ -111,6 +111,10 @@ class BottleMetadata:
     backend: str = ""
     label: str = ""
     color: str = ""
+    # Ordered bottle names selected at launch (issue #269). Empty tuple
+    # for state dirs written before this change; resume falls back to
+    # the agent's `bottle:` field in that case.
+    bottle_names: tuple[str, ...] = ()
 
 
 def metadata_path(identity: str) -> Path:
@@ -138,6 +142,10 @@ def read_metadata(identity: str) -> BottleMetadata | None:
     if not isinstance(raw, dict):
         return None
     raw_typed = cast(dict[str, object], raw)
+    raw_bottle_names = raw_typed.get("bottle_names", [])
+    bottle_names: tuple[str, ...] = ()
+    if isinstance(raw_bottle_names, list):
+        bottle_names = tuple(str(n) for n in raw_bottle_names if isinstance(n, str))
     return BottleMetadata(
         identity=str(raw_typed.get("identity", identity)),
         agent_name=str(raw_typed.get("agent_name", "")),
@@ -148,6 +156,7 @@ def read_metadata(identity: str) -> BottleMetadata | None:
         backend=str(raw_typed.get("backend", "")),
         label=str(raw_typed.get("label", "")),
         color=str(raw_typed.get("color", "")),
+        bottle_names=bottle_names,
     )
 
 

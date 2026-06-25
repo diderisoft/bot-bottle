@@ -49,6 +49,7 @@ def cmd_resume(argv: list[str]) -> int:
         copy_cwd=metadata.copy_cwd,
         user_cwd=metadata.cwd or USER_CWD,
         identity=metadata.identity,
+        bottle_names=tuple(metadata.bottle_names),
     )
     backend_name = metadata.backend or None
     return _launch_bottle(

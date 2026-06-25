@@ -17,6 +17,42 @@ import sys
 from typing import Any, Optional
 
 
+def filter_multiselect(
+    items: list[str],
+    *,
+    title: str = "",
+    initial: Optional[list[str]] = None,
+    tty_path: str = "/dev/tty",
+) -> Optional[list[str]]:
+    """Render a multi-select picker over *items*.
+
+    Returns the ordered list of selected items, or ``None`` if the user
+    cancelled (Esc / ``q`` / Ctrl-C / Ctrl-D with no items).
+
+    Press Space or Enter to toggle the item under the cursor.
+    Press Ctrl-D to confirm the current selection (returns even if empty).
+    Press Esc/q to cancel (returns None).
+
+    *initial* pre-populates the selection in insertion order. Items
+    added are appended; removed items leave the remaining order unchanged.
+    """
+    if not items:
+        return []
+
+    try:
+        tty_fd = open(tty_path, "r+b", buffering=0)
+    except OSError:
+        return None
+
+    try:
+        fd_dup = os.dup(tty_fd.fileno())
+        return _run_multiselect(
+            items, title=title, initial=list(initial or []), tty_fd=fd_dup
+        )
+    finally:
+        tty_fd.close()
+
+
 def filter_select(
     items: list[str],
     *,
@@ -219,6 +255,179 @@ def _addstr_safe(screen: Any, row: int, col: int, text: str, attr: int = curses.
         screen.addstr(row, col, text, attr)
     except curses.error:
         pass
+
+
+# ---------------------------------------------------------------------------
+# filter_multiselect internals
+# ---------------------------------------------------------------------------
+
+_KEY_SPACE = 32
+
+
+def _run_multiselect(
+    items: list[str], *, title: str, initial: list[str], tty_fd: int
+) -> Optional[list[str]]:
+    """Drive a curses multi-select session on *tty_fd*."""
+    os.environ.setdefault("TERM", "xterm-256color")
+
+    orig_stdin = sys.__stdin__
+    orig_stdout = sys.__stdout__
+
+    try:
+        import io
+        tty_text = io.TextIOWrapper(io.FileIO(tty_fd, mode='r+'), write_through=True)
+        sys.__stdin__ = tty_text   # type: ignore[assignment]
+        sys.__stdout__ = tty_text  # type: ignore[assignment]
+
+        screen = curses.initscr()
+        curses.noecho()
+        curses.cbreak()
+        screen.keypad(True)
+
+        try:
+            result = _multiselect_loop(screen, items, title=title, initial=initial)
+        finally:
+            screen.keypad(False)
+            curses.nocbreak()
+            curses.echo()
+            curses.endwin()
+    except Exception:  # noqa: W0718
+        return None
+    finally:
+        sys.__stdin__ = orig_stdin    # type: ignore[assignment]
+        sys.__stdout__ = orig_stdout  # type: ignore[assignment]
+
+    return result
+
+
+def _multiselect_loop(
+    screen: Any, items: list[str], *, title: str, initial: list[str]
+) -> Optional[list[str]]:
+    query = ""
+    cursor = 0
+    selected: list[str] = [s for s in initial if s in items]
+
+    while True:
+        filtered = _filter_items(items, query)
+
+        if not filtered:
+            cursor = 0
+        elif cursor >= len(filtered):
+            cursor = len(filtered) - 1
+
+        try:
+            _render_multiselect(screen, filtered, cursor, query=query, title=title, selected=selected)
+        except curses.error:
+            return None
+
+        try:
+            key = screen.getch()
+        except KeyboardInterrupt:
+            return None
+
+        if key in (_KEY_ESC, _KEY_CTRL_C, ord("q")):
+            return None
+
+        if key == _KEY_CTRL_D:
+            return list(selected)
+
+        if key in (curses.KEY_ENTER, _KEY_ENTER_ALT, ord("\r"), _KEY_SPACE):
+            if filtered:
+                item = filtered[cursor]
+                if item in selected:
+                    selected.remove(item)
+                else:
+                    selected.append(item)
+
+        elif key in (curses.KEY_UP, ord("k")):
+            if cursor > 0:
+                cursor -= 1
+
+        elif key in (curses.KEY_DOWN, ord("j")):
+            if cursor < len(filtered) - 1:
+                cursor += 1
+
+        elif key in (curses.KEY_BACKSPACE, _KEY_BACKSPACE_WIN, 127):
+            query = query[:-1]
+            new_filtered = _filter_items(items, query)
+            if cursor >= len(new_filtered):
+                cursor = max(0, len(new_filtered) - 1)
+
+        elif 32 <= key <= 126 and key != _KEY_SPACE:
+            query += chr(key)
+            cursor = 0
+
+
+def _render_multiselect(
+    screen: Any,
+    filtered: list[str],
+    cursor: int,
+    *,
+    query: str,
+    title: str,
+    selected: list[str],
+) -> None:
+    screen.erase()
+    rows, cols = screen.getmaxyx()
+    min_rows = 7
+
+    if rows < min_rows:
+        raise curses.error("terminal too small")
+
+    row = 0
+
+    if title and row < rows - 1:
+        _addstr_safe(screen, row, 0, title[:cols - 1], curses.A_BOLD)
+        row += 1
+
+    filter_label = f"Filter: {query}"
+    if row < rows - 1:
+        _addstr_safe(screen, row, 0, filter_label[:cols - 1])
+        row += 1
+
+    sep = "─" * min(cols - 1, 40)
+    if row < rows - 1:
+        _addstr_safe(screen, row, 0, sep)
+        row += 1
+
+    # Reserve rows for: sep + selected-line + sep + help-line = 4
+    list_start = row
+    list_rows = rows - list_start - 4
+    if list_rows < 1:
+        return
+
+    selected_set = set(selected)
+    scroll = max(0, cursor - list_rows + 1)
+    visible = filtered[scroll: scroll + list_rows]
+
+    for idx, item in enumerate(visible):
+        abs_idx = scroll + idx
+        mark = "[*]" if item in selected_set else "[ ]"
+        prefix = "> " if abs_idx == cursor else "  "
+        line = (prefix + mark + " " + item)[:cols - 1]
+        attr = curses.A_REVERSE if abs_idx == cursor else curses.A_NORMAL
+        if row < rows - 4:
+            _addstr_safe(screen, row, 0, line, attr)
+        row += 1
+
+    if row < rows - 3:
+        _addstr_safe(screen, row, 0, sep)
+        row += 1
+
+    selected_summary = "Selected (in order): " + (", ".join(selected) if selected else "(none)")
+    if row < rows - 2:
+        _addstr_safe(screen, row, 0, selected_summary[:cols - 1])
+        row += 1
+
+    if row < rows - 1:
+        _addstr_safe(screen, row, 0, sep)
+        row += 1
+
+    help_line = "[↑↓/jk] move  [Space/Enter] toggle  [Ctrl-D] done  [Esc/q] cancel"
+    if row < rows:
+        _addstr_safe(screen, min(rows - 1, row), 0, help_line[:cols - 1])
+
+    screen.refresh()
 
 
 # ---------------------------------------------------------------------------

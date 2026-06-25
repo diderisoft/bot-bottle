@@ -18,8 +18,8 @@ _FILENAME_RX = re.compile(r"^[a-z][a-z0-9-]*$")
 BOTTLE_KEYS = frozenset(
     {"env", "extends", "agent_provider", "git-gate", "egress", "supervise"}
 )
-AGENT_KEYS_REQUIRED = frozenset({"bottle"})
-AGENT_KEYS_OPTIONAL = frozenset({"skills", "git-gate"})
+AGENT_KEYS_REQUIRED: frozenset[str] = frozenset()
+AGENT_KEYS_OPTIONAL = frozenset({"bottle", "skills", "git-gate"})
 
 # Claude Code subagent fields bot-bottle ignores at launch but does
 # not reject. This lets the same file double as

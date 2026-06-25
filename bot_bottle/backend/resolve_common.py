@@ -63,6 +63,7 @@ def write_launch_metadata(
         backend=backend,
         label=spec.label,
         color=spec.color,
+        bottle_names=spec.bottle_names,
     ))
 
 

@@ -73,6 +73,20 @@ def cmd_start(argv: list[str]) -> int:
 
     backend_name: str | None = args.backend
 
+    # Bottle multiselect: always show after agent selection so operators
+    # can compose bottles at launch time without editing agent manifests.
+    available_bottles = manifest.all_bottle_names
+    initial_bottle = _peek_agent_bottle(manifest, agent_name)
+    initial_bottles = [initial_bottle] if initial_bottle else []
+    selected_bottles = tui.filter_multiselect(
+        available_bottles,
+        title="Select bottles",
+        initial=initial_bottles,
+    )
+    if selected_bottles is None:
+        return 0
+    bottle_names = tuple(selected_bottles)
+
     label, color = tui.name_color_modal(default_label=agent_name)
     label, color = _resolve_unique_label(label, color)
 
@@ -83,6 +97,7 @@ def cmd_start(argv: list[str]) -> int:
         user_cwd=USER_CWD,
         label=label,
         color=color,
+        bottle_names=bottle_names,
     )
     return _launch_bottle(
         spec,
@@ -187,6 +202,38 @@ def _identity_from_plan(plan: object) -> str:
     identity attribute; for now we duck-type to keep this layer
     backend-agnostic."""
     return getattr(plan, "slug", "")
+
+
+def _peek_agent_bottle(manifest: ManifestIndex, agent_name: str) -> str:
+    """Return the `bottle:` value from the named agent's frontmatter without
+    fully parsing the agent file, or "" when absent or unreadable.
+
+    Used to pre-populate the bottle multiselect with the agent's default
+    bottle so operators who haven't removed `bottle:` from their manifests
+    don't need to re-select it every time."""
+    if manifest.home_md is None:
+        # Eager mode (from_json_obj): agent is pre-parsed.
+        if agent_name in manifest.agents:
+            return manifest.agents[agent_name].bottle
+        return ""
+
+    from ..manifest_loader import scan_agent_names
+    from ..yaml_subset import YamlSubsetError, parse_frontmatter
+
+    home_agents = scan_agent_names(manifest.home_md / "agents")
+    cwd_agents: dict[str, Path] = {}
+    if manifest.cwd_md is not None:
+        cwd_agents = scan_agent_names(manifest.cwd_md / "agents")
+    merged = {**home_agents, **cwd_agents}
+    path = merged.get(agent_name)
+    if path is None:
+        return ""
+    try:
+        fm, _ = parse_frontmatter(path.read_text())
+        bottle = fm.get("bottle", "")
+        return str(bottle) if isinstance(bottle, str) else ""
+    except (OSError, YamlSubsetError):
+        return ""
 
 
 def _resolve_unique_label(label: str, color: str) -> tuple[str, str]:

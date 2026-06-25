@@ -1,4 +1,4 @@
-"""Unit tests for bot_bottle.cli.tui — filter_select internals.
+"""Unit tests for bot_bottle.cli.tui — filter_select and filter_multiselect.
 
 We test the pure-Python logic (_filter_items, cursor movement, confirm,
 cancel) by exercising the internal helpers directly, without spinning up
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import unittest
 
-from bot_bottle.cli.tui import _filter_items, filter_select
+from bot_bottle.cli.tui import _filter_items, filter_multiselect, filter_select
 
 
 class TestFilterItems(unittest.TestCase):
@@ -43,6 +43,17 @@ class TestFilterSelectEmptyItems(unittest.TestCase):
     def test_returns_none_when_tty_unavailable(self):
         # /nonexistent is guaranteed to not open.
         result = filter_select(["a", "b"], tty_path="/nonexistent/tty")
+        self.assertIsNone(result)
+
+
+class TestFilterMultiselectEmptyItems(unittest.TestCase):
+    def test_returns_empty_list_for_empty_items(self):
+        # No TTY needed — short-circuits before opening tty.
+        result = filter_multiselect([], title="Select", tty_path="/dev/null")
+        self.assertEqual([], result)
+
+    def test_returns_none_when_tty_unavailable(self):
+        result = filter_multiselect(["a", "b"], tty_path="/nonexistent/tty")
         self.assertIsNone(result)
 
 

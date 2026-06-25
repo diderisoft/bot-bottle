@@ -32,6 +32,25 @@ def check_stale_json(dir_path: Path, md_dir: Path, label: str) -> None:
         )
 
 
+def scan_bottle_names(bottles_dir: Path) -> list[str]:
+    """Scan `<bottles_dir>/*.md` for valid filenames and return sorted bottle names.
+
+    No file content is read. Invalid filenames are skipped with a warning."""
+    result: list[str] = []
+    if not bottles_dir.is_dir():
+        return result
+    for path in sorted(bottles_dir.glob("*.md")):
+        name = entity_name_from_path(path)
+        if name is None:
+            warn(
+                f"skipping {path}: filename must match "
+                f"[a-z][a-z0-9-]*.md (got {path.name!r})"
+            )
+            continue
+        result.append(name)
+    return result
+
+
 def scan_agent_names(agents_dir: Path) -> dict[str, Path]:
     """Scan `<agents_dir>/*.md` for valid filenames and return `{name: path}`.
 

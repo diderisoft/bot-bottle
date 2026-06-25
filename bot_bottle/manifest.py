@@ -213,6 +213,65 @@ def _merge_git_user(
     )
 
 
+def _resolve_effective_bottle_eager(
+    agent_name: str,
+    agent: "ManifestAgent",
+    bottle_names: "tuple[str, ...]",
+    bottles: "Mapping[str, ManifestBottle]",
+) -> "ManifestBottle":
+    """Return the effective ManifestBottle for the eager (from_json_obj) path.
+
+    When bottle_names is non-empty they are merged in order. When empty, falls
+    back to agent.bottle. Raises ManifestError when neither is set."""
+    from .manifest_extends import merge_bottles_runtime
+
+    if bottle_names:
+        resolved: list[ManifestBottle] = []
+        for bn in bottle_names:
+            if bn not in bottles:
+                available = ", ".join(sorted(bottles.keys())) or "(none)"
+                raise ManifestError(
+                    f"bottle '{bn}' not defined. Available: {available}"
+                )
+            resolved.append(bottles[bn])
+        return merge_bottles_runtime(resolved)
+
+    if not agent.bottle:
+        raise ManifestError(
+            f"agent '{agent_name}' has no 'bottle' field and no bottles were "
+            f"selected at launch. Select at least one bottle or add "
+            f"'bottle: <name>' to the agent manifest."
+        )
+    return bottles[agent.bottle]
+
+
+def _resolve_effective_bottle_lazy(
+    agent_name: str,
+    agent_bottle: str,
+    bottle_names: "tuple[str, ...]",
+    bottles_dir: "Path",
+) -> "ManifestBottle":
+    """Return the effective ManifestBottle for the lazy (from_md_dirs) path.
+
+    When bottle_names is non-empty they are resolved from disk and merged in
+    order. When empty, falls back to agent_bottle. Raises ManifestError when
+    neither is set."""
+    from .manifest_extends import merge_bottles_runtime
+    from .manifest_loader import load_bottle_chain_from_dir
+
+    if bottle_names:
+        resolved = [load_bottle_chain_from_dir(bn, bottles_dir) for bn in bottle_names]
+        return merge_bottles_runtime(resolved)
+
+    if not agent_bottle:
+        raise ManifestError(
+            f"agent '{agent_name}' has no 'bottle' field and no bottles were "
+            f"selected at launch. Select at least one bottle or add "
+            f"'bottle: <name>' to the agent manifest."
+        )
+    return load_bottle_chain_from_dir(agent_bottle, bottles_dir)
+
+
 @dataclass(frozen=True)
 class Manifest:
     """Single-agent/bottle value type. Returned by ManifestIndex.load_for_agent().
@@ -359,6 +418,18 @@ class ManifestIndex:
         return cls(bottles=bottles, agents=agents)
 
     @property
+    def all_bottle_names(self) -> list[str]:
+        """Sorted list of all discoverable bottle names.
+
+        In names-only mode (from resolve/from_md_dirs) this scans bottle
+        filenames without reading their content. In eager mode (from
+        from_json_obj) it returns the pre-parsed bottles' names."""
+        if self.home_md is not None:
+            from .manifest_loader import scan_bottle_names
+            return scan_bottle_names(self.home_md / "bottles")
+        return sorted(self.bottles.keys())
+
+    @property
     def all_agent_names(self) -> list[str]:
         """Sorted list of all discoverable agent names.
 
@@ -374,8 +445,17 @@ class ManifestIndex:
             return sorted(home_names | cwd_names)
         return sorted(self.agents.keys())
 
-    def load_for_agent(self, agent_name: str) -> "Manifest":
+    def load_for_agent(
+        self,
+        agent_name: str,
+        bottle_names: "tuple[str, ...] | None" = None,
+    ) -> "Manifest":
         """Parse the named agent and its bottle; return a single-value Manifest.
+
+        `bottle_names` is an ordered list of bottles selected at launch time.
+        When non-empty they are resolved and merged in order (index 0 = base;
+        later entries override). When empty or None, falls back to the agent's
+        own `bottle:` field. Raises ManifestError when neither is set.
 
         In lazy mode (from resolve/from_md_dirs) the agent file and its
         bottle chain are read from disk for the first time here.  In eager
@@ -387,6 +467,8 @@ class ManifestIndex:
 
         Always raises ManifestError if the agent is unknown or invalid.
         Backends call this at preflight inside _validate."""
+        effective_bottle_names: tuple[str, ...] = bottle_names or ()
+
         if self.home_md is None:
             # Eager manifest (from_json_obj): data already parsed; filter to
             # the one requested agent and its bottle so the returned Manifest
@@ -397,7 +479,9 @@ class ManifestIndex:
                     f"agent '{agent_name}' not defined. Available: {available}"
                 )
             agent = self.agents[agent_name]
-            raw_bottle = self.bottles[agent.bottle]
+            raw_bottle = _resolve_effective_bottle_eager(
+                agent_name, agent, effective_bottle_names, self.bottles
+            )
             merged = _merge_git_user(agent.git_user, raw_bottle.git_user)
             bottle = raw_bottle if merged == raw_bottle.git_user else replace(raw_bottle, git_user=merged)
             return Manifest(agent=agent, bottle=bottle)
@@ -429,26 +513,31 @@ class ManifestIndex:
 
         validate_agent_frontmatter_keys(agent_path, fm.keys())
 
-        bottle_name = fm.get("bottle")
-        if not isinstance(bottle_name, str) or not bottle_name:
-            raise ManifestError(
-                f"agent '{agent_name}' must declare a 'bottle' field "
-                f"naming a defined bottle"
-            )
-
-        # Load the bottle chain (may raise ManifestError).
+        # Determine the effective bottle name(s).
+        agent_bottle = fm.get("bottle") or ""
         bottles_dir = self.home_md / "bottles"
-        raw_bottle = load_bottle_chain_from_dir(bottle_name, bottles_dir)
+        raw_bottle = _resolve_effective_bottle_lazy(
+            agent_name, str(agent_bottle), effective_bottle_names, bottles_dir
+        )
+        effective_bottle_name = (
+            effective_bottle_names[-1] if effective_bottle_names
+            else str(agent_bottle)
+        )
 
         # Build and validate the full ManifestAgent.
         agent_dict: dict[str, object] = {
-            "bottle": bottle_name,
             "skills": fm.get("skills", []),
             "prompt": body.strip(),
         }
+        if agent_bottle:
+            agent_dict["bottle"] = agent_bottle
         if "git-gate" in fm:
             agent_dict["git-gate"] = fm["git-gate"]
-        agent = ManifestAgent.from_dict(agent_name, agent_dict, {bottle_name})
+        # Pass the effective bottle name as the known-bottles set so agents
+        # that have bottle: set are validated; agents without bottle: pass {}
+        # since bottle_names were already resolved above.
+        known = {effective_bottle_name} if effective_bottle_name else set()
+        agent = ManifestAgent.from_dict(agent_name, agent_dict, known)
 
         merged_user = _merge_git_user(agent.git_user, raw_bottle.git_user)
         bottle = raw_bottle if merged_user == raw_bottle.git_user else replace(raw_bottle, git_user=merged_user)

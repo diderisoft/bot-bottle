@@ -9,6 +9,58 @@ if TYPE_CHECKING:
     from .manifest_egress import ManifestEgressConfig
 
 
+def merge_bottles_runtime(bottles: "list[ManifestBottle]") -> "ManifestBottle":
+    """Merge an ordered list of pre-resolved ManifestBottle objects.
+
+    Index 0 is the base; each subsequent entry is applied on top using
+    the same field-merge rules as the file-based extends machinery:
+      env: dict merge, later wins; git_user: per-field overlay, later
+      wins on non-empty; git (repos): union by name, later wins; egress
+      routes: concatenate; agent_provider, supervise: later replaces.
+    """
+    if not bottles:
+        raise ValueError("merge_bottles_runtime requires at least one bottle")
+    result = bottles[0]
+    for override in bottles[1:]:
+        result = _merge_two_bottles_runtime(result, override)
+    return result
+
+
+def _merge_two_bottles_runtime(base: "ManifestBottle", override: "ManifestBottle") -> "ManifestBottle":
+    from .manifest import ManifestBottle, ManifestGitUser
+    from .manifest_egress import ManifestEgressConfig
+
+    merged_env = {**base.env, **override.env}
+
+    merged_git_user = ManifestGitUser(
+        name=override.git_user.name or base.git_user.name,
+        email=override.git_user.email or base.git_user.email,
+    )
+
+    # git repos: union keyed by Name, override wins per-name.
+    base_repos_by_name = {entry.Name: entry for entry in base.git}
+    override_repos_by_name = {entry.Name: entry for entry in override.git}
+    merged_repos_names = list(base_repos_by_name) + [
+        n for n in override_repos_by_name if n not in base_repos_by_name
+    ]
+    merged_git = tuple(
+        override_repos_by_name.get(n, base_repos_by_name[n])
+        for n in merged_repos_names
+    )
+
+    merged_routes: tuple[ManifestEgressRoute, ...] = base.egress.routes + override.egress.routes
+    merged_egress = ManifestEgressConfig(routes=merged_routes, Log=override.egress.Log)
+
+    return ManifestBottle(
+        env=merged_env,
+        agent_provider=override.agent_provider,
+        git=merged_git,
+        git_user=merged_git_user,
+        egress=merged_egress,
+        supervise=override.supervise,
+    )
+
+
 def resolve_bottles(raws: dict[str, dict[str, object]]) -> dict[str, ManifestBottle]:
     """Apply `extends:` chains and return resolved ManifestBottle objects."""
     cache: dict[str, ManifestBottle] = {}

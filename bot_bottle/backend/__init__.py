@@ -72,6 +72,9 @@ class BottleSpec:
     identity: str = ""
     label: str = ""
     color: str = ""
+    # Ordered bottle names selected at launch (issue #269). When non-empty
+    # they are merged in order and replace the agent's `bottle:` field.
+    bottle_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -129,7 +132,11 @@ class BottlePlan(ABC):
         info(f"provider        : {self.agent_provision.template}")
         print_multi("env             ", env_names)
         print_multi("skills          ", list(agent.skills))
-        info(f"bottle          : {agent.bottle}")
+        effective_bottles = (
+            list(spec.bottle_names) if spec.bottle_names
+            else ([agent.bottle] if agent.bottle else [])
+        )
+        print_multi("bottle          ", effective_bottles)
 
         identity = manifest.git_identity_summary()
         if identity:
@@ -363,7 +370,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         Returns the loaded Manifest for the selected agent. Subclasses with
         additional preconditions should override and call
         `super()._validate(spec)` first."""
-        manifest = spec.manifest.load_for_agent(spec.agent_name)
+        manifest = spec.manifest.load_for_agent(spec.agent_name, spec.bottle_names)
         self._validate_skills(manifest.agent.skills)
         self._validate_agent_provider_dockerfile(spec, manifest)
         return manifest
@@ -389,9 +396,12 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         if not path.is_absolute():
             path = Path(spec.user_cwd) / path
         if not path.is_file():
+            effective = (
+                ", ".join(spec.bottle_names) if spec.bottle_names else manifest.agent.bottle
+            )
             die(
                 f"agent_provider.dockerfile for bottle "
-                f"'{manifest.agent.bottle}' not found: {path}"
+                f"'{effective}' not found: {path}"
             )
 
     @abstractmethod

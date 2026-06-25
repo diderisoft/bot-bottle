@@ -109,7 +109,8 @@ class ManifestAgentProvider:
 
 @dataclass(frozen=True)
 class ManifestAgent:
-    bottle: str
+    # Optional: when empty the operator selects bottles at launch time.
+    bottle: str = ""
     skills: tuple[str, ...] = ()
     prompt: str = ""
     # Per-agent git identity (issue #94). Overlays the referenced
@@ -129,18 +130,20 @@ class ManifestAgent:
                 f"allowed keys are {allowed}."
             )
 
-        bottle = d.get("bottle")
-        if not isinstance(bottle, str) or not bottle:
-            raise ManifestError(
-                f"agent '{name}' must declare a 'bottle' field naming a "
-                f"defined bottle"
-            )
-        if bottle not in bottle_names:
-            available = ", ".join(sorted(bottle_names)) or "(none defined)"
-            raise ManifestError(
-                f"agent '{name}' references bottle '{bottle}', which is not defined. "
-                f"Available: {available}"
-            )
+        bottle_raw = d.get("bottle")
+        bottle = ""
+        if bottle_raw is not None:
+            if not isinstance(bottle_raw, str) or not bottle_raw:
+                raise ManifestError(
+                    f"agent '{name}' bottle must be a non-empty string when declared"
+                )
+            if bottle_raw not in bottle_names:
+                available = ", ".join(sorted(bottle_names)) or "(none defined)"
+                raise ManifestError(
+                    f"agent '{name}' references bottle '{bottle_raw}', which is not defined. "
+                    f"Available: {available}"
+                )
+            bottle = bottle_raw
 
         skills: tuple[str, ...] = ()
         skills_raw = d.get("skills")
