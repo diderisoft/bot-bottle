@@ -54,11 +54,23 @@ jobs:
           echo "percent=$PERCENT" >> $GITHUB_OUTPUT
           echo "Coverage: $PERCENT%"
 
+      - name: Extract core (critical-module) coverage percentage
+        id: core_coverage
+        run: |
+          # Reuses the .coverage data from the previous step. The core list is
+          # the single source of truth in scripts/critical-modules.txt; every
+          # core module is unit-tested, so the unit-only run is accurate for it.
+          INCLUDE=$(grep -vE '^[[:space:]]*(#|$)' scripts/critical-modules.txt | paste -sd, -)
+          PERCENT=$(python -m coverage report --include="$INCLUDE" 2>/dev/null | grep '^TOTAL' | grep -oP '\d+(?=%)' | tail -1)
+          echo "percent=$PERCENT" >> $GITHUB_OUTPUT
+          echo "Core coverage: $PERCENT%"
+
       - name: Update badges in README
         run: |
           PYLINT_SCORE="${{ steps.pylint.outputs.score }}"
           PYRIGHT_ERRORS="${{ steps.pyright.outputs.errors }}"
           COVERAGE_PERCENT="${{ steps.coverage.outputs.percent }}"
+          CORE_COVERAGE_PERCENT="${{ steps.core_coverage.outputs.percent }}"
 
           PYLINT_SCORE_ENCODED=$(echo "$PYLINT_SCORE" | sed 's|/|%2F|g')
 
@@ -71,9 +83,12 @@ jobs:
           if [ -n "$COVERAGE_PERCENT" ]; then
             sed -i "s|/badge/coverage-[^)]*|/badge/coverage-${COVERAGE_PERCENT}%25-brightgreen|" README.md
           fi
+          if [ -n "$CORE_COVERAGE_PERCENT" ]; then
+            sed -i "s|/badge/core%20coverage-[^)]*|/badge/core%20coverage-${CORE_COVERAGE_PERCENT}%25-brightgreen|" README.md
+          fi
 
           echo "Updated badges:"
-          grep -E "pylint|pyright|coverage" README.md | head -3
+          grep -E "pylint|pyright|coverage" README.md | head -4
 
       - name: Commit and push badge updates
         run: |
@@ -86,7 +101,7 @@ jobs:
           else
             echo "Badge changes detected, committing..."
             git add README.md
-            MSG="chore: update quality badges"$'\n\n'"- Pylint: ${{ steps.pylint.outputs.score }}"$'\n'"- Pyright: ${{ steps.pyright.outputs.errors }} errors"$'\n'"- Coverage: ${{ steps.coverage.outputs.percent }}%"$'\n\n'"[skip ci]"
+            MSG="chore: update quality badges"$'\n\n'"- Pylint: ${{ steps.pylint.outputs.score }}"$'\n'"- Pyright: ${{ steps.pyright.outputs.errors }} errors"$'\n'"- Coverage: ${{ steps.coverage.outputs.percent }}%"$'\n'"- Core coverage: ${{ steps.core_coverage.outputs.percent }}%"$'\n\n'"[skip ci]"
             git commit -m "$MSG"
             git push
           fi

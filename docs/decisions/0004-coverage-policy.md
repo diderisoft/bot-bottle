@@ -88,3 +88,9 @@ omit list.
 - PRs #290 (cover the egress adapter), and the coverage-policy PR that
   introduces this record.
 - `.coveragerc`, `scripts/coverage.sh`, `scripts/diff_coverage.py`.
+- `scripts/critical-modules.txt` — the single source of truth for the
+  core-module list; read by both `scripts/coverage.sh` and the
+  `update-badges.yml` "core coverage" badge so they cannot drift.
+- The README carries a `core coverage` badge (auto-updated from that
+  list) — the headline number, distinct from the informational global
+  `coverage` badge.

@@ -1,0 +1,23 @@
+# Critical security/logic core held to the >=90% coverage bar by
+# docs/decisions/0004-coverage-policy.md.
+#
+# SINGLE SOURCE OF TRUTH: scripts/coverage.sh (the `critical` report) and
+# .gitea/workflows/update-badges.yml (the "core coverage" badge) both read
+# this file. Add a module here when it becomes part of the core; a coverage
+# number that silently stops measuring a module is worse than no badge.
+#
+# One module path per line, relative to the repo root. Blank lines and
+# `#` comments are ignored.
+bot_bottle/egress_addon.py
+bot_bottle/egress_addon_core.py
+bot_bottle/dlp_detectors.py
+bot_bottle/egress.py
+bot_bottle/manifest.py
+bot_bottle/manifest_egress.py
+bot_bottle/manifest_agent.py
+bot_bottle/manifest_schema.py
+bot_bottle/git_gate.py
+bot_bottle/git_http_backend.py
+bot_bottle/supervise.py
+bot_bottle/yaml_subset.py
+bot_bottle/bottle_state.py

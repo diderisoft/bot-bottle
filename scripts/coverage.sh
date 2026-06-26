@@ -16,13 +16,10 @@ cd "$(dirname "$0")/.."
 
 PY="${PYTHON:-python3}"
 
-# Critical security/logic core held to the high bar by ADR 0004.
-CRITICAL="bot_bottle/egress_addon.py,bot_bottle/egress_addon_core.py,\
-bot_bottle/dlp_detectors.py,bot_bottle/egress.py,bot_bottle/manifest.py,\
-bot_bottle/manifest_egress.py,bot_bottle/manifest_agent.py,\
-bot_bottle/manifest_schema.py,bot_bottle/git_gate.py,\
-bot_bottle/git_http_backend.py,bot_bottle/supervise.py,\
-bot_bottle/yaml_subset.py,bot_bottle/bottle_state.py"
+# Critical security/logic core held to the high bar by ADR 0004. The list
+# lives in one place (scripts/critical-modules.txt) so this report and the
+# README "core coverage" badge can't drift; comma-join it for --include.
+CRITICAL=$(grep -vE '^[[:space:]]*(#|$)' scripts/critical-modules.txt | paste -sd, -)
 
 rm -f .coverage
 
