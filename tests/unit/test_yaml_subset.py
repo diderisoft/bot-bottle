@@ -325,5 +325,137 @@ class TestFrontmatter(unittest.TestCase):
         self.assertEqual("\nline one\n\nline three\n", body)
 
 
+class TestEdgeAndErrorBranches(unittest.TestCase):
+    """Reachable error / edge branches of the parser (coverage ratchet)."""
+
+    # --- scalars / comments -------------------------------------------------
+    def test_hash_not_preceded_by_space_is_literal(self) -> None:
+        self.assertEqual({"k": "a#b"}, parse_yaml_subset("k: a#b\n"))
+
+    def test_blank_line_between_entries_skipped(self) -> None:
+        self.assertEqual({"a": 1, "b": 2}, parse_yaml_subset("a: 1\n\nb: 2\n"))
+
+    def test_unterminated_quote_single_char(self) -> None:
+        with self.assertRaises(YamlSubsetError):
+            parse_yaml_subset('k: "\n')
+
+    def test_bad_double_quote_escape(self) -> None:
+        with self.assertRaises(YamlSubsetError):
+            parse_yaml_subset('k: "\\x"\n')
+
+    # --- inline list / dict -------------------------------------------------
+    def test_inline_dict_empty_value_is_empty_string(self) -> None:
+        self.assertEqual({"k": {"a": ""}}, parse_yaml_subset("k: {a: }\n"))
+
+    def test_unterminated_inline_list(self) -> None:
+        with self.assertRaises(YamlSubsetError):
+            parse_yaml_subset("k: [a, b\n")
+
+    def test_empty_inline_list(self) -> None:
+        self.assertEqual({"k": []}, parse_yaml_subset("k: []\n"))
+
+    def test_unterminated_inline_dict(self) -> None:
+        with self.assertRaises(YamlSubsetError):
+            parse_yaml_subset("k: {a: 1\n")
+
+    def test_empty_inline_dict(self) -> None:
+        self.assertEqual({"k": {}}, parse_yaml_subset("k: {}\n"))
+
+    def test_inline_dict_entry_missing_colon(self) -> None:
+        with self.assertRaises(YamlSubsetError):
+            parse_yaml_subset("k: {a}\n")
+
+    def test_inline_dict_non_bare_key(self) -> None:
+        with self.assertRaises(YamlSubsetError):
+            parse_yaml_subset("k: {$x: 1}\n")
+
+    def test_quoted_comma_in_flow_is_one_item(self) -> None:
+        self.assertEqual({"k": ["a", "b, c"]}, parse_yaml_subset("k: [a, 'b, c']\n"))
+
+    # --- block mapping / list ----------------------------------------------
+    def test_line_missing_colon_separator(self) -> None:
+        with self.assertRaises(YamlSubsetError):
+            parse_yaml_subset("justtext\n")
+
+    def test_single_quoted_key_rejected_as_non_bare(self) -> None:
+        with self.assertRaises(YamlSubsetError):
+            parse_yaml_subset("'ab': v\n")
+
+    def test_list_item_at_mapping_indent_rejected(self) -> None:
+        with self.assertRaises(YamlSubsetError):
+            parse_yaml_subset("a: 1\n- b\n")
+
+    def test_empty_block_value_is_none(self) -> None:
+        self.assertEqual({"k": None}, parse_yaml_subset("k:\n"))
+
+    def test_list_item_first_key_non_bare(self) -> None:
+        with self.assertRaises(YamlSubsetError):
+            parse_yaml_subset("k:\n  - $x: 1\n")
+
+    def test_bare_dash_nested_block_list(self) -> None:
+        self.assertEqual(
+            {"k": [["nested"]]},
+            parse_yaml_subset("k:\n  -\n    - nested\n"),
+        )
+
+    def test_list_item_quoted_colon_is_scalar(self) -> None:
+        self.assertEqual({"k": ["a:b"]}, parse_yaml_subset('k:\n  - "a:b"\n'))
+
+    def test_list_item_mapping_with_nested_block(self) -> None:
+        self.assertEqual(
+            {"k": [{"a": {"b": 2}}]},
+            parse_yaml_subset("k:\n  - a:\n        b: 2\n"),
+        )
+
+    def test_list_item_sibling_key_empty_is_none(self) -> None:
+        self.assertEqual(
+            {"k": [{"a": 1, "b": None}]},
+            parse_yaml_subset("k:\n  - a: 1\n    b:\n"),
+        )
+
+    def test_list_item_duplicate_key(self) -> None:
+        with self.assertRaises(YamlSubsetError):
+            parse_yaml_subset("k:\n  - a: 1\n    a: 2\n")
+
+    def test_list_item_sibling_key_non_bare(self) -> None:
+        with self.assertRaises(YamlSubsetError):
+            parse_yaml_subset("k:\n  - a: 1\n    $b: 2\n")
+
+    # --- document-level rejections -----------------------------------------
+    def test_block_scalar_folded_rejected(self) -> None:
+        with self.assertRaises(YamlSubsetError):
+            parse_yaml_subset(">folded\n")
+
+    def test_block_scalar_literal_rejected(self) -> None:
+        with self.assertRaises(YamlSubsetError):
+            parse_yaml_subset("|literal\n")
+
+    def test_anchor_rejected(self) -> None:
+        with self.assertRaises(YamlSubsetError):
+            parse_yaml_subset("k: &a x\n")
+
+    def test_ampersand_in_quoted_value_allowed(self) -> None:
+        self.assertEqual({"k": "a & b"}, parse_yaml_subset('k: "a & b"\n'))
+
+    def test_yaml_tag_rejected(self) -> None:
+        with self.assertRaises(YamlSubsetError):
+            parse_yaml_subset("k: !!str x\n")
+
+    def test_only_comments_is_empty_mapping(self) -> None:
+        self.assertEqual({}, parse_yaml_subset("# just a comment\n"))
+
+    def test_top_level_not_column_zero(self) -> None:
+        with self.assertRaises(YamlSubsetError):
+            parse_yaml_subset("  k: 1\n")
+
+    def test_top_level_list_rejected(self) -> None:
+        with self.assertRaises(YamlSubsetError):
+            parse_yaml_subset("- a\n- b\n")
+
+    # --- frontmatter --------------------------------------------------------
+    def test_frontmatter_empty_text(self) -> None:
+        self.assertEqual(({}, ""), parse_frontmatter(""))
+
+
 if __name__ == "__main__":
     unittest.main()
