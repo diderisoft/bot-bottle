@@ -70,3 +70,32 @@ jobs:
 
       - name: Run integration tests
         run: python3 -m unittest discover -t . -s tests/integration -v
+
+  # Combined unit+integration coverage + the diff-coverage gate.
+  # See docs/decisions/0004-coverage-policy.md. The hard gate is diff
+  # coverage (new/changed lines >= 90%); the combined + critical reports
+  # are informational and degrade gracefully when the runner has no
+  # Docker (integration tests skip, those modules just read lower).
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dev requirements
+        run: python3 -m pip install -r requirements-dev.txt
+
+      - name: Combined coverage (unit + integration)
+        run: PYTHON=python3 bash scripts/coverage.sh critical
+
+      - name: Diff-coverage gate (changed lines >= 90%)
+        run: |
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          python3 scripts/diff_coverage.py --base origin/main --min 90
