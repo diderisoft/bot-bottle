@@ -6,8 +6,6 @@ on:
       - main
     paths:
       - '**.py'
-      - '.pylintrc'
-      - 'pyrightconfig.json'
       - '.coveragerc'
       # The core-coverage badge reads this list; refresh when it changes.
       - 'scripts/critical-modules.txt'
@@ -32,22 +30,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
-      - name: Run pylint and extract score
-        id: pylint
-        run: |
-          PYLINT_OUTPUT=$(python -m pylint bot_bottle/ 2>&1) || true
-          SCORE=$(echo "$PYLINT_OUTPUT" | grep -oP '(?<=rated at )\d+\.\d+/10' | head -1)
-          echo "score=$SCORE" >> $GITHUB_OUTPUT
-          echo "Pylint score: $SCORE"
-
-      - name: Run pyright and check errors
-        id: pyright
-        run: |
-          PYRIGHT_OUTPUT=$(python -m pyright 2>&1) || true
-          ERRORS=$(echo "$PYRIGHT_OUTPUT" | grep -oP '\d+(?= error)' | head -1)
-          echo "errors=$ERRORS" >> $GITHUB_OUTPUT
-          echo "Pyright errors: $ERRORS"
-
       - name: Run coverage and extract percentage
         id: coverage
         run: |
@@ -69,19 +51,9 @@ jobs:
 
       - name: Update badges in README
         run: |
-          PYLINT_SCORE="${{ steps.pylint.outputs.score }}"
-          PYRIGHT_ERRORS="${{ steps.pyright.outputs.errors }}"
           COVERAGE_PERCENT="${{ steps.coverage.outputs.percent }}"
           CORE_COVERAGE_PERCENT="${{ steps.core_coverage.outputs.percent }}"
 
-          PYLINT_SCORE_ENCODED=$(echo "$PYLINT_SCORE" | sed 's|/|%2F|g')
-
-          if [ -n "$PYLINT_SCORE_ENCODED" ]; then
-            sed -i "s|/badge/pylint-[^)]*|/badge/pylint-${PYLINT_SCORE_ENCODED}-brightgreen|" README.md
-          fi
-          if [ -n "$PYRIGHT_ERRORS" ]; then
-            sed -i "s|/badge/pyright-[^)]*|/badge/pyright-${PYRIGHT_ERRORS}%20errors-brightgreen|" README.md
-          fi
           if [ -n "$COVERAGE_PERCENT" ]; then
             sed -i "s|/badge/coverage-[^)]*|/badge/coverage-${COVERAGE_PERCENT}%25-brightgreen|" README.md
           fi
@@ -90,7 +62,7 @@ jobs:
           fi
 
           echo "Updated badges:"
-          grep -E "pylint|pyright|coverage" README.md | head -4
+          grep -E "coverage" README.md | head -2
 
       - name: Commit and push badge updates
         run: |
@@ -103,7 +75,7 @@ jobs:
           else
             echo "Badge changes detected, committing..."
             git add README.md
-            MSG="chore: update quality badges"$'\n\n'"- Pylint: ${{ steps.pylint.outputs.score }}"$'\n'"- Pyright: ${{ steps.pyright.outputs.errors }} errors"$'\n'"- Coverage: ${{ steps.coverage.outputs.percent }}%"$'\n'"- Core coverage: ${{ steps.core_coverage.outputs.percent }}%"$'\n\n'"[skip ci]"
+            MSG="chore: update quality badges"$'\n\n'"- Coverage: ${{ steps.coverage.outputs.percent }}%"$'\n'"- Core coverage: ${{ steps.core_coverage.outputs.percent }}%"$'\n\n'"[skip ci]"
             git commit -m "$MSG"
             git push
           fi
