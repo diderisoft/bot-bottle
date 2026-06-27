@@ -9,6 +9,8 @@ on:
       - '.pylintrc'
       - 'pyrightconfig.json'
       - '.coveragerc'
+      # The core-coverage badge reads this list; refresh when it changes.
+      - 'scripts/critical-modules.txt'
   workflow_dispatch:
 
 jobs:
