@@ -11,6 +11,7 @@ the same try/except import shim pattern.
 from __future__ import annotations
 
 import base64
+import functools
 import gzip
 import re
 import typing
@@ -132,8 +133,10 @@ def redact_tokens(
 # header, body). Deriving the variant set is relatively expensive (gzip +
 # nine encodings), so memoize it per distinct secret. The proxy process
 # already holds these values in `os.environ`, so caching them here adds no
-# new exposure.
-_VARIANT_CACHE: dict[str, tuple[str, ...]] = {}
+# new exposure. The cache is bounded (lru_cache maxsize) so a long-lived
+# proxy that sees rotating secrets evicts the oldest rather than growing
+# without limit; 256 comfortably covers the EGRESS_TOKEN_* set in practice.
+_VARIANT_CACHE_MAXSIZE = 256
 
 
 def _encoded_variants(secret: str) -> list[str]:
@@ -141,15 +144,12 @@ def _encoded_variants(secret: str) -> list[str]:
 
     The variant set is computed once per distinct secret and cached; callers
     get a fresh list so they can't mutate the shared cached tuple."""
-    cached = _VARIANT_CACHE.get(secret)
-    if cached is None:
-        cached = _compute_encoded_variants(secret)
-        _VARIANT_CACHE[secret] = cached
-    return list(cached)
+    return list(_compute_encoded_variants(secret))
 
 
+@functools.lru_cache(maxsize=_VARIANT_CACHE_MAXSIZE)
 def _compute_encoded_variants(secret: str) -> tuple[str, ...]:
-    """Derive the secret plus its encoded variants (uncached)."""
+    """Derive the secret plus its encoded variants (memoized, bounded)."""
     seen: set[str] = {secret}
     variants: list[str] = [secret]
 
@@ -392,19 +392,52 @@ JAILBREAK_PHRASES: tuple[re.Pattern[str], ...] = (
 PROXIMITY_CHARS = 500
 
 
+def _match_gap(a: re.Match[str], b: re.Match[str]) -> int:
+    """Character gap between two match spans; 0 when they overlap or touch."""
+    return max(0, max(a.start(), b.start()) - min(a.end(), b.end()))
+
+
 def _closest_pair(
     a_matches: list[re.Match[str]],
     b_matches: list[re.Match[str]],
+    *,
+    within: int | None = None,
 ) -> tuple[re.Match[str], re.Match[str]] | None:
-    """Return the pair (a, b) with the smallest character gap, or None."""
+    """Return the (a, b) pair with the smallest character gap, or None when
+    either list is empty.
+
+    Runs in O(n log n) sort + O(n) merge rather than the O(n*m) cross product:
+    both lists are sorted by start offset and swept with a two-pointer merge,
+    advancing whichever span ends first (it can only get farther from any
+    later span in the other list). This matters because the inputs are
+    attacker-controlled response-body matches that have already passed the
+    body-size cap, so the quadratic form is a latent DoS.
+
+    When `within` is set, returns as soon as a pair with gap <= within is
+    found: the only caller blocks on any pair inside the proximity threshold,
+    so the exact global minimum past that point doesn't change the decision.
+    """
+    if not a_matches or not b_matches:
+        return None
+    a_sorted = sorted(a_matches, key=lambda m: m.start())
+    b_sorted = sorted(b_matches, key=lambda m: m.start())
+    i = j = 0
     best: tuple[re.Match[str], re.Match[str]] | None = None
     best_gap: int | None = None
-    for a in a_matches:
-        for b in b_matches:
-            gap = max(0, max(a.start(), b.start()) - min(a.end(), b.end()))
-            if best_gap is None or gap < best_gap:
-                best_gap = gap
-                best = (a, b)
+    while i < len(a_sorted) and j < len(b_sorted):
+        a, b = a_sorted[i], b_sorted[j]
+        gap = _match_gap(a, b)
+        if best_gap is None or gap < best_gap:
+            best_gap = gap
+            best = (a, b)
+            if within is not None and gap <= within:
+                return best
+        # Advance the span that ends first; it cannot form a closer pair with
+        # any later (further-right) span from the other list.
+        if a.end() <= b.end():
+            i += 1
+        else:
+            j += 1
     return best
 
 
@@ -414,9 +447,9 @@ def scan_naive_injection(text: str) -> ScanResult | None:
     jailbreak_hits = [m for p in JAILBREAK_PHRASES for m in p.finditer(text)]
 
     if disclosure_hits and jailbreak_hits:
-        pair = _closest_pair(disclosure_hits, jailbreak_hits)
+        pair = _closest_pair(disclosure_hits, jailbreak_hits, within=PROXIMITY_CHARS)
         if pair is not None:
-            dist = max(0, max(pair[0].start(), pair[1].start()) - min(pair[0].end(), pair[1].end()))
+            dist = _match_gap(pair[0], pair[1])
             if dist <= PROXIMITY_CHARS:
                 first = pair[0] if pair[0].start() <= pair[1].start() else pair[1]
                 return ScanResult(
