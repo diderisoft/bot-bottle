@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from .manifest import ManifestBottle
-    from .manifest_egress import ManifestEgressConfig
+from .manifest_bottle import ManifestBottle
+from .manifest_egress import ManifestEgressConfig, validate_egress_routes
+from .manifest_git import ManifestGitUser, parse_git_gate_config
+from .manifest_util import ManifestError, as_json_object
 
 
 def merge_bottles_runtime(bottles: "list[ManifestBottle]") -> "ManifestBottle":
@@ -27,9 +26,6 @@ def merge_bottles_runtime(bottles: "list[ManifestBottle]") -> "ManifestBottle":
 
 
 def _merge_two_bottles_runtime(base: "ManifestBottle", override: "ManifestBottle") -> "ManifestBottle":
-    from .manifest import ManifestBottle, ManifestGitUser
-    from .manifest_egress import ManifestEgressConfig
-
     merged_env = {**base.env, **override.env}
 
     merged_git_user = ManifestGitUser(
@@ -81,8 +77,6 @@ def _resolve_one_bottle(
     repos_cache: dict[str, dict[str, object]],
     seen: tuple[str, ...],
 ) -> ManifestBottle:
-    from .manifest import ManifestBottle, ManifestError
-
     if name in cache:
         return cache[name]
     if name in seen:
@@ -174,11 +168,6 @@ def _fold_two_bottles(
     later_repos_raw: dict[str, object],
 ) -> tuple[ManifestBottle, dict[str, object]]:
     """Combine two resolved parent bottles; later wins over earlier."""
-    from .manifest import ManifestBottle, ManifestGitUser
-    from .manifest_egress import ManifestEgressConfig
-    from .manifest_git import parse_git_gate_config
-    from .manifest_util import as_json_object
-
     merged_env = {**earlier.env, **later.env}
 
     merged_git_user = ManifestGitUser(
@@ -227,10 +216,6 @@ def _merge_bottles(
     name: str,
 ) -> ManifestBottle:
     """Apply PRD 0025 merge rules."""
-    from .manifest import ManifestBottle, ManifestGitUser
-    from .manifest_egress import validate_egress_routes
-    from .manifest_util import as_json_object
-
     # git-gate.repos: when the child declares repos, inject the already
     # name-merged repo set (computed by _resolve_repos_raw) so the child
     # parses with the full inherited+overridden list (issue #237).
@@ -303,8 +288,6 @@ def _resolve_repos_raw(
     inherits the parent's set verbatim; an explicit empty dict clears it.
     Otherwise parent and child unite by name, with same-name entries
     field-merged (parent fields are defaults, child fields win)."""
-    from .manifest_util import as_json_object
-
     if not _child_declares_git_gate_repos(child_raw):
         return parent_repos
     child_repos = _declared_repos_raw(child_raw)
@@ -324,8 +307,6 @@ def _resolve_repos_raw(
 def _declared_repos_raw(child_raw: dict[str, object]) -> dict[str, object]:
     """Return the child's explicitly declared git-gate.repos as raw dicts,
     or an empty dict when none are declared."""
-    from .manifest_util import as_json_object
-
     if not _child_declares_git_gate_repos(child_raw):
         return {}
     git_raw = as_json_object(child_raw.get("git-gate", {}), "child git-gate")
@@ -333,8 +314,6 @@ def _declared_repos_raw(child_raw: dict[str, object]) -> dict[str, object]:
 
 
 def _child_declares_git_gate_repos(child_raw: dict[str, object]) -> bool:
-    from .manifest_util import as_json_object
-
     git_raw = child_raw.get("git-gate")
     if git_raw is None:
         return False
@@ -347,9 +326,6 @@ def _merge_egress(
     child: ManifestEgressConfig,
     child_raw: dict[str, object],
 ) -> ManifestEgressConfig:
-    from .manifest_egress import ManifestEgressConfig
-    from .manifest_util import as_json_object
-
     child_egress_raw = as_json_object(child_raw.get("egress"), "child egress")
     routes = parent.routes + child.routes
     log = child.Log if "log" in child_egress_raw else parent.Log

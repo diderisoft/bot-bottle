@@ -3,18 +3,16 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from .log import warn
+from .manifest_bottle import ManifestBottle
+from .manifest_extends import resolve_bottles
 from .manifest_schema import (
     entity_name_from_path,
     validate_bottle_frontmatter_keys,
 )
 from .manifest_util import ManifestError
 from .yaml_subset import YamlSubsetError, parse_frontmatter
-
-if TYPE_CHECKING:
-    from .manifest import ManifestBottle
 
 
 def check_stale_json(dir_path: Path, md_dir: Path, label: str) -> None:
@@ -78,8 +76,6 @@ def load_bottle_chain_from_dir(
 
     Only the files in the extends chain are read — unrelated bottle files
     are never touched. Raises ManifestError on parse or validation failure."""
-    from .manifest_extends import resolve_bottles
-
     raws: dict[str, dict[str, object]] = {}
     to_load = [bottle_name]
     while to_load:

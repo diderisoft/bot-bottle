@@ -62,15 +62,25 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Mapping
 
+from .log import warn
 from .manifest_util import ManifestError, as_json_object
 from .manifest_agent import ManifestAgent, ManifestAgentProvider
+from .manifest_bottle import ManifestBottle
 from .manifest_egress import (
     EGRESS_AUTH_SCHEMES,
     ManifestEgressConfig,
     ManifestEgressRoute,
 )
-from .manifest_git import ManifestGitEntry, ManifestGitUser, ManifestKeyConfig, parse_git_gate_config
-from .manifest_schema import BOTTLE_KEYS
+from .manifest_extends import merge_bottles_runtime, resolve_bottles
+from .manifest_git import ManifestGitEntry, ManifestGitUser, ManifestKeyConfig
+from .manifest_loader import (
+    check_stale_json,
+    load_bottle_chain_from_dir,
+    scan_agent_names,
+    scan_bottle_names,
+)
+from .manifest_schema import validate_agent_frontmatter_keys
+from .yaml_subset import YamlSubsetError, parse_frontmatter
 
 # Re-export everything that callers currently import from this module.
 __all__ = [
@@ -89,116 +99,11 @@ __all__ = [
 ]
 
 
-def _empty_str_dict() -> dict[str, str]:
-    return {}
-
-
 def _section_dict(value: object, label: str) -> dict[str, object]:
     """Like as_json_object but treats absent/null as an empty section."""
     if value is None:
         return {}
     return as_json_object(value, label)
-
-
-@dataclass(frozen=True)
-class ManifestBottle:
-    env: Mapping[str, str] = field(default_factory=_empty_str_dict)
-    agent_provider: ManifestAgentProvider = field(default_factory=ManifestAgentProvider)
-    git: tuple[ManifestGitEntry, ...] = ()
-    # Per-bottle git identity (issue #86). Empty default — bottles
-    # that don't set `git-gate.user:` in the manifest skip the
-    # `git config --global` step entirely. A bottle can declare a user
-    # identity without any git-gate.repos upstreams, and vice versa.
-    git_user: ManifestGitUser = field(default_factory=ManifestGitUser)
-    egress: ManifestEgressConfig = field(default_factory=ManifestEgressConfig)
-    # Per-bottle stuck-recovery sidecar (PRD 0013). When true (the
-    # default, issue #249), the launch step brings up a supervise
-    # sidecar that exposes egress MCP tools to the agent. Set
-    # `supervise: false` to skip the sidecar.
-    supervise: bool = True
-
-    @classmethod
-    def from_dict(cls, name: str, raw: object) -> "ManifestBottle":
-        d = as_json_object(raw, f"bottle '{name}'")
-
-        if "runtime" in d:
-            raise ManifestError(
-                f"bottle '{name}' has a 'runtime' field, which is no longer "
-                f"supported. gVisor (runsc) is now auto-detected by the "
-                f"backend; remove the 'runtime' field from the bottle "
-                f"definition."
-            )
-
-        if "ssh" in d:
-            raise ManifestError(
-                f"bottle '{name}' has an 'ssh' field, which has been removed "
-                f"(PRD 0009). Declare upstreams under 'git-gate.repos' with "
-                f"url + identity + host_key; the git-gate sidecar (PRD 0008) "
-                f"holds the credential and gitleaks-scans pushes."
-            )
-
-        if "git" in d:
-            raise ManifestError(
-                f"bottle '{name}' uses 'git' which has been replaced by "
-                f"'git-gate' (PRD 0047). Move git.user → git-gate.user "
-                f"and git.remotes → git-gate.repos (fields: url, identity, host_key)."
-            )
-
-        if "git_user" in d:
-            raise ManifestError(
-                f"bottle '{name}' has a 'git_user' field, which has been "
-                f"removed. Move it under 'git-gate.user'."
-            )
-
-        unknown = set(d.keys()) - BOTTLE_KEYS
-        if unknown:
-            allowed = ", ".join(sorted(BOTTLE_KEYS))
-            raise ManifestError(
-                f"bottle '{name}' has unknown key(s) {sorted(unknown)}; "
-                f"allowed keys are {allowed}."
-            )
-
-        env: dict[str, str] = {}
-        env_raw = d.get("env")
-        if env_raw is not None:
-            env_dict = as_json_object(env_raw, f"bottle '{name}' env")
-            for var, value in env_dict.items():
-                if not isinstance(value, str):
-                    raise ManifestError(
-                        f"env entry {var} in bottle '{name}' must be a JSON string "
-                        f"(was {type(value).__name__}). Use \"?<message>\" for prompt-at-runtime."
-                    )
-                env[var] = value
-
-        git: tuple[ManifestGitEntry, ...] = ()
-        git_user = ManifestGitUser()
-        git_raw = d.get("git-gate")
-        if git_raw is not None:
-            git, git_user = parse_git_gate_config(name, git_raw)
-
-        agent_provider = (
-            ManifestAgentProvider.from_dict(name, d["agent_provider"])
-            if "agent_provider" in d
-            else ManifestAgentProvider()
-        )
-
-        egress = (
-            ManifestEgressConfig.from_dict(name, d["egress"])
-            if "egress" in d
-            else ManifestEgressConfig()
-        )
-
-        supervise_raw = d.get("supervise", True)
-        if not isinstance(supervise_raw, bool):
-            raise ManifestError(
-                f"bottle '{name}' supervise must be a boolean "
-                f"(was {type(supervise_raw).__name__})"
-            )
-
-        return cls(
-            env=env, agent_provider=agent_provider, git=git,
-            git_user=git_user, egress=egress, supervise=supervise_raw,
-        )
 
 
 def _merge_git_user(
@@ -237,8 +142,6 @@ def _resolve_effective_bottle_eager(
 
     When bottle_names is non-empty they are merged in order. When empty, falls
     back to agent.bottle. Raises ManifestError when neither is set."""
-    from .manifest_extends import merge_bottles_runtime
-
     if bottle_names:
         resolved: list[ManifestBottle] = []
         for bn in bottle_names:
@@ -270,9 +173,6 @@ def _resolve_effective_bottle_lazy(
     When bottle_names is non-empty they are resolved from disk and merged in
     order. When empty, falls back to agent_bottle. Raises ManifestError when
     neither is set."""
-    from .manifest_extends import merge_bottles_runtime
-    from .manifest_loader import load_bottle_chain_from_dir
-
     if bottle_names:
         resolved = [load_bottle_chain_from_dir(bn, bottles_dir) for bn in bottle_names]
         return merge_bottles_runtime(resolved)
@@ -358,8 +258,6 @@ class ManifestIndex:
         home_md = home_dir / ".bot-bottle"
         cwd_md = cwd_dir / ".bot-bottle"
 
-        from .manifest_loader import check_stale_json
-
         check_stale_json(home_dir, home_md, "$HOME")
         if cwd_dir.resolve() != home_dir.resolve():
             check_stale_json(cwd_dir, cwd_md, "$CWD")
@@ -399,7 +297,6 @@ class ManifestIndex:
                 files = sorted(stale_bottles.glob("*.md"))
                 if files:
                     names = ", ".join(p.name for p in files)
-                    from .log import warn
                     warn(
                         f"ignoring bottle file(s) under "
                         f"{stale_bottles}: {names}. Bottles can only "
@@ -421,7 +318,6 @@ class ManifestIndex:
         raw_bottles: dict[str, dict[str, object]] = {}
         for n, b in raw_bottles_obj.items():
             raw_bottles[n] = as_json_object(b, f"bottle '{n}'")
-        from .manifest_extends import resolve_bottles
 
         bottles = resolve_bottles(raw_bottles)
 
@@ -439,7 +335,6 @@ class ManifestIndex:
         filenames without reading their content. In eager mode (from
         from_json_obj) it returns the pre-parsed bottles' names."""
         if self.home_md is not None:
-            from .manifest_loader import scan_bottle_names
             return scan_bottle_names(self.home_md / "bottles")
         return sorted(self.bottles.keys())
 
@@ -451,7 +346,6 @@ class ManifestIndex:
         filenames without reading their content. In eager mode (from
         from_json_obj) it returns the pre-parsed agents' names."""
         if self.home_md is not None:
-            from .manifest_loader import scan_agent_names
             home_names = set(scan_agent_names(self.home_md / "agents").keys())
             cwd_names: set[str] = set()
             if self.cwd_md is not None:
@@ -509,10 +403,6 @@ class ManifestIndex:
         """Lazy path (resolve/from_md_dirs): read and parse the agent file and
         its bottle chain from disk for the first time here."""
         assert self.home_md is not None  # guaranteed by load_for_agent dispatch
-        from .manifest_loader import scan_agent_names
-        from .manifest_schema import validate_agent_frontmatter_keys
-        from .yaml_subset import YamlSubsetError, parse_frontmatter
-
         # Locate the agent file; cwd wins over home on name collision.
         home_agents = scan_agent_names(self.home_md / "agents")
         cwd_agents: dict[str, Path] = {}
