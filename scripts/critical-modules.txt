@@ -17,6 +17,8 @@ bot_bottle/manifest_egress.py
 bot_bottle/manifest_agent.py
 bot_bottle/manifest_schema.py
 bot_bottle/git_gate.py
+bot_bottle/git_gate_render.py
+bot_bottle/git_gate_provision.py
 bot_bottle/git_http_backend.py
 bot_bottle/supervise.py
 bot_bottle/yaml_subset.py

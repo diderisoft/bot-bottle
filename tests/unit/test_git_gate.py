@@ -367,7 +367,7 @@ class TestDynamicKeyProvisioning(unittest.TestCase):
 
     def test_resolve_identity_file_gitea_provisions_key(self):
         entry = self._gitea_manifest().bottles["dev"].git[0]
-        with patch("bot_bottle.git_gate._provision_dynamic_key", return_value="/tmp/provisioned-key") as mock_provision:
+        with patch("bot_bottle.git_gate_provision._provision_dynamic_key", return_value="/tmp/provisioned-key") as mock_provision:
             self.assertEqual("/tmp/provisioned-key", _resolve_identity_file(entry, "demo", self.stage))
         mock_provision.assert_called_once()
 
