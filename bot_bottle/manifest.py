@@ -213,6 +213,20 @@ def _merge_git_user(
     )
 
 
+def _manifest_with_merged_git_user(
+    agent: "ManifestAgent", raw_bottle: "ManifestBottle"
+) -> "Manifest":
+    """Build the single-value Manifest, overlaying the agent's git-gate.user
+    onto the bottle (agent wins on non-empty, per-field). Shared by the eager
+    and lazy load_for_agent paths."""
+    merged = _merge_git_user(agent.git_user, raw_bottle.git_user)
+    bottle = (
+        raw_bottle if merged == raw_bottle.git_user
+        else replace(raw_bottle, git_user=merged)
+    )
+    return Manifest(agent=agent, bottle=bottle)
+
+
 def _resolve_effective_bottle_eager(
     agent_name: str,
     agent: "ManifestAgent",
@@ -468,24 +482,33 @@ class ManifestIndex:
         Always raises ManifestError if the agent is unknown or invalid.
         Backends call this at preflight inside _validate."""
         effective_bottle_names: tuple[str, ...] = bottle_names or ()
-
         if self.home_md is None:
-            # Eager manifest (from_json_obj): data already parsed; filter to
-            # the one requested agent and its bottle so the returned Manifest
-            # always holds exactly one agent and one bottle regardless of path.
-            if agent_name not in self.agents:
-                available = ", ".join(sorted(self.agents.keys())) or "(none)"
-                raise ManifestError(
-                    f"agent '{agent_name}' not defined. Available: {available}"
-                )
-            agent = self.agents[agent_name]
-            raw_bottle = _resolve_effective_bottle_eager(
-                agent_name, agent, effective_bottle_names, self.bottles
-            )
-            merged = _merge_git_user(agent.git_user, raw_bottle.git_user)
-            bottle = raw_bottle if merged == raw_bottle.git_user else replace(raw_bottle, git_user=merged)
-            return Manifest(agent=agent, bottle=bottle)
+            return self._load_for_agent_eager(agent_name, effective_bottle_names)
+        return self._load_for_agent_lazy(agent_name, effective_bottle_names)
 
+    def _load_for_agent_eager(
+        self, agent_name: str, bottle_names: tuple[str, ...]
+    ) -> "Manifest":
+        """Eager path (from_json_obj): data is already parsed; filter to the one
+        requested agent and its bottle so the returned Manifest always holds
+        exactly one agent and one bottle regardless of path."""
+        if agent_name not in self.agents:
+            available = ", ".join(sorted(self.agents.keys())) or "(none)"
+            raise ManifestError(
+                f"agent '{agent_name}' not defined. Available: {available}"
+            )
+        agent = self.agents[agent_name]
+        raw_bottle = _resolve_effective_bottle_eager(
+            agent_name, agent, bottle_names, self.bottles
+        )
+        return _manifest_with_merged_git_user(agent, raw_bottle)
+
+    def _load_for_agent_lazy(
+        self, agent_name: str, bottle_names: tuple[str, ...]
+    ) -> "Manifest":
+        """Lazy path (resolve/from_md_dirs): read and parse the agent file and
+        its bottle chain from disk for the first time here."""
+        assert self.home_md is not None  # guaranteed by load_for_agent dispatch
         from .manifest_loader import scan_agent_names
         from .manifest_schema import validate_agent_frontmatter_keys
         from .yaml_subset import YamlSubsetError, parse_frontmatter
@@ -517,11 +540,10 @@ class ManifestIndex:
         agent_bottle = fm.get("bottle") or ""
         bottles_dir = self.home_md / "bottles"
         raw_bottle = _resolve_effective_bottle_lazy(
-            agent_name, str(agent_bottle), effective_bottle_names, bottles_dir
+            agent_name, str(agent_bottle), bottle_names, bottles_dir
         )
         effective_bottle_name = (
-            effective_bottle_names[-1] if effective_bottle_names
-            else str(agent_bottle)
+            bottle_names[-1] if bottle_names else str(agent_bottle)
         )
 
         # Build and validate the full ManifestAgent.
@@ -539,9 +561,7 @@ class ManifestIndex:
         known = {effective_bottle_name} if effective_bottle_name else set()
         agent = ManifestAgent.from_dict(agent_name, agent_dict, known)
 
-        merged_user = _merge_git_user(agent.git_user, raw_bottle.git_user)
-        bottle = raw_bottle if merged_user == raw_bottle.git_user else replace(raw_bottle, git_user=merged_user)
-        return Manifest(agent=agent, bottle=bottle)
+        return _manifest_with_merged_git_user(agent, raw_bottle)
 
     def has_agent(self, name: str) -> bool:
         return name in self.agents
