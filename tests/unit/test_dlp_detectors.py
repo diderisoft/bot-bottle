@@ -281,6 +281,17 @@ class TestEncodedVariants(unittest.TestCase):
         v = self._variants()
         self.assertEqual(len(v), len(set(v)))
 
+    def test_repeated_calls_equal(self):
+        # Memoization must not change observable output.
+        self.assertEqual(self._variants(), self._variants())
+
+    def test_returns_fresh_list_each_call(self):
+        # Callers mutate/iterate the result; the cached set must not be
+        # exposed by reference, or one caller could corrupt another's view.
+        first = self._variants()
+        first.append("MUTATED")
+        self.assertNotIn("MUTATED", self._variants())
+
 
 class TestUnicodeNormalization(unittest.TestCase):
     def test_fullwidth_chars_normalized(self):
