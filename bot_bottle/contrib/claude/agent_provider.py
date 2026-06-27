@@ -217,7 +217,7 @@ class ClaudeAgentProvider(AgentProvider):
         if not agent.skills:
             return
         skills_dir = _skills_dir(plan.guest_home)
-        bottle.exec(f"mkdir -p {skills_dir}", user="root")
+        bottle.exec(f"mkdir -p {shlex.quote(skills_dir)}", user="root")
         for name in agent.skills:
             src = host_skill_dir(name)
             if not os.path.isdir(src):
@@ -227,9 +227,13 @@ class ClaudeAgentProvider(AgentProvider):
                 )
             dst = f"{skills_dir}/{name}"
             info(f"copying skill {name} into {bottle.name}:{dst}")
-            bottle.exec(f"rm -rf {dst} && mkdir -p {dst}", user="root")
+            # Defense in depth: skill names are validated kebab-case at
+            # manifest load, but quote the path so a future unvalidated
+            # field can't inject shell metacharacters here either.
+            dst_q = shlex.quote(dst)
+            bottle.exec(f"rm -rf {dst_q} && mkdir -p {dst_q}", user="root")
             bottle.cp_in(f"{src}/.", f"{dst}/")
-            bottle.exec(f"chown -R node:node {dst}", user="root")
+            bottle.exec(f"chown -R node:node {dst_q}", user="root")
 
     def provision_prompt(self, plan: "BottlePlan", bottle: "Bottle") -> str | None:
         """Copy the prompt file into the guest, fix ownership/mode.

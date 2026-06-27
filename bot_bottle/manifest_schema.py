@@ -33,13 +33,20 @@ AGENT_KEYS = (
 AGENT_MODEL_KEYS = AGENT_KEYS | frozenset({"prompt"})
 
 
+def is_valid_entity_name(name: str) -> bool:
+    """True if `name` fits the kebab-case `[a-z][a-z0-9-]*` convention
+    shared by bottle/agent filenames and skill names. Names that satisfy
+    this are also safe to interpolate into a host/guest path segment."""
+    return bool(_FILENAME_RX.match(name))
+
+
 def entity_name_from_path(path: Path) -> str | None:
     """Return the entity name implied by the filename, or None if the
     filename does not fit the [a-z][a-z0-9-]* convention."""
     if path.suffix != ".md":
         return None
     stem = path.stem
-    if not _FILENAME_RX.match(stem):
+    if not is_valid_entity_name(stem):
         return None
     return stem
 

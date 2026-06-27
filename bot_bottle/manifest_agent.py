@@ -8,7 +8,7 @@ from typing import cast
 from .agent_provider import PROVIDER_TEMPLATES
 from .manifest_util import ManifestError, as_json_object
 from .manifest_git import ManifestGitUser
-from .manifest_schema import AGENT_MODEL_KEYS
+from .manifest_schema import AGENT_MODEL_KEYS, is_valid_entity_name
 
 
 @dataclass(frozen=True)
@@ -160,6 +160,16 @@ class ManifestAgent:
                     raise ManifestError(
                         f"agent '{name}' skills[{i}] must be a string "
                         f"(was {type(skill).__name__})"
+                    )
+                # Skill names become host/guest path segments and are
+                # interpolated into provisioning shell commands, so they
+                # must fit the same kebab-case convention as bottle/agent
+                # filenames — rejecting anything that could break out of a
+                # path segment or inject shell metacharacters.
+                if not is_valid_entity_name(skill):
+                    raise ManifestError(
+                        f"agent '{name}' skills[{i}] {skill!r} is not a valid "
+                        f"skill name; must match [a-z][a-z0-9-]*"
                     )
                 collected.append(skill)
             skills = tuple(collected)

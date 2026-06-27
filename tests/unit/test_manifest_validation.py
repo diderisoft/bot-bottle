@@ -165,6 +165,22 @@ class TestAgentValidation(unittest.TestCase):
         with self.assertRaises(ManifestError):
             ManifestAgent.from_dict("a", {"skills": [5]}, set())
 
+    def test_skill_name_rejects_shell_metacharacters(self) -> None:
+        # Skill names become host/guest path segments interpolated into
+        # provisioning shell commands; anything outside kebab-case is
+        # rejected at load so it can never reach a `bottle.exec` string.
+        for bad in ("foo; rm -rf /", "../escape", "foo bar", "Foo", "-leading"):
+            with self.assertRaises(ManifestError):
+                ManifestAgent.from_dict("a", {"skills": [bad]}, set())
+
+    def test_skill_name_accepts_kebab_case(self) -> None:
+        agent = ManifestAgent.from_dict(
+            "a", {"skills": ["init-entry", "quality-eval", "skill0"]}, set()
+        )
+        self.assertEqual(
+            agent.skills, ("init-entry", "quality-eval", "skill0")
+        )
+
     def test_prompt_not_string(self) -> None:
         with self.assertRaises(ManifestError):
             ManifestAgent.from_dict("a", {"prompt": 5}, set())
