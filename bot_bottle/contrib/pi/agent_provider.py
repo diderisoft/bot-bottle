@@ -315,6 +315,9 @@ class PiAgentProvider(AgentProvider):
     ) -> None:
         del plan, bottle, supervise_url
 
+    def headless_prompt(self, prompt: str) -> list[str]:
+        return ["-p", prompt]
+
 
 def _exec(bottle: "Bottle", script: str, error: str) -> None:
     result = bottle.exec(script, user="root")

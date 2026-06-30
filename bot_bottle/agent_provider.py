@@ -209,6 +209,15 @@ class AgentProvider(ABC):
         the supervise sidecar is reachable. No-op when
         `plan.supervise_plan is None`."""
 
+    @abstractmethod
+    def headless_prompt(self, prompt: str) -> list[str]:
+        """Return the agent CLI args that deliver `prompt` as the
+        initial task in a non-interactive (headless) session.
+
+        Called only when ``--prompt`` is passed to
+        ``./cli.py start --headless``; the returned args are appended
+        after the provider's ``bypass_args`` and ``startup_args``."""
+
     def provision_ca(self, bottle: "Bottle", plan: "BottlePlan") -> None:
         """Install the egress MITM CA into the agent's trust store.
 

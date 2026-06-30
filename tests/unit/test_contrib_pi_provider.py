@@ -223,5 +223,14 @@ class TestPiDockerfile(unittest.TestCase):
         self.assertIn("chmod 1777 /tmp /var/tmp", dockerfile)
 
 
+class TestPiHeadlessPrompt(unittest.TestCase):
+    def test_returns_p_flag_and_prompt(self):
+        self.assertEqual(["-p", "Do the task"], PiAgentProvider().headless_prompt("Do the task"))
+
+    def test_preserves_prompt_text_verbatim(self):
+        text = "Fix issue #42: the widget breaks on empty input"
+        self.assertEqual(["-p", text], PiAgentProvider().headless_prompt(text))
+
+
 if __name__ == "__main__":
     unittest.main()

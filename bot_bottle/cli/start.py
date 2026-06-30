@@ -2,6 +2,11 @@
 interactive claude-code session. The container is torn down when the
 session ends.
 
+`--headless` selects a non-interactive launch (agent/bottles/label from
+flags, no TUI selectors, no y/N prompt) for orchestrators,
+CI, and webhook dispatch. The agent still execs on the inherited
+stdio/PTY, so an orchestrator that allocates the PTY drives the session.
+
 The launch core is shared with `cli.py resume <identity>` through
 the private orchestrator `_launch_bottle`.
 """
@@ -16,7 +21,7 @@ import tempfile
 from pathlib import Path
 from typing import Callable
 
-from ..agent_provider import runtime_for
+from ..agent_provider import get_provider, runtime_for
 from ..backend import (
     Bottle,
     BottleSpec,
@@ -31,7 +36,7 @@ from ..bottle_state import (
     is_preserved,
     mark_preserved,
 )
-from ..log import info
+from ..log import info, die
 from ..manifest import Manifest, ManifestIndex
 from ._common import PROG, USER_CWD, read_tty_line
 from . import tui
@@ -51,6 +56,39 @@ def cmd_start(argv: list[str]) -> int:
         ),
     )
     parser.add_argument(
+        "--headless",
+        action="store_true",
+        help=(
+            "non-interactive launch: take agent/bottles/label from flags, "
+            "skip all prompts. For orchestrators, CI, and webhooks."
+        ),
+    )
+    parser.add_argument(
+        "--bottle",
+        action="append",
+        default=None,
+        metavar="NAME",
+        help=(
+            "bottle to compose, repeatable (order = merge order). In "
+            "--headless, defaults to the agent's own bottle when omitted."
+        ),
+    )
+    parser.add_argument(
+        "--label",
+        default=None,
+        help="bottle label / terminal title (--headless default: agent name)",
+    )
+    parser.add_argument(
+        "--color",
+        default=None,
+        help="bottle color, one of the 16 ANSI color names (--headless default: none)",
+    )
+    parser.add_argument(
+        "--prompt",
+        default=None,
+        help="initial task prompt delivered to the agent (required with --headless)",
+    )
+    parser.add_argument(
         "name",
         nargs="?",
         default=None,
@@ -61,6 +99,12 @@ def cmd_start(argv: list[str]) -> int:
     dry_run = args.dry_run or os.environ.get("BOT_BOTTLE_DRY_RUN") == "1"
 
     manifest = ManifestIndex.resolve(USER_CWD)
+    backend_name: str | None = args.backend
+
+    if args.headless:
+        return _start_headless(
+            manifest, args, dry_run=dry_run, backend_name=backend_name
+        )
 
     agent_name: str | None = args.name
     if agent_name is None:
@@ -70,8 +114,6 @@ def cmd_start(argv: list[str]) -> int:
         )
         if agent_name is None:
             return 0
-
-    backend_name: str | None = args.backend
 
     # Bottle multiselect: always show after agent selection so operators
     # can compose bottles at launch time without editing agent manifests.
@@ -107,6 +149,83 @@ def cmd_start(argv: list[str]) -> int:
         dry_run=dry_run,
         backend_name=backend_name,
     )
+
+
+# --- Headless launch -----------------------------------------------------
+
+
+def _start_headless(
+    manifest: ManifestIndex,
+    args: argparse.Namespace,
+    *,
+    dry_run: bool,
+    backend_name: str | None,
+) -> int:
+    """Non-interactive launch path for orchestrators / CI / webhooks.
+
+    Resolves agent, bottles, label, and color from flags + manifest
+    defaults instead of the TUI selectors, and auto-confirms the
+    preflight. Otherwise runs the same launch core as the interactive
+    path, so the agent still execs on the inherited stdio/PTY — an
+    orchestrator allocates that PTY and relays it to its
+    desktop/mobile clients."""
+    agent_name = args.name
+    if not agent_name:
+        die("--headless requires an agent name: ./cli.py start <agent> --headless")
+    manifest.require_agent(agent_name)  # raises ManifestError if unknown
+
+    prompt = args.prompt
+    if not prompt:
+        die(
+            "--headless requires --prompt: "
+            "./cli.py start <agent> --headless --prompt 'Do the thing'"
+        )
+
+    if args.bottle:
+        bottle_names: tuple[str, ...] = tuple(args.bottle)
+    else:
+        default_bottle = _peek_agent_bottle(manifest, agent_name)
+        if not default_bottle:
+            die(
+                f"--headless: agent '{agent_name}' has no default bottle; "
+                f"pass one or more --bottle NAME"
+            )
+        bottle_names = (default_bottle,)
+
+    label = _uniquify_label_headless(args.label or agent_name)
+
+    spec = BottleSpec(
+        manifest=manifest,
+        agent_name=agent_name,
+        copy_cwd=args.cwd,
+        user_cwd=USER_CWD,
+        label=label,
+        color=args.color or "",
+        bottle_names=bottle_names,
+    )
+    return _launch_bottle(
+        spec,
+        dry_run=dry_run,
+        backend_name=backend_name,
+        assume_yes=True,
+        headless_prompt_text=prompt,
+    )
+
+
+def _uniquify_label_headless(label: str) -> str:
+    """Non-interactive analog of `_resolve_unique_label`: if the label's
+    slug collides with a running bottle, append -2, -3, … until free,
+    logging the chosen label. Orchestrators fire-and-forget many bottles,
+    so silently picking a free name beats erroring on every collision."""
+    active_slugs = {a.slug for a in enumerate_active_agents()}
+    if docker_mod.slugify(label) not in active_slugs:
+        return label
+    n = 2
+    while docker_mod.slugify(f"{label}-{n}") in active_slugs:
+        n += 1
+    chosen = f"{label}-{n}"
+    info(f"label '{label}' already in use; using '{chosen}'")
+    return chosen
 
 
 # --- Launch helpers ------------------------------------------------------
@@ -376,10 +495,19 @@ def _launch_bottle(
     *,
     dry_run: bool,
     backend_name: str | None = None,
+    assume_yes: bool = False,
+    headless_prompt_text: str = "",
 ) -> int:
     """Shared launch core for `start` and `resume`. Builds the plan,
     prints / dry-runs / prompts as appropriate, brings the bottle up,
-    attaches claude, and prints the resume hint on session end."""
+    attaches claude, and prints the resume hint on session end.
+
+    `assume_yes` skips the interactive y/N confirmation (headless /
+    orchestrator launches), where there is no human at the prompt.
+
+    `headless_prompt_text` is passed to the provider's `headless_prompt`
+    method and the resulting args are appended to startup_args so the
+    agent receives the initial task without interactive input."""
     stage_dir = Path(tempfile.mkdtemp(prefix="bot-bottle-stage."))
     identity = ""
     try:
@@ -387,7 +515,7 @@ def _launch_bottle(
             spec,
             stage_dir=stage_dir,
             render_preflight=_text_render_preflight(),
-            prompt_yes=_text_prompt_yes,
+            prompt_yes=(lambda: True) if assume_yes else _text_prompt_yes,
             dry_run=dry_run,
             backend_name=backend_name,
         )
@@ -397,10 +525,17 @@ def _launch_bottle(
         backend = get_bottle_backend(backend_name)
         with backend.launch(plan) as bottle:
             agent_provider_template = getattr(plan, "agent_provider_template", "claude")
+            extra_args: tuple[str, ...] = ()
+            if headless_prompt_text:
+                extra_args = tuple(
+                    get_provider(agent_provider_template).headless_prompt(
+                        headless_prompt_text
+                    )
+                )
             exit_code = attach_agent(
                 bottle,
                 agent_provider_template=agent_provider_template,
-                startup_args=plan.agent_provision.startup_args,
+                startup_args=plan.agent_provision.startup_args + extra_args,
             )
             info(
                 f"session ended (exit {exit_code}); "

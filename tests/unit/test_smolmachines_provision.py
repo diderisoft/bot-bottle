@@ -49,6 +49,7 @@ class _Provider(AgentProvider):
     def provision_prompt(self, plan, bottle): ...  # type: ignore[override]
     def provision(self, plan, bottle): ...  # type: ignore[override]
     def provision_supervise_mcp(self, plan, bottle, supervise_url): ...  # type: ignore[override]
+    def headless_prompt(self, prompt): return []  # type: ignore[override]
 
 
 _PROVIDER = _Provider()

@@ -314,5 +314,14 @@ class TestCodexSuperviseMcp(unittest.TestCase):
         )
 
 
+class TestCodexHeadlessPrompt(unittest.TestCase):
+    def test_returns_prompt_as_positional_arg(self):
+        self.assertEqual(["Do the task"], CodexAgentProvider().headless_prompt("Do the task"))
+
+    def test_preserves_prompt_text_verbatim(self):
+        text = "Fix issue #42: the widget breaks on empty input"
+        self.assertEqual([text], CodexAgentProvider().headless_prompt(text))
+
+
 if __name__ == "__main__":
     unittest.main()

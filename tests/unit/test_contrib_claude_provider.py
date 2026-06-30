@@ -343,5 +343,14 @@ class TestClaudeSuperviseMcp(unittest.TestCase):
         )
 
 
+class TestClaudeHeadlessPrompt(unittest.TestCase):
+    def test_returns_p_flag_and_prompt(self):
+        self.assertEqual(["-p", "Do the task"], ClaudeAgentProvider().headless_prompt("Do the task"))
+
+    def test_preserves_prompt_text_verbatim(self):
+        text = "Fix issue #42: the widget breaks on empty input"
+        self.assertEqual(["-p", text], ClaudeAgentProvider().headless_prompt(text))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,188 @@
+"""Unit: `cli.py start --headless` non-interactive launch path.
+
+Headless is the keystone for orchestrators, CI, and webhook
+dispatch: agent/bottles/label come from flags + manifest defaults, no
+TUI selectors fire, and the preflight y/N is auto-confirmed
+(`assume_yes=True`). All actual launch work is stubbed so no container
+is created.
+"""
+
+from __future__ import annotations
+
+import os
+import unittest
+from unittest.mock import MagicMock, patch
+
+import bot_bottle.cli.start as start_mod
+import bot_bottle.cli.tui as tui_mod
+from bot_bottle.backend import ActiveAgent
+from bot_bottle.log import Die
+from bot_bottle.manifest import ManifestError
+
+
+def _make_manifest(
+    agent_names: list[str],
+    bottle_names: list[str] | None = None,
+    agent_bottle: str = "",
+):
+    manifest = MagicMock()
+    manifest.agents = {name: MagicMock(bottle=agent_bottle) for name in agent_names}
+    manifest.all_agent_names = sorted(agent_names)
+    manifest.all_bottle_names = sorted(bottle_names or [])
+    manifest.home_md = None  # eager mode so _peek_agent_bottle uses agents dict
+    manifest.require_agent = MagicMock(return_value=None)
+    return manifest
+
+
+def _active_agent(slug: str) -> ActiveAgent:
+    return ActiveAgent(
+        backend_name="docker",
+        slug=slug,
+        agent_name="demo",
+        started_at="2026-01-01T00:00:00+00:00",
+        services=(),
+    )
+
+
+class TestCmdStartHeadless(unittest.TestCase):
+    """Drive `cmd_start --headless` with launch + TUI stubbed out."""
+
+    def setUp(self):
+        self._manifest = _make_manifest(
+            ["researcher", "implementer"], ["claude", "dev"], agent_bottle="claude"
+        )
+        patch(
+            "bot_bottle.cli.start.ManifestIndex.resolve",
+            return_value=self._manifest,
+        ).start()
+        self._launch_mock = patch(
+            "bot_bottle.cli.start._launch_bottle", return_value=0
+        ).start()
+        # No bottles running by default → no label collision.
+        patch(
+            "bot_bottle.cli.start.enumerate_active_agents", return_value=[]
+        ).start()
+        # If any TUI picker fires in headless mode, that's a bug.
+        self._agent_picker = patch.object(tui_mod, "filter_select").start()
+        self._bottle_picker = patch.object(tui_mod, "filter_multiselect").start()
+        self._modal = patch.object(tui_mod, "name_color_modal").start()
+        patch.dict(os.environ, {}, clear=False).start()
+        os.environ.pop("BOT_BOTTLE_BACKEND", None)
+        self.addCleanup(patch.stopall)
+
+    def _spec(self):
+        self._launch_mock.assert_called_once()
+        return self._launch_mock.call_args[0][0]
+
+    # -- no TUI in headless --------------------------------------------
+
+    def test_headless_fires_no_pickers(self):
+        rc = start_mod.cmd_start(
+            ["--headless", "researcher", "--bottle", "claude", "--prompt", "Do it"]
+        )
+        self.assertEqual(0, rc)
+        self._agent_picker.assert_not_called()
+        self._bottle_picker.assert_not_called()
+        self._modal.assert_not_called()
+
+    def test_headless_assume_yes_forwarded(self):
+        start_mod.cmd_start(
+            ["--headless", "researcher", "--bottle", "claude", "--prompt", "Do it"]
+        )
+        self.assertTrue(self._launch_mock.call_args[1]["assume_yes"])
+
+    # -- prompt --------------------------------------------------------
+
+    def test_headless_without_prompt_dies(self):
+        with self.assertRaises(Die):
+            start_mod.cmd_start(["--headless", "researcher", "--bottle", "claude"])
+        self._launch_mock.assert_not_called()
+
+    def test_headless_prompt_forwarded_to_launch(self):
+        start_mod.cmd_start(
+            ["--headless", "researcher", "--bottle", "claude",
+             "--prompt", "Implement issue #42"]
+        )
+        self.assertEqual(
+            "Implement issue #42",
+            self._launch_mock.call_args[1]["headless_prompt_text"],
+        )
+
+    # -- bottle resolution ---------------------------------------------
+
+    def test_explicit_bottles_forwarded_in_order(self):
+        start_mod.cmd_start(
+            ["--headless", "researcher", "--bottle", "dev", "--bottle", "claude",
+             "--prompt", "Do it"]
+        )
+        self.assertEqual(("dev", "claude"), self._spec().bottle_names)
+
+    def test_omitted_bottle_falls_back_to_agent_default(self):
+        start_mod.cmd_start(["--headless", "implementer", "--prompt", "Do it"])
+        self.assertEqual(("claude",), self._spec().bottle_names)
+
+    def test_no_bottle_and_no_default_dies(self):
+        manifest = _make_manifest(["researcher"], ["claude"], agent_bottle="")
+        with patch(
+            "bot_bottle.cli.start.ManifestIndex.resolve", return_value=manifest
+        ):
+            with self.assertRaises(Die):
+                start_mod.cmd_start(
+                    ["--headless", "researcher", "--prompt", "Do it"]
+                )
+        self._launch_mock.assert_not_called()
+
+    # -- agent resolution ----------------------------------------------
+
+    def test_missing_agent_name_dies(self):
+        with self.assertRaises(Die):
+            start_mod.cmd_start(["--headless"])
+        self._launch_mock.assert_not_called()
+
+    def test_unknown_agent_raises_manifest_error(self):
+        self._manifest.require_agent.side_effect = ManifestError("agent 'x' not defined")
+        with self.assertRaises(ManifestError):
+            start_mod.cmd_start(
+                ["--headless", "x", "--bottle", "claude", "--prompt", "Do it"]
+            )
+        self._launch_mock.assert_not_called()
+
+    # -- label / color -------------------------------------------------
+
+    def test_label_defaults_to_agent_name(self):
+        start_mod.cmd_start(
+            ["--headless", "researcher", "--bottle", "claude", "--prompt", "Do it"]
+        )
+        self.assertEqual("researcher", self._spec().label)
+
+    def test_explicit_label_and_color_forwarded(self):
+        start_mod.cmd_start(
+            ["--headless", "researcher", "--bottle", "claude",
+             "--label", "nightly", "--color", "green", "--prompt", "Do it"]
+        )
+        spec = self._spec()
+        self.assertEqual("nightly", spec.label)
+        self.assertEqual("green", spec.color)
+
+    def test_label_collision_uniquifies(self):
+        with patch(
+            "bot_bottle.cli.start.enumerate_active_agents",
+            return_value=[_active_agent("researcher")],
+        ):
+            start_mod.cmd_start(
+                ["--headless", "researcher", "--bottle", "claude", "--prompt", "Do it"]
+            )
+        self.assertEqual("researcher-2", self._spec().label)
+
+    # -- backend wiring ------------------------------------------------
+
+    def test_backend_flag_forwarded(self):
+        start_mod.cmd_start(
+            ["--headless", "--backend=docker", "researcher", "--bottle", "claude",
+             "--prompt", "Do it"]
+        )
+        self.assertEqual("docker", self._launch_mock.call_args[1]["backend_name"])
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -279,6 +279,9 @@ class CodexAgentProvider(AgentProvider):
                 f"codex mcp add supervise --url {shlex.quote(supervise_url)}"
             )
 
+    def headless_prompt(self, prompt: str) -> list[str]:
+        return [prompt]
+
 
 def _exec(bottle: "Bottle", script: str, error: str) -> None:
     result = bottle.exec(script, user="root")
