@@ -41,7 +41,10 @@ from ..docker.git_gate import (
     GIT_GATE_ENTRYPOINT_IN_CONTAINER,
     GIT_GATE_HOOK_IN_CONTAINER,
 )
-from ...git_gate import revoke_git_gate_provisioned_keys
+from ...git_gate import (
+    provision_git_gate_dynamic_keys,
+    revoke_git_gate_provisioned_keys,
+)
 from ...log import info, warn
 from ...bottle_state import (
     egress_state_dir,
@@ -174,12 +177,26 @@ def _start_bundle(
 ) -> SmolmachinesBottlePlan:
     """Build the BundleLaunchSpec, resolve token env, start the
     sidecar bundle container, and register teardown."""
+    plan = _provision_git_gate_keys(plan)
     bundle_spec = _bundle_launch_spec(plan, network, loopback_ip)
     token_env = _resolve_token_env(plan, dict(os.environ))
     _bundle.ensure_bundle_image(bundle_spec.image)
     _bundle.start_bundle(bundle_spec, env={**os.environ, **token_env})
     stack.callback(_bundle.stop_bundle, plan.slug)
     return plan
+
+
+def _provision_git_gate_keys(
+    plan: SmolmachinesBottlePlan,
+) -> SmolmachinesBottlePlan:
+    if not plan.git_gate_plan.upstreams:
+        return plan
+    git_gate_plan = provision_git_gate_dynamic_keys(
+        plan.manifest.bottle,
+        plan.git_gate_plan,
+        git_gate_state_dir(plan.slug),
+    )
+    return dataclasses.replace(plan, git_gate_plan=git_gate_plan)
 
 
 def _discover_urls(

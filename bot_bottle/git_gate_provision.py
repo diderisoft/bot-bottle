@@ -9,10 +9,16 @@ imported (`deploy_key_provisioner`) to keep its cost off the host path.
 from __future__ import annotations
 
 import os
+import dataclasses
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .log import info
 from .manifest import ManifestBottle, ManifestGitEntry
+from .git_gate_render import GitGateUpstream
+
+if TYPE_CHECKING:
+    from .git_gate import GitGatePlan
 
 def _provision_dynamic_key(
     entry: ManifestGitEntry,
@@ -95,8 +101,45 @@ def _resolve_identity_file(entry: ManifestGitEntry, slug: str, stage_dir: Path) 
     return entry.IdentityFile
 
 
+def provision_git_gate_dynamic_keys(
+    bottle: ManifestBottle,
+    plan: "GitGatePlan",
+    stage_dir: Path,
+) -> "GitGatePlan":
+    """Provision dynamic git-gate keys and return an updated plan.
+
+    This runs during backend launch, after the operator confirms the
+    preflight. Plan preparation intentionally stays side-effect-light:
+    dry-runs and aborted launches must not create remote deploy keys.
+    """
+    if not plan.upstreams:
+        return plan
+
+    upstreams_by_name: dict[str, GitGateUpstream] = {
+        upstream.name: upstream for upstream in plan.upstreams
+    }
+    updated: list[GitGateUpstream] = []
+    for entry in bottle.git:
+        upstream = upstreams_by_name.get(entry.Name)
+        if upstream is None:
+            continue
+        if entry.Key.provider == "gitea":
+            identity_file = _provision_dynamic_key(entry, plan.slug, stage_dir)
+            upstream = dataclasses.replace(upstream, identity_file=identity_file)
+        updated.append(upstream)
+
+    if len(updated) != len(plan.upstreams):
+        updated_names = {u.name for u in updated}
+        for upstream in plan.upstreams:
+            if upstream.name not in updated_names:
+                updated.append(upstream)
+
+    return dataclasses.replace(plan, upstreams=tuple(updated))
+
+
 __all__ = [
     "revoke_git_gate_provisioned_keys",
+    "provision_git_gate_dynamic_keys",
     "_provision_dynamic_key",
     "_resolve_identity_file",
 ]

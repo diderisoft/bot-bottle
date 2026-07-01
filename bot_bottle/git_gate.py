@@ -30,7 +30,6 @@ backend-specific and lives on concrete subclasses (see
 
 from __future__ import annotations
 
-import dataclasses
 from abc import ABC
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,6 +52,7 @@ from .git_gate_render import (
     _gitconfig_validate_value,
 )
 from .git_gate_provision import (
+    provision_git_gate_dynamic_keys,
     revoke_git_gate_provisioned_keys,
     _provision_dynamic_key,
     _resolve_identity_file,
@@ -93,20 +93,14 @@ class GitGate(ABC):
         entrypoint, pre-receive hook, and access-hook scripts (mode
         600) under `stage_dir`. Pure host-side, no docker subprocess.
 
-        For `gitea` key entries, also generates and registers
-        a fresh deploy key via the forge API and writes the private key
-        + key ID to `stage_dir`.
+        For `gitea` key entries, the returned upstream intentionally
+        has an empty identity file. Backend launch fills that in after
+        the operator confirms the preflight.
 
         Returned plan is incomplete: the launch step must fill
         `internal_network` / `egress_network` via `dataclasses.replace`
         before passing the plan to `.start`."""
-        upstreams_list = list(git_gate_upstreams_for_bottle(bottle))
-        for i, entry in enumerate(bottle.git):
-            upstreams_list[i] = dataclasses.replace(
-                upstreams_list[i],
-                identity_file=_resolve_identity_file(entry, slug, stage_dir),
-            )
-        upstreams = tuple(upstreams_list)
+        upstreams = git_gate_upstreams_for_bottle(bottle)
         entrypoint = stage_dir / "git_gate_entrypoint.sh"
         entrypoint.write_text(git_gate_render_entrypoint(upstreams))
         entrypoint.chmod(0o600)
@@ -162,6 +156,7 @@ __all__ = [
     "git_gate_render_entrypoint",
     "git_gate_render_hook",
     "git_gate_render_access_hook",
+    "provision_git_gate_dynamic_keys",
     "revoke_git_gate_provisioned_keys",
     "_gitconfig_validate_value",
     "_provision_dynamic_key",

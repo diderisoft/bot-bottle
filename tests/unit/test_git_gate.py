@@ -14,6 +14,7 @@ from bot_bottle.git_gate import (
     git_gate_render_access_hook,
     git_gate_render_entrypoint,
     git_gate_render_hook,
+    provision_git_gate_dynamic_keys,
     revoke_git_gate_provisioned_keys,
     _resolve_identity_file,
     git_gate_upstreams_for_bottle,
@@ -370,6 +371,27 @@ class TestDynamicKeyProvisioning(unittest.TestCase):
         with patch("bot_bottle.git_gate_provision._provision_dynamic_key", return_value="/tmp/provisioned-key") as mock_provision:
             self.assertEqual("/tmp/provisioned-key", _resolve_identity_file(entry, "demo", self.stage))
         mock_provision.assert_called_once()
+
+    def test_prepare_defers_gitea_key_provisioning(self):
+        bottle = self._gitea_manifest().bottles["dev"]
+        with patch("bot_bottle.git_gate_provision._provision_dynamic_key") as mock_provision:
+            plan = _StubGate().prepare(bottle, "demo", self.stage)
+
+        mock_provision.assert_not_called()
+        self.assertEqual("", plan.upstreams[0].identity_file)
+
+    def test_launch_time_helper_provisions_gitea_keys(self):
+        bottle = self._gitea_manifest().bottles["dev"]
+        plan = _StubGate().prepare(bottle, "demo", self.stage)
+
+        with patch(
+            "bot_bottle.git_gate_provision._provision_dynamic_key",
+            return_value="/tmp/provisioned-key",
+        ) as mock_provision:
+            updated = provision_git_gate_dynamic_keys(bottle, plan, self.stage)
+
+        mock_provision.assert_called_once_with(bottle.git[0], "demo", self.stage)
+        self.assertEqual("/tmp/provisioned-key", updated.upstreams[0].identity_file)
 
     def test_revoke_skips_non_gitea_and_missing_id_file(self):
         revoke_git_gate_provisioned_keys(fixture_with_git().bottles["dev"], self.stage)

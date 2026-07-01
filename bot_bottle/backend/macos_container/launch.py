@@ -28,7 +28,10 @@ from ...egress import (
     egress_resolve_token_values,
     egress_sidecar_env_entries,
 )
-from ...git_gate import revoke_git_gate_provisioned_keys
+from ...git_gate import (
+    provision_git_gate_dynamic_keys,
+    revoke_git_gate_provisioned_keys,
+)
 from ...log import die, info, warn
 from ...supervise import QUEUE_DIR_IN_CONTAINER, SUPERVISE_PORT
 from ...util import expand_tilde
@@ -97,6 +100,8 @@ def launch(
         internal_network = internal_network_name(plan.slug)
         egress_network = egress_network_name(plan.slug)
         _create_networks(internal_network, egress_network, stack)
+
+        plan = _provision_git_gate_keys(plan)
 
         sidecar_name = sidecar_container_name(plan.slug)
         container_mod.force_remove_container(sidecar_name)
@@ -239,6 +244,19 @@ def _stamp_agent_urls(
         agent_git_gate_url=git_gate_url,
         agent_supervise_url=supervise_url,
     )
+
+
+def _provision_git_gate_keys(
+    plan: MacosContainerBottlePlan,
+) -> MacosContainerBottlePlan:
+    if not plan.git_gate_plan.upstreams:
+        return plan
+    git_gate_plan = provision_git_gate_dynamic_keys(
+        plan.manifest.bottle,
+        plan.git_gate_plan,
+        git_gate_state_dir(plan.slug),
+    )
+    return dataclasses.replace(plan, git_gate_plan=git_gate_plan)
 
 
 def _stage_git_gate(plan: MacosContainerBottlePlan, sidecar_name: str) -> None:

@@ -37,7 +37,10 @@ from pathlib import Path
 from typing import Callable, Generator
 
 from ...egress import egress_resolve_token_values
-from ...git_gate import revoke_git_gate_provisioned_keys
+from ...git_gate import (
+    provision_git_gate_dynamic_keys,
+    revoke_git_gate_provisioned_keys,
+)
 from ...log import info, warn
 from . import network as network_mod
 from . import util as docker_mod
@@ -118,6 +121,11 @@ def launch(
 
         git_gate_plan = plan.git_gate_plan
         if git_gate_plan.upstreams:
+            git_gate_plan = provision_git_gate_dynamic_keys(
+                plan.manifest.bottle,
+                git_gate_plan,
+                git_gate_state_dir(plan.slug),
+            )
             git_gate_plan = dataclasses.replace(
                 git_gate_plan,
                 internal_network=internal_network,
