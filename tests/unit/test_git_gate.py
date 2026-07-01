@@ -210,7 +210,9 @@ class TestHookRender(unittest.TestCase):
         # the suppressed findings for human approval.
         self.assertIn("--ignore-gitleaks-allow", hook)
         self.assertIn("--report-format=json", hook)
-        self.assertIn('"tool": "gitleaks-allow"', hook)
+        self.assertIn("tool=_sv.TOOL_GITLEAKS_ALLOW", hook)
+        self.assertIn("_sv.write_proposal", hook)
+        self.assertIn("_sv.read_response", hook)
         self.assertIn("SUPERVISE_QUEUE_DIR", hook)
         self.assertIn("SUPERVISE_BOTTLE_SLUG", hook)
         self.assertIn("supervisor approved # gitleaks:allow", hook)

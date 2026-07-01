@@ -78,6 +78,7 @@ def _plan(
         supervise_plan = SupervisePlan(
             slug="demo-abc12",
             queue_dir=Path("/tmp/queue"),
+            db_path=Path("/tmp/bot-bottle.db"),
         )
     return DockerBottlePlan(
         spec=spec,

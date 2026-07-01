@@ -108,6 +108,7 @@ def _supervise_plan() -> SupervisePlan:
     return SupervisePlan(
         slug=SLUG,
         queue_dir=STATE / "supervise" / "queue",
+        db_path=STATE / "bot-bottle.db",
         internal_network=f"bot-bottle-net-{SLUG}",
     )
 
@@ -392,6 +393,7 @@ class TestSidecarBundleShape(unittest.TestCase):
         sc = self._render(supervise=True)["services"]["sidecars"]
         env_strings = sc["environment"]
         self.assertIn(f"SUPERVISE_BOTTLE_SLUG={SLUG}", env_strings)
+        self.assertIn("SUPERVISE_DB_PATH=/run/supervise/bot-bottle.db", env_strings)
         self.assertTrue(any(e.startswith("SUPERVISE_QUEUE_DIR=") for e in env_strings))
         self.assertTrue(any(e.startswith("SUPERVISE_PORT=") for e in env_strings))
 
@@ -408,6 +410,7 @@ class TestSidecarBundleShape(unittest.TestCase):
         self.assertIn("/etc/egress", targets)
         self.assertIn("/git-gate-entrypoint.sh", targets)
         self.assertIn("/git-gate/creds/upstream-known_hosts", targets)
+        self.assertIn("/run/supervise/bot-bottle.db", targets)
         self.assertTrue(any("supervise/queue" in t or t.startswith("/run/supervise")
                             for t in targets))
 

@@ -382,6 +382,7 @@ class TestSupervisePrepare(unittest.TestCase):
     def test_prepare_creates_queue(self):
         plan = _StubSupervise().prepare("dev", self.stage_dir)
         self.assertTrue(plan.queue_dir.is_dir())
+        self.assertTrue(plan.db_path.is_file())
         self.assertEqual("dev", plan.slug)
         self.assertEqual("", plan.internal_network)
 

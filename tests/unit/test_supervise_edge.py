@@ -44,7 +44,7 @@ class TestPathHelpers(unittest.TestCase):
 
     def test_queue_db_path_for_slug_dir(self) -> None:
         self.assertEqual(
-            Path("/tmp/queue/supervise.db"),
+            supervise.host_db_path(),
             supervise.queue_db_path(Path("/tmp/queue")),
         )
 

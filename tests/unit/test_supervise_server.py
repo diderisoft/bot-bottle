@@ -122,9 +122,10 @@ class TestRpcInternalErrorOnIoFailure(unittest.TestCase):
     def test_write_proposal_os_error_raises_internal(self):
         config = ServerConfig(
             bottle_slug="dev",
-            queue_dir=Path("/dev/null/cannot-exist"),
+            queue_dir=Path("/unused"),
         )
-        with self.assertRaises(_RpcInternalError) as cm:
+        with patch.object(_sv, "write_proposal", side_effect=OSError("disk full")), \
+                self.assertRaises(_RpcInternalError) as cm:
             handle_tools_call(
                 {
                     "name": _sv.TOOL_EGRESS_ALLOW,

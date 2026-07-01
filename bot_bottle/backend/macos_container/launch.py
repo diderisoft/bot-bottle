@@ -33,7 +33,7 @@ from ...git_gate import (
     revoke_git_gate_provisioned_keys,
 )
 from ...log import die, info, warn
-from ...supervise import QUEUE_DIR_IN_CONTAINER, SUPERVISE_PORT
+from ...supervise import DB_PATH_IN_CONTAINER, QUEUE_DIR_IN_CONTAINER, SUPERVISE_PORT
 from ...util import expand_tilde
 from ..docker.egress import EGRESS_CA_IN_CONTAINER, EGRESS_PORT
 from ..docker.git_gate import (
@@ -379,6 +379,7 @@ def _sidecar_env_entries(plan: MacosContainerBottlePlan) -> tuple[str, ...]:
     if plan.supervise_plan is not None:
         env += [
             f"SUPERVISE_BOTTLE_SLUG={plan.slug}",
+            f"SUPERVISE_DB_PATH={DB_PATH_IN_CONTAINER}",
             f"SUPERVISE_QUEUE_DIR={QUEUE_DIR_IN_CONTAINER}",
             f"SUPERVISE_PORT={SUPERVISE_PORT}",
         ]
@@ -405,6 +406,7 @@ def _sidecar_mounts(
 
     sp = plan.supervise_plan
     if sp is not None:
+        mounts.append((str(sp.db_path), DB_PATH_IN_CONTAINER, False))
         mounts.append((str(sp.queue_dir), QUEUE_DIR_IN_CONTAINER, False))
 
     return tuple(mounts)

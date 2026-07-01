@@ -71,7 +71,10 @@ def _plan(
     else:
         git_gate_plan = SimpleNamespace(upstreams=())
     supervise_plan = (
-        SimpleNamespace(queue_dir=Path("/state/supervise/queue"))
+        SimpleNamespace(
+            queue_dir=Path("/state/supervise/queue"),
+            db_path=Path("/state/bot-bottle.db"),
+        )
         if supervise else None
     )
     agent_provision = SimpleNamespace(
@@ -134,6 +137,10 @@ class TestMacosContainerLaunchArgv(unittest.TestCase):
         )
         self.assertIn(
             f"type=bind,source={self.stage_dir},target=/etc/egress,readonly",
+            argv,
+        )
+        self.assertIn(
+            "type=bind,source=/state/bot-bottle.db,target=/run/supervise/bot-bottle.db",
             argv,
         )
         self.assertIn(

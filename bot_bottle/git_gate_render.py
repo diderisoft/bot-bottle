@@ -234,8 +234,9 @@ import hashlib
 import json
 import os
 import sys
-import uuid
 from pathlib import Path
+
+from bot_bottle import supervise as _sv
 
 report_path = Path(sys.argv[1])
 queue_dir = os.environ.get("SUPERVISE_QUEUE_DIR", "")
@@ -277,31 +278,19 @@ for i, finding in enumerate(raw, 1):
     ])
 
 payload = "\n".join(lines).rstrip() + "\n"
-proposal_id = str(uuid.uuid4())
-proposal = {
-    "id": proposal_id,
-    "bottle_slug": slug,
-    "tool": "gitleaks-allow",
-    "proposed_file": payload,
-    "justification": (
+proposal = _sv.Proposal.new(
+    bottle_slug=slug,
+    tool=_sv.TOOL_GITLEAKS_ALLOW,
+    proposed_file=payload,
+    justification=(
         "git-gate found gitleaks findings hidden by # gitleaks:allow; "
         "approve only for dummy test fixtures or confirmed false positives"
     ),
-    "arrival_timestamp": datetime.datetime.now(
-        datetime.timezone.utc
-    ).isoformat(),
-    "current_file_hash": hashlib.sha256(payload.encode("utf-8")).hexdigest(),
-}
-queue = Path(queue_dir)
-queue.mkdir(parents=True, exist_ok=True)
-path = queue / f"{proposal_id}.proposal.json"
-tmp = path.with_suffix(path.suffix + ".tmp")
-with tmp.open("w", encoding="utf-8") as f:
-    json.dump(proposal, f, indent=2)
-    f.write("\n")
-os.chmod(tmp, 0o600)
-os.replace(tmp, path)
-print(proposal_id)
+    current_file_hash=hashlib.sha256(payload.encode("utf-8")).hexdigest(),
+    now=datetime.datetime.now(datetime.timezone.utc),
+)
+_sv.write_proposal(Path(queue_dir), proposal)
+print(proposal.id)
 PY
   )
   rc=$?
@@ -315,7 +304,6 @@ PY
   fi
 
   queue_dir=${SUPERVISE_QUEUE_DIR:-}
-  response_file="$queue_dir/${proposal_id}.response.json"
   timeout=${SUPERVISE_GITLEAKS_ALLOW_TIMEOUT_SECONDS:-300}
   case "$timeout" in
     ''|*[!0-9]*)
@@ -327,26 +315,36 @@ PY
   echo "git-gate: approve with './cli.py supervise' to continue this push" >&2
   waited=0
   while [ "$waited" -lt "$timeout" ]; do
-    if [ -f "$response_file" ]; then
-      status=$(python3 - "$response_file" <<'PY'
-import json
+    status=$(python3 - "$queue_dir" "$proposal_id" <<'PY'
 import sys
+from pathlib import Path
+
+from bot_bottle import supervise as _sv
+
 try:
-    with open(sys.argv[1], encoding="utf-8") as f:
-        raw = json.load(f)
-except (OSError, json.JSONDecodeError):
-    sys.exit(1)
-status = raw.get("status")
-if not isinstance(status, str):
-    sys.exit(1)
-print(status)
+    response = _sv.read_response(Path(sys.argv[1]), sys.argv[2])
+except FileNotFoundError:
+    sys.exit(2)
+print(response.status)
 PY
-      ) || status=""
+    )
+    rc=$?
+    if [ "$rc" -eq 2 ]; then
+      status=""
+    elif [ "$rc" -ne 0 ]; then
+      status="invalid"
+    fi
+    if [ -n "$status" ]; then
       case "$status" in
         approved|modified)
-          mkdir -p "$queue_dir/processed"
-          mv -f "$queue_dir/${proposal_id}.proposal.json" "$queue_dir/processed/" 2>/dev/null || true
-          mv -f "$queue_dir/${proposal_id}.response.json" "$queue_dir/processed/" 2>/dev/null || true
+          python3 - "$queue_dir" "$proposal_id" <<'PY' || true
+import sys
+from pathlib import Path
+
+from bot_bottle import supervise as _sv
+
+_sv.archive_proposal(Path(sys.argv[1]), sys.argv[2])
+PY
           echo "git-gate: supervisor approved # gitleaks:allow for $ref" >&2
           return 0
           ;;
@@ -499,4 +497,3 @@ if ! git -C "$repo_dir" rev-parse --verify HEAD >/dev/null 2>&1; then
 fi
 exit 0
 """
-

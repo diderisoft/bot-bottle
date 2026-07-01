@@ -34,6 +34,7 @@ from __future__ import annotations
 import dataclasses
 import difflib
 import hashlib
+import os
 import sqlite3
 import time
 import uuid
@@ -86,9 +87,9 @@ STATUSES: tuple[str, ...] = (STATUS_APPROVED, STATUS_MODIFIED, STATUS_REJECTED)
 ACTION_OPERATOR_EDIT = "operator-edit"
 
 QUEUE_DIR_IN_CONTAINER = "/run/supervise/queue"
+DB_PATH_IN_CONTAINER = "/run/supervise/bot-bottle.db"
 DEFAULT_POLL_INTERVAL_SEC = 0.5
 HOST_DB_FILENAME = "bot-bottle.db"
-QUEUE_DB_FILENAME = "supervise.db"
 
 
 # --- Paths -----------------------------------------------------------------
@@ -115,7 +116,9 @@ def host_db_path() -> Path:
 
 
 def queue_db_path(queue_dir: Path) -> Path:
-    return queue_dir / QUEUE_DB_FILENAME
+    del queue_dir
+    env_path = os.environ.get("SUPERVISE_DB_PATH", "").strip()
+    return Path(env_path) if env_path else host_db_path()
 
 
 # --- Dataclasses -----------------------------------------------------------
@@ -331,6 +334,7 @@ def sha256_hex(content: str) -> str:
 
 class _QueueStore:
     def __init__(self, queue_dir: Path) -> None:
+        self.queue_key = _queue_key(queue_dir)
         self.db_path = queue_db_path(queue_dir)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init()
@@ -340,11 +344,12 @@ class _QueueStore:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO supervise_proposals (
-                    id, bottle_slug, tool, proposed_file, justification,
+                    queue_key, id, bottle_slug, tool, proposed_file, justification,
                     arrival_timestamp, current_file_hash, archived
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
                 """,
                 (
+                    self.queue_key,
                     proposal.id,
                     proposal.bottle_slug,
                     proposal.tool,
@@ -362,9 +367,9 @@ class _QueueStore:
             row = conn.execute(
                 """
                 SELECT * FROM supervise_proposals
-                WHERE id = ? AND archived = 0
+                WHERE queue_key = ? AND id = ? AND archived = 0
                 """,
-                (proposal_id,),
+                (self.queue_key, proposal_id),
             ).fetchone()
         if row is None:
             raise FileNotFoundError(proposal_id)
@@ -378,12 +383,16 @@ class _QueueStore:
                 """
                 SELECT p.* FROM supervise_proposals p
                 WHERE p.archived = 0
+                  AND p.queue_key = ?
                   AND NOT EXISTS (
                     SELECT 1 FROM supervise_responses r
-                    WHERE r.proposal_id = p.id AND r.archived = 0
+                    WHERE r.queue_key = p.queue_key
+                      AND r.proposal_id = p.id
+                      AND r.archived = 0
                   )
                 ORDER BY p.arrival_timestamp, p.id
-                """
+                """,
+                (self.queue_key,),
             ).fetchall()
         return [_proposal_from_row(row) for row in rows]
 
@@ -392,10 +401,11 @@ class _QueueStore:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO supervise_responses (
-                    proposal_id, status, notes, final_file, archived
-                ) VALUES (?, ?, ?, ?, 0)
+                    queue_key, proposal_id, status, notes, final_file, archived
+                ) VALUES (?, ?, ?, ?, ?, 0)
                 """,
                 (
+                    self.queue_key,
                     response.proposal_id,
                     response.status,
                     response.notes,
@@ -410,9 +420,9 @@ class _QueueStore:
             row = conn.execute(
                 """
                 SELECT * FROM supervise_responses
-                WHERE proposal_id = ? AND archived = 0
+                WHERE queue_key = ? AND proposal_id = ? AND archived = 0
                 """,
-                (proposal_id,),
+                (self.queue_key, proposal_id),
             ).fetchone()
         if row is None:
             raise FileNotFoundError(proposal_id)
@@ -423,15 +433,18 @@ class _QueueStore:
             return
         with self._connect() as conn:
             conn.execute(
-                "UPDATE supervise_proposals SET archived = 1 WHERE id = ?",
-                (proposal_id,),
+                """
+                UPDATE supervise_proposals SET archived = 1
+                WHERE queue_key = ? AND id = ?
+                """,
+                (self.queue_key, proposal_id),
             )
             conn.execute(
                 """
                 UPDATE supervise_responses SET archived = 1
-                WHERE proposal_id = ?
+                WHERE queue_key = ? AND proposal_id = ?
                 """,
-                (proposal_id,),
+                (self.queue_key, proposal_id),
             )
 
     def _connect(self) -> sqlite3.Connection:
@@ -444,25 +457,29 @@ class _QueueStore:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS supervise_proposals (
-                    id TEXT PRIMARY KEY,
+                    queue_key TEXT NOT NULL,
+                    id TEXT NOT NULL,
                     bottle_slug TEXT NOT NULL,
                     tool TEXT NOT NULL,
                     proposed_file TEXT NOT NULL,
                     justification TEXT NOT NULL,
                     arrival_timestamp TEXT NOT NULL,
                     current_file_hash TEXT NOT NULL,
-                    archived INTEGER NOT NULL DEFAULT 0
+                    archived INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (queue_key, id)
                 )
                 """
             )
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS supervise_responses (
-                    proposal_id TEXT PRIMARY KEY,
+                    queue_key TEXT NOT NULL,
+                    proposal_id TEXT NOT NULL,
                     status TEXT NOT NULL,
                     notes TEXT NOT NULL,
                     final_file TEXT,
-                    archived INTEGER NOT NULL DEFAULT 0
+                    archived INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (queue_key, proposal_id)
                 )
                 """
             )
@@ -580,6 +597,13 @@ def _audit_entry_from_row(row: sqlite3.Row) -> AuditEntry:
     )
 
 
+def _queue_key(queue_dir: Path) -> str:
+    env_slug = os.environ.get("SUPERVISE_BOTTLE_SLUG", "").strip()
+    if env_slug:
+        return env_slug
+    return queue_dir.name
+
+
 # --- Sidecar plan + abstract lifecycle -------------------------------------
 
 
@@ -594,6 +618,7 @@ class SupervisePlan:
 
     slug: str
     queue_dir: Path
+    db_path: Path
     internal_network: str = ""
 
 
@@ -613,9 +638,13 @@ class Supervise(ABC):
         del stage_dir
         queue_dir = queue_dir_for_slug(slug)
         queue_dir.mkdir(parents=True, exist_ok=True)
+        db_path = host_db_path()
+        _QueueStore(queue_dir)
+        _AuditStore(db_path)
         return SupervisePlan(
             slug=slug,
             queue_dir=queue_dir,
+            db_path=db_path,
         )
 
 # --- Helpers ---------------------------------------------------------------
@@ -633,6 +662,7 @@ __all__ = [
     "AuditEntry",
     "COMPONENT_FOR_TOOL",
     "DEFAULT_POLL_INTERVAL_SEC",
+    "DB_PATH_IN_CONTAINER",
     "Proposal",
     "QUEUE_DIR_IN_CONTAINER",
     "Response",
