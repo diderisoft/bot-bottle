@@ -4,7 +4,6 @@ fallback paths."""
 
 from __future__ import annotations
 
-import os
 import tempfile
 import time
 import unittest
@@ -13,13 +12,16 @@ from unittest.mock import patch
 
 from bot_bottle import supervise
 from bot_bottle.supervise import (
+    AuditEntry,
     Proposal,
+    STATUS_APPROVED,
     TOOL_EGRESS_ALLOW,
     list_pending_proposals,
     read_audit_entries,
     read_proposal,
     read_response,
     wait_for_response,
+    write_audit_entry,
 )
 
 
@@ -40,29 +42,29 @@ class TestPathHelpers(unittest.TestCase):
     def test_queue_dir_for_slug(self) -> None:
         self.assertIn("slug", str(supervise.queue_dir_for_slug("slug")))
 
-    def test_id_from_non_proposal_filename(self) -> None:
-        self.assertIsNone(supervise._id_from_proposal_filename(Path("x.response.json")))
+    def test_queue_db_path_for_slug_dir(self) -> None:
+        self.assertEqual(
+            Path("/tmp/queue/supervise.db"),
+            supervise.queue_db_path(Path("/tmp/queue")),
+        )
 
 
 class TestReadMalformed(unittest.TestCase):
-    def test_read_proposal_non_dict(self) -> None:
+    def test_read_proposal_missing_row(self) -> None:
         with tempfile.TemporaryDirectory() as d:
-            (Path(d) / "p.proposal.json").write_text("[]")
-            with self.assertRaises(ValueError):
+            with self.assertRaises(FileNotFoundError):
                 read_proposal(Path(d), "p")
 
-    def test_read_response_non_dict(self) -> None:
+    def test_read_response_missing_row(self) -> None:
         with tempfile.TemporaryDirectory() as d:
-            (Path(d) / "p.response.json").write_text("[]")
-            with self.assertRaises(ValueError):
+            with self.assertRaises(FileNotFoundError):
                 read_response(Path(d), "p")
 
-    def test_list_pending_skips_malformed(self) -> None:
+    def test_list_pending_ignores_legacy_json_files(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             qd = Path(d)
             (qd / "bad.proposal.json").write_text("{ not json")
             (qd / "arr.proposal.json").write_text("[]")
-            (qd / "incomplete.proposal.json").write_text("{}")  # from_dict raises
             supervise.write_proposal(qd, _proposal())  # one valid
             pending = list_pending_proposals(qd)
             self.assertEqual(1, len(pending))
@@ -73,18 +75,21 @@ class TestReadMalformed(unittest.TestCase):
             qd = Path(d)
             p = _proposal()
             supervise.write_proposal(qd, p)
-            (qd / f"{p.id}.response.json").write_text("{}")  # response exists -> skipped
+            supervise.write_response(qd, supervise.Response(
+                proposal_id=p.id,
+                status=STATUS_APPROVED,
+                notes="",
+            ))
             self.assertEqual([], list_pending_proposals(qd))
 
 
 class TestWaitForResponse(unittest.TestCase):
-    def test_malformed_response_then_timeout(self) -> None:
+    def test_missing_response_times_out(self) -> None:
         with tempfile.TemporaryDirectory() as d:
-            (Path(d) / "p.response.json").write_text("{ not json")
             with self.assertRaises(TimeoutError):
                 wait_for_response(Path(d), "p", deadline=time.monotonic())
 
-    def test_incomplete_response_then_timeout(self) -> None:
+    def test_legacy_response_file_does_not_count(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "p.response.json").write_text("{}")  # dict but from_dict raises
             with self.assertRaises(TimeoutError):
@@ -97,35 +102,43 @@ class TestReadAuditEntries(unittest.TestCase):
                 patch.dict("os.environ", {"HOME": home}):
             self.assertEqual([], read_audit_entries("egress", "nope"))
 
-    def test_skips_malformed_lines(self) -> None:
+    def test_reads_entries_from_db(self) -> None:
         with tempfile.TemporaryDirectory() as home, \
                 patch.dict("os.environ", {"HOME": home}):
-            path = supervise.audit_log_path("egress", "slug")
-            path.parent.mkdir(parents=True, exist_ok=True)
-            valid = (
-                '{"timestamp": "t", "bottle_slug": "slug", "component": "egress",'
-                ' "operator_action": "approve", "operator_notes": "",'
-                ' "justification": "", "diff": ""}'
-            )
-            path.write_text(
-                "\n"               # blank line skipped
-                "{ not json\n"     # JSONDecodeError skipped
-                "[]\n"             # not a dict skipped
-                "{}\n"             # missing fields -> ValueError skipped
-                + valid + "\n"
-            )
+            write_audit_entry(AuditEntry(
+                timestamp="t",
+                bottle_slug="slug",
+                component="egress",
+                operator_action="approve",
+                operator_notes="",
+                justification="",
+                diff="",
+            ))
+            write_audit_entry(AuditEntry(
+                timestamp="t",
+                bottle_slug="other",
+                component="egress",
+                operator_action="reject",
+                operator_notes="",
+                justification="",
+                diff="",
+            ))
             entries = read_audit_entries("egress", "slug")
             self.assertEqual(1, len(entries))
             self.assertEqual("approve", entries[0].operator_action)
 
-
-class TestFlockFallback(unittest.TestCase):
-    def test_flock_on_closed_fd_is_swallowed(self) -> None:
-        # flock on a closed fd raises OSError(EBADF), which the helpers swallow.
-        fd = os.open(os.devnull, os.O_RDONLY)
-        os.close(fd)
-        supervise._try_flock(fd)
-        supervise._try_funlock(fd)
+    def test_legacy_audit_log_file_does_not_count(self) -> None:
+        with tempfile.TemporaryDirectory() as home, \
+                patch.dict("os.environ", {"HOME": home}):
+            path = supervise.audit_log_path("egress", "slug")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                '{"timestamp": "t", "bottle_slug": "slug", "component": "egress",'
+                ' "operator_action": "approve", "operator_notes": "",'
+                ' "justification": "", "diff": ""}\n'
+            )
+            entries = read_audit_entries("egress", "slug")
+            self.assertEqual([], entries)
 
 
 if __name__ == "__main__":
