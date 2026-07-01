@@ -16,10 +16,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from .git_gate import GIT_GATE_TIMEOUT_SECS
-
 
 DEFAULT_PORT = 9420
+
+# Mirrors git_gate_render.GIT_GATE_TIMEOUT_SECS. Duplicated rather than
+# imported: this module ships as a flat top-level sibling in the sidecar
+# bundle image (see Dockerfile.sidecars), not as part of the bot_bottle
+# package, so `bot_bottle.git_gate` and its dependency chain aren't
+# available at runtime.
+GIT_GATE_TIMEOUT_SECS = 15
 
 # Bound memory use while still allowing ordinary git push packfiles.
 MAX_BODY_BYTES = 100 * 1024 * 1024
