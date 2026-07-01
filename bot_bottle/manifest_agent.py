@@ -25,8 +25,9 @@ class ManifestAgentProvider:
     header, and sets a placeholder CLAUDE_CODE_OAUTH_TOKEN in the agent
     so the Claude Code CLI starts.
 
-    `forward_host_credentials` forwards the host Codex auth token into
-    the egress daemon (Codex only).
+    `forward_host_credentials` forwards the host provider auth token into
+    the egress sidecar (Codex and Claude). For Codex this reads
+    `~/.codex/auth.json`; for Claude it reads `~/.claude/.credentials.json`.
     """
 
     template: str = "claude"
@@ -92,10 +93,15 @@ class ManifestAgentProvider:
                 f"is only supported for built-in templates "
                 f"({', '.join(sorted(PROVIDER_TEMPLATES))})"
             )
-        if forward_host_credentials and template != "codex":
+        if forward_host_credentials and template not in {"codex", "claude"}:
             raise ManifestError(
                 f"bottle '{bottle_name}' agent_provider.forward_host_credentials "
-                "is currently only supported for template 'codex'"
+                "is only supported for templates 'codex' and 'claude'"
+            )
+        if forward_host_credentials and auth_token:
+            raise ManifestError(
+                f"bottle '{bottle_name}' agent_provider.forward_host_credentials "
+                "and auth_token both set; use one or the other"
             )
         settings = _parse_provider_settings(bottle_name, template, d.get("settings"))
         return cls(

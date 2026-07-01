@@ -23,8 +23,9 @@ from ...agent_provider import (
     provider_startup_args,
 )
 from ...backend.docker import util as docker_mod
-from ...egress import EgressRoute
+from ...egress import CLAUDE_HOST_CREDENTIAL_TOKEN_REF, EgressRoute
 from ...log import die, info, warn
+from .claude_auth import claude_host_access_token
 
 
 if TYPE_CHECKING:
@@ -118,7 +119,6 @@ class ClaudeAgentProvider(AgentProvider):
         color: str = "",
         provider_settings: dict[str, object] | None = None,
     ) -> AgentProvisionPlan:
-        del forward_host_credentials, host_env
         resolved_guest_env = dict(guest_env or {})
         startup_args = provider_startup_args(provider_settings)
         guest_home = self.guest_home
@@ -180,13 +180,24 @@ class ClaudeAgentProvider(AgentProvider):
                 claude_settings,
                 f"{guest_home}/.claude/settings.json",
             ))
+        provisioned_env: dict[str, str] = {}
+        if forward_host_credentials:
+            _host_env = host_env or dict(os.environ)
+            provisioned_env[CLAUDE_HOST_CREDENTIAL_TOKEN_REF] = (
+                claude_host_access_token(_host_env)
+            )
+
+        cred_token_ref = (
+            CLAUDE_HOST_CREDENTIAL_TOKEN_REF if forward_host_credentials
+            else auth_token
+        )
         egress_routes = (EgressRoute(
             host="api.anthropic.com",
-            auth_scheme="Bearer" if auth_token else "",
-            token_ref=auth_token,
+            auth_scheme="Bearer" if (auth_token or forward_host_credentials) else "",
+            token_ref=cred_token_ref,
         ),)
         hidden_env_names: frozenset[str] = frozenset()
-        if auth_token:
+        if auth_token or forward_host_credentials:
             env_vars["CLAUDE_CODE_OAUTH_TOKEN"] = "egress-placeholder"
             hidden_env_names = frozenset({"CLAUDE_CODE_OAUTH_TOKEN"})
 
@@ -208,6 +219,7 @@ class ClaudeAgentProvider(AgentProvider):
             files=tuple(files),
             egress_routes=egress_routes,
             hidden_env_names=hidden_env_names,
+            provisioned_env=provisioned_env,
         )
 
     def provision_skills(self, plan: "BottlePlan", bottle: "Bottle") -> None:

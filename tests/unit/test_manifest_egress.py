@@ -80,11 +80,19 @@ class TestAgentProviderHostCredentials(unittest.TestCase):
                 "forward_host_credentials": "yes",
             })
 
-    def test_forward_host_credentials_rejected_for_claude(self):
+    def test_forward_host_credentials_allowed_for_claude(self):
+        b = _provider_config_bottle({
+            "template": "claude",
+            "forward_host_credentials": True,
+        })
+        self.assertTrue(b.agent_provider.forward_host_credentials)
+
+    def test_forward_host_credentials_and_auth_token_rejected_together(self):
         with self.assertRaises(ManifestError):
             _provider_config_bottle({
                 "template": "claude",
                 "forward_host_credentials": True,
+                "auth_token": "SOME_TOKEN",
             })
 
     def test_auth_token_defaults_empty(self):

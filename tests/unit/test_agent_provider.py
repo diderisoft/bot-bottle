@@ -9,11 +9,15 @@ import unittest
 from pathlib import Path
 
 from bot_bottle.agent_provider import (
+    CLAUDE_HOST_CREDENTIAL_HOSTS,
     CODEX_HOST_CREDENTIAL_HOSTS,
     build_agent_provision_plan,
     prompt_args,
 )
-from bot_bottle.egress import CODEX_HOST_CREDENTIAL_TOKEN_REF
+from bot_bottle.egress import (
+    CLAUDE_HOST_CREDENTIAL_TOKEN_REF,
+    CODEX_HOST_CREDENTIAL_TOKEN_REF,
+)
 
 
 def _jwt(exp: int) -> str:
@@ -284,6 +288,67 @@ class TestAgentProviderRuntime(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
             plan = build_agent_provision_plan(
                 template="codex",
+                dockerfile="",
+                state_dir=Path(tmp),
+                instance_name="bot-bottle-test",
+                prompt_file=Path(tmp) / "prompt.txt",
+                forward_host_credentials=False,
+            )
+        self.assertEqual({}, plan.provisioned_env)
+
+    def test_claude_forward_host_credentials_populates_egress_route(self):
+        access_token = "sk-ant-oat01-test-key"  # gitleaks:allow
+        with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
+            home = Path(tmp) / "host-claude"
+            cred_dir = home / ".claude"
+            cred_dir.mkdir(parents=True)
+            (cred_dir / ".credentials.json").write_text(json.dumps({
+                "claudeAiOauth": {"accessToken": access_token},
+            }))
+            plan = build_agent_provision_plan(
+                template="claude",
+                dockerfile="",
+                state_dir=Path(tmp),
+                instance_name="bot-bottle-test",
+                prompt_file=Path(tmp) / "prompt.txt",
+                forward_host_credentials=True,
+                host_env={"HOME": str(home)},
+            )
+        self.assertEqual(1, len(plan.egress_routes))
+        route = plan.egress_routes[0]
+        self.assertIn(route.host, CLAUDE_HOST_CREDENTIAL_HOSTS)
+        self.assertEqual("Bearer", route.auth_scheme)
+        self.assertEqual(CLAUDE_HOST_CREDENTIAL_TOKEN_REF, route.token_ref)
+        self.assertEqual("egress-placeholder", plan.env_vars["CLAUDE_CODE_OAUTH_TOKEN"])
+        self.assertEqual(frozenset({"CLAUDE_CODE_OAUTH_TOKEN"}), plan.hidden_env_names)
+
+    def test_claude_forward_host_credentials_populates_provisioned_env(self):
+        access_token = "sk-ant-oat01-test-key"  # gitleaks:allow
+        with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
+            home = Path(tmp) / "host-claude"
+            cred_dir = home / ".claude"
+            cred_dir.mkdir(parents=True)
+            (cred_dir / ".credentials.json").write_text(json.dumps({
+                "claudeAiOauth": {"accessToken": access_token},
+            }))
+            plan = build_agent_provision_plan(
+                template="claude",
+                dockerfile="",
+                state_dir=Path(tmp),
+                instance_name="bot-bottle-test",
+                prompt_file=Path(tmp) / "prompt.txt",
+                forward_host_credentials=True,
+                host_env={"HOME": str(home)},
+            )
+        self.assertEqual(
+            {CLAUDE_HOST_CREDENTIAL_TOKEN_REF: access_token},
+            plan.provisioned_env,
+        )
+
+    def test_claude_without_forward_host_credentials_has_empty_provisioned_env(self):
+        with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
+            plan = build_agent_provision_plan(
+                template="claude",
                 dockerfile="",
                 state_dir=Path(tmp),
                 instance_name="bot-bottle-test",

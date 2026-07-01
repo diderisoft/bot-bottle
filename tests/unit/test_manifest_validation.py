@@ -86,10 +86,22 @@ class TestAgentProviderValidation(unittest.TestCase):
                 "b", {"forward_host_credentials": True, "template": "weird"}
             )
 
-    def test_forward_creds_non_codex_template(self) -> None:
+    def test_forward_creds_pi_template_rejected(self) -> None:
         with self.assertRaises(ManifestError):
             ManifestAgentProvider.from_dict(
-                "b", {"forward_host_credentials": True, "template": "claude"}
+                "b", {"forward_host_credentials": True, "template": "pi"}
+            )
+
+    def test_forward_creds_claude_allowed(self) -> None:
+        p = ManifestAgentProvider.from_dict(
+            "b", {"forward_host_credentials": True, "template": "claude"}
+        )
+        self.assertTrue(p.forward_host_credentials)
+
+    def test_forward_creds_and_auth_token_rejected(self) -> None:
+        with self.assertRaises(ManifestError):
+            ManifestAgentProvider.from_dict(
+                "b", {"forward_host_credentials": True, "auth_token": "T", "template": "claude"}
             )
 
     def test_valid_claude_auth_token(self) -> None:

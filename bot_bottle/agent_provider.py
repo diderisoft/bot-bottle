@@ -45,6 +45,10 @@ PROVIDER_TEMPLATES = frozenset({PROVIDER_CLAUDE, PROVIDER_CODEX, PROVIDER_PI})
 # forward_host_credentials is enabled. Pipelock must pass these through
 # (no TLS MITM) or its header DLP blocks the injected JWT.
 CODEX_HOST_CREDENTIAL_HOSTS = ("api.openai.com", "chatgpt.com")
+
+# Host that egress injects the host Claude bearer on when Claude
+# forward_host_credentials is enabled.
+CLAUDE_HOST_CREDENTIAL_HOSTS = ("api.anthropic.com",)
 PromptMode = Literal[
     "append_file",
     "read_prompt_file",
