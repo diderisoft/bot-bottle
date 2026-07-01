@@ -1,6 +1,5 @@
 """Unit: supervise queue + audit log + diff helpers (PRD 0013)."""
 
-import json
 import tempfile
 import threading
 import time
@@ -19,8 +18,9 @@ from bot_bottle.supervise import (
     TOOL_EGRESS_ALLOW,
     TOOL_GITLEAKS_ALLOW,
     archive_proposal,
-    audit_log_path,
+    host_db_path,
     list_pending_proposals,
+    queue_db_path,
     read_audit_entries,
     read_proposal,
     read_response,
@@ -121,6 +121,7 @@ class TestQueueIO(unittest.TestCase):
         p = _proposal()
         path = write_proposal(self.queue_dir, p)
         self.assertTrue(path.exists())
+        self.assertEqual(queue_db_path(self.queue_dir), path)
         self.assertEqual(0o600, path.stat().st_mode & 0o777)
         loaded = read_proposal(self.queue_dir, p.id)
         self.assertEqual(p, loaded)
@@ -198,10 +199,9 @@ class TestQueueIO(unittest.TestCase):
             proposal_id=p.id, status=STATUS_APPROVED, notes="",
         ))
         archive_proposal(self.queue_dir, p.id)
-        self.assertFalse((self.queue_dir / f"{p.id}.proposal.json").exists())
-        self.assertFalse((self.queue_dir / f"{p.id}.response.json").exists())
-        self.assertTrue((self.queue_dir / "processed" / f"{p.id}.proposal.json").exists())
-        self.assertTrue((self.queue_dir / "processed" / f"{p.id}.response.json").exists())
+        self.assertEqual([], list_pending_proposals(self.queue_dir))
+        with self.assertRaises(FileNotFoundError):
+            read_response(self.queue_dir, p.id)
 
     def test_archive_is_idempotent_on_missing_files(self):
         # Should not raise.
@@ -237,6 +237,7 @@ class TestAuditLog(unittest.TestCase):
             diff="--- before\n+++ after\n",
         )
         path = write_audit_entry(e)
+        self.assertEqual(host_db_path(), path)
         self.assertEqual(0o600, path.stat().st_mode & 0o777)
         loaded = read_audit_entries("cred-proxy", "dev")
         self.assertEqual([e], loaded)
@@ -252,12 +253,13 @@ class TestAuditLog(unittest.TestCase):
                 justification="",
                 diff="",
             ))
-        path = audit_log_path("egress", "dev")
-        with path.open() as f:
-            lines = [line for line in f if line.strip()]
-        self.assertEqual(3, len(lines))
-        for line in lines:
-            self.assertTrue(json.loads(line))  # each line is valid JSON
+        entries = read_audit_entries("egress", "dev")
+        self.assertEqual(3, len(entries))
+        self.assertEqual(
+            ["2026-05-25T12:00:00+00:00", "2026-05-25T12:00:01+00:00",
+             "2026-05-25T12:00:02+00:00"],
+            [entry.timestamp for entry in entries],
+        )
 
     def test_separate_logs_per_component_slug(self):
         write_audit_entry(AuditEntry(

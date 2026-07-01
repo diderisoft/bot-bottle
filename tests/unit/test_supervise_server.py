@@ -413,9 +413,7 @@ class TestHandleToolsCall(unittest.TestCase):
             responder.join()
         # No pending proposals left after archive.
         self.assertEqual([], _sv.list_pending_proposals(self.queue_dir))
-        # Both files moved to processed/.
-        processed = list((self.queue_dir / "processed").glob("*.json"))
-        self.assertEqual(2, len(processed))
+        self.assertFalse((self.queue_dir / "processed").exists())
 
     def test_pending_response_times_out_without_archive(self):
         config = ServerConfig(
