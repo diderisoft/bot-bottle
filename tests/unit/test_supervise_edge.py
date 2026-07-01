@@ -38,9 +38,6 @@ class TestPathHelpers(unittest.TestCase):
     def test_bot_bottle_root(self) -> None:
         self.assertTrue(str(supervise.bot_bottle_root()).endswith(".bot-bottle"))
 
-    def test_queue_db_path_is_host_db_path(self) -> None:
-        self.assertEqual(supervise.host_db_path(), supervise.queue_db_path())
-
 
 class TestReadMalformed(unittest.TestCase):
     def test_read_proposal_missing_row(self) -> None:

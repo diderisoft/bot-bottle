@@ -20,7 +20,6 @@ from bot_bottle.supervise import (
     archive_proposal,
     host_db_path,
     list_pending_proposals,
-    queue_db_path,
     read_audit_entries,
     read_proposal,
     read_response,
@@ -132,7 +131,7 @@ class TestQueueIO(unittest.TestCase):
         p = _proposal()
         path = write_proposal(p)
         self.assertTrue(path.exists())
-        self.assertEqual(queue_db_path(), path)
+        self.assertEqual(host_db_path(), path)
         self.assertEqual(0o600, path.stat().st_mode & 0o777)
         loaded = read_proposal(self.slug, p.id)
         self.assertEqual(p, loaded)
