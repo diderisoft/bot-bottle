@@ -45,7 +45,7 @@ from ..supervise import (
     TOOL_EGRESS_BLOCK,
     TOOL_GITLEAKS_ALLOW,
     TOOL_EGRESS_TOKEN_ALLOW,
-    list_pending_proposals,
+    list_all_pending_proposals,
     render_diff,
     write_audit_entry,
     write_response,
@@ -63,10 +63,9 @@ _REPORT_ONLY_TOOLS: tuple[str, ...] = (TOOL_GITLEAKS_ALLOW, TOOL_EGRESS_TOKEN_AL
 
 @dataclass(frozen=True)
 class QueuedProposal:
-    """A pending proposal plus the queue dir it was found in."""
+    """A pending proposal from the supervise queue."""
 
     proposal: Proposal
-    queue_dir: Path
 
 
 # Errors any remediation engine may raise. Caught by the TUI key
@@ -86,16 +85,11 @@ def apply_routes_change(slug: str, content: str) -> tuple[str, str]:
 
 
 def discover_pending() -> list[QueuedProposal]:
-    """Walk ~/.bot-bottle/queue/* and collect pending proposals."""
-    queue_root = _supervise.bot_bottle_root() / "queue"
-    if not queue_root.is_dir():
-        return []
-    out: list[QueuedProposal] = []
-    for slug_dir in sorted(queue_root.iterdir()):
-        if not slug_dir.is_dir():
-            continue
-        for proposal in list_pending_proposals(slug_dir):
-            out.append(QueuedProposal(proposal=proposal, queue_dir=slug_dir))
+    """Collect pending proposals across bottles."""
+    out = [
+        QueuedProposal(proposal=proposal)
+        for proposal in list_all_pending_proposals()
+    ]
     out.sort(key=lambda q: q.proposal.arrival_timestamp)
     return out
 
@@ -118,7 +112,6 @@ def _detail_lines(
         (f"tool: {p.tool}", 0),
         (f"id: {p.id}", 0),
         (f"arrived: {p.arrival_timestamp}", 0),
-        (f"queue: {qp.queue_dir}", 0),
         ("", 0),
         ("justification:", 0),
     ]
@@ -165,7 +158,7 @@ def approve(
         notes=notes,
         final_file=final_file,
     )
-    write_response(qp.queue_dir, response)
+    write_response(qp.proposal.bottle_slug, response)
     _write_audit(
         qp, action=status, notes=notes,
         diff_before=diff_before, diff_after=diff_after,
@@ -179,7 +172,7 @@ def reject(qp: QueuedProposal, *, reason: str) -> None:
         notes=reason,
         final_file=None,
     )
-    write_response(qp.queue_dir, response)
+    write_response(qp.proposal.bottle_slug, response)
     _write_audit(qp, action=STATUS_REJECTED, notes=reason, diff_before="", diff_after="")
 
 

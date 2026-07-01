@@ -239,9 +239,8 @@ from pathlib import Path
 from bot_bottle import supervise as _sv
 
 report_path = Path(sys.argv[1])
-queue_dir = os.environ.get("SUPERVISE_QUEUE_DIR", "")
 slug = os.environ.get("SUPERVISE_BOTTLE_SLUG", "")
-if not queue_dir or not slug:
+if not slug:
     sys.exit(2)
 
 try:
@@ -289,7 +288,7 @@ proposal = _sv.Proposal.new(
     current_file_hash=hashlib.sha256(payload.encode("utf-8")).hexdigest(),
     now=datetime.datetime.now(datetime.timezone.utc),
 )
-_sv.write_proposal(Path(queue_dir), proposal)
+_sv.write_proposal(proposal)
 print(proposal.id)
 PY
   )
@@ -303,7 +302,7 @@ PY
     return 1
   fi
 
-  queue_dir=${SUPERVISE_QUEUE_DIR:-}
+  slug=${SUPERVISE_BOTTLE_SLUG:-}
   timeout=${SUPERVISE_GITLEAKS_ALLOW_TIMEOUT_SECONDS:-300}
   case "$timeout" in
     ''|*[!0-9]*)
@@ -315,14 +314,14 @@ PY
   echo "git-gate: approve with './cli.py supervise' to continue this push" >&2
   waited=0
   while [ "$waited" -lt "$timeout" ]; do
-    status=$(python3 - "$queue_dir" "$proposal_id" <<'PY'
+    status=$(python3 - "$slug" "$proposal_id" <<'PY'
 import sys
-from pathlib import Path
 
 from bot_bottle import supervise as _sv
 
+slug = sys.argv[1]
 try:
-    response = _sv.read_response(Path(sys.argv[1]), sys.argv[2])
+    response = _sv.read_response(slug, sys.argv[2])
 except FileNotFoundError:
     sys.exit(2)
 print(response.status)
@@ -337,13 +336,12 @@ PY
     if [ -n "$status" ]; then
       case "$status" in
         approved|modified)
-          python3 - "$queue_dir" "$proposal_id" <<'PY' || true
+          python3 - "$slug" "$proposal_id" <<'PY' || true
 import sys
-from pathlib import Path
 
 from bot_bottle import supervise as _sv
 
-_sv.archive_proposal(Path(sys.argv[1]), sys.argv[2])
+_sv.archive_proposal(sys.argv[1], sys.argv[2])
 PY
           echo "git-gate: supervisor approved # gitleaks:allow for $ref" >&2
           return 0

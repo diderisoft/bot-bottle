@@ -112,7 +112,7 @@ class TestRpcErrorTaxonomy(unittest.TestCase):
             validate_proposed_file(_sv.TOOL_EGRESS_ALLOW, "routes: nope\n")
 
     def test_unknown_tool_in_tools_call_is_client_error(self):
-        config = ServerConfig(bottle_slug="dev", queue_dir=Path("/unused"))
+        config = ServerConfig(bottle_slug="dev")
         with self.assertRaises(_RpcClientError) as cm:
             handle_tools_call({"name": "no-such-tool", "arguments": {}}, config)
         self.assertEqual(ERR_INVALID_PARAMS, cm.exception.code)
@@ -122,7 +122,6 @@ class TestRpcInternalErrorOnIoFailure(unittest.TestCase):
     def test_write_proposal_os_error_raises_internal(self):
         config = ServerConfig(
             bottle_slug="dev",
-            queue_dir=Path("/unused"),
         )
         with patch.object(_sv, "write_proposal", side_effect=OSError("disk full")), \
                 self.assertRaises(_RpcInternalError) as cm:
@@ -266,21 +265,31 @@ class TestHandleToolsList(unittest.TestCase):
 class TestHandleToolsCall(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory(prefix="supervise-server-test.")
-        self.queue_dir = Path(self._tmp.name)
-        self.config = ServerConfig(bottle_slug="dev", queue_dir=self.queue_dir)
+        self._home_patch = self._patch_home(Path(self._tmp.name))
+        self.config = ServerConfig(bottle_slug="dev")
 
     def tearDown(self):
+        self._home_patch()
         self._tmp.cleanup()
+
+    def _patch_home(self, fake_home: Path):
+        original = _sv.bot_bottle_root
+
+        def fake_root() -> Path:
+            return fake_home / ".bot-bottle"
+
+        _sv.bot_bottle_root = fake_root  # type: ignore[assignment]
+        return lambda: setattr(_sv, "bot_bottle_root", original)
 
     def _respond_when_proposal_appears(self, status: str, notes: str = "") -> threading.Thread:
         """Background thread: poll the queue for a fresh proposal, write a
         matching response. Returns the thread so the test can join it."""
         def runner():
             for _ in range(200):
-                pending = _sv.list_pending_proposals(self.queue_dir)
+                pending = _sv.list_pending_proposals("dev")
                 if pending:
                     p = pending[0]
-                    _sv.write_response(self.queue_dir, _sv.Response(
+                    _sv.write_response("dev", _sv.Response(
                         proposal_id=p.id, status=status, notes=notes,
                     ))
                     return
@@ -413,13 +422,11 @@ class TestHandleToolsCall(unittest.TestCase):
         finally:
             responder.join()
         # No pending proposals left after archive.
-        self.assertEqual([], _sv.list_pending_proposals(self.queue_dir))
-        self.assertFalse((self.queue_dir / "processed").exists())
+        self.assertEqual([], _sv.list_pending_proposals("dev"))
 
     def test_pending_response_times_out_without_archive(self):
         config = ServerConfig(
             bottle_slug="dev",
-            queue_dir=self.queue_dir,
             response_timeout_seconds=0.05,
         )
         result = handle_tools_call(
@@ -437,8 +444,7 @@ class TestHandleToolsCall(unittest.TestCase):
         text = result["content"][0]["text"]  # type: ignore[index]
         self.assertIn("status: pending", text)
         self.assertIn("proposal remains queued", text)
-        self.assertEqual(1, len(_sv.list_pending_proposals(self.queue_dir)))
-        self.assertFalse((self.queue_dir / "processed").exists())
+        self.assertEqual(1, len(_sv.list_pending_proposals("dev")))
 
 
 class TestHandleListEgressRoutes(unittest.TestCase):
@@ -460,7 +466,7 @@ class TestHandleListEgressRoutes(unittest.TestCase):
         with patch.object(supervise_server.urllib.request, "build_opener", return_value=_Opener()):
             result = handle_list_egress_routes(
                 {},
-                ServerConfig(bottle_slug="dev", queue_dir=Path("/unused")),
+                ServerConfig(bottle_slug="dev"),
             )
 
         self.assertFalse(result["isError"])  # type: ignore[index]
@@ -475,7 +481,7 @@ class TestHandleListEgressRoutes(unittest.TestCase):
         with patch.object(supervise_server.urllib.request, "build_opener", return_value=_Opener()):
             result = handle_list_egress_routes(
                 {},
-                ServerConfig(bottle_slug="dev", queue_dir=Path("/unused")),
+                ServerConfig(bottle_slug="dev"),
             )
 
         self.assertTrue(result["isError"])  # type: ignore[index]
@@ -543,7 +549,6 @@ class TestHttpEndToEnd(unittest.TestCase):
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory(prefix="supervise-http-test.")
-        self.queue_dir = Path(self._tmp.name)
         # Pick a random port by binding to :0 first.
         import socket
         s = socket.socket()
@@ -551,7 +556,7 @@ class TestHttpEndToEnd(unittest.TestCase):
         self.port = s.getsockname()[1]
         s.close()
         self.server = MCPServer(("127.0.0.1", self.port), MCPHandler)
-        self.server.config = ServerConfig(bottle_slug="dev", queue_dir=self.queue_dir)
+        self.server.config = ServerConfig(bottle_slug="dev")
         self.thread = threading.Thread(
             target=self.server.serve_forever, daemon=True,
         )

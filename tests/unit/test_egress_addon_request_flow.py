@@ -212,7 +212,6 @@ def _addon(config: Config) -> EgressAddon:
     a: EgressAddon = EgressAddon.__new__(EgressAddon)
     a.config = config
     a.safe_tokens = set()
-    a._supervise_queue_dir = ""
     a._supervise_slug = ""
     a._token_allow_timeout = 300.0
     a.routes_path = "/nonexistent/routes.yaml"
@@ -386,10 +385,10 @@ def _fake_sv(response_status: str | None) -> types.SimpleNamespace:
     def _sha256_hex(_payload: Any) -> str:
         return "hash"
 
-    def _noop(_a: Any, _b: Any) -> None:
+    def _noop(*_args: Any) -> None:
         return None
 
-    def _read_response(_qd: Any, _pid: Any) -> Any:
+    def _read_response(_slug: Any, _pid: Any) -> Any:
         if response_status is None:
             raise OSError("not written yet")  # forces poll -> timeout
         return types.SimpleNamespace(status=response_status)
@@ -409,7 +408,6 @@ def _fake_sv(response_status: str | None) -> types.SimpleNamespace:
 class TestSuperviseBranch(unittest.TestCase):
     def _supervised_addon(self) -> EgressAddon:
         addon = _addon(Config(routes=(Route(host="api.example.com"),)))
-        addon._supervise_queue_dir = "/tmp/egress-queue"
         addon._supervise_slug = "test-bottle"
         addon._token_allow_timeout = 0.05
         return addon
@@ -632,14 +630,13 @@ class TestRedactSurfaces(unittest.TestCase):
 class TestSuperviseWriteFailure(unittest.TestCase):
     def test_write_proposal_oserror_blocks(self) -> None:
         addon = _addon(Config(routes=(Route(host="api.example.com"),)))
-        addon._supervise_queue_dir = "/tmp/egress-queue"
         addon._supervise_slug = "test-bottle"
         addon._token_allow_timeout = 0.05
         flow = _Flow(_Request(host="api.example.com", method="POST", body=f"k={_OPENAI_KEY}"))
 
         fake = _fake_sv("approved")
 
-        def _raise(_qd: Any, _p: Any) -> None:
+        def _raise(_p: Any) -> None:
             raise OSError("disk full")
 
         fake.write_proposal = _raise

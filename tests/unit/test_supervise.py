@@ -112,33 +112,44 @@ class TestResponseRoundtrip(unittest.TestCase):
 class TestQueueIO(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory(prefix="bot-bottle-supervise-test.")
-        self.queue_dir = Path(self._tmp.name)
+        self._home_patch = self._patch_home(Path(self._tmp.name))
+        self.slug = "dev"
 
     def tearDown(self):
+        self._home_patch()
         self._tmp.cleanup()
+
+    def _patch_home(self, fake_home: Path):
+        original = supervise.bot_bottle_root
+
+        def fake_root() -> Path:
+            return fake_home / ".bot-bottle"
+
+        supervise.bot_bottle_root = fake_root  # type: ignore[assignment]
+        return lambda: setattr(supervise, "bot_bottle_root", original)
 
     def test_write_and_read_proposal(self):
         p = _proposal()
-        path = write_proposal(self.queue_dir, p)
+        path = write_proposal(p)
         self.assertTrue(path.exists())
-        self.assertEqual(queue_db_path(self.queue_dir), path)
+        self.assertEqual(queue_db_path(), path)
         self.assertEqual(0o600, path.stat().st_mode & 0o777)
-        loaded = read_proposal(self.queue_dir, p.id)
+        loaded = read_proposal(self.slug, p.id)
         self.assertEqual(p, loaded)
 
     def test_list_pending_excludes_responded(self):
         a = _proposal(justification="first")
         b = _proposal(justification="second")
-        write_proposal(self.queue_dir, a)
-        write_proposal(self.queue_dir, b)
-        write_response(self.queue_dir, Response(
+        write_proposal(a)
+        write_proposal(b)
+        write_response(self.slug, Response(
             proposal_id=a.id, status=STATUS_APPROVED, notes="",
         ))
-        pending = list_pending_proposals(self.queue_dir)
+        pending = list_pending_proposals(self.slug)
         self.assertEqual([b.id], [p.id for p in pending])
 
-    def test_list_pending_returns_empty_for_missing_dir(self):
-        self.assertEqual([], list_pending_proposals(self.queue_dir / "nope"))
+    def test_list_pending_returns_empty_for_missing_slug(self):
+        self.assertEqual([], list_pending_proposals("nope"))
 
     def test_list_pending_sorted_by_arrival(self):
         # Fabricate two with explicit timestamps.
@@ -155,30 +166,30 @@ class TestQueueIO(unittest.TestCase):
             now=datetime(2026, 5, 25, 14, 0, 0, tzinfo=timezone.utc),
         )
         # Write in reverse order.
-        write_proposal(self.queue_dir, b)
-        write_proposal(self.queue_dir, a)
-        ordered = list_pending_proposals(self.queue_dir)
+        write_proposal(b)
+        write_proposal(a)
+        ordered = list_pending_proposals(self.slug)
         self.assertEqual([a.id, b.id], [p.id for p in ordered])
 
     def test_write_and_read_response(self):
         r = Response(proposal_id="xyz", status=STATUS_REJECTED, notes="no")
-        write_response(self.queue_dir, r)
-        self.assertEqual(r, read_response(self.queue_dir, "xyz"))
+        write_response(self.slug, r)
+        self.assertEqual(r, read_response(self.slug, "xyz"))
 
     def test_wait_for_response_returns_when_file_appears(self):
         p = _proposal()
-        write_proposal(self.queue_dir, p)
+        write_proposal(p)
 
         def write_after_delay():
             time.sleep(0.05)
-            write_response(self.queue_dir, Response(
+            write_response(self.slug, Response(
                 proposal_id=p.id, status=STATUS_APPROVED, notes="ok",
             ))
 
         t = threading.Thread(target=write_after_delay)
         t.start()
         try:
-            r = wait_for_response(self.queue_dir, p.id, poll_interval=0.01)
+            r = wait_for_response(self.slug, p.id, poll_interval=0.01)
         finally:
             t.join()
         self.assertEqual(STATUS_APPROVED, r.status)
@@ -188,24 +199,24 @@ class TestQueueIO(unittest.TestCase):
         deadline = time.monotonic() + 0.05
         with self.assertRaises(TimeoutError):
             wait_for_response(
-                self.queue_dir, "never",
+                self.slug, "never",
                 poll_interval=0.01, deadline=deadline,
             )
 
-    def test_archive_proposal_moves_both_files(self):
+    def test_archive_proposal_hides_rows(self):
         p = _proposal()
-        write_proposal(self.queue_dir, p)
-        write_response(self.queue_dir, Response(
+        write_proposal(p)
+        write_response(self.slug, Response(
             proposal_id=p.id, status=STATUS_APPROVED, notes="",
         ))
-        archive_proposal(self.queue_dir, p.id)
-        self.assertEqual([], list_pending_proposals(self.queue_dir))
+        archive_proposal(self.slug, p.id)
+        self.assertEqual([], list_pending_proposals(self.slug))
         with self.assertRaises(FileNotFoundError):
-            read_response(self.queue_dir, p.id)
+            read_response(self.slug, p.id)
 
     def test_archive_is_idempotent_on_missing_files(self):
         # Should not raise.
-        archive_proposal(self.queue_dir, "nope")
+        archive_proposal(self.slug, "nope")
 
 
 class TestAuditLog(unittest.TestCase):
@@ -381,7 +392,6 @@ class TestSupervisePrepare(unittest.TestCase):
 
     def test_prepare_creates_queue(self):
         plan = _StubSupervise().prepare("dev", self.stage_dir)
-        self.assertTrue(plan.queue_dir.is_dir())
         self.assertTrue(plan.db_path.is_file())
         self.assertEqual("dev", plan.slug)
         self.assertEqual("", plan.internal_network)

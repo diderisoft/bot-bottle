@@ -35,7 +35,6 @@ from ...git_gate import GIT_GATE_HOSTNAME
 from ...log import die, warn
 from ...supervise import (
     DB_PATH_IN_CONTAINER,
-    QUEUE_DIR_IN_CONTAINER,
     SUPERVISE_HOSTNAME,
     SUPERVISE_PORT,
 )
@@ -165,7 +164,6 @@ def _sidecar_bundle_service(plan: DockerBottlePlan) -> dict[str, Any]:
         env += [
             f"SUPERVISE_BOTTLE_SLUG={plan.slug}",
             f"SUPERVISE_DB_PATH={DB_PATH_IN_CONTAINER}",
-            f"SUPERVISE_QUEUE_DIR={QUEUE_DIR_IN_CONTAINER}",
             f"SUPERVISE_PORT={SUPERVISE_PORT}",
         ]
         volumes.append({
@@ -174,13 +172,6 @@ def _sidecar_bundle_service(plan: DockerBottlePlan) -> dict[str, Any]:
             "target": DB_PATH_IN_CONTAINER,
             "read_only": False,
         })
-        volumes.append({
-            "type": "bind",
-            "source": str(sp.queue_dir),
-            "target": QUEUE_DIR_IN_CONTAINER,
-            "read_only": False,
-        })
-
     internal_aliases = [EGRESS_HOSTNAME]
     if gp.upstreams:
         internal_aliases.append(GIT_GATE_HOSTNAME)

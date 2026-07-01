@@ -47,7 +47,6 @@ def _addon() -> EgressAddon:
     a: EgressAddon = EgressAddon.__new__(EgressAddon)
     a.config = Config(routes=(), log=LOG_FULL)
     a.safe_tokens = set()
-    a._supervise_queue_dir = ""
     a._supervise_slug = ""
     a._token_allow_timeout = 300.0
     return a

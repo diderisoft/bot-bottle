@@ -7,7 +7,6 @@ from __future__ import annotations
 import tempfile
 import time
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
 from bot_bottle import supervise
@@ -39,61 +38,56 @@ class TestPathHelpers(unittest.TestCase):
     def test_bot_bottle_root(self) -> None:
         self.assertTrue(str(supervise.bot_bottle_root()).endswith(".bot-bottle"))
 
-    def test_queue_dir_for_slug(self) -> None:
-        self.assertIn("slug", str(supervise.queue_dir_for_slug("slug")))
-
-    def test_queue_db_path_for_slug_dir(self) -> None:
-        self.assertEqual(
-            supervise.host_db_path(),
-            supervise.queue_db_path(Path("/tmp/queue")),
-        )
+    def test_queue_db_path_is_host_db_path(self) -> None:
+        self.assertEqual(supervise.host_db_path(), supervise.queue_db_path())
 
 
 class TestReadMalformed(unittest.TestCase):
     def test_read_proposal_missing_row(self) -> None:
         with tempfile.TemporaryDirectory() as d:
-            with self.assertRaises(FileNotFoundError):
-                read_proposal(Path(d), "p")
+            with patch.dict("os.environ", {"HOME": d}), \
+                    self.assertRaises(FileNotFoundError):
+                read_proposal("slug", "p")
 
     def test_read_response_missing_row(self) -> None:
         with tempfile.TemporaryDirectory() as d:
-            with self.assertRaises(FileNotFoundError):
-                read_response(Path(d), "p")
+            with patch.dict("os.environ", {"HOME": d}), \
+                    self.assertRaises(FileNotFoundError):
+                read_response("slug", "p")
 
-    def test_list_pending_ignores_legacy_json_files(self) -> None:
+    def test_list_pending_reads_db_only(self) -> None:
         with tempfile.TemporaryDirectory() as d:
-            qd = Path(d)
-            (qd / "bad.proposal.json").write_text("{ not json")
-            (qd / "arr.proposal.json").write_text("[]")
-            supervise.write_proposal(qd, _proposal())  # one valid
-            pending = list_pending_proposals(qd)
+            with patch.dict("os.environ", {"HOME": d}):
+                supervise.write_proposal(_proposal())
+                pending = list_pending_proposals("slug")
             self.assertEqual(1, len(pending))
             self.assertEqual("slug", pending[0].bottle_slug)
 
     def test_list_pending_skips_when_response_present(self) -> None:
         with tempfile.TemporaryDirectory() as d:
-            qd = Path(d)
-            p = _proposal()
-            supervise.write_proposal(qd, p)
-            supervise.write_response(qd, supervise.Response(
-                proposal_id=p.id,
-                status=STATUS_APPROVED,
-                notes="",
-            ))
-            self.assertEqual([], list_pending_proposals(qd))
+            with patch.dict("os.environ", {"HOME": d}):
+                p = _proposal()
+                supervise.write_proposal(p)
+                supervise.write_response("slug", supervise.Response(
+                    proposal_id=p.id,
+                    status=STATUS_APPROVED,
+                    notes="",
+                ))
+                self.assertEqual([], list_pending_proposals("slug"))
 
 
 class TestWaitForResponse(unittest.TestCase):
     def test_missing_response_times_out(self) -> None:
         with tempfile.TemporaryDirectory() as d:
-            with self.assertRaises(TimeoutError):
-                wait_for_response(Path(d), "p", deadline=time.monotonic())
+            with patch.dict("os.environ", {"HOME": d}), \
+                    self.assertRaises(TimeoutError):
+                wait_for_response("slug", "p", deadline=time.monotonic())
 
-    def test_legacy_response_file_does_not_count(self) -> None:
+    def test_empty_db_response_does_not_count(self) -> None:
         with tempfile.TemporaryDirectory() as d:
-            (Path(d) / "p.response.json").write_text("{}")  # dict but from_dict raises
-            with self.assertRaises(TimeoutError):
-                wait_for_response(Path(d), "p", deadline=time.monotonic())
+            with patch.dict("os.environ", {"HOME": d}), \
+                    self.assertRaises(TimeoutError):
+                wait_for_response("slug", "p", deadline=time.monotonic())
 
 
 class TestReadAuditEntries(unittest.TestCase):

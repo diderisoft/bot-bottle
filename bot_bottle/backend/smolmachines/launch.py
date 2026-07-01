@@ -27,7 +27,7 @@ from ...egress import (
     egress_resolve_token_values,
     egress_sidecar_env_entries,
 )
-from ...supervise import DB_PATH_IN_CONTAINER, QUEUE_DIR_IN_CONTAINER, SUPERVISE_PORT
+from ...supervise import DB_PATH_IN_CONTAINER, SUPERVISE_PORT
 from ...util import expand_tilde
 from ..docker import util as docker_mod
 from ..docker.egress import (
@@ -370,11 +370,9 @@ def _bundle_launch_spec(
         env += [
             f"SUPERVISE_BOTTLE_SLUG={plan.slug}",
             f"SUPERVISE_DB_PATH={DB_PATH_IN_CONTAINER}",
-            f"SUPERVISE_QUEUE_DIR={QUEUE_DIR_IN_CONTAINER}",
             f"SUPERVISE_PORT={SUPERVISE_PORT}",
         ]
         volumes.append((str(sp.db_path), DB_PATH_IN_CONTAINER, False))
-        volumes.append((str(sp.queue_dir), QUEUE_DIR_IN_CONTAINER, False))
 
     # Container ports the agent reaches from the smolvm guest —
     # published on host loopback so the guest can dial via TSI +

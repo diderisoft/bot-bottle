@@ -79,14 +79,13 @@ class EgressAddon:
         # only — a restart re-prompts. Mutated only from the asyncio loop that
         # runs the addon hooks, so no lock is needed.
         self.safe_tokens: set[str] = set()
-        self._supervise_queue_dir = os.environ.get("SUPERVISE_QUEUE_DIR", "").strip()
         self._supervise_slug = os.environ.get("SUPERVISE_BOTTLE_SLUG", "").strip()
         self._token_allow_timeout = _token_allow_timeout_from_env(os.environ)
         self._reload(initial=True)
         self._install_sighup()
 
     def _supervise_available(self) -> bool:
-        return bool(self._supervise_queue_dir and self._supervise_slug)
+        return bool(self._supervise_slug)
 
     def _reload(self, *, initial: bool = False) -> None:
         try:
@@ -393,9 +392,8 @@ class EgressAddon:
             justification=_TOKEN_ALLOW_JUSTIFICATION,
             current_file_hash=_sv.sha256_hex(payload),
         )
-        queue_dir = Path(self._supervise_queue_dir)
         try:
-            _sv.write_proposal(queue_dir, proposal)
+            _sv.write_proposal(proposal)
         except OSError as e:
             sys.stderr.write(
                 f"egress: could not queue token-allow proposal: {e}; "
@@ -411,8 +409,8 @@ class EgressAddon:
             **self._req_ctx(flow),
         }) + "\n")
 
-        response = await self._await_token_response(queue_dir, proposal.id)
-        _sv.archive_proposal(queue_dir, proposal.id)
+        response = await self._await_token_response(proposal.id)
+        _sv.archive_proposal(self._supervise_slug, proposal.id)
 
         if response is not None and response.status in (
             _sv.STATUS_APPROVED, _sv.STATUS_MODIFIED,
@@ -439,16 +437,15 @@ class EgressAddon:
 
     async def _await_token_response(
         self,
-        queue_dir: Path,
         proposal_id: str,
     ) -> "_sv.Response | None":
-        """Poll the queue dir for the operator's response without blocking the
+        """Poll the DB for the operator's response without blocking the
         proxy event loop. Returns the Response, or None on timeout."""
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self._token_allow_timeout
         while True:
             try:
-                return _sv.read_response(queue_dir, proposal_id)
+                return _sv.read_response(self._supervise_slug, proposal_id)
             except (OSError, ValueError, KeyError):
                 # Not written yet, or a partial/malformed write — retry until
                 # the deadline, then fail closed.

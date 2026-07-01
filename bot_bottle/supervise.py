@@ -9,15 +9,14 @@ calls when it needs an operator-reviewed egress change:
 
 Each tool call: the agent passes the full proposed file plus a
 justification text. The sidecar validates the proposal syntactically,
-writes it to the host's per-bottle queue dir, and holds the tool-call
+writes it to the host SQLite queue table, and holds the tool-call
 connection open. The operator's supervise TUI
 (bot_bottle.cli.supervise) sees the proposal, accepts
-approve / modify / reject, and writes a response file alongside the
-proposal. The sidecar sees the response and returns `{status, notes}`
-to the agent.
+approve / modify / reject, and writes a response row. The sidecar sees
+the response and returns `{status, notes}` to the agent.
 
 This module defines the host-side library: dataclasses for the queue
-file shapes, queue read/write helpers, the audit log writer, and the
+record shapes, queue read/write helpers, the audit log writer, and the
 diff renderer. The in-container sidecar lives in
 bot_bottle/supervise_server.py; the supervise daemon's container
 lifecycle is owned by the sidecar bundle (PRD 0024).
@@ -86,7 +85,6 @@ STATUSES: tuple[str, ...] = (STATUS_APPROVED, STATUS_MODIFIED, STATUS_REJECTED)
 # `routes edit <bottle>` verb writes entries with this action.
 ACTION_OPERATOR_EDIT = "operator-edit"
 
-QUEUE_DIR_IN_CONTAINER = "/run/supervise/queue"
 DB_PATH_IN_CONTAINER = "/run/supervise/bot-bottle.db"
 DEFAULT_POLL_INTERVAL_SEC = 0.5
 HOST_DB_FILENAME = "bot-bottle.db"
@@ -97,10 +95,6 @@ HOST_DB_FILENAME = "bot-bottle.db"
 
 def bot_bottle_root() -> Path:
     return Path.home() / ".bot-bottle"
-
-
-def queue_dir_for_slug(slug: str) -> Path:
-    return bot_bottle_root() / "queue" / slug
 
 
 def audit_dir() -> Path:
@@ -115,8 +109,7 @@ def host_db_path() -> Path:
     return bot_bottle_root() / HOST_DB_FILENAME
 
 
-def queue_db_path(queue_dir: Path) -> Path:
-    del queue_dir
+def queue_db_path() -> Path:
     env_path = os.environ.get("SUPERVISE_DB_PATH", "").strip()
     return Path(env_path) if env_path else host_db_path()
 
@@ -126,9 +119,7 @@ def queue_db_path(queue_dir: Path) -> Path:
 
 @dataclass(frozen=True)
 class Proposal:
-    """One pending tool-call from the agent. The sidecar writes one
-    of these to the queue dir on a tool call; the operator's TUI
-    reads them; the sidecar polls for a matching Response."""
+    """One pending tool-call from the agent."""
 
     id: str
     bottle_slug: str
@@ -182,7 +173,7 @@ class Proposal:
 @dataclass(frozen=True)
 class Response:
     """The operator's decision on a proposal. The TUI writes one of
-    these to the queue dir; the sidecar reads it and returns the
+    these to the queue table; the sidecar reads it and returns the
     `{status, notes}` pair to the agent's tool call.
 
     `final_file` carries the file content the supervisor will
@@ -238,33 +229,38 @@ class AuditEntry:
 # --- Queue I/O -------------------------------------------------------------
 
 
-def write_proposal(queue_dir: Path, proposal: Proposal) -> Path:
+def write_proposal(proposal: Proposal) -> Path:
     """Persist `proposal` in the queue database, mode 0o600.
     Directory is created if missing."""
-    return _QueueStore(queue_dir).write_proposal(proposal)
+    return _QueueStore(proposal.bottle_slug).write_proposal(proposal)
 
 
-def read_proposal(queue_dir: Path, proposal_id: str) -> Proposal:
-    return _QueueStore(queue_dir).read_proposal(proposal_id)
+def read_proposal(bottle_slug: str, proposal_id: str) -> Proposal:
+    return _QueueStore(bottle_slug).read_proposal(proposal_id)
 
 
-def list_pending_proposals(queue_dir: Path) -> list[Proposal]:
-    """All proposals in `queue_dir` that do not yet have a matching
+def list_pending_proposals(bottle_slug: str) -> list[Proposal]:
+    """All proposals for `bottle_slug` that do not yet have a matching
     response. Sorted by `arrival_timestamp` so the operator
     sees the queue FIFO."""
-    return _QueueStore(queue_dir).list_pending_proposals()
+    return _QueueStore(bottle_slug).list_pending_proposals()
 
 
-def write_response(queue_dir: Path, response: Response) -> Path:
-    return _QueueStore(queue_dir).write_response(response)
+def list_all_pending_proposals() -> list[Proposal]:
+    """All pending proposals across bottles, sorted FIFO."""
+    return _QueueStore("").list_all_pending_proposals()
 
 
-def read_response(queue_dir: Path, proposal_id: str) -> Response:
-    return _QueueStore(queue_dir).read_response(proposal_id)
+def write_response(bottle_slug: str, response: Response) -> Path:
+    return _QueueStore(bottle_slug).write_response(response)
+
+
+def read_response(bottle_slug: str, proposal_id: str) -> Response:
+    return _QueueStore(bottle_slug).read_response(proposal_id)
 
 
 def wait_for_response(
-    queue_dir: Path,
+    bottle_slug: str,
     proposal_id: str,
     *,
     poll_interval: float = DEFAULT_POLL_INTERVAL_SEC,
@@ -276,7 +272,7 @@ def wait_for_response(
     natural shape, since the operator's response time is unbounded.
 
     Polls SQLite so the implementation stays portable and stdlib-only."""
-    store = _QueueStore(queue_dir)
+    store = _QueueStore(bottle_slug)
     while True:
         try:
             return store.read_response(proposal_id)
@@ -287,10 +283,10 @@ def wait_for_response(
         time.sleep(poll_interval)
 
 
-def archive_proposal(queue_dir: Path, proposal_id: str) -> None:
+def archive_proposal(bottle_slug: str, proposal_id: str) -> None:
     """Mark both proposal and response rows processed.
     Idempotent — missing rows are silently skipped."""
-    _QueueStore(queue_dir).archive_proposal(proposal_id)
+    _QueueStore(bottle_slug).archive_proposal(proposal_id)
 
 
 # --- Audit log -------------------------------------------------------------
@@ -333,9 +329,9 @@ def sha256_hex(content: str) -> str:
 
 
 class _QueueStore:
-    def __init__(self, queue_dir: Path) -> None:
-        self.queue_key = _queue_key(queue_dir)
-        self.db_path = queue_db_path(queue_dir)
+    def __init__(self, queue_key: str) -> None:
+        self.queue_key = queue_key
+        self.db_path = queue_db_path()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init()
 
@@ -393,6 +389,25 @@ class _QueueStore:
                 ORDER BY p.arrival_timestamp, p.id
                 """,
                 (self.queue_key,),
+            ).fetchall()
+        return [_proposal_from_row(row) for row in rows]
+
+    def list_all_pending_proposals(self) -> list[Proposal]:
+        if not self.db_path.is_file():
+            return []
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT p.* FROM supervise_proposals p
+                WHERE p.archived = 0
+                  AND NOT EXISTS (
+                    SELECT 1 FROM supervise_responses r
+                    WHERE r.queue_key = p.queue_key
+                      AND r.proposal_id = p.id
+                      AND r.archived = 0
+                  )
+                ORDER BY p.arrival_timestamp, p.id
+                """
             ).fetchall()
         return [_proposal_from_row(row) for row in rows]
 
@@ -597,13 +612,6 @@ def _audit_entry_from_row(row: sqlite3.Row) -> AuditEntry:
     )
 
 
-def _queue_key(queue_dir: Path) -> str:
-    env_slug = os.environ.get("SUPERVISE_BOTTLE_SLUG", "").strip()
-    if env_slug:
-        return env_slug
-    return queue_dir.name
-
-
 # --- Sidecar plan + abstract lifecycle -------------------------------------
 
 
@@ -611,39 +619,33 @@ def _queue_key(queue_dir: Path) -> str:
 class SupervisePlan:
     """Output of Supervise.prepare; consumed by .start.
 
-    `queue_dir` is the host directory bind-mounted into the sidecar
-    at /run/supervise/queue. `internal_network` is empty at prepare
-    time; the backend's launch step fills it via dataclasses.replace
-    before calling .start."""
+    `db_path` is the host database bind-mounted into the sidecar at
+    /run/supervise/bot-bottle.db. `internal_network` is empty at
+    prepare time; the backend's launch step fills it via
+    dataclasses.replace before calling .start."""
 
     slug: str
-    queue_dir: Path
     db_path: Path
     internal_network: str = ""
 
 
 class Supervise(ABC):
-    """Per-bottle supervise sidecar. Encapsulates the host-side
-    prepare (queue dir staging); the sidecar's start/stop lifecycle
-    is backend-specific."""
+    """Per-bottle supervise sidecar. Encapsulates host-side database
+    staging; the sidecar's start/stop lifecycle is backend-specific."""
 
     def prepare(
         self,
         slug: str,
         stage_dir: Path,
     ) -> SupervisePlan:
-        """Stage the per-bottle queue dir on the host. Returns the
-        plan; `internal_network` must be set by the launch step before
-        .start runs."""
+        """Stage the host database. Returns the plan; `internal_network`
+        must be set by the launch step before .start runs."""
         del stage_dir
-        queue_dir = queue_dir_for_slug(slug)
-        queue_dir.mkdir(parents=True, exist_ok=True)
         db_path = host_db_path()
-        _QueueStore(queue_dir)
+        _QueueStore(slug)
         _AuditStore(db_path)
         return SupervisePlan(
             slug=slug,
-            queue_dir=queue_dir,
             db_path=db_path,
         )
 
@@ -664,7 +666,6 @@ __all__ = [
     "DEFAULT_POLL_INTERVAL_SEC",
     "DB_PATH_IN_CONTAINER",
     "Proposal",
-    "QUEUE_DIR_IN_CONTAINER",
     "Response",
     "STATUSES",
     "STATUS_APPROVED",
@@ -688,8 +689,8 @@ __all__ = [
     "bot_bottle_root",
     "host_db_path",
     "list_pending_proposals",
+    "list_all_pending_proposals",
     "queue_db_path",
-    "queue_dir_for_slug",
     "read_audit_entries",
     "read_proposal",
     "read_response",

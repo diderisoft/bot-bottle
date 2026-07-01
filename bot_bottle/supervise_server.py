@@ -7,14 +7,13 @@ config changes when stuck. The tools are `egress-allow`,
 Each queued tool call:
 
   1. Validates the proposed file syntactically.
-  2. Writes a Proposal to /run/supervise/queue/ (bind-mounted from
-     the host's ~/.bot-bottle/queue/<slug>/).
-  3. Blocks polling for a matching Response file.
+  2. Writes a Proposal to the host SQLite database.
+  3. Blocks polling for a matching Response row.
   4. Returns the operator's `{status, notes}` to the agent.
 
 The bottle slug arrives via SUPERVISE_BOTTLE_SLUG env (stamped at
-container creation by the backend's start step). The queue dir comes
-from SUPERVISE_QUEUE_DIR (default `/run/supervise/queue`).
+container creation by the backend's start step). SUPERVISE_DB_PATH
+points at the bind-mounted host database.
 
 Speaks MCP over HTTP+JSON-RPC. Methods handled:
 
@@ -42,7 +41,6 @@ import typing
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from pathlib import Path
 
 try:
     # Same-directory imports inside the bundle container; these files are
@@ -277,7 +275,6 @@ def validate_proposed_file(tool: str, content: str) -> None:
 @dataclass(frozen=True)
 class ServerConfig:
     bottle_slug: str
-    queue_dir: Path
     response_timeout_seconds: float = DEFAULT_RESPONSE_TIMEOUT_SECONDS
 
 
@@ -376,7 +373,7 @@ def handle_tools_call(
         current_file_hash=_sv.sha256_hex(proposed_file),
     )
     try:
-        _sv.write_proposal(config.queue_dir, proposal)
+        _sv.write_proposal(proposal)
     except OSError as e:
         raise _RpcInternalError(f"failed to write proposal to queue: {e}") from e
     sys.stderr.write(
@@ -387,7 +384,7 @@ def handle_tools_call(
     deadline = time.monotonic() + config.response_timeout_seconds
     try:
         response = _sv.wait_for_response(
-            config.queue_dir,
+            config.bottle_slug,
             proposal.id,
             poll_interval=MIN_RESPONSE_POLL_INTERVAL_SECONDS,
             deadline=deadline,
@@ -399,7 +396,7 @@ def handle_tools_call(
             "isError": False,
         }
     try:
-        _sv.archive_proposal(config.queue_dir, proposal.id)
+        _sv.archive_proposal(config.bottle_slug, proposal.id)
     except OSError as e:
         raise _RpcInternalError(f"failed to archive proposal: {e}") from e
 
@@ -539,7 +536,7 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
 class MCPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     allow_reuse_address = True
     daemon_threads = True
-    config: ServerConfig = ServerConfig(bottle_slug="", queue_dir=Path())
+    config: ServerConfig = ServerConfig(bottle_slug="")
 
 
 # --- Entry point -----------------------------------------------------------
@@ -548,21 +545,18 @@ class MCPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
 def serve(
     *,
     bottle_slug: str,
-    queue_dir: Path,
     port: int = _sv.SUPERVISE_PORT,
     bind: str = "0.0.0.0",
     response_timeout_seconds: float = DEFAULT_RESPONSE_TIMEOUT_SECONDS,
 ) -> typing.NoReturn:
-    queue_dir.mkdir(parents=True, exist_ok=True)
     server = MCPServer((bind, port), MCPHandler)
     server.config = ServerConfig(
         bottle_slug=bottle_slug,
-        queue_dir=queue_dir,
         response_timeout_seconds=response_timeout_seconds,
     )
     sys.stderr.write(
         f"supervise listening on {bind}:{port}; "
-        f"slug={bottle_slug!r}; queue={queue_dir}; "
+        f"slug={bottle_slug!r}; "
         f"tools: {', '.join(t['name'] for t in TOOL_DEFINITIONS)}\n"  # type: ignore[arg-type]
     )
     sys.stderr.flush()
@@ -581,7 +575,6 @@ def main(argv: list[str]) -> int:
     if not bottle_slug:
         sys.stderr.write("supervise: SUPERVISE_BOTTLE_SLUG env is unset\n")
         return 2
-    queue_dir = Path(os.environ.get("SUPERVISE_QUEUE_DIR", _sv.QUEUE_DIR_IN_CONTAINER))
     port = int(os.environ.get("SUPERVISE_PORT", str(_sv.SUPERVISE_PORT)))
     bind = os.environ.get("SUPERVISE_BIND", "0.0.0.0")
     try:
@@ -591,7 +584,6 @@ def main(argv: list[str]) -> int:
         return 2
     serve(
         bottle_slug=bottle_slug,
-        queue_dir=queue_dir,
         port=port,
         bind=bind,
         response_timeout_seconds=response_timeout_seconds,

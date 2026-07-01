@@ -77,9 +77,7 @@ class TestDiscoverPending(_FakeHomeMixin, unittest.TestCase):
 
     def test_walks_all_slug_subdirs(self):
         for slug in ("dev", "api"):
-            qdir = supervise.queue_dir_for_slug(slug)
-            qdir.mkdir(parents=True)
-            supervise.write_proposal(qdir, _proposal(slug=slug))
+            supervise.write_proposal(_proposal(slug=slug))
         pending = supervise_cli.discover_pending()
         self.assertEqual({"dev", "api"}, {qp.proposal.bottle_slug for qp in pending})
 
@@ -97,18 +95,14 @@ class TestDiscoverPending(_FakeHomeMixin, unittest.TestCase):
             now=datetime(2026, 5, 25, 14, 0, 0, tzinfo=timezone.utc),
         )
         for p in (late, early):
-            qdir = supervise.queue_dir_for_slug(p.bottle_slug)
-            qdir.mkdir(parents=True, exist_ok=True)
-            supervise.write_proposal(qdir, p)
+            supervise.write_proposal(p)
         pending = supervise_cli.discover_pending()
         self.assertEqual([early.id, late.id], [qp.proposal.id for qp in pending])
 
     def test_excludes_already_responded(self):
         p = _proposal()
-        qdir = supervise.queue_dir_for_slug("dev")
-        qdir.mkdir(parents=True)
-        supervise.write_proposal(qdir, p)
-        supervise.write_response(qdir, supervise.Response(
+        supervise.write_proposal(p)
+        supervise.write_response("dev", supervise.Response(
             proposal_id=p.id, status=STATUS_APPROVED, notes="",
         ))
         self.assertEqual([], supervise_cli.discover_pending())
@@ -123,10 +117,8 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
 
     def _enqueue(self, tool: str = TOOL_EGRESS_ALLOW):
         p = _proposal(tool=tool)
-        qdir = supervise.queue_dir_for_slug("dev")
-        qdir.mkdir(parents=True, exist_ok=True)
-        supervise.write_proposal(qdir, p)
-        return supervise_cli.QueuedProposal(proposal=p, queue_dir=qdir)
+        supervise.write_proposal(p)
+        return supervise_cli.QueuedProposal(proposal=p)
 
     def test_approve_writes_response(self):
         qp = self._enqueue()
@@ -135,7 +127,7 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
             return_value=("routes: []\n", "routes:\n  - host: example.com\n"),
         ):
             supervise_cli.approve(qp)
-        resp = read_response(qp.queue_dir, qp.proposal.id)
+        resp = read_response(qp.proposal.bottle_slug, qp.proposal.id)
         self.assertEqual(STATUS_APPROVED, resp.status)
         self.assertIsNone(resp.final_file)
 
@@ -150,7 +142,7 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
                 final_file="routes:\n  - host: edited.example.com\n",
                 notes="tweaked",
             )
-        resp = read_response(qp.queue_dir, qp.proposal.id)
+        resp = read_response(qp.proposal.bottle_slug, qp.proposal.id)
         self.assertEqual(STATUS_MODIFIED, resp.status)
         self.assertEqual("routes:\n  - host: edited.example.com\n", resp.final_file)
         self.assertEqual("tweaked", resp.notes)
@@ -158,7 +150,7 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
     def test_reject_writes_rejection(self):
         qp = self._enqueue()
         supervise_cli.reject(qp, reason="nope")
-        resp = read_response(qp.queue_dir, qp.proposal.id)
+        resp = read_response(qp.proposal.bottle_slug, qp.proposal.id)
         self.assertEqual(STATUS_REJECTED, resp.status)
         self.assertEqual("nope", resp.notes)
 
@@ -181,36 +173,33 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
     def test_approve_gitleaks_allow_leaves_response_for_gate(self):
         qp = self._enqueue(tool=TOOL_GITLEAKS_ALLOW)
         supervise_cli.approve(qp, notes="dummy fixture")
-        # Gate polls the queue dir for the response; TUI must not archive it.
-        resp = read_response(qp.queue_dir, qp.proposal.id)
+        # Gate polls the DB for the response; TUI must not archive it.
+        resp = read_response(qp.proposal.bottle_slug, qp.proposal.id)
         self.assertEqual(STATUS_APPROVED, resp.status)
         self.assertEqual("dummy fixture", resp.notes)
-        self.assertFalse((qp.queue_dir / "processed").exists())
 
     def test_tui_gitleaks_allow_requires_reason(self):
         qp = self._enqueue(tool=TOOL_GITLEAKS_ALLOW)
         with patch.object(supervise_cli, "_prompt", return_value=""):
             status = supervise_cli._approve_from_tui(None, qp)  # type: ignore[arg-type]
         self.assertEqual("approve aborted (empty reason)", status)
-        self.assertFalse((qp.queue_dir / "processed").exists())
 
     def test_tui_gitleaks_allow_writes_reason(self):
         qp = self._enqueue(tool=TOOL_GITLEAKS_ALLOW)
         with patch.object(supervise_cli, "_prompt", return_value="test fixture"):
             status = supervise_cli._approve_from_tui(None, qp)  # type: ignore[arg-type]
         self.assertIn("approved gitleaks-allow", status)
-        resp = read_response(qp.queue_dir, qp.proposal.id)
+        resp = read_response(qp.proposal.bottle_slug, qp.proposal.id)
         self.assertEqual("test fixture", resp.notes)
 
     def test_approve_token_allow_leaves_response_for_egress(self):
         qp = self._enqueue(tool=TOOL_EGRESS_TOKEN_ALLOW)
         supervise_cli.approve(qp, notes="false positive")
-        # The egress addon polls the queue dir for the response; the TUI must
+        # The egress addon polls the DB for the response; the TUI must
         # not archive it (the addon archives after reading).
-        resp = read_response(qp.queue_dir, qp.proposal.id)
+        resp = read_response(qp.proposal.bottle_slug, qp.proposal.id)
         self.assertEqual(STATUS_APPROVED, resp.status)
         self.assertEqual("false positive", resp.notes)
-        self.assertFalse((qp.queue_dir / "processed").exists())
 
     def test_token_allow_writes_no_audit_log(self):
         qp = self._enqueue(tool=TOOL_EGRESS_TOKEN_ALLOW)
@@ -222,14 +211,13 @@ class TestApproveReject(_FakeHomeMixin, unittest.TestCase):
         with patch.object(supervise_cli, "_prompt", return_value=""):
             status = supervise_cli._approve_from_tui(None, qp)  # type: ignore[arg-type]
         self.assertEqual("approve aborted (empty reason)", status)
-        self.assertFalse((qp.queue_dir / "processed").exists())
 
     def test_tui_token_allow_writes_reason(self):
         qp = self._enqueue(tool=TOOL_EGRESS_TOKEN_ALLOW)
         with patch.object(supervise_cli, "_prompt", return_value="legit"):
             status = supervise_cli._approve_from_tui(None, qp)  # type: ignore[arg-type]
         self.assertIn("approved egress-token-allow", status)
-        resp = read_response(qp.queue_dir, qp.proposal.id)
+        resp = read_response(qp.proposal.bottle_slug, qp.proposal.id)
         self.assertEqual("legit", resp.notes)
 
     def test_suffix_for_token_allow_is_txt(self):

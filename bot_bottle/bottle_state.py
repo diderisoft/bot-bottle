@@ -284,9 +284,8 @@ def git_gate_state_dir(identity: str) -> Path:
 
 def supervise_state_dir(identity: str) -> Path:
     """State subdir reserved for supervise sidecar bind-mount sources.
-    The queue dir is intentionally NOT under here — it lives at
-    ~/.bot-bottle/queue/<slug>/ alongside the audit logs, so it
-    survives state-dir cleanup."""
+    Runtime queue/audit rows live in the host-level bot-bottle SQLite
+    database, so they survive state-dir cleanup."""
     return bottle_state_dir(identity) / _SUPERVISE_SUBDIR
 
 

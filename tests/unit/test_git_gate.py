@@ -213,7 +213,6 @@ class TestHookRender(unittest.TestCase):
         self.assertIn("tool=_sv.TOOL_GITLEAKS_ALLOW", hook)
         self.assertIn("_sv.write_proposal", hook)
         self.assertIn("_sv.read_response", hook)
-        self.assertIn("SUPERVISE_QUEUE_DIR", hook)
         self.assertIn("SUPERVISE_BOTTLE_SLUG", hook)
         self.assertIn("supervisor approved # gitleaks:allow", hook)
         self.assertIn("supervisor rejected # gitleaks:allow", hook)
