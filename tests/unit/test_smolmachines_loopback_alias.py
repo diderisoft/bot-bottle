@@ -361,7 +361,7 @@ class TestForceAllowlist(unittest.TestCase):
         # force_allowlist must fail closed rather than boot the VM.
         original = loopback_alias._read_machine_cfg
 
-        def stale_cfg(con, name):
+        def stale_cfg(con: sqlite3.Connection, name: str) -> dict[str, object]:
             # Always report the un-patched row so the post-write
             # verification never sees the requested cidrs.
             cfg = original(con, name)

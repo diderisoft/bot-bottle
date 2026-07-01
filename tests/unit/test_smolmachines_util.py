@@ -97,7 +97,7 @@ class TestKvmPreflight(unittest.TestCase):
     """Linux-only KVM gate: smolvm needs /dev/kvm present and
     accessible. macOS skips this entirely (Hypervisor.framework)."""
 
-    def _run(self, *, system, exists, access):
+    def _run(self, *, system: str, exists: bool, access: bool) -> None:
         with patch(
             "bot_bottle.backend.smolmachines.util.shutil.which",
             return_value="/usr/bin/smolvm",
