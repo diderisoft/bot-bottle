@@ -422,6 +422,14 @@ class TestBundleLaunchSpec(unittest.TestCase):
             spec.environment,
         )
 
+    def test_supervise_adds_daemon_volume_and_env(self):
+        from bot_bottle.supervise import DB_PATH_IN_CONTAINER
+        plan = _plan(supervise=True)
+        spec = _bundle_launch_spec(plan, "net", "127.0.0.16")
+        self.assertIn("supervise", spec.daemons_csv)
+        self.assertIn(f"SUPERVISE_DB_PATH={DB_PATH_IN_CONTAINER}", spec.environment)
+        self.assertIn(("/tmp/bot-bottle.db", DB_PATH_IN_CONTAINER, False), spec.volumes)
+
     def test_canary_env_visible_to_smolvm_guest(self):
         plan = _plan(canary=True)
         with patch.object(

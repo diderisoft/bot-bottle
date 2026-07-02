@@ -7,9 +7,12 @@ from __future__ import annotations
 import tempfile
 import time
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from bot_bottle import supervise
+from bot_bottle.audit_store import AuditStore
+from bot_bottle.queue_store import QueueStore
 from bot_bottle.supervise import (
     AuditEntry,
     Proposal,
@@ -130,6 +133,57 @@ class TestReadAuditEntries(unittest.TestCase):
             )
             entries = read_audit_entries("egress", "slug")
             self.assertEqual([], entries)
+
+
+class TestStoreGuardBranches(unittest.TestCase):
+    """Direct QueueStore / AuditStore construction and early-return guard branches."""
+
+    def test_queue_store_explicit_db_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            db = Path(d) / "q.db"
+            store = QueueStore("key", db_path=db)
+            self.assertTrue(db.is_file())
+            self.assertEqual(db, store.db_path)
+
+    def test_queue_store_missing_db_list_pending_returns_empty(self):
+        with tempfile.TemporaryDirectory() as d:
+            db = Path(d) / "q.db"
+            store = QueueStore("key", db_path=db)
+            db.unlink()
+            self.assertEqual([], store.list_pending_proposals())
+
+    def test_queue_store_missing_db_list_all_returns_empty(self):
+        with tempfile.TemporaryDirectory() as d:
+            db = Path(d) / "q.db"
+            store = QueueStore("key", db_path=db)
+            db.unlink()
+            self.assertEqual([], store.list_all_pending_proposals())
+
+    def test_queue_store_missing_db_archive_is_noop(self):
+        with tempfile.TemporaryDirectory() as d:
+            db = Path(d) / "q.db"
+            store = QueueStore("key", db_path=db)
+            db.unlink()
+            store.archive_proposal("anything")  # must not raise
+
+    def test_queue_store_chmod_oserror_is_swallowed(self):
+        with tempfile.TemporaryDirectory() as d:
+            db = Path(d) / "q.db"
+            with patch("pathlib.Path.chmod", side_effect=OSError("ro")):
+                QueueStore("key", db_path=db)  # must not raise
+
+    def test_audit_store_missing_db_read_returns_empty(self):
+        with tempfile.TemporaryDirectory() as d:
+            db = Path(d) / "a.db"
+            store = AuditStore(db_path=db)
+            db.unlink()
+            self.assertEqual([], store.read_audit_entries("egress", "slug"))
+
+    def test_audit_store_chmod_oserror_is_swallowed(self):
+        with tempfile.TemporaryDirectory() as d:
+            db = Path(d) / "a.db"
+            with patch("pathlib.Path.chmod", side_effect=OSError("ro")):
+                AuditStore(db_path=db)  # must not raise
 
 
 if __name__ == "__main__":
