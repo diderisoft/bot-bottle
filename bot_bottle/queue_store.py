@@ -10,6 +10,13 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .supervise import Proposal, Response
 
+try:
+    from .db_store import DbStore
+    from .migrations import TableMigrations
+except ImportError:
+    from db_store import DbStore  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
+    from migrations import TableMigrations  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
+
 
 def get_supervise_mod() -> object:
     """Lazy import of supervise to avoid a circular-import at module init time.
@@ -30,10 +37,10 @@ def get_supervise_mod() -> object:
     return _m
 
 
-# One entry per schema version: _MIGRATIONS[0] brings a fresh DB (user_version=0)
-# to version 1, _MIGRATIONS[1] to version 2, and so on.  Add new migrations at
-# the end; never edit existing ones.
-_MIGRATIONS: list[str] = [
+# One entry per schema version: _MIGRATIONS.migrations[0] brings a fresh DB
+# to version 1, [1] to version 2, and so on.  Add new migrations at the end;
+# never edit existing ones.
+_MIGRATIONS = TableMigrations("queue_store", [
     # v1 — proposals table
     """
     CREATE TABLE IF NOT EXISTS supervise_proposals (
@@ -61,24 +68,23 @@ _MIGRATIONS: list[str] = [
         PRIMARY KEY (queue_key, proposal_id)
     )
     """,
-]
+])
 
 
-class QueueStore:
+class QueueStore(DbStore):
     """SQLite-backed persistent store for supervise proposals and responses."""
 
     def __init__(self, queue_key: str, db_path: Path | None = None) -> None:
         self.queue_key = queue_key
         if db_path is not None:
-            self.db_path = db_path
+            resolved = db_path
         else:
             # In the sidecar container SUPERVISE_DB_PATH points at the
             # bind-mounted host DB. On the host this env var is never set,
             # so we always fall through to host_db_path().
             env_path = os.environ.get("SUPERVISE_DB_PATH", "").strip()
-            self.db_path = Path(env_path) if env_path else get_supervise_mod().host_db_path()  # type: ignore[attr-defined]
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._init()
+            resolved = Path(env_path) if env_path else get_supervise_mod().host_db_path()  # type: ignore[attr-defined]
+        super().__init__(resolved, _MIGRATIONS)
 
     def write_proposal(self, proposal: Proposal) -> Path:
         with self._connect() as conn:
@@ -229,42 +235,6 @@ class QueueStore:
             notes=row["notes"],
             final_file=row["final_file"],
         )
-
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
-
-    _SCHEMA_KEY = "queue_store"
-
-    def _init(self) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS schema_versions (
-                    module TEXT PRIMARY KEY,
-                    version INTEGER NOT NULL DEFAULT 0
-                )
-                """
-            )
-            row = conn.execute(
-                "SELECT version FROM schema_versions WHERE module = ?",
-                (self._SCHEMA_KEY,),
-            ).fetchone()
-            version = row[0] if row else 0
-            for i, sql in enumerate(_MIGRATIONS[version:], start=version + 1):
-                conn.execute(sql)
-                conn.execute(
-                    "INSERT OR REPLACE INTO schema_versions (module, version) VALUES (?, ?)",
-                    (self._SCHEMA_KEY, i),
-                )
-        self._chmod()
-
-    def _chmod(self) -> None:
-        try:
-            self.db_path.chmod(0o600)
-        except OSError:
-            pass
 
 
 __all__ = ["QueueStore"]
