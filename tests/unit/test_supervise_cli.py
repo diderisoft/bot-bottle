@@ -12,7 +12,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from bot_bottle import supervise
+from bot_bottle.audit_store import AuditStore
 from bot_bottle.cli import supervise as supervise_cli
+from bot_bottle.queue_store import QueueStore
 from bot_bottle.supervise import (
     Proposal,
     STATUS_APPROVED,
@@ -59,6 +61,8 @@ class _FakeHomeMixin:
 
         supervise.bot_bottle_root = fake_root  # type: ignore[assignment]
         self._restore_home = lambda: setattr(supervise, "bot_bottle_root", original)
+        QueueStore("").migrate()
+        AuditStore().migrate()
 
     def _teardown_fake_home(self):
         self._restore_home()

@@ -11,6 +11,10 @@ except ImportError:
     from migrations import TableMigrations  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
 
 
+class DbVersionError(Exception):
+    """Raised when the on-disk schema is behind the current migration list."""
+
+
 class DbStore:
     """Base for SQLite-backed stores. Subclasses resolve db_path then call super().__init__."""
 
@@ -18,14 +22,29 @@ class DbStore:
         self.db_path = db_path
         self._migrations = migrations
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._init()
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         return conn
 
-    def _init(self) -> None:
+    def check_migrations(self) -> bool:
+        """Return True if the DB is fully up-to-date, False if migration is needed."""
+        if not self.db_path.exists():
+            return False
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT version FROM schema_versions WHERE module = ?",
+                    (self._migrations.schema_key,),
+                ).fetchone()
+        except sqlite3.OperationalError:
+            return False
+        version = row[0] if row else 0
+        return version == len(self._migrations.migrations)
+
+    def migrate(self) -> None:
+        """Apply any pending migrations and set permissions on the DB file."""
         with self._connect() as conn:
             self._migrations.apply(conn)
         self._chmod()
@@ -37,4 +56,4 @@ class DbStore:
             pass
 
 
-__all__ = ["DbStore"]
+__all__ = ["DbStore", "DbVersionError"]

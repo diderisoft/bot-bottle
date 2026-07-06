@@ -12,11 +12,17 @@ from unittest.mock import patch
 
 import bot_bottle.cli as climod
 from bot_bottle.cli import main
+from bot_bottle.db_store import DbStore
 from bot_bottle.log import Die
 from bot_bottle.manifest import ManifestError
 
 
 class TestMainDispatch(unittest.TestCase):
+    def setUp(self) -> None:
+        patcher = patch.object(DbStore, "check_migrations", return_value=True)
+        self._mock_check = patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_no_args_prints_usage_returns_2(self) -> None:
         with patch("sys.stderr", io.StringIO()):
             self.assertEqual(2, main([]))

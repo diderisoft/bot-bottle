@@ -17,6 +17,8 @@ from unittest.mock import patch
 # bare name `supervise`.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "bot_bottle"))
 import supervise as _sv  # noqa: E402  # type: ignore
+import queue_store as _qs  # noqa: E402  # type: ignore
+import audit_store as _as  # noqa: E402  # type: ignore
 
 from bot_bottle import supervise_server  # noqa: E402
 from bot_bottle.supervise_server import (
@@ -267,6 +269,8 @@ class TestHandleToolsCall(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory(prefix="supervise-server-test.")
         self._home_patch = self._patch_home(Path(self._tmp.name))
         self.config = ServerConfig(bottle_slug="dev")
+        _qs.QueueStore("dev").migrate()
+        _as.AuditStore().migrate()
 
     def tearDown(self):
         self._home_patch()

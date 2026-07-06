@@ -45,19 +45,22 @@ class TestPathHelpers(unittest.TestCase):
 class TestReadMalformed(unittest.TestCase):
     def test_read_proposal_missing_row(self) -> None:
         with tempfile.TemporaryDirectory() as d:
-            with patch.dict("os.environ", {"HOME": d}), \
-                    self.assertRaises(FileNotFoundError):
-                read_proposal("slug", "p")
+            with patch.dict("os.environ", {"HOME": d}):
+                QueueStore("slug").migrate()
+                with self.assertRaises(FileNotFoundError):
+                    read_proposal("slug", "p")
 
     def test_read_response_missing_row(self) -> None:
         with tempfile.TemporaryDirectory() as d:
-            with patch.dict("os.environ", {"HOME": d}), \
-                    self.assertRaises(FileNotFoundError):
-                read_response("slug", "p")
+            with patch.dict("os.environ", {"HOME": d}):
+                QueueStore("slug").migrate()
+                with self.assertRaises(FileNotFoundError):
+                    read_response("slug", "p")
 
     def test_list_pending_reads_db_only(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             with patch.dict("os.environ", {"HOME": d}):
+                QueueStore("slug").migrate()
                 supervise.write_proposal(_proposal())
                 pending = list_pending_proposals("slug")
             self.assertEqual(1, len(pending))
@@ -66,6 +69,7 @@ class TestReadMalformed(unittest.TestCase):
     def test_list_pending_skips_when_response_present(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             with patch.dict("os.environ", {"HOME": d}):
+                QueueStore("slug").migrate()
                 p = _proposal()
                 supervise.write_proposal(p)
                 supervise.write_response("slug", supervise.Response(
@@ -79,15 +83,17 @@ class TestReadMalformed(unittest.TestCase):
 class TestWaitForResponse(unittest.TestCase):
     def test_missing_response_times_out(self) -> None:
         with tempfile.TemporaryDirectory() as d:
-            with patch.dict("os.environ", {"HOME": d}), \
-                    self.assertRaises(TimeoutError):
-                wait_for_response("slug", "p", deadline=time.monotonic())
+            with patch.dict("os.environ", {"HOME": d}):
+                QueueStore("slug").migrate()
+                with self.assertRaises(TimeoutError):
+                    wait_for_response("slug", "p", deadline=time.monotonic())
 
     def test_empty_db_response_does_not_count(self) -> None:
         with tempfile.TemporaryDirectory() as d:
-            with patch.dict("os.environ", {"HOME": d}), \
-                    self.assertRaises(TimeoutError):
-                wait_for_response("slug", "p", deadline=time.monotonic())
+            with patch.dict("os.environ", {"HOME": d}):
+                QueueStore("slug").migrate()
+                with self.assertRaises(TimeoutError):
+                    wait_for_response("slug", "p", deadline=time.monotonic())
 
 
 class TestReadAuditEntries(unittest.TestCase):
@@ -99,6 +105,7 @@ class TestReadAuditEntries(unittest.TestCase):
     def test_reads_entries_from_db(self) -> None:
         with tempfile.TemporaryDirectory() as home, \
                 patch.dict("os.environ", {"HOME": home}):
+            AuditStore().migrate()
             write_audit_entry(AuditEntry(
                 timestamp="t",
                 bottle_slug="slug",
@@ -142,6 +149,7 @@ class TestStoreGuardBranches(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             db = Path(d) / "q.db"
             store = QueueStore("key", db_path=db)
+            store.migrate()
             self.assertTrue(db.is_file())
             self.assertEqual(db, store.db_path)
 
@@ -149,6 +157,7 @@ class TestStoreGuardBranches(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             db = Path(d) / "q.db"
             store = QueueStore("key", db_path=db)
+            store.migrate()
             db.unlink()
             self.assertEqual([], store.list_pending_proposals())
 
@@ -156,6 +165,7 @@ class TestStoreGuardBranches(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             db = Path(d) / "q.db"
             store = QueueStore("key", db_path=db)
+            store.migrate()
             db.unlink()
             self.assertEqual([], store.list_all_pending_proposals())
 
@@ -163,27 +173,31 @@ class TestStoreGuardBranches(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             db = Path(d) / "q.db"
             store = QueueStore("key", db_path=db)
+            store.migrate()
             db.unlink()
             store.archive_proposal("anything")  # must not raise
 
     def test_queue_store_chmod_oserror_is_swallowed(self):
         with tempfile.TemporaryDirectory() as d:
             db = Path(d) / "q.db"
+            store = QueueStore("key", db_path=db)
             with patch("pathlib.Path.chmod", side_effect=OSError("ro")):
-                QueueStore("key", db_path=db)  # must not raise
+                store.migrate()  # must not raise
 
     def test_audit_store_missing_db_read_returns_empty(self):
         with tempfile.TemporaryDirectory() as d:
             db = Path(d) / "a.db"
             store = AuditStore(db_path=db)
+            store.migrate()
             db.unlink()
             self.assertEqual([], store.read_audit_entries("egress", "slug"))
 
     def test_audit_store_chmod_oserror_is_swallowed(self):
         with tempfile.TemporaryDirectory() as d:
             db = Path(d) / "a.db"
+            store = AuditStore(db_path=db)
             with patch("pathlib.Path.chmod", side_effect=OSError("ro")):
-                AuditStore(db_path=db)  # must not raise
+                store.migrate()  # must not raise
 
 
 if __name__ == "__main__":

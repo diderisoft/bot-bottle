@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from bot_bottle import supervise
+from bot_bottle.audit_store import AuditStore
+from bot_bottle.queue_store import QueueStore
 from bot_bottle.supervise import (
     AuditEntry,
     Proposal,
@@ -113,6 +115,7 @@ class TestQueueIO(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory(prefix="bot-bottle-supervise-test.")
         self._home_patch = self._patch_home(Path(self._tmp.name))
         self.slug = "dev"
+        QueueStore("").migrate()
 
     def tearDown(self):
         self._home_patch()
@@ -222,6 +225,7 @@ class TestAuditLog(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory(prefix="bot-bottle-supervise-audit.")
         self._home_patch = self._patch_home(Path(self._tmp.name))
+        AuditStore().migrate()
 
     def tearDown(self):
         self._home_patch()

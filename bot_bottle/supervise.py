@@ -357,8 +357,8 @@ class Supervise(ABC):
         must be set by the launch step before .start runs."""
         del stage_dir
         db_path = host_db_path()
-        QueueStore(slug)
-        AuditStore(db_path)
+        QueueStore(slug).migrate()
+        AuditStore(db_path).migrate()
         return SupervisePlan(
             slug=slug,
             db_path=db_path,
