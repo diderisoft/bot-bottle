@@ -20,7 +20,7 @@ from bot_bottle.store_manager import StoreManager
 
 class TestMainDispatch(unittest.TestCase):
     def setUp(self) -> None:
-        patcher = patch.object(DbStore, "check_migrations", return_value=True)
+        patcher = patch.object(DbStore, "is_migrated", return_value=True)
         self._mock_check = patcher.start()
         self.addCleanup(patcher.stop)
         self.addCleanup(StoreManager.reset)

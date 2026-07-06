@@ -28,7 +28,7 @@ class DbStore:
         conn.row_factory = sqlite3.Row
         return conn
 
-    def check_migrations(self) -> bool:
+    def is_migrated(self) -> bool:
         """Return True if the DB is fully up-to-date, False if migration is needed."""
         if not self.db_path.exists():
             return False

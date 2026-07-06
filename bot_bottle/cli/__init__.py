@@ -76,7 +76,7 @@ def main(argv: list[str] | None = None) -> int:
         usage()
         die(f"unknown command: {command}")
     mgr = StoreManager.instance()
-    if not mgr.check_migrations():
+    if not mgr.is_migrated():
         sys.stderr.write("bot-bottle: database schema is out of date\n")
         sys.stderr.write("Migrate now? [y/N] ")
         sys.stderr.flush()

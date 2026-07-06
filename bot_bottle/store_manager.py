@@ -15,7 +15,7 @@ _instance: StoreManager | None = None
 
 
 class StoreManager:
-    """Owns db_path and delegates migrate/check_migrations across all stores.
+    """Owns db_path and delegates migrate/is_migrated across all stores.
 
     Use instance() for normal access. Call reset(db_path) in tests to swap
     the singleton to a temp path, then reset() with no args to restore the
@@ -46,10 +46,10 @@ class StoreManager:
         global _instance
         _instance = cls(db_path)
 
-    def check_migrations(self) -> bool:
+    def is_migrated(self) -> bool:
         return (
-            QueueStore("", self.db_path).check_migrations()
-            and AuditStore(self.db_path).check_migrations()
+            QueueStore("", self.db_path).is_migrated()
+            and AuditStore(self.db_path).is_migrated()
         )
 
     def migrate(self) -> None:
