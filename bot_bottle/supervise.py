@@ -110,7 +110,10 @@ def host_db_path() -> Path:
     # Calls bot_bottle_root() through this module's globals so that patches
     # on supervise.bot_bottle_root propagate to callers going through
     # supervise.host_db_path().
-    return bot_bottle_root() / HOST_DB_FILENAME
+    #
+    # Kept in its own "db" subdirectory (see supervise_types.host_db_path
+    # for why) — must stay in sync with that copy.
+    return bot_bottle_root() / "db" / HOST_DB_FILENAME
 
 
 def audit_log_path(component: str, slug: str) -> Path:

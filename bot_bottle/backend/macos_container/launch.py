@@ -405,7 +405,15 @@ def _sidecar_mounts(
 
     sp = plan.supervise_plan
     if sp is not None:
-        mounts.append((str(sp.db_path), DB_PATH_IN_CONTAINER, False))
+        # `container run --mount type=bind` only accepts directory
+        # sources (a file source fails with "is not a directory") —
+        # mount db_path's dedicated parent dir instead of the file
+        # itself, same as the CA/routes mounts above.
+        mounts.append((
+            str(sp.db_path.parent),
+            str(Path(DB_PATH_IN_CONTAINER).parent),
+            False,
+        ))
 
     return tuple(mounts)
 

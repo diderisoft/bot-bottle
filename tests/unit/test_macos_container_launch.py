@@ -139,7 +139,7 @@ class TestMacosContainerLaunchArgv(unittest.TestCase):
             argv,
         )
         self.assertIn(
-            "type=bind,source=/state/bot-bottle.db,target=/run/supervise/bot-bottle.db",
+            "type=bind,source=/state,target=/run/supervise",
             argv,
         )
 

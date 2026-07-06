@@ -50,7 +50,14 @@ def bot_bottle_root() -> Path:
 def host_db_path() -> Path:
     # Look up bot_bottle_root through this module's live namespace so that
     # monkey-patches on supervise_types.bot_bottle_root take effect.
-    return sys.modules[__name__].bot_bottle_root() / HOST_DB_FILENAME
+    #
+    # Lives in its own "db" subdirectory, not directly under
+    # bot_bottle_root(), so backends that can only bind-mount
+    # directories (macos_container's `container run --mount`, which
+    # rejects file sources with "is not a directory") can share this
+    # one file with a sidecar without also exposing bot_bottle_root()'s
+    # other contents (git-gate keys, per-bottle state, etc.).
+    return sys.modules[__name__].bot_bottle_root() / "db" / HOST_DB_FILENAME
 
 
 def _require_str(raw: dict[str, object], key: str) -> str:
