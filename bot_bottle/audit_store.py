@@ -15,31 +15,29 @@ except ImportError:
     from migrations import TableMigrations  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
 
 
-# One entry per schema version: _MIGRATIONS.migrations[0] brings a fresh DB
-# to version 1, [1] to version 2, and so on.  Add new migrations at the end;
-# never edit existing ones.
-_MIGRATIONS = TableMigrations("audit_store", [
-    # v1 — initial schema
-    """
-    CREATE TABLE IF NOT EXISTS supervise_audit_entries (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        timestamp TEXT NOT NULL,
-        bottle_slug TEXT NOT NULL,
-        component TEXT NOT NULL,
-        operator_action TEXT NOT NULL,
-        operator_notes TEXT NOT NULL,
-        justification TEXT NOT NULL,
-        diff TEXT NOT NULL
-    )
-    """,
-])
-
-
 class AuditStore(DbStore):
     """SQLite-backed persistent store for supervise audit entries."""
 
     def __init__(self, db_path: Path | None = None) -> None:
-        super().__init__(db_path or host_db_path(), _MIGRATIONS)
+        # One entry per schema version: migrations[0] brings a fresh DB to
+        # version 1, [1] to version 2, etc.  Add new entries at the end; never
+        # edit existing ones.
+        migrations = TableMigrations("audit_store", [
+            # v1 — initial schema
+            """
+            CREATE TABLE IF NOT EXISTS supervise_audit_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                bottle_slug TEXT NOT NULL,
+                component TEXT NOT NULL,
+                operator_action TEXT NOT NULL,
+                operator_notes TEXT NOT NULL,
+                justification TEXT NOT NULL,
+                diff TEXT NOT NULL
+            )
+            """,
+        ])
+        super().__init__(db_path or host_db_path(), migrations)
 
     def write_audit_entry(self, entry: AuditEntry) -> Path:
         with self._connect() as conn:

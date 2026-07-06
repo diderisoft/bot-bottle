@@ -16,40 +16,6 @@ except ImportError:
     from migrations import TableMigrations  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
 
 
-# One entry per schema version: _MIGRATIONS.migrations[0] brings a fresh DB
-# to version 1, [1] to version 2, and so on.  Add new migrations at the end;
-# never edit existing ones.
-_MIGRATIONS = TableMigrations("queue_store", [
-    # v1 — proposals table
-    """
-    CREATE TABLE IF NOT EXISTS supervise_proposals (
-        queue_key TEXT NOT NULL,
-        id TEXT NOT NULL,
-        bottle_slug TEXT NOT NULL,
-        tool TEXT NOT NULL,
-        proposed_file TEXT NOT NULL,
-        justification TEXT NOT NULL,
-        arrival_timestamp TEXT NOT NULL,
-        current_file_hash TEXT NOT NULL,
-        archived INTEGER NOT NULL DEFAULT 0,
-        PRIMARY KEY (queue_key, id)
-    )
-    """,
-    # v2 — responses table
-    """
-    CREATE TABLE IF NOT EXISTS supervise_responses (
-        queue_key TEXT NOT NULL,
-        proposal_id TEXT NOT NULL,
-        status TEXT NOT NULL,
-        notes TEXT NOT NULL,
-        final_file TEXT,
-        archived INTEGER NOT NULL DEFAULT 0,
-        PRIMARY KEY (queue_key, proposal_id)
-    )
-    """,
-])
-
-
 class QueueStore(DbStore):
     """SQLite-backed persistent store for supervise proposals and responses."""
 
@@ -63,7 +29,39 @@ class QueueStore(DbStore):
             # so we always fall through to host_db_path().
             env_path = os.environ.get("SUPERVISE_DB_PATH", "").strip()
             resolved = Path(env_path) if env_path else host_db_path()
-        super().__init__(resolved, _MIGRATIONS)
+        # One entry per schema version: migrations[0] brings a fresh DB to
+        # version 1, [1] to version 2, etc.  Add new entries at the end; never
+        # edit existing ones.
+        migrations = TableMigrations("queue_store", [
+            # v1 — proposals table
+            """
+            CREATE TABLE IF NOT EXISTS supervise_proposals (
+                queue_key TEXT NOT NULL,
+                id TEXT NOT NULL,
+                bottle_slug TEXT NOT NULL,
+                tool TEXT NOT NULL,
+                proposed_file TEXT NOT NULL,
+                justification TEXT NOT NULL,
+                arrival_timestamp TEXT NOT NULL,
+                current_file_hash TEXT NOT NULL,
+                archived INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (queue_key, id)
+            )
+            """,
+            # v2 — responses table
+            """
+            CREATE TABLE IF NOT EXISTS supervise_responses (
+                queue_key TEXT NOT NULL,
+                proposal_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                notes TEXT NOT NULL,
+                final_file TEXT,
+                archived INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (queue_key, proposal_id)
+            )
+            """,
+        ])
+        super().__init__(resolved, migrations)
 
     def write_proposal(self, proposal: Proposal) -> Path:
         with self._connect() as conn:
