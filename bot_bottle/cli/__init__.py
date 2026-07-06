@@ -7,11 +7,9 @@ from __future__ import annotations
 
 import sys
 
-from ..audit_store import AuditStore
-from ..db_store import DbVersionError
 from ..log import Die, die, error
 from ..manifest import ManifestError
-from ..queue_store import QueueStore
+from ..store_manager import StoreManager
 from ._common import PROG
 from . import list as _list_mod
 from .cleanup import cmd_cleanup
@@ -77,9 +75,8 @@ def main(argv: list[str] | None = None) -> int:
     if handler is None:
         usage()
         die(f"unknown command: {command}")
-    queue_store = QueueStore("")
-    audit_store = AuditStore()
-    if not queue_store.check_migrations() or not audit_store.check_migrations():
+    mgr = StoreManager.instance()
+    if not mgr.check_migrations():
         sys.stderr.write("bot-bottle: database schema is out of date\n")
         sys.stderr.write("Migrate now? [y/N] ")
         sys.stderr.flush()
@@ -90,8 +87,7 @@ def main(argv: list[str] | None = None) -> int:
         if answer != "y":
             error("migration required — re-run and confirm to migrate")
             return 1
-        queue_store.migrate()
-        audit_store.migrate()
+        mgr.migrate()
     try:
         return handler(rest) or 0
     except ManifestError as e:

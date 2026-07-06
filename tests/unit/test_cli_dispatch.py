@@ -15,6 +15,7 @@ from bot_bottle.cli import main
 from bot_bottle.db_store import DbStore
 from bot_bottle.log import Die
 from bot_bottle.manifest import ManifestError
+from bot_bottle.store_manager import StoreManager
 
 
 class TestMainDispatch(unittest.TestCase):
@@ -22,6 +23,7 @@ class TestMainDispatch(unittest.TestCase):
         patcher = patch.object(DbStore, "check_migrations", return_value=True)
         self._mock_check = patcher.start()
         self.addCleanup(patcher.stop)
+        self.addCleanup(StoreManager.reset)
 
     def test_no_args_prints_usage_returns_2(self) -> None:
         with patch("sys.stderr", io.StringIO()):

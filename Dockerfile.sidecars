@@ -70,6 +70,7 @@ COPY bot_bottle/migrations.py        /app/migrations.py
 COPY bot_bottle/db_store.py          /app/db_store.py
 COPY bot_bottle/queue_store.py       /app/queue_store.py
 COPY bot_bottle/audit_store.py       /app/audit_store.py
+COPY bot_bottle/store_manager.py     /app/store_manager.py
 COPY bot_bottle/supervise.py         /app/supervise.py
 COPY bot_bottle/supervise_server.py  /app/supervise_server.py
 COPY bot_bottle/sidecar_init.py      /app/sidecar_init.py

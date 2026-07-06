@@ -222,10 +222,12 @@ class AuditEntry:
 try:
     from .queue_store import QueueStore
     from .audit_store import AuditStore
+    from .store_manager import StoreManager
 except ImportError:
     # Sidecar bundle: files are flat-copied under /app, not a package.
     from queue_store import QueueStore  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
     from audit_store import AuditStore  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
+    from store_manager import StoreManager  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
 
 
 # --- Queue I/O -------------------------------------------------------------
@@ -356,12 +358,11 @@ class Supervise(ABC):
         """Stage the host database. Returns the plan; `internal_network`
         must be set by the launch step before .start runs."""
         del stage_dir
-        db_path = host_db_path()
-        QueueStore(slug).migrate()
-        AuditStore(db_path).migrate()
+        mgr = StoreManager.instance()
+        mgr.migrate()
         return SupervisePlan(
             slug=slug,
-            db_path=db_path,
+            db_path=mgr.db_path,
         )
 
 # --- Helpers ---------------------------------------------------------------
@@ -384,6 +385,7 @@ __all__ = [
     "Proposal",
     "QueueStore",
     "Response",
+    "StoreManager",
     "STATUSES",
     "STATUS_APPROVED",
     "STATUS_MODIFIED",
