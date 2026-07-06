@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from bot_bottle import supervise
-from bot_bottle import _supervise_types as _sv_types
+from bot_bottle import supervise_types as sv_types
 from bot_bottle.audit_store import AuditStore
 from bot_bottle.queue_store import QueueStore
 from bot_bottle.supervise import (
@@ -124,17 +124,17 @@ class TestQueueIO(unittest.TestCase):
 
     def _patch_home(self, fake_home: Path):
         original_sv = supervise.bot_bottle_root
-        original_svt = _sv_types.bot_bottle_root
+        original_svt = sv_types.bot_bottle_root
 
         def fake_root() -> Path:
             return fake_home / ".bot-bottle"
 
         supervise.bot_bottle_root = fake_root  # type: ignore[assignment]
-        _sv_types.bot_bottle_root = fake_root  # type: ignore[assignment]
+        sv_types.bot_bottle_root = fake_root  # type: ignore[assignment]
 
         def restore() -> None:
             supervise.bot_bottle_root = original_sv  # type: ignore[assignment]
-            _sv_types.bot_bottle_root = original_svt  # type: ignore[assignment]
+            sv_types.bot_bottle_root = original_svt  # type: ignore[assignment]
 
         return restore
 
@@ -241,17 +241,17 @@ class TestAuditLog(unittest.TestCase):
 
     def _patch_home(self, fake_home: Path):
         original_sv = supervise.bot_bottle_root
-        original_svt = _sv_types.bot_bottle_root
+        original_svt = sv_types.bot_bottle_root
 
         def fake_root() -> Path:
             return fake_home / ".bot-bottle"
 
         supervise.bot_bottle_root = fake_root  # type: ignore[assignment]
-        _sv_types.bot_bottle_root = fake_root  # type: ignore[assignment]
+        sv_types.bot_bottle_root = fake_root  # type: ignore[assignment]
 
         def restore() -> None:
             supervise.bot_bottle_root = original_sv  # type: ignore[assignment]
-            _sv_types.bot_bottle_root = original_svt  # type: ignore[assignment]
+            sv_types.bot_bottle_root = original_svt  # type: ignore[assignment]
 
         return restore
 
@@ -401,17 +401,17 @@ class TestSupervisePrepare(unittest.TestCase):
 
     def _patch_home(self, fake_home: Path):
         original_sv = supervise.bot_bottle_root
-        original_svt = _sv_types.bot_bottle_root
+        original_svt = sv_types.bot_bottle_root
 
         def fake_root() -> Path:
             return fake_home / ".bot-bottle"
 
         supervise.bot_bottle_root = fake_root  # type: ignore[assignment]
-        _sv_types.bot_bottle_root = fake_root  # type: ignore[assignment]
+        sv_types.bot_bottle_root = fake_root  # type: ignore[assignment]
 
         def restore() -> None:
             supervise.bot_bottle_root = original_sv  # type: ignore[assignment]
-            _sv_types.bot_bottle_root = original_svt  # type: ignore[assignment]
+            sv_types.bot_bottle_root = original_svt  # type: ignore[assignment]
 
         return restore
 

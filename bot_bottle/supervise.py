@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 try:
-    from ._supervise_types import (
+    from .supervise_types import (
         ACTION_OPERATOR_EDIT,
         AuditEntry,
         HOST_DB_FILENAME,
@@ -57,7 +57,7 @@ try:
         bot_bottle_root,
     )
 except ImportError:
-    from _supervise_types import (  # type: ignore[import-not-found,no-redef]  # pylint: disable=import-error,no-name-in-module
+    from supervise_types import (  # type: ignore[import-not-found,no-redef]  # pylint: disable=import-error,no-name-in-module
         ACTION_OPERATOR_EDIT,
         AuditEntry,
         HOST_DB_FILENAME,

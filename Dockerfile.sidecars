@@ -68,7 +68,7 @@ COPY bot_bottle/dlp_detectors.py     /app/dlp_detectors.py
 COPY bot_bottle/yaml_subset.py       /app/yaml_subset.py
 COPY bot_bottle/migrations.py        /app/migrations.py
 COPY bot_bottle/db_store.py          /app/db_store.py
-COPY bot_bottle/_supervise_types.py  /app/_supervise_types.py
+COPY bot_bottle/supervise_types.py   /app/supervise_types.py
 COPY bot_bottle/queue_store.py       /app/queue_store.py
 COPY bot_bottle/audit_store.py       /app/audit_store.py
 COPY bot_bottle/store_manager.py     /app/store_manager.py

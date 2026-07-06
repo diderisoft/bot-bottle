@@ -19,10 +19,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "bot_bott
 import supervise as _sv  # noqa: E402  # type: ignore
 import queue_store as _qs  # noqa: E402  # type: ignore
 import audit_store as _as  # noqa: E402  # type: ignore
-import _supervise_types as _svt_flat  # noqa: E402  # type: ignore
+import supervise_types as svt_flat  # noqa: E402  # type: ignore
 
 from bot_bottle import supervise_server  # noqa: E402
-from bot_bottle import _supervise_types as _svt_pkg  # noqa: E402
+from bot_bottle import supervise_types as svt_pkg  # noqa: E402
 from bot_bottle.supervise_server import (
     ERR_INTERNAL,
     ERR_INVALID_PARAMS,
@@ -280,20 +280,20 @@ class TestHandleToolsCall(unittest.TestCase):
 
     def _patch_home(self, fake_home: Path):
         original_sv = _sv.bot_bottle_root
-        original_flat = _svt_flat.bot_bottle_root
-        original_pkg = _svt_pkg.bot_bottle_root
+        original_flat = svt_flat.bot_bottle_root
+        original_pkg = svt_pkg.bot_bottle_root
 
         def fake_root() -> Path:
             return fake_home / ".bot-bottle"
 
         _sv.bot_bottle_root = fake_root  # type: ignore[assignment]
-        _svt_flat.bot_bottle_root = fake_root  # type: ignore[assignment]
-        _svt_pkg.bot_bottle_root = fake_root  # type: ignore[assignment]
+        svt_flat.bot_bottle_root = fake_root  # type: ignore[assignment]
+        svt_pkg.bot_bottle_root = fake_root  # type: ignore[assignment]
 
         def restore() -> None:
             _sv.bot_bottle_root = original_sv  # type: ignore[assignment]
-            _svt_flat.bot_bottle_root = original_flat  # type: ignore[assignment]
-            _svt_pkg.bot_bottle_root = original_pkg  # type: ignore[assignment]
+            svt_flat.bot_bottle_root = original_flat  # type: ignore[assignment]
+            svt_pkg.bot_bottle_root = original_pkg  # type: ignore[assignment]
 
         return restore
 

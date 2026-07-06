@@ -49,7 +49,7 @@ def bot_bottle_root() -> Path:
 
 def host_db_path() -> Path:
     # Look up bot_bottle_root through this module's live namespace so that
-    # monkey-patches on _supervise_types.bot_bottle_root take effect.
+    # monkey-patches on supervise_types.bot_bottle_root take effect.
     return sys.modules[__name__].bot_bottle_root() / HOST_DB_FILENAME
 
 
