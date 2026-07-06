@@ -4,33 +4,15 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from .supervise import AuditEntry
 
 try:
+    from ._supervise_types import AuditEntry, host_db_path
     from .db_store import DbStore
     from .migrations import TableMigrations
 except ImportError:
+    from _supervise_types import AuditEntry, host_db_path  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
     from db_store import DbStore  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
     from migrations import TableMigrations  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
-
-
-def get_supervise_mod() -> object:
-    """Lazy import of supervise to avoid a circular-import at module init time.
-    Mirrors our own module identity so patches on supervise.bot_bottle_root
-    propagate correctly in both flat (sidecar / sys.path-injection tests) and
-    package contexts."""
-    import sys
-    sv_name = "supervise" if __name__ == "audit_store" else "bot_bottle.supervise"
-    if sv_name in sys.modules:
-        return sys.modules[sv_name]
-    try:
-        import bot_bottle.supervise as _m
-    except ImportError:
-        import supervise as _m  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
-    return _m
 
 
 # One entry per schema version: _MIGRATIONS.migrations[0] brings a fresh DB
@@ -57,8 +39,7 @@ class AuditStore(DbStore):
     """SQLite-backed persistent store for supervise audit entries."""
 
     def __init__(self, db_path: Path | None = None) -> None:
-        resolved = db_path or get_supervise_mod().host_db_path()  # type: ignore[attr-defined]
-        super().__init__(resolved, _MIGRATIONS)
+        super().__init__(db_path or host_db_path(), _MIGRATIONS)
 
     def write_audit_entry(self, entry: AuditEntry) -> Path:
         with self._connect() as conn:
@@ -98,8 +79,7 @@ class AuditStore(DbStore):
 
     @staticmethod
     def _row_to_entry(row: sqlite3.Row) -> AuditEntry:
-        m = get_supervise_mod()
-        return m.AuditEntry(  # type: ignore[attr-defined]
+        return AuditEntry(
             timestamp=row["timestamp"],
             bottle_slug=row["bottle_slug"],
             component=row["component"],

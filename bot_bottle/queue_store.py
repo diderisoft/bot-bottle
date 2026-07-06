@@ -5,36 +5,15 @@ from __future__ import annotations
 import os
 import sqlite3
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from .supervise import Proposal, Response
 
 try:
+    from ._supervise_types import Proposal, Response, host_db_path
     from .db_store import DbStore
     from .migrations import TableMigrations
 except ImportError:
+    from _supervise_types import Proposal, Response, host_db_path  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
     from db_store import DbStore  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
     from migrations import TableMigrations  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
-
-
-def get_supervise_mod() -> object:
-    """Lazy import of supervise to avoid a circular-import at module init time.
-    By the time any QueueStore method is called, both modules are fully loaded.
-
-    Mirrors our own module identity: when we are 'queue_store' (sidecar flat
-    context or tests that inject bot_bottle/ into sys.path) we use the flat
-    'supervise' module so that patches on supervise.bot_bottle_root propagate
-    correctly. When we are 'bot_bottle.queue_store' we use 'bot_bottle.supervise'."""
-    import sys
-    sv_name = "supervise" if __name__ == "queue_store" else "bot_bottle.supervise"
-    if sv_name in sys.modules:
-        return sys.modules[sv_name]
-    try:
-        import bot_bottle.supervise as _m
-    except ImportError:
-        import supervise as _m  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
-    return _m
 
 
 # One entry per schema version: _MIGRATIONS.migrations[0] brings a fresh DB
@@ -83,7 +62,7 @@ class QueueStore(DbStore):
             # bind-mounted host DB. On the host this env var is never set,
             # so we always fall through to host_db_path().
             env_path = os.environ.get("SUPERVISE_DB_PATH", "").strip()
-            resolved = Path(env_path) if env_path else get_supervise_mod().host_db_path()  # type: ignore[attr-defined]
+            resolved = Path(env_path) if env_path else host_db_path()
         super().__init__(resolved, _MIGRATIONS)
 
     def write_proposal(self, proposal: Proposal) -> Path:
@@ -215,8 +194,7 @@ class QueueStore(DbStore):
 
     @staticmethod
     def _row_to_proposal(row: sqlite3.Row) -> Proposal:
-        m = get_supervise_mod()
-        return m.Proposal(  # type: ignore[attr-defined]
+        return Proposal(
             id=row["id"],
             bottle_slug=row["bottle_slug"],
             tool=row["tool"],
@@ -228,8 +206,7 @@ class QueueStore(DbStore):
 
     @staticmethod
     def _row_to_response(row: sqlite3.Row) -> Response:
-        m = get_supervise_mod()
-        return m.Response(  # type: ignore[attr-defined]
+        return Response(
             proposal_id=row["proposal_id"],
             status=row["status"],
             notes=row["notes"],
