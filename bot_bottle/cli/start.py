@@ -108,6 +108,13 @@ def cmd_start(argv: list[str]) -> int:
 
     agent_name: str | None = args.name
     if agent_name is None:
+        if not manifest.all_agent_names:
+            print(
+                "bot-bottle: no agents defined. "
+                "Add an agent to ~/.bot-bottle/agents/ or ./bot-bottle/agents/ to get started.",
+                file=sys.stderr,
+            )
+            return 1
         agent_name = tui.filter_select(
             manifest.all_agent_names,
             title="Select agent",
