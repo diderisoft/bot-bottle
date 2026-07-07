@@ -2,7 +2,7 @@
 exercised against the real binary.
 
 The full machine-lifecycle round trip (create → start → exec →
-delete) is gated behind macOS + Darwin platform check and lives
+delete) is gated behind macOS/Linux platform check and lives
 in chunk 2d's smoke. This file just verifies `is_available()`
 correctly reports presence and `_smolvm()` can run a no-op
 subcommand without errors — enough to flag wrapper drift if
@@ -23,8 +23,8 @@ from bot_bottle.backend.smolmachines.smolvm import is_available
     "skipped under act_runner: smolvm not installed on the runner",
 )
 @unittest.skipUnless(
-    platform.system() == "Darwin",
-    "smolvm is macOS-only for v1; Linux+KVM path is a future PRD",
+    platform.system() in ("Darwin", "Linux"),
+    "smolvm requires macOS or Linux",
 )
 @unittest.skipUnless(
     is_available(),

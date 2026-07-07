@@ -116,10 +116,9 @@ def machine_create(
     allow_cidrs: Sequence[str] = (),
     env: Mapping[str, str] | None = None,
 ) -> None:
-    """`smolvm machine create NAME [--image IMG | --from PATH]
-    [--allow-cidr CIDR ...] [-e K=V ...]`. NAME is positional
-    (the CLI's exception to the `--name` pattern other
-    subcommands use).
+    """`smolvm machine create --name NAME [--image IMG | --from PATH]
+    [--allow-cidr CIDR ...] [-e K=V ...]`. NAME is passed as
+    `--name` (smolvm 1.4.7+; earlier versions took it positionally).
 
     `image` (registry ref like `alpine:latest`) and `from_path`
     (a `.smolmachine` artifact) are mutually exclusive — one or
@@ -133,12 +132,10 @@ def machine_create(
     result without the Smolfile complication.
 
     `--net` is sent explicitly when `allow_cidrs` is non-empty.
-    smolvm 0.8.0's docs say `--allow-cidr` implies `--net`, but
-    empirically the implication only fires when no `--from` is
-    set — `--from PATH --allow-cidr X/32` silently produces a
-    machine with `network: false` and no routes in the guest, so
-    the agent can't reach the bundle's pinned IP."""
-    args: list[str] = ["machine", "create"]
+    `--allow-cidr` implies `--net` per the CLI help, but sending
+    `--net` explicitly is harmless and ensures the guest has
+    network access even if that implication changes across versions."""
+    args: list[str] = ["machine", "create", "--name", name]
     if image is not None:
         args += ["--image", image]
     if from_path is not None:
@@ -150,7 +147,6 @@ def machine_create(
     if env:
         for k, v in env.items():
             args += ["-e", f"{k}={v}"]
-    args.append(name)
     _smolvm(*args)
 
 
@@ -182,10 +178,9 @@ def machine_stop(name: str) -> None:
 
 
 def machine_delete(name: str) -> None:
-    """`smolvm machine delete -f NAME`. NAME is positional. `-f`
-    skips the interactive confirmation — required for
-    non-interactive teardown."""
-    _smolvm("machine", "delete", "-f", name)
+    """`smolvm machine delete --name NAME -f`. `-f` skips the
+    interactive confirmation — required for non-interactive teardown."""
+    _smolvm("machine", "delete", "--name", name, "-f")
 
 
 def machine_exec(

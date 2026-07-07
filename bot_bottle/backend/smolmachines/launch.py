@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import platform
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Callable, Generator
@@ -91,12 +92,13 @@ def launch(
     try:
         loopback_ip, network = _allocate_resources(plan, stack)
         plan = _mint_certs(plan)
-        plan = _start_bundle(plan, network, loopback_ip, stack)
-        plan = _discover_urls(plan, loopback_ip)
+        proxy_host = _proxy_host(plan, loopback_ip)
+        plan = _start_bundle(plan, network, proxy_host, stack)
+        plan = _discover_urls(plan, proxy_host)
 
         agent_from_path = _agent_from_path(plan)
 
-        _launch_vm(plan, agent_from_path, loopback_ip, stack)
+        _launch_vm(plan, agent_from_path, proxy_host, stack)
         _init_vm(plan)
 
         bottle = SmolmachinesBottle(
@@ -174,13 +176,13 @@ def _mint_certs(plan: SmolmachinesBottlePlan) -> SmolmachinesBottlePlan:
 def _start_bundle(
     plan: SmolmachinesBottlePlan,
     network: str,
-    loopback_ip: str,
+    proxy_host: str,
     stack: ExitStack,
 ) -> SmolmachinesBottlePlan:
     """Build the BundleLaunchSpec, resolve token env, start the
     sidecar bundle container, and register teardown."""
     plan = _provision_git_gate_keys(plan)
-    bundle_spec = _bundle_launch_spec(plan, network, loopback_ip)
+    bundle_spec = _bundle_launch_spec(plan, network, proxy_host)
     token_env = _resolve_token_env(plan, dict(os.environ))
     _bundle.ensure_bundle_image(bundle_spec.image)
     _bundle.start_bundle(bundle_spec, env={**os.environ, **token_env})
@@ -203,41 +205,40 @@ def _provision_git_gate_keys(
 
 def _discover_urls(
     plan: SmolmachinesBottlePlan,
-    loopback_ip: str,
+    proxy_host: str,
 ) -> SmolmachinesBottlePlan:
     """Discover host-side ports for published container ports and
     return the plan with URLs + guest_env stamped in.
 
-    Docker container IPs (192.168.x.x in the daemon's bridge)
-    aren't reachable from the smolvm guest — TSI proxies the
-    guest's connects through the host, and the host reaches the
-    bundle only via its published-port loopback forward (the
-    daemon's bridge isn't on the TSI allowlist). The agent dials
-    the published port on the per-bottle loopback alias.
+    `proxy_host` is the host IP that both TSI's allowlist and
+    docker's port-forward bindings are keyed to. On macOS it is the
+    per-bottle loopback alias; on Linux it is the per-bottle bridge
+    gateway (see `_proxy_host`). The agent dials the published port
+    on this IP for all bundle-hosted services.
 
-    NO_PROXY includes the per-bottle loopback alias so the
-    supervise + git-gate URLs bypass HTTPS_PROXY."""
+    NO_PROXY includes `proxy_host` so supervise + git-gate URLs
+    bypass HTTPS_PROXY."""
     agent_facing_host_port = _bundle.bundle_host_port(
-        plan.slug, _EGRESS_PORT, host_ip=loopback_ip,
+        plan.slug, _EGRESS_PORT, host_ip=proxy_host,
     )
-    agent_proxy_url = f"http://{loopback_ip}:{agent_facing_host_port}"
+    agent_proxy_url = f"http://{proxy_host}:{agent_facing_host_port}"
 
     agent_git_gate_host = ""
     if plan.git_gate_plan.upstreams:
         git_gate_host_port = _bundle.bundle_host_port(
-            plan.slug, _GIT_HTTP_PORT, host_ip=loopback_ip,
+            plan.slug, _GIT_HTTP_PORT, host_ip=proxy_host,
         )
-        agent_git_gate_host = f"{loopback_ip}:{git_gate_host_port}"
+        agent_git_gate_host = f"{proxy_host}:{git_gate_host_port}"
 
     agent_supervise_url = ""
     if plan.supervise_plan is not None:
         supervise_host_port = _bundle.bundle_host_port(
-            plan.slug, _SUPERVISE_PORT, host_ip=loopback_ip,
+            plan.slug, _SUPERVISE_PORT, host_ip=proxy_host,
         )
-        agent_supervise_url = f"http://{loopback_ip}:{supervise_host_port}/"
+        agent_supervise_url = f"http://{proxy_host}:{supervise_host_port}/"
 
     existing_no_proxy = plan.guest_env.get("NO_PROXY", "localhost,127.0.0.1")
-    no_proxy = f"{existing_no_proxy},{loopback_ip}"
+    no_proxy = f"{existing_no_proxy},{proxy_host}"
     guest_env = {
         **plan.guest_env,
         "HTTPS_PROXY": agent_proxy_url,
@@ -267,21 +268,24 @@ def _discover_urls(
 def _launch_vm(
     plan: SmolmachinesBottlePlan,
     agent_from_path: Path,
-    loopback_ip: str,
+    proxy_host: str,
     stack: ExitStack,
 ) -> None:
     """Create, patch, and start the smolvm VM; register teardown.
 
-    --allow-cidr is the per-bottle loopback alias so the guest can
-    only reach this bottle's bundle ports. force_allowlist then
-    confirms the allowlist persisted (patching smolvm 0.8.0's
-    silent-drop of --allow-cidr when combined with --from) and
-    fails closed if it can't. Smolfile isn't usable here — smolvm
-    0.8.0 makes --from and --smolfile mutually exclusive."""
+    --allow-cidr is `proxy_host/32` — the per-bottle loopback alias
+    on macOS or the bridge gateway on Linux (see `_proxy_host`). This
+    ensures the guest can only reach bundle ports published on that IP,
+    not the container IP directly. force_allowlist confirms the
+    allowlist persisted (patching smolvm 0.8.0's silent-drop of
+    --allow-cidr when combined with --from) and fails closed if it
+    can't. Smolfile isn't usable here — smolvm 0.8.0 makes --from
+    and --smolfile mutually exclusive."""
+    tsi_cidr = f"{proxy_host}/32"
     _smolvm.machine_create(
         plan.machine_name,
         from_path=agent_from_path,
-        allow_cidrs=[f"{loopback_ip}/32"],
+        allow_cidrs=[tsi_cidr],
         env=plan.guest_env,
     )
     stack.callback(_smolvm.machine_delete, plan.machine_name)
@@ -289,7 +293,7 @@ def _launch_vm(
     # /32 before start (smolvm 0.8.0 silently drops `--allow-cidr`
     # with `--from`, so the persisted state DB is patched if needed).
     # Fails closed if enforcement can't be confirmed.
-    _loopback.force_allowlist(plan.machine_name, [f"{loopback_ip}/32"])
+    _loopback.force_allowlist(plan.machine_name, [tsi_cidr])
     _smolvm.machine_start(plan.machine_name)
     stack.callback(_smolvm.machine_stop, plan.machine_name)
 
@@ -323,8 +327,29 @@ def _init_vm(plan: SmolmachinesBottlePlan) -> None:
     _smolvm.wait_exec_ready(plan.machine_name)
 
 
+def _proxy_host(plan: SmolmachinesBottlePlan, loopback_ip: str) -> str:
+    """Return the host IP for TSI's allowlist and docker port-forward bindings.
+
+    On macOS, the per-bottle loopback alias (e.g. ``127.0.0.16``) works
+    because macOS's network stack lets TSI intercept 127.x.x.x connects
+    from the guest before they reach the host's own loopback.
+
+    On Linux, the guest kernel's LOCAL routing table routes all
+    ``127.0.0.0/8`` to the guest's own loopback — those packets never
+    reach eth0 and TSI never sees them. Using the per-bottle bridge
+    gateway (e.g. ``192.168.N.1``) instead sidesteps the problem: it
+    is not a loopback address, so the guest routes it via eth0 and TSI
+    intercepts it normally. The TSI allowlist is ``gateway/32``, which
+    is distinct from the container IP (``192.168.N.2``), so the agent
+    still can't reach the egress daemon directly — TSI blocks any
+    connection to the container IP that isn't via the published port."""
+    if platform.system() == "Linux":
+        return plan.bundle_gateway
+    return loopback_ip
+
+
 def _bundle_launch_spec(
-    plan: SmolmachinesBottlePlan, network: str, loopback_ip: str,
+    plan: SmolmachinesBottlePlan, network: str, proxy_host: str,
 ) -> _bundle.BundleLaunchSpec:
     """Build a BundleLaunchSpec from the resolved inner Plans.
 
@@ -383,8 +408,9 @@ def _bundle_launch_spec(
         volumes.append((str(sp.db_path), DB_PATH_IN_CONTAINER, False))
 
     # Container ports the agent reaches from the smolvm guest —
-    # published on host loopback so the guest can dial via TSI +
-    # macOS networking. Egress is always the agent's HTTP/HTTPS proxy.
+    # published on `proxy_host` so the TSI allowlist and the docker
+    # port-forward bindings point at the same IP. Egress is always
+    # the agent's HTTP/HTTPS proxy.
     ports_to_publish: list[int] = [_EGRESS_PORT]
     if gp.upstreams:
         ports_to_publish.append(_GIT_HTTP_PORT)
@@ -401,7 +427,7 @@ def _bundle_launch_spec(
         environment=tuple(env),
         volumes=tuple(volumes),
         ports_to_publish=tuple(ports_to_publish),
-        publish_host_ip=loopback_ip,
+        publish_host_ip=proxy_host,
     )
 
 
@@ -475,6 +501,12 @@ def _ensure_smolmachine(image_ref: str, *, dockerfile: str = "") -> Path:
         return sidecar
     tarball = _SMOLMACHINE_CACHE_DIR / f"{digest}.image.tar"
     docker_mod.save(image_ref, str(tarball))
+    # On Linux, `docker save -o` writes the tarball with owner-only
+    # permissions (mode 600). The crane push container runs as UID
+    # 65532 (distroless nonroot) and can't read it through a bind
+    # mount unless world-read is set. The tarball is temporary and
+    # lives in ~/.cache, so 644 is safe.
+    tarball.chmod(0o644)
     try:
         with ephemeral_registry() as handle:
             push_ref = f"{handle.push_endpoint}/bot-bottle:{digest}"

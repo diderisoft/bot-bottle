@@ -21,13 +21,14 @@ security properties the design pivot was about:
     bind-address mitigation is what closes TSI's port-granularity
     gap.
 
-Gated on macOS + smolvm + docker + not GITEA_ACTIONS — the
+Gated on macOS/Linux + smolvm + docker + not GITEA_ACTIONS — the
 runner can't host libkrun-backed VMs."""
 
 from __future__ import annotations
 
 import os
 import platform
+import re
 import shutil
 import tempfile
 import unittest
@@ -65,8 +66,8 @@ def _minimal_manifest() -> ManifestIndex:
 
 @skip_unless_docker()
 @unittest.skipUnless(
-    platform.system() == "Darwin",
-    "smolvm is macOS-only for v1; Linux+KVM path is a future PRD",
+    platform.system() in ("Darwin", "Linux"),
+    "smolvm requires macOS or Linux",
 )
 @unittest.skipUnless(
     _smolvm_available(),
@@ -141,7 +142,15 @@ class TestSmolmachinesLaunch(unittest.TestCase):
         proxies = [line.strip() for line in r.stdout.splitlines()]
         self.assertEqual(2, len(proxies), proxies)
         self.assertEqual(proxies[0], proxies[1], proxies)
-        self.assertTrue(proxies[0].startswith("http://127."), proxies[0])
+        # macOS: proxy binds to the per-bottle loopback alias (127.x.x.x) so
+        # TSI can intercept guest connections to it.  Linux: the guest kernel
+        # routes 127.0.0.0/8 to its own loopback (TSI never sees those), so
+        # the proxy instead binds to the per-bottle bridge gateway (192.168.x.1)
+        # which routes via eth0 and is intercepted by TSI normally.
+        self.assertRegex(
+            proxies[0], r"^http://\d+\.\d+\.\d+\.\d+:\d+$",
+            "expected proxy URL to be an http://IP:port address",
+        )
 
         r = self.bottle.exec(
             "curl -fsS --max-time 20 https://example.com >/dev/null && echo OK"
