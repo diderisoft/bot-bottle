@@ -261,6 +261,36 @@ class TestCodexProvision(unittest.TestCase):
         self.assertTrue(any("find" in s and "-delete" in s for s in scripts))
         self.assertTrue(any("runuser" in s and "codex login status" in s for s in scripts))
 
+    def test_forwarded_credentials_verify_sets_codex_path(self):
+        with tempfile.TemporaryDirectory(prefix="bb-codex-auth.") as tmp:
+            state_dir = Path(tmp)
+            prompt_file = state_dir / "prompt.txt"
+            prompt_file.write_text("")
+            with patch(
+                "bot_bottle.contrib.codex.agent_provider.codex_host_access_token",
+                return_value="token",
+            ), patch(
+                "bot_bottle.contrib.codex.agent_provider.write_codex_dummy_auth_file",
+            ):
+                provision = CodexAgentProvider().provision_plan(
+                    dockerfile="",
+                    state_dir=state_dir,
+                    instance_name="bot-bottle-demo-abc12",
+                    prompt_file=prompt_file,
+                    forward_host_credentials=True,
+                    host_env={},
+                )
+
+        verify_argv = provision.verify[0].argv
+        self.assertTrue(any(
+            item.startswith("PATH=/home/node/.local/bin:")
+            for item in verify_argv
+        ))
+        self.assertIn(
+            "/home/node/.codex/packages/standalone/current/bin/codex",
+            verify_argv,
+        )
+
     def test_dies_when_dir_creation_fails(self):
         provision = AgentProvisionPlan(
             template="codex", command="codex",
@@ -301,7 +331,8 @@ class TestCodexSuperviseMcp(unittest.TestCase):
         script = bottle.exec.call_args.args[0]
         self.assertEqual("node", bottle.exec.call_args.kwargs.get("user"))
         self.assertEqual(
-            f"codex mcp add supervise --url {_URL}",
+            "/home/node/.codex/packages/standalone/current/bin/codex "
+            f"mcp add supervise --url {_URL}",
             script,
         )
 

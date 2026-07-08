@@ -228,7 +228,7 @@ supervise_gitleaks_allow() {
   fi
 
   proposal_id=$(
-    GITLEAKS_ALLOW_REF="$ref" python3 - "$report_file" <<'PY'
+    PYTHONPATH="/app${PYTHONPATH:+:$PYTHONPATH}" GITLEAKS_ALLOW_REF="$ref" python3 - "$report_file" <<'PY'
 import datetime
 import hashlib
 import json
@@ -236,7 +236,10 @@ import os
 import sys
 from pathlib import Path
 
-from bot_bottle import supervise as _sv
+try:
+    import supervise as _sv
+except ImportError:
+    from bot_bottle import supervise as _sv
 
 report_path = Path(sys.argv[1])
 slug = os.environ.get("SUPERVISE_BOTTLE_SLUG", "")
@@ -314,10 +317,13 @@ PY
   echo "git-gate: approve with './cli.py supervise' to continue this push" >&2
   waited=0
   while [ "$waited" -lt "$timeout" ]; do
-    status=$(python3 - "$slug" "$proposal_id" <<'PY'
+    status=$(PYTHONPATH="/app${PYTHONPATH:+:$PYTHONPATH}" python3 - "$slug" "$proposal_id" <<'PY'
 import sys
 
-from bot_bottle import supervise as _sv
+try:
+    import supervise as _sv
+except ImportError:
+    from bot_bottle import supervise as _sv
 
 slug = sys.argv[1]
 try:
@@ -336,10 +342,13 @@ PY
     if [ -n "$status" ]; then
       case "$status" in
         approved|modified)
-          python3 - "$slug" "$proposal_id" <<'PY' || true
+          PYTHONPATH="/app${PYTHONPATH:+:$PYTHONPATH}" python3 - "$slug" "$proposal_id" <<'PY' || true
 import sys
 
-from bot_bottle import supervise as _sv
+try:
+    import supervise as _sv
+except ImportError:
+    from bot_bottle import supervise as _sv
 
 _sv.archive_proposal(sys.argv[1], sys.argv[2])
 PY

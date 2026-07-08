@@ -47,10 +47,24 @@ _HOME_FOR = {
     "root": "/root",
 }
 
+_DEFAULT_PATH_FOR = {
+    # Committed smolmachine snapshots are rebuilt from a rootfs tarball and
+    # lose Docker image ENV metadata. Restore the provider CLI path here so
+    # resumed Codex bottles can still find the per-user install.
+    "node": (
+        "/home/node/.local/bin:"
+        "/home/node/.codex/packages/standalone/current/bin:"
+        "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    ),
+    "root": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+}
+
 
 def _env_assignments_for(user: str, env: Mapping[str, str]) -> list[str]:
     home = _HOME_FOR.get(user, f"/home/{user}")
     out = [f"HOME={home}", f"USER={user}"]
+    if "PATH" not in env:
+        out.append(f"PATH={_DEFAULT_PATH_FOR.get(user, _DEFAULT_PATH_FOR['root'])}")
     for k, v in env.items():
         out.append(f"{k}={v}")
     return out

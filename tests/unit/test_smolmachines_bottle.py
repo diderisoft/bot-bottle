@@ -79,6 +79,11 @@ class TestClaudeArgvWrapped(unittest.TestCase):
                 "--",
                 "runuser", "-u", "node", "--",
                 "env", "HOME=/home/node", "USER=node",
+                (
+                    "PATH=/home/node/.local/bin:"
+                    "/home/node/.codex/packages/standalone/current/bin:"
+                    "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+                ),
                 "claude",
             ],
             argv,
@@ -127,16 +132,24 @@ class TestClaudeArgvWrapped(unittest.TestCase):
         self.assertIn("HTTPS_PROXY=http://127.0.0.1:1234", argv)
         self.assertIn("NO_PROXY=localhost", argv)
 
+    def test_guest_env_path_overrides_default_path(self):
+        argv = _unwrap(_bottle(None, PATH="/custom/bin").agent_argv([]))
+        self.assertIn("PATH=/custom/bin", argv)
+        self.assertFalse(any(
+            item.startswith("PATH=/home/node/.local/bin")
+            for item in argv
+        ))
+
     def test_runuser_switch_precedes_claude(self):
         # The dashboard's `_build_resume_argv_with_fallback` finds
         # the `claude` token to split exec-framing from the claude
         # tail. `runuser -u node --` must sit on the prefix side so
         # the shell wrap inherits the UID switch.
         argv = _bottle().agent_argv([])
-        agent_idx = argv.index("claude")
+        runuser_idx = argv.index("runuser")
         self.assertEqual(
             ["runuser", "-u", "node", "--", "env"],
-            argv[agent_idx - 7:agent_idx - 2],
+            argv[runuser_idx:runuser_idx + 5],
         )
 
     def test_pi_provider_appends_system_prompt_without_print_mode(self):

@@ -30,6 +30,19 @@ class TestMacosContainerBottle(unittest.TestCase):
             argv,
         )
 
+    def test_agent_argv_accepts_absolute_provider_command(self):
+        command = "/home/node/.codex/packages/standalone/current/bin/codex"
+        bottle = MacosContainerBottle(
+            "bot-bottle-dev-abc",
+            lambda: None,
+            None,
+            agent_command=command,
+        )
+        with patch.dict(bottle_mod.os.environ, {}, clear=True):
+            argv = bottle.agent_argv(["run"])
+        self.assertIn(command, argv)
+        self.assertNotIn("codex", argv)
+
     def test_agent_argv_includes_workdir(self):
         bottle = MacosContainerBottle(
             "bot-bottle-dev-abc",

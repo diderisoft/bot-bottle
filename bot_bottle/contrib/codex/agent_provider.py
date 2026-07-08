@@ -34,6 +34,12 @@ if TYPE_CHECKING:
 
 
 _SUPERVISE_MCP_NAME = "supervise"
+_CODEX_CLI = "/home/node/.codex/packages/standalone/current/bin/codex"
+_CODEX_CLI_PATH = (
+    "/home/node/.local/bin:"
+    "/home/node/.codex/packages/standalone/current/bin:"
+    "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+)
 
 
 def _skills_dir(guest_home: str) -> str:
@@ -50,7 +56,7 @@ def _prompt_path(guest_home: str) -> str:
 
 _RUNTIME = AgentProviderRuntime(
     template="codex",
-    command="codex",
+    command=_CODEX_CLI,
     image="bot-bottle-codex:latest",
     prompt_mode="read_prompt_file",
     bypass_args=("--dangerously-bypass-approvals-and-sandbox",),
@@ -145,7 +151,8 @@ class CodexAgentProvider(AgentProvider):
                 "env",
                 f"HOME={guest_home}",
                 f"CODEX_HOME={auth_dir}",
-                "codex", "login", "status",
+                f"PATH={_CODEX_CLI_PATH}",
+                _CODEX_CLI, "login", "status",
             ), (
                 "codex host credentials: dummy auth was copied into the "
                 "guest, but Codex did not accept it"
@@ -267,7 +274,7 @@ class CodexAgentProvider(AgentProvider):
             return
         info(f"registering supervise MCP server in agent codex config → {supervise_url}")
         r = bottle.exec(
-            f"codex mcp add {_SUPERVISE_MCP_NAME} --url "
+            f"{shlex.quote(_CODEX_CLI)} mcp add {_SUPERVISE_MCP_NAME} --url "
             f"{shlex.quote(supervise_url)}",
             user="node",
         )

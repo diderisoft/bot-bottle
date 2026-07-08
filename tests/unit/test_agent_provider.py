@@ -35,7 +35,10 @@ class TestAgentProviderRuntime(unittest.TestCase):
             )
             config = Path(tmp, "codex-config.toml").read_text()
         self.assertEqual("codex", plan.template)
-        self.assertEqual("codex", plan.command)
+        self.assertEqual(
+            "/home/node/.codex/packages/standalone/current/bin/codex",
+            plan.command,
+        )
         self.assertEqual("read_prompt_file", plan.prompt_mode)
         self.assertEqual("/tmp/Dockerfile.codex", plan.dockerfile)
         self.assertEqual(
