@@ -82,6 +82,7 @@ class GitGatePlan:
 
 
 
+
 class GitGate(ABC):
     """The per-agent git-gate. Encapsulates the host-side prepare
     (upstream lift + entrypoint/hook render); the sidecar's

@@ -35,6 +35,7 @@ import re
 import sys
 from dataclasses import dataclass, field
 
+from .errors import MissingEnvVarError
 from .log import die
 from .manifest import Manifest
 
@@ -136,9 +137,10 @@ def resolve_env(manifest: Manifest) -> ResolvedEnv:
             host_var = env_entry_interpolated_from(raw)
             host_value = os.environ.get(host_var, "")
             if not host_value:
-                die(
+                raise MissingEnvVarError(
+                    host_var,
                     f"env entry {name} is interpolated from ${host_var}, "
-                    f"but ${host_var} is unset or empty in the host environment."
+                    f"but ${host_var} is unset or empty in the host environment.",
                 )
             forwarded[name] = host_value
         else:  # literal

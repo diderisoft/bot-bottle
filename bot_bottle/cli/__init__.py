@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import sys
 
+from ..errors import MissingEnvVarError
 from ..log import Die, die, error
 from ..manifest import ManifestError
 from ..store_manager import StoreManager
@@ -90,9 +91,10 @@ def main(argv: list[str] | None = None) -> int:
         mgr.migrate()
     try:
         return handler(rest) or 0
+    except MissingEnvVarError as e:
+        error(str(e))
+        return 1
     except ManifestError as e:
-        # Manifest/config problems surface as a catchable exception;
-        # print the reason and exit non-zero (same UX die() used to give).
         error(str(e))
         return 1
     except Die as e:

@@ -13,7 +13,8 @@ import dataclasses
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .log import die, info
+from .errors import MissingEnvVarError
+from .log import info
 from .manifest import ManifestBottle, ManifestGitEntry
 from .git_gate_render import GitGateUpstream
 
@@ -34,9 +35,10 @@ def _provision_dynamic_key(
     pk = entry.Key
     token = os.environ.get(pk.forge_token_env)
     if token is None:
-        die(
+        raise MissingEnvVarError(
+            pk.forge_token_env,
             f"git-gate.repos[{entry.Name!r}] key.forge_token_env"
-            f" = {pk.forge_token_env!r}: env var is not set"
+            f" = {pk.forge_token_env!r}: env var is not set",
         )
     api_url = pk.api_url or f"https://{entry.UpstreamHost}"
     provisioner = get_provisioner(pk.provider, token, api_url)
@@ -78,10 +80,11 @@ def revoke_git_gate_provisioned_keys(bottle: ManifestBottle, stage_dir: Path) ->
         key_id = id_file.read_text().strip()
         token = os.environ.get(pk.forge_token_env)
         if token is None:
-            raise RuntimeError(
+            raise MissingEnvVarError(
+                pk.forge_token_env,
                 f"git-gate.repos[{entry.Name!r}] key.forge_token_env"
                 f" = {pk.forge_token_env!r}: env var is not set;"
-                f" cannot revoke deploy key {key_id}"
+                f" cannot revoke deploy key {key_id}",
             )
         api_url = pk.api_url or f"https://{entry.UpstreamHost}"
         provisioner = get_provisioner(pk.provider, token, api_url)

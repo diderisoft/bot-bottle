@@ -23,6 +23,7 @@ from .egress_addon_core import (
     PathMatch as CorePathMatch,
     Route,
 )
+from .errors import MissingEnvVarError
 from .log import die
 
 if TYPE_CHECKING:
@@ -354,16 +355,18 @@ def egress_resolve_token_values(
     for token_env, token_ref in token_env_map.items():
         value = host_env.get(token_ref)
         if value is None:
-            die(
+            raise MissingEnvVarError(
+                token_ref,
                 f"egress: host env var '{token_ref}' is unset. Set it "
                 f"before launching, or remove the corresponding auth block "
-                f"from bottle.egress.routes."
+                f"from bottle.egress.routes.",
             )
         if not value:
-            die(
+            raise MissingEnvVarError(
+                token_ref,
                 f"egress: host env var '{token_ref}' is empty. The "
                 f"egress will not inject an empty token; set it to "
-                f"the real value or remove the route's auth block."
+                f"the real value or remove the route's auth block.",
             )
         out[token_env] = value
     return out
