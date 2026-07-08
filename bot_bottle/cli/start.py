@@ -242,7 +242,7 @@ def prepare_with_preflight(
     spec: BottleSpec,
     *,
     stage_dir: Path,
-    render_preflight: Callable[[DockerBottlePlan], None],
+    render_preflight: Callable[[DockerBottlePlan, str], None],
     prompt_yes: Callable[[], bool],
     dry_run: bool = False,
     backend_name: str | None = None,
@@ -263,7 +263,7 @@ def prepare_with_preflight(
     plan = backend.prepare(spec, stage_dir=stage_dir)
     identity = _identity_from_plan(plan)
 
-    render_preflight(plan)
+    render_preflight(plan, backend.name)
 
     if dry_run:
         info("dry-run requested; not starting container.")
@@ -390,8 +390,9 @@ def _text_prompt_yes() -> bool:
 
 
 def _text_render_preflight():
-    def _render(plan: DockerBottlePlan) -> None:
+    def _render(plan: DockerBottlePlan, backend_name: str) -> None:
         print(file=sys.stderr)
+        print(f"backend: {backend_name}", file=sys.stderr)
         print(_manifest_to_yaml(plan.manifest), file=sys.stderr)
     return _render
 
