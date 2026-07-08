@@ -13,7 +13,7 @@ import dataclasses
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .log import info
+from .log import die, info
 from .manifest import ManifestBottle, ManifestGitEntry
 from .git_gate_render import GitGateUpstream
 
@@ -34,7 +34,7 @@ def _provision_dynamic_key(
     pk = entry.Key
     token = os.environ.get(pk.forge_token_env)
     if token is None:
-        raise RuntimeError(
+        die(
             f"git-gate.repos[{entry.Name!r}] key.forge_token_env"
             f" = {pk.forge_token_env!r}: env var is not set"
         )
