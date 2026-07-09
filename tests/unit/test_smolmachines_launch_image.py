@@ -94,6 +94,10 @@ class TestEnsureSmolmachine(unittest.TestCase):
                 calls.append(name)
             return _f
 
+        def save_and_record(image_ref: str, path: str) -> None:
+            Path(path).touch()
+            calls.append("save")
+
         with patch.object(
             _launch_mod.docker_mod, "build_image",
             side_effect=record("build"),
@@ -102,7 +106,7 @@ class TestEnsureSmolmachine(unittest.TestCase):
             return_value=f"sha256:{digest}fffffffffffffffff",
         ), patch.object(
             _launch_mod.docker_mod, "save",
-            side_effect=record("save"),
+            side_effect=save_and_record,
         ) as save, patch.object(
             _launch_mod, "ephemeral_registry",
             return_value=_Reg(),
