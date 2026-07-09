@@ -276,8 +276,8 @@ class TestProvisionCA(unittest.TestCase):
             str(self.egress_ca),
             AGENT_CA_PATH,
         )
-        bottle.exec.assert_called_once()
-        script = bottle.exec.call_args.args[0]
+        self.assertEqual(2, bottle.exec.call_count)
+        script = bottle.exec.call_args_list[1].args[0]
         self.assertIn("chmod 644", script)
         self.assertIn("update-ca-certificates", script)
         self.assertEqual("root", bottle.exec.call_args.kwargs.get("user"))

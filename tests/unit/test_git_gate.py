@@ -19,6 +19,7 @@ from bot_bottle.git_gate import (
     _resolve_identity_file,
     git_gate_upstreams_for_bottle,
 )
+from bot_bottle.errors import MissingEnvVarError
 from bot_bottle.manifest import ManifestIndex
 from tests.fixtures import fixture_minimal, fixture_with_git
 
@@ -421,7 +422,7 @@ class TestDynamicKeyProvisioning(unittest.TestCase):
     def test_revoke_missing_token_raises(self):
         bottle = self._gitea_manifest().bottles["dev"]
         (self.stage / "repo-deploy-key-id").write_text("123\n")
-        with patch.dict("os.environ", {}, clear=True), self.assertRaises(RuntimeError) as cm:
+        with patch.dict("os.environ", {}, clear=True), self.assertRaises(MissingEnvVarError) as cm:
             revoke_git_gate_provisioned_keys(bottle, self.stage)
         self.assertIn("env var is not set", str(cm.exception))
 

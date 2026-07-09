@@ -79,7 +79,7 @@ class TestArgvShapes(unittest.TestCase):
         with self._patch_run() as m:
             machine_create("agent-xyz")
         self.assertEqual(
-            ["smolvm", "machine", "create", "agent-xyz"],
+            ["smolvm", "machine", "create", "--name", "agent-xyz"],
             m.call_args.args[0],
         )
 
@@ -103,7 +103,8 @@ class TestArgvShapes(unittest.TestCase):
         self.assertIn("192.168.50.2/32", argv)
         self.assertIn("-e", argv)
         self.assertIn("HTTPS_PROXY=http://192.168.50.2:8888", argv)
-        self.assertEqual("agent-xyz", argv[-1])
+        self.assertIn("--name", argv)
+        self.assertIn("agent-xyz", argv)
 
     def test_machine_create_omits_net_when_no_allow_cidrs(self):
         with self._patch_run() as m:
@@ -127,13 +128,13 @@ class TestArgvShapes(unittest.TestCase):
             m.call_args.args[0],
         )
 
-    def test_machine_delete_uses_positional_name_and_force(self):
-        # delete NAME is positional; -f required so no interactive
+    def test_machine_delete_uses_name_flag_and_force(self):
+        # delete uses --name flag; -f required so no interactive
         # confirmation blocks teardown.
         with self._patch_run() as m:
             machine_delete("agent-xyz")
         self.assertEqual(
-            ["smolvm", "machine", "delete", "-f", "agent-xyz"],
+            ["smolvm", "machine", "delete", "--name", "agent-xyz", "-f"],
             m.call_args.args[0],
         )
 

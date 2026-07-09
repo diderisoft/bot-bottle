@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
 
+from bot_bottle.errors import MissingEnvVarError
 from bot_bottle.git_gate import (
     _gitconfig_validate_value,
     _provision_dynamic_key,
@@ -120,7 +121,7 @@ class TestProvisionDynamicKey(unittest.TestCase):
                 patch.dict("os.environ", {}, clear=False):
             import os
             os.environ.pop("GITEA_TOK", None)
-            with self.assertRaises(RuntimeError):
+            with self.assertRaises(MissingEnvVarError):
                 _provision_dynamic_key(_gitea_entry(), "s", Path(d))
 
 
@@ -166,7 +167,7 @@ class TestRevokeProvisionedKeys(unittest.TestCase):
             import os
             os.environ.pop("GITEA_TOK", None)
             (Path(d) / "repo-deploy-key-id").write_text("kid123")
-            with self.assertRaises(RuntimeError):
+            with self.assertRaises(MissingEnvVarError):
                 revoke_git_gate_provisioned_keys(_bottle(_gitea_entry()), Path(d))
 
 

@@ -19,7 +19,7 @@ from bot_bottle.egress import (
     egress_sidecar_env_entries,
     egress_token_env_map,
 )
-from bot_bottle.log import Die
+from bot_bottle.errors import MissingEnvVarError
 from bot_bottle.manifest import ManifestIndex
 from bot_bottle.yaml_subset import parse_yaml_subset
 
@@ -499,14 +499,14 @@ class TestResolveTokenValues(unittest.TestCase):
         self.assertEqual({"EGRESS_TOKEN_0": "the-value"}, out)
 
     def test_missing_token_ref_dies(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(MissingEnvVarError):
             egress_resolve_token_values(
                 {"EGRESS_TOKEN_0": "GH_PAT"},
                 {},
             )
 
     def test_empty_token_ref_dies(self):
-        with self.assertRaises(Die):
+        with self.assertRaises(MissingEnvVarError):
             egress_resolve_token_values(
                 {"EGRESS_TOKEN_0": "GH_PAT"},
                 {"GH_PAT": ""},
