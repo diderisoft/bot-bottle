@@ -17,8 +17,7 @@ import sys
 from pathlib import Path
 
 from .log import die, info
-from .manifest import Manifest, ManifestBottle
-from .manifest_git import ManifestGitEntry
+from .manifest import Manifest
 
 
 def fetch_host_key(host: str, port: str) -> str:
@@ -36,14 +35,14 @@ def fetch_host_key(host: str, port: str) -> str:
     args.append(host)
     try:
         result = subprocess.run(
-            args, capture_output=True, text=True, timeout=15,
+            args, capture_output=True, text=True, timeout=15, check=False,
         )
     except OSError as e:
         raise RuntimeError(
             f"ssh-keyscan: could not launch for {host}:{port}: {e}"
         ) from e
-    except subprocess.TimeoutExpired:
-        raise RuntimeError(f"ssh-keyscan timed out for {host}:{port}")
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(f"ssh-keyscan timed out for {host}:{port}") from e
 
     for line in result.stdout.splitlines():
         line = line.strip()
@@ -155,7 +154,7 @@ def _find_and_update_bottle_file(
         try:
             text = path.read_text(encoding="utf-8")
             fm, _body = parse_frontmatter(text)
-        except (OSError, YamlSubsetError):
+        except (OSError, UnicodeDecodeError, YamlSubsetError):
             continue
 
         git_gate = fm.get("git-gate")

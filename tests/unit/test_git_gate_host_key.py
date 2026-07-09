@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 from bot_bottle.git_gate_host_key import (
     _find_and_update_bottle_file,
     _insert_host_key_in_frontmatter,
+    _prompt_tty,
     _update_frontmatter_in_file,
     fetch_host_key,
     preflight_host_keys,
@@ -58,11 +59,28 @@ class TestFetchHostKey(unittest.TestCase):
             key = fetch_host_key("github.com", "22")
         self.assertEqual("ssh-ed25519 AAAA", key)
 
+    def test_skips_lines_without_three_parts(self) -> None:
+        # A line with only two whitespace-separated tokens is not a valid
+        # known_hosts entry; it should be skipped and the function should
+        # raise rather than return a partial result.
+        stdout = "malformed-line\ngithub.com ssh-ed25519 AAAA\n"
+        with patch("subprocess.run", return_value=self._run_result(stdout)):
+            key = fetch_host_key("github.com", "22")
+        self.assertEqual("ssh-ed25519 AAAA", key)
+
     def test_raises_on_empty_output(self) -> None:
         with patch("subprocess.run", return_value=self._run_result("")):
             with self.assertRaises(RuntimeError) as cm:
                 fetch_host_key("example.com", "22")
         self.assertIn("no ed25519 key", str(cm.exception))
+
+    def test_raises_includes_stderr_when_present(self) -> None:
+        r = self._run_result("")
+        r.stderr = "connection refused"
+        with patch("subprocess.run", return_value=r):
+            with self.assertRaises(RuntimeError) as cm:
+                fetch_host_key("example.com", "22")
+        self.assertIn("connection refused", str(cm.exception))
 
     def test_raises_on_os_error(self) -> None:
         with patch("subprocess.run", side_effect=OSError("not found")):
@@ -76,6 +94,28 @@ class TestFetchHostKey(unittest.TestCase):
             with self.assertRaises(RuntimeError) as cm:
                 fetch_host_key("example.com", "22")
         self.assertIn("timed out", str(cm.exception))
+
+
+# ---------------------------------------------------------------------------
+# _prompt_tty
+# ---------------------------------------------------------------------------
+
+
+class TestPromptTty(unittest.TestCase):
+    def test_reads_from_tty_when_available(self) -> None:
+        import io
+        fake_tty = io.StringIO("yes\n")
+        with patch("builtins.open", return_value=fake_tty), patch("sys.stderr"):
+            result = _prompt_tty("question: ")
+        self.assertEqual("yes", result)
+
+    def test_falls_back_to_stdin_on_os_error(self) -> None:
+        import io
+        with patch("builtins.open", side_effect=OSError("no tty")), \
+                patch("sys.stdin", io.StringIO("fallback\n")), \
+                patch("sys.stderr"):
+            result = _prompt_tty("question: ")
+        self.assertEqual("fallback", result)
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +181,27 @@ git-gate:
         result = _insert_host_key_in_frontmatter(fm, "myrepo", "ssh-ed25519 AAAA")
         self.assertIn("            host_key: ssh-ed25519 AAAA", result)
 
+    def test_blank_lines_inside_block_do_not_end_scan(self) -> None:
+        fm = """\
+git-gate:
+  repos:
+    myrepo:
+      url: ssh://git@host/org/repo.git
+
+      key:
+        provider: static
+        path: /dev/null
+"""
+        result = _insert_host_key_in_frontmatter(fm, "myrepo", "ssh-ed25519 AAAA")
+        self.assertIn("host_key: ssh-ed25519 AAAA", result)
+
+    def test_repo_with_no_children_uses_default_indent(self) -> None:
+        # Edge case: repo entry has no child keys at all (empty block).
+        fm = "git-gate:\n  repos:\n    myrepo:\n"
+        result = _insert_host_key_in_frontmatter(fm, "myrepo", "ssh-ed25519 AAAA")
+        # Should fall back to repo_indent+2 = 4
+        self.assertIn("    host_key: ssh-ed25519 AAAA", result)
+
 
 # ---------------------------------------------------------------------------
 # _update_frontmatter_in_file
@@ -174,6 +235,11 @@ git-gate:
     def test_no_change_when_repo_not_in_file(self) -> None:
         result = _update_frontmatter_in_file(self._FILE, "other", "ssh-ed25519 AAAA")
         self.assertEqual(self._FILE, result)
+
+    def test_no_change_when_no_closing_delimiter(self) -> None:
+        text = "---\ngit-gate:\n  repos:\n    myrepo:\n      url: x\n"
+        result = _update_frontmatter_in_file(text, "myrepo", "ssh-ed25519 AAAA")
+        self.assertEqual(text, result)
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +313,62 @@ git-gate:
             Path("/nonexistent/dir"), "myrepo", "ssh-ed25519 AAAA"
         )
         self.assertFalse(result)
+
+    def test_skips_file_without_git_gate_section(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            self._write_bottle(d, "plain", "---\nenv:\n  FOO: bar\n---\n")
+            result = _find_and_update_bottle_file(Path(d), "myrepo", "ssh-ed25519 AAAA")
+            self.assertFalse(result)
+
+    def test_skips_file_with_non_dict_repos(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            self._write_bottle(d, "bad", "---\ngit-gate:\n  repos:\n    - item\n---\n")
+            result = _find_and_update_bottle_file(Path(d), "myrepo", "ssh-ed25519 AAAA")
+            self.assertFalse(result)
+
+    def test_skips_invalid_utf8_file(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "broken.md"
+            path.write_bytes(b"\xff\xfe")  # invalid UTF-8
+            result = _find_and_update_bottle_file(Path(d), "myrepo", "ssh-ed25519 AAAA")
+            self.assertFalse(result)
+
+    def test_skips_unreadable_file(self) -> None:
+        import os
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "unreadable.md"
+            path.write_text("---\n---\n")
+            os.chmod(path, 0o000)
+            try:
+                result = _find_and_update_bottle_file(Path(d), "myrepo", "ssh-ed25519 AAAA")
+                self.assertFalse(result)
+            finally:
+                os.chmod(path, 0o644)
+
+    def test_skips_when_update_produces_no_change(self) -> None:
+        # _update_frontmatter_in_file returns the original text unchanged
+        # (e.g. because _insert_host_key_in_frontmatter can't locate the
+        # entry in the raw text).  Line 174 must `continue` rather than write.
+        content = """\
+---
+git-gate:
+  repos:
+    myrepo:
+      url: ssh://git@host/org/repo.git
+      key:
+        provider: static
+        path: /dev/null
+---
+"""
+        with tempfile.TemporaryDirectory() as d:
+            path = self._write_bottle(d, "dev", content)
+            with patch(
+                "bot_bottle.git_gate_host_key._update_frontmatter_in_file",
+                return_value=content,  # no change
+            ):
+                result = _find_and_update_bottle_file(Path(d), "myrepo", "ssh-ed25519 AAAA")
+            self.assertFalse(result)
+            self.assertNotIn("host_key", path.read_text())
 
 
 # ---------------------------------------------------------------------------
@@ -372,6 +494,40 @@ class TestPreflightHostKeys(unittest.TestCase):
             self.assertEqual("ssh-ed25519 FETCHED", result.bottle.git[0].KnownHostKey)
             written = bottle_file.read_text()
             self.assertNotIn("host_key", written)
+
+    def test_interactive_dies_when_fetch_fails(self) -> None:
+        manifest = _manifest_with_git()
+
+        with patch(
+            "bot_bottle.git_gate_host_key.fetch_host_key",
+            side_effect=RuntimeError("connection refused"),
+        ), patch("sys.stderr"), self.assertRaises(SystemExit):
+            preflight_host_keys(manifest, headless=False, home_md=None)
+
+    def test_interactive_warns_when_persist_file_not_found(self) -> None:
+        manifest = _manifest_with_git()
+        replies = iter(["y", "y"])  # confirm key, yes persist
+
+        with tempfile.TemporaryDirectory() as home:
+            # bottles/ dir exists but does not contain the repo entry
+            bottles_dir = Path(home) / "bottles"
+            bottles_dir.mkdir()
+
+            import io
+            buf = io.StringIO()
+            with patch(
+                "bot_bottle.git_gate_host_key.fetch_host_key",
+                return_value="ssh-ed25519 FETCHED",
+            ), patch(
+                "bot_bottle.git_gate_host_key._prompt_tty",
+                side_effect=lambda msg: next(replies),
+            ), patch("sys.stderr", buf):
+                result = preflight_host_keys(
+                    manifest, headless=False, home_md=Path(home),
+                )
+
+            self.assertEqual("ssh-ed25519 FETCHED", result.bottle.git[0].KnownHostKey)
+            self.assertIn("kept in memory", buf.getvalue())
 
     def test_headless_names_all_missing_repos_in_error(self) -> None:
         manifest = ManifestIndex.from_json_obj({
