@@ -8,14 +8,12 @@ Exercises the while-True / try-except loop around backend.launch:
 
 from __future__ import annotations
 
-import contextlib
 import io
 import tempfile
 import unittest
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 from bot_bottle.image_cache import StaleImageError
 from bot_bottle.log import Die
@@ -47,10 +45,10 @@ def _ok_cm(bottle: Any) -> MagicMock:
 
 
 class TestLaunchBottleStaleHandling(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self._tmp = tempfile.mkdtemp(prefix="cli-stale-test.")
 
-    def _spec(self):
+    def _spec(self) -> Any:
         from bot_bottle.backend import BottleSpec
         from bot_bottle.manifest import ManifestIndex
         idx = ManifestIndex.from_json_obj({
@@ -65,7 +63,7 @@ class TestLaunchBottleStaleHandling(unittest.TestCase):
             identity="dev-abc",
         )
 
-    def _run_launch(self, **patch_kwargs) -> int:
+    def _run_launch(self, **patch_kwargs: Any) -> int:
         import bot_bottle.cli.start as start_mod
         spec = self._spec()
         with patch.object(start_mod, "prepare_with_preflight",
@@ -79,7 +77,7 @@ class TestLaunchBottleStaleHandling(unittest.TestCase):
                 **patch_kwargs,
             )
 
-    def test_headless_stale_calls_die(self):
+    def test_headless_stale_calls_die(self) -> None:
         """In headless mode (assume_yes=True), a StaleImageError must call die()."""
         import bot_bottle.cli.start as start_mod
 
@@ -87,11 +85,11 @@ class TestLaunchBottleStaleHandling(unittest.TestCase):
         backend_mock.launch.return_value = _stale_cm()
 
         with patch.object(start_mod, "get_bottle_backend", return_value=backend_mock), \
-             patch.object(start_mod, "die", side_effect=Die("stale")):
+             patch.object(start_mod, "die", side_effect=Die()):
             with self.assertRaises(Die):
                 self._run_launch(assume_yes=True)
 
-    def test_interactive_user_declines_stops_loop(self):
+    def test_interactive_user_declines_stops_loop(self) -> None:
         """Interactive user answering 'n' → loop exits without a second launch."""
         import bot_bottle.cli.start as start_mod
 
@@ -107,16 +105,14 @@ class TestLaunchBottleStaleHandling(unittest.TestCase):
         # launch was called once (stale), then the user declined → no second call.
         backend_mock.launch.assert_called_once()
 
-    def test_interactive_user_confirms_retries_with_skip_stale(self):
+    def test_interactive_user_confirms_retries_with_skip_stale(self) -> None:
         """Interactive user answering 'y' → second launch with skip_stale=True."""
         import bot_bottle.cli.start as start_mod
 
         bottle_mock = MagicMock()
         bottle_mock.name = "dev-abc"
 
-        stale_calls = [0]
-
-        def launch_side_effect(plan, *, skip_stale=False):
+        def launch_side_effect(plan: Any, *, skip_stale: bool = False) -> Any:
             if not skip_stale:
                 return _stale_cm()
             return _ok_cm(bottle_mock)
@@ -138,14 +134,14 @@ class TestLaunchBottleStaleHandling(unittest.TestCase):
         self.assertFalse(calls[0].kwargs.get("skip_stale", False))
         self.assertTrue(calls[1].kwargs.get("skip_stale", False))
 
-    def test_interactive_yes_uppercase_also_accepted(self):
+    def test_interactive_yes_uppercase_also_accepted(self) -> None:
         """'Y' or 'YES' should also be accepted as confirmation."""
         import bot_bottle.cli.start as start_mod
 
         bottle_mock = MagicMock()
         bottle_mock.name = "dev-abc"
 
-        def launch_side_effect(plan, *, skip_stale=False):
+        def launch_side_effect(plan: Any, *, skip_stale: bool = False) -> Any:
             if not skip_stale:
                 return _stale_cm()
             return _ok_cm(bottle_mock)

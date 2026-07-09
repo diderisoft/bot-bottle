@@ -11,10 +11,6 @@ from unittest.mock import patch
 from bot_bottle.image_cache import StaleImageError, check_stale, check_stale_path
 
 
-def _utc(**kwargs) -> datetime:
-    return datetime.now(tz=timezone.utc) - timedelta(**kwargs)
-
-
 class TestCheckStale(unittest.TestCase):
     def _run(self, threshold: int, age_days: float) -> None:
         created = datetime.now(tz=timezone.utc) - timedelta(days=age_days)
@@ -53,7 +49,7 @@ class TestCheckStale(unittest.TestCase):
         # that would be interpreted as local time should still work.
         # We can't control the local tz in a unit test, so just ensure
         # no exception is thrown for a very recent naive datetime.
-        naive_now = datetime.utcnow()
+        naive_now = datetime(2099, 1, 1)  # far future, always "fresh"
         with patch("bot_bottle.image_cache.ConfigStore") as cs:
             cs.return_value.cached_image_stale_warning_days.return_value = 1
             # Should not raise — the image is brand new.
