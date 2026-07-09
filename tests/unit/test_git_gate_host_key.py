@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import dataclasses
 import tempfile
 import unittest
 from pathlib import Path
@@ -404,20 +403,18 @@ class TestPreflightHostKeys(unittest.TestCase):
 
     def test_headless_dies_when_key_missing(self) -> None:
         manifest = _manifest_with_git()
-        from bot_bottle.log import die as real_die
         with self.assertRaises(SystemExit):
             preflight_host_keys(manifest, headless=True, home_md=None)
 
     def test_interactive_fetches_and_confirms_key(self) -> None:
         manifest = _manifest_with_git()
-        replies = iter(["y", "n"])  # confirm key, don't persist
 
         with patch(
             "bot_bottle.git_gate_host_key.fetch_host_key",
             return_value="ssh-ed25519 FETCHED",
         ), patch(
             "bot_bottle.git_gate_host_key._prompt_tty",
-            side_effect=lambda msg: next(replies),
+            side_effect=["y", "n"],  # confirm key, don't persist
         ), patch("sys.stderr"):
             result = preflight_host_keys(manifest, headless=False, home_md=None)
 
@@ -437,7 +434,6 @@ class TestPreflightHostKeys(unittest.TestCase):
 
     def test_interactive_persists_when_requested(self) -> None:
         manifest = _manifest_with_git()
-        replies = iter(["y", "y"])  # confirm key, yes persist
 
         with tempfile.TemporaryDirectory() as home:
             bottles_dir = Path(home) / "bottles"
@@ -455,7 +451,7 @@ class TestPreflightHostKeys(unittest.TestCase):
                 return_value="ssh-ed25519 FETCHED",
             ), patch(
                 "bot_bottle.git_gate_host_key._prompt_tty",
-                side_effect=lambda msg: next(replies),
+                side_effect=["y", "y"],  # confirm key, yes persist
             ), patch("sys.stderr"):
                 result = preflight_host_keys(
                     manifest, headless=False, home_md=Path(home),
@@ -467,7 +463,6 @@ class TestPreflightHostKeys(unittest.TestCase):
 
     def test_interactive_skips_persist_when_declined(self) -> None:
         manifest = _manifest_with_git()
-        replies = iter(["y", "n"])  # confirm key, no persist
 
         with tempfile.TemporaryDirectory() as home:
             bottles_dir = Path(home) / "bottles"
@@ -485,7 +480,7 @@ class TestPreflightHostKeys(unittest.TestCase):
                 return_value="ssh-ed25519 FETCHED",
             ), patch(
                 "bot_bottle.git_gate_host_key._prompt_tty",
-                side_effect=lambda msg: next(replies),
+                side_effect=["y", "n"],  # confirm key, no persist
             ), patch("sys.stderr"):
                 result = preflight_host_keys(
                     manifest, headless=False, home_md=Path(home),
@@ -506,7 +501,6 @@ class TestPreflightHostKeys(unittest.TestCase):
 
     def test_interactive_warns_when_persist_file_not_found(self) -> None:
         manifest = _manifest_with_git()
-        replies = iter(["y", "y"])  # confirm key, yes persist
 
         with tempfile.TemporaryDirectory() as home:
             # bottles/ dir exists but does not contain the repo entry
@@ -520,7 +514,7 @@ class TestPreflightHostKeys(unittest.TestCase):
                 return_value="ssh-ed25519 FETCHED",
             ), patch(
                 "bot_bottle.git_gate_host_key._prompt_tty",
-                side_effect=lambda msg: next(replies),
+                side_effect=["y", "y"],  # confirm key, yes persist
             ), patch("sys.stderr", buf):
                 result = preflight_host_keys(
                     manifest, headless=False, home_md=Path(home),
