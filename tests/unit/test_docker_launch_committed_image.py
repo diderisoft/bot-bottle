@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import io
 import tempfile
 import unittest
@@ -18,6 +19,7 @@ from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
 from bot_bottle.backend.docker.consolidated_launch import LaunchContext
 from bot_bottle.egress import EgressPlan
 from bot_bottle.git_gate import GitGatePlan
+from bot_bottle.log import Die
 from bot_bottle.manifest import ManifestIndex
 from tests.unit import use_bottle_root
 
@@ -92,6 +94,8 @@ class TestLaunchCommittedImage(unittest.TestCase):
                 mock.patch.object(launch_mod.docker_mod, "image_exists", return_value=image_present), \
                 mock.patch.object(launch_mod.docker_mod, "build_image", side_effect=_build), \
                 mock.patch.object(launch_mod.docker_mod, "verify_agent_image"), \
+                mock.patch.object(launch_mod.docker_mod, "image_created_at"), \
+                mock.patch.object(launch_mod, "warn_if_stale"), \
                 mock.patch.object(launch_mod, "launch_consolidated", return_value=_CTX), \
                 mock.patch.object(launch_mod, "teardown_consolidated"), \
                 mock.patch.object(launch_mod, "DockerGateway", return_value=gw), \
@@ -134,6 +138,24 @@ class TestLaunchCommittedImage(unittest.TestCase):
 
     def test_falls_back_to_build_when_no_committed_image(self) -> None:
         self.assertEqual([_DEFAULT_IMAGE], self._run_launch(_plan(self._tmp), committed_tag=None))
+
+    def test_cached_images_skip_build_when_present(self) -> None:
+        base = _plan(self._tmp)
+        plan = dataclasses.replace(
+            base,
+            spec=dataclasses.replace(base.spec, image_policy="cached"),
+        )
+        built = self._run_launch(plan, committed_tag=None, image_present=True)
+        self.assertEqual([], built)
+
+    def test_cached_images_die_when_agent_missing(self) -> None:
+        base = _plan(self._tmp)
+        plan = dataclasses.replace(
+            base,
+            spec=dataclasses.replace(base.spec, image_policy="cached"),
+        )
+        with self.assertRaises(Die):
+            self._run_launch(plan, committed_tag=None, image_present=False)
 
     def test_falls_back_to_build_when_committed_image_missing_from_daemon(self) -> None:
         built = self._run_launch(_plan(self._tmp), committed_tag=_COMMITTED_TAG, image_present=False)

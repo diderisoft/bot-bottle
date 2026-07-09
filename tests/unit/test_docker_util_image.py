@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import subprocess
 import unittest
+from datetime import timezone
 from unittest.mock import patch
 
 from bot_bottle.backend.docker import util as docker_mod
@@ -24,6 +25,24 @@ def _fail(stderr: str = "boom") -> subprocess.CompletedProcess:  # type: ignore
     return subprocess.CompletedProcess(
         args=[], returncode=1, stdout="", stderr=stderr,
     )
+
+
+
+class TestImageCreatedAt(unittest.TestCase):
+    def test_parses_docker_timestamp_with_nanoseconds(self):
+        with patch.object(
+            docker_mod.subprocess, "run",
+            return_value=_ok(stdout="2026-07-06T15:33:47.123456789Z\n"),
+        ) as run:
+            created = docker_mod.image_created_at("bot-bottle-claude:latest")
+        self.assertEqual(2026, created.year)
+        self.assertEqual(123456, created.microsecond)
+        self.assertEqual(timezone.utc, created.tzinfo)
+        self.assertEqual(
+            ["docker", "image", "inspect", "--format", "{{.Created}}", "bot-bottle-claude:latest"],
+            run.call_args.args[0],
+        )
+
 
 
 class TestCommitContainer(unittest.TestCase):

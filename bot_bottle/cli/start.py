@@ -65,6 +65,14 @@ def cmd_start(argv: list[str]) -> int:
         ),
     )
     parser.add_argument(
+        "--cached-images",
+        action="store_true",
+        help=(
+            "quickstart with existing local agent and sidecar images; "
+            "only valid with --headless"
+        ),
+    )
+    parser.add_argument(
         "--bottle",
         action="append",
         default=None,
@@ -96,6 +104,8 @@ def cmd_start(argv: list[str]) -> int:
         help="agent name defined in bot-bottle.json (omit to pick interactively)",
     )
     args = parser.parse_args(argv)
+    if args.cached_images and not args.headless:
+        die("--cached-images is only supported with --headless")
 
     dry_run = args.dry_run or os.environ.get("BOT_BOTTLE_DRY_RUN") == "1"
     if args.no_cache or os.environ.get("BOT_BOTTLE_NO_CACHE") == "1":
@@ -147,6 +157,10 @@ def cmd_start(argv: list[str]) -> int:
     label, color = tui.name_color_modal(default_label=agent_name)
     label, color = _resolve_unique_label(label, color)
 
+    image_policy = _select_image_policy()
+    if image_policy is None:
+        return 0
+
     spec = BottleSpec(
         manifest=manifest,
         agent_name=agent_name,
@@ -155,6 +169,7 @@ def cmd_start(argv: list[str]) -> int:
         label=label,
         color=color,
         bottle_names=bottle_names,
+        image_policy=image_policy,
     )
     return _launch_bottle(
         spec,
@@ -213,6 +228,7 @@ def _start_headless(
         color=args.color or "",
         bottle_names=bottle_names,
         headless=True,
+        image_policy="cached" if args.cached_images else "fresh",
     )
     return _launch_bottle(
         spec,
@@ -393,6 +409,13 @@ def _text_prompt_yes() -> bool:
     sys.stderr.flush()
     reply = read_tty_line()
     return reply in ("y", "Y", "yes", "YES")
+
+
+def _select_image_policy() -> str | None:
+    return tui.filter_select(
+        ["fresh", "cached"],
+        title="Select image startup mode",
+    )
 
 
 def _text_render_preflight():

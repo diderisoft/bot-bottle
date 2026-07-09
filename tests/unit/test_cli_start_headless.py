@@ -176,6 +176,18 @@ class TestCmdStartHeadless(unittest.TestCase):
         self.assertEqual("researcher-2", self._spec().label)
 
 
+    def test_cached_images_sets_cached_policy(self):
+        start_mod.cmd_start(
+            ["--headless", "--cached-images", "researcher", "--bottle", "claude",
+             "--prompt", "Do it"]
+        )
+        self.assertEqual("cached", self._spec().image_policy)
+
+    def test_cached_images_requires_headless(self):
+        with self.assertRaises(Die):
+            start_mod.cmd_start(["--cached-images", "researcher"])
+        self._launch_mock.assert_not_called()
+
 
 class TestPrepareWithPreflight(unittest.TestCase):
     """prepare_with_preflight calls render_preflight with the plan and backend name."""

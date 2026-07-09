@@ -83,6 +83,9 @@ class BottleSpec:
     # True when launched via --headless (no TTY, no interactive prompts).
     # The git-gate host-key preflight uses this to error rather than prompt.
     headless: bool = False
+    # Image startup policy. "fresh" preserves the normal build path;
+    # "cached" reuses the current local image/artifact without rebuilding.
+    image_policy: str = "fresh"
 
 
 @dataclass(frozen=True)

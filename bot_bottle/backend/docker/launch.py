@@ -42,7 +42,8 @@ from ...git_gate import (
     provision_git_gate_dynamic_keys,
     revoke_git_gate_provisioned_keys,
 )
-from ...log import info, warn
+from ...image_cache import warn_if_stale
+from ...log import die, info, warn
 from . import util as docker_mod
 from .bottle import DockerBottle
 from .bottle_plan import DockerBottlePlan
@@ -101,11 +102,28 @@ def launch(
         # and is present in the local daemon; otherwise build from the
         # Dockerfile. (The gateway image is built by the orchestrator.)
         committed = read_committed_image(plan.slug)
+        cached_policy = plan.spec.image_policy == "cached"
         if committed and docker_mod.image_exists(committed):
             info(f"using committed image {committed!r}")
+            if cached_policy:
+                warn_if_stale(
+                    f"agent image {committed!r}",
+                    docker_mod.image_created_at(committed),
+                )
             plan = dataclasses.replace(
                 plan,
                 agent_provision=dataclasses.replace(plan.agent_provision, image=committed),
+            )
+        elif cached_policy:
+            if not docker_mod.image_exists(plan.image):
+                die(
+                    f"cached agent image {plan.image!r} not found; "
+                    "run without --cached-images to build it"
+                )
+            info(f"using cached agent image {plan.image!r}")
+            warn_if_stale(
+                f"agent image {plan.image!r}",
+                docker_mod.image_created_at(plan.image),
             )
         else:
             docker_mod.build_image(

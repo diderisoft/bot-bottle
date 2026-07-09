@@ -5,6 +5,7 @@ existence, and building images."""
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 import re
 import shutil
 import subprocess
@@ -197,3 +198,42 @@ def commit_container(container_name: str, image_tag: str) -> None:
             f"{(result.stderr or '').strip() or '<no stderr>'}"
         )
     info(f"committed {container_name!r} → {image_tag!r}")
+
+
+def image_created_at(ref: str) -> datetime:
+    """Return Docker's image Created timestamp as an aware UTC datetime."""
+    r = subprocess.run(
+        ["docker", "image", "inspect", "--format", "{{.Created}}", ref],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if r.returncode != 0:
+        die(
+            f"docker image inspect for {ref!r} failed: "
+            f"{(r.stderr or '').strip() or '<no stderr>'}"
+        )
+    raw = r.stdout.strip()
+    try:
+        return _parse_docker_timestamp(raw)
+    except ValueError:
+        die(f"docker image inspect for {ref!r} returned invalid Created timestamp: {raw!r}")
+
+
+def _parse_docker_timestamp(raw: str) -> datetime:
+    text = raw.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    dot = text.find(".")
+    if dot != -1:
+        tz_plus = text.find("+", dot)
+        tz_minus = text.find("-", dot)
+        tz_candidates = [pos for pos in (tz_plus, tz_minus) if pos != -1]
+        if tz_candidates:
+            tz_pos = min(tz_candidates)
+            frac = text[dot + 1:tz_pos]
+            text = text[:dot + 1] + frac[:6].ljust(6, "0") + text[tz_pos:]
+    dt = datetime.fromisoformat(text)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)

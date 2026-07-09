@@ -65,6 +65,12 @@ class TestCmdStartSelector(unittest.TestCase):
         )
         self._modal_patch.start()
 
+        self._image_policy_patch = patch(
+            "bot_bottle.cli.start._select_image_policy",
+            return_value="fresh",
+        )
+        self._image_policy_patch.start()
+
         self._env_patch = patch.dict(os.environ, {}, clear=False)
         self._env_patch.start()
         os.environ.pop("BOT_BOTTLE_BACKEND", None)
@@ -75,6 +81,7 @@ class TestCmdStartSelector(unittest.TestCase):
         self._agent_picker_patch.stop()
         self._bottle_picker_patch.stop()
         self._modal_patch.stop()
+        self._image_policy_patch.stop()
         self._env_patch.stop()
 
     # ------------------------------------------------------------------
@@ -132,6 +139,19 @@ class TestCmdStartSelector(unittest.TestCase):
         self._launch_mock.assert_called_once()
         spec = self._launch_mock.call_args[0][0]
         self.assertEqual(("claude", "dev"), spec.bottle_names)
+
+    def test_image_policy_forwarded_to_spec(self):
+        with patch("bot_bottle.cli.start._select_image_policy", return_value="cached"):
+            start_mod.cmd_start(["researcher"])
+        self._launch_mock.assert_called_once()
+        spec = self._launch_mock.call_args[0][0]
+        self.assertEqual("cached", spec.image_policy)
+
+    def test_image_policy_cancel_returns_0(self):
+        with patch("bot_bottle.cli.start._select_image_policy", return_value=None):
+            rc = start_mod.cmd_start(["researcher"])
+        self.assertEqual(0, rc)
+        self._launch_mock.assert_not_called()
 
     def test_empty_bottle_selection_forwarded(self):
         self._bottle_picker_mock.return_value = []
@@ -214,6 +234,7 @@ class TestCmdStartLabelCollision(unittest.TestCase):
         ).start()
         # Stub the bottle picker to always return a selection.
         patch.object(tui_mod, "filter_multiselect", return_value=["claude"]).start()
+        patch("bot_bottle.cli.start._select_image_policy", return_value="fresh").start()
         self.addCleanup(patch.stopall)
 
     def test_no_collision_proceeds_without_reprompt(self):

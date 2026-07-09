@@ -6,9 +6,11 @@ from pathlib import Path
 
 try:
     from .audit_store import AuditStore
+    from .config_store import ConfigStore
     from .queue_store import QueueStore
 except ImportError:
     from audit_store import AuditStore  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
+    from config_store import ConfigStore  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
     from queue_store import QueueStore  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
 
 _instance: StoreManager | None = None
@@ -47,11 +49,13 @@ class StoreManager:
         return (
             QueueStore("", self.db_path).is_migrated()
             and AuditStore(self.db_path).is_migrated()
+            and ConfigStore(self.db_path).is_migrated()
         )
 
     def migrate(self) -> None:
         QueueStore("", self.db_path).migrate()
         AuditStore(self.db_path).migrate()
+        ConfigStore(self.db_path).migrate()
 
 
 __all__ = ["StoreManager"]
