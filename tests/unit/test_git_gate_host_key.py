@@ -342,9 +342,8 @@ git-gate:
                 os.chmod(path, 0o644)
 
     def test_returns_false_when_file_unreadable_on_write(self) -> None:
-        # find_repo_bottle_file succeeds, but the file becomes unreadable
-        # before find_and_update_bottle_file can re-read it.
-        import os
+        # find_repo_bottle_file succeeds, but the second read (for writing)
+        # raises OSError — e.g. file removed or permissions changed.
         content = """\
 ---
 git-gate:
@@ -361,12 +360,8 @@ git-gate:
             with patch(
                 "bot_bottle.git_gate_host_key.find_repo_bottle_file",
                 return_value=path,
-            ):
-                os.chmod(path, 0o000)
-                try:
-                    result = find_and_update_bottle_file(Path(d), "myrepo", "ssh-ed25519 AAAA")
-                finally:
-                    os.chmod(path, 0o644)
+            ), patch.object(Path, "read_text", side_effect=OSError("Permission denied")):
+                result = find_and_update_bottle_file(Path(d), "myrepo", "ssh-ed25519 AAAA")
             self.assertFalse(result)
 
     def test_skips_when_update_produces_no_change(self) -> None:
@@ -440,15 +435,10 @@ git-gate:
         self.assertIsNone(find_repo_bottle_file(Path("/nonexistent"), "myrepo"))
 
     def test_skips_unreadable_file(self) -> None:
-        import os
         with tempfile.TemporaryDirectory() as d:
-            path = Path(d) / "unreadable.md"
-            path.write_text(self._CONTENT)
-            os.chmod(path, 0o000)
-            try:
+            (Path(d) / "unreadable.md").write_text(self._CONTENT)
+            with patch.object(Path, "read_text", side_effect=OSError("Permission denied")):
                 self.assertIsNone(find_repo_bottle_file(Path(d), "myrepo"))
-            finally:
-                os.chmod(path, 0o644)
 
     def test_skips_file_with_non_dict_git_gate(self) -> None:
         with tempfile.TemporaryDirectory() as d:
