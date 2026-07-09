@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from datetime import datetime, timezone
 from typing import Iterable
 
 from ...log import die, info
@@ -658,6 +659,39 @@ def image_id(ref: str) -> str:
         if value:
             return str(value)
     die(f"container image inspect for {ref!r} did not include an image id")
+    raise AssertionError("unreachable")
+
+
+def image_created_at(ref: str) -> datetime:
+    """Return the image creation timestamp as an aware UTC datetime.
+
+    Parses the `created` field from `container image inspect` JSON output."""
+    result = subprocess.run(
+        [_CONTAINER, "image", "inspect", ref],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        die(
+            f"container image inspect for {ref!r} failed: "
+            f"{(result.stderr or '').strip() or '<no stderr>'}"
+        )
+    try:
+        data = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        die(f"container image inspect for {ref!r} returned malformed JSON: {exc}")
+    if isinstance(data, list) and data:
+        data = data[0]
+    if isinstance(data, dict):
+        value = data.get("created") or data.get("Created")
+        if isinstance(value, str) and value:
+            try:
+                ts = value.rstrip("Z")
+                return datetime.fromisoformat(ts).replace(tzinfo=timezone.utc)
+            except ValueError:
+                pass
+    die(f"container image inspect for {ref!r} did not include a creation timestamp")
     raise AssertionError("unreachable")
 
 

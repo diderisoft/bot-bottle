@@ -42,7 +42,7 @@ from ...git_gate import (
     provision_git_gate_dynamic_keys,
     revoke_git_gate_provisioned_keys,
 )
-from ...image_cache import warn_if_stale
+from ...image_cache import check_stale
 from ...log import die, info, warn
 from . import util as docker_mod
 from .bottle import DockerBottle
@@ -105,11 +105,6 @@ def launch(
         cached_policy = plan.spec.image_policy == "cached"
         if committed and docker_mod.image_exists(committed):
             info(f"using committed image {committed!r}")
-            if cached_policy:
-                warn_if_stale(
-                    f"agent image {committed!r}",
-                    docker_mod.image_created_at(committed),
-                )
             plan = dataclasses.replace(
                 plan,
                 agent_provision=dataclasses.replace(plan.agent_provision, image=committed),
@@ -121,10 +116,6 @@ def launch(
                     "run without --cached-images to build it"
                 )
             info(f"using cached agent image {plan.image!r}")
-            warn_if_stale(
-                f"agent image {plan.image!r}",
-                docker_mod.image_created_at(plan.image),
-            )
         else:
             docker_mod.build_image(
                 plan.image, _REPO_DIR,
@@ -229,3 +220,17 @@ def launch(
         yield bottle
     finally:
         teardown()
+
+
+def stale_checks(plan: DockerBottlePlan) -> None:
+    """Raise StaleImageError if a cached image is older than the configured
+    threshold. Only runs when image_policy is 'cached'. Called by the backend
+    class's _image_stale_checks before _launch_impl starts any resources."""
+    if plan.spec.image_policy != "cached":
+        return
+    committed = read_committed_image(plan.slug)
+    if committed and docker_mod.image_exists(committed):
+        check_stale(f"agent image {committed!r}", docker_mod.image_created_at(committed))
+        return
+    if docker_mod.image_exists(plan.image):
+        check_stale(f"agent image {plan.image!r}", docker_mod.image_created_at(plan.image))

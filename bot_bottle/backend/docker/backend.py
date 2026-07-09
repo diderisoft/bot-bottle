@@ -100,8 +100,11 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
             stage_dir=stage_dir,
         )
 
+    def _image_stale_checks(self, plan: DockerBottlePlan) -> None:
+        _launch.stale_checks(plan)
+
     @contextmanager
-    def launch(self, plan: DockerBottlePlan) -> Generator[DockerBottle, None, None]:
+    def _launch_impl(self, plan: DockerBottlePlan) -> Generator[DockerBottle, None, None]:
         with _launch.launch(plan, provision=self.provision) as bottle:
             yield bottle
 

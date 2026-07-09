@@ -37,10 +37,10 @@ import os
 import shlex
 import sys
 from abc import ABC, abstractmethod
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Generic, Sequence, TypeVar
+from typing import TYPE_CHECKING, Any, Generator, Generic, Sequence, TypeVar
 
 from ..agent_provider import AgentProvisionPlan, get_provider, build_agent_provision_plan
 from ..egress import EgressPlan
@@ -440,8 +440,25 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         prompt file, Dockerfile path, and guest home all live on
         `agent_provision_plan` — the source of truth."""
 
+    @contextmanager
+    def launch(
+        self, plan: PlanT, *, skip_stale: bool = False
+    ) -> Generator[Bottle, None, None]:
+        """Template: optionally check for stale cached images, then delegate
+        to `_launch_impl`. Pass `skip_stale=True` to bypass the stale check
+        (used by the interactive CLI after the operator confirms)."""
+        if not skip_stale:
+            self._image_stale_checks(plan)
+        with self._launch_impl(plan) as bottle:
+            yield bottle
+
+    def _image_stale_checks(self, plan: PlanT) -> None:
+        """Raise StaleImageError if any cached image used by this plan is stale.
+        No-op default; backends override to call the shared `check_stale*`
+        helpers on their image/artifact timestamps."""
+
     @abstractmethod
-    def launch(self, plan: PlanT) -> AbstractContextManager[Bottle]:
+    def _launch_impl(self, plan: PlanT) -> AbstractContextManager[Bottle]:
         """Build/run the bottle and yield a handle; tear down on exit."""
 
     def provision(self, plan: PlanT, bottle: "Bottle") -> str | None:

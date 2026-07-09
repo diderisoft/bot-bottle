@@ -82,8 +82,11 @@ class MacosContainerBottleBackend(
             stage_dir=stage_dir,
         )
 
+    def _image_stale_checks(self, plan: MacosContainerBottlePlan) -> None:
+        _launch.stale_checks(plan)
+
     @contextmanager
-    def launch(
+    def _launch_impl(
         self, plan: MacosContainerBottlePlan
     ) -> Generator[MacosContainerBottle, None, None]:
         with _launch.launch(plan, provision=self.provision) as bottle:

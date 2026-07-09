@@ -53,6 +53,7 @@ from ...git_gate import (
     revoke_git_gate_provisioned_keys,
 )
 from ...git_http_backend import DEFAULT_PORT as _GIT_HTTP_PORT
+from ...image_cache import check_stale
 from ...log import die, info, warn
 from ...supervise import SUPERVISE_PORT
 from ..docker.egress import EGRESS_PORT
@@ -196,6 +197,7 @@ def launch(
 def _build_images(plan: MacosContainerBottlePlan) -> MacosContainerBottlePlan:
     """Build the agent image. The gateway's own image is built by
     `ensure_gateway` — it belongs to the shared singleton, not to a bottle."""
+    cached = plan.spec.image_policy == "cached"
     committed = read_committed_image(plan.slug)
     if committed and container_mod.image_exists(committed):
         info(f"using committed image {committed!r}")
@@ -205,10 +207,32 @@ def _build_images(plan: MacosContainerBottlePlan) -> MacosContainerBottlePlan:
                 plan.agent_provision, image=committed,
             ),
         )
+    if cached:
+        if not container_mod.image_exists(plan.image):
+            die(
+                f"cached agent image {plan.image!r} not found; "
+                "run without --cached-images to build it"
+            )
+        info(f"using cached agent image {plan.image!r}")
+        return plan
     container_mod.build_image(
         plan.image, _REPO_DIR, dockerfile=plan.dockerfile_path,
     )
     return plan
+
+
+def stale_checks(plan: MacosContainerBottlePlan) -> None:
+    """Raise StaleImageError if a cached image is older than the configured
+    threshold. Only runs when image_policy is 'cached'. Called by the backend
+    class's _image_stale_checks before _launch_impl starts any resources."""
+    if plan.spec.image_policy != "cached":
+        return
+    committed = read_committed_image(plan.slug)
+    if committed and container_mod.image_exists(committed):
+        check_stale(f"agent image {committed!r}", container_mod.image_created_at(committed))
+        return
+    if container_mod.image_exists(plan.image):
+        check_stale(f"agent image {plan.image!r}", container_mod.image_created_at(plan.image))
 
 
 def _provision_git_gate_keys(
