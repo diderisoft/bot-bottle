@@ -209,6 +209,7 @@ def _start_headless(
         label=label,
         color=args.color or "",
         bottle_names=bottle_names,
+        headless=True,
     )
     return _launch_bottle(
         spec,

@@ -75,6 +75,9 @@ class BottleSpec:
     # Ordered bottle names selected at launch (issue #269). When non-empty
     # they are merged in order and replace the agent's `bottle:` field.
     bottle_names: tuple[str, ...] = ()
+    # True when launched via --headless (no TTY, no interactive prompts).
+    # The git-gate host-key preflight uses this to error rather than prompt.
+    headless: bool = False
 
 
 @dataclass(frozen=True)
@@ -299,6 +302,13 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         manifest = self._validate(spec)
 
         self._preflight()
+
+        from ..git_gate_host_key import preflight_host_keys
+        manifest = preflight_host_keys(
+            manifest,
+            headless=spec.headless,
+            home_md=spec.manifest.home_md,
+        )
 
         manifest_bottle = manifest.bottle
         manifest_agent_provider = manifest_bottle.agent_provider
