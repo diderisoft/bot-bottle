@@ -9,6 +9,7 @@ is created.
 
 from __future__ import annotations
 
+import io
 import os
 import unittest
 from unittest.mock import MagicMock, patch
@@ -182,6 +183,56 @@ class TestCmdStartHeadless(unittest.TestCase):
              "--prompt", "Do it"]
         )
         self.assertEqual("docker", self._launch_mock.call_args[1]["backend_name"])
+
+
+class TestPrepareWithPreflight(unittest.TestCase):
+    """prepare_with_preflight calls render_preflight with the plan and backend name."""
+
+    def test_render_preflight_called(self):
+        from pathlib import Path
+        mock_backend = MagicMock()
+        mock_plan = MagicMock()
+        mock_backend.prepare.return_value = mock_plan
+        mock_backend.name = "test-backend"
+        render = MagicMock()
+
+        with patch("bot_bottle.cli.start.get_bottle_backend", return_value=mock_backend), \
+             patch("bot_bottle.cli.start._identity_from_plan", return_value="id"), \
+             patch("bot_bottle.cli.start.info"):
+            start_mod.prepare_with_preflight(
+                MagicMock(),
+                stage_dir=Path("/tmp"),
+                render_preflight=render,
+                prompt_yes=MagicMock(),
+                dry_run=True,
+            )
+
+        render.assert_called_once_with(mock_plan, "test-backend")
+
+
+class TestNoAgentsDefined(unittest.TestCase):
+    """cmd_start prints an error and returns 1 when the manifest has no agents."""
+
+    def test_no_agents_defined_returns_1(self):
+        manifest = _make_manifest([], [])
+        with patch(
+            "bot_bottle.cli.start.ManifestIndex.resolve", return_value=manifest
+        ), patch("sys.stderr", io.StringIO()) as err:
+            rc = start_mod.cmd_start([])
+        self.assertEqual(1, rc)
+        self.assertIn("no agents defined", err.getvalue())
+
+
+class TestTextRenderPreflight(unittest.TestCase):
+    """_text_render_preflight returns a renderer that prints the backend name."""
+
+    def test_backend_name_in_output(self):
+        render = start_mod._text_render_preflight()
+        plan = MagicMock()
+        with patch("bot_bottle.cli.start._manifest_to_yaml", return_value=""), \
+             patch("sys.stderr", io.StringIO()) as err:
+            render(plan, "my-backend")
+        self.assertIn("my-backend", err.getvalue())
 
 
 if __name__ == "__main__":

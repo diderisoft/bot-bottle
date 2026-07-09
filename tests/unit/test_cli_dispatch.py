@@ -64,6 +64,15 @@ class TestMainDispatch(unittest.TestCase):
             main(["x", "a", "b"])
         self.assertEqual([["a", "b"]], seen)
 
+    def test_missing_env_var_error_maps_to_1(self) -> None:
+        from bot_bottle.errors import MissingEnvVarError
+
+        def boom(_rest: list[str]) -> int:
+            raise MissingEnvVarError("MY_VAR", "MY_VAR is not set")
+
+        with patch.dict(climod.COMMANDS, {"x": boom}), patch("sys.stderr", io.StringIO()):
+            self.assertEqual(1, main(["x"]))
+
     def test_manifest_error_maps_to_1(self) -> None:
         def boom(_rest: list[str]) -> int:
             raise ManifestError("bad manifest")

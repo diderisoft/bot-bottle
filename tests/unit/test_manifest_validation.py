@@ -9,7 +9,11 @@ from __future__ import annotations
 
 import unittest
 
-from bot_bottle.manifest import ManifestBottle, ManifestIndex
+from unittest.mock import patch
+
+from bot_bottle.env import resolve_env
+from bot_bottle.errors import MissingEnvVarError
+from bot_bottle.manifest import Manifest, ManifestBottle, ManifestIndex
 from bot_bottle.manifest_agent import (
     ManifestAgent,
     ManifestAgentProvider,
@@ -236,6 +240,27 @@ class TestEagerIndexLookups(unittest.TestCase):
     def test_git_identity_summary_none_when_empty(self) -> None:
         m = _idx({"bottles": {"b": {}}, "agents": {"a": {"bottle": "b"}}}).load_for_agent("a")
         self.assertIsNone(m.git_identity_summary())
+
+
+class TestResolveEnv(unittest.TestCase):
+    """resolve_env raises MissingEnvVarError when an interpolated entry's
+    host var is unset."""
+
+    def _manifest(self, env_dict: dict[str, str]) -> Manifest:
+        idx = ManifestIndex.from_json_obj({
+            "bottles": {"dev": {"env": env_dict}},
+            "agents": {"demo": {"bottle": "dev"}},
+        })
+        return idx.load_for_agent("demo")
+
+    def test_missing_interpolated_host_var_raises(self):
+        manifest = self._manifest({"API_KEY": "${HOST_API_KEY}"})
+        with patch.dict("os.environ", {}, clear=False):
+            import os
+            os.environ.pop("HOST_API_KEY", None)
+            with self.assertRaises(MissingEnvVarError) as cm:
+                resolve_env(manifest)
+        self.assertIn("HOST_API_KEY", str(cm.exception))
 
 
 if __name__ == "__main__":

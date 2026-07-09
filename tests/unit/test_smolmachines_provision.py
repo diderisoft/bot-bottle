@@ -506,5 +506,54 @@ class TestProvisionGitUser(unittest.TestCase):
         self.assertIn("bot@example.com", calls[0][0])
 
 
+class TestProxyHost(unittest.TestCase):
+    """_proxy_host returns the bridge gateway on Linux and the loopback
+    alias on other platforms."""
+
+    def test_linux_returns_bundle_gateway(self):
+        plan = _plan()
+        with patch("bot_bottle.backend.smolmachines.launch.platform.system",
+                   return_value="Linux"):
+            result = _launch._proxy_host(plan, "127.0.0.16")
+        self.assertEqual(plan.bundle_gateway, result)
+
+    def test_non_linux_returns_loopback(self):
+        plan = _plan()
+        with patch("bot_bottle.backend.smolmachines.launch.platform.system",
+                   return_value="Darwin"):
+            result = _launch._proxy_host(plan, "127.0.0.16")
+        self.assertEqual("127.0.0.16", result)
+
+
+class TestDiscoverUrls(unittest.TestCase):
+    """_discover_urls stamps git-gate host + supervise URL into the plan."""
+
+    def test_git_gate_host_set_when_upstreams_present(self):
+        plan = _plan()
+        plan = replace(
+            plan,
+            git_gate_plan=replace(
+                plan.git_gate_plan,
+                upstreams=(GitGateUpstream(
+                    name="bot-bottle",
+                    upstream_url="ssh://git@host/repo.git",
+                    upstream_host="host",
+                    upstream_port="22",
+                    identity_file="/tmp/key",
+                    known_host_key="",
+                ),),
+            ),
+        )
+        with patch.object(_launch._bundle, "bundle_host_port", return_value="9420"):
+            stamped = _launch._discover_urls(plan, "127.0.0.16")
+        self.assertEqual("127.0.0.16:9420", stamped.agent_git_gate_host)
+
+    def test_supervise_url_set_when_supervise_present(self):
+        plan = _plan(supervise=True)
+        with patch.object(_launch._bundle, "bundle_host_port", return_value="55556"):
+            stamped = _launch._discover_urls(plan, "127.0.0.16")
+        self.assertEqual("http://127.0.0.16:55556/", stamped.agent_supervise_url)
+
+
 if __name__ == "__main__":
     unittest.main()
