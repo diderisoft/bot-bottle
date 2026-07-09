@@ -8,9 +8,10 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from bot_bottle.git_gate_host_key import (
-    _add_host_key_to_frontmatter,
-    _find_and_update_bottle_file,
-    _prompt_tty,
+    add_host_key_to_frontmatter,
+    find_and_update_bottle_file,
+    find_repo_bottle_file,
+    prompt_tty,
     fetch_host_key,
     preflight_host_keys,
 )
@@ -122,7 +123,7 @@ class TestFetchHostKey(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# _prompt_tty
+# prompt_tty
 # ---------------------------------------------------------------------------
 
 
@@ -131,7 +132,7 @@ class TestPromptTty(unittest.TestCase):
         import io
         fake_tty = io.StringIO("yes\n")
         with patch("builtins.open", return_value=fake_tty), patch("sys.stderr"):
-            result = _prompt_tty("question: ")
+            result = prompt_tty("question: ")
         self.assertEqual("yes", result)
 
     def test_falls_back_to_stdin_on_os_error(self) -> None:
@@ -139,12 +140,12 @@ class TestPromptTty(unittest.TestCase):
         with patch("builtins.open", side_effect=OSError("no tty")), \
                 patch("sys.stdin", io.StringIO("fallback\n")), \
                 patch("sys.stderr"):
-            result = _prompt_tty("question: ")
+            result = prompt_tty("question: ")
         self.assertEqual("fallback", result)
 
 
 # ---------------------------------------------------------------------------
-# _add_host_key_to_frontmatter
+# add_host_key_to_frontmatter
 # ---------------------------------------------------------------------------
 
 
@@ -163,7 +164,7 @@ git-gate:
 """
 
     def test_inserts_host_key_at_repo_level(self) -> None:
-        result = _add_host_key_to_frontmatter(self._FILE, "myrepo", "ssh-ed25519 AAAA")
+        result = add_host_key_to_frontmatter(self._FILE, "myrepo", "ssh-ed25519 AAAA")
         self.assertIn("host_key: ssh-ed25519 AAAA", result)
         # Must be a sibling of `url` and `key`, not nested inside `key`
         lines = result.splitlines()
@@ -175,7 +176,7 @@ git-gate:
         )
 
     def test_preserves_body(self) -> None:
-        result = _add_host_key_to_frontmatter(self._FILE, "myrepo", "ssh-ed25519 AAAA")
+        result = add_host_key_to_frontmatter(self._FILE, "myrepo", "ssh-ed25519 AAAA")
         self.assertIn("# Body text here", result)
 
     def test_preserves_other_repos(self) -> None:
@@ -195,7 +196,7 @@ git-gate:
         path: /dev/null
 ---
 """
-        result = _add_host_key_to_frontmatter(text, "first", "ssh-ed25519 AAAA")
+        result = add_host_key_to_frontmatter(text, "first", "ssh-ed25519 AAAA")
         self.assertIn("host_key: ssh-ed25519 AAAA", result)
         self.assertIn("second:", result)
 
@@ -204,41 +205,41 @@ git-gate:
             "        path: /dev/null\n",
             "        path: /dev/null\n      host_key: ssh-ed25519 EXISTING\n",
         )
-        result = _add_host_key_to_frontmatter(text, "myrepo", "ssh-ed25519 NEW")
+        result = add_host_key_to_frontmatter(text, "myrepo", "ssh-ed25519 NEW")
         self.assertNotIn("NEW", result)
 
     def test_no_change_when_repo_not_found(self) -> None:
-        result = _add_host_key_to_frontmatter(self._FILE, "other", "ssh-ed25519 AAAA")
+        result = add_host_key_to_frontmatter(self._FILE, "other", "ssh-ed25519 AAAA")
         self.assertEqual(self._FILE, result)
 
     def test_no_change_without_frontmatter(self) -> None:
         text = "No frontmatter here\n"
-        result = _add_host_key_to_frontmatter(text, "myrepo", "ssh-ed25519 AAAA")
+        result = add_host_key_to_frontmatter(text, "myrepo", "ssh-ed25519 AAAA")
         self.assertEqual(text, result)
 
     def test_no_change_when_no_closing_delimiter(self) -> None:
         text = "---\ngit-gate:\n  repos:\n    myrepo:\n      url: x\n"
-        result = _add_host_key_to_frontmatter(text, "myrepo", "ssh-ed25519 AAAA")
+        result = add_host_key_to_frontmatter(text, "myrepo", "ssh-ed25519 AAAA")
         self.assertEqual(text, result)
 
     def test_no_change_when_git_gate_missing(self) -> None:
         text = "---\nenv:\n  FOO: bar\n---\n"
-        result = _add_host_key_to_frontmatter(text, "myrepo", "ssh-ed25519 AAAA")
+        result = add_host_key_to_frontmatter(text, "myrepo", "ssh-ed25519 AAAA")
         self.assertEqual(text, result)
 
     def test_no_change_when_repos_missing(self) -> None:
         text = "---\ngit-gate:\n  foo: bar\n---\n"
-        result = _add_host_key_to_frontmatter(text, "myrepo", "ssh-ed25519 AAAA")
+        result = add_host_key_to_frontmatter(text, "myrepo", "ssh-ed25519 AAAA")
         self.assertEqual(text, result)
 
     def test_no_change_when_repo_entry_not_a_dict(self) -> None:
         text = "---\ngit-gate:\n  repos:\n    - item\n---\n"
-        result = _add_host_key_to_frontmatter(text, "myrepo", "ssh-ed25519 AAAA")
+        result = add_host_key_to_frontmatter(text, "myrepo", "ssh-ed25519 AAAA")
         self.assertEqual(text, result)
 
 
 # ---------------------------------------------------------------------------
-# _find_and_update_bottle_file
+# find_and_update_bottle_file
 # ---------------------------------------------------------------------------
 
 
@@ -262,7 +263,7 @@ git-gate:
 ---
 """
             path = self._write_bottle(d, "dev", content)
-            result = _find_and_update_bottle_file(Path(d), "myrepo", "ssh-ed25519 AAAA")
+            result = find_and_update_bottle_file(Path(d), "myrepo", "ssh-ed25519 AAAA")
             self.assertTrue(result)
             updated = path.read_text()
             self.assertIn("host_key: ssh-ed25519 AAAA", updated)
@@ -281,7 +282,7 @@ git-gate:
 ---
 """
             self._write_bottle(d, "dev", content)
-            result = _find_and_update_bottle_file(Path(d), "myrepo", "ssh-ed25519 AAAA")
+            result = find_and_update_bottle_file(Path(d), "myrepo", "ssh-ed25519 AAAA")
             self.assertFalse(result)
 
     def test_skips_file_that_already_has_host_key(self) -> None:
@@ -299,12 +300,12 @@ git-gate:
 ---
 """
             path = self._write_bottle(d, "dev", content)
-            result = _find_and_update_bottle_file(Path(d), "myrepo", "ssh-ed25519 NEW")
+            result = find_and_update_bottle_file(Path(d), "myrepo", "ssh-ed25519 NEW")
             self.assertFalse(result)
             self.assertNotIn("NEW", path.read_text())
 
     def test_returns_false_for_nonexistent_dir(self) -> None:
-        result = _find_and_update_bottle_file(
+        result = find_and_update_bottle_file(
             Path("/nonexistent/dir"), "myrepo", "ssh-ed25519 AAAA"
         )
         self.assertFalse(result)
@@ -312,20 +313,20 @@ git-gate:
     def test_skips_file_without_git_gate_section(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             self._write_bottle(d, "plain", "---\nenv:\n  FOO: bar\n---\n")
-            result = _find_and_update_bottle_file(Path(d), "myrepo", "ssh-ed25519 AAAA")
+            result = find_and_update_bottle_file(Path(d), "myrepo", "ssh-ed25519 AAAA")
             self.assertFalse(result)
 
     def test_skips_file_with_non_dict_repos(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             self._write_bottle(d, "bad", "---\ngit-gate:\n  repos:\n    - item\n---\n")
-            result = _find_and_update_bottle_file(Path(d), "myrepo", "ssh-ed25519 AAAA")
+            result = find_and_update_bottle_file(Path(d), "myrepo", "ssh-ed25519 AAAA")
             self.assertFalse(result)
 
     def test_skips_invalid_utf8_file(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "broken.md"
             path.write_bytes(b"\xff\xfe")  # invalid UTF-8
-            result = _find_and_update_bottle_file(Path(d), "myrepo", "ssh-ed25519 AAAA")
+            result = find_and_update_bottle_file(Path(d), "myrepo", "ssh-ed25519 AAAA")
             self.assertFalse(result)
 
     def test_skips_unreadable_file(self) -> None:
@@ -335,15 +336,15 @@ git-gate:
             path.write_text("---\n---\n")
             os.chmod(path, 0o000)
             try:
-                result = _find_and_update_bottle_file(Path(d), "myrepo", "ssh-ed25519 AAAA")
+                result = find_and_update_bottle_file(Path(d), "myrepo", "ssh-ed25519 AAAA")
                 self.assertFalse(result)
             finally:
                 os.chmod(path, 0o644)
 
-    def test_skips_when_update_produces_no_change(self) -> None:
-        # _add_host_key_to_frontmatter returns the original text unchanged
-        # (e.g. because the entry is absent from the parsed structure).
-        # _find_and_update_bottle_file must continue rather than write.
+    def test_returns_false_when_file_unreadable_on_write(self) -> None:
+        # find_repo_bottle_file succeeds, but the file becomes unreadable
+        # before find_and_update_bottle_file can re-read it.
+        import os
         content = """\
 ---
 git-gate:
@@ -358,12 +359,135 @@ git-gate:
         with tempfile.TemporaryDirectory() as d:
             path = self._write_bottle(d, "dev", content)
             with patch(
-                "bot_bottle.git_gate_host_key._add_host_key_to_frontmatter",
+                "bot_bottle.git_gate_host_key.find_repo_bottle_file",
+                return_value=path,
+            ):
+                os.chmod(path, 0o000)
+                try:
+                    result = find_and_update_bottle_file(Path(d), "myrepo", "ssh-ed25519 AAAA")
+                finally:
+                    os.chmod(path, 0o644)
+            self.assertFalse(result)
+
+    def test_skips_when_update_produces_no_change(self) -> None:
+        # add_host_key_to_frontmatter returns the original text unchanged
+        # (e.g. because the entry is absent from the parsed structure).
+        # find_and_update_bottle_file must continue rather than write.
+        content = """\
+---
+git-gate:
+  repos:
+    myrepo:
+      url: ssh://git@host/org/repo.git
+      key:
+        provider: static
+        path: /dev/null
+---
+"""
+        with tempfile.TemporaryDirectory() as d:
+            path = self._write_bottle(d, "dev", content)
+            with patch(
+                "bot_bottle.git_gate_host_key.add_host_key_to_frontmatter",
                 return_value=content,  # no change
             ):
-                result = _find_and_update_bottle_file(Path(d), "myrepo", "ssh-ed25519 AAAA")
+                result = find_and_update_bottle_file(Path(d), "myrepo", "ssh-ed25519 AAAA")
             self.assertFalse(result)
             self.assertNotIn("host_key", path.read_text())
+
+
+# ---------------------------------------------------------------------------
+# find_repo_bottle_file
+# ---------------------------------------------------------------------------
+
+
+class TestFindRepoBottleFile(unittest.TestCase):
+    _CONTENT = """\
+---
+git-gate:
+  repos:
+    myrepo:
+      url: ssh://git@host/org/repo.git
+      key:
+        provider: static
+        path: /dev/null
+---
+"""
+
+    def _write(self, d: str, name: str, content: str) -> Path:
+        path = Path(d) / f"{name}.md"
+        path.write_text(content, encoding="utf-8")
+        return path
+
+    def test_returns_path_when_repo_found(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            path = self._write(d, "dev", self._CONTENT)
+            result = find_repo_bottle_file(Path(d), "myrepo")
+            self.assertEqual(path, result)
+
+    def test_returns_none_when_no_matching_file(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            self._write(d, "dev", self._CONTENT)
+            self.assertIsNone(find_repo_bottle_file(Path(d), "other"))
+
+    def test_returns_none_when_host_key_already_set(self) -> None:
+        content = self._CONTENT.replace("        path: /dev/null\n",
+                                        "        path: /dev/null\n      host_key: X\n")
+        with tempfile.TemporaryDirectory() as d:
+            self._write(d, "dev", content)
+            self.assertIsNone(find_repo_bottle_file(Path(d), "myrepo"))
+
+    def test_returns_none_for_nonexistent_dir(self) -> None:
+        self.assertIsNone(find_repo_bottle_file(Path("/nonexistent"), "myrepo"))
+
+    def test_skips_unreadable_file(self) -> None:
+        import os
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "unreadable.md"
+            path.write_text(self._CONTENT)
+            os.chmod(path, 0o000)
+            try:
+                self.assertIsNone(find_repo_bottle_file(Path(d), "myrepo"))
+            finally:
+                os.chmod(path, 0o644)
+
+    def test_skips_file_with_non_dict_git_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "dev.md").write_text("---\ngit-gate:\n  - item\n---\n")
+            self.assertIsNone(find_repo_bottle_file(Path(d), "myrepo"))
+
+    def test_skips_file_with_non_dict_repos(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "dev.md").write_text("---\ngit-gate:\n  repos:\n    - item\n---\n")
+            self.assertIsNone(find_repo_bottle_file(Path(d), "myrepo"))
+
+    def test_save_prompt_includes_filename(self) -> None:
+        """preflight prompt must name the discovered bottle file."""
+        manifest = _manifest_with_git()
+
+        with tempfile.TemporaryDirectory() as home:
+            bottles_dir = Path(home) / "bottles"
+            bottles_dir.mkdir()
+            bottle_file = bottles_dir / "dev.md"
+            bottle_file.write_text(
+                "---\ngit-gate:\n  repos:\n    myrepo:\n"
+                "      url: ssh://git@gitea.example.com:30009/org/myrepo.git\n"
+                "      key:\n        provider: static\n        path: /dev/null\n---\n",
+                encoding="utf-8",
+            )
+
+            mock_prompt = MagicMock(side_effect=["y", "n"])  # confirm key, skip save
+            with patch(
+                "bot_bottle.git_gate_host_key.fetch_host_key",
+                return_value="ssh-ed25519 FETCHED",
+            ), patch(
+                "bot_bottle.git_gate_host_key.prompt_tty", mock_prompt,
+            ), patch("sys.stderr"):
+                preflight_host_keys(manifest, headless=False, home_md=Path(home))
+
+            save_call = next(
+                c for c in mock_prompt.call_args_list if "Save" in c.args[0]
+            )
+            self.assertIn(str(bottle_file), save_call.args[0])
 
 
 # ---------------------------------------------------------------------------
@@ -409,7 +533,7 @@ class TestPreflightHostKeys(unittest.TestCase):
             "bot_bottle.git_gate_host_key.fetch_host_key",
             return_value="ssh-ed25519 FETCHED",
         ), patch(
-            "bot_bottle.git_gate_host_key._prompt_tty",
+            "bot_bottle.git_gate_host_key.prompt_tty",
             side_effect=["y", "n"],  # confirm key, don't persist
         ), patch("sys.stderr"):
             result = preflight_host_keys(manifest, headless=False, home_md=None)
@@ -423,7 +547,7 @@ class TestPreflightHostKeys(unittest.TestCase):
             "bot_bottle.git_gate_host_key.fetch_host_key",
             return_value="ssh-ed25519 FETCHED",
         ), patch(
-            "bot_bottle.git_gate_host_key._prompt_tty",
+            "bot_bottle.git_gate_host_key.prompt_tty",
             return_value="n",
         ), patch("sys.stderr"), self.assertRaises(SystemExit):
             preflight_host_keys(manifest, headless=False, home_md=None)
@@ -446,7 +570,7 @@ class TestPreflightHostKeys(unittest.TestCase):
                 "bot_bottle.git_gate_host_key.fetch_host_key",
                 return_value="ssh-ed25519 FETCHED",
             ), patch(
-                "bot_bottle.git_gate_host_key._prompt_tty",
+                "bot_bottle.git_gate_host_key.prompt_tty",
                 side_effect=["y", "y"],  # confirm key, yes persist
             ), patch("sys.stderr"):
                 result = preflight_host_keys(
@@ -475,7 +599,7 @@ class TestPreflightHostKeys(unittest.TestCase):
                 "bot_bottle.git_gate_host_key.fetch_host_key",
                 return_value="ssh-ed25519 FETCHED",
             ), patch(
-                "bot_bottle.git_gate_host_key._prompt_tty",
+                "bot_bottle.git_gate_host_key.prompt_tty",
                 side_effect=["y", "n"],  # confirm key, no persist
             ), patch("sys.stderr"):
                 result = preflight_host_keys(
@@ -509,8 +633,42 @@ class TestPreflightHostKeys(unittest.TestCase):
                 "bot_bottle.git_gate_host_key.fetch_host_key",
                 return_value="ssh-ed25519 FETCHED",
             ), patch(
-                "bot_bottle.git_gate_host_key._prompt_tty",
+                "bot_bottle.git_gate_host_key.prompt_tty",
+                side_effect=["y"],  # confirm key only; no save prompt when no file found
+            ), patch("sys.stderr", buf):
+                result = preflight_host_keys(
+                    manifest, headless=False, home_md=Path(home),
+                )
+
+            self.assertEqual("ssh-ed25519 FETCHED", result.bottle.git[0].KnownHostKey)
+            self.assertIn("kept in memory", buf.getvalue())
+
+    def test_interactive_warns_when_write_fails_after_prompt(self) -> None:
+        # User says yes to save, but find_and_update_bottle_file fails.
+        manifest = _manifest_with_git()
+
+        with tempfile.TemporaryDirectory() as home:
+            bottles_dir = Path(home) / "bottles"
+            bottles_dir.mkdir()
+            bottle_file = bottles_dir / "dev.md"
+            bottle_file.write_text(
+                "---\ngit-gate:\n  repos:\n    myrepo:\n"
+                "      url: ssh://git@gitea.example.com:30009/org/myrepo.git\n"
+                "      key:\n        provider: static\n        path: /dev/null\n---\n",
+                encoding="utf-8",
+            )
+
+            import io
+            buf = io.StringIO()
+            with patch(
+                "bot_bottle.git_gate_host_key.fetch_host_key",
+                return_value="ssh-ed25519 FETCHED",
+            ), patch(
+                "bot_bottle.git_gate_host_key.prompt_tty",
                 side_effect=["y", "y"],  # confirm key, yes persist
+            ), patch(
+                "bot_bottle.git_gate_host_key.find_and_update_bottle_file",
+                return_value=False,
             ), patch("sys.stderr", buf):
                 result = preflight_host_keys(
                     manifest, headless=False, home_md=Path(home),

@@ -86,7 +86,7 @@ def fetch_host_key(host: str, port: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _add_host_key_to_frontmatter(file_text: str, repo_name: str, host_key: str) -> str:
+def add_host_key_to_frontmatter(file_text: str, repo_name: str, host_key: str) -> str:
     """Return an updated copy of `file_text` with `host_key` set on the
     named repo entry in the YAML frontmatter.
 
@@ -115,32 +115,50 @@ def _add_host_key_to_frontmatter(file_text: str, repo_name: str, host_key: str) 
     return f"---\n{serialize_yaml_subset(fm)}---\n{body}"
 
 
-def _find_and_update_bottle_file(
-    bottles_dir: Path, repo_name: str, host_key: str,
-) -> bool:
-    """Scan `bottles_dir/*.md` for the first file that directly declares
-    `repo_name` without a `host_key`, update it, and return True.
-
-    Walks files in sorted order so the result is deterministic.  Does NOT
-    follow `extends:` chains — only files that explicitly declare the repo
-    entry are candidates.  Returns False when no such file is found."""
+def find_repo_bottle_file(bottles_dir: Path, repo_name: str) -> Path | None:
+    """Return the first `bottles_dir/*.md` that declares `repo_name` without
+    a `host_key`, without modifying anything.  Returns None if not found."""
     if not bottles_dir.is_dir():
-        return False
-
+        return None
     for path in sorted(bottles_dir.glob("*.md")):
         try:
             text = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+            fm, _ = parse_frontmatter(text)
+        except (OSError, UnicodeDecodeError, YamlSubsetError):
             continue
-
-        updated = _add_host_key_to_frontmatter(text, repo_name, host_key)
-        if updated == text:
+        git_gate = fm.get("git-gate")
+        if not isinstance(git_gate, dict):
             continue
-        path.write_text(updated, encoding="utf-8")
-        info(f"wrote host_key for {repo_name!r} to {path}")
-        return True
+        repos = git_gate.get("repos")
+        if not isinstance(repos, dict):
+            continue
+        repo = repos.get(repo_name)
+        if not isinstance(repo, dict) or repo.get("host_key"):
+            continue
+        return path
+    return None
 
-    return False
+
+def find_and_update_bottle_file(
+    bottles_dir: Path, repo_name: str, host_key: str,
+) -> bool:
+    """Write `host_key` into the bottle file returned by `find_repo_bottle_file`.
+
+    Returns True on success, False when no suitable file is found or the
+    write fails."""
+    path = find_repo_bottle_file(bottles_dir, repo_name)
+    if path is None:
+        return False
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    updated = add_host_key_to_frontmatter(text, repo_name, host_key)
+    if updated == text:
+        return False
+    path.write_text(updated, encoding="utf-8")
+    info(f"wrote host_key for {repo_name!r} to {path}")
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +166,7 @@ def _find_and_update_bottle_file(
 # ---------------------------------------------------------------------------
 
 
-def _prompt_tty(message: str) -> str:
+def prompt_tty(message: str) -> str:
     """Write `message` to stderr and read a line from /dev/tty (or stdin)."""
     sys.stderr.write(message)
     sys.stderr.flush()
@@ -210,21 +228,28 @@ def preflight_host_keys(
             die(f"git-gate: {label}: {e}")
 
         sys.stderr.write(f"\ngit-gate: host key for {label}:\n  {key}\n\n")
-        confirm = _prompt_tty("Is this host key correct? [y/N] ")
+        confirm = prompt_tty("Is this host key correct? [y/N] ")
         if confirm.strip().lower() not in ("y", "yes"):
             die(f"git-gate: {label}: host key not confirmed; aborting launch")
 
         if bottles_dir is not None:
-            save = _prompt_tty(
-                f"Save host_key for {entry.Name!r} to the bottle config file? [y/N] "
-            )
-            if save.strip().lower() in ("y", "yes"):
-                ok = _find_and_update_bottle_file(bottles_dir, entry.Name, key)
-                if not ok:
-                    sys.stderr.write(
-                        f"git-gate: {label}: bottle file not found or not writable; "
-                        f"host_key kept in memory for this session only\n"
-                    )
+            target_file = find_repo_bottle_file(bottles_dir, entry.Name)
+            if target_file is not None:
+                save = prompt_tty(
+                    f"Save host_key for {entry.Name!r} to {target_file}? [y/N] "
+                )
+                if save.strip().lower() in ("y", "yes"):
+                    ok = find_and_update_bottle_file(bottles_dir, entry.Name, key)
+                    if not ok:
+                        sys.stderr.write(
+                            f"git-gate: {label}: could not write to {target_file}; "
+                            f"host_key kept in memory for this session only\n"
+                        )
+            else:
+                sys.stderr.write(
+                    f"git-gate: {label}: no bottle config file found for "
+                    f"{entry.Name!r}; host_key kept in memory for this session only\n"
+                )
 
         idx = next(i for i, e in enumerate(updated_entries) if e.Name == entry.Name)
         updated_entries[idx] = dataclasses.replace(entry, KnownHostKey=key)
@@ -236,6 +261,8 @@ def preflight_host_keys(
 __all__ = [
     "fetch_host_key",
     "preflight_host_keys",
-    "_add_host_key_to_frontmatter",
-    "_find_and_update_bottle_file",
+    "add_host_key_to_frontmatter",
+    "find_repo_bottle_file",
+    "find_and_update_bottle_file",
+    "prompt_tty",
 ]
