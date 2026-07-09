@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 
 from bot_bottle.config_store import (
-    CACHED_IMAGE_STALE_WARNING_DAYS,
     DEFAULT_CACHED_IMAGE_STALE_WARNING_DAYS,
     ConfigStore,
 )
@@ -28,8 +28,23 @@ class TestConfigStore(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="config-store.") as tmp:
             store = ConfigStore(Path(tmp) / "bot-bottle.db")
             store.migrate()
-            store.set(CACHED_IMAGE_STALE_WARNING_DAYS, "7")
+            store.set_cached_image_stale_warning_days(7)
             self.assertEqual(7, store.cached_image_stale_warning_days())
+
+    def test_config_schema_uses_explicit_settings_columns(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="config-store.") as tmp:
+            store = ConfigStore(Path(tmp) / "bot-bottle.db")
+            store.migrate()
+            with sqlite3.connect(store.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                columns = [
+                    row["name"]
+                    for row in conn.execute("PRAGMA table_info(bot_bottle_config)")
+                ]
+            self.assertEqual([
+                "id",
+                "cached_image_stale_warning_days",
+            ], columns)
 
     def test_store_manager_includes_config_store(self) -> None:
         with tempfile.TemporaryDirectory(prefix="config-store.") as tmp:
