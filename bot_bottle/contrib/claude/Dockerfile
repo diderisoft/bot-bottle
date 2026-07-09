@@ -21,7 +21,7 @@ FROM node:22-slim
 # to it) works against egress's bumped TLS without the agent needing
 # local DNS.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends git ca-certificates curl ripgrep iproute2 \
+  && apt-get install -y --no-install-recommends git ca-certificates curl ripgrep iproute2 dnsutils \
   && rm -rf /var/lib/apt/lists/*
 
 # App-specific deps. Python isn't required by claude-code itself

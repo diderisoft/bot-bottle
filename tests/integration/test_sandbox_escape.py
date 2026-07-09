@@ -81,10 +81,10 @@ class TestSandboxEscape(unittest.TestCase):
         # those are missing rather than die-ing inside backend.prepare.
         backend_name = os.environ.get("BOT_BOTTLE_BACKEND", "docker")
         if backend_name == "smolmachines":
-            if sys.platform != "darwin":
+            if sys.platform not in ("darwin", "linux"):
                 raise unittest.SkipTest(
-                    "BOT_BOTTLE_BACKEND=smolmachines is macOS-only in "
-                    "v1 (libkrun TSI)"
+                    f"BOT_BOTTLE_BACKEND=smolmachines is not supported "
+                    f"on {sys.platform} (macOS and Linux only)"
                 )
             if shutil.which("smolvm") is None:
                 raise unittest.SkipTest(
