@@ -71,7 +71,34 @@ class TestFetchHostKey(unittest.TestCase):
         with patch("subprocess.run", return_value=self._run_result("")):
             with self.assertRaises(RuntimeError) as cm:
                 fetch_host_key("example.com", "22")
-        self.assertIn("no ed25519 key", str(cm.exception))
+        self.assertIn("no host key", str(cm.exception))
+
+    def test_prefers_ed25519_over_ecdsa(self) -> None:
+        stdout = (
+            "gitea.example.com ecdsa-sha2-nistp256 BBBBB\n"
+            "gitea.example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA\n"
+        )
+        with patch("subprocess.run", return_value=self._run_result(stdout)):
+            key = fetch_host_key("gitea.example.com", "22")
+        self.assertEqual("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA", key)
+
+    def test_falls_back_to_ecdsa_without_ed25519(self) -> None:
+        stdout = "gitea.example.com ecdsa-sha2-nistp256 BBBBB\n"
+        with patch("subprocess.run", return_value=self._run_result(stdout)):
+            key = fetch_host_key("gitea.example.com", "22")
+        self.assertEqual("ecdsa-sha2-nistp256 BBBBB", key)
+
+    def test_falls_back_to_rsa_without_ed25519_or_ecdsa(self) -> None:
+        stdout = "gitea.example.com ssh-rsa AAAAB3NzaC1yc2EAAAA\n"
+        with patch("subprocess.run", return_value=self._run_result(stdout)):
+            key = fetch_host_key("gitea.example.com", "22")
+        self.assertEqual("ssh-rsa AAAAB3NzaC1yc2EAAAA", key)
+
+    def test_falls_back_to_first_for_unknown_type(self) -> None:
+        stdout = "gitea.example.com ssh-unknown CCCCC\n"
+        with patch("subprocess.run", return_value=self._run_result(stdout)):
+            key = fetch_host_key("gitea.example.com", "22")
+        self.assertEqual("ssh-unknown CCCCC", key)
 
     def test_raises_includes_stderr_when_present(self) -> None:
         r = self._run_result("")

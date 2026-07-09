@@ -20,16 +20,29 @@ from .log import die, info
 from .manifest import Manifest
 
 
+# Preferred key types, most secure first.
+_KEY_TYPE_PREFERENCE = (
+    "ssh-ed25519",
+    "ecdsa-sha2-nistp256",
+    "ecdsa-sha2-nistp384",
+    "ecdsa-sha2-nistp521",
+    "ssh-rsa",
+)
+
+
 def fetch_host_key(host: str, port: str) -> str:
-    """Return an SSH ed25519 public key for `host`:`port` via ssh-keyscan.
+    """Return an SSH public key for `host`:`port` via ssh-keyscan.
 
     Returns the key in `<type> <base64-data>` format (the host prefix is
     stripped so the result can be stored in `host_key` and later formatted
     into a known_hosts line by `git_gate_known_hosts_line`).
 
-    Raises `RuntimeError` on subprocess failure, timeout, or no ed25519
-    result. Uses only the Python stdlib (subprocess)."""
-    args = ["ssh-keyscan", "-t", "ed25519"]
+    Prefers ed25519 > ecdsa > rsa; falls back to the first key type
+    returned if none of the preferred types are present.
+
+    Raises `RuntimeError` on subprocess failure, timeout, or no result.
+    Uses only the Python stdlib (subprocess)."""
+    args = ["ssh-keyscan"]
     if port and port != "22":
         args += ["-p", port]
     args.append(host)
@@ -44,18 +57,25 @@ def fetch_host_key(host: str, port: str) -> str:
     except subprocess.TimeoutExpired as e:
         raise RuntimeError(f"ssh-keyscan timed out for {host}:{port}") from e
 
+    # known_hosts format: "[host]:port type data"  or  "host type data"
+    # Strip the host/port prefix; collect "type -> type data" by type.
+    found: dict[str, str] = {}
     for line in result.stdout.splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        # known_hosts format: "[host]:port type data"  or  "host type data"
-        # Strip the host/port prefix; keep "type data".
         parts = line.split(None, 2)
-        if len(parts) == 3:
-            return f"{parts[1]} {parts[2]}"
+        if len(parts) == 3 and parts[1] not in found:
+            found[parts[1]] = f"{parts[1]} {parts[2]}"
+
+    for preferred in _KEY_TYPE_PREFERENCE:
+        if preferred in found:
+            return found[preferred]
+    if found:
+        return next(iter(found.values()))
 
     raise RuntimeError(
-        f"ssh-keyscan returned no ed25519 key for {host}:{port}."
+        f"ssh-keyscan returned no host key for {host}:{port}."
         + (f" stderr: {result.stderr.strip()!r}" if result.stderr.strip() else "")
     )
 
