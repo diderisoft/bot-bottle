@@ -391,5 +391,71 @@ class TestWaitContainerIpv4(unittest.TestCase):
             self.assertEqual("", util.wait_container_ipv4_on_network("c", "net", timeout=-1))
 
 
+class TestMacosContainerImageCreatedAt(unittest.TestCase):
+    def _ok(self, stdout: str) -> "util.subprocess.CompletedProcess":  # type: ignore
+        return util.subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=stdout, stderr="",
+        )
+
+    def _fail(self, stderr: str = "no such image") -> "util.subprocess.CompletedProcess":  # type: ignore
+        return util.subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr=stderr,
+        )
+
+    def test_parses_iso_timestamp_from_dict(self):
+        payload = '[{"created": "2025-06-01T12:00:00"}]'
+        with patch.object(util.subprocess, "run", return_value=self._ok(payload)):
+            dt = util.image_created_at("bot-bottle-agent:latest")
+        self.assertEqual(2025, dt.year)
+        self.assertEqual(6, dt.month)
+        self.assertEqual(1, dt.day)
+
+    def test_accepts_list_or_dict_input(self):
+        # Container CLI may return a list; we take the first element.
+        payload = '[{"created": "2024-01-15T08:30:00"}]'
+        with patch.object(util.subprocess, "run", return_value=self._ok(payload)):
+            dt = util.image_created_at("some-image:latest")
+        self.assertEqual(2024, dt.year)
+
+    def test_accepts_uppercase_Created_field(self):
+        payload = '[{"Created": "2024-03-20T10:00:00"}]'
+        with patch.object(util.subprocess, "run", return_value=self._ok(payload)):
+            dt = util.image_created_at("some-image:latest")
+        self.assertEqual(2024, dt.year)
+        self.assertEqual(3, dt.month)
+
+    def test_dies_on_nonzero_returncode(self):
+        with patch.object(util.subprocess, "run", return_value=self._fail("not found")), \
+             patch.object(util, "die", side_effect=SystemExit("die")) as die:
+            with self.assertRaises(SystemExit):
+                util.image_created_at("missing:tag")
+        die.assert_called_once()
+        self.assertIn("missing:tag", die.call_args.args[0])
+
+    def test_dies_on_malformed_json(self):
+        with patch.object(util.subprocess, "run", return_value=self._ok("not-json {")), \
+             patch.object(util, "die", side_effect=SystemExit("die")) as die:
+            with self.assertRaises(SystemExit):
+                util.image_created_at("some:tag")
+        die.assert_called_once()
+
+    def test_dies_when_no_created_field(self):
+        payload = '[{"id": "sha256:abc123"}]'
+        with patch.object(util.subprocess, "run", return_value=self._ok(payload)), \
+             patch.object(util, "die", side_effect=SystemExit("die")) as die:
+            with self.assertRaises(SystemExit):
+                util.image_created_at("some:tag")
+        die.assert_called_once()
+        self.assertIn("creation timestamp", die.call_args.args[0])
+
+    def test_dies_on_invalid_timestamp_format(self):
+        payload = '[{"created": "not-a-date"}]'
+        with patch.object(util.subprocess, "run", return_value=self._ok(payload)), \
+             patch.object(util, "die", side_effect=SystemExit("die")) as die:
+            with self.assertRaises(SystemExit):
+                util.image_created_at("some:tag")
+        die.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()
