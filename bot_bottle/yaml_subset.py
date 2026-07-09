@@ -21,6 +21,11 @@ Public API:
         For a Markdown file with YAML frontmatter delimited by `---`
         lines. Returns (frontmatter_dict, body_text).
 
+    serialize_yaml_subset(data) -> str
+        Serialize a dict (as produced by parse_yaml_subset) back to
+        block-style YAML text.  The result ends with a newline and
+        can be parsed back by parse_yaml_subset.
+
 What we accept (block-style):
 
     key: value                # mapping entry, value is inline
@@ -576,3 +581,105 @@ def parse_frontmatter(text: str) -> tuple[dict[str, object], str]:
     fm = parse_yaml_subset(fm_text)
     body = text[body_start:]
     return fm, body
+
+
+# --- Serializer -------------------------------------------------------------
+
+
+def _needs_quoting(s: str) -> bool:
+    """True when the string must be single-quoted to survive a round-trip."""
+    if not s:
+        return True
+    if s in ("true", "false", "null", "~") or s in _RESERVED_BOOL_LIKE:
+        return True
+    if (
+        _INT_RX.match(s)
+        or _DATE_RX.match(s)
+        or _OCTAL_RX.match(s)
+        or _HEX_RX.match(s)
+        or _FLOAT_RX.match(s)
+    ):
+        return True
+    # Characters that have special meaning at the start of a YAML value
+    if s[0] in ('"', "'", "[", "{", "!", "&", "*", "#", "|", ">", "%", "@", "`"):
+        return True
+    return False
+
+
+def _yaml_scalar(v: object) -> str:
+    """Serialize a scalar Python value to its YAML text form."""
+    if v is None:
+        return "null"
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, int):
+        return str(v)
+    s = str(v)
+    if _needs_quoting(s):
+        return "'" + s.replace("'", "''") + "'"
+    return s
+
+
+def _serialize_node(node: object, indent: int) -> list[str]:
+    """Return lines (without trailing newlines) for `node` at `indent`.
+
+    Called only for non-empty dicts and lists (the caller guards with
+    `isinstance(val, (dict, list)) and val`), plus scalars at the leaf."""
+    prefix = " " * indent
+    if isinstance(node, dict):
+        out: list[str] = []
+        for key, val in node.items():
+            if isinstance(val, (dict, list)) and val:
+                out.append(f"{prefix}{key}:")
+                out.extend(_serialize_node(val, indent + 2))
+            else:
+                scalar = (
+                    "{}" if isinstance(val, dict)
+                    else "[]" if isinstance(val, list)
+                    else _yaml_scalar(val)
+                )
+                out.append(f"{prefix}{key}: {scalar}")
+        return out
+    if isinstance(node, list):
+        out = []
+        for item in node:
+            if isinstance(item, dict) and item:
+                entries = list(item.items())
+                first_key, first_val = entries[0]
+                if isinstance(first_val, (dict, list)) and first_val:
+                    out.append(f"{prefix}- {first_key}:")
+                    out.extend(_serialize_node(first_val, indent + 4))
+                else:
+                    scalar = (
+                        "{}" if isinstance(first_val, dict)
+                        else "[]" if isinstance(first_val, list)
+                        else _yaml_scalar(first_val)
+                    )
+                    out.append(f"{prefix}- {first_key}: {scalar}")
+                cont = prefix + "  "
+                for key, val in entries[1:]:
+                    if isinstance(val, (dict, list)) and val:
+                        out.append(f"{cont}{key}:")
+                        out.extend(_serialize_node(val, indent + 4))
+                    else:
+                        scalar = (
+                            "{}" if isinstance(val, dict)
+                            else "[]" if isinstance(val, list)
+                            else _yaml_scalar(val)
+                        )
+                        out.append(f"{cont}{key}: {scalar}")
+            else:
+                out.append(f"{prefix}- {_yaml_scalar(item)}")
+        return out
+    return [_yaml_scalar(node)]  # pragma: no cover
+
+
+def serialize_yaml_subset(data: dict[str, object]) -> str:
+    """Serialize `data` (as produced by parse_yaml_subset) to YAML text.
+
+    Produces block-style output with 2-space indentation. The result ends
+    with a newline and can be parsed back by parse_yaml_subset. Keys are
+    emitted in iteration order (insertion order in Python 3.7+)."""
+    if not data:
+        return ""
+    return "\n".join(_serialize_node(data, 0)) + "\n"

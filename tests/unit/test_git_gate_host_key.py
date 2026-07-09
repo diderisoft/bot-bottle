@@ -8,10 +8,9 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from bot_bottle.git_gate_host_key import (
+    _add_host_key_to_frontmatter,
     _find_and_update_bottle_file,
-    _insert_host_key_in_frontmatter,
     _prompt_tty,
-    _update_frontmatter_in_file,
     fetch_host_key,
     preflight_host_keys,
 )
@@ -145,96 +144,11 @@ class TestPromptTty(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# _insert_host_key_in_frontmatter
+# _add_host_key_to_frontmatter
 # ---------------------------------------------------------------------------
 
 
-class TestInsertHostKeyInFrontmatter(unittest.TestCase):
-    _FM = """\
-git-gate:
-  repos:
-    myrepo:
-      url: ssh://git@host/org/repo.git
-      key:
-        provider: static
-        path: /dev/null
-"""
-
-    def test_inserts_host_key_after_last_child(self) -> None:
-        result = _insert_host_key_in_frontmatter(self._FM, "myrepo", "ssh-ed25519 AAAA")
-        self.assertIn("      host_key: ssh-ed25519 AAAA", result)
-
-    def test_no_change_when_repo_not_found(self) -> None:
-        result = _insert_host_key_in_frontmatter(self._FM, "other", "ssh-ed25519 AAAA")
-        self.assertEqual(self._FM, result)
-
-    def test_no_change_when_host_key_already_present(self) -> None:
-        fm = self._FM + "      host_key: ssh-ed25519 EXISTING\n"
-        result = _insert_host_key_in_frontmatter(fm, "myrepo", "ssh-ed25519 NEW")
-        self.assertNotIn("NEW", result)
-        self.assertEqual(fm, result)
-
-    def test_preserves_other_repos(self) -> None:
-        fm = """\
-git-gate:
-  repos:
-    first:
-      url: ssh://git@host/org/first.git
-      key:
-        provider: static
-        path: /dev/null
-    second:
-      url: ssh://git@host/org/second.git
-      key:
-        provider: static
-        path: /dev/null
-"""
-        result = _insert_host_key_in_frontmatter(fm, "first", "ssh-ed25519 AAAA")
-        self.assertIn("host_key: ssh-ed25519 AAAA", result)
-        self.assertIn("second:", result)
-
-    def test_detects_child_indent_from_existing_keys(self) -> None:
-        # 4-space indent (non-standard but valid)
-        fm = """\
-git-gate:
-    repos:
-        myrepo:
-            url: ssh://git@host/org/repo.git
-            key:
-                provider: static
-                path: /dev/null
-"""
-        result = _insert_host_key_in_frontmatter(fm, "myrepo", "ssh-ed25519 AAAA")
-        self.assertIn("            host_key: ssh-ed25519 AAAA", result)
-
-    def test_blank_lines_inside_block_do_not_end_scan(self) -> None:
-        fm = """\
-git-gate:
-  repos:
-    myrepo:
-      url: ssh://git@host/org/repo.git
-
-      key:
-        provider: static
-        path: /dev/null
-"""
-        result = _insert_host_key_in_frontmatter(fm, "myrepo", "ssh-ed25519 AAAA")
-        self.assertIn("host_key: ssh-ed25519 AAAA", result)
-
-    def test_repo_with_no_children_uses_default_indent(self) -> None:
-        # Edge case: repo entry has no child keys at all (empty block).
-        fm = "git-gate:\n  repos:\n    myrepo:\n"
-        result = _insert_host_key_in_frontmatter(fm, "myrepo", "ssh-ed25519 AAAA")
-        # Should fall back to repo_indent+2 = 4
-        self.assertIn("    host_key: ssh-ed25519 AAAA", result)
-
-
-# ---------------------------------------------------------------------------
-# _update_frontmatter_in_file
-# ---------------------------------------------------------------------------
-
-
-class TestUpdateFrontmatterInFile(unittest.TestCase):
+class TestAddHostKeyToFrontmatter(unittest.TestCase):
     _FILE = """\
 ---
 git-gate:
@@ -248,23 +162,78 @@ git-gate:
 # Body text here
 """
 
-    def test_updates_frontmatter_preserves_body(self) -> None:
-        result = _update_frontmatter_in_file(self._FILE, "myrepo", "ssh-ed25519 AAAA")
+    def test_inserts_host_key_at_repo_level(self) -> None:
+        result = _add_host_key_to_frontmatter(self._FILE, "myrepo", "ssh-ed25519 AAAA")
         self.assertIn("host_key: ssh-ed25519 AAAA", result)
+        # Must be a sibling of `url` and `key`, not nested inside `key`
+        lines = result.splitlines()
+        hk_line = next(l for l in lines if "host_key" in l)
+        url_line = next(l for l in lines if "url:" in l)
+        self.assertEqual(
+            len(hk_line) - len(hk_line.lstrip()),
+            len(url_line) - len(url_line.lstrip()),
+        )
+
+    def test_preserves_body(self) -> None:
+        result = _add_host_key_to_frontmatter(self._FILE, "myrepo", "ssh-ed25519 AAAA")
         self.assertIn("# Body text here", result)
+
+    def test_preserves_other_repos(self) -> None:
+        text = """\
+---
+git-gate:
+  repos:
+    first:
+      url: ssh://git@host/org/first.git
+      key:
+        provider: static
+        path: /dev/null
+    second:
+      url: ssh://git@host/org/second.git
+      key:
+        provider: static
+        path: /dev/null
+---
+"""
+        result = _add_host_key_to_frontmatter(text, "first", "ssh-ed25519 AAAA")
+        self.assertIn("host_key: ssh-ed25519 AAAA", result)
+        self.assertIn("second:", result)
+
+    def test_no_change_when_host_key_already_present(self) -> None:
+        text = self._FILE.replace(
+            "        path: /dev/null\n",
+            "        path: /dev/null\n      host_key: ssh-ed25519 EXISTING\n",
+        )
+        result = _add_host_key_to_frontmatter(text, "myrepo", "ssh-ed25519 NEW")
+        self.assertNotIn("NEW", result)
+
+    def test_no_change_when_repo_not_found(self) -> None:
+        result = _add_host_key_to_frontmatter(self._FILE, "other", "ssh-ed25519 AAAA")
+        self.assertEqual(self._FILE, result)
 
     def test_no_change_without_frontmatter(self) -> None:
         text = "No frontmatter here\n"
-        result = _update_frontmatter_in_file(text, "myrepo", "ssh-ed25519 AAAA")
+        result = _add_host_key_to_frontmatter(text, "myrepo", "ssh-ed25519 AAAA")
         self.assertEqual(text, result)
-
-    def test_no_change_when_repo_not_in_file(self) -> None:
-        result = _update_frontmatter_in_file(self._FILE, "other", "ssh-ed25519 AAAA")
-        self.assertEqual(self._FILE, result)
 
     def test_no_change_when_no_closing_delimiter(self) -> None:
         text = "---\ngit-gate:\n  repos:\n    myrepo:\n      url: x\n"
-        result = _update_frontmatter_in_file(text, "myrepo", "ssh-ed25519 AAAA")
+        result = _add_host_key_to_frontmatter(text, "myrepo", "ssh-ed25519 AAAA")
+        self.assertEqual(text, result)
+
+    def test_no_change_when_git_gate_missing(self) -> None:
+        text = "---\nenv:\n  FOO: bar\n---\n"
+        result = _add_host_key_to_frontmatter(text, "myrepo", "ssh-ed25519 AAAA")
+        self.assertEqual(text, result)
+
+    def test_no_change_when_repos_missing(self) -> None:
+        text = "---\ngit-gate:\n  foo: bar\n---\n"
+        result = _add_host_key_to_frontmatter(text, "myrepo", "ssh-ed25519 AAAA")
+        self.assertEqual(text, result)
+
+    def test_no_change_when_repo_entry_not_a_dict(self) -> None:
+        text = "---\ngit-gate:\n  repos:\n    - item\n---\n"
+        result = _add_host_key_to_frontmatter(text, "myrepo", "ssh-ed25519 AAAA")
         self.assertEqual(text, result)
 
 
@@ -372,9 +341,9 @@ git-gate:
                 os.chmod(path, 0o644)
 
     def test_skips_when_update_produces_no_change(self) -> None:
-        # _update_frontmatter_in_file returns the original text unchanged
-        # (e.g. because _insert_host_key_in_frontmatter can't locate the
-        # entry in the raw text).  Line 174 must `continue` rather than write.
+        # _add_host_key_to_frontmatter returns the original text unchanged
+        # (e.g. because the entry is absent from the parsed structure).
+        # _find_and_update_bottle_file must continue rather than write.
         content = """\
 ---
 git-gate:
@@ -389,7 +358,7 @@ git-gate:
         with tempfile.TemporaryDirectory() as d:
             path = self._write_bottle(d, "dev", content)
             with patch(
-                "bot_bottle.git_gate_host_key._update_frontmatter_in_file",
+                "bot_bottle.git_gate_host_key._add_host_key_to_frontmatter",
                 return_value=content,  # no change
             ):
                 result = _find_and_update_bottle_file(Path(d), "myrepo", "ssh-ed25519 AAAA")

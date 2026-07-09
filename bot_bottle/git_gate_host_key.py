@@ -11,13 +11,14 @@ Public entry point: `preflight_host_keys(manifest, headless=..., home_md=...)`.
 from __future__ import annotations
 
 import dataclasses
-import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import cast
 
 from .log import die, info
 from .manifest import Manifest
+from .yaml_subset import YamlSubsetError, parse_frontmatter, serialize_yaml_subset
 
 
 # Preferred key types, most secure first.
@@ -81,79 +82,37 @@ def fetch_host_key(host: str, port: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Frontmatter text-level editing
+# Frontmatter editing
 # ---------------------------------------------------------------------------
 
 
-def _insert_host_key_in_frontmatter(fm_text: str, repo_name: str, host_key: str) -> str:
-    """Append `host_key: <key>` to the named repo entry in raw frontmatter text.
+def _add_host_key_to_frontmatter(file_text: str, repo_name: str, host_key: str) -> str:
+    """Return an updated copy of `file_text` with `host_key` set on the
+    named repo entry in the YAML frontmatter.
 
-    Locates the `<repo_name>:` block-mapping key, detects its child
-    indentation from the sibling keys already present, and inserts the
-    new line after the last child.  Returns the original text if the
-    repo entry is not found or already has a `host_key:` line."""
-    lines = fm_text.splitlines(keepends=True)
-
-    repo_pat = re.compile(r"^(\s+)" + re.escape(repo_name) + r"\s*:\s*(\r?\n)?$")
-    repo_line_idx: int | None = None
-    repo_indent: int | None = None
-    for i, line in enumerate(lines):
-        if repo_pat.match(line):
-            repo_indent = len(line) - len(line.lstrip())
-            repo_line_idx = i
-            break
-
-    if repo_line_idx is None or repo_indent is None:
-        return fm_text
-
-    child_indent: int | None = None
-    last_child_idx = repo_line_idx
-
-    for i in range(repo_line_idx + 1, len(lines)):
-        raw = lines[i].rstrip("\r\n")
-        if not raw.strip():
-            continue
-        indent = len(raw) - len(raw.lstrip())
-        if indent > repo_indent:
-            child_indent = indent
-            last_child_idx = i
-        else:
-            break
-
-    if child_indent is None:
-        child_indent = repo_indent + 2
-
-    block = "".join(lines[repo_line_idx + 1 : last_child_idx + 1])
-    if re.search(r"^\s*host_key\s*:", block, re.MULTILINE):
-        return fm_text
-
-    new_line = " " * child_indent + f"host_key: {host_key}\n"
-    lines.insert(last_child_idx + 1, new_line)
-    return "".join(lines)
-
-
-def _update_frontmatter_in_file(file_text: str, repo_name: str, host_key: str) -> str:
-    """Apply `_insert_host_key_in_frontmatter` to the frontmatter section of
-    a Markdown file, leaving the body unchanged.  Returns the original text
-    when no change is needed."""
-    lines = file_text.splitlines(keepends=True)
-    if not lines or lines[0].rstrip("\r\n") != "---":
+    Parses the frontmatter into a dict, sets the key, and re-serializes.
+    Returns the original text unchanged when: the file has no frontmatter,
+    the git-gate.repos.<repo_name> entry is absent or already has a
+    host_key, or the frontmatter cannot be parsed."""
+    try:
+        fm, body = parse_frontmatter(file_text)
+    except YamlSubsetError:
         return file_text
 
-    close_idx: int | None = None
-    for i in range(1, len(lines)):
-        if lines[i].rstrip("\r\n") == "---":
-            close_idx = i
-            break
-    if close_idx is None:
+    git_gate = fm.get("git-gate")
+    if not isinstance(git_gate, dict):
+        return file_text
+    repos = git_gate.get("repos")
+    if not isinstance(repos, dict):
+        return file_text
+    repo = repos.get(repo_name)
+    if not isinstance(repo, dict):
+        return file_text
+    if repo.get("host_key"):
         return file_text
 
-    fm_text = "".join(lines[1:close_idx])
-    body_text = "".join(lines[close_idx:])
-    updated_fm = _insert_host_key_in_frontmatter(fm_text, repo_name, host_key)
-    if updated_fm == fm_text:
-        return file_text
-    return "---\n" + updated_fm + body_text
+    cast(dict[str, object], repo)["host_key"] = host_key
+    return f"---\n{serialize_yaml_subset(fm)}---\n{body}"
 
 
 def _find_and_update_bottle_file(
@@ -168,28 +127,13 @@ def _find_and_update_bottle_file(
     if not bottles_dir.is_dir():
         return False
 
-    from .yaml_subset import YamlSubsetError, parse_frontmatter
-
     for path in sorted(bottles_dir.glob("*.md")):
         try:
             text = path.read_text(encoding="utf-8")
-            fm, _body = parse_frontmatter(text)
-        except (OSError, UnicodeDecodeError, YamlSubsetError):
+        except (OSError, UnicodeDecodeError):
             continue
 
-        git_gate = fm.get("git-gate")
-        if not isinstance(git_gate, dict):
-            continue
-        repos = git_gate.get("repos")
-        if not isinstance(repos, dict):
-            continue
-        repo = repos.get(repo_name)
-        if not isinstance(repo, dict):
-            continue
-        if repo.get("host_key"):
-            continue
-
-        updated = _update_frontmatter_in_file(text, repo_name, host_key)
+        updated = _add_host_key_to_frontmatter(text, repo_name, host_key)
         if updated == text:
             continue
         path.write_text(updated, encoding="utf-8")
@@ -292,7 +236,6 @@ def preflight_host_keys(
 __all__ = [
     "fetch_host_key",
     "preflight_host_keys",
-    "_insert_host_key_in_frontmatter",
+    "_add_host_key_to_frontmatter",
     "_find_and_update_bottle_file",
-    "_update_frontmatter_in_file",
 ]

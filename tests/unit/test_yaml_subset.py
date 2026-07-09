@@ -6,7 +6,7 @@ import textwrap
 import unittest
 
 from bot_bottle.yaml_subset import YamlSubsetError
-from bot_bottle.yaml_subset import parse_frontmatter, parse_yaml_subset
+from bot_bottle.yaml_subset import parse_frontmatter, parse_yaml_subset, serialize_yaml_subset
 
 
 def _y(s: str):
@@ -455,6 +455,142 @@ class TestEdgeAndErrorBranches(unittest.TestCase):
     # --- frontmatter --------------------------------------------------------
     def test_frontmatter_empty_text(self) -> None:
         self.assertEqual(({}, ""), parse_frontmatter(""))
+
+
+# ---------------------------------------------------------------------------
+# serialize_yaml_subset
+# ---------------------------------------------------------------------------
+
+
+class TestSerializeYamlSubset(unittest.TestCase):
+    def _roundtrip(self, text: str) -> None:
+        """Parse then serialize then re-parse; result must equal original parse."""
+        parsed = parse_yaml_subset(text)
+        serialized = serialize_yaml_subset(parsed)
+        self.assertEqual(parsed, parse_yaml_subset(serialized))
+
+    # --- scalar values ---------------------------------------------------------
+
+    def test_string_bare(self) -> None:
+        self.assertEqual("key: value\n", serialize_yaml_subset({"key": "value"}))
+
+    def test_string_empty_is_quoted(self) -> None:
+        out = serialize_yaml_subset({"key": ""})
+        self.assertIn("key: ''", out)
+        self._roundtrip("key: ''\n")
+
+    def test_string_true_like_is_quoted(self) -> None:
+        out = serialize_yaml_subset({"key": "true"})
+        self.assertIn("'true'", out)
+        self.assertEqual({"key": "true"}, parse_yaml_subset(out))
+
+    def test_string_int_like_is_quoted(self) -> None:
+        out = serialize_yaml_subset({"key": "42"})
+        self.assertIn("'42'", out)
+        self.assertEqual({"key": "42"}, parse_yaml_subset(out))
+
+    def test_string_special_start_char_is_quoted(self) -> None:
+        for ch in ('"', "'", "[", "{", "!", "&", "*", "#", "|", ">"):
+            out = serialize_yaml_subset({"key": ch + "rest"})
+            self.assertIn("'", out, msg=f"expected quoting for {ch!r}")
+
+    def test_none_emits_null(self) -> None:
+        self.assertEqual("key: null\n", serialize_yaml_subset({"key": None}))
+
+    def test_bool_true(self) -> None:
+        self.assertEqual("key: true\n", serialize_yaml_subset({"key": True}))
+
+    def test_bool_false(self) -> None:
+        self.assertEqual("key: false\n", serialize_yaml_subset({"key": False}))
+
+    def test_int(self) -> None:
+        self.assertEqual("key: 42\n", serialize_yaml_subset({"key": 42}))
+
+    # --- nested dict -----------------------------------------------------------
+
+    def test_nested_dict(self) -> None:
+        data: dict[str, object] = {"outer": {"inner": "val"}}
+        out = serialize_yaml_subset(data)
+        self.assertIn("outer:", out)
+        self.assertIn("  inner: val", out)
+        self.assertEqual(data, parse_yaml_subset(out))
+
+    def test_empty_dict_value_inline(self) -> None:
+        out = serialize_yaml_subset({"key": {}})
+        self.assertIn("key: {}", out)
+
+    # --- lists -----------------------------------------------------------------
+
+    def test_list_of_scalars(self) -> None:
+        data: dict[str, object] = {"items": ["a", "b", "c"]}
+        out = serialize_yaml_subset(data)
+        self.assertEqual(data, parse_yaml_subset(out))
+
+    def test_empty_list_value_inline(self) -> None:
+        out = serialize_yaml_subset({"key": []})
+        self.assertIn("key: []", out)
+
+    def test_list_of_mappings(self) -> None:
+        data: dict[str, object] = {"items": [{"name": "alpha", "val": 1}, {"name": "beta", "val": 2}]}
+        out = serialize_yaml_subset(data)
+        self.assertEqual(data, parse_yaml_subset(out))
+
+    def test_list_item_mapping_with_nested_dict(self) -> None:
+        data: dict[str, object] = {"items": [{"name": "x", "sub": {"k": "v"}}]}
+        out = serialize_yaml_subset(data)
+        self.assertEqual(data, parse_yaml_subset(out))
+
+    def test_list_item_first_key_is_nested_dict(self) -> None:
+        # Covers the branch where the FIRST key of a mapping list item
+        # has a nested dict/list value (not a scalar).
+        data: dict[str, object] = {"items": [{"cfg": {"a": 1, "b": 2}, "name": "x"}]}
+        out = serialize_yaml_subset(data)
+        self.assertEqual(data, parse_yaml_subset(out))
+
+    def test_list_item_mapping_continuation_keys(self) -> None:
+        data: dict[str, object] = {"items": [{"a": 1, "b": 2, "c": 3}]}
+        out = serialize_yaml_subset(data)
+        self.assertEqual(data, parse_yaml_subset(out))
+
+    # --- empty / trivial -------------------------------------------------------
+
+    def test_empty_dict(self) -> None:
+        self.assertEqual("", serialize_yaml_subset({}))
+
+    # --- realistic bottle frontmatter round-trip --------------------------------
+
+    def test_bottle_frontmatter_round_trip(self) -> None:
+        text = textwrap.dedent("""\
+            git-gate:
+              repos:
+                myrepo:
+                  url: ssh://git@host/org/repo.git
+                  key:
+                    provider: static
+                    path: /dev/null
+        """)
+        self._roundtrip(text)
+
+    def test_host_key_inserted_at_repo_level(self) -> None:
+        """The canonical use-case: host_key lands as a sibling of url/key."""
+        from typing import cast
+        text = textwrap.dedent("""\
+            git-gate:
+              repos:
+                myrepo:
+                  url: ssh://git@host/org/repo.git
+                  key:
+                    provider: static
+                    path: /dev/null
+        """)
+        data = parse_yaml_subset(text)
+        repos = cast(dict[str, object], cast(dict[str, object], data["git-gate"])["repos"])
+        cast(dict[str, object], repos["myrepo"])["host_key"] = "ssh-ed25519 AAAA"
+        out = serialize_yaml_subset(data)
+        parsed_back = parse_yaml_subset(out)
+        repo = cast(dict[str, object], cast(dict[str, object], cast(dict[str, object], parsed_back["git-gate"])["repos"])["myrepo"])
+        self.assertEqual("ssh-ed25519 AAAA", repo["host_key"])
+        self.assertIn("provider", cast(dict[str, object], repo["key"]))
 
 
 if __name__ == "__main__":
