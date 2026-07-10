@@ -13,7 +13,7 @@ from typing import Any
 from unittest import mock
 
 from bot_bottle.agent_provider import AgentProvisionPlan
-from bot_bottle.backend import BottleImages, BottleSpec
+from bot_bottle.backend import BottleSpec
 from bot_bottle.backend.docker import launch as launch_mod
 from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
 from bot_bottle.backend.docker.consolidated_launch import LaunchContext

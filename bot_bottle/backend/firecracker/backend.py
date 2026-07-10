@@ -18,7 +18,7 @@ from ...env import ResolvedEnv
 from ...git_gate import GitGatePlan
 from ...manifest import Manifest
 from ...supervise import SupervisePlan
-from .. import ActiveAgent, BottleBackend, BottleSpec
+from .. import ActiveAgent, BottleBackend, BottleImages, BottleSpec
 from . import cleanup as _cleanup
 from . import enumerate as _enumerate
 from . import launch as _launch
@@ -92,10 +92,16 @@ class FirecrackerBottleBackend(
             stage_dir=stage_dir,
         )
 
+    def _build_or_load_images(self, plan: FirecrackerBottlePlan) -> BottleImages:
+        # Firecracker builds its rootfs image inside _launch_impl (via buildah in
+        # a builder VM), so there is nothing to pre-resolve here.
+        return BottleImages(agent=plan.image)
+
     @contextmanager
-    def launch(
-        self, plan: FirecrackerBottlePlan
+    def _launch_impl(
+        self, plan: FirecrackerBottlePlan, images: BottleImages,
     ) -> Generator[FirecrackerBottle, None, None]:
+        del images  # rootfs built inside _launch.launch; images unused here
         with _launch.launch(plan, provision=self.provision) as bottle:
             yield bottle
 
