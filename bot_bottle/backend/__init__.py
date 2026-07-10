@@ -289,8 +289,8 @@ class BottleImages:
     image refs. For the smolmachines backend they are Path objects pointing
     to pre-built `.smolmachine` artifacts."""
 
-    agent: "str | Path"
-    sidecar: "str | Path" = ""
+    agent: str | Path
+    sidecar: str | Path = ""
 
 
 class BottleBackend(ABC, Generic[PlanT, CleanupT]):
@@ -466,12 +466,12 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
             yield bottle
 
     @abstractmethod
-    def _build_or_load_images(self, plan: PlanT) -> "BottleImages":
+    def _build_or_load_images(self, plan: PlanT) -> BottleImages:
         """Return the agent and sidecar image references (or artifact paths)
         for this plan, building fresh images when the policy requires it."""
 
     @abstractmethod
-    def _launch_impl(self, plan: PlanT, images: "BottleImages") -> AbstractContextManager[Bottle]:
+    def _launch_impl(self, plan: PlanT, images: BottleImages) -> AbstractContextManager[Bottle]:
         """Bring up the bottle using pre-resolved images; yield a handle; tear down on exit."""
 
     def provision(self, plan: PlanT, bottle: "Bottle") -> str | None:
