@@ -13,7 +13,7 @@ from typing import Any
 from unittest import mock
 
 from bot_bottle.agent_provider import AgentProvisionPlan
-from bot_bottle.backend import BottleSpec
+from bot_bottle.backend import BottleImages, BottleSpec
 from bot_bottle.backend.docker import launch as launch_mod
 from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
 from bot_bottle.backend.docker.consolidated_launch import LaunchContext
@@ -115,7 +115,8 @@ class TestLaunchCommittedImage(unittest.TestCase):
         with self._patched(
             committed_tag=committed_tag, image_present=image_present, compose=compose,
         ) as built:
-            with launch_mod.launch(plan, provision=mock.Mock(return_value=None)):
+            images = launch_mod.build_or_load_images(plan)
+            with launch_mod.launch(plan, images, provision=mock.Mock(return_value=None)):
                 pass
         return built
 
@@ -130,8 +131,10 @@ class TestLaunchCommittedImage(unittest.TestCase):
             captured.append(p)
             return {"services": {"agent": {}}}
 
-        with self._patched(committed_tag=_COMMITTED_TAG, image_present=True, compose=compose):
-            with launch_mod.launch(_plan(self._tmp), provision=mock.Mock(return_value=None)):
+        with self._patched(committed_tag=_COMMITTED_TAG, image_present=True, compose=compose) as _:
+            plan = _plan(self._tmp)
+            images = launch_mod.build_or_load_images(plan)
+            with launch_mod.launch(plan, images, provision=mock.Mock(return_value=None)):
                 pass
         self.assertEqual(_COMMITTED_TAG, captured[0].image)
 

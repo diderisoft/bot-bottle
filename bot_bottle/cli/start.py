@@ -561,38 +561,35 @@ def _launch_bottle(
             return 0
 
         backend = get_bottle_backend(backend_name)
-        skip_stale = False
-        while True:
-            try:
-                with backend.launch(plan, skip_stale=skip_stale) as bottle:
-                    agent_provider_template = getattr(plan, "agent_provider_template", "claude")
-                    extra_args: tuple[str, ...] = ()
-                    if headless_prompt_text:
-                        extra_args = tuple(
-                            get_provider(agent_provider_template).headless_prompt(
-                                headless_prompt_text
-                            )
-                        )
-                    exit_code = attach_agent(
-                        bottle,
-                        agent_provider_template=agent_provider_template,
-                        startup_args=plan.agent_provision.startup_args + extra_args,
+        try:
+            backend.prelaunch_checks(plan)
+        except StaleImageError as exc:
+            if assume_yes:
+                die(str(exc))
+            sys.stderr.write(f"bot-bottle: {exc}\nLaunch anyway? [y/N] ")
+            sys.stderr.flush()
+            if read_tty_line() not in ("y", "Y", "yes", "YES"):
+                return 0
+        with backend.launch(plan) as bottle:
+            agent_provider_template = getattr(plan, "agent_provider_template", "claude")
+            extra_args: tuple[str, ...] = ()
+            if headless_prompt_text:
+                extra_args = tuple(
+                    get_provider(agent_provider_template).headless_prompt(
+                        headless_prompt_text
                     )
-                    info(
-                        f"session ended (exit {exit_code}); "
-                        f"container {bottle.name} will be removed"
-                    )
-                    if agent_provider_template == "claude":
-                        capture_claude_session_state(identity, exit_code)
-                break
-            except StaleImageError as exc:
-                if assume_yes:
-                    die(str(exc))
-                sys.stderr.write(f"bot-bottle: {exc}\nLaunch anyway? [y/N] ")
-                sys.stderr.flush()
-                if read_tty_line() not in ("y", "Y", "yes", "YES"):
-                    break
-                skip_stale = True
+                )
+            exit_code = attach_agent(
+                bottle,
+                agent_provider_template=agent_provider_template,
+                startup_args=plan.agent_provision.startup_args + extra_args,
+            )
+            info(
+                f"session ended (exit {exit_code}); "
+                f"container {bottle.name} will be removed"
+            )
+            if agent_provider_template == "claude":
+                capture_claude_session_state(identity, exit_code)
         return 0
     finally:
         # PRD 0018 chunk 2: prepare now writes the bottle's bind-mount

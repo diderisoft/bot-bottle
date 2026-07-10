@@ -55,6 +55,7 @@ from ...git_gate import (
 from ...git_http_backend import DEFAULT_PORT as _GIT_HTTP_PORT
 from ...image_cache import check_stale
 from ...log import die, info, warn
+from .. import BottleImages
 from ...supervise import SUPERVISE_PORT
 from ..docker.egress import EGRESS_PORT
 from ..util import AGENT_CA_BUNDLE, AGENT_CA_PATH
@@ -78,17 +79,42 @@ _REPO_DIR = str(Path(__file__).resolve().parent.parent.parent.parent)
 _AGENT_SLEEP_SECONDS = "2147483647"
 
 
+def build_or_load_images(plan: MacosContainerBottlePlan) -> BottleImages:
+    """Resolve the agent image ref for this plan. The gateway's own image is
+    built by `ensure_gateway` — it belongs to the shared singleton."""
+    committed = read_committed_image(plan.slug)
+    if committed and container_mod.image_exists(committed):
+        info(f"using committed image {committed!r}")
+        return BottleImages(agent=committed)
+    if plan.spec.image_policy == "cached":
+        if not container_mod.image_exists(plan.image):
+            die(
+                f"cached agent image {plan.image!r} not found; "
+                "run without --cached-images to build it"
+            )
+        info(f"using cached agent image {plan.image!r}")
+        return BottleImages(agent=plan.image)
+    container_mod.build_image(plan.image, _REPO_DIR, dockerfile=plan.dockerfile_path)
+    return BottleImages(agent=plan.image)
+
+
 @contextmanager
 def launch(
     plan: MacosContainerBottlePlan,
+    images: BottleImages,
     *,
     provision: Callable[[MacosContainerBottlePlan, "MacosContainerBottle"], str | None],
 ) -> Generator[MacosContainerBottle, None, None]:
-    """Build, run, register, provision, and yield an Apple Container bottle on
-    the shared per-host gateway."""
+    """Run, register, provision, and yield an Apple Container bottle on the
+    shared per-host gateway."""
     stack = ExitStack()
     bottle_for_revoke = plan.manifest.bottle
     git_gate_dir_for_revoke = git_gate_state_dir(plan.slug)
+
+    plan = dataclasses.replace(
+        plan,
+        agent_provision=dataclasses.replace(plan.agent_provision, image=str(images.agent)),
+    )
 
     def teardown() -> None:
         teardown_exc: BaseException | None = None
@@ -102,8 +128,6 @@ def launch(
             raise teardown_exc
 
     try:
-        plan = _build_images(plan)
-
         # Step 1: the per-host singletons. Must precede the agent run — its
         # proxy env needs the gateway's address at `container run` time.
         endpoint = ensure_gateway()
@@ -193,32 +217,6 @@ def launch(
     finally:
         teardown()
 
-
-def _build_images(plan: MacosContainerBottlePlan) -> MacosContainerBottlePlan:
-    """Build the agent image. The gateway's own image is built by
-    `ensure_gateway` — it belongs to the shared singleton, not to a bottle."""
-    cached = plan.spec.image_policy == "cached"
-    committed = read_committed_image(plan.slug)
-    if committed and container_mod.image_exists(committed):
-        info(f"using committed image {committed!r}")
-        return dataclasses.replace(
-            plan,
-            agent_provision=dataclasses.replace(
-                plan.agent_provision, image=committed,
-            ),
-        )
-    if cached:
-        if not container_mod.image_exists(plan.image):
-            die(
-                f"cached agent image {plan.image!r} not found; "
-                "run without --cached-images to build it"
-            )
-        info(f"using cached agent image {plan.image!r}")
-        return plan
-    container_mod.build_image(
-        plan.image, _REPO_DIR, dockerfile=plan.dockerfile_path,
-    )
-    return plan
 
 
 def stale_checks(plan: MacosContainerBottlePlan) -> None:

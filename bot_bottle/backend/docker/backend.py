@@ -31,7 +31,7 @@ from ...env import ResolvedEnv
 from ...git_gate import GitGatePlan
 from ...supervise import SupervisePlan
 from ...manifest import Manifest
-from .. import ActiveAgent, BottleBackend, BottleSpec
+from .. import ActiveAgent, BottleBackend, BottleImages, BottleSpec
 from . import cleanup as _cleanup
 from . import enumerate as _enumerate
 from . import launch as _launch
@@ -100,12 +100,15 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
             stage_dir=stage_dir,
         )
 
-    def _image_stale_checks(self, plan: DockerBottlePlan) -> None:
+    def prelaunch_checks(self, plan: DockerBottlePlan) -> None:
         _launch.stale_checks(plan)
 
+    def _build_or_load_images(self, plan: DockerBottlePlan) -> BottleImages:
+        return _launch.build_or_load_images(plan)
+
     @contextmanager
-    def _launch_impl(self, plan: DockerBottlePlan) -> Generator[DockerBottle, None, None]:
-        with _launch.launch(plan, provision=self.provision) as bottle:
+    def _launch_impl(self, plan: DockerBottlePlan, images: BottleImages) -> Generator[DockerBottle, None, None]:
+        with _launch.launch(plan, images, provision=self.provision) as bottle:
             yield bottle
 
     def ensure_orchestrator(self) -> str:

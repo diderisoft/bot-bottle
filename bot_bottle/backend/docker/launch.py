@@ -44,6 +44,7 @@ from ...git_gate import (
 )
 from ...image_cache import check_stale
 from ...log import die, info, warn
+from .. import BottleImages
 from . import util as docker_mod
 from .bottle import DockerBottle
 from .bottle_plan import DockerBottlePlan
@@ -72,15 +73,46 @@ from ...orchestrator.gateway import DockerGateway
 _REPO_DIR = str(Path(__file__).resolve().parent.parent.parent.parent)
 
 
+def build_or_load_images(plan: DockerBottlePlan) -> BottleImages:
+    """Resolve the agent image ref for this plan.
+
+    Returns the committed snapshot if one exists, the cached image when the
+    policy is 'cached', or builds a fresh image and returns that."""
+    committed = read_committed_image(plan.slug)
+    if committed and docker_mod.image_exists(committed):
+        info(f"using committed image {committed!r}")
+        return BottleImages(agent=committed)
+    if plan.spec.image_policy == "cached":
+        if not docker_mod.image_exists(plan.image):
+            die(
+                f"cached agent image {plan.image!r} not found; "
+                "run without --cached-images to build it"
+            )
+        info(f"using cached agent image {plan.image!r}")
+        return BottleImages(agent=plan.image)
+    docker_mod.build_image(plan.image, _REPO_DIR, dockerfile=plan.dockerfile_path)
+    docker_mod.verify_agent_image(
+        plan.image, runtime_for(plan.agent_provider_template).smoke_test,
+    )
+    return BottleImages(agent=plan.image)
+
+
 @contextmanager
 def launch(
     plan: DockerBottlePlan,
+    images: BottleImages,
     *,
     provision: Callable[[DockerBottlePlan, "DockerBottle"], str | None],
 ) -> Generator[DockerBottle, None, None]:
-    """Build, launch, and provision a Docker bottle via compose.
-    Teardown on exit."""
+    """Launch and provision a Docker bottle via compose. Teardown on exit."""
     stack = ExitStack()
+
+    # Stamp the resolved agent image ref into the plan so compose rendering
+    # picks up the right image (may be a committed snapshot or cached ref).
+    plan = dataclasses.replace(
+        plan,
+        agent_provision=dataclasses.replace(plan.agent_provision, image=str(images.agent)),
+    )
 
     _bottle_for_revoke = plan.manifest.bottle
     _git_gate_dir_for_revoke = git_gate_state_dir(plan.slug)
@@ -98,33 +130,6 @@ def launch(
         )
 
     try:
-        # Step 1: agent image. Use a committed snapshot when one exists
-        # and is present in the local daemon; otherwise build from the
-        # Dockerfile. (The gateway image is built by the orchestrator.)
-        committed = read_committed_image(plan.slug)
-        cached_policy = plan.spec.image_policy == "cached"
-        if committed and docker_mod.image_exists(committed):
-            info(f"using committed image {committed!r}")
-            plan = dataclasses.replace(
-                plan,
-                agent_provision=dataclasses.replace(plan.agent_provision, image=committed),
-            )
-        elif cached_policy:
-            if not docker_mod.image_exists(plan.image):
-                die(
-                    f"cached agent image {plan.image!r} not found; "
-                    "run without --cached-images to build it"
-                )
-            info(f"using cached agent image {plan.image!r}")
-        else:
-            docker_mod.build_image(
-                plan.image, _REPO_DIR,
-                dockerfile=plan.dockerfile_path,
-            )
-            docker_mod.verify_agent_image(
-                plan.image, runtime_for(plan.agent_provider_template).smoke_test,
-            )
-
         # Step 2: mint the git-gate dynamic (gitea) deploy keys, if any, before
         # provisioning the bottle's repos into the shared gateway.
         git_gate_plan = plan.git_gate_plan

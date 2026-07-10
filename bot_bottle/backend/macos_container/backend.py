@@ -12,7 +12,7 @@ from ...env import ResolvedEnv
 from ...git_gate import GitGatePlan
 from ...supervise import SupervisePlan
 from ...manifest import Manifest
-from .. import ActiveAgent, BottleBackend, BottleSpec
+from .. import ActiveAgent, BottleBackend, BottleImages, BottleSpec
 from . import cleanup as _cleanup
 from . import enumerate as _enumerate
 from . import launch as _launch
@@ -82,14 +82,17 @@ class MacosContainerBottleBackend(
             stage_dir=stage_dir,
         )
 
-    def _image_stale_checks(self, plan: MacosContainerBottlePlan) -> None:
+    def prelaunch_checks(self, plan: MacosContainerBottlePlan) -> None:
         _launch.stale_checks(plan)
+
+    def _build_or_load_images(self, plan: MacosContainerBottlePlan) -> BottleImages:
+        return _launch.build_or_load_images(plan)
 
     @contextmanager
     def _launch_impl(
-        self, plan: MacosContainerBottlePlan
+        self, plan: MacosContainerBottlePlan, images: BottleImages
     ) -> Generator[MacosContainerBottle, None, None]:
-        with _launch.launch(plan, provision=self.provision) as bottle:
+        with _launch.launch(plan, images, provision=self.provision) as bottle:
             yield bottle
 
     def ensure_orchestrator(self) -> str:

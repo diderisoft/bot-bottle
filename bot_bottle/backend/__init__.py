@@ -281,6 +281,18 @@ PlanT = TypeVar("PlanT", bound=BottlePlan)
 CleanupT = TypeVar("CleanupT", bound=BottleCleanupPlan)
 
 
+@dataclass(frozen=True)
+class BottleImages:
+    """Resolved image references (or artifact paths) for a bottle launch.
+
+    For Docker/macOS-container backends, `agent` and `sidecar` are string
+    image refs. For the smolmachines backend they are Path objects pointing
+    to pre-built `.smolmachine` artifacts."""
+
+    agent: "str | Path"
+    sidecar: "str | Path" = ""
+
+
 class BottleBackend(ABC, Generic[PlanT, CleanupT]):
     """Abstract base for selectable bottle backends. Concrete subclasses
     (e.g. DockerBottleBackend) own their own prepare/launch impls.
@@ -440,26 +452,27 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         prompt file, Dockerfile path, and guest home all live on
         `agent_provision_plan` — the source of truth."""
 
+    def prelaunch_checks(self, plan: PlanT) -> None:
+        """Raise StaleImageError if any cached image used by this plan is stale.
+        No-op default; backends override to call the shared check_stale*
+        helpers on their image/artifact timestamps. Called by the CLI before
+        launch so the operator can be prompted outside the launch context."""
+
     @contextmanager
-    def launch(
-        self, plan: PlanT, *, skip_stale: bool = False
-    ) -> Generator[Bottle, None, None]:
-        """Template: optionally check for stale cached images, then delegate
-        to `_launch_impl`. Pass `skip_stale=True` to bypass the stale check
-        (used by the interactive CLI after the operator confirms)."""
-        if not skip_stale:
-            self._image_stale_checks(plan)
-        with self._launch_impl(plan) as bottle:
+    def launch(self, plan: PlanT) -> Generator[Bottle, None, None]:
+        """Template: build or load images, then delegate to _launch_impl."""
+        images = self._build_or_load_images(plan)
+        with self._launch_impl(plan, images) as bottle:
             yield bottle
 
-    def _image_stale_checks(self, plan: PlanT) -> None:
-        """Raise StaleImageError if any cached image used by this plan is stale.
-        No-op default; backends override to call the shared `check_stale*`
-        helpers on their image/artifact timestamps."""
+    @abstractmethod
+    def _build_or_load_images(self, plan: PlanT) -> "BottleImages":
+        """Return the agent and sidecar image references (or artifact paths)
+        for this plan, building fresh images when the policy requires it."""
 
     @abstractmethod
-    def _launch_impl(self, plan: PlanT) -> AbstractContextManager[Bottle]:
-        """Build/run the bottle and yield a handle; tear down on exit."""
+    def _launch_impl(self, plan: PlanT, images: "BottleImages") -> AbstractContextManager[Bottle]:
+        """Bring up the bottle using pre-resolved images; yield a handle; tear down on exit."""
 
     def provision(self, plan: PlanT, bottle: "Bottle") -> str | None:
         """Copy host-side files (CA cert, prompt, skills, .git) into
