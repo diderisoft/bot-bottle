@@ -1,12 +1,14 @@
 """`backend` CLI command — generic host setup/status across backends.
 
-`./cli.py backend setup  [--backend=NAME]` provisions (or points at how
+`./cli.py backend setup    [--backend=NAME]` provisions (or points at how
 to provision) the chosen backend's one-time host prerequisites.
-`./cli.py backend status [--backend=NAME]` reports readiness.
+`./cli.py backend status   [--backend=NAME]` reports readiness.
+`./cli.py backend teardown [--backend=NAME]` undoes setup (uninstall).
 
-Both dispatch to the backend's `setup()` / `status()` classmethods, so
-there are no backend-specific commands — swapping backends is just a
-different `--backend` (or `$BOT_BOTTLE_BACKEND`, or the host default).
+All dispatch to the backend's `setup()` / `status()` / `teardown()`
+classmethods, so there are no backend-specific commands — swapping
+backends is just a different `--backend` (or `$BOT_BOTTLE_BACKEND`, or
+the host default).
 """
 
 from __future__ import annotations
@@ -24,8 +26,9 @@ def cmd_backend(args: list[str]) -> int:
     )
     parser.add_argument(
         "action",
-        choices=("setup", "status"),
-        help="setup: provision/print host prerequisites; status: report readiness",
+        choices=("setup", "status", "teardown"),
+        help="setup: provision/print host prerequisites; status: report "
+             "readiness; teardown: undo setup (uninstall)",
     )
     parser.add_argument(
         "--backend",
@@ -38,4 +41,6 @@ def cmd_backend(args: list[str]) -> int:
     backend = get_bottle_backend(ns.backend)
     if ns.action == "setup":
         return backend.setup()
+    if ns.action == "teardown":
+        return backend.teardown()
     return backend.status()

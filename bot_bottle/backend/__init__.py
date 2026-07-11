@@ -560,6 +560,17 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         the backend is ready to launch and non-zero when something is
         missing. Invoked by `./cli.py backend status [--backend=…]`."""
 
+    @classmethod
+    @abstractmethod
+    def teardown(cls) -> int:
+        """Undo `setup()` — the inverse operation, surfaced as
+        `./cli.py backend teardown [--backend=…]` (uninstall). Symmetric
+        with setup: where setup is advisory (prints the privileged
+        commands / declarative config to apply), teardown prints the
+        commands / config change to remove the host prerequisites. A
+        backend with no host setup prints a short note and returns 0.
+        Not called by the launch path or the test suite."""
+
 
 # Import concrete backend classes AFTER the base types are defined, so
 # each backend module can pull BottleSpec / BottlePlan / BottleBackend

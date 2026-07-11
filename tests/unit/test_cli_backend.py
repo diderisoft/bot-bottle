@@ -21,6 +21,7 @@ class TestCmdBackendDispatch(unittest.TestCase):
         b = MagicMock()
         b.setup.return_value = 0
         b.status.return_value = 3
+        b.teardown.return_value = 0
         return b
 
     def test_setup_dispatches_to_backend(self):
@@ -38,6 +39,14 @@ class TestCmdBackendDispatch(unittest.TestCase):
             rc = cmd.cmd_backend(["status", "--backend", "docker"])
         b.status.assert_called_once_with()
         self.assertEqual(3, rc)
+
+    def test_teardown_dispatches_to_backend(self):
+        b = self._fake_backend()
+        with patch.object(cmd, "get_bottle_backend", return_value=b):
+            rc = cmd.cmd_backend(["teardown", "--backend", "firecracker"])
+        b.teardown.assert_called_once_with()
+        b.setup.assert_not_called()
+        self.assertEqual(0, rc)
 
     def test_no_backend_flag_uses_host_default(self):
         b = self._fake_backend()
@@ -73,6 +82,9 @@ class TestDockerSetupStatus(unittest.TestCase):
              patch.object(docker_setup, "_daemon_reachable", return_value=False), \
              patch.object(docker_setup._util, "runsc_available", return_value=False):
             self.assertEqual(1, docker_setup.status())
+
+    def test_teardown_is_noop_success(self):
+        self.assertEqual(0, docker_setup.teardown())
 
 
 if __name__ == "__main__":

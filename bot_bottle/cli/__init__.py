@@ -42,7 +42,7 @@ COMMANDS = {
 def usage() -> None:
     sys.stderr.write(f"usage: {PROG} <command> [args...]\n\n")
     sys.stderr.write("Commands:\n")
-    sys.stderr.write("  backend   set up or check a backend's host prerequisites (setup|status)\n")
+    sys.stderr.write("  backend   set up / check / undo a backend's host prerequisites (setup|status|teardown)\n")
     sys.stderr.write("  cleanup   stop and remove all active bot-bottle containers\n")
     sys.stderr.write("  commit    snapshot a running bottle's container state to a Docker image\n")
     sys.stderr.write("  edit      open an agent in vim for editing\n")

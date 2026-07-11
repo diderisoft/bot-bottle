@@ -61,6 +61,15 @@ def setup() -> int:
     return 0
 
 
+def teardown() -> int:
+    sys.stderr.write(
+        "Docker backend: nothing to undo — it provisions no privileged host "
+        "state (networks and the sidecar bundle are per-launch and are "
+        "removed by `./cli.py cleanup`). Docker itself is left installed.\n"
+    )
+    return 0
+
+
 def status() -> int:
     ok = True
     if _docker_on_path():

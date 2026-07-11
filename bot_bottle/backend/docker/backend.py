@@ -64,6 +64,11 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
         from . import setup as _setup
         return _setup.status()
 
+    @classmethod
+    def teardown(cls) -> int:
+        from . import setup as _setup
+        return _setup.teardown()
+
     def _preflight(self) -> None:
         _resolve_plan.preflight()
 

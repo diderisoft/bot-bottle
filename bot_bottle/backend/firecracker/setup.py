@@ -81,6 +81,25 @@ def setup() -> int:
     return 0
 
 
+def teardown() -> int:
+    slots = netpool.all_slots()
+    sys.stderr.write(
+        f"Undo the Firecracker network pool ({len(slots)} slots, base "
+        f"{netpool.ip_base()}) — a privileged, one-time operation.\n\n"
+    )
+    if _is_nixos():
+        sys.stderr.write(
+            "On NixOS: set `services.bot-bottle-firecracker.enable = false;` "
+            "(or drop the module import) and `nixos-rebuild switch`. The TAP "
+            "netdevs and nft table are removed declaratively.\n\n"
+            "To tear down imperatively before a rebuild (does not persist):\n\n"
+        )
+    else:
+        sys.stderr.write("Run the teardown as root:\n\n")
+    sys.stdout.write("sudo ./scripts/firecracker-netpool.sh down\n")
+    return 0
+
+
 def status() -> int:
     ok = True
     if netpool.nft_table_present():

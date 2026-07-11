@@ -46,6 +46,16 @@ def setup() -> int:
     return 0
 
 
+def teardown() -> int:
+    sys.stderr.write(
+        "macos-container backend: nothing to undo — it provisions no "
+        "privileged host state. The Apple Container CLI and its system "
+        "service are left as-is (stop the service yourself with "
+        "`container system stop` if you want).\n"
+    )
+    return 0
+
+
 def status() -> int:
     ok = True
     if _container.is_macos():
