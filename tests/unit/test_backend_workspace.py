@@ -16,7 +16,7 @@ from bot_bottle import bottle_state
 from bot_bottle import supervise
 from bot_bottle.backend import Bottle, BottleSpec, ExecResult
 from bot_bottle.backend.docker import DockerBottleBackend
-from bot_bottle.backend.smolmachines import SmolmachinesBottleBackend
+from bot_bottle.backend.firecracker import FirecrackerBottleBackend
 from bot_bottle.manifest import ManifestIndex
 
 
@@ -114,13 +114,13 @@ class TestRuntimeWorkspaceProvisioning(_FakeStateMixin, unittest.TestCase):
         bottle.exec.assert_not_called()
         bottle.cp_in.assert_not_called()
 
-    def test_smolmachines_uses_same_running_bottle_method(self) -> None:
-        backend = SmolmachinesBottleBackend()
+    def test_firecracker_uses_same_running_bottle_method(self) -> None:
+        backend = FirecrackerBottleBackend()
         with patch(
-            "bot_bottle.backend.smolmachines.resolve_plan.smolmachines_preflight",
+            "bot_bottle.backend.firecracker.resolve_plan.util.require_firecracker",
         ):
             plan = backend.prepare(
-                _spec(self.tmp, identity="demo-smol-work"),
+                _spec(self.tmp, identity="demo-fc-work"),
                 self.tmp / "stage",
             )
 
@@ -128,10 +128,10 @@ class TestRuntimeWorkspaceProvisioning(_FakeStateMixin, unittest.TestCase):
         backend.provision_workspace(plan, bottle)
 
         bottle.cp_in.assert_called_once_with(str(self.tmp), "/home/node/workspace")
-        metadata = bottle_state.read_metadata("demo-smol-work")
+        metadata = bottle_state.read_metadata("demo-fc-work")
         self.assertIsNotNone(metadata)
         assert metadata is not None
-        self.assertEqual("smolmachines", metadata.backend)
+        self.assertEqual("firecracker", metadata.backend)
 
 
 class TestWorkspaceTrustPath(_FakeStateMixin, unittest.TestCase):

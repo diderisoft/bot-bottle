@@ -241,7 +241,7 @@ class TestBottleMetadataBackend(_FakeHomeMixin, unittest.TestCase):
         assert loaded is not None
         self.assertEqual("docker", loaded.backend)
 
-    def test_backend_field_roundtrips_smolmachines(self):
+    def test_backend_field_roundtrips_firecracker(self):
         meta = BottleMetadata(
             identity="dev-b2",
             agent_name="dev",
@@ -249,13 +249,13 @@ class TestBottleMetadataBackend(_FakeHomeMixin, unittest.TestCase):
             copy_cwd=False,
             started_at="2026-06-02T00:00:00+00:00",
             compose_project="",
-            backend="smolmachines",
+            backend="firecracker",
         )
         write_metadata(meta)
         loaded = read_metadata("dev-b2")
         self.assertIsNotNone(loaded)
         assert loaded is not None
-        self.assertEqual("smolmachines", loaded.backend)
+        self.assertEqual("firecracker", loaded.backend)
 
     def test_missing_backend_field_defaults_to_empty(self):
         # Old state dirs written before PRD 0040 have no backend key.

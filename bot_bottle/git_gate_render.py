@@ -76,14 +76,14 @@ def git_gate_render_gitconfig(
     entries: tuple[ManifestGitEntry, ...], gate_host: str, *, scheme: str = "git",
 ) -> str:
     """Render the agent's ~/.gitconfig content for git-gate
-    `insteadOf` rewrites. Pure host-side, no docker / smolvm;
+    `insteadOf` rewrites. Pure host-side, no docker / VM;
     exposed for tests + reuse across backends.
 
     `gate_host` is the part of the URL between `<scheme>://` and the
     repo path — backends differ here:
       - docker:        `git-gate` (the short network alias)
-      - smolmachines:  `<bundle_ip>:<port>` (no DNS in the
-                       TSI-allowlisted guest)
+      - firecracker:   `<bundle_ip>:<port>` (no DNS on the
+                       point-to-point TAP link)
 
     Empty `entries` returns an empty string so callers can no-op
     cleanly without conditional formatting at the call site."""

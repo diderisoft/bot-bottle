@@ -18,8 +18,7 @@ scan, just as a fallback bucket alongside the project list.
 
 `cleanup` removes everything in the plan.
 
-Active-agent enumeration lives in `backend/docker/enumerate.py`
-(mirror of `backend/smolmachines/enumerate.py`).
+Active-agent enumeration lives in `backend/docker/enumerate.py`.
 """
 
 from __future__ import annotations
@@ -93,8 +92,8 @@ def _list_orphan_state_dirs(
 
     `protected_identities` is the set of slugs that are live in
     ANY backend — used so this docker-side check doesn't reap a
-    running smolmachines bottle's state dir (the layout is shared
-    across both backends)."""
+    running non-docker bottle's state dir (the layout is shared
+    across backends)."""
     state_root = _supervise.bot_bottle_root() / "state"
     if not state_root.is_dir():
         return []
@@ -119,7 +118,7 @@ def prepare_cleanup() -> DockerBottleCleanupPlan:
 
     Pulls the union of live identities across backends via
     `enumerate_active_agents()` so the orphan-state-dir bucket
-    doesn't include slugs whose smolmachines VM is still up."""
+    doesn't include slugs whose non-docker bottle is still up."""
     docker_mod.require_docker()
     projects = list_compose_projects()
     project_set = set(projects)

@@ -25,14 +25,14 @@
 - **Provider templates (Claude, Codex)** — `Dockerfile.claude` / `Dockerfile.codex`, or a bottle-supplied Dockerfile. Claude auth via long-lived OAuth token; Codex via opt-in host device-auth forwarding.
 - **gVisor auto-detect** — on Linux hosts where `runsc` is registered with Docker, every bottle launches under it for a userspace syscall barrier; no manifest config required.
 - **Apple Container backend (macOS default when available)** — runs the agent and sidecar bundle with Apple's `container` CLI, using a host-only agent network plus a separate sidecar egress network.
-- **Smolmachines backend** — runs the agent in a libkrun micro-VM while the sidecar bundle stays in Docker. TSI and smolmachines DNS filtering close the raw DNS exfiltration gap that exists in the legacy Docker backend. Runs on macOS (Hypervisor.framework) and Linux (KVM, `/dev/kvm`).
-- **Legacy Docker backend** — still available for examples, CI, and hosts without Apple Container via `BOT_BOTTLE_BACKEND=docker` or `--backend=docker`.
+- **Firecracker backend (Linux default when available)** — runs the agent in a KVM Firecracker microVM reached over SSH on a point-to-point TAP, with the sidecar bundle in Docker. A dedicated, fail-closed `nftables` table isolates the guest, closing the raw DNS/IP exfiltration gap that exists in the legacy Docker backend. Requires KVM (`/dev/kvm`) and a one-time privileged network-pool setup.
+- **Legacy Docker backend** — still available for examples, CI, and hosts without Apple Container or KVM via `BOT_BOTTLE_BACKEND=docker` or `--backend=docker`.
 
 ## Architecture
 
 On the default macOS Apple Container backend, a bottle is an agent container on a host-only internal network plus a sidecar bundle attached to both that internal network and a NAT egress network. The agent gets HTTP(S)_PROXY and CA bundle env vars pointing at the sidecar's internal-network IP, so HTTP/HTTPS traffic flows through the sidecar instead of direct egress. `bottle.git` / git-gate is intentionally deferred on this backend until a safe Apple Container key-delivery path exists.
 
-On the smolmachines backend, a bottle is an agent micro-VM plus a Docker sidecar bundle for egress, git-gate, and supervise. The VM reaches the sidecars through a per-bottle loopback alias allowed by TSI; smolmachines handles DNS filtering below the guest OS.
+On the Firecracker backend, a bottle is an agent microVM plus a Docker sidecar bundle for egress, git-gate, and supervise. The VM reaches the sidecars over a per-bottle point-to-point TAP link; a dedicated fail-closed `nftables` table (`inet bot_bottle_fc`) confines the guest to that link, so nothing leaves the box except through the sidecars. The TAP pool and nft table are provisioned once (root); per-launch needs no privilege.
 
 On the legacy Docker backend, the same logical bottle is two containers per agent: an `agent` container and a `sidecars` container. They share a per-agent Docker `--internal` network; the agent has no default route off-box.
 
@@ -71,25 +71,24 @@ When the agent exits, `cli.py` tears down every sidecar and both networks; nothi
 
 ## Quickstart
 
-On compatible macOS hosts, the default backend requires Apple's `container` CLI and does not require Docker. The smolmachines backend requires Docker on the host for the sidecar bundle plus `smolvm` (macOS or Linux). The legacy Docker backend requires Docker. Claude bottles also need a long-lived Claude Code OAuth token (`claude setup-token`) exported as `BOT_BOTTLE_CLAUDE_OAUTH_TOKEN`.
+On compatible macOS hosts, the default backend requires Apple's `container` CLI and does not require Docker. The Firecracker backend (Linux) requires Docker on the host for the sidecar bundle plus the `firecracker` binary and KVM. The legacy Docker backend requires Docker. Claude bottles also need a long-lived Claude Code OAuth token (`claude setup-token`) exported as `BOT_BOTTLE_CLAUDE_OAUTH_TOKEN`.
 
-Use `BOT_BOTTLE_BACKEND=docker ./cli.py start <agent>` on hosts where Apple Container is not installed and Docker is the desired backend.
+Use `BOT_BOTTLE_BACKEND=docker ./cli.py start <agent>` on hosts where neither Apple Container nor KVM is available and Docker is the desired backend.
 
-### smolmachines on Linux
+### Firecracker on Linux
 
-The smolmachines backend runs on Linux as well as macOS. On Linux, `smolvm`/libkrun use KVM, so the host needs:
+On Linux, a KVM-capable host defaults to the Firecracker backend. It needs:
 
 - **`/dev/kvm`** present and accessible. Load `kvm-intel` or `kvm-amd` (and enable virtualization in BIOS/firmware). The invoking user must be in the `kvm` group: `sudo usermod -aG kvm "$USER"` then re-login. bot-bottle preflights this and reports exactly what's missing.
-- **`smolvm`** on `PATH`: `curl -sSL https://smolmachines.com/install.sh | sh`.
-- **Docker** for the sidecar bundle and image build, same as macOS.
-
-Per-bottle isolation works the same as macOS without any `ifconfig`/sudo step — all of `127.0.0.0/8` is already loopback on Linux, so each bottle's sidecar bundle is published on its own `127.0.0.<N>` and TSI's allowlist is scoped to that `/32`.
+- **`firecracker`** on `PATH`: grab a release from <https://github.com/firecracker-microvm/firecracker/releases>. Start flows print this pointer when the binary is missing.
+- **Docker** for the sidecar bundle and image build.
+- **A one-time privileged network setup** — the per-bottle TAP pool plus the fail-closed `nftables` isolation table. Run `./cli.py firecracker setup` for the host-appropriate command (a declarative module on NixOS, a `sudo` script elsewhere); `./cli.py firecracker status` reports what's present.
 
 ```sh
-BOT_BOTTLE_BACKEND=smolmachines ./cli.py start <agent>
+BOT_BOTTLE_BACKEND=firecracker ./cli.py start <agent>
 ```
 
-> **NixOS:** enable `virtualisation.docker`, ensure the KVM module is loaded (`boot.kernelModules = [ "kvm-intel" ];` or `kvm-amd`), and add your user to the `kvm` and `docker` groups. If you run bottles from a Gitea Actions runner, use a `host`-label runner so Docker, `smolvm`, and `/dev/kvm` are all reachable from the job. `smolvm` isn't in nixpkgs — install the release binary (pin the version) and put it on the runner's `PATH`.
+> **NixOS:** enable `virtualisation.docker`, ensure the KVM module is loaded (`boot.kernelModules = [ "kvm-intel" ];` or `kvm-amd`), and add your user to the `kvm` and `docker` groups. Apply the network-pool module from `./cli.py firecracker setup` and `nixos-rebuild switch` (imperative nft/TAP rules don't survive a rebuild). `firecracker` isn't in nixpkgs by default as a user binary — install the release binary (pin the version) and put it on `PATH`.
 
 ```sh
 ./cli.py start <agent>   # builds the image on first run, drops you into claude

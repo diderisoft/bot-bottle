@@ -227,9 +227,9 @@ class AgentProvider(ABC):
         from .backend.util import AGENT_CA_PATH, log_ca_fingerprint, select_ca_cert
         from .log import die
         cert_host_path, label = select_ca_cert(plan.egress_plan)
-        # Ensure the target directory exists. smolvm's pack step may not
-        # preserve the empty /usr/local/share/ca-certificates/ directory
-        # on Linux; mkdir -p is idempotent and safe for all backends.
+        # Ensure the target directory exists. A backend's rootfs build
+        # may not preserve the empty /usr/local/share/ca-certificates/
+        # directory; mkdir -p is idempotent and safe for all backends.
         bottle.exec("mkdir -p /usr/local/share/ca-certificates", user="root")
         bottle.cp_in(str(cert_host_path), AGENT_CA_PATH)
         r = bottle.exec(

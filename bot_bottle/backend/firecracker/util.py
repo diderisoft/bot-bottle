@@ -63,16 +63,22 @@ def is_linux() -> bool:
     return platform.system() == "Linux"
 
 
+def is_host_capable() -> bool:
+    """Whether this host *could* run firecracker — Linux with KVM —
+    regardless of whether the `firecracker` binary is installed. Used
+    for default-backend selection so a KVM Linux host that hasn't
+    installed firecracker yet still selects it and gets an install
+    pointer at launch (see `require_firecracker`), rather than silently
+    falling back to docker."""
+    return is_linux() and os.path.exists(_KVM_DEVICE)
+
+
 def is_available() -> bool:
     """Cheap capability probe used by cross-backend enumeration —
     firecracker on PATH, on Linux, with KVM. Does not check the
     (operator-provisioned) kernel / pool, so an available-but-unset
     host still shows up and gets an actionable error at launch."""
-    return (
-        is_linux()
-        and shutil.which("firecracker") is not None
-        and os.path.exists(_KVM_DEVICE)
-    )
+    return is_host_capable() and shutil.which("firecracker") is not None
 
 
 def require_firecracker() -> None:
@@ -83,6 +89,7 @@ def require_firecracker() -> None:
         die("firecracker backend is only supported on Linux (KVM). "
             "On macOS use --backend=macos-container.")
     if shutil.which("firecracker") is None:
+        info("Firecracker is required but was not found on PATH.")
         info("Install: https://github.com/firecracker-microvm/firecracker/releases")
         die("firecracker not found on PATH")
     _require_kvm()

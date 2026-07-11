@@ -12,7 +12,7 @@ from bot_bottle.backend import ActiveAgent
 from bot_bottle.backend.freeze import get_freezer
 from bot_bottle.backend.docker.freezer import DockerFreezer
 from bot_bottle.backend.macos_container.freezer import MacosContainerFreezer
-from bot_bottle.backend.smolmachines.freezer import SmolmachinesFreezer
+from bot_bottle.backend.firecracker.freezer import FirecrackerFreezer
 
 
 class _FakeHomeMixin:
@@ -51,8 +51,8 @@ class TestGetFreezer(unittest.TestCase):
     def test_macos_container(self):
         self.assertIsInstance(get_freezer("macos-container"), MacosContainerFreezer)
 
-    def test_smolmachines(self):
-        self.assertIsInstance(get_freezer("smolmachines"), SmolmachinesFreezer)
+    def test_firecracker(self):
+        self.assertIsInstance(get_freezer("firecracker"), FirecrackerFreezer)
 
     def test_unknown_backend_dies(self):
         with patch("bot_bottle.backend.freeze.die", side_effect=SystemExit("die")):
@@ -176,39 +176,59 @@ class TestMacosContainerFreezer(_FakeHomeMixin, unittest.TestCase):
         self.assertTrue(bottle_state.is_preserved(slug))
 
 
-class TestSmolmachinesFreezer(_FakeHomeMixin, unittest.TestCase):
+class TestFirecrackerFreezer(_FakeHomeMixin, unittest.TestCase):
     def setUp(self):
         self._setup_fake_home()
+        # The freezer resolves the running VM's SSH key + config from
+        # the per-bottle run dir under the firecracker cache; point that
+        # at a temp dir so we can stage a fake live bottle.
+        self._cache = tempfile.TemporaryDirectory(prefix="fc-freezer-cache.")
+        self._cache_patch = patch(
+            "bot_bottle.backend.firecracker.freezer.util.cache_dir",
+            return_value=Path(self._cache.name),
+        )
+        self._cache_patch.start()
 
     def tearDown(self):
+        self._cache_patch.stop()
+        self._cache.cleanup()
         self._teardown_fake_home()
 
     def _write_meta(self, slug: str) -> None:
         bottle_state.write_metadata(bottle_state.BottleMetadata(
             identity=slug, agent_name="dev", cwd="", copy_cwd=False,
-            started_at="t", backend="smolmachines",
+            started_at="t", backend="firecracker",
         ))
 
+    def _stage_run_dir(self, slug: str, guest_ip: str = "100.64.0.1") -> None:
+        run_dir = Path(self._cache.name) / "run" / slug
+        run_dir.mkdir(parents=True)
+        (run_dir / "bottle_id_ed25519").write_text("KEY")
+        (run_dir / "config.json").write_text(
+            '{"boot-source": {"boot_args": '
+            f'"console=ttyS0 ip={guest_ip}::100.64.0.0:255.255.255.254::eth0:off"}}}}'
+        )
+
     def test_snapshots_running_vm_without_stopping(self):
-        """Commit should exec-tar the running VM, not stop it."""
+        """Commit should tar the running guest rootfs over SSH, not stop it."""
         slug = "dev-abc12"
         self._write_meta(slug)
-        freezer = SmolmachinesFreezer()
-        agent = _make_agent(slug, "smolmachines")
+        self._stage_run_dir(slug)
+        freezer = FirecrackerFreezer()
+        agent = _make_agent(slug, "firecracker")
 
-        with patch("bot_bottle.backend.smolmachines.freezer._snapshot_running_vm") as mock_snap, \
+        with patch("bot_bottle.backend.firecracker.freezer._commit_via_ssh") as mock_commit, \
              patch("bot_bottle.backend.freeze.info"), \
-             patch("bot_bottle.backend.smolmachines.freezer.info"):
+             patch("bot_bottle.backend.firecracker.freezer.info"):
             freezer.commit(agent)
 
-        expected_binary = bottle_state.bottle_state_dir(slug) / "committed-smolmachine"
-        mock_snap.assert_called_once_with(
-            f"bot-bottle-{slug}",
-            f"bot-bottle-committed-{slug}:latest",
-            expected_binary,
-        )
-        expected_sidecar = str(expected_binary.with_suffix(".smolmachine"))
-        self.assertEqual(expected_sidecar, bottle_state.read_committed_image(slug))
+        image_tag = f"bot-bottle-committed-{slug}:latest"
+        self.assertEqual(1, mock_commit.call_count)
+        # (private_key, guest_ip, image_tag) — guest_ip parsed from config.
+        args = mock_commit.call_args.args
+        self.assertEqual("100.64.0.1", args[1])
+        self.assertEqual(image_tag, args[2])
+        self.assertEqual(image_tag, bottle_state.read_committed_image(slug))
         self.assertTrue(bottle_state.is_preserved(slug))
 
 

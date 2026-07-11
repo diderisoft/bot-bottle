@@ -45,8 +45,9 @@ def cmd_list(argv: list[str]) -> int:
             print(name)
         return 0
 
-    # `active` enumerates every backend (docker + smolmachines)
-    # so smolmachines bottles aren't hidden behind the env var.
+    # `active` enumerates every backend (docker, firecracker,
+    # macos-container) so non-docker bottles aren't hidden behind
+    # the env var.
     active = enumerate_active_agents()
     if not active:
         print("no active bot-bottle bottles", file=sys.stderr)

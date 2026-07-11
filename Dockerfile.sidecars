@@ -24,7 +24,7 @@
 # Exposed ports inside the container:
 #   9099  egress (mitmproxy, agent-facing HTTPS proxy)
 #   9418  git-gate (git-daemon)
-#   9420  git-gate smart HTTP (smolmachines agent-facing transport)
+#   9420  git-gate smart HTTP (VM-backend agent-facing transport)
 #   9100  supervise (MCP HTTP)
 
 # Stage 1: gitleaks binary. The upstream gitleaks image is alpine

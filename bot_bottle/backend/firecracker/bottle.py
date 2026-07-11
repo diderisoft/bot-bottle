@@ -4,8 +4,7 @@ Every operation routes through SSH to the guest (dropbear, listening on
 the TAP link). `exec` pipes a script over stdin and captures output;
 `cp_in` uses scp; `exec_agent` uses `ssh -t` for an interactive PTY
 session. `ssh -t` forwards the host terminal's SIGWINCH to the remote
-PTY natively, so — unlike the smolmachines backend — no resize bridge
-is needed.
+PTY natively, so no separate resize bridge is needed.
 
 Commands run as the image's `node` user via `runuser`, with HOME/USER/
 PATH and the bottle env (HTTPS_PROXY at the sidecar, CA paths, …) set

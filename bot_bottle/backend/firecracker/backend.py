@@ -38,6 +38,14 @@ class FirecrackerBottleBackend(
     def is_available(cls) -> bool:
         return _util.is_available()
 
+    @classmethod
+    def is_host_capable(cls) -> bool:
+        """Linux + KVM, regardless of whether the `firecracker` binary
+        is installed. Drives default-backend selection so a capable host
+        without the binary still lands on firecracker and gets an
+        install pointer at launch."""
+        return _util.is_host_capable()
+
     def _preflight(self) -> None:
         _resolve_plan.preflight()
 

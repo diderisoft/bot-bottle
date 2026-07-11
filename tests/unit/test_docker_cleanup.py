@@ -99,25 +99,25 @@ class TestOrphanStateDirs(_FakeHomeMixin, unittest.TestCase):
 
     def test_protected_identity_skips_dir(self):
         # `protected_identities` carries slugs that are live in
-        # any backend (smolmachines included). docker's orphan
-        # detection respects them so a running smolmachines
+        # any backend (firecracker included). docker's orphan
+        # detection respects them so a running firecracker
         # bottle's state dir isn't reaped while the VM is up.
-        bottle_state.write_per_bottle_dockerfile("smol-hhh", "FROM x\n")
+        bottle_state.write_per_bottle_dockerfile("fc-hhh", "FROM x\n")
         self.assertEqual(
             [],
-            _list_orphan_state_dirs(set(), {"smol-hhh"}),
+            _list_orphan_state_dirs(set(), {"fc-hhh"}),
         )
 
     def test_protected_overrides_no_live_project(self):
-        # A smolmachines bottle has no docker compose project but
+        # A firecracker bottle has no docker compose project but
         # IS in the protected set; the absence of a project
         # shouldn't cause a reap.
-        bottle_state.write_per_bottle_dockerfile("smol-iii", "FROM x\n")
+        bottle_state.write_per_bottle_dockerfile("fc-iii", "FROM x\n")
         self.assertEqual(
             [],
             _list_orphan_state_dirs(
                 {"bot-bottle-something-else"},  # different project up
-                {"smol-iii"},                       # but smol-iii is live
+                {"fc-iii"},                         # but fc-iii is live
             ),
         )
 

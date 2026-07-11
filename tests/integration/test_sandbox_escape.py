@@ -11,7 +11,7 @@ asserts each one is blocked:
   5. Secret exfil via README link pushed through git-gate
 
 The suite is backend-agnostic — it goes through `get_bottle_backend()`
-so smolmachines can be tested by setting `BOT_BOTTLE_BACKEND=smolmachines`.
+so another backend can be tested by setting `BOT_BOTTLE_BACKEND`.
 When unset, this integration test pins Docker explicitly to preserve
 the Docker-backed CI path.
 
@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -70,27 +69,16 @@ class TestSandboxEscape(unittest.TestCase):
     _launch_cm = None  # backend.launch context manager
     _bottle = None
     _identity: str = ""
+    _backend_name: str = "docker"
 
     @classmethod
     def setUpClass(cls) -> None:
-        # Per-backend prerequisites. Docker is always required (both
-        # backends use it — docker for the agent + sidecars, smolmachines
-        # for the sidecar bundle); the class-level @skip_unless_docker
-        # already covers that. Smolmachines additionally needs smolvm on
-        # PATH and is macOS-only in v1 (libkrun/TSI). Skip cleanly when
-        # those are missing rather than die-ing inside backend.prepare.
-        backend_name = os.environ.get("BOT_BOTTLE_BACKEND", "docker")
-        if backend_name == "smolmachines":
-            if sys.platform not in ("darwin", "linux"):
-                raise unittest.SkipTest(
-                    f"BOT_BOTTLE_BACKEND=smolmachines is not supported "
-                    f"on {sys.platform} (macOS and Linux only)"
-                )
-            if shutil.which("smolvm") is None:
-                raise unittest.SkipTest(
-                    "BOT_BOTTLE_BACKEND=smolmachines requires `smolvm` "
-                    "on PATH: curl -sSL https://smolmachines.com/install.sh | sh"
-                )
+        # Docker is always required (the agent + sidecars run under it,
+        # and VM backends still use it for the sidecar bundle); the
+        # class-level @skip_unless_docker already covers that. Pin
+        # Docker when BOT_BOTTLE_BACKEND is unset to preserve the
+        # Docker-backed CI path.
+        cls._backend_name = os.environ.get("BOT_BOTTLE_BACKEND", "docker")
 
         # Throwaway static key for the git-gate fixture. It need not
         # be a real SSH key: test 5 reaches gitleaks before any SSH
@@ -149,7 +137,7 @@ class TestSandboxEscape(unittest.TestCase):
 
         cls._stage_dir = Path(tempfile.mkdtemp(prefix="sandbox-escape-stage."))
         try:
-            backend = get_bottle_backend(backend_name)
+            backend = get_bottle_backend(cls._backend_name)
             plan = backend.prepare(spec, stage_dir=cls._stage_dir)
             cls._identity = plan.slug
 
@@ -421,7 +409,7 @@ class TestSandboxEscape(unittest.TestCase):
         # ~/.gitconfig insteadOf rewrite (set up by provision_git)
         # redirects to the gate. This makes the test backend-
         # agnostic: docker resolves the gate via the short `git-gate`
-        # alias, smolmachines via `<bundle_ip>:9418` — both
+        # alias, a VM backend via `<bundle_ip>:9418` — both
         # transparent to the test through insteadOf.
         upstream_url = "ssh://git@unreachable.invalid:22/throwaway.git"
 

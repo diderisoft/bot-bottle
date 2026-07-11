@@ -28,8 +28,8 @@ def enumerate_active() -> list[ActiveAgent]:
         slug = name[len(_SIDECAR_PREFIX):]
         metadata = read_metadata(slug)
         if metadata is None or metadata.backend != "firecracker":
-            # Skip sidecars owned by another backend (docker/smolmachines
-            # share the container-name prefix).
+            # Skip sidecars owned by another backend (docker shares the
+            # container-name prefix).
             continue
         out.append(ActiveAgent(
             backend_name="firecracker",

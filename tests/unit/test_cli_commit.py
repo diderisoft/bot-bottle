@@ -83,9 +83,9 @@ class TestCmdCommitSlugArg(_FakeHomeMixin, unittest.TestCase):
         mock_gf.assert_called_once_with("macos-container")
         mock_freezer.commit_slug.assert_called_once_with(slug)
 
-    def test_commits_smolmachines_bottle(self):
+    def test_commits_firecracker_bottle(self):
         slug = "dev-abc12"
-        self._write_meta(slug, "smolmachines")
+        self._write_meta(slug, "firecracker")
 
         with patch("bot_bottle.cli.commit.get_freezer") as mock_gf:
             mock_freezer = MagicMock()
@@ -93,7 +93,7 @@ class TestCmdCommitSlugArg(_FakeHomeMixin, unittest.TestCase):
             rc = cmd_commit([slug])
 
         self.assertEqual(0, rc)
-        mock_gf.assert_called_once_with("smolmachines")
+        mock_gf.assert_called_once_with("firecracker")
 
     def test_returns_zero_on_commit_cancelled(self):
         slug = "dev-abc12"

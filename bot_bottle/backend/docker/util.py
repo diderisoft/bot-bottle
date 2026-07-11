@@ -167,36 +167,6 @@ def commit_container(container_name: str, image_tag: str) -> None:
     info(f"committed {container_name!r} → {image_tag!r}")
 
 
-def image_id(ref: str) -> str:
-    """Return the content-addressed image ID (e.g.
-    `sha256:abcd...`) for `ref`. The smolmachines backend keys its
-    `.smolmachine` artifact cache on this, so a Dockerfile change
-    that produces a new image automatically invalidates the cache."""
-    r = subprocess.run(
-        ["docker", "image", "inspect", "--format", "{{.Id}}", ref],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if r.returncode != 0:
-        die(
-            f"docker image inspect for {ref!r} failed: "
-            f"{(r.stderr or '').strip() or '<no stderr>'}"
-        )
-    return r.stdout.strip()
-
-
-def save(ref: str, output: str) -> None:
-    """`docker save REF -o OUTPUT`. Writes a tarball of the image
-    layers + manifest to the host path. Used by smolmachines
-    prepare to hand the agent image to a containerized crane that
-    pushes it to the ephemeral registry — bypassing the docker
-    daemon's `docker push` (which on Docker Desktop can't reach a
-    host-loopback registry and refuses plain-HTTP pushes to
-    non-loopback hosts)."""
-    subprocess.run(["docker", "save", ref, "-o", output], check=True)
-
-
 def _silent_run(cmd: Iterable[str]) -> int:
     return subprocess.run(
         list(cmd),

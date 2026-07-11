@@ -1,7 +1,7 @@
-"""Shared helpers used by both backends' resolve_plan steps.
+"""Shared helpers used across backends' resolve_plan steps.
 
 Each helper owns one well-defined step of the per-bottle plan
-resolution so docker and smolmachines don't repeat the same logic.
+resolution so the backends don't repeat the same logic.
 Backend-specific steps (container names, env-file, per-bottle
 Dockerfile overrides, subnet allocation) stay in the backend's own
 resolve_plan.py.

@@ -2,10 +2,10 @@
 
 Docker bottles are committed to a local Docker image. Macos-container
 bottles are exported and rebuilt as a local Apple Container image.
-Smolmachines bottles are packed from the running VM into a
-`.smolmachine` artifact. The resulting reference is stored in
-per-bottle state so the next `./cli.py resume <slug>` boots from the
-snapshot instead of rebuilding from the Dockerfile.
+Firecracker bottles stream the guest rootfs out over SSH and rebuild a
+local Docker image. The resulting reference is stored in per-bottle
+state so the next `./cli.py resume <slug>` boots from the snapshot
+instead of rebuilding from the Dockerfile.
 """
 
 from __future__ import annotations

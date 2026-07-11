@@ -85,7 +85,7 @@ SUPERVISE_PORT = 9100
 # tool. The hostname + port match egress's docker network
 # listen port (see backend.docker.egress.EGRESS_PORT). The supervise
 # daemon runs inside the sidecar bundle alongside egress, so loopback
-# is the stable address across docker, smolmachines, and Apple
+# is the stable address across docker, firecracker, and Apple
 # Container backends.
 EGRESS_FORWARD_PROXY = "http://127.0.0.1:9099"
 EGRESS_INTROSPECT_URL = "http://_egress.local/allowlist"
