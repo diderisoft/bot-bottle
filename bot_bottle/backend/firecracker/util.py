@@ -268,6 +268,10 @@ def ssh_base_argv(private_key: Path, guest_ip: str) -> list[str]:
     return [
         "ssh",
         "-i", str(private_key),
+        # Only offer the per-bottle key — don't let an agent or the
+        # operator's ~/.ssh/config inject other identities (newer
+        # OpenSSH otherwise may not reliably present the -i key).
+        "-o", "IdentitiesOnly=yes",
         "-o", "StrictHostKeyChecking=no",
         "-o", "UserKnownHostsFile=/dev/null",
         "-o", "LogLevel=ERROR",
@@ -301,9 +305,17 @@ if [ -n "$KEY" ]; then
     chown -R node:node /home/node/.ssh 2>/dev/null || true
 fi
 
+# The rootless rootfs build (`docker export | tar` as a non-root user)
+# can't preserve uid 0, so every path lands owned by the build uid,
+# which maps to `node` (uid 1000) in-guest — including /root. dropbear
+# (like OpenSSH) refuses root's authorized_keys unless the home dir is
+# owned by root, so restore root's ownership of its own home.
+chown -R 0:0 /root 2>/dev/null || true
+
 mkdir -p /etc/dropbear /run
-# -R: generate host keys on demand. -E: log to stderr (guest console).
-/bb-dropbear -R -E -p 22 2>/dev/null &
+# -R: generate host keys on demand. -E: log auth failures to stderr,
+# captured in the host-side console.log for debugging.
+/bb-dropbear -R -E -p 22 &
 
 # Reap zombies as PID 1. dropbear is always a child, so `wait` blocks
 # rather than busy-looping.

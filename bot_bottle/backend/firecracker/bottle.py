@@ -151,8 +151,13 @@ class FirecrackerBottle(Bottle):
             ["tar", "-C", host_parent, "-cf", "-", host_base],
             stdout=subprocess.PIPE,
         )
+        # Pass the command as one arg: ssh space-joins everything after
+        # the host into a single string for the guest's login shell, so a
+        # `sh -c <remote>` split would drop everything past the first word
+        # (the guest shell runs `<remote>` directly; stdin carries the
+        # tar).
         ssh = subprocess.run(
-            [*self._ssh(tty=False), "--", "sh", "-c", remote],
+            [*self._ssh(tty=False), "--", remote],
             stdin=tar.stdout, capture_output=True, text=True, check=False,
         )
         tar.wait()
