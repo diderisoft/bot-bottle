@@ -38,7 +38,15 @@ class TestNetpoolSlots(unittest.TestCase):
                          (s1.iface, s1.host_ip, s1.guest_ip))
 
     def test_guest_cidr_is_31(self):
-        self.assertEqual("100.64.0.1/31", netpool.slot(0).guest_cidr)
+        with patch.dict(os.environ, {"BOT_BOTTLE_FC_IP_BASE": "100.64.0.0"}):
+            self.assertEqual("100.64.0.1/31", netpool.slot(0).guest_cidr)
+
+    def test_default_base_avoids_cgnat_and_common_private_ranges(self):
+        # The default base must NOT sit in 100.64.0.0/10 (RFC-6598 CGNAT,
+        # which Tailscale hands node addresses from); it's an obscure
+        # RFC-1918 block instead.
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual("10.243.0.0", netpool.ip_base())
 
     def test_pool_size_env_override(self):
         with patch.dict(os.environ, {"BOT_BOTTLE_FC_POOL_SIZE": "4"}):
@@ -63,6 +71,49 @@ class TestNetpoolRenderers(unittest.TestCase):
             out = netpool.render_shell_setup()
         self.assertIn("BOT_BOTTLE_FC_POOL_SIZE=3", out)
         self.assertIn("firecracker-netpool.sh up", out)
+
+
+class TestNetpoolOverlap(unittest.TestCase):
+    """`overlapping_routes()` flags a pool base that collides with an
+    existing host route (Tailscale CGNAT peer, docker/libvirt bridge,
+    LAN) and ignores our own bbfc TAPs + the default route."""
+
+    def _routes(self, entries: list[dict]) -> object:
+        import json
+        import subprocess
+
+        def fake_run(argv, **kwargs):
+            return subprocess.CompletedProcess(
+                argv, 0, stdout=json.dumps(entries), stderr="",
+            )
+        return patch.object(netpool.subprocess, "run", side_effect=fake_run)
+
+    def test_flags_route_overlapping_pool(self):
+        # base 100.64.0.0 + a Tailscale peer /32 inside the pool window.
+        with patch.dict(os.environ, {"BOT_BOTTLE_FC_IP_BASE": "100.64.0.0",
+                                     "BOT_BOTTLE_FC_POOL_SIZE": "8"}), \
+             self._routes([
+                 {"dst": "default", "dev": "enp4s0"},
+                 {"dst": "100.64.0.5", "dev": "tailscale0"},
+             ]):
+            conflicts = netpool.overlapping_routes()
+        self.assertEqual(1, len(conflicts))
+        self.assertEqual("tailscale0", conflicts[0].dev)
+
+    def test_ignores_own_taps_and_default(self):
+        with patch.dict(os.environ, {"BOT_BOTTLE_FC_IP_BASE": "10.243.0.0",
+                                     "BOT_BOTTLE_FC_POOL_SIZE": "8"}), \
+             self._routes([
+                 {"dst": "default", "dev": "enp4s0"},
+                 {"dst": "10.243.0.0/31", "dev": "bbfc0"},
+                 {"dst": "192.168.1.0/24", "dev": "enp4s0"},
+             ]):
+            self.assertEqual([], netpool.overlapping_routes())
+
+    def test_empty_when_ip_missing(self):
+        with self._routes([]) as run:
+            run.side_effect = FileNotFoundError()
+            self.assertEqual([], netpool.overlapping_routes())
 
 
 class TestNetpoolAllocation(unittest.TestCase):

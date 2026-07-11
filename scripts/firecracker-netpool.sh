@@ -19,11 +19,14 @@
 #     virbr0 (libvirt), cni0 (k8s) or br-* (docker networks).
 #   * Own nftables table `bot_bottle_fc` — independent of the iptables
 #     filter/nat tables Docker/ufw/firewalld use, so nothing is stomped.
-#   * Default IP block is RFC-6598 shared address space (100.64.0.0/10),
-#     purpose-built to not collide with LAN/VPN private ranges.
+#   * Default IP block is an obscure RFC-1918 /16 (10.243.0.0/16),
+#     chosen to dodge the usual occupants (docker 172.17-31, libvirt
+#     192.168.122, k8s 10.42/10.244, home LANs). NOT 100.64.0.0/10 —
+#     that's RFC-6598 CGNAT, which Tailscale hands node addresses from.
 #
 # NixOS: imperative rules here do NOT survive nixos-rebuild. Use the
-# declarative module in docs/firecracker/nixos-netpool.nix instead.
+# declarative module in nix/firecracker-netpool.nix instead (exposed as
+# the flake output nixosModules.firecracker-netpool).
 #
 # Usage:
 #   sudo ./scripts/firecracker-netpool.sh up
@@ -32,14 +35,14 @@
 #
 # Env overrides (must match the backend's util.py constants):
 #   BOT_BOTTLE_FC_POOL_SIZE   number of slots (default 8)
-#   BOT_BOTTLE_FC_IP_BASE     base IPv4 of the /31 pool (default 100.64.0.0)
+#   BOT_BOTTLE_FC_IP_BASE     base IPv4 of the /31 pool (default 10.243.0.0)
 #   BOT_BOTTLE_FC_IFACE_PREFIX  TAP name prefix (default bbfc)
 #   BOT_BOTTLE_FC_OWNER       owning user (default $SUDO_USER or $USER)
 
 set -euo pipefail
 
 POOL_SIZE="${BOT_BOTTLE_FC_POOL_SIZE:-8}"
-IP_BASE="${BOT_BOTTLE_FC_IP_BASE:-100.64.0.0}"
+IP_BASE="${BOT_BOTTLE_FC_IP_BASE:-10.243.0.0}"
 PREFIX="${BOT_BOTTLE_FC_IFACE_PREFIX:-bbfc}"
 OWNER="${BOT_BOTTLE_FC_OWNER:-${SUDO_USER:-$USER}}"
 TABLE="bot_bottle_fc"
