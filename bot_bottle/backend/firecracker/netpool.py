@@ -231,11 +231,45 @@ def allocate(slug: str) -> tuple[Slot, IO[str]]:
 
 # --- config renderers (shown by `./cli.py backend setup`) -----------
 
+# The persistent unit is the portable install: the same systemd oneshot
+# on every systemd distro (Debian/Ubuntu/Fedora/RHEL/Arch/…).
+SYSTEMD_UNIT = "bot-bottle-firecracker-netpool.service"
+
+
 def render_shell_setup() -> str:
-    """The imperative command for non-NixOS hosts."""
+    """The imperative one-shot command — non-persistent fallback for
+    hosts without systemd (OpenRC/runit/manual)."""
     env = _nondefault_env()
     prefix = f"{env} " if env else ""
     return f"sudo {prefix}./scripts/firecracker-netpool.sh up"
+
+
+def render_systemd_unit(owner: str, script_path: str) -> str:
+    """A portable systemd oneshot unit for the pool — identical across
+    every systemd distro. ExecStart/ExecStop delegate to the bundled
+    shell script (the single source of bring-up logic); pool params are
+    pinned via Environment= so the unit matches the CLI's current
+    settings and doesn't depend on $SUDO_USER at boot (systemd runs it
+    as root with no SUDO_USER, which would otherwise own the TAPs as
+    root and break the rootless launch)."""
+    return f"""[Unit]
+Description=bot-bottle Firecracker TAP pool + nft isolation table
+After=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=BOT_BOTTLE_FC_POOL_SIZE={pool_size()}
+Environment=BOT_BOTTLE_FC_IP_BASE={ip_base()}
+Environment=BOT_BOTTLE_FC_IFACE_PREFIX={IFACE_PREFIX}
+Environment=BOT_BOTTLE_FC_OWNER={owner}
+ExecStart={script_path} up
+ExecStop={script_path} down
+
+[Install]
+WantedBy=multi-user.target
+"""
 
 
 # The NixOS setup is a real, importable module (nix/firecracker-netpool.nix,

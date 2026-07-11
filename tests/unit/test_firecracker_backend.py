@@ -73,6 +73,21 @@ class TestNetpoolRenderers(unittest.TestCase):
         self.assertIn("BOT_BOTTLE_FC_POOL_SIZE=3", out)
         self.assertIn("firecracker-netpool.sh up", out)
 
+    def test_systemd_unit_pins_params_and_calls_script(self):
+        # The portable install: one oneshot unit, params pinned via
+        # Environment= (must not depend on $SUDO_USER at boot), delegating
+        # bring-up/teardown to the bundled script.
+        script = "/opt/bb/scripts/firecracker-netpool.sh"
+        with patch.dict(os.environ, {"BOT_BOTTLE_FC_POOL_SIZE": "4"}):
+            unit = netpool.render_systemd_unit("alice", script)
+        self.assertIn("Type=oneshot", unit)
+        self.assertIn("BOT_BOTTLE_FC_POOL_SIZE=4", unit)
+        self.assertIn("BOT_BOTTLE_FC_OWNER=alice", unit)
+        self.assertIn(f"BOT_BOTTLE_FC_IP_BASE={netpool.ip_base()}", unit)
+        self.assertIn(f"ExecStart={script} up", unit)
+        self.assertIn(f"ExecStop={script} down", unit)
+        self.assertIn("WantedBy=multi-user.target", unit)
+
 
 class TestFirecrackerStatus(unittest.TestCase):
     """`status()` gates launch: ready == TAP pool present + no overlap.

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -23,15 +24,27 @@ from . import util
 
 
 _FC_RELEASES = "https://github.com/firecracker-microvm/firecracker/releases"
+_UNIT_PATH = Path("/etc/systemd/system") / netpool.SYSTEMD_UNIT
 
 
 def _owner() -> str:
-    return os.environ.get("USER", "youruser")
+    # Under `sudo`, USER is root but SUDO_USER is the real invoker — the
+    # TAPs must be owned by them so `./cli.py start` stays rootless.
+    return os.environ.get("SUDO_USER") or os.environ.get("USER") or "youruser"
+
+
+def _has_systemd() -> bool:
+    return Path("/run/systemd/system").is_dir()
 
 
 def _module_path() -> str:
     """Absolute path to the importable NixOS module in this checkout."""
     return str(Path(__file__).resolve().parents[3] / "nix" / "firecracker-netpool.nix")
+
+
+def _script_path() -> str:
+    """Absolute path to the bundled bring-up script in this checkout."""
+    return str(Path(__file__).resolve().parents[3] / "scripts" / "firecracker-netpool.sh")
 
 
 def _print_prereqs() -> None:
@@ -113,21 +126,65 @@ def setup() -> int:
             f"  services.bot-bottle-firecracker = {{ enable = true; owner = \"{_owner()}\"; }};\n\n"
             "Then `nixos-rebuild switch`.\n"
         )
+    elif _has_systemd():
+        _setup_systemd()
     else:
-        sys.stderr.write("Run the one-time setup as root:\n\n")
-        sys.stdout.write(netpool.render_shell_setup() + "\n")
         sys.stderr.write(
-            "\n(On NixOS, use the declarative module instead — this host "
-            "was not detected as NixOS.)\n"
+            "No systemd detected. Run the one-time bring-up as root (and add "
+            "your own boot persistence — e.g. an OpenRC/runit service):\n\n"
         )
+        sys.stdout.write(netpool.render_shell_setup() + "\n")
     return 0
+
+
+def _setup_systemd() -> None:
+    """Install the pool as a persistent systemd unit — the portable path,
+    identical on every systemd distro. Performs the install directly when
+    run as root; otherwise prints a self-contained copy-paste block."""
+    unit = netpool.render_systemd_unit(_owner(), _script_path())
+    sys.stderr.write(
+        f"Persistent install (systemd — same on every systemd distro). Needs "
+        f"`nft` (nftables) and `ip` (iproute2); install via your package "
+        f"manager if `backend status` reports them missing.\n\n"
+    )
+    if os.geteuid() == 0:
+        _UNIT_PATH.write_text(unit)
+        subprocess.run(["systemctl", "daemon-reload"], check=False)
+        rc = subprocess.run(
+            ["systemctl", "enable", "--now", netpool.SYSTEMD_UNIT], check=False,
+        ).returncode
+        if rc == 0:
+            sys.stderr.write(
+                f"Installed and started {netpool.SYSTEMD_UNIT}. Verify with "
+                f"`./cli.py backend status --backend=firecracker`.\n"
+            )
+        else:
+            sys.stderr.write(
+                f"Wrote {_UNIT_PATH} but `systemctl enable --now` failed — "
+                f"check `systemctl status {netpool.SYSTEMD_UNIT}`.\n"
+            )
+        return
+    sys.stderr.write(
+        "Install the unit (one copy-paste; enables it on boot too):\n\n"
+    )
+    sys.stdout.write(
+        f"sudo tee {_UNIT_PATH} >/dev/null <<'UNIT'\n"
+        f"{unit}"
+        f"UNIT\n"
+        f"sudo systemctl daemon-reload\n"
+        f"sudo systemctl enable --now {netpool.SYSTEMD_UNIT}\n"
+    )
+    sys.stderr.write(
+        f"\n(Or re-run this as root to install it directly: "
+        f"sudo ./cli.py backend setup --backend=firecracker)\n"
+    )
 
 
 def teardown() -> int:
     slots = netpool.all_slots()
     sys.stderr.write(
         f"Undo the Firecracker network pool ({len(slots)} slots, base "
-        f"{netpool.ip_base()}) — a privileged, one-time operation.\n\n"
+        f"{netpool.ip_base()}) — a privileged operation.\n\n"
     )
     if _is_nixos():
         sys.stderr.write(
@@ -136,8 +193,28 @@ def teardown() -> int:
             "netdevs and nft table are removed declaratively.\n\n"
             "To tear down imperatively before a rebuild (does not persist):\n\n"
         )
-    else:
-        sys.stderr.write("Run the teardown as root:\n\n")
+        sys.stdout.write("sudo ./scripts/firecracker-netpool.sh down\n")
+        return 0
+    if _has_systemd():
+        if os.geteuid() == 0:
+            subprocess.run(
+                ["systemctl", "disable", "--now", netpool.SYSTEMD_UNIT],
+                check=False,
+            )
+            _UNIT_PATH.unlink(missing_ok=True)
+            subprocess.run(["systemctl", "daemon-reload"], check=False)
+            sys.stderr.write(
+                f"Stopped, disabled, and removed {netpool.SYSTEMD_UNIT}.\n"
+            )
+        else:
+            sys.stderr.write("Remove the persistent unit (one copy-paste):\n\n")
+            sys.stdout.write(
+                f"sudo systemctl disable --now {netpool.SYSTEMD_UNIT}\n"
+                f"sudo rm -f {_UNIT_PATH}\n"
+                f"sudo systemctl daemon-reload\n"
+            )
+        return 0
+    sys.stderr.write("Run the teardown as root:\n\n")
     sys.stdout.write("sudo ./scripts/firecracker-netpool.sh down\n")
     return 0
 
@@ -174,6 +251,26 @@ def status() -> int:
         ok = False
     else:
         sys.stderr.write(f"range overlap: none (base {netpool.ip_base()})\n")
+    _report_persistence()
     if not ok:
         sys.stderr.write("\nRun: ./cli.py backend setup --backend=firecracker\n")
     return 0 if ok else 1
+
+
+def _report_persistence() -> None:
+    """Report whether the pool is installed as the persistent systemd
+    unit (so it survives reboot) vs brought up imperatively. Advisory —
+    doesn't affect launch readiness."""
+    if not _has_systemd():
+        return
+    state = subprocess.run(
+        ["systemctl", "is-active", netpool.SYSTEMD_UNIT],
+        capture_output=True, text=True, check=False,
+    ).stdout.strip() or "unknown"
+    if state == "active":
+        sys.stderr.write(f"persistence: {netpool.SYSTEMD_UNIT} active "
+                         f"(survives reboot)\n")
+    else:
+        sys.stderr.write(f"persistence: {netpool.SYSTEMD_UNIT} {state} — pool "
+                         f"is not installed as a persistent unit (install with "
+                         f"`backend setup` so it survives reboot)\n")
