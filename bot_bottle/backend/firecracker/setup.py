@@ -14,14 +14,49 @@ generic `./cli.py backend {setup,status}` command dispatches to.
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 from pathlib import Path
 
 from . import netpool
+from . import util
+
+
+_FC_RELEASES = "https://github.com/firecracker-microvm/firecracker/releases"
 
 
 def _owner() -> str:
     return os.environ.get("USER", "youruser")
+
+
+def _print_prereqs() -> None:
+    """The firecracker binary + KVM + guest artifacts, shown before the
+    privileged network-pool step so operators see the full picture."""
+    fc = shutil.which("firecracker")
+    if fc:
+        sys.stderr.write(f"1) firecracker binary: found ({fc}).\n")
+    else:
+        sys.stderr.write(
+            "1) firecracker binary: NOT found on PATH. Install a release binary "
+            "and put it on PATH:\n"
+            f"     {_FC_RELEASES}\n"
+            "   e.g.: download firecracker-vX.Y.Z-$(uname -m).tgz, extract, and\n"
+            "     install -m755 release-*/firecracker-* ~/.local/bin/firecracker\n"
+            "   (NixOS: not packaged as a user binary — fetch the release, pin\n"
+            "    the version, and add it to PATH.)\n"
+        )
+    if util.is_host_capable():
+        sys.stderr.write("   KVM: /dev/kvm present.\n")
+    else:
+        sys.stderr.write(
+            "   KVM: /dev/kvm missing/unusable — load kvm-intel/kvm-amd, enable\n"
+            "   virtualization in firmware, and add your user to the `kvm` group.\n"
+        )
+    sys.stderr.write(
+        "   Guest artifacts: a kernel (BOT_BOTTLE_FC_KERNEL) and static dropbear\n"
+        "   (BOT_BOTTLE_FC_DROPBEAR) must be cached, and `mke2fs` (e2fsprogs) is\n"
+        "   needed to build the rootfs.\n\n"
+    )
 
 
 def _is_nixos() -> bool:
@@ -50,11 +85,13 @@ def _warn_overlaps() -> None:
 
 
 def setup() -> int:
+    sys.stderr.write("Firecracker backend — one-time host setup.\n\n")
+    _print_prereqs()
     slots = netpool.all_slots()
     sys.stderr.write(
-        f"Firecracker network pool: {len(slots)} slots "
-        f"({slots[0].iface}..{slots[-1].iface}), base {netpool.ip_base()}.\n"
-        f"This is a one-time privileged setup (needs root once).\n\n"
+        f"2) network pool: {len(slots)} slots "
+        f"({slots[0].iface}..{slots[-1].iface}), base {netpool.ip_base()} — "
+        f"TAP devices + nft isolation table, privileged (needs root once).\n\n"
     )
     _warn_overlaps()
     if _is_nixos():
