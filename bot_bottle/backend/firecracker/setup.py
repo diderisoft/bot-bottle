@@ -29,6 +29,11 @@ def _owner() -> str:
     return os.environ.get("USER", "youruser")
 
 
+def _module_path() -> str:
+    """Absolute path to the importable NixOS module in this checkout."""
+    return str(Path(__file__).resolve().parents[3] / "nix" / "firecracker-netpool.nix")
+
+
 def _print_prereqs() -> None:
     """The firecracker binary + KVM + guest artifacts, shown before the
     privileged network-pool step so operators see the full picture."""
@@ -96,18 +101,18 @@ def setup() -> int:
     _warn_overlaps()
     if _is_nixos():
         sys.stderr.write(
-            "Detected NixOS. Preferred: consume the flake module (versioned, "
-            "no copy-paste drift):\n\n"
-            "  # flake inputs (point at wherever you host bot-bottle):\n"
+            "Detected NixOS. Import the module — it is NON-INVASIVE: it does "
+            "not flip networking.nftables.enable or systemd.network.enable, so "
+            "your existing (iptables) firewall and Docker are untouched. A "
+            "systemd oneshot brings the pool up alongside them.\n\n"
+            "  # flake users:\n"
             "  inputs.bot-bottle.url = \"git+ssh://<your-bot-bottle-remote>\";\n"
-            "  # host module:\n"
             "  imports = [ inputs.bot-bottle.nixosModules.firecracker-netpool ];\n"
+            "  # channel (non-flake) users — import the file directly:\n"
+            f"  imports = [ {_module_path()} ];\n\n"
             f"  services.bot-bottle-firecracker = {{ enable = true; owner = \"{_owner()}\"; }};\n\n"
-            "Then `nixos-rebuild switch`. Channel (non-flake) users can "
-            "`imports = [ <bot-bottle>/nix/firecracker-netpool.nix ];` instead.\n\n"
-            "Fallback — paste this generated module directly:\n\n"
+            "Then `nixos-rebuild switch`.\n"
         )
-        sys.stdout.write(netpool.render_nixos_module())
     else:
         sys.stderr.write("Run the one-time setup as root:\n\n")
         sys.stdout.write(netpool.render_shell_setup() + "\n")

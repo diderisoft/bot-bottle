@@ -55,16 +55,17 @@ class TestNetpoolSlots(unittest.TestCase):
 
 
 class TestNetpoolRenderers(unittest.TestCase):
-    def test_nixos_module_has_table_and_taps(self):
-        with patch.dict(os.environ, {"BOT_BOTTLE_FC_POOL_SIZE": "2"}):
-            out = netpool.render_nixos_module()
-        self.assertIn('networking.nftables.tables."bot_bottle_fc"', out)
-        self.assertIn('Name = "bbfc0"', out)
-        self.assertIn('Name = "bbfc1"', out)
-        self.assertIn("net.ipv4.ip_forward", out)
-        # fail-closed isolation rules present
-        self.assertIn('iifname != "bbfc*" return', out)
-        self.assertIn("ct status dnat accept", out)
+    def test_nixos_module_is_non_invasive(self):
+        # The NixOS module must NOT flip the host firewall backend or
+        # hand interfaces to systemd-networkd; it brings the pool up via
+        # a systemd oneshot that coexists with an iptables firewall.
+        root = Path(__file__).resolve().parents[2]
+        mod = (root / "nix" / "firecracker-netpool.nix").read_text()
+        self.assertNotIn("networking.nftables.enable = true", mod)
+        self.assertNotIn("systemd.network.enable = true", mod)
+        self.assertIn("bot-bottle-firecracker-netpool", mod)  # the oneshot
+        self.assertIn(netpool.NFT_TABLE, mod)
+        self.assertIn('iifname != "${cfg.ifacePrefix}*" return', mod)
 
     def test_shell_setup_reflects_overrides(self):
         with patch.dict(os.environ, {"BOT_BOTTLE_FC_POOL_SIZE": "3"}):

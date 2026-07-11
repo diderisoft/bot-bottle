@@ -2,10 +2,20 @@
 #
 # The one-time privileged setup the Firecracker backend needs: a pool of
 # user-owned point-to-point TAP devices plus a fail-closed nftables table
-# that confines every microVM to its own sidecar. Enabling this module is
-# the NixOS equivalent of `sudo ./scripts/firecracker-netpool.sh up` — but
-# declarative, so the taps/table survive `nixos-rebuild` and are only
-# reconfigured when this config changes (running VMs aren't dropped).
+# that confines every microVM to its own sidecar.
+#
+# NON-INVASIVE BY DESIGN. It does NOT flip `networking.nftables.enable`
+# (which would switch your whole host firewall backend) or
+# `systemd.network.enable` (which would hand your interfaces to
+# systemd-networkd). Instead a single systemd oneshot service brings the
+# pool up on boot — the declarative equivalent of
+# `sudo ./scripts/firecracker-netpool.sh up`. The `inet <tableName>` table
+# is independent (its own hooks at priority -10), so it coexists with an
+# iptables `networking.firewall`, Docker, ufw, firewalld, etc.
+#
+# The oneshot is only restarted when this config changes, so a
+# `nixos-rebuild switch` doesn't tear down TAPs out from under running
+# VMs unless you actually changed the pool.
 #
 # The option defaults MUST match the backend constants in
 # bot_bottle/backend/firecracker/netpool.py (pool size, IP base, iface
@@ -13,7 +23,7 @@
 # the BOT_BOTTLE_FC_* env vars; if you override an option here, override
 # the matching env var for the CLI too (or set writeEnvFile = true below
 # to have this module emit them). Keep the two sides in lockstep.
-{ config, lib, ... }:
+{ config, lib, pkgs, ... }:
 
 let
   cfg = config.services.bot-bottle-firecracker;
@@ -42,7 +52,47 @@ let
     hostIp = intToIp (baseInt + 2 * i);
   }) cfg.poolSize;
 
-  mkAttr = f: lib.listToAttrs (map (s: lib.nameValuePair "10-${s.iface}" (f s)) slots);
+  ip = "${pkgs.iproute2}/bin/ip";
+  nft = "${pkgs.nftables}/bin/nft";
+
+  # Idempotent ruleset: (create-if-absent → delete → recreate) is atomic
+  # within one `nft -f`, so re-running `up` always lands a clean table.
+  nftFile = pkgs.writeText "bot-bottle-fc.nft" ''
+    table inet ${cfg.tableName}
+    delete table inet ${cfg.tableName}
+    table inet ${cfg.tableName} {
+      chain forward {
+        type filter hook forward priority -10; policy accept;
+        iifname != "${cfg.ifacePrefix}*" return
+        ct state established,related accept
+        ct status dnat accept
+        drop
+      }
+      chain input {
+        type filter hook input priority -10; policy accept;
+        iifname != "${cfg.ifacePrefix}*" return
+        ct state established,related accept
+        drop
+      }
+    }
+  '';
+
+  upScript = pkgs.writeShellScript "bot-bottle-fc-netpool-up" ''
+    set -eu
+    ${lib.concatMapStringsSep "\n" (s: ''
+      ${ip} link show ${s.iface} >/dev/null 2>&1 || ${ip} tuntap add dev ${s.iface} mode tap user ${cfg.owner}
+      ${ip} addr replace ${s.hostIp}/31 dev ${s.iface}
+      ${ip} link set ${s.iface} up
+    '') slots}
+    ${nft} -f ${nftFile}
+  '';
+
+  downScript = pkgs.writeShellScript "bot-bottle-fc-netpool-down" ''
+    ${nft} delete table inet ${cfg.tableName} 2>/dev/null || true
+    ${lib.concatMapStringsSep "\n" (s: ''
+      ${ip} link show ${s.iface} >/dev/null 2>&1 && ${ip} tuntap del dev ${s.iface} mode tap || true
+    '') slots}
+  '';
 in
 {
   options.services.bot-bottle-firecracker = {
@@ -106,39 +156,18 @@ in
     # VM->sidecar traffic is DNAT'd and forwarded, so forwarding must be on.
     boot.kernel.sysctl."net.ipv4.ip_forward" = 1;
 
-    systemd.network.enable = true;
-    systemd.network.netdevs = mkAttr (s: {
-      netdevConfig = { Name = s.iface; Kind = "tap"; };
-      tapConfig = { User = cfg.owner; };
-    });
-    systemd.network.networks = mkAttr (s: {
-      matchConfig.Name = s.iface;
-      address = [ "${s.hostIp}/31" ];
-      networkConfig.ConfigureWithoutCarrier = true;
-    });
-
-    # Independent, fail-closed table — coexists with Docker/ufw/firewalld
-    # rather than replacing the ruleset. A VM (traffic from a
-    # ${cfg.ifacePrefix}* TAP) may reach only its own sidecar (DNAT'd from
-    # the host TAP IP); everything else is dropped.
-    networking.nftables.enable = true;
-    networking.nftables.tables.${cfg.tableName} = {
-      family = "inet";
-      content = ''
-        chain forward {
-          type filter hook forward priority -10; policy accept;
-          iifname != "${cfg.ifacePrefix}*" return
-          ct state established,related accept
-          ct status dnat accept
-          drop
-        }
-        chain input {
-          type filter hook input priority -10; policy accept;
-          iifname != "${cfg.ifacePrefix}*" return
-          ct state established,related accept
-          drop
-        }
-      '';
+    # One oneshot brings up the whole pool (TAPs + independent nft table).
+    # No networking.nftables.enable / systemd.network.enable — see header.
+    systemd.services."bot-bottle-firecracker-netpool" = {
+      description = "bot-bottle Firecracker TAP pool + nft isolation table";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "network-pre.target" ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = upScript;
+        ExecStop = downScript;
+      };
     };
 
     environment.etc."bot-bottle/firecracker.env" = lib.mkIf cfg.writeEnvFile {
