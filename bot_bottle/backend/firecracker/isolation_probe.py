@@ -108,7 +108,7 @@ def verify_isolation(private_key: Path, guest_ip: str) -> None:
         die(f"ISOLATION FAILURE: the VM reached the host canary "
             f"{canary_ip}:{canary_port}. The egress boundary is not in "
             f"force — refusing to run the agent (fail-closed). Verify the "
-            f"nft table with: ./cli.py firecracker setup")
+            f"nft table with: ./cli.py backend setup --backend=firecracker")
     if result.returncode == 2:
         die("isolation probe inconclusive: the guest has no python3/bash/nc "
             "to run the connectivity test. Refusing to continue "

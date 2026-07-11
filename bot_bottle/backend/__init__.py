@@ -538,6 +538,28 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         doesn't fail when `cli.py list active` walks past
         firecracker."""
 
+    @classmethod
+    @abstractmethod
+    def setup(cls) -> int:
+        """Emit this backend's one-time host setup — privileged network
+        pool, daemon bring-up, install pointers, etc. — as
+        host-appropriate config or commands. Prints to stdout/stderr and
+        returns a shell exit code (0 = nothing to report / success). A
+        backend that needs no host setup prints a short note and returns
+        0. Invoked generically by `./cli.py backend setup [--backend=…]`
+        so operators can provision any backend without a
+        backend-specific command. Classmethod (like `is_available`) —
+        it's a host query, not per-bottle state."""
+
+    @classmethod
+    @abstractmethod
+    def status(cls) -> int:
+        """Report whether this backend's prerequisites are satisfied on
+        the host — binaries, daemon reachability, network pool, range
+        conflicts, etc. Prints a human-readable summary; returns 0 when
+        the backend is ready to launch and non-zero when something is
+        missing. Invoked by `./cli.py backend status [--backend=…]`."""
+
 
 # Import concrete backend classes AFTER the base types are defined, so
 # each backend module can pull BottleSpec / BottlePlan / BottleBackend

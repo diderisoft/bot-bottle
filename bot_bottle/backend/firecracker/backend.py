@@ -46,6 +46,16 @@ class FirecrackerBottleBackend(
         install pointer at launch."""
         return _util.is_host_capable()
 
+    @classmethod
+    def setup(cls) -> int:
+        from . import setup as _setup
+        return _setup.setup()
+
+    @classmethod
+    def status(cls) -> int:
+        from . import setup as _setup
+        return _setup.status()
+
     def _preflight(self) -> None:
         _resolve_plan.preflight()
 
