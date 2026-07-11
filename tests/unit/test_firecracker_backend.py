@@ -1,0 +1,187 @@
+"""Unit: Firecracker backend helpers.
+
+Covers the pieces that run without KVM/root: pool IP math + config
+renderers + allocation, the SSH-backed bottle's argv construction, and
+the VM boot-arg assembly.
+"""
+
+from __future__ import annotations
+
+import base64
+import os
+import unittest
+from pathlib import Path
+from typing import Any, cast
+from unittest.mock import patch
+
+from bot_bottle.backend.firecracker import firecracker_vm, netpool
+from bot_bottle.backend.firecracker.bottle import FirecrackerBottle
+
+
+def _bottle(**kw: Any) -> FirecrackerBottle:
+    defaults = dict(
+        name="bot-bottle-dev-abc",
+        private_key=Path("/tmp/key"),
+        guest_ip="100.64.0.1",
+    )
+    defaults.update(kw)
+    return FirecrackerBottle(**defaults)  # type: ignore[arg-type]
+
+
+class TestNetpoolSlots(unittest.TestCase):
+    def test_slot_ip_math_31_pairs(self):
+        with patch.dict(os.environ, {"BOT_BOTTLE_FC_IP_BASE": "100.64.0.0"}):
+            s0, s1 = netpool.slot(0), netpool.slot(1)
+        self.assertEqual(("bbfc0", "100.64.0.0", "100.64.0.1"),
+                         (s0.iface, s0.host_ip, s0.guest_ip))
+        self.assertEqual(("bbfc1", "100.64.0.2", "100.64.0.3"),
+                         (s1.iface, s1.host_ip, s1.guest_ip))
+
+    def test_guest_cidr_is_31(self):
+        self.assertEqual("100.64.0.1/31", netpool.slot(0).guest_cidr)
+
+    def test_pool_size_env_override(self):
+        with patch.dict(os.environ, {"BOT_BOTTLE_FC_POOL_SIZE": "4"}):
+            self.assertEqual(4, netpool.pool_size())
+            self.assertEqual(4, len(netpool.all_slots()))
+
+
+class TestNetpoolRenderers(unittest.TestCase):
+    def test_nixos_module_has_table_and_taps(self):
+        with patch.dict(os.environ, {"BOT_BOTTLE_FC_POOL_SIZE": "2"}):
+            out = netpool.render_nixos_module()
+        self.assertIn('networking.nftables.tables."bot_bottle_fc"', out)
+        self.assertIn('Name = "bbfc0"', out)
+        self.assertIn('Name = "bbfc1"', out)
+        self.assertIn("net.ipv4.ip_forward", out)
+        # fail-closed isolation rules present
+        self.assertIn('iifname != "bbfc*" return', out)
+        self.assertIn("ct status dnat accept", out)
+
+    def test_shell_setup_reflects_overrides(self):
+        with patch.dict(os.environ, {"BOT_BOTTLE_FC_POOL_SIZE": "3"}):
+            out = netpool.render_shell_setup()
+        self.assertIn("BOT_BOTTLE_FC_POOL_SIZE=3", out)
+        self.assertIn("firecracker-netpool.sh up", out)
+
+
+class TestNetpoolAllocation(unittest.TestCase):
+    def test_allocate_is_mutually_exclusive(self):
+        with patch.dict(os.environ, {"BOT_BOTTLE_FC_POOL_SIZE": "1"}):
+            # First allocation grabs the only slot; the lock is held
+            # until the handle is closed, so a second call must fail
+            # over (and here, exhaust the pool).
+            slot, lock = netpool.allocate("first")
+            self.addCleanup(lock.close)
+            self.assertEqual("bbfc0", slot.iface)
+            with patch.object(netpool, "die",
+                              side_effect=SystemExit("exhausted")):
+                with self.assertRaises(SystemExit):
+                    netpool.allocate("second")
+
+    def test_allocate_releases_on_close(self):
+        with patch.dict(os.environ, {"BOT_BOTTLE_FC_POOL_SIZE": "1"}):
+            slot, lock = netpool.allocate("first")
+            lock.close()
+            # Slot is free again after close.
+            slot2, lock2 = netpool.allocate("second")
+            self.addCleanup(lock2.close)
+            self.assertEqual(slot.iface, slot2.iface)
+
+
+class TestBottleAgentArgv(unittest.TestCase):
+    def test_interactive_uses_ssh_tty_and_runuser(self):
+        argv = _bottle().agent_argv([], tty=True)
+        self.assertEqual("ssh", argv[0])
+        self.assertIn("-t", argv)
+        self.assertIn("100.64.0.1", " ".join(argv))
+        idx = argv.index("--")
+        self.assertEqual(["runuser", "-u", "node", "--"], argv[idx + 1:idx + 5])
+        self.assertIn("claude", argv)
+
+    def test_non_interactive_has_no_tty(self):
+        argv = _bottle().agent_argv([], tty=False)
+        self.assertEqual("ssh", argv[0])
+        self.assertNotIn("-t", argv)
+
+    def test_appends_extra_args_after_command(self):
+        argv = _bottle().agent_argv(
+            ["--dangerously-skip-permissions", "--continue"], tty=False,
+        )
+        idx = argv.index("claude")
+        self.assertEqual(
+            ["claude", "--dangerously-skip-permissions", "--continue"],
+            argv[idx:],
+        )
+
+    def test_prompt_file_flag_injected(self):
+        argv = _bottle(
+            prompt_path_in_guest="/home/node/.bot-bottle-prompt.txt",
+        ).agent_argv(["--continue"], tty=False)
+        idx = argv.index("claude")
+        self.assertEqual(
+            ["claude", "--continue",
+             "--append-system-prompt-file", "/home/node/.bot-bottle-prompt.txt"],
+            argv[idx:],
+        )
+
+    def test_workdir_wraps_command(self):
+        argv = _bottle(agent_workdir="/home/node/workspace").agent_argv([], tty=False)
+        self.assertIn("sh", argv)
+        joined = " ".join(argv)
+        self.assertIn("cd /home/node/workspace", joined)
+
+    def test_guest_env_injected(self):
+        argv = _bottle(guest_env={"HTTPS_PROXY": "http://100.64.0.0:9099"}).agent_argv(
+            [], tty=False,
+        )
+        self.assertIn("HTTPS_PROXY=http://100.64.0.0:9099", argv)
+        self.assertIn("HOME=/home/node", argv)
+        self.assertIn("USER=node", argv)
+
+
+class TestSetupScriptConsistency(unittest.TestCase):
+    """The shell setup script duplicates the pool defaults; keep them in
+    lockstep with the Python constants so the two setup paths agree."""
+
+    def _script(self) -> str:
+        root = Path(__file__).resolve().parent.parent.parent
+        return (root / "scripts" / "firecracker-netpool.sh").read_text()
+
+    def test_defaults_match_python(self):
+        script = self._script()
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertIn(f'POOL_SIZE:-{netpool.pool_size()}', script)
+            self.assertIn(f'BOT_BOTTLE_FC_IP_BASE:-{netpool.ip_base()}', script)
+            self.assertIn(f'IFACE_PREFIX:-{netpool.IFACE_PREFIX}', script)
+
+    def test_table_name_and_ports_match(self):
+        script = self._script()
+        self.assertIn(f'TABLE="{netpool.NFT_TABLE}"', script)
+        for port in netpool.SIDECAR_PORTS:
+            self.assertIn(str(port), script)
+
+
+class TestBootArgs(unittest.TestCase):
+    def test_boot_args_carry_ip_and_pubkey(self):
+        args = firecracker_vm._boot_args(
+            guest_ip="100.64.0.1", host_ip="100.64.0.0", pubkey="ssh-ed25519 AAAA x",
+        )
+        self.assertIn("ip=100.64.0.1::100.64.0.0:255.255.255.254::eth0:off", args)
+        self.assertIn("init=/bb-init", args)
+        b64 = base64.b64encode(b"ssh-ed25519 AAAA x").decode()
+        self.assertIn(f"bb_pubkey={b64}", args)
+
+    def test_config_has_rootfs_and_tap(self):
+        cfg = cast(Any, firecracker_vm._config(
+            rootfs=Path("/run/rootfs.ext4"), tap="bbfc0",
+            guest_ip="100.64.0.1", host_ip="100.64.0.0", pubkey="k",
+            vcpus=2, mem_mib=2048, guest_mac="06:00:AC:10:00:02",
+        ))
+        self.assertEqual("/run/rootfs.ext4", cfg["drives"][0]["path_on_host"])
+        self.assertFalse(cfg["drives"][0]["is_read_only"])
+        self.assertEqual("bbfc0", cfg["network-interfaces"][0]["host_dev_name"])
+
+
+if __name__ == "__main__":
+    unittest.main()

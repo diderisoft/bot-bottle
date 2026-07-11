@@ -26,8 +26,9 @@ backend exposes five methods:
 
 Selection is driven by `--backend` on `start` or BOT_BOTTLE_BACKEND
 (env var). When neither is set, compatible macOS hosts default to
-`macos-container`; other hosts default to `smolmachines`. Per PRD 0003
-the manifest does not carry a backend field; the host picks.
+`macos-container`; Linux hosts with Firecracker + KVM default to
+`firecracker`; otherwise `smolmachines`. Per PRD 0003 the manifest
+does not carry a backend field; the host picks.
 """
 
 from __future__ import annotations
@@ -542,6 +543,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
 # each backend module can pull BottleSpec / BottlePlan / BottleBackend
 # via `from . import ...` without hitting a partially-initialized module.
 from .docker import DockerBottleBackend  # noqa: E402  # pylint: disable=wrong-import-position
+from .firecracker import FirecrackerBottleBackend  # noqa: E402  # pylint: disable=wrong-import-position
 from .macos_container import MacosContainerBottleBackend  # noqa: E402  # pylint: disable=wrong-import-position
 from .smolmachines import SmolmachinesBottleBackend  # noqa: E402  # pylint: disable=wrong-import-position
 
@@ -557,6 +559,7 @@ from .freeze import CommitCancelled, Freezer, get_freezer  # noqa: E402  # pylin
 # unparameterized methods (prepare → plan → launch(plan), cleanup, etc.).
 _BACKENDS: dict[str, BottleBackend[Any, Any]] = {
     "docker": DockerBottleBackend(),
+    "firecracker": FirecrackerBottleBackend(),
     "macos-container": MacosContainerBottleBackend(),
     "smolmachines": SmolmachinesBottleBackend(),
 }
@@ -585,6 +588,8 @@ def get_bottle_backend(
 def _default_backend_name() -> str:
     if has_backend("macos-container"):
         return "macos-container"
+    if has_backend("firecracker"):
+        return "firecracker"
     return "smolmachines"
 
 

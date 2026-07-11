@@ -90,11 +90,15 @@ def get_freezer(backend_name: str) -> Freezer:
     if resolved == "macos-container":
         from .macos_container.freezer import MacosContainerFreezer
         return MacosContainerFreezer()
+    if resolved == "firecracker":
+        from .firecracker.freezer import FirecrackerFreezer
+        return FirecrackerFreezer()
     if resolved == "smolmachines":
         from .smolmachines.freezer import SmolmachinesFreezer
         return SmolmachinesFreezer()
     die(
-        f"commit is only supported for docker, macos-container, and "
-        f"smolmachines; backend {backend_name!r} has no freezer"
+        f"commit is only supported for docker, macos-container, "
+        f"firecracker, and smolmachines; backend {backend_name!r} has "
+        f"no freezer"
     )
     raise AssertionError("unreachable")

@@ -16,6 +16,7 @@ from . import list as _list_mod
 from .cleanup import cmd_cleanup
 from .commit import cmd_commit
 from .edit import cmd_edit
+from .firecracker import cmd_firecracker
 from .info import cmd_info
 from .init import cmd_init
 from .resume import cmd_resume
@@ -28,6 +29,7 @@ COMMANDS = {
     "cleanup": cmd_cleanup,
     "commit": cmd_commit,
     "edit": cmd_edit,
+    "firecracker": cmd_firecracker,
     "info": cmd_info,
     "init": cmd_init,
     "list": cmd_list,
@@ -43,6 +45,7 @@ def usage() -> None:
     sys.stderr.write("  cleanup   stop and remove all active bot-bottle containers\n")
     sys.stderr.write("  commit    snapshot a running bottle's container state to a Docker image\n")
     sys.stderr.write("  edit      open an agent in vim for editing\n")
+    sys.stderr.write("  firecracker  one-time network setup for the Firecracker backend\n")
     sys.stderr.write("  info      print env, skills, and prompt details for a named agent\n")
     sys.stderr.write("  init      interactively create a new agent and add it to bot-bottle.json\n")
     sys.stderr.write("  list      list available agents or active containers\n")
