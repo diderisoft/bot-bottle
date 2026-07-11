@@ -235,11 +235,17 @@ class TestBottleAgentArgv(unittest.TestCase):
             argv[idx:],
         )
 
-    def test_workdir_wraps_command(self):
+    def test_workdir_sets_chdir(self):
+        # The agent runs from its workdir via `env --chdir` (ssh-safe;
+        # not a `sh -c 'cd …'` wrapper, which the ssh arg-join mangles).
         argv = _bottle(agent_workdir="/home/node/workspace").agent_argv([], tty=False)
-        self.assertIn("sh", argv)
-        joined = " ".join(argv)
-        self.assertIn("cd /home/node/workspace", joined)
+        self.assertIn("--chdir=/home/node/workspace", argv)
+
+    def test_default_workdir_still_chdirs_off_root(self):
+        # Even with the default workdir the agent must leave /root (the
+        # root-SSH cwd it can't read); it cd's to /home/node.
+        argv = _bottle().agent_argv([], tty=False)
+        self.assertIn("--chdir=/home/node", argv)
 
     def test_guest_env_injected(self):
         argv = _bottle(guest_env={"HTTPS_PROXY": "http://100.64.0.0:9099"}).agent_argv(

@@ -93,12 +93,27 @@ class FirecrackerBottle(Bottle):
                 argv=full_argv,
             )
         )
+        # ALWAYS cd into the workdir before exec'ing the agent. The
+        # control SSH logs in as root, so the inherited cwd is /root —
+        # which the agent (running as node) can't even read now that
+        # /root is root-owned. Run the agent from the node workdir
+        # (default /home/node) so its cwd is node-accessible; otherwise
+        # Node's process.cwd(), the shell-snapshot machinery, and
+        # `/doctor` all fail on the unreadable /root.
+        # Run the agent from the node workdir (default /home/node), NOT
+        # the /root cwd inherited from the root SSH login — /root is now
+        # root-owned and unreadable by node, which breaks Node's
+        # process.cwd(), the shell-snapshot machinery, and `/doctor`.
+        # Use `env --chdir` rather than a `sh -c 'cd … && exec "$@"'`
+        # wrapper: ssh space-joins everything after the host into one
+        # string for the guest shell, so a quoted script + $@ would be
+        # re-split and mangled (exec'ing the $0 placeholder). All-simple
+        # words survive that join.
+        workdir = self.agent_workdir or _HOME_FOR["node"]
         remote = ["runuser", "-u", "node", "--",
-                  "env", *_env_assignments_for("node", self._guest_env)]
-        if self.agent_workdir and self.agent_workdir != _HOME_FOR["node"]:
-            remote += ["sh", "-lc", f"cd {self.agent_workdir} && exec \"$@\"",
-                       "bot-bottle-agent"]
-        remote += [self.agent_command, *full_argv]
+                  "env", f"--chdir={workdir}",
+                  *_env_assignments_for("node", self._guest_env),
+                  self.agent_command, *full_argv]
         return remote
 
     def agent_argv(self, argv: list[str], *, tty: bool = True) -> list[str]:
