@@ -8,11 +8,14 @@ the VM boot-arg assembly.
 from __future__ import annotations
 
 import base64
+import json
 import os
+import subprocess
 import unittest
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any, cast
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from bot_bottle.backend.firecracker import firecracker_vm, netpool
 from bot_bottle.backend.firecracker.bottle import FirecrackerBottle
@@ -137,11 +140,12 @@ class TestNetpoolOverlap(unittest.TestCase):
     existing host route (Tailscale CGNAT peer, docker/libvirt bridge,
     LAN) and ignores our own bbfc TAPs + the default route."""
 
-    def _routes(self, entries: list[dict]) -> object:
-        import json
-        import subprocess
-
-        def fake_run(argv, **kwargs):
+    def _routes(
+        self, entries: list[dict[str, str]]
+    ) -> AbstractContextManager[MagicMock]:
+        def fake_run(
+            argv: list[str], **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
             return subprocess.CompletedProcess(
                 argv, 0, stdout=json.dumps(entries), stderr="",
             )
