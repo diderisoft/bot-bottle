@@ -143,12 +143,13 @@ def teardown() -> int:
 
 
 def status() -> int:
+    # Readiness == what the launch preflight hard-requires: the TAP pool
+    # present (unprivileged, authoritative) and no range overlap. Listing
+    # the nft table usually needs root, so — like the preflight — an
+    # unconfirmable table is reported but NOT treated as not-ready; the
+    # post-boot isolation probe is the authoritative check. This keeps an
+    # unprivileged `backend status` usable as a launch gate.
     ok = True
-    if netpool.nft_table_present():
-        sys.stderr.write(f"nft table inet {netpool.NFT_TABLE}: present\n")
-    else:
-        sys.stderr.write(f"nft table inet {netpool.NFT_TABLE}: MISSING\n")
-        ok = False
     missing = netpool.missing_taps()
     total = netpool.pool_size()
     if missing:
@@ -157,6 +158,14 @@ def status() -> int:
         ok = False
     else:
         sys.stderr.write(f"TAP pool: {total}/{total} present\n")
+    if shutil.which("nft") is None:
+        sys.stderr.write(f"nft table inet {netpool.NFT_TABLE}: unverified "
+                         f"(nft not on PATH; enforced + checked post-boot)\n")
+    elif netpool.nft_table_present():
+        sys.stderr.write(f"nft table inet {netpool.NFT_TABLE}: present\n")
+    else:
+        sys.stderr.write(f"nft table inet {netpool.NFT_TABLE}: not confirmable "
+                         f"unprivileged (listing needs root; verified post-boot)\n")
     conflicts = netpool.overlapping_routes()
     if conflicts:
         detail = ", ".join(f"{c.dst} dev {c.dev}" for c in conflicts)

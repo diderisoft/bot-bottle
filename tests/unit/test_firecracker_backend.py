@@ -74,6 +74,49 @@ class TestNetpoolRenderers(unittest.TestCase):
         self.assertIn("firecracker-netpool.sh up", out)
 
 
+class TestFirecrackerStatus(unittest.TestCase):
+    """`status()` gates launch: ready == TAP pool present + no overlap.
+    An nft table that can't be confirmed unprivileged is reported, not
+    treated as not-ready (the post-boot probe is authoritative)."""
+
+    def _run(self):
+        import contextlib
+        import io
+        from bot_bottle.backend.firecracker import setup as fc_setup
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            rc = fc_setup.status()
+        return rc, buf.getvalue()
+
+    def test_ready_when_taps_present_even_if_nft_unverifiable(self):
+        from bot_bottle.backend.firecracker import setup as fc_setup
+        with patch.object(fc_setup.netpool, "missing_taps", return_value=[]), \
+             patch.object(fc_setup.netpool, "overlapping_routes", return_value=[]), \
+             patch.object(fc_setup.shutil, "which", return_value=None):
+            rc, out = self._run()
+        self.assertEqual(0, rc)
+        self.assertIn("unverified", out)
+
+    def test_not_ready_when_taps_missing(self):
+        from bot_bottle.backend.firecracker import setup as fc_setup
+        with patch.object(fc_setup.netpool, "missing_taps", return_value=["bbfc0"]), \
+             patch.object(fc_setup.netpool, "overlapping_routes", return_value=[]), \
+             patch.object(fc_setup.shutil, "which", return_value=None):
+            rc, _ = self._run()
+        self.assertEqual(1, rc)
+
+    def test_not_ready_on_range_overlap(self):
+        from bot_bottle.backend.firecracker import netpool
+        from bot_bottle.backend.firecracker import setup as fc_setup
+        conflict = netpool.RouteConflict(dst="10.243.0.0/24", dev="eth0")
+        with patch.object(fc_setup.netpool, "missing_taps", return_value=[]), \
+             patch.object(fc_setup.netpool, "overlapping_routes", return_value=[conflict]), \
+             patch.object(fc_setup.shutil, "which", return_value=None):
+            rc, out = self._run()
+        self.assertEqual(1, rc)
+        self.assertIn("CLASHES", out)
+
+
 class TestNetpoolOverlap(unittest.TestCase):
     """`overlapping_routes()` flags a pool base that collides with an
     existing host route (Tailscale CGNAT peer, docker/libvirt bridge,
