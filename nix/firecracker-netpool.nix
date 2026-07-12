@@ -77,10 +77,16 @@ let
     }
   '';
 
+  # A non-owner user can't open a user-owned TAP, but any member of a
+  # TAP's owning GROUP can (the kernel checks owner-uid OR owning-group).
+  # So `group` lets an interactive user and a CI-runner user share one
+  # pool; `owner` is the single-user default.
+  tapOwn = if cfg.group != null then "group ${cfg.group}" else "user ${cfg.owner}";
+
   upScript = pkgs.writeShellScript "bot-bottle-fc-netpool-up" ''
     set -eu
     ${lib.concatMapStringsSep "\n" (s: ''
-      ${ip} link show ${s.iface} >/dev/null 2>&1 || ${ip} tuntap add dev ${s.iface} mode tap user ${cfg.owner}
+      ${ip} link show ${s.iface} >/dev/null 2>&1 || ${ip} tuntap add dev ${s.iface} mode tap ${tapOwn}
       ${ip} addr replace ${s.hostIp}/31 dev ${s.iface}
       ${ip} link set ${s.iface} up
     '') slots}
@@ -123,9 +129,26 @@ in
     };
 
     owner = lib.mkOption {
-      type = lib.types.str;
+      type = lib.types.nullOr lib.types.str;
+      default = null;
       example = "alice";
-      description = "User that owns the TAP devices, so `./cli.py start` opens them without root.";
+      description = ''
+        User that owns the TAP devices (single-user hosts), so
+        `./cli.py start` opens them without root. Set exactly one of
+        `owner` or `group`.
+      '';
+    };
+
+    group = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "firecracker";
+      description = ''
+        Group that owns the TAP devices instead of a single user. Any
+        member of this group can open the pool, so an interactive user
+        and a CI-runner user can share one pool. Set exactly one of
+        `owner` or `group`.
+      '';
     };
 
     tableName = lib.mkOption {
@@ -150,6 +173,10 @@ in
       {
         assertion = lib.mod baseInt 2 == 0;
         message = "services.bot-bottle-firecracker.ipBase must be /31-aligned (even final octet); got ${cfg.ipBase}.";
+      }
+      {
+        assertion = (cfg.owner != null) != (cfg.group != null);
+        message = "services.bot-bottle-firecracker: set exactly one of `owner` or `group`.";
       }
     ];
 

@@ -69,6 +69,8 @@ class TestNetpoolRenderers(unittest.TestCase):
         self.assertIn("bot-bottle-firecracker-netpool", mod)  # the oneshot
         self.assertIn(netpool.NFT_TABLE, mod)
         self.assertIn('iifname != "${cfg.ifacePrefix}*" return', mod)
+        # Supports group-owned TAPs (shared pool for a multi-user host).
+        self.assertIn("group ${cfg.group}", mod)
 
     def test_shell_setup_reflects_overrides(self):
         with patch.dict(os.environ, {"BOT_BOTTLE_FC_POOL_SIZE": "3"}):

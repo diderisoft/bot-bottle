@@ -38,6 +38,10 @@
 #   BOT_BOTTLE_FC_IP_BASE     base IPv4 of the /31 pool (default 10.243.0.0)
 #   BOT_BOTTLE_FC_IFACE_PREFIX  TAP name prefix (default bbfc)
 #   BOT_BOTTLE_FC_OWNER       owning user (default $SUDO_USER or $USER)
+#   BOT_BOTTLE_FC_GROUP       owning group; if set, TAPs are group-owned
+#                             instead of user-owned, so any group member
+#                             (e.g. an interactive user + a CI runner
+#                             user) can open the pool. Overrides OWNER.
 
 set -euo pipefail
 
@@ -45,6 +49,7 @@ POOL_SIZE="${BOT_BOTTLE_FC_POOL_SIZE:-8}"
 IP_BASE="${BOT_BOTTLE_FC_IP_BASE:-10.243.0.0}"
 PREFIX="${BOT_BOTTLE_FC_IFACE_PREFIX:-bbfc}"
 OWNER="${BOT_BOTTLE_FC_OWNER:-${SUDO_USER:-$USER}}"
+GROUP="${BOT_BOTTLE_FC_GROUP:-}"
 TABLE="bot_bottle_fc"
 
 # Sidecar ports (must match the backend). egress=9099, supervise=9100,
@@ -73,7 +78,14 @@ require_root() {
 
 cmd_up() {
     require_root up
-    echo "firecracker net pool: $POOL_SIZE slots, base $IP_BASE, owner $OWNER"
+    # Group ownership (any member can open the pool) overrides single-user
+    # ownership. The kernel lets a TAP's owning-group members attach.
+    if [ -n "$GROUP" ]; then
+        own_args=(group "$GROUP") ; own_desc="group=$GROUP"
+    else
+        own_args=(user "$OWNER") ; own_desc="owner=$OWNER"
+    fi
+    echo "firecracker net pool: $POOL_SIZE slots, base $IP_BASE, $own_desc"
 
     # VM->sidecar traffic is DNAT'd to the sidecar container and
     # forwarded, so forwarding must be enabled (Docker also sets this).
@@ -86,10 +98,10 @@ cmd_up() {
             ip link set "$dev" down 2>/dev/null || true
             ip tuntap del dev "$dev" mode tap 2>/dev/null || true
         fi
-        ip tuntap add dev "$dev" mode tap user "$OWNER"
+        ip tuntap add dev "$dev" mode tap "${own_args[@]}"
         ip addr add "$host/31" dev "$dev"
         ip link set "$dev" up
-        echo "  $dev  host=$host  guest=$(guest_ip "$i")  owner=$OWNER"
+        echo "  $dev  host=$host  guest=$(guest_ip "$i")  $own_desc"
     done
 
     _install_nft
