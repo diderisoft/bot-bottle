@@ -33,24 +33,44 @@
 #   sudo ./scripts/firecracker-netpool.sh down
 #   ./scripts/firecracker-netpool.sh status
 #
-# Env overrides (must match the backend's util.py constants):
-#   BOT_BOTTLE_FC_POOL_SIZE   number of slots (default 8)
-#   BOT_BOTTLE_FC_IP_BASE     base IPv4 of the /31 pool (default 10.243.0.0)
-#   BOT_BOTTLE_FC_IFACE_PREFIX  TAP name prefix (default bbfc)
-#   BOT_BOTTLE_FC_OWNER       owning user (default $SUDO_USER or $USER)
-#   BOT_BOTTLE_FC_GROUP       owning group; if set, TAPs are group-owned
-#                             instead of user-owned, so any group member
-#                             (e.g. an interactive user + a CI runner
-#                             user) can open the pool. Overrides OWNER.
+# Pool params default to the shared single-source file
+# (bot_bottle/backend/firecracker/netpool.defaults.env); a matching
+# env var overrides its key:
+#   BOT_BOTTLE_FC_POOL_SIZE     number of slots
+#   BOT_BOTTLE_FC_IP_BASE       base IPv4 of the /31 pool
+#   BOT_BOTTLE_FC_IFACE_PREFIX  TAP name prefix
+#   BOT_BOTTLE_FC_NFT_TABLE     isolation table name
+#   BOT_BOTTLE_FC_OWNER         owning user (default $SUDO_USER or $USER)
+#   BOT_BOTTLE_FC_GROUP         owning group; if set, TAPs are group-owned
+#                               instead of user-owned, so any group member
+#                               (e.g. an interactive user + a CI runner
+#                               user) can open the pool. Overrides OWNER.
 
 set -euo pipefail
 
-POOL_SIZE="${BOT_BOTTLE_FC_POOL_SIZE:-8}"
-IP_BASE="${BOT_BOTTLE_FC_IP_BASE:-10.243.0.0}"
-PREFIX="${BOT_BOTTLE_FC_IFACE_PREFIX:-bbfc}"
+# The single source of the pool defaults, shared with netpool.py and the
+# Nix module. The Nix path passes every value as env (the script runs
+# from the store, detached from this file), so this lookup only matters
+# on the direct/sudo path where the script sits in the repo tree.
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_DEFAULTS="$_SCRIPT_DIR/../bot_bottle/backend/firecracker/netpool.defaults.env"
+_default() {  # value of KEY=... from the shared file; empty if unavailable
+    [ -f "$_DEFAULTS" ] || return 0
+    sed -n "s/^$1=//p" "$_DEFAULTS" | tail -1
+}
+
+POOL_SIZE="${BOT_BOTTLE_FC_POOL_SIZE:-$(_default BOT_BOTTLE_FC_POOL_SIZE)}"
+IP_BASE="${BOT_BOTTLE_FC_IP_BASE:-$(_default BOT_BOTTLE_FC_IP_BASE)}"
+PREFIX="${BOT_BOTTLE_FC_IFACE_PREFIX:-$(_default BOT_BOTTLE_FC_IFACE_PREFIX)}"
+TABLE="${BOT_BOTTLE_FC_NFT_TABLE:-$(_default BOT_BOTTLE_FC_NFT_TABLE)}"
 OWNER="${BOT_BOTTLE_FC_OWNER:-${SUDO_USER:-$USER}}"
 GROUP="${BOT_BOTTLE_FC_GROUP:-}"
-TABLE="bot_bottle_fc"
+
+# Fail loudly rather than provisioning a half/empty range if a value
+# resolved to nothing (env unset AND the shared file unreadable).
+for _v in POOL_SIZE IP_BASE PREFIX TABLE; do
+    [ -n "${!_v}" ] || { echo "error: $_v unresolved (set BOT_BOTTLE_FC_* or fix $_DEFAULTS)" >&2; exit 1; }
+done
 
 # Sidecar ports (must match the backend). egress=9099, supervise=9100,
 # git-http=9420. Reached by the VM at its host-side TAP IP.
@@ -94,12 +114,13 @@ cmd_up() {
     for i in $(seq 0 $((POOL_SIZE-1))); do
         local dev host
         dev="$(iface "$i")" ; host="$(host_ip "$i")"
-        if ip link show "$dev" >/dev/null 2>&1; then
-            ip link set "$dev" down 2>/dev/null || true
-            ip tuntap del dev "$dev" mode tap 2>/dev/null || true
-        fi
-        ip tuntap add dev "$dev" mode tap "${own_args[@]}"
-        ip addr add "$host/31" dev "$dev"
+        # Non-destructive + idempotent: only create a missing TAP (tearing
+        # an existing one down would cut a running VM), and `addr replace`
+        # is safe to re-run. Ownership is fixed at creation, so to change
+        # owner/group run `down` then `up`.
+        ip link show "$dev" >/dev/null 2>&1 \
+            || ip tuntap add dev "$dev" mode tap "${own_args[@]}"
+        ip addr replace "$host/31" dev "$dev"
         ip link set "$dev" up
         echo "  $dev  host=$host  guest=$(guest_ip "$i")  $own_desc"
     done

@@ -1,104 +1,70 @@
 # bot-bottle Firecracker network pool — declarative NixOS module.
 #
 # The one-time privileged setup the Firecracker backend needs: a pool of
-# user-owned point-to-point TAP devices plus a fail-closed nftables table
-# that confines every microVM to its own sidecar.
+# user- (or group-) owned point-to-point TAP devices plus a fail-closed
+# nftables table that confines every microVM to its own sidecar.
 #
 # NON-INVASIVE BY DESIGN. It does NOT flip `networking.nftables.enable`
 # (which would switch your whole host firewall backend) or
 # `systemd.network.enable` (which would hand your interfaces to
-# systemd-networkd). Instead a single systemd oneshot service brings the
-# pool up on boot — the declarative equivalent of
-# `sudo ./scripts/firecracker-netpool.sh up`. The `inet <tableName>` table
-# is independent (its own hooks at priority -10), so it coexists with an
-# iptables `networking.firewall`, Docker, ufw, firewalld, etc.
+# systemd-networkd). Instead a single systemd oneshot brings the pool up
+# on boot by running the SAME bring-up script as every other install
+# path (`scripts/firecracker-netpool.sh`) — so the TAP/nft logic lives in
+# exactly one place. The `inet <tableName>` table is independent (its own
+# hooks at priority -10), so it coexists with an iptables
+# `networking.firewall`, Docker, ufw, firewalld, etc.
 #
-# The oneshot is only restarted when this config changes, so a
-# `nixos-rebuild switch` doesn't tear down TAPs out from under running
-# VMs unless you actually changed the pool.
+# The oneshot is only restarted when this config changes, and the shared
+# script is non-destructive (it never tears down an existing TAP), so a
+# `nixos-rebuild switch` won't cut TAPs out from under running VMs.
 #
-# The option defaults MUST match the backend constants in
-# bot_bottle/backend/firecracker/netpool.py (pool size, IP base, iface
-# prefix, table name). The backend reads the same values at launch from
-# the BOT_BOTTLE_FC_* env vars; if you override an option here, override
-# the matching env var for the CLI too (or set writeEnvFile = true below
-# to have this module emit them). Keep the two sides in lockstep.
+# Single source of the pool defaults: bot_bottle/backend/firecracker/
+# netpool.defaults.env. This module readFile-parses it for the option
+# defaults below, then passes the resolved values back to the script as
+# Environment=, so the host pool and the CLI launcher can't drift.
 { config, lib, pkgs, ... }:
 
 let
   cfg = config.services.bot-bottle-firecracker;
 
-  # --- IPv4 <-> int (full 32-bit carry math) -------------------------
-  toOctets = s: map lib.toInt (lib.splitString "." s);
-  ipToInt = s:
-    let o = toOctets s; in
-    (lib.elemAt o 0) * 16777216
-    + (lib.elemAt o 1) * 65536
-    + (lib.elemAt o 2) * 256
-    + (lib.elemAt o 3);
-  intToIp = n:
+  # --- shared single-source defaults ---------------------------------
+  # Parse the KEY=VALUE defaults file (the same one netpool.py and the
+  # shell script read). Pure eval — just readFile, no import-from-
+  # derivation — so it works for both flake and channel consumers.
+  readDefaults = file:
     let
-      b0 = n / 16777216;      r0 = n - b0 * 16777216;
-      b1 = r0 / 65536;        r1 = r0 - b1 * 65536;
-      b2 = r1 / 256;
-      b3 = r1 - b2 * 256;
-    in "${toString b0}.${toString b1}.${toString b2}.${toString b3}";
+      lines = lib.splitString "\n" (builtins.readFile file);
+      keep = l: l != "" && !(lib.hasPrefix "#" l) && lib.hasInfix "=" l;
+      toPair = l:
+        let parts = lib.splitString "=" l;
+        in lib.nameValuePair (lib.head parts)
+             (lib.concatStringsSep "=" (lib.tail parts));
+    in lib.listToAttrs (map toPair (lib.filter keep lines));
 
-  baseInt = ipToInt cfg.ipBase;
+  defaults = readDefaults ../bot_bottle/backend/firecracker/netpool.defaults.env;
 
-  # Slot i: host = base + 2i (the VM's gateway), on its own /31.
-  slots = lib.genList (i: {
-    iface = "${cfg.ifacePrefix}${toString i}";
-    hostIp = intToIp (baseInt + 2 * i);
-  }) cfg.poolSize;
+  # The one bring-up implementation, shared with the sudo/systemd paths.
+  netpoolScript = ../scripts/firecracker-netpool.sh;
 
-  ip = "${pkgs.iproute2}/bin/ip";
-  nft = "${pkgs.nftables}/bin/nft";
+  # /31 alignment == an even final octet (only bit 0 matters for base+2i).
+  lastOctet = lib.toInt (lib.last (lib.splitString "." cfg.ipBase));
 
-  # Idempotent ruleset: (create-if-absent → delete → recreate) is atomic
-  # within one `nft -f`, so re-running `up` always lands a clean table.
-  nftFile = pkgs.writeText "bot-bottle-fc.nft" ''
-    table inet ${cfg.tableName}
-    delete table inet ${cfg.tableName}
-    table inet ${cfg.tableName} {
-      chain forward {
-        type filter hook forward priority -10; policy accept;
-        iifname != "${cfg.ifacePrefix}*" return
-        ct state established,related accept
-        ct status dnat accept
-        drop
-      }
-      chain input {
-        type filter hook input priority -10; policy accept;
-        iifname != "${cfg.ifacePrefix}*" return
-        ct state established,related accept
-        drop
-      }
-    }
-  '';
+  # The script needs ip/nft/sysctl + the usual coreutils. It gets every
+  # pool value via the unit's Environment=, so it never reads the shared
+  # defaults file (which isn't beside it once copied to the store).
+  runtimePath = with pkgs; [ iproute2 nftables procps coreutils gnused ];
 
-  # A non-owner user can't open a user-owned TAP, but any member of a
-  # TAP's owning GROUP can (the kernel checks owner-uid OR owning-group).
-  # So `group` lets an interactive user and a CI-runner user share one
-  # pool; `owner` is the single-user default.
-  tapOwn = if cfg.group != null then "group ${cfg.group}" else "user ${cfg.owner}";
+  ownEnv =
+    if cfg.group != null
+    then { BOT_BOTTLE_FC_GROUP = cfg.group; }
+    else { BOT_BOTTLE_FC_OWNER = cfg.owner; };
 
-  upScript = pkgs.writeShellScript "bot-bottle-fc-netpool-up" ''
-    set -eu
-    ${lib.concatMapStringsSep "\n" (s: ''
-      ${ip} link show ${s.iface} >/dev/null 2>&1 || ${ip} tuntap add dev ${s.iface} mode tap ${tapOwn}
-      ${ip} addr replace ${s.hostIp}/31 dev ${s.iface}
-      ${ip} link set ${s.iface} up
-    '') slots}
-    ${nft} -f ${nftFile}
-  '';
-
-  downScript = pkgs.writeShellScript "bot-bottle-fc-netpool-down" ''
-    ${nft} delete table inet ${cfg.tableName} 2>/dev/null || true
-    ${lib.concatMapStringsSep "\n" (s: ''
-      ${ip} link show ${s.iface} >/dev/null 2>&1 && ${ip} tuntap del dev ${s.iface} mode tap || true
-    '') slots}
-  '';
+  unitEnv = {
+    BOT_BOTTLE_FC_POOL_SIZE = toString cfg.poolSize;
+    BOT_BOTTLE_FC_IP_BASE = cfg.ipBase;
+    BOT_BOTTLE_FC_IFACE_PREFIX = cfg.ifacePrefix;
+    BOT_BOTTLE_FC_NFT_TABLE = cfg.tableName;
+  } // ownEnv;
 in
 {
   options.services.bot-bottle-firecracker = {
@@ -106,25 +72,28 @@ in
 
     poolSize = lib.mkOption {
       type = lib.types.ints.positive;
-      default = 8;
+      default = lib.toInt defaults.BOT_BOTTLE_FC_POOL_SIZE;
+      defaultText = lib.literalMD "the shared `netpool.defaults.env` value";
       description = "Number of pool slots (concurrent bottles). Must match BOT_BOTTLE_FC_POOL_SIZE.";
     };
 
     ipBase = lib.mkOption {
       type = lib.types.str;
-      default = "10.243.0.0";
+      default = defaults.BOT_BOTTLE_FC_IP_BASE;
+      defaultText = lib.literalMD "the shared `netpool.defaults.env` value";
       description = ''
         Base IPv4 of the /31 pool; slot i uses host = base + 2i. Must
-        be /31-aligned (even final address) and must match
-        BOT_BOTTLE_FC_IP_BASE. Default is an obscure RFC-1918 /16 that
-        dodges docker/libvirt/k8s/LAN and, deliberately, Tailscale's
-        100.64.0.0/10 CGNAT range.
+        be /31-aligned (even final octet) and must match
+        BOT_BOTTLE_FC_IP_BASE. The shared default is an obscure RFC-1918
+        /16 that dodges docker/libvirt/k8s/LAN and, deliberately,
+        Tailscale's 100.64.0.0/10 CGNAT range.
       '';
     };
 
     ifacePrefix = lib.mkOption {
       type = lib.types.str;
-      default = "bbfc";
+      default = defaults.BOT_BOTTLE_FC_IFACE_PREFIX;
+      defaultText = lib.literalMD "the shared `netpool.defaults.env` value";
       description = "TAP interface name prefix. Must match BOT_BOTTLE_FC_IFACE_PREFIX.";
     };
 
@@ -153,7 +122,8 @@ in
 
     tableName = lib.mkOption {
       type = lib.types.str;
-      default = "bot_bottle_fc";
+      default = defaults.BOT_BOTTLE_FC_NFT_TABLE;
+      defaultText = lib.literalMD "the shared `netpool.defaults.env` value";
       description = "nftables table name for the isolation boundary. Must match netpool.NFT_TABLE.";
     };
 
@@ -171,7 +141,7 @@ in
   config = lib.mkIf cfg.enable {
     assertions = [
       {
-        assertion = lib.mod baseInt 2 == 0;
+        assertion = lib.mod lastOctet 2 == 0;
         message = "services.bot-bottle-firecracker.ipBase must be /31-aligned (even final octet); got ${cfg.ipBase}.";
       }
       {
@@ -183,17 +153,20 @@ in
     # VM->sidecar traffic is DNAT'd and forwarded, so forwarding must be on.
     boot.kernel.sysctl."net.ipv4.ip_forward" = 1;
 
-    # One oneshot brings up the whole pool (TAPs + independent nft table).
-    # No networking.nftables.enable / systemd.network.enable — see header.
+    # One oneshot brings up the whole pool (TAPs + independent nft table)
+    # by running the shared bring-up script. No networking.nftables.enable
+    # / systemd.network.enable — see header.
     systemd.services."bot-bottle-firecracker-netpool" = {
       description = "bot-bottle Firecracker TAP pool + nft isolation table";
       wantedBy = [ "multi-user.target" ];
       after = [ "network-pre.target" ];
+      path = runtimePath;
+      environment = unitEnv;
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
-        ExecStart = upScript;
-        ExecStop = downScript;
+        ExecStart = "${pkgs.bash}/bin/bash ${netpoolScript} up";
+        ExecStop = "${pkgs.bash}/bin/bash ${netpoolScript} down";
       };
     };
 
@@ -202,6 +175,7 @@ in
         BOT_BOTTLE_FC_POOL_SIZE=${toString cfg.poolSize}
         BOT_BOTTLE_FC_IP_BASE=${cfg.ipBase}
         BOT_BOTTLE_FC_IFACE_PREFIX=${cfg.ifacePrefix}
+        BOT_BOTTLE_FC_NFT_TABLE=${cfg.tableName}
       '';
     };
   };

@@ -67,10 +67,24 @@ class TestNetpoolRenderers(unittest.TestCase):
         self.assertNotIn("networking.nftables.enable = true", mod)
         self.assertNotIn("systemd.network.enable = true", mod)
         self.assertIn("bot-bottle-firecracker-netpool", mod)  # the oneshot
-        self.assertIn(netpool.NFT_TABLE, mod)
-        self.assertIn('iifname != "${cfg.ifacePrefix}*" return', mod)
         # Supports group-owned TAPs (shared pool for a multi-user host).
-        self.assertIn("group ${cfg.group}", mod)
+        self.assertIn("BOT_BOTTLE_FC_GROUP", mod)
+
+    def test_nixos_module_delegates_and_holds_no_literals(self):
+        # Single-source discipline: the module must NOT re-implement the
+        # bring-up (it delegates to the shared script) and must NOT hard-
+        # code the pool defaults (it readFile-parses the shared .env), so
+        # nothing can drift from netpool.py / the shell script.
+        root = Path(__file__).resolve().parents[2]
+        mod = (root / "nix" / "firecracker-netpool.nix").read_text()
+        # Delegation to the one bring-up implementation + shared defaults.
+        self.assertIn("scripts/firecracker-netpool.sh", mod)
+        self.assertIn("netpool.defaults.env", mod)
+        self.assertIn("BOT_BOTTLE_FC_NFT_TABLE", mod)
+        # No duplicated literals or nft ruleset.
+        self.assertNotIn(netpool.ip_base(), mod)      # 10.243.0.0
+        self.assertNotIn(netpool.NFT_TABLE, mod)      # bot_bottle_fc
+        self.assertNotIn("ct status dnat", mod)       # the nft ruleset
 
     def test_shell_setup_reflects_overrides(self):
         with patch.dict(os.environ, {"BOT_BOTTLE_FC_POOL_SIZE": "3"}):
@@ -262,26 +276,43 @@ class TestBottleAgentArgv(unittest.TestCase):
         self.assertIn("USER=node", argv)
 
 
-class TestSetupScriptConsistency(unittest.TestCase):
-    """The shell setup script duplicates the pool defaults; keep them in
-    lockstep with the Python constants so the two setup paths agree."""
+class TestNetpoolDefaultsSingleSource(unittest.TestCase):
+    """The pool defaults live in one shared file (netpool.defaults.env);
+    Python parses it and the shell script + Nix module read the same file,
+    so the three setup paths can't drift."""
 
-    def _script(self) -> str:
-        root = Path(__file__).resolve().parent.parent.parent
-        return (root / "scripts" / "firecracker-netpool.sh").read_text()
+    def _root(self) -> Path:
+        return Path(__file__).resolve().parents[2]
 
-    def test_defaults_match_python(self):
-        script = self._script()
+    def _shared_defaults(self) -> dict[str, str]:
+        text = netpool.DEFAULTS_FILE.read_text()
+        out: dict[str, str] = {}
+        for raw in text.splitlines():
+            line = raw.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, _, v = line.partition("=")
+                out[k.strip()] = v.strip()
+        return out
+
+    def test_python_reads_the_shared_file(self):
+        d = self._shared_defaults()
         with patch.dict(os.environ, {}, clear=True):
-            self.assertIn(f'POOL_SIZE:-{netpool.pool_size()}', script)
-            self.assertIn(f'BOT_BOTTLE_FC_IP_BASE:-{netpool.ip_base()}', script)
-            self.assertIn(f'IFACE_PREFIX:-{netpool.IFACE_PREFIX}', script)
+            self.assertEqual(int(d["BOT_BOTTLE_FC_POOL_SIZE"]), netpool.pool_size())
+            self.assertEqual(d["BOT_BOTTLE_FC_IP_BASE"], netpool.ip_base())
+        # Module constants resolve through the same shared file.
+        self.assertEqual(d["BOT_BOTTLE_FC_IFACE_PREFIX"], netpool.IFACE_PREFIX)
+        self.assertEqual(d["BOT_BOTTLE_FC_NFT_TABLE"], netpool.NFT_TABLE)
 
-    def test_table_name_and_ports_match(self):
-        script = self._script()
-        self.assertIn(f'TABLE="{netpool.NFT_TABLE}"', script)
-        for port in netpool.SIDECAR_PORTS:
-            self.assertIn(str(port), script)
+    def test_env_var_overrides_the_shared_default(self):
+        with patch.dict(os.environ, {"BOT_BOTTLE_FC_IP_BASE": "10.99.0.0"}):
+            self.assertEqual("10.99.0.0", netpool.ip_base())
+
+    def test_script_defers_to_shared_file_without_literals(self):
+        script = (self._root() / "scripts" / "firecracker-netpool.sh").read_text()
+        # Delegates its defaults to the shared file, not hardcoded values.
+        self.assertIn("netpool.defaults.env", script)
+        self.assertIn("BOT_BOTTLE_FC_POOL_SIZE:-$(_default BOT_BOTTLE_FC_POOL_SIZE)", script)
+        self.assertIn('TABLE="${BOT_BOTTLE_FC_NFT_TABLE:-$(_default BOT_BOTTLE_FC_NFT_TABLE)}"', script)
 
 
 class TestBootArgs(unittest.TestCase):

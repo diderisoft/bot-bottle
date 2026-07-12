@@ -4,11 +4,13 @@ config renderers (shell command + NixOS module) shown to operators.
 The Firecracker backend needs a privileged one-time network setup:
 a pool of point-to-point TAP devices (owned by the invoking user, so
 `./cli.py start` never needs root) and a dedicated nftables table that
-isolates every VM. This module is the single source of truth for the
-pool parameters — the shell script (`scripts/firecracker-netpool.sh`),
-the NixOS module (`nix/firecracker-netpool.nix`), and the backend's
-fail-closed preflight all derive from these constants so they can't
-drift.
+isolates every VM. The pool parameters live in exactly one place —
+`netpool.defaults.env`, a plain KEY=VALUE file next to this module —
+and every consumer reads *that*: this module (below), the shell script
+(`scripts/firecracker-netpool.sh`), and the NixOS module
+(`nix/firecracker-netpool.nix`). A `BOT_BOTTLE_FC_*` env var of the
+same name always overrides the file, and the backend's fail-closed
+preflight derives from these accessors, so nothing can drift.
 
 Topology (per slot i):
   * TAP  ``bbfc{i}``  — no shared bridge, so no docker0 / virbr0 / cni0
@@ -43,18 +45,47 @@ from typing import IO
 from ...log import die
 
 
+# The pool defaults live in one shared file (see module docstring); the
+# shell script and NixOS module read the same file, so the values can't
+# drift. This is a packaged data file — a missing/broken install is a
+# hard error, surfaced here rather than as confusing empty defaults.
+DEFAULTS_FILE = Path(__file__).with_name("netpool.defaults.env")
+
+
+def _load_defaults() -> dict[str, str]:
+    out: dict[str, str] = {}
+    for raw in DEFAULTS_FILE.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        out[key.strip()] = value.strip()
+    return out
+
+
+_DEFAULTS = _load_defaults()
+
+
+def _cfg(key: str) -> str:
+    """A `BOT_BOTTLE_FC_*` env var overrides the shared-file default."""
+    try:
+        return os.environ.get(key) or _DEFAULTS[key]
+    except KeyError:
+        die(f"{key} is missing from {DEFAULTS_FILE.name} (broken install)")
+
+
 # Interface names are capped at 15 chars (IFNAMSIZ-1); "bbfc" + a small
 # index stays well under that and is distinctive enough to grep for.
-IFACE_PREFIX = os.environ.get("BOT_BOTTLE_FC_IFACE_PREFIX", "bbfc")
-NFT_TABLE = "bot_bottle_fc"
+IFACE_PREFIX = _cfg("BOT_BOTTLE_FC_IFACE_PREFIX")
+NFT_TABLE = _cfg("BOT_BOTTLE_FC_NFT_TABLE")
 
 
 def pool_size() -> int:
-    return int(os.environ.get("BOT_BOTTLE_FC_POOL_SIZE", "8"))
+    return int(_cfg("BOT_BOTTLE_FC_POOL_SIZE"))
 
 
 def ip_base() -> str:
-    return os.environ.get("BOT_BOTTLE_FC_IP_BASE", "10.243.0.0")
+    return _cfg("BOT_BOTTLE_FC_IP_BASE")
 
 
 # Sidecar ports the VM reaches at its host-side TAP IP. Kept in sync
