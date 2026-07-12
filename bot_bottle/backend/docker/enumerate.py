@@ -1,7 +1,6 @@
 """Active-agent enumeration for the docker backend.
 
-Mirrors `backend/smolmachines/enumerate.py`: returns
-`ActiveAgent` records the CLI `list active` command and the
+Returns `ActiveAgent` records the CLI `list active` command and the
 dashboard agents pane consume. Empty when docker isn't reachable
 — gated by `has_backend('docker')` at the cross-backend caller
 so this module trusts that docker is available when called.

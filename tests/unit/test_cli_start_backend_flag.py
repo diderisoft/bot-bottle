@@ -35,8 +35,8 @@ class TestStartBackendFlag(unittest.TestCase):
         return parser
 
     def test_flag_recognized(self):
-        args = self._build_parser().parse_args(["--backend=smolmachines", "researcher"])
-        self.assertEqual("smolmachines", args.backend)
+        args = self._build_parser().parse_args(["--backend=firecracker", "researcher"])
+        self.assertEqual("firecracker", args.backend)
         self.assertEqual("researcher", args.name)
 
     def test_flag_default_none_means_env_or_default_backend(self):
@@ -53,7 +53,7 @@ class TestStartBackendFlag(unittest.TestCase):
         # `--backend` ultimately threads to) prefers the explicit
         # name over BOT_BOTTLE_BACKEND.
         from bot_bottle.backend import get_bottle_backend
-        with patch.dict(os.environ, {"BOT_BOTTLE_BACKEND": "smolmachines"}):
+        with patch.dict(os.environ, {"BOT_BOTTLE_BACKEND": "firecracker"}):
             self.assertEqual("docker", get_bottle_backend("docker").name)
 
 

@@ -13,6 +13,6 @@ agent_provider:
 
 Common Claude provider boundary. Drop this file into
 `~/.bot-bottle/bottles/claude.md`, then extend it from task-specific
-bottles. The default smolmachines backend keeps DNS resolution under
-the VM-layer egress policy; use `BOT_BOTTLE_BACKEND=docker` only for
-legacy Docker-backed runs.
+bottles. On a KVM Linux host the default Firecracker backend confines
+the guest behind a fail-closed nftables boundary; use
+`BOT_BOTTLE_BACKEND=docker` only for legacy Docker-backed runs.

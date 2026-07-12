@@ -1,8 +1,9 @@
 """Tiny smart-HTTP wrapper for git-gate repos.
 
-Used by the smolmachines backend where `git://` push traffic over the
-host-published Docker port can hang before receive-pack reaches hooks.
-The wrapper serves the same `/git/*.git` bare repos through
+Used where `git://` push traffic over a host-published Docker port can
+hang before receive-pack reaches hooks (e.g. the firecracker backend,
+where the guest reaches the sidecar over the point-to-point TAP). The
+wrapper serves the same `/git/*.git` bare repos through
 `git http-backend`, so pre-receive and upstream forwarding remain the
 git-gate enforcement point.
 """

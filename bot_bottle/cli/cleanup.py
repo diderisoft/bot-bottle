@@ -1,14 +1,14 @@
 """cleanup: stop and remove all orphaned bot-bottle resources.
 
-Walks every registered backend (docker + smolmachines) so a single
-`./cli.py cleanup` reaps both backends' leftovers — orphaned
-smolvm machines won't survive a docker-only cleanup pass (issue
-addressed alongside #77).
+Walks every registered backend (docker, firecracker, macos-container)
+so a single `./cli.py cleanup` reaps every backend's leftovers — a
+firecracker bottle's sidecars won't survive a docker-only cleanup pass
+(issue addressed alongside #77).
 
 Each backend's `prepare_cleanup` enumerates its own resources;
 docker's `_list_orphan_state_dirs` consults
 `enumerate_active_agents()` for the union of live identities so
-state dirs of running smolmachines bottles aren't reaped. State
+state dirs of running non-docker bottles aren't reaped. State
 dirs are shared layout, so docker is the single owner of that
 bucket.
 

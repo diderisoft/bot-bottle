@@ -53,15 +53,16 @@ class TestGitGateGitconfigRender(unittest.TestCase):
         self.assertNotIn("pushInsteadOf", out)
 
     def test_gate_host_can_be_ip_port_form(self):
-        # The smolmachines backend's TSI-allowlisted guest has no
-        # DNS, so it dials git-gate via `<bundle_ip>:<port>`.
+        # A VM backend's guest may have no DNS (e.g. firecracker over
+        # the point-to-point TAP), so it dials git-gate via
+        # `<bundle_ip>:<port>`.
         bottle = fixture_with_git().bottles["dev"]
         out = git_gate_render_gitconfig(bottle.git, "192.168.20.2:9418")
         self.assertIn(
             '[url "git://192.168.20.2:9418/bot-bottle.git"]', out,
         )
 
-    def test_scheme_can_be_http_for_smolmachines(self):
+    def test_scheme_can_be_http_for_vm_backend(self):
         bottle = fixture_with_git().bottles["dev"]
         out = git_gate_render_gitconfig(
             bottle.git, "127.0.0.16:57001", scheme="http",

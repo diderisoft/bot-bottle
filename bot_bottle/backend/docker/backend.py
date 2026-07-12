@@ -54,6 +54,21 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
         launch."""
         return shutil.which("docker") is not None
 
+    @classmethod
+    def setup(cls) -> int:
+        from . import setup as _setup
+        return _setup.setup()
+
+    @classmethod
+    def status(cls) -> int:
+        from . import setup as _setup
+        return _setup.status()
+
+    @classmethod
+    def teardown(cls) -> int:
+        from . import setup as _setup
+        return _setup.teardown()
+
     def _preflight(self) -> None:
         _resolve_plan.preflight()
 

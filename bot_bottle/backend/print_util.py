@@ -1,9 +1,8 @@
 """Shared print helpers for BottlePlan.print implementations.
 
-Lifts the multi-value label printer out of DockerBottlePlan so the
-smolmachines backend (and any future backend) renders the same
-two-column scannable preflight without duplicating the indent
-math."""
+Lifts the multi-value label printer out of DockerBottlePlan so every
+backend (and any future backend) renders the same two-column
+scannable preflight without duplicating the indent math."""
 
 from __future__ import annotations
 

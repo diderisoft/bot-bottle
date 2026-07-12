@@ -1,6 +1,6 @@
 """Main CLI dispatcher.
 
-Commands: cleanup, commit, edit, info, init, list, resume, start, supervise
+Commands: backend, cleanup, commit, edit, info, init, list, resume, start, supervise
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from ..manifest import ManifestError
 from ..store_manager import StoreManager
 from ._common import PROG
 from . import list as _list_mod
+from .backend import cmd_backend
 from .cleanup import cmd_cleanup
 from .commit import cmd_commit
 from .edit import cmd_edit
@@ -25,6 +26,7 @@ from .supervise import cmd_supervise
 cmd_list = _list_mod.cmd_list
 
 COMMANDS = {
+    "backend": cmd_backend,
     "cleanup": cmd_cleanup,
     "commit": cmd_commit,
     "edit": cmd_edit,
@@ -40,6 +42,7 @@ COMMANDS = {
 def usage() -> None:
     sys.stderr.write(f"usage: {PROG} <command> [args...]\n\n")
     sys.stderr.write("Commands:\n")
+    sys.stderr.write("  backend   set up / check / undo a backend's host prerequisites (setup|status|teardown)\n")
     sys.stderr.write("  cleanup   stop and remove all active bot-bottle containers\n")
     sys.stderr.write("  commit    snapshot a running bottle's container state to a Docker image\n")
     sys.stderr.write("  edit      open an agent in vim for editing\n")

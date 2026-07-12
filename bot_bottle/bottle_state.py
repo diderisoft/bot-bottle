@@ -105,9 +105,9 @@ class BottleMetadata:
     # written before chunk 3 (resume / inspect should fall back to
     # deriving from identity in that case).
     compose_project: str = ""
-    # PRD 0040: backend name ("docker" or "smolmachines"). Empty string
-    # for state dirs written before PRD 0040; callers default to "docker"
-    # for backward compatibility.
+    # PRD 0040: backend name ("docker", "firecracker", "macos-container").
+    # Empty string for state dirs written before PRD 0040; callers default
+    # to "docker" for backward compatibility.
     backend: str = ""
     label: str = ""
     color: str = ""

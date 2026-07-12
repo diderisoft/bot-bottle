@@ -1,18 +1,18 @@
 """Cross-backend parity tests (PRD 0042).
 
-Verifies that Docker and smolmachines bottles expose the same
+Verifies that Docker and firecracker bottles expose the same
 observable contracts for env injection, agent argv, and exec. Tests
 use mock subprocess layers so no live VM or Docker daemon is needed.
 
-The scenarios here document what must hold across both backends. As
-PRDs 0038–0040 land these tests provide regression coverage for the
-contracts they establish.
+The scenarios here document what must hold across both backends and
+provide regression coverage for those contracts.
 """
 
 from __future__ import annotations
 
 import subprocess
 import unittest
+from pathlib import Path
 from typing import Callable
 from unittest.mock import patch
 
@@ -31,10 +31,12 @@ def _docker_bottle(guest_env: dict[str, str]) -> "object":
     )
 
 
-def _smolmachines_bottle(guest_env: dict[str, str]) -> "object":
-    from bot_bottle.backend.smolmachines.bottle import SmolmachinesBottle
-    return SmolmachinesBottle(
+def _firecracker_bottle(guest_env: dict[str, str]) -> "object":
+    from bot_bottle.backend.firecracker.bottle import FirecrackerBottle
+    return FirecrackerBottle(
         "bot-bottle-test",
+        private_key=Path("/tmp/key"),
+        guest_ip="100.64.0.1",
         guest_env=guest_env,
         agent_command="claude",
     )
@@ -43,7 +45,7 @@ def _smolmachines_bottle(guest_env: dict[str, str]) -> "object":
 # One entry per backend: (label, factory).
 _BACKENDS: list[tuple[str, Callable[[dict[str, str]], object]]] = [
     ("docker", _docker_bottle),
-    ("smolmachines", _smolmachines_bottle),
+    ("firecracker", _firecracker_bottle),
 ]
 
 
@@ -91,19 +93,16 @@ class TestAgentArgvParity(unittest.TestCase):
                     )
 
 
-class TestSmolmachinesEnvInArgv(unittest.TestCase):
-    """smolmachines bottle includes guest_env values in exec argv."""
+class TestFirecrackerEnvInArgv(unittest.TestCase):
+    """firecracker bottle includes guest_env values in the agent argv."""
 
-    def test_guest_env_in_exec_argv(self):
-        from bot_bottle.backend.smolmachines.bottle import SmolmachinesBottle
-        bottle = SmolmachinesBottle(
-            "bot-bottle-test",
-            guest_env={"TOKEN": "abc123", "PROXY": "http://proxy:8888"},
+    def test_guest_env_in_agent_argv(self):
+        bottle = _firecracker_bottle(
+            {"TOKEN": "abc123", "PROXY": "http://proxy:8888"},
         )
-        argv = bottle.agent_argv([], tty=False)
-        joined = " ".join(argv)
-        self.assertIn("TOKEN=abc123", joined)
-        self.assertIn("PROXY=http://proxy:8888", joined)
+        argv = bottle.agent_argv([], tty=False)  # type: ignore[union-attr]
+        self.assertIn("TOKEN=abc123", argv)
+        self.assertIn("PROXY=http://proxy:8888", argv)
 
 
 # ---------------------------------------------------------------------------
@@ -129,17 +128,16 @@ class TestExecUserSwitching(unittest.TestCase):
         self.assertIn("node", call_args,
                       "docker exec should use 'node' user by default")
 
-    def test_smolmachines_exec_uses_node_user_by_default(self):
-        from bot_bottle.backend.smolmachines.bottle import SmolmachinesBottle
-        bottle = SmolmachinesBottle("bot-bottle-test", guest_env={})
-        with patch("bot_bottle.backend.smolmachines.bottle.subprocess.run") as run:
+    def test_firecracker_exec_uses_node_user_by_default(self):
+        bottle = _firecracker_bottle({})
+        with patch("bot_bottle.backend.firecracker.bottle.subprocess.run") as run:
             run.return_value = subprocess.CompletedProcess(
                 [], 0, stdout="", stderr="",
             )
-            bottle.exec("echo hi")
-        call_args = run.call_args[0][0]
-        self.assertIn("node", call_args,
-                      "smolvm exec should use 'node' user by default")
+            bottle.exec("echo hi")  # type: ignore[union-attr]
+        call_args = " ".join(run.call_args[0][0])
+        self.assertIn("runuser -u node", call_args,
+                      "firecracker exec should use 'node' user by default")
 
     def test_docker_exec_respects_root_user(self):
         from bot_bottle.backend.docker.bottle import DockerBottle
@@ -156,16 +154,15 @@ class TestExecUserSwitching(unittest.TestCase):
         call_args = run.call_args[0][0]
         self.assertIn("root", call_args)
 
-    def test_smolmachines_exec_respects_root_user(self):
-        from bot_bottle.backend.smolmachines.bottle import SmolmachinesBottle
-        bottle = SmolmachinesBottle("bot-bottle-test", guest_env={})
-        with patch("bot_bottle.backend.smolmachines.bottle.subprocess.run") as run:
+    def test_firecracker_exec_respects_root_user(self):
+        bottle = _firecracker_bottle({})
+        with patch("bot_bottle.backend.firecracker.bottle.subprocess.run") as run:
             run.return_value = subprocess.CompletedProcess(
                 [], 0, stdout="", stderr="",
             )
-            bottle.exec("id", user="root")
-        call_args = run.call_args[0][0]
-        self.assertIn("root", call_args)
+            bottle.exec("id", user="root")  # type: ignore[union-attr]
+        call_args = " ".join(run.call_args[0][0])
+        self.assertIn("runuser -u root", call_args)
 
 
 # ---------------------------------------------------------------------------
@@ -196,13 +193,12 @@ class TestExecResultParity(unittest.TestCase):
         self.assertIsInstance(result.stdout, str)
         self.assertIsInstance(result.stderr, str)
 
-    def test_smolmachines_exec_result_shape(self):
-        from bot_bottle.backend.smolmachines.bottle import SmolmachinesBottle
+    def test_firecracker_exec_result_shape(self):
         from bot_bottle.backend import ExecResult
-        bottle = SmolmachinesBottle("bot-bottle-test", guest_env={})
-        with patch("bot_bottle.backend.smolmachines.bottle.subprocess.run",
+        bottle = _firecracker_bottle({})
+        with patch("bot_bottle.backend.firecracker.bottle.subprocess.run",
                    side_effect=self._stub_run):
-            result = bottle.exec("echo hi")
+            result = bottle.exec("echo hi")  # type: ignore[union-attr]
         self.assertIsInstance(result, ExecResult)
         self.assertEqual(0, result.returncode)
         self.assertIsInstance(result.stdout, str)
@@ -229,11 +225,10 @@ class TestCloseParity(unittest.TestCase):
         # DockerBottle.close calls teardown — once per call is fine;
         # what matters is it doesn't raise.
 
-    def test_smolmachines_close_is_noop(self):
-        from bot_bottle.backend.smolmachines.bottle import SmolmachinesBottle
-        bottle = SmolmachinesBottle("bot-bottle-test", guest_env={})
-        bottle.close()
-        bottle.close()
+    def test_firecracker_close_is_noop(self):
+        bottle = _firecracker_bottle({})
+        bottle.close()  # type: ignore[union-attr]
+        bottle.close()  # type: ignore[union-attr]
 
 
 if __name__ == "__main__":

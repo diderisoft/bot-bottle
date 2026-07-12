@@ -1,7 +1,7 @@
 """Unit: egress_entrypoint.sh argv construction (PRD 0023 chunk 3).
 
 The egress entrypoint is a small POSIX-sh script that builds
-the mitmdump argv from env vars. The smolmachines backend
+the mitmdump argv from env vars. A VM backend (e.g. firecracker)
 controls egress's bind address via EGRESS_LISTEN_HOST; the
 docker backend leaves it unset and gets mitmdump's default
 (all interfaces).
@@ -67,7 +67,7 @@ class TestEgressEntrypointArgv(unittest.TestCase):
         )
 
     def test_listen_host_127_0_0_1_emits_flag(self):
-        # smolmachines backend sets EGRESS_LISTEN_HOST=127.0.0.1
+        # A VM backend sets EGRESS_LISTEN_HOST=127.0.0.1
         # to scope egress to localhost inside the bundle.
         argv = _run_entrypoint({"EGRESS_LISTEN_HOST": "127.0.0.1"})
         self.assertIn("--listen-host\n127.0.0.1", argv)
@@ -79,7 +79,7 @@ class TestEgressEntrypointArgv(unittest.TestCase):
         self.assertNotIn("--listen-host", argv)
 
     def test_upstream_mode_combined_with_listen_host(self):
-        # smolmachines mode also sets EGRESS_UPSTREAM_PROXY so
+        # VM-backend mode also sets EGRESS_UPSTREAM_PROXY so
         # both flags should compose correctly.
         argv = _run_entrypoint({
             "EGRESS_UPSTREAM_PROXY": "http://192.168.50.2:8888",

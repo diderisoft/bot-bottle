@@ -1,4 +1,4 @@
-"""Unit: BottlePlan.print parity across Docker and smolmachines (PRD 0044).
+"""Unit: BottlePlan.print parity across Docker and firecracker (PRD 0044).
 
 Both backends inherit a single concrete print() from BottlePlan. These
 tests verify that identical git_gate_plan and egress_plan inputs produce
@@ -16,7 +16,7 @@ from pathlib import Path
 from bot_bottle.agent_provider import AgentProvisionPlan
 from bot_bottle.backend import BottleSpec
 from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
-from bot_bottle.backend.smolmachines.bottle_plan import SmolmachinesBottlePlan
+from bot_bottle.backend.firecracker.bottle_plan import FirecrackerBottlePlan
 from bot_bottle.egress import EgressPlan, EgressRoute
 from bot_bottle.git_gate import GitGatePlan, GitGateUpstream
 from bot_bottle.manifest import Manifest, ManifestIndex
@@ -107,9 +107,9 @@ def _docker_plan(spec: BottleSpec, manifest: Manifest, tmp: str) -> DockerBottle
     )
 
 
-def _smolmachines_plan(spec: BottleSpec, manifest: Manifest, tmp: str) -> SmolmachinesBottlePlan:
+def _firecracker_plan(spec: BottleSpec, manifest: Manifest, tmp: str) -> FirecrackerBottlePlan:
     stage = Path(tmp)
-    return SmolmachinesBottlePlan(
+    return FirecrackerBottlePlan(
         spec=spec,
         manifest=manifest,
         stage_dir=stage,
@@ -118,14 +118,11 @@ def _smolmachines_plan(spec: BottleSpec, manifest: Manifest, tmp: str) -> Smolma
         supervise_plan=None,
         agent_provision=_agent_provision(tmp),
         slug="test-00001",
-        bundle_subnet="10.99.0.0/24",
-        bundle_gateway="10.99.0.1",
-        bundle_ip="10.99.0.2",
-        guest_env={"HTTPS_PROXY": "http://127.0.0.1:9999"},
+        forwarded_env={},
     )
 
 
-def _capture_print(plan: DockerBottlePlan | SmolmachinesBottlePlan) -> list[str]:
+def _capture_print(plan: DockerBottlePlan | FirecrackerBottlePlan) -> list[str]:
     buf = io.StringIO()
     orig = sys.stderr
     sys.stderr = buf
@@ -144,7 +141,7 @@ class TestGitGatePrintParity(unittest.TestCase):
         manifest = _INDEX.load_for_agent("demo")
         spec = _spec(_INDEX, self._tmp)
         self._docker_lines = _capture_print(_docker_plan(spec, manifest, self._tmp))
-        self._smol_lines = _capture_print(_smolmachines_plan(spec, manifest, self._tmp))
+        self._fc_lines = _capture_print(_firecracker_plan(spec, manifest, self._tmp))
 
     def _git_gate_lines(self, lines: list[str]) -> list[str]:
         return [ln for ln in lines if "git gate" in ln]
@@ -154,15 +151,15 @@ class TestGitGatePrintParity(unittest.TestCase):
         self.assertEqual(1, len(git_lines))
         self.assertIn("myrepo → gitea.example.com:30009", git_lines[0])
 
-    def test_smolmachines_renders_name_arrow_host_port(self) -> None:
-        git_lines = self._git_gate_lines(self._smol_lines)
+    def test_firecracker_renders_name_arrow_host_port(self) -> None:
+        git_lines = self._git_gate_lines(self._fc_lines)
         self.assertEqual(1, len(git_lines))
         self.assertIn("myrepo → gitea.example.com:30009", git_lines[0])
 
     def test_git_gate_lines_match_across_backends(self) -> None:
         self.assertEqual(
             self._git_gate_lines(self._docker_lines),
-            self._git_gate_lines(self._smol_lines),
+            self._git_gate_lines(self._fc_lines),
         )
 
 
@@ -174,7 +171,7 @@ class TestEgressPrintParity(unittest.TestCase):
         manifest = _INDEX.load_for_agent("demo")
         spec = _spec(_INDEX, self._tmp)
         self._docker_lines = _capture_print(_docker_plan(spec, manifest, self._tmp))
-        self._smol_lines = _capture_print(_smolmachines_plan(spec, manifest, self._tmp))
+        self._fc_lines = _capture_print(_firecracker_plan(spec, manifest, self._tmp))
 
     def _egress_section(self, lines: list[str]) -> list[str]:
         """Return lines from the egress label through the last route entry.
@@ -210,8 +207,8 @@ class TestEgressPrintParity(unittest.TestCase):
         combined = "\n".join(self._egress_section(self._docker_lines))
         self.assertIn("api.example.com [auth:bearer]", combined)
 
-    def test_smolmachines_includes_auth_annotation(self) -> None:
-        combined = "\n".join(self._egress_section(self._smol_lines))
+    def test_firecracker_includes_auth_annotation(self) -> None:
+        combined = "\n".join(self._egress_section(self._fc_lines))
         self.assertIn("api.example.com [auth:bearer]", combined)
 
     def test_unauthenticated_route_has_no_annotation(self) -> None:
@@ -222,7 +219,7 @@ class TestEgressPrintParity(unittest.TestCase):
     def test_egress_lines_match_across_backends(self) -> None:
         self.assertEqual(
             self._egress_section(self._docker_lines),
-            self._egress_section(self._smol_lines),
+            self._egress_section(self._fc_lines),
         )
 
 

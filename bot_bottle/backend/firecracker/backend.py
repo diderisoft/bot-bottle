@@ -1,11 +1,10 @@
-"""SmolmachinesBottleBackend — the smolmachines implementation of
-BottleBackend (PRD 0023).
+"""FirecrackerBottleBackend — Linux microVM implementation.
 
-Per PRD 0050 the per-provider provisioning steps (prompt, skills,
-the declarative provision-plan apply, supervise MCP registration)
-live on the `AgentProvider` plugin under `bot_bottle/contrib/`. The
-smolmachines backend only owns the steps that are about backend
-infrastructure: CA install (no-op for now), workspace, git copy-in."""
+Replaces smolmachines on Linux (issue #342): mature KVM-based
+isolation via Firecracker, SSH control over a point-to-point TAP, and a
+fail-closed nftables egress boundary. Selected by
+`BOT_BOTTLE_BACKEND=firecracker` or `--backend=firecracker`.
+"""
 
 from __future__ import annotations
 
@@ -17,34 +16,50 @@ from ...agent_provider import AgentProvisionPlan
 from ...egress import EgressPlan
 from ...env import ResolvedEnv
 from ...git_gate import GitGatePlan
-from ...supervise import SupervisePlan
 from ...manifest import Manifest
+from ...supervise import SupervisePlan
 from .. import ActiveAgent, BottleBackend, BottleSpec
 from . import cleanup as _cleanup
 from . import enumerate as _enumerate
 from . import launch as _launch
 from . import resolve_plan as _resolve_plan
-from . import smolvm as _smolvm
-from .bottle import SmolmachinesBottle
-from .bottle_cleanup_plan import SmolmachinesBottleCleanupPlan
-from .bottle_plan import SmolmachinesBottlePlan
+from . import util as _util
+from .bottle import FirecrackerBottle
+from .bottle_cleanup_plan import FirecrackerBottleCleanupPlan
+from .bottle_plan import FirecrackerBottlePlan
 
 
-class SmolmachinesBottleBackend(
-    BottleBackend["SmolmachinesBottlePlan", "SmolmachinesBottleCleanupPlan"]
+class FirecrackerBottleBackend(
+    BottleBackend["FirecrackerBottlePlan", "FirecrackerBottleCleanupPlan"]
 ):
-    """smolmachines backend. Selected by
-    `BOT_BOTTLE_BACKEND=smolmachines`."""
-
-    name = "smolmachines"
+    name = "firecracker"
 
     @classmethod
     def is_available(cls) -> bool:
-        """`smolvm` on PATH. The backend additionally needs macOS
-        for libkrun + TSI, but `enumerate_active` / `cleanup` are
-        host-shell ops that gracefully no-op on Linux too — the
-        runtime check happens at `prepare`."""
-        return _smolvm.is_available()
+        return _util.is_available()
+
+    @classmethod
+    def is_host_capable(cls) -> bool:
+        """Linux + KVM, regardless of whether the `firecracker` binary
+        is installed. Drives default-backend selection so a capable host
+        without the binary still lands on firecracker and gets an
+        install pointer at launch."""
+        return _util.is_host_capable()
+
+    @classmethod
+    def setup(cls) -> int:
+        from . import setup as _setup
+        return _setup.setup()
+
+    @classmethod
+    def status(cls) -> int:
+        from . import setup as _setup
+        return _setup.status()
+
+    @classmethod
+    def teardown(cls) -> int:
+        from . import setup as _setup
+        return _setup.teardown()
 
     def _preflight(self) -> None:
         _resolve_plan.preflight()
@@ -64,7 +79,7 @@ class SmolmachinesBottleBackend(
         git_gate_plan: GitGatePlan,
         supervise_plan: SupervisePlan | None,
         stage_dir: Path,
-    ) -> SmolmachinesBottlePlan:
+    ) -> FirecrackerBottlePlan:
         return _resolve_plan.resolve_plan(
             spec,
             manifest=manifest,
@@ -79,23 +94,19 @@ class SmolmachinesBottleBackend(
 
     @contextmanager
     def launch(
-        self, plan: SmolmachinesBottlePlan
-    ) -> Generator[SmolmachinesBottle, None, None]:
+        self, plan: FirecrackerBottlePlan
+    ) -> Generator[FirecrackerBottle, None, None]:
         with _launch.launch(plan, provision=self.provision) as bottle:
             yield bottle
 
-    def supervise_mcp_url(self, plan: SmolmachinesBottlePlan) -> str:
-        """The smolmachines guest reaches the supervise sidecar via a
-        host-published random port the launch step pinned earlier
-        (`http://<loopback_ip>:<random_port>/`). `agent_supervise_url`
-        on the plan is "" when the bottle has no sidecar."""
-        return plan.agent_supervise_url
-
-    def prepare_cleanup(self) -> SmolmachinesBottleCleanupPlan:
+    def prepare_cleanup(self) -> FirecrackerBottleCleanupPlan:
         return _cleanup.prepare_cleanup()
 
-    def cleanup(self, plan: SmolmachinesBottleCleanupPlan) -> None:
+    def cleanup(self, plan: FirecrackerBottleCleanupPlan) -> None:
         _cleanup.cleanup(plan)
 
     def enumerate_active(self) -> Sequence[ActiveAgent]:
         return _enumerate.enumerate_active()
+
+    def supervise_mcp_url(self, plan: FirecrackerBottlePlan) -> str:
+        return plan.agent_supervise_url

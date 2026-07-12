@@ -26,8 +26,9 @@ backend exposes five methods:
 
 Selection is driven by `--backend` on `start` or BOT_BOTTLE_BACKEND
 (env var). When neither is set, compatible macOS hosts default to
-`macos-container`; other hosts default to `smolmachines`. Per PRD 0003
-the manifest does not carry a backend field; the host picks.
+`macos-container`; Linux hosts with KVM default to `firecracker`;
+otherwise `docker`. Per PRD 0003 the manifest does not carry a
+backend field; the host picks.
 """
 
 from __future__ import annotations
@@ -97,14 +98,14 @@ class BottlePlan(ABC):
     @property
     def git_gate_insteadof_host(self) -> str:
         """Host (and optional port) used in git-gate insteadOf URLs.
-        Docker uses the compose-network DNS alias; smolmachines
-        overrides with a loopback IP:port since TSI has no DNS."""
+        Docker uses the compose-network DNS alias; VM backends may
+        override with an IP:port when the guest has no DNS."""
         return "git-gate"
 
     @property
     def git_gate_insteadof_scheme(self) -> str:
         """URL scheme for git-gate insteadOf rewrites. 'git' for
-        Docker (git daemon); 'http' for smolmachines (HTTP proxy
+        Docker (git daemon); VM backends may override (e.g. 'http'
         over a published host port)."""
         return "git"
     egress_plan: EgressPlan
@@ -182,8 +183,8 @@ class BottleCleanupPlan(ABC):
 class ExecResult:
     """Captured result of `Bottle.exec`. Backend-neutral: the Docker
     impl populates it from a `subprocess.CompletedProcess`, but a
-    future fly/smolmachines backend could populate it from any source
-    that produces a returncode + captured streams."""
+    VM backend could populate it from any source that produces a
+    returncode + captured streams."""
 
     returncode: int
     stdout: str
@@ -201,7 +202,7 @@ class ActiveAgent:
     of sidecar daemons currently up for this bottle (`egress`,
     `git-gate`, `supervise`); the dashboard uses it to
     gate edit verbs. `backend_name` is the matching key in
-    `_BACKENDS` (`docker` / `smolmachines` / `macos-container`) — used by the active-
+    `_BACKENDS` (`docker` / `firecracker` / `macos-container`) — used by the active-
     list rendering to disambiguate and by the dashboard's
     re-attach path."""
 
@@ -506,7 +507,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         MCP entry inside the guest.
 
         Default returns "" so backends without supervise support
-        don't have to implement it. Docker and smolmachines override."""
+        don't have to implement it. Docker and firecracker override."""
         del plan
         return ""
 
@@ -523,27 +524,60 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
     def enumerate_active(self) -> Sequence[ActiveAgent]:
         """Return every currently-running agent on this backend.
         Empty when none. Backend-specific: docker queries `docker
-        compose ls`; smolmachines queries `smolvm machine ls --json`
-        + cross-references its bundle container."""
+        compose ls`; firecracker cross-references its running sidecar
+        containers against per-bottle metadata."""
 
     @classmethod
     @abstractmethod
     def is_available(cls) -> bool:
         """Whether this backend's runtime prerequisites are satisfied
-        on the current host. Docker → `docker` on PATH; smolmachines
-        → `smolvm` on PATH. Used by the cross-backend
+        on the current host. Docker → `docker` on PATH; firecracker →
+        Linux + KVM. Used by the cross-backend
         `enumerate_active_agents` / `cmd_cleanup` to skip backends
         the operator hasn't installed, so a docker-only host
         doesn't fail when `cli.py list active` walks past
-        smolmachines."""
+        firecracker."""
+
+    @classmethod
+    @abstractmethod
+    def setup(cls) -> int:
+        """Emit this backend's one-time host setup — privileged network
+        pool, daemon bring-up, install pointers, etc. — as
+        host-appropriate config or commands. Prints to stdout/stderr and
+        returns a shell exit code (0 = nothing to report / success). A
+        backend that needs no host setup prints a short note and returns
+        0. Invoked generically by `./cli.py backend setup [--backend=…]`
+        so operators can provision any backend without a
+        backend-specific command. Classmethod (like `is_available`) —
+        it's a host query, not per-bottle state."""
+
+    @classmethod
+    @abstractmethod
+    def status(cls) -> int:
+        """Report whether this backend's prerequisites are satisfied on
+        the host — binaries, daemon reachability, network pool, range
+        conflicts, etc. Prints a human-readable summary; returns 0 when
+        the backend is ready to launch and non-zero when something is
+        missing. Invoked by `./cli.py backend status [--backend=…]`."""
+
+    @classmethod
+    @abstractmethod
+    def teardown(cls) -> int:
+        """Undo `setup()` — the inverse operation, surfaced as
+        `./cli.py backend teardown [--backend=…]` (uninstall). Symmetric
+        with setup: where setup is advisory (prints the privileged
+        commands / declarative config to apply), teardown prints the
+        commands / config change to remove the host prerequisites. A
+        backend with no host setup prints a short note and returns 0.
+        Not called by the launch path or the test suite."""
 
 
 # Import concrete backend classes AFTER the base types are defined, so
 # each backend module can pull BottleSpec / BottlePlan / BottleBackend
 # via `from . import ...` without hitting a partially-initialized module.
 from .docker import DockerBottleBackend  # noqa: E402  # pylint: disable=wrong-import-position
+from .firecracker import FirecrackerBottleBackend  # noqa: E402  # pylint: disable=wrong-import-position
 from .macos_container import MacosContainerBottleBackend  # noqa: E402  # pylint: disable=wrong-import-position
-from .smolmachines import SmolmachinesBottleBackend  # noqa: E402  # pylint: disable=wrong-import-position
 
 # Freezer is imported after the backend classes for the same reason:
 # Freezer.commit_slug constructs ActiveAgent, which must be fully
@@ -557,8 +591,8 @@ from .freeze import CommitCancelled, Freezer, get_freezer  # noqa: E402  # pylin
 # unparameterized methods (prepare → plan → launch(plan), cleanup, etc.).
 _BACKENDS: dict[str, BottleBackend[Any, Any]] = {
     "docker": DockerBottleBackend(),
+    "firecracker": FirecrackerBottleBackend(),
     "macos-container": MacosContainerBottleBackend(),
-    "smolmachines": SmolmachinesBottleBackend(),
 }
 
 
@@ -571,7 +605,8 @@ def get_bottle_backend(
       1. explicit arg (CLI `--backend=<name>` passes through here)
       2. BOT_BOTTLE_BACKEND env var
       3. `macos-container` on compatible macOS hosts
-      4. default `smolmachines`
+      4. `firecracker` on KVM-capable Linux hosts
+      5. default `docker`
 
     Dies with a pointer at the known backends if the chosen name
     isn't implemented."""
@@ -585,7 +620,13 @@ def get_bottle_backend(
 def _default_backend_name() -> str:
     if has_backend("macos-container"):
         return "macos-container"
-    return "smolmachines"
+    # A KVM-capable Linux host defaults to firecracker even when the
+    # `firecracker` binary isn't installed yet: selecting it here routes
+    # start through firecracker's preflight, which prints an install
+    # pointer, instead of silently falling back to docker.
+    if FirecrackerBottleBackend.is_host_capable():
+        return "firecracker"
+    return "docker"
 
 
 def known_backend_names() -> tuple[str, ...]:
@@ -599,7 +640,7 @@ def has_backend(name: str) -> bool:
     """Whether the named backend's runtime prerequisites are
     available on the current host. Cross-backend callers (list,
     cleanup) skip unavailable backends so a docker-only host
-    doesn't fail when the smolmachines backend isn't installed,
+    doesn't fail when the firecracker backend isn't usable,
     and vice versa.
 
     Returns False for unknown names so callers can pass

@@ -23,12 +23,12 @@ def _make_backend(empty: bool = True):
 class TestCmdCleanup(unittest.TestCase):
     def test_iterates_every_backend(self):
         docker, docker_plan = _make_backend(empty=False)
-        smol, smol_plan = _make_backend(empty=False)
-        backends_by_name = {"docker": docker, "smolmachines": smol}
+        fc, fc_plan = _make_backend(empty=False)
+        backends_by_name = {"docker": docker, "firecracker": fc}
 
         with patch.object(
             cmd, "known_backend_names",
-            return_value=("docker", "smolmachines"),
+            return_value=("docker", "firecracker"),
         ), patch.object(
             cmd, "get_bottle_backend",
             side_effect=lambda name: backends_by_name[name],  # type: ignore
@@ -38,18 +38,18 @@ class TestCmdCleanup(unittest.TestCase):
             self.assertEqual(0, cmd.cmd_cleanup([]))
 
         docker.prepare_cleanup.assert_called_once()
-        smol.prepare_cleanup.assert_called_once()
+        fc.prepare_cleanup.assert_called_once()
         docker.cleanup.assert_called_once_with(docker_plan)
-        smol.cleanup.assert_called_once_with(smol_plan)
+        fc.cleanup.assert_called_once_with(fc_plan)
 
     def test_short_circuits_when_all_empty(self):
         docker, _ = _make_backend(empty=True)
-        smol, _ = _make_backend(empty=True)
-        backends_by_name = {"docker": docker, "smolmachines": smol}
+        fc, _ = _make_backend(empty=True)
+        backends_by_name = {"docker": docker, "firecracker": fc}
 
         with patch.object(
             cmd, "known_backend_names",
-            return_value=("docker", "smolmachines"),
+            return_value=("docker", "firecracker"),
         ), patch.object(
             cmd, "get_bottle_backend",
             side_effect=lambda name: backends_by_name[name],  # type: ignore
@@ -59,16 +59,16 @@ class TestCmdCleanup(unittest.TestCase):
             self.assertEqual(0, cmd.cmd_cleanup([]))
         prompt.assert_not_called()
         docker.cleanup.assert_not_called()
-        smol.cleanup.assert_not_called()
+        fc.cleanup.assert_not_called()
 
     def test_abort_at_prompt_runs_nothing(self):
         docker, _ = _make_backend(empty=False)
-        smol, _ = _make_backend(empty=True)
-        backends_by_name = {"docker": docker, "smolmachines": smol}
+        fc, _ = _make_backend(empty=True)
+        backends_by_name = {"docker": docker, "firecracker": fc}
 
         with patch.object(
             cmd, "known_backend_names",
-            return_value=("docker", "smolmachines"),
+            return_value=("docker", "firecracker"),
         ), patch.object(
             cmd, "get_bottle_backend",
             side_effect=lambda name: backends_by_name[name],  # type: ignore
@@ -77,18 +77,18 @@ class TestCmdCleanup(unittest.TestCase):
         ):
             self.assertEqual(0, cmd.cmd_cleanup([]))
         docker.cleanup.assert_not_called()
-        smol.cleanup.assert_not_called()
+        fc.cleanup.assert_not_called()
 
     def test_skips_empty_plans_when_others_have_work(self):
-        # docker has work, smolmachines doesn't — only docker.cleanup
+        # docker has work, firecracker doesn't — only docker.cleanup
         # is called.
         docker, docker_plan = _make_backend(empty=False)
-        smol, _ = _make_backend(empty=True)
-        backends_by_name = {"docker": docker, "smolmachines": smol}
+        fc, _ = _make_backend(empty=True)
+        backends_by_name = {"docker": docker, "firecracker": fc}
 
         with patch.object(
             cmd, "known_backend_names",
-            return_value=("docker", "smolmachines"),
+            return_value=("docker", "firecracker"),
         ), patch.object(
             cmd, "get_bottle_backend",
             side_effect=lambda name: backends_by_name[name],  # type: ignore
@@ -97,7 +97,7 @@ class TestCmdCleanup(unittest.TestCase):
         ):
             cmd.cmd_cleanup([])
         docker.cleanup.assert_called_once_with(docker_plan)
-        smol.cleanup.assert_not_called()
+        fc.cleanup.assert_not_called()
 
 
 if __name__ == "__main__":

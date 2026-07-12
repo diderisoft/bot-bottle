@@ -37,8 +37,8 @@ if [ -n "$EGRESS_UPSTREAM_PROXY" ]; then
 fi
 
 # Bind address. Docker backend wants `0.0.0.0` (agent dials egress
-# directly via the docker network alias). Smolmachines backend
-# uses EGRESS_LISTEN_HOST when a non-default binding is needed.
+# directly via the docker network alias). A VM backend uses
+# EGRESS_LISTEN_HOST when a non-default binding is needed.
 LISTEN_HOST_FLAG=""
 if [ -n "$EGRESS_LISTEN_HOST" ]; then
   LISTEN_HOST_FLAG="--listen-host $EGRESS_LISTEN_HOST"

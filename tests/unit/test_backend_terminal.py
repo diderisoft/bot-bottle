@@ -34,7 +34,7 @@ class TestPalettePrintf(unittest.TestCase):
 
 
 class TestExecShellScript(unittest.TestCase):
-    _ARGV = ["smolvm", "machine", "exec", "--name", "x", "--", "claude"]
+    _ARGV = ["ssh", "-t", "100.64.0.1", "--", "claude"]
 
     def test_no_decoration_returns_none(self):
         self.assertIsNone(exec_shell_script(self._ARGV))
@@ -58,7 +58,7 @@ class TestExecShellScript(unittest.TestCase):
         self.assertIn("\\033]111", script)  # background reset
         # No exec-replace when palette is active (shell must survive for reset)
         parts = script.split("; ")
-        agent_part = next(p for p in parts if "smolvm" in p)
+        agent_part = next(p for p in parts if "ssh" in p)
         self.assertFalse(agent_part.startswith("exec "))
 
     def test_title_and_color_both_appear(self):

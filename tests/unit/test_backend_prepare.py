@@ -17,7 +17,7 @@ from bot_bottle import supervise
 from bot_bottle.backend import BottleSpec
 from bot_bottle.backend.docker import DockerBottleBackend
 from bot_bottle.backend.resolve_common import mint_slug
-from bot_bottle.backend.smolmachines import SmolmachinesBottleBackend
+from bot_bottle.backend.firecracker import FirecrackerBottleBackend
 from bot_bottle.manifest import ManifestIndex
 
 
@@ -90,30 +90,28 @@ class TestDockerPrepare(_FakeStateMixin, unittest.TestCase):
         self.assertNotIn("FORWARDED_ENV", plan.agent_provision.guest_env)
 
 
-class TestSmolmachinesPrepare(_FakeStateMixin, unittest.TestCase):
+class TestFirecrackerPrepare(_FakeStateMixin, unittest.TestCase):
     def test_records_backend_and_builds_guest_env(self) -> None:
-        backend = SmolmachinesBottleBackend()
-        spec = _spec(Path(self.tmp.name), identity="demo-smol")
+        backend = FirecrackerBottleBackend()
+        spec = _spec(Path(self.tmp.name), identity="demo-fc")
 
         with (
             patch.dict("os.environ", {"HOST_SECRET_ENV": "secret-value"}),
             patch(
-                "bot_bottle.backend.smolmachines.resolve_plan.smolmachines_preflight",
+                "bot_bottle.backend.firecracker.resolve_plan.util.require_firecracker",
             ) as preflight,
         ):
             plan = backend.prepare(spec, Path(self.tmp.name) / "stage")
 
         preflight.assert_called_once_with()
-        metadata = bottle_state.read_metadata("demo-smol")
+        metadata = bottle_state.read_metadata("demo-fc")
         self.assertIsNotNone(metadata)
         assert metadata is not None
-        self.assertEqual("smolmachines", metadata.backend)
-        self.assertEqual("literal-value", plan.guest_env["LITERAL_ENV"])
-        self.assertEqual("secret-value", plan.guest_env["FORWARDED_ENV"])
+        self.assertEqual("firecracker", metadata.backend)
         self.assertEqual(
-            "/etc/ssl/certs/ca-certificates.crt",
-            plan.guest_env["SSL_CERT_FILE"],
+            "literal-value", plan.agent_provision.guest_env["LITERAL_ENV"],
         )
+        self.assertEqual({"FORWARDED_ENV": "secret-value"}, plan.forwarded_env)
 
 
 class TestMintSlug(unittest.TestCase):
