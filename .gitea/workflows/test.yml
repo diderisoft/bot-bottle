@@ -71,28 +71,42 @@ jobs:
       - name: Run integration tests
         run: python3 -m unittest discover -t . -s tests/integration -v
 
-  # Combined unit+integration coverage + the diff-coverage gate.
-  # See docs/decisions/0004-coverage-policy.md. The hard gate is diff
-  # coverage (new/changed lines >= 90%); the combined + critical reports
-  # are informational and degrade gracefully when the runner has no
-  # Docker (integration tests skip, those modules just read lower).
+  # Combined unit+integration coverage + the diff-coverage gate (the hard
+  # gate: new/changed lines >= 90%). See docs/decisions/0004-coverage-policy.md.
+  #
+  # This runs on a self-hosted KVM runner (label `kvm`), NOT ubuntu-latest,
+  # because the Firecracker backend's subprocess/VM orchestration
+  # (launch/boot/SSH/isolation-probe) is covered by the integration suite,
+  # and that suite needs `/dev/kvm` + the provisioned TAP/nft pool — which a
+  # container-based runner doesn't have. On such a runner the firecracker
+  # integration test skips and its ~230 orchestration lines read as
+  # uncovered, so the gate can't pass there.
+  #
+  # Runner prerequisites (provision once on the host; see the README
+  # "Firecracker on Linux" section): the `firecracker` binary on PATH,
+  # `/dev/kvm` accessible to the runner user, Docker, the cached guest
+  # kernel + static dropbear (BOT_BOTTLE_FC_KERNEL / BOT_BOTTLE_FC_DROPBEAR),
+  # and the network pool installed as the persistent systemd unit
+  # (`./cli.py backend setup --backend=firecracker`). The preflight step
+  # below fails fast with instructions if anything is missing.
   coverage:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, kvm]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+      - name: Preflight — Firecracker host is ready
+        run: |
+          command -v firecracker >/dev/null || {
+            echo "firecracker not on PATH — provision the runner (README: Firecracker on Linux)"; exit 1; }
+          test -e /dev/kvm || { echo "/dev/kvm missing — KVM not available on this runner"; exit 1; }
+          # `backend status` exits non-zero unless the TAP pool is up + no
+          # range overlap; it prints the exact `backend setup` fix.
+          python3 cli.py backend status --backend=firecracker
 
-      - name: Install dev requirements
-        run: python3 -m pip install -r requirements-dev.txt
-
-      - name: Combined coverage (unit + integration)
+      - name: Combined coverage (unit + integration, incl. firecracker)
         run: PYTHON=python3 bash scripts/coverage.sh critical
 
       - name: Diff-coverage gate (changed lines >= 90%)

@@ -303,5 +303,74 @@ class TestBootArgs(unittest.TestCase):
         self.assertEqual("bbfc0", cfg["network-interfaces"][0]["host_dev_name"])
 
 
+class TestBottleExecClose(unittest.TestCase):
+    def test_exec_runs_as_node_and_returns_result(self):
+        from bot_bottle.backend.firecracker import bottle as bmod
+        with patch.object(bmod.subprocess, "run",
+                          return_value=bmod.subprocess.CompletedProcess(
+                              [], 0, stdout="hi\n", stderr="")) as run:
+            r = _bottle().exec("echo hi")
+        self.assertEqual(0, r.returncode)
+        self.assertEqual("hi\n", r.stdout)
+        # runs `runuser -u node` over ssh, script piped on stdin.
+        self.assertIn("runuser", run.call_args.args[0])
+        self.assertEqual("echo hi", run.call_args.kwargs["input"])
+
+    def test_exec_respects_root_user(self):
+        from bot_bottle.backend.firecracker import bottle as bmod
+        with patch.object(bmod.subprocess, "run",
+                          return_value=bmod.subprocess.CompletedProcess([], 0,
+                                                                        stdout="", stderr="")) as run:
+            _bottle().exec("id", user="root")
+        joined = " ".join(run.call_args.args[0])
+        self.assertIn("runuser -u root", joined)
+
+    def test_close_is_idempotent_noop(self):
+        b = _bottle()
+        b.close()
+        b.close()  # must not raise
+
+
+class TestBottlePlanProperties(unittest.TestCase):
+    def _plan(self, **overrides: Any):
+        from bot_bottle.backend.firecracker.bottle_plan import FirecrackerBottlePlan
+        ap = cast(Any, MagicMock())
+        ap.instance_name = "bot-bottle-demo-x"
+        ap.image = "bot-bottle-claude:latest"
+        ap.dockerfile = "Dockerfile.claude"
+        ap.prompt_file = Path("/stage/prompt.txt")
+        ap.command = "claude"
+        ap.prompt_mode = "append_file"
+        ap.template = "claude"
+        fields = dict(
+            spec=cast(Any, MagicMock()), manifest=cast(Any, MagicMock()),
+            stage_dir=Path("/stage"), git_gate_plan=cast(Any, MagicMock()),
+            egress_plan=cast(Any, MagicMock()), supervise_plan=None,
+            agent_provision=ap, slug="demo-x", forwarded_env={},
+        )
+        fields.update(overrides)
+        return FirecrackerBottlePlan(**fields)  # type: ignore[arg-type]
+
+    def test_provision_backed_properties(self):
+        p = self._plan()
+        self.assertEqual("bot-bottle-demo-x", p.container_name)
+        self.assertEqual("bot-bottle-claude:latest", p.image)
+        self.assertEqual("Dockerfile.claude", p.dockerfile_path)
+        self.assertEqual(Path("/stage/prompt.txt"), p.prompt_file)
+        self.assertEqual("claude", p.agent_command)
+        self.assertEqual("append_file", p.agent_prompt_mode)
+        self.assertEqual("claude", p.agent_provider_template)
+
+    def test_git_gate_insteadof_defaults(self):
+        p = self._plan()
+        self.assertEqual("git-gate", p.git_gate_insteadof_host)
+        self.assertEqual("git", p.git_gate_insteadof_scheme)
+
+    def test_git_gate_insteadof_http_override(self):
+        p = self._plan(agent_git_gate_url="http://10.243.0.0:9420/")
+        self.assertEqual("10.243.0.0:9420", p.git_gate_insteadof_host)
+        self.assertEqual("http", p.git_gate_insteadof_scheme)
+
+
 if __name__ == "__main__":
     unittest.main()

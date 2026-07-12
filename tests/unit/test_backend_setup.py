@@ -215,6 +215,32 @@ class TestDockerSetupStatus(unittest.TestCase):
         with patch.object(dk.shutil, "which", return_value=None):
             self.assertFalse(dk._daemon_reachable())
 
+    def test_status_reports_missing_docker(self):
+        with patch.object(dk.shutil, "which", return_value=None):
+            rc, out = _cap(dk.status)
+        self.assertEqual(1, rc)
+        self.assertIn("docker on PATH: NO", out)
+
+    def test_setup_missing_docker_prints_install(self):
+        with patch.object(dk.shutil, "which", return_value=None):
+            rc, out = _cap(dk.setup)
+        self.assertEqual(1, rc)
+        self.assertIn("docker.com", out)
+
+
+class TestNetpoolSpanConflict(unittest.TestCase):
+    def test_pool_span_bounds(self):
+        with patch.dict("os.environ", {"BOT_BOTTLE_FC_IP_BASE": "10.243.0.0",
+                                       "BOT_BOTTLE_FC_POOL_SIZE": "8"}):
+            lo, hi = netpool._pool_span()
+        # base .. base + 2*8 - 1  (16 addresses)
+        self.assertEqual(15, hi - lo)
+
+    def test_route_conflict_fields(self):
+        c = netpool.RouteConflict(dst="10.243.0.0/24", dev="eth0")
+        self.assertEqual("10.243.0.0/24", c.dst)
+        self.assertEqual("eth0", c.dev)
+
 
 # --- macos-container ------------------------------------------------
 
