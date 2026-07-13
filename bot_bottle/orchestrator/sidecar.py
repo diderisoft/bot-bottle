@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import abc
 
-from .dockerutil import run_docker
+from ..docker_cmd import run_docker
 
 SIDECAR_NAME = "bot-bottle-orch-sidecar"
 SIDECAR_LABEL = "bot-bottle-orch-sidecar=1"
