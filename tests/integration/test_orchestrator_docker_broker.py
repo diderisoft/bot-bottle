@@ -40,14 +40,15 @@ class TestDockerBrokerIntegration(unittest.TestCase):
         )
         return self.name in proc.stdout.split()
 
-    def _submit(self, op: str, **kw: str) -> None:
-        req = LaunchRequest(op=op, bottle_id=self.bottle_id, **kw)
+    def _submit(self, req: LaunchRequest) -> None:
         self.broker.submit(sign_request(req, self.secret))
 
     def test_launch_creates_then_teardown_removes(self) -> None:
-        self._submit("launch", image_ref=IMAGE)
+        self._submit(
+            LaunchRequest(op="launch", bottle_id=self.bottle_id, image_ref=IMAGE)
+        )
         self.assertTrue(self._exists(), "container should exist after launch")
-        self._submit("teardown")
+        self._submit(LaunchRequest(op="teardown", bottle_id=self.bottle_id))
         self.assertFalse(self._exists(), "container should be gone after teardown")
 
 
