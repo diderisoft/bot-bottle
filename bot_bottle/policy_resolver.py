@@ -73,8 +73,15 @@ class PolicyResolver:
     def resolve(self, source_ip: str, identity_token: str = "") -> str | None:
         """The calling bottle's policy blob, or None if unattributed. Always
         fetches from the orchestrator so revocations / changes / teardowns
-        are honored immediately. `identity_token` is optional — omit it to
-        resolve by source IP alone (the network-layer attribution).
+        are honored immediately.
+
+        `identity_token` is optional *transitionally* — omitting it resolves
+        by source IP alone (the network-layer attribution, sound by
+        construction on Firecracker's `/31`+nft, weaker elsewhere). The
+        consolidated end state makes the token mandatory so the app-layer
+        defense is always enforced, not silently degraded; that flips at the
+        `/resolve` boundary once identity-token *delivery* lands (a PRD 0070
+        open question — we can't require what the agent can't yet present).
         Raises `PolicyResolveError` if the orchestrator can't be reached."""
         payload = self._post_resolve(source_ip, identity_token)
         if payload is None:

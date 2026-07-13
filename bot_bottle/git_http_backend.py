@@ -13,7 +13,8 @@ calling bottle's repo namespace (`<root>/<bottle_id>`), attributed from
 the unspoofable source IP via the orchestrator. Per-repo credentials +
 hooks scope by repo directory, so isolating the *root* per bottle isolates
 its creds too. Unattributed clients fail closed (404). Unset → the legacy
-per-bottle single-tenant flat root, unchanged.
+per-bottle single-tenant flat root, unchanged — a transitional path that
+gets stripped out once every backend runs the consolidated gateway.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import typing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -54,24 +56,38 @@ ORCHESTRATOR_URL_ENV = "BOT_BOTTLE_ORCHESTRATOR_URL"
 IDENTITY_HEADER = "x-bot-bottle-identity"
 
 # Default flat repo root (single-tenant, and the base under which
-# consolidated mode nests each bottle's namespace).
-DEFAULT_PROJECT_ROOT = "/git"
+# consolidated mode nests each sandbox's namespace).
+DEFAULT_REPO_ROOT = "/git"
 
 
-def resolve_repo_root(
-    resolver: "PolicyResolver | None",
+class ResolverLike(typing.Protocol):
+    """Structural type for the resolver `resolve_sandbox_root` needs — just
+    `resolve_bottle_id`. A Protocol so tests can pass a fake without
+    importing PolicyResolver (mirrors egress_addon_core.PolicyResolverLike)."""
+
+    def resolve_bottle_id(
+        self, source_ip: str, identity_token: str = ...,
+    ) -> "str | None": ...
+
+
+def resolve_sandbox_root(
+    resolver: "ResolverLike | None",
     base_root: Path,
     source_ip: str,
     identity_token: str = "",
 ) -> Path | None:
-    """The repo root to serve this request from, or None to deny (404).
+    """The per-sandbox repo root to serve this request from, or None to
+    deny (404).
 
     Single-tenant (`resolver is None`): the flat `base_root`, unchanged.
+    NOTE: this legacy per-bottle single-tenant path is transitional — it
+    will be stripped out once every backend runs the consolidated gateway
+    (PRD 0070), leaving only the source-IP-attributed path below.
 
-    Consolidated: `base_root/<bottle_id>`, where the bottle is attributed
+    Consolidated: `base_root/<bottle_id>`, where the sandbox is attributed
     from the source IP via the orchestrator. Fail-closed — an unattributed
     client, a resolver error, or a namespace that would escape `base_root`
-    all deny, so one bottle can never reach another's repos."""
+    all deny, so one sandbox can never reach another's repos."""
     if resolver is None:
         return base_root
     try:
@@ -106,24 +122,25 @@ class GitHttpHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         self._run_backend()
 
-    def _project_root(self) -> Path | None:
-        """This request's repo root, or None to deny. Single-tenant unless
-        the server was started with a resolver (consolidated mode), in which
-        case the root is the calling bottle's source-IP-selected namespace."""
-        base = Path(os.environ.get("GIT_PROJECT_ROOT", DEFAULT_PROJECT_ROOT))
+    def _sandbox_root(self) -> Path | None:
+        """This request's per-sandbox repo root, or None to deny. Single-tenant
+        unless the server was started with a resolver (consolidated mode), in
+        which case the root is the calling sandbox's source-IP-selected
+        namespace. `GIT_PROJECT_ROOT` keeps git's own env-var name."""
+        base = Path(os.environ.get("GIT_PROJECT_ROOT", DEFAULT_REPO_ROOT))
         resolver = getattr(self.server, "policy_resolver", None)
         token = self.headers.get(IDENTITY_HEADER, "")
-        return resolve_repo_root(resolver, base, self.client_address[0], token)
+        return resolve_sandbox_root(resolver, base, self.client_address[0], token)
 
     def _run_backend(self) -> None:
-        project_root = self._project_root()
-        if project_root is None:
+        sandbox_root = self._sandbox_root()
+        if sandbox_root is None:
             # Unattributed / resolver error: deny before touching any repo.
             self.send_error(404)
             return
         parsed = urlsplit(self.path)
         if self._is_upload_pack(parsed.path, parsed.query):
-            repo_dir = self._repo_dir(project_root, parsed.path)
+            repo_dir = self._repo_dir(sandbox_root, parsed.path)
             if repo_dir is None:
                 self.send_error(404)
                 return
@@ -157,7 +174,7 @@ class GitHttpHandler(BaseHTTPRequestHandler):
                 return
         env = os.environ.copy()
         env.update({
-            "GIT_PROJECT_ROOT": str(project_root),
+            "GIT_PROJECT_ROOT": str(sandbox_root),
             "GIT_HTTP_EXPORT_ALL": "1",
             "REQUEST_METHOD": self.command,
             "PATH_INFO": parsed.path,
@@ -203,8 +220,8 @@ class GitHttpHandler(BaseHTTPRequestHandler):
         )
         self._write_cgi_response(proc.stdout)
 
-    def _repo_dir(self, project_root: Path, path: str) -> Path | None:
-        root = project_root.resolve()
+    def _repo_dir(self, sandbox_root: Path, path: str) -> Path | None:
+        root = sandbox_root.resolve()
         relative = path.lstrip("/").split(".git", 1)[0] + ".git"
         candidate = (root / relative).resolve()
         if root not in (candidate, *candidate.parents):
@@ -262,9 +279,10 @@ def main() -> int:
     port = int(os.environ.get("GIT_HTTP_PORT", str(DEFAULT_PORT)))
     server = ThreadingHTTPServer(("0.0.0.0", port), GitHttpHandler)
     orch_url = os.environ.get(ORCHESTRATOR_URL_ENV, "").strip()
-    # Consolidated mode: resolve each request's bottle namespace by source IP.
-    # Absent → single-tenant (flat repo root); behaviour unchanged.
-    server.policy_resolver = PolicyResolver(orch_url) if orch_url else None  # type: ignore[attr-defined]
+    # Consolidated mode: resolve each request's sandbox namespace by source
+    # IP. Absent → single-tenant (flat repo root); behaviour unchanged.
+    resolver = PolicyResolver(orch_url) if orch_url else None
+    server.policy_resolver = resolver  # type: ignore[attr-defined]
     mode = "multi-tenant" if orch_url else "single-tenant"
     sys.stdout.write(f"git-http listening on 0.0.0.0:{port} ({mode})\n")
     sys.stdout.flush()
