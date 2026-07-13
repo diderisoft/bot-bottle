@@ -1,0 +1,150 @@
+"""Unit tests for the orchestrator HTTP control plane (PRD 0070).
+
+Mostly exercises the pure `dispatch()` (socket-free, like the supervise
+server tests), plus one real-socket round-trip to prove the handler wiring.
+"""
+
+from __future__ import annotations
+
+import json
+import tempfile
+import threading
+import unittest
+import urllib.request
+from pathlib import Path
+
+from bot_bottle.orchestrator.control_plane import dispatch, make_server
+from bot_bottle.orchestrator.registry import RegistryStore
+
+
+def _body(obj: object) -> bytes:
+    return json.dumps(obj).encode()
+
+
+class TestDispatch(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.store = RegistryStore(Path(self._tmp.name) / "r.db")
+        self.store.migrate()
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_health(self) -> None:
+        status, payload = dispatch(self.store, "GET", "/health", b"")
+        self.assertEqual(200, status)
+        self.assertEqual("ok", payload["status"])
+
+    def test_register_returns_id_and_token(self) -> None:
+        status, payload = dispatch(
+            self.store, "POST", "/bottles", _body({"source_ip": "10.243.0.1"})
+        )
+        self.assertEqual(201, status)
+        self.assertTrue(payload["bottle_id"])
+        self.assertTrue(payload["identity_token"])
+
+    def test_register_requires_source_ip(self) -> None:
+        status, _ = dispatch(self.store, "POST", "/bottles", _body({}))
+        self.assertEqual(400, status)
+
+    def test_register_rejects_bad_json(self) -> None:
+        status, _ = dispatch(self.store, "POST", "/bottles", b"{not json")
+        self.assertEqual(400, status)
+
+    def test_list_redacts_identity_token(self) -> None:
+        dispatch(self.store, "POST", "/bottles", _body({"source_ip": "10.243.0.1"}))
+        status, payload = dispatch(self.store, "GET", "/bottles", b"")
+        self.assertEqual(200, status)
+        bottles = payload["bottles"]
+        assert isinstance(bottles, list)
+        self.assertEqual(1, len(bottles))
+        first = bottles[0]
+        assert isinstance(first, dict)
+        self.assertNotIn("identity_token", first)
+        self.assertEqual("10.243.0.1", first["source_ip"])
+
+    def test_attribute_ok_and_forbidden(self) -> None:
+        _, reg = dispatch(
+            self.store, "POST", "/bottles", _body({"source_ip": "10.243.0.5"})
+        )
+        token = reg["identity_token"]
+        ok_status, ok = dispatch(
+            self.store, "POST", "/attribute",
+            _body({"source_ip": "10.243.0.5", "identity_token": token}),
+        )
+        self.assertEqual(200, ok_status)
+        self.assertEqual(reg["bottle_id"], ok["bottle_id"])
+
+        bad_status, _ = dispatch(
+            self.store, "POST", "/attribute",
+            _body({"source_ip": "10.243.0.5", "identity_token": "nope"}),
+        )
+        self.assertEqual(403, bad_status)
+
+    def test_attribute_requires_both_fields(self) -> None:
+        status, _ = dispatch(
+            self.store, "POST", "/attribute", _body({"source_ip": "10.243.0.5"})
+        )
+        self.assertEqual(400, status)
+
+    def test_delete(self) -> None:
+        _, reg = dispatch(
+            self.store, "POST", "/bottles", _body({"source_ip": "10.243.0.1"})
+        )
+        bid = reg["bottle_id"]
+        status, payload = dispatch(self.store, "DELETE", f"/bottles/{bid}", b"")
+        self.assertEqual(200, status)
+        self.assertEqual(True, payload["deregistered"])
+        self.assertEqual([], self.store.all())
+
+    def test_delete_missing_404(self) -> None:
+        status, _ = dispatch(self.store, "DELETE", "/bottles/ghost", b"")
+        self.assertEqual(404, status)
+
+    def test_unknown_route_404(self) -> None:
+        status, _ = dispatch(self.store, "GET", "/nope", b"")
+        self.assertEqual(404, status)
+
+    def test_trailing_slash_normalized(self) -> None:
+        status, _ = dispatch(self.store, "GET", "/health/", b"")
+        self.assertEqual(200, status)
+
+
+class TestServerRoundTrip(unittest.TestCase):
+    def test_http_register_health_attribute(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = RegistryStore(Path(tmp.name) / "r.db")
+        store.migrate()
+        server = make_server(store, "127.0.0.1", 0)
+        self.addCleanup(server.server_close)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.shutdown)
+
+        host, port = server.server_address[0], server.server_address[1]
+        base = f"http://{host}:{port}"
+
+        reg = json.load(urllib.request.urlopen(
+            urllib.request.Request(
+                f"{base}/bottles", data=_body({"source_ip": "10.243.0.7"}),
+                method="POST", headers={"Content-Type": "application/json"},
+            ), timeout=5,
+        ))
+        self.assertTrue(reg["bottle_id"])
+
+        health = json.load(urllib.request.urlopen(f"{base}/health", timeout=5))
+        self.assertEqual("ok", health["status"])
+
+        attr = json.load(urllib.request.urlopen(
+            urllib.request.Request(
+                f"{base}/attribute",
+                data=_body({"source_ip": "10.243.0.7", "identity_token": reg["identity_token"]}),
+                method="POST", headers={"Content-Type": "application/json"},
+            ), timeout=5,
+        ))
+        self.assertEqual(reg["bottle_id"], attr["bottle_id"])
+
+
+if __name__ == "__main__":
+    unittest.main()
