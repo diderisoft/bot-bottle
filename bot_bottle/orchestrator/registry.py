@@ -35,9 +35,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..db_store import DbStore
+from ..db_store import DbStore, host_db_path
 from ..migrations import TableMigrations
-from ..supervise_types import host_db_path
 
 # 256 bits of urandom, URL-safe — unguessable per-bottle identity token.
 IDENTITY_TOKEN_BYTES = 32

@@ -5,22 +5,28 @@ Proposal, Response, AuditEntry, and host_db_path without creating a
 circular import (supervise imports from queue_store/audit_store and
 vice-versa).
 
-Patching bot_bottle_root on this module propagates through host_db_path
-because host_db_path looks up bot_bottle_root via sys.modules[__name__]
-at call time rather than capturing it at import time.
+host_db_path / HOST_DB_FILENAME now live in db_store (shared DB infra) and
+are re-exported here for the historical import path. db_store.host_db_path
+resolves bot_bottle_root from this module lazily, so patching
+supervise_types.bot_bottle_root still propagates to the DB path.
 """
 
 from __future__ import annotations
 
 import dataclasses
-import sys
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-
-HOST_DB_FILENAME = "bot-bottle.db"
+# host_db_path / HOST_DB_FILENAME now live in db_store (shared DB infra);
+# re-exported here for the historical import path. db_store resolves
+# bot_bottle_root from this module lazily, so patching
+# supervise_types.bot_bottle_root still propagates.
+try:
+    from .db_store import HOST_DB_FILENAME, host_db_path
+except ImportError:  # flat imports inside the sidecar bundle
+    from db_store import HOST_DB_FILENAME, host_db_path  # type: ignore[import-not-found,no-redef]  # pylint: disable=import-error,no-name-in-module
 
 TOOL_EGRESS_BLOCK = "egress-block"
 TOOL_EGRESS_ALLOW = "egress-allow"
@@ -45,19 +51,6 @@ ACTION_OPERATOR_EDIT = "operator-edit"
 
 def bot_bottle_root() -> Path:
     return Path.home() / ".bot-bottle"
-
-
-def host_db_path() -> Path:
-    # Look up bot_bottle_root through this module's live namespace so that
-    # monkey-patches on supervise_types.bot_bottle_root take effect.
-    #
-    # Lives in its own "db" subdirectory, not directly under
-    # bot_bottle_root(), so backends that can only bind-mount
-    # directories (macos_container's `container run --mount`, which
-    # rejects file sources with "is not a directory") can share this
-    # one file with a sidecar without also exposing bot_bottle_root()'s
-    # other contents (git-gate keys, per-bottle state, etc.).
-    return sys.modules[__name__].bot_bottle_root() / "db" / HOST_DB_FILENAME
 
 
 def _require_str(raw: dict[str, object], key: str) -> str:

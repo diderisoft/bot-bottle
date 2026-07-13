@@ -11,6 +11,30 @@ except ImportError:
     from migrations import TableMigrations  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
 
 
+# The single shared host state DB. All bot-bottle SQLite stores (supervise
+# queue, audit, the orchestrator registry) co-tenant this one file — the
+# TableMigrations schema_key namespaces each store's tables.
+HOST_DB_FILENAME = "bot-bottle.db"
+
+
+def host_db_path() -> Path:
+    """Path to the shared host state DB, `<bot_bottle_root>/db/bot-bottle.db`.
+
+    Kept in its own `db/` subdirectory (not directly under the root) so a
+    backend that can only bind-mount *directories* can share this one file
+    with a sidecar without exposing the root's other contents (git-gate
+    keys, per-bottle state, ...).
+
+    Resolves `bot_bottle_root` from `supervise_types` at call time (a lazy
+    import — avoids a load-time cycle, and lets a monkey-patch of
+    `supervise_types.bot_bottle_root` propagate here)."""
+    try:
+        from . import supervise_types as _st
+    except ImportError:  # flat imports inside the sidecar bundle
+        import supervise_types as _st  # type: ignore[import-not-found,no-redef]  # pylint: disable=import-error,no-name-in-module
+    return _st.bot_bottle_root() / "db" / HOST_DB_FILENAME
+
+
 class DbVersionError(Exception):
     """Raised when the on-disk schema is behind the current migration list."""
 
@@ -56,4 +80,4 @@ class DbStore:
             pass
 
 
-__all__ = ["DbStore", "DbVersionError"]
+__all__ = ["DbStore", "DbVersionError", "HOST_DB_FILENAME", "host_db_path"]
