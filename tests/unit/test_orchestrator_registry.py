@@ -121,6 +121,18 @@ class TestRegistryStore(unittest.TestCase):
         assert got is not None
         self.assertEqual("", got.policy)
 
+    def test_by_source_ip_returns_single_active(self) -> None:
+        rec = self.store.register("10.243.0.1")
+        got = self.store.by_source_ip("10.243.0.1")
+        assert got is not None
+        self.assertEqual(rec.bottle_id, got.bottle_id)
+
+    def test_by_source_ip_unknown_or_ambiguous_denied(self) -> None:
+        self.assertIsNone(self.store.by_source_ip("10.243.9.9"))  # unknown
+        self.store.register("10.243.0.1", bottle_id="a")
+        self.store.register("10.243.0.1", bottle_id="b")
+        self.assertIsNone(self.store.by_source_ip("10.243.0.1"))  # ambiguous
+
 
 if __name__ == "__main__":
     unittest.main()

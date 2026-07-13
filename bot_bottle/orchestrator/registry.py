@@ -212,14 +212,13 @@ class RegistryStore(DbStore):
             ).fetchall()
         return [_row_to_record(r) for r in rows]
 
-    def attribute(self, source_ip: str, identity_token: str) -> BottleRecord | None:
-        """Fail-closed attribution. Returns the bottle only when exactly one
-        active record has this source IP AND its identity token matches
-        (constant-time). Either signal alone is insufficient: an unknown IP,
-        an ambiguous IP (more than one active bottle — a misconfiguration),
-        an empty token, or a token mismatch all deny."""
-        if not identity_token:
-            return None
+    def by_source_ip(self, source_ip: str) -> BottleRecord | None:
+        """Network-layer attribution: the single active bottle at this source
+        IP, or None if unknown or ambiguous (more than one — a
+        misconfiguration). Safe as the *sole* attributor only where the
+        source IP is unspoofable (Firecracker `/31` + nft) and the control
+        plane is reachable only by the trusted sidecar; pair with the
+        identity token (`attribute`) elsewhere."""
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT * FROM orchestrator_bottles "
@@ -228,7 +227,17 @@ class RegistryStore(DbStore):
             ).fetchall()
         if len(rows) != 1:
             return None
-        rec = _row_to_record(rows[0])
+        return _row_to_record(rows[0])
+
+    def attribute(self, source_ip: str, identity_token: str) -> BottleRecord | None:
+        """Fail-closed attribution: `by_source_ip` AND a matching identity
+        token (constant-time). Either signal alone is insufficient here — an
+        unknown/ambiguous IP, an empty token, or a token mismatch all deny."""
+        if not identity_token:
+            return None
+        rec = self.by_source_ip(source_ip)
+        if rec is None:
+            return None
         if not hmac.compare_digest(rec.identity_token, identity_token):
             return None
         return rec

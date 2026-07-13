@@ -32,6 +32,7 @@ from egress_addon_core import (  # type: ignore[import-not-found]  # pylint: dis
     is_git_push_request,
     load_config,
     match_route,
+    resolve_client_config,
     outbound_scan_headers,
     route_to_yaml_dict,
     scan_inbound,
@@ -51,10 +52,25 @@ try:
 except ImportError:  # pragma: no cover - host-side path
     from bot_bottle import supervise as _sv  # type: ignore[import-not-found]
 
+try:
+    from policy_resolver import PolicyResolver  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover - host-side path
+    from bot_bottle.policy_resolver import PolicyResolver
+
 
 DEFAULT_ROUTES_PATH = "/etc/egress/routes.yaml"
 
 INTROSPECT_HOST = "_egress.local"
+
+# Consolidated (multi-tenant) mode: when this points at the per-host
+# orchestrator's control plane, the addon resolves each client's Config by
+# source IP per request instead of using a single static routes file. Unset
+# → legacy per-bottle single-tenant mode (unchanged).
+ORCHESTRATOR_URL_ENV = "BOT_BOTTLE_ORCHESTRATOR_URL"
+
+# App-layer identity token (defense-in-depth over the source-IP invariant);
+# the agent injects it, the addon strips it so it never leaks upstream.
+IDENTITY_HEADER = "x-bot-bottle-identity"
 
 # Seconds the egress proxy holds a token-blocked request open waiting for the
 # operator's supervisor decision (PRD 0062), overridable via env.
@@ -72,9 +88,17 @@ _TOKEN_ALLOW_JUSTIFICATION = (
 
 
 class EgressAddon:
+    # Class default so addons built via __new__ (e.g. in tests) default to
+    # single-tenant; __init__ sets the instance attribute for real runs.
+    _resolver: "PolicyResolver | None" = None
+
     def __init__(self) -> None:
         self.routes_path = os.environ.get("EGRESS_ROUTES", DEFAULT_ROUTES_PATH)
         self.config: Config = Config(routes=())
+        # Consolidated mode: resolve per-client Config from the orchestrator.
+        # Absent → single-tenant (static routes file); behaviour unchanged.
+        orch_url = os.environ.get(ORCHESTRATOR_URL_ENV, "").strip()
+        self._resolver = PolicyResolver(orch_url) if orch_url else None
         # Tokens the operator has approved this session (PRD 0062). In-memory
         # only — a restart re-prompts. Mutated only from the asyncio loop that
         # runs the addon hooks, so no lock is needed.
@@ -194,6 +218,20 @@ class EgressAddon:
             + "\n"
         )
 
+    def _active_config(self, flow: http.HTTPFlow) -> Config:
+        """The Config to apply to this request. Single-tenant → the static
+        `self.config`. Consolidated → the calling bottle's Config, resolved
+        by source IP (fail-closed to deny-all if unattributed). The identity
+        token, if the agent injected one, is read then stripped so it never
+        leaks upstream."""
+        if self._resolver is None:
+            return self.config
+        conn = flow.client_conn
+        client_ip = conn.peername[0] if conn and conn.peername else ""
+        token = flow.request.headers.get(IDENTITY_HEADER, "")
+        flow.request.headers.pop(IDENTITY_HEADER, None)
+        return resolve_client_config(self._resolver, client_ip, token)
+
     async def request(self, flow: http.HTTPFlow) -> None:
         request_path, _, query = flow.request.path.partition("?")
 
@@ -201,10 +239,12 @@ class EgressAddon:
             self._serve_introspection(flow, request_path)
             return
 
+        config = self._active_config(flow)
+
         # DLP outbound scan BEFORE stripping auth — catches tokens the
         # agent tried to smuggle in any header, path, query param, or body.
         # Hostname is included to catch DNS-tunnelling exfiltration attempts.
-        route = match_route(self.config.routes, flow.request.pretty_host)
+        route = match_route(config.routes, flow.request.pretty_host)
         if route is not None:
             if not await self._handle_outbound_dlp(flow, route):
                 return
@@ -224,7 +264,7 @@ class EgressAddon:
 
         if is_git_fetch_request(request_path, query):
             git_decision = decide_git_fetch(
-                self.config.routes, flow.request.pretty_host,
+                config.routes, flow.request.pretty_host,
             )
             if git_decision.action == "block":
                 self._block(
@@ -242,7 +282,7 @@ class EgressAddon:
         req_headers = {k.lower(): v for k, v in flow.request.headers.items()}
 
         decision = decide(
-            self.config.routes,
+            config.routes,
             flow.request.pretty_host,
             request_path,
             os.environ,
@@ -257,7 +297,7 @@ class EgressAddon:
         if decision.inject_authorization is not None:
             flow.request.headers["authorization"] = decision.inject_authorization
 
-        if self.config.log >= LOG_FULL:
+        if config.log >= LOG_FULL:
             self._log_request(flow)
 
     def _block_dlp(self, flow: http.HTTPFlow, result: ScanResult) -> None:

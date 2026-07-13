@@ -171,6 +171,22 @@ class TestDispatch(unittest.TestCase):
         )
         self.assertEqual(400, status)
 
+    def test_resolve_without_token_by_source_ip(self) -> None:
+        _, reg = dispatch(
+            self.orch, "POST", "/bottles",
+            _body({"source_ip": "10.243.0.5", "policy": "P"}),
+        )
+        status, payload = dispatch(
+            self.orch, "POST", "/resolve", _body({"source_ip": "10.243.0.5"})
+        )
+        self.assertEqual(200, status)
+        self.assertEqual(reg["bottle_id"], payload["bottle_id"])
+        self.assertEqual("P", payload["policy"])
+
+    def test_resolve_requires_source_ip(self) -> None:
+        status, _ = dispatch(self.orch, "POST", "/resolve", _body({}))
+        self.assertEqual(400, status)
+
 
 class TestServerRoundTrip(unittest.TestCase):
     def test_http_register_health_attribute(self) -> None:

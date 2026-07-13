@@ -66,6 +66,11 @@ class TestPolicyResolver(unittest.TestCase):
         self.assertEqual("10.243.0.7", sent["source_ip"])
         self.assertEqual("the-token", sent["identity_token"])
 
+    def test_resolve_without_token_sends_empty(self) -> None:
+        with patch(_URLOPEN, return_value=_resp({"policy": "P"})) as m:
+            self.r.resolve("10.243.0.7")  # token optional
+        self.assertEqual("", json.loads(m.call_args.args[0].data)["identity_token"])
+
 
 if __name__ == "__main__":
     unittest.main()

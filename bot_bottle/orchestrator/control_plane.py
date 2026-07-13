@@ -107,7 +107,7 @@ def dispatch(  # pylint: disable=too-many-return-statements,too-many-branches
             return 200, {"torn_down": True}
         return 404, {"error": "no such bottle"}
 
-    if method == "POST" and route in ("/attribute", "/resolve"):
+    if method == "POST" and route == "/attribute":
         try:
             data = _parse_json_object(body)
         except ValueError as e:
@@ -119,12 +119,24 @@ def dispatch(  # pylint: disable=too-many-return-statements,too-many-branches
         rec = orch.attribute(source_ip, token)
         if rec is None:
             return 403, {"error": "unattributed"}
-        # /attribute is the lightweight identity check; /resolve additionally
-        # returns the bottle's policy — the source-IP-keyed lookup the
-        # multi-tenant sidecar makes per request.
-        if route == "/resolve":
-            return 200, {"bottle_id": rec.bottle_id, "policy": rec.policy}
         return 200, {"bottle_id": rec.bottle_id}
+
+    if method == "POST" and route == "/resolve":
+        # The per-request lookup the multi-tenant sidecar makes: returns the
+        # bottle's policy. identity_token is OPTIONAL — absent means resolve
+        # by source IP alone (network-layer attribution).
+        try:
+            data = _parse_json_object(body)
+        except ValueError as e:
+            return 400, {"error": f"invalid JSON: {e}"}
+        source_ip = data.get("source_ip")
+        token = data.get("identity_token")
+        if not isinstance(source_ip, str) or not source_ip:
+            return 400, {"error": "source_ip (string) is required"}
+        rec = orch.resolve(source_ip, token if isinstance(token, str) else "")
+        if rec is None:
+            return 403, {"error": "unattributed"}
+        return 200, {"bottle_id": rec.bottle_id, "policy": rec.policy}
 
     return 404, {"error": "not found"}
 

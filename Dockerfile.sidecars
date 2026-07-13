@@ -64,6 +64,7 @@ COPY --from=gitleaks-src /usr/bin/gitleaks /usr/bin/gitleaks
 COPY bot_bottle/egress_addon_core.py /app/egress_addon_core.py
 COPY bot_bottle/egress_dlp_config.py /app/egress_dlp_config.py
 COPY bot_bottle/egress_addon.py      /app/egress_addon.py
+COPY bot_bottle/policy_resolver.py   /app/policy_resolver.py
 COPY bot_bottle/dlp_detectors.py     /app/dlp_detectors.py
 COPY bot_bottle/yaml_subset.py       /app/yaml_subset.py
 COPY bot_bottle/paths.py             /app/paths.py

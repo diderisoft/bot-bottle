@@ -102,6 +102,18 @@ class TestOrchestrator(unittest.TestCase):
     def test_set_policy_unknown_is_false(self) -> None:
         self.assertFalse(self.orch.set_policy("ghost", "{}"))
 
+    def test_resolve_by_source_ip_without_token(self) -> None:
+        rec = self.orch.launch_bottle("10.243.0.1", policy="P")
+        got = self.orch.resolve("10.243.0.1")  # network-layer, no token
+        assert got is not None
+        self.assertEqual(rec.bottle_id, got.bottle_id)
+        self.assertEqual("P", got.policy)
+
+    def test_resolve_with_token_stays_strict(self) -> None:
+        rec = self.orch.launch_bottle("10.243.0.3")
+        self.assertIsNotNone(self.orch.resolve("10.243.0.3", rec.identity_token))
+        self.assertIsNone(self.orch.resolve("10.243.0.3", "wrong-token"))
+
     def test_launch_rolls_back_registry_on_broker_failure(self) -> None:
         orch = Orchestrator(self.store, _FailingBroker(self.secret), self.secret)
         with self.assertRaises(RuntimeError):

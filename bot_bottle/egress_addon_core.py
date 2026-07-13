@@ -413,6 +413,34 @@ def load_config(text: str) -> "Config":
     return parse_config(payload)
 
 
+class PolicyResolverLike(typing.Protocol):
+    """The bit of `policy_resolver.PolicyResolver` this module needs — kept a
+    Protocol so egress_addon_core stays free of that import."""
+
+    def resolve(self, source_ip: str, identity_token: str = ...) -> "str | None":
+        ...
+
+
+def resolve_client_config(
+    resolver: PolicyResolverLike, client_ip: str, identity_token: str = ""
+) -> "Config":
+    """The calling client's egress Config, resolved from the orchestrator via
+    `resolver` and parsed — **fail-closed**. An unattributed client (None), a
+    resolver error, or an unparseable policy all yield a deny-all Config (no
+    routes → every request blocked). A compromised, absent, or confused
+    orchestrator must never *widen* a bottle's egress."""
+    try:
+        policy = resolver.resolve(client_ip, identity_token)
+    except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        return Config(routes=())  # orchestrator unreachable/errored → deny
+    if not policy:
+        return Config(routes=())  # unattributed or empty → deny-all
+    try:
+        return load_config(policy)
+    except ValueError:
+        return Config(routes=())  # unparseable policy → deny
+
+
 # ---------------------------------------------------------------------------
 # Match evaluation
 # ---------------------------------------------------------------------------
@@ -804,6 +832,8 @@ __all__ = [
     "is_git_push_request",
     "is_git_fetch_request",
     "load_config",
+    "resolve_client_config",
+    "PolicyResolverLike",
     "match_route",
     "outbound_scan_headers",
     "parse_config",

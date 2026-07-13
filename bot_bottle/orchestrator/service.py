@@ -79,10 +79,19 @@ class Orchestrator:
         return True
 
     def attribute(self, source_ip: str, identity_token: str) -> BottleRecord | None:
-        """Fail-closed attribution (delegates to the registry). The returned
-        record carries the bottle's `policy` — this is the source-IP-keyed
-        resolution the multi-tenant sidecar makes per request."""
+        """Fail-closed attribution (delegates to the registry)."""
         return self.registry.attribute(source_ip, identity_token)
+
+    def resolve(self, source_ip: str, identity_token: str = "") -> BottleRecord | None:
+        """Resolve the bottle behind a request — the source-IP-keyed lookup
+        the multi-tenant sidecar makes per request; the returned record
+        carries its `policy`. With a token, full attribution (source IP +
+        token); without, network-layer attribution by source IP alone
+        (valid where the IP is unspoofable and the control plane is
+        sidecar-only)."""
+        if identity_token:
+            return self.registry.attribute(source_ip, identity_token)
+        return self.registry.by_source_ip(source_ip)
 
     def set_policy(self, bottle_id: str, policy: str) -> bool:
         """Update a bottle's sidecar policy in place (live reload). False if

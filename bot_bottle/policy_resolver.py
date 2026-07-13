@@ -47,11 +47,12 @@ class PolicyResolver:
         self._base = base_url.rstrip("/")
         self._timeout = timeout
 
-    def resolve(self, source_ip: str, identity_token: str) -> str | None:
+    def resolve(self, source_ip: str, identity_token: str = "") -> str | None:
         """The calling bottle's policy blob, or None if unattributed. Always
         fetches from the orchestrator so revocations / changes / teardowns
-        are honored immediately. Raises `PolicyResolveError` if the
-        orchestrator can't be reached / errors."""
+        are honored immediately. `identity_token` is optional — omit it to
+        resolve by source IP alone (the network-layer attribution).
+        Raises `PolicyResolveError` if the orchestrator can't be reached."""
         body = json.dumps(
             {"source_ip": source_ip, "identity_token": identity_token}
         ).encode()
