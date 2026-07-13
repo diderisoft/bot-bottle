@@ -7,11 +7,13 @@ import sqlite3
 from pathlib import Path
 
 try:
-    from .supervise_types import Proposal, Response, host_db_path
+    from .supervise_types import Proposal, Response
+    from .paths import host_db_path
     from .db_store import DbStore
     from .migrations import TableMigrations
 except ImportError:
-    from supervise_types import Proposal, Response, host_db_path  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
+    from supervise_types import Proposal, Response  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
+    from paths import host_db_path  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
     from db_store import DbStore  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
     from migrations import TableMigrations  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
 

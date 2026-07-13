@@ -1,14 +1,11 @@
-"""Shared types and path helpers for supervise stores (PRD 0013).
+"""Shared types for supervise stores (PRD 0013).
 
 Extracted from supervise.py so queue_store and audit_store can import
-Proposal, Response, AuditEntry, and host_db_path without creating a
-circular import (supervise imports from queue_store/audit_store and
-vice-versa).
+Proposal, Response, and AuditEntry without creating a circular import
+(supervise imports from queue_store/audit_store and vice-versa).
 
-host_db_path / HOST_DB_FILENAME now live in db_store (shared DB infra) and
-are re-exported here for the historical import path. db_store.host_db_path
-resolves bot_bottle_root from this module lazily, so patching
-supervise_types.bot_bottle_root still propagates to the DB path.
+The path helpers (`bot_bottle_root`, `host_db_path`, `HOST_DB_FILENAME`)
+live in `paths` — import them from there.
 """
 
 from __future__ import annotations
@@ -17,16 +14,6 @@ import dataclasses
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
-
-# host_db_path / HOST_DB_FILENAME now live in db_store (shared DB infra);
-# re-exported here for the historical import path. db_store resolves
-# bot_bottle_root from this module lazily, so patching
-# supervise_types.bot_bottle_root still propagates.
-try:
-    from .db_store import HOST_DB_FILENAME, host_db_path
-except ImportError:  # flat imports inside the sidecar bundle
-    from db_store import HOST_DB_FILENAME, host_db_path  # type: ignore[import-not-found,no-redef]  # pylint: disable=import-error,no-name-in-module
 
 TOOL_EGRESS_BLOCK = "egress-block"
 TOOL_EGRESS_ALLOW = "egress-allow"
@@ -47,10 +34,6 @@ STATUS_REJECTED = "rejected"
 STATUSES: tuple[str, ...] = (STATUS_APPROVED, STATUS_MODIFIED, STATUS_REJECTED)
 
 ACTION_OPERATOR_EDIT = "operator-edit"
-
-
-def bot_bottle_root() -> Path:
-    return Path.home() / ".bot-bottle"
 
 
 def _require_str(raw: dict[str, object], key: str) -> str:
@@ -164,7 +147,6 @@ class AuditEntry:
 __all__ = [
     "ACTION_OPERATOR_EDIT",
     "AuditEntry",
-    "HOST_DB_FILENAME",
     "Proposal",
     "Response",
     "STATUSES",
@@ -177,6 +159,4 @@ __all__ = [
     "TOOL_EGRESS_TOKEN_ALLOW",
     "TOOL_GITLEAKS_ALLOW",
     "TOOL_LIST_EGRESS_ROUTES",
-    "bot_bottle_root",
-    "host_db_path",
 ]

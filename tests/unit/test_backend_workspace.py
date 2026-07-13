@@ -13,7 +13,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
 from bot_bottle import bottle_state
-from bot_bottle import supervise
+from tests.unit import use_bottle_root
 from bot_bottle.backend import Bottle, BottleSpec, ExecResult
 from bot_bottle.backend.docker import DockerBottleBackend
 from bot_bottle.backend.firecracker import FirecrackerBottleBackend
@@ -55,11 +55,10 @@ class _FakeStateMixin:
         self.tmp_dir = tempfile.TemporaryDirectory(prefix="backend-workspace.")
         self.tmp = Path(self.tmp_dir.name)
         self.root = self.tmp / ".bot-bottle"
-        self.original_root = supervise.bot_bottle_root
-        supervise.bot_bottle_root = lambda: self.root  # type: ignore[assignment]
+        self._restore = use_bottle_root(self.root)
 
     def tearDown(self) -> None:
-        supervise.bot_bottle_root = self.original_root  # type: ignore[assignment]
+        self._restore()
         self.tmp_dir.cleanup()
 
 

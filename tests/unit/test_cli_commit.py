@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from bot_bottle.cli.commit import cmd_commit
-from bot_bottle import supervise
+from tests.unit import use_bottle_root
 from bot_bottle import bottle_state
 from bot_bottle.backend.freeze import CommitCancelled
 
@@ -16,13 +16,7 @@ from bot_bottle.backend.freeze import CommitCancelled
 class _FakeHomeMixin:
     def _setup_fake_home(self):
         self._tmp = tempfile.TemporaryDirectory(prefix="cli-commit-test.")
-        original = supervise.bot_bottle_root
-
-        def fake_root() -> Path:
-            return Path(self._tmp.name) / ".bot-bottle"
-
-        supervise.bot_bottle_root = fake_root  # type: ignore[assignment]
-        self._restore = lambda: setattr(supervise, "bot_bottle_root", original)
+        self._restore = use_bottle_root(Path(self._tmp.name) / ".bot-bottle")
 
     def _teardown_fake_home(self):
         self._restore()

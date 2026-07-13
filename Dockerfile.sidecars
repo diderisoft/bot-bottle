@@ -66,6 +66,7 @@ COPY bot_bottle/egress_dlp_config.py /app/egress_dlp_config.py
 COPY bot_bottle/egress_addon.py      /app/egress_addon.py
 COPY bot_bottle/dlp_detectors.py     /app/dlp_detectors.py
 COPY bot_bottle/yaml_subset.py       /app/yaml_subset.py
+COPY bot_bottle/paths.py             /app/paths.py
 COPY bot_bottle/migrations.py        /app/migrations.py
 COPY bot_bottle/db_store.py          /app/db_store.py
 COPY bot_bottle/supervise_types.py   /app/supervise_types.py

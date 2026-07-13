@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .. import supervise as _supervise
+from ..paths import bot_bottle_root
 from ..bottle_state import read_metadata
 from ..backend.docker.egress_apply import (
     EgressApplyError,
@@ -276,7 +276,7 @@ def _write_crash_log(exc: BaseException) -> Path:
     )
     entry = f"=== supervise crash {stamp} ===\n{body}\n"
     try:
-        log_dir = _supervise.bot_bottle_root() / "logs"
+        log_dir = bot_bottle_root() / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         path = log_dir / "supervise-crash.log"
         with path.open("a", encoding="utf-8") as fh:

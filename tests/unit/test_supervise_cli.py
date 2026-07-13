@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from bot_bottle import supervise
-from bot_bottle import supervise_types as sv_types
+from tests.unit import use_bottle_root
 from bot_bottle.audit_store import AuditStore
 from bot_bottle.cli import supervise as supervise_cli
 from bot_bottle.queue_store import QueueStore
@@ -55,20 +55,7 @@ class _FakeHomeMixin:
 
     def _setup_fake_home(self):
         self._tmp = tempfile.TemporaryDirectory(prefix="supervise-test.")
-        original_sv = supervise.bot_bottle_root
-        original_svt = sv_types.bot_bottle_root
-
-        def fake_root() -> Path:
-            return Path(self._tmp.name) / ".bot-bottle"
-
-        supervise.bot_bottle_root = fake_root  # type: ignore[assignment]
-        sv_types.bot_bottle_root = fake_root  # type: ignore[assignment]
-
-        def restore() -> None:
-            supervise.bot_bottle_root = original_sv  # type: ignore[assignment]
-            sv_types.bot_bottle_root = original_svt  # type: ignore[assignment]
-
-        self._restore_home = restore
+        self._restore_home = use_bottle_root(Path(self._tmp.name) / ".bot-bottle")
         QueueStore("").migrate()
         AuditStore().migrate()
 

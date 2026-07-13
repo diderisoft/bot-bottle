@@ -23,13 +23,10 @@ class StoreManager:
 
     def __init__(self, db_path: Path | None = None) -> None:
         if db_path is None:
-            # Lazy import to avoid a circular dependency: supervise imports
-            # StoreManager at module level; StoreManager must not import
-            # supervise at module level in return.
             try:
-                from .supervise import host_db_path
+                from .paths import host_db_path
             except ImportError:
-                from supervise import host_db_path  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
+                from paths import host_db_path  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
             db_path = host_db_path()
         self.db_path = db_path
 

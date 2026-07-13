@@ -11,12 +11,13 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from bot_bottle import supervise
+from tests.unit import use_bottle_root
 from bot_bottle.cli import supervise as supervise_cli
 from bot_bottle.log import Die, die
 
@@ -45,12 +46,11 @@ class _FakeHomeMixin:
 
     def _setup_fake_home(self):
         self._tmp = tempfile.TemporaryDirectory(prefix="supervise-crash-test.")
-        self._orig_root = supervise.bot_bottle_root
         self._root = Path(self._tmp.name) / ".bot-bottle"
-        supervise.bot_bottle_root = lambda: self._root  # type: ignore[assignment]
+        self._restore_root = use_bottle_root(self._root)
 
     def _teardown_fake_home(self):
-        supervise.bot_bottle_root = self._orig_root  # type: ignore[assignment]
+        self._restore_root()
         self._tmp.cleanup()
 
 
@@ -127,11 +127,11 @@ class TestWriteCrashLog(_FakeHomeMixin, unittest.TestCase):
         # OSError and the helper must fall back to a tempfile.
         bad = Path(self._tmp.name) / "not-a-dir"
         bad.write_text("x")
-        supervise.bot_bottle_root = lambda: bad  # type: ignore[assignment]
-        try:
-            raise RuntimeError("explode2")
-        except RuntimeError as e:
-            path = supervise_cli._write_crash_log(e)
+        with mock.patch.dict(os.environ, {"BOT_BOTTLE_ROOT": str(bad)}):
+            try:
+                raise RuntimeError("explode2")
+            except RuntimeError as e:
+                path = supervise_cli._write_crash_log(e)
         self.assertTrue(path.exists())
         self.assertIn("explode2", path.read_text())
 

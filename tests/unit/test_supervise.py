@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from bot_bottle import supervise
-from bot_bottle import supervise_types as sv_types
+from tests.unit import use_bottle_root
 from bot_bottle.audit_store import AuditStore
 from bot_bottle.queue_store import QueueStore
 from bot_bottle.supervise import (
@@ -123,20 +123,7 @@ class TestQueueIO(unittest.TestCase):
         self._tmp.cleanup()
 
     def _patch_home(self, fake_home: Path):
-        original_sv = supervise.bot_bottle_root
-        original_svt = sv_types.bot_bottle_root
-
-        def fake_root() -> Path:
-            return fake_home / ".bot-bottle"
-
-        supervise.bot_bottle_root = fake_root  # type: ignore[assignment]
-        sv_types.bot_bottle_root = fake_root  # type: ignore[assignment]
-
-        def restore() -> None:
-            supervise.bot_bottle_root = original_sv  # type: ignore[assignment]
-            sv_types.bot_bottle_root = original_svt  # type: ignore[assignment]
-
-        return restore
+        return use_bottle_root(fake_home / ".bot-bottle")
 
     def test_write_and_read_proposal(self):
         p = _proposal()
@@ -240,20 +227,7 @@ class TestAuditLog(unittest.TestCase):
         self._tmp.cleanup()
 
     def _patch_home(self, fake_home: Path):
-        original_sv = supervise.bot_bottle_root
-        original_svt = sv_types.bot_bottle_root
-
-        def fake_root() -> Path:
-            return fake_home / ".bot-bottle"
-
-        supervise.bot_bottle_root = fake_root  # type: ignore[assignment]
-        sv_types.bot_bottle_root = fake_root  # type: ignore[assignment]
-
-        def restore() -> None:
-            supervise.bot_bottle_root = original_sv  # type: ignore[assignment]
-            sv_types.bot_bottle_root = original_svt  # type: ignore[assignment]
-
-        return restore
+        return use_bottle_root(fake_home / ".bot-bottle")
 
     def test_write_then_read_single_entry(self):
         e = AuditEntry(
@@ -400,20 +374,7 @@ class TestSupervisePrepare(unittest.TestCase):
         self._tmp.cleanup()
 
     def _patch_home(self, fake_home: Path):
-        original_sv = supervise.bot_bottle_root
-        original_svt = sv_types.bot_bottle_root
-
-        def fake_root() -> Path:
-            return fake_home / ".bot-bottle"
-
-        supervise.bot_bottle_root = fake_root  # type: ignore[assignment]
-        sv_types.bot_bottle_root = fake_root  # type: ignore[assignment]
-
-        def restore() -> None:
-            supervise.bot_bottle_root = original_sv  # type: ignore[assignment]
-            sv_types.bot_bottle_root = original_svt  # type: ignore[assignment]
-
-        return restore
+        return use_bottle_root(fake_home / ".bot-bottle")
 
     def test_prepare_creates_queue(self):
         plan = _StubSupervise().prepare("dev", self.stage_dir)

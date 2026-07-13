@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from bot_bottle import supervise
+from tests.unit import use_bottle_root
 from bot_bottle.backend.egress_apply import EgressApplyError
 from bot_bottle.backend.docker.egress_apply import applicator
 
@@ -67,14 +67,8 @@ class TestValidateRoutesContent(unittest.TestCase):
 class TestApplyRoutesChange(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory(prefix="egress-apply-test.")
-        original = supervise.bot_bottle_root
-
-        def fake_root() -> Path:
-            return Path(self._tmp.name) / ".bot-bottle"
-
-        supervise.bot_bottle_root = fake_root  # type: ignore[assignment]
-        self.addCleanup(lambda: setattr(supervise, "bot_bottle_root", original))
         self.addCleanup(self._tmp.cleanup)
+        self.addCleanup(use_bottle_root(Path(self._tmp.name) / ".bot-bottle"))
 
     def test_writes_live_routes_and_signals_reload(self):
         calls: list[list[str]] = []

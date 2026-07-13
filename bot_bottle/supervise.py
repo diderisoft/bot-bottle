@@ -41,7 +41,6 @@ try:
     from .supervise_types import (
         ACTION_OPERATOR_EDIT,
         AuditEntry,
-        HOST_DB_FILENAME,
         Proposal,
         Response,
         STATUSES,
@@ -54,13 +53,11 @@ try:
         TOOL_EGRESS_TOKEN_ALLOW,
         TOOL_GITLEAKS_ALLOW,
         TOOL_LIST_EGRESS_ROUTES,
-        bot_bottle_root,
     )
 except ImportError:
     from supervise_types import (  # type: ignore[import-not-found,no-redef]  # pylint: disable=import-error,no-name-in-module
         ACTION_OPERATOR_EDIT,
         AuditEntry,
-        HOST_DB_FILENAME,
         Proposal,
         Response,
         STATUSES,
@@ -73,8 +70,13 @@ except ImportError:
         TOOL_EGRESS_TOKEN_ALLOW,
         TOOL_GITLEAKS_ALLOW,
         TOOL_LIST_EGRESS_ROUTES,
-        bot_bottle_root,
     )
+
+
+try:
+    from .paths import bot_bottle_root, host_db_path
+except ImportError:  # flat imports inside the sidecar bundle
+    from paths import bot_bottle_root, host_db_path  # type: ignore[import-not-found,no-redef]  # pylint: disable=import-error,no-name-in-module
 
 
 SUPERVISE_HOSTNAME = "supervise"
@@ -104,16 +106,6 @@ DEFAULT_POLL_INTERVAL_SEC = 0.5
 
 def audit_dir() -> Path:
     return bot_bottle_root() / "audit"
-
-
-def host_db_path() -> Path:
-    # Calls bot_bottle_root() through this module's globals so that patches
-    # on supervise.bot_bottle_root propagate to callers going through
-    # supervise.host_db_path().
-    #
-    # Kept in its own "db" subdirectory (see supervise_types.host_db_path
-    # for why) — must stay in sync with that copy.
-    return bot_bottle_root() / "db" / HOST_DB_FILENAME
 
 
 def audit_log_path(component: str, slug: str) -> Path:

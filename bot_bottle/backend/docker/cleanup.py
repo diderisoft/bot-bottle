@@ -26,7 +26,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 
-from ... import supervise as _supervise
+from ...paths import bot_bottle_root
 from ...log import info, warn
 from . import util as docker_mod
 from .bottle_cleanup_plan import DockerBottleCleanupPlan
@@ -94,7 +94,7 @@ def _list_orphan_state_dirs(
     ANY backend — used so this docker-side check doesn't reap a
     running non-docker bottle's state dir (the layout is shared
     across backends)."""
-    state_root = _supervise.bot_bottle_root() / "state"
+    state_root = bot_bottle_root() / "state"
     if not state_root.is_dir():
         return []
     orphans: list[str] = []

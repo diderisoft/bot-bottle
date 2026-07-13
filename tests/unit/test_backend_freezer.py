@@ -7,7 +7,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from bot_bottle import supervise, bottle_state
+from bot_bottle import bottle_state
+from tests.unit import use_bottle_root
 from bot_bottle.backend import ActiveAgent
 from bot_bottle.backend.freeze import get_freezer
 from bot_bottle.backend.docker.freezer import DockerFreezer
@@ -18,13 +19,7 @@ from bot_bottle.backend.firecracker.freezer import FirecrackerFreezer
 class _FakeHomeMixin:
     def _setup_fake_home(self):
         self._tmp = tempfile.TemporaryDirectory(prefix="freezer-test.")
-        original = supervise.bot_bottle_root
-
-        def fake_root() -> Path:
-            return Path(self._tmp.name) / ".bot-bottle"
-
-        supervise.bot_bottle_root = fake_root  # type: ignore[assignment]
-        self._restore = lambda: setattr(supervise, "bot_bottle_root", original)
+        self._restore = use_bottle_root(Path(self._tmp.name) / ".bot-bottle")
 
     def _teardown_fake_home(self):
         self._restore()

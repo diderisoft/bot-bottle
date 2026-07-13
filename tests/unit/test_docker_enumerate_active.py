@@ -23,7 +23,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from bot_bottle import supervise
+from tests.unit import use_bottle_root
 from bot_bottle import bottle_state
 from bot_bottle.backend.docker import enumerate as _enumerate
 
@@ -75,13 +75,7 @@ class TestParseServicesByProject(unittest.TestCase):
 class _FakeHomeMixin:
     def _setup_fake_home(self) -> None:
         self._tmp = tempfile.TemporaryDirectory(prefix="enum-active.")
-        original = supervise.bot_bottle_root
-
-        def fake_root() -> Path:
-            return Path(self._tmp.name) / ".bot-bottle"
-
-        supervise.bot_bottle_root = fake_root  # type: ignore[assignment]
-        self._restore_home = lambda: setattr(supervise, "bot_bottle_root", original)
+        self._restore_home = use_bottle_root(Path(self._tmp.name) / ".bot-bottle")
 
     def _teardown_fake_home(self) -> None:
         self._restore_home()

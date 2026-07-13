@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from . import supervise as _supervise
+from .paths import bot_bottle_root
 
 
 # Directory layout: ~/.bot-bottle/state/<identity>/...
@@ -163,7 +163,7 @@ def read_metadata(identity: str) -> BottleMetadata | None:
 def bottle_state_dir(identity: str) -> Path:
     """Per-bottle state directory on the host. Created lazily by the
     write helpers; readers tolerate its absence."""
-    return _supervise.bot_bottle_root() / _STATE_SUBDIR / identity
+    return bot_bottle_root() / _STATE_SUBDIR / identity
 
 
 def per_bottle_dockerfile_path(identity: str) -> Path:

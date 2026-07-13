@@ -10,8 +10,12 @@ and unisolated tests otherwise pollute the developer's home dir.
 
 Individual tests that need their own ``HOME`` still override
 ``os.environ['HOME']`` and restore it; they now restore to this isolated
-dir rather than the real one, so isolation holds either way. Tests that
-patch ``supervise.bot_bottle_root`` directly are unaffected.
+dir rather than the real one, so isolation holds either way.
+
+Tests that need their own app-data root call ``use_bottle_root`` (below),
+which sets ``BOT_BOTTLE_ROOT`` — the supported override read by
+``paths.bot_bottle_root`` — instead of monkey-patching. One env setting
+covers every module and every flat/package copy of the helper.
 """
 
 from __future__ import annotations
@@ -20,6 +24,9 @@ import atexit
 import os
 import shutil
 import tempfile
+from collections.abc import Callable
+from pathlib import Path
+from unittest import mock
 
 _real_home = os.environ.get("HOME")
 _tmp_home = tempfile.mkdtemp(prefix="bot-bottle-unit-home.")
@@ -35,3 +42,15 @@ def _restore_home() -> None:
 
 
 atexit.register(_restore_home)
+
+
+def use_bottle_root(root: Path) -> Callable[[], None]:
+    """Redirect ``paths.bot_bottle_root()`` to ``root`` by setting
+    ``BOT_BOTTLE_ROOT`` — the supported override. Returns a callable that
+    undoes it (store it as the test's restore hook, or pass to addCleanup).
+
+    Replaces monkey-patching ``supervise.bot_bottle_root``; one env var
+    covers every module and the flat/package copies alike (they all read it)."""
+    patcher = mock.patch.dict(os.environ, {"BOT_BOTTLE_ROOT": str(root)})
+    patcher.start()
+    return patcher.stop
