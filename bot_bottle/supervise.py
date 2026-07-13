@@ -74,9 +74,9 @@ except ImportError:
 
 
 try:
-    from .paths import bot_bottle_root, host_db_path
+    from .paths import bot_bottle_root
 except ImportError:  # flat imports inside the sidecar bundle
-    from paths import bot_bottle_root, host_db_path  # type: ignore[import-not-found,no-redef]  # pylint: disable=import-error,no-name-in-module
+    from paths import bot_bottle_root  # type: ignore[import-not-found,no-redef]  # pylint: disable=import-error,no-name-in-module
 
 
 SUPERVISE_HOSTNAME = "supervise"
@@ -289,8 +289,6 @@ __all__ = [
     "archive_proposal",
     "audit_dir",
     "audit_log_path",
-    "bot_bottle_root",
-    "host_db_path",
     "list_pending_proposals",
     "list_all_pending_proposals",
     "read_audit_entries",

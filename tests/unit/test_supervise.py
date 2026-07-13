@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from bot_bottle import supervise
+from bot_bottle.paths import host_db_path
 from tests.unit import use_bottle_root
 from bot_bottle.audit_store import AuditStore
 from bot_bottle.queue_store import QueueStore
@@ -21,7 +22,6 @@ from bot_bottle.supervise import (
     TOOL_EGRESS_ALLOW,
     TOOL_GITLEAKS_ALLOW,
     archive_proposal,
-    host_db_path,
     list_pending_proposals,
     read_audit_entries,
     read_proposal,

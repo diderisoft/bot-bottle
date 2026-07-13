@@ -2,7 +2,7 @@
 
 Isolates ``HOME`` to a throwaway directory for the entire unit suite so
 no test ever reads or writes the real ``~/.bot-bottle`` (state, queue,
-and audit dirs all derive from ``supervise.bot_bottle_root()`` →
+and audit dirs all derive from ``paths.bot_bottle_root()`` →
 ``Path.home()``). Without this, a test that takes a ``flock`` on the
 real audit log can **block indefinitely** when a live bottle's supervise
 sidecar holds that lock — observed as a hung ``coverage run`` at 0% CPU —
@@ -49,8 +49,8 @@ def use_bottle_root(root: Path) -> Callable[[], None]:
     ``BOT_BOTTLE_ROOT`` — the supported override. Returns a callable that
     undoes it (store it as the test's restore hook, or pass to addCleanup).
 
-    Replaces monkey-patching ``supervise.bot_bottle_root``; one env var
-    covers every module and the flat/package copies alike (they all read it)."""
+    Replaces monkey-patching ``paths.bot_bottle_root``; one env var covers
+    every module and the flat/package copies alike (they all read it)."""
     patcher = mock.patch.dict(os.environ, {"BOT_BOTTLE_ROOT": str(root)})
     patcher.start()
     return patcher.stop

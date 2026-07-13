@@ -51,7 +51,7 @@ def _proposal(slug: str = "dev", tool: str = TOOL_EGRESS_ALLOW) -> Proposal:
 
 
 class _FakeHomeMixin:
-    """Patch supervise.bot_bottle_root to a temp dir for the test."""
+    """Point bot_bottle_root at a temp dir (via BOT_BOTTLE_ROOT) for the test."""
 
     def _setup_fake_home(self):
         self._tmp = tempfile.TemporaryDirectory(prefix="supervise-test.")

@@ -40,9 +40,8 @@ class TestDieCarriesMessage(unittest.TestCase):
 
 
 class _FakeHomeMixin:
-    """Point supervise.bot_bottle_root (what _write_crash_log resolves
-    through) at a temp dir so the crash log doesn't touch the real
-    ~/.bot-bottle."""
+    """Point bot_bottle_root (what _write_crash_log resolves through) at a
+    temp dir so the crash log doesn't touch the real ~/.bot-bottle."""
 
     def _setup_fake_home(self):
         self._tmp = tempfile.TemporaryDirectory(prefix="supervise-crash-test.")

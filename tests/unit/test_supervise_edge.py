@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 from bot_bottle import supervise
 from bot_bottle.audit_store import AuditStore
+from bot_bottle.paths import bot_bottle_root
 from bot_bottle.queue_store import QueueStore
 from bot_bottle.supervise import (
     AuditEntry,
@@ -39,7 +40,7 @@ def _proposal() -> Proposal:
 
 class TestPathHelpers(unittest.TestCase):
     def test_bot_bottle_root(self) -> None:
-        self.assertTrue(str(supervise.bot_bottle_root()).endswith(".bot-bottle"))
+        self.assertTrue(str(bot_bottle_root()).endswith(".bot-bottle"))
 
 
 class TestReadMalformed(unittest.TestCase):
