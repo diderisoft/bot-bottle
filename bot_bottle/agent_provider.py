@@ -61,6 +61,13 @@ class AgentProviderRuntime:
     prompt_mode: PromptMode
     bypass_args: tuple[str, ...]
     resume_args: tuple[str, ...]
+    # argv run inside a throwaway container of a freshly built agent
+    # image, right after `build_image()`, to catch a build that
+    # exited 0 but produced a broken CLI (e.g. an npm
+    # optionalDependencies fetch for a platform-native binary that
+    # silently no-ops on a transient failure). Empty tuple skips the
+    # check — not every provider has opted in yet.
+    smoke_test: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

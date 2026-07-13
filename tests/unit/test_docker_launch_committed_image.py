@@ -88,9 +88,11 @@ class TestLaunchCommittedImage(unittest.TestCase):
             del ctx, dockerfile
             built.append(image)
 
+<<<<<<< HEAD
         with mock.patch.object(launch_mod, "read_committed_image", return_value=committed_tag), \
                 mock.patch.object(launch_mod.docker_mod, "image_exists", return_value=image_present), \
                 mock.patch.object(launch_mod.docker_mod, "build_image", side_effect=_build), \
+                mock.patch.object(launch_mod.docker_mod, "verify_agent_image"), \
                 mock.patch.object(launch_mod, "launch_consolidated", return_value=_CTX), \
                 mock.patch.object(launch_mod, "teardown_consolidated"), \
                 mock.patch.object(launch_mod, "DockerGateway", return_value=gw), \

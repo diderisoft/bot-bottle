@@ -36,6 +36,7 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Callable, Generator
 
+from ...agent_provider import runtime_for
 from ...egress import egress_resolve_token_values
 from ...git_gate import (
     provision_git_gate_dynamic_keys,
@@ -109,6 +110,9 @@ def launch(
             docker_mod.build_image(
                 plan.image, _REPO_DIR,
                 dockerfile=plan.dockerfile_path,
+            )
+            docker_mod.verify_agent_image(
+                plan.image, runtime_for(plan.agent_provider_template).smoke_test,
             )
 
         # Step 2: mint the git-gate dynamic (gitea) deploy keys, if any, before

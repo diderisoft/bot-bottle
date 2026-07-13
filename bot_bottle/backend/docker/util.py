@@ -4,6 +4,7 @@ existence, and building images."""
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -108,13 +109,43 @@ def build_image(ref: str, context: str, *, dockerfile: str = "") -> None:
 
     `dockerfile` is an optional path (relative to `context`, or
     absolute) for callers that need to build from a non-default
-    Dockerfile in the same context — e.g. `Dockerfile.git-gate`."""
+    Dockerfile in the same context — e.g. `Dockerfile.git-gate`.
+
+    Set `BOT_BOTTLE_NO_CACHE=1` (the `start --no-cache` flag) to force
+    `--no-cache`. The npm/curl installers some provider Dockerfiles
+    shell out to can silently no-op on a transient network failure —
+    e.g. an `optionalDependencies` fetch for a platform-native binary —
+    and Docker will then cache that broken layer indefinitely."""
     info(f"building image {ref} from {context} (layer cache keeps repeat builds fast)")
     args = ["docker", "build", "-t", ref]
+    if os.environ.get("BOT_BOTTLE_NO_CACHE") == "1":
+        args.append("--no-cache")
     if dockerfile:
         args.extend(["-f", dockerfile])
     args.append(context)
     subprocess.run(args, check=True)
+
+
+def verify_agent_image(image: str, argv: tuple[str, ...]) -> None:
+    """Run `argv` inside a throwaway container of a freshly built agent
+    image and die loudly if it fails, instead of shipping an image
+    whose CLI only breaks at first real use. No-op when the provider
+    hasn't declared a smoke test (`AgentProviderRuntime.smoke_test`)."""
+    if not argv:
+        return
+    result = subprocess.run(
+        ["docker", "run", "--rm", "--entrypoint", argv[0], image, *argv[1:]],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        die(
+            f"agent image {image!r} failed its post-build smoke test "
+            f"({' '.join(argv)}): {detail}\n"
+            f"Try rebuilding from scratch: bot-bottle start --no-cache"
+        )
 
 
 # def build_image_with_cwd(

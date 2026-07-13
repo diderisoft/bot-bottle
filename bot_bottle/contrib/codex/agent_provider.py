@@ -61,6 +61,7 @@ _RUNTIME = AgentProviderRuntime(
     prompt_mode="read_prompt_file",
     bypass_args=("--dangerously-bypass-approvals-and-sandbox",),
     resume_args=("resume", "--last"),
+    smoke_test=(_CODEX_CLI, "--version"),
 )
 
 

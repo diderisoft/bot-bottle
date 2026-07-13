@@ -60,13 +60,21 @@ def dns_server() -> str:
 
 
 def build_image(ref: str, context: str, *, dockerfile: str = "") -> None:
-    """Build an OCI image with Apple's BuildKit-backed `container build`."""
+    """Build an OCI image with Apple's BuildKit-backed `container build`.
+
+    Set `BOT_BOTTLE_NO_CACHE=1` (the `start --no-cache` flag) to force
+    `--no-cache`. The npm/curl installers some provider Dockerfiles
+    shell out to can silently no-op on a transient network failure —
+    e.g. an `optionalDependencies` fetch for a platform-native binary —
+    and the builder will then cache that broken layer indefinitely."""
     info(
         f"building image {ref} from {context} with Apple Container "
         "(layer cache keeps repeat builds fast)"
     )
     _ensure_builder_dns()
     args = [_CONTAINER, "build", "-t", ref, "--dns", dns_server()]
+    if os.environ.get("BOT_BOTTLE_NO_CACHE") == "1":
+        args.append("--no-cache")
     if dockerfile:
         # `container build` resolves -f relative to the current working
         # directory, not the build context. Anchor a relative Dockerfile to
@@ -76,6 +84,28 @@ def build_image(ref: str, context: str, *, dockerfile: str = "") -> None:
         args.extend(["-f", dockerfile])
     args.append(context)
     subprocess.run(args, check=True)
+
+
+def verify_agent_image(image: str, argv: tuple[str, ...]) -> None:
+    """Run `argv` inside a throwaway container of a freshly built agent
+    image and die loudly if it fails, instead of shipping an image
+    whose CLI only breaks at first real use. No-op when the provider
+    hasn't declared a smoke test (`AgentProviderRuntime.smoke_test`)."""
+    if not argv:
+        return
+    result = subprocess.run(
+        [_CONTAINER, "run", "--rm", "--entrypoint", argv[0], image, *argv[1:]],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        die(
+            f"agent image {image!r} failed its post-build smoke test "
+            f"({' '.join(argv)}): {detail}\n"
+            f"Try rebuilding from scratch: bot-bottle start --no-cache"
+        )
 
 
 def commit_container(container_name: str, image_tag: str) -> None:

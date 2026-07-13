@@ -47,6 +47,17 @@ def cmd_start(argv: list[str]) -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--cwd", action="store_true", help="copy host cwd into the running bottle")
     parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help=(
+            "rebuild agent/sidecar images from scratch, bypassing the "
+            "build layer cache. Use when an image looks broken after a "
+            "dependency bump — e.g. an installer's optionalDependencies "
+            "fetch silently no-op'd on a transient failure and got baked "
+            "into a cached layer."
+        ),
+    )
+    parser.add_argument(
         "--backend",
         choices=known_backend_names(),
         default=None,
@@ -97,6 +108,11 @@ def cmd_start(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     dry_run = args.dry_run or os.environ.get("BOT_BOTTLE_DRY_RUN") == "1"
+    if args.no_cache or os.environ.get("BOT_BOTTLE_NO_CACHE") == "1":
+        # Read by build_image() in each backend's util module — set here
+        # so both the interactive and --headless paths pick it up without
+        # threading a no_cache field through every backend's plan dataclass.
+        os.environ["BOT_BOTTLE_NO_CACHE"] = "1"
 
     manifest = ManifestIndex.resolve(USER_CWD)
     backend_name: str | None = args.backend
