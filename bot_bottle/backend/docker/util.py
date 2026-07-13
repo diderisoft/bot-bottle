@@ -89,6 +89,31 @@ def docker_exec_root(container: str, argv: list[str]) -> None:
     )
 
 
+def docker_exec(container: str, argv: list[str], *, user: str = "") -> None:
+    """Run `docker exec` in the named container, dying with the
+    command's own stderr on failure. Pass `user=\"0\"` to run as root."""
+    cmd = ["docker", "exec"]
+    if user:
+        cmd += ["-u", user]
+    cmd += [container, *argv]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        die(
+            f"docker exec in {container} failed: "
+            f"{(result.stderr or '').strip() or '<no stderr>'}"
+        )
+
+
+def docker_cp(src: str, dest: str) -> None:
+    """Run `docker cp`, dying with the command's own stderr on failure."""
+    result = subprocess.run(
+        ["docker", "cp", src, dest], capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        die(f"docker cp {src} -> {dest} failed: "
+            f"{(result.stderr or '').strip() or '<no stderr>'}")
+
+
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
