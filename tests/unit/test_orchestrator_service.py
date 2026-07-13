@@ -10,6 +10,7 @@ from pathlib import Path
 from bot_bottle.orchestrator.broker import LaunchBroker, LaunchRequest, StubBroker
 from bot_bottle.orchestrator.registry import RegistryStore
 from bot_bottle.orchestrator.service import Orchestrator
+from bot_bottle.orchestrator.sidecar import Sidecar
 
 
 class _FailingBroker(LaunchBroker):
@@ -21,6 +22,25 @@ class _FailingBroker(LaunchBroker):
 
     def _teardown(self, req: LaunchRequest) -> None:
         pass
+
+
+class _FakeSidecar(Sidecar):
+    """In-memory sidecar for wiring tests."""
+
+    def __init__(self) -> None:
+        self.name = "fake-sidecar"
+        self.ensured = 0
+        self._running = False
+
+    def ensure_running(self) -> None:
+        self.ensured += 1
+        self._running = True
+
+    def is_running(self) -> bool:
+        return self._running
+
+    def stop(self) -> None:
+        self._running = False
 
 
 class TestOrchestrator(unittest.TestCase):
@@ -67,6 +87,24 @@ class TestOrchestrator(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             orch.launch_bottle("10.243.0.9")
         self.assertEqual([], self.store.all())  # no orphan
+
+    def test_sidecar_unconfigured_by_default(self) -> None:
+        self.assertEqual({"configured": False}, self.orch.sidecar_status())
+        self.orch.ensure_sidecar()  # no-op, must not raise
+
+    def test_sidecar_wired_and_ensured(self) -> None:
+        sc = _FakeSidecar()
+        orch = Orchestrator(self.store, self.broker, self.secret, sidecar=sc)
+        self.assertEqual(
+            {"configured": True, "name": "fake-sidecar", "running": False},
+            orch.sidecar_status(),
+        )
+        orch.ensure_sidecar()
+        self.assertEqual(1, sc.ensured)
+        self.assertEqual(
+            {"configured": True, "name": "fake-sidecar", "running": True},
+            orch.sidecar_status(),
+        )
 
 
 if __name__ == "__main__":

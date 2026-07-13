@@ -19,17 +19,25 @@ from __future__ import annotations
 
 from .broker import LaunchBroker, LaunchRequest, sign_request
 from .registry import BottleRecord, RegistryStore
+from .sidecar import Sidecar
 
 
 class Orchestrator:
-    """Owns the registry + brokers launches. Backend-neutral."""
+    """Owns the registry + brokers launches, and manages the single
+    consolidated per-host sidecar. Backend-neutral (broker and sidecar
+    abstract the backend-native pieces)."""
 
     def __init__(
-        self, registry: RegistryStore, broker: LaunchBroker, sign_secret: bytes
+        self,
+        registry: RegistryStore,
+        broker: LaunchBroker,
+        sign_secret: bytes,
+        sidecar: Sidecar | None = None,
     ) -> None:
         self.registry = registry
         self._broker = broker
         self._secret = sign_secret
+        self._sidecar = sidecar
 
     def launch_bottle(
         self,
@@ -71,6 +79,24 @@ class Orchestrator:
     def attribute(self, source_ip: str, identity_token: str) -> BottleRecord | None:
         """Fail-closed attribution (delegates to the registry)."""
         return self.registry.attribute(source_ip, identity_token)
+
+    # --- consolidated sidecar ----------------------------------------------
+
+    def ensure_sidecar(self) -> None:
+        """Bring the single per-host sidecar up (idempotent). No-op when no
+        sidecar is configured."""
+        if self._sidecar is not None:
+            self._sidecar.ensure_running()
+
+    def sidecar_status(self) -> dict[str, object]:
+        """Report the shared sidecar for the control plane / console."""
+        if self._sidecar is None:
+            return {"configured": False}
+        return {
+            "configured": True,
+            "name": self._sidecar.name,
+            "running": self._sidecar.is_running(),
+        }
 
 
 __all__ = ["Orchestrator"]

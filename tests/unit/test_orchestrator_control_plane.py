@@ -118,6 +118,11 @@ class TestDispatch(unittest.TestCase):
         status, _ = dispatch(self.orch, "GET", "/health/", b"")
         self.assertEqual(200, status)
 
+    def test_sidecar_status_unconfigured(self) -> None:
+        status, payload = dispatch(self.orch, "GET", "/sidecar", b"")
+        self.assertEqual(200, status)
+        self.assertEqual(False, payload["configured"])
+
 
 class TestServerRoundTrip(unittest.TestCase):
     def test_http_register_health_attribute(self) -> None:

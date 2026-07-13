@@ -16,6 +16,7 @@ from __future__ import annotations
 import subprocess
 
 from .broker import LaunchBroker, LaunchRequest
+from .dockerutil import run_docker
 
 CONTAINER_PREFIX = "bot-bottle-orch-"
 BOTTLE_ID_LABEL = "bot-bottle-bottle-id"
@@ -51,10 +52,7 @@ class DockerBroker(LaunchBroker):
     Provenance + schema verification are inherited from `LaunchBroker`."""
 
     def _docker(self, argv: list[str]) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, check=False,
-        )
+        return run_docker(argv)
 
     def _launch(self, req: LaunchRequest) -> None:
         if not req.image_ref:
