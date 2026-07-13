@@ -16,8 +16,9 @@ import secrets
 from pathlib import Path
 
 from .. import log
-from .broker import StubBroker
+from .broker import LaunchBroker, StubBroker
 from .control_plane import make_server
+from .docker_broker import DockerBroker
 from .registry import RegistryStore, default_db_path
 from .service import Orchestrator
 
@@ -31,16 +32,21 @@ def main(argv: list[str] | None = None) -> int:
         "--db", type=Path, default=None,
         help=f"registry DB path (default: {default_db_path()})",
     )
+    parser.add_argument(
+        "--broker", choices=("stub", "docker"), default="stub",
+        help="launch broker: 'stub' records requests; 'docker' runs containers",
+    )
     args = parser.parse_args(argv)
 
     registry = RegistryStore(args.db)
     registry.migrate()
 
-    # Dev-harness wiring: an ephemeral signing secret + a stub broker that
-    # records launches instead of starting anything. A real backend broker
-    # (docker, then firecracker) drops in here later.
+    # An ephemeral signing secret ties the orchestrator (signer) to its
+    # broker (verifier). 'stub' records launches instead of starting
+    # anything; 'docker' runs real containers (firecracker drops in later).
     secret = secrets.token_bytes(32)
-    orchestrator = Orchestrator(registry, StubBroker(secret), secret)
+    broker: LaunchBroker = DockerBroker(secret) if args.broker == "docker" else StubBroker(secret)
+    orchestrator = Orchestrator(registry, broker, secret)
 
     server = make_server(orchestrator, host=args.host, port=args.port)
     bound_host, bound_port = server.server_address[0], server.server_address[1]

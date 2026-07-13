@@ -32,6 +32,7 @@ from .broker import (
     sign_request,
     verify_request,
 )
+from .docker_broker import DockerBroker, DockerBrokerError
 from .service import Orchestrator
 from .control_plane import ControlPlaneServer, dispatch, make_server
 
@@ -43,6 +44,8 @@ __all__ = [
     "LaunchBroker",
     "LaunchRequest",
     "StubBroker",
+    "DockerBroker",
+    "DockerBrokerError",
     "sign_request",
     "verify_request",
     "Orchestrator",
