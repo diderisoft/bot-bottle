@@ -75,5 +75,55 @@ class TestDockerSidecar(unittest.TestCase):
                 self.sc.stop()
 
 
+class TestDockerSidecarBuild(unittest.TestCase):
+    def setUp(self) -> None:
+        self.sc = DockerSidecar()  # defaults to the real bundle image + dockerfile
+
+    def test_image_exists_reads_docker_inspect(self) -> None:
+        with patch(_RUN_DOCKER, return_value=_proc(returncode=0)):
+            self.assertTrue(self.sc.image_exists())
+        with patch(_RUN_DOCKER, return_value=_proc(returncode=1)):
+            self.assertFalse(self.sc.image_exists())
+
+    def test_ensure_built_is_noop_when_image_present(self) -> None:
+        with patch(_RUN_DOCKER, return_value=_proc(returncode=0)) as m:
+            self.sc.ensure_built()
+        self.assertEqual(1, m.call_count)  # only the image-inspect probe
+
+    def test_ensure_built_builds_from_dockerfile_when_missing(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake(argv: list[str]) -> Mock:
+            calls.append(argv)
+            if argv[:3] == ["docker", "image", "inspect"]:
+                return _proc(returncode=1)  # missing
+            return _proc()
+
+        with patch(_RUN_DOCKER, side_effect=fake):
+            self.sc.ensure_built()
+
+        builds = [c for c in calls if c[:2] == ["docker", "build"]]
+        self.assertEqual(1, len(builds))
+        self.assertIn(self.sc.image_ref, builds[0])
+        self.assertIn("-f", builds[0])
+        self.assertTrue(any(a.endswith("Dockerfile.sidecars") for a in builds[0]))
+
+    def test_ensure_built_noop_when_no_dockerfile(self) -> None:
+        sc = DockerSidecar("busybox", dockerfile=None)
+        with patch(_RUN_DOCKER) as m:
+            sc.ensure_built()
+        m.assert_not_called()
+
+    def test_ensure_built_raises_on_build_failure(self) -> None:
+        def fake(argv: list[str]) -> Mock:
+            if argv[:3] == ["docker", "image", "inspect"]:
+                return _proc(returncode=1)
+            return _proc(returncode=1, stderr="build boom")
+
+        with patch(_RUN_DOCKER, side_effect=fake):
+            with self.assertRaises(SidecarError):
+                self.sc.ensure_built()
+
+
 if __name__ == "__main__":
     unittest.main()

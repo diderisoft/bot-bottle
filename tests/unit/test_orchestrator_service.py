@@ -30,7 +30,11 @@ class _FakeSidecar(Sidecar):
     def __init__(self) -> None:
         self.name = "fake-sidecar"
         self.ensured = 0
+        self.built = 0
         self._running = False
+
+    def ensure_built(self) -> None:
+        self.built += 1
 
     def ensure_running(self) -> None:
         self.ensured += 1
@@ -100,7 +104,8 @@ class TestOrchestrator(unittest.TestCase):
             orch.sidecar_status(),
         )
         orch.ensure_sidecar()
-        self.assertEqual(1, sc.ensured)
+        self.assertEqual(1, sc.built)   # ensure_sidecar builds first,
+        self.assertEqual(1, sc.ensured)  # then runs
         self.assertEqual(
             {"configured": True, "name": "fake-sidecar", "running": True},
             orch.sidecar_status(),

@@ -83,9 +83,10 @@ class Orchestrator:
     # --- consolidated sidecar ----------------------------------------------
 
     def ensure_sidecar(self) -> None:
-        """Bring the single per-host sidecar up (idempotent). No-op when no
-        sidecar is configured."""
+        """Ensure the single per-host sidecar is built and up (idempotent).
+        No-op when no sidecar is configured."""
         if self._sidecar is not None:
+            self._sidecar.ensure_built()
             self._sidecar.ensure_running()
 
     def sidecar_status(self) -> dict[str, object]:
