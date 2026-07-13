@@ -1,9 +1,14 @@
 """Orchestrator bottle registry — the per-host runtime-state store (PRD 0070).
 
-SQLite-backed (WAL) registry mapping each live bottle to its source IP and
+SQLite-backed registry mapping each live bottle to its source IP and
 per-bottle identity token, plus the **fail-closed attribution** the data
 plane relies on: a request is attributed to a bottle only when its source
 IP *and* its identity token both match a single active record.
+
+The registry co-tenants the shared host `bot-bottle.db` (the `DbStore`
+framework namespaces each store by `schema_key`), so all bot-bottle
+runtime state lives in one queryable file — one place to back up, inspect,
+and integrate a console against.
 
 This is the "runtime state" tier of PRD 0070 (leases / approvals /
 registry) — deliberately NOT config (which stays declarative under
@@ -32,6 +37,7 @@ from pathlib import Path
 
 from ..db_store import DbStore
 from ..migrations import TableMigrations
+from ..supervise_types import host_db_path
 
 # 256 bits of urandom, URL-safe — unguessable per-bottle identity token.
 IDENTITY_TOKEN_BYTES = 32
@@ -43,9 +49,10 @@ def new_identity_token() -> str:
 
 
 def default_db_path() -> Path:
-    """Host location for the orchestrator's runtime-state DB. Runtime state
-    (not config), so it lives under the cache dir like the pool state."""
-    return Path.home() / ".cache" / "bot-bottle" / "orchestrator" / "registry.db"
+    """The shared host state DB (`bot-bottle.db`) — all bot-bottle runtime
+    state in one file, co-tenanted via schema_key. Host-resident so it
+    survives orchestrator restarts (re-adoption sweeps it)."""
+    return host_db_path()
 
 
 @dataclass(frozen=True)
@@ -113,12 +120,12 @@ class RegistryStore(DbStore):
         super().__init__(db_path or default_db_path(), _MIGRATIONS)
 
     def _connect(self) -> sqlite3.Connection:
-        """Open a WAL connection (concurrent data-plane reads + writer)."""
+        """Open a connection with a busy timeout for the shared DB."""
         conn = super()._connect()
-        # WAL lets the data-plane attribution reads run concurrently with the
-        # control-plane writer without blocking; busy_timeout avoids spurious
-        # "database is locked" under that concurrency (PRD 0070 state tier).
-        conn.execute("PRAGMA journal_mode=WAL")
+        # The registry co-tenants the shared bot-bottle.db, so a busy_timeout
+        # rides out brief lock contention with the other stores. WAL for the
+        # shared DB is a deliberate future change (it affects supervise/audit
+        # and is finicky over guest shares) — not flipped here.
         conn.execute("PRAGMA busy_timeout=5000")
         return conn
 
