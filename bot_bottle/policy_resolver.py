@@ -1,6 +1,6 @@
-"""Sidecar-side per-client policy resolver (PRD 0070).
+"""Gateway-side per-client policy resolver (PRD 0070).
 
-The consolidated sidecar serves every bottle from one process, so for each
+The consolidated gateway serves every bottle from one process, so for each
 request it must apply the *calling* bottle's policy, selected by the source
 IP the attribution invariant makes unspoofable. This resolves that policy
 from the orchestrator's control plane (`POST /resolve`), keyed on the

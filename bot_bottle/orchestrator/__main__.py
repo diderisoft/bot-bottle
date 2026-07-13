@@ -21,7 +21,7 @@ from .control_plane import make_server
 from .docker_broker import DockerBroker
 from .registry import RegistryStore, default_db_path
 from .service import Orchestrator
-from .sidecar import DockerSidecar, Sidecar
+from .gateway import DockerGateway, Gateway
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -38,7 +38,7 @@ def main(argv: list[str] | None = None) -> int:
         help="launch broker: 'stub' records requests; 'docker' runs containers",
     )
     parser.add_argument(
-        "--sidecar", action="store_true",
+        "--gateway", action="store_true",
         help="run one consolidated per-host sidecar bundle (build-if-missing)",
     )
     args = parser.parse_args(argv)
@@ -51,14 +51,14 @@ def main(argv: list[str] | None = None) -> int:
     # anything; 'docker' runs real containers (firecracker drops in later).
     secret = secrets.token_bytes(32)
     broker: LaunchBroker = DockerBroker(secret) if args.broker == "docker" else StubBroker(secret)
-    sidecar: Sidecar | None = DockerSidecar() if args.sidecar else None
-    orchestrator = Orchestrator(registry, broker, secret, sidecar)
+    gateway: Gateway | None = DockerGateway() if args.gateway else None
+    orchestrator = Orchestrator(registry, broker, secret, gateway)
 
-    # One persistent per-host sidecar, shared by every bottle: build the
+    # One persistent per-host gateway, shared by every bottle: build the
     # bundle image if missing, then bring the singleton up (idempotent).
-    if sidecar is not None:
-        orchestrator.ensure_sidecar()
-        log.info("consolidated sidecar ensured", context={"name": sidecar.name})
+    if gateway is not None:
+        orchestrator.ensure_gateway()
+        log.info("consolidated gateway ensured", context={"name": gateway.name})
 
     server = make_server(orchestrator, host=args.host, port=args.port)
     bound_host, bound_port = server.server_address[0], server.server_address[1]

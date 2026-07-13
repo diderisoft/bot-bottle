@@ -1,7 +1,7 @@
-"""Integration: the consolidated Docker sidecar is an idempotent singleton.
+"""Integration: the consolidated Docker gateway is an idempotent singleton.
 
 Gated on a reachable Docker daemon. Uses a unique name so it never
-collides with a real per-host sidecar or a leftover from another run.
+collides with a real per-host gateway or a leftover from another run.
 """
 
 from __future__ import annotations
@@ -10,17 +10,17 @@ import secrets
 import subprocess
 import unittest
 
-from bot_bottle.orchestrator.sidecar import DockerSidecar
+from bot_bottle.orchestrator.gateway import DockerGateway
 from tests._docker import skip_unless_docker
 
 IMAGE = "busybox"
 
 
 @skip_unless_docker()
-class TestDockerSidecarIntegration(unittest.TestCase):
+class TestDockerGatewayIntegration(unittest.TestCase):
     def setUp(self) -> None:
-        self.name = "bot-bottle-orch-sidecar-itest-" + secrets.token_hex(4)
-        self.sc = DockerSidecar(IMAGE, name=self.name)
+        self.name = "bot-bottle-orch-gateway-itest-" + secrets.token_hex(4)
+        self.sc = DockerGateway(IMAGE, name=self.name)
         self.addCleanup(self.sc.stop)
 
     def _count(self) -> int:

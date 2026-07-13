@@ -19,12 +19,12 @@ from __future__ import annotations
 
 from .broker import LaunchBroker, LaunchRequest, sign_request
 from .registry import BottleRecord, RegistryStore
-from .sidecar import Sidecar
+from .gateway import Gateway
 
 
 class Orchestrator:
     """Owns the registry + brokers launches, and manages the single
-    consolidated per-host sidecar. Backend-neutral (broker and sidecar
+    consolidated per-host gateway. Backend-neutral (broker and gateway
     abstract the backend-native pieces)."""
 
     def __init__(
@@ -32,12 +32,12 @@ class Orchestrator:
         registry: RegistryStore,
         broker: LaunchBroker,
         sign_secret: bytes,
-        sidecar: Sidecar | None = None,
+        gateway: Gateway | None = None,
     ) -> None:
         self.registry = registry
         self._broker = broker
         self._secret = sign_secret
-        self._sidecar = sidecar
+        self._gateway = gateway
 
     def launch_bottle(
         self,
@@ -48,7 +48,7 @@ class Orchestrator:
         metadata: str = "",
         policy: str = "",
     ) -> BottleRecord:
-        """Register a bottle (with its sidecar policy) and broker its launch.
+        """Register a bottle (with its gateway policy) and broker its launch.
         Rolls the registry entry back if the launch doesn't take, so a
         failure leaves no orphan."""
         rec = self.registry.register(source_ip, metadata=metadata, policy=policy)
@@ -84,37 +84,37 @@ class Orchestrator:
 
     def resolve(self, source_ip: str, identity_token: str = "") -> BottleRecord | None:
         """Resolve the bottle behind a request — the source-IP-keyed lookup
-        the multi-tenant sidecar makes per request; the returned record
+        the multi-tenant gateway makes per request; the returned record
         carries its `policy`. With a token, full attribution (source IP +
         token); without, network-layer attribution by source IP alone
         (valid where the IP is unspoofable and the control plane is
-        sidecar-only)."""
+        gateway-only)."""
         if identity_token:
             return self.registry.attribute(source_ip, identity_token)
         return self.registry.by_source_ip(source_ip)
 
     def set_policy(self, bottle_id: str, policy: str) -> bool:
-        """Update a bottle's sidecar policy in place (live reload). False if
+        """Update a bottle's gateway policy in place (live reload). False if
         the bottle is unknown."""
         return self.registry.set_policy(bottle_id, policy)
 
-    # --- consolidated sidecar ----------------------------------------------
+    # --- consolidated gateway ----------------------------------------------
 
-    def ensure_sidecar(self) -> None:
-        """Ensure the single per-host sidecar is built and up (idempotent).
-        No-op when no sidecar is configured."""
-        if self._sidecar is not None:
-            self._sidecar.ensure_built()
-            self._sidecar.ensure_running()
+    def ensure_gateway(self) -> None:
+        """Ensure the single per-host gateway is built and up (idempotent).
+        No-op when no gateway is configured."""
+        if self._gateway is not None:
+            self._gateway.ensure_built()
+            self._gateway.ensure_running()
 
-    def sidecar_status(self) -> dict[str, object]:
-        """Report the shared sidecar for the control plane / console."""
-        if self._sidecar is None:
+    def gateway_status(self) -> dict[str, object]:
+        """Report the shared gateway for the control plane / console."""
+        if self._gateway is None:
             return {"configured": False}
         return {
             "configured": True,
-            "name": self._sidecar.name,
-            "running": self._sidecar.is_running(),
+            "name": self._gateway.name,
+            "running": self._gateway.is_running(),
         }
 
 

@@ -67,9 +67,9 @@ class BottleRecord:
     # Opaque JSON blob for forward-compat (pool slot, ...) — the registry
     # doesn't interpret it, so new fields need no migration.
     metadata: str = ""
-    # The bottle's sidecar policy (opaque JSON — egress allowlist / routes /
+    # The bottle's gateway policy (opaque JSON — egress allowlist / routes /
     # git config). The registry stores and serves it verbatim, keyed by
-    # source IP; the multi-tenant sidecar interprets it.
+    # source IP; the multi-tenant gateway interprets it.
     policy: str = ""
 
     def redacted(self) -> dict[str, object]:
@@ -102,9 +102,9 @@ _MIGRATIONS = TableMigrations(
         # the "one active bottle per source IP" check cheap.
         "CREATE INDEX IF NOT EXISTS idx_orchestrator_bottles_source_ip "
         "ON orchestrator_bottles (source_ip)",
-        # v3 — per-bottle policy (opaque JSON the sidecar interprets): the
+        # v3 — per-bottle policy (opaque JSON the gateway interprets): the
         # egress allowlist / routes / git config selected by source IP. The
-        # multi-tenant sidecar resolves it per request via `attribute`.
+        # multi-tenant gateway resolves it per request via `attribute`.
         "ALTER TABLE orchestrator_bottles ADD COLUMN policy TEXT NOT NULL DEFAULT ''",
     ],
 )
@@ -217,7 +217,7 @@ class RegistryStore(DbStore):
         IP, or None if unknown or ambiguous (more than one — a
         misconfiguration). Safe as the *sole* attributor only where the
         source IP is unspoofable (Firecracker `/31` + nft) and the control
-        plane is reachable only by the trusted sidecar; pair with the
+        plane is reachable only by the trusted gateway; pair with the
         identity token (`attribute`) elsewhere."""
         with self._connect() as conn:
             rows = conn.execute(

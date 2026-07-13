@@ -10,7 +10,7 @@ from pathlib import Path
 from bot_bottle.orchestrator.broker import LaunchBroker, LaunchRequest, StubBroker
 from bot_bottle.orchestrator.registry import RegistryStore
 from bot_bottle.orchestrator.service import Orchestrator
-from bot_bottle.orchestrator.sidecar import Sidecar
+from bot_bottle.orchestrator.gateway import Gateway
 
 
 class _FailingBroker(LaunchBroker):
@@ -24,11 +24,11 @@ class _FailingBroker(LaunchBroker):
         pass
 
 
-class _FakeSidecar(Sidecar):
-    """In-memory sidecar for wiring tests."""
+class _FakeGateway(Gateway):
+    """In-memory gateway for wiring tests."""
 
     def __init__(self) -> None:
-        self.name = "fake-sidecar"
+        self.name = "fake-gateway"
         self.ensured = 0
         self.built = 0
         self._running = False
@@ -120,23 +120,23 @@ class TestOrchestrator(unittest.TestCase):
             orch.launch_bottle("10.243.0.9")
         self.assertEqual([], self.store.all())  # no orphan
 
-    def test_sidecar_unconfigured_by_default(self) -> None:
-        self.assertEqual({"configured": False}, self.orch.sidecar_status())
-        self.orch.ensure_sidecar()  # no-op, must not raise
+    def test_gateway_unconfigured_by_default(self) -> None:
+        self.assertEqual({"configured": False}, self.orch.gateway_status())
+        self.orch.ensure_gateway()  # no-op, must not raise
 
-    def test_sidecar_wired_and_ensured(self) -> None:
-        sc = _FakeSidecar()
-        orch = Orchestrator(self.store, self.broker, self.secret, sidecar=sc)
+    def test_gateway_wired_and_ensured(self) -> None:
+        sc = _FakeGateway()
+        orch = Orchestrator(self.store, self.broker, self.secret, gateway=sc)
         self.assertEqual(
-            {"configured": True, "name": "fake-sidecar", "running": False},
-            orch.sidecar_status(),
+            {"configured": True, "name": "fake-gateway", "running": False},
+            orch.gateway_status(),
         )
-        orch.ensure_sidecar()
-        self.assertEqual(1, sc.built)   # ensure_sidecar builds first,
+        orch.ensure_gateway()
+        self.assertEqual(1, sc.built)   # ensure_gateway builds first,
         self.assertEqual(1, sc.ensured)  # then runs
         self.assertEqual(
-            {"configured": True, "name": "fake-sidecar", "running": True},
-            orch.sidecar_status(),
+            {"configured": True, "name": "fake-gateway", "running": True},
+            orch.gateway_status(),
         )
 
 

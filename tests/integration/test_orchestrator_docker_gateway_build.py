@@ -1,4 +1,4 @@
-"""Integration: DockerSidecar.image_exists reflects real docker state.
+"""Integration: DockerGateway.image_exists reflects real docker state.
 
 Gated on a reachable Docker daemon. Deliberately does NOT build the full
 sidecar bundle (a heavy, slow image build) — it exercises the `image_exists`
@@ -11,14 +11,14 @@ from __future__ import annotations
 import subprocess
 import unittest
 
-from bot_bottle.orchestrator.sidecar import DockerSidecar
+from bot_bottle.orchestrator.gateway import DockerGateway
 from tests._docker import skip_unless_docker
 
 IMAGE = "busybox"
 
 
 @skip_unless_docker()
-class TestDockerSidecarImageExists(unittest.TestCase):
+class TestDockerGatewayImageExists(unittest.TestCase):
     def test_image_exists_true_for_present_false_for_absent(self) -> None:
         # Ensure the tiny image is present (build_if_missing is disabled here
         # so this never triggers a Dockerfile.sidecars build).
@@ -26,9 +26,9 @@ class TestDockerSidecarImageExists(unittest.TestCase):
             ["docker", "pull", IMAGE],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
         )
-        self.assertTrue(DockerSidecar(IMAGE, dockerfile=None).image_exists())
+        self.assertTrue(DockerGateway(IMAGE, dockerfile=None).image_exists())
         self.assertFalse(
-            DockerSidecar("bot-bottle-nonexistent:doesnotexist", dockerfile=None).image_exists()
+            DockerGateway("bot-bottle-nonexistent:doesnotexist", dockerfile=None).image_exists()
         )
 
 

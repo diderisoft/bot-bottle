@@ -1,4 +1,4 @@
-"""mitmproxy addon entrypoint for the egress sidecar (PRD 0017, PRD 0053).
+"""mitmproxy addon entrypoint for the egress gateway (PRD 0017, PRD 0053).
 
 Loaded by `mitmdump -s /app/egress_addon.py` inside the
 egress container."""
@@ -275,7 +275,7 @@ class EgressAddon:
                 return
 
         # Strip agent-set Authorization after DLP scan so smuggled tokens
-        # are caught above; the route may inject sidecar-owned auth below.
+        # are caught above; the route may inject gateway-owned auth below.
         flow.request.headers.pop("authorization", None)
 
         # Build headers mapping for match evaluation

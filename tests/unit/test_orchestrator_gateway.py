@@ -1,29 +1,29 @@
-"""Unit tests for the consolidated Docker sidecar (PRD 0070). Docker mocked."""
+"""Unit tests for the consolidated Docker gateway (PRD 0070). Docker mocked."""
 
 from __future__ import annotations
 
 import unittest
 from unittest.mock import Mock, patch
 
-from bot_bottle.orchestrator.sidecar import (
-    SIDECAR_NAME,
-    DockerSidecar,
-    SidecarError,
+from bot_bottle.orchestrator.gateway import (
+    GATEWAY_NAME,
+    DockerGateway,
+    GatewayError,
 )
 
-_RUN_DOCKER = "bot_bottle.orchestrator.sidecar.run_docker"
+_RUN_DOCKER = "bot_bottle.orchestrator.gateway.run_docker"
 
 
 def _proc(returncode: int = 0, stdout: str = "", stderr: str = "") -> Mock:
     return Mock(returncode=returncode, stdout=stdout, stderr=stderr)
 
 
-class TestDockerSidecar(unittest.TestCase):
+class TestDockerGateway(unittest.TestCase):
     def setUp(self) -> None:
-        self.sc = DockerSidecar("bot-bottle-sidecars:latest")
+        self.sc = DockerGateway("bot-bottle-sidecars:latest")
 
     def test_default_name(self) -> None:
-        self.assertEqual(SIDECAR_NAME, self.sc.name)
+        self.assertEqual(GATEWAY_NAME, self.sc.name)
 
     def test_is_running_reads_docker_ps(self) -> None:
         with patch(_RUN_DOCKER, return_value=_proc(stdout=self.sc.name + "\n")):
@@ -61,7 +61,7 @@ class TestDockerSidecar(unittest.TestCase):
             return _proc()
 
         with patch(_RUN_DOCKER, side_effect=fake):
-            with self.assertRaises(SidecarError):
+            with self.assertRaises(GatewayError):
                 self.sc.ensure_running()
 
     def test_stop_is_idempotent_on_missing(self) -> None:
@@ -71,13 +71,13 @@ class TestDockerSidecar(unittest.TestCase):
 
     def test_stop_raises_on_other_failure(self) -> None:
         with patch(_RUN_DOCKER, return_value=_proc(returncode=1, stderr="daemon down")):
-            with self.assertRaises(SidecarError):
+            with self.assertRaises(GatewayError):
                 self.sc.stop()
 
 
-class TestDockerSidecarBuild(unittest.TestCase):
+class TestDockerGatewayBuild(unittest.TestCase):
     def setUp(self) -> None:
-        self.sc = DockerSidecar()  # defaults to the real bundle image + dockerfile
+        self.sc = DockerGateway()  # defaults to the real bundle image + dockerfile
 
     def test_image_exists_reads_docker_inspect(self) -> None:
         with patch(_RUN_DOCKER, return_value=_proc(returncode=0)):
@@ -109,7 +109,7 @@ class TestDockerSidecarBuild(unittest.TestCase):
         self.assertTrue(any(a.endswith("Dockerfile.sidecars") for a in builds[0]))
 
     def test_ensure_built_noop_when_no_dockerfile(self) -> None:
-        sc = DockerSidecar("busybox", dockerfile=None)
+        sc = DockerGateway("busybox", dockerfile=None)
         with patch(_RUN_DOCKER) as m:
             sc.ensure_built()
         m.assert_not_called()
@@ -121,7 +121,7 @@ class TestDockerSidecarBuild(unittest.TestCase):
             return _proc(returncode=1, stderr="build boom")
 
         with patch(_RUN_DOCKER, side_effect=fake):
-            with self.assertRaises(SidecarError):
+            with self.assertRaises(GatewayError):
                 self.sc.ensure_built()
 
 

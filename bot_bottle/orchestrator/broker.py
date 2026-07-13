@@ -9,7 +9,7 @@ The request it sends is:
     request can't be coerced into launching an arbitrary payload; and
   * **signed** — wrapped as a compact JWS/JWT the broker verifies before
     acting, so a *compromised co-located component* (an agent-facing
-    sidecar, say) can't forge a launch. This is the concrete form of the
+    gateway, say) can't forge a launch. This is the concrete form of the
     "structured requests only" rule in the PRD security review.
 
 Signing is **HS256** over a secret shared by the orchestrator (signer) and

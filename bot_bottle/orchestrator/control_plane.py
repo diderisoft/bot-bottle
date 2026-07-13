@@ -5,7 +5,7 @@ The backend-agnostic control-plane RPC (CLI / console -> orchestrator) over
 vsock / unix-socket portability caveats):
 
     GET    /health                    -> 200 {"status": "ok"}
-    GET    /sidecar                   -> 200 {"configured", ["name","running"]}
+    GET    /gateway                   -> 200 {"configured", ["name","running"]}
     GET    /bottles                   -> 200 {"bottles": [ <redacted record>, ...]}
     POST   /bottles                   -> 201 {"bottle_id","identity_token"}  (launch)
                                          body: {"source_ip", ["image_ref"],
@@ -63,8 +63,8 @@ def dispatch(  # pylint: disable=too-many-return-statements,too-many-branches
     if method == "GET" and route == "/health":
         return 200, {"status": "ok"}
 
-    if method == "GET" and route == "/sidecar":
-        return 200, orch.sidecar_status()
+    if method == "GET" and route == "/gateway":
+        return 200, orch.gateway_status()
 
     if method == "GET" and route == "/bottles":
         return 200, {"bottles": [r.redacted() for r in orch.registry.all()]}
@@ -122,7 +122,7 @@ def dispatch(  # pylint: disable=too-many-return-statements,too-many-branches
         return 200, {"bottle_id": rec.bottle_id}
 
     if method == "POST" and route == "/resolve":
-        # The per-request lookup the multi-tenant sidecar makes: returns the
+        # The per-request lookup the multi-tenant gateway makes: returns the
         # bottle's policy. identity_token is OPTIONAL — absent means resolve
         # by source IP alone (network-layer attribution).
         try:

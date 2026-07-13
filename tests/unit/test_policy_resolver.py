@@ -1,4 +1,4 @@
-"""Unit tests for the sidecar-side PolicyResolver (PRD 0070). HTTP mocked."""
+"""Unit tests for the gateway-side PolicyResolver (PRD 0070). HTTP mocked."""
 
 from __future__ import annotations
 

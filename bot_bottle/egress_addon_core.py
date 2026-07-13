@@ -3,7 +3,7 @@
 Split out of `egress_addon.py` so the host's unit tests can
 exercise the parse + decision functions without depending on the
 `mitmproxy` package. The companion module wraps these with the
-`mitmproxy.http.HTTPFlow` API and is loaded inside the sidecar
+`mitmproxy.http.HTTPFlow` API and is loaded inside the gateway
 container.
 
 Imports: stdlib + `yaml_subset` (which is itself stdlib-only and
@@ -22,7 +22,7 @@ except ImportError:  # pragma: no cover - host-side path
     from .yaml_subset import YamlSubsetError, parse_yaml_subset
 
 # DLP detector-config parsing lives in a sibling module (also flat-bundled
-# into the sidecar — see Dockerfile.sidecars). Re-exported below so existing
+# into the gateway — see Dockerfile.sidecars). Re-exported below so existing
 # `from egress_addon_core import ON_MATCH_*` callers keep working.
 try:
     from egress_dlp_config import (  # type: ignore[import-not-found]
@@ -120,7 +120,7 @@ class ScanResult:
     reason: str
     location: str = ""  # where the match was found, e.g. "body", "authorization header"
     context: str = ""   # surrounding text with the match replaced by REDACT
-    # Raw substring the detector matched. Used inside the sidecar to key the
+    # Raw substring the detector matched. Used inside the gateway to key the
     # supervisor-approved "safe tokens" set (PRD 0062); never logged or written
     # to a proposal file. Empty for structural detectors (CRLF) that carry no
     # safelist-able value.
@@ -641,7 +641,7 @@ def outbound_scan_headers(
 ) -> dict[str, str]:
     """Return request headers that should be included in outbound DLP.
 
-    Routes that inject sidecar-owned auth always strip the agent's
+    Routes that inject gateway-owned auth always strip the agent's
     Authorization header before forwarding. Scanning that header first
     creates false positives for provider clients that insist on sending
     their own bearer-shaped placeholder, while still not changing what
@@ -692,7 +692,7 @@ def scan_outbound(
     crlf_text: str | None = None,
 ) -> ScanResult | None:
     # Lazy import to avoid circular deps and keep dlp_detectors optional
-    # at import time (the sidecar copies it flat alongside this file).
+    # at import time (the gateway copies it flat alongside this file).
     try:
         from dlp_detectors import (  # type: ignore[import-not-found]
             scan_crlf_injection,
