@@ -6,6 +6,14 @@ where the guest reaches the sidecar over the point-to-point TAP). The
 wrapper serves the same `/git/*.git` bare repos through
 `git http-backend`, so pre-receive and upstream forwarding remain the
 git-gate enforcement point.
+
+Consolidated (PRD 0070): when `BOT_BOTTLE_ORCHESTRATOR_URL` is set, one
+shared gateway serves every bottle, and each request is served from the
+calling bottle's repo namespace (`<root>/<bottle_id>`), attributed from
+the unspoofable source IP via the orchestrator. Per-repo credentials +
+hooks scope by repo directory, so isolating the *root* per bottle isolates
+its creds too. Unattributed clients fail closed (404). Unset → the legacy
+per-bottle single-tenant flat root, unchanged.
 """
 
 from __future__ import annotations
@@ -17,8 +25,66 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
+# policy_resolver ships flat alongside this file in the sidecar bundle
+# image (see Dockerfile.sidecars); the bot_bottle.* fallback is the
+# host-side / test path. Mirrors egress_addon's import shape.
+try:
+    from policy_resolver import (  # type: ignore[import-not-found]
+        PolicyResolveError,
+        PolicyResolver,
+    )
+except ImportError:  # pragma: no cover - host-side path
+    from bot_bottle.policy_resolver import PolicyResolveError, PolicyResolver
+
 
 DEFAULT_PORT = 9420
+
+# Consolidated (multi-tenant) mode: when this points at the per-host
+# orchestrator's control plane, the backend serves each request from the
+# *calling* bottle's repo namespace, selected by source IP, instead of a
+# single flat repo root. Unset → legacy per-bottle single-tenant mode
+# (unchanged). Same env the egress addon reads, so one orchestrator setting
+# flips the whole shared gateway multi-tenant.
+ORCHESTRATOR_URL_ENV = "BOT_BOTTLE_ORCHESTRATOR_URL"
+
+# App-layer identity token (defense-in-depth over the source-IP invariant);
+# the agent injects it, the backend reads it for attribution and never
+# forwards it to `git http-backend`. Mirrors egress_addon.IDENTITY_HEADER
+# (duplicated, not imported: egress_addon pulls in mitmproxy).
+IDENTITY_HEADER = "x-bot-bottle-identity"
+
+# Default flat repo root (single-tenant, and the base under which
+# consolidated mode nests each bottle's namespace).
+DEFAULT_PROJECT_ROOT = "/git"
+
+
+def resolve_repo_root(
+    resolver: "PolicyResolver | None",
+    base_root: Path,
+    source_ip: str,
+    identity_token: str = "",
+) -> Path | None:
+    """The repo root to serve this request from, or None to deny (404).
+
+    Single-tenant (`resolver is None`): the flat `base_root`, unchanged.
+
+    Consolidated: `base_root/<bottle_id>`, where the bottle is attributed
+    from the source IP via the orchestrator. Fail-closed — an unattributed
+    client, a resolver error, or a namespace that would escape `base_root`
+    all deny, so one bottle can never reach another's repos."""
+    if resolver is None:
+        return base_root
+    try:
+        bottle_id = resolver.resolve_bottle_id(source_ip, identity_token)
+    except PolicyResolveError:
+        return None  # orchestrator unreachable/errored → deny
+    if not bottle_id:
+        return None  # unattributed → deny
+    base = base_root.resolve()
+    namespace = (base / bottle_id).resolve()
+    if base not in namespace.parents:
+        return None  # bottle_id tried to escape the root → deny
+    return namespace
 
 # Mirrors git_gate_render.GIT_GATE_TIMEOUT_SECS. Duplicated rather than
 # imported: this module ships as a flat top-level sibling in the sidecar
@@ -40,10 +106,24 @@ class GitHttpHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         self._run_backend()
 
+    def _project_root(self) -> Path | None:
+        """This request's repo root, or None to deny. Single-tenant unless
+        the server was started with a resolver (consolidated mode), in which
+        case the root is the calling bottle's source-IP-selected namespace."""
+        base = Path(os.environ.get("GIT_PROJECT_ROOT", DEFAULT_PROJECT_ROOT))
+        resolver = getattr(self.server, "policy_resolver", None)
+        token = self.headers.get(IDENTITY_HEADER, "")
+        return resolve_repo_root(resolver, base, self.client_address[0], token)
+
     def _run_backend(self) -> None:
+        project_root = self._project_root()
+        if project_root is None:
+            # Unattributed / resolver error: deny before touching any repo.
+            self.send_error(404)
+            return
         parsed = urlsplit(self.path)
         if self._is_upload_pack(parsed.path, parsed.query):
-            repo_dir = self._repo_dir(parsed.path)
+            repo_dir = self._repo_dir(project_root, parsed.path)
             if repo_dir is None:
                 self.send_error(404)
                 return
@@ -77,7 +157,7 @@ class GitHttpHandler(BaseHTTPRequestHandler):
                 return
         env = os.environ.copy()
         env.update({
-            "GIT_PROJECT_ROOT": os.environ.get("GIT_PROJECT_ROOT", "/git"),
+            "GIT_PROJECT_ROOT": str(project_root),
             "GIT_HTTP_EXPORT_ALL": "1",
             "REQUEST_METHOD": self.command,
             "PATH_INFO": parsed.path,
@@ -123,8 +203,8 @@ class GitHttpHandler(BaseHTTPRequestHandler):
         )
         self._write_cgi_response(proc.stdout)
 
-    def _repo_dir(self, path: str) -> Path | None:
-        root = Path(os.environ.get("GIT_PROJECT_ROOT", "/git")).resolve()
+    def _repo_dir(self, project_root: Path, path: str) -> Path | None:
+        root = project_root.resolve()
         relative = path.lstrip("/").split(".git", 1)[0] + ".git"
         candidate = (root / relative).resolve()
         if root not in (candidate, *candidate.parents):
@@ -181,7 +261,12 @@ class GitHttpHandler(BaseHTTPRequestHandler):
 def main() -> int:
     port = int(os.environ.get("GIT_HTTP_PORT", str(DEFAULT_PORT)))
     server = ThreadingHTTPServer(("0.0.0.0", port), GitHttpHandler)
-    sys.stdout.write(f"git-http listening on 0.0.0.0:{port}\n")
+    orch_url = os.environ.get(ORCHESTRATOR_URL_ENV, "").strip()
+    # Consolidated mode: resolve each request's bottle namespace by source IP.
+    # Absent → single-tenant (flat repo root); behaviour unchanged.
+    server.policy_resolver = PolicyResolver(orch_url) if orch_url else None  # type: ignore[attr-defined]
+    mode = "multi-tenant" if orch_url else "single-tenant"
+    sys.stdout.write(f"git-http listening on 0.0.0.0:{port} ({mode})\n")
     sys.stdout.flush()
     server.serve_forever()
     return 0

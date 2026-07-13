@@ -71,6 +71,23 @@ class TestPolicyResolver(unittest.TestCase):
             self.r.resolve("10.243.0.7")  # token optional
         self.assertEqual("", json.loads(m.call_args.args[0].data)["identity_token"])
 
+    def test_resolve_bottle_id_returns_id(self) -> None:
+        with patch(_URLOPEN, return_value=_resp({"bottle_id": "b1", "policy": "P"})):
+            self.assertEqual("b1", self.r.resolve_bottle_id("10.243.0.1", "tok"))
+
+    def test_resolve_bottle_id_403_is_none_fail_closed(self) -> None:
+        with patch(_URLOPEN, side_effect=_http_error(403)):
+            self.assertIsNone(self.r.resolve_bottle_id("10.243.0.9", "tok"))
+
+    def test_resolve_bottle_id_missing_field_is_none(self) -> None:
+        with patch(_URLOPEN, return_value=_resp({"policy": "P"})):
+            self.assertIsNone(self.r.resolve_bottle_id("10.243.0.1", "tok"))
+
+    def test_resolve_bottle_id_error_raises(self) -> None:
+        with patch(_URLOPEN, side_effect=_http_error(500)):
+            with self.assertRaises(PolicyResolveError):
+                self.r.resolve_bottle_id("10.243.0.1", "tok")
+
 
 if __name__ == "__main__":
     unittest.main()

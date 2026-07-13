@@ -47,12 +47,11 @@ class PolicyResolver:
         self._base = base_url.rstrip("/")
         self._timeout = timeout
 
-    def resolve(self, source_ip: str, identity_token: str = "") -> str | None:
-        """The calling bottle's policy blob, or None if unattributed. Always
-        fetches from the orchestrator so revocations / changes / teardowns
-        are honored immediately. `identity_token` is optional — omit it to
-        resolve by source IP alone (the network-layer attribution).
-        Raises `PolicyResolveError` if the orchestrator can't be reached."""
+    def _post_resolve(self, source_ip: str, identity_token: str) -> dict[str, object] | None:
+        """The orchestrator's `/resolve` payload for this client, or None if
+        unattributed (a clean `403`). Raises `PolicyResolveError` on an
+        unreachable / unexpected-status / malformed response so every caller
+        can fail closed. Shared by `resolve` and `resolve_bottle_id`."""
         body = json.dumps(
             {"source_ip": source_ip, "identity_token": identity_token}
         ).encode()
@@ -69,8 +68,30 @@ class PolicyResolver:
             raise PolicyResolveError(f"/resolve returned HTTP {e.code}") from e
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
             raise PolicyResolveError(f"/resolve unreachable or malformed: {e}") from e
-        policy = payload.get("policy") if isinstance(payload, dict) else None
+        return payload if isinstance(payload, dict) else {}
+
+    def resolve(self, source_ip: str, identity_token: str = "") -> str | None:
+        """The calling bottle's policy blob, or None if unattributed. Always
+        fetches from the orchestrator so revocations / changes / teardowns
+        are honored immediately. `identity_token` is optional — omit it to
+        resolve by source IP alone (the network-layer attribution).
+        Raises `PolicyResolveError` if the orchestrator can't be reached."""
+        payload = self._post_resolve(source_ip, identity_token)
+        if payload is None:
+            return None
+        policy = payload.get("policy")
         return policy if isinstance(policy, str) else ""
+
+    def resolve_bottle_id(self, source_ip: str, identity_token: str = "") -> str | None:
+        """The calling bottle's id, or None if unattributed. This is the
+        source-IP-keyed identity the git-gate uses to select the bottle's
+        repo namespace (there is no per-bottle policy blob to parse — the
+        bottle *is* the namespace). Same fail-closed contract as `resolve`."""
+        payload = self._post_resolve(source_ip, identity_token)
+        if payload is None:
+            return None
+        bottle_id = payload.get("bottle_id")
+        return bottle_id if isinstance(bottle_id, str) and bottle_id else None
 
 
 __all__ = ["PolicyResolver", "PolicyResolveError"]
