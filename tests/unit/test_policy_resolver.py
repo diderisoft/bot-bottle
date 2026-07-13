@@ -25,29 +25,17 @@ def _http_error(code: int) -> urllib.error.HTTPError:
 
 class TestPolicyResolver(unittest.TestCase):
     def setUp(self) -> None:
-        self.r = PolicyResolver("http://orch:8080", ttl=5.0)
+        self.r = PolicyResolver("http://orch:8080")
 
     def test_resolve_returns_policy(self) -> None:
         with patch(_URLOPEN, return_value=_resp({"bottle_id": "b1", "policy": "P"})):
             self.assertEqual("P", self.r.resolve("10.243.0.1", "tok"))
 
-    def test_resolve_caches_within_ttl(self) -> None:
-        with patch(_URLOPEN, return_value=_resp({"policy": "P"})) as m:
-            self.assertEqual("P", self.r.resolve("10.243.0.1", "tok"))
-            self.assertEqual("P", self.r.resolve("10.243.0.1", "tok"))
-        m.assert_called_once()  # second hit came from the cache
-
-    def test_cache_expires(self) -> None:
-        r = PolicyResolver("http://orch:8080", ttl=0.0)
-        with patch(_URLOPEN, return_value=_resp({"policy": "P"})) as m:
-            r.resolve("10.243.0.1", "tok")
-            r.resolve("10.243.0.1", "tok")
-        self.assertEqual(2, m.call_count)  # ttl=0 → always refetch
-
-    def test_invalidate_forces_refetch(self) -> None:
+    def test_resolve_always_fetches_fresh(self) -> None:
+        # No cache — every resolve hits the orchestrator so revocations /
+        # policy changes are honored immediately.
         with patch(_URLOPEN, return_value=_resp({"policy": "P"})) as m:
             self.r.resolve("10.243.0.1", "tok")
-            self.r.invalidate("10.243.0.1")
             self.r.resolve("10.243.0.1", "tok")
         self.assertEqual(2, m.call_count)
 

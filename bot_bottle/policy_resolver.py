@@ -4,8 +4,15 @@ The consolidated sidecar serves every bottle from one process, so for each
 request it must apply the *calling* bottle's policy, selected by the source
 IP the attribution invariant makes unspoofable. This resolves that policy
 from the orchestrator's control plane (`POST /resolve`), keyed on the
-`(source_ip, identity_token)` pair, and caches it briefly so it isn't a
-round-trip per request.
+`(source_ip, identity_token)` pair.
+
+**Always fresh — no cache.** The resolver is called rarely enough that a
+round-trip doesn't matter, and correctness matters more than speed: every
+resolve reflects the orchestrator's *current* view, so a revocation, a
+policy change, or a bottle teardown the orchestrator knows about is honored
+immediately rather than lingering for a cache TTL. (If this ever becomes a
+hot path, add caching with orchestrator-driven invalidation — not a blind
+TTL.)
 
 **Fail-closed:** an unattributed client (the orchestrator answers `403`)
 resolves to `None`, and the caller (the egress addon, git-gate) must then
@@ -22,11 +29,9 @@ the sidecar bundle.
 from __future__ import annotations
 
 import json
-import time
 import urllib.error
 import urllib.request
 
-DEFAULT_TTL_SECONDS = 5.0
 DEFAULT_TIMEOUT_SECONDS = 2.0
 
 
@@ -36,39 +41,17 @@ class PolicyResolveError(RuntimeError):
 
 
 class PolicyResolver:
-    """Resolves + caches each client's policy from the orchestrator."""
+    """Resolves each client's policy from the orchestrator, fresh per call."""
 
-    def __init__(
-        self,
-        base_url: str,
-        *,
-        ttl: float = DEFAULT_TTL_SECONDS,
-        timeout: float = DEFAULT_TIMEOUT_SECONDS,
-    ) -> None:
+    def __init__(self, base_url: str, *, timeout: float = DEFAULT_TIMEOUT_SECONDS) -> None:
         self._base = base_url.rstrip("/")
-        self._ttl = ttl
         self._timeout = timeout
-        # source_ip -> (fetched_at_monotonic, policy | None)
-        self._cache: dict[str, tuple[float, str | None]] = {}
 
     def resolve(self, source_ip: str, identity_token: str) -> str | None:
-        """The calling bottle's policy blob, or None if unattributed. Cached
-        per source IP for `ttl` seconds. Raises `PolicyResolveError` if the
+        """The calling bottle's policy blob, or None if unattributed. Always
+        fetches from the orchestrator so revocations / changes / teardowns
+        are honored immediately. Raises `PolicyResolveError` if the
         orchestrator can't be reached / errors."""
-        now = time.monotonic()
-        hit = self._cache.get(source_ip)
-        if hit is not None and now - hit[0] < self._ttl:
-            return hit[1]
-        policy = self._fetch(source_ip, identity_token)
-        self._cache[source_ip] = (now, policy)
-        return policy
-
-    def invalidate(self, source_ip: str) -> None:
-        """Drop a cached entry — e.g. on teardown or a policy live-reload,
-        so the next request re-resolves immediately."""
-        self._cache.pop(source_ip, None)
-
-    def _fetch(self, source_ip: str, identity_token: str) -> str | None:
         body = json.dumps(
             {"source_ip": source_ip, "identity_token": identity_token}
         ).encode()
@@ -89,4 +72,4 @@ class PolicyResolver:
         return policy if isinstance(policy, str) else ""
 
 
-__all__ = ["PolicyResolver", "PolicyResolveError", "DEFAULT_TTL_SECONDS"]
+__all__ = ["PolicyResolver", "PolicyResolveError"]
