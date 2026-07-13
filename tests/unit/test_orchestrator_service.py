@@ -86,6 +86,22 @@ class TestOrchestrator(unittest.TestCase):
     def test_teardown_unknown_is_false(self) -> None:
         self.assertFalse(self.orch.teardown_bottle("ghost"))
 
+    def test_launch_with_policy_is_resolvable(self) -> None:
+        rec = self.orch.launch_bottle("10.243.0.1", policy='{"routes":[]}')
+        got = self.orch.attribute("10.243.0.1", rec.identity_token)
+        assert got is not None
+        self.assertEqual('{"routes":[]}', got.policy)
+
+    def test_set_policy_live_reload(self) -> None:
+        rec = self.orch.launch_bottle("10.243.0.3")
+        self.assertTrue(self.orch.set_policy(rec.bottle_id, '{"x":1}'))
+        got = self.orch.attribute("10.243.0.3", rec.identity_token)
+        assert got is not None
+        self.assertEqual('{"x":1}', got.policy)
+
+    def test_set_policy_unknown_is_false(self) -> None:
+        self.assertFalse(self.orch.set_policy("ghost", "{}"))
+
     def test_launch_rolls_back_registry_on_broker_failure(self) -> None:
         orch = Orchestrator(self.store, _FailingBroker(self.secret), self.secret)
         with self.assertRaises(RuntimeError):

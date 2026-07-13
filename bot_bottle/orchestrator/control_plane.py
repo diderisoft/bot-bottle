@@ -4,14 +4,18 @@ The backend-agnostic control-plane RPC (CLI / console -> orchestrator) over
 **HTTP** — the universal transport chosen in 0070 (works on every host; no
 vsock / unix-socket portability caveats):
 
-    GET    /health              -> 200 {"status": "ok"}
-    GET    /sidecar             -> 200 {"configured", ["name", "running"]}
-    GET    /bottles             -> 200 {"bottles": [ <redacted record>, ... ]}
-    POST   /bottles             -> 201 {"bottle_id", "identity_token"}    (launch)
-                                   body: {"source_ip", ["image_ref"], ["metadata"]}
-    DELETE /bottles/<bottle_id> -> 200 {"torn_down": true} | 404          (teardown)
-    POST   /attribute           -> 200 {"bottle_id"} | 403
-                                   body: {"source_ip", "identity_token"}
+    GET    /health                    -> 200 {"status": "ok"}
+    GET    /sidecar                   -> 200 {"configured", ["name","running"]}
+    GET    /bottles                   -> 200 {"bottles": [ <redacted record>, ...]}
+    POST   /bottles                   -> 201 {"bottle_id","identity_token"}  (launch)
+                                         body: {"source_ip", ["image_ref"],
+                                                ["metadata"], ["policy"]}
+    PUT    /bottles/<bottle_id>/policy -> 200 {"updated": true} | 404  (live reload)
+                                         body: {"policy"}
+    DELETE /bottles/<bottle_id>        -> 200 {"torn_down": true} | 404  (teardown)
+    POST   /attribute                 -> 200 {"bottle_id"} | 403
+    POST   /resolve                   -> 200 {"bottle_id","policy"} | 403
+                                         body: {"source_ip","identity_token"}
 
 `POST /bottles` / `DELETE` drive the full launch lifecycle: they mint (or
 tear down) the bottle in the registry AND broker the backend-native launch
@@ -49,7 +53,7 @@ def _parse_json_object(body: bytes) -> Json:
     return obj
 
 
-def dispatch(  # pylint: disable=too-many-return-statements
+def dispatch(  # pylint: disable=too-many-return-statements,too-many-branches
     orch: Orchestrator, method: str, path: str, body: bytes
 ) -> tuple[int, Json]:
     """Route one control-plane request to a (status, payload) pair. Pure —
@@ -75,12 +79,27 @@ def dispatch(  # pylint: disable=too-many-return-statements
             return 400, {"error": "source_ip (string) is required"}
         image_ref = data.get("image_ref")
         metadata = data.get("metadata")
+        policy = data.get("policy")
         rec = orch.launch_bottle(
             source_ip,
             image_ref=image_ref if isinstance(image_ref, str) else "",
             metadata=metadata if isinstance(metadata, str) else "",
+            policy=policy if isinstance(policy, str) else "",
         )
         return 201, {"bottle_id": rec.bottle_id, "identity_token": rec.identity_token}
+
+    if method == "PUT" and route.startswith("/bottles/") and route.endswith("/policy"):
+        bottle_id = route[len("/bottles/"):-len("/policy")]
+        try:
+            data = _parse_json_object(body)
+        except ValueError as e:
+            return 400, {"error": f"invalid JSON: {e}"}
+        policy = data.get("policy")
+        if not isinstance(policy, str):
+            return 400, {"error": "policy (string) is required"}
+        if orch.set_policy(bottle_id, policy):
+            return 200, {"updated": True}
+        return 404, {"error": "no such bottle"}
 
     if method == "DELETE" and route.startswith("/bottles/"):
         bottle_id = route[len("/bottles/"):]
@@ -88,7 +107,7 @@ def dispatch(  # pylint: disable=too-many-return-statements
             return 200, {"torn_down": True}
         return 404, {"error": "no such bottle"}
 
-    if method == "POST" and route == "/attribute":
+    if method == "POST" and route in ("/attribute", "/resolve"):
         try:
             data = _parse_json_object(body)
         except ValueError as e:
@@ -100,6 +119,11 @@ def dispatch(  # pylint: disable=too-many-return-statements
         rec = orch.attribute(source_ip, token)
         if rec is None:
             return 403, {"error": "unattributed"}
+        # /attribute is the lightweight identity check; /resolve additionally
+        # returns the bottle's policy — the source-IP-keyed lookup the
+        # multi-tenant sidecar makes per request.
+        if route == "/resolve":
+            return 200, {"bottle_id": rec.bottle_id, "policy": rec.policy}
         return 200, {"bottle_id": rec.bottle_id}
 
     return 404, {"error": "not found"}
@@ -133,6 +157,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         self._serve("POST")
+
+    def do_PUT(self) -> None:
+        self._serve("PUT")
 
     def do_DELETE(self) -> None:
         self._serve("DELETE")

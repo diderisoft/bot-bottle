@@ -123,6 +123,54 @@ class TestDispatch(unittest.TestCase):
         self.assertEqual(200, status)
         self.assertEqual(False, payload["configured"])
 
+    def test_launch_stores_policy_and_resolve_returns_it(self) -> None:
+        _, reg = dispatch(
+            self.orch, "POST", "/bottles",
+            _body({"source_ip": "10.243.0.5", "policy": '{"a":1}'}),
+        )
+        status, payload = dispatch(
+            self.orch, "POST", "/resolve",
+            _body({"source_ip": "10.243.0.5", "identity_token": reg["identity_token"]}),
+        )
+        self.assertEqual(200, status)
+        self.assertEqual(reg["bottle_id"], payload["bottle_id"])
+        self.assertEqual('{"a":1}', payload["policy"])
+
+    def test_resolve_forbidden_on_bad_token(self) -> None:
+        dispatch(self.orch, "POST", "/bottles", _body({"source_ip": "10.243.0.5"}))
+        status, _ = dispatch(
+            self.orch, "POST", "/resolve",
+            _body({"source_ip": "10.243.0.5", "identity_token": "nope"}),
+        )
+        self.assertEqual(403, status)
+
+    def test_put_policy_updates_live(self) -> None:
+        _, reg = dispatch(self.orch, "POST", "/bottles", _body({"source_ip": "10.243.0.1"}))
+        bid = reg["bottle_id"]
+        status, payload = dispatch(
+            self.orch, "PUT", f"/bottles/{bid}/policy", _body({"policy": '{"v":9}'})
+        )
+        self.assertEqual(200, status)
+        self.assertEqual(True, payload["updated"])
+        _, resolved = dispatch(
+            self.orch, "POST", "/resolve",
+            _body({"source_ip": "10.243.0.1", "identity_token": reg["identity_token"]}),
+        )
+        self.assertEqual('{"v":9}', resolved["policy"])
+
+    def test_put_policy_missing_bottle_404(self) -> None:
+        status, _ = dispatch(
+            self.orch, "PUT", "/bottles/ghost/policy", _body({"policy": "{}"})
+        )
+        self.assertEqual(404, status)
+
+    def test_put_policy_requires_string(self) -> None:
+        _, reg = dispatch(self.orch, "POST", "/bottles", _body({"source_ip": "10.243.0.1"}))
+        status, _ = dispatch(
+            self.orch, "PUT", f"/bottles/{reg['bottle_id']}/policy", _body({})
+        )
+        self.assertEqual(400, status)
+
 
 class TestServerRoundTrip(unittest.TestCase):
     def test_http_register_health_attribute(self) -> None:

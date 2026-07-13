@@ -46,10 +46,12 @@ class Orchestrator:
         image_ref: str = "",
         slot: int | None = None,
         metadata: str = "",
+        policy: str = "",
     ) -> BottleRecord:
-        """Register a bottle and broker its launch. Rolls the registry entry
-        back if the launch doesn't take, so a failure leaves no orphan."""
-        rec = self.registry.register(source_ip, metadata=metadata)
+        """Register a bottle (with its sidecar policy) and broker its launch.
+        Rolls the registry entry back if the launch doesn't take, so a
+        failure leaves no orphan."""
+        rec = self.registry.register(source_ip, metadata=metadata, policy=policy)
         req = LaunchRequest(
             op="launch",
             bottle_id=rec.bottle_id,
@@ -77,8 +79,15 @@ class Orchestrator:
         return True
 
     def attribute(self, source_ip: str, identity_token: str) -> BottleRecord | None:
-        """Fail-closed attribution (delegates to the registry)."""
+        """Fail-closed attribution (delegates to the registry). The returned
+        record carries the bottle's `policy` — this is the source-IP-keyed
+        resolution the multi-tenant sidecar makes per request."""
         return self.registry.attribute(source_ip, identity_token)
+
+    def set_policy(self, bottle_id: str, policy: str) -> bool:
+        """Update a bottle's sidecar policy in place (live reload). False if
+        the bottle is unknown."""
+        return self.registry.set_policy(bottle_id, policy)
 
     # --- consolidated sidecar ----------------------------------------------
 

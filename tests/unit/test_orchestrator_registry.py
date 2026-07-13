@@ -97,6 +97,30 @@ class TestRegistryStore(unittest.TestCase):
         self.assertNotIn("identity_token", rec.redacted())
         self.assertEqual("10.243.0.1", rec.redacted()["source_ip"])
 
+    def test_register_with_policy_resolves_via_attribution(self) -> None:
+        rec = self.store.register("10.243.0.1", policy='{"allow":["x"]}')
+        self.assertEqual('{"allow":["x"]}', rec.policy)
+        got = self.store.attribute("10.243.0.1", rec.identity_token)
+        assert got is not None
+        self.assertEqual('{"allow":["x"]}', got.policy)
+
+    def test_set_policy_updates_live(self) -> None:
+        rec = self.store.register("10.243.0.1")
+        self.assertEqual("", rec.policy)
+        self.assertTrue(self.store.set_policy(rec.bottle_id, '{"v":2}'))
+        got = self.store.get(rec.bottle_id)
+        assert got is not None
+        self.assertEqual('{"v":2}', got.policy)
+
+    def test_set_policy_missing_is_false(self) -> None:
+        self.assertFalse(self.store.set_policy("ghost", "{}"))
+
+    def test_policy_defaults_empty_and_persists(self) -> None:
+        rec = self.store.register("10.243.0.1")
+        got = RegistryStore(self.db).get(rec.bottle_id)
+        assert got is not None
+        self.assertEqual("", got.policy)
+
 
 if __name__ == "__main__":
     unittest.main()

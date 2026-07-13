@@ -64,9 +64,13 @@ class BottleRecord:
     identity_token: str
     state: str = "active"
     created_at: float = 0.0
-    # Opaque JSON blob for forward-compat (policy refs, pool slot, ...) —
-    # the registry doesn't interpret it, so new fields need no migration.
+    # Opaque JSON blob for forward-compat (pool slot, ...) — the registry
+    # doesn't interpret it, so new fields need no migration.
     metadata: str = ""
+    # The bottle's sidecar policy (opaque JSON — egress allowlist / routes /
+    # git config). The registry stores and serves it verbatim, keyed by
+    # source IP; the multi-tenant sidecar interprets it.
+    policy: str = ""
 
     def redacted(self) -> dict[str, object]:
         """Public view for listing — never exposes the identity token."""
@@ -76,6 +80,7 @@ class BottleRecord:
             "state": self.state,
             "created_at": self.created_at,
             "metadata": self.metadata,
+            "policy": self.policy,
         }
 
 
@@ -97,6 +102,10 @@ _MIGRATIONS = TableMigrations(
         # the "one active bottle per source IP" check cheap.
         "CREATE INDEX IF NOT EXISTS idx_orchestrator_bottles_source_ip "
         "ON orchestrator_bottles (source_ip)",
+        # v3 — per-bottle policy (opaque JSON the sidecar interprets): the
+        # egress allowlist / routes / git config selected by source IP. The
+        # multi-tenant sidecar resolves it per request via `attribute`.
+        "ALTER TABLE orchestrator_bottles ADD COLUMN policy TEXT NOT NULL DEFAULT ''",
     ],
 )
 
@@ -110,6 +119,7 @@ def _row_to_record(row: sqlite3.Row) -> BottleRecord:
         state=row["state"],
         created_at=row["created_at"],
         metadata=row["metadata"],
+        policy=row["policy"],
     )
 
 
@@ -136,6 +146,7 @@ class RegistryStore(DbStore):
         bottle_id: str | None = None,
         identity_token: str | None = None,
         metadata: str = "",
+        policy: str = "",
     ) -> BottleRecord:
         """Register (or replace) a bottle. Mints a bottle_id / identity token
         when not supplied. Live — this is the control-plane reload path."""
@@ -146,12 +157,13 @@ class RegistryStore(DbStore):
             state="active",
             created_at=time.time(),
             metadata=metadata,
+            policy=policy,
         )
         with self._connect() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO orchestrator_bottles "
-                "(bottle_id, source_ip, identity_token, state, created_at, metadata) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "(bottle_id, source_ip, identity_token, state, created_at, metadata, policy) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     rec.bottle_id,
                     rec.source_ip,
@@ -159,10 +171,22 @@ class RegistryStore(DbStore):
                     rec.state,
                     rec.created_at,
                     rec.metadata,
+                    rec.policy,
                 ),
             )
         self._chmod()
         return rec
+
+    def set_policy(self, bottle_id: str, policy: str) -> bool:
+        """Update a bottle's policy in place (live reload). Returns True if
+        the bottle exists."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE orchestrator_bottles SET policy = ? WHERE bottle_id = ?",
+                (policy, bottle_id),
+            )
+        self._chmod()
+        return cur.rowcount > 0
 
     def deregister(self, bottle_id: str) -> bool:
         """Remove a bottle. Returns True if a row was deleted."""
