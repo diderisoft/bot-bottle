@@ -2,23 +2,25 @@
 
 The backend-agnostic control-plane RPC (CLI / console -> orchestrator) over
 **HTTP** — the universal transport chosen in 0070 (works on every host; no
-vsock / unix-socket portability caveats). Endpoints mutate the live
-registry, so register/deregister are the *live-reload* path — no restart:
+vsock / unix-socket portability caveats):
 
     GET    /health              -> 200 {"status": "ok"}
     GET    /bottles             -> 200 {"bottles": [ <redacted record>, ... ]}
-    POST   /bottles             -> 201 {"bottle_id", "identity_token"}
-                                   body: {"source_ip", ["bottle_id"], ["metadata"]}
-    DELETE /bottles/<bottle_id> -> 200 {"deregistered": true} | 404
+    POST   /bottles             -> 201 {"bottle_id", "identity_token"}    (launch)
+                                   body: {"source_ip", ["image_ref"], ["metadata"]}
+    DELETE /bottles/<bottle_id> -> 200 {"torn_down": true} | 404          (teardown)
     POST   /attribute           -> 200 {"bottle_id"} | 403
                                    body: {"source_ip", "identity_token"}
 
+`POST /bottles` / `DELETE` drive the full launch lifecycle: they mint (or
+tear down) the bottle in the registry AND broker the backend-native launch
+via the orchestrator. Register/deregister without a launch are internal to
+`Orchestrator`, not exposed here.
+
 Routing/handling is the pure function `dispatch()` so it is unit-testable
 without a socket; `Handler` / `ControlPlaneServer` / `make_server` are a
-thin stdlib adapter around it.
-
-Note the listing redacts identity tokens — they are never returned except
-once, to the caller that registers the bottle.
+thin stdlib adapter around it. Listing redacts identity tokens — they are
+returned only once, to the caller that launches the bottle.
 """
 
 from __future__ import annotations
@@ -30,7 +32,7 @@ import socketserver
 import typing
 from urllib.parse import urlsplit
 
-from .registry import RegistryStore
+from .service import Orchestrator
 
 # JSON body payload type (parsed request / rendered response).
 Json = dict[str, object]
@@ -47,17 +49,17 @@ def _parse_json_object(body: bytes) -> Json:
 
 
 def dispatch(  # pylint: disable=too-many-return-statements
-    registry: RegistryStore, method: str, path: str, body: bytes
+    orch: Orchestrator, method: str, path: str, body: bytes
 ) -> tuple[int, Json]:
     """Route one control-plane request to a (status, payload) pair. Pure —
-    no I/O beyond the registry — so it is fully testable without a socket."""
+    no I/O beyond the orchestrator — so it is fully testable without a socket."""
     route = urlsplit(path).path.rstrip("/") or "/"
 
     if method == "GET" and route == "/health":
         return 200, {"status": "ok"}
 
     if method == "GET" and route == "/bottles":
-        return 200, {"bottles": [r.redacted() for r in registry.all()]}
+        return 200, {"bottles": [r.redacted() for r in orch.registry.all()]}
 
     if method == "POST" and route == "/bottles":
         try:
@@ -67,19 +69,19 @@ def dispatch(  # pylint: disable=too-many-return-statements
         source_ip = data.get("source_ip")
         if not isinstance(source_ip, str) or not source_ip:
             return 400, {"error": "source_ip (string) is required"}
-        bottle_id = data.get("bottle_id")
+        image_ref = data.get("image_ref")
         metadata = data.get("metadata")
-        rec = registry.register(
+        rec = orch.launch_bottle(
             source_ip,
-            bottle_id=bottle_id if isinstance(bottle_id, str) else None,
+            image_ref=image_ref if isinstance(image_ref, str) else "",
             metadata=metadata if isinstance(metadata, str) else "",
         )
         return 201, {"bottle_id": rec.bottle_id, "identity_token": rec.identity_token}
 
     if method == "DELETE" and route.startswith("/bottles/"):
         bottle_id = route[len("/bottles/"):]
-        if registry.deregister(bottle_id):
-            return 200, {"deregistered": True}
+        if orch.teardown_bottle(bottle_id):
+            return 200, {"torn_down": True}
         return 404, {"error": "no such bottle"}
 
     if method == "POST" and route == "/attribute":
@@ -91,7 +93,7 @@ def dispatch(  # pylint: disable=too-many-return-statements
         token = data.get("identity_token")
         if not isinstance(source_ip, str) or not isinstance(token, str):
             return 400, {"error": "source_ip and identity_token (strings) required"}
-        rec = registry.attribute(source_ip, token)
+        rec = orch.attribute(source_ip, token)
         if rec is None:
             return 403, {"error": "unattributed"}
         return 200, {"bottle_id": rec.bottle_id}
@@ -114,7 +116,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         assert isinstance(server, ControlPlaneServer)
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length > 0 else b""
-        status, payload = dispatch(server.registry, method, self.path, body)
+        status, payload = dispatch(server.orchestrator, method, self.path, body)
         data = json.dumps(payload).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -133,22 +135,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 
 class ControlPlaneServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
-    """Threading HTTP server that carries the registry for its handlers."""
+    """Threading HTTP server that carries the orchestrator for its handlers."""
 
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, address: tuple[str, int], registry: RegistryStore) -> None:
-        self.registry = registry
+    def __init__(self, address: tuple[str, int], orchestrator: Orchestrator) -> None:
+        self.orchestrator = orchestrator
         super().__init__(address, Handler)
 
 
 def make_server(
-    registry: RegistryStore, host: str = "127.0.0.1", port: int = 0
+    orchestrator: Orchestrator, host: str = "127.0.0.1", port: int = 0
 ) -> ControlPlaneServer:
     """Build (but do not start) a control-plane server. `port=0` binds an
     ephemeral port — read `server.server_address` for the actual one."""
-    return ControlPlaneServer((host, port), registry)
+    return ControlPlaneServer((host, port), orchestrator)
 
 
 __all__ = ["dispatch", "Handler", "ControlPlaneServer", "make_server", "Json"]

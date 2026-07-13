@@ -12,11 +12,14 @@ container packaging. Wrapping this exact service in a backend-native unit
 from __future__ import annotations
 
 import argparse
+import secrets
 from pathlib import Path
 
 from .. import log
+from .broker import StubBroker
 from .control_plane import make_server
 from .registry import RegistryStore, default_db_path
+from .service import Orchestrator
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -33,7 +36,13 @@ def main(argv: list[str] | None = None) -> int:
     registry = RegistryStore(args.db)
     registry.migrate()
 
-    server = make_server(registry, host=args.host, port=args.port)
+    # Dev-harness wiring: an ephemeral signing secret + a stub broker that
+    # records launches instead of starting anything. A real backend broker
+    # (docker, then firecracker) drops in here later.
+    secret = secrets.token_bytes(32)
+    orchestrator = Orchestrator(registry, StubBroker(secret), secret)
+
+    server = make_server(orchestrator, host=args.host, port=args.port)
     bound_host, bound_port = server.server_address[0], server.server_address[1]
     log.info(
         "orchestrator control plane listening",
