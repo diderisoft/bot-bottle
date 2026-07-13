@@ -46,7 +46,7 @@ def _addon() -> EgressAddon:
     """Return a bare EgressAddon with LOG_FULL config and no routes file."""
     a: EgressAddon = EgressAddon.__new__(EgressAddon)
     a.config = Config(routes=(), log=LOG_FULL)
-    a.safe_tokens = set()
+    a._safe_tokens = {}
     a._supervise_slug = ""
     a._token_allow_timeout = 300.0
     return a

@@ -88,6 +88,20 @@ class TestPolicyResolver(unittest.TestCase):
             with self.assertRaises(PolicyResolveError):
                 self.r.resolve_bottle_id("10.243.0.1", "tok")
 
+    def test_resolve_policy_and_bottle_id_one_call(self) -> None:
+        with patch(_URLOPEN, return_value=_resp({"bottle_id": "b1", "policy": "P"})) as m:
+            self.assertEqual(("P", "b1"), self.r.resolve_policy_and_bottle_id("10.243.0.1", "t"))
+        self.assertEqual(1, m.call_count)  # both from a single /resolve
+
+    def test_resolve_policy_and_bottle_id_403_is_none_none(self) -> None:
+        with patch(_URLOPEN, side_effect=_http_error(403)):
+            self.assertEqual((None, None), self.r.resolve_policy_and_bottle_id("10.243.0.9"))
+
+    def test_resolve_policy_and_bottle_id_error_raises(self) -> None:
+        with patch(_URLOPEN, side_effect=urllib.error.URLError("refused")):
+            with self.assertRaises(PolicyResolveError):
+                self.r.resolve_policy_and_bottle_id("10.243.0.1")
+
 
 if __name__ == "__main__":
     unittest.main()

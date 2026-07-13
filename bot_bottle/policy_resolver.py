@@ -100,5 +100,24 @@ class PolicyResolver:
         bottle_id = payload.get("bottle_id")
         return bottle_id if isinstance(bottle_id, str) and bottle_id else None
 
+    def resolve_policy_and_bottle_id(
+        self, source_ip: str, identity_token: str = "",
+    ) -> tuple[str | None, str | None]:
+        """Both the policy blob and the bottle id in a single `/resolve` — so
+        a caller that needs each (the egress addon: policy for routing, bottle
+        id to key the calling bottle's supervise queue + safelist) makes one
+        round-trip, not two. Returns `(None, None)` when unattributed (a clean
+        `403`). Raises `PolicyResolveError` if the orchestrator can't be
+        reached, so the caller still fails closed."""
+        payload = self._post_resolve(source_ip, identity_token)
+        if payload is None:
+            return None, None
+        policy = payload.get("policy")
+        bottle_id = payload.get("bottle_id")
+        return (
+            policy if isinstance(policy, str) else "",
+            bottle_id if isinstance(bottle_id, str) and bottle_id else None,
+        )
+
 
 __all__ = ["PolicyResolver", "PolicyResolveError"]

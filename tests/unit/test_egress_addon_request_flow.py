@@ -211,7 +211,7 @@ def _addon(config: Config) -> EgressAddon:
     """Bare EgressAddon with a supplied config and no supervise wiring."""
     a: EgressAddon = EgressAddon.__new__(EgressAddon)
     a.config = config
-    a.safe_tokens = set()
+    a._safe_tokens = {}
     a._supervise_slug = ""
     a._token_allow_timeout = 300.0
     a.routes_path = "/nonexistent/routes.yaml"
@@ -220,6 +220,29 @@ def _addon(config: Config) -> EgressAddon:
 
 def _run_request(addon: EgressAddon, flow: _Flow) -> None:
     asyncio.run(addon.request(flow))  # type: ignore[arg-type]
+
+
+def _with_client_ip(flow: _Flow, ip: str) -> _Flow:
+    """Attach a mitmproxy-style client_conn so consolidated resolution can read
+    the source IP (`flow.client_conn.peername[0]`)."""
+    flow.client_conn = types.SimpleNamespace(peername=(ip, 54321))  # type: ignore[attr-defined]
+    return flow
+
+
+class _CtxResolver:
+    """Fake orchestrator resolver: maps source IP -> bottle id, and grants the
+    same allow-list to any attributed bottle (unattributed -> deny)."""
+
+    def __init__(self, ip_to_bottle: dict[str, str]) -> None:
+        self._map = ip_to_bottle
+
+    def resolve_policy_and_bottle_id(
+        self, source_ip: str, identity_token: str = "",
+    ) -> tuple[str | None, str | None]:
+        del identity_token
+        bottle_id = self._map.get(source_ip)
+        policy = "routes:\n  - host: api.example.com\n" if bottle_id else None
+        return policy, bottle_id
 
 
 # ---------------------------------------------------------------------------
@@ -418,7 +441,8 @@ class TestSuperviseBranch(unittest.TestCase):
         with patch.object(_ea_mod, "_sv", _fake_sv("approved")):
             _run_request(addon, flow)
         self.assertIsNone(flow.response)  # forwarded after approval
-        self.assertIn(_OPENAI_KEY, addon.safe_tokens)
+        # Approval lands in the calling bottle's safelist (keyed by slug).
+        self.assertIn(_OPENAI_KEY, addon._safe_tokens_for("test-bottle"))
 
     def test_operator_rejection_blocks(self) -> None:
         addon = self._supervised_addon()
@@ -733,6 +757,63 @@ class TestLogFullRequest(unittest.TestCase):
             _run_request(addon, flow)
         logged = [json.loads(x) for x in buf.getvalue().splitlines() if x.strip()]
         self.assertTrue(any(e.get("event") == "egress_request" for e in logged))
+
+
+class TestSuperviseMultiTenant(unittest.TestCase):
+    """Consolidated gateway: supervise proposals + the DLP safelist are keyed
+    per bottle, resolved by source IP (PRD 0070)."""
+
+    def _consolidated_addon(self) -> EgressAddon:
+        # Static config is empty; the resolver supplies each bottle's config.
+        addon = _addon(Config(routes=()))
+        addon._resolver = cast(Any, _CtxResolver({"10.0.0.1": "bottle-a", "10.0.0.2": "bottle-b"}))
+        addon._token_allow_timeout = 0.05
+        return addon
+
+    def test_approval_is_scoped_to_the_calling_bottle(self) -> None:
+        addon = self._consolidated_addon()
+        # bottle-a (10.0.0.1) sends the token; the operator approves.
+        flow = _with_client_ip(
+            _Flow(_Request(host="api.example.com", method="POST", body=f"k={_OPENAI_KEY}")),
+            "10.0.0.1",
+        )
+        with patch.object(_ea_mod, "_sv", _fake_sv("approved")):
+            _run_request(addon, flow)
+        self.assertIsNone(flow.response)  # forwarded after approval
+        # The approval lands ONLY in bottle-a's safelist — never bottle-b's.
+        # A global set here would be the cross-tenant leak this slice closes.
+        self.assertIn(_OPENAI_KEY, addon._safe_tokens_for("bottle-a"))
+        self.assertNotIn(_OPENAI_KEY, addon._safe_tokens_for("bottle-b"))
+
+    def test_proposal_is_attributed_to_the_source_ip_bottle(self) -> None:
+        addon = self._consolidated_addon()
+        seen: list[str] = []
+        fake = _fake_sv("approved")
+
+        def _capture(**kw: Any) -> Any:
+            seen.append(kw["bottle_slug"])
+            return types.SimpleNamespace(id="p")
+
+        fake.Proposal = types.SimpleNamespace(new=_capture)
+        flow = _with_client_ip(
+            _Flow(_Request(host="api.example.com", method="POST", body=f"k={_OPENAI_KEY}")),
+            "10.0.0.2",
+        )
+        with patch.object(_ea_mod, "_sv", fake):
+            _run_request(addon, flow)
+        self.assertEqual(["bottle-b"], seen)  # proposal keyed by the resolved bottle
+
+    def test_unattributed_source_ip_cannot_supervise(self) -> None:
+        addon = self._consolidated_addon()
+        # 10.9.9.9 is not in the resolver map -> deny-all config, empty slug.
+        flow = _with_client_ip(
+            _Flow(_Request(host="api.example.com", method="POST", body=f"k={_OPENAI_KEY}")),
+            "10.9.9.9",
+        )
+        with patch.object(_ea_mod, "_sv", _fake_sv("approved")):
+            _run_request(addon, flow)
+        self.assertIsNotNone(flow.response)  # blocked (no route, no supervise)
+        self.assertNotIn(_OPENAI_KEY, addon._safe_tokens_for(""))
 
 
 if __name__ == "__main__":

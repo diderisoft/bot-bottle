@@ -32,7 +32,7 @@ from egress_addon_core import (  # type: ignore[import-not-found]  # pylint: dis
     is_git_push_request,
     load_config,
     match_route,
-    resolve_client_config,
+    resolve_client_context,
     outbound_scan_headers,
     route_to_yaml_dict,
     scan_inbound,
@@ -99,17 +99,29 @@ class EgressAddon:
         # Absent → single-tenant (static routes file); behaviour unchanged.
         orch_url = os.environ.get(ORCHESTRATOR_URL_ENV, "").strip()
         self._resolver = PolicyResolver(orch_url) if orch_url else None
-        # Tokens the operator has approved this session (PRD 0062). In-memory
-        # only — a restart re-prompts. Mutated only from the asyncio loop that
-        # runs the addon hooks, so no lock is needed.
-        self.safe_tokens: set[str] = set()
+        # Tokens the operator has approved this session (PRD 0062), keyed by
+        # bottle so the shared gateway keeps each bottle's safelist separate —
+        # a global set would let bottle A's approved secret pass bottle B's DLP
+        # scan. In-memory only (a restart re-prompts); mutated only from the
+        # asyncio loop that runs the addon hooks, so no lock is needed.
+        self._safe_tokens: dict[str, set[str]] = {}
         self._supervise_slug = os.environ.get("SUPERVISE_BOTTLE_SLUG", "").strip()
         self._token_allow_timeout = _token_allow_timeout_from_env(os.environ)
         self._reload(initial=True)
         self._install_sighup()
 
-    def _supervise_available(self) -> bool:
-        return bool(self._supervise_slug)
+    @staticmethod
+    def _supervise_available(slug: str) -> bool:
+        """Supervise is reachable for this request iff we resolved a bottle to
+        attribute its proposals to (single-tenant env slug, or a source-IP
+        -attributed bottle id). Empty → fail closed (no queue to write to)."""
+        return bool(slug)
+
+    def _safe_tokens_for(self, slug: str) -> set[str]:
+        """This bottle's operator-approved DLP safelist (PRD 0062), created on
+        first use. Keyed by bottle so the shared gateway never leaks one
+        bottle's approved token into another's scan."""
+        return self._safe_tokens.setdefault(slug, set())
 
     def _reload(self, *, initial: bool = False) -> None:
         try:
@@ -218,19 +230,21 @@ class EgressAddon:
             + "\n"
         )
 
-    def _active_config(self, flow: http.HTTPFlow) -> Config:
-        """The Config to apply to this request. Single-tenant → the static
-        `self.config`. Consolidated → the calling bottle's Config, resolved
-        by source IP (fail-closed to deny-all if unattributed). The identity
-        token, if the agent injected one, is read then stripped so it never
-        leaks upstream."""
+    def _resolve_flow(self, flow: http.HTTPFlow) -> "tuple[Config, str]":
+        """The `(Config, supervise slug)` to apply to this request. Single-tenant
+        → the static `self.config` and the env slug. Consolidated → the calling
+        bottle's Config and its bottle id, resolved by source IP in one
+        round-trip (fail-closed to deny-all + empty slug if unattributed). The
+        identity token, if the agent injected one, is read then stripped so it
+        never leaks upstream. The slug keys both the proposal queue and the
+        per-bottle safelist, so an approval only ever affects its own bottle."""
         if self._resolver is None:
-            return self.config
+            return self.config, self._supervise_slug
         conn = flow.client_conn
         client_ip = conn.peername[0] if conn and conn.peername else ""
         token = flow.request.headers.get(IDENTITY_HEADER, "")
         flow.request.headers.pop(IDENTITY_HEADER, None)
-        return resolve_client_config(self._resolver, client_ip, token)
+        return resolve_client_context(self._resolver, client_ip, token)
 
     async def request(self, flow: http.HTTPFlow) -> None:
         request_path, _, query = flow.request.path.partition("?")
@@ -239,14 +253,14 @@ class EgressAddon:
             self._serve_introspection(flow, request_path)
             return
 
-        config = self._active_config(flow)
+        config, slug = self._resolve_flow(flow)
 
         # DLP outbound scan BEFORE stripping auth — catches tokens the
         # agent tried to smuggle in any header, path, query param, or body.
         # Hostname is included to catch DNS-tunnelling exfiltration attempts.
         route = match_route(config.routes, flow.request.pretty_host)
         if route is not None:
-            if not await self._handle_outbound_dlp(flow, route):
+            if not await self._handle_outbound_dlp(flow, route, slug):
                 return
             # The redact policy may have rewritten the request line; recompute
             # the path/query the git checks below rely on.
@@ -310,6 +324,7 @@ class EgressAddon:
         self,
         flow: http.HTTPFlow,
         route: Route,
+        slug: str,
     ) -> bool:
         """Scan the outbound request and apply the route's on-match policy
         (PRD 0062). Returns True if the request may be forwarded, False if a
@@ -331,7 +346,7 @@ class EgressAddon:
             )
             result = scan_outbound(
                 route, scan_text, os.environ,
-                safe_tokens=self.safe_tokens, crlf_text=crlf_text,
+                safe_tokens=self._safe_tokens_for(slug), crlf_text=crlf_text,
             )
             if result is None or result.severity != "block":
                 return True
@@ -366,10 +381,10 @@ class EgressAddon:
 
             # supervise (default): hold the request for operator approval.
             # Fall back to a hard 403 when supervise isn't wired for the bottle.
-            if not self._supervise_available():
+            if not self._supervise_available(slug):
                 self._block_dlp(flow, result)
                 return False
-            approved = await self._supervise_token_block(flow, request_path, result)
+            approved = await self._supervise_token_block(flow, request_path, result, slug)
             if not approved:
                 return False  # _supervise_token_block wrote the 403 response
             # loop: the approved value is now in safe_tokens; re-scan.
@@ -412,12 +427,16 @@ class EgressAddon:
         flow: http.HTTPFlow,
         request_path: str,
         result: ScanResult,
+        slug: str,
     ) -> bool:
         """Route a token DLP block to the operator's supervisor queue and wait.
 
-        Returns True if the operator approved (the matched value is added to
-        `self.safe_tokens` and the caller re-scans); False if the request must
-        be blocked (a 403 response has been written to `flow`)."""
+        `slug` attributes the proposal to the calling bottle (its own queue +
+        safelist) — in the shared gateway this is what keeps one bottle's
+        approval from unblocking another's request. Returns True if the operator
+        approved (the matched value is added to that bottle's safelist and the
+        caller re-scans); False if the request must be blocked (a 403 response
+        has been written to `flow`)."""
         host = flow.request.pretty_host
         payload = build_token_allow_payload(
             redact_tokens(host, env=os.environ),
@@ -426,7 +445,7 @@ class EgressAddon:
             result,
         )
         proposal = _sv.Proposal.new(
-            bottle_slug=self._supervise_slug,
+            bottle_slug=slug,
             tool=_sv.TOOL_EGRESS_TOKEN_ALLOW,
             proposed_file=payload,
             justification=_TOKEN_ALLOW_JUSTIFICATION,
@@ -449,13 +468,13 @@ class EgressAddon:
             **self._req_ctx(flow),
         }) + "\n")
 
-        response = await self._await_token_response(proposal.id)
-        _sv.archive_proposal(self._supervise_slug, proposal.id)
+        response = await self._await_token_response(proposal.id, slug)
+        _sv.archive_proposal(slug, proposal.id)
 
         if response is not None and response.status in (
             _sv.STATUS_APPROVED, _sv.STATUS_MODIFIED,
         ):
-            self.safe_tokens.add(result.matched)
+            self._safe_tokens_for(slug).add(result.matched)
             if self.config.log >= LOG_BLOCKS:
                 sys.stderr.write(json.dumps({
                     "event": "egress_token_allowed",
@@ -478,6 +497,7 @@ class EgressAddon:
     async def _await_token_response(
         self,
         proposal_id: str,
+        slug: str,
     ) -> "_sv.Response | None":
         """Poll the DB for the operator's response without blocking the
         proxy event loop. Returns the Response, or None on timeout."""
@@ -485,7 +505,7 @@ class EgressAddon:
         deadline = loop.time() + self._token_allow_timeout
         while True:
             try:
-                return _sv.read_response(self._supervise_slug, proposal_id)
+                return _sv.read_response(slug, proposal_id)
             except (OSError, ValueError, KeyError):
                 # Not written yet, or a partial/malformed write — retry until
                 # the deadline, then fail closed.
@@ -539,6 +559,9 @@ class EgressAddon:
         """
         if flow.websocket is None:  # type: ignore[union-attr]
             return
+        # WebSocket DLP runs against the static config only (single-tenant); in
+        # the consolidated gateway self.config has no routes, so this is inert
+        # until websocket routing is made source-IP-aware (a separate slice).
         route = match_route(self.config.routes, flow.request.pretty_host)
         if route is None:
             return
@@ -549,7 +572,7 @@ class EgressAddon:
             # not an injection vector here — scan only for credential leakage.
             result = scan_outbound(
                 route, content, os.environ,
-                safe_tokens=self.safe_tokens, crlf_text="",
+                safe_tokens=self._safe_tokens_for(self._supervise_slug), crlf_text="",
             )
             if result is not None and result.severity == "block":
                 sys.stderr.write(f"egress DLP: {result.reason}\n")

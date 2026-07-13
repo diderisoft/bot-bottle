@@ -421,6 +421,18 @@ class PolicyResolverLike(typing.Protocol):
         ...
 
 
+def _config_from_policy(policy: "str | None") -> "Config":
+    """Parse a resolved policy blob into a Config, fail-closed: None / empty /
+    unparseable all become a deny-all Config (no routes → every request
+    blocked)."""
+    if not policy:
+        return Config(routes=())  # unattributed or empty → deny-all
+    try:
+        return load_config(policy)
+    except ValueError:
+        return Config(routes=())  # unparseable policy → deny
+
+
 def resolve_client_config(
     resolver: PolicyResolverLike, client_ip: str, identity_token: str = ""
 ) -> "Config":
@@ -433,12 +445,33 @@ def resolve_client_config(
         policy = resolver.resolve(client_ip, identity_token)
     except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         return Config(routes=())  # orchestrator unreachable/errored → deny
-    if not policy:
-        return Config(routes=())  # unattributed or empty → deny-all
+    return _config_from_policy(policy)
+
+
+class ContextResolverLike(typing.Protocol):
+    """The bit of `policy_resolver.PolicyResolver` `resolve_client_context`
+    needs — one round-trip returning both policy and bottle id."""
+
+    def resolve_policy_and_bottle_id(
+        self, source_ip: str, identity_token: str = ...,
+    ) -> "tuple[str | None, str | None]":
+        ...
+
+
+def resolve_client_context(
+    resolver: ContextResolverLike, client_ip: str, identity_token: str = "",
+) -> "tuple[Config, str]":
+    """The calling client's `(Config, bottle_id)` in one round-trip —
+    **fail-closed**. The Config follows `resolve_client_config`'s deny-all
+    rules; the bottle id is `""` whenever unattributed or the orchestrator
+    errored, which the caller treats as "supervise unavailable for this
+    bottle" (never another bottle's queue). One `/resolve` keys both the
+    per-request egress policy and the per-bottle supervise queue + safelist."""
     try:
-        return load_config(policy)
-    except ValueError:
-        return Config(routes=())  # unparseable policy → deny
+        policy, bottle_id = resolver.resolve_policy_and_bottle_id(client_ip, identity_token)
+    except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        return Config(routes=()), ""  # orchestrator unreachable/errored → deny
+    return _config_from_policy(policy), (bottle_id or "")
 
 
 # ---------------------------------------------------------------------------
@@ -833,7 +866,9 @@ __all__ = [
     "is_git_fetch_request",
     "load_config",
     "resolve_client_config",
+    "resolve_client_context",
     "PolicyResolverLike",
+    "ContextResolverLike",
     "match_route",
     "outbound_scan_headers",
     "parse_config",
