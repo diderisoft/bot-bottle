@@ -46,13 +46,18 @@ class TestOrchestratorService(unittest.TestCase):
         with patch(_URLOPEN, side_effect=urllib.error.URLError("refused")):
             self.assertFalse(self.svc.is_healthy())
 
-    def test_ensure_running_healthy_still_ensures_gateway_but_not_orchestrator(self) -> None:
+    def test_ensure_running_always_recreates_orchestrator(self) -> None:
+        # Even when a control plane is already healthy, the orchestrator is
+        # recreated so bind-mounted code changes take effect (its process
+        # won't reload). The gateway is ensured too.
+        run = Mock(return_value=Mock(returncode=0, stderr=""))
         with patch(_URLOPEN, return_value=_health(200)), \
-                patch(_GATEWAY) as gw_cls, patch(_RUN) as run:
+                patch(_GATEWAY) as gw_cls, patch(_RUN, run), patch(_SLEEP):
             self.assertEqual(self.svc.url, self.svc.ensure_running())
-        gw = gw_cls.return_value
-        gw.ensure_running.assert_called()          # gateway kept up
-        run.assert_not_called()                    # no orchestrator container run
+        gw_cls.return_value.ensure_running.assert_called()   # gateway kept up
+        runs = [c.args[0] for c in run.call_args_list if c.args[0][:2] == ["docker", "run"]]
+        self.assertEqual(1, len(runs))                       # orchestrator recreated
+        self.assertIn(ORCHESTRATOR_NAME, runs[0])
 
     def test_ensure_running_starts_orchestrator_container_when_absent(self) -> None:
         run = Mock(return_value=Mock(returncode=0, stderr=""))

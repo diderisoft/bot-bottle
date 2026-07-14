@@ -127,13 +127,17 @@ class OrchestratorService:
         gateway are left untouched. Raises `OrchestratorStartError` on
         timeout."""
         gateway = self._gateway()
-        gateway.ensure_built()  # build the bundle image if missing (both use it)
-        if self.is_healthy():
-            gateway.ensure_running()  # make sure the gateway is up too
-            return self.url
+        gateway.ensure_built()  # rebuild the bundle image on a source change
+        gateway.ensure_running()  # creates the shared network + (re)starts gateway
 
+        # Always (re)create the orchestrator container. It runs the repo's code
+        # bind-mounted, but the Python process loaded that code at startup and
+        # won't reload — so reusing a healthy-but-stale container would keep
+        # running OLD control-plane code (e.g. dropping the tokens field). Cheap
+        # (~seconds); the registry DB persists and the current launch
+        # re-registers its own in-memory state. (The dedicated orchestrator
+        # image follow-up replaces this with image-staleness detection.)
         log.info("starting orchestrator container", context={"name": ORCHESTRATOR_NAME})
-        gateway.ensure_running()  # creates the shared network + gateway
         self._run_orchestrator_container()
 
         deadline = time.monotonic() + startup_timeout
