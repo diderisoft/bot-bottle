@@ -584,28 +584,63 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         Not called by the launch path or the test suite."""
 
 
-# Import concrete backend classes AFTER the base types are defined, so
-# each backend module can pull BottleSpec / BottlePlan / BottleBackend
-# via `from . import ...` without hitting a partially-initialized module.
-from .docker import DockerBottleBackend  # noqa: E402  # pylint: disable=wrong-import-position
-from .firecracker import FirecrackerBottleBackend  # noqa: E402  # pylint: disable=wrong-import-position
-from .macos_container import MacosContainerBottleBackend  # noqa: E402  # pylint: disable=wrong-import-position
+# _BACKENDS is None until the first call to _get_backends(), at which
+# point all three concrete backend classes are imported and instantiated.
+# Keeping the imports out of module scope means that importing any
+# backend sub-module (e.g. `backend.docker.util`) no longer drags the
+# firecracker and macos-container implementations into memory.
+#
+# Tests may replace _BACKENDS with a {name: fake} dict via patch.object;
+# _get_backends() returns the current module-level value as-is when it
+# is not None, so test fakes take effect without triggering real imports.
+_BACKENDS: dict[str, BottleBackend[Any, Any]] | None = None
 
-# Freezer is imported after the backend classes for the same reason:
-# Freezer.commit_slug constructs ActiveAgent, which must be fully
-# defined first.
-from .freeze import CommitCancelled, Freezer, get_freezer  # noqa: E402  # pylint: disable=wrong-import-position
+
+def _get_backends() -> dict[str, BottleBackend[Any, Any]]:
+    """Return the registry of all backend instances, loading lazily on first call."""
+    global _BACKENDS
+    if _BACKENDS is None:
+        from .docker import DockerBottleBackend
+        from .firecracker import FirecrackerBottleBackend
+        from .macos_container import MacosContainerBottleBackend
+        _BACKENDS = {
+            "docker": DockerBottleBackend(),
+            "firecracker": FirecrackerBottleBackend(),
+            "macos-container": MacosContainerBottleBackend(),
+        }
+    return _BACKENDS
 
 
-# The dict is heterogeneous: each value is a BottleBackend specialized
-# over its own plan type. Concrete plan types are erased here because
-# the registry is selected at runtime and the CLI only needs the
-# unparameterized methods (prepare → plan → launch(plan), cleanup, etc.).
-_BACKENDS: dict[str, BottleBackend[Any, Any]] = {
-    "docker": DockerBottleBackend(),
-    "firecracker": FirecrackerBottleBackend(),
-    "macos-container": MacosContainerBottleBackend(),
-}
+def __getattr__(name: str) -> Any:
+    """Lazily surface concrete backend classes and freeze symbols at the
+    package level so existing `from bot_bottle.backend import X` and
+    `patch.object(backend_mod, X, ...)` call-sites keep working without
+    forcing an import of every backend at module-init time."""
+    if name == "DockerBottleBackend":
+        from .docker import DockerBottleBackend
+        globals()[name] = DockerBottleBackend
+        return DockerBottleBackend
+    if name == "FirecrackerBottleBackend":
+        from .firecracker import FirecrackerBottleBackend
+        globals()[name] = FirecrackerBottleBackend
+        return FirecrackerBottleBackend
+    if name == "MacosContainerBottleBackend":
+        from .macos_container import MacosContainerBottleBackend
+        globals()[name] = MacosContainerBottleBackend
+        return MacosContainerBottleBackend
+    if name == "CommitCancelled":
+        from .freeze import CommitCancelled
+        globals()[name] = CommitCancelled
+        return CommitCancelled
+    if name == "Freezer":
+        from .freeze import Freezer
+        globals()[name] = Freezer
+        return Freezer
+    if name == "get_freezer":
+        from .freeze import get_freezer
+        globals()[name] = get_freezer
+        return get_freezer
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def get_bottle_backend(
@@ -623,10 +658,11 @@ def get_bottle_backend(
     Dies with a pointer at the known backends if the chosen name
     isn't implemented."""
     resolved = name or os.environ.get("BOT_BOTTLE_BACKEND") or _default_backend_name()
-    if resolved not in _BACKENDS:
-        known = ", ".join(sorted(_BACKENDS))
+    backends = _get_backends()
+    if resolved not in backends:
+        known = ", ".join(sorted(backends))
         die(f"unknown backend {resolved!r}; known backends: {known}")
-    return _BACKENDS[resolved]
+    return backends[resolved]
 
 
 def _default_backend_name() -> str:
@@ -636,16 +672,17 @@ def _default_backend_name() -> str:
     # `firecracker` binary isn't installed yet: selecting it here routes
     # start through firecracker's preflight, which prints an install
     # pointer, instead of silently falling back to docker.
+    from .firecracker import FirecrackerBottleBackend
     if FirecrackerBottleBackend.is_host_capable():
         return "firecracker"
     return "docker"
 
 
 def known_backend_names() -> tuple[str, ...]:
-    """Sorted tuple of all backend keys in `_BACKENDS`. Used by
+    """Sorted tuple of all backend keys in `_get_backends()`. Used by
     argparse (`--backend` choices) and the dashboard's backend
     picker."""
-    return tuple(sorted(_BACKENDS))
+    return tuple(sorted(_get_backends()))
 
 
 def has_backend(name: str) -> bool:
@@ -657,9 +694,10 @@ def has_backend(name: str) -> bool:
 
     Returns False for unknown names so callers can pass
     arbitrary input without separate validation."""
-    if name not in _BACKENDS:
+    backends = _get_backends()
+    if name not in backends:
         return False
-    return _BACKENDS[name].is_available()
+    return backends[name].is_available()
 
 
 def enumerate_active_agents() -> list[ActiveAgent]:
@@ -675,10 +713,11 @@ def enumerate_active_agents() -> list[ActiveAgent]:
     deterministic tiebreaker. Agents with missing metadata
     (`started_at == ""`) sort first."""
     out: list[ActiveAgent] = []
-    for name in known_backend_names():
-        if not has_backend(name):
+    backends = _get_backends()
+    for name in sorted(backends):
+        if not backends[name].is_available():
             continue
-        out.extend(_BACKENDS[name].enumerate_active())
+        out.extend(backends[name].enumerate_active())
     out.sort(key=lambda a: (a.started_at, a.slug))
     return out
 

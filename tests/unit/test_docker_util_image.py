@@ -29,7 +29,7 @@ def _fail(stderr: str = "boom") -> subprocess.CompletedProcess:  # type: ignore
 class TestCommitContainer(unittest.TestCase):
     def test_runs_docker_commit(self):
         with patch.object(
-            docker_mod.subprocess, "run", return_value=_ok(),
+            docker_mod, "run_docker", return_value=_ok(),
         ) as run, patch.object(docker_mod, "info"):
             docker_mod.commit_container(
                 "bot-bottle-dev-abc12",
@@ -47,7 +47,7 @@ class TestCommitContainer(unittest.TestCase):
 
     def test_dies_on_docker_commit_failure(self):
         with patch.object(
-            docker_mod.subprocess, "run", return_value=_fail("No such container"),
+            docker_mod, "run_docker", return_value=_fail("No such container"),
         ), patch.object(
             docker_mod, "die", side_effect=SystemExit("die"),
         ) as die:
@@ -58,7 +58,7 @@ class TestCommitContainer(unittest.TestCase):
 
     def test_die_message_includes_image_tag(self):
         with patch.object(
-            docker_mod.subprocess, "run", return_value=_fail("boom"),
+            docker_mod, "run_docker", return_value=_fail("boom"),
         ), patch.object(
             docker_mod, "die", side_effect=SystemExit("die"),
         ) as die:

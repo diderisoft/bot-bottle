@@ -8,7 +8,7 @@ import os
 import re
 import shutil
 import subprocess
-from typing import Iterable, Iterator
+from typing import Iterator
 
 from ...docker_cmd import run_docker
 from ...log import die, info
@@ -32,12 +32,7 @@ def container_name_candidates(base: str) -> Iterator[str]:
 def runsc_available() -> bool:
     """Return True if the Docker daemon has the gVisor (`runsc`) runtime
     registered. Called once per prepare; the result lives on the plan."""
-    r = subprocess.run(
-        ["docker", "info", "--format", "{{json .Runtimes}}"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    r = run_docker(["docker", "info", "--format", "{{json .Runtimes}}"])
     return r.returncode == 0 and "runsc" in r.stdout
 
 
@@ -51,20 +46,15 @@ def require_docker() -> None:
 
 
 def image_exists(ref: str) -> bool:
-    return _silent_run(["docker", "image", "inspect", ref]) == 0
+    return run_docker(["docker", "image", "inspect", ref]).returncode == 0
 
 
 def container_exists(name: str) -> bool:
     """Returns True if a container (running or stopped) with the given
     name exists. Uses `docker ps -a -q -f name=^<name>$` so substring
     matches don't false-positive."""
-    result = subprocess.run(
-        ["docker", "ps", "-a", "-q", "-f", f"name=^{name}$"],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return bool(result.stdout.strip())
+    result = run_docker(["docker", "ps", "-a", "-q", "-f", f"name=^{name}$"])
+    return result.returncode == 0 and bool(result.stdout.strip())
 
 
 def force_remove_container(name: str) -> None:
@@ -72,12 +62,7 @@ def force_remove_container(name: str) -> None:
     doesn't — and the rm itself is best-effort (errors swallowed) so
     this is safe to register as a teardown callback."""
     if container_exists(name):
-        subprocess.run(
-            ["docker", "rm", "-f", name],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
+        run_docker(["docker", "rm", "-f", name])
 
 
 def docker_exec_root(container: str, argv: list[str]) -> None:
@@ -205,22 +190,10 @@ def verify_agent_image(image: str, argv: tuple[str, ...]) -> None:
 def commit_container(container_name: str, image_tag: str) -> None:
     """Run `docker commit <container_name> <image_tag>` to snapshot the
     running container's filesystem state as a local Docker image."""
-    result = subprocess.run(
-        ["docker", "commit", container_name, image_tag],
-        capture_output=True, text=True, check=False,
-    )
+    result = run_docker(["docker", "commit", container_name, image_tag])
     if result.returncode != 0:
         die(
             f"docker commit {container_name!r} → {image_tag!r} failed: "
             f"{(result.stderr or '').strip() or '<no stderr>'}"
         )
     info(f"committed {container_name!r} → {image_tag!r}")
-
-
-def _silent_run(cmd: Iterable[str]) -> int:
-    return subprocess.run(
-        list(cmd),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    ).returncode
