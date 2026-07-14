@@ -78,7 +78,13 @@ def _source_hash(repo_root: Path) -> str:
 
 class OrchestratorService:
     """Manages the orchestrator control-plane container + the shared gateway.
-    Callers only need `ensure_running()` + `url`."""
+    Callers only need `ensure_running()` + `url`.
+
+    `orchestrator_name` / `orchestrator_label` let backends run independent
+    orchestrators on the same host without name collisions (e.g. the
+    Firecracker backend uses `bot-bottle-fc-orchestrator` alongside the Docker
+    backend's `bot-bottle-orchestrator`). Subclass and override `_gateway()`
+    to supply a backend-specific gateway variant."""
 
     def __init__(
         self,
@@ -89,6 +95,8 @@ class OrchestratorService:
         gateway_image: str = GATEWAY_IMAGE,
         repo_root: Path = _REPO_ROOT,
         host_root: Path | None = None,
+        orchestrator_name: str = ORCHESTRATOR_NAME,
+        orchestrator_label: str = ORCHESTRATOR_LABEL,
     ) -> None:
         self.port = port
         self.network = network
@@ -100,6 +108,8 @@ class OrchestratorService:
         self._gateway_image = gateway_image
         self._repo_root = repo_root
         self._host_root = host_root or bot_bottle_root()
+        self._orchestrator_name = orchestrator_name
+        self._orchestrator_label = orchestrator_label
 
     @property
     def url(self) -> str:
@@ -111,7 +121,7 @@ class OrchestratorService:
         """Control-plane URL as the gateway container reaches it — by name over
         docker DNS on the shared network. This is the gateway's
         BOT_BOTTLE_ORCHESTRATOR_URL."""
-        return f"http://{ORCHESTRATOR_NAME}:{self.port}"
+        return f"http://{self._orchestrator_name}:{self.port}"
 
     def is_healthy(self, *, timeout: float = _HEALTH_REQUEST_TIMEOUT_SECONDS) -> bool:
         try:
@@ -129,11 +139,11 @@ class OrchestratorService:
         fixed-name container first). Register-only broker → no docker socket.
         Labels the container with `source_hash` so a later `ensure_running`
         can detect a real code change (see `_source_hash`)."""
-        run_docker(["docker", "rm", "--force", ORCHESTRATOR_NAME])
+        run_docker(["docker", "rm", "--force", self._orchestrator_name])
         proc = run_docker([
             "docker", "run", "--detach",
-            "--name", ORCHESTRATOR_NAME,
-            "--label", ORCHESTRATOR_LABEL,
+            "--name", self._orchestrator_name,
+            "--label", self._orchestrator_label,
             "--label", f"{ORCHESTRATOR_SOURCE_HASH_LABEL}={source_hash}",
             "--network", self.network,
             # Host CLI reaches the control plane here; bound to loopback so it
@@ -185,12 +195,12 @@ class OrchestratorService:
         *current* bind-mounted source. Mirrors `DockerGateway`'s
         image-staleness check, but by content hash rather than image id since
         the orchestrator runs bind-mounted source, not a built image."""
-        if not self._container_running(ORCHESTRATOR_NAME):
+        if not self._container_running(self._orchestrator_name):
             return False
         proc = run_docker([
             "docker", "inspect", "--format",
             "{{ index .Config.Labels \"" + ORCHESTRATOR_SOURCE_HASH_LABEL + "\" }}",
-            ORCHESTRATOR_NAME,
+            self._orchestrator_name,
         ])
         if proc.returncode != 0:
             return True  # can't compare -> don't churn a working container
@@ -219,7 +229,10 @@ class OrchestratorService:
             return self.url
 
         self._ensure_orchestrator_image()
-        log.info("starting orchestrator container", context={"name": ORCHESTRATOR_NAME})
+        log.info(
+            "starting orchestrator container",
+            context={"name": self._orchestrator_name},
+        )
         self._run_orchestrator_container(current_hash)
 
         deadline = time.monotonic() + startup_timeout
@@ -234,7 +247,7 @@ class OrchestratorService:
 
     def stop(self) -> None:
         """Remove the orchestrator + gateway containers (idempotent)."""
-        run_docker(["docker", "rm", "--force", ORCHESTRATOR_NAME])
+        run_docker(["docker", "rm", "--force", self._orchestrator_name])
         self._gateway().stop()
 
 

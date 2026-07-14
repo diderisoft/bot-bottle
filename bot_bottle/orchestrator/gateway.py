@@ -100,6 +100,7 @@ class DockerGateway(Gateway):
         orchestrator_url: str = "",
         build_context: Path | None = None,
         dockerfile: str | None = GATEWAY_DOCKERFILE,
+        host_port_bindings: tuple[int, ...] = (),
     ) -> None:
         self.image_ref = image_ref
         self.name = name
@@ -110,6 +111,10 @@ class DockerGateway(Gateway):
         self._orchestrator_url = orchestrator_url
         self._build_context = build_context or _REPO_ROOT
         self._dockerfile = dockerfile
+        # Ports published on the host (0.0.0.0). Used by the Firecracker
+        # backend's dev-harness gateway so VMs can reach it via their TAP link;
+        # Docker's DNAT + the nft `ct status dnat accept` rule handle the rest.
+        self._host_port_bindings = host_port_bindings
 
     def image_exists(self) -> bool:
         return run_docker(["docker", "image", "inspect", self.image_ref]).returncode == 0
@@ -188,6 +193,8 @@ class DockerGateway(Gateway):
             # trust it) — see GATEWAY_CA_VOLUME.
             "--volume", f"{GATEWAY_CA_VOLUME}:{MITMPROXY_HOME}",
         ]
+        for port in self._host_port_bindings:
+            argv += ["--publish", f"0.0.0.0:{port}:{port}"]
         if self._orchestrator_url:
             # Makes the gateway's egress / git / supervise daemons multi-tenant:
             # each request resolves source-IP -> policy against the control plane.
