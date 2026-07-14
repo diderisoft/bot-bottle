@@ -81,9 +81,17 @@ class TestDockerGateway(unittest.TestCase):
         self.assertEqual(["docker", "exec", self.sc.name, "cat", GATEWAY_CA_CERT], argv)
 
     def test_ca_cert_pem_raises_when_absent(self) -> None:
+        # timeout=0 → one probe then give up (no polling delay in the test).
         with patch(_RUN_DOCKER, return_value=_proc(returncode=1, stderr="No such file")):
             with self.assertRaises(GatewayError):
-                self.sc.ca_cert_pem()
+                self.sc.ca_cert_pem(timeout=0)
+
+    def test_ca_cert_pem_polls_until_mitmproxy_writes_it(self) -> None:
+        # First read: CA not there yet; second read: present.
+        seq = [_proc(returncode=1, stderr="No such file"), _proc(stdout=_CA_PEM)]
+        with patch(_RUN_DOCKER, side_effect=seq), \
+                patch("bot_bottle.orchestrator.gateway.time.sleep"):
+            self.assertEqual(_CA_PEM, self.sc.ca_cert_pem(timeout=5))
 
     def test_ensure_running_reuses_existing_network(self) -> None:
         calls: list[list[str]] = []

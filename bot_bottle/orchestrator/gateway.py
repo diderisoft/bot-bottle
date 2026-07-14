@@ -19,9 +19,15 @@ from __future__ import annotations
 
 import abc
 import os
+import time
 from pathlib import Path
 
 from ..docker_cmd import run_docker
+
+# The gateway's mitmproxy writes its CA a beat after the container starts, so
+# reads poll for it rather than assuming it's there on a fresh launch.
+_CA_POLL_SECONDS = 0.5
+DEFAULT_CA_TIMEOUT_SECONDS = 30.0
 
 GATEWAY_NAME = "bot-bottle-orch-gateway"
 GATEWAY_LABEL = "bot-bottle-orch-gateway=1"
@@ -175,17 +181,23 @@ class DockerGateway(Gateway):
         if proc.returncode != 0:
             raise GatewayError(f"gateway failed to start: {proc.stderr.strip()}")
 
-    def ca_cert_pem(self) -> str:
+    def ca_cert_pem(self, *, timeout: float = DEFAULT_CA_TIMEOUT_SECONDS) -> str:
         """The gateway's CA certificate (PEM) that agents install to trust its
-        TLS interception. Read from the running container; raises if the
-        gateway hasn't generated it yet (it's created on first mitmproxy
-        start)."""
-        proc = run_docker(["docker", "exec", self.name, "cat", GATEWAY_CA_CERT])
-        if proc.returncode != 0 or not proc.stdout.strip():
-            raise GatewayError(
-                f"gateway CA cert not available: {proc.stderr.strip() or 'empty'}"
-            )
-        return proc.stdout
+        TLS interception. mitmproxy generates it a moment after the container
+        starts, so this **polls** for it (up to `timeout`) rather than assuming
+        it's already there on a fresh gateway — raising only if it never
+        appears."""
+        deadline = time.monotonic() + timeout
+        while True:
+            proc = run_docker(["docker", "exec", self.name, "cat", GATEWAY_CA_CERT])
+            if proc.returncode == 0 and proc.stdout.strip():
+                return proc.stdout
+            if time.monotonic() >= deadline:
+                raise GatewayError(
+                    f"gateway CA cert not available after {timeout:g}s: "
+                    f"{proc.stderr.strip() or 'empty'}"
+                )
+            time.sleep(_CA_POLL_SECONDS)
 
     def stop(self) -> None:
         proc = run_docker(["docker", "rm", "--force", self.name])
