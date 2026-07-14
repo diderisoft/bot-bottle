@@ -10,8 +10,10 @@ from unittest.mock import MagicMock, Mock, patch
 
 from bot_bottle.orchestrator.lifecycle import (
     ORCHESTRATOR_NAME,
+    ORCHESTRATOR_SOURCE_HASH_LABEL,
     OrchestratorService,
     OrchestratorStartError,
+    _source_hash,
 )
 from tests.unit import use_bottle_root
 
@@ -26,6 +28,10 @@ def _health(status: int) -> MagicMock:
     m = MagicMock()
     m.__enter__.return_value.status = status
     return m
+
+
+def _proc(returncode: int = 0, stdout: str = "", stderr: str = "") -> Mock:
+    return Mock(returncode=returncode, stdout=stdout, stderr=stderr)
 
 
 class TestOrchestratorService(unittest.TestCase):
@@ -46,25 +52,67 @@ class TestOrchestratorService(unittest.TestCase):
         with patch(_URLOPEN, side_effect=urllib.error.URLError("refused")):
             self.assertFalse(self.svc.is_healthy())
 
-    def test_ensure_running_always_recreates_orchestrator(self) -> None:
-        # Even when a control plane is already healthy, the orchestrator is
-        # recreated so bind-mounted code changes take effect (its process
-        # won't reload). The gateway is ensured too.
-        run = Mock(return_value=Mock(returncode=0, stderr=""))
+    def test_ensure_running_noop_when_healthy_and_source_unchanged(self) -> None:
+        # A healthy control plane already running the *current* bind-mounted
+        # source is left alone — recreating it on every launch would drop
+        # every other active bottle's in-memory egress tokens (#381).
+        current = _source_hash(self.svc._repo_root)
+        calls: list[list[str]] = []
+
+        def fake(argv: list[str]) -> Mock:
+            calls.append(argv)
+            if argv[:2] == ["docker", "ps"]:
+                return _proc(stdout=ORCHESTRATOR_NAME)
+            if argv[:2] == ["docker", "inspect"]:
+                return _proc(stdout=current)
+            return _proc()
+
         with patch(_URLOPEN, return_value=_health(200)), \
-                patch(_GATEWAY) as gw_cls, patch(_RUN, run), patch(_SLEEP):
+                patch(_GATEWAY) as gw_cls, patch(_RUN, side_effect=fake), patch(_SLEEP):
             self.assertEqual(self.svc.url, self.svc.ensure_running())
         gw_cls.return_value.ensure_running.assert_called()   # gateway kept up
-        runs = [c.args[0] for c in run.call_args_list if c.args[0][:2] == ["docker", "run"]]
-        self.assertEqual(1, len(runs))                       # orchestrator recreated
+        runs = [c for c in calls if c[:2] == ["docker", "run"]]
+        rms = [c for c in calls if c[:3] == ["docker", "rm", "--force"] and ORCHESTRATOR_NAME in c]
+        self.assertEqual([], runs)   # not recreated
+        self.assertEqual([], rms)
+
+    def test_ensure_running_recreates_when_source_changed(self) -> None:
+        # Healthy, but the running container's label doesn't match the
+        # current source hash (a real code change) — recreate so it takes
+        # effect, same as the gateway's image-staleness check.
+        calls: list[list[str]] = []
+
+        def fake(argv: list[str]) -> Mock:
+            calls.append(argv)
+            if argv[:2] == ["docker", "ps"]:
+                return _proc(stdout=ORCHESTRATOR_NAME)
+            if argv[:2] == ["docker", "inspect"]:
+                return _proc(stdout="stale-hash")
+            return _proc()
+
+        with patch(_URLOPEN, return_value=_health(200)), \
+                patch(_GATEWAY), patch(_RUN, side_effect=fake), patch(_SLEEP):
+            self.assertEqual(self.svc.url, self.svc.ensure_running())
+        runs = [c for c in calls if c[:2] == ["docker", "run"]]
+        self.assertEqual(1, len(runs))
         self.assertIn(ORCHESTRATOR_NAME, runs[0])
+        # the fresh container is labeled with the current hash, not the stale one
+        current = _source_hash(self.svc._repo_root)
+        self.assertIn(f"{ORCHESTRATOR_SOURCE_HASH_LABEL}={current}", runs[0])
 
     def test_ensure_running_starts_orchestrator_container_when_absent(self) -> None:
-        run = Mock(return_value=Mock(returncode=0, stderr=""))
+        calls: list[list[str]] = []
+
+        def fake(argv: list[str]) -> Mock:
+            calls.append(argv)
+            if argv[:2] == ["docker", "ps"]:
+                return _proc(stdout="")   # not running
+            return _proc()
+
         with patch(_URLOPEN, side_effect=[urllib.error.URLError("down"), _health(200)]), \
-                patch(_GATEWAY), patch(_RUN, run), patch(_SLEEP):
+                patch(_GATEWAY), patch(_RUN, side_effect=fake), patch(_SLEEP):
             self.assertEqual(self.svc.url, self.svc.ensure_running())
-        runs = [c.args[0] for c in run.call_args_list if c.args[0][:2] == ["docker", "run"]]
+        runs = [c for c in calls if c[:2] == ["docker", "run"]]
         self.assertEqual(1, len(runs))
         argv = runs[0]
         self.assertIn(ORCHESTRATOR_NAME, argv)
