@@ -51,6 +51,33 @@ class TestDockerGateway(unittest.TestCase):
         self.assertEqual(1, len(runs))
         self.assertIn(self.sc.name, runs[0])
         self.assertIn("bot-bottle-sidecars:latest", runs[0])
+        # Runs on the shared gateway network so agents can reach it by IP.
+        self.assertEqual(self.sc.network, runs[0][runs[0].index("--network") + 1])
+
+    def test_ensure_running_creates_network_when_missing(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake(argv: list[str]) -> Mock:
+            calls.append(argv)
+            if argv[:3] == ["docker", "network", "inspect"]:
+                return _proc(returncode=1, stderr="No such network")
+            return _proc(stdout="") if argv[:2] == ["docker", "ps"] else _proc()
+
+        with patch(_RUN_DOCKER, side_effect=fake):
+            self.sc.ensure_running()
+        creates = [c for c in calls if c[:3] == ["docker", "network", "create"]]
+        self.assertEqual([["docker", "network", "create", self.sc.network]], creates)
+
+    def test_ensure_running_reuses_existing_network(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake(argv: list[str]) -> Mock:
+            calls.append(argv)
+            return _proc(stdout="") if argv[:2] == ["docker", "ps"] else _proc()
+
+        with patch(_RUN_DOCKER, side_effect=fake):
+            self.sc.ensure_running()  # network inspect returns 0 → exists
+        self.assertEqual([], [c for c in calls if c[:3] == ["docker", "network", "create"]])
 
     def test_ensure_running_raises_on_docker_failure(self) -> None:
         def fake(argv: list[str]) -> Mock:

@@ -25,6 +25,11 @@ from ..docker_cmd import run_docker
 
 GATEWAY_NAME = "bot-bottle-orch-gateway"
 GATEWAY_LABEL = "bot-bottle-orch-gateway=1"
+# The single user-defined network the gateway and every agent bottle share.
+# Agents attach here with a pinned IP and reach the gateway's egress /
+# git-http / supervise ports by its address — no host port publishing, and
+# the source IP the gateway attributes by is the address on this network.
+GATEWAY_NETWORK = "bot-bottle-gateway"
 
 # The real sidecar-bundle image + its Dockerfile. Kept as a local constant
 # rather than imported from backend.docker.sidecar_bundle, which would drag
@@ -77,11 +82,13 @@ class DockerGateway(Gateway):
         image_ref: str = GATEWAY_IMAGE,
         *,
         name: str = GATEWAY_NAME,
+        network: str = GATEWAY_NETWORK,
         build_context: Path | None = None,
         dockerfile: str | None = GATEWAY_DOCKERFILE,
     ) -> None:
         self.image_ref = image_ref
         self.name = name
+        self.network = network
         self._build_context = build_context or _REPO_ROOT
         self._dockerfile = dockerfile
 
@@ -112,9 +119,22 @@ class DockerGateway(Gateway):
         ])
         return self.name in proc.stdout.split()
 
+    def _ensure_network(self) -> None:
+        """Create the shared gateway network if it doesn't exist. Idempotent —
+        a concurrent create loses harmlessly (the loser sees 'already exists').
+        Docker picks the subnet; the launcher reads it back to allocate IPs."""
+        if run_docker(["docker", "network", "inspect", self.network]).returncode == 0:
+            return
+        proc = run_docker(["docker", "network", "create", self.network])
+        if proc.returncode != 0 and "already exists" not in proc.stderr:
+            raise GatewayError(
+                f"gateway network {self.network} failed to create: {proc.stderr.strip()}"
+            )
+
     def ensure_running(self) -> None:
         if self.is_running():
             return
+        self._ensure_network()
         # Clear any stale (stopped) container holding the fixed name, then
         # start fresh. `rm --force` on an absent name is a tolerated no-op.
         run_docker(["docker", "rm", "--force", self.name])
@@ -122,6 +142,7 @@ class DockerGateway(Gateway):
             "docker", "run", "--detach",
             "--name", self.name,
             "--label", GATEWAY_LABEL,
+            "--network", self.network,
             self.image_ref,
         ])
         if proc.returncode != 0:
@@ -135,5 +156,5 @@ class DockerGateway(Gateway):
 
 __all__ = [
     "Gateway", "DockerGateway", "GatewayError",
-    "GATEWAY_NAME", "GATEWAY_LABEL", "GATEWAY_IMAGE",
+    "GATEWAY_NAME", "GATEWAY_LABEL", "GATEWAY_IMAGE", "GATEWAY_NETWORK",
 ]
