@@ -233,16 +233,19 @@ class _CtxResolver:
     """Fake orchestrator resolver: maps source IP -> bottle id, and grants the
     same allow-list to any attributed bottle (unattributed -> deny)."""
 
-    def __init__(self, ip_to_bottle: dict[str, str]) -> None:
+    def __init__(
+        self, ip_to_bottle: dict[str, str], tokens: dict[str, str] | None = None,
+    ) -> None:
         self._map = ip_to_bottle
+        self._tokens = tokens or {}
 
     def resolve_policy_and_bottle_id(
         self, source_ip: str, identity_token: str = "",
-    ) -> tuple[str | None, str | None]:
+    ) -> tuple[str | None, str | None, dict[str, str]]:
         del identity_token
         bottle_id = self._map.get(source_ip)
         policy = "routes:\n  - host: api.example.com\n" if bottle_id else None
-        return policy, bottle_id
+        return policy, bottle_id, (self._tokens if bottle_id else {})
 
 
 # ---------------------------------------------------------------------------
@@ -802,6 +805,46 @@ class TestSuperviseMultiTenant(unittest.TestCase):
         with patch.object(_ea_mod, "_sv", fake):
             _run_request(addon, flow)
         self.assertEqual(["bottle-b"], seen)  # proposal keyed by the resolved bottle
+
+    def test_auth_token_injected_from_resolved_tokens(self) -> None:
+        # The bottle's upstream token comes from /resolve (in-memory on the
+        # orchestrator), NOT the gateway's env — the request is forwarded with
+        # Authorization injected. This is the token-injection cut-over fix.
+        policy = (
+            'routes:\n  - host: api.example.com\n'
+            '    auth_scheme: "Bearer"\n    token_env: "EGRESS_TOKEN_0"\n'
+        )
+
+        class _AuthResolver:
+            def resolve_policy_and_bottle_id(self, ip: str, identity_token: str = ""):
+                del ip, identity_token
+                return policy, "bottle-a", {"EGRESS_TOKEN_0": "sk-secret"}
+
+        addon = _addon(Config(routes=()))
+        addon._resolver = cast(Any, _AuthResolver())
+        flow = _with_client_ip(_Flow(_Request(host="api.example.com", method="GET")), "10.0.0.1")
+        _run_request(addon, flow)
+        self.assertIsNone(flow.response)  # forwarded, not blocked
+        self.assertEqual("Bearer sk-secret", flow.request.headers.get("authorization"))
+
+    def test_authed_route_without_token_is_blocked(self) -> None:
+        # No token resolved for the bottle → the authed route can't inject, so
+        # the request is blocked (the error the cut-over originally produced).
+        policy = (
+            'routes:\n  - host: api.example.com\n'
+            '    auth_scheme: "Bearer"\n    token_env: "EGRESS_TOKEN_0"\n'
+        )
+
+        class _NoTokenResolver:
+            def resolve_policy_and_bottle_id(self, ip: str, identity_token: str = ""):
+                del ip, identity_token
+                return policy, "bottle-a", {}  # no tokens
+
+        addon = _addon(Config(routes=()))
+        addon._resolver = cast(Any, _NoTokenResolver())
+        flow = _with_client_ip(_Flow(_Request(host="api.example.com", method="GET")), "10.0.0.1")
+        _run_request(addon, flow)
+        self.assertIsNotNone(flow.response)  # blocked — token unset
 
     def test_unattributed_source_ip_cannot_supervise(self) -> None:
         addon = self._consolidated_addon()

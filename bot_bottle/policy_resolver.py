@@ -102,21 +102,26 @@ class PolicyResolver:
 
     def resolve_policy_and_bottle_id(
         self, source_ip: str, identity_token: str = "",
-    ) -> tuple[str | None, str | None]:
-        """Both the policy blob and the bottle id in a single `/resolve` — so
-        a caller that needs each (the egress addon: policy for routing, bottle
-        id to key the calling bottle's supervise queue + safelist) makes one
-        round-trip, not two. Returns `(None, None)` when unattributed (a clean
-        `403`). Raises `PolicyResolveError` if the orchestrator can't be
-        reached, so the caller still fails closed."""
+    ) -> tuple[str | None, str | None, dict[str, str]]:
+        """The policy blob, bottle id, **and per-bottle egress auth tokens** in
+        a single `/resolve` — so the egress addon gets everything it needs
+        (policy for routing, bottle id for the supervise queue/safelist, tokens
+        to inject upstream auth) in one round-trip. Returns `(None, None, {})`
+        when unattributed (a clean `403`). Raises `PolicyResolveError` if the
+        orchestrator can't be reached, so the caller still fails closed."""
         payload = self._post_resolve(source_ip, identity_token)
         if payload is None:
-            return None, None
+            return None, None, {}
         policy = payload.get("policy")
         bottle_id = payload.get("bottle_id")
+        raw = payload.get("tokens")
+        tokens = {
+            k: v for k, v in raw.items() if isinstance(k, str) and isinstance(v, str)
+        } if isinstance(raw, dict) else {}
         return (
             policy if isinstance(policy, str) else "",
             bottle_id if isinstance(bottle_id, str) and bottle_id else None,
+            tokens,
         )
 
 

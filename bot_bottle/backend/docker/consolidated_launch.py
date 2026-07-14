@@ -98,6 +98,7 @@ def launch_consolidated(
     git_gate_plan: GitGatePlan,
     *,
     image_ref: str = "",
+    tokens: dict[str, str] | None = None,
     service: OrchestratorService | None = None,
     gateway_name: str = GATEWAY_NAME,
     network: str = GATEWAY_NETWORK,
@@ -116,7 +117,8 @@ def launch_consolidated(
 
     inputs = registration_inputs(egress_plan)
     reg = client.register_bottle(
-        source_ip, image_ref=image_ref, policy=inputs.policy, metadata=inputs.metadata,
+        source_ip, image_ref=image_ref, policy=inputs.policy,
+        metadata=inputs.metadata, tokens=tokens,
     )
     try:
         provision_git_gate(gateway_name, reg.bottle_id, git_gate_plan)

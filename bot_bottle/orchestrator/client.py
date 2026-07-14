@@ -90,14 +90,18 @@ class OrchestratorClient:
         image_ref: str = "",
         metadata: str = "",
         policy: str = "",
+        tokens: dict[str, str] | None = None,
     ) -> RegisteredBottle:
-        """Register a bottle and broker its launch (`POST /bottles`). Returns
-        its minted id + identity token."""
+        """Register a bottle and broker its launch (`POST /bottles`). `tokens`
+        are the per-bottle egress auth values (env_name -> value) the
+        orchestrator holds in memory for the gateway to inject. Returns the
+        minted id + identity token."""
         payload = self._ok("POST", "/bottles", {
             "source_ip": source_ip,
             "image_ref": image_ref,
             "metadata": metadata,
             "policy": policy,
+            "tokens": tokens or {},
         })
         bottle_id = payload.get("bottle_id")
         token = payload.get("identity_token")

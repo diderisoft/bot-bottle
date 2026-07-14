@@ -81,11 +81,16 @@ def dispatch(  # pylint: disable=too-many-return-statements,too-many-branches
         image_ref = data.get("image_ref")
         metadata = data.get("metadata")
         policy = data.get("policy")
+        raw_tokens = data.get("tokens")
+        tokens = {
+            k: v for k, v in raw_tokens.items() if isinstance(k, str) and isinstance(v, str)
+        } if isinstance(raw_tokens, dict) else {}
         rec = orch.launch_bottle(
             source_ip,
             image_ref=image_ref if isinstance(image_ref, str) else "",
             metadata=metadata if isinstance(metadata, str) else "",
             policy=policy if isinstance(policy, str) else "",
+            tokens=tokens,
         )
         return 201, {"bottle_id": rec.bottle_id, "identity_token": rec.identity_token}
 
@@ -137,7 +142,13 @@ def dispatch(  # pylint: disable=too-many-return-statements,too-many-branches
         rec = orch.resolve(source_ip, token if isinstance(token, str) else "")
         if rec is None:
             return 403, {"error": "unattributed"}
-        return 200, {"bottle_id": rec.bottle_id, "policy": rec.policy}
+        # tokens are the in-memory per-bottle egress auth values the gateway
+        # injects; served here, never persisted.
+        return 200, {
+            "bottle_id": rec.bottle_id,
+            "policy": rec.policy,
+            "tokens": orch.tokens_for(rec.bottle_id),
+        }
 
     return 404, {"error": "not found"}
 

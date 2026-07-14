@@ -10,6 +10,7 @@ import json
 import os
 import signal
 import sys
+import typing
 from pathlib import Path
 
 from mitmproxy import http  # type: ignore[import-not-found]  # pylint: disable=import-error
@@ -230,21 +231,27 @@ class EgressAddon:
             + "\n"
         )
 
-    def _resolve_flow(self, flow: http.HTTPFlow) -> "tuple[Config, str]":
-        """The `(Config, supervise slug)` to apply to this request. Single-tenant
-        → the static `self.config` and the env slug. Consolidated → the calling
-        bottle's Config and its bottle id, resolved by source IP in one
-        round-trip (fail-closed to deny-all + empty slug if unattributed). The
-        identity token, if the agent injected one, is read then stripped so it
-        never leaks upstream. The slug keys both the proposal queue and the
-        per-bottle safelist, so an approval only ever affects its own bottle."""
+    def _resolve_flow(
+        self, flow: http.HTTPFlow,
+    ) -> "tuple[Config, str, typing.Mapping[str, str]]":
+        """The `(Config, supervise slug, env)` to apply to this request.
+        Single-tenant → the static `self.config`, the env slug, and the process
+        env. Consolidated → the calling bottle's Config + bottle id + auth
+        tokens, resolved by source IP in one round-trip (fail-closed to deny-all
+        + empty slug if unattributed); `env` is the process env overlaid with
+        the bottle's tokens, so upstream-auth injection (and DLP) use *this*
+        bottle's credentials — exactly what the per-bottle sidecar's env did.
+        The identity token, if the agent injected one, is read then stripped so
+        it never leaks upstream."""
         if self._resolver is None:
-            return self.config, self._supervise_slug
+            return self.config, self._supervise_slug, os.environ
         conn = flow.client_conn
         client_ip = conn.peername[0] if conn and conn.peername else ""
         token = flow.request.headers.get(IDENTITY_HEADER, "")
         flow.request.headers.pop(IDENTITY_HEADER, None)
-        return resolve_client_context(self._resolver, client_ip, token)
+        config, slug, tokens = resolve_client_context(self._resolver, client_ip, token)
+        env = {**os.environ, **tokens} if tokens else os.environ
+        return config, slug, env
 
     async def request(self, flow: http.HTTPFlow) -> None:
         request_path, _, query = flow.request.path.partition("?")
@@ -253,14 +260,14 @@ class EgressAddon:
             self._serve_introspection(flow, request_path)
             return
 
-        config, slug = self._resolve_flow(flow)
+        config, slug, env = self._resolve_flow(flow)
 
         # DLP outbound scan BEFORE stripping auth — catches tokens the
         # agent tried to smuggle in any header, path, query param, or body.
         # Hostname is included to catch DNS-tunnelling exfiltration attempts.
         route = match_route(config.routes, flow.request.pretty_host)
         if route is not None:
-            if not await self._handle_outbound_dlp(flow, route, slug):
+            if not await self._handle_outbound_dlp(flow, route, slug, env):
                 return
             # The redact policy may have rewritten the request line; recompute
             # the path/query the git checks below rely on.
@@ -299,7 +306,7 @@ class EgressAddon:
             config.routes,
             flow.request.pretty_host,
             request_path,
-            os.environ,
+            env,
             request_method=flow.request.method,
             request_headers=req_headers,
         )
@@ -325,10 +332,12 @@ class EgressAddon:
         flow: http.HTTPFlow,
         route: Route,
         slug: str,
+        env: "typing.Mapping[str, str]",
     ) -> bool:
         """Scan the outbound request and apply the route's on-match policy
-        (PRD 0062). Returns True if the request may be forwarded, False if a
-        403 response has been written to `flow`.
+        (PRD 0062). `env` is the per-bottle env overlay (process env + this
+        bottle's tokens) used for DLP detection. Returns True if the request may
+        be forwarded, False if a 403 response has been written to `flow`.
 
         Loops so the supervise policy can re-scan after each approval — a
         second, un-approved token in the same request is still caught."""
@@ -345,7 +354,7 @@ class EgressAddon:
                 flow.request.pretty_host, request_path, query, headers, "",
             )
             result = scan_outbound(
-                route, scan_text, os.environ,
+                route, scan_text, env,
                 safe_tokens=self._safe_tokens_for(slug), crlf_text=crlf_text,
             )
             if result is None or result.severity != "block":
@@ -356,7 +365,7 @@ class EgressAddon:
             # redact scrubs every detection (tokens and structural CRLF) and
             # forwards; it fails closed only if a match survives the scrub.
             if policy == ON_MATCH_REDACT:
-                if self._redact_outbound(flow, route):
+                if self._redact_outbound(flow, route, env):
                     if self.config.log >= LOG_BLOCKS:
                         sys.stderr.write(json.dumps({
                             "event": "egress_redacted",
@@ -384,29 +393,31 @@ class EgressAddon:
             if not self._supervise_available(slug):
                 self._block_dlp(flow, result)
                 return False
-            approved = await self._supervise_token_block(flow, request_path, result, slug)
+            approved = await self._supervise_token_block(flow, request_path, result, slug, env)
             if not approved:
                 return False  # _supervise_token_block wrote the 403 response
             # loop: the approved value is now in safe_tokens; re-scan.
 
-    def _redact_outbound(self, flow: http.HTTPFlow, route: Route) -> bool:
+    def _redact_outbound(
+        self, flow: http.HTTPFlow, route: Route, env: "typing.Mapping[str, str]",
+    ) -> bool:
         """Scrub detected tokens (and CRLF injection sequences) from the mutable
-        request surfaces (body, headers, path/query) and re-scan. Returns True
-        if the request is now clean; False if a block-severity match remains on
-        a surface redaction cannot rewrite (the hostname) so the caller fails
-        closed."""
+        request surfaces (body, headers, path/query) and re-scan. `env` is the
+        per-bottle env overlay. Returns True if the request is now clean; False
+        if a block-severity match remains on a surface redaction cannot rewrite
+        (the hostname) so the caller fails closed."""
         body = flow.request.get_text(strict=False)
         if body:
-            redacted_body = redact_tokens(body, env=os.environ)
+            redacted_body = redact_tokens(body, env=env)
             if redacted_body != body:
                 flow.request.text = redacted_body
         for name, value in list(flow.request.headers.items()):
             if name.lower() == "host":
                 continue  # routing-critical; never a legitimate token
-            redacted = strip_crlf(redact_tokens(value, env=os.environ))
+            redacted = strip_crlf(redact_tokens(value, env=env))
             if redacted != value:
                 flow.request.headers[name] = redacted
-        redacted_path = strip_crlf(redact_tokens(flow.request.path, env=os.environ))
+        redacted_path = strip_crlf(redact_tokens(flow.request.path, env=env))
         if redacted_path != flow.request.path:
             flow.request.path = redacted_path
 
@@ -419,7 +430,7 @@ class EgressAddon:
         crlf_text = build_outbound_scan_text(
             flow.request.pretty_host, request_path, query, headers, "",
         )
-        result = scan_outbound(route, scan_text, os.environ, crlf_text=crlf_text)
+        result = scan_outbound(route, scan_text, env, crlf_text=crlf_text)
         return result is None or result.severity != "block"
 
     async def _supervise_token_block(
@@ -428,20 +439,22 @@ class EgressAddon:
         request_path: str,
         result: ScanResult,
         slug: str,
+        env: "typing.Mapping[str, str]",
     ) -> bool:
         """Route a token DLP block to the operator's supervisor queue and wait.
 
         `slug` attributes the proposal to the calling bottle (its own queue +
         safelist) — in the shared gateway this is what keeps one bottle's
-        approval from unblocking another's request. Returns True if the operator
-        approved (the matched value is added to that bottle's safelist and the
-        caller re-scans); False if the request must be blocked (a 403 response
-        has been written to `flow`)."""
+        approval from unblocking another's request. `env` is the per-bottle env
+        overlay used to redact secrets from the proposal text. Returns True if
+        the operator approved (the matched value is added to that bottle's
+        safelist and the caller re-scans); False if the request must be blocked
+        (a 403 response has been written to `flow`)."""
         host = flow.request.pretty_host
         payload = build_token_allow_payload(
-            redact_tokens(host, env=os.environ),
+            redact_tokens(host, env=env),
             flow.request.method,
-            redact_tokens(request_path, env=os.environ),
+            redact_tokens(request_path, env=env),
             result,
         )
         proposal = _sv.Proposal.new(

@@ -38,6 +38,12 @@ class Orchestrator:
         self._broker = broker
         self._secret = sign_secret
         self._gateway = gateway
+        # Per-bottle egress auth tokens (env_name -> value), keyed by bottle_id.
+        # Held **in memory only** — never written to the registry DB — so the
+        # gateway can inject each bottle's upstream credential without secrets
+        # at rest. Lost on restart (re-launch re-registers them); the future
+        # SecretProvider (#355) replaces this with per-request minting.
+        self._tokens: dict[str, dict[str, str]] = {}
 
     def launch_bottle(
         self,
@@ -47,11 +53,14 @@ class Orchestrator:
         slot: int | None = None,
         metadata: str = "",
         policy: str = "",
+        tokens: dict[str, str] | None = None,
     ) -> BottleRecord:
-        """Register a bottle (with its gateway policy) and broker its launch.
-        Rolls the registry entry back if the launch doesn't take, so a
-        failure leaves no orphan."""
+        """Register a bottle (with its gateway policy + in-memory egress auth
+        tokens) and broker its launch. Rolls the registry entry back if the
+        launch doesn't take, so a failure leaves no orphan."""
         rec = self.registry.register(source_ip, metadata=metadata, policy=policy)
+        if tokens:
+            self._tokens[rec.bottle_id] = dict(tokens)
         req = LaunchRequest(
             op="launch",
             bottle_id=rec.bottle_id,
@@ -66,6 +75,7 @@ class Orchestrator:
         finally:
             if not launched:
                 self.registry.deregister(rec.bottle_id)
+                self._tokens.pop(rec.bottle_id, None)
         return rec
 
     def teardown_bottle(self, bottle_id: str) -> bool:
@@ -76,7 +86,14 @@ class Orchestrator:
         req = LaunchRequest(op="teardown", bottle_id=bottle_id, source_ip=rec.source_ip)
         self._broker.submit(sign_request(req, self._secret))
         self.registry.deregister(bottle_id)
+        self._tokens.pop(bottle_id, None)
         return True
+
+    def tokens_for(self, bottle_id: str) -> dict[str, str]:
+        """The bottle's in-memory egress auth tokens (env_name -> value), or
+        empty. The gateway injects these per request; they are never
+        persisted."""
+        return dict(self._tokens.get(bottle_id, {}))
 
     def attribute(self, source_ip: str, identity_token: str) -> BottleRecord | None:
         """Fail-closed attribution (delegates to the registry)."""

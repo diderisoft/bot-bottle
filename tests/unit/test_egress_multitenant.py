@@ -51,45 +51,55 @@ class TestResolveClientConfig(unittest.TestCase):
 
 class _FakeContextResolver:
     def __init__(
-        self, policy: str | None = None, bottle_id: str | None = None, raises: bool = False,
+        self, policy: str | None = None, bottle_id: str | None = None,
+        raises: bool = False, tokens: dict[str, str] | None = None,
     ) -> None:
         self._policy = policy
         self._bottle_id = bottle_id
         self._raises = raises
+        self._tokens = tokens or {}
 
     def resolve_policy_and_bottle_id(
         self, source_ip: str, identity_token: str = "",
-    ) -> tuple[str | None, str | None]:
+    ) -> tuple[str | None, str | None, dict[str, str]]:
         if self._raises:
             raise PolicyResolveError("orchestrator down")
-        return self._policy, self._bottle_id
+        return self._policy, self._bottle_id, self._tokens
 
 
 class TestResolveClientContext(unittest.TestCase):
-    def test_returns_config_and_bottle_id(self) -> None:
-        cfg, slug = resolve_client_context(
-            _FakeContextResolver(policy="routes:\n  - host: example.com\n", bottle_id="b1"),
+    def test_returns_config_bottle_id_and_tokens(self) -> None:
+        cfg, slug, tokens = resolve_client_context(
+            _FakeContextResolver(
+                policy="routes:\n  - host: example.com\n", bottle_id="b1",
+                tokens={"EGRESS_TOKEN_0": "sekret"},
+            ),
             "10.243.0.1",
         )
         self.assertEqual(("example.com",), tuple(r.host for r in cfg.routes))
         self.assertEqual("b1", slug)
+        self.assertEqual({"EGRESS_TOKEN_0": "sekret"}, tokens)  # for auth injection
 
     def test_unattributed_denies_and_empty_slug(self) -> None:
-        cfg, slug = resolve_client_context(
+        cfg, slug, tokens = resolve_client_context(
             _FakeContextResolver(policy=None, bottle_id=None), "10.243.0.9",
         )
         self.assertEqual((), cfg.routes)
         self.assertEqual("", slug)  # no bottle → supervise unavailable
+        self.assertEqual({}, tokens)
 
-    def test_resolver_error_denies_and_empty_slug(self) -> None:
-        cfg, slug = resolve_client_context(_FakeContextResolver(raises=True), "10.243.0.1")
+    def test_resolver_error_denies_empty_slug_no_tokens(self) -> None:
+        cfg, slug, tokens = resolve_client_context(
+            _FakeContextResolver(raises=True), "10.243.0.1",
+        )
         self.assertEqual((), cfg.routes)
         self.assertEqual("", slug)
+        self.assertEqual({}, tokens)
 
     def test_unparseable_policy_denies_but_keeps_slug(self) -> None:
         # A bad policy denies egress, but the bottle is still attributed (its
         # supervise queue is keyed by the id, independent of route parsing).
-        cfg, slug = resolve_client_context(
+        cfg, slug, _tokens = resolve_client_context(
             _FakeContextResolver(policy="routes: notalist\n", bottle_id="b2"), "10.243.0.1",
         )
         self.assertEqual((), cfg.routes)

@@ -36,6 +36,7 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Callable, Generator
 
+from ...egress import egress_resolve_token_values
 from ...git_gate import (
     provision_git_gate_dynamic_keys,
     revoke_git_gate_provisioned_keys,
@@ -120,8 +121,17 @@ def launch(
 
         # Step 3: register on the orchestrator + provision this bottle's
         # git-gate state into the shared gateway; get the agent's attach
-        # context (pinned source IP, gateway address, shared network).
-        ctx = launch_consolidated(plan.egress_plan, git_gate_plan, image_ref=plan.image)
+        # context (pinned source IP, gateway address, shared network). The
+        # per-bottle egress auth tokens are resolved from the host env now and
+        # handed to the orchestrator (in memory) for the gateway to inject —
+        # the agent never sees them.
+        effective_env = {**os.environ, **plan.agent_provision.provisioned_env}
+        token_values = egress_resolve_token_values(
+            plan.egress_plan.token_env_map, effective_env,
+        )
+        ctx = launch_consolidated(
+            plan.egress_plan, git_gate_plan, image_ref=plan.image, tokens=token_values,
+        )
         stack.callback(
             teardown_consolidated, ctx.bottle_id, orchestrator_url=ctx.orchestrator_url,
         )

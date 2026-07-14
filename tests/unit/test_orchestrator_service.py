@@ -92,6 +92,18 @@ class TestOrchestrator(unittest.TestCase):
         assert got is not None
         self.assertEqual('{"routes":[]}', got.policy)
 
+    def test_tokens_held_in_memory_and_cleared_on_teardown(self) -> None:
+        rec = self.orch.launch_bottle("10.243.0.5", tokens={"EGRESS_TOKEN_0": "sk"})
+        self.assertEqual({"EGRESS_TOKEN_0": "sk"}, self.orch.tokens_for(rec.bottle_id))
+        # not persisted in the registry (redacted record has no tokens field)
+        self.assertNotIn("tokens", rec.redacted())
+        self.orch.teardown_bottle(rec.bottle_id)
+        self.assertEqual({}, self.orch.tokens_for(rec.bottle_id))
+
+    def test_tokens_default_empty(self) -> None:
+        rec = self.orch.launch_bottle("10.243.0.6")
+        self.assertEqual({}, self.orch.tokens_for(rec.bottle_id))
+
     def test_set_policy_live_reload(self) -> None:
         rec = self.orch.launch_bottle("10.243.0.3")
         self.assertTrue(self.orch.set_policy(rec.bottle_id, '{"x":1}'))

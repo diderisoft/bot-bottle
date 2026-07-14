@@ -450,28 +450,31 @@ def resolve_client_config(
 
 class ContextResolverLike(typing.Protocol):
     """The bit of `policy_resolver.PolicyResolver` `resolve_client_context`
-    needs — one round-trip returning both policy and bottle id."""
+    needs — one round-trip returning policy, bottle id, and auth tokens."""
 
     def resolve_policy_and_bottle_id(
         self, source_ip: str, identity_token: str = ...,
-    ) -> "tuple[str | None, str | None]":
+    ) -> "tuple[str | None, str | None, dict[str, str]]":
         ...
 
 
 def resolve_client_context(
     resolver: ContextResolverLike, client_ip: str, identity_token: str = "",
-) -> "tuple[Config, str]":
-    """The calling client's `(Config, bottle_id)` in one round-trip —
+) -> "tuple[Config, str, dict[str, str]]":
+    """The calling client's `(Config, bottle_id, tokens)` in one round-trip —
     **fail-closed**. The Config follows `resolve_client_config`'s deny-all
     rules; the bottle id is `""` whenever unattributed or the orchestrator
-    errored, which the caller treats as "supervise unavailable for this
-    bottle" (never another bottle's queue). One `/resolve` keys both the
-    per-request egress policy and the per-bottle supervise queue + safelist."""
+    errored (caller treats as "supervise unavailable", never another bottle's
+    queue); `tokens` are the per-bottle upstream auth values the addon injects.
+    One `/resolve` keys the egress policy, the supervise queue + safelist, and
+    auth injection."""
     try:
-        policy, bottle_id = resolver.resolve_policy_and_bottle_id(client_ip, identity_token)
+        policy, bottle_id, tokens = resolver.resolve_policy_and_bottle_id(
+            client_ip, identity_token,
+        )
     except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
-        return Config(routes=()), ""  # orchestrator unreachable/errored → deny
-    return _config_from_policy(policy), (bottle_id or "")
+        return Config(routes=()), "", {}  # orchestrator unreachable/errored → deny
+    return _config_from_policy(policy), (bottle_id or ""), tokens
 
 
 # ---------------------------------------------------------------------------
