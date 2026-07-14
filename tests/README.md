@@ -48,7 +48,7 @@ Discovery is invoked with `-t .` (top-level dir = repo root) so the
   the bottle's runtime, and creates zero Docker resources.
 - `test_orphan_cleanup.py` — `network_remove` is idempotent against
   missing resources, so the EXIT trap can call it unconditionally.
-- `test_sidecar_bundle_image.py` — builds Dockerfile.sidecars and
+- `test_sidecar_bundle_image.py` — builds Dockerfile.gateway and
   probes that gitleaks / mitmdump / supervise are all reachable
   inside the bundle.
 - `test_sidecar_bundle_compose.py` — end-to-end compose-up of an

@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
 from bot_bottle.orchestrator.lifecycle import (
+    ORCHESTRATOR_IMAGE,
     ORCHESTRATOR_NAME,
     ORCHESTRATOR_SOURCE_HASH_LABEL,
     OrchestratorService,
@@ -120,6 +121,45 @@ class TestOrchestratorService(unittest.TestCase):
         self.assertEqual("stub", argv[argv.index("--broker") + 1])  # register-only, no socket
         self.assertIn("bot_bottle.orchestrator", argv)
         self.assertEqual("127.0.0.1:8099:8099", argv[argv.index("--publish") + 1])
+
+    def test_ensure_running_builds_lean_orchestrator_image_when_missing(self) -> None:
+        # The control plane runs its own lean image (#384), distinct from the
+        # gateway data plane — built from Dockerfile.orchestrator when absent.
+        calls: list[list[str]] = []
+
+        def fake(argv: list[str]) -> Mock:
+            calls.append(argv)
+            if argv[:2] == ["docker", "ps"]:
+                return _proc(stdout="")                 # orchestrator not running
+            if argv[:3] == ["docker", "image", "inspect"]:
+                return _proc(returncode=1)               # image absent -> build
+            return _proc()
+
+        with patch(_URLOPEN, side_effect=[urllib.error.URLError("down"), _health(200)]), \
+                patch(_GATEWAY), patch(_RUN, side_effect=fake), patch(_SLEEP):
+            self.svc.ensure_running()
+        builds = [c for c in calls if c[:2] == ["docker", "build"]]
+        self.assertEqual(1, len(builds))
+        self.assertIn(ORCHESTRATOR_IMAGE, builds[0])
+        self.assertTrue(any(a.endswith("Dockerfile.orchestrator") for a in builds[0]))
+        # It is NOT the gateway image/dockerfile — the split is the point.
+        self.assertFalse(any("Dockerfile.gateway" in a for a in builds[0]))
+
+    def test_ensure_running_skips_orchestrator_image_build_when_present(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake(argv: list[str]) -> Mock:
+            calls.append(argv)
+            if argv[:2] == ["docker", "ps"]:
+                return _proc(stdout="")
+            if argv[:3] == ["docker", "image", "inspect"]:
+                return _proc(returncode=0)               # image present -> no build
+            return _proc()
+
+        with patch(_URLOPEN, side_effect=[urllib.error.URLError("down"), _health(200)]), \
+                patch(_GATEWAY), patch(_RUN, side_effect=fake), patch(_SLEEP):
+            self.svc.ensure_running()
+        self.assertEqual([], [c for c in calls if c[:2] == ["docker", "build"]])
 
     def test_ensure_running_raises_on_timeout(self) -> None:
         with patch(_URLOPEN, side_effect=urllib.error.URLError("down")), \

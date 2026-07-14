@@ -17,6 +17,7 @@ names + the published port).
 from __future__ import annotations
 
 import hashlib
+import os
 import time
 import urllib.error
 import urllib.request
@@ -25,11 +26,19 @@ from pathlib import Path
 from .. import log
 from ..docker_cmd import run_docker
 from ..paths import bot_bottle_root
-from .gateway import GATEWAY_IMAGE, GATEWAY_NETWORK, DockerGateway
+from .gateway import GATEWAY_IMAGE, GATEWAY_NETWORK, DockerGateway, GatewayError
 
 DEFAULT_PORT = 8099
 ORCHESTRATOR_NAME = "bot-bottle-orchestrator"
 ORCHESTRATOR_LABEL = "bot-bottle-orchestrator=1"
+# The control-plane's own runtime image — lean (python + the stdlib-only
+# `bot_bottle` package, bind-mounted at run time), distinct from the heavy
+# gateway data-plane image it used to borrow (#384). Env override for
+# operators pinning a published build.
+ORCHESTRATOR_IMAGE = os.environ.get(
+    "BOT_BOTTLE_ORCHESTRATOR_IMAGE", "bot-bottle-orchestrator:latest"
+)
+ORCHESTRATOR_DOCKERFILE = "Dockerfile.orchestrator"
 # Baked onto the container as a label so `ensure_running` can tell whether the
 # running process is executing the *current* bind-mounted source — see
 # `_source_hash`.
@@ -37,7 +46,7 @@ ORCHESTRATOR_SOURCE_HASH_LABEL = "bot-bottle-orchestrator-source-hash"
 
 # The repo root is bind-mounted into the control-plane container so
 # `python -m bot_bottle.orchestrator` resolves the package (the orchestrator
-# is stdlib-only, so the bundle image's python is enough).
+# is stdlib-only, so the lean orchestrator image's python is enough).
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _APP_DIR = "/app"
 _ROOT_IN_CONTAINER = "/bot-bottle-root"
@@ -76,13 +85,19 @@ class OrchestratorService:
         *,
         port: int = DEFAULT_PORT,
         network: str = GATEWAY_NETWORK,
-        image: str = GATEWAY_IMAGE,
+        image: str = ORCHESTRATOR_IMAGE,
+        gateway_image: str = GATEWAY_IMAGE,
         repo_root: Path = _REPO_ROOT,
         host_root: Path | None = None,
     ) -> None:
         self.port = port
         self.network = network
+        # Two distinct images (#384): `image` is the lean control-plane
+        # runtime this container runs; `_gateway_image` is the heavy egress /
+        # git-gate / supervise data plane the gateway container runs. They
+        # were one conflated image before the split.
         self.image = image
+        self._gateway_image = gateway_image
         self._repo_root = repo_root
         self._host_root = host_root or bot_bottle_root()
 
@@ -141,7 +156,29 @@ class OrchestratorService:
             )
 
     def _gateway(self) -> DockerGateway:
-        return DockerGateway(self.image, network=self.network, orchestrator_url=self.internal_url)
+        return DockerGateway(
+            self._gateway_image, network=self.network, orchestrator_url=self.internal_url
+        )
+
+    def _ensure_orchestrator_image(self) -> None:
+        """Build the lean control-plane image from `Dockerfile.orchestrator`
+        when it's missing (#384). Cheap — a `FROM python:*-slim` base with no
+        deps to install, so the layer cache makes rebuilds a no-op. Unlike the
+        gateway image this is build-if-missing, not build-every-time: the
+        control plane bind-mounts its source, so a code change is caught by the
+        source-hash recreate (below), not by an image rebuild."""
+        if run_docker(["docker", "image", "inspect", self.image]).returncode == 0:
+            return
+        argv = ["docker", "build", "-t", self.image,
+                "-f", str(self._repo_root / ORCHESTRATOR_DOCKERFILE),
+                str(self._repo_root)]
+        if os.environ.get("BOT_BOTTLE_NO_CACHE"):
+            argv.insert(2, "--no-cache")
+        proc = run_docker(argv)
+        if proc.returncode != 0:
+            raise GatewayError(
+                f"orchestrator image build failed: {proc.stderr.strip()}"
+            )
 
     def _orchestrator_source_current(self, current_hash: str) -> bool:
         """True iff the running orchestrator container was created from the
@@ -181,6 +218,7 @@ class OrchestratorService:
         if self.is_healthy() and self._orchestrator_source_current(current_hash):
             return self.url
 
+        self._ensure_orchestrator_image()
         log.info("starting orchestrator container", context={"name": ORCHESTRATOR_NAME})
         self._run_orchestrator_container(current_hash)
 
@@ -204,6 +242,7 @@ __all__ = [
     "OrchestratorService",
     "OrchestratorStartError",
     "ORCHESTRATOR_NAME",
+    "ORCHESTRATOR_IMAGE",
     "DEFAULT_PORT",
     "DEFAULT_STARTUP_TIMEOUT_SECONDS",
 ]

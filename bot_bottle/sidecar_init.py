@@ -1,6 +1,6 @@
 """Per-bottle sidecar supervisor (PRD 0024 chunk 1).
 
-PID 1 inside the `bot-bottle-sidecars` bundle image. Spawns
+PID 1 inside the `bot-bottle-gateway` data-plane image. Spawns
 the configured daemons (egress, git-gate, supervise),
 forwards SIGTERM/SIGINT to each child, and propagates per-daemon
 stdout+stderr to the container log with a `[name] ` prefix.

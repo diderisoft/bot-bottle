@@ -88,14 +88,14 @@ resolver #2
                  "BOT_BOTTLE_MACOS_CONTAINER_DNS": "9.9.9.9",
              }):
             util.build_image(
-                "bot-bottle-sidecars:latest",
+                "bot-bottle-gateway:latest",
                 "/repo",
-                dockerfile="Dockerfile.sidecars",
+                dockerfile="Dockerfile.gateway",
             )
         self.assertEqual(
             [
-                "container", "build", "-t", "bot-bottle-sidecars:latest",
-                "--dns", "9.9.9.9", "-f", "/repo/Dockerfile.sidecars", "/repo",
+                "container", "build", "-t", "bot-bottle-gateway:latest",
+                "--dns", "9.9.9.9", "-f", "/repo/Dockerfile.gateway", "/repo",
             ],
             run.call_args_list[-1].args[0],
         )

@@ -6,7 +6,7 @@ config (routes.yaml, etc) — that lands in chunk 2 when the
 renderer wires the bundle into compose. What we verify here is
 the chunk-1 contract:
 
-  - Dockerfile.sidecars builds (multi-stage works, base layers
+  - Dockerfile.gateway builds (multi-stage works, base layers
     pull, COPYs resolve).
   - gitleaks, mitmdump are at the documented paths and answer
     `--version`.
@@ -28,8 +28,8 @@ import unittest
 from tests._docker import skip_unless_docker
 
 
-_IMAGE = "bot-bottle-sidecars-test:chunk1"
-_DOCKERFILE = "Dockerfile.sidecars"
+_IMAGE = "bot-bottle-gateway-test:chunk1"
+_DOCKERFILE = "Dockerfile.gateway"
 
 
 @skip_unless_docker()

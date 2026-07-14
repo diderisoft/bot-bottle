@@ -21,7 +21,7 @@ IMAGE = "busybox"
 class TestDockerGatewayImageExists(unittest.TestCase):
     def test_image_exists_true_for_present_false_for_absent(self) -> None:
         # Ensure the tiny image is present (build_if_missing is disabled here
-        # so this never triggers a Dockerfile.sidecars build).
+        # so this never triggers a Dockerfile.gateway build).
         subprocess.run(
             ["docker", "pull", IMAGE],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,

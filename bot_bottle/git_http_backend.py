@@ -28,7 +28,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 # policy_resolver ships flat alongside this file in the sidecar bundle
-# image (see Dockerfile.sidecars); the bot_bottle.* fallback is the
+# image (see Dockerfile.gateway); the bot_bottle.* fallback is the
 # host-side / test path. Mirrors egress_addon's import shape.
 try:
     from policy_resolver import (  # type: ignore[import-not-found]
@@ -104,7 +104,7 @@ def resolve_sandbox_root(
 
 # Mirrors git_gate_render.GIT_GATE_TIMEOUT_SECS. Duplicated rather than
 # imported: this module ships as a flat top-level sibling in the sidecar
-# bundle image (see Dockerfile.sidecars), not as part of the bot_bottle
+# bundle image (see Dockerfile.gateway), not as part of the bot_bottle
 # package, so `bot_bottle.git_gate` and its dependency chain aren't
 # available at runtime.
 GIT_GATE_TIMEOUT_SECS = 15

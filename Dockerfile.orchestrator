@@ -1,0 +1,27 @@
+# Orchestrator control-plane image (PRD 0070, #384).
+#
+# The per-host orchestrator runs `python3 -m bot_bottle.orchestrator`.
+# The `bot_bottle` package is **stdlib-only** by design, so the control
+# plane needs nothing but a Python runtime — none of the gateway's
+# mitmproxy / git / gitleaks payload (that is the separate
+# `bot-bottle-gateway` image, Dockerfile.gateway). Splitting them keeps
+# the secret-dense control plane (it concentrates every bottle's egress
+# tokens — see PRD 0070's "secret concentration") on a minimal
+# dependency surface.
+#
+# The repo is bind-mounted read-only into the container at run time (see
+# `orchestrator/lifecycle.py`), so the source is NOT copied in here: the
+# image is just the runtime. `ensure_running` recreates the container
+# only when the bind-mounted source hash changes (#381), which is why
+# the code stays a mount rather than a baked layer.
+
+FROM python:3.12-slim
+
+# No third-party deps to install — stdlib only. Kept as an explicit,
+# self-documenting stage so a future confinement step (baking the
+# package, dropping the bind mount) has an obvious home.
+WORKDIR /app
+
+# Documentation only; lifecycle.py overrides the entrypoint to
+# `python3 -m bot_bottle.orchestrator` with the runtime flags.
+ENTRYPOINT ["python3", "-m", "bot_bottle.orchestrator"]

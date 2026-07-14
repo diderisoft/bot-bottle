@@ -297,8 +297,8 @@ class TestSidecarBundleShape(unittest.TestCase):
 
     def test_bundle_uses_bundle_image_and_dockerfile(self):
         sc = self._render()["services"]["sidecars"]
-        self.assertEqual("bot-bottle-sidecars:latest", sc["image"])
-        self.assertEqual("Dockerfile.sidecars", sc["build"]["dockerfile"])
+        self.assertEqual("bot-bottle-gateway:latest", sc["image"])
+        self.assertEqual("Dockerfile.gateway", sc["build"]["dockerfile"])
 
     def test_bundle_container_name_uses_sidecars_prefix(self):
         sc = self._render()["services"]["sidecars"]

@@ -7,7 +7,7 @@ kept apart from the request-time scan/decision flow in `egress_addon_core`
 so each half reads top-to-bottom without scrolling past the other.
 
 Stdlib-only; ships flat into the sidecar bundle image alongside
-`egress_addon_core.py` — see `Dockerfile.sidecars`."""
+`egress_addon_core.py` — see `Dockerfile.gateway`."""
 
 from __future__ import annotations
 

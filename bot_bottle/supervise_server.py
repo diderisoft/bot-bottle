@@ -50,7 +50,7 @@ from dataclasses import dataclass, replace
 
 try:
     # Same-directory imports inside the bundle container; these files are
-    # COPYed flat under /app by Dockerfile.sidecars.
+    # COPYed flat under /app by Dockerfile.gateway.
     from egress_addon_core import LOG_OFF, load_config
     from policy_resolver import PolicyResolveError, PolicyResolver
     import supervise as _sv

@@ -45,12 +45,12 @@ MITMPROXY_HOME = "/home/mitmproxy/.mitmproxy"
 GATEWAY_CA_VOLUME = "bot-bottle-gateway-mitmproxy"
 GATEWAY_CA_CERT = f"{MITMPROXY_HOME}/mitmproxy-ca-cert.pem"
 
-# The real sidecar-bundle image + its Dockerfile. Kept as a local constant
+# The gateway data-plane image + its Dockerfile. Kept as a local constant
 # rather than imported from backend.docker.sidecar_bundle, which would drag
 # the whole backend layer into the lean orchestrator (see #359); unify when
-# that lands. Env override matches the backend's BOT_BOTTLE_SIDECAR_IMAGE.
-GATEWAY_IMAGE = os.environ.get("BOT_BOTTLE_SIDECAR_IMAGE", "bot-bottle-sidecars:latest")
-GATEWAY_DOCKERFILE = "Dockerfile.sidecars"
+# that lands. Env override matches the backend's BOT_BOTTLE_GATEWAY_IMAGE.
+GATEWAY_IMAGE = os.environ.get("BOT_BOTTLE_GATEWAY_IMAGE", "bot-bottle-gateway:latest")
+GATEWAY_DOCKERFILE = "Dockerfile.gateway"
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -86,8 +86,8 @@ class Gateway(abc.ABC):
 class DockerGateway(Gateway):
     """The consolidated gateway as a single, fixed-name Docker container.
 
-    `image_ref` defaults to the real sidecar-bundle image; `ensure_built`
-    builds it from `Dockerfile.sidecars` when it's missing. (Note: slice 5
+    `image_ref` defaults to the gateway data-plane image; `ensure_built`
+    builds it from `Dockerfile.gateway` when it's missing. (Note: slice 5
     builds + launches the bundle container; wiring its per-bottle,
     source-IP-keyed config is a later slice — see PRD 0070.)"""
 

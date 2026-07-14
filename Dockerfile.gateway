@@ -1,4 +1,12 @@
-# Per-bottle sidecar bundle image (PRD 0024).
+# Gateway data-plane image (PRD 0024 bundle shape; PRD 0070 gateway).
+#
+# The egress / git-gate / supervise *data plane* — one image, shared by
+# the consolidated per-host gateway (PRD 0070) and, on backends that
+# still run a per-bottle bundle, each bottle's sidecar. It is NOT the
+# orchestrator control plane: that is the separate, lean
+# `bot-bottle-orchestrator` image (Dockerfile.orchestrator, #384), which
+# ships only python + the stdlib-only `bot_bottle` package and none of
+# this image's mitmproxy / git / gitleaks payload.
 #
 # Collapses the prior per-sidecar images (egress, git-gate,
 # supervise) into one. A small stdlib-Python init supervisor at

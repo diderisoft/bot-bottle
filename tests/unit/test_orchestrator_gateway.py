@@ -24,7 +24,7 @@ def _proc(returncode: int = 0, stdout: str = "", stderr: str = "") -> Mock:
 
 class TestDockerGateway(unittest.TestCase):
     def setUp(self) -> None:
-        self.sc = DockerGateway("bot-bottle-sidecars:latest")
+        self.sc = DockerGateway("bot-bottle-gateway:latest")
 
     def test_default_name(self) -> None:
         self.assertEqual(GATEWAY_NAME, self.sc.name)
@@ -86,7 +86,7 @@ class TestDockerGateway(unittest.TestCase):
         runs = [c for c in calls if c[:2] == ["docker", "run"]]
         self.assertEqual(1, len(runs))
         self.assertIn(self.sc.name, runs[0])
-        self.assertIn("bot-bottle-sidecars:latest", runs[0])
+        self.assertIn("bot-bottle-gateway:latest", runs[0])
         # Runs on the shared gateway network so agents can reach it by IP.
         self.assertEqual(self.sc.network, runs[0][runs[0].index("--network") + 1])
         # Persists its CA on a named volume so agents keep trusting it.
@@ -183,7 +183,7 @@ class TestDockerGatewayBuild(unittest.TestCase):
         builds = [c for c in calls if c[:2] == ["docker", "build"]]
         self.assertEqual(1, len(builds))
         self.assertIn(self.sc.image_ref, builds[0])
-        self.assertTrue(any(a.endswith("Dockerfile.sidecars") for a in builds[0]))
+        self.assertTrue(any(a.endswith("Dockerfile.gateway") for a in builds[0]))
         self.assertNotIn("--no-cache", builds[0])
 
     def test_ensure_built_no_cache_env_forces_full_rebuild(self) -> None:

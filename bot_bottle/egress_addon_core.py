@@ -8,7 +8,7 @@ container.
 
 Imports: stdlib + `yaml_subset` (which is itself stdlib-only and
 ships flat into the sidecar bundle image alongside this file —
-see `Dockerfile.sidecars`)."""
+see `Dockerfile.gateway`)."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ except ImportError:  # pragma: no cover - host-side path
     from .yaml_subset import YamlSubsetError, parse_yaml_subset
 
 # DLP detector-config parsing lives in a sibling module (also flat-bundled
-# into the gateway — see Dockerfile.sidecars). Re-exported below so existing
+# into the gateway — see Dockerfile.gateway). Re-exported below so existing
 # `from egress_addon_core import ON_MATCH_*` callers keep working.
 try:
     from egress_dlp_config import (  # type: ignore[import-not-found]
