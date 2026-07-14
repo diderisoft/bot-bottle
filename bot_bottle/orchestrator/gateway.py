@@ -31,6 +31,14 @@ GATEWAY_LABEL = "bot-bottle-orch-gateway=1"
 # the source IP the gateway attributes by is the address on this network.
 GATEWAY_NETWORK = "bot-bottle-gateway"
 
+# mitmproxy's CA dir in the bundle. A persistent named volume here keeps the
+# gateway's self-generated CA STABLE across container recreation — every agent
+# installs this one CA to trust the shared gateway's TLS interception, so it
+# must not rotate when the gateway restarts.
+MITMPROXY_HOME = "/home/mitmproxy/.mitmproxy"
+GATEWAY_CA_VOLUME = "bot-bottle-gateway-mitmproxy"
+GATEWAY_CA_CERT = f"{MITMPROXY_HOME}/mitmproxy-ca-cert.pem"
+
 # The real sidecar-bundle image + its Dockerfile. Kept as a local constant
 # rather than imported from backend.docker.sidecar_bundle, which would drag
 # the whole backend layer into the lean orchestrator (see #359); unify when
@@ -143,10 +151,25 @@ class DockerGateway(Gateway):
             "--name", self.name,
             "--label", GATEWAY_LABEL,
             "--network", self.network,
+            # Persist the self-generated CA so it survives restarts (agents
+            # trust it) — see GATEWAY_CA_VOLUME.
+            "--volume", f"{GATEWAY_CA_VOLUME}:{MITMPROXY_HOME}",
             self.image_ref,
         ])
         if proc.returncode != 0:
             raise GatewayError(f"gateway failed to start: {proc.stderr.strip()}")
+
+    def ca_cert_pem(self) -> str:
+        """The gateway's CA certificate (PEM) that agents install to trust its
+        TLS interception. Read from the running container; raises if the
+        gateway hasn't generated it yet (it's created on first mitmproxy
+        start)."""
+        proc = run_docker(["docker", "exec", self.name, "cat", GATEWAY_CA_CERT])
+        if proc.returncode != 0 or not proc.stdout.strip():
+            raise GatewayError(
+                f"gateway CA cert not available: {proc.stderr.strip() or 'empty'}"
+            )
+        return proc.stdout
 
     def stop(self) -> None:
         proc = run_docker(["docker", "rm", "--force", self.name])
@@ -157,4 +180,5 @@ class DockerGateway(Gateway):
 __all__ = [
     "Gateway", "DockerGateway", "GatewayError",
     "GATEWAY_NAME", "GATEWAY_LABEL", "GATEWAY_IMAGE", "GATEWAY_NETWORK",
+    "GATEWAY_CA_VOLUME", "GATEWAY_CA_CERT",
 ]

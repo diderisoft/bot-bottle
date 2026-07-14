@@ -6,10 +6,14 @@ import unittest
 from unittest.mock import Mock, patch
 
 from bot_bottle.orchestrator.gateway import (
+    GATEWAY_CA_CERT,
     GATEWAY_NAME,
     DockerGateway,
     GatewayError,
 )
+
+
+_CA_PEM = "-----BEGIN CERTIFICATE-----\nMII...\n-----END CERTIFICATE-----\n"
 
 _RUN_DOCKER = "bot_bottle.orchestrator.gateway.run_docker"
 
@@ -53,6 +57,8 @@ class TestDockerGateway(unittest.TestCase):
         self.assertIn("bot-bottle-sidecars:latest", runs[0])
         # Runs on the shared gateway network so agents can reach it by IP.
         self.assertEqual(self.sc.network, runs[0][runs[0].index("--network") + 1])
+        # Persists its CA on a named volume so agents keep trusting it.
+        self.assertTrue(any("mitmproxy" in a for a in runs[0]))
 
     def test_ensure_running_creates_network_when_missing(self) -> None:
         calls: list[list[str]] = []
@@ -67,6 +73,17 @@ class TestDockerGateway(unittest.TestCase):
             self.sc.ensure_running()
         creates = [c for c in calls if c[:3] == ["docker", "network", "create"]]
         self.assertEqual([["docker", "network", "create", self.sc.network]], creates)
+
+    def test_ca_cert_pem_reads_from_container(self) -> None:
+        with patch(_RUN_DOCKER, return_value=_proc(stdout=_CA_PEM)) as m:
+            self.assertEqual(_CA_PEM, self.sc.ca_cert_pem())
+        argv = m.call_args.args[0]
+        self.assertEqual(["docker", "exec", self.sc.name, "cat", GATEWAY_CA_CERT], argv)
+
+    def test_ca_cert_pem_raises_when_absent(self) -> None:
+        with patch(_RUN_DOCKER, return_value=_proc(returncode=1, stderr="No such file")):
+            with self.assertRaises(GatewayError):
+                self.sc.ca_cert_pem()
 
     def test_ensure_running_reuses_existing_network(self) -> None:
         calls: list[list[str]] = []
