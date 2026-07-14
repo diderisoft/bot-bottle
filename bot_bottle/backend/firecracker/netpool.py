@@ -91,7 +91,7 @@ def ip_base() -> str:
 # Sidecar ports the VM reaches at its host-side TAP IP. Kept in sync
 # with the backend constants (egress 9099, supervise 9100, git-http
 # 9420); rendered into the setup output for operator visibility.
-SIDECAR_PORTS = (9099, 9100, 9420)
+GATEWAY_PORTS = (9099, 9100, 9420)
 
 
 @dataclass(frozen=True)

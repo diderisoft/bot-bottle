@@ -38,18 +38,6 @@ class TestOrphanEnumeration(unittest.TestCase):
         with patch.object(fc_cleanup.subprocess, "run", return_value=_proc(returncode=1)):
             self.assertEqual([], fc_cleanup._orphan_vm_pids())
 
-    def test_sidecar_containers_sorted(self):
-        with patch.object(fc_cleanup.subprocess, "run",
-                          return_value=_proc("bot-bottle-sidecars-b\nbot-bottle-sidecars-a\n")):
-            self.assertEqual(
-                ["bot-bottle-sidecars-a", "bot-bottle-sidecars-b"],
-                fc_cleanup._sidecar_containers(),
-            )
-
-    def test_sidecar_containers_empty_on_failure(self):
-        with patch.object(fc_cleanup.subprocess, "run", return_value=_proc(returncode=1)):
-            self.assertEqual([], fc_cleanup._sidecar_containers())
-
     def test_run_dirs_empty_when_absent(self):
         with patch.object(fc_cleanup.util, "cache_dir") as cache:
             cache.return_value.__truediv__.return_value.is_dir.return_value = False
@@ -57,28 +45,23 @@ class TestOrphanEnumeration(unittest.TestCase):
 
     def test_prepare_cleanup_assembles_plan(self):
         with patch.object(fc_cleanup, "_orphan_vm_pids", return_value=[7]), \
-             patch.object(fc_cleanup, "_sidecar_containers", return_value=["c1"]), \
              patch.object(fc_cleanup, "_run_dirs", return_value=["/run/x"]):
             plan = fc_cleanup.prepare_cleanup()
         self.assertEqual((7,), plan.vm_pids)
-        self.assertEqual(("c1",), plan.containers)
         self.assertEqual(("/run/x",), plan.run_dirs)
 
 
 class TestCleanupRemoval(unittest.TestCase):
-    def test_cleanup_kills_removes_and_rmtrees(self):
+    def test_cleanup_kills_and_rmtrees(self):
         plan = FirecrackerBottleCleanupPlan(
-            vm_pids=(101,), containers=("bot-bottle-sidecars-x",),
+            vm_pids=(101,),
             run_dirs=("/run/dev-x",),
         )
         with patch.object(fc_cleanup.os, "kill") as kill, \
-             patch.object(fc_cleanup.subprocess, "run") as run, \
              patch.object(fc_cleanup.shutil, "rmtree") as rmtree, \
              patch.object(fc_cleanup, "info"):
             fc_cleanup.cleanup(plan)
         kill.assert_called_once()
-        run.assert_called_once()
-        self.assertIn("bot-bottle-sidecars-x", run.call_args.args[0])
         rmtree.assert_called_once_with("/run/dev-x", ignore_errors=True)
 
     def test_cleanup_tolerates_dead_pid(self):
@@ -101,13 +84,12 @@ class TestCleanupPlan(unittest.TestCase):
 
     def test_print_lists_resources(self):
         plan = FirecrackerBottleCleanupPlan(
-            vm_pids=(5,), containers=("c",), run_dirs=("/r",),
+            vm_pids=(5,), run_dirs=("/r",),
         )
         with patch("bot_bottle.backend.firecracker.bottle_cleanup_plan.info") as info:
             plan.print()
         joined = " ".join(c.args[0] for c in info.call_args_list)
         self.assertIn("pid 5", joined)
-        self.assertIn("container: c", joined)
         self.assertIn("run dir: /r", joined)
 
 

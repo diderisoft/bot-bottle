@@ -70,32 +70,16 @@ class TestApplyRoutesChange(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.addCleanup(use_bottle_root(Path(self._tmp.name) / ".bot-bottle"))
 
-    def test_writes_live_routes_and_signals_reload(self):
-        calls: list[list[str]] = []
-
-        def fake_run(argv: list[str], **kwargs: object) -> SimpleNamespace:
-            calls.append(list(argv))
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
-
-        with patch(
-            "bot_bottle.backend.docker.egress_apply.subprocess.run",
-            side_effect=fake_run,
-        ):
-            before, after = applicator.apply_routes_change(
+    def test_apply_routes_change_fails_closed_after_companion_removal(self):
+        # The per-bottle companion container that live route-apply used to
+        # signal was removed in the de-sidecar cleanup (#385); apply now
+        # fails closed until the gateway-side apply lands.
+        with self.assertRaises(EgressApplyError) as cm:
+            applicator.apply_routes_change(
                 "dev",
                 "routes:\n  - host: google.com\n",
             )
-
-        self.assertEqual("", before)
-        self.assertEqual("routes:\n  - host: google.com\n", after)
-        self.assertEqual(
-            "routes:\n  - host: google.com\n",
-            (Path(self._tmp.name) / ".bot-bottle/state/dev/egress/routes.yaml").read_text(encoding="utf-8"),
-        )
-        self.assertEqual(
-            ["docker", "kill", "--signal", "HUP", "bot-bottle-sidecars-dev"],
-            calls[0],
-        )
+        self.assertIn("consolidated gateway", str(cm.exception))
 
 
 if __name__ == "__main__":

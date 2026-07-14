@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 
 from bot_bottle.backend.docker.consolidated_compose import consolidated_agent_compose
-from tests.unit.test_compose import _plan
+from tests.unit._docker_bottle_plan import _plan
 
 _GW = "172.18.0.2"
 _IP = "172.18.0.5"

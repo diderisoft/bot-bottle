@@ -9,7 +9,6 @@ from . import util as container_mod
 from .bottle_cleanup_plan import MacosContainerBottleCleanupPlan
 
 _PREFIX = "bot-bottle-"
-_BUNDLE_PREFIX = "bot-bottle-sidecars-"
 
 
 def _list_prefixed_containers() -> list[str]:
@@ -24,7 +23,7 @@ def _list_prefixed_containers() -> list[str]:
         return []
     return sorted(
         name for name in (line.strip() for line in result.stdout.splitlines())
-        if name.startswith(_PREFIX) or name.startswith(_BUNDLE_PREFIX)
+        if name.startswith(_PREFIX)
     )
 
 

@@ -1,60 +1,29 @@
-"""Host-side helper for egress sidecar inspection and live updates.
+"""Host-side egress route-apply for the docker backend.
 
-The approve path uses this module to validate a proposed routes file,
-write it to the bottle's live egress state dir, and signal the sidecar
-bundle so the mitmproxy addon reloads it.
+The per-bottle companion container this used to signal (`docker kill
+--signal HUP <container>`) was removed in the de-sidecar cleanup (#385).
+In the consolidated model the shared gateway resolves egress policy
+per-request against the orchestrator rather than reloading a per-bottle
+routes file, so the live per-bottle reload is not supported here and
+fails closed until the gateway-side apply lands.
 """
 
 from __future__ import annotations
 
-import os
-import subprocess
-
-from ...egress import EGRESS_ROUTES_IN_CONTAINER
-from ...log import warn
 from ..egress_apply import EgressApplicator, EgressApplyError
-from .sidecar_bundle import sidecar_bundle_container_name
-
-
-def fetch_current_routes(slug: str) -> str:
-    container = sidecar_bundle_container_name(slug)
-    r = subprocess.run(
-        ["docker", "exec", container, "cat", EGRESS_ROUTES_IN_CONTAINER],
-        capture_output=True, text=True, check=False,
-    )
-    if r.returncode != 0:
-        raise EgressApplyError(
-            f"could not read routes.yaml from {container}: "
-            f"{(r.stderr or '').strip() or 'container not running?'}"
-        )
-    return r.stdout
 
 
 class DockerEgressApplicator(EgressApplicator):
     def _signal_bundle_reload(self, slug: str) -> None:
-        container = sidecar_bundle_container_name(slug)
-        result = subprocess.run(
-            ["docker", "kill", "--signal", "HUP", container],
-            capture_output=True, text=True, check=False, env=os.environ,
+        del slug
+        raise EgressApplyError(
+            "live egress route-apply was removed with the per-bottle "
+            "companion container (#385); route changes will flow through "
+            "the consolidated gateway in a follow-up."
         )
-        if result.returncode != 0:
-            last_error = (result.stderr or "").strip() or (result.stdout or "").strip()
-            warn(
-                f"egress: routes updated on disk for {slug}, but bundle reload failed: "
-                f"{last_error or 'docker kill failed'}"
-            )
-            raise EgressApplyError(
-                f"could not reload egress bundle {container}: "
-                f"{last_error or 'docker kill failed'}"
-            )
 
 
 applicator = DockerEgressApplicator()
 
 
-__all__ = [
-    "DockerEgressApplicator",
-    "EgressApplyError",
-    "applicator",
-    "fetch_current_routes",
-]
+__all__ = ["DockerEgressApplicator", "EgressApplyError", "applicator"]

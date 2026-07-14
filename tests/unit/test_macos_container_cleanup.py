@@ -43,27 +43,10 @@ class TestMacosContainerCleanup(unittest.TestCase):
 
 
 class TestMacosContainerEnumerate(unittest.TestCase):
-    def test_enumerate_active_reads_metadata(self):
-        completed = enum_mod.subprocess.CompletedProcess(
-            args=[],
-            returncode=0,
-            stdout="bot-bottle-a\nbot-bottle-sidecars-a\nother\n",
-            stderr="",
-        )
-
-        class _Metadata:
-            agent_name = "impl"
-            started_at = "2026-06-10T00:00:00Z"
-            label = "Implement"
-            color = "blue"
-
-        with patch.object(enum_mod.subprocess, "run", return_value=completed), \
-             patch.object(enum_mod, "read_metadata", return_value=_Metadata()):
-            agents = enum_mod.enumerate_active()
-        self.assertEqual(1, len(agents))
-        self.assertEqual("macos-container", agents[0].backend_name)
-        self.assertEqual("a", agents[0].slug)
-        self.assertEqual("impl", agents[0].agent_name)
+    def test_enumerate_active_is_empty_while_disabled(self):
+        # The macOS backend is disabled during the de-sidecar cleanup
+        # (#385); it launches nothing, so there is nothing to enumerate.
+        self.assertEqual([], enum_mod.enumerate_active())
 
 
 if __name__ == "__main__":

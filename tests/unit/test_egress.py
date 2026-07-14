@@ -16,7 +16,7 @@ from bot_bottle.egress import (
     egress_render_routes,
     egress_resolve_token_values,
     egress_routes_for_bottle,
-    egress_sidecar_env_entries,
+    egress_gateway_env_entries,
     egress_token_env_map,
 )
 from bot_bottle.errors import MissingEnvVarError
@@ -603,7 +603,7 @@ class TestEgressEnvEntries(unittest.TestCase):
                 "CANON_ALPHA_SECRET=fake-canary-value",
                 "BOT_BOTTLE_SENSITIVE_PREFIXES=CANON_ALPHA_SECRET",
             ),
-            egress_sidecar_env_entries(plan),
+            egress_gateway_env_entries(plan),
         )
 
     def test_agent_entries_include_only_canary_bait(self):
@@ -630,7 +630,7 @@ class TestEgressEnvEntries(unittest.TestCase):
             canary="fake-canary-value",
         )
 
-        self.assertEqual((), egress_sidecar_env_entries(plan))
+        self.assertEqual((), egress_gateway_env_entries(plan))
         self.assertEqual((), egress_agent_env_entries(plan))
 
 

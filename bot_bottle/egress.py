@@ -63,8 +63,8 @@ def _random_canary_env() -> str:
     return f"{first}_{second}_SECRET"
 
 
-def egress_sidecar_env_entries(plan: "EgressPlan") -> tuple[str, ...]:
-    """Return sidecar env entries needed by egress across all backends."""
+def egress_gateway_env_entries(plan: "EgressPlan") -> tuple[str, ...]:
+    """Return gateway env entries needed by egress across all backends."""
     env: list[str] = []
     if plan.routes:
         env.extend(sorted(plan.token_env_map.keys()))
@@ -412,6 +412,6 @@ __all__ = [
     "egress_resolve_token_values",
     "egress_routes_for_bottle",
     "egress_agent_env_entries",
-    "egress_sidecar_env_entries",
+    "egress_gateway_env_entries",
     "egress_token_env_map",
 ]
