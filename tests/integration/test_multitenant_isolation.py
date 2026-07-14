@@ -73,6 +73,13 @@ _PROBE_SRC = (
 
 
 @skip_unless_docker()
+@unittest.skipIf(
+    os.environ.get("GITEA_ACTIONS") == "true",
+    "skipped under act_runner: the orchestrator container bind-mounts the repo "
+    "path into a container on the socket-shared host daemon, which can't see the "
+    "runner's /workspace — same host-bind-mount constraint as the other "
+    "bottle-bringup integration tests",
+)
 class TestMultitenantIsolation(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
