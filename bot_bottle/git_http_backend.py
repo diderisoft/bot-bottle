@@ -188,6 +188,14 @@ class GitHttpHandler(BaseHTTPRequestHandler):
             "SERVER_PORT": str(self.server.server_port),  # type: ignore
             "SERVER_PROTOCOL": self.request_version,
         })
+        # Consolidated mode: attribute the gitleaks-allow supervise proposal
+        # (written by receive-pack's pre-receive hook, a child of the CGI we
+        # spawn below) to the calling bottle. The namespaced root is
+        # `<base>/<bottle_id>`, so its final component is the bottle id — the
+        # same per-bottle key egress uses. Single-tenant leaves the hook's
+        # container-stamped SUPERVISE_BOTTLE_SLUG untouched.
+        if getattr(self.server, "policy_resolver", None) is not None:
+            env["SUPERVISE_BOTTLE_SLUG"] = sandbox_root.name
         for header, variable in (
             ("accept", "HTTP_ACCEPT"),
             ("content-encoding", "HTTP_CONTENT_ENCODING"),

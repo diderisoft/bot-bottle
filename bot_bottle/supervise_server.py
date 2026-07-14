@@ -15,6 +15,12 @@ The bottle slug arrives via SUPERVISE_BOTTLE_SLUG env (stamped at
 container creation by the backend's start step). SUPERVISE_DB_PATH
 points at the bind-mounted host database.
 
+Consolidated (PRD 0070): when BOT_BOTTLE_ORCHESTRATOR_URL is set, one
+shared server fronts every bottle and attributes each proposal to the
+calling bottle by source IP (resolved from the orchestrator) instead of a
+fixed slug — an unattributed source fails closed. Unset → the legacy
+per-bottle single-tenant server, unchanged.
+
 Speaks MCP over HTTP+JSON-RPC. Methods handled:
 
   * `initialize`           — handshake; returns server info + caps.
@@ -40,16 +46,18 @@ import time
 import typing
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 try:
     # Same-directory imports inside the bundle container; these files are
     # COPYed flat under /app by Dockerfile.sidecars.
     from egress_addon_core import LOG_OFF, load_config
+    from policy_resolver import PolicyResolveError, PolicyResolver
     import supervise as _sv
 except ModuleNotFoundError:
     # Package imports for host-side tests and tooling.
     from .egress_addon_core import LOG_OFF, load_config
+    from .policy_resolver import PolicyResolveError, PolicyResolver
     from . import supervise as _sv
 
 
@@ -72,6 +80,12 @@ ERR_INTERNAL = -32603
 DEFAULT_RESPONSE_TIMEOUT_SECONDS = 30.0
 MIN_RESPONSE_POLL_INTERVAL_SECONDS = 0.05
 EGRESS_LIST_TIMEOUT_SECONDS = 5.0
+
+# Consolidated (multi-tenant) mode: when set, one shared supervise server
+# fronts every bottle and attributes each proposal to the calling bottle by
+# source IP (resolved from the orchestrator), instead of a single
+# SUPERVISE_BOTTLE_SLUG env. Unset → legacy per-bottle single-tenant.
+ORCHESTRATOR_URL_ENV = "BOT_BOTTLE_ORCHESTRATOR_URL"
 
 
 @dataclass(frozen=True)
@@ -511,8 +525,29 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
         if method == "tools/list":
             return handle_tools_list(req.params)
         if method == "tools/call":
-            return handle_tools_call(req.params, config)
+            # Attribute the proposal to the calling bottle. Single-tenant → the
+            # env slug on `config`; consolidated → the source-IP-resolved
+            # bottle id, so one shared server queues each bottle's proposal
+            # under its own slug.
+            return handle_tools_call(req.params, self._attributed_config(config))
         raise _RpcClientError(ERR_METHOD_NOT_FOUND, f"method not found: {method}")
+
+    def _attributed_config(self, config: ServerConfig) -> ServerConfig:
+        """The ServerConfig with `bottle_slug` bound to *this request's* bottle.
+        Single-tenant (no resolver): unchanged. Consolidated: the bottle id
+        attributed from the source IP — **fail-closed**, an unattributed or
+        unreachable source raises so no proposal is queued under the wrong (or
+        empty) slug."""
+        resolver = getattr(self.server, "policy_resolver", None)
+        if resolver is None:
+            return config
+        try:
+            bottle_id = resolver.resolve_bottle_id(self.client_address[0])
+        except PolicyResolveError as e:
+            raise _RpcInternalError(f"orchestrator unreachable, cannot attribute: {e}") from e
+        if not bottle_id:
+            raise _RpcInternalError("request source is not attributed to a bottle")
+        return replace(config, bottle_slug=bottle_id)
 
     def _write_jsonrpc(self, body: bytes) -> None:
         self.send_response(200)
@@ -537,6 +572,9 @@ class MCPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     allow_reuse_address = True
     daemon_threads = True
     config: ServerConfig = ServerConfig(bottle_slug="")
+    # None → single-tenant (proposals use config.bottle_slug); set → consolidated
+    # (each proposal attributed to the source-IP-resolved bottle).
+    policy_resolver: "PolicyResolver | None" = None
 
 
 # --- Entry point -----------------------------------------------------------
@@ -548,15 +586,17 @@ def serve(
     port: int = _sv.SUPERVISE_PORT,
     bind: str = "0.0.0.0",
     response_timeout_seconds: float = DEFAULT_RESPONSE_TIMEOUT_SECONDS,
+    resolver: "PolicyResolver | None" = None,
 ) -> typing.NoReturn:
     server = MCPServer((bind, port), MCPHandler)
     server.config = ServerConfig(
         bottle_slug=bottle_slug,
         response_timeout_seconds=response_timeout_seconds,
     )
+    server.policy_resolver = resolver
+    mode = "multi-tenant" if resolver else f"slug={bottle_slug!r}"
     sys.stderr.write(
-        f"supervise listening on {bind}:{port}; "
-        f"slug={bottle_slug!r}; "
+        f"supervise listening on {bind}:{port}; {mode}; "
         f"tools: {', '.join(t['name'] for t in TOOL_DEFINITIONS)}\n"  # type: ignore[arg-type]
     )
     sys.stderr.flush()
@@ -571,8 +611,12 @@ def serve(
 
 def main(argv: list[str]) -> int:
     del argv  # config is env-only, no CLI flags
+    orch_url = os.environ.get(ORCHESTRATOR_URL_ENV, "").strip()
+    resolver = PolicyResolver(orch_url) if orch_url else None
     bottle_slug = os.environ.get("SUPERVISE_BOTTLE_SLUG", "")
-    if not bottle_slug:
+    # Consolidated mode resolves the slug per request, so the env slug is
+    # optional there; single-tenant still requires it.
+    if not bottle_slug and resolver is None:
         sys.stderr.write("supervise: SUPERVISE_BOTTLE_SLUG env is unset\n")
         return 2
     port = int(os.environ.get("SUPERVISE_PORT", str(_sv.SUPERVISE_PORT)))
@@ -587,6 +631,7 @@ def main(argv: list[str]) -> int:
         port=port,
         bind=bind,
         response_timeout_seconds=response_timeout_seconds,
+        resolver=resolver,
     )
     return 0  # serve() does not return
 

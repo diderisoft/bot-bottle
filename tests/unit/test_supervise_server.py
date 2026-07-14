@@ -6,6 +6,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -627,6 +628,58 @@ class TestHttpEndToEnd(unittest.TestCase):
             self.assertEqual(b"ok\n", resp.read())
         finally:
             conn.close()
+
+
+class _FakeResolver:
+    def __init__(self, bottle_id: str | None = None, raises: bool = False) -> None:
+        self._bottle_id = bottle_id
+        self._raises = raises
+        self.calls: list[str] = []
+
+    def resolve_bottle_id(self, source_ip: str, identity_token: str = "") -> str | None:
+        del identity_token
+        self.calls.append(source_ip)
+        if self._raises:
+            # Raise the exact class supervise_server catches (it imports
+            # policy_resolver flat inside the bundle, package-side in tests).
+            raise supervise_server.PolicyResolveError("orchestrator down")
+        return self._bottle_id
+
+
+def _handler(resolver: object) -> MCPHandler:
+    """A bare MCPHandler wired with a server (carrying the resolver) and a
+    client address, enough to exercise `_attributed_config` off-socket."""
+    h: MCPHandler = MCPHandler.__new__(MCPHandler)
+    h.server = types.SimpleNamespace(policy_resolver=resolver)  # type: ignore[assignment]
+    h.client_address = ("10.0.0.7", 4321)
+    return h
+
+
+class TestAttributedConfig(unittest.TestCase):
+    """Consolidated supervise: each proposal is attributed to the calling
+    bottle by source IP; single-tenant keeps the env slug (PRD 0070)."""
+
+    def test_single_tenant_keeps_env_slug(self) -> None:
+        cfg = _handler(None)._attributed_config(ServerConfig(bottle_slug="dev"))
+        self.assertEqual("dev", cfg.bottle_slug)
+
+    def test_consolidated_binds_source_ip_bottle(self) -> None:
+        r = _FakeResolver(bottle_id="bottle-x")
+        cfg = _handler(r)._attributed_config(ServerConfig(bottle_slug="ignored"))
+        self.assertEqual("bottle-x", cfg.bottle_slug)  # resolved slug wins
+        self.assertEqual(["10.0.0.7"], r.calls)
+
+    def test_unattributed_source_fails_closed(self) -> None:
+        with self.assertRaises(_RpcInternalError):
+            _handler(_FakeResolver(bottle_id=None))._attributed_config(
+                ServerConfig(bottle_slug="x")
+            )
+
+    def test_resolver_error_fails_closed(self) -> None:
+        with self.assertRaises(_RpcInternalError):
+            _handler(_FakeResolver(raises=True))._attributed_config(
+                ServerConfig(bottle_slug="x")
+            )
 
 
 if __name__ == "__main__":

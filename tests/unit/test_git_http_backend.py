@@ -13,6 +13,17 @@ from bot_bottle.git_gate import GIT_GATE_TIMEOUT_SECS
 from bot_bottle.git_http_backend import GitHttpHandler, MAX_BODY_BYTES
 
 
+class _FixedResolver:
+    """Maps every source IP to one bottle id (consolidated-mode stub)."""
+
+    def __init__(self, bottle_id: str) -> None:
+        self._bottle_id = bottle_id
+
+    def resolve_bottle_id(self, source_ip: str, identity_token: str = "") -> str:
+        del source_ip, identity_token
+        return self._bottle_id
+
+
 class TestGitHttpBackend(unittest.TestCase):
     def test_real_git_push_reaches_bare_repo(self):
         from http.server import ThreadingHTTPServer
@@ -93,6 +104,62 @@ class TestGitHttpBackend(unittest.TestCase):
                 text=True,
             ).strip()
             self.assertEqual(head, cloned)
+
+    def test_consolidated_push_stamps_bottle_slug_for_the_hook(self):
+        # In consolidated mode the backend attributes the push by source IP and
+        # stamps SUPERVISE_BOTTLE_SLUG=<bottle_id> into the CGI env, so the
+        # gitleaks-allow pre-receive hook queues its proposal under the right
+        # bottle. The hook here just records what it received.
+        from http.server import ThreadingHTTPServer
+
+        bottle_id = "bottleab12"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bare = root / bottle_id / "repo.git"  # namespaced per bottle (slice 10)
+            bare.parent.mkdir(parents=True)
+            subprocess.run(["git", "init", "--bare", str(bare)],
+                           check=True, capture_output=True, text=True)
+            subprocess.run(
+                ["git", "-C", str(bare), "config", "http.receivepack", "true"],
+                check=True,
+            )
+            capture = root / "slug-capture"
+            hook = bare / "hooks" / "pre-receive"
+            hook.write_text(
+                f"#!/bin/sh\nprintf '%s' \"${{SUPERVISE_BOTTLE_SLUG:-UNSET}}\" > "
+                f"{capture}\ncat >/dev/null\nexit 0\n"
+            )
+            hook.chmod(0o755)
+
+            old_root = os.environ.get("GIT_PROJECT_ROOT")
+            os.environ["GIT_PROJECT_ROOT"] = str(root)  # base; backend nests per bottle
+            self.addCleanup(self._restore_env, old_root)
+
+            server = ThreadingHTTPServer(("127.0.0.1", 0), GitHttpHandler)
+            server.policy_resolver = _FixedResolver(bottle_id)  # type: ignore[attr-defined]
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            self.addCleanup(server.shutdown)
+            self.addCleanup(server.server_close)
+
+            work = root / "work"
+            work.mkdir()
+            subprocess.run(["git", "init"], cwd=work, check=True,
+                           capture_output=True, text=True)
+            subprocess.run(["git", "config", "user.name", "test"], cwd=work, check=True)
+            subprocess.run(["git", "config", "user.email", "t@example.invalid"],
+                           cwd=work, check=True)
+            (work / "README.md").write_text("test\n")
+            subprocess.run(["git", "add", "README.md"], cwd=work, check=True)
+            subprocess.run(["git", "commit", "-m", "init"], cwd=work,
+                           check=True, capture_output=True, text=True)
+
+            url = f"http://127.0.0.1:{server.server_port}/repo.git"
+            subprocess.run(
+                ["git", "push", url, "HEAD:refs/heads/main"],
+                cwd=work, check=True, capture_output=True, text=True, timeout=5,
+            )
+            self.assertEqual(bottle_id, capture.read_text())
 
     def test_post_forwards_git_cgi_headers(self):
         from http.server import ThreadingHTTPServer
