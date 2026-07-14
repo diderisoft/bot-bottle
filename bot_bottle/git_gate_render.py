@@ -9,6 +9,7 @@ own; `git_gate` re-exports these names for API stability."""
 
 from __future__ import annotations
 
+import re
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
@@ -125,22 +126,18 @@ def git_gate_known_hosts_line(host: str, port: str, key: str) -> str:
     return f"{target} {key}\n"
 
 
-def git_gate_render_entrypoint(upstreams: tuple[GitGateUpstream, ...]) -> str:
-    """Posix-sh entrypoint. One `init_repo` call per upstream, then
-    `exec git daemon`. The function reads
-    `/git-gate/creds/<name>-{key,known_hosts}` (bind-mounted into
-    the bundle by the renderer) and wires them into each bare repo's
-    config; the access-hook + pre-receive hook pick those paths up
-    at fetch / push time."""
-    lines = [
-        "#!/bin/sh",
-        "set -eu",
-        "",
+def _git_gate_init_repo_fn(repo_root: str, creds_dir: str) -> list[str]:
+    """The `init_repo` shell function, parameterized by the bare-repo root
+    and the per-bottle creds dir. Single source of the credential-wiring
+    logic, shared by the single-tenant daemon entrypoint (`/git`,
+    `/git-gate/creds`) and the consolidated per-bottle provisioning
+    (`/git/<bottle_id>`, `/git-gate/creds/<bottle_id>`)."""
+    return [
         "init_repo() {",
         "  name=$1",
         "  upstream_url=$2",
-        "  keyfile=/git-gate/creds/${name}-key",
-        "  hostsfile=/git-gate/creds/${name}-known_hosts",
+        f"  keyfile={creds_dir}/${{name}}-key",
+        f"  hostsfile={creds_dir}/${{name}}-known_hosts",
         "",
         # `|| true`: PRD 0018 chunk 3+ bind-mounts these RO from the
         # host, so chmod-syscalls fail with EROFS. The files already
@@ -153,14 +150,14 @@ def git_gate_render_entrypoint(upstreams: tuple[GitGateUpstream, ...]) -> str:
         "    chmod 600 \"$hostsfile\" 2>/dev/null || true",
         "  fi",
         "",
-        "  repo=/git/${name}.git",
+        f"  repo={repo_root}/${{name}}.git",
         "  if [ ! -d \"$repo\" ]; then",
         "    git init --bare \"$repo\" >/dev/null",
-        # --mirror=fetch sets remote.origin.fetch = +refs/*:refs/* so",
-        # a later `git fetch origin` mirrors the upstream's full ref",
-        # graph (heads, tags, notes) into the bare repo at canonical",
-        # paths. It does NOT set remote.origin.mirror=true, so an",
-        # explicit `git push origin <ref>:<ref>` still pushes one ref.",
+        # --mirror=fetch sets remote.origin.fetch = +refs/*:refs/* so a later
+        # `git fetch origin` mirrors the upstream's full ref graph (heads,
+        # tags, notes) into the bare repo at canonical paths. It does NOT set
+        # remote.origin.mirror=true, so an explicit `git push origin
+        # <ref>:<ref>` still pushes one ref.
         "    git -C \"$repo\" remote add --mirror=fetch origin \"$upstream_url\"",
         "  fi",
         "  git -C \"$repo\" config git-gate.identityFile \"$keyfile\"",
@@ -170,9 +167,19 @@ def git_gate_render_entrypoint(upstreams: tuple[GitGateUpstream, ...]) -> str:
         "  git -C \"$repo\" config http.receivepack true",
         "  install -m 755 /etc/git-gate/pre-receive \"$repo/hooks/pre-receive\"",
         "}",
-        "",
-        "mkdir -p /git",
     ]
+
+
+def git_gate_render_entrypoint(upstreams: tuple[GitGateUpstream, ...]) -> str:
+    """Posix-sh entrypoint. One `init_repo` call per upstream, then
+    `exec git daemon`. The function reads
+    `/git-gate/creds/<name>-{key,known_hosts}` (bind-mounted into
+    the bundle by the renderer) and wires them into each bare repo's
+    config; the access-hook + pre-receive hook pick those paths up
+    at fetch / push time."""
+    lines = ["#!/bin/sh", "set -eu", ""]
+    lines += _git_gate_init_repo_fn("/git", "/git-gate/creds")
+    lines += ["", "mkdir -p /git"]
     for u in upstreams:
         lines.append(f"init_repo {shlex.quote(u.name)} {shlex.quote(u.upstream_url)}")
     lines.extend([
@@ -187,6 +194,35 @@ def git_gate_render_entrypoint(upstreams: tuple[GitGateUpstream, ...]) -> str:
         "  --access-hook=/etc/git-gate/access-hook \\",
         "  --verbose",
     ])
+    return "\n".join(lines) + "\n"
+
+
+# A bottle id namespaces the consolidated gateway's repo + creds dirs; it is
+# embedded unquoted in the provisioning script, so restrict it to a shell- and
+# path-safe alphabet (registry ids are token_hex — this is defense in depth).
+_SAFE_BOTTLE_ID = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def git_gate_render_provision(
+    bottle_id: str, upstreams: tuple[GitGateUpstream, ...],
+) -> str:
+    """Posix-sh script that provisions ONE bottle's bare repos into the
+    consolidated gateway (PRD 0070), under `/git/<bottle_id>/` with creds
+    read from `/git-gate/creds/<bottle_id>/`. Init-only — no `git daemon`,
+    since the shared gateway already serves every bottle; run inside the
+    running gateway when the bottle is registered.
+
+    Isolating each bottle's repo root and creds dir by id is what keeps one
+    bottle's push credentials out of another's repos on the shared gateway."""
+    if not _SAFE_BOTTLE_ID.fullmatch(bottle_id):
+        raise ValueError(f"git-gate: unsafe bottle id {bottle_id!r}")
+    repo_root = f"/git/{bottle_id}"
+    creds_dir = f"/git-gate/creds/{bottle_id}"
+    lines = ["#!/bin/sh", "set -eu", ""]
+    lines += _git_gate_init_repo_fn(repo_root, creds_dir)
+    lines += ["", f"mkdir -p {shlex.quote(repo_root)}"]
+    for u in upstreams:
+        lines.append(f"init_repo {shlex.quote(u.name)} {shlex.quote(u.upstream_url)}")
     return "\n".join(lines) + "\n"
 
 
