@@ -598,7 +598,7 @@ _BACKENDS: dict[str, BottleBackend[Any, Any]] | None = None
 
 def _get_backends() -> dict[str, BottleBackend[Any, Any]]:
     """Return the registry of all backend instances, loading lazily on first call."""
-    global _BACKENDS
+    global _BACKENDS  # pylint: disable=global-statement
     if _BACKENDS is None:
         from .docker import DockerBottleBackend
         from .firecracker import FirecrackerBottleBackend
@@ -729,12 +729,12 @@ __all__ = [
     "BottleCleanupPlan",
     "BottlePlan",
     "BottleSpec",
-    "CommitCancelled",
+    "CommitCancelled",  # pylint: disable=undefined-all-variable
     "ExecResult",
-    "Freezer",
+    "Freezer",  # pylint: disable=undefined-all-variable
     "enumerate_active_agents",
     "get_bottle_backend",
-    "get_freezer",
+    "get_freezer",  # pylint: disable=undefined-all-variable
     "has_backend",
     "known_backend_names",
 ]
