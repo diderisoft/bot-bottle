@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -22,6 +23,20 @@ class TestRegistryStore(unittest.TestCase):
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
+
+    def _force_active_row(self, source_ip: str, bottle_id: str) -> None:
+        """Insert a raw active row, bypassing `register`'s same-IP supersede —
+        the only way to manufacture the ambiguity the fail-closed guard exists
+        for (crash-orphaned / externally-injected duplicate)."""
+        conn = sqlite3.connect(self.db)
+        conn.execute(
+            "INSERT INTO orchestrator_bottles "
+            "(bottle_id, source_ip, identity_token, state, created_at, metadata, policy) "
+            "VALUES (?, ?, ?, 'active', 0.0, '', '')",
+            (bottle_id, source_ip, "tok-" + bottle_id),
+        )
+        conn.commit()
+        conn.close()
 
     def test_register_mints_id_and_token(self) -> None:
         rec = self.store.register("10.243.0.1")
@@ -76,10 +91,28 @@ class TestRegistryStore(unittest.TestCase):
 
     def test_attribute_ambiguous_ip_denied(self) -> None:
         # Two active bottles on one source IP is a misconfiguration — deny
-        # rather than guess (fail-closed), even with a valid token.
+        # rather than guess (fail-closed), even with a valid token. (Forced
+        # directly: `register` now supersedes, so this can only arise from an
+        # orphaned/injected row.)
         a = self.store.register("10.243.0.1", bottle_id="a")
-        self.store.register("10.243.0.1", bottle_id="b")
+        self._force_active_row("10.243.0.1", "b")
         self.assertIsNone(self.store.attribute("10.243.0.1", a.identity_token))
+
+    def test_reregister_same_source_ip_supersedes(self) -> None:
+        # Re-registering a source IP (reused IP / crash recovery / persisted
+        # DB) must supersede the prior active bottle, not add a second active
+        # row that would fail-closed the whole IP to 403.
+        a = self.store.register("10.243.0.1", bottle_id="a", policy="A")
+        b = self.store.register("10.243.0.1", bottle_id="b", policy="B")
+        # exactly one active row at that IP, and it's the new bottle
+        got = self.store.by_source_ip("10.243.0.1")
+        assert got is not None
+        self.assertEqual("b", got.bottle_id)
+        self.assertEqual("B", got.policy)
+        # the superseded bottle is gone and its token no longer attributes
+        self.assertIsNone(self.store.get("a"))
+        self.assertIsNone(self.store.attribute("10.243.0.1", a.identity_token))
+        self.assertIsNotNone(self.store.attribute("10.243.0.1", b.identity_token))
 
     def test_state_persists_across_reopen(self) -> None:
         rec = self.store.register("10.243.0.1")
@@ -130,7 +163,7 @@ class TestRegistryStore(unittest.TestCase):
     def test_by_source_ip_unknown_or_ambiguous_denied(self) -> None:
         self.assertIsNone(self.store.by_source_ip("10.243.9.9"))  # unknown
         self.store.register("10.243.0.1", bottle_id="a")
-        self.store.register("10.243.0.1", bottle_id="b")
+        self._force_active_row("10.243.0.1", "b")  # orphaned duplicate
         self.assertIsNone(self.store.by_source_ip("10.243.0.1"))  # ambiguous
 
 

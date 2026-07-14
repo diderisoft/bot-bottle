@@ -149,7 +149,15 @@ class RegistryStore(DbStore):
         policy: str = "",
     ) -> BottleRecord:
         """Register (or replace) a bottle. Mints a bottle_id / identity token
-        when not supplied. Live — this is the control-plane reload path."""
+        when not supplied. Live — this is the control-plane reload path.
+
+        Supersedes any *other* active bottle at the same source IP first:
+        `by_source_ip` fail-closes on ambiguity (>1 active row → None), so a
+        leftover row at a reused IP — from an untorn-down bottle, crash
+        recovery, or a persisted DB — would otherwise *brick* the new bottle's
+        attribution. The new registration is authoritative for its IP; the
+        stale rows go. INSERT OR REPLACE handles a same-`bottle_id` reload in
+        place (its own row is exempt from the sweep)."""
         rec = BottleRecord(
             bottle_id=bottle_id or secrets.token_hex(8),
             source_ip=source_ip,
@@ -160,6 +168,11 @@ class RegistryStore(DbStore):
             policy=policy,
         )
         with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM orchestrator_bottles "
+                "WHERE source_ip = ? AND state = 'active' AND bottle_id != ?",
+                (rec.source_ip, rec.bottle_id),
+            )
             conn.execute(
                 "INSERT OR REPLACE INTO orchestrator_bottles "
                 "(bottle_id, source_ip, identity_token, state, created_at, metadata, policy) "
