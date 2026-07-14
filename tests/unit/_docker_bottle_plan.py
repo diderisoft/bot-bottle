@@ -23,6 +23,10 @@ SLUG = "demo-abc12"
 STAGE = Path("/tmp/cb-stage")
 STATE = Path("/tmp/cb-state")
 
+# Exported to consumers (e.g. test_consolidated_compose); named with a
+# leading underscore for the historical fixture convention.
+__all__ = ["_plan"]
+
 
 def _manifest(*, supervise: bool, with_git: bool, with_egress: bool) -> ManifestIndex:
     """Minimal manifest with the toggles the matrix needs. The renderer

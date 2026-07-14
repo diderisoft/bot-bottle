@@ -5,8 +5,6 @@ integration test)."""
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import patch
 
 from tests.unit import use_bottle_root
 from bot_bottle.backend.egress_apply import EgressApplyError
