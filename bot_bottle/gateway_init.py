@@ -1,4 +1,4 @@
-"""Per-bottle sidecar supervisor (PRD 0024 chunk 1).
+"""Gateway data-plane supervisor (PRD 0070; PRD 0024 bundle shape).
 
 PID 1 inside the `bot-bottle-gateway` data-plane image. Spawns
 the configured daemons (egress, git-gate, supervise),
@@ -7,20 +7,20 @@ stdout+stderr to the container log with a `[name] ` prefix.
 
 Failure policy (interim): when a child dies unexpectedly, the
 supervisor logs the death and leaves the surviving children
-running. The bundle stays up; whatever the dead daemon served
+running. The gateway stays up; whatever the dead daemon served
 will start failing, surfacing in the agent's own error path.
-The supervisor itself exits only when (a) the operator/compose
-sends SIGTERM/SIGINT, or (b) every child has died.
+The supervisor itself exits only when (a) the operator sends
+SIGTERM/SIGINT, or (b) every child has died.
 
 Failure policy (eventual): on unexpected death, the supervisor
 restarts the daemon and emits a notification to the supervise
-sidecar so the operator sees the event. That lands in a later
-PR; the interim policy is "don't take the bundle down for one
+daemon so the operator sees the event. That lands in a later
+PR; the interim policy is "don't take the gateway down for one
 sick daemon."
 
-Daemon subset is env-driven. The compose renderer narrows it via
-`BOT_BOTTLE_SIDECAR_DAEMONS=egress` for bottles that
-don't use git-gate or supervise. Default: all daemons.
+Daemon subset is env-driven via `BOT_BOTTLE_GATEWAY_DAEMONS=egress`
+for callers that don't use git-gate or supervise. Default: all
+daemons.
 
 Stdlib-only by design — adding supervisord/s6/runit for four
 daemons is heavier than this script.
@@ -103,8 +103,8 @@ def _selected_daemons(
     env: dict[str, str],
     all_daemons: Sequence[_DaemonSpec] | None = None,
 ) -> tuple[_DaemonSpec, ...]:
-    """Filter the daemon set by the BOT_BOTTLE_SIDECAR_DAEMONS env
-    var. Unknown names in the list are ignored — the renderer is the
+    """Filter the daemon set by the BOT_BOTTLE_GATEWAY_DAEMONS env
+    var. Unknown names in the list are ignored — the caller is the
     source of truth for which daemons are wired.
 
     `all_daemons` defaults to `_DAEMONS` resolved at call time (not
@@ -112,7 +112,7 @@ def _selected_daemons(
     `_DAEMONS` and have the new value take effect."""
     if all_daemons is None:
         all_daemons = _DAEMONS
-    raw = env.get("BOT_BOTTLE_SIDECAR_DAEMONS", "").strip()
+    raw = env.get("BOT_BOTTLE_GATEWAY_DAEMONS", "").strip()
     if not raw:
         return tuple(all_daemons)
     wanted = {n.strip() for n in raw.split(",") if n.strip()}
@@ -120,7 +120,7 @@ def _selected_daemons(
 
 
 def _log(msg: str) -> None:
-    sys.stdout.write(f"sidecar-init: {msg}\n")
+    sys.stdout.write(f"gateway-init: {msg}\n")
     sys.stdout.flush()
 
 
