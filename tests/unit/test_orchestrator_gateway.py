@@ -129,28 +129,35 @@ class TestDockerGatewayBuild(unittest.TestCase):
         with patch(_RUN_DOCKER, return_value=_proc(returncode=1)):
             self.assertFalse(self.sc.image_exists())
 
-    def test_ensure_built_is_noop_when_image_present(self) -> None:
-        with patch(_RUN_DOCKER, return_value=_proc(returncode=0)) as m:
-            self.sc.ensure_built()
-        self.assertEqual(1, m.call_count)  # only the image-inspect probe
-
-    def test_ensure_built_builds_from_dockerfile_when_missing(self) -> None:
+    def test_ensure_built_builds_even_when_image_present(self) -> None:
+        # Always build (cache-aware) so a flat-source change rebuilds; the old
+        # build-if-missing silently ran a stale single-tenant image.
         calls: list[list[str]] = []
 
-        def fake(argv: list[str]) -> Mock:
+        def rec(argv: list[str]) -> Mock:
             calls.append(argv)
-            if argv[:3] == ["docker", "image", "inspect"]:
-                return _proc(returncode=1)  # missing
-            return _proc()
+            return _proc()  # image present, build succeeds
 
-        with patch(_RUN_DOCKER, side_effect=fake):
+        with patch(_RUN_DOCKER, side_effect=rec):
             self.sc.ensure_built()
-
         builds = [c for c in calls if c[:2] == ["docker", "build"]]
         self.assertEqual(1, len(builds))
         self.assertIn(self.sc.image_ref, builds[0])
-        self.assertIn("-f", builds[0])
         self.assertTrue(any(a.endswith("Dockerfile.sidecars") for a in builds[0]))
+        self.assertNotIn("--no-cache", builds[0])
+
+    def test_ensure_built_no_cache_env_forces_full_rebuild(self) -> None:
+        calls: list[list[str]] = []
+
+        def rec(argv: list[str]) -> Mock:
+            calls.append(argv)
+            return _proc()
+
+        with patch(_RUN_DOCKER, side_effect=rec), \
+                patch.dict("os.environ", {"BOT_BOTTLE_NO_CACHE": "1"}):
+            self.sc.ensure_built()
+        builds = [c for c in calls if c[:2] == ["docker", "build"]]
+        self.assertIn("--no-cache", builds[0])
 
     def test_ensure_built_noop_when_no_dockerfile(self) -> None:
         sc = DockerGateway("busybox", dockerfile=None)
@@ -159,12 +166,7 @@ class TestDockerGatewayBuild(unittest.TestCase):
         m.assert_not_called()
 
     def test_ensure_built_raises_on_build_failure(self) -> None:
-        def fake(argv: list[str]) -> Mock:
-            if argv[:3] == ["docker", "image", "inspect"]:
-                return _proc(returncode=1)
-            return _proc(returncode=1, stderr="build boom")
-
-        with patch(_RUN_DOCKER, side_effect=fake):
+        with patch(_RUN_DOCKER, return_value=_proc(returncode=1, stderr="build boom")):
             with self.assertRaises(GatewayError):
                 self.sc.ensure_built()
 

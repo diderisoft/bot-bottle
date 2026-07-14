@@ -109,17 +109,23 @@ class DockerGateway(Gateway):
         return run_docker(["docker", "image", "inspect", self.image_ref]).returncode == 0
 
     def ensure_built(self) -> None:
-        """Build the bundle image from its Dockerfile when it's missing.
-        No-op when the image is already present, or when no dockerfile is
-        configured (e.g. a pre-pulled image)."""
-        if self._dockerfile is None or self.image_exists():
+        """Build the bundle image from its Dockerfile, **cache-aware** — cheap
+        (a cache check) when nothing changed, a real rebuild when the flat
+        sources (egress addon / git-http / policy_resolver / supervise) moved.
+
+        This deliberately builds every time rather than build-if-missing: the
+        per-bottle model kept the image fresh via compose's `build:` on up, and
+        a stale image silently runs the OLD single-tenant daemons. No-op only
+        when no dockerfile is configured (a pre-pulled image). BOT_BOTTLE_NO_CACHE
+        forces a full rebuild (parity with `start --no-cache`)."""
+        if self._dockerfile is None:
             return
-        proc = run_docker([
-            "docker", "build",
-            "-t", self.image_ref,
-            "-f", str(self._build_context / self._dockerfile),
-            str(self._build_context),
-        ])
+        argv = ["docker", "build", "-t", self.image_ref,
+                "-f", str(self._build_context / self._dockerfile),
+                str(self._build_context)]
+        if os.environ.get("BOT_BOTTLE_NO_CACHE"):
+            argv.insert(2, "--no-cache")
+        proc = run_docker(argv)
         if proc.returncode != 0:
             raise GatewayError(f"gateway image build failed: {proc.stderr.strip()}")
 
