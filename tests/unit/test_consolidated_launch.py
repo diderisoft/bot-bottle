@@ -39,7 +39,10 @@ def _client(*, bottles: list[dict[str, object]] | None = None) -> Mock:
 
 
 class TestLaunchConsolidated(unittest.TestCase):
-    def _run(self, client: Mock, provision: Mock | None = None, *, on_network=("172.18.0.2",)):
+    def _run(
+        self, client: Mock, provision: Mock | None = None,
+        *, on_network: tuple[str, ...] = ("172.18.0.2",),
+    ):
         service = MagicMock()
         service.ensure_running.return_value = "http://orch:8080"
         with patch(f"{_MOD}._network_cidr", return_value="172.18.0.0/16"), \
