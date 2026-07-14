@@ -144,6 +144,18 @@ class DockerGateway(Gateway):
         ])
         return self.name in proc.stdout.split()
 
+    def _running_image_is_current(self) -> bool:
+        """True iff the running gateway was created from the *current*
+        `image_ref`. When `ensure_built` rebuilds the image (a source change),
+        the running container is still the OLD image running the OLD flat
+        daemons — so this is how a rebuild actually takes effect: a mismatch
+        means recreate."""
+        running = run_docker(["docker", "inspect", "--format", "{{.Image}}", self.name])
+        current = run_docker(["docker", "image", "inspect", "--format", "{{.Id}}", self.image_ref])
+        if running.returncode != 0 or current.returncode != 0:
+            return True  # can't compare → don't churn a working container
+        return running.stdout.strip() == current.stdout.strip()
+
     def _ensure_network(self) -> None:
         """Create the shared gateway network if it doesn't exist. Idempotent —
         a concurrent create loses harmlessly (the loser sees 'already exists').
@@ -157,11 +169,15 @@ class DockerGateway(Gateway):
             )
 
     def ensure_running(self) -> None:
-        if self.is_running():
+        # Recreate when the running container's image is stale (a rebuild),
+        # so source changes to the gateway's flat daemons take effect — not
+        # just when the container is absent.
+        if self.is_running() and self._running_image_is_current():
             return
         self._ensure_network()
-        # Clear any stale (stopped) container holding the fixed name, then
-        # start fresh. `rm --force` on an absent name is a tolerated no-op.
+        # Clear any stale (stopped OR outdated-image) container holding the
+        # fixed name, then start fresh. `rm --force` on an absent name is a
+        # tolerated no-op.
         run_docker(["docker", "rm", "--force", self.name])
         argv = [
             "docker", "run", "--detach",

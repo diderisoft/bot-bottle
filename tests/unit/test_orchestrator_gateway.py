@@ -35,11 +35,43 @@ class TestDockerGateway(unittest.TestCase):
         with patch(_RUN_DOCKER, return_value=_proc(stdout="")):
             self.assertFalse(self.sc.is_running())
 
-    def test_ensure_running_is_noop_when_already_up(self) -> None:
-        with patch(_RUN_DOCKER, return_value=_proc(stdout=self.sc.name)) as m:
+    def test_ensure_running_noop_when_up_and_image_current(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake(argv: list[str]) -> Mock:
+            calls.append(argv)
+            if argv[:2] == ["docker", "ps"]:
+                return _proc(stdout=self.sc.name)          # running
+            if argv[:3] == ["docker", "image", "inspect"]:
+                return _proc(stdout="img-A")               # current image id
+            if argv[:2] == ["docker", "inspect"]:
+                return _proc(stdout="img-A")               # container's image (same)
+            return _proc()
+
+        with patch(_RUN_DOCKER, side_effect=fake):
             self.sc.ensure_running()
-        # Only the is_running() ps probe — no rm / run.
-        self.assertEqual(1, m.call_count)
+        self.assertEqual([], [c for c in calls if c[:2] == ["docker", "run"]])
+        self.assertEqual([], [c for c in calls if c[:2] == ["docker", "rm"]])
+
+    def test_ensure_running_recreates_when_image_is_stale(self) -> None:
+        # Running, but the container was built from an OLD image → recreate so
+        # a rebuild's new flat daemons take effect.
+        calls: list[list[str]] = []
+
+        def fake(argv: list[str]) -> Mock:
+            calls.append(argv)
+            if argv[:2] == ["docker", "ps"]:
+                return _proc(stdout=self.sc.name)
+            if argv[:3] == ["docker", "image", "inspect"]:
+                return _proc(stdout="img-NEW")
+            if argv[:2] == ["docker", "inspect"]:
+                return _proc(stdout="img-OLD")
+            return _proc()
+
+        with patch(_RUN_DOCKER, side_effect=fake):
+            self.sc.ensure_running()
+        self.assertEqual(1, len([c for c in calls if c[:2] == ["docker", "run"]]))
+        self.assertTrue(any(c[:2] == ["docker", "rm"] for c in calls))
 
     def test_ensure_running_starts_the_singleton_when_absent(self) -> None:
         calls: list[list[str]] = []
