@@ -10,6 +10,7 @@ import shutil
 import subprocess
 from typing import Iterable, Iterator
 
+from ...docker_cmd import run_docker
 from ...log import die, info
 # from ...workspace import WorkspacePlan
 
@@ -96,7 +97,7 @@ def docker_exec(container: str, argv: list[str], *, user: str = "") -> None:
     if user:
         cmd += ["-u", user]
     cmd += [container, *argv]
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    result = run_docker(cmd)
     if result.returncode != 0:
         die(
             f"docker exec in {container} failed: "
@@ -106,9 +107,7 @@ def docker_exec(container: str, argv: list[str], *, user: str = "") -> None:
 
 def docker_cp(src: str, dest: str) -> None:
     """Run `docker cp`, dying with the command's own stderr on failure."""
-    result = subprocess.run(
-        ["docker", "cp", src, dest], capture_output=True, text=True, check=False,
-    )
+    result = run_docker(["docker", "cp", src, dest])
     if result.returncode != 0:
         die(f"docker cp {src} -> {dest} failed: "
             f"{(result.stderr or '').strip() or '<no stderr>'}")
@@ -158,12 +157,7 @@ def verify_agent_image(image: str, argv: tuple[str, ...]) -> None:
     hasn't declared a smoke test (`AgentProviderRuntime.smoke_test`)."""
     if not argv:
         return
-    result = subprocess.run(
-        ["docker", "run", "--rm", "--entrypoint", argv[0], image, *argv[1:]],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    result = run_docker(["docker", "run", "--rm", "--entrypoint", argv[0], image, *argv[1:]])
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
         die(
