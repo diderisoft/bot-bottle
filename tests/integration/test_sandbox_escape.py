@@ -72,7 +72,7 @@ _DUMMY_HOST_KEY = (
     os.environ.get("GITEA_ACTIONS") == "true",
     "skipped under act_runner: egress_tls_init uses a host bind mount "
     "the runner container can't see, and the network topology hides "
-    "sibling-sidecar visibility — same constraint as the other "
+    "sibling-gateway visibility — same constraint as the other "
     "bottle-bringup integration tests",
 )
 class TestSandboxEscape(unittest.TestCase):
@@ -90,8 +90,8 @@ class TestSandboxEscape(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        # Docker is always required (the agent + sidecars run under it,
-        # and VM backends still use it for the sidecar bundle); the
+        # Docker is always required (the agent + companion containers run under it,
+        # and VM backends still use it for the gateway); the
         # class-level @skip_unless_docker already covers that. Pin
         # Docker when BOT_BOTTLE_BACKEND is unset to preserve the
         # Docker-backed CI path.
@@ -121,7 +121,7 @@ class TestSandboxEscape(unittest.TestCase):
                     "egress": {
                         "routes": [{"host": "api.anthropic.com"}],
                     },
-                    # git-gate sidecar so attack 5 can push. Upstream
+                    # git-gate daemon so attack 5 can push. Upstream
                     # is intentionally unreachable — the pre-receive
                     # gitleaks hook must reject BEFORE git-gate
                     # attempts the upstream push. A preset `host_key`
@@ -275,7 +275,7 @@ class TestSandboxEscape(unittest.TestCase):
 
     def _assert_sandbox_block(self, label: str, r: object) -> None:  # type: ignore
         """A real sandbox block produces an HTTP 403 with a
-        recognizable sandbox sidecar marker in the body. ANY
+        recognizable sandbox gateway marker in the body. ANY
         other outcome (200 from upstream, 401/404 from upstream,
         non-marker 5xx) means the request escaped — the secret
         reached the network."""

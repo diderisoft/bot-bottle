@@ -6,7 +6,7 @@ resources.
 
 The PipelockProxy.stop idempotency case that used to live here was
 removed in PRD 0024 chunk 3 when the per-container .stop method
-went away — sidecar teardown is now compose's responsibility, and
+went away — gateway teardown is now compose's responsibility, and
 `compose down` already no-ops on missing containers."""
 
 import os

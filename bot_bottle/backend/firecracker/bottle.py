@@ -7,7 +7,7 @@ session. `ssh -t` forwards the host terminal's SIGWINCH to the remote
 PTY natively, so no separate resize bridge is needed.
 
 Commands run as the image's `node` user via `runuser`, with HOME/USER/
-PATH and the bottle env (HTTPS_PROXY at the sidecar, CA paths, …) set
+PATH and the bottle env (HTTPS_PROXY at the gateway, CA paths, …) set
 per-invocation through `env` (the VM itself just runs the init; it has
 no baked-in process env like a `docker run` container would).
 """

@@ -1,6 +1,6 @@
 """Active-agent enumeration for the Firecracker backend.
 
-The backend is disabled during the de-sidecar cleanup (#385) — it can't
+The backend is disabled during the companion-container removal (#385) — it can't
 launch bottles, so there are none to enumerate. Real enumeration returns
 with the backend's consolidated relaunch (#354).
 """

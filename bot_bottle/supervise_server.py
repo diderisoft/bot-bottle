@@ -1,4 +1,4 @@
-"""Supervise sidecar HTTP server (PRD 0013).
+"""Supervise daemon HTTP server (PRD 0013).
 
 Per-bottle MCP server exposing tools the agent calls to propose egress
 config changes when stuck. The tools are `egress-allow`,

@@ -71,7 +71,7 @@ class YamlSubsetError(ValueError):
     that want fatal-exit semantics (manifest loader, egress-apply,
     etc.) catch this at their own boundary and forward to `die`;
     callers running outside the bot-bottle CLI process (the
-    egress sidecar's addon) handle it as a normal exception."""
+    egress daemon's addon) handle it as a normal exception."""
 
 
 

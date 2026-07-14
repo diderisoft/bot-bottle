@@ -39,7 +39,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--gateway", action="store_true",
-        help="run one consolidated per-host sidecar bundle (build-if-missing)",
+        help="run one consolidated per-host gateway (build-if-missing)",
     )
     args = parser.parse_args(argv)
 

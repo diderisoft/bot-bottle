@@ -218,9 +218,9 @@ class TestHookRender(unittest.TestCase):
         self.assertIn("supervisor approved # gitleaks:allow", hook)
         self.assertIn("supervisor rejected # gitleaks:allow", hook)
 
-    def test_inline_gitleaks_allow_python_imports_work_in_sidecar_layout(self):
+    def test_inline_gitleaks_allow_python_imports_work_in_gateway_layout(self):
         hook = git_gate_render_hook()
-        # The sidecar image copies supervise.py flat under /app, while
+        # The gateway image copies supervise.py flat under /app, while
         # host-side tests import it through the bot_bottle package.
         # Hooks execute from the bare repo directory, so the embedded
         # Python must include /app and support both import layouts.

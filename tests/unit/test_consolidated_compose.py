@@ -19,8 +19,8 @@ class TestConsolidatedAgentCompose(unittest.TestCase):
             plan = type(plan)(**{**vars(plan), "use_runsc": True})  # type: ignore[arg-type]
         return consolidated_agent_compose(plan, gateway_ip=_GW, source_ip=_IP, network=_NET)
 
-    def test_only_agent_service_no_sidecars(self) -> None:
-        # The whole point of consolidation: no per-bottle sidecar bundle.
+    def test_only_agent_service_no_companion_container(self) -> None:
+        # The whole point of consolidation: no per-bottle gateway.
         self.assertEqual(["agent"], list(self._spec()["services"]))
 
     def test_agent_pinned_on_external_gateway_network(self) -> None:
@@ -35,7 +35,7 @@ class TestConsolidatedAgentCompose(unittest.TestCase):
         # git-http + supervise on the gateway must bypass the egress proxy.
         self.assertTrue(any(e.startswith("NO_PROXY=") and _GW in e for e in env))
 
-    def test_no_sidecar_dependency(self) -> None:
+    def test_no_companion_container_dependency(self) -> None:
         self.assertNotIn("depends_on", self._spec()["services"]["agent"])
 
     def test_runsc_runtime_when_enabled(self) -> None:

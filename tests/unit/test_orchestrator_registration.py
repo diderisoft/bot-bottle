@@ -28,7 +28,7 @@ def _plan(routes: tuple[EgressRoute, ...], *, slug: str = "demo", log: int = 0) 
 class TestEgressPolicy(unittest.TestCase):
     def test_policy_round_trips_through_load_config(self) -> None:
         # The policy the gateway serves must parse back to the same allow-list
-        # the per-bottle sidecar applied — moving onto the shared gateway must
+        # the per-bottle gateway applied — moving onto the shared gateway must
         # not change a bottle's egress.
         routes = (EgressRoute(host="api.example.com"), EgressRoute(host="pypi.org"))
         cfg = load_config(egress_policy(_plan(routes)))

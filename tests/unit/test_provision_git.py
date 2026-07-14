@@ -26,7 +26,7 @@ class TestGitGateGitconfigRender(unittest.TestCase):
         bottle = fixture_with_git().bottles["dev"]
         out = git_gate_render_gitconfig(bottle.git, GIT_GATE_HOSTNAME)
         # Both entries map to a [url ...] block keyed on the gate's
-        # short network alias (`git-gate`) inside the sidecar bundle.
+        # short network alias (`git-gate`) inside the gateway.
         self.assertIn(
             '[url "git://git-gate/bot-bottle.git"]',
             out,

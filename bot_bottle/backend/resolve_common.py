@@ -94,7 +94,7 @@ def prepare_egress(
 
 
 def prepare_supervise(bottle: ManifestBottle, slug: str) -> SupervisePlan | None:
-    """Prepare the supervise sidecar state dir. Returns None when
+    """Prepare the supervise daemon state dir. Returns None when
     bottle.supervise is falsy."""
     if not bottle.supervise:
         return None

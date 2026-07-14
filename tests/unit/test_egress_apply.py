@@ -72,7 +72,7 @@ class TestApplyRoutesChange(unittest.TestCase):
 
     def test_apply_routes_change_fails_closed_after_companion_removal(self):
         # The per-bottle companion container that live route-apply used to
-        # signal was removed in the de-sidecar cleanup (#385); apply now
+        # signal was removed in the companion-container removal (#385); apply now
         # fails closed until the gateway-side apply lands.
         with self.assertRaises(EgressApplyError) as cm:
             applicator.apply_routes_change(

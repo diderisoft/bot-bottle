@@ -1,8 +1,8 @@
 #!/bin/sh
-# Egress daemon entrypoint inside the sidecar bundle (PRD 0024).
+# Egress daemon entrypoint inside the gateway (PRD 0024).
 #
 # Extracted verbatim from Dockerfile.egress's prior inline `sh -c`
-# ENTRYPOINT so the supervisor in bot_bottle/sidecar_init.py can
+# ENTRYPOINT so the supervisor in bot_bottle/gateway_init.py can
 # call it as a normal child. Behavior is unchanged:
 #
 #   * Upstream proxy: when EGRESS_UPSTREAM_PROXY is set, switch
@@ -22,7 +22,7 @@ set -e
 
 # Pin mitmproxy's config dir to the bind-mount location of its CA
 # regardless of which user mitmdump runs as. In the legacy
-# four-sidecar setup (Dockerfile.egress, USER mitmproxy) this
+# four-daemon setup (Dockerfile.egress, USER mitmproxy) this
 # resolved naturally to `~mitmproxy/.mitmproxy`. In the PRD 0024
 # bundle (USER root) `~root/.mitmproxy` is empty, so without this
 # flag mitmdump would generate a fresh CA on the wrong path and

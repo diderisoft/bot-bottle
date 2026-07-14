@@ -4,7 +4,7 @@
 # Creates a pool of point-to-point TAP devices (owned by the invoking
 # user so the backend can open them without root at launch) and a
 # dedicated nftables table that isolates every VM: a bottle VM can
-# reach only its own sidecar (published on the host-side TAP IP) and
+# reach only its own gateway (published on the host-side TAP IP) and
 # nothing else on the host or network.
 #
 # Why a pool + one-time setup: creating a TAP and assigning it an IP
@@ -72,9 +72,9 @@ for _v in POOL_SIZE IP_BASE PREFIX TABLE; do
     [ -n "${!_v}" ] || { echo "error: $_v unresolved (set BOT_BOTTLE_FC_* or fix $_DEFAULTS)" >&2; exit 1; }
 done
 
-# Sidecar ports (must match the backend). egress=9099, supervise=9100,
+# Gateway ports (must match the backend). egress=9099, supervise=9100,
 # git-http=9420. Reached by the VM at its host-side TAP IP.
-SIDECAR_PORTS="9099,9100,9420"
+GATEWAY_PORTS="9099,9100,9420"
 
 # --- IP math ---------------------------------------------------------
 # Slot i occupies the /31 {base+2i, base+2i+1}: host = base+2i (the
@@ -107,7 +107,7 @@ cmd_up() {
     fi
     echo "firecracker net pool: $POOL_SIZE slots, base $IP_BASE, $own_desc"
 
-    # VM->sidecar traffic is DNAT'd to the sidecar container and
+    # VM->gateway traffic is DNAT'd to the gateway container and
     # forwarded, so forwarding must be enabled (Docker also sets this).
     sysctl -qw net.ipv4.ip_forward=1
 
@@ -135,11 +135,11 @@ _install_nft() {
     # tool's traffic is affected. Priority -10 runs before Docker's
     # filter hooks (priority 0); a drop here is terminal for the packet.
     #
-    #   forward: VM egress is DNAT'd to the sidecar (established via
+    #   forward: VM egress is DNAT'd to the gateway (established via
     #     `ct status dnat`); return traffic via `ct state established`.
     #     Anything else from a VM is dropped -> no route to the internet
-    #     or the rest of the host except through the sidecar proxy.
-    #   input: a VM never needs host-local delivery (its sidecar is
+    #     or the rest of the host except through the gateway proxy.
+    #   input: a VM never needs host-local delivery (its gateway is
     #     reached via DNAT->forward), so drop all direct input from VMs
     #     -> host services bound on 0.0.0.0 are unreachable from the VM.
     nft -f - <<EOF

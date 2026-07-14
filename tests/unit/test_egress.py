@@ -586,7 +586,7 @@ class TestCanaryGeneration(unittest.TestCase):
 
 
 class TestEgressEnvEntries(unittest.TestCase):
-    def test_sidecar_entries_include_route_tokens_and_canary_scan_prefix(self):
+    def test_gateway_entries_include_route_tokens_and_canary_scan_prefix(self):
         plan = EgressPlan(
             slug="s",
             routes_path=Path("/tmp/r.yaml"),

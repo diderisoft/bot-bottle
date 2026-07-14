@@ -7,7 +7,7 @@ exercise the parse + decision functions without depending on the
 container.
 
 Imports: stdlib + `yaml_subset` (which is itself stdlib-only and
-ships flat into the sidecar bundle image alongside this file —
+ships flat into the gateway image alongside this file —
 see `Dockerfile.gateway`)."""
 
 from __future__ import annotations

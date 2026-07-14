@@ -240,7 +240,7 @@ class EgressAddon:
         tokens, resolved by source IP in one round-trip (fail-closed to deny-all
         + empty slug if unattributed); `env` is the process env overlaid with
         the bottle's tokens, so upstream-auth injection (and DLP) use *this*
-        bottle's credentials — exactly what the per-bottle sidecar's env did.
+        bottle's credentials — exactly what the per-bottle gateway daemon's env did.
         The identity token, if the agent injected one, is read then stripped so
         it never leaks upstream."""
         if self._resolver is None:

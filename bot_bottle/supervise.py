@@ -1,25 +1,25 @@
 """Per-bottle supervise plane (PRD 0013).
 
-The supervise plane is the per-bottle MCP sidecar plus its host-side
-queue/audit support. The sidecar (bot_bottle.supervise_server)
+The supervise plane is the per-bottle MCP daemon plus its host-side
+queue/audit support. The daemon (bot_bottle.supervise_server)
 sits on the bottle's internal network and exposes MCP tools the agent
 calls when it needs an operator-reviewed egress change:
 
   * egress-block / allow — agent proposes a new routes.yaml
 
 Each tool call: the agent passes the full proposed file plus a
-justification text. The sidecar validates the proposal syntactically,
+justification text. The gateway validates the proposal syntactically,
 writes it to the host SQLite queue table, and holds the tool-call
 connection open. The operator's supervise TUI
 (bot_bottle.cli.supervise) sees the proposal, accepts
-approve / modify / reject, and writes a response row. The sidecar sees
+approve / modify / reject, and writes a response row. The gateway sees
 the response and returns `{status, notes}` to the agent.
 
 This module defines the host-side library: dataclasses for the queue
 record shapes, queue read/write helpers, the audit log writer, and the
-diff renderer. The in-container sidecar lives in
+diff renderer. The in-gateway daemon lives in
 bot_bottle/supervise_server.py; the supervise daemon's container
-lifecycle is owned by the sidecar bundle (PRD 0024).
+lifecycle is owned by the gateway (PRD 0024).
 
 For 0013 the supervisor's approval handlers are deliberately no-ops:
 on approval the audit log is written and the response file is
@@ -75,18 +75,18 @@ except ImportError:
 
 try:
     from .paths import bot_bottle_root
-except ImportError:  # flat imports inside the sidecar bundle
+except ImportError:  # flat imports inside the gateway
     from paths import bot_bottle_root  # type: ignore[import-not-found,no-redef]  # pylint: disable=import-error,no-name-in-module
 
 
 SUPERVISE_HOSTNAME = "supervise"
 SUPERVISE_PORT = 9100
 
-# The supervise sidecar uses these to query egress's
+# The supervise daemon uses these to query egress's
 # introspection endpoint for the `list-egress-routes` MCP
 # tool. The hostname + port match egress's docker network
 # listen port (see backend.docker.egress.EGRESS_PORT). The supervise
-# daemon runs inside the sidecar bundle alongside egress, so loopback
+# daemon runs inside the gateway alongside egress, so loopback
 # is the stable address across docker, firecracker, and Apple
 # Container backends.
 EGRESS_FORWARD_PROXY = "http://127.0.0.1:9099"
@@ -117,7 +117,7 @@ try:
     from .audit_store import AuditStore
     from .store_manager import StoreManager
 except ImportError:
-    # Sidecar bundle: files are flat-copied under /app, not a package.
+    # Gateway: files are flat-copied under /app, not a package.
     from queue_store import QueueStore  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
     from audit_store import AuditStore  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
     from store_manager import StoreManager  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
@@ -222,14 +222,14 @@ def sha256_hex(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
-# --- Sidecar plan + abstract lifecycle -------------------------------------
+# --- Gateway plan + abstract lifecycle -------------------------------------
 
 
 @dataclass(frozen=True)
 class SupervisePlan:
     """Output of Supervise.prepare; consumed by .start.
 
-    `db_path` is the host database bind-mounted into the sidecar at
+    `db_path` is the host database bind-mounted into the gateway at
     /run/supervise/bot-bottle.db. `internal_network` is empty at
     prepare time; the backend's launch step fills it via
     dataclasses.replace before calling .start."""
@@ -240,8 +240,8 @@ class SupervisePlan:
 
 
 class Supervise(ABC):
-    """Per-bottle supervise sidecar. Encapsulates host-side database
-    staging; the sidecar's start/stop lifecycle is backend-specific."""
+    """Per-bottle supervise daemon. Encapsulates host-side database
+    staging; the gateway's start/stop lifecycle is backend-specific."""
 
     def prepare(
         self,

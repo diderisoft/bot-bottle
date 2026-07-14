@@ -5,7 +5,7 @@ PRD 0018 chunk 3: each instance is one `docker compose` project.
 The flow is:
 
   1. Build the agent image from the provider Dockerfile (compose
-     builds the sidecar images via the `build:` directive on first up).
+     builds the gateway image on first up).
   2. Mint the per-bottle egress CA (chunk 2 writes it under
      state/<slug>/egress/).
   3. Populate the inner plans with launch-time fields so the

@@ -76,7 +76,7 @@ def network_create_internal(slug: str) -> str:
 
 def network_create_egress(slug: str) -> str:
     """Create a per-agent user-defined bridge (NOT the legacy `bridge`)
-    so the egress sidecar has working DNS for upstream hostnames."""
+    so the egress daemon has working DNS for upstream hostnames."""
     return _network_create_with_prefix(network_egress_name_for_slug(slug), internal=False)
 
 

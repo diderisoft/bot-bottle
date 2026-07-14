@@ -18,7 +18,7 @@ Topology (per slot i):
   * a /31 host<->guest link: host = base + 2i (the gateway the VM
     routes through), guest = base + 2i + 1 (the VM's address).
   * isolation via ``table inet bot_bottle_fc``: a VM reaches only its
-    own sidecar (DNAT'd from the host TAP IP) and nothing else.
+    own gateway (DNAT'd from the host TAP IP) and nothing else.
 
 The default IP block is ``10.243.0.0/16`` — an intentionally obscure
 corner of RFC-1918 private space. RFC-1918 is the range *designated*
@@ -88,7 +88,7 @@ def ip_base() -> str:
     return _cfg("BOT_BOTTLE_FC_IP_BASE")
 
 
-# Sidecar ports the VM reaches at its host-side TAP IP. Kept in sync
+# Gateway ports the VM reaches at its host-side TAP IP. Kept in sync
 # with the backend constants (egress 9099, supervise 9100, git-http
 # 9420); rendered into the setup output for operator visibility.
 GATEWAY_PORTS = (9099, 9100, 9420)

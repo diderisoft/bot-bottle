@@ -1,6 +1,6 @@
 """Per-agent git-gate (PRD 0008).
 
-A third per-agent sidecar that fronts the bottle's declared git
+A third per-agent daemon that fronts the bottle's declared git
 upstreams as a transparent mirror. Each `bottle.git` entry maps to
 a bare repo on the gate; `git daemon` serves the bare repos over
 `git://<gate>/<name>.git`. Two hooks make the mirror bidirectional:
@@ -15,7 +15,7 @@ a bare repo on the gate; `git daemon` serves the bare repos over
 
 The agent never sees the upstream credential under either path.
 
-Why a separate sidecar (not folded into egress or ssh-gate): the
+Why a separate daemon (not folded into egress or ssh-gate): the
 gate is the only one of the three that holds upstream push
 credentials. Mixing it with egress would put push creds in the
 same blast radius as internet-facing TLS interception; mixing it
@@ -23,7 +23,7 @@ with ssh-gate would force ssh-gate above L4 and into git-protocol
 land. See `docs/prds/0008-git-gate.md`.
 
 This module defines the abstract gate (`GitGate`) and its plan
-dataclass (`GitGatePlan`). The sidecar's start/stop lifecycle is
+dataclass (`GitGatePlan`). The gateway's start/stop lifecycle is
 backend-specific and lives on concrete subclasses (see
 `bot_bottle/backend/docker/git_gate.py`)."""
 
@@ -86,7 +86,7 @@ class GitGatePlan:
 
 class GitGate(ABC):
     """The per-agent git-gate. Encapsulates the host-side prepare
-    (upstream lift + entrypoint/hook render); the sidecar's
+    (upstream lift + entrypoint/hook render); the gateway's
     start/stop lifecycle is backend-specific and lives on concrete
     subclasses."""
 

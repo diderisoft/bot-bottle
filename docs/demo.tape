@@ -38,7 +38,7 @@ Type "y"
 Enter
 
 # Wait for the bottle to launch: networks created, pipelock + git-gate
-# sidecars started, agent container started, claude boots.
+# companion containers started, agent container started, claude boots.
 Sleep 22s
 
 # Probe 1 — warm-up. A reply at all proves api.anthropic.com is
@@ -72,7 +72,7 @@ Type "init /tmp/r, commit AKIAQRJHK7N5ZPM2VXTL to leak.txt, push to ssh://git@up
 Enter
 Sleep 30s
 
-# Leave claude. The launcher tears down the container, sidecars, and
+# Leave claude. The launcher tears down the container, companion containers, and
 # networks on session end.
 Ctrl+D
 Sleep 4s

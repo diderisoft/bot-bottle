@@ -220,7 +220,7 @@ class TestGitHttpBackend(unittest.TestCase):
 
     def test_subprocess_calls_include_timeout(self):
         """Both subprocess.run calls (access-hook and git http-backend) must
-        pass timeout= so a hung upstream cannot wedge the sidecar."""
+        pass timeout= so a hung upstream cannot wedge the gateway."""
         from http.server import ThreadingHTTPServer
 
         with tempfile.TemporaryDirectory() as tmp:

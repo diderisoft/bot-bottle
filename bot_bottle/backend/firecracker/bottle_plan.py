@@ -13,7 +13,7 @@ from .. import BottlePlan
 class FirecrackerBottlePlan(BottlePlan):
     slug: str
     forwarded_env: dict[str, str] = field(repr=False)
-    # Stamped by launch once the sidecar is up and its ports are
+    # Stamped by launch once the gateway is up and its ports are
     # published on the host-side TAP IP (empty at prepare time).
     agent_proxy_url: str = ""
     agent_git_gate_url: str = ""
@@ -21,7 +21,7 @@ class FirecrackerBottlePlan(BottlePlan):
 
     @property
     def container_name(self) -> str:
-        """Instance name, reused for the sidecar container + VM run dir.
+        """Instance name, reused for the gateway container + VM run dir.
         Matches the `bot-bottle-<slug>` convention the other backends
         use so cleanup/enumerate discovery-by-prefix keeps working."""
         return self.agent_provision.instance_name

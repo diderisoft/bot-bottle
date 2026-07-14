@@ -2,7 +2,7 @@
 
 The firecracker backend launched a per-bottle companion container (the
 egress / git-gate / supervise data plane) alongside each microVM. That
-per-bottle-companion architecture was removed in the de-sidecar cleanup;
+per-bottle-companion architecture was removed in the companion-container removal;
 firecracker's replacement — the consolidated per-host gateway — lands in
 its own cutover (#354).
 

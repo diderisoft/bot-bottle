@@ -1,6 +1,6 @@
 """Unit: LOG_FULL credential redaction in _log_request / _log_response (issue #257).
 
-egress_addon.py is sidecar-only code that depends on mitmproxy, which is
+egress_addon.py is gateway-only code that depends on mitmproxy, which is
 not installed on the host. This file pre-populates sys.modules with the
 minimum mocks needed so EgressAddon can be imported and tested without the
 real mitmproxy package."""
@@ -17,7 +17,7 @@ from unittest.mock import patch
 
 
 # ---------------------------------------------------------------------------
-# Sidecar-import shims — must run before importing egress_addon
+# Gateway-import shims — must run before importing egress_addon
 # ---------------------------------------------------------------------------
 
 def _ensure_shims() -> None:

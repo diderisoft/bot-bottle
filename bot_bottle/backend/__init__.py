@@ -199,7 +199,7 @@ class ActiveAgent:
     bottle is the container, the agent is what runs in it.)
 
     Fields are deliberately backend-neutral. `services` is the set
-    of sidecar daemons currently up for this bottle (`egress`,
+    of gateway daemons currently up for this bottle (`egress`,
     `git-gate`, `supervise`); the dashboard uses it to
     gate edit verbs. `backend_name` is the matching key in
     `_BACKENDS` (`docker` / `firecracker` / `macos-container`) — used by the active-
@@ -251,7 +251,7 @@ class Bottle(ABC):
         `user` (default `node`, matching the agent image's USER
         directive) and return the captured stdout/stderr/returncode.
         The bottle's environment (including HTTPS_PROXY pointing at
-        the egress sidecar) is inherited by the child. Non-zero
+        the egress daemon) is inherited by the child. Non-zero
         exit does not raise — callers inspect `returncode`
         themselves.
 
@@ -454,7 +454,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         declarative provision-plan apply, supervise MCP registration)
         live on the `AgentProvider` plugin. The backend only owns the
         steps that are about backend infrastructure (CA, workspace,
-        git) and surfaces the supervise sidecar URL its launch step
+        git) and surfaces the supervise daemon URL its launch step
         knows about via `supervise_mcp_url`.
 
         PRD 0017: cred-proxy's agent-side dotfile rewrites (~/.npmrc,
@@ -502,7 +502,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
 
     def supervise_mcp_url(self, plan: PlanT) -> str:
         """Return the agent-side URL of the per-bottle supervise
-        sidecar, or "" when this bottle has no sidecar. The provider
+        gateway, or "" when this bottle has no gateway. The provider
         plugin's `provision_supervise_mcp` uses it to register the
         MCP entry inside the guest.
 
@@ -524,7 +524,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
     def enumerate_active(self) -> Sequence[ActiveAgent]:
         """Return every currently-running agent on this backend.
         Empty when none. Backend-specific: docker queries `docker
-        compose ls`; firecracker cross-references its running sidecar
+        compose ls`; firecracker cross-references its running gateway
         containers against per-bottle metadata."""
 
     @classmethod

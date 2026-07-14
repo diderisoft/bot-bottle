@@ -18,8 +18,7 @@ tests/
     test_manifest_runtime.py
     ...                             # many others; see unit/ directory
   integration/
-    test_sidecar_bundle_image.py
-    test_sidecar_bundle_compose.py
+    test_gateway_image.py
     test_dry_run_plan.py
     test_orphan_cleanup.py
     ...
@@ -48,12 +47,9 @@ Discovery is invoked with `-t .` (top-level dir = repo root) so the
   the bottle's runtime, and creates zero Docker resources.
 - `test_orphan_cleanup.py` — `network_remove` is idempotent against
   missing resources, so the EXIT trap can call it unconditionally.
-- `test_sidecar_bundle_image.py` — builds Dockerfile.gateway and
+- `test_gateway_image.py` — builds Dockerfile.gateway and
   probes that gitleaks / mitmdump / supervise are all reachable
-  inside the bundle.
-- `test_sidecar_bundle_compose.py` — end-to-end compose-up of an
-  agent + bundle pair; verifies the agent reaches the bundle via
-  the legacy network aliases.
+  inside the gateway image.
 
 ## Canaries
 

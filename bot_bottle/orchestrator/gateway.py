@@ -1,7 +1,7 @@
 """The consolidated per-host gateway (PRD 0070).
 
 The core consolidation win: **one** persistent gateway per host, shared by
-every bottle, instead of a sidecar bundle per bottle. It's safe to share
+every bottle, instead of a gateway per bottle. It's safe to share
 because the attribution invariant (source IP + identity token, see
 `registry`) lets the gateway attribute each request to the right bottle —
 so per-bottle policy lives in one long-lived process keyed on who's calling.
@@ -46,7 +46,7 @@ GATEWAY_CA_VOLUME = "bot-bottle-gateway-mitmproxy"
 GATEWAY_CA_CERT = f"{MITMPROXY_HOME}/mitmproxy-ca-cert.pem"
 
 # The gateway data-plane image + its Dockerfile. Kept as a local constant
-# rather than imported from backend.docker.sidecar_bundle, which would drag
+# rather than imported from the backend layer, which would drag
 # the whole backend layer into the lean orchestrator (see #359); unify when
 # that lands. Env override matches the backend's BOT_BOTTLE_GATEWAY_IMAGE.
 GATEWAY_IMAGE = os.environ.get("BOT_BOTTLE_GATEWAY_IMAGE", "bot-bottle-gateway:latest")

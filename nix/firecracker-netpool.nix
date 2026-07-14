@@ -2,7 +2,7 @@
 #
 # The one-time privileged setup the Firecracker backend needs: a pool of
 # user- (or group-) owned point-to-point TAP devices plus a fail-closed
-# nftables table that confines every microVM to its own sidecar.
+# nftables table that confines every microVM to its own gateway.
 #
 # NON-INVASIVE BY DESIGN. It does NOT flip `networking.nftables.enable`
 # (which would switch your whole host firewall backend) or
@@ -150,7 +150,7 @@ in
       }
     ];
 
-    # VM->sidecar traffic is DNAT'd and forwarded, so forwarding must be on.
+    # VM->gateway traffic is DNAT'd and forwarded, so forwarding must be on.
     boot.kernel.sysctl."net.ipv4.ip_forward" = 1;
 
     # One oneshot brings up the whole pool (TAPs + independent nft table)

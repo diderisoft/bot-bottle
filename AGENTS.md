@@ -8,10 +8,10 @@ broad permissions inside a sandbox, so a misbehaving agent cannot reach the
 host. A Python CLI (entry point `cli.py`, package `bot_bottle/`) orchestrates
 the runtime lifecycle and the copying of skills and env vars into it.
 The default backend on compatible macOS hosts is macos-container:
-agents and sidecar bundles run through Apple's `container` CLI without
+agents and gateways run through Apple's `container` CLI without
 requiring Docker. On KVM-capable Linux hosts the default is firecracker:
 agents run in a Firecracker microVM reached over SSH on a point-to-point
-TAP, while the sidecar bundle still uses Docker. The legacy Docker
+TAP, while the gateway still uses Docker. The legacy Docker
 backend remains available with `BOT_BOTTLE_BACKEND=docker` or
 `--backend=docker`.
 
@@ -59,7 +59,7 @@ backend remains available with `BOT_BOTTLE_BACKEND=docker` or
   in a PRD, research note, or decision record.
 - Low dependencies by default. The project is Python, stdlib-first (no
   runtime pip dependencies in the package itself; the only language
-  runtime is the Python 3.13 used by the CLI + sidecars). Ask before
+  runtime is the Python 3.13 used by the CLI + companion containers). Ask before
   adding new tools, runtimes, or package managers.
 - Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/):
   `<type>[(scope)][!]: <description>`, where `<type>` is one of `feat`, `fix`,

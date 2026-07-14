@@ -3,7 +3,7 @@
 This backend launched a per-bottle companion container (the egress /
 git-gate / supervise data plane) alongside the agent container, with the
 agent's proxy env pointed at the companion's host-only IP. That
-per-bottle-companion architecture was removed in the de-sidecar cleanup;
+per-bottle-companion architecture was removed in the companion-container removal;
 the macOS backend will be re-enabled once it grows the consolidated
 per-host gateway the docker backend already uses.
 

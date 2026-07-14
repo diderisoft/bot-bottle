@@ -1,7 +1,7 @@
 """Consolidated bottle launch sequence for the docker backend (PRD 0070).
 
 Composes the orchestrator primitives into the register/teardown sequence that
-replaces the per-bottle sidecar bundle:
+replaces the per-bottle gateway:
 
   1. ensure the orchestrator control plane + shared gateway are up;
   2. allocate the bottle a pinned source IP on the gateway network (the

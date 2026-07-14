@@ -1,7 +1,7 @@
 """Pure host-side rendering for the per-agent git-gate (PRD 0008).
 
 Builds the agent's `.gitconfig` insteadOf rewrites, the known_hosts
-line, and the entrypoint / pre-receive / access-hook scripts the sidecar
+line, and the entrypoint / pre-receive / access-hook scripts the gateway
 runs. No docker or forge calls — exposed for tests and reuse across
 backends. Split out of `git_gate.py` so the control surface (`GitGate`)
 and the deploy-key lifecycle (`git_gate_provision`) each read on their
@@ -16,7 +16,7 @@ from pathlib import Path
 
 from .manifest import ManifestBottle, ManifestGitEntry
 
-# Short network alias for git-gate inside the sidecar bundle. The
+# Short network alias for git-gate inside the gateway. The
 # agent's `.gitconfig` insteadOf rewrites resolve through this name.
 GIT_GATE_HOSTNAME = "git-gate"
 # Shared timeout (seconds) for all git-gate subprocess and CGI calls:
@@ -38,7 +38,7 @@ class GitGateUpstream:
     KnownHostKey string from the manifest; the gate's start step
     materialises it into a known_hosts file if non-empty.
 
-    the gate credential paths inside the running sidecar."""
+    the gate credential paths inside the running gateway."""
 
     name: str
     upstream_url: str

@@ -10,7 +10,7 @@ suite points it at a throwaway dir instead of monkey-patching the function
 override covers them all), and operators can relocate the root if needed.
 
 This module has no bot-bottle imports, so it is safe to import from any
-layer (and to COPY flat into the sidecar bundle).
+layer (and to COPY flat into the gateway).
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ def host_db_path() -> Path:
 
     Kept in its own `db/` subdirectory (not directly under the root) so a
     backend that can only bind-mount *directories* can share this one file
-    with a sidecar without exposing the root's other contents (git-gate
+    with a gateway without exposing the root's other contents (git-gate
     keys, per-bottle state, ...)."""
     return bot_bottle_root() / "db" / HOST_DB_FILENAME
 

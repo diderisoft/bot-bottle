@@ -1,4 +1,4 @@
-"""Integration: PRD 0024 chunk 1 — the sidecar bundle image builds
+"""Integration: PRD 0024 chunk 1 — the gateway image builds
 and the daemon binaries are present + executable inside it.
 
 This test does NOT exercise the daemons running against real
@@ -10,7 +10,7 @@ the chunk-1 contract:
     pull, COPYs resolve).
   - gitleaks, mitmdump are at the documented paths and answer
     `--version`.
-  - The Python init at /app/sidecar_init.py runs and prints the
+  - The Python init at /app/gateway_init.py runs and prints the
     expected "no daemons selected" line when the supervisor is
     pointed at an empty daemon set.
 
@@ -36,10 +36,10 @@ _DOCKERFILE = "Dockerfile.gateway"
 @unittest.skipIf(
     os.environ.get("GITEA_ACTIONS") == "true",
     "skipped under act_runner: multi-stage build pulls a 200+MB "
-    "mitmproxy base + two upstream sidecar images; runner storage "
+    "mitmproxy base + two upstream gateway images; runner storage "
     "+ time budget make this an interactive-only test",
 )
-class TestSidecarBundleImage(unittest.TestCase):
+class TestGatewayImage(unittest.TestCase):
     """Builds the image once for the class, then runs a few
     `docker run` probes against it."""
 
@@ -103,7 +103,7 @@ class TestSidecarBundleImage(unittest.TestCase):
         # ENTRYPOINT wiring works.
         proc = subprocess.run(
             ["docker", "run", "--rm",
-             "-e", "BOT_BOTTLE_SIDECAR_DAEMONS=nothing",
+             "-e", "BOT_BOTTLE_GATEWAY_DAEMONS=nothing",
              _IMAGE],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             timeout=10.0,

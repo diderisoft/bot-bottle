@@ -2,7 +2,7 @@
 bind-mounts target + the listening port. The prepare-time entrypoint
 / hook render lives on the platform-neutral `GitGate` ABC — backends
 instantiate it directly. The git-gate daemon's container lifecycle
-is owned by the sidecar bundle (PRD 0024)."""
+is owned by the gateway (PRD 0024)."""
 
 from __future__ import annotations
 

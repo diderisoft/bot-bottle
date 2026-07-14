@@ -2,7 +2,7 @@
 
 Used where `git://` push traffic over a host-published Docker port can
 hang before receive-pack reaches hooks (e.g. the firecracker backend,
-where the guest reaches the sidecar over the point-to-point TAP). The
+where the guest reaches the gateway over the point-to-point TAP). The
 wrapper serves the same `/git/*.git` bare repos through
 `git http-backend`, so pre-receive and upstream forwarding remain the
 git-gate enforcement point.
@@ -27,7 +27,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
-# policy_resolver ships flat alongside this file in the sidecar bundle
+# policy_resolver ships flat alongside this file in the gateway
 # image (see Dockerfile.gateway); the bot_bottle.* fallback is the
 # host-side / test path. Mirrors egress_addon's import shape.
 try:
@@ -103,7 +103,7 @@ def resolve_sandbox_root(
     return namespace
 
 # Mirrors git_gate_render.GIT_GATE_TIMEOUT_SECS. Duplicated rather than
-# imported: this module ships as a flat top-level sibling in the sidecar
+# imported: this module ships as a flat top-level sibling in the gateway
 # bundle image (see Dockerfile.gateway), not as part of the bot_bottle
 # package, so `bot_bottle.git_gate` and its dependency chain aren't
 # available at runtime.

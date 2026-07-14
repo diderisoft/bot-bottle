@@ -2,7 +2,7 @@
 
 This module defines the abstract proxy (`Egress`), its plan
 dataclass (`EgressPlan`), and the resolved per-route shape
-(`EgressRoute`). The sidecar's start/stop lifecycle is backend-
+(`EgressRoute`). The gateway's start/stop lifecycle is backend-
 specific and lives on concrete subclasses (see
 `bot_bottle/backend/docker/egress.py`).
 """
@@ -87,7 +87,7 @@ class EgressRoute(Route):
 
     Inherits `host`, `matches`, `auth_scheme`, and `token_env`
     from `egress_addon_core.Route` — those are the fields that cross the
-    YAML wire into the sidecar. The fields below are host-only and
+    YAML wire into the gateway. The fields below are host-only and
     are never serialised to the addon.
 
     `token_ref` is the host env var the CLI reads at launch and forwards
@@ -386,7 +386,7 @@ class Egress(ABC):
         routes_path.write_text(egress_render_routes(routes, log=log))
         routes_path.chmod(0o600)
         # Generate a per-session fake secret under a plausible random env name.
-        # The sidecar marks that exact env name as sensitive for known-secret
+        # The gateway marks that exact env name as sensitive for known-secret
         # scanning; the agent receives the same name/value as exfil bait.
         canary = secrets.token_urlsafe(32)
         return EgressPlan(

@@ -26,7 +26,7 @@ class QueueStore(DbStore):
         if db_path is not None:
             resolved = db_path
         else:
-            # In the sidecar container SUPERVISE_DB_PATH points at the
+            # In the gateway container SUPERVISE_DB_PATH points at the
             # bind-mounted host DB. On the host this env var is never set,
             # so we always fall through to host_db_path().
             env_path = os.environ.get("SUPERVISE_DB_PATH", "").strip()

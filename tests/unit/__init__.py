@@ -5,7 +5,7 @@ no test ever reads or writes the real ``~/.bot-bottle`` (state, queue,
 and audit dirs all derive from ``paths.bot_bottle_root()`` →
 ``Path.home()``). Without this, a test that takes a ``flock`` on the
 real audit log can **block indefinitely** when a live bottle's supervise
-sidecar holds that lock — observed as a hung ``coverage run`` at 0% CPU —
+gateway holds that lock — observed as a hung ``coverage run`` at 0% CPU —
 and unisolated tests otherwise pollute the developer's home dir.
 
 Individual tests that need their own ``HOME`` still override

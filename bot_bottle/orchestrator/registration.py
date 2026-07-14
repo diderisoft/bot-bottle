@@ -5,7 +5,7 @@ registry: turns a prepared bottle's egress plan into the backend-neutral
 inputs `Orchestrator.launch_bottle` takes — the egress **policy** blob and
 launch **metadata**.
 
-The policy blob is the exact routes YAML the per-bottle egress sidecar used
+The policy blob is the exact routes YAML the per-bottle egress daemon used
 to read from a file; in the consolidated model the multi-tenant gateway's
 `PolicyResolver` fetches it from the registry per request (keyed by source
 IP) instead. Same render, so consolidated and single-tenant egress apply

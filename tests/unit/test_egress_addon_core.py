@@ -951,7 +951,7 @@ class TestScanOutbound(unittest.TestCase):
             body='{"jsonrpc":"2.0","method":"initialize"}',
         )
         self.assertIsNone(scan_outbound(route, text, {
-            "EGRESS_TOKEN_0": "sidecar-owned-secret",
+            "EGRESS_TOKEN_0": "gateway-owned-secret",
         }))
 
     def test_token_in_body_blocked(self):
@@ -1302,7 +1302,7 @@ class TestScanOutboundEnhanced(unittest.TestCase):
         self.assertEqual("warn", result.severity)
 
     def test_bot_bottle_sensitive_prefixes_env_var(self):
-        # When the sidecar env contains BOT_BOTTLE_SENSITIVE_PREFIXES,
+        # When the gateway env contains BOT_BOTTLE_SENSITIVE_PREFIXES,
         # scan_outbound should scan those additional prefixes.
         secret = "extra-sensitive-value-abc"
         env = {
@@ -1324,7 +1324,7 @@ class TestScanOutboundEnhanced(unittest.TestCase):
         self.assertIsNotNone(result)
 
     def test_canary_detected_via_random_secret_env_name(self):
-        # The fake secret uses a randomized env name that the sidecar marks
+        # The fake secret uses a randomized env name that the gateway marks
         # as sensitive through BOT_BOTTLE_SENSITIVE_PREFIXES.
         canary = "canaryvalue12345abcdef"
         env = {

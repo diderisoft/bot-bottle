@@ -106,7 +106,7 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
             yield bottle
 
     def supervise_mcp_url(self, plan: DockerBottlePlan) -> str:
-        """Docker bottles reach the supervise sidecar via the
+        """Docker bottles reach the supervise daemon via the
         compose-network alias `supervise:9100`. No per-bottle URL
         plumbing needed; the alias resolves inside the bridge."""
         if plan.supervise_plan is None:

@@ -39,10 +39,10 @@ class ManifestBottle:
     # identity without any git-gate.repos upstreams, and vice versa.
     git_user: ManifestGitUser = field(default_factory=ManifestGitUser)
     egress: ManifestEgressConfig = field(default_factory=ManifestEgressConfig)
-    # Per-bottle stuck-recovery sidecar (PRD 0013). When true (the
+    # Per-bottle stuck-recovery daemon (PRD 0013). When true (the
     # default, issue #249), the launch step brings up a supervise
-    # sidecar that exposes egress MCP tools to the agent. Set
-    # `supervise: false` to skip the sidecar.
+    # daemon that exposes egress MCP tools to the agent. Set
+    # `supervise: false` to skip the gateway.
     supervise: bool = True
 
     @classmethod
@@ -61,7 +61,7 @@ class ManifestBottle:
             raise ManifestError(
                 f"bottle '{name}' has an 'ssh' field, which has been removed "
                 f"(PRD 0009). Declare upstreams under 'git-gate.repos' with "
-                f"url + identity + host_key; the git-gate sidecar (PRD 0008) "
+                f"url + identity + host_key; the git-gate daemon (PRD 0008) "
                 f"holds the credential and gitleaks-scans pushes."
             )
 

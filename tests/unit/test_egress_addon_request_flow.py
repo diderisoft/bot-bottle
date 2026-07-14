@@ -1,6 +1,6 @@
 """Unit: EgressAddon request/response decision flow (issue #286).
 
-`egress_addon.py` is the sidecar-only mitmproxy adapter that wires the
+`egress_addon.py` is the gateway-only mitmproxy adapter that wires the
 host-importable decision logic in `egress_addon_core` into mitmproxy's
 request/response hooks. The core logic is exercised directly by
 `test_egress_addon_core.py`; the redaction logging by
@@ -13,7 +13,7 @@ from coverage.
 mitmproxy is not installed on the host, so we pre-populate `sys.modules`
 with the minimum stubs needed to import the adapter (a `mitmproxy.http`
 module exposing a `Response` with `.make`, plus the flat
-`egress_addon_core` name the sidecar uses)."""
+`egress_addon_core` name the gateway uses)."""
 
 from __future__ import annotations
 
@@ -158,7 +158,7 @@ class _WebSocketData:
 
 
 # ---------------------------------------------------------------------------
-# Sidecar-import shims — must run before importing egress_addon
+# Gateway-import shims — must run before importing egress_addon
 # ---------------------------------------------------------------------------
 
 
@@ -303,9 +303,9 @@ class TestAuthInjection(unittest.TestCase):
         route = Route(host="api.example.com", auth_scheme="Bearer", token_env="EGRESS_TOKEN_0")
         addon = _addon(Config(routes=(route,)))
         flow = _Flow(_Request(host="api.example.com", headers={"authorization": "Bearer agent-faked"}))
-        with patch.dict("os.environ", {"EGRESS_TOKEN_0": "real-sidecar-token"}):
+        with patch.dict("os.environ", {"EGRESS_TOKEN_0": "real-gateway-token"}):
             _run_request(addon, flow)
-        self.assertEqual("Bearer real-sidecar-token", flow.request.headers.get("authorization"))
+        self.assertEqual("Bearer real-gateway-token", flow.request.headers.get("authorization"))
         self.assertIsNone(flow.response)
 
     def test_auth_route_with_unset_env_blocks(self) -> None:

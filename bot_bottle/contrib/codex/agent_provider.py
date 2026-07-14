@@ -4,7 +4,7 @@ The Codex-specific behavior previously inlined under
 `agent_provider.agent_provision_plan` (config.toml trust marker,
 chatgpt.com / api.openai.com egress routes, optional host-credential
 forwarding with dummy-auth.json + verify), plus the `codex mcp add`
-invocation that registers the supervise sidecar in Codex's
+invocation that registers the supervise daemon in Codex's
 ~/.codex/config.toml (PRD 0050)."""
 
 from __future__ import annotations
@@ -266,7 +266,7 @@ class CodexAgentProvider(AgentProvider):
         supervise_url: str,
     ) -> None:
         """Run `codex mcp add` inside the agent guest to register the
-        supervise sidecar in Codex's user config (~/.codex/config.toml).
+        supervise daemon in Codex's user config (~/.codex/config.toml).
 
         Mirrors the Claude provider's `claude mcp add` flow — failure
         is logged but not fatal."""

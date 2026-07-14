@@ -4,7 +4,7 @@ The Claude-specific behavior previously inlined under
 `agent_provider.agent_provision_plan` (claude.json trust marker,
 api.anthropic.com egress route, OAuth-token placeholder), plus
 the `claude mcp add` invocation that registers the supervise
-sidecar in claude-code's user config (PRD 0013)."""
+gateway in claude-code's user config (PRD 0013)."""
 
 from __future__ import annotations
 
@@ -293,7 +293,7 @@ class ClaudeAgentProvider(AgentProvider):
         supervise_url: str,
     ) -> None:
         """Run `claude mcp add` inside the agent guest to register the
-        supervise sidecar in claude-code's user config (~/.claude.json).
+        supervise daemon in claude-code's user config (~/.claude.json).
 
         Failure is logged but not fatal — the bottle still works without
         the entry; the operator can register it manually."""

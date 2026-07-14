@@ -4,7 +4,7 @@ prepare-time routes-yaml rendering itself lives on the
 platform-neutral `Egress` ABC — backends instantiate it directly.
 
 The per-container `.start()` / `.stop()` lifecycle was removed in
-PRD 0024 chunk 3; the sidecar bundle (PRD 0024) runs egress
+PRD 0024 chunk 3; the gateway (PRD 0024) runs egress
 under its python init supervisor."""
 
 from __future__ import annotations

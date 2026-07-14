@@ -1,7 +1,7 @@
 """Host setup + status for the Docker backend.
 
 Unlike Firecracker, the Docker backend needs no privileged one-time
-host provisioning (no TAP pool / nft table) — networks and the sidecar
+host provisioning (no TAP pool / nft table) — networks and the gateway
 bundle are created per-launch. So `setup()` is mostly an install/daemon
 pointer, and `status()` reports whether docker is usable.
 
@@ -45,7 +45,7 @@ def setup() -> int:
         return 1
     sys.stderr.write(
         "Docker backend: no privileged host setup required — networks and "
-        "the sidecar bundle are created per-launch.\n"
+        "the gateway are created per-launch.\n"
     )
     if not _daemon_reachable():
         sys.stderr.write(
@@ -64,7 +64,7 @@ def setup() -> int:
 def teardown() -> int:
     sys.stderr.write(
         "Docker backend: nothing to undo — it provisions no privileged host "
-        "state (networks and the sidecar bundle are per-launch and are "
+        "state (networks and the gateway are per-launch and are "
         "removed by `./cli.py cleanup`). Docker itself is left installed.\n"
     )
     return 0

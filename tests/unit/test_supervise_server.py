@@ -1,4 +1,4 @@
-"""Unit: supervise sidecar MCP server (PRD 0013)."""
+"""Unit: supervise daemon MCP server (PRD 0013)."""
 
 import http.client
 import json

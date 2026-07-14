@@ -267,7 +267,7 @@ resolver #2
             self.assertEqual(
                 "192.168.128.2",
                 util.container_ipv4_on_network(
-                    "bot-bottle-sidecars-demo",
+                    "bot-bottle-demo",
                     "bot-bottle-net-demo",
                 ),
             )

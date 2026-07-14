@@ -1,7 +1,7 @@
 """Host-side egress route-apply for the macos-container backend.
 
 The per-bottle companion container this used to signal (`container kill
---signal HUP <container>`) was removed in the de-sidecar cleanup (#385),
+--signal HUP <container>`) was removed in the companion-container removal (#385),
 along with the disabled macOS launch path. Fails closed until the macOS
 backend grows the consolidated gateway.
 """

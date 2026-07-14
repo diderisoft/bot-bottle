@@ -1,7 +1,7 @@
 """Host-side egress route-apply for the docker backend.
 
 The per-bottle companion container this used to signal (`docker kill
---signal HUP <container>`) was removed in the de-sidecar cleanup (#385).
+--signal HUP <container>`) was removed in the companion-container removal (#385).
 In the consolidated model the shared gateway resolves egress policy
 per-request against the orchestrator rather than reloading a per-bottle
 routes file, so the live per-bottle reload is not supported here and

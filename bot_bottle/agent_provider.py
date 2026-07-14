@@ -204,9 +204,9 @@ class AgentProvider(ABC):
         bottle: "Bottle",
         supervise_url: str,
     ) -> None:
-        """Register the per-bottle supervise sidecar as an MCP server
+        """Register the per-bottle supervise daemon as an MCP server
         in the provider's in-guest config. Called by the backend after
-        the supervise sidecar is reachable. No-op when
+        the supervise daemon is reachable. No-op when
         `plan.supervise_plan is None`."""
 
     @abstractmethod

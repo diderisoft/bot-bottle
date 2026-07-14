@@ -1,7 +1,7 @@
 """Integration: DockerGateway.image_exists reflects real docker state.
 
 Gated on a reachable Docker daemon. Deliberately does NOT build the full
-sidecar bundle (a heavy, slow image build) — it exercises the `image_exists`
+gateway (a heavy, slow image build) — it exercises the `image_exists`
 primitive that `ensure_built` gates on, against a tiny pulled image and a
 name that can't exist.
 """

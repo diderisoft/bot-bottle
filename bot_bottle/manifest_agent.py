@@ -17,7 +17,7 @@ class ManifestAgentProvider:
 
     `template` selects a built-in launch/runtime contract. `dockerfile`
     optionally points at a custom agent-image Dockerfile while leaving
-    bot-bottle's sidecar infrastructure intact.
+    bot-bottle's gateway infrastructure intact.
 
     `auth_token` names the host env var that holds the provider's OAuth
     token (Claude only). The provisioner injects a provider-owned egress
@@ -26,7 +26,7 @@ class ManifestAgentProvider:
     so the Claude Code CLI starts.
 
     `forward_host_credentials` forwards the host Codex auth token into
-    the egress sidecar (Codex only).
+    the egress daemon (Codex only).
     """
 
     template: str = "claude"

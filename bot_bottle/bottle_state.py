@@ -44,16 +44,16 @@ _STATE_SUBDIR = "state"
 _PER_BOTTLE_DOCKERFILE_NAME = "Dockerfile"
 _COMMITTED_IMAGE_NAME = "committed-image"
 _TRANSCRIPT_SUBDIR = "transcript"
-# Per-sidecar scratch subdirs. PRD 0018 chunk 2: bind-mount sources
+# Per-daemon scratch subdirs. PRD 0018 chunk 2: bind-mount sources
 # live here so chunk 3's `docker compose up` can find them at stable
-# paths. Each sidecar's `prepare()` writes config + CAs into its own
+# paths. Each daemon's `prepare()` writes config + CAs into its own
 # subdir; the launch step is unchanged today (still `docker cp`).
 _EGRESS_SUBDIR = "egress"
 _GIT_GATE_SUBDIR = "git-gate"
 _SUPERVISE_SUBDIR = "supervise"
 _AGENT_SUBDIR = "agent"
 _METADATA_NAME = "metadata.json"
-# Live-config dir bind-mounted into the supervise sidecar (read-only).
+# Live-config dir bind-mounted into the supervise daemon (read-only).
 # Host's apply paths keep these files fresh so supervise's
 # `list-egress-routes` MCP tool returns the current state —
 # not a snapshot from launch time.
@@ -222,7 +222,7 @@ def per_bottle_image_tag(identity: str) -> str:
 
 def live_config_dir(identity: str) -> Path:
     """Per-bottle live-config dir. Bind-mounted read-only into the
-    supervise sidecar; the host's apply paths refresh the files on
+    supervise daemon; the host's apply paths refresh the files on
     every operator approval so the agent's `list-*` MCP tools always
     return current state."""
     return bottle_state_dir(identity) / _LIVE_CONFIG_SUBDIR
@@ -260,9 +260,9 @@ def transcript_snapshot_dir(identity: str) -> Path:
     return bottle_state_dir(identity) / _TRANSCRIPT_SUBDIR
 
 
-# --- Per-sidecar scratch subdirs (PRD 0018 chunk 2) ------------------------
+# --- Per-daemon scratch subdirs (PRD 0018 chunk 2) ------------------------
 #
-# Each sidecar gets its own subdir under the bottle's state dir for
+# Each daemon gets its own subdir under the bottle's state dir for
 # bind-mount sources (config, CAs, hooks, etc.). Prepare-time writes
 # land here; the state dir's normal cleanup (`cleanup_state`) reaps
 # them along with everything else when the bottle session ends and
@@ -270,20 +270,20 @@ def transcript_snapshot_dir(identity: str) -> Path:
 
 
 def egress_state_dir(identity: str) -> Path:
-    """State subdir for the egress sidecar: routes.yaml + the
+    """State subdir for the egress daemon: routes.yaml + the
     per-bottle mitmproxy CA. Bind-mount source from chunk 3 onward."""
     return bottle_state_dir(identity) / _EGRESS_SUBDIR
 
 
 def git_gate_state_dir(identity: str) -> Path:
-    """State subdir for the git-gate sidecar: entrypoint + hooks +
+    """State subdir for the git-gate daemon: entrypoint + hooks +
     per-upstream known_hosts. Bind-mount source from chunk 3
     onward."""
     return bottle_state_dir(identity) / _GIT_GATE_SUBDIR
 
 
 def supervise_state_dir(identity: str) -> Path:
-    """State subdir reserved for supervise sidecar bind-mount sources.
+    """State subdir reserved for supervise daemon bind-mount sources.
     Runtime queue/audit rows live in the host-level bot-bottle SQLite
     database, so they survive state-dir cleanup."""
     return bottle_state_dir(identity) / _SUPERVISE_SUBDIR

@@ -3,7 +3,7 @@
 Pure Python, no mitmproxy dependency. Each detector is a module-level
 function returning `ScanResult | None`.
 
-Ships flat into the sidecar bundle image alongside
+Ships flat into the gateway image alongside
 `egress_addon_core.py` — both this file and the package source use
 the same try/except import shim pattern.
 """

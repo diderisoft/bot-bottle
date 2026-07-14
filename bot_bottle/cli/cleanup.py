@@ -2,8 +2,8 @@
 
 Walks every registered backend (docker, firecracker, macos-container)
 so a single `./cli.py cleanup` reaps every backend's leftovers — a
-firecracker bottle's sidecars won't survive a docker-only cleanup pass
-(issue addressed alongside #77).
+firecracker bottle's VM processes and run dirs won't survive a
+docker-only cleanup pass (issue addressed alongside #77).
 
 Each backend's `prepare_cleanup` enumerates its own resources;
 docker's `_list_orphan_state_dirs` consults

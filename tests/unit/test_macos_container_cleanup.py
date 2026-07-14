@@ -16,12 +16,12 @@ class TestMacosContainerCleanup(unittest.TestCase):
         completed = cleanup.subprocess.CompletedProcess(
             args=[],
             returncode=0,
-            stdout="bot-bottle-a\nbot-bottle-sidecars-a\nother\n",
+            stdout="bot-bottle-a\nbot-bottle-b\nother\n",
             stderr="",
         )
         with patch.object(cleanup.subprocess, "run", return_value=completed):
             self.assertEqual(
-                ["bot-bottle-a", "bot-bottle-sidecars-a"],
+                ["bot-bottle-a", "bot-bottle-b"],
                 cleanup._list_prefixed_containers(),
             )
 
@@ -44,7 +44,7 @@ class TestMacosContainerCleanup(unittest.TestCase):
 
 class TestMacosContainerEnumerate(unittest.TestCase):
     def test_enumerate_active_is_empty_while_disabled(self):
-        # The macOS backend is disabled during the de-sidecar cleanup
+        # The macOS backend is disabled during the companion-container removal cleanup
         # (#385); it launches nothing, so there is nothing to enumerate.
         self.assertEqual([], enum_mod.enumerate_active())
 

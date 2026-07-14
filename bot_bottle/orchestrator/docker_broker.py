@@ -2,12 +2,12 @@
 
 On a verified launch request it starts a Docker container; on teardown it
 removes it. This proves the orchestrator -> backend seam on the cheapest
-backend (the sidecar bundle is already containers). Only the request's
+backend (the gateway is already containers). Only the request's
 static ids/flags reach `docker`, so nothing free-form crosses the boundary.
 
 Slice 3 launches a single container from the request's `image_ref`, named
 after the bottle id and labelled for cleanup. Wiring the full agent +
-sidecar bundle (networks, mounts, the consolidated sidecar) is a later
+gateway (networks, mounts, the consolidated gateway) is a later
 slice — this is the seam, not the finished launcher.
 """
 
