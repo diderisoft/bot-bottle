@@ -91,12 +91,17 @@ class DockerGateway(Gateway):
         *,
         name: str = GATEWAY_NAME,
         network: str = GATEWAY_NETWORK,
+        orchestrator_url: str = "",
         build_context: Path | None = None,
         dockerfile: str | None = GATEWAY_DOCKERFILE,
     ) -> None:
         self.image_ref = image_ref
         self.name = name
         self.network = network
+        # The control-plane URL the gateway's data plane resolves per bottle
+        # against — reached by container name over docker DNS on the shared
+        # network (container↔container, no host firewall). Empty → single-tenant.
+        self._orchestrator_url = orchestrator_url
         self._build_context = build_context or _REPO_ROOT
         self._dockerfile = dockerfile
 
@@ -146,7 +151,7 @@ class DockerGateway(Gateway):
         # Clear any stale (stopped) container holding the fixed name, then
         # start fresh. `rm --force` on an absent name is a tolerated no-op.
         run_docker(["docker", "rm", "--force", self.name])
-        proc = run_docker([
+        argv = [
             "docker", "run", "--detach",
             "--name", self.name,
             "--label", GATEWAY_LABEL,
@@ -154,8 +159,13 @@ class DockerGateway(Gateway):
             # Persist the self-generated CA so it survives restarts (agents
             # trust it) — see GATEWAY_CA_VOLUME.
             "--volume", f"{GATEWAY_CA_VOLUME}:{MITMPROXY_HOME}",
-            self.image_ref,
-        ])
+        ]
+        if self._orchestrator_url:
+            # Makes the gateway's egress / git / supervise daemons multi-tenant:
+            # each request resolves source-IP -> policy against the control plane.
+            argv += ["--env", f"BOT_BOTTLE_ORCHESTRATOR_URL={self._orchestrator_url}"]
+        argv.append(self.image_ref)
+        proc = run_docker(argv)
         if proc.returncode != 0:
             raise GatewayError(f"gateway failed to start: {proc.stderr.strip()}")
 

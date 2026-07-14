@@ -51,7 +51,13 @@ def main(argv: list[str] | None = None) -> int:
     # anything; 'docker' runs real containers (firecracker drops in later).
     secret = secrets.token_bytes(32)
     broker: LaunchBroker = DockerBroker(secret) if args.broker == "docker" else StubBroker(secret)
-    gateway: Gateway | None = DockerGateway() if args.gateway else None
+    # Standalone `--gateway` (not the consolidated flow, where the host
+    # lifecycle runs the gateway). The gateway resolves against this same
+    # process; the URL is only reachable when they share a docker network.
+    gateway: Gateway | None = (
+        DockerGateway(orchestrator_url=f"http://{args.host}:{args.port}")
+        if args.gateway else None
+    )
     orchestrator = Orchestrator(registry, broker, secret, gateway)
 
     # One persistent per-host gateway, shared by every bottle: build the

@@ -34,6 +34,7 @@ import http.server
 import json
 import os
 import socketserver
+import sys
 import typing
 from urllib.parse import urlsplit
 
@@ -151,12 +152,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
             super().log_message(format, *args)
 
     def _serve(self, method: str) -> None:
-        """Read the request body, dispatch it, and write the JSON reply."""
+        """Read the request body, dispatch it, and write the JSON reply. A
+        dispatch failure (e.g. a broker error) returns a 500 rather than
+        crashing the connection, so one bad request can't take the control
+        plane down for the caller."""
         server = self.server
         assert isinstance(server, ControlPlaneServer)
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length > 0 else b""
-        status, payload = dispatch(server.orchestrator, method, self.path, body)
+        try:
+            status, payload = dispatch(server.orchestrator, method, self.path, body)
+        except Exception as e:  # noqa: BLE001 — the control plane must stay up
+            sys.stderr.write(f"orchestrator: {method} {self.path} failed: {e!r}\n")
+            sys.stderr.flush()
+            status, payload = 500, {"error": f"internal error: {e}"}
         data = json.dumps(payload).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")

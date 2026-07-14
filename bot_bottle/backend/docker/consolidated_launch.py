@@ -26,7 +26,7 @@ from ...egress import EgressPlan
 from ...git_gate import GitGatePlan
 from ...orchestrator.client import OrchestratorClient
 from ...orchestrator.gateway import GATEWAY_NAME, GATEWAY_NETWORK
-from ...orchestrator.lifecycle import OrchestratorProcess
+from ...orchestrator.lifecycle import OrchestratorService
 from ...orchestrator.registration import registration_inputs
 from .gateway_net import next_free_ip
 from .gateway_provision import deprovision_git_gate, provision_git_gate
@@ -92,7 +92,7 @@ def launch_consolidated(
     git_gate_plan: GitGatePlan,
     *,
     image_ref: str = "",
-    process: OrchestratorProcess | None = None,
+    service: OrchestratorService | None = None,
     gateway_name: str = GATEWAY_NAME,
     network: str = GATEWAY_NETWORK,
 ) -> LaunchContext:
@@ -100,8 +100,8 @@ def launch_consolidated(
     bottle, and provision its git-gate state. Returns the agent's attach
     context. Raises `ConsolidatedLaunchError` (or the primitives' own errors)
     if any step fails — the caller tears down on failure."""
-    process = process or OrchestratorProcess()
-    url = process.ensure_running()
+    service = service or OrchestratorService()
+    url = service.ensure_running()
     client = OrchestratorClient(url)
 
     cidr = _network_cidr(network)

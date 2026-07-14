@@ -40,13 +40,13 @@ def _client(*, bottles: list[dict[str, object]] | None = None) -> Mock:
 
 class TestLaunchConsolidated(unittest.TestCase):
     def _run(self, client: Mock, provision: Mock | None = None):
-        process = MagicMock()
-        process.ensure_running.return_value = "http://orch:8080"
+        service = MagicMock()
+        service.ensure_running.return_value = "http://orch:8080"
         with patch(f"{_MOD}._network_cidr", return_value="172.18.0.0/16"), \
                 patch(f"{_MOD}._container_ip", return_value="172.18.0.2"), \
                 patch(f"{_MOD}.OrchestratorClient", return_value=client), \
                 patch(f"{_MOD}.provision_git_gate", provision or Mock()):
-            return launch_consolidated(_egress_plan(), _git_plan(), process=process)
+            return launch_consolidated(_egress_plan(), _git_plan(), service=service)
 
     def test_allocates_ip_registers_and_provisions(self) -> None:
         client = _client()
