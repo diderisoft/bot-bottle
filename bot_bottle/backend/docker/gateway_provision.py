@@ -67,6 +67,12 @@ def provision_git_gate(gateway: str, bottle_id: str, plan: GitGatePlan) -> None:
     _require_safe(bottle_id)
     if not plan.upstreams:
         return
+    # The pre-receive + access hooks are bottle-agnostic and shared by every
+    # bottle's repos; install them into the gateway (idempotent — same content
+    # each time). The per-bottle model cp'd these into each bundle at start.
+    _exec(gateway, ["mkdir", "-p", "/etc/git-gate"])
+    _cp_into(gateway, str(plan.hook_script), "/etc/git-gate/pre-receive")
+    _cp_into(gateway, str(plan.access_hook_script), "/etc/git-gate/access-hook")
     creds = _creds_dir(bottle_id)
     _exec(gateway, ["mkdir", "-p", creds])
     for u in plan.upstreams:

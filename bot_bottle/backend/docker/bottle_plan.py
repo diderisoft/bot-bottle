@@ -28,10 +28,29 @@ class DockerBottlePlan(BottlePlan):
     # accidental log of the plan dataclass.
     forwarded_env: dict[str, str] = field(repr=False)
     use_runsc: bool
+    # Consolidated mode (PRD 0070): the agent reaches git-gate over HTTP at the
+    # shared gateway's address (`http://<gateway_ip>:9420`), set at launch.
+    # Empty → single-tenant defaults (the `git-gate` alias over git://).
+    agent_git_gate_url: str = ""
+    # Likewise the supervise MCP endpoint at the gateway (`http://<gw>:9100/`);
+    # empty → the single-tenant `supervise` alias.
+    agent_supervise_url: str = ""
 
     @property
     def container_name(self) -> str:
         return self.agent_provision.instance_name
+
+    @property
+    def git_gate_insteadof_host(self) -> str:
+        if self.agent_git_gate_url.startswith("http://"):
+            return self.agent_git_gate_url.removeprefix("http://").rstrip("/")
+        return super().git_gate_insteadof_host
+
+    @property
+    def git_gate_insteadof_scheme(self) -> str:
+        if self.agent_git_gate_url.startswith("http://"):
+            return "http"
+        return super().git_gate_insteadof_scheme
 
     @property
     def image(self) -> str:

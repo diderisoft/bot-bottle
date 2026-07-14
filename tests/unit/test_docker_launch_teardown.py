@@ -19,9 +19,11 @@ from bot_bottle.agent_provider import AgentProvisionPlan
 from bot_bottle.backend import BottleSpec
 from bot_bottle.backend.docker import launch as launch_mod
 from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
+from bot_bottle.backend.docker.consolidated_launch import LaunchContext
 from bot_bottle.egress import EgressPlan
 from bot_bottle.git_gate import GitGatePlan
 from bot_bottle.manifest import ManifestIndex
+from tests.unit import use_bottle_root
 
 _INDEX = ManifestIndex.from_json_obj({
     "bottles": {"dev": {}},
@@ -77,41 +79,36 @@ def _plan(tmp: str) -> DockerBottlePlan:
 class TestTeardownWarning(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.mkdtemp(prefix="docker-launch-teardown-test.")
-
-    def tearDown(self) -> None:
-        import shutil
-        shutil.rmtree(self._tmp, ignore_errors=True)
+        self.addCleanup(lambda: __import__("shutil").rmtree(self._tmp, ignore_errors=True))
+        self.addCleanup(use_bottle_root(Path(self._tmp)))  # sandbox the gateway CA write
 
     def test_teardown_failure_emits_warning_with_container_and_operation(self):
         plan = _plan(self._tmp)
         buf = io.StringIO()
+        gw = mock.Mock()
+        gw.ca_cert_pem.return_value = "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n"
+        ctx = LaunchContext(
+            bottle_id="b1", identity_token="t", source_ip="172.20.0.4",
+            network="bot-bottle-gateway", gateway_ip="172.20.0.2",
+            orchestrator_url="http://orch:8099",
+        )
 
         with mock.patch.object(launch_mod.docker_mod, "build_image"), \
+             mock.patch.object(launch_mod, "launch_consolidated", return_value=ctx), \
+             mock.patch.object(launch_mod, "teardown_consolidated"), \
+             mock.patch.object(launch_mod, "DockerGateway", return_value=gw), \
              mock.patch.object(
-                 launch_mod, "egress_tls_init",
-                 return_value=(Path("/egress_ca"), Path("/egress_cert")),
-             ), \
-             mock.patch.object(
-                 launch_mod.network_mod, "network_name_for_slug",
-                 return_value="bb-internal-test",
-             ), \
-             mock.patch.object(
-                 launch_mod.network_mod, "network_egress_name_for_slug",
-                 return_value="bb-egress-test",
-             ), \
-             mock.patch.object(
-                 launch_mod, "bottle_plan_to_compose",
+                 launch_mod, "consolidated_agent_compose",
                  return_value={"services": {"agent": {}}},
              ), \
              mock.patch.object(
-                 launch_mod, "write_compose_file",
-                 return_value=Path("/tmp/compose.yml"),
+                 launch_mod, "write_compose_file", return_value=Path("/tmp/compose.yml"),
              ), \
              mock.patch.object(launch_mod, "compose_up"), \
              mock.patch.object(launch_mod, "compose_dump_logs"), \
              mock.patch.object(
                  launch_mod, "compose_down",
-                 side_effect=RuntimeError("network remove failed"),
+                 side_effect=RuntimeError("compose down failed"),
              ), \
              contextlib.redirect_stderr(buf):
             provision = mock.Mock(return_value=None)

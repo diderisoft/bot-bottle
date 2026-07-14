@@ -36,13 +36,11 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Callable, Generator
 
-from ...egress import egress_resolve_token_values
 from ...git_gate import (
     provision_git_gate_dynamic_keys,
     revoke_git_gate_provisioned_keys,
 )
 from ...log import info, warn
-from . import network as network_mod
 from . import util as docker_mod
 from .bottle import DockerBottle
 from .bottle_plan import DockerBottlePlan
@@ -53,7 +51,6 @@ from ...bottle_state import (
     read_committed_image,
 )
 from .compose import (
-    bottle_plan_to_compose,
     compose_down,
     compose_dump_logs,
     compose_file_path,
@@ -62,7 +59,9 @@ from .compose import (
     compose_up,
     write_compose_file,
 )
-from .egress import egress_tls_init
+from .consolidated_compose import consolidated_agent_compose
+from .consolidated_launch import launch_consolidated, teardown_consolidated
+from ...orchestrator.gateway import DockerGateway
 
 
 # Where the repo root lives, for `docker build` context. Computed once.
@@ -97,8 +96,7 @@ def launch(
     try:
         # Step 1: agent image. Use a committed snapshot when one exists
         # and is present in the local daemon; otherwise build from the
-        # Dockerfile. Sidecar images get built lazily by `docker compose
-        # up` via the renderer's `build:` directives.
+        # Dockerfile. (The gateway image is built by the orchestrator.)
         committed = read_committed_image(plan.slug)
         if committed and docker_mod.image_exists(committed):
             info(f"using committed image {committed!r}")
@@ -112,82 +110,73 @@ def launch(
                 dockerfile=plan.dockerfile_path,
             )
 
-        internal_network = network_mod.network_name_for_slug(plan.slug)
-        egress_network = network_mod.network_egress_name_for_slug(plan.slug)
-
-        egress_ca_host, egress_ca_cert_only = egress_tls_init(
-            egress_state_dir(plan.slug),
-        )
-
+        # Step 2: mint the git-gate dynamic (gitea) deploy keys, if any, before
+        # provisioning the bottle's repos into the shared gateway.
         git_gate_plan = plan.git_gate_plan
         if git_gate_plan.upstreams:
             git_gate_plan = provision_git_gate_dynamic_keys(
-                plan.manifest.bottle,
-                git_gate_plan,
-                git_gate_state_dir(plan.slug),
+                plan.manifest.bottle, git_gate_plan, git_gate_state_dir(plan.slug),
             )
-            git_gate_plan = dataclasses.replace(
-                git_gate_plan,
-                internal_network=internal_network,
-                egress_network=egress_network,
-            )
+
+        # Step 3: register on the orchestrator + provision this bottle's
+        # git-gate state into the shared gateway; get the agent's attach
+        # context (pinned source IP, gateway address, shared network).
+        ctx = launch_consolidated(plan.egress_plan, git_gate_plan, image_ref=plan.image)
+        stack.callback(
+            teardown_consolidated, ctx.bottle_id, orchestrator_url=ctx.orchestrator_url,
+        )
+
+        # Step 4: install the SHARED gateway CA into the agent (replaces the
+        # per-bottle CA) — read it out of the running gateway.
+        ca_dir = egress_state_dir(plan.slug) / "gateway-ca"
+        ca_dir.mkdir(parents=True, exist_ok=True)
+        ca_file = ca_dir / "gateway-ca.pem"
+        ca_file.write_text(DockerGateway(network=ctx.network).ca_cert_pem())
         egress_plan = dataclasses.replace(
             plan.egress_plan,
-            internal_network=internal_network,
-            egress_network=egress_network,
-            mitmproxy_ca_host_path=egress_ca_host,
-            mitmproxy_ca_cert_only_host_path=egress_ca_cert_only,
+            mitmproxy_ca_host_path=ca_file,
+            mitmproxy_ca_cert_only_host_path=ca_file,
         )
-        supervise_plan = plan.supervise_plan
-        if supervise_plan is not None:
-            supervise_plan = dataclasses.replace(
-                supervise_plan,
-                internal_network=internal_network,
-            )
+        # Point the agent's git-gate insteadOf rewrites at the shared gateway's
+        # HTTP git endpoint (9420) instead of the dead per-bottle `git-gate`
+        # alias. git-http + supervise on the gateway bypass the egress proxy
+        # (NO_PROXY includes the gateway address).
+        git_gate_url = (
+            f"http://{ctx.gateway_ip}:9420" if git_gate_plan.upstreams else ""
+        )
+        supervise_url = (
+            f"http://{ctx.gateway_ip}:9100/" if plan.supervise_plan is not None else ""
+        )
         plan = dataclasses.replace(
             plan,
             git_gate_plan=git_gate_plan,
             egress_plan=egress_plan,
-            supervise_plan=supervise_plan,
+            agent_git_gate_url=git_gate_url,
+            agent_supervise_url=supervise_url,
         )
 
-        # Step 6: render + write the compose file. metadata.json
-        # was written at prepare time and already carries
-        # compose_project; nothing to update here.
+        # Step 5: render + up the agent-only compose, pinned on the shared
+        # gateway network and proxied through the gateway's address.
         state_dir = bottle_state_dir(plan.slug)
-        spec = bottle_plan_to_compose(plan)
+        spec = consolidated_agent_compose(
+            plan, gateway_ip=ctx.gateway_ip, source_ip=ctx.source_ip, network=ctx.network,
+        )
         compose_file = write_compose_file(spec, compose_file_path(state_dir))
         project = compose_project_name(plan.slug)
-
-        # Step 7: compose up. Token values + the OAuth placeholder
-        # flow through subprocess env; the compose file holds only
-        # bare names for the secret-carrying entries.
-        effective_env = {**dict(os.environ), **plan.agent_provision.provisioned_env}
-        token_values = egress_resolve_token_values(
-            plan.egress_plan.token_env_map, effective_env,
-        )
-        compose_env: dict[str, str] = {
-            **os.environ,
-            **plan.forwarded_env,
-            **token_values,
-        }
+        # Forwarded vars (OAuth token, host interpolations) flow through the
+        # subprocess env as bare names so values never land in the file.
+        compose_env: dict[str, str] = {**os.environ, **plan.forwarded_env}
         info(
-            f"docker compose up -d  (project {project}, "
-            f"{len(spec['services'])} services)"
+            f"docker compose up -d  (project {project}, agent on shared "
+            f"gateway {ctx.gateway_ip}, ip {ctx.source_ip})"
         )
         compose_up(project, compose_file, env=compose_env)
-
-        # Register teardown in reverse order: log dump first, then
-        # `compose down`. Networks come down last via callbacks
-        # registered in step 2.
         stack.callback(compose_down, project, compose_file)
         stack.callback(
             compose_dump_logs, project, compose_file, compose_log_path(state_dir),
         )
 
-        # Step 8: provision. Create the bottle first so provisioners
-        # can use bottle.exec / bottle.cp_in; set the prompt path
-        # returned by provision_prompt after the fact.
+        # Step 6: provision (CA install now uses the gateway CA) + yield.
         bottle = DockerBottle(
             plan.container_name,
             teardown,
@@ -200,10 +189,6 @@ def launch(
             agent_workdir=plan.workspace_plan.workdir,
         )
         bottle.prompt_path = provision(plan, bottle)
-
-        # Step 9: yield. exec_agent continues to use `docker exec -it`
-        # — the agent runs `sleep infinity` per the renderer's
-        # service spec.
         yield bottle
     finally:
         teardown()

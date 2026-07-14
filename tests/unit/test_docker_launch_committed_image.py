@@ -1,4 +1,4 @@
-"""Unit: Docker launch step uses committed image when available."""
+"""Unit: Docker launch step uses committed image when available (consolidated)."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import contextlib
 import io
 import tempfile
 import unittest
+from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -14,9 +15,11 @@ from bot_bottle.agent_provider import AgentProvisionPlan
 from bot_bottle.backend import BottleSpec
 from bot_bottle.backend.docker import launch as launch_mod
 from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
+from bot_bottle.backend.docker.consolidated_launch import LaunchContext
 from bot_bottle.egress import EgressPlan
 from bot_bottle.git_gate import GitGatePlan
 from bot_bottle.manifest import ManifestIndex
+from tests.unit import use_bottle_root
 
 
 _SLUG = "dev-abc12"
@@ -28,163 +31,111 @@ _IDX = ManifestIndex.from_json_obj({
     "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
 })
 
+_CTX = LaunchContext(
+    bottle_id="b1", identity_token="t", source_ip="172.20.0.4",
+    network="bot-bottle-gateway", gateway_ip="172.20.0.2",
+    orchestrator_url="http://orch:8099",
+)
+
 
 def _plan(tmp: str) -> DockerBottlePlan:
     stage = Path(tmp)
     spec = BottleSpec(
-        manifest=_IDX,
-        agent_name="demo",
-        copy_cwd=False,
-        user_cwd=tmp,
-        identity=_SLUG,
+        manifest=_IDX, agent_name="demo", copy_cwd=False, user_cwd=tmp, identity=_SLUG,
     )
     return DockerBottlePlan(
         spec=spec,
         manifest=_IDX.load_for_agent("demo"),
         stage_dir=stage,
         git_gate_plan=GitGatePlan(
-            slug=_SLUG,
-            entrypoint_script=stage / "entrypoint.sh",
-            hook_script=stage / "hook.sh",
-            access_hook_script=stage / "access-hook.sh",
-            upstreams=(),
+            slug=_SLUG, entrypoint_script=stage / "e.sh", hook_script=stage / "h.sh",
+            access_hook_script=stage / "a.sh", upstreams=(),
         ),
         egress_plan=EgressPlan(
-            slug=_SLUG,
-            routes_path=stage / "egress.yaml",
-            routes=(),
-            token_env_map={},
+            slug=_SLUG, routes_path=stage / "egress.yaml", routes=(), token_env_map={},
         ),
         supervise_plan=None,
         agent_provision=AgentProvisionPlan(
-            template="claude",
-            command="claude",
-            prompt_mode="append_file",
-            image=_DEFAULT_IMAGE,
-            dockerfile="",
-            guest_home="/home/node",
-            instance_name=f"bot-bottle-{_SLUG}",
-            prompt_file=stage / "prompt.txt",
+            template="claude", command="claude", prompt_mode="append_file",
+            image=_DEFAULT_IMAGE, dockerfile="", guest_home="/home/node",
+            instance_name=f"bot-bottle-{_SLUG}", prompt_file=stage / "prompt.txt",
             guest_env={},
         ),
-        slug=_SLUG,
-        forwarded_env={},
-        use_runsc=False,
+        slug=_SLUG, forwarded_env={}, use_runsc=False,
     )
 
 
 class TestLaunchCommittedImage(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.mkdtemp(prefix="launch-committed-test.")
+        self.addCleanup(lambda: __import__("shutil").rmtree(self._tmp, ignore_errors=True))
+        # The launch writes the gateway CA under the bottle root — sandbox it.
+        self.addCleanup(use_bottle_root(Path(self._tmp)))
 
-    def tearDown(self) -> None:
-        import shutil
-        shutil.rmtree(self._tmp, ignore_errors=True)
-
-    def _run_launch(
+    @contextlib.contextmanager
+    def _patched(
         self,
-        plan: DockerBottlePlan,
         *,
-        committed_tag: str | None = None,
-        image_present: bool = True,
-    ) -> list[str]:
-        """Drive launch() through its full sequence with the committed-image
-        behaviour controlled by the arguments. Returns the images that were
-        passed to `build_image` (empty list if it was never called)."""
+        committed_tag: str | None,
+        image_present: bool,
+        compose: Callable[..., dict[str, Any]],
+    ) -> Generator[list[str], None, None]:
         built: list[str] = []
+        gw = mock.Mock()
+        gw.ca_cert_pem.return_value = "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n"
 
-        def fake_build(image: str, ctx: str, *, dockerfile: str = "") -> None:
+        def _build(image: str, ctx: str, *, dockerfile: str = "") -> None:
             del ctx, dockerfile
             built.append(image)
 
-        with mock.patch.object(
-            launch_mod, "read_committed_image", return_value=committed_tag,
-        ), mock.patch.object(
-            launch_mod.docker_mod, "image_exists", return_value=image_present,
-        ), mock.patch.object(
-            launch_mod.docker_mod, "build_image", side_effect=fake_build,
-        ), mock.patch.object(
-            launch_mod, "egress_tls_init",
-            return_value=(Path("/egress_ca"), Path("/egress_cert")),
-        ), mock.patch.object(
-            launch_mod.network_mod, "network_name_for_slug",
-            return_value="bb-internal",
-        ), mock.patch.object(
-            launch_mod.network_mod, "network_egress_name_for_slug",
-            return_value="bb-egress",
-        ), mock.patch.object(
-            launch_mod, "bottle_plan_to_compose",
-            return_value={"services": {"agent": {}}},
-        ), mock.patch.object(
-            launch_mod, "write_compose_file",
-            return_value=Path("/tmp/compose.yml"),
-        ), mock.patch.object(launch_mod, "compose_up"), \
-           mock.patch.object(launch_mod, "compose_dump_logs"), \
-           mock.patch.object(launch_mod, "compose_down"), \
-           contextlib.redirect_stderr(io.StringIO()):
-            provision = mock.Mock(return_value=None)
-            with launch_mod.launch(plan, provision=provision):
-                pass
+        with mock.patch.object(launch_mod, "read_committed_image", return_value=committed_tag), \
+                mock.patch.object(launch_mod.docker_mod, "image_exists", return_value=image_present), \
+                mock.patch.object(launch_mod.docker_mod, "build_image", side_effect=_build), \
+                mock.patch.object(launch_mod, "launch_consolidated", return_value=_CTX), \
+                mock.patch.object(launch_mod, "teardown_consolidated"), \
+                mock.patch.object(launch_mod, "DockerGateway", return_value=gw), \
+                mock.patch.object(launch_mod, "consolidated_agent_compose", side_effect=compose), \
+                mock.patch.object(launch_mod, "write_compose_file", return_value=Path("/tmp/c.yml")), \
+                mock.patch.object(launch_mod, "compose_up"), \
+                mock.patch.object(launch_mod, "compose_dump_logs"), \
+                mock.patch.object(launch_mod, "compose_down"), \
+                contextlib.redirect_stderr(io.StringIO()):
+            yield built
 
+    def _run_launch(
+        self, plan: DockerBottlePlan, *,
+        committed_tag: str | None = None, image_present: bool = True,
+    ) -> list[str]:
+        def compose(_p: DockerBottlePlan, **_kw: Any) -> dict[str, Any]:
+            return {"services": {"agent": {}}}
+        with self._patched(
+            committed_tag=committed_tag, image_present=image_present, compose=compose,
+        ) as built:
+            with launch_mod.launch(plan, provision=mock.Mock(return_value=None)):
+                pass
         return built
 
     def test_skips_build_when_committed_image_present(self) -> None:
-        plan = _plan(self._tmp)
-        built = self._run_launch(plan, committed_tag=_COMMITTED_TAG, image_present=True)
-        self.assertEqual([], built, "build_image should not be called when committed image exists")
+        built = self._run_launch(_plan(self._tmp), committed_tag=_COMMITTED_TAG, image_present=True)
+        self.assertEqual([], built)  # committed image reused, no build
 
     def test_uses_committed_image_in_compose_spec(self) -> None:
-        """The compose spec renderer receives the committed image tag via
-        plan.image — captured here by checking what bottle_plan_to_compose
-        was called with."""
-        plan = _plan(self._tmp)
-        captured_plans: list[DockerBottlePlan] = []
+        captured: list[DockerBottlePlan] = []
 
-        def fake_compose(p: DockerBottlePlan) -> dict[str, Any]:
-            captured_plans.append(p)
+        def compose(p: DockerBottlePlan, **_kw: Any) -> dict[str, Any]:
+            captured.append(p)
             return {"services": {"agent": {}}}
 
-        with mock.patch.object(
-            launch_mod, "read_committed_image", return_value=_COMMITTED_TAG,
-        ), mock.patch.object(
-            launch_mod.docker_mod, "image_exists", return_value=True,
-        ), mock.patch.object(
-            launch_mod.docker_mod, "build_image",
-        ), mock.patch.object(
-            launch_mod, "egress_tls_init",
-            return_value=(Path("/egress_ca"), Path("/egress_cert")),
-        ), mock.patch.object(
-            launch_mod.network_mod, "network_name_for_slug",
-            return_value="bb-internal",
-        ), mock.patch.object(
-            launch_mod.network_mod, "network_egress_name_for_slug",
-            return_value="bb-egress",
-        ), mock.patch.object(
-            launch_mod, "bottle_plan_to_compose", side_effect=fake_compose,
-        ), mock.patch.object(
-            launch_mod, "write_compose_file",
-            return_value=Path("/tmp/compose.yml"),
-        ), mock.patch.object(launch_mod, "compose_up"), \
-           mock.patch.object(launch_mod, "compose_dump_logs"), \
-           mock.patch.object(launch_mod, "compose_down"), \
-           contextlib.redirect_stderr(io.StringIO()):
-            provision = mock.Mock(return_value=None)
-            with launch_mod.launch(plan, provision=provision):
+        with self._patched(committed_tag=_COMMITTED_TAG, image_present=True, compose=compose):
+            with launch_mod.launch(_plan(self._tmp), provision=mock.Mock(return_value=None)):
                 pass
-
-        self.assertEqual(1, len(captured_plans))
-        self.assertEqual(_COMMITTED_TAG, captured_plans[0].image)
+        self.assertEqual(_COMMITTED_TAG, captured[0].image)
 
     def test_falls_back_to_build_when_no_committed_image(self) -> None:
-        plan = _plan(self._tmp)
-        built = self._run_launch(plan, committed_tag=None)
-        self.assertEqual([_DEFAULT_IMAGE], built)
+        self.assertEqual([_DEFAULT_IMAGE], self._run_launch(_plan(self._tmp), committed_tag=None))
 
     def test_falls_back_to_build_when_committed_image_missing_from_daemon(self) -> None:
-        plan = _plan(self._tmp)
-        built = self._run_launch(
-            plan, committed_tag=_COMMITTED_TAG, image_present=False,
-        )
+        built = self._run_launch(_plan(self._tmp), committed_tag=_COMMITTED_TAG, image_present=False)
         self.assertEqual([_DEFAULT_IMAGE], built)
 
 

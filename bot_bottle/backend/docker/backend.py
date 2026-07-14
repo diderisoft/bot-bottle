@@ -111,6 +111,11 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
         plumbing needed; the alias resolves inside the bridge."""
         if plan.supervise_plan is None:
             return ""
+        # Consolidated: the supervise daemon lives on the shared gateway, so
+        # the agent registers the gateway address (NO_PROXY bypasses egress),
+        # not the per-bottle `supervise` alias.
+        if plan.agent_supervise_url:
+            return plan.agent_supervise_url
         return f"http://{SUPERVISE_HOSTNAME}:{SUPERVISE_PORT}/"
 
     def prepare_cleanup(self) -> DockerBottleCleanupPlan:

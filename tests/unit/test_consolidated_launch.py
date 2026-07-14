@@ -39,11 +39,12 @@ def _client(*, bottles: list[dict[str, object]] | None = None) -> Mock:
 
 
 class TestLaunchConsolidated(unittest.TestCase):
-    def _run(self, client: Mock, provision: Mock | None = None):
+    def _run(self, client: Mock, provision: Mock | None = None, *, on_network=("172.18.0.2",)):
         service = MagicMock()
         service.ensure_running.return_value = "http://orch:8080"
         with patch(f"{_MOD}._network_cidr", return_value="172.18.0.0/16"), \
                 patch(f"{_MOD}._container_ip", return_value="172.18.0.2"), \
+                patch(f"{_MOD}._network_container_ips", return_value=list(on_network)), \
                 patch(f"{_MOD}.OrchestratorClient", return_value=client), \
                 patch(f"{_MOD}.provision_git_gate", provision or Mock()):
             return launch_consolidated(_egress_plan(), _git_plan(), service=service)
@@ -64,10 +65,10 @@ class TestLaunchConsolidated(unittest.TestCase):
         self.assertIn("api.example.com", kwargs.kwargs["policy"])
         provision.assert_called_once()
 
-    def test_skips_gateway_and_live_bottle_addresses(self) -> None:
-        client = _client(bottles=[{"source_ip": "172.18.0.3"}])
-        ctx = self._run(client)
-        self.assertEqual("172.18.0.4", ctx.source_ip)  # .2 gw, .3 taken → .4
+    def test_skips_all_addresses_on_the_network(self) -> None:
+        # Gateway .2 + orchestrator .3 already attached -> agent gets .4.
+        ctx = self._run(_client(), on_network=("172.18.0.2", "172.18.0.3"))
+        self.assertEqual("172.18.0.4", ctx.source_ip)
 
     def test_provision_failure_rolls_back_registration(self) -> None:
         client = _client()

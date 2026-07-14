@@ -76,15 +76,21 @@ def _container_ip(name: str, network: str) -> str:
     return ip
 
 
-def _taken_ips(client: OrchestratorClient, gateway_ip: str) -> list[str]:
-    """Every address already in use on the gateway network: the gateway
-    container plus every live bottle the registry knows."""
-    taken = [gateway_ip]
-    for rec in client.list_bottles():
-        src = rec.get("source_ip")
-        if isinstance(src, str) and src:
-            taken.append(src)
-    return taken
+def _network_container_ips(network: str) -> list[str]:
+    """Every address currently assigned on the gateway network — the ground
+    truth for "in use": the gateway + orchestrator infrastructure containers
+    and every live agent. Read from the network so a new bottle can't collide
+    with anything actually attached (a registry-only view would miss the
+    orchestrator/gateway containers)."""
+    proc = run_docker([
+        "docker", "network", "inspect", "--format",
+        "{{range .Containers}}{{.IPv4Address}} {{end}}", network,
+    ])
+    ips: list[str] = []
+    for entry in proc.stdout.split():
+        # entries look like "172.20.0.2/16" — keep the address.
+        ips.append(entry.split("/", 1)[0])
+    return ips
 
 
 def launch_consolidated(
@@ -106,7 +112,7 @@ def launch_consolidated(
 
     cidr = _network_cidr(network)
     gateway_ip = _container_ip(gateway_name, network)
-    source_ip = next_free_ip(cidr, _taken_ips(client, gateway_ip))
+    source_ip = next_free_ip(cidr, _network_container_ips(network))
 
     inputs = registration_inputs(egress_plan)
     reg = client.register_bottle(

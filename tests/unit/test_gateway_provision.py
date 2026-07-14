@@ -31,9 +31,9 @@ def _recorder(calls: list[list[str]]):
 def _plan(*upstreams: GitGateUpstream) -> GitGatePlan:
     return GitGatePlan(
         slug="demo",
-        entrypoint_script=Path(),
-        hook_script=Path(),
-        access_hook_script=Path(),
+        entrypoint_script=Path("/stage/entrypoint.sh"),
+        hook_script=Path("/stage/pre-receive"),
+        access_hook_script=Path("/stage/access-hook"),
         upstreams=tuple(upstreams),
     )
 
@@ -61,6 +61,8 @@ class TestProvisionGitGate(unittest.TestCase):
         self.assertIn(
             ["docker", "cp", "/host/kh", "gw:/git-gate/creds/bottle1/foo-known_hosts"], cps,
         )
+        # The shared (bottle-agnostic) hooks are installed into the gateway.
+        self.assertIn(["docker", "cp", "/stage/pre-receive", "gw:/etc/git-gate/pre-receive"], cps)
         # The init script runs in the gateway, namespaced under the bottle id.
         exec_scripts = [c for c in calls if c[:3] == ["docker", "exec", "gw"] and c[3] == "sh"]
         self.assertEqual(1, len(exec_scripts))
@@ -70,9 +72,9 @@ class TestProvisionGitGate(unittest.TestCase):
         calls: list[list[str]] = []
         with patch(_RUN, side_effect=_recorder(calls)):
             provision_git_gate("gw", "b1", _plan(_up("foo")))  # no known_hosts
-        cps = [c for c in calls if c[:2] == ["docker", "cp"]]
-        self.assertEqual(1, len(cps))  # only the key, not known_hosts
-        self.assertTrue(cps[0][3].endswith("/foo-key"))
+        creds_cps = [c for c in calls if c[:2] == ["docker", "cp"] and "/git-gate/creds/" in c[3]]
+        self.assertEqual(1, len(creds_cps))  # only the key, not known_hosts
+        self.assertTrue(creds_cps[0][3].endswith("/foo-key"))
 
     def test_no_upstreams_is_noop(self) -> None:
         with patch(_RUN) as m:
