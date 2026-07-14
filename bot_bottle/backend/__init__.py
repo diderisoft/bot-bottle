@@ -40,7 +40,7 @@ from abc import ABC, abstractmethod
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Generic, Sequence, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Sequence, TypeVar
 
 from ..agent_provider import AgentProvisionPlan, get_provider, build_agent_provision_plan
 from ..egress import EgressPlan
@@ -53,6 +53,9 @@ from ..env import resolve_env, ResolvedEnv
 from ..workspace import WorkspacePlan, workspace_plan
 from .print_util import print_multi, visible_agent_env_names
 from .util import host_skill_dir
+
+if TYPE_CHECKING:
+    from .freeze import CommitCancelled, Freezer, get_freezer
 
 
 @dataclass(frozen=True)
@@ -584,31 +587,31 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         Not called by the launch path or the test suite."""
 
 
-# _BACKENDS is None until the first call to _get_backends(), at which
+# _backends is None until the first call to _get_backends(), at which
 # point all three concrete backend classes are imported and instantiated.
 # Keeping the imports out of module scope means that importing any
 # backend sub-module (e.g. `backend.docker.util`) no longer drags the
 # firecracker and macos-container implementations into memory.
 #
-# Tests may replace _BACKENDS with a {name: fake} dict via patch.object;
+# Tests may replace _backends with a {name: fake} dict via patch.object;
 # _get_backends() returns the current module-level value as-is when it
 # is not None, so test fakes take effect without triggering real imports.
-_BACKENDS: dict[str, BottleBackend[Any, Any]] | None = None
+_backends: dict[str, BottleBackend[Any, Any]] | None = None
 
 
 def _get_backends() -> dict[str, BottleBackend[Any, Any]]:
     """Return the registry of all backend instances, loading lazily on first call."""
-    global _BACKENDS  # pylint: disable=global-statement
-    if _BACKENDS is None:
+    global _backends  # pylint: disable=global-statement
+    if _backends is None:
         from .docker import DockerBottleBackend
         from .firecracker import FirecrackerBottleBackend
         from .macos_container import MacosContainerBottleBackend
-        _BACKENDS = {
+        _backends = {
             "docker": DockerBottleBackend(),
             "firecracker": FirecrackerBottleBackend(),
             "macos-container": MacosContainerBottleBackend(),
         }
-    return _BACKENDS
+    return _backends
 
 
 def __getattr__(name: str) -> Any:
@@ -729,12 +732,12 @@ __all__ = [
     "BottleCleanupPlan",
     "BottlePlan",
     "BottleSpec",
-    "CommitCancelled",  # pylint: disable=undefined-all-variable
+    "CommitCancelled",
     "ExecResult",
-    "Freezer",  # pylint: disable=undefined-all-variable
+    "Freezer",
     "enumerate_active_agents",
     "get_bottle_backend",
-    "get_freezer",  # pylint: disable=undefined-all-variable
+    "get_freezer",
     "has_backend",
     "known_backend_names",
 ]

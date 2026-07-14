@@ -40,7 +40,7 @@ class TestGetBottleBackend(unittest.TestCase):
                 return True
 
         with patch.dict(os.environ, {}, clear=True), \
-             patch.object(backend_mod, "_BACKENDS", {
+             patch.object(backend_mod, "_backends", {
                  "macos-container": _FakeBackend(),
                  "docker": _FakeBackend(),
              }):
@@ -61,7 +61,7 @@ class TestGetBottleBackend(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True), \
              patch.object(backend_mod.FirecrackerBottleBackend,
                           "is_host_capable", classmethod(lambda cls: False)), \
-             patch.object(backend_mod, "_BACKENDS", {
+             patch.object(backend_mod, "_backends", {
                  "macos-container": _FakeBackend("macos-container", False),
                  "docker": _FakeBackend("docker", True),
              }):
@@ -83,7 +83,7 @@ class TestGetBottleBackend(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True), \
              patch.object(backend_mod.FirecrackerBottleBackend,
                           "is_host_capable", classmethod(lambda cls: True)), \
-             patch.object(backend_mod, "_BACKENDS", {
+             patch.object(backend_mod, "_backends", {
                  "macos-container": _FakeBackend("macos-container", False),
                  "firecracker": _FakeBackend("firecracker", False),
                  "docker": _FakeBackend("docker", True),
@@ -133,7 +133,7 @@ class TestEnumerateActiveAgents(unittest.TestCase):
                 return self._items
 
         with patch.object(
-            backend_mod, "_BACKENDS",
+            backend_mod, "_backends",
             {"docker": _FakeBackend([a]), "firecracker": _FakeBackend([b])},
         ):
             self.assertEqual([a, b], enumerate_active_agents())
@@ -167,7 +167,7 @@ class TestEnumerateActiveAgents(unittest.TestCase):
                 return self._items
 
         with patch.object(
-            backend_mod, "_BACKENDS",
+            backend_mod, "_backends",
             {
                 "docker": _FakeBackend([newer, tie_b]),
                 "firecracker": _FakeBackend([missing_metadata, tie_a]),
@@ -187,7 +187,7 @@ class TestEnumerateActiveAgents(unittest.TestCase):
                 return []
 
         with patch.object(
-            backend_mod, "_BACKENDS",
+            backend_mod, "_backends",
             {"docker": _FakeBackend(), "firecracker": _FakeBackend()},
         ):
             self.assertEqual([], enumerate_active_agents())
@@ -218,7 +218,7 @@ class TestEnumerateActiveAgents(unittest.TestCase):
                 return self._items
 
         with patch.object(
-            backend_mod, "_BACKENDS",
+            backend_mod, "_backends",
             {
                 "docker": _FakeBackend([present], available=True),
                 "firecracker": _FakeBackend([hidden], available=False),
@@ -234,7 +234,7 @@ class TestHasBackend(unittest.TestCase):
                 return False
 
         with patch.object(
-            backend_mod, "_BACKENDS", {"docker": _FakeBackend()},
+            backend_mod, "_backends", {"docker": _FakeBackend()},
         ):
             from bot_bottle.backend import has_backend
             self.assertFalse(has_backend("docker"))
