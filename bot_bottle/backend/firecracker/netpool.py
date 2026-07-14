@@ -79,6 +79,12 @@ def _cfg(key: str) -> str:
 IFACE_PREFIX = _cfg("BOT_BOTTLE_FC_IFACE_PREFIX")
 NFT_TABLE = _cfg("BOT_BOTTLE_FC_NFT_TABLE")
 
+# The orchestrator/gateway VM's dedicated TAP — outside the bbfc* agent
+# pool and, unlike it, NAT'd to the internet (see `orch_slot`). The
+# orchestrator is trusted infra: it builds agent images in-VM (buildah
+# needs to FROM-pull + apt/npm) and forwards agent egress upstream.
+ORCH_IFACE = _cfg("BOT_BOTTLE_FC_ORCH_IFACE")
+
 
 def pool_size() -> int:
     return int(_cfg("BOT_BOTTLE_FC_POOL_SIZE"))
@@ -121,6 +127,25 @@ def slot(index: int) -> Slot:
 
 def all_slots() -> list[Slot]:
     return [slot(i) for i in range(pool_size())]
+
+
+def orch_slot() -> Slot:
+    """The orchestrator/gateway VM's dedicated link — its own TAP
+    (`ORCH_IFACE`) on a /31 at the TOP of the IP_BASE /16 (host
+    x.y.255.0, guest x.y.255.1), well clear of the agent pool near the
+    bottom of the block. Unlike a pool `Slot`, this link is NAT'd out to
+    the internet by the setup (the orchestrator is trusted infra), so it
+    is deliberately *not* one of the isolated `bbfc*` slots.
+
+    `index` is -1 (sentinel: not a pool index)."""
+    base16 = int(ipaddress.IPv4Address(ip_base())) & 0xFFFF0000
+    host = base16 + 0xFF00
+    return Slot(
+        index=-1,
+        iface=ORCH_IFACE,
+        host_ip=str(ipaddress.IPv4Address(host)),
+        guest_ip=str(ipaddress.IPv4Address(host + 1)),
+    )
 
 
 # --- fail-closed verification ---------------------------------------

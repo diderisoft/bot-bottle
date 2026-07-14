@@ -64,6 +64,21 @@ class TestNetpoolProbes(unittest.TestCase):
              patch.object(netpool, "tap_present", side_effect=[True, False]):
             self.assertEqual(["bbfc1"], netpool.missing_taps())
 
+    def test_orch_slot_is_top_of_ip_base_16(self):
+        # Dedicated orchestrator link: /31 at the top of the IP_BASE /16,
+        # clear of the pool (bottom of the block). Must match the shell
+        # script's orch_host()/orch_guest() and be a non-pool index.
+        with patch.dict("os.environ", {"BOT_BOTTLE_FC_IP_BASE": "10.243.0.0"}):
+            s = netpool.orch_slot()
+        self.assertEqual(netpool.ORCH_IFACE, s.iface)
+        self.assertEqual("10.243.255.0", s.host_ip)
+        self.assertEqual("10.243.255.1", s.guest_ip)
+        self.assertEqual(-1, s.index)
+        # Never collides with a pool slot's guest address.
+        with patch.dict("os.environ", {"BOT_BOTTLE_FC_IP_BASE": "10.243.0.0"}):
+            pool_guests = {sl.guest_ip for sl in netpool.all_slots()}
+        self.assertNotIn(s.guest_ip, pool_guests)
+
 
 class TestConsoleTail(unittest.TestCase):
     def test_reads_tail(self):

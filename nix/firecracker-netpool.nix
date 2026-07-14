@@ -49,10 +49,12 @@ let
   # /31 alignment == an even final octet (only bit 0 matters for base+2i).
   lastOctet = lib.toInt (lib.last (lib.splitString "." cfg.ipBase));
 
-  # The script needs ip/nft/sysctl + the usual coreutils. It gets every
-  # pool value via the unit's Environment=, so it never reads the shared
-  # defaults file (which isn't beside it once copied to the store).
-  runtimePath = with pkgs; [ iproute2 nftables procps coreutils gnused ];
+  # The script needs ip/nft/sysctl + the usual coreutils, plus iptables
+  # for the orchestrator link's DOCKER-USER accept (best-effort; skipped
+  # when Docker is absent). It gets every pool value via the unit's
+  # Environment=, so it never reads the shared defaults file (which isn't
+  # beside it once copied to the store).
+  runtimePath = with pkgs; [ iproute2 nftables iptables procps coreutils gnused ];
 
   ownEnv =
     if cfg.group != null
@@ -64,6 +66,7 @@ let
     BOT_BOTTLE_FC_IP_BASE = cfg.ipBase;
     BOT_BOTTLE_FC_IFACE_PREFIX = cfg.ifacePrefix;
     BOT_BOTTLE_FC_NFT_TABLE = cfg.tableName;
+    BOT_BOTTLE_FC_ORCH_IFACE = cfg.orchIface;
   } // ownEnv;
 in
 {
@@ -127,6 +130,19 @@ in
       description = "nftables table name for the isolation boundary. Must match netpool.NFT_TABLE.";
     };
 
+    orchIface = lib.mkOption {
+      type = lib.types.str;
+      default = defaults.BOT_BOTTLE_FC_ORCH_IFACE;
+      defaultText = lib.literalMD "the shared `netpool.defaults.env` value";
+      description = ''
+        TAP name for the orchestrator/gateway VM's dedicated link. Unlike
+        the isolated bbfc* agent pool, this link is NAT'd to the internet
+        (the orchestrator is trusted infra that builds agent images in-VM
+        and forwards agent egress upstream). Must match
+        BOT_BOTTLE_FC_ORCH_IFACE / netpool.ORCH_IFACE.
+      '';
+    };
+
     writeEnvFile = lib.mkOption {
       type = lib.types.bool;
       default = false;
@@ -176,6 +192,7 @@ in
         BOT_BOTTLE_FC_IP_BASE=${cfg.ipBase}
         BOT_BOTTLE_FC_IFACE_PREFIX=${cfg.ifacePrefix}
         BOT_BOTTLE_FC_NFT_TABLE=${cfg.tableName}
+        BOT_BOTTLE_FC_ORCH_IFACE=${cfg.orchIface}
       '';
     };
   };
