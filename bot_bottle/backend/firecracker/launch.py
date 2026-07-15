@@ -48,7 +48,7 @@ from ...supervise import SUPERVISE_PORT
 from ..docker import util as docker_mod
 from ..docker.egress import EGRESS_PORT
 from ..util import AGENT_CA_BUNDLE, AGENT_CA_PATH
-from . import firecracker_vm, isolation_probe, netpool, util
+from . import firecracker_vm, image_builder, isolation_probe, netpool, util
 from .bottle import FirecrackerBottle
 from .bottle_plan import FirecrackerBottlePlan
 from .consolidated_launch import (
@@ -57,7 +57,6 @@ from .consolidated_launch import (
 )
 
 
-_REPO_DIR = str(Path(__file__).resolve().parent.parent.parent.parent)
 _GIT_HTTP_PORT = 9420
 
 
@@ -85,10 +84,10 @@ def launch(
             raise teardown_exc
 
     try:
-        # Step 1: agent image. The sidecar bundle image is built by the
-        # orchestrator service (ensure_running → ensure_built); we only
-        # build the agent image here. Use a committed snapshot when available.
-        plan = _build_agent_image(plan)
+        # Step 1: agent rootfs. Built from the Dockerfile inside a Firecracker
+        # builder VM (buildah, no host docker); a committed snapshot is reused
+        # when present. Returns the base dir the per-bottle ext4 is made from.
+        plan, agent_base = _build_agent_base(plan)
 
         # Step 2: mint the git-gate dynamic (gitea) deploy keys, if any.
         git_gate_plan = plan.git_gate_plan
@@ -154,11 +153,10 @@ def launch(
         )
 
         # Step 6: build the per-bottle rootfs + SSH key, then boot.
-        base_dir = util.build_base_rootfs_dir(plan.image)
         run_dir = util.cache_dir() / "run" / plan.slug
         run_dir.mkdir(parents=True, exist_ok=True)
         rootfs = run_dir / "rootfs.ext4"
-        util.build_rootfs_ext4(base_dir, rootfs)
+        util.build_rootfs_ext4(agent_base, rootfs)
         private_key, pubkey = util.generate_keypair(run_dir)
 
         vm = firecracker_vm.boot(
@@ -199,19 +197,27 @@ def launch(
         teardown()
 
 
-def _build_agent_image(plan: FirecrackerBottlePlan) -> FirecrackerBottlePlan:
+def _build_agent_base(
+    plan: FirecrackerBottlePlan,
+) -> tuple[FirecrackerBottlePlan, Path]:
+    """Produce the agent's base rootfs dir. Primary path: build the Dockerfile
+    inside a Firecracker builder VM (buildah, no host docker), smoke-testing
+    the image before export. A committed snapshot (freeze/migrate) is still
+    exported via the host docker path until that is ported too."""
     committed = read_committed_image(plan.slug)
     if committed and docker_mod.image_exists(committed):
         info(f"using committed image {committed!r}")
-        return dataclasses.replace(
+        plan = dataclasses.replace(
             plan,
             agent_provision=dataclasses.replace(plan.agent_provision, image=committed),
         )
-    docker_mod.build_image(plan.image, _REPO_DIR, dockerfile=plan.dockerfile_path)
-    docker_mod.verify_agent_image(
-        plan.image, runtime_for(plan.agent_provider_template).smoke_test,
+        return plan, util.build_base_rootfs_dir(committed)
+    base = image_builder.build_agent_rootfs_dir(
+        Path(plan.dockerfile_path),
+        image_tag=plan.image,
+        smoke_test=runtime_for(plan.agent_provider_template).smoke_test,
     )
-    return plan
+    return plan, base
 
 
 # --- agent guest env -------------------------------------------------

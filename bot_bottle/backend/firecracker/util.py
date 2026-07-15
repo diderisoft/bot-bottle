@@ -200,12 +200,12 @@ def build_base_rootfs_dir(image_ref: str) -> Path:
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
         )
 
-    _inject_guest_boot(base)
+    inject_guest_boot(base)
     ready.write_text("ok\n")
     return base
 
 
-def _inject_guest_boot(rootfs: Path) -> None:
+def inject_guest_boot(rootfs: Path) -> None:
     """Drop the static dropbear and the PID-1 init into the rootfs."""
     shutil.copy2(dropbear_path(), rootfs / "bb-dropbear")
     os.chmod(rootfs / "bb-dropbear", 0o755)
