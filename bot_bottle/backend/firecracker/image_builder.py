@@ -139,6 +139,18 @@ def _ssh(private_key: Path, guest_ip: str, script: str,
     )
 
 
+def _ssh_streamed(private_key: Path, guest_ip: str, script: str,
+                  *, timeout: float) -> int:
+    """Run an SSH command letting the remote's stdout/stderr flow straight to
+    ours (no capture), for long chatty steps where live progress beats a
+    silent wait. Returns the exit code."""
+    proc = subprocess.run(
+        util.ssh_base_argv(private_key, guest_ip) + [script],
+        timeout=timeout, check=False,
+    )
+    return proc.returncode
+
+
 def _send_dockerfile(private_key: Path, guest_ip: str, dockerfile: Path, ctx: str) -> None:
     proc = subprocess.run(
         util.ssh_base_argv(private_key, guest_ip) + [f"cat > {ctx}/Dockerfile"],
@@ -150,14 +162,19 @@ def _send_dockerfile(private_key: Path, guest_ip: str, dockerfile: Path, ctx: st
 
 
 def _buildah_build(private_key: Path, guest_ip: str, ctx: str, tag: str) -> None:
-    build = _ssh(
+    # Stream buildah's step-by-step output straight to our stderr (like the
+    # docker backend's `docker build`), so a long first build (base pull +
+    # apt/npm installs) shows live progress instead of a silent wait. The
+    # remote stderr is where buildah writes its `STEP i/n` lines.
+    info(f"buildah build {tag} in the infra VM (streaming output)")
+    rc = _ssh_streamed(
         private_key, guest_ip,
         f"buildah build {_BUILD_FLAGS} -t {tag} -f {ctx}/Dockerfile {ctx}/ctx",
         timeout=_BUILD_TIMEOUT_SECONDS,
     )
-    if build.returncode != 0:
-        tail = "\n".join((build.stdout + build.stderr).strip().splitlines()[-20:])
-        die(f"buildah build in the infra VM failed:\n{tail}")
+    if rc != 0:
+        die(f"buildah build in the infra VM failed (exit {rc}); "
+            "see the build output above.")
 
 
 def _smoke_test(private_key: Path, guest_ip: str, tag: str, ctr: str,
