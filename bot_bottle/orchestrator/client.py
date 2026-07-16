@@ -135,10 +135,71 @@ class OrchestratorClient:
         bottles = payload.get("bottles")
         return bottles if isinstance(bottles, list) else []
 
+    # --- supervise queue (operator TUI) ------------------------------------
+
+    def supervise_pending(self) -> list[dict[str, object]]:
+        """Pending supervise proposals across all bottles
+        (`GET /supervise/proposals`)."""
+        payload = self._ok("GET", "/supervise/proposals")
+        proposals = payload.get("proposals")
+        return proposals if isinstance(proposals, list) else []
+
+    def supervise_respond(
+        self,
+        proposal_id: str,
+        *,
+        bottle_slug: str,
+        decision: str,
+        notes: str = "",
+        final_file: str | None = None,
+    ) -> None:
+        """Record an operator decision (`POST /supervise/respond`). `decision`
+        is approve/modify/reject. Raises `OrchestratorClientError` if the
+        proposal is gone or the bottle can no longer be applied to (409)."""
+        body: dict[str, object] = {
+            "proposal_id": proposal_id,
+            "bottle_slug": bottle_slug,
+            "decision": decision,
+            "notes": notes,
+        }
+        if final_file is not None:
+            body["final_file"] = final_file
+        self._ok("POST", "/supervise/respond", body)
+
+
+def discover_orchestrator_url(*, timeout: float = 2.0) -> str:
+    """The URL of the one running per-host orchestrator control plane, probing
+    the backends' well-known control-plane addresses (both on port 8099):
+    docker publishes it on loopback; the firecracker infra VM serves it on the
+    orchestrator TAP. Returns the first that answers `/health`; raises if none
+    do (no orchestrator up — launch a bottle first)."""
+    candidates: list[str] = []
+    try:  # docker: loopback-published control plane
+        from .lifecycle import DEFAULT_PORT as _DOCKER_PORT
+        candidates.append(f"http://127.0.0.1:{_DOCKER_PORT}")
+    except Exception:  # noqa: BLE001 — backend optional
+        candidates.append("http://127.0.0.1:8099")
+    try:  # firecracker: infra VM control plane on the orchestrator TAP
+        from ..backend.firecracker import netpool
+        from ..backend.firecracker.infra_vm import CONTROL_PLANE_PORT
+        candidates.append(
+            f"http://{netpool.orch_slot().guest_ip}:{CONTROL_PLANE_PORT}")
+    except Exception:  # noqa: BLE001 — backend optional / not firecracker
+        pass
+    for url in candidates:
+        if OrchestratorClient(url, timeout=timeout).health():
+            return url
+    raise OrchestratorClientError(
+        "no running orchestrator control plane found (tried "
+        + ", ".join(candidates)
+        + "); launch a bottle first"
+    )
+
 
 __all__ = [
     "OrchestratorClient",
     "OrchestratorClientError",
     "RegisteredBottle",
     "DEFAULT_TIMEOUT_SECONDS",
+    "discover_orchestrator_url",
 ]

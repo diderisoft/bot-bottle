@@ -20,32 +20,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..paths import bot_bottle_root
-from ..bottle_state import read_metadata
-from ..backend.docker.egress_apply import (
-    EgressApplyError,
-    applicator as _docker_applicator,
-)
-from ..backend.macos_container.egress_apply import (
-    applicator as _macos_applicator,
-)
 from ..log import Die, error, info
+from ..orchestrator.client import (
+    OrchestratorClient,
+    OrchestratorClientError,
+    discover_orchestrator_url,
+)
 
 from ..supervise import (
-    COMPONENT_FOR_TOOL,
-    AuditEntry,
     Proposal,
-    Response,
-    STATUS_APPROVED,
-    STATUS_MODIFIED,
-    STATUS_REJECTED,
     TOOL_EGRESS_ALLOW,
     TOOL_EGRESS_BLOCK,
     TOOL_GITLEAKS_ALLOW,
     TOOL_EGRESS_TOKEN_ALLOW,
-    list_all_pending_proposals,
-    render_diff,
-    write_audit_entry,
-    write_response,
 )
 from ._common import PROG
 
@@ -65,25 +52,31 @@ class QueuedProposal:
     proposal: Proposal
 
 
-# Errors any remediation engine may raise. Caught by the TUI key
-# handlers and surfaced in the status line so a failed apply keeps
-# the proposal pending rather than crashing curses.
-ApplyError = (EgressApplyError,)
+# A failed operator action (orchestrator unreachable, bottle torn down,
+# 409) is caught by the TUI key handlers and surfaced in the status line so
+# the proposal stays pending rather than crashing curses.
+ApplyError = (OrchestratorClientError,)
 
 
-def apply_routes_change(slug: str, content: str) -> tuple[str, str]:
-    meta = read_metadata(slug)
-    backend = meta.backend if meta is not None else ""
-    if backend == "macos-container":
-        return _macos_applicator.apply_routes_change(slug, content)
-    return _docker_applicator.apply_routes_change(slug, content)
+# The one per-host orchestrator, discovered lazily on first use. Every
+# operator action — list, approve, reject — goes through its HTTP control
+# plane (the orchestrator owns the single DB + live policy); there is no
+# direct-DB path and no backend branching here.
+_client_instance: OrchestratorClient | None = None
+
+
+def _client() -> OrchestratorClient:
+    global _client_instance  # noqa: PLW0603 — CLI-session singleton
+    if _client_instance is None:
+        _client_instance = OrchestratorClient(discover_orchestrator_url())
+    return _client_instance
 
 
 def discover_pending() -> list[QueuedProposal]:
-    """Collect pending proposals across bottles."""
+    """Collect pending proposals across bottles from the orchestrator."""
     out = [
-        QueuedProposal(proposal=proposal)
-        for proposal in list_all_pending_proposals()
+        QueuedProposal(proposal=Proposal.from_dict(d))
+        for d in _client().supervise_pending()
     ]
     out.sort(key=lambda q: q.proposal.arrival_timestamp)
     return out
@@ -136,39 +129,27 @@ def approve(
     notes: str = "",
     final_file: str | None = None,
 ) -> None:
-    """Apply the proposal, write the waiting response, and audit it."""
-    status = STATUS_MODIFIED if final_file is not None else STATUS_APPROVED
-    file_to_apply = final_file if final_file is not None else qp.proposal.proposed_file
-
-    diff_before, diff_after = "", ""
-    if qp.proposal.tool in (TOOL_EGRESS_ALLOW, TOOL_EGRESS_BLOCK):
-        diff_before, diff_after = apply_routes_change(
-            qp.proposal.bottle_slug,
-            file_to_apply,
-        )
-
-    response = Response(
-        proposal_id=qp.proposal.id,
-        status=status,
+    """Approve (or, with `final_file`, modify-then-approve) via the
+    orchestrator: it applies the route change to the bottle's live policy,
+    writes the response that unblocks the agent, and audits it — one atomic
+    server-side op. Raises `OrchestratorClientError` on failure."""
+    _client().supervise_respond(
+        qp.proposal.id,
+        bottle_slug=qp.proposal.bottle_slug,
+        decision="modify" if final_file is not None else "approve",
         notes=notes,
         final_file=final_file,
     )
-    write_response(qp.proposal.bottle_slug, response)
-    _write_audit(
-        qp, action=status, notes=notes,
-        diff_before=diff_before, diff_after=diff_after,
-    )
+
 
 def reject(qp: QueuedProposal, *, reason: str) -> None:
-    """Write a rejection response and an audit entry."""
-    response = Response(
-        proposal_id=qp.proposal.id,
-        status=STATUS_REJECTED,
+    """Reject via the orchestrator (writes the response + audit)."""
+    _client().supervise_respond(
+        qp.proposal.id,
+        bottle_slug=qp.proposal.bottle_slug,
+        decision="reject",
         notes=reason,
-        final_file=None,
     )
-    write_response(qp.proposal.bottle_slug, response)
-    _write_audit(qp, action=STATUS_REJECTED, notes=reason, diff_before="", diff_after="")
 
 
 def _approve_from_tui(
@@ -186,29 +167,6 @@ def _approve_from_tui(
     approve(qp, final_file=final_file, notes=notes)
     verb = "modified+approved" if final_file is not None else "approved"
     return _approval_status(qp, verb)
-
-
-def _write_audit(
-    qp: QueuedProposal,
-    *,
-    action: str,
-    notes: str,
-    diff_before: str,
-    diff_after: str,
-) -> None:
-    """Audit log for egress tool."""
-    component = COMPONENT_FOR_TOOL.get(qp.proposal.tool)
-    if component is None:
-        return
-    write_audit_entry(AuditEntry(
-        timestamp=datetime.now(timezone.utc).isoformat(),
-        bottle_slug=qp.proposal.bottle_slug,
-        component=component,
-        operator_action=action,
-        operator_notes=notes,
-        justification=qp.proposal.justification,
-        diff=render_diff(diff_before, diff_after, label=component),
-    ))
 
 
 # --- $EDITOR integration --------------------------------------------------
@@ -244,6 +202,14 @@ def cmd_supervise(argv: list[str]) -> int:
         help="list pending proposals once and exit (no TUI)",
     )
     args = parser.parse_args(argv)
+
+    # Establish the orchestrator connection up front so a missing control
+    # plane is a clean one-line error, not a curses crash mid-loop.
+    try:
+        _client()
+    except OrchestratorClientError as e:
+        error(str(e))
+        return 1
 
     if args.once:
         return _list_once()
