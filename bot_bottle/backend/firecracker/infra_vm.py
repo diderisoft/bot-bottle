@@ -165,6 +165,7 @@ def boot() -> InfraVm:
         name="bot-bottle-infra", rootfs=rootfs, tap=slot.iface,
         guest_ip=slot.guest_ip, host_ip=slot.host_ip, pubkey=pubkey,
         run_dir=run_dir, mem_mib=4096, detached=True,
+        data_drive=_ensure_registry_volume(),
     )
     _pid_file().write_text(str(vm.process.pid))
     return InfraVm(guest_ip=slot.guest_ip, private_key=private_key, vm=vm)
@@ -178,6 +179,35 @@ def _infra_dir() -> Path:
 
 def _pid_file() -> Path:
     return _infra_dir() / "vm.pid"
+
+
+# The registry "volume": a host-side ext4 file attached to the infra VM as a
+# second virtio-block device (guest /dev/vdb), mounted at the control plane's
+# DB dir. It outlives the ephemeral rootfs, so the bottle registry survives an
+# infra-VM restart — the firecracker analogue of a docker volume. It is a
+# plain ext4 file: `sudo mount -o loop <path>` on the host (with the VM
+# stopped) to inspect bot-bottle.db directly.
+_REGISTRY_SIZE = "512M"
+
+
+def registry_volume_path() -> Path:
+    return _infra_dir() / "registry.ext4"
+
+
+def _ensure_registry_volume() -> Path:
+    """Create the empty ext4 registry volume on first use; reuse it after."""
+    vol = registry_volume_path()
+    if vol.exists():
+        return vol
+    info(f"creating infra registry volume {vol} ({_REGISTRY_SIZE})")
+    proc = subprocess.run(
+        ["mke2fs", "-q", "-t", "ext4", "-F", str(vol), _REGISTRY_SIZE],
+        capture_output=True, text=True, check=False,
+    )
+    if proc.returncode != 0:
+        vol.unlink(missing_ok=True)
+        die(f"creating registry volume failed: {proc.stderr.strip()}")
+    return vol
 
 
 def _stable_keypair() -> tuple[Path, str]:
@@ -321,6 +351,11 @@ if [ -n "$KEY" ]; then
 fi
 chown -R 0:0 /root 2>/dev/null || true
 mkdir -p /etc/dropbear /run /var/lib/bot-bottle
+
+# Persistent registry volume (second virtio-block device, /dev/vdb) mounted
+# at the control plane's DB dir, so bot-bottle.db survives infra-VM restarts.
+mount -t ext4 /dev/vdb /var/lib/bot-bottle 2>/dev/null || true
+
 /bb-dropbear -R -E -p 22 &
 
 # Control plane. Source is baked at /app; the package is stdlib-only.

@@ -78,20 +78,32 @@ def _config(
     vcpus: int,
     mem_mib: int,
     guest_mac: str,
+    data_drive: Path | None = None,
 ) -> dict[str, object]:
+    drives: list[dict[str, object]] = [
+        {
+            "drive_id": "rootfs",
+            "path_on_host": str(rootfs),
+            "is_root_device": True,
+            "is_read_only": False,
+        }
+    ]
+    # A second virtio-block device (guest /dev/vdb) — the infra VM's
+    # persistent registry "volume", a host-side ext4 file that outlives the
+    # ephemeral rootfs across VM restarts.
+    if data_drive is not None:
+        drives.append({
+            "drive_id": "data",
+            "path_on_host": str(data_drive),
+            "is_root_device": False,
+            "is_read_only": False,
+        })
     return {
         "boot-source": {
             "kernel_image_path": str(util.kernel_path()),
             "boot_args": _boot_args(guest_ip, host_ip, pubkey),
         },
-        "drives": [
-            {
-                "drive_id": "rootfs",
-                "path_on_host": str(rootfs),
-                "is_root_device": True,
-                "is_read_only": False,
-            }
-        ],
+        "drives": drives,
         "network-interfaces": [
             {
                 "iface_id": "eth0",
@@ -119,6 +131,7 @@ def boot(
     mem_mib: int = 2048,
     guest_mac: str = "06:00:AC:10:00:02",
     detached: bool = False,
+    data_drive: Path | None = None,
 ) -> VmHandle:
     """Write the config and launch the VMM. Returns once the process is
     spawned; callers wait for SSH readiness separately.
@@ -134,6 +147,7 @@ def boot(
         _config(
             rootfs=rootfs, tap=tap, guest_ip=guest_ip, host_ip=host_ip,
             pubkey=pubkey, vcpus=vcpus, mem_mib=mem_mib, guest_mac=guest_mac,
+            data_drive=data_drive,
         ),
         indent=2,
     ))

@@ -38,6 +38,34 @@ class TestBuildInfraRootfs(unittest.TestCase):
         self.assertIn("bot_bottle.orchestrator", init)
         self.assertIn("gateway_init.py", init)
         self.assertIn("export PATH=", init)
+        # Persistent registry volume mounted at the DB dir before the CP starts.
+        self.assertIn("/dev/vdb", init)
+
+
+class TestRegistryVolume(unittest.TestCase):
+    def test_reuses_existing_volume(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            vol = Path(td) / "registry.ext4"
+            vol.write_bytes(b"")  # already present
+            with patch.object(infra_vm, "registry_volume_path", return_value=vol), \
+                 patch.object(infra_vm.subprocess, "run") as run:
+                out = infra_vm._ensure_registry_volume()
+            run.assert_not_called()  # no mke2fs when it exists
+            self.assertEqual(vol, out)
+
+    def test_creates_volume_when_missing(self):
+        import tempfile
+        from subprocess import CompletedProcess
+        with tempfile.TemporaryDirectory() as td:
+            vol = Path(td) / "registry.ext4"
+            with patch.object(infra_vm, "registry_volume_path", return_value=vol), \
+                 patch.object(infra_vm.subprocess, "run",
+                              return_value=CompletedProcess([], 0)) as run:
+                infra_vm._ensure_registry_volume()
+            argv = run.call_args.args[0]
+            self.assertIn("mke2fs", argv)
+            self.assertIn(str(vol), argv)
 
 
 class TestEnsureBuilt(unittest.TestCase):

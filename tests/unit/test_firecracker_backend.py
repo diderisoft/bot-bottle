@@ -334,6 +334,18 @@ class TestBootArgs(unittest.TestCase):
         self.assertEqual("/run/rootfs.ext4", cfg["drives"][0]["path_on_host"])
         self.assertFalse(cfg["drives"][0]["is_read_only"])
         self.assertEqual("bbfc0", cfg["network-interfaces"][0]["host_dev_name"])
+        self.assertEqual(1, len(cfg["drives"]))  # no data drive by default
+
+    def test_config_adds_data_drive(self):
+        cfg = cast(Any, firecracker_vm._config(
+            rootfs=Path("/run/rootfs.ext4"), tap="bbfc0",
+            guest_ip="100.64.0.1", host_ip="100.64.0.0", pubkey="k",
+            vcpus=2, mem_mib=2048, guest_mac="06:00:AC:10:00:02",
+            data_drive=Path("/run/registry.ext4"),
+        ))
+        self.assertEqual(2, len(cfg["drives"]))
+        self.assertFalse(cfg["drives"][1]["is_root_device"])
+        self.assertEqual("/run/registry.ext4", cfg["drives"][1]["path_on_host"])
 
 
 class TestBottleExecClose(unittest.TestCase):
