@@ -17,9 +17,37 @@ Launch lifecycle:
 
 from __future__ import annotations
 
+import json
+from datetime import datetime, timezone
+
 from .broker import LaunchBroker, LaunchRequest, sign_request
 from .registry import BottleRecord, RegistryStore
 from .gateway import Gateway
+from ..supervise import (
+    AuditEntry,
+    COMPONENT_FOR_TOOL,
+    Response,
+    STATUS_APPROVED,
+    STATUS_MODIFIED,
+    STATUS_REJECTED,
+    TOOL_EGRESS_ALLOW,
+    TOOL_EGRESS_BLOCK,
+    list_all_pending_proposals,
+    read_proposal,
+    render_diff,
+    write_audit_entry,
+    write_response,
+)
+
+
+# Operator decision → Response.status. The apply half (egress tools) runs
+# for approve/modify only.
+_RESPOND_STATUS = {
+    "approve": STATUS_APPROVED,
+    "modify": STATUS_MODIFIED,
+    "reject": STATUS_REJECTED,
+}
+_APPLY_TOOLS = (TOOL_EGRESS_ALLOW, TOOL_EGRESS_BLOCK)
 
 
 class Orchestrator:
@@ -116,6 +144,83 @@ class Orchestrator:
         """Update a bottle's gateway policy in place (live reload). False if
         the bottle is unknown."""
         return self.registry.set_policy(bottle_id, policy)
+
+    # --- supervise queue (operator approvals) ------------------------------
+    #
+    # The orchestrator owns the single DB *and* the live policy, so operator
+    # decisions are applied here, server-side, and reached over HTTP by the
+    # host TUI (no direct-DB access, one path for every backend).
+
+    def supervise_pending(self) -> list[dict[str, object]]:
+        """All pending proposals across bottles, FIFO, as JSON dicts
+        (`Proposal.to_dict`, round-trippable via `Proposal.from_dict`)."""
+        return [p.to_dict() for p in list_all_pending_proposals()]
+
+    def _record_for_slug(self, slug: str) -> BottleRecord | None:
+        """The live registry record whose metadata carries `slug`, or None
+        (e.g. the bottle was torn down before the operator responded)."""
+        for rec in self.registry.all():
+            try:
+                meta = json.loads(rec.metadata) if rec.metadata else {}
+            except ValueError:
+                meta = {}
+            if isinstance(meta, dict) and meta.get("slug") == slug:
+                return rec
+        return None
+
+    def supervise_respond(
+        self,
+        proposal_id: str,
+        *,
+        bottle_slug: str,
+        decision: str,
+        notes: str = "",
+        final_file: str | None = None,
+    ) -> tuple[bool, str]:
+        """Record an operator decision on a queued proposal, applying it
+        server-side. `decision` is approve/modify/reject.
+
+        Approve/modify on an egress tool rewrites the bottle's policy so the
+        gateway serves the new routes on its next `/resolve` (the live apply);
+        then the queued Response is written (unblocking the agent's MCP call)
+        and an audit entry recorded — all against the one DB. Returns
+        (ok, error): ok=False with a message when the proposal or decision is
+        unknown, or the bottle is gone so an approval can't be applied."""
+        status = _RESPOND_STATUS.get(decision)
+        if status is None:
+            return False, f"unknown decision {decision!r}"
+        try:
+            proposal = read_proposal(bottle_slug, proposal_id)
+        except FileNotFoundError:
+            return False, "no such proposal"
+
+        diff_before, diff_after = "", ""
+        if status in (STATUS_APPROVED, STATUS_MODIFIED) and proposal.tool in _APPLY_TOOLS:
+            new_policy = final_file if final_file is not None else proposal.proposed_file
+            rec = self._record_for_slug(bottle_slug)
+            if rec is None:
+                return False, (
+                    f"bottle {bottle_slug!r} is no longer registered; "
+                    "cannot apply the route change"
+                )
+            diff_before, diff_after = rec.policy, new_policy
+            self.set_policy(rec.bottle_id, new_policy)
+
+        write_response(bottle_slug, Response(
+            proposal_id=proposal_id, status=status, notes=notes, final_file=final_file,
+        ))
+        component = COMPONENT_FOR_TOOL.get(proposal.tool)
+        if component is not None:
+            write_audit_entry(AuditEntry(
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                bottle_slug=bottle_slug,
+                component=component,
+                operator_action=status,
+                operator_notes=notes,
+                justification=proposal.justification,
+                diff=render_diff(diff_before, diff_after, label=component),
+            ))
+        return True, ""
 
     # --- consolidated gateway ----------------------------------------------
 

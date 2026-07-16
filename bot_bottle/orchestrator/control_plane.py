@@ -16,6 +16,10 @@ vsock / unix-socket portability caveats):
     POST   /attribute                 -> 200 {"bottle_id"} | 403
     POST   /resolve                   -> 200 {"bottle_id","policy"} | 403
                                          body: {"source_ip","identity_token"}
+    GET    /supervise/proposals       -> 200 {"proposals": [ <proposal>, ...]}
+    POST   /supervise/respond         -> 200 {"responded": true} | 409  (operator)
+                                         body: {"proposal_id","bottle_slug",
+                                                "decision", ["notes"],["final_file"]}
 
 `POST /bottles` / `DELETE` drive the full launch lifecycle: they mint (or
 tear down) the bottle in the registry AND broker the backend-native launch
@@ -126,6 +130,39 @@ def dispatch(  # pylint: disable=too-many-return-statements,too-many-branches
         if rec is None:
             return 403, {"error": "unattributed"}
         return 200, {"bottle_id": rec.bottle_id}
+
+    if method == "GET" and route == "/supervise/proposals":
+        # Operator TUI: pending supervise proposals across all bottles.
+        return 200, {"proposals": orch.supervise_pending()}
+
+    if method == "POST" and route == "/supervise/respond":
+        # Operator decision: apply (approve/modify rewrites egress policy),
+        # write the queued response, audit — all server-side on the one DB.
+        try:
+            data = _parse_json_object(body)
+        except ValueError as e:
+            return 400, {"error": f"invalid JSON: {e}"}
+        proposal_id = data.get("proposal_id")
+        bottle_slug = data.get("bottle_slug")
+        decision = data.get("decision")
+        if not (isinstance(proposal_id, str) and proposal_id):
+            return 400, {"error": "proposal_id (string) is required"}
+        if not (isinstance(bottle_slug, str) and bottle_slug):
+            return 400, {"error": "bottle_slug (string) is required"}
+        if not (isinstance(decision, str) and decision):
+            return 400, {"error": "decision (string) is required"}
+        notes = data.get("notes")
+        final_file = data.get("final_file")
+        ok, err = orch.supervise_respond(
+            proposal_id,
+            bottle_slug=bottle_slug,
+            decision=decision,
+            notes=notes if isinstance(notes, str) else "",
+            final_file=final_file if isinstance(final_file, str) else None,
+        )
+        if ok:
+            return 200, {"responded": True}
+        return 409, {"error": err}
 
     if method == "POST" and route == "/resolve":
         # The per-request lookup the multi-tenant gateway makes: returns the

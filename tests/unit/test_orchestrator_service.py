@@ -2,15 +2,26 @@
 
 from __future__ import annotations
 
+import json
 import secrets
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from bot_bottle.orchestrator.broker import LaunchBroker, LaunchRequest, StubBroker
 from bot_bottle.orchestrator.registry import RegistryStore
 from bot_bottle.orchestrator.service import Orchestrator
 from bot_bottle.orchestrator.gateway import Gateway
+from bot_bottle.store_manager import StoreManager
+from bot_bottle.supervise import (
+    Proposal,
+    STATUS_APPROVED,
+    TOOL_EGRESS_ALLOW,
+    read_response,
+    sha256_hex,
+    write_proposal,
+)
 
 
 class _FailingBroker(LaunchBroker):
@@ -153,6 +164,112 @@ class TestOrchestrator(unittest.TestCase):
             {"configured": True, "name": "fake-gateway", "running": True},
             orch.gateway_status(),
         )
+
+
+class TestOrchestratorSupervise(unittest.TestCase):
+    """Operator-approval flow: the orchestrator applies the decision
+    server-side against the single DB (queue + policy + audit)."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        root = Path(self._tmp.name)
+        db = root / "db" / "bot-bottle.db"
+        db.parent.mkdir(parents=True)
+        # One DB for registry + supervise queue + audit (as in the VM).
+        self._env = patch.dict("os.environ", {
+            "BOT_BOTTLE_ROOT": str(root),
+            "SUPERVISE_DB_PATH": str(db),
+        })
+        self._env.start()
+        self.store = RegistryStore(db)
+        self.store.migrate()
+        StoreManager(db).migrate()
+        secret = secrets.token_bytes(16)
+        self.orch = Orchestrator(self.store, StubBroker(secret), secret)
+
+    def tearDown(self) -> None:
+        self._env.stop()
+        self._tmp.cleanup()
+
+    def _register(self, slug: str, policy: str) -> str:
+        rec = self.store.register(
+            "10.243.0.1", metadata=json.dumps({"slug": slug}), policy=policy)
+        return rec.bottle_id
+
+    def _queue(self, slug: str, proposed: str) -> str:
+        p = Proposal.new(
+            bottle_slug=slug, tool=TOOL_EGRESS_ALLOW, proposed_file=proposed,
+            justification="need it", current_file_hash=sha256_hex(proposed))
+        write_proposal(p)
+        return p.id
+
+    def test_pending_lists_queued_proposal(self) -> None:
+        self._register("demo", "routes: []\n")
+        pid = self._queue("demo", "routes:\n  - host: google.com\n")
+        pending = self.orch.supervise_pending()
+        self.assertEqual(1, len(pending))
+        self.assertEqual(pid, pending[0]["id"])
+        self.assertEqual("demo", pending[0]["bottle_slug"])
+
+    def test_approve_applies_policy_writes_response_and_clears_pending(self) -> None:
+        bottle_id = self._register("demo", "routes:\n  - host: existing.com\n")
+        new_routes = "routes:\n  - host: google.com\n"
+        pid = self._queue("demo", new_routes)
+        ok, err = self.orch.supervise_respond(
+            pid, bottle_slug="demo", decision="approve")
+        self.assertTrue(ok, err)
+        # policy live-applied so /resolve serves the new routes
+        rec = self.store.get(bottle_id)
+        assert rec is not None
+        self.assertEqual(new_routes, rec.policy)
+        # response written -> agent unblocks, proposal no longer pending
+        self.assertEqual(STATUS_APPROVED, read_response("demo", pid).status)
+        self.assertEqual([], self.orch.supervise_pending())
+
+    def test_modify_applies_final_file_not_proposed(self) -> None:
+        bottle_id = self._register("demo", "routes: []\n")
+        pid = self._queue("demo", "routes:\n  - host: google.com\n")
+        edited = "routes:\n  - host: example.com\n"
+        ok, _ = self.orch.supervise_respond(
+            pid, bottle_slug="demo", decision="modify", final_file=edited)
+        self.assertTrue(ok)
+        rec = self.store.get(bottle_id)
+        assert rec is not None
+        self.assertEqual(edited, rec.policy)
+
+    def test_reject_leaves_policy_unchanged(self) -> None:
+        bottle_id = self._register("demo", "routes:\n  - host: existing.com\n")
+        pid = self._queue("demo", "routes:\n  - host: google.com\n")
+        ok, _ = self.orch.supervise_respond(
+            pid, bottle_slug="demo", decision="reject", notes="no")
+        self.assertTrue(ok)
+        rec = self.store.get(bottle_id)
+        assert rec is not None
+        self.assertEqual("routes:\n  - host: existing.com\n", rec.policy)
+        self.assertEqual("rejected", read_response("demo", pid).status)
+
+    def test_unknown_proposal_is_error(self) -> None:
+        ok, err = self.orch.supervise_respond(
+            "ghost", bottle_slug="demo", decision="approve")
+        self.assertFalse(ok)
+        self.assertIn("no such proposal", err)
+
+    def test_unknown_decision_is_error(self) -> None:
+        self._register("demo", "routes: []\n")
+        pid = self._queue("demo", "routes:\n  - host: google.com\n")
+        ok, err = self.orch.supervise_respond(
+            pid, bottle_slug="demo", decision="bogus")
+        self.assertFalse(ok)
+        self.assertIn("unknown decision", err)
+
+    def test_approve_when_bottle_gone_cannot_apply(self) -> None:
+        # Proposal queued but the bottle was torn down before the operator
+        # acted: an egress apply has no target, so respond fails closed.
+        pid = self._queue("ghost-bottle", "routes:\n  - host: google.com\n")
+        ok, err = self.orch.supervise_respond(
+            pid, bottle_slug="ghost-bottle", decision="approve")
+        self.assertFalse(ok)
+        self.assertIn("no longer registered", err)
 
 
 if __name__ == "__main__":

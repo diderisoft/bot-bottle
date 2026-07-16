@@ -13,11 +13,19 @@ import threading
 import unittest
 import urllib.request
 from pathlib import Path
+from unittest.mock import patch
 
 from bot_bottle.orchestrator.broker import StubBroker
 from bot_bottle.orchestrator.control_plane import dispatch, make_server
 from bot_bottle.orchestrator.registry import RegistryStore
 from bot_bottle.orchestrator.service import Orchestrator
+from bot_bottle.store_manager import StoreManager
+from bot_bottle.supervise import (
+    Proposal,
+    TOOL_EGRESS_ALLOW,
+    sha256_hex,
+    write_proposal,
+)
 
 
 def _body(obj: object) -> bytes:
@@ -233,6 +241,71 @@ class TestServerRoundTrip(unittest.TestCase):
             ), timeout=5,
         ))
         self.assertEqual(reg["bottle_id"], attr["bottle_id"])
+
+
+class TestDispatchSupervise(unittest.TestCase):
+    """The /supervise/* routes over the pure dispatch()."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        root = Path(self._tmp.name)
+        db = root / "db" / "bot-bottle.db"
+        db.parent.mkdir(parents=True)
+        self._env = patch.dict("os.environ", {
+            "BOT_BOTTLE_ROOT": str(root),
+            "SUPERVISE_DB_PATH": str(db),
+        })
+        self._env.start()
+        self.store = RegistryStore(db)
+        self.store.migrate()
+        StoreManager(db).migrate()
+        secret = secrets.token_bytes(16)
+        self.orch = Orchestrator(self.store, StubBroker(secret), secret)
+
+    def tearDown(self) -> None:
+        self._env.stop()
+        self._tmp.cleanup()
+
+    def _queue(self, slug: str, proposed: str) -> str:
+        self.store.register(
+            "10.243.0.1", metadata=json.dumps({"slug": slug}), policy="routes: []\n")
+        p = Proposal.new(
+            bottle_slug=slug, tool=TOOL_EGRESS_ALLOW, proposed_file=proposed,
+            justification="need it", current_file_hash=sha256_hex(proposed))
+        write_proposal(p)
+        return p.id
+
+    def test_list_pending(self) -> None:
+        pid = self._queue("demo", "routes:\n  - host: google.com\n")
+        status, payload = dispatch(self.orch, "GET", "/supervise/proposals", b"")
+        self.assertEqual(200, status)
+        proposals = payload["proposals"]
+        assert isinstance(proposals, list)
+        self.assertEqual(pid, proposals[0]["id"])
+
+    def test_respond_approve_applies_and_clears(self) -> None:
+        pid = self._queue("demo", "routes:\n  - host: google.com\n")
+        status, payload = dispatch(
+            self.orch, "POST", "/supervise/respond",
+            _body({"proposal_id": pid, "bottle_slug": "demo", "decision": "approve"}),
+        )
+        self.assertEqual(200, status)
+        self.assertTrue(payload["responded"])
+        _, listing = dispatch(self.orch, "GET", "/supervise/proposals", b"")
+        self.assertEqual([], listing["proposals"])
+
+    def test_respond_requires_fields(self) -> None:
+        status, _ = dispatch(
+            self.orch, "POST", "/supervise/respond", _body({"decision": "approve"}))
+        self.assertEqual(400, status)
+
+    def test_respond_unknown_proposal_conflicts(self) -> None:
+        status, payload = dispatch(
+            self.orch, "POST", "/supervise/respond",
+            _body({"proposal_id": "ghost", "bottle_slug": "demo", "decision": "approve"}),
+        )
+        self.assertEqual(409, status)
+        self.assertIn("no such proposal", str(payload["error"]))
 
 
 if __name__ == "__main__":
