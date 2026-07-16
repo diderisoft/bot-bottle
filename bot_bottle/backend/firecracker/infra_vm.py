@@ -17,9 +17,11 @@ surface.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shlex
 import signal
+import stat
 import subprocess
 import time
 import urllib.error
@@ -115,9 +117,13 @@ def ensure_built() -> None:
 
 def build_infra_rootfs_dir() -> Path:
     """The infra VM's base rootfs: the infra image prepared with the
-    control-plane + gateway init as PID 1."""
+    control-plane + gateway init as PID 1. The init's content is folded into
+    the cache key so an init change rebuilds the rootfs (the base image digest
+    alone wouldn't catch it)."""
+    init = _infra_init()
+    tag = hashlib.sha256(init.encode()).hexdigest()[:8]
     return util.build_base_rootfs_dir(
-        _INFRA_IMAGE, variant="-infra", init_script=_infra_init(),
+        _INFRA_IMAGE, variant=f"-infra-{tag}", init_script=init,
     )
 
 
@@ -278,8 +284,14 @@ class SshGatewayTransport:
                 f"infra gateway exec {argv!r} failed: {proc.stderr.strip()}")
 
     def cp_into(self, src: str, dest: str) -> None:
+        # Preserve the source mode (docker cp does): the access-hook is staged
+        # 0700 and git-http execs it directly — a plain `cat >` would land it
+        # 0644 and the exec fails with EACCES; keys stay 0600.
+        mode = stat.S_IMODE(os.stat(src).st_mode)
+        q = shlex.quote(dest)
         proc = subprocess.run(
-            util.ssh_base_argv(self._key, self._ip) + [f"cat > {shlex.quote(dest)}"],
+            util.ssh_base_argv(self._key, self._ip)
+            + [f"cat > {q} && chmod {mode:o} {q}"],
             input=Path(src).read_bytes(), capture_output=True, timeout=30, check=False,
         )
         if proc.returncode != 0:
@@ -363,8 +375,11 @@ cd /app
 BOT_BOTTLE_ROOT=/var/lib/bot-bottle python3 -m bot_bottle.orchestrator \\
     --host 0.0.0.0 --port {CONTROL_PLANE_PORT} --broker stub &
 
-# Gateway data plane (egress / git-gate / supervise), multi-tenant: each
-# request resolves source-IP -> policy against the local control plane.
+# Gateway data plane, multi-tenant: each request resolves source-IP ->
+# policy against the local control plane. The VM backend reaches git over
+# git-http (9420), so the git:// daemon (git-gate, needs a per-bottle
+# entrypoint the consolidated model doesn't use) is left out.
+BOT_BOTTLE_GATEWAY_DAEMONS=egress,git-http,supervise \\
 BOT_BOTTLE_ORCHESTRATOR_URL=http://127.0.0.1:{CONTROL_PLANE_PORT} \\
     python3 /app/gateway_init.py &
 

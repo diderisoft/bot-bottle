@@ -31,7 +31,8 @@ class TestBuildInfraRootfs(unittest.TestCase):
             infra_vm.build_infra_rootfs_dir()
         build.assert_called_once()
         self.assertEqual(infra_vm._INFRA_IMAGE, build.call_args.args[0])
-        self.assertEqual("-infra", build.call_args.kwargs["variant"])
+        # variant is "-infra-<init-hash>" so an init change rebuilds the rootfs.
+        self.assertTrue(build.call_args.kwargs["variant"].startswith("-infra-"))
         # The init runs BOTH the control plane and the gateway data plane,
         # and exports PATH so gateway_init's subprocess daemons find python3.
         init = build.call_args.kwargs["init_script"]
@@ -40,6 +41,31 @@ class TestBuildInfraRootfs(unittest.TestCase):
         self.assertIn("export PATH=", init)
         # Persistent registry volume mounted at the DB dir before the CP starts.
         self.assertIn("/dev/vdb", init)
+        # VM backend uses git-http (9420); the git:// daemon is left out.
+        self.assertIn("BOT_BOTTLE_GATEWAY_DAEMONS=egress,git-http,supervise", init)
+
+
+class TestSshGatewayTransport(unittest.TestCase):
+    def test_cp_into_preserves_source_mode(self):
+        import os
+        import tempfile
+        from subprocess import CompletedProcess
+        with tempfile.NamedTemporaryFile() as f:
+            os.chmod(f.name, 0o700)  # like the staged access-hook
+            t = infra_vm.SshGatewayTransport(Path("/k"), "10.0.0.1")
+            with patch.object(infra_vm.subprocess, "run",
+                              return_value=CompletedProcess([], 0)) as run:
+                t.cp_into(f.name, "/etc/git-gate/access-hook")
+        remote_cmd = run.call_args.args[0][-1]
+        self.assertIn("chmod 700", remote_cmd)  # exec bit preserved over SSH
+
+    def test_exec_raises_on_failure(self):
+        from subprocess import CompletedProcess
+        t = infra_vm.SshGatewayTransport(Path("/k"), "10.0.0.1")
+        with patch.object(infra_vm.subprocess, "run",
+                          return_value=CompletedProcess([], 1, stderr="nope")), \
+             self.assertRaises(infra_vm.GatewayProvisionError):
+            t.exec(["mkdir", "-p", "/git-gate"])
 
 
 class TestRegistryVolume(unittest.TestCase):
