@@ -166,6 +166,19 @@ _install_nft() {
     # Delete-first (create empty, delete, recreate) so a re-applied `up`
     # lands identical state instead of appending rules / erroring on the
     # existing base chains — the setup is idempotent regardless of history.
+
+    # Anti-spoof: bind each TAP to its assigned guest IP. The /31 alone
+    # does NOT make the source address unspoofable — root in an agent VM
+    # can source another bottle's guest IP on its own bbfc TAP, and the
+    # gateway attributes egress/policy/tokens by source IP. So drop any
+    # packet whose source isn't the guest address assigned to the exact
+    # TAP it arrived on, before it can be attributed. One rule per slot.
+    local antispoof="" i
+    for i in $(seq 0 $((POOL_SIZE-1))); do
+        antispoof="${antispoof}        iifname \"$(iface "$i")\" ip saddr != $(guest_ip "$i") drop
+"
+    done
+
     nft -f - <<EOF
 table inet $TABLE {}
 delete table inet $TABLE
@@ -173,7 +186,7 @@ table inet $TABLE {
     chain forward {
         type filter hook forward priority -10; policy accept;
         iifname != "${PREFIX}*" return
-        ct state established,related accept
+${antispoof}        ct state established,related accept
         ct status dnat accept
         drop
     }
