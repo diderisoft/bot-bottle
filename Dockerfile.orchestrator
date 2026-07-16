@@ -1,60 +1,34 @@
-# Orchestrator control-plane image (PRD 0070, #384) + in-VM agent-image
-# builder (PRD 0069 Stage 3).
+# Orchestrator control-plane image (PRD 0070, #384).
 #
-# The per-host orchestrator runs `python3 -m bot_bottle.orchestrator`.
-# The `bot_bottle` package is **stdlib-only** by design, so the control
-# plane itself needs nothing but a Python runtime — none of the
-# gateway's mitmproxy / git / gitleaks payload (that is the separate
-# `bot-bottle-gateway` image, Dockerfile.gateway). Splitting them keeps
-# the secret-dense control plane (it concentrates every bottle's egress
-# tokens — see PRD 0070's "secret concentration") on a minimal
-# dependency surface.
+# This is the **single definition of the orchestrator's content** — the
+# `bot_bottle` package baked onto a Python runtime — referenced by BOTH:
+#   * the docker backend, which runs this image directly as the lean
+#     control-plane container; and
+#   * the firecracker infra image (Dockerfile.infra), which `COPY --from`s
+#     this image's `/app/bot_bottle` so the single infra VM runs the same
+#     control plane. Keeping it in one place means future orchestrator deps
+#     (e.g. iroh) are added here once, not duplicated per backend.
 #
-# The repo is bind-mounted read-only into the container at run time (see
-# `orchestrator/lifecycle.py`), so the source is NOT copied in here: the
-# image is just the runtime. `ensure_running` recreates the container
-# only when the bind-mounted source hash changes (#381), which is why
-# the code stays a mount rather than a baked layer.
+# It stays deliberately lean: the control plane is **stdlib-only** today, so
+# no third-party payload — none of the gateway's mitmproxy/git/gitleaks
+# (that's Dockerfile.gateway) and no buildah (that's the firecracker
+# builder, and lives only in Dockerfile.infra). Keeping the secret-dense
+# control plane on a minimal dependency surface is the point (PRD 0070's
+# "secret concentration").
+#
+# Shares the trixie `python:3.12-slim` base with the gateway image, so when
+# the orchestrator grows real deps they can be `COPY --from`'d into the
+# infra image cleanly (same base/python — installed packages copy safely).
 
 FROM python:3.12-slim
 
-# --- in-VM agent-image builder (PRD 0069 Stage 3) -------------------
-# The Firecracker backend removes the host Docker daemon by building
-# users' agent Dockerfiles *inside the orchestrator VM* with buildah
-# (rootless, daemonless) instead of on the host. The host then needs no
-# Docker daemon and no root-equivalent `docker` group; an untrusted
-# Dockerfile builds inside the confined orchestrator VM, never on the
-# host — strictly more isolated than host `docker build`.
-#
-# `git` lets buildah resolve git-context builds and lets the backend
-# clone/pull; `ca-certificates` is needed for `FROM` pulls over TLS.
-# buildah's runtime helpers (stripped by --no-install-recommends, so
-# listed explicitly): `crun` is the OCI runtime that executes build
-# steps; `netavark` + `aardvark-dns` are the network backend buildah
-# uses to give `FROM` pulls and `RUN` steps network access.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
-      buildah crun netavark aardvark-dns git ca-certificates \
- && rm -rf /var/lib/apt/lists/*
-
-# vfs storage + chroot isolation: buildah then needs neither
-# fuse-overlayfs / an overlay kernel module nor configured subuid maps
-# (newuidmap/newgidmap), so it works unconditionally as root in a
-# minimal microVM rootfs. vfs copies layers rather than stacking them —
-# slower and heavier than overlay; a build-cache optimization (overlay
-# where available, a persistent cache disk) is tracked for later.
-ENV STORAGE_DRIVER=vfs \
-    BUILDAH_ISOLATION=chroot
-
-# No third-party *Python* deps — the control plane stays stdlib only.
 WORKDIR /app
 
-# Bake the (stdlib-only) control-plane source so the image is
-# self-contained — it runs from a built image, no runtime bind-mount.
-# This is what the Firecracker infra VM boots (a guest can't bind-mount
-# host source); the docker backend may still bind-mount /app for dev
-# live-reload, which simply overlays this baked copy. `.dockerignore`
-# keeps .git/docs/*.md out of the context.
+# The orchestrator content. Baked so the image is self-contained (runs from
+# a built image, no runtime bind-mount); the docker backend may still
+# bind-mount /app for dev live-reload, which simply overlays this copy.
+# `.dockerignore` keeps .git/docs/*.md out of the context. (Future deps like
+# iroh go here too — a shared requirements installed on this same base.)
 COPY bot_bottle /app/bot_bottle
 
 # Documentation only; lifecycle.py overrides the entrypoint to

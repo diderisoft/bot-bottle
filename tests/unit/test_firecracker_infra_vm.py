@@ -95,11 +95,14 @@ class TestRegistryVolume(unittest.TestCase):
 
 
 class TestEnsureBuilt(unittest.TestCase):
-    def test_builds_gateway_then_infra(self):
+    def test_builds_deps_before_infra(self):
         with patch.object(infra_vm.docker_mod, "build_image") as build:
             infra_vm.ensure_built()
         tags = [c.args[0] for c in build.call_args_list]
-        self.assertEqual([infra_vm._GATEWAY_IMAGE, infra_vm._INFRA_IMAGE], tags)
+        # infra is FROM gateway and COPY --from orchestrator, so both first.
+        self.assertEqual(infra_vm._INFRA_IMAGE, tags[-1])
+        self.assertIn(infra_vm._ORCHESTRATOR_IMAGE, tags[:-1])
+        self.assertIn(infra_vm._GATEWAY_IMAGE, tags[:-1])
 
 
 class TestWaitForHealth(unittest.TestCase):

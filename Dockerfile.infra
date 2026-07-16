@@ -1,21 +1,45 @@
 # Firecracker single infra-VM image (PRD 0070 Stage B).
 #
-# The per-host infra VM runs BOTH the orchestrator control plane and the
-# gateway data plane in one microVM (see backend/firecracker/infra_vm.py).
-# It layers the stdlib-only control-plane source onto the gateway
-# data-plane image, so the single VM has mitmproxy / git / gitleaks /
-# supervise (gateway) AND `bot_bottle.orchestrator` (control plane) —
-# reusing the gateway payload rather than copying it into a third image.
+# The per-host infra VM runs the orchestrator control plane, the gateway
+# data plane, AND builds agent images (buildah) — all in one microVM (see
+# backend/firecracker/infra_vm.py). It composes:
+#   * FROM the gateway image (mitmproxy / git / gitleaks / supervise + the
+#     flat daemon modules) — now trixie-based, so buildah 1.39 is available;
+#   * `COPY --from` the orchestrator image's content (the single definition
+#     of the control-plane payload — see Dockerfile.orchestrator), so this
+#     VM and the docker backend share one orchestrator definition; and
+#   * buildah, installed HERE only (the docker orchestrator/gateway images
+#     never carry it).
 #
-# The docker backend keeps the two images separate (a lean orchestrator
-# container + a gateway container); this combined image exists only for
-# the Firecracker single-VM cut. If the egress blast radius ever warrants
-# it, splitting egress back into its own VM is a routing change, not a
-# repackaging (see PRD 0070's "secret concentration").
+# multi-`FROM` can't union two bases (that's multi-stage, not multiple
+# inheritance), so the orchestrator content is pulled in via `COPY --from`
+# rather than a second base. Both images share the trixie `python:3.12-slim`
+# base, so the copy is clean (same python; future installed deps copy too).
+#
+# The docker backend keeps orchestrator + gateway as separate images; this
+# combined image exists only for the Firecracker single-VM cut. Splitting a
+# service back into its own VM later is a routing change, not a repackaging
+# (PRD 0070's "secret concentration"; a disposable builder can boot from
+# this same image on its own TAP).
 FROM bot-bottle-gateway:latest
 
-# The gateway image copies only its daemon modules flat under /app; the
-# control plane needs the whole (stdlib-only) package. Both coexist:
-# `/app/gateway_init.py` keeps its flat-sibling imports, and
-# `python3 -m bot_bottle.orchestrator` resolves /app/bot_bottle.
-COPY bot_bottle /app/bot_bottle
+# --- in-VM agent-image builder (PRD 0069 Stage 3) -------------------
+# The Firecracker backend builds users' agent Dockerfiles *inside this VM*
+# with buildah (rootless, daemonless) instead of on the host — no host
+# Docker daemon, no root-equivalent `docker` group. `crun` is the OCI
+# runtime; `netavark` + `aardvark-dns` are the network backend for `FROM`
+# pulls + `RUN` egress. Requires the trixie base (buildah 1.39: bookworm's
+# 1.28 can't parse Dockerfile heredocs that agent images use).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      buildah crun netavark aardvark-dns \
+ && rm -rf /var/lib/apt/lists/*
+# vfs + chroot: buildah works as root in the bare microVM (no
+# fuse-overlayfs / overlay module / subuid maps). Matches image_builder.
+ENV STORAGE_DRIVER=vfs \
+    BUILDAH_ISOLATION=chroot
+
+# The orchestrator content, pulled from its single definition. The gateway
+# image already has the flat daemon modules under /app; this adds the full
+# `bot_bottle` package so `python3 -m bot_bottle.orchestrator` resolves.
+COPY --from=bot-bottle-orchestrator:latest /app/bot_bottle /app/bot_bottle

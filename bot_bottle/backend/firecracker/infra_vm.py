@@ -39,6 +39,7 @@ from . import firecracker_vm, netpool, util
 # a pull-from-registry mode lands later.
 _INFRA_IMAGE = "bot-bottle-infra:latest"
 _GATEWAY_IMAGE = "bot-bottle-gateway:latest"
+_ORCHESTRATOR_IMAGE = "bot-bottle-orchestrator:latest"
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 CONTROL_PLANE_PORT = 8099
@@ -105,10 +106,12 @@ class InfraVm:
 
 
 def ensure_built() -> None:
-    """Build the infra image from source (bootstrap via host docker): the
-    gateway data-plane image, then the infra image that layers the
-    control-plane source onto it. A pull-from-registry mode replaces this
-    later."""
+    """Build the infra image from source (bootstrap via host docker). The
+    infra image `COPY --from`s the orchestrator image and is `FROM` the
+    gateway image, so both must exist first. A pull-from-registry mode
+    replaces this later."""
+    docker_mod.build_image(
+        _ORCHESTRATOR_IMAGE, str(_REPO_ROOT), dockerfile="Dockerfile.orchestrator")
     docker_mod.build_image(
         _GATEWAY_IMAGE, str(_REPO_ROOT), dockerfile="Dockerfile.gateway")
     docker_mod.build_image(
