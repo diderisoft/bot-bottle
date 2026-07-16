@@ -411,6 +411,7 @@ BOT_BOTTLE_ROOT=/var/lib/bot-bottle python3 -m bot_bottle.orchestrator \\
 # entrypoint the consolidated model doesn't use) is left out.
 BOT_BOTTLE_GATEWAY_DAEMONS=egress,git-http,supervise \\
 BOT_BOTTLE_ORCHESTRATOR_URL=http://127.0.0.1:{CONTROL_PLANE_PORT} \\
+SUPERVISE_DB_PATH=/var/lib/bot-bottle/db/bot-bottle.db \\
     python3 /app/gateway_init.py &
 
 # Reap as PID 1; children are backgrounded, so `wait` blocks.

@@ -16,6 +16,7 @@ import secrets
 from pathlib import Path
 
 from .. import log
+from ..store_manager import StoreManager
 from .broker import LaunchBroker, StubBroker
 from .control_plane import make_server
 from .docker_broker import DockerBroker
@@ -45,6 +46,11 @@ def main(argv: list[str] | None = None) -> int:
 
     registry = RegistryStore(args.db)
     registry.migrate()
+    # One DB per host: the supervise queue + audit tables live in the SAME
+    # SQLite file the registry owns, so the control plane is the single
+    # source of truth. The in-VM supervise daemon writes here; the host
+    # operator reaches it over HTTP (never a second, disconnected DB).
+    StoreManager(registry.db_path).migrate()
 
     # An ephemeral signing secret ties the orchestrator (signer) to its
     # broker (verifier). 'stub' records launches instead of starting
