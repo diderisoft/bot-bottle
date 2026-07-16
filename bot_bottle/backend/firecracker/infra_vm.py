@@ -18,6 +18,7 @@ surface.
 from __future__ import annotations
 
 import os
+import shlex
 import signal
 import subprocess
 import time
@@ -28,6 +29,7 @@ from pathlib import Path
 
 from ...log import die, info
 from ..docker import util as docker_mod
+from ..docker.gateway_provision import GatewayProvisionError
 from . import firecracker_vm, netpool, util
 
 # The single infra-VM image: gateway data plane + baked control-plane source
@@ -226,6 +228,42 @@ def _health_ok(url: str) -> bool:
             return resp.status == 200
     except (urllib.error.URLError, TimeoutError, OSError):
         return False
+
+
+class SshGatewayTransport:
+    """`GatewayTransport` for the gateway running in the infra VM — the docker
+    exec/cp equivalents over SSH (dropbear + the stable infra key)."""
+
+    def __init__(self, private_key: Path, guest_ip: str) -> None:
+        self._key = private_key
+        self._ip = guest_ip
+
+    def exec(self, argv: list[str]) -> None:
+        proc = subprocess.run(
+            util.ssh_base_argv(self._key, self._ip) + [shlex.join(argv)],
+            capture_output=True, text=True, timeout=60, check=False,
+        )
+        if proc.returncode != 0:
+            raise GatewayProvisionError(
+                f"infra gateway exec {argv!r} failed: {proc.stderr.strip()}")
+
+    def cp_into(self, src: str, dest: str) -> None:
+        proc = subprocess.run(
+            util.ssh_base_argv(self._key, self._ip) + [f"cat > {shlex.quote(dest)}"],
+            input=Path(src).read_bytes(), capture_output=True, timeout=30, check=False,
+        )
+        if proc.returncode != 0:
+            raise GatewayProvisionError(
+                f"infra gateway cp {src} -> {dest} failed: "
+                f"{proc.stderr.decode(errors='replace').strip()}")
+
+
+def gateway_transport() -> SshGatewayTransport:
+    """git-gate provisioning transport for the gateway in the infra VM, built
+    from the stable key + the orchestrator link's guest IP. Needs no live VM
+    handle, so teardown can use it too."""
+    return SshGatewayTransport(
+        _infra_dir() / "id_ed25519", netpool.orch_slot().guest_ip)
 
 
 def wait_for_health(
