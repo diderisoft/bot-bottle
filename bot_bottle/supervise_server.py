@@ -65,6 +65,8 @@ except ModuleNotFoundError:
 
 
 MCP_PROTOCOL_VERSION = "2024-11-05"
+# App-layer identity token header (mirrors egress_addon / git_http_backend).
+IDENTITY_HEADER = "x-bot-bottle-identity"
 SERVER_NAME = "bot-bottle-supervise"
 SERVER_VERSION = "0.1.0"
 
@@ -541,8 +543,13 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
         resolver = getattr(self.server, "policy_resolver", None)
         if resolver is None:
             return config
+        # The agent's MCP client sends the identity token as a request header
+        # (provisioned via `mcp add --header`); the orchestrator requires the
+        # (source_ip, token) pair, so a missing/wrong token fail-closes below.
+        headers = getattr(self, "headers", None)
+        token = headers.get(IDENTITY_HEADER, "") if headers is not None else ""
         try:
-            bottle_id = resolver.resolve_bottle_id(self.client_address[0])
+            bottle_id = resolver.resolve_bottle_id(self.client_address[0], token)
         except PolicyResolveError as e:
             raise _RpcInternalError(f"orchestrator unreachable, cannot attribute: {e}") from e
         if not bottle_id:

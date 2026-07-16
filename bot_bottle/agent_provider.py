@@ -266,6 +266,7 @@ class AgentProvider(ABC):
             gate_scheme = getattr(plan, "git_gate_insteadof_scheme", "git")
             content = git_gate_render_gitconfig(
                 manifest_bottle.git, gate_host, scheme=gate_scheme,
+                identity_token=getattr(plan, "identity_token", ""),
             )
             guest_gitconfig = f"{plan.guest_home}/.gitconfig"
             with tempfile.NamedTemporaryFile(

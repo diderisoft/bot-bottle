@@ -147,7 +147,15 @@ def launch(
             plan,
             git_gate_plan=git_gate_plan,
             egress_plan=egress_plan,
-            agent_proxy_url=f"http://{slot.host_ip}:{EGRESS_PORT}",
+            identity_token=ctx.identity_token,
+            # Deliver the identity token as egress proxy credentials — clients
+            # honor `HTTPS_PROXY=http://id:token@gw` without app changes; the
+            # gateway reads Proxy-Authorization, validates the (source_ip,
+            # token) pair, and strips it before upstream.
+            agent_proxy_url=(
+                f"http://bottle:{ctx.identity_token}"
+                f"@{slot.host_ip}:{EGRESS_PORT}"
+            ),
             agent_git_gate_url=git_gate_url,
             agent_supervise_url=supervise_url,
         )
@@ -226,7 +234,8 @@ def _agent_guest_env(plan: FirecrackerBottlePlan, host_ip: str) -> dict[str, str
     """Env injected into every agent/exec call over SSH. The VM has no
     baked process env (it just runs init), so the proxy/CA/git/supervise
     wiring is applied per-invocation."""
-    proxy_url = f"http://{host_ip}:{EGRESS_PORT}"
+    # Carries the identity token as proxy credentials (set in `launch`).
+    proxy_url = plan.agent_proxy_url or f"http://{host_ip}:{EGRESS_PORT}"
     no_proxy = f"localhost,127.0.0.1,{host_ip}"
     env: dict[str, str] = {
         "HTTPS_PROXY": proxy_url, "HTTP_PROXY": proxy_url,

@@ -99,16 +99,18 @@ class Orchestrator:
         """Fail-closed attribution (delegates to the registry)."""
         return self.registry.attribute(source_ip, identity_token)
 
-    def resolve(self, source_ip: str, identity_token: str = "") -> BottleRecord | None:
-        """Resolve the bottle behind a request — the source-IP-keyed lookup
-        the multi-tenant gateway makes per request; the returned record
-        carries its `policy`. With a token, full attribution (source IP +
-        token); without, network-layer attribution by source IP alone
-        (valid where the IP is unspoofable and the control plane is
-        gateway-only)."""
-        if identity_token:
-            return self.registry.attribute(source_ip, identity_token)
-        return self.registry.by_source_ip(source_ip)
+    def resolve(self, source_ip: str, identity_token: str) -> BottleRecord | None:
+        """Resolve the bottle behind a request — the per-request lookup the
+        multi-tenant gateway makes; the returned record carries its `policy`.
+
+        **Mandatory pair**: requires a matching `(source_ip, identity_token)`
+        (constant-time). There is no source-IP-only fallback — the app-layer
+        token is delivered on every attributed data plane (egress proxy
+        credentials, git-gate/supervise headers), so a missing or mismatched
+        token fail-closes. This keeps a spoofed source IP (which the /31 TAP
+        alone does not prevent) from selecting another bottle's policy/tokens
+        without also holding that bottle's unguessable token."""
+        return self.registry.attribute(source_ip, identity_token)
 
     def set_policy(self, bottle_id: str, policy: str) -> bool:
         """Update a bottle's gateway policy in place (live reload). False if

@@ -274,9 +274,17 @@ class CodexAgentProvider(AgentProvider):
         if plan.supervise_plan is None:
             return
         info(f"registering supervise MCP server in agent codex config → {supervise_url}")
+        # Deliver the identity token as an MCP request header — supervise
+        # requires it (mandatory (source_ip, token) attribution). If the codex
+        # CLI's header flag differs, mcp add just warns (non-fatal) and
+        # supervise fail-closes for this bottle until the flag is corrected.
+        token = getattr(plan, "identity_token", "")
+        header = (
+            f"--header {shlex.quote(f'x-bot-bottle-identity: {token}')} " if token else ""
+        )
         r = bottle.exec(
             f"{shlex.quote(_CODEX_CLI)} mcp add {_SUPERVISE_MCP_NAME} --url "
-            f"{shlex.quote(supervise_url)}",
+            f"{shlex.quote(supervise_url)} {header}".rstrip(),
             user="node",
         )
         if r.returncode != 0:

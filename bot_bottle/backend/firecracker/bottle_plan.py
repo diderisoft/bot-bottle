@@ -18,6 +18,10 @@ class FirecrackerBottlePlan(BottlePlan):
     agent_proxy_url: str = ""
     agent_git_gate_url: str = ""
     agent_supervise_url: str = ""
+    # Per-bottle identity token the agent presents on every attributed request
+    # (egress proxy credentials, git-gate/supervise headers); set by launch
+    # from the orchestrator registration. Empty pre-registration.
+    identity_token: str = ""
 
     @property
     def container_name(self) -> str:

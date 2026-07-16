@@ -167,6 +167,7 @@ def launch(
             egress_plan=egress_plan,
             agent_git_gate_url=git_gate_url,
             agent_supervise_url=supervise_url,
+            identity_token=ctx.identity_token,
         )
 
         # Step 5: render + up the agent-only compose, pinned on the shared

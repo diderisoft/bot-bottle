@@ -171,13 +171,25 @@ class TestDispatch(unittest.TestCase):
         )
         self.assertEqual(400, status)
 
-    def test_resolve_without_token_by_source_ip(self) -> None:
-        _, reg = dispatch(
+    def test_resolve_without_token_denies(self) -> None:
+        # Mandatory token: source-IP alone no longer resolves (fail-closed 403).
+        dispatch(
             self.orch, "POST", "/bottles",
             _body({"source_ip": "10.243.0.5", "policy": "P"}),
         )
-        status, payload = dispatch(
+        status, _ = dispatch(
             self.orch, "POST", "/resolve", _body({"source_ip": "10.243.0.5"})
+        )
+        self.assertEqual(403, status)
+
+    def test_resolve_with_matching_token(self) -> None:
+        _, reg = dispatch(
+            self.orch, "POST", "/bottles",
+            _body({"source_ip": "10.243.0.6", "policy": "P"}),
+        )
+        status, payload = dispatch(
+            self.orch, "POST", "/resolve",
+            _body({"source_ip": "10.243.0.6", "identity_token": reg["identity_token"]}),
         )
         self.assertEqual(200, status)
         self.assertEqual(reg["bottle_id"], payload["bottle_id"])

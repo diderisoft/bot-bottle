@@ -19,6 +19,9 @@ from .manifest import ManifestBottle, ManifestGitEntry
 # Short network alias for git-gate inside the gateway. The
 # agent's `.gitconfig` insteadOf rewrites resolve through this name.
 GIT_GATE_HOSTNAME = "git-gate"
+# App-layer identity token header the agent's git sends to git-http and the
+# gateway validates (mirrors egress_addon / git_http_backend IDENTITY_HEADER).
+IDENTITY_HEADER = "x-bot-bottle-identity"
 # Shared timeout (seconds) for all git-gate subprocess and CGI calls:
 # git daemon (--timeout/--init-timeout), the access-hook subprocess in
 # git_http_backend, and the git http-backend CGI subprocess.
@@ -75,6 +78,7 @@ def _gitconfig_validate_value(field: str, value: str) -> None:
 
 def git_gate_render_gitconfig(
     entries: tuple[ManifestGitEntry, ...], gate_host: str, *, scheme: str = "git",
+    identity_token: str = "",
 ) -> str:
     """Render the agent's ~/.gitconfig content for git-gate
     `insteadOf` rewrites. Pure host-side, no docker / VM;
@@ -96,6 +100,15 @@ def git_gate_render_gitconfig(
         "# the upstream bidirectionally (gitleaks-scanned push;\n",
         "# fetch-from-upstream-before-every-upload-pack via access-hook).\n",
     ]
+    # Over the smart-HTTP transport (VM backends), attach the per-bottle
+    # identity token as a request header on requests to the gate, scoped to
+    # its URL so it never goes to any other remote. git-http requires it (the
+    # gateway's mandatory (source_ip, token) attribution). git:// (single-tenant
+    # docker) carries no header — attribution there is the network alias.
+    if identity_token and scheme == "http":
+        _gitconfig_validate_value("identity_token", identity_token)
+        out.append(f'[http "http://{gate_host}/"]\n')
+        out.append(f"\textraHeader = {IDENTITY_HEADER}: {identity_token}\n")
     for entry in entries:
         _gitconfig_validate_value(f"repos[{entry.Name!r}].url", entry.Upstream)
         out.append(f'[url "{scheme}://{gate_host}/{entry.Name}.git"]\n')

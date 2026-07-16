@@ -129,8 +129,9 @@ def dispatch(  # pylint: disable=too-many-return-statements,too-many-branches
 
     if method == "POST" and route == "/resolve":
         # The per-request lookup the multi-tenant gateway makes: returns the
-        # bottle's policy. identity_token is OPTIONAL — absent means resolve
-        # by source IP alone (network-layer attribution).
+        # bottle's policy. Requires a matching (source_ip, identity_token)
+        # pair — a missing/empty/mismatched token fail-closes (403), no
+        # source-IP-only fallback.
         try:
             data = _parse_json_object(body)
         except ValueError as e:

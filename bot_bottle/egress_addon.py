@@ -6,6 +6,8 @@ egress container."""
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import json
 import os
 import signal
@@ -69,9 +71,27 @@ INTROSPECT_HOST = "_egress.local"
 # → legacy per-bottle single-tenant mode (unchanged).
 ORCHESTRATOR_URL_ENV = "BOT_BOTTLE_ORCHESTRATOR_URL"
 
-# App-layer identity token (defense-in-depth over the source-IP invariant);
-# the agent injects it, the addon strips it so it never leaks upstream.
+# App-layer identity token. Delivered as proxy credentials
+# (`HTTPS_PROXY=http://<bottle_id>:<token>@gw`): clients honor it as part of
+# the proxy protocol without app changes, and the addon reads + strips it so
+# it never leaks upstream. The legacy `x-bot-bottle-identity` request header
+# is still stripped defensively (git-http uses that header on its own port).
 IDENTITY_HEADER = "x-bot-bottle-identity"
+
+
+def _token_from_proxy_auth(header: str) -> str:
+    """Extract the identity token (the password) from a `Proxy-Authorization:
+    Basic base64(<bottle_id>:<token>)` header. Empty on any malformed value —
+    the mandatory `/resolve` then fail-closes on the empty token."""
+    scheme, _, encoded = header.partition(" ")
+    if scheme.lower() != "basic" or not encoded:
+        return ""
+    try:
+        decoded = base64.b64decode(encoded, validate=True).decode("utf-8")
+    except (binascii.Error, ValueError, UnicodeDecodeError):
+        return ""
+    _, _, password = decoded.partition(":")
+    return password
 
 # Seconds the egress proxy holds a token-blocked request open waiting for the
 # operator's supervisor decision (PRD 0062), overridable via env.
@@ -92,6 +112,10 @@ class EgressAddon:
     # Class default so addons built via __new__ (e.g. in tests) default to
     # single-tenant; __init__ sets the instance attribute for real runs.
     _resolver: "PolicyResolver | None" = None
+    # Class default so __new__-built addons have it (real runs get a fresh
+    # per-instance dict in __init__; only http_connect mutates it, which the
+    # request-flow tests don't exercise).
+    _conn_tokens: "dict[str, str]" = {}
 
     def __init__(self) -> None:
         self.routes_path = os.environ.get("EGRESS_ROUTES", DEFAULT_ROUTES_PATH)
@@ -106,6 +130,10 @@ class EgressAddon:
         # scan. In-memory only (a restart re-prompts); mutated only from the
         # asyncio loop that runs the addon hooks, so no lock is needed.
         self._safe_tokens: dict[str, set[str]] = {}
+        # Per-client-connection identity token captured from the CONNECT's
+        # `Proxy-Authorization` (HTTPS tunnels don't repeat it on the bumped
+        # inner requests). Keyed by client_conn.id; cleared on disconnect.
+        self._conn_tokens: dict[str, str] = {}
         self._supervise_slug = os.environ.get("SUPERVISE_BOTTLE_SLUG", "").strip()
         self._token_allow_timeout = _token_allow_timeout_from_env(os.environ)
         self._reload(initial=True)
@@ -247,11 +275,41 @@ class EgressAddon:
             return self.config, self._supervise_slug, os.environ
         conn = flow.client_conn
         client_ip = conn.peername[0] if conn and conn.peername else ""
-        token = flow.request.headers.get(IDENTITY_HEADER, "")
-        flow.request.headers.pop(IDENTITY_HEADER, None)
+        token = self._request_token(flow)
         config, slug, tokens = resolve_client_context(self._resolver, client_ip, token)
         env = {**os.environ, **tokens} if tokens else os.environ
         return config, slug, env
+
+    def _request_token(self, flow: http.HTTPFlow) -> str:
+        """The per-bottle identity token for this request, from the proxy
+        credentials — the delivery mechanism (`HTTPS_PROXY=http://id:token@gw`)
+        that clients honor without app changes. Plain-HTTP requests carry
+        `Proxy-Authorization` directly; HTTPS bumped requests inherit the token
+        captured from their tunnel's CONNECT. Read then stripped so it never
+        leaks upstream (also strips the legacy header, if present)."""
+        token = _token_from_proxy_auth(
+            flow.request.headers.get("Proxy-Authorization", ""))
+        flow.request.headers.pop("Proxy-Authorization", None)
+        flow.request.headers.pop(IDENTITY_HEADER, None)
+        conn = flow.client_conn
+        if not token and conn is not None:
+            token = self._conn_tokens.get(getattr(conn, "id", ""), "")
+        return token
+
+    def http_connect(self, flow: http.HTTPFlow) -> None:
+        """Capture the identity token from an HTTPS tunnel's CONNECT (the inner
+        bumped requests won't carry `Proxy-Authorization`), keyed by client
+        connection, and strip it so it never reaches upstream."""
+        token = _token_from_proxy_auth(
+            flow.request.headers.get("Proxy-Authorization", ""))
+        flow.request.headers.pop("Proxy-Authorization", None)
+        conn = flow.client_conn
+        if conn is not None and getattr(conn, "id", ""):
+            self._conn_tokens[conn.id] = token
+
+    def client_disconnected(self, client: typing.Any) -> None:
+        """Drop the per-connection token when the client goes away."""
+        self._conn_tokens.pop(getattr(client, "id", ""), None)
 
     async def request(self, flow: http.HTTPFlow) -> None:
         request_path, _, query = flow.request.path.partition("?")

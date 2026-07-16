@@ -32,6 +32,8 @@ if TYPE_CHECKING:
 
 
 _SUPERVISE_MCP_NAME = "supervise"
+# App-layer identity token header (mirrors egress_addon / git_http_backend).
+_IDENTITY_HEADER = "x-bot-bottle-identity"
 
 
 def _skills_dir(guest_home: str) -> str:
@@ -301,9 +303,15 @@ class ClaudeAgentProvider(AgentProvider):
         if plan.supervise_plan is None:
             return
         info(f"registering supervise MCP server in agent claude config → {supervise_url}")
+        # Deliver the identity token as an MCP request header — the supervise
+        # daemon requires it (mandatory (source_ip, token) attribution).
+        token = getattr(plan, "identity_token", "")
+        header = (
+            f" --header {shlex.quote(f'{_IDENTITY_HEADER}: {token}')}" if token else ""
+        )
         r = bottle.exec(
             f"claude mcp add --scope user --transport http "
-            f"{_SUPERVISE_MCP_NAME} {supervise_url}",
+            f"{_SUPERVISE_MCP_NAME} {supervise_url}{header}",
             user="node",
         )
         if r.returncode != 0:

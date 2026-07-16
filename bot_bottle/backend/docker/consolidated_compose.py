@@ -31,7 +31,13 @@ def consolidated_agent_compose(
 ) -> dict[str, Any]:
     """A compose spec with only the agent service, on the external gateway
     network at `source_ip`, proxying egress through `gateway_ip`."""
-    proxy_url = f"http://{gateway_ip}:{EGRESS_PORT}"
+    # Deliver the identity token as egress proxy credentials — the gateway
+    # reads Proxy-Authorization, validates the (source_ip, token) pair, and
+    # strips it before upstream. git-http/supervise get it via their own
+    # headers (git config extraHeader / MCP header).
+    token = getattr(plan, "identity_token", "")
+    cred = f"bottle:{token}@" if token else ""
+    proxy_url = f"http://{cred}{gateway_ip}:{EGRESS_PORT}"
     # git-http + supervise live on the gateway too and must NOT go through the
     # egress proxy — the agent reaches them directly by the gateway address.
     no_proxy = f"localhost,127.0.0.1,{gateway_ip}"

@@ -35,6 +35,10 @@ class DockerBottlePlan(BottlePlan):
     # Likewise the supervise MCP endpoint at the gateway (`http://<gw>:9100/`);
     # empty → the single-tenant `supervise` alias.
     agent_supervise_url: str = ""
+    # Per-bottle identity token the agent presents on every attributed request
+    # (egress proxy credentials, git-gate/supervise headers); set by launch
+    # from the orchestrator registration. Empty pre-registration.
+    identity_token: str = ""
 
     @property
     def container_name(self) -> str:

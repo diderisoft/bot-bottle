@@ -114,9 +114,12 @@ class TestOrchestrator(unittest.TestCase):
     def test_set_policy_unknown_is_false(self) -> None:
         self.assertFalse(self.orch.set_policy("ghost", "{}"))
 
-    def test_resolve_by_source_ip_without_token(self) -> None:
+    def test_resolve_requires_matching_token(self) -> None:
+        # Mandatory (source_ip, token) pair — no source-IP-only fallback.
         rec = self.orch.launch_bottle("10.243.0.1", policy="P")
-        got = self.orch.resolve("10.243.0.1")  # network-layer, no token
+        self.assertIsNone(self.orch.resolve("10.243.0.1", ""))  # empty token denies
+        self.assertIsNone(self.orch.resolve("10.243.0.1", "wrong"))  # mismatch denies
+        got = self.orch.resolve("10.243.0.1", rec.identity_token)  # exact pair
         assert got is not None
         self.assertEqual(rec.bottle_id, got.bottle_id)
         self.assertEqual("P", got.policy)
