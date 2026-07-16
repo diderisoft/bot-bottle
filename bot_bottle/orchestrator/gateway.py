@@ -23,6 +23,13 @@ import time
 from pathlib import Path
 
 from ..docker_cmd import run_docker
+from ..paths import host_db_path
+from ..supervise import DB_PATH_IN_CONTAINER
+
+# The host DB dir is bind-mounted here so the gateway's supervise daemon
+# writes its queued proposals into the ONE host DB (the same file the
+# orchestrator container opens and the operator reaches over HTTP).
+_SUPERVISE_DB_DIR_IN_CONTAINER = os.path.dirname(DB_PATH_IN_CONTAINER)
 
 # The gateway's mitmproxy writes its CA a beat after the container starts, so
 # reads poll for it rather than assuming it's there on a fresh launch.
@@ -52,6 +59,14 @@ GATEWAY_CA_CERT = f"{MITMPROXY_HOME}/mitmproxy-ca-cert.pem"
 GATEWAY_IMAGE = os.environ.get("BOT_BOTTLE_GATEWAY_IMAGE", "bot-bottle-gateway:latest")
 GATEWAY_DOCKERFILE = "Dockerfile.gateway"
 _REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _host_db_dir() -> str:
+    """The host DB directory (created if missing), for the gateway's
+    supervise-DB bind-mount."""
+    db_dir = host_db_path().parent
+    db_dir.mkdir(parents=True, exist_ok=True)
+    return str(db_dir)
 
 
 class GatewayError(Exception):
@@ -192,6 +207,11 @@ class DockerGateway(Gateway):
             # Persist the self-generated CA so it survives restarts (agents
             # trust it) — see GATEWAY_CA_VOLUME.
             "--volume", f"{GATEWAY_CA_VOLUME}:{MITMPROXY_HOME}",
+            # Share the one host DB: the supervise daemon queues proposals
+            # into the same file the orchestrator (and the operator, over
+            # HTTP) reads — no second, disconnected DB in the container.
+            "--volume", f"{_host_db_dir()}:{_SUPERVISE_DB_DIR_IN_CONTAINER}",
+            "--env", f"SUPERVISE_DB_PATH={DB_PATH_IN_CONTAINER}",
         ]
         for port in self._host_port_bindings:
             argv += ["--publish", f"0.0.0.0:{port}:{port}"]

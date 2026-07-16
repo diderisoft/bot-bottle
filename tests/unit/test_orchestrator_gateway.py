@@ -91,6 +91,13 @@ class TestDockerGateway(unittest.TestCase):
         self.assertEqual(self.sc.network, runs[0][runs[0].index("--network") + 1])
         # Persists its CA on a named volume so agents keep trusting it.
         self.assertTrue(any("mitmproxy" in a for a in runs[0]))
+        # Shares the ONE host DB: the supervise daemon queues into the same
+        # file the orchestrator + operator (over HTTP) use.
+        self.assertTrue(any(
+            a.startswith("SUPERVISE_DB_PATH=") and a.endswith("/run/supervise/bot-bottle.db")
+            for a in runs[0]))
+        self.assertTrue(any(
+            a.endswith(":/run/supervise") for a in runs[0]))
 
     def test_ensure_running_creates_network_when_missing(self) -> None:
         calls: list[list[str]] = []
