@@ -49,6 +49,14 @@ ENV STORAGE_DRIVER=vfs \
 # No third-party *Python* deps — the control plane stays stdlib only.
 WORKDIR /app
 
+# Bake the (stdlib-only) control-plane source so the image is
+# self-contained — it runs from a built image, no runtime bind-mount.
+# This is what the Firecracker infra VM boots (a guest can't bind-mount
+# host source); the docker backend may still bind-mount /app for dev
+# live-reload, which simply overlays this baked copy. `.dockerignore`
+# keeps .git/docs/*.md out of the context.
+COPY bot_bottle /app/bot_bottle
+
 # Documentation only; lifecycle.py overrides the entrypoint to
 # `python3 -m bot_bottle.orchestrator` with the runtime flags.
 ENTRYPOINT ["python3", "-m", "bot_bottle.orchestrator"]

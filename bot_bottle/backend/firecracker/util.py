@@ -159,15 +159,22 @@ def docker_image_id(ref: str) -> str:
     return result.stdout.strip().replace("sha256:", "")[:16]
 
 
-def build_base_rootfs_dir(image_ref: str) -> Path:
-    """Export the agent image's filesystem and inject the guest init +
-    static dropbear. Cached by image digest — the per-bottle bits
+def build_base_rootfs_dir(
+    image_ref: str, *, variant: str = "", init_script: str | None = None,
+) -> Path:
+    """Export the image's filesystem and inject the guest init + static
+    dropbear. Cached by image digest — the per-bottle bits
     (authorized_keys, IP) are passed at boot via the kernel cmdline, so
     this tree carries nothing bottle-specific and is safely shared.
 
+    `variant` suffixes the cache key so the same image can be prepared
+    with a different `init_script` (e.g. the infra VM boots the same
+    orchestrator image as the builder but runs the control plane as
+    PID 1, not the SSH-only agent init) without a cache collision.
+
     Returns the prepared directory (read as the `mke2fs -d` source)."""
     digest = docker_image_id(image_ref)
-    base = cache_dir() / "rootfs" / digest
+    base = cache_dir() / "rootfs" / f"{digest}{variant}"
     ready = base / ".bb-ready"
     if ready.is_file():
         return base
@@ -200,17 +207,19 @@ def build_base_rootfs_dir(image_ref: str) -> Path:
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
         )
 
-    inject_guest_boot(base)
+    inject_guest_boot(base, init_script=init_script)
     ready.write_text("ok\n")
     return base
 
 
-def inject_guest_boot(rootfs: Path) -> None:
-    """Drop the static dropbear and the PID-1 init into the rootfs."""
+def inject_guest_boot(rootfs: Path, init_script: str | None = None) -> None:
+    """Drop the static dropbear and the PID-1 init into the rootfs.
+    `init_script` defaults to the SSH-only agent init; the infra VM
+    passes its own (control plane + gateway) init."""
     shutil.copy2(dropbear_path(), rootfs / "bb-dropbear")
     os.chmod(rootfs / "bb-dropbear", 0o755)
     init = rootfs / "bb-init"
-    init.write_text(_GUEST_INIT)
+    init.write_text(init_script or _GUEST_INIT)
     os.chmod(init, 0o755)
 
 
