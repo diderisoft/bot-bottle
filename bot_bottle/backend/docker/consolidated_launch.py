@@ -29,7 +29,11 @@ from ...orchestrator.gateway import GATEWAY_NAME, GATEWAY_NETWORK
 from ...orchestrator.lifecycle import OrchestratorService
 from ...orchestrator.registration import registration_inputs
 from .gateway_net import next_free_ip
-from .gateway_provision import deprovision_git_gate, provision_git_gate
+from .gateway_provision import (
+    DockerGatewayTransport,
+    deprovision_git_gate,
+    provision_git_gate,
+)
 
 
 class ConsolidatedLaunchError(RuntimeError):
@@ -121,7 +125,8 @@ def launch_consolidated(
         metadata=inputs.metadata, tokens=tokens,
     )
     try:
-        provision_git_gate(gateway_name, reg.bottle_id, git_gate_plan)
+        provision_git_gate(
+            DockerGatewayTransport(gateway_name), reg.bottle_id, git_gate_plan)
     except Exception:
         # Roll the registration back so a provisioning failure leaves no orphan.
         client.teardown_bottle(reg.bottle_id)
@@ -142,7 +147,7 @@ def teardown_consolidated(
     """Deregister the bottle and remove its git-gate state from the gateway.
     Both steps are idempotent so this is safe from a cleanup trap."""
     OrchestratorClient(orchestrator_url).teardown_bottle(bottle_id)
-    deprovision_git_gate(gateway_name, bottle_id)
+    deprovision_git_gate(DockerGatewayTransport(gateway_name), bottle_id)
 
 
 __all__ = [

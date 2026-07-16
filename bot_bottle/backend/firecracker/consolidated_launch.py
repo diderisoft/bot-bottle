@@ -44,7 +44,11 @@ from ...orchestrator.lifecycle import (
 )
 from ...orchestrator.registration import registration_inputs
 from ..docker.egress import EGRESS_PORT
-from ..docker.gateway_provision import deprovision_git_gate, provision_git_gate
+from ..docker.gateway_provision import (
+    DockerGatewayTransport,
+    deprovision_git_gate,
+    provision_git_gate,
+)
 from ...supervise import SUPERVISE_PORT
 
 _GIT_HTTP_PORT = 9420
@@ -126,7 +130,8 @@ def launch_consolidated(
         metadata=inputs.metadata, tokens=tokens,
     )
     try:
-        provision_git_gate(gateway_name, reg.bottle_id, git_gate_plan)
+        provision_git_gate(
+            DockerGatewayTransport(gateway_name), reg.bottle_id, git_gate_plan)
     except Exception:
         client.teardown_bottle(reg.bottle_id)
         raise
@@ -152,7 +157,7 @@ def teardown_consolidated(
     """Deregister the bottle and remove its git-gate state from the gateway.
     Both steps are idempotent so this is safe from a cleanup trap."""
     OrchestratorClient(orchestrator_url).teardown_bottle(bottle_id)
-    deprovision_git_gate(gateway_name, bottle_id)
+    deprovision_git_gate(DockerGatewayTransport(gateway_name), bottle_id)
 
 
 __all__ = [
