@@ -17,6 +17,8 @@ surface.
 
 from __future__ import annotations
 
+import os
+import signal
 import subprocess
 import time
 import urllib.error
@@ -57,18 +59,27 @@ _CA_TIMEOUT_SECONDS = 30.0
 
 @dataclass
 class InfraVm:
-    """A booted infra VM: its VMM handle, guest IP, and debug SSH key."""
+    """A handle to the per-host infra VM: its guest IP and the stable SSH key
+    used to fetch the gateway CA / provision git-gate. `vm` is the live VMM
+    handle when this process booted it, and None when adopting a singleton a
+    prior launcher started (teardown then goes through the PID file)."""
 
-    vm: firecracker_vm.VmHandle
     guest_ip: str
     private_key: Path
+    vm: firecracker_vm.VmHandle | None = None
 
     @property
     def control_plane_url(self) -> str:
         return f"http://{self.guest_ip}:{CONTROL_PLANE_PORT}"
 
     def terminate(self) -> None:
-        self.vm.terminate()
+        """Stop the infra VM — via the live handle if we booted it, else the
+        PID file (adopting-process case)."""
+        if self.vm is not None:
+            self.vm.terminate()
+        else:
+            _kill_pidfile()
+        _pid_file().unlink(missing_ok=True)
 
     def gateway_ca_pem(self, *, timeout: float = _CA_TIMEOUT_SECONDS) -> str:
         """The gateway's mitmproxy CA (PEM) that agents install to trust its
@@ -108,28 +119,113 @@ def build_infra_rootfs_dir() -> Path:
     )
 
 
+def ensure_running() -> InfraVm:
+    """Idempotent per-host singleton. Adopt the infra VM if its control plane
+    is already healthy (a prior launcher booted it — it outlives short-lived
+    `start` processes); otherwise clear any stale VM and boot a fresh one.
+    Returns a handle usable for CA fetch / git-gate provisioning."""
+    slot = netpool.orch_slot()
+    url = f"http://{slot.guest_ip}:{CONTROL_PLANE_PORT}"
+    key = _infra_dir() / "id_ed25519"
+    if key.exists() and _health_ok(url):
+        info(f"adopting running infra VM at {url}")
+        return InfraVm(guest_ip=slot.guest_ip, private_key=key)
+
+    stop()  # clear a stale/hung VM holding the link before booting fresh
+    ensure_built()
+    infra = boot()
+    wait_for_health(infra)
+    return infra
+
+
+def stop() -> None:
+    """Stop the infra VM singleton (idempotent — absent is success)."""
+    _kill_pidfile()
+    _pid_file().unlink(missing_ok=True)
+
+
 def boot() -> InfraVm:
-    """Boot the infra VM on the orchestrator link. Caller waits for health
-    (`wait_for_health`) and tears it down."""
+    """Boot the infra VM (detached, so it outlives the launcher) on the
+    orchestrator link, recording its PID. Prefer `ensure_running`."""
     slot = netpool.orch_slot()
     if not netpool.tap_present(slot.iface):
         die(f"orchestrator link {slot.iface} not present.\n"
             f"    ./cli.py backend setup --backend=firecracker")
 
     base = build_infra_rootfs_dir()
-    run_dir = util.cache_dir() / "run" / "infra"
-    run_dir.mkdir(parents=True, exist_ok=True)
+    run_dir = _infra_dir()
     rootfs = run_dir / "rootfs.ext4"
     util.build_rootfs_ext4(base, rootfs, slack_mib=8192)
-    private_key, pubkey = util.generate_keypair(run_dir)
+    private_key, pubkey = _stable_keypair()
 
     info(f"booting infra VM on {slot.iface} (guest {slot.guest_ip})")
     vm = firecracker_vm.boot(
         name="bot-bottle-infra", rootfs=rootfs, tap=slot.iface,
         guest_ip=slot.guest_ip, host_ip=slot.host_ip, pubkey=pubkey,
-        run_dir=run_dir, mem_mib=4096,
+        run_dir=run_dir, mem_mib=4096, detached=True,
     )
-    return InfraVm(vm=vm, guest_ip=slot.guest_ip, private_key=private_key)
+    _pid_file().write_text(str(vm.process.pid))
+    return InfraVm(guest_ip=slot.guest_ip, private_key=private_key, vm=vm)
+
+
+def _infra_dir() -> Path:
+    d = util.cache_dir() / "infra"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _pid_file() -> Path:
+    return _infra_dir() / "vm.pid"
+
+
+def _stable_keypair() -> tuple[Path, str]:
+    """The infra VM's SSH keypair — generated once and reused, so any later
+    launcher can SSH in (fetch CA / provision) even though a different process
+    booted the VM. The pubkey is re-injected on every boot via the cmdline."""
+    d = _infra_dir()
+    key, pub = d / "id_ed25519", d / "id_ed25519.pub"
+    if key.exists() and pub.exists():
+        return key, pub.read_text().strip()
+    key.unlink(missing_ok=True)
+    pub.unlink(missing_ok=True)
+    subprocess.run(
+        ["ssh-keygen", "-t", "ed25519", "-N", "", "-q", "-f", str(key),
+         "-C", "bot-bottle-infra"],
+        check=True,
+    )
+    return key, pub.read_text().strip()
+
+
+def _kill_pidfile() -> None:
+    """SIGTERM (then SIGKILL) the recorded infra VMM, if it's still ours.
+    Guards against a recycled PID by checking the process is firecracker."""
+    try:
+        pid = int(_pid_file().read_text().strip())
+    except (OSError, ValueError):
+        return
+    try:
+        comm = Path(f"/proc/{pid}/comm").read_text().strip()
+    except OSError:
+        return  # already gone
+    if comm != "firecracker":
+        return  # PID recycled by an unrelated process
+    try:
+        os.kill(pid, signal.SIGTERM)
+        for _ in range(50):
+            if not Path(f"/proc/{pid}").exists():
+                return
+            time.sleep(0.1)
+        os.kill(pid, signal.SIGKILL)
+    except OSError:
+        pass
+
+
+def _health_ok(url: str) -> bool:
+    try:
+        with urllib.request.urlopen(f"{url}/health", timeout=1.0) as resp:
+            return resp.status == 200
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return False
 
 
 def wait_for_health(
@@ -140,7 +236,7 @@ def wait_for_health(
     url = f"{infra.control_plane_url}/health"
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if not infra.vm.is_alive():
+        if infra.vm is not None and not infra.vm.is_alive():
             die(f"infra VM exited during boot (rc={infra.vm.process.returncode}).\n"
                 f"{firecracker_vm._console_tail(infra.vm.console_log)}")
         try:
@@ -151,8 +247,10 @@ def wait_for_health(
         except (urllib.error.URLError, TimeoutError, OSError):
             pass
         time.sleep(_HEALTH_POLL_SECONDS)
+    tail = (firecracker_vm._console_tail(infra.vm.console_log)
+            if infra.vm is not None else "")
     die(f"infra control plane at {url} did not become healthy within "
-        f"{timeout:.0f}s.\n{firecracker_vm._console_tail(infra.vm.console_log)}")
+        f"{timeout:.0f}s.\n{tail}")
 
 
 def _infra_init() -> str:

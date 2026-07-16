@@ -118,9 +118,15 @@ def boot(
     vcpus: int = 2,
     mem_mib: int = 2048,
     guest_mac: str = "06:00:AC:10:00:02",
+    detached: bool = False,
 ) -> VmHandle:
     """Write the config and launch the VMM. Returns once the process is
-    spawned; callers wait for SSH readiness separately."""
+    spawned; callers wait for SSH readiness separately.
+
+    `detached` starts the VMM in its own session (`start_new_session`) so it
+    survives the launcher exiting — used for the persistent per-host infra
+    VM, which must outlive the short-lived `start` process (agent VMs stay
+    attached and are torn down with the launcher)."""
     run_dir.mkdir(parents=True, exist_ok=True)
     config_path = run_dir / "config.json"
     console_log = run_dir / "console.log"
@@ -137,6 +143,7 @@ def boot(
     process = subprocess.Popen(
         ["firecracker", "--no-api", "--config-file", str(config_path)],
         stdout=log_fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+        start_new_session=detached,
     )
     return VmHandle(process=process, guest_ip=guest_ip, console_log=console_log)
 

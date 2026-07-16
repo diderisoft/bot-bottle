@@ -63,10 +63,59 @@ class TestWaitForHealth(unittest.TestCase):
 
     def test_dies_when_vm_exits(self):
         infra = self._infra(alive=False)
+        assert infra.vm is not None  # narrow for the type checker (it's a mock)
         infra.vm.process.returncode = 1
         with patch.object(infra_vm.firecracker_vm, "_console_tail", return_value=""), \
              self.assertRaises(SystemExit):
             infra_vm.wait_for_health(infra, timeout=5)
+
+
+class TestEnsureRunningSingleton(unittest.TestCase):
+    def test_adopts_when_healthy(self):
+        # A healthy control plane + existing key -> adopt (no boot), vm=None.
+        with patch.object(infra_vm, "_health_ok", return_value=True), \
+             patch.object(infra_vm, "_infra_dir") as d, \
+             patch.object(infra_vm, "boot") as boot:
+            keydir = MagicMock()
+            (keydir / "id_ed25519").exists.return_value = True
+            d.return_value = keydir
+            infra = infra_vm.ensure_running()
+        boot.assert_not_called()
+        self.assertIsNone(infra.vm)
+
+    def test_boots_when_unhealthy(self):
+        with patch.object(infra_vm, "_health_ok", return_value=False), \
+             patch.object(infra_vm, "stop") as stop, \
+             patch.object(infra_vm, "ensure_built") as built, \
+             patch.object(infra_vm, "boot") as boot, \
+             patch.object(infra_vm, "wait_for_health") as wait:
+            boot.return_value = infra_vm.InfraVm(
+                guest_ip="10.243.255.1", private_key=Path("/k"), vm=MagicMock())
+            infra_vm.ensure_running()
+        stop.assert_called_once()      # clear a stale VM first
+        built.assert_called_once()
+        boot.assert_called_once()
+        wait.assert_called_once()
+
+
+class TestKillPidfile(unittest.TestCase):
+    def test_noop_when_no_pidfile(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            with patch.object(infra_vm, "_pid_file", return_value=Path(td) / "vm.pid"), \
+                 patch.object(infra_vm.os, "kill") as kill:
+                infra_vm._kill_pidfile()  # must not raise
+            kill.assert_not_called()
+
+    def test_skips_dead_or_recycled_pid(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            pidf = Path(td) / "vm.pid"
+            pidf.write_text("999999")  # a PID that isn't a live firecracker
+            with patch.object(infra_vm, "_pid_file", return_value=pidf), \
+                 patch.object(infra_vm.os, "kill") as kill:
+                infra_vm._kill_pidfile()
+            kill.assert_not_called()
 
 
 if __name__ == "__main__":
