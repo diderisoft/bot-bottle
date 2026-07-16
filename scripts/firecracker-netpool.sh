@@ -163,7 +163,12 @@ _install_nft() {
     #   input: a VM never needs host-local delivery (its gateway is
     #     reached via DNAT->forward), so drop all direct input from VMs
     #     -> host services bound on 0.0.0.0 are unreachable from the VM.
+    # Delete-first (create empty, delete, recreate) so a re-applied `up`
+    # lands identical state instead of appending rules / erroring on the
+    # existing base chains — the setup is idempotent regardless of history.
     nft -f - <<EOF
+table inet $TABLE {}
+delete table inet $TABLE
 table inet $TABLE {
     chain forward {
         type filter hook forward priority -10; policy accept;
@@ -199,6 +204,8 @@ EOF
 #                    (skipped once Docker is gone).
 _install_orch_egress() {
     nft -f - <<EOF
+table inet ${TABLE}_nat {}
+delete table inet ${TABLE}_nat
 table inet ${TABLE}_nat {
     chain forward {
         type filter hook forward priority -10; policy accept;
@@ -240,6 +247,8 @@ _docker_user_orch() {
 # /31 unspoofable) guest IP.
 _install_gateway_route() {
     nft -f - <<EOF
+table ip ${TABLE}_gw {}
+delete table ip ${TABLE}_gw
 table ip ${TABLE}_gw {
     chain prerouting {
         type nat hook prerouting priority -100; policy accept;
