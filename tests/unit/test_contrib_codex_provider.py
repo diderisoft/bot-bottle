@@ -54,6 +54,7 @@ def _plan(
     skills: list[str] | None = None,
     agent_provision: AgentProvisionPlan | None = None,
     supervise: bool = False,
+    identity_token: str = "",
 ) -> DockerBottlePlan:
     bottle_json: dict = {"agent_provider": {"template": "codex"}}  # type: ignore
     if supervise:
@@ -100,6 +101,7 @@ def _plan(
         ),
         supervise_plan=supervise_plan,
         use_runsc=False,
+        identity_token=identity_token,
         agent_provision=agent_provision or AgentProvisionPlan(
             template="codex", command="codex", prompt_mode="read_prompt_file",
             image="bot-bottle-codex:latest", dockerfile="",
@@ -314,6 +316,31 @@ class TestCodexDockerfile(unittest.TestCase):
         self.assertIn("procps", dockerfile)
 
 
+# Codex-supported streamable-HTTP MCP config keys (RawMcpServerConfig in
+# codex-rs/config/src/mcp_types.rs). config.toml uses deny_unknown_fields,
+# so an entry that names anything outside this set is rejected by the CLI.
+_CODEX_HTTP_MCP_KEYS = frozenset({
+    "url", "http_headers", "env_http_headers", "bearer_token_env_var",
+    # shared (transport-agnostic) keys
+    "environment_id", "auth", "startup_timeout_sec", "startup_timeout_ms",
+    "tool_timeout_sec", "enabled", "required", "supports_parallel_tool_calls",
+    "default_tools_approval_mode", "enabled_tools", "disabled_tools",
+    "scopes", "oauth", "oauth_resource", "name", "tools",
+})
+
+
+def _append_target(bottle: MagicMock) -> tuple[str, str]:
+    """Reconstruct (config_path, appended_toml) from the base64 append
+    script the provider ran."""
+    import base64 as _b64
+
+    script = bottle.exec.call_args.args[0]
+    # printf %s '<b64>' | base64 -d >> '<path>'
+    b64 = script.split("printf %s ", 1)[1].split(" |", 1)[0].strip("'")
+    path = script.rsplit(">> ", 1)[1].strip().strip("'")
+    return path, _b64.b64decode(b64).decode()
+
+
 class TestCodexSuperviseMcp(unittest.TestCase):
     def test_noop_when_supervise_disabled(self):
         bottle = _make_bottle()
@@ -322,27 +349,68 @@ class TestCodexSuperviseMcp(unittest.TestCase):
         )
         bottle.exec.assert_not_called()
 
-    def test_runs_codex_mcp_add_as_node(self):
+    def test_appends_streamable_http_entry_as_node(self):
+        import tomllib
+
+        bottle = _make_bottle()
+        plan = _plan(supervise=True, identity_token="tok-abc123")
+        CodexAgentProvider().provision_supervise_mcp(plan, bottle, _URL)
+        bottle.exec.assert_called_once()
+        self.assertEqual("node", bottle.exec.call_args.kwargs.get("user"))
+
+        config_path, appended = _append_target(bottle)
+        self.assertEqual("/home/node/.codex/config.toml", config_path)
+        # The appended block must be valid TOML and parse to a streamable
+        # HTTP server carrying the identity token as a static http header.
+        parsed = tomllib.loads(appended)
+        server = parsed["mcp_servers"]["supervise"]
+        self.assertEqual(_URL, server["url"])
+        self.assertEqual(
+            "tok-abc123", server["http_headers"]["x-bot-bottle-identity"],
+        )
+        # Never emit an unsupported key (config.toml is deny_unknown_fields);
+        # in particular there is no `--header` / `header` surface.
+        self.assertTrue(
+            set(server).issubset(_CODEX_HTTP_MCP_KEYS),
+            f"unsupported codex mcp keys: {set(server) - _CODEX_HTTP_MCP_KEYS}",
+        )
+        self.assertNotIn("mcp add", bottle.exec.call_args.args[0])
+
+    def test_appends_to_custom_codex_home(self):
+        bottle = _make_bottle()
+        provision = AgentProvisionPlan(
+            template="codex", command="codex", prompt_mode="read_prompt_file",
+            image="", dockerfile="", guest_home="/home/node",
+            instance_name="bot-bottle-demo-abc12",
+            prompt_file=Path("/tmp/prompt.txt"),
+            guest_env={"CODEX_HOME": "/home/node/alt-codex"},
+        )
+        plan = _plan(
+            supervise=True, agent_provision=provision, identity_token="tok",
+        )
+        CodexAgentProvider().provision_supervise_mcp(plan, bottle, _URL)
+        config_path, _ = _append_target(bottle)
+        self.assertEqual("/home/node/alt-codex/config.toml", config_path)
+
+    def test_omits_http_headers_when_no_token(self):
+        import tomllib
+
         bottle = _make_bottle()
         CodexAgentProvider().provision_supervise_mcp(
             _plan(supervise=True), bottle, _URL,
         )
-        bottle.exec.assert_called_once()
-        script = bottle.exec.call_args.args[0]
-        self.assertEqual("node", bottle.exec.call_args.kwargs.get("user"))
-        self.assertEqual(
-            "/home/node/.codex/packages/standalone/current/bin/codex "
-            f"mcp add supervise --url {_URL}",
-            script,
-        )
+        _, appended = _append_target(bottle)
+        server = tomllib.loads(appended)["mcp_servers"]["supervise"]
+        self.assertNotIn("http_headers", server)
 
-    def test_logs_warning_on_failure_but_does_not_raise(self):
+    def test_registration_failure_is_fatal(self):
         bottle = _make_bottle(
             exec_result=ExecResult(returncode=1, stdout="", stderr="boom"),
         )
-        CodexAgentProvider().provision_supervise_mcp(
-            _plan(supervise=True), bottle, _URL,
-        )
+        with self.assertRaises(SystemExit):
+            CodexAgentProvider().provision_supervise_mcp(
+                _plan(supervise=True), bottle, _URL,
+            )
 
 
 class TestCodexHeadlessPrompt(unittest.TestCase):

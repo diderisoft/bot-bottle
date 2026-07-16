@@ -9,6 +9,7 @@ invocation that registers the supervise daemon in Codex's
 
 from __future__ import annotations
 
+import base64
 import os
 import shlex
 from pathlib import Path
@@ -26,7 +27,7 @@ from ...agent_provider import (
 )
 from .codex_auth import codex_host_access_token, write_codex_dummy_auth_file
 from ...egress import CODEX_HOST_CREDENTIAL_TOKEN_REF, EgressRoute
-from ...log import die, info, warn
+from ...log import die, info
 
 
 if TYPE_CHECKING:
@@ -34,12 +35,49 @@ if TYPE_CHECKING:
 
 
 _SUPERVISE_MCP_NAME = "supervise"
+# App-layer identity token header (mirrors egress_addon / git_http_backend).
+_IDENTITY_HEADER = "x-bot-bottle-identity"
 _CODEX_CLI = "/home/node/.codex/packages/standalone/current/bin/codex"
 _CODEX_CLI_PATH = (
     "/home/node/.local/bin:"
     "/home/node/.codex/packages/standalone/current/bin:"
     "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 )
+
+
+def _toml_basic_string(value: str) -> str:
+    """Quote `value` as a TOML basic (double-quoted) string."""
+    escaped = (
+        value.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\t", "\\t")
+    )
+    return f'"{escaped}"'
+
+
+def _supervise_mcp_config_toml(supervise_url: str, token: str) -> str:
+    """Render the `[mcp_servers.supervise]` streamable-HTTP entry for
+    Codex's `config.toml`.
+
+    The Codex CLI has no `mcp add --header` flag; a static request
+    header on an HTTP MCP server is only expressible via the
+    `http_headers` config key (see `RawMcpServerConfig` /
+    `McpServerTransportConfig::StreamableHttp`). We deliver the
+    mandatory identity token (source_ip, token attribution) that way.
+    Only Codex-supported streamable-HTTP keys (`url`, `http_headers`)
+    are emitted."""
+    lines = [
+        "",
+        f"[mcp_servers.{_SUPERVISE_MCP_NAME}]",
+        f"url = {_toml_basic_string(supervise_url)}",
+    ]
+    if token:
+        key = _toml_basic_string(_IDENTITY_HEADER)
+        val = _toml_basic_string(token)
+        lines.append(f"http_headers = {{ {key} = {val} }}")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def _skills_dir(guest_home: str) -> str:
@@ -266,33 +304,39 @@ class CodexAgentProvider(AgentProvider):
         bottle: "Bottle",
         supervise_url: str,
     ) -> None:
-        """Run `codex mcp add` inside the agent guest to register the
-        supervise daemon in Codex's user config (~/.codex/config.toml).
+        """Register the supervise daemon as a streamable-HTTP MCP
+        server in Codex's user config (`~/.codex/config.toml`).
 
-        Mirrors the Claude provider's `claude mcp add` flow — failure
-        is logged but not fatal."""
+        We write the `[mcp_servers.supervise]` entry directly rather
+        than shelling out to `codex mcp add`: the CLI's `add` has no
+        way to attach a static request header, and the identity token
+        (mandatory (source_ip, token) attribution) MUST ride on the
+        MCP request as `http_headers`. Failure is FATAL when supervise
+        is enabled — a silently-unregistered server leaves the agent
+        with no supervise access and, under mandatory attribution, no
+        way to recover from inside the bottle."""
         if plan.supervise_plan is None:
             return
         info(f"registering supervise MCP server in agent codex config → {supervise_url}")
-        # Deliver the identity token as an MCP request header — supervise
-        # requires it (mandatory (source_ip, token) attribution). If the codex
-        # CLI's header flag differs, mcp add just warns (non-fatal) and
-        # supervise fail-closes for this bottle until the flag is corrected.
         token = getattr(plan, "identity_token", "")
-        header = (
-            f"--header {shlex.quote(f'x-bot-bottle-identity: {token}')} " if token else ""
+        block = _supervise_mcp_config_toml(supervise_url, token)
+        auth_dir = plan.agent_provision.guest_env.get("CODEX_HOME") \
+            or f"{plan.guest_home}/.codex"
+        config_path = f"{auth_dir}/config.toml"
+        # Append via base64 so the TOML payload never has to survive a
+        # shell-quoting round trip. node owns the config file, so append
+        # as node to preserve ownership/mode.
+        payload = base64.b64encode(block.encode()).decode()
+        script = (
+            f"printf %s {shlex.quote(payload)} | base64 -d "
+            f">> {shlex.quote(config_path)}"
         )
-        r = bottle.exec(
-            f"{shlex.quote(_CODEX_CLI)} mcp add {_SUPERVISE_MCP_NAME} --url "
-            f"{shlex.quote(supervise_url)} {header}".rstrip(),
-            user="node",
-        )
+        r = bottle.exec(script, user="node")
         if r.returncode != 0:
-            warn(
-                f"`codex mcp add supervise` failed (exit {r.returncode}): "
-                f"{(r.stderr or r.stdout or '').strip()}. Inside the bottle, "
-                f"register manually with: "
-                f"codex mcp add supervise --url {shlex.quote(supervise_url)}"
+            die(
+                "agent provider provisioning: could not register supervise "
+                f"MCP server in {config_path}: "
+                f"{(r.stderr or r.stdout or '').strip()}"
             )
 
     def headless_prompt(self, prompt: str) -> list[str]:
