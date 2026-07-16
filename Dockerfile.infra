@@ -1,0 +1,21 @@
+# Firecracker single infra-VM image (PRD 0070 Stage B).
+#
+# The per-host infra VM runs BOTH the orchestrator control plane and the
+# gateway data plane in one microVM (see backend/firecracker/infra_vm.py).
+# It layers the stdlib-only control-plane source onto the gateway
+# data-plane image, so the single VM has mitmproxy / git / gitleaks /
+# supervise (gateway) AND `bot_bottle.orchestrator` (control plane) —
+# reusing the gateway payload rather than copying it into a third image.
+#
+# The docker backend keeps the two images separate (a lean orchestrator
+# container + a gateway container); this combined image exists only for
+# the Firecracker single-VM cut. If the egress blast radius ever warrants
+# it, splitting egress back into its own VM is a routing change, not a
+# repackaging (see PRD 0070's "secret concentration").
+FROM bot-bottle-gateway:latest
+
+# The gateway image copies only its daemon modules flat under /app; the
+# control plane needs the whole (stdlib-only) package. Both coexist:
+# `/app/gateway_init.py` keeps its flat-sibling imports, and
+# `python3 -m bot_bottle.orchestrator` resolves /app/bot_bottle.
+COPY bot_bottle /app/bot_bottle

@@ -17,6 +17,7 @@ surface.
 
 from __future__ import annotations
 
+import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -24,10 +25,25 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ...log import die, info
+from ..docker import util as docker_mod
 from . import firecracker_vm, netpool, util
 
-_ORCHESTRATOR_IMAGE = "bot-bottle-orchestrator:latest"
+# The single infra-VM image: gateway data plane + baked control-plane source
+# (Dockerfile.infra FROM the gateway image). Built from source by default;
+# a pull-from-registry mode lands later.
+_INFRA_IMAGE = "bot-bottle-infra:latest"
+_GATEWAY_IMAGE = "bot-bottle-gateway:latest"
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
 CONTROL_PLANE_PORT = 8099
+# Gateway data-plane ports (agent-facing): egress proxy, supervise MCP,
+# git-http. Reached by agent VMs over VM-to-VM routing (added next).
+EGRESS_PORT = 9099
+SUPERVISE_PORT = 9100
+GIT_HTTP_PORT = 9420
+# mitmproxy writes its CA here a beat after start; agents install it to trust
+# the gateway's TLS interception.
+_GATEWAY_CA_PATH = "/home/mitmproxy/.mitmproxy/mitmproxy-ca-cert.pem"
 
 # The infra VM makes direct upstream connections (gateway egress, and buildah
 # during builds), and the kernel `ip=` cmdline sets no resolver. Public for
@@ -36,6 +52,7 @@ _INFRA_RESOLVER = "1.1.1.1"
 
 _HEALTH_TIMEOUT_SECONDS = 45.0
 _HEALTH_POLL_SECONDS = 0.5
+_CA_TIMEOUT_SECONDS = 30.0
 
 
 @dataclass
@@ -53,12 +70,41 @@ class InfraVm:
     def terminate(self) -> None:
         self.vm.terminate()
 
+    def gateway_ca_pem(self, *, timeout: float = _CA_TIMEOUT_SECONDS) -> str:
+        """The gateway's mitmproxy CA (PEM) that agents install to trust its
+        TLS interception. Generated a moment after boot, so this polls over
+        SSH until it appears (mirrors DockerGateway.ca_cert_pem)."""
+        deadline = time.monotonic() + timeout
+        while True:
+            proc = subprocess.run(
+                util.ssh_base_argv(self.private_key, self.guest_ip)
+                + [f"cat {_GATEWAY_CA_PATH}"],
+                capture_output=True, text=True, timeout=15, check=False,
+            )
+            if proc.returncode == 0 and "BEGIN CERTIFICATE" in proc.stdout:
+                return proc.stdout
+            if time.monotonic() >= deadline:
+                die(f"gateway CA not available after {timeout:g}s: "
+                    f"{proc.stderr.strip() or 'empty'}")
+            time.sleep(_HEALTH_POLL_SECONDS)
+
+
+def ensure_built() -> None:
+    """Build the infra image from source (bootstrap via host docker): the
+    gateway data-plane image, then the infra image that layers the
+    control-plane source onto it. A pull-from-registry mode replaces this
+    later."""
+    docker_mod.build_image(
+        _GATEWAY_IMAGE, str(_REPO_ROOT), dockerfile="Dockerfile.gateway")
+    docker_mod.build_image(
+        _INFRA_IMAGE, str(_REPO_ROOT), dockerfile="Dockerfile.infra")
+
 
 def build_infra_rootfs_dir() -> Path:
-    """The infra VM's base rootfs: the orchestrator image (with its baked,
-    stdlib-only source) prepared with the control-plane init as PID 1."""
+    """The infra VM's base rootfs: the infra image prepared with the
+    control-plane + gateway init as PID 1."""
     return util.build_base_rootfs_dir(
-        _ORCHESTRATOR_IMAGE, variant="-infra", init_script=_infra_init(),
+        _INFRA_IMAGE, variant="-infra", init_script=_infra_init(),
     )
 
 
@@ -111,8 +157,8 @@ def wait_for_health(
 
 def _infra_init() -> str:
     """PID-1 init for the infra VM: mount the pseudo-filesystems, wire a
-    resolver, start dropbear (debug SSH), then launch the control plane. The
-    gateway daemons are added here in the next step."""
+    resolver, start dropbear (debug SSH), then launch the control plane and
+    the gateway data plane (multi-tenant against the local control plane)."""
     return f"""#!/bin/sh
 # bot-bottle Firecracker infra VM init (PID 1).
 mount -t proc proc /proc 2>/dev/null
@@ -120,6 +166,12 @@ mount -t sysfs sys /sys 2>/dev/null
 mount -t devtmpfs dev /dev 2>/dev/null
 mkdir -p /dev/pts && mount -t devpts devpts /dev/pts 2>/dev/null
 mount -o remount,rw / 2>/dev/null
+
+# Export a real PATH: a bare-init shell resolves its own execs via a
+# built-in default path, but that isn't in the *environment*, so
+# gateway_init's subprocess daemons (spawned as `python3 ...`) would
+# inherit no PATH and fail to find python3. Export it for all children.
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Direct upstream resolver (control-plane / gateway egress + buildah).
 printf 'nameserver {_INFRA_RESOLVER}\\n' > /etc/resolv.conf 2>/dev/null
@@ -139,6 +191,11 @@ mkdir -p /etc/dropbear /run /var/lib/bot-bottle
 cd /app
 BOT_BOTTLE_ROOT=/var/lib/bot-bottle python3 -m bot_bottle.orchestrator \\
     --host 0.0.0.0 --port {CONTROL_PLANE_PORT} --broker stub &
+
+# Gateway data plane (egress / git-gate / supervise), multi-tenant: each
+# request resolves source-IP -> policy against the local control plane.
+BOT_BOTTLE_ORCHESTRATOR_URL=http://127.0.0.1:{CONTROL_PLANE_PORT} \\
+    python3 /app/gateway_init.py &
 
 # Reap as PID 1; children are backgrounded, so `wait` blocks.
 while : ; do wait ; done
