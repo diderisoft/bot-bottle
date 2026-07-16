@@ -44,7 +44,7 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
         build.assert_called_once()
         # smoke_test threads through to the VM build.
         self.assertEqual(("claude", "--version"), build.call_args.args[2])
-        inject.assert_called_once_with(out)
+        inject.assert_called_once()
         self.assertTrue((out / ".bb-ready").is_file())
 
     def test_content_addressed_cache_key(self):
@@ -59,7 +59,7 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
 class TestSmokeTest(unittest.TestCase):
     def test_empty_argv_is_noop(self):
         with patch.object(image_builder, "_ssh") as ssh:
-            image_builder._smoke_test(Path("/k"), "10.0.0.1", "tag", ())
+            image_builder._smoke_test(Path("/k"), "10.0.0.1", "tag", "ctr", ())
         ssh.assert_not_called()
 
     def test_failed_smoke_dies(self):
@@ -67,7 +67,7 @@ class TestSmokeTest(unittest.TestCase):
         result = subprocess.CompletedProcess([], 1, stdout="broken", stderr="")
         with patch.object(image_builder, "_ssh", return_value=result), \
              self.assertRaises(SystemExit):
-            image_builder._smoke_test(Path("/k"), "10.0.0.1", "tag", ("claude", "--version"))
+            image_builder._smoke_test(Path("/k"), "10.0.0.1", "tag", "ctr", ("claude", "--version"))
 
 
 if __name__ == "__main__":

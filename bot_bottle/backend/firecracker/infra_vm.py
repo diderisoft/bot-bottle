@@ -17,6 +17,7 @@ surface.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import os
 import shlex
@@ -26,8 +27,10 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Generator
 
 from ...log import die, info
 from ..docker import util as docker_mod
@@ -134,7 +137,11 @@ def ensure_running() -> InfraVm:
     """Idempotent per-host singleton. Adopt the infra VM if its control plane
     is already healthy (a prior launcher booted it — it outlives short-lived
     `start` processes); otherwise clear any stale VM and boot a fresh one.
-    Returns a handle usable for CA fetch / git-gate provisioning."""
+    Returns a handle usable for CA fetch / git-gate provisioning.
+
+    Concurrency-safe: the cold stop/build/boot path is serialized by a host
+    flock, so two simultaneous first launches don't both boot on the same
+    rootfs/PID. The healthy fast-path takes no lock."""
     slot = netpool.orch_slot()
     url = f"http://{slot.guest_ip}:{CONTROL_PLANE_PORT}"
     key = _infra_dir() / "id_ed25519"
@@ -142,11 +149,31 @@ def ensure_running() -> InfraVm:
         info(f"adopting running infra VM at {url}")
         return InfraVm(guest_ip=slot.guest_ip, private_key=key)
 
-    stop()  # clear a stale/hung VM holding the link before booting fresh
-    ensure_built()
-    infra = boot()
-    wait_for_health(infra)
-    return infra
+    with _singleton_lock():
+        # Re-check under the lock: another launcher may have booted it while
+        # we waited for the lock (double-checked, so we adopt not re-boot).
+        if key.exists() and _health_ok(url):
+            info(f"adopting running infra VM at {url}")
+            return InfraVm(guest_ip=slot.guest_ip, private_key=key)
+        stop()  # clear a stale/hung VM holding the link before booting fresh
+        ensure_built()
+        infra = boot()
+        wait_for_health(infra)
+        return infra
+
+
+@contextmanager
+def _singleton_lock() -> Generator[None, None, None]:
+    """Host-level exclusive lock serializing the infra VM's cold create path
+    (`stop`/`ensure_built`/`boot`). flock auto-releases if the launcher
+    crashes, so the lock is never leaked."""
+    lock_path = _infra_dir() / "singleton.lock"
+    handle = open(lock_path, "w", encoding="utf-8")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
+    finally:
+        handle.close()
 
 
 def stop() -> None:
