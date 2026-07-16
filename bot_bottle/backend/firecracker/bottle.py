@@ -105,10 +105,9 @@ class FirecrackerBottle(Bottle):
         # root-owned and unreadable by node, which breaks Node's
         # process.cwd(), the shell-snapshot machinery, and `/doctor`.
         # Use `env --chdir` rather than a `sh -c 'cd … && exec "$@"'`
-        # wrapper: ssh space-joins everything after the host into one
-        # string for the guest shell, so a quoted script + $@ would be
-        # re-split and mangled (exec'ing the $0 placeholder). All-simple
-        # words survive that join.
+        # wrapper: it keeps the guest command a flat argv that `agent_argv`
+        # can quote token-by-token for the ssh→guest-shell round trip,
+        # avoiding a fragile nested-quoting `"$@"` script.
         workdir = self.agent_workdir or _HOME_FOR["node"]
         remote = ["runuser", "-u", "node", "--",
                   "env", f"--chdir={workdir}",
@@ -117,7 +116,15 @@ class FirecrackerBottle(Bottle):
         return remote
 
     def agent_argv(self, argv: list[str], *, tty: bool = True) -> list[str]:
-        return [*self._ssh(tty=tty), "--", *self._agent_remote_argv(argv)]
+        # ssh space-joins everything after the host into one line the guest
+        # shell re-parses, so pre-quote each remote token for that shell.
+        # Simple words are unchanged (existing behaviour); an arg containing
+        # spaces — e.g. codex's `read_prompt_file` positional "Read and follow
+        # the instructions in <path>." — is quoted so it survives as ONE
+        # argument instead of being re-split (which made codex parse "and" as
+        # a subcommand).
+        remote = self._agent_remote_argv(argv)
+        return [*self._ssh(tty=tty), "--", *(shlex.quote(t) for t in remote)]
 
     def exec_agent(self, argv: list[str], *, tty: bool = True) -> int:
         agent_argv = self.agent_argv(argv, tty=tty)

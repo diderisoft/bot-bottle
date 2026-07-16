@@ -255,6 +255,30 @@ class TestBottleAgentArgv(unittest.TestCase):
             argv[idx:],
         )
 
+    def test_codex_multiword_prompt_survives_ssh_reparse(self):
+        # codex's read_prompt_file mode passes a single positional with
+        # spaces ("Read and follow the instructions in <path>."). ssh
+        # space-joins the remote argv and the guest shell re-splits it, so
+        # the token MUST be quoted or codex sees "and" as a subcommand
+        # (regression). Each remote token is shlex.quote'd; round-tripping
+        # the joined remote command back through shlex.split must recover
+        # the prompt as ONE argument.
+        import shlex
+
+        argv = _bottle(
+            agent_command="codex",
+            agent_prompt_mode="read_prompt_file",
+            agent_provider_template="codex",
+            prompt_path_in_guest="/home/node/.bot-bottle-prompt.txt",
+        ).agent_argv([], tty=False)
+        idx = argv.index("--")
+        remote_line = " ".join(argv[idx + 1:])  # what ssh sends to the guest
+        reparsed = shlex.split(remote_line)  # what the guest shell sees
+        prompt = "Read and follow the instructions in /home/node/.bot-bottle-prompt.txt."
+        self.assertIn(prompt, reparsed)
+        # codex is the last simple token before the (single) prompt arg.
+        self.assertEqual([*reparsed[reparsed.index("codex"):]], ["codex", prompt])
+
     def test_workdir_sets_chdir(self):
         # The agent runs from its workdir via `env --chdir` (ssh-safe;
         # not a `sh -c 'cd …'` wrapper, which the ssh arg-join mangles).
