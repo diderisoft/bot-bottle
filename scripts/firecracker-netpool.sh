@@ -146,6 +146,8 @@ cmd_up() {
     echo "nftables table inet $TABLE installed (fail-closed boundary)"
     _install_orch_egress
     echo "orchestrator egress installed ($ORCH_IFACE -> NAT out)"
+    _install_gateway_route
+    echo "agent->gateway route installed (${PREFIX}* :$GATEWAY_PORTS -> $(orch_guest))"
     echo "done."
 }
 
@@ -228,9 +230,29 @@ _docker_user_orch() {
     done
 }
 
+# Agent -> gateway VM routing. The shared gateway (egress / supervise /
+# git-http) runs in the orchestrator/infra VM at $(orch_guest). Agents keep
+# addressing their own host-side TAP IP on the gateway ports; a PREROUTING
+# DNAT redirects that to the infra VM, and the isolation table's
+# `ct status dnat accept` forward rule lets it through — every other agent
+# egress stays dropped. Source IP is deliberately NOT masqueraded: the
+# gateway attributes each request to the originating bottle by its (nft +
+# /31 unspoofable) guest IP.
+_install_gateway_route() {
+    nft -f - <<EOF
+table ip ${TABLE}_gw {
+    chain prerouting {
+        type nat hook prerouting priority -100; policy accept;
+        iifname "${PREFIX}*" tcp dport { $GATEWAY_PORTS } dnat to $(orch_guest)
+    }
+}
+EOF
+}
+
 cmd_down() {
     require_root down
     _docker_user_orch del
+    nft delete table ip "${TABLE}_gw" 2>/dev/null || true
     nft delete table inet "${TABLE}_nat" 2>/dev/null || true
     if ip link show "$ORCH_IFACE" >/dev/null 2>&1; then
         ip link set "$ORCH_IFACE" down 2>/dev/null || true
@@ -254,6 +276,8 @@ cmd_status() {
     nft list table inet "$TABLE" 2>/dev/null || echo "  (absent)"
     echo "table inet ${TABLE}_nat (orchestrator egress):"
     nft list table inet "${TABLE}_nat" 2>/dev/null || echo "  (absent)"
+    echo "table ip ${TABLE}_gw (agent->gateway route):"
+    nft list table ip "${TABLE}_gw" 2>/dev/null || echo "  (absent)"
     echo "taps:"
     for i in $(seq 0 $((POOL_SIZE-1))); do
         local dev ; dev="$(iface "$i")"
