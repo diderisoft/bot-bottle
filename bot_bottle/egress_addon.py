@@ -78,6 +78,16 @@ ORCHESTRATOR_URL_ENV = "BOT_BOTTLE_ORCHESTRATOR_URL"
 # is still stripped defensively (git-http uses that header on its own port).
 IDENTITY_HEADER = "x-bot-bottle-identity"
 
+# Per-flow key under which `request()` stashes the resolved (Config, supervise
+# slug, env) so the later `response()` and `websocket_message()` hooks scan
+# against the *calling bottle's* policy. In the consolidated (multi-tenant)
+# gateway the static `self.config` is empty — every request's real policy comes
+# from the per-request `/resolve` — so a hook that fell back to `self.config`
+# would find no route and silently skip its DLP scan (fail-open). Resolving once
+# at the request and reusing it also avoids a `/resolve` round-trip per response
+# and per WebSocket frame.
+_FLOW_CTX_KEY = "bot_bottle_egress_ctx"
+
 
 def _token_from_proxy_auth(header: str) -> str:
     """Extract the identity token (the password) from a `Proxy-Authorization:
@@ -280,6 +290,36 @@ class EgressAddon:
         env = {**os.environ, **tokens} if tokens else os.environ
         return config, slug, env
 
+    def _stash_flow_ctx(
+        self,
+        flow: http.HTTPFlow,
+        config: Config,
+        slug: str,
+        env: "typing.Mapping[str, str]",
+    ) -> None:
+        """Remember the per-flow context `request()` resolved, so the later
+        `response()` / `websocket_message()` hooks reuse it — scanning against
+        the same bottle's policy the request was decided on, with one `/resolve`
+        per flow rather than one per frame."""
+        meta = getattr(flow, "metadata", None)
+        if isinstance(meta, dict):
+            meta[_FLOW_CTX_KEY] = (config, slug, env)
+
+    def _flow_ctx(
+        self, flow: http.HTTPFlow,
+    ) -> "tuple[Config, str, typing.Mapping[str, str]]":
+        """The `(Config, supervise slug, env)` `request()` resolved for this
+        flow, so a later hook scans against the calling bottle's policy — not the
+        empty static config the consolidated gateway carries. Falls back to the
+        single-tenant static values for a flow that never passed through
+        `request()` (or a flow object without metadata)."""
+        meta = getattr(flow, "metadata", None)
+        if isinstance(meta, dict):
+            ctx = meta.get(_FLOW_CTX_KEY)
+            if ctx is not None:
+                return ctx
+        return self.config, self._supervise_slug, os.environ
+
     def _request_token(self, flow: http.HTTPFlow) -> str:
         """The per-bottle identity token for this request, from the proxy
         credentials — the delivery mechanism (`HTTPS_PROXY=http://id:token@gw`)
@@ -319,6 +359,9 @@ class EgressAddon:
             return
 
         config, slug, env = self._resolve_flow(flow)
+        # Stash for the response / websocket hooks so their DLP scans use this
+        # bottle's resolved policy, not the empty static config (see _flow_ctx).
+        self._stash_flow_ctx(flow, config, slug, env)
 
         # DLP outbound scan BEFORE stripping auth — catches tokens the
         # agent tried to smuggle in any header, path, query param, or body.
@@ -586,13 +629,16 @@ class EgressAddon:
             await asyncio.sleep(TOKEN_ALLOW_POLL_INTERVAL_SECONDS)
 
     def response(self, flow: http.HTTPFlow) -> None:
-        """DLP inbound scan on response headers and body."""
-        route = match_route(self.config.routes, flow.request.pretty_host)
+        """DLP inbound scan on response headers and body, against the calling
+        bottle's resolved config (multi-tenant) or the static config
+        (single-tenant) — see `_flow_ctx`."""
+        config, _slug, _env = self._flow_ctx(flow)
+        route = match_route(config.routes, flow.request.pretty_host)
         if route is None:
             return
         if flow.response is None:
             return
-        if self.config.log >= LOG_FULL:
+        if config.log >= LOG_FULL:
             self._log_response(flow)
         resp_headers = {k.lower(): v for k, v in flow.response.headers.items()}
         body = flow.response.get_text(strict=False) or ""
@@ -610,7 +656,7 @@ class EgressAddon:
             resp_ctx = {**resp_ctx, "context": result.context}
         if result.severity == "block":
             self._block(flow, f"egress DLP: {result.reason}", ctx=resp_ctx)
-        elif result.severity == "warn" and self.config.log >= LOG_BLOCKS:
+        elif result.severity == "warn" and config.log >= LOG_BLOCKS:
             sys.stderr.write(
                 json.dumps({
                     "event": "egress_warn",
@@ -621,7 +667,10 @@ class EgressAddon:
             )
 
     def websocket_message(self, flow: http.HTTPFlow) -> None:
-        """DLP scan on WebSocket frames.
+        """DLP scan on WebSocket frames, against the calling bottle's resolved
+        config (see `_flow_ctx`). `request()` resolves and stashes the per-flow
+        (config, slug, env) at the upgrade, so both the multi-tenant and
+        single-tenant gateways scan here.
 
         Outbound frames (from_client) are scanned for credential leakage;
         inbound frames are scanned for prompt injection.  On a block the
@@ -630,10 +679,8 @@ class EgressAddon:
         """
         if flow.websocket is None:  # type: ignore[union-attr]
             return
-        # WebSocket DLP runs against the static config only (single-tenant); in
-        # the consolidated gateway self.config has no routes, so this is inert
-        # until websocket routing is made source-IP-aware (a separate slice).
-        route = match_route(self.config.routes, flow.request.pretty_host)
+        config, slug, env = self._flow_ctx(flow)
+        route = match_route(config.routes, flow.request.pretty_host)
         if route is None:
             return
         message = flow.websocket.messages[-1]  # type: ignore[union-attr]
@@ -642,8 +689,8 @@ class EgressAddon:
             # A WebSocket data frame is not an HTTP request line, so CRLF is
             # not an injection vector here — scan only for credential leakage.
             result = scan_outbound(
-                route, content, os.environ,
-                safe_tokens=self._safe_tokens_for(self._supervise_slug), crlf_text="",
+                route, content, env,
+                safe_tokens=self._safe_tokens_for(slug), crlf_text="",
             )
             if result is not None and result.severity == "block":
                 sys.stderr.write(f"egress DLP: {result.reason}\n")

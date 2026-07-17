@@ -141,6 +141,10 @@ class _Flow:
         self.response = response
         self.websocket: Any = None
         self.killed = False
+        # mitmproxy flows carry a per-flow `metadata` dict for addon use; the
+        # egress addon stashes the resolved (config, slug, env) there in
+        # request() so the response/websocket hooks reuse it.
+        self.metadata: dict[str, Any] = {}
 
     def kill(self) -> None:
         self.killed = True
@@ -857,6 +861,64 @@ class TestSuperviseMultiTenant(unittest.TestCase):
             _run_request(addon, flow)
         self.assertIsNotNone(flow.response)  # blocked (no route, no supervise)
         self.assertNotIn(_OPENAI_KEY, addon._safe_tokens_for(""))
+
+
+class TestMultiTenantInboundDlp(unittest.TestCase):
+    """Consolidated gateway: the response + websocket DLP hooks must scan
+    against the *calling bottle's* config, resolved by source IP in request()
+    and reused here. The static `self.config` is empty in this mode, so before
+    the flow-context stash these hooks silently skipped every scan (fail-open).
+    """
+
+    def _consolidated_addon(self) -> EgressAddon:
+        addon = _addon(Config(routes=()))  # empty static config, as in prod
+        addon._resolver = cast(Any, _CtxResolver({"10.0.0.1": "bottle-a"}))
+        return addon
+
+    def test_response_injection_blocked_after_request_resolves(self) -> None:
+        addon = self._consolidated_addon()
+        flow = _with_client_ip(_Flow(_Request(host="api.example.com")), "10.0.0.1")
+        _run_request(addon, flow)  # resolves + stashes bottle-a's allowlist
+        self.assertIsNone(flow.response)  # request forwarded
+        flow.response = _Response(200, content=_INJECTION_BLOCK)
+        addon.response(flow)  # type: ignore[arg-type]
+        assert flow.response is not None
+        # Empty static config would have found no route and left this 200.
+        self.assertEqual(403, flow.response.status_code)
+
+    def test_websocket_outbound_token_killed_after_request_resolves(self) -> None:
+        addon = self._consolidated_addon()
+        flow = _with_client_ip(_Flow(_Request(host="api.example.com")), "10.0.0.1")
+        _run_request(addon, flow)  # the ws upgrade resolves + stashes the config
+        flow.websocket = _WebSocketData(
+            [_Message(f"k={_OPENAI_KEY}".encode(), from_client=True)]
+        )
+        addon.websocket_message(flow)  # type: ignore[arg-type]
+        self.assertTrue(flow.killed)  # scanned against bottle-a's route now
+
+    def test_websocket_inbound_injection_killed_after_request_resolves(self) -> None:
+        addon = self._consolidated_addon()
+        flow = _with_client_ip(_Flow(_Request(host="api.example.com")), "10.0.0.1")
+        _run_request(addon, flow)
+        flow.websocket = _WebSocketData(
+            [_Message(_INJECTION_BLOCK.encode(), from_client=False)]
+        )
+        addon.websocket_message(flow)  # type: ignore[arg-type]
+        self.assertTrue(flow.killed)
+
+    def test_unattributed_flow_has_no_route_so_frame_passes(self) -> None:
+        # An unattributed source resolves to a deny-all (empty) config, so the
+        # request is blocked at the upgrade and any later frame has no route to
+        # scan against — it passes rather than being attributed to a bottle.
+        addon = self._consolidated_addon()
+        flow = _with_client_ip(_Flow(_Request(host="api.example.com")), "10.9.9.9")
+        _run_request(addon, flow)
+        self.assertIsNotNone(flow.response)  # blocked at the upgrade
+        flow.websocket = _WebSocketData(
+            [_Message(f"k={_OPENAI_KEY}".encode(), from_client=True)]
+        )
+        addon.websocket_message(flow)  # type: ignore[arg-type]
+        self.assertFalse(flow.killed)
 
 
 if __name__ == "__main__":
