@@ -26,7 +26,7 @@ from pathlib import Path
 from .. import log
 from ..docker_cmd import run_docker
 from ..paths import CONTROL_PLANE_TOKEN_ENV, bot_bottle_root, host_control_plane_token
-from .gateway import GATEWAY_IMAGE, GATEWAY_NETWORK, DockerGateway, GatewayError
+from .gateway import GATEWAY_IMAGE, GATEWAY_NAME, GATEWAY_NETWORK, DockerGateway, GatewayError
 
 DEFAULT_PORT = 8099
 ORCHESTRATOR_NAME = "bot-bottle-orchestrator"
@@ -83,8 +83,11 @@ class OrchestratorService:
     `orchestrator_name` / `orchestrator_label` let backends run independent
     orchestrators on the same host without name collisions (e.g. the
     Firecracker backend uses `bot-bottle-fc-orchestrator` alongside the Docker
-    backend's `bot-bottle-orchestrator`). Subclass and override `_gateway()`
-    to supply a backend-specific gateway variant."""
+    backend's `bot-bottle-orchestrator`); `gateway_name` gives the paired
+    gateway container the same treatment (e.g. isolated integration tests
+    that can't share the production `GATEWAY_NAME` singleton). Subclass and
+    override `_gateway()` for anything `_gateway_image`/`gateway_name` can't
+    express (a genuinely backend-specific gateway variant)."""
 
     def __init__(
         self,
@@ -93,6 +96,7 @@ class OrchestratorService:
         network: str = GATEWAY_NETWORK,
         image: str = ORCHESTRATOR_IMAGE,
         gateway_image: str = GATEWAY_IMAGE,
+        gateway_name: str = GATEWAY_NAME,
         repo_root: Path = _REPO_ROOT,
         host_root: Path | None = None,
         orchestrator_name: str = ORCHESTRATOR_NAME,
@@ -106,6 +110,7 @@ class OrchestratorService:
         # were one conflated image before the split.
         self.image = image
         self._gateway_image = gateway_image
+        self._gateway_name = gateway_name
         self._repo_root = repo_root
         self._host_root = host_root or bot_bottle_root()
         self._orchestrator_name = orchestrator_name
@@ -175,7 +180,10 @@ class OrchestratorService:
 
     def _gateway(self) -> DockerGateway:
         return DockerGateway(
-            self._gateway_image, network=self.network, orchestrator_url=self.internal_url
+            self._gateway_image,
+            name=self._gateway_name,
+            network=self.network,
+            orchestrator_url=self.internal_url,
         )
 
     def _ensure_orchestrator_image(self) -> None:
