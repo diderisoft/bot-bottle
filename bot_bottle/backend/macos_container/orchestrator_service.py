@@ -49,6 +49,7 @@ from .gateway import (
     AppleGateway,
     ensure_networks,
 )
+from .util import bind_mount_spec as _mount
 
 # Distinct from the docker backend's container name so both can run on one host.
 ORCHESTRATOR_NAME = "bot-bottle-mac-orchestrator"
@@ -59,13 +60,6 @@ _ROOT_IN_CONTAINER = "/bot-bottle-root"
 
 _HEALTH_POLL_SECONDS = 0.25
 _HEALTH_REQUEST_TIMEOUT_SECONDS = 1.0
-
-
-def _mount(source: str, target: str, *, readonly: bool = False) -> str:
-    spec = f"type=bind,source={source},target={target}"
-    if readonly:
-        spec += ",readonly"
-    return spec
 
 
 class MacosOrchestratorService:
@@ -92,30 +86,24 @@ class MacosOrchestratorService:
         self._repo_root = repo_root
         self._host_root = host_root or bot_bottle_root()
         self._orchestrator_name = orchestrator_name
-        # Resolved once the container is up — there is no name to fall back on.
-        self._url = ""
-
-    @property
-    def url(self) -> str:
-        """The control-plane URL, or "" before the container is up. One URL for
-        both the host CLI and the gateway (see the module docstring)."""
-        return self._url
 
     def _resolve_url(self) -> str:
-        """The control-plane URL, or "" while the container has no address."""
+        """The control-plane URL, or "" while the container has no address.
+        Resolved fresh each time (there is no name to fall back on, and a
+        recreated orchestrator can come back on a different DHCP address), so
+        nothing caches a URL that could go stale."""
         ip = container_mod.try_container_ipv4_on_network(
             self._orchestrator_name, self.network,
         )
         return f"http://{ip}:{self.port}" if ip else ""
 
     def is_healthy(
-        self, url: str = "", *, timeout: float = _HEALTH_REQUEST_TIMEOUT_SECONDS,
+        self, url: str, *, timeout: float = _HEALTH_REQUEST_TIMEOUT_SECONDS,
     ) -> bool:
-        target = url or self._url
-        if not target:
+        if not url:
             return False
         try:
-            with urllib.request.urlopen(f"{target}/health", timeout=timeout) as resp:
+            with urllib.request.urlopen(f"{url}/health", timeout=timeout) as resp:
                 return resp.status == 200
         except (urllib.error.URLError, TimeoutError, OSError):
             return False
@@ -192,16 +180,15 @@ class MacosOrchestratorService:
         control-plane URL. Idempotent — a healthy control plane running current
         code and a running gateway are left untouched."""
         current_hash = source_hash(self._repo_root)
-        if not self._orchestrator_source_current(current_hash):
+        url = self._running_healthy_url(current_hash)
+        if not url:
             self._ensure_orchestrator_image()
             log.info(
                 "starting orchestrator container",
                 context={"name": self._orchestrator_name},
             )
             self._run_orchestrator_container(current_hash)
-
-        url = self._wait_healthy(startup_timeout)
-        self._url = url
+            url = self._wait_healthy(startup_timeout)
 
         # Gateway second: it can only reach the control plane by IP, which does
         # not exist until the orchestrator container is up (see the docstring).
@@ -209,6 +196,21 @@ class MacosOrchestratorService:
         gateway.ensure_built()
         gateway.ensure_running()
         return url
+
+    def _running_healthy_url(self, current_hash: str) -> str:
+        """The control-plane URL if the running orchestrator is BOTH current
+        and answering /health, else "" (→ recreate).
+
+        Checking health, not just the source-hash label, is what lets the
+        service self-heal: a container that is running the current code but
+        whose HTTP server is wedged (bind failure, deadlock, OOM'd thread)
+        would otherwise be left alone and polled to death on every launch
+        forever. Mirrors the docker service's `is_healthy() and source_current`
+        gate."""
+        if not self._orchestrator_source_current(current_hash):
+            return ""
+        url = self._resolve_url()
+        return url if url and self.is_healthy(url) else ""
 
     def _wait_healthy(self, startup_timeout: float) -> str:
         """Poll until the control plane answers /health, resolving its address
@@ -231,7 +233,6 @@ class MacosOrchestratorService:
         """Remove the orchestrator + gateway containers (idempotent)."""
         container_mod.force_remove_container(self._orchestrator_name)
         self.gateway("").stop()
-        self._url = ""
 
 
 __all__ = [

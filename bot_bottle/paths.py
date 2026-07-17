@@ -40,4 +40,13 @@ def host_db_path() -> Path:
     return bot_bottle_root() / "db" / HOST_DB_FILENAME
 
 
-__all__ = ["HOST_DB_FILENAME", "bot_bottle_root", "host_db_path"]
+def host_db_dir() -> Path:
+    """The directory holding the shared host state DB, created if missing.
+    Backends bind-mount this into their gateway so the supervise daemon writes
+    to the one DB the orchestrator (and the operator over HTTP) reads."""
+    db_dir = host_db_path().parent
+    db_dir.mkdir(parents=True, exist_ok=True)
+    return db_dir
+
+
+__all__ = ["HOST_DB_FILENAME", "bot_bottle_root", "host_db_path", "host_db_dir"]

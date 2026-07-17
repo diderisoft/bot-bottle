@@ -158,6 +158,36 @@ class TestIdentityTokenDelivery(unittest.TestCase):
         argv = bottle.agent_argv(["--help"], tty=False)
         self.assertNotIn("--env", argv)
 
+
+class TestPlanIdentityToken(unittest.TestCase):
+    """git-gate's gitconfig extraHeader and the supervise MCP --header read
+    `getattr(plan, "identity_token", "")` at provision time and both bypass the
+    egress proxy (NO_PROXY), so the exec-time proxy token never reaches them —
+    the plan must carry the token or /resolve fail-closes and git + supervise
+    are denied on macOS."""
+
+    def test_macos_plan_has_the_identity_token_field(self) -> None:
+        from dataclasses import fields
+
+        from bot_bottle.backend.macos_container.bottle_plan import (
+            MacosContainerBottlePlan,
+        )
+        names = {f.name for f in fields(MacosContainerBottlePlan)}
+        self.assertIn("identity_token", names)
+
+    def test_matches_the_docker_plan(self) -> None:
+        """Both consolidated backends must expose identity_token so a shared
+        provision-time consumer degrades to neither backend silently."""
+        from dataclasses import fields
+
+        from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
+        from bot_bottle.backend.macos_container.bottle_plan import (
+            MacosContainerBottlePlan,
+        )
+        docker = {f.name for f in fields(DockerBottlePlan)}
+        macos = {f.name for f in fields(MacosContainerBottlePlan)}
+        self.assertIn("identity_token", docker & macos)
+
     def test_provisioning_exec_also_carries_the_token(self) -> None:
         """`provision` runs through `exec`; a provider whose provision step
         fetches anything would otherwise egress token-less and be denied."""

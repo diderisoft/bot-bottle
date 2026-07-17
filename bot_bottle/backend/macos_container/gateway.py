@@ -36,9 +36,10 @@ from ...orchestrator.gateway import (
     Gateway,
     GatewayError,
 )
-from ...paths import host_db_path
+from ...paths import host_db_dir
 from ...supervise import DB_PATH_IN_CONTAINER
 from . import util as container_mod
+from .util import bind_mount_spec as _mount
 
 # Distinct from the docker gateway's names so both backends' gateways can
 # coexist on one host (a macOS host can run the docker backend too).
@@ -69,7 +70,7 @@ def gateway_ca_dir() -> Path:
     The docker gateway uses a named volume for this; a plain host dir is the
     same guarantee with fewer moving parts, and it lets `ca_cert_pem` read the
     PEM straight off the host instead of shelling into the container."""
-    path = host_db_path().parent / "mac-gateway-ca"
+    path = host_db_dir() / "mac-gateway-ca"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -86,19 +87,6 @@ def ensure_networks(
     ensure the networks; whoever runs first wins."""
     container_mod.create_network(egress_network)
     container_mod.create_network(network, internal=True)
-
-
-def _host_db_dir() -> str:
-    db_dir = host_db_path().parent
-    db_dir.mkdir(parents=True, exist_ok=True)
-    return str(db_dir)
-
-
-def _mount(source: str, target: str, *, readonly: bool = False) -> str:
-    spec = f"type=bind,source={source},target={target}"
-    if readonly:
-        spec += ",readonly"
-    return spec
 
 
 class AppleGateway(Gateway):
@@ -187,7 +175,7 @@ class AppleGateway(Gateway):
             # The NAT gateway routes but does not resolve, so DNS is explicit.
             "--dns", container_mod.dns_server(),
             "--mount", _mount(str(gateway_ca_dir()), MITMPROXY_HOME),
-            "--mount", _mount(_host_db_dir(), _SUPERVISE_DB_DIR_IN_CONTAINER),
+            "--mount", _mount(str(host_db_dir()), _SUPERVISE_DB_DIR_IN_CONTAINER),
             "--env", f"SUPERVISE_DB_PATH={DB_PATH_IN_CONTAINER}",
         ]
         if self._orchestrator_url:
@@ -204,8 +192,14 @@ class AppleGateway(Gateway):
 
     def ip_on_shared_network(self) -> str:
         """The gateway's address on the shared host-only network — what agents
-        point their proxy / git-http / supervise URLs at."""
-        return container_mod.container_ipv4_on_network(self.name, self.network)
+        point their proxy / git-http / supervise URLs at. Polls: a freshly
+        run gateway can be up before vmnet's DHCP has assigned the address."""
+        ip = container_mod.wait_container_ipv4_on_network(self.name, self.network)
+        if not ip:
+            raise GatewayError(
+                f"gateway {self.name} never got an address on {self.network}"
+            )
+        return ip
 
     def ca_cert_pem(self, *, timeout: float = DEFAULT_CA_TIMEOUT_SECONDS) -> str:
         """The gateway's CA certificate (PEM) that agents install to trust its

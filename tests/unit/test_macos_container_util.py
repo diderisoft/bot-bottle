@@ -273,5 +273,55 @@ resolver #2
             )
 
 
+def _completed(stdout: str, returncode: int = 0):
+    return util.subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr="")
+
+
+class TestInspectDigests(unittest.TestCase):
+    """image_digest and container_image_digest must read the SAME field shape
+    (a `descriptor.digest`) so a running container and its image are
+    comparable. An asymmetry recreates the gateway on every launch."""
+
+    _IMAGE = '{"configuration": {"descriptor": {"digest": "sha256:abc123"}}, "id": "abc123"}'
+    _CONTAINER = '[{"configuration": {"image": {"descriptor": {"digest": "sha256:abc123"}}}}]'
+
+    def test_image_and_container_digests_agree_for_the_same_image(self):
+        with patch.object(util, "run_container_argv") as run:
+            run.return_value = _completed(self._IMAGE)
+            img = util.image_digest("bot-bottle-gateway:latest")
+            run.return_value = _completed(self._CONTAINER)
+            ctr = util.container_image_digest("bot-bottle-mac-gateway")
+        self.assertEqual("abc123", img)
+        self.assertEqual(img, ctr)
+
+    def test_image_digest_never_falls_back_to_a_tag_or_id(self):
+        """The old `id` fallback could yield a value container_image_digest
+        can't produce, permanently mismatching. Missing descriptor → '' (don't
+        churn), never a stray id/tag."""
+        with patch.object(util, "run_container_argv") as run:
+            run.return_value = _completed('{"id": "bot-bottle-gateway:latest"}')
+            self.assertEqual("", util.image_digest("bot-bottle-gateway:latest"))
+
+    def test_unreadable_inspect_returns_empty(self):
+        with patch.object(util, "run_container_argv") as run:
+            run.return_value = _completed("", returncode=1)
+            self.assertEqual("", util.image_digest("x"))
+            self.assertEqual("", util.container_image_digest("x"))
+            self.assertEqual({}, util.container_env("x"))
+
+
+class TestWaitContainerIpv4(unittest.TestCase):
+    def test_returns_address_once_dhcp_assigns_it(self):
+        with patch.object(util, "try_container_ipv4_on_network", side_effect=["", "", "192.168.128.4"]), \
+                patch.object(util.time, "sleep"):
+            ip = util.wait_container_ipv4_on_network("c", "net", timeout=5, poll=0)
+        self.assertEqual("192.168.128.4", ip)
+
+    def test_returns_empty_on_timeout(self):
+        with patch.object(util, "try_container_ipv4_on_network", return_value=""), \
+                patch.object(util.time, "sleep"):
+            self.assertEqual("", util.wait_container_ipv4_on_network("c", "net", timeout=-1))
+
+
 if __name__ == "__main__":
     unittest.main()

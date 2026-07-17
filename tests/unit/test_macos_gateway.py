@@ -194,6 +194,28 @@ class TestMacosOrchestratorService(unittest.TestCase):
             svc.ensure_running()
         run.assert_not_called()
 
+    def test_wedged_but_current_orchestrator_is_recreated(self) -> None:
+        """A container running the current code but whose HTTP server is dead
+        must be recreated, not left alone and polled to death forever. Checking
+        the source-hash label alone (without health) would strand the host."""
+        svc = MacosOrchestratorService(repo_root=Path("/r"), host_root=Path("/h"))
+        run = Mock()
+        # Unhealthy on the pre-check, healthy once recreated + waited.
+        health = Mock(side_effect=[False, True])
+        with patch(f"{_ORCH}.container_mod") as mod, \
+                patch(f"{_ORCH}.source_hash", return_value="h1"), \
+                patch.object(svc, "_run_orchestrator_container", run), \
+                patch.object(svc, "_ensure_orchestrator_image"), \
+                patch.object(svc, "gateway"), \
+                patch.object(svc, "is_healthy", health):
+            mod.container_is_running.return_value = True
+            mod.inspect_container.return_value = {
+                "configuration": {"labels": {"bot-bottle-orchestrator-source-hash": "h1"}}
+            }
+            mod.try_container_ipv4_on_network.return_value = "192.168.128.2"
+            svc.ensure_running()
+        run.assert_called_once()
+
     def test_changed_source_recreates_the_orchestrator(self) -> None:
         """The control-plane process loaded its bind-mounted source at startup
         and won't reload it."""

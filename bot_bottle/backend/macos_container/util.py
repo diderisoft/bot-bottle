@@ -453,77 +453,73 @@ def run_container_argv(argv: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(argv, capture_output=True, text=True, check=False)
 
 
+def bind_mount_spec(source: str, target: str, *, readonly: bool = False) -> str:
+    """A `container run --mount` bind spec. One definition so the gateway and
+    orchestrator emit an identical string — a divergence here would silently
+    break one backend's mounts while the other kept working."""
+    spec = f"type=bind,source={source},target={target}"
+    if readonly:
+        spec += ",readonly"
+    return spec
+
+
 def _normalize_digest(value: str) -> str:
     return value.split(":", 1)[1] if ":" in value else value
 
 
-def image_digest(ref: str) -> str:
-    """The digest of image `ref`, or "" if it can't be read. Empty is a
-    'don't know' signal — callers treat it as "don't churn a working
-    container" rather than as a mismatch."""
-    result = run_container_argv([_CONTAINER, "image", "inspect", ref])
+def _inspect_first(argv: list[str]) -> dict[str, object]:
+    """Run an inspect command and return its first JSON object, or {} on any
+    failure (non-zero exit, malformed JSON, unexpected shape). {} is the shared
+    'don't know' signal all the non-fatal inspect readers below build on — a
+    caller comparing against it treats it as 'leave the working container
+    alone', never as a mismatch."""
+    result = run_container_argv(argv)
     if result.returncode != 0:
-        return ""
+        return {}
     try:
-        data = json.loads(result.stdout or "{}")
+        data = json.loads(result.stdout or "[]")
     except json.JSONDecodeError:
+        return {}
+    if isinstance(data, list):
+        data = data[0] if data else {}
+    return data if isinstance(data, dict) else {}
+
+
+def _descriptor_digest(node: object) -> str:
+    """The normalized digest under a `{... "descriptor": {"digest": ...}}`
+    node, or "". Both the image and container inspect shapes nest the image's
+    identity this way, so the digest readers stay symmetric — a difference
+    between them is what would spuriously recreate a container."""
+    if not isinstance(node, dict):
         return ""
-    if isinstance(data, list) and data:
-        data = data[0]
-    if not isinstance(data, dict):
-        return ""
-    config = data.get("configuration")
-    if isinstance(config, dict):
-        descriptor = config.get("descriptor")
-        if isinstance(descriptor, dict) and descriptor.get("digest"):
-            return _normalize_digest(str(descriptor["digest"]))
-    value = data.get("id")
-    return _normalize_digest(str(value)) if value else ""
+    descriptor = node.get("descriptor")
+    if isinstance(descriptor, dict) and descriptor.get("digest"):
+        return _normalize_digest(str(descriptor["digest"]))
+    return ""
+
+
+def image_digest(ref: str) -> str:
+    """The digest of image `ref`, or "" if it can't be read. Reads exactly the
+    field `container_image_digest` reads (`configuration.descriptor.digest`) so
+    the two are comparable; "" means 'don't know' → callers don't churn."""
+    data = _inspect_first([_CONTAINER, "image", "inspect", ref])
+    return _descriptor_digest(data.get("configuration"))
 
 
 def container_image_digest(name: str) -> str:
     """The digest of the image container `name` was created from, or "" if it
     can't be read. Compare with `image_digest(ref)` to tell whether a running
     container predates an image rebuild."""
-    result = run_container_argv([_CONTAINER, "inspect", name])
-    if result.returncode != 0:
-        return ""
-    try:
-        data = json.loads(result.stdout or "[]")
-    except json.JSONDecodeError:
-        return ""
-    if isinstance(data, list) and data:
-        data = data[0]
-    if not isinstance(data, dict):
-        return ""
-    config = data.get("configuration")
-    if not isinstance(config, dict):
-        return ""
-    image = config.get("image")
-    if not isinstance(image, dict):
-        return ""
-    descriptor = image.get("descriptor")
-    if isinstance(descriptor, dict) and descriptor.get("digest"):
-        return _normalize_digest(str(descriptor["digest"]))
-    return ""
+    config = _inspect_first([_CONTAINER, "inspect", name]).get("configuration")
+    image = config.get("image") if isinstance(config, dict) else None
+    return _descriptor_digest(image)
 
 
 def container_env(name: str) -> dict[str, str]:
     """The env container `name` was started with, or {} if unreadable. Lets a
     caller tell whether a running container's baked-in configuration still
     matches what it would pass today."""
-    result = run_container_argv([_CONTAINER, "inspect", name])
-    if result.returncode != 0:
-        return {}
-    try:
-        data = json.loads(result.stdout or "[]")
-    except json.JSONDecodeError:
-        return {}
-    if isinstance(data, list) and data:
-        data = data[0]
-    if not isinstance(data, dict):
-        return {}
-    config = data.get("configuration")
+    config = _inspect_first([_CONTAINER, "inspect", name]).get("configuration")
     init = config.get("initProcess") if isinstance(config, dict) else None
     entries = init.get("environment") if isinstance(init, dict) else None
     if not isinstance(entries, list):
@@ -540,18 +536,7 @@ def try_container_ipv4_on_network(name: str, network: str) -> str:
     """`container_ipv4_on_network` without the fatal exit: "" when the address
     isn't readable yet. For pollers — a container is created before it has an
     address, so "not yet" is an expected state there, not an error."""
-    result = run_container_argv([_CONTAINER, "inspect", name])
-    if result.returncode != 0:
-        return ""
-    try:
-        data = json.loads(result.stdout or "[]")
-    except json.JSONDecodeError:
-        return ""
-    if isinstance(data, list) and data:
-        data = data[0]
-    if not isinstance(data, dict):
-        return ""
-    status = data.get("status")
+    status = _inspect_first([_CONTAINER, "inspect", name]).get("status")
     networks = status.get("networks") if isinstance(status, dict) else None
     if not isinstance(networks, list):
         return ""
@@ -562,6 +547,27 @@ def try_container_ipv4_on_network(name: str, network: str) -> str:
         if isinstance(raw, str) and raw:
             return raw.split("/", 1)[0]
     return ""
+
+
+def wait_container_ipv4_on_network(
+    name: str, network: str, *, timeout: float = 15.0, poll: float = 0.25,
+) -> str:
+    """Poll for the container's DHCP-assigned address on `network`, returning
+    it once available or "" on timeout.
+
+    Apple Container has no `--ip`: `container run --detach` can return before
+    vmnet's DHCP has populated `status.networks[].ipv4Address`, so a bare read
+    right after start races the assignment. Callers that need the address (the
+    attribution key, the gateway's proxy target) poll through here instead of
+    the fatal `container_ipv4_on_network`."""
+    deadline = time.monotonic() + timeout
+    while True:
+        ip = try_container_ipv4_on_network(name, network)
+        if ip:
+            return ip
+        if time.monotonic() >= deadline:
+            return ""
+        time.sleep(poll)
 
 
 def image_id(ref: str) -> str:

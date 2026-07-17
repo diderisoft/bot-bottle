@@ -52,6 +52,7 @@ from ...git_gate import (
     provision_git_gate_dynamic_keys,
     revoke_git_gate_provisioned_keys,
 )
+from ...git_http_backend import DEFAULT_PORT as _GIT_HTTP_PORT
 from ...log import die, info, warn
 from ...supervise import SUPERVISE_PORT
 from ..docker.egress import EGRESS_PORT
@@ -68,7 +69,6 @@ from .consolidated_launch import (
 
 _REPO_DIR = str(Path(__file__).resolve().parent.parent.parent.parent)
 _AGENT_SLEEP_SECONDS = "2147483647"
-_GIT_HTTP_PORT = 9420
 
 
 @contextmanager
@@ -115,10 +115,16 @@ def launch(
 
         # Step 4: read the assigned address and register by it. This is the
         # attribution key; `--cap-drop CAP_NET_RAW` at run is what makes it
-        # unforgeable.
-        source_ip = container_mod.container_ipv4_on_network(
+        # unforgeable. Poll: `container run --detach` can return before vmnet's
+        # DHCP has assigned the address.
+        source_ip = container_mod.wait_container_ipv4_on_network(
             plan.container_name, endpoint.network,
         )
+        if not source_ip:
+            die(
+                f"agent {plan.container_name} never got an address on "
+                f"{endpoint.network}"
+            )
         effective_env = {**os.environ, **plan.agent_provision.provisioned_env}
         token_values = egress_resolve_token_values(
             plan.egress_plan.token_env_map, effective_env,
@@ -139,6 +145,15 @@ def launch(
             f"agent {plan.container_name} registered "
             f"(gateway {endpoint.gateway_ip}, ip {source_ip})"
         )
+
+        # Stamp the token onto the plan so provision-time consumers can read it,
+        # not only the exec-time egress proxy. git-gate's gitconfig extraHeader
+        # and the supervise MCP --header both reach the gateway on NO_PROXY (they
+        # bypass the egress proxy that carries the token), so without this the
+        # gateway's /resolve fail-closes and every git fetch/push and supervise
+        # call from the bottle is denied. Registration already produced the
+        # token above, so — unlike the run-time env — the plan CAN carry it.
+        plan = dataclasses.replace(plan, identity_token=ctx.identity_token)
 
         bottle = MacosContainerBottle(
             plan.container_name,
@@ -227,7 +242,6 @@ def _stamp_agent_urls(
     )
     return dataclasses.replace(
         plan,
-        agent_proxy_url=f"http://{endpoint.gateway_ip}:{EGRESS_PORT}",
         agent_git_gate_url=git_gate_url,
         agent_supervise_url=supervise_url,
     )
