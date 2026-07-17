@@ -169,7 +169,7 @@ class TestConfig(unittest.TestCase):
             url = ia.artifact_url("v1", "rootfs.ext4.gz")
         self.assertEqual(
             "https://mirror.example/api/packages/acme/generic/"
-            "bot-bottle-infra/v1/rootfs.ext4.gz", url)
+            "bot-bottle-firecracker-infra/v1/rootfs.ext4.gz", url)
 
     def test_local_build_flag(self) -> None:
         with mock.patch.dict(os.environ, {"BOT_BOTTLE_INFRA_BUILD": "local"}):

@@ -5,7 +5,7 @@ never on the launch host. It runs the same pipeline the launch host used to run
 locally — `docker build` the three fixed images, export to a rootfs dir, inject
 the guest boot, `mke2fs` to an ext4 with the buildah build slack — then gzips
 the ext4 and PUTs it (plus a `.sha256`) to
-`…/api/packages/<owner>/generic/bot-bottle-infra/<version>/`.
+`…/api/packages/<owner>/generic/bot-bottle-firecracker-infra/<version>/`.
 
 The `<version>` is `infra_artifact.infra_artifact_version(...)`, the content
 hash of the rootfs inputs, so a launch host at the same code checkout resolves

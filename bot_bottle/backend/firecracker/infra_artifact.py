@@ -45,7 +45,7 @@ _DOCKERFILES = ("Dockerfile.orchestrator", "Dockerfile.gateway", "Dockerfile.inf
 
 _DEFAULT_BASE = "https://gitea.dideric.is"
 _DEFAULT_OWNER = "didericis"
-_PACKAGE = "bot-bottle-infra"
+_PACKAGE = "bot-bottle-firecracker-infra"
 
 # Streaming copy chunk for the (hundreds-of-MB) download.
 _CHUNK = 1 << 20
