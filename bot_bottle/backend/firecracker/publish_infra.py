@@ -14,7 +14,7 @@ the exact artifact this produced.
   python3 -m bot_bottle.backend.firecracker.publish_infra [--dry-run] [--force]
 
 Auth: a token with `write:package` on the target owner, from
-`BOT_BOTTLE_INFRA_ARTIFACT_TOKEN` or `BOT_BOTTLE_CLAUDE_GITEA_TOKEN`.
+`BOT_BOTTLE_INFRA_ARTIFACT_TOKEN`.
 """
 
 from __future__ import annotations
@@ -114,8 +114,8 @@ def main(argv: list[str] | None = None) -> int:
     _, _, token = infra_artifact._config()
     if not args.dry_run and not token:
         raise SystemExit(
-            "no publish token: set BOT_BOTTLE_INFRA_ARTIFACT_TOKEN (or "
-            "BOT_BOTTLE_CLAUDE_GITEA_TOKEN) to a token with write:package")
+            "no publish token: set BOT_BOTTLE_INFRA_ARTIFACT_TOKEN to a token "
+            "with write:package")
 
     with tempfile.TemporaryDirectory(prefix="bb-publish-infra.") as tmp:
         version, gz, sha = build_artifact(Path(tmp))

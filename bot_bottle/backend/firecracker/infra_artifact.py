@@ -82,13 +82,13 @@ def infra_artifact_version(init_script: str) -> str:
 
 def _config() -> tuple[str, str, str]:
     """(base_url, owner, token) for the generic-package endpoint. Base + owner
-    are overridable for other deployments / mirrors; the token (optional — a
-    public package needs none) reuses the shared Gitea token."""
+    are overridable for other deployments / mirrors; the token comes solely from
+    `BOT_BOTTLE_INFRA_ARTIFACT_TOKEN` (a dedicated package-scoped token, kept
+    separate from the general-purpose Gitea token) and is optional — a public
+    package needs none to pull."""
     base = os.environ.get("BOT_BOTTLE_INFRA_ARTIFACT_BASE", _DEFAULT_BASE).rstrip("/")
     owner = os.environ.get("BOT_BOTTLE_INFRA_ARTIFACT_OWNER", _DEFAULT_OWNER)
-    token = os.environ.get("BOT_BOTTLE_INFRA_ARTIFACT_TOKEN") or os.environ.get(
-        "BOT_BOTTLE_CLAUDE_GITEA_TOKEN", ""
-    )
+    token = os.environ.get("BOT_BOTTLE_INFRA_ARTIFACT_TOKEN", "")
     return base, owner, token
 
 
