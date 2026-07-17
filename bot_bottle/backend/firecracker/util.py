@@ -259,12 +259,34 @@ def build_committed_rootfs_dir(tar_path: Path) -> Path:
 def inject_guest_boot(rootfs: Path, init_script: str | None = None) -> None:
     """Drop the static dropbear and the PID-1 init into the rootfs.
     `init_script` defaults to the SSH-only agent init; the infra VM
-    passes its own (control plane + gateway) init."""
-    shutil.copy2(dropbear_path(), rootfs / "bb-dropbear")
-    os.chmod(rootfs / "bb-dropbear", 0o755)
-    init = rootfs / "bb-init"
-    init.write_text(init_script or _GUEST_INIT)
-    os.chmod(init, 0o755)
+    passes its own (control plane + gateway) init.
+
+    A committed snapshot is guest-controlled, so `bb-dropbear`/`bb-init`
+    may already exist as symlinks aimed at a host file (e.g. bb-init ->
+    ~/.bashrc). Replace whatever is there and create the files with
+    O_EXCL|O_NOFOLLOW so the write always lands a fresh regular file in
+    the staging tree and never follows a planted symlink out of it."""
+    _write_staged_file(rootfs / "bb-dropbear", dropbear_path().read_bytes())
+    _write_staged_file(rootfs / "bb-init", (init_script or _GUEST_INIT).encode())
+
+
+def _write_staged_file(path: Path, data: bytes) -> None:
+    """Write `data` to `path` (mode 0755) as a fresh regular file inside a
+    staging rootfs, replacing any pre-existing entry without following a
+    symlink at `path`. Fails closed on anything unexpected there."""
+    if path.is_symlink() or path.exists():
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    fd = os.open(
+        path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o755
+    )
+    try:
+        os.write(fd, data)
+    finally:
+        os.close(fd)
+    os.chmod(path, 0o755)
 
 
 def build_rootfs_ext4(base_dir: Path, out_path: Path, *, slack_mib: int = 1024) -> None:

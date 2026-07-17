@@ -63,7 +63,11 @@ def _commit_rootfs_via_ssh(private_key: Path, guest_ip: str, tar_path: Path) -> 
     tar_path.parent.mkdir(parents=True, exist_ok=True)
     partial = tar_path.with_name(tar_path.name + ".partial")
     ssh = util.ssh_base_argv(private_key, guest_ip)
-    with open(partial, "wb") as tar_out:
+    # The snapshot can contain the bottle's private workspace, so keep it
+    # owner-only (0600) — create it that way and re-assert after the rename
+    # (os.replace carries the source mode, but be explicit).
+    fd = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as tar_out:
         result = subprocess.run(
             [*ssh, "--", "tar", "--create", "--one-file-system",
              "--exclude=./proc", "--exclude=./sys", "--exclude=./dev",
@@ -75,3 +79,4 @@ def _commit_rootfs_via_ssh(private_key: Path, guest_ip: str, tar_path: Path) -> 
         die(f"ssh tar for {guest_ip} failed: "
             f"{(result.stderr or b'').decode().strip() or '<no stderr>'}")
     os.replace(partial, tar_path)
+    os.chmod(tar_path, 0o600)
