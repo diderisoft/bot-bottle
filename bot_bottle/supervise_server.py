@@ -51,12 +51,16 @@ from dataclasses import dataclass, replace
 try:
     # Same-directory imports inside the bundle container; these files are
     # COPYed flat under /app by Dockerfile.gateway.
-    from egress_addon_core import LOG_OFF, load_config
+    from egress_addon_core import (
+        LOG_OFF, load_config, resolve_client_context, route_to_yaml_dict,
+    )
     from policy_resolver import PolicyResolveError, PolicyResolver
     import supervise as _sv
 except ModuleNotFoundError:
     # Package imports for host-side tests and tooling.
-    from .egress_addon_core import LOG_OFF, load_config
+    from .egress_addon_core import (
+        LOG_OFF, load_config, resolve_client_context, route_to_yaml_dict,
+    )
     from .policy_resolver import PolicyResolveError, PolicyResolver
     from . import supervise as _sv
 
@@ -527,12 +531,45 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
         if method == "tools/list":
             return handle_tools_list(req.params)
         if method == "tools/call":
+            # `list-egress-routes` is read-only introspection. In consolidated
+            # mode the gateway's *static* route table is empty (routes are
+            # resolved per request by source IP), so answer it from the calling
+            # bottle's resolved policy. Otherwise the agent sees an empty
+            # allowlist and composes an egress proposal that *replaces* the live
+            # routes instead of extending them — silently dropping base routes
+            # like api.anthropic.com when the operator approves it.
+            if req.params.get("name") == _sv.TOOL_LIST_EGRESS_ROUTES:
+                resolved = self._resolved_routes_payload()
+                if resolved is not None:
+                    return resolved
             # Attribute the proposal to the calling bottle. Single-tenant → the
             # env slug on `config`; consolidated → the source-IP-resolved
             # bottle id, so one shared server queues each bottle's proposal
             # under its own slug.
             return handle_tools_call(req.params, self._attributed_config(config))
         raise _RpcClientError(ERR_METHOD_NOT_FOUND, f"method not found: {method}")
+
+    def _resolved_routes_payload(self) -> dict[str, object] | None:
+        """The calling bottle's live egress routes as the `list-egress-routes`
+        JSON payload, resolved by (source_ip, identity token) — the same shape
+        the single-tenant introspection endpoint returns. None when there is no
+        resolver (single-tenant), so the caller falls back to that endpoint.
+
+        Fail-closed like `_attributed_config`: an unattributed source or an
+        unreachable orchestrator yields an empty route list (never another
+        bottle's), courtesy of `resolve_client_context`."""
+        resolver = getattr(self.server, "policy_resolver", None)
+        if resolver is None:
+            return None
+        headers = getattr(self, "headers", None)
+        token = headers.get(IDENTITY_HEADER, "") if headers is not None else ""
+        conf, _slug, _tokens = resolve_client_context(
+            resolver, self.client_address[0], token,
+        )
+        body = json.dumps(
+            {"routes": [route_to_yaml_dict(r) for r in conf.routes]}, indent=2,
+        )
+        return {"content": [{"type": "text", "text": body}], "isError": False}
 
     def _attributed_config(self, config: ServerConfig) -> ServerConfig:
         """The ServerConfig with `bottle_slug` bound to *this request's* bottle.

@@ -631,9 +631,15 @@ class TestHttpEndToEnd(unittest.TestCase):
 
 
 class _FakeResolver:
-    def __init__(self, bottle_id: str | None = None, raises: bool = False) -> None:
+    def __init__(
+        self,
+        bottle_id: str | None = None,
+        raises: bool = False,
+        policy: str = "",
+    ) -> None:
         self._bottle_id = bottle_id
         self._raises = raises
+        self._policy = policy
         self.calls: list[str] = []
 
     def resolve_bottle_id(self, source_ip: str, identity_token: str = "") -> str | None:
@@ -644,6 +650,15 @@ class _FakeResolver:
             # policy_resolver flat inside the bundle, package-side in tests).
             raise supervise_server.PolicyResolveError("orchestrator down")
         return self._bottle_id
+
+    def resolve_policy_and_bottle_id(
+        self, source_ip: str, identity_token: str = "",
+    ) -> "tuple[str, str | None, dict[str, str]]":
+        del identity_token
+        self.calls.append(source_ip)
+        if self._raises:
+            raise supervise_server.PolicyResolveError("orchestrator down")
+        return self._policy, self._bottle_id, {}
 
 
 def _handler(resolver: object) -> MCPHandler:
@@ -680,6 +695,42 @@ class TestAttributedConfig(unittest.TestCase):
             _handler(_FakeResolver(raises=True))._attributed_config(
                 ServerConfig(bottle_slug="x")
             )
+
+
+class TestResolvedRoutesPayload(unittest.TestCase):
+    """`list-egress-routes` answers from the calling bottle's resolved policy in
+    consolidated mode — not the gateway's empty static table. Regression: an
+    empty list led agents to propose replace-all route files that dropped base
+    hosts like api.anthropic.com on approval."""
+
+    def test_returns_resolved_bottle_routes(self) -> None:
+        policy = (
+            "routes:\n"
+            "  - host: api.anthropic.com\n"
+            "  - host: www.google.com\n"
+        )
+        payload = _handler(
+            _FakeResolver(bottle_id="b1", policy=policy)
+        )._resolved_routes_payload()
+        assert payload is not None
+        self.assertFalse(payload["isError"])  # type: ignore[index]
+        data = json.loads(payload["content"][0]["text"])  # type: ignore[index]
+        hosts = {r["host"] for r in data["routes"]}
+        self.assertEqual({"api.anthropic.com", "www.google.com"}, hosts)
+
+    def test_orchestrator_error_fails_closed_to_empty(self) -> None:
+        # resolve_client_context swallows resolver errors → deny-all (empty),
+        # never another bottle's routes.
+        payload = _handler(
+            _FakeResolver(raises=True)
+        )._resolved_routes_payload()
+        assert payload is not None
+        data = json.loads(payload["content"][0]["text"])  # type: ignore[index]
+        self.assertEqual([], data["routes"])
+
+    def test_single_tenant_returns_none(self) -> None:
+        # No resolver → caller falls back to the static introspection endpoint.
+        self.assertIsNone(_handler(None)._resolved_routes_payload())
 
 
 if __name__ == "__main__":
