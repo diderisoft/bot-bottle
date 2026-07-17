@@ -253,22 +253,47 @@ class TestCommitRootfsPermissions(unittest.TestCase):
     """The snapshot tar can hold the bottle's private workspace, so the
     freezer must write it owner-only (0600)."""
 
+    def _commit(self, tar_path: Path) -> int:
+        """Run _commit_rootfs_via_ssh with a stubbed ssh|tar pipe; return the
+        mode of the open partial observed mid-stream (from subprocess.run)."""
+        key = tar_path.parent.parent / "key"
+        key.write_text("K")
+        seen: dict[str, int] = {}
+
+        def fake_run(argv: list[str], *a: Any, **k: Any) -> Any:
+            out = k["stdout"]
+            seen["mode"] = stat.S_IMODE(os.fstat(out.fileno()).st_mode)
+            out.write(b"TARDATA")
+            return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+        with patch.object(freezer.util, "ssh_base_argv", return_value=["ssh"]), \
+             patch.object(freezer.subprocess, "run", side_effect=fake_run):
+            freezer._commit_rootfs_via_ssh(key, "10.0.0.1", tar_path)
+        return seen["mode"]
+
     def test_snapshot_created_owner_only(self):
         with tempfile.TemporaryDirectory(prefix="fc-freeze.") as d:
-            tmp = Path(d)
-            key = tmp / "key"
-            key.write_text("K")
-            tar_path = tmp / "state" / "committed-rootfs.tar"
+            tar_path = Path(d) / "state" / "committed-rootfs.tar"
+            tar_path.parent.mkdir()
+            stream_mode = self._commit(tar_path)
 
-            def fake_run(argv: list[str], *a: Any, **k: Any) -> Any:
-                # Emulate the ssh|tar pipe streaming the snapshot to stdout.
-                k["stdout"].write(b"TARDATA")
-                return subprocess.CompletedProcess(argv, 0, b"", b"")
+            self.assertEqual(0o600, stream_mode)  # private during the stream
+            self.assertEqual(b"TARDATA", tar_path.read_bytes())
+            self.assertEqual(0o600, stat.S_IMODE(tar_path.stat().st_mode))
 
-            with patch.object(freezer.util, "ssh_base_argv", return_value=["ssh"]), \
-                 patch.object(freezer.subprocess, "run", side_effect=fake_run):
-                freezer._commit_rootfs_via_ssh(key, "10.0.0.1", tar_path)
+    def test_leftover_world_readable_partial_is_recreated_private(self):
+        """A partial left 0644 by an interrupted prior run must not keep the
+        new snapshot world-readable while it streams."""
+        with tempfile.TemporaryDirectory(prefix="fc-freeze.") as d:
+            tar_path = Path(d) / "state" / "committed-rootfs.tar"
+            tar_path.parent.mkdir()
+            partial = tar_path.with_name(tar_path.name + ".partial")
+            partial.write_bytes(b"stale")
+            os.chmod(partial, 0o644)
 
+            stream_mode = self._commit(tar_path)
+
+            self.assertEqual(0o600, stream_mode)
             self.assertEqual(b"TARDATA", tar_path.read_bytes())
             self.assertEqual(0o600, stat.S_IMODE(tar_path.stat().st_mode))
 

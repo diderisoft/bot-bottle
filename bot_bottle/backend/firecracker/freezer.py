@@ -64,9 +64,17 @@ def _commit_rootfs_via_ssh(private_key: Path, guest_ip: str, tar_path: Path) -> 
     partial = tar_path.with_name(tar_path.name + ".partial")
     ssh = util.ssh_base_argv(private_key, guest_ip)
     # The snapshot can contain the bottle's private workspace, so keep it
-    # owner-only (0600) — create it that way and re-assert after the rename
-    # (os.replace carries the source mode, but be explicit).
-    fd = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    # owner-only (0600) for the whole stream. The `os.open` mode only applies
+    # on *creation*, so unlink any leftover partial (a prior interrupted run
+    # could have left it world-readable, or something could swap in a symlink
+    # at this predictable name) and exclusively recreate it — O_EXCL|O_NOFOLLOW
+    # — then fchmod immediately so umask can't loosen it. Re-assert after the
+    # rename too (os.replace carries the source mode, but be explicit).
+    partial.unlink(missing_ok=True)
+    fd = os.open(
+        partial, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600
+    )
+    os.fchmod(fd, 0o600)
     with os.fdopen(fd, "wb") as tar_out:
         result = subprocess.run(
             [*ssh, "--", "tar", "--create", "--one-file-system",
