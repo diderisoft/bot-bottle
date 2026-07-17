@@ -57,24 +57,34 @@ def local_build_requested() -> bool:
     return os.environ.get("BOT_BOTTLE_INFRA_BUILD", "").strip().lower() == "local"
 
 
-def infra_artifact_version(init_script: str) -> str:
+def infra_artifact_version(init_script: str, *, repo_root: Path = _REPO_ROOT) -> str:
     """Content hash (16 hex) of everything baked into the infra rootfs: the
-    whole shipped `bot_bottle` package (the infra image `COPY`s it wholesale),
-    the three fixed Dockerfiles, and the guest init. Deterministic across the
-    publish host and the launch host when both run the same checkout, so the
-    tag the launch host pulls is exactly the tag publish produced."""
+    whole shipped `bot_bottle` package, the three fixed Dockerfiles, and the
+    guest init. Deterministic across the publish host and the launch host when
+    both run the same checkout, so the tag the launch host pulls is exactly the
+    tag publish produced.
+
+    The package is `COPY bot_bottle /app/bot_bottle`'d wholesale into the image,
+    so hash *every* regular file under it — not just `*.py`. Non-Python inputs
+    (e.g. `egress_entrypoint.sh`, `netpool.defaults.env`) are baked in too, and
+    a change to one must bump the version or a launch host could boot a stale
+    rootfs whose code differs from its checkout. `__pycache__`/`.pyc` are the
+    only exclusions — build artifacts, never copied."""
     h = hashlib.sha256()
     h.update(f"format={_ARTIFACT_FORMAT}\n".encode())
-    pkg = _REPO_ROOT / "bot_bottle"
-    for path in sorted(pkg.rglob("*.py")):
-        if "__pycache__" in path.parts:
+    pkg = repo_root / "bot_bottle"
+    for path in sorted(pkg.rglob("*")):
+        if not path.is_file():
             continue
-        h.update(str(path.relative_to(_REPO_ROOT)).encode())
+        if "__pycache__" in path.parts or path.suffix == ".pyc":
+            continue
+        h.update(str(path.relative_to(repo_root)).encode())
+        h.update(b"\0")
         h.update(path.read_bytes())
     for name in _DOCKERFILES:
-        p = _REPO_ROOT / name
         h.update(name.encode())
-        h.update(p.read_bytes())
+        h.update(b"\0")
+        h.update((repo_root / name).read_bytes())
     h.update(b"init\0")
     h.update(init_script.encode())
     return h.hexdigest()[:16]

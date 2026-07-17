@@ -47,8 +47,22 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def _put(url: str, body: bytes, token: str) -> None:
-    req = urllib.request.Request(url, data=body, method="PUT")
+def _put(url: str, body: "bytes | Path", token: str) -> None:
+    """PUT `body` (raw bytes, or a Path streamed from disk) to `url`. The rootfs
+    is hundreds of MB, so it is passed as a Path and streamed — `urlopen` reads
+    the open file in blocks rather than materializing it in memory (with an
+    explicit Content-Length, which Gitea requires and which also stops urllib
+    from `len()`-ing a non-bytes body)."""
+    handle = None
+    if isinstance(body, Path):
+        length = body.stat().st_size
+        handle = open(body, "rb")
+        data: object = handle
+    else:
+        length = len(body)
+        data = body
+    req = urllib.request.Request(url, data=data, method="PUT")  # type: ignore[arg-type]
+    req.add_header("Content-Length", str(length))
     if token:
         req.add_header("Authorization", f"token {token}")
     req.add_header("Content-Type", "application/octet-stream")
@@ -64,6 +78,9 @@ def _put(url: str, body: bytes, token: str) -> None:
         raise SystemExit(f"upload failed (HTTP {e.code}): {url}\n{e.read().decode(errors='replace')}")
     except urllib.error.URLError as e:
         raise SystemExit(f"registry unreachable: {url} ({e.reason})")
+    finally:
+        if handle is not None:
+            handle.close()
 
 
 def _delete(url: str, token: str) -> None:
@@ -127,8 +144,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.force:
             _delete(gz_url, token)
             _delete(sha_url, token)
-        _put(gz_url, gz.read_bytes(), token)
-        _put(sha_url, sha.read_bytes(), token)
+        _put(gz_url, gz, token)  # streamed from disk (hundreds of MB)
+        _put(sha_url, sha.read_bytes(), token)  # tiny, in-memory is fine
     print(f"published infra rootfs {version}")
     return 0
 

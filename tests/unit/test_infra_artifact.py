@@ -79,6 +79,44 @@ class TestVersion(unittest.TestCase):
             ia.infra_artifact_version("a"), ia.infra_artifact_version("b"))
 
 
+class TestVersionInputs(unittest.TestCase):
+    """The hash must cover *every* file baked into the rootfs, not just `*.py`
+    (`COPY bot_bottle` is wholesale) — else a non-Python change (e.g. the egress
+    entrypoint shell script) leaves the version unchanged and a launch host
+    boots a rootfs whose code differs from its checkout."""
+
+    def _fake_repo(self, root: Path) -> None:
+        pkg = root / "bot_bottle"
+        pkg.mkdir()
+        (pkg / "app.py").write_text("print('hi')\n")
+        (pkg / "egress_entrypoint.sh").write_text("#!/bin/sh\nexec mitmdump\n")
+        (pkg / "netpool.defaults.env").write_text("FOO=1\n")
+        for name in ("Dockerfile.orchestrator", "Dockerfile.gateway", "Dockerfile.infra"):
+            (root / name).write_text(f"FROM scratch  # {name}\n")
+
+    def test_non_python_file_change_bumps_version(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._fake_repo(root)
+            before = ia.infra_artifact_version("init", repo_root=root)
+            (root / "bot_bottle" / "egress_entrypoint.sh").write_text(
+                "#!/bin/sh\nexec mitmdump --different\n")
+            after = ia.infra_artifact_version("init", repo_root=root)
+        self.assertNotEqual(before, after)
+
+    def test_pyc_and_pycache_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._fake_repo(root)
+            before = ia.infra_artifact_version("init", repo_root=root)
+            cache = root / "bot_bottle" / "__pycache__"
+            cache.mkdir()
+            (cache / "app.cpython-312.pyc").write_bytes(b"\x00bytecode")
+            (root / "bot_bottle" / "app.pyc").write_bytes(b"\x00bytecode")
+            after = ia.infra_artifact_version("init", repo_root=root)
+        self.assertEqual(before, after)
+
+
 class TestEnsureArtifact(_CacheMixin):
     def test_downloads_verifies_and_caches(self) -> None:
         version = "deadbeef00000000"
