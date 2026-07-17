@@ -31,6 +31,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import secrets
+import socket
 import string
 from dataclasses import dataclass
 from pathlib import Path
@@ -85,6 +86,14 @@ def bottle_identity(agent_name: str) -> str:
     slug = docker_mod.slugify(agent_name)
     suffix = "".join(secrets.choice(_SUFFIX_ALPHABET) for _ in range(_RANDOM_SUFFIX_LEN))
     return f"{slug}-{suffix}"
+
+
+def globalize_slug(slug: str) -> str:
+    """Return a globally-unique slug qualified with the current hostname.
+
+    Assumes slug is a value returned from mint_slug. Use wherever a slug
+    must be unique across hosts (e.g. deploy-key titles)."""
+    return f"{socket.gethostname()}-{slug}"
 
 
 @dataclass(frozen=True)
@@ -340,6 +349,7 @@ __all__ = [
     "BottleMetadata",
     "agent_state_dir",
     "bottle_identity",
+    "globalize_slug",
     "bottle_state_dir",
     "cleanup_state",
     "clear_preserve_marker",

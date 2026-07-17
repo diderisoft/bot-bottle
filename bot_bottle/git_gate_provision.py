@@ -10,10 +10,10 @@ from __future__ import annotations
 
 import os
 import dataclasses
-import socket
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .bottle_state import globalize_slug
 from .errors import MissingEnvVarError
 from .log import info
 from .manifest import ManifestBottle, ManifestGitEntry
@@ -47,7 +47,7 @@ def _provision_dynamic_key(
     owner_repo = entry.UpstreamPath
     if owner_repo.endswith(".git"):
         owner_repo = owner_repo[:-4]
-    title = f"bot-bottle:{socket.gethostname()}:{slug}:{entry.Name}"
+    title = f"bot-bottle:{globalize_slug(slug)}:{entry.Name}"
 
     info(f"provisioning deploy key for git-gate.repos[{entry.Name!r}]")
     key_id, private_key_bytes = provisioner.create(owner_repo, title)
