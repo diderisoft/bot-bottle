@@ -906,6 +906,34 @@ class TestMultiTenantInboundDlp(unittest.TestCase):
         addon.websocket_message(flow)  # type: ignore[arg-type]
         self.assertTrue(flow.killed)
 
+    def test_response_log_redacts_per_bottle_resolve_token(self) -> None:
+        # LOG_FULL response logging now runs in multi-tenant mode, so it must
+        # scrub the calling bottle's /resolve token — which lives only in the
+        # resolved env overlay, never in the gateway's os.environ. A
+        # non-token-shaped secret is caught only via that env, so os.environ
+        # redaction (the pre-fix behaviour) would leak it into the log.
+        secret = "bottle-a-provisioned-secret-value"
+        policy = "log: 2\nroutes:\n  - host: api.example.com\n"
+
+        class _TokenResolver:
+            def resolve_policy_and_bottle_id(
+                self, ip: str, identity_token: str = "",
+            ) -> tuple[str | None, str | None, dict[str, str]]:
+                del ip, identity_token
+                return policy, "bottle-a", {"EGRESS_TOKEN_0": secret}
+
+        addon = _addon(Config(routes=()))
+        addon._resolver = cast(Any, _TokenResolver())
+        flow = _with_client_ip(_Flow(_Request(host="api.example.com")), "10.0.0.1")
+        _run_request(addon, flow)
+        flow.response = _Response(200, content=f"echo {secret} back")
+        buf = StringIO()
+        with patch("sys.stderr", buf):
+            addon.response(flow)  # type: ignore[arg-type]
+        logged = buf.getvalue()
+        self.assertIn("egress_response", logged)  # LOG_FULL logged the response
+        self.assertNotIn(secret, logged)  # redacted via the resolved env overlay
+
     def test_unattributed_flow_has_no_route_so_frame_passes(self) -> None:
         # An unattributed source resolves to a deny-all (empty) config, so the
         # request is blocked at the upgrade and any later frame has no route to

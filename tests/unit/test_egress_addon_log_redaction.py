@@ -8,6 +8,7 @@ real mitmproxy package."""
 from __future__ import annotations
 
 import json
+import os
 import sys
 import types
 import unittest
@@ -107,14 +108,14 @@ class _Flow:
 def _log_request(addon: EgressAddon, flow: _Flow) -> dict[str, Any]:
     buf = StringIO()
     with patch("sys.stderr", buf):
-        addon._log_request(flow)  # type: ignore[arg-type]
+        addon._log_request(flow, os.environ)  # type: ignore[arg-type]
     return json.loads(buf.getvalue())
 
 
 def _log_response(addon: EgressAddon, flow: _Flow) -> dict[str, Any]:
     buf = StringIO()
     with patch("sys.stderr", buf):
-        addon._log_response(flow)  # type: ignore[arg-type]
+        addon._log_response(flow, os.environ)  # type: ignore[arg-type]
     return json.loads(buf.getvalue())
 
 

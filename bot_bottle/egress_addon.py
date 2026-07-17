@@ -233,31 +233,39 @@ class EgressAddon:
             {"Content-Type": "text/plain; charset=utf-8"},
         )
 
-    def _log_request(self, flow: http.HTTPFlow) -> None:
+    def _log_request(
+        self, flow: http.HTTPFlow, env: "typing.Mapping[str, str]",
+    ) -> None:
+        # `env` is the per-flow resolved overlay (process env + this bottle's
+        # /resolve tokens), so the log redaction scrubs the calling bottle's
+        # provisioned secrets — not just the process-level ones in os.environ.
         headers = {
-            k: redact_tokens(v, env=os.environ)
+            k: redact_tokens(v, env=env)
             for k, v in flow.request.headers.items()
             if k.lower() != "authorization"
         }
-        body = redact_tokens(flow.request.get_text(strict=False) or "", env=os.environ)
+        body = redact_tokens(flow.request.get_text(strict=False) or "", env=env)
         sys.stderr.write(
             json.dumps({
                 "event": "egress_request",
-                "host": redact_tokens(flow.request.pretty_host, env=os.environ),
+                "host": redact_tokens(flow.request.pretty_host, env=env),
                 "method": flow.request.method,
-                "path": redact_tokens(flow.request.path, env=os.environ),
+                "path": redact_tokens(flow.request.path, env=env),
                 "headers": headers,
                 "body": body,
             })
             + "\n"
         )
 
-    def _log_response(self, flow: http.HTTPFlow) -> None:
+    def _log_response(
+        self, flow: http.HTTPFlow, env: "typing.Mapping[str, str]",
+    ) -> None:
+        # Per-flow env overlay (see _log_request): redact this bottle's tokens.
         headers = {
-            k: redact_tokens(v, env=os.environ)
+            k: redact_tokens(v, env=env)
             for k, v in flow.response.headers.items()
         }
-        body = redact_tokens(flow.response.get_text(strict=False) or "", env=os.environ)
+        body = redact_tokens(flow.response.get_text(strict=False) or "", env=env)
         sys.stderr.write(
             json.dumps({
                 "event": "egress_response",
@@ -420,7 +428,7 @@ class EgressAddon:
             flow.request.headers["authorization"] = decision.inject_authorization
 
         if config.log >= LOG_FULL:
-            self._log_request(flow)
+            self._log_request(flow, env)
 
     def _block_dlp(self, flow: http.HTTPFlow, result: ScanResult) -> None:
         ctx = self._req_ctx(flow)
@@ -632,14 +640,14 @@ class EgressAddon:
         """DLP inbound scan on response headers and body, against the calling
         bottle's resolved config (multi-tenant) or the static config
         (single-tenant) — see `_flow_ctx`."""
-        config, _slug, _env = self._flow_ctx(flow)
+        config, _slug, env = self._flow_ctx(flow)
         route = match_route(config.routes, flow.request.pretty_host)
         if route is None:
             return
         if flow.response is None:
             return
         if config.log >= LOG_FULL:
-            self._log_response(flow)
+            self._log_response(flow, env)
         resp_headers = {k.lower(): v for k, v in flow.response.headers.items()}
         body = flow.response.get_text(strict=False) or ""
         scan_text = build_inbound_scan_text(resp_headers, body)
