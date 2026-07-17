@@ -35,7 +35,7 @@ from typing import Generator
 from ...log import die, info
 from ..docker import util as docker_mod
 from ..docker.gateway_provision import GatewayProvisionError
-from . import firecracker_vm, netpool, util
+from . import firecracker_vm, infra_artifact, netpool, util
 
 # The single infra-VM image: gateway data plane + baked control-plane source
 # (Dockerfile.infra FROM the gateway image). Built from source by default;
@@ -109,10 +109,26 @@ class InfraVm:
 
 
 def ensure_built() -> None:
-    """Build the infra image from source (bootstrap via host docker). The
-    infra image `COPY --from`s the orchestrator image and is `FROM` the
-    gateway image, so both must exist first. A pull-from-registry mode
-    replaces this later."""
+    """Ensure the infra rootfs is available before boot.
+
+    Default (docker-free, PRD 0069 Stage 2): download + verify the prebuilt
+    rootfs artifact matching this code version (see `infra_artifact`); the
+    launch host needs no Docker. `BOT_BOTTLE_INFRA_BUILD=local` instead builds
+    the three fixed images from source with host Docker — the infra image
+    `COPY --from`s the orchestrator image and is `FROM` the gateway image, so
+    both must exist first — for iterating on the Dockerfiles."""
+    if infra_artifact.local_build_requested():
+        build_infra_images_with_docker()
+        return
+    infra_artifact.ensure_artifact_gz(
+        infra_artifact.infra_artifact_version(_infra_init()))
+
+
+def build_infra_images_with_docker() -> None:
+    """Build the three fixed images from source with host Docker: orchestrator,
+    gateway, then the combined infra image (`COPY --from` orchestrator, `FROM`
+    gateway). The launch host uses this only in `BOT_BOTTLE_INFRA_BUILD=local`
+    mode; `publish_infra` uses it off-host to produce the published artifact."""
     docker_mod.build_image(
         _ORCHESTRATOR_IMAGE, str(_REPO_ROOT), dockerfile="Dockerfile.orchestrator")
     docker_mod.build_image(
@@ -190,10 +206,15 @@ def boot() -> InfraVm:
         die(f"orchestrator link {slot.iface} not present.\n"
             f"    ./cli.py backend setup --backend=firecracker")
 
-    base = build_infra_rootfs_dir()
     run_dir = _infra_dir()
     rootfs = run_dir / "rootfs.ext4"
-    util.build_rootfs_ext4(base, rootfs, slack_mib=8192)
+    if infra_artifact.local_build_requested():
+        util.build_rootfs_ext4(build_infra_rootfs_dir(), rootfs, slack_mib=8192)
+    else:
+        # Prebuilt artifact already carries the buildah build slack; expand it
+        # to a fresh writable rootfs for this boot.
+        infra_artifact.materialize_ext4(
+            infra_artifact.infra_artifact_version(_infra_init()), rootfs)
     private_key, pubkey = _stable_keypair()
 
     info(f"booting infra VM on {slot.iface} (guest {slot.guest_ip})")

@@ -7,6 +7,7 @@ decisions that must hold without a VM.
 
 from __future__ import annotations
 
+import os
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -95,8 +96,17 @@ class TestRegistryVolume(unittest.TestCase):
 
 
 class TestEnsureBuilt(unittest.TestCase):
-    def test_builds_deps_before_infra(self):
-        with patch.object(infra_vm.docker_mod, "build_image") as build:
+    def test_default_pulls_artifact_without_docker(self):
+        # PRD 0069 Stage 2: the launch host pulls the prebuilt rootfs; no Docker.
+        with patch.object(infra_vm.docker_mod, "build_image") as build, \
+                patch.object(infra_vm.infra_artifact, "ensure_artifact_gz") as pull:
+            infra_vm.ensure_built()
+        build.assert_not_called()
+        pull.assert_called_once()
+
+    def test_local_mode_builds_deps_before_infra(self):
+        with patch.dict(os.environ, {"BOT_BOTTLE_INFRA_BUILD": "local"}), \
+                patch.object(infra_vm.docker_mod, "build_image") as build:
             infra_vm.ensure_built()
         tags = [c.args[0] for c in build.call_args_list]
         # infra is FROM gateway and COPY --from orchestrator, so both first.
