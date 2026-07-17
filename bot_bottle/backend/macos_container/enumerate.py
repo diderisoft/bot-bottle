@@ -6,14 +6,13 @@ import subprocess
 
 from ...bottle_state import read_metadata
 from .. import ActiveAgent
-from .gateway import GATEWAY_NAME
-from .orchestrator_service import ORCHESTRATOR_NAME
+from .infra import INFRA_NAME
 
 _PREFIX = "bot-bottle-"
-# The shared per-host singletons carry the same prefix as agent containers but
-# are infrastructure, not bottles — one gateway and one control plane serve
-# every agent, so listing them as agents would invent one per host.
-_INFRA_NAMES = frozenset({GATEWAY_NAME, ORCHESTRATOR_NAME})
+# The shared per-host infra container carries the same prefix as agent
+# containers but is infrastructure, not a bottle — one control plane + gateway
+# serves every agent, so listing it as an agent would invent one per host.
+_INFRA_NAMES = frozenset({INFRA_NAME})
 
 
 def enumerate_active() -> list[ActiveAgent]:

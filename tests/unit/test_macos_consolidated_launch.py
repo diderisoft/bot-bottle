@@ -50,30 +50,35 @@ def _client() -> Mock:
 
 class TestEnsureGateway(unittest.TestCase):
     def _run(self, service: MagicMock) -> GatewayEndpoint:
-        with patch(f"{_MOD}.MacosOrchestratorService", return_value=service):
+        with patch(f"{_MOD}.MacosInfraService", return_value=service):
             return ensure_gateway()
 
     def _service(self) -> MagicMock:
+        from bot_bottle.backend.macos_container.infra import InfraEndpoint
         service = MagicMock()
-        service.ensure_running.return_value = "http://192.168.128.2:8099"
+        service.ensure_running.return_value = InfraEndpoint(
+            control_plane_url="http://192.168.128.2:8099",
+            gateway_ip="192.168.128.2",
+        )
         service.network = "bot-bottle-mac-gateway"
-        service.gateway.return_value.ip_on_shared_network.return_value = "192.168.128.3"
-        service.gateway.return_value.ca_cert_pem.return_value = "PEM"
+        service.ca_cert_pem.return_value = "PEM"
         return service
 
     def test_reports_gateway_endpoint(self) -> None:
         endpoint = self._run(self._service())
         self.assertEqual("http://192.168.128.2:8099", endpoint.orchestrator_url)
-        self.assertEqual("192.168.128.3", endpoint.gateway_ip)
+        self.assertEqual("192.168.128.2", endpoint.gateway_ip)
         self.assertEqual("PEM", endpoint.gateway_ca_pem)
         self.assertEqual("bot-bottle-mac-gateway", endpoint.network)
 
-    def test_gateway_is_pointed_at_the_resolved_control_plane(self) -> None:
-        """Apple has no container DNS, so the gateway must be handed the
-        control plane's *resolved URL* rather than a container name."""
-        service = self._service()
-        self._run(service)
-        service.gateway.assert_called_with("http://192.168.128.2:8099")
+    def test_control_plane_and_gateway_share_one_address(self) -> None:
+        """One infra container hosts both, so the gateway IP and the
+        control-plane host are the same."""
+        endpoint = self._run(self._service())
+        self.assertEqual(
+            endpoint.gateway_ip,
+            endpoint.orchestrator_url.split("://")[1].split(":")[0],
+        )
 
 
 class TestRegisterAgent(unittest.TestCase):

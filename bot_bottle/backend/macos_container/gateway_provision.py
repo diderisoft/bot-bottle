@@ -1,23 +1,23 @@
-"""`GatewayTransport` for the Apple gateway container (PRD 0070).
+"""`GatewayTransport` for the Apple infra container (PRD 0070).
 
 The provisioning *logic* (per-bottle creds dirs, namespaced repo init) is
 backend-neutral and lives in `backend.docker.gateway_provision`; this is only
 the transport — how files and commands reach the running gateway. Docker uses
 `docker exec`/`docker cp` and Firecracker uses SSH; Apple uses the `container`
-CLI's equivalents.
+CLI's equivalents against the infra container that hosts the gateway daemons.
 """
 
 from __future__ import annotations
 
 from ..docker.gateway_provision import GatewayProvisionError
 from . import util as container_mod
-from .gateway import GATEWAY_NAME
+from .infra import INFRA_NAME
 
 
 class AppleGatewayTransport:
-    """`GatewayTransport` for the gateway as an Apple container."""
+    """`GatewayTransport` for the gateway daemons in the Apple infra container."""
 
-    def __init__(self, gateway: str = GATEWAY_NAME) -> None:
+    def __init__(self, gateway: str = INFRA_NAME) -> None:
         self.gateway = gateway
 
     def exec(self, argv: list[str]) -> None:

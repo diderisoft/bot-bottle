@@ -15,6 +15,9 @@ caller has to start the agent in between. `ensure_gateway` runs first because
 the agent's proxy env needs the gateway's address at `container run` time; the
 agent's *own* address (the attribution key) only exists afterwards.
 
+The control plane and the gateway are one **infra container** here (see
+`infra`), so `gateway_ip` and the control-plane host are the same address.
+
 The consequence for the identity token: it is minted by registration, i.e.
 *after* the agent container exists, so it cannot be baked into the run-time
 env the way docker's compose spec does. It is delivered at `container exec`
@@ -38,7 +41,7 @@ from ...orchestrator.registration import registration_inputs
 from ..docker.gateway_provision import deprovision_git_gate, provision_git_gate
 from .gateway import GATEWAY_NETWORK
 from .gateway_provision import AppleGatewayTransport
-from .orchestrator_service import MacosOrchestratorService, OrchestratorStartError
+from .infra import MacosInfraService, OrchestratorStartError
 
 
 class ConsolidatedLaunchError(RuntimeError):
@@ -47,7 +50,9 @@ class ConsolidatedLaunchError(RuntimeError):
 
 @dataclass(frozen=True)
 class GatewayEndpoint:
-    """What the agent `container run` needs to reach the shared gateway."""
+    """What the agent `container run` needs to reach the shared gateway (the
+    infra container). `gateway_ip` is that container's host-only address, the
+    same host the control-plane URL points at."""
 
     orchestrator_url: str
     gateway_ip: str         # the gateway's address — the agent's proxy target
@@ -68,19 +73,18 @@ class LaunchContext:
 
 
 def ensure_gateway(
-    *, service: MacosOrchestratorService | None = None,
+    *, service: MacosInfraService | None = None,
 ) -> GatewayEndpoint:
-    """Ensure the orchestrator control plane + shared gateway are up, and
-    report how to reach them. Idempotent — both are per-host singletons, so N
-    bottle launches share the one pair. Call before starting the agent
-    container: the agent's proxy env needs `gateway_ip` at run time."""
-    service = service or MacosOrchestratorService()
-    url = service.ensure_running()
-    gateway = service.gateway(url)
+    """Ensure the per-host infra container (control plane + gateway) is up and
+    report how to reach it. Idempotent — one singleton, so N bottle launches
+    share it. Call before starting the agent container: the agent's proxy env
+    needs `gateway_ip` at run time."""
+    service = service or MacosInfraService()
+    infra = service.ensure_running()
     return GatewayEndpoint(
-        orchestrator_url=url,
-        gateway_ip=gateway.ip_on_shared_network(),
-        gateway_ca_pem=gateway.ca_cert_pem(),
+        orchestrator_url=infra.control_plane_url,
+        gateway_ip=infra.gateway_ip,
+        gateway_ca_pem=service.ca_cert_pem(),
         network=service.network,
     )
 

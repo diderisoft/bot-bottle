@@ -186,6 +186,13 @@ def discover_orchestrator_url(*, timeout: float = 2.0) -> str:
             f"http://{netpool.orch_slot().guest_ip}:{CONTROL_PLANE_PORT}")
     except Exception:  # noqa: BLE001 — backend optional / not firecracker
         pass
+    try:  # macOS: infra container control plane on its host-only address
+        from ..backend.macos_container.infra import probe_control_plane_url
+        url = probe_control_plane_url()
+        if url:
+            candidates.append(url)
+    except Exception:  # noqa: BLE001 — backend optional / not macOS
+        pass
     for url in candidates:
         if OrchestratorClient(url, timeout=timeout).health():
             return url

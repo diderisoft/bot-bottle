@@ -89,6 +89,14 @@ class MacosContainerBottleBackend(
         with _launch.launch(plan, provision=self.provision) as bottle:
             yield bottle
 
+    def ensure_orchestrator(self) -> str:
+        """Bring up the per-host infra container (control plane + gateway) and
+        return its control-plane URL — the on-demand entry point operator tools
+        (`supervise`) call when no control plane is running yet. Mirrors
+        firecracker's infra-VM bring-up."""
+        from .infra import MacosInfraService
+        return MacosInfraService().ensure_running().control_plane_url
+
     def prepare_cleanup(self) -> MacosContainerBottleCleanupPlan:
         return _cleanup.prepare_cleanup()
 
