@@ -230,7 +230,12 @@ class TestMacosOrchestratorService(unittest.TestCase):
         reaches it there directly, so there is no --publish and no NAT leg."""
         svc = MacosOrchestratorService(repo_root=Path("/r"), host_root=Path("/h"))
         run = Mock(return_value=_ok())
-        with patch(f"{_ORCH}.container_mod") as mod:
+        # `ensure_networks` lives in the gateway module and shells out to the
+        # `container` CLI, which does not exist on the Linux CI host — patch it
+        # here, not gateway.container_mod, since it is called through this
+        # module's imported name.
+        with patch(f"{_ORCH}.container_mod") as mod, \
+                patch(f"{_ORCH}.ensure_networks"):
             mod.run_container_argv = run
             svc._run_orchestrator_container("h1")
         argv = run.call_args.args[0]
@@ -238,9 +243,29 @@ class TestMacosOrchestratorService(unittest.TestCase):
         self.assertEqual(["bot-bottle-mac-gateway"], networks)
         self.assertNotIn("--publish", argv)
 
+    def test_networks_exist_before_the_orchestrator_runs(self) -> None:
+        """The orchestrator is the first container on the shared network, so it
+        has to create it — the gateway that used to do so now starts second."""
+        svc = MacosOrchestratorService(repo_root=Path("/r"), host_root=Path("/h"))
+        order: list[str] = []
+
+        def _networks(*_args: str) -> None:
+            order.append("networks")
+
+        def _run(*_args: list[str]) -> Mock:
+            order.append("run")
+            return _ok()
+
+        with patch(f"{_ORCH}.container_mod") as mod, \
+                patch(f"{_ORCH}.ensure_networks", side_effect=_networks):
+            mod.run_container_argv = Mock(side_effect=_run)
+            svc._run_orchestrator_container("h1")
+        self.assertEqual(["networks", "run"], order)
+
     def test_orchestrator_start_failure_raises(self) -> None:
         svc = MacosOrchestratorService(repo_root=Path("/r"), host_root=Path("/h"))
-        with patch(f"{_ORCH}.container_mod") as mod:
+        with patch(f"{_ORCH}.container_mod") as mod, \
+                patch(f"{_ORCH}.ensure_networks"):
             mod.run_container_argv = Mock(return_value=_fail())
             with self.assertRaises(OrchestratorStartError):
                 svc._run_orchestrator_container("h1")

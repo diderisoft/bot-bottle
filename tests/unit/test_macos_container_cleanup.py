@@ -43,10 +43,34 @@ class TestMacosContainerCleanup(unittest.TestCase):
 
 
 class TestMacosContainerEnumerate(unittest.TestCase):
-    def test_enumerate_active_is_empty_while_disabled(self):
-        # The macOS backend is disabled during the companion-container removal cleanup
-        # (#385); it launches nothing, so there is nothing to enumerate.
-        self.assertEqual([], enum_mod.enumerate_active())
+    """The backend launches bottles again (PRD 0070), so enumeration is real
+    rather than the disabled-era stub. These must not shell out: `container`
+    does not exist on the Linux CI host."""
+
+    def _enumerate(self, stdout: str, returncode: int = 0):
+        completed = enum_mod.subprocess.CompletedProcess(
+            args=[], returncode=returncode, stdout=stdout, stderr="",
+        )
+        with patch.object(enum_mod.subprocess, "run", return_value=completed), \
+                patch.object(enum_mod, "read_metadata", return_value=None):
+            return enum_mod.enumerate_active()
+
+    def test_lists_agent_containers_by_slug(self):
+        agents = self._enumerate("bot-bottle-dev-abc\nunrelated\n")
+        self.assertEqual(["dev-abc"], [a.slug for a in agents])
+        self.assertEqual(["macos-container"], [a.backend_name for a in agents])
+
+    def test_excludes_the_shared_singletons(self):
+        """The gateway and control plane share the bot-bottle- prefix but are
+        infrastructure — listing them would invent an agent per host."""
+        agents = self._enumerate(
+            "bot-bottle-mac-gateway\nbot-bottle-mac-orchestrator\n"
+            "bot-bottle-dev-abc\n"
+        )
+        self.assertEqual(["dev-abc"], [a.slug for a in agents])
+
+    def test_empty_when_the_cli_fails(self):
+        self.assertEqual([], self._enumerate("", returncode=1))
 
 
 if __name__ == "__main__":
