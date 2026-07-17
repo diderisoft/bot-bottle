@@ -49,6 +49,13 @@ class _IsolatedOrchestratorService(OrchestratorService):
 
 
 @skip_unless_docker()
+@unittest.skipIf(
+    os.environ.get("GITEA_ACTIONS") == "true",
+    "skipped under act_runner: the orchestrator container bind-mounts the repo "
+    "path into a container on the socket-shared host daemon, which can't see the "
+    "runner's /workspace — same host-bind-mount constraint as the other "
+    "bottle-bringup integration tests",
+)
 class TestDockerControlPlaneAuthIntegration(unittest.TestCase):
     def setUp(self) -> None:
         suffix = secrets.token_hex(4)
