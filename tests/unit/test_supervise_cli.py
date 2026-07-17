@@ -78,6 +78,23 @@ class TestDiscoverPending(_ClientMixin, unittest.TestCase):
         pending = supervise_cli.discover_pending()
         self.assertEqual([early.id, late.id], [qp.proposal.id for qp in pending])
 
+    def test_label_comes_from_bottle_label(self) -> None:
+        # The server tags each dict with the human slug; the CLI displays it
+        # while the proposal stays keyed by the opaque bottle_id.
+        client = MagicMock()
+        d = _proposal("3601cbe883c2786d").to_dict()
+        d["bottle_label"] = "codex-dev-a1b2c"
+        client.supervise_pending.return_value = [d]
+        with patch.object(supervise_cli, "_client", return_value=client):
+            pending = supervise_cli.discover_pending()
+        self.assertEqual("codex-dev-a1b2c", pending[0].label)
+        self.assertEqual("3601cbe883c2786d", pending[0].proposal.bottle_slug)
+
+    def test_label_falls_back_to_slug_when_absent(self) -> None:
+        # Legacy dicts without bottle_label (e.g. an older orchestrator).
+        self._install_client([_proposal("dev")])
+        self.assertEqual("dev", supervise_cli.discover_pending()[0].label)
+
 
 class TestApproveReject(_ClientMixin, unittest.TestCase):
     def _qp(self, tool: str = TOOL_EGRESS_ALLOW) -> "supervise_cli.QueuedProposal":

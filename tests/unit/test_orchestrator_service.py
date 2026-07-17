@@ -226,6 +226,21 @@ class TestOrchestratorSupervise(unittest.TestCase):
         self.assertEqual(STATUS_APPROVED, read_response("demo", pid).status)
         self.assertEqual([], self.orch.supervise_pending())
 
+    def test_pending_carries_human_label(self) -> None:
+        # The proposal is keyed by bottle_id, but pending dicts also expose the
+        # bottle's human slug so the operator sees a name, not a hex id.
+        bottle_id = self._register("codex-dev-a1b2c", "routes: []\n")
+        self._queue(bottle_id, "routes:\n  - host: google.com\n")
+        pending = self.orch.supervise_pending()
+        self.assertEqual(bottle_id, pending[0]["bottle_slug"])
+        self.assertEqual("codex-dev-a1b2c", pending[0]["bottle_label"])
+
+    def test_pending_label_falls_back_to_slug_when_bottle_gone(self) -> None:
+        # No registry record (torn down): label is the id, never empty.
+        self._queue("ghost-id", "routes:\n  - host: google.com\n")
+        pending = self.orch.supervise_pending()
+        self.assertEqual("ghost-id", pending[0]["bottle_label"])
+
     def test_approve_by_bottle_id_applies_policy(self) -> None:
         # Consolidated reality: the supervise server keys each proposal by the
         # orchestrator-assigned bottle_id, not the human slug. Approval must

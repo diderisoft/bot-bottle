@@ -153,8 +153,32 @@ class Orchestrator:
 
     def supervise_pending(self) -> list[dict[str, object]]:
         """All pending proposals across bottles, FIFO, as JSON dicts
-        (`Proposal.to_dict`, round-trippable via `Proposal.from_dict`)."""
-        return [p.to_dict() for p in list_all_pending_proposals()]
+        (`Proposal.to_dict`, round-trippable via `Proposal.from_dict`).
+
+        Each dict carries an extra `bottle_label`: the bottle's human slug
+        resolved from the registry (the proposal itself is keyed by the
+        orchestrator-assigned bottle_id, which is opaque to an operator). The
+        CLI renders the label but still responds against `bottle_slug`."""
+        out: list[dict[str, object]] = []
+        for p in list_all_pending_proposals():
+            d = p.to_dict()
+            d["bottle_label"] = self._label_for(p.bottle_slug)
+            out.append(d)
+        return out
+
+    def _label_for(self, bottle_slug: str) -> str:
+        """The human slug recorded in registry metadata for a proposal's
+        bottle, or the bottle_slug unchanged when the bottle is gone or has no
+        recorded slug — so the label is always non-empty."""
+        rec = self.registry.get(bottle_slug)
+        if rec is None:
+            return bottle_slug
+        try:
+            meta = json.loads(rec.metadata) if rec.metadata else {}
+        except ValueError:
+            meta = {}
+        slug = meta.get("slug") if isinstance(meta, dict) else None
+        return slug if isinstance(slug, str) and slug else bottle_slug
 
     def _record_for_slug(self, slug: str) -> BottleRecord | None:
         """The live registry record for a proposal's bottle, or None (e.g. the

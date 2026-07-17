@@ -47,9 +47,15 @@ _REPORT_ONLY_TOOLS: tuple[str, ...] = (TOOL_GITLEAKS_ALLOW, TOOL_EGRESS_TOKEN_AL
 
 @dataclass(frozen=True)
 class QueuedProposal:
-    """A pending proposal from the supervise queue."""
+    """A pending proposal from the supervise queue.
+
+    `label` is the operator-facing bottle name (the human slug the
+    orchestrator resolved from the registry); `proposal.bottle_slug` is the
+    opaque bottle_id every operator action is keyed by. Display uses `label`;
+    respond calls use `proposal.bottle_slug`."""
 
     proposal: Proposal
+    label: str = ""
 
 
 # A failed operator action (orchestrator unreachable, bottle torn down,
@@ -91,7 +97,10 @@ def _client() -> OrchestratorClient:
 def discover_pending() -> list[QueuedProposal]:
     """Collect pending proposals across bottles from the orchestrator."""
     out = [
-        QueuedProposal(proposal=Proposal.from_dict(d))
+        QueuedProposal(
+            proposal=Proposal.from_dict(d),
+            label=str(d.get("bottle_label") or d.get("bottle_slug") or ""),
+        )
         for d in _client().supervise_pending()
     ]
     out.sort(key=lambda q: q.proposal.arrival_timestamp)
@@ -100,8 +109,8 @@ def discover_pending() -> list[QueuedProposal]:
 
 def _approval_status(qp: QueuedProposal, verb: str) -> str:
     """Status-line text after a successful approval."""
-    base = f"{verb} {qp.proposal.tool} for [{qp.proposal.bottle_slug}]"
-    return f"{base}; resume: ./cli.py resume {qp.proposal.bottle_slug}"
+    base = f"{verb} {qp.proposal.tool} for [{qp.label}]"
+    return f"{base}; resume: ./cli.py resume {qp.label}"
 
 
 def _detail_lines(
@@ -112,7 +121,7 @@ def _detail_lines(
     """Return the detail-view body as (text, curses-attr) tuples."""
     p = qp.proposal
     out: list[tuple[str, int]] = [
-        (f"bottle: {p.bottle_slug}", 0),
+        (f"bottle: {qp.label}", 0),
         (f"tool: {p.tool}", 0),
         (f"id: {p.id}", 0),
         (f"arrived: {p.arrival_timestamp}", 0),
@@ -287,7 +296,7 @@ def _list_once() -> int:
     for qp in pending:
         sys.stdout.write(
             f"{qp.proposal.arrival_timestamp}  "
-            f"[{qp.proposal.bottle_slug}]  "
+            f"[{qp.label}]  "
             f"{qp.proposal.tool}  "
             f"{qp.proposal.id}\n"
         )
@@ -384,7 +393,7 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:  # type: ignore  # pragm
             reason = _prompt(stdscr, "reject reason: ")
             if reason:
                 reject(qp, reason=reason)
-                status_line = f"rejected {qp.proposal.tool} for [{qp.proposal.bottle_slug}]"
+                status_line = f"rejected {qp.proposal.tool} for [{qp.label}]"
             else:
                 status_line = "reject aborted (empty reason)"
 
@@ -423,7 +432,7 @@ def _render(
             cursor = "> " if i == selected else "  "
             line = (
                 f"{cursor}{ts_short}  "
-                f"[{p.bottle_slug}]  {p.tool:<18}  {p.id[:8]}"
+                f"[{qp.label}]  {p.tool:<18}  {p.id[:8]}"
             )
             attr = curses.A_REVERSE if i == selected else curses.A_NORMAL
             stdscr.addnstr(row, 0, line, w - 1, attr)
