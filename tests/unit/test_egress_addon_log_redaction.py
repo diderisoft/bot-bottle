@@ -22,6 +22,10 @@ from unittest.mock import patch
 # ---------------------------------------------------------------------------
 
 def _ensure_shims() -> None:
+    # Resolver-only egress: importing the module builds the `addons` singleton,
+    # which requires an orchestrator URL. These tests exercise the log helpers
+    # on a __new__-built addon, so the value is never dialed.
+    os.environ.setdefault("BOT_BOTTLE_ORCHESTRATOR_URL", "http://127.0.0.1:0")
     if "mitmproxy" not in sys.modules:
         _mm = types.ModuleType("mitmproxy")
         _mh = types.ModuleType("mitmproxy.http")
@@ -36,7 +40,6 @@ def _ensure_shims() -> None:
 _ensure_shims()
 
 from bot_bottle.egress_addon import EgressAddon  # noqa: E402  (import after shims)
-from bot_bottle.egress_addon_core import Config, LOG_FULL  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -44,13 +47,10 @@ from bot_bottle.egress_addon_core import Config, LOG_FULL  # noqa: E402
 # ---------------------------------------------------------------------------
 
 def _addon() -> EgressAddon:
-    """Return a bare EgressAddon with LOG_FULL config and no routes file."""
-    a: EgressAddon = EgressAddon.__new__(EgressAddon)
-    a.config = Config(routes=(), log=LOG_FULL)
-    a._safe_tokens = {}
-    a._supervise_slug = ""
-    a._token_allow_timeout = 300.0
-    return a
+    """A bare EgressAddon for exercising the log helpers directly. The redaction
+    log methods take their env explicitly, so no resolver/config wiring is
+    needed here."""
+    return EgressAddon.__new__(EgressAddon)
 
 
 class _Headers:

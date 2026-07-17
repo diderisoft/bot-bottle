@@ -13,8 +13,14 @@ from bot_bottle.git_gate import GIT_GATE_TIMEOUT_SECS
 from bot_bottle.git_http_backend import GitHttpHandler, MAX_BODY_BYTES
 
 
+# The git-http backend is resolver-only: every request is attributed to a
+# bottle namespace by source IP. These tests wire a fixed resolver and nest the
+# bare repo under `<GIT_PROJECT_ROOT>/<_BID>/`.
+_BID = "bottletest"
+
+
 class _FixedResolver:
-    """Maps every source IP to one bottle id (consolidated-mode stub)."""
+    """Maps every source IP to one bottle id."""
 
     def __init__(self, bottle_id: str) -> None:
         self._bottle_id = bottle_id
@@ -30,7 +36,7 @@ class TestGitHttpBackend(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            bare = root / "repo.git"
+            bare = root / _BID / "repo.git"
             subprocess.run(["git", "init", "--bare", str(bare)],
                            check=True, capture_output=True, text=True)
             subprocess.run(
@@ -49,6 +55,7 @@ class TestGitHttpBackend(unittest.TestCase):
             self.addCleanup(self._restore_hook, old_hook)
 
             server = ThreadingHTTPServer(("127.0.0.1", 0), GitHttpHandler)
+            server.policy_resolver = _FixedResolver(_BID)  # type: ignore[attr-defined]
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             self.addCleanup(server.shutdown)
@@ -166,13 +173,14 @@ class TestGitHttpBackend(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / "repo.git").mkdir()
+            (root / _BID / "repo.git").mkdir(parents=True)
 
             old_root = os.environ.get("GIT_PROJECT_ROOT")
             os.environ["GIT_PROJECT_ROOT"] = str(root)
             self.addCleanup(self._restore_env, old_root)
 
             server = ThreadingHTTPServer(("127.0.0.1", 0), GitHttpHandler)
+            server.policy_resolver = _FixedResolver(_BID)  # type: ignore[attr-defined]
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             self.addCleanup(server.shutdown)
@@ -225,7 +233,7 @@ class TestGitHttpBackend(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / "repo.git").mkdir()
+            (root / _BID / "repo.git").mkdir(parents=True)
 
             old_root = os.environ.get("GIT_PROJECT_ROOT")
             os.environ["GIT_PROJECT_ROOT"] = str(root)
@@ -238,6 +246,7 @@ class TestGitHttpBackend(unittest.TestCase):
             self.addCleanup(self._restore_hook, old_hook)
 
             server = ThreadingHTTPServer(("127.0.0.1", 0), GitHttpHandler)
+            server.policy_resolver = _FixedResolver(_BID)  # type: ignore[attr-defined]
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             self.addCleanup(server.shutdown)
@@ -284,12 +293,13 @@ class TestGitHttpBackend(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / "repo.git").mkdir()
+            (root / _BID / "repo.git").mkdir(parents=True)
             old_root = os.environ.get("GIT_PROJECT_ROOT")
             os.environ["GIT_PROJECT_ROOT"] = str(root)
             self.addCleanup(self._restore_env, old_root)
 
             server = ThreadingHTTPServer(("127.0.0.1", 0), GitHttpHandler)
+            server.policy_resolver = _FixedResolver(_BID)  # type: ignore[attr-defined]
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             self.addCleanup(server.shutdown)
@@ -330,12 +340,13 @@ class TestGitHttpBackend(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / "repo.git").mkdir()
+            (root / _BID / "repo.git").mkdir(parents=True)
             old_root = os.environ.get("GIT_PROJECT_ROOT")
             os.environ["GIT_PROJECT_ROOT"] = str(root)
             self.addCleanup(self._restore_env, old_root)
 
             server = ThreadingHTTPServer(("127.0.0.1", 0), GitHttpHandler)
+            server.policy_resolver = _FixedResolver(_BID)  # type: ignore[attr-defined]
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             self.addCleanup(server.shutdown)
@@ -431,6 +442,7 @@ class TestMalformedStatusHeader(unittest.TestCase):
         self._tmp = tempfile.mkdtemp()
         os.environ["GIT_PROJECT_ROOT"] = self._tmp
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), GitHttpHandler)
+        self._server.policy_resolver = _FixedResolver(_BID)  # type: ignore[attr-defined]
         self._thread = threading.Thread(
             target=self._server.serve_forever, daemon=True,
         )
@@ -482,6 +494,7 @@ class TestContentLengthBounds(unittest.TestCase):
         self._tmp = tempfile.mkdtemp()
         os.environ["GIT_PROJECT_ROOT"] = self._tmp
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), GitHttpHandler)
+        self._server.policy_resolver = _FixedResolver(_BID)  # type: ignore[attr-defined]
         self._thread = threading.Thread(
             target=self._server.serve_forever, daemon=True,
         )

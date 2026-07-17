@@ -10,10 +10,8 @@ import base64
 import binascii
 import json
 import os
-import signal
 import sys
 import typing
-from pathlib import Path
 
 from mitmproxy import http  # type: ignore[import-not-found]  # pylint: disable=import-error
 
@@ -33,7 +31,6 @@ from egress_addon_core import (  # type: ignore[import-not-found]  # pylint: dis
     decide_git_fetch,
     is_git_fetch_request,
     is_git_push_request,
-    load_config,
     match_route,
     resolve_client_context,
     outbound_scan_headers,
@@ -61,14 +58,12 @@ except ImportError:  # pragma: no cover - host-side path
     from bot_bottle.policy_resolver import PolicyResolver
 
 
-DEFAULT_ROUTES_PATH = "/etc/egress/routes.yaml"
-
 INTROSPECT_HOST = "_egress.local"
 
-# Consolidated (multi-tenant) mode: when this points at the per-host
-# orchestrator's control plane, the addon resolves each client's Config by
-# source IP per request instead of using a single static routes file. Unset
-# → legacy per-bottle single-tenant mode (unchanged).
+# The per-host orchestrator control plane the addon resolves every request's
+# Config against, by source IP (PRD 0070). Mandatory: the consolidated gateway
+# is the only topology now — there is no static per-bottle routes file to fall
+# back to — so an unset value is a fatal misconfiguration (see __init__).
 ORCHESTRATOR_URL_ENV = "BOT_BOTTLE_ORCHESTRATOR_URL"
 
 # App-layer identity token. Delivered as proxy credentials
@@ -80,12 +75,10 @@ IDENTITY_HEADER = "x-bot-bottle-identity"
 
 # Per-flow key under which `request()` stashes the resolved (Config, supervise
 # slug, env) so the later `response()` and `websocket_message()` hooks scan
-# against the *calling bottle's* policy. In the consolidated (multi-tenant)
-# gateway the static `self.config` is empty — every request's real policy comes
-# from the per-request `/resolve` — so a hook that fell back to `self.config`
-# would find no route and silently skip its DLP scan (fail-open). Resolving once
-# at the request and reusing it also avoids a `/resolve` round-trip per response
-# and per WebSocket frame.
+# against the *calling bottle's* policy — the same one the request was decided
+# on — without a second `/resolve` per response or per WebSocket frame. A hook
+# on a flow that never resolved (no stash) fails closed to deny-all, so it's a
+# safe no-op rather than an unscanned pass.
 _FLOW_CTX_KEY = "bot_bottle_egress_ctx"
 
 
@@ -119,21 +112,30 @@ _TOKEN_ALLOW_JUSTIFICATION = (
 
 
 class EgressAddon:
-    # Class default so addons built via __new__ (e.g. in tests) default to
-    # single-tenant; __init__ sets the instance attribute for real runs.
-    _resolver: "PolicyResolver | None" = None
+    # Bare annotations (no class value): __init__ sets a live PolicyResolver for
+    # real runs, and every host-side test builds an addon via __new__ and sets a
+    # fake resolver. Egress is resolver-only now — the per-request policy always
+    # comes from the orchestrator's /resolve (PRD 0070); there is no static
+    # per-bottle routes file, SIGHUP reload, or single-tenant fallback.
+    _resolver: "PolicyResolver"
     # Class default so __new__-built addons have it (real runs get a fresh
     # per-instance dict in __init__; only http_connect mutates it, which the
     # request-flow tests don't exercise).
     _conn_tokens: "dict[str, str]" = {}
 
     def __init__(self) -> None:
-        self.routes_path = os.environ.get("EGRESS_ROUTES", DEFAULT_ROUTES_PATH)
-        self.config: Config = Config(routes=())
-        # Consolidated mode: resolve per-client Config from the orchestrator.
-        # Absent → single-tenant (static routes file); behaviour unchanged.
+        # Resolver-only: the gateway is always multi-tenant, resolving each
+        # request's policy by source IP against the orchestrator control plane
+        # (PRD 0070). The URL is mandatory — without a policy source the gateway
+        # must not come up (fail-closed), rather than silently allowing nothing.
         orch_url = os.environ.get(ORCHESTRATOR_URL_ENV, "").strip()
-        self._resolver = PolicyResolver(orch_url) if orch_url else None
+        if not orch_url:
+            raise RuntimeError(
+                f"{ORCHESTRATOR_URL_ENV} is required: the egress gateway "
+                "resolves every request's policy from the orchestrator and has "
+                "no static routes file to fall back to."
+            )
+        self._resolver = PolicyResolver(orch_url)
         # Tokens the operator has approved this session (PRD 0062), keyed by
         # bottle so the shared gateway keeps each bottle's safelist separate —
         # a global set would let bottle A's approved secret pass bottle B's DLP
@@ -144,16 +146,13 @@ class EgressAddon:
         # `Proxy-Authorization` (HTTPS tunnels don't repeat it on the bumped
         # inner requests). Keyed by client_conn.id; cleared on disconnect.
         self._conn_tokens: dict[str, str] = {}
-        self._supervise_slug = os.environ.get("SUPERVISE_BOTTLE_SLUG", "").strip()
         self._token_allow_timeout = _token_allow_timeout_from_env(os.environ)
-        self._reload(initial=True)
-        self._install_sighup()
 
     @staticmethod
     def _supervise_available(slug: str) -> bool:
         """Supervise is reachable for this request iff we resolved a bottle to
-        attribute its proposals to (single-tenant env slug, or a source-IP
-        -attributed bottle id). Empty → fail closed (no queue to write to)."""
+        attribute its proposals to (the source-IP-attributed bottle id). Empty
+        → fail closed (no queue to write to)."""
         return bool(slug)
 
     def _safe_tokens_for(self, slug: str) -> set[str]:
@@ -162,40 +161,15 @@ class EgressAddon:
         bottle's approved token into another's scan."""
         return self._safe_tokens.setdefault(slug, set())
 
-    def _reload(self, *, initial: bool = False) -> None:
-        try:
-            text = Path(self.routes_path).read_text(encoding="utf-8")
-            new_config = load_config(text)
-        except (OSError, ValueError) as e:
-            tag = "boot" if initial else "SIGHUP"
-            sys.stderr.write(
-                f"egress: {tag} load failed: {e}\n"
-            )
-            if initial:
-                self.config = Config(routes=())
-            return
-        self.config = new_config
-        log_label = ("off", "blocks", "full")[self.config.log]
-        sys.stderr.write(
-            f"egress: loaded {len(self.config.routes)} route(s): "
-            f"{', '.join(r.host for r in self.config.routes)}"
-            f" [log={log_label}]\n"
-        )
-
-    def _install_sighup(self) -> None:
-        if not hasattr(signal, "SIGHUP"):
-            return
-
-        def handler(signum: int, frame: object) -> None:
-            del signum, frame
-            self._reload()
-
-        signal.signal(signal.SIGHUP, handler)
-
-    def _serve_introspection(self, flow: http.HTTPFlow, path: str) -> None:
+    def _serve_introspection(
+        self, flow: http.HTTPFlow, path: str, config: Config,
+    ) -> None:
+        """Serve the calling bottle's own allowlist. `config` is this flow's
+        resolved policy (the same one every hook uses), so the agent sees the
+        routes that actually apply to it."""
         if path == "/allowlist":
             payload = json.dumps(
-                {"routes": [route_to_yaml_dict(r) for r in self.config.routes]},
+                {"routes": [route_to_yaml_dict(r) for r in config.routes]},
                 indent=2,
             ).encode("utf-8")
             flow.response = http.Response.make(
@@ -209,11 +183,21 @@ class EgressAddon:
             {"Content-Type": "text/plain; charset=utf-8"},
         )
 
+    def _flow_log(self, flow: http.HTTPFlow) -> int:
+        """This flow's log level, from the policy `request()` resolved and
+        stashed. The block/redact log gates were a single global in the static-
+        config world; they are per bottle now, so they read it from the flow."""
+        return self._flow_ctx(flow)[0].log
+
     def _req_ctx(self, flow: http.HTTPFlow) -> dict[str, object]:
+        # Redact with this flow's resolved env overlay (process env + the
+        # bottle's /resolve tokens), so the ctx scrubs the calling bottle's
+        # provisioned secrets, not just os.environ's.
+        env = self._flow_ctx(flow)[2]
         return {
-            "host": redact_tokens(flow.request.pretty_host, env=os.environ),
+            "host": redact_tokens(flow.request.pretty_host, env=env),
             "method": flow.request.method,
-            "path": redact_tokens(flow.request.path, env=os.environ),
+            "path": redact_tokens(flow.request.path, env=env),
         }
 
     def _block(
@@ -222,7 +206,7 @@ class EgressAddon:
         reason: str,
         ctx: dict[str, object] | None = None,
     ) -> None:
-        if self.config.log >= LOG_BLOCKS:
+        if self._flow_log(flow) >= LOG_BLOCKS:
             entry: dict[str, object] = {"event": "egress_block", "reason": reason}
             if ctx:
                 entry.update(ctx)
@@ -280,17 +264,12 @@ class EgressAddon:
     def _resolve_flow(
         self, flow: http.HTTPFlow,
     ) -> "tuple[Config, str, typing.Mapping[str, str]]":
-        """The `(Config, supervise slug, env)` to apply to this request.
-        Single-tenant → the static `self.config`, the env slug, and the process
-        env. Consolidated → the calling bottle's Config + bottle id + auth
-        tokens, resolved by source IP in one round-trip (fail-closed to deny-all
-        + empty slug if unattributed); `env` is the process env overlaid with
-        the bottle's tokens, so upstream-auth injection (and DLP) use *this*
-        bottle's credentials — exactly what the per-bottle gateway daemon's env did.
-        The identity token, if the agent injected one, is read then stripped so
-        it never leaks upstream."""
-        if self._resolver is None:
-            return self.config, self._supervise_slug, os.environ
+        """The calling bottle's `(Config, supervise slug, env)`, resolved by
+        source IP in one round-trip against the orchestrator — fail-closed to
+        deny-all + empty slug if unattributed. `env` is the process env overlaid
+        with the bottle's `/resolve` tokens, so upstream-auth injection (and DLP)
+        use *this* bottle's credentials. The identity token, if the agent
+        injected one, is read then stripped so it never leaks upstream."""
         conn = flow.client_conn
         client_ip = conn.peername[0] if conn and conn.peername else ""
         token = self._request_token(flow)
@@ -317,16 +296,16 @@ class EgressAddon:
         self, flow: http.HTTPFlow,
     ) -> "tuple[Config, str, typing.Mapping[str, str]]":
         """The `(Config, supervise slug, env)` `request()` resolved for this
-        flow, so a later hook scans against the calling bottle's policy — not the
-        empty static config the consolidated gateway carries. Falls back to the
-        single-tenant static values for a flow that never passed through
-        `request()` (or a flow object without metadata)."""
+        flow, so a later hook scans against the calling bottle's policy. Falls
+        back to deny-all (empty routes, empty slug) for a flow that never passed
+        through `request()` (or a flow object without metadata) — fail-closed, so
+        a DLP hook on such a flow is a safe no-op rather than an unscanned pass."""
         meta = getattr(flow, "metadata", None)
         if isinstance(meta, dict):
             ctx = meta.get(_FLOW_CTX_KEY)
             if ctx is not None:
                 return ctx
-        return self.config, self._supervise_slug, os.environ
+        return Config(routes=()), "", os.environ
 
     def _request_token(self, flow: http.HTTPFlow) -> str:
         """The per-bottle identity token for this request, from the proxy
@@ -362,14 +341,17 @@ class EgressAddon:
     async def request(self, flow: http.HTTPFlow) -> None:
         request_path, _, query = flow.request.path.partition("?")
 
-        if flow.request.pretty_host == INTROSPECT_HOST:
-            self._serve_introspection(flow, request_path)
-            return
-
         config, slug, env = self._resolve_flow(flow)
-        # Stash for the response / websocket hooks so their DLP scans use this
-        # bottle's resolved policy, not the empty static config (see _flow_ctx).
+        # Stash for the response / websocket hooks so their DLP scans reuse this
+        # bottle's resolved policy (one /resolve per flow — see _flow_ctx).
         self._stash_flow_ctx(flow, config, slug, env)
+
+        # Introspection ("_egress.local/allowlist") reports the calling bottle's
+        # own resolved routes — served after resolution so it reflects this
+        # bottle's policy, not a stale global.
+        if flow.request.pretty_host == INTROSPECT_HOST:
+            self._serve_introspection(flow, request_path, config)
+            return
 
         # DLP outbound scan BEFORE stripping auth — catches tokens the
         # agent tried to smuggle in any header, path, query param, or body.
@@ -475,7 +457,7 @@ class EgressAddon:
             # forwards; it fails closed only if a match survives the scrub.
             if policy == ON_MATCH_REDACT:
                 if self._redact_outbound(flow, route, env):
-                    if self.config.log >= LOG_BLOCKS:
+                    if self._flow_log(flow) >= LOG_BLOCKS:
                         sys.stderr.write(json.dumps({
                             "event": "egress_redacted",
                             "reason": f"egress DLP: {result.reason}",
@@ -597,7 +579,7 @@ class EgressAddon:
             _sv.STATUS_APPROVED, _sv.STATUS_MODIFIED,
         ):
             self._safe_tokens_for(slug).add(result.matched)
-            if self.config.log >= LOG_BLOCKS:
+            if self._flow_log(flow) >= LOG_BLOCKS:
                 sys.stderr.write(json.dumps({
                     "event": "egress_token_allowed",
                     "reason": f"egress DLP: {result.reason}",
@@ -638,8 +620,7 @@ class EgressAddon:
 
     def response(self, flow: http.HTTPFlow) -> None:
         """DLP inbound scan on response headers and body, against the calling
-        bottle's resolved config (multi-tenant) or the static config
-        (single-tenant) — see `_flow_ctx`."""
+        bottle's resolved config (`request()` stashed it — see `_flow_ctx`)."""
         config, _slug, env = self._flow_ctx(flow)
         route = match_route(config.routes, flow.request.pretty_host)
         if route is None:
@@ -677,8 +658,7 @@ class EgressAddon:
     def websocket_message(self, flow: http.HTTPFlow) -> None:
         """DLP scan on WebSocket frames, against the calling bottle's resolved
         config (see `_flow_ctx`). `request()` resolves and stashes the per-flow
-        (config, slug, env) at the upgrade, so both the multi-tenant and
-        single-tenant gateways scan here.
+        (config, slug, env) at the upgrade, and every frame reuses it.
 
         Outbound frames (from_client) are scanned for credential leakage;
         inbound frames are scanned for prompt injection.  On a block the

@@ -41,7 +41,6 @@ from bot_bottle.supervise_server import (
     _response_timeout_from_env,
     format_response_text,
     handle_initialize,
-    handle_list_egress_routes,
     handle_tools_call,
     handle_tools_list,
     jsonrpc_error,
@@ -448,49 +447,6 @@ class TestHandleToolsCall(unittest.TestCase):
         self.assertEqual(1, len(_sv.list_pending_proposals("dev")))
 
 
-class TestHandleListEgressRoutes(unittest.TestCase):
-    def test_success_returns_body_text(self):
-        class _Resp:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: object) -> bool:
-                return False
-
-            def read(self):
-                return b"[{\"host\": \"example.com\"}]"
-
-        class _Opener:
-            def open(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003  # type: ignore
-                return _Resp()
-
-        with patch.object(supervise_server.urllib.request, "build_opener", return_value=_Opener()):
-            result = handle_list_egress_routes(
-                {},
-                ServerConfig(bottle_slug="dev"),
-            )
-
-        self.assertFalse(result["isError"])  # type: ignore[index]
-        text = result["content"][0]["text"]  # type: ignore[index]
-        self.assertIn("example.com", text)
-
-    def test_url_error_returns_tool_error(self):
-        class _Opener:
-            def open(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003  # type: ignore
-                raise OSError("egress unavailable")
-
-        with patch.object(supervise_server.urllib.request, "build_opener", return_value=_Opener()):
-            result = handle_list_egress_routes(
-                {},
-                ServerConfig(bottle_slug="dev"),
-            )
-
-        self.assertTrue(result["isError"])  # type: ignore[index]
-        text = result["content"][0]["text"]  # type: ignore[index]
-        self.assertIn("could not reach", text)
-        self.assertIn("egress unavailable", text)
-
-
 class TestResponseTimeoutEnv(unittest.TestCase):
     def test_unset_uses_default(self):
         self.assertEqual(
@@ -671,12 +627,13 @@ def _handler(resolver: object) -> MCPHandler:
 
 
 class TestAttributedConfig(unittest.TestCase):
-    """Consolidated supervise: each proposal is attributed to the calling
-    bottle by source IP; single-tenant keeps the env slug (PRD 0070)."""
+    """Each proposal is attributed to the calling bottle by source IP (PRD
+    0070); a server without a resolver fails closed rather than queuing under an
+    unattributed slug."""
 
-    def test_single_tenant_keeps_env_slug(self) -> None:
-        cfg = _handler(None)._attributed_config(ServerConfig(bottle_slug="dev"))
-        self.assertEqual("dev", cfg.bottle_slug)
+    def test_missing_resolver_fails_closed(self) -> None:
+        with self.assertRaises(_RpcInternalError):
+            _handler(None)._attributed_config(ServerConfig(bottle_slug="dev"))
 
     def test_consolidated_binds_source_ip_bottle(self) -> None:
         r = _FakeResolver(bottle_id="bottle-x")
@@ -698,10 +655,10 @@ class TestAttributedConfig(unittest.TestCase):
 
 
 class TestResolvedRoutesPayload(unittest.TestCase):
-    """`list-egress-routes` answers from the calling bottle's resolved policy in
-    consolidated mode — not the gateway's empty static table. Regression: an
-    empty list led agents to propose replace-all route files that dropped base
-    hosts like api.anthropic.com on approval."""
+    """`list-egress-routes` answers from the calling bottle's resolved policy —
+    not the gateway's empty static table. Regression: an empty list led agents
+    to propose replace-all route files that dropped base hosts like
+    api.anthropic.com on approval."""
 
     def test_returns_resolved_bottle_routes(self) -> None:
         policy = (
@@ -728,9 +685,11 @@ class TestResolvedRoutesPayload(unittest.TestCase):
         data = json.loads(payload["content"][0]["text"])  # type: ignore[index]
         self.assertEqual([], data["routes"])
 
-    def test_single_tenant_returns_none(self) -> None:
-        # No resolver → caller falls back to the static introspection endpoint.
-        self.assertIsNone(_handler(None)._resolved_routes_payload())
+    def test_missing_resolver_fails_closed(self) -> None:
+        # A server without a resolver is a misconfig, not a mode: raise rather
+        # than list anything.
+        with self.assertRaises(_RpcInternalError):
+            _handler(None)._resolved_routes_payload()
 
 
 if __name__ == "__main__":

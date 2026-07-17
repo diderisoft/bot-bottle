@@ -11,15 +11,11 @@ Each queued tool call:
   3. Blocks polling for a matching Response row.
   4. Returns the operator's `{status, notes}` to the agent.
 
-The bottle slug arrives via SUPERVISE_BOTTLE_SLUG env (stamped at
-container creation by the backend's start step). SUPERVISE_DB_PATH
+One shared server fronts every bottle (PRD 0070) and attributes each
+proposal to the calling bottle by source IP, resolved from the orchestrator
+— an unattributed or unreachable source fails closed. BOT_BOTTLE_ORCHESTRATOR_URL
+is mandatory: there is no fixed-slug single-tenant fallback. SUPERVISE_DB_PATH
 points at the bind-mounted host database.
-
-Consolidated (PRD 0070): when BOT_BOTTLE_ORCHESTRATOR_URL is set, one
-shared server fronts every bottle and attributes each proposal to the
-calling bottle by source IP (resolved from the orchestrator) instead of a
-fixed slug — an unattributed source fails closed. Unset → the legacy
-per-bottle single-tenant server, unchanged.
 
 Speaks MCP over HTTP+JSON-RPC. Methods handled:
 
@@ -44,8 +40,6 @@ import socketserver
 import sys
 import time
 import typing
-import urllib.error
-import urllib.request
 from dataclasses import dataclass, replace
 
 try:
@@ -85,12 +79,10 @@ ERR_INTERNAL = -32603
 
 DEFAULT_RESPONSE_TIMEOUT_SECONDS = 30.0
 MIN_RESPONSE_POLL_INTERVAL_SECONDS = 0.05
-EGRESS_LIST_TIMEOUT_SECONDS = 5.0
 
-# Consolidated (multi-tenant) mode: when set, one shared supervise server
-# fronts every bottle and attributes each proposal to the calling bottle by
-# source IP (resolved from the orchestrator), instead of a single
-# SUPERVISE_BOTTLE_SLUG env. Unset → legacy per-bottle single-tenant.
+# The per-host orchestrator control plane the shared supervise server attributes
+# each proposal to, by source IP. Mandatory — there is no single-tenant
+# SUPERVISE_BOTTLE_SLUG fallback.
 ORCHESTRATOR_URL_ENV = "BOT_BOTTLE_ORCHESTRATOR_URL"
 
 
@@ -310,42 +302,6 @@ def handle_tools_list(_params: dict[str, object]) -> dict[str, object]:
     return {"tools": TOOL_DEFINITIONS}
 
 
-def handle_list_egress_routes(
-    _params: dict[str, object],
-    _config: ServerConfig,
-) -> dict[str, object]:
-    """Fetch the live egress route table via its
-    `_egress.local/allowlist` introspection endpoint. The
-    request goes through egress as a forward proxy; the
-    addon recognises the magic host and synthesizes a response —
-    no real upstream connection, no allowlist enforcement
-    against the magic host. Returns the JSON payload as the
-    tool's text content."""
-    proxy_handler = urllib.request.ProxyHandler({
-        "http": _sv.EGRESS_FORWARD_PROXY,
-    })
-    opener = urllib.request.build_opener(proxy_handler)
-    try:
-        with opener.open(_sv.EGRESS_INTROSPECT_URL, timeout=EGRESS_LIST_TIMEOUT_SECONDS) as resp:
-            body = resp.read().decode("utf-8")
-    except (urllib.error.URLError, OSError) as e:
-        return {
-            "content": [{
-                "type": "text",
-                "text": (
-                    f"list-egress-routes: could not reach "
-                    f"{_sv.EGRESS_INTROSPECT_URL!r} via "
-                    f"{_sv.EGRESS_FORWARD_PROXY!r}: {e}"
-                ),
-            }],
-            "isError": True,
-        }
-    return {
-        "content": [{"type": "text", "text": body}],
-        "isError": False,
-    }
-
-
 def handle_tools_call(
     params: dict[str, object],
     config: ServerConfig,
@@ -353,14 +309,13 @@ def handle_tools_call(
     """Validates the proposal, writes it to the queue, blocks waiting
     for a Response, returns the result wrapped in MCP `content`.
 
-    Side-effect-free `list-*` tools short-circuit before the queue/
-    blocking machinery — they're read-only introspection that
-    doesn't need operator approval."""
+    `list-egress-routes` never reaches here — the handler answers it from
+    the calling bottle's resolved policy before dispatching (see
+    `MCPHandler._dispatch`); this path is the queued, operator-approved
+    `egress-allow` / `egress-block` tools."""
     name = params.get("name")
     if not isinstance(name, str):
         raise _RpcClientError(ERR_INVALID_PARAMS, "tools/call missing 'name'")
-    if name == _sv.TOOL_LIST_EGRESS_ROUTES:
-        return handle_list_egress_routes(typing.cast(dict[str, object], params.get("arguments", {})), config)
 
     args_raw = params.get("arguments", {})
     if not isinstance(args_raw, dict):
@@ -531,36 +486,35 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
         if method == "tools/list":
             return handle_tools_list(req.params)
         if method == "tools/call":
-            # `list-egress-routes` is read-only introspection. In consolidated
-            # mode the gateway's *static* route table is empty (routes are
-            # resolved per request by source IP), so answer it from the calling
-            # bottle's resolved policy. Otherwise the agent sees an empty
-            # allowlist and composes an egress proposal that *replaces* the live
-            # routes instead of extending them — silently dropping base routes
-            # like api.anthropic.com when the operator approves it.
+            # `list-egress-routes` is read-only introspection. The shared gateway
+            # has no static route table (routes are resolved per request by
+            # source IP), so answer it from the calling bottle's resolved policy.
+            # Otherwise the agent sees an empty allowlist and composes an egress
+            # proposal that *replaces* the live routes instead of extending them
+            # — silently dropping base routes like api.anthropic.com on approval.
             if req.params.get("name") == _sv.TOOL_LIST_EGRESS_ROUTES:
-                resolved = self._resolved_routes_payload()
-                if resolved is not None:
-                    return resolved
-            # Attribute the proposal to the calling bottle. Single-tenant → the
-            # env slug on `config`; consolidated → the source-IP-resolved
-            # bottle id, so one shared server queues each bottle's proposal
-            # under its own slug.
+                return self._resolved_routes_payload()
+            # Attribute the proposal to the source-IP-resolved bottle, so the one
+            # shared server queues each bottle's proposal under its own slug.
             return handle_tools_call(req.params, self._attributed_config(config))
         raise _RpcClientError(ERR_METHOD_NOT_FOUND, f"method not found: {method}")
 
-    def _resolved_routes_payload(self) -> dict[str, object] | None:
-        """The calling bottle's live egress routes as the `list-egress-routes`
-        JSON payload, resolved by (source_ip, identity token) — the same shape
-        the single-tenant introspection endpoint returns. None when there is no
-        resolver (single-tenant), so the caller falls back to that endpoint.
-
-        Fail-closed like `_attributed_config`: an unattributed source or an
-        unreachable orchestrator yields an empty route list (never another
-        bottle's), courtesy of `resolve_client_context`."""
+    def _resolver_or_fail(self) -> "PolicyResolver":
+        """This server's policy resolver. A server started without one is a
+        misconfiguration, not a tenancy mode — fail closed rather than
+        attribute (or list) anything."""
         resolver = getattr(self.server, "policy_resolver", None)
         if resolver is None:
-            return None
+            raise _RpcInternalError("supervise server has no policy resolver")
+        return resolver
+
+    def _resolved_routes_payload(self) -> dict[str, object]:
+        """The calling bottle's live egress routes as the `list-egress-routes`
+        JSON payload, resolved by (source_ip, identity token). Fail-closed like
+        `_attributed_config`: an unattributed source or an unreachable
+        orchestrator yields an empty route list (never another bottle's),
+        courtesy of `resolve_client_context`."""
+        resolver = self._resolver_or_fail()
         headers = getattr(self, "headers", None)
         token = headers.get(IDENTITY_HEADER, "") if headers is not None else ""
         conf, _slug, _tokens = resolve_client_context(
@@ -572,14 +526,11 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
         return {"content": [{"type": "text", "text": body}], "isError": False}
 
     def _attributed_config(self, config: ServerConfig) -> ServerConfig:
-        """The ServerConfig with `bottle_slug` bound to *this request's* bottle.
-        Single-tenant (no resolver): unchanged. Consolidated: the bottle id
-        attributed from the source IP — **fail-closed**, an unattributed or
-        unreachable source raises so no proposal is queued under the wrong (or
-        empty) slug."""
-        resolver = getattr(self.server, "policy_resolver", None)
-        if resolver is None:
-            return config
+        """The ServerConfig with `bottle_slug` bound to *this request's* bottle:
+        the bottle id attributed from the source IP — **fail-closed**, an
+        unattributed or unreachable source raises so no proposal is queued under
+        the wrong (or empty) slug."""
+        resolver = self._resolver_or_fail()
         # The agent's MCP client sends the identity token as a request header
         # (provisioned via `mcp add --header`); the orchestrator requires the
         # (source_ip, token) pair, so a missing/wrong token fail-closes below.
@@ -616,8 +567,9 @@ class MCPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     allow_reuse_address = True
     daemon_threads = True
     config: ServerConfig = ServerConfig(bottle_slug="")
-    # None → single-tenant (proposals use config.bottle_slug); set → consolidated
-    # (each proposal attributed to the source-IP-resolved bottle).
+    # Set by `serve`; every proposal is attributed to the source-IP-resolved
+    # bottle. The class default is a placeholder — a server without a resolver
+    # fails closed per request (see `_resolver_or_fail`).
     policy_resolver: "PolicyResolver | None" = None
 
 
@@ -626,21 +578,21 @@ class MCPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 def serve(
     *,
-    bottle_slug: str,
+    resolver: "PolicyResolver",
     port: int = _sv.SUPERVISE_PORT,
     bind: str = "0.0.0.0",
     response_timeout_seconds: float = DEFAULT_RESPONSE_TIMEOUT_SECONDS,
-    resolver: "PolicyResolver | None" = None,
 ) -> typing.NoReturn:
     server = MCPServer((bind, port), MCPHandler)
+    # bottle_slug is a placeholder: every request's proposal is attributed to
+    # the source-IP-resolved bottle (see MCPHandler._attributed_config).
     server.config = ServerConfig(
-        bottle_slug=bottle_slug,
+        bottle_slug="",
         response_timeout_seconds=response_timeout_seconds,
     )
     server.policy_resolver = resolver
-    mode = "multi-tenant" if resolver else f"slug={bottle_slug!r}"
     sys.stderr.write(
-        f"supervise listening on {bind}:{port}; {mode}; "
+        f"supervise listening on {bind}:{port}; multi-tenant; "
         f"tools: {', '.join(t['name'] for t in TOOL_DEFINITIONS)}\n"  # type: ignore[arg-type]
     )
     sys.stderr.flush()
@@ -656,12 +608,13 @@ def serve(
 def main(argv: list[str]) -> int:
     del argv  # config is env-only, no CLI flags
     orch_url = os.environ.get(ORCHESTRATOR_URL_ENV, "").strip()
-    resolver = PolicyResolver(orch_url) if orch_url else None
-    bottle_slug = os.environ.get("SUPERVISE_BOTTLE_SLUG", "")
-    # Consolidated mode resolves the slug per request, so the env slug is
-    # optional there; single-tenant still requires it.
-    if not bottle_slug and resolver is None:
-        sys.stderr.write("supervise: SUPERVISE_BOTTLE_SLUG env is unset\n")
+    if not orch_url:
+        # Resolver-only: without an orchestrator the server can't attribute a
+        # proposal to a bottle, so it must not serve (fail-closed).
+        sys.stderr.write(
+            f"supervise: {ORCHESTRATOR_URL_ENV} is required "
+            "(no single-tenant SUPERVISE_BOTTLE_SLUG fallback)\n"
+        )
         return 2
     port = int(os.environ.get("SUPERVISE_PORT", str(_sv.SUPERVISE_PORT)))
     bind = os.environ.get("SUPERVISE_BIND", "0.0.0.0")
@@ -671,11 +624,10 @@ def main(argv: list[str]) -> int:
         sys.stderr.write(f"supervise: {e}\n")
         return 2
     serve(
-        bottle_slug=bottle_slug,
+        resolver=PolicyResolver(orch_url),
         port=port,
         bind=bind,
         response_timeout_seconds=response_timeout_seconds,
-        resolver=resolver,
     )
     return 0  # serve() does not return
 

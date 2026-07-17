@@ -30,10 +30,6 @@ class _FakeResolver:
 
 
 class TestResolveRepoRoot(unittest.TestCase):
-    def test_single_tenant_passthrough(self) -> None:
-        # No resolver → the flat base root, unchanged (legacy per-bottle mode).
-        self.assertEqual(_BASE, resolve_sandbox_root(None, _BASE, "10.243.0.1"))
-
     def test_attributed_bottle_gets_namespaced_root(self) -> None:
         root = resolve_sandbox_root(_FakeResolver(bottle_id="ab12cd34"), _BASE, "10.243.0.1")
         self.assertEqual(Path("/git/ab12cd34"), root)
