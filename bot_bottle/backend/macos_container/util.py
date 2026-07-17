@@ -437,22 +437,131 @@ def inspect_container(name: str) -> dict[str, object]:
 
 
 def container_ipv4_on_network(name: str, network: str) -> str:
-    data = inspect_container(name)
+    """The container's IPv4 address on `network`. Fatal if absent — callers
+    that can tolerate "not yet" want `try_container_ipv4_on_network`."""
+    ip = try_container_ipv4_on_network(name, network)
+    if not ip:
+        die(f"container {name} has no IPv4 address on {network}")
+    return ip
+
+
+def run_container_argv(argv: list[str]) -> subprocess.CompletedProcess[str]:
+    """Run a `container` command, returning the result for the caller to
+    interpret. Unlike the `die`-on-failure helpers above, this lets callers
+    that raise their own typed errors (the gateway / orchestrator lifecycle)
+    keep control of the failure path."""
+    return subprocess.run(argv, capture_output=True, text=True, check=False)
+
+
+def _normalize_digest(value: str) -> str:
+    return value.split(":", 1)[1] if ":" in value else value
+
+
+def image_digest(ref: str) -> str:
+    """The digest of image `ref`, or "" if it can't be read. Empty is a
+    'don't know' signal — callers treat it as "don't churn a working
+    container" rather than as a mismatch."""
+    result = run_container_argv([_CONTAINER, "image", "inspect", ref])
+    if result.returncode != 0:
+        return ""
+    try:
+        data = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        return ""
+    if isinstance(data, list) and data:
+        data = data[0]
+    if not isinstance(data, dict):
+        return ""
+    config = data.get("configuration")
+    if isinstance(config, dict):
+        descriptor = config.get("descriptor")
+        if isinstance(descriptor, dict) and descriptor.get("digest"):
+            return _normalize_digest(str(descriptor["digest"]))
+    value = data.get("id")
+    return _normalize_digest(str(value)) if value else ""
+
+
+def container_image_digest(name: str) -> str:
+    """The digest of the image container `name` was created from, or "" if it
+    can't be read. Compare with `image_digest(ref)` to tell whether a running
+    container predates an image rebuild."""
+    result = run_container_argv([_CONTAINER, "inspect", name])
+    if result.returncode != 0:
+        return ""
+    try:
+        data = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError:
+        return ""
+    if isinstance(data, list) and data:
+        data = data[0]
+    if not isinstance(data, dict):
+        return ""
+    config = data.get("configuration")
+    if not isinstance(config, dict):
+        return ""
+    image = config.get("image")
+    if not isinstance(image, dict):
+        return ""
+    descriptor = image.get("descriptor")
+    if isinstance(descriptor, dict) and descriptor.get("digest"):
+        return _normalize_digest(str(descriptor["digest"]))
+    return ""
+
+
+def container_env(name: str) -> dict[str, str]:
+    """The env container `name` was started with, or {} if unreadable. Lets a
+    caller tell whether a running container's baked-in configuration still
+    matches what it would pass today."""
+    result = run_container_argv([_CONTAINER, "inspect", name])
+    if result.returncode != 0:
+        return {}
+    try:
+        data = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError:
+        return {}
+    if isinstance(data, list) and data:
+        data = data[0]
+    if not isinstance(data, dict):
+        return {}
+    config = data.get("configuration")
+    init = config.get("initProcess") if isinstance(config, dict) else None
+    entries = init.get("environment") if isinstance(init, dict) else None
+    if not isinstance(entries, list):
+        return {}
+    env: dict[str, str] = {}
+    for entry in entries:
+        if isinstance(entry, str) and "=" in entry:
+            key, value = entry.split("=", 1)
+            env[key] = value
+    return env
+
+
+def try_container_ipv4_on_network(name: str, network: str) -> str:
+    """`container_ipv4_on_network` without the fatal exit: "" when the address
+    isn't readable yet. For pollers — a container is created before it has an
+    address, so "not yet" is an expected state there, not an error."""
+    result = run_container_argv([_CONTAINER, "inspect", name])
+    if result.returncode != 0:
+        return ""
+    try:
+        data = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError:
+        return ""
+    if isinstance(data, list) and data:
+        data = data[0]
+    if not isinstance(data, dict):
+        return ""
     status = data.get("status")
     networks = status.get("networks") if isinstance(status, dict) else None
     if not isinstance(networks, list):
-        die(f"container inspect {name} did not include status.networks")
+        return ""
     for entry in networks:
-        if not isinstance(entry, dict):
-            continue
-        if entry.get("network") != network:
+        if not isinstance(entry, dict) or entry.get("network") != network:
             continue
         raw = entry.get("ipv4Address")
-        if not isinstance(raw, str) or not raw:
-            die(f"container {name} has no IPv4 address on {network}")
-        return raw.split("/", 1)[0]
-    die(f"container {name} is not attached to network {network}")
-    raise AssertionError("unreachable")
+        if isinstance(raw, str) and raw:
+            return raw.split("/", 1)[0]
+    return ""
 
 
 def image_id(ref: str) -> str:

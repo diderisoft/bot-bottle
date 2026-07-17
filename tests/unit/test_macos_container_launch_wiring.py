@@ -1,0 +1,180 @@
+"""Unit: macOS agent run wiring — the attribution invariant + token delivery
+(PRD 0070).
+
+Replaces the argv coverage from the per-bottle companion-container era
+(`test_macos_container_launch.py`, removed with that architecture in #385).
+"""
+
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
+from unittest.mock import patch
+
+from bot_bottle.backend.macos_container.bottle import MacosContainerBottle
+from bot_bottle.backend.macos_container.bottle_plan import MacosContainerBottlePlan
+from bot_bottle.backend.macos_container.consolidated_launch import GatewayEndpoint
+from bot_bottle.backend.macos_container.launch import (
+    _agent_run_argv,
+    _identity_proxy_env,
+    _proxy_url,
+)
+from bot_bottle.manifest import ManifestIndex
+
+_BOTTLE = "bot_bottle.backend.macos_container.bottle"
+
+_MANIFEST = ManifestIndex.from_json_obj({
+    "bottles": {"dev": {}},
+    "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+}).load_for_agent("demo")
+
+
+def _endpoint() -> GatewayEndpoint:
+    return GatewayEndpoint(
+        orchestrator_url="http://192.168.128.2:8099",
+        gateway_ip="192.168.128.3",
+        gateway_ca_pem="PEM",
+        network="bot-bottle-mac-gateway",
+    )
+
+
+def _plan(
+    stage_dir: Path,
+    *,
+    agent_git_gate_url: str = "",
+    agent_supervise_url: str = "",
+) -> MacosContainerBottlePlan:
+    routes_path = stage_dir / "routes.yaml"
+    routes_path.write_text("routes: []\n", encoding="utf-8")
+    ca_path = stage_dir / "gateway-ca.pem"
+    ca_path.write_text("ca\n", encoding="utf-8")
+    egress_plan = SimpleNamespace(
+        mitmproxy_ca_host_path=ca_path,
+        routes_path=routes_path,
+        routes=("route",),
+        token_env_map={"EGRESS_TOKEN_0": "HOST_TOKEN"},
+        canary="",
+        canary_env="",
+    )
+    return cast(MacosContainerBottlePlan, SimpleNamespace(
+        spec=SimpleNamespace(),
+        manifest=_MANIFEST,
+        stage_dir=stage_dir,
+        slug="dev-abc",
+        container_name="bot-bottle-dev-abc",
+        image="bot-bottle-agent:latest",
+        forwarded_env={"OAUTH_TOKEN": "host-value"},
+        egress_plan=egress_plan,
+        git_gate_plan=SimpleNamespace(upstreams=()),
+        supervise_plan=None,
+        agent_provision=SimpleNamespace(
+            guest_env={"LITERAL": "value"},
+            provisioned_env={},
+        ),
+        agent_git_gate_url=agent_git_gate_url,
+        agent_supervise_url=agent_supervise_url,
+    ))
+
+
+class TestAgentRunArgv(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.argv = _agent_run_argv(_plan(Path(self._tmp.name)), _endpoint())
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_drops_net_raw(self) -> None:
+        """The attribution invariant: Apple grants CAP_NET_RAW by default,
+        which would let an agent forge a neighbour's source address with a raw
+        socket and be attributed as that bottle."""
+        self.assertIn("--cap-drop", self.argv)
+        self.assertEqual("CAP_NET_RAW", self.argv[self.argv.index("--cap-drop") + 1])
+
+    def test_attaches_to_the_shared_gateway_network(self) -> None:
+        self.assertEqual(
+            "bot-bottle-mac-gateway", self.argv[self.argv.index("--network") + 1],
+        )
+
+    def test_never_pins_an_ip(self) -> None:
+        """Apple Container 1.0.0 has no --ip: the address is DHCP-assigned and
+        read back after start."""
+        self.assertNotIn("--ip", self.argv)
+
+    def test_run_time_proxy_carries_no_identity_token(self) -> None:
+        """The token is minted by registration, which happens after this run —
+        so it cannot be here. `/resolve` denies the token-less pair (#366),
+        which is the safe direction; the real value arrives at exec time."""
+        joined = " ".join(self.argv)
+        self.assertIn(f"HTTP_PROXY={_proxy_url('192.168.128.3')}", joined)
+        self.assertNotIn("bottle:", joined)
+
+    def test_gateway_bypasses_the_proxy(self) -> None:
+        """git-http + supervise live on the gateway and must be reached
+        directly, not through its own egress proxy."""
+        entry = next(a for a in self.argv if a.startswith("NO_PROXY="))
+        self.assertIn("192.168.128.3", entry)
+
+    def test_forwarded_secrets_stay_off_argv(self) -> None:
+        """Bare name → inherited from the run process env, so the value never
+        lands on the command line."""
+        self.assertIn("OAUTH_TOKEN", self.argv)
+        self.assertNotIn("host-value", " ".join(self.argv))
+
+    def test_agent_init_is_a_no_op(self) -> None:
+        """Every agent command arrives via `container exec`; the init process
+        just holds the container open."""
+        self.assertEqual("sleep", self.argv[-2])
+
+
+class TestIdentityTokenDelivery(unittest.TestCase):
+    def test_exec_env_carries_the_token_as_proxy_credentials(self) -> None:
+        env = _identity_proxy_env(_endpoint(), "s3cret")
+        self.assertEqual(
+            "http://bottle:s3cret@192.168.128.3:9099", env["HTTP_PROXY"],
+        )
+        self.assertEqual(env["HTTP_PROXY"], env["https_proxy"])
+
+    def test_no_token_means_no_override(self) -> None:
+        self.assertEqual({}, _identity_proxy_env(_endpoint(), ""))
+
+    def test_token_value_never_reaches_argv(self) -> None:
+        """`ps` is world-readable: the token rides the child env behind a bare
+        `--env` name, never the command line."""
+        bottle = MacosContainerBottle(
+            "bot-bottle-demo", lambda: None, None,
+            exec_env=_identity_proxy_env(_endpoint(), "s3cret"),
+        )
+        argv = bottle.agent_argv(["--help"], tty=False)
+        self.assertNotIn("s3cret", " ".join(argv))
+        self.assertIn("HTTP_PROXY", argv)
+        self.assertEqual("--env", argv[argv.index("HTTP_PROXY") - 1])
+
+    def test_bottle_without_exec_env_is_unchanged(self) -> None:
+        bottle = MacosContainerBottle("bot-bottle-demo", lambda: None, None)
+        argv = bottle.agent_argv(["--help"], tty=False)
+        self.assertNotIn("--env", argv)
+
+    def test_provisioning_exec_also_carries_the_token(self) -> None:
+        """`provision` runs through `exec`; a provider whose provision step
+        fetches anything would otherwise egress token-less and be denied."""
+        bottle = MacosContainerBottle(
+            "bot-bottle-demo", lambda: None, None,
+            exec_env=_identity_proxy_env(_endpoint(), "s3cret"),
+        )
+        with patch(f"{_BOTTLE}.subprocess.run") as run:
+            run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+            bottle.exec("echo hi")
+        argv, kwargs = run.call_args.args[0], run.call_args.kwargs
+        self.assertIn("HTTP_PROXY", argv)
+        self.assertNotIn("s3cret", " ".join(argv))
+        self.assertEqual(
+            "http://bottle:s3cret@192.168.128.3:9099", kwargs["env"]["HTTP_PROXY"],
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -52,6 +52,7 @@ class MacosContainerBottle(Bottle):
         terminal_title: str = "",
         terminal_color: str = "",
         agent_workdir: str = "/home/node",
+        exec_env: dict[str, str] | None = None,
     ):
         self.name = container
         self._teardown = teardown
@@ -62,6 +63,15 @@ class MacosContainerBottle(Bottle):
         self.terminal_color = terminal_color
         self.agent_provider_template = agent_provider_template
         self.agent_workdir = agent_workdir
+        # Env applied to the agent process at `container exec` time, on top of
+        # what the container was run with. This is how the identity token
+        # reaches the agent (PRD 0070): registration mints it *after* the
+        # container exists — its source IP is the registration key and Apple
+        # Container assigns that by DHCP — so it cannot be in the run-time env
+        # the way docker's compose spec does it. `container exec --env` wins
+        # over the run-time value, so the token-bearing proxy URL set here
+        # supersedes the token-less one baked in at launch.
+        self._exec_env = dict(exec_env or {})
         self._closed = False
 
     def agent_argv(self, argv: list[str], *, tty: bool = True) -> list[str]:
@@ -74,6 +84,12 @@ class MacosContainerBottle(Bottle):
             )
         )
         container_exec = ["container", "exec"]
+        # Bare env names, same rule as the terminal hints below: the value
+        # stays in the child env `exec_agent` builds and never reaches argv —
+        # the proxy URL here carries the identity token, which `ps` would
+        # otherwise expose to every process on the host.
+        for name in sorted(self._exec_env):
+            container_exec.extend(["--env", name])
         if tty:
             container_exec.extend(["--interactive", "--tty"])
             # Forward terminal capability hints so TUIs can enable modified-key
@@ -94,21 +110,33 @@ class MacosContainerBottle(Bottle):
 
     def exec_agent(self, argv: list[str], *, tty: bool = True) -> int:
         agent_argv = self.agent_argv(argv, tty=tty)
+        # The values behind the bare `--env` names in `agent_argv`. `sh -lc`
+        # below is in this process tree, so the child env reaches `container
+        # exec` either way.
+        env = {**os.environ, **self._exec_env} if self._exec_env else None
         script = (
             exec_shell_script(agent_argv, self.terminal_title, self.terminal_color)
             if tty else None
         )
         if script is None:
-            return subprocess.run(agent_argv, check=False).returncode
-        return subprocess.run(["sh", "-lc", script], check=False).returncode
+            return subprocess.run(agent_argv, env=env, check=False).returncode
+        return subprocess.run(["sh", "-lc", script], env=env, check=False).returncode
 
     def exec(self, script: str, *, user: str = "node") -> ExecResult:
+        # Carry the same exec env the agent gets: provisioning steps run
+        # through here, and a provider whose provision step fetches anything
+        # would egress without the identity token and be denied by /resolve.
+        # Bare `--env NAME` again, so the token stays off argv.
+        argv = ["container", "exec", "--user", user, "--interactive"]
+        for name in sorted(self._exec_env):
+            argv.extend(["--env", name])
+        argv.extend([self.name, "sh", "-s"])
         result = subprocess.run(
-            ["container", "exec", "--user", user, "--interactive",
-             self.name, "sh", "-s"],
+            argv,
             input=script,
             capture_output=True,
             text=True,
+            env={**os.environ, **self._exec_env} if self._exec_env else None,
             check=False,
         )
         return ExecResult(

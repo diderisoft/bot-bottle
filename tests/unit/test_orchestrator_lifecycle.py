@@ -14,7 +14,7 @@ from bot_bottle.orchestrator.lifecycle import (
     ORCHESTRATOR_SOURCE_HASH_LABEL,
     OrchestratorService,
     OrchestratorStartError,
-    _source_hash,
+    source_hash,
 )
 from tests.unit import use_bottle_root
 
@@ -57,7 +57,7 @@ class TestOrchestratorService(unittest.TestCase):
         # A healthy control plane already running the *current* bind-mounted
         # source is left alone — recreating it on every launch would drop
         # every other active bottle's in-memory egress tokens (#381).
-        current = _source_hash(self.svc._repo_root)
+        current = source_hash(self.svc._repo_root)
         calls: list[list[str]] = []
 
         def fake(argv: list[str]) -> Mock:
@@ -98,7 +98,7 @@ class TestOrchestratorService(unittest.TestCase):
         self.assertEqual(1, len(runs))
         self.assertIn(ORCHESTRATOR_NAME, runs[0])
         # the fresh container is labeled with the current hash, not the stale one
-        current = _source_hash(self.svc._repo_root)
+        current = source_hash(self.svc._repo_root)
         self.assertIn(f"{ORCHESTRATOR_SOURCE_HASH_LABEL}={current}", runs[0])
 
     def test_ensure_running_starts_orchestrator_container_when_absent(self) -> None:

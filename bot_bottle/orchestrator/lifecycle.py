@@ -41,7 +41,7 @@ ORCHESTRATOR_IMAGE = os.environ.get(
 ORCHESTRATOR_DOCKERFILE = "Dockerfile.orchestrator"
 # Baked onto the container as a label so `ensure_running` can tell whether the
 # running process is executing the *current* bind-mounted source — see
-# `_source_hash`.
+# `source_hash`.
 ORCHESTRATOR_SOURCE_HASH_LABEL = "bot-bottle-orchestrator-source-hash"
 
 # The repo root is bind-mounted into the control-plane container so
@@ -60,7 +60,7 @@ class OrchestratorStartError(RuntimeError):
     """The orchestrator container did not become healthy within the timeout."""
 
 
-def _source_hash(repo_root: Path) -> str:
+def source_hash(repo_root: Path) -> str:
     """Content hash of the orchestrator's bind-mounted Python source (the
     `bot_bottle` package the control-plane process imports). This only
     changes when the code that would actually run inside the container
@@ -134,17 +134,17 @@ class OrchestratorService:
         proc = run_docker(["docker", "ps", "--filter", f"name=^/{name}$", "--format", "{{.Names}}"])
         return name in proc.stdout.split()
 
-    def _run_orchestrator_container(self, source_hash: str) -> None:
+    def _run_orchestrator_container(self, current_hash: str) -> None:
         """Start the control-plane container (idempotent: clears a stale
         fixed-name container first). Register-only broker → no docker socket.
-        Labels the container with `source_hash` so a later `ensure_running`
-        can detect a real code change (see `_source_hash`)."""
+        Labels the container with `current_hash` so a later `ensure_running`
+        can detect a real code change (see `source_hash`)."""
         run_docker(["docker", "rm", "--force", self._orchestrator_name])
         proc = run_docker([
             "docker", "run", "--detach",
             "--name", self._orchestrator_name,
             "--label", self._orchestrator_label,
-            "--label", f"{ORCHESTRATOR_SOURCE_HASH_LABEL}={source_hash}",
+            "--label", f"{ORCHESTRATOR_SOURCE_HASH_LABEL}={current_hash}",
             "--network", self.network,
             # Host CLI reaches the control plane here; bound to loopback so it
             # is not exposed on the host's external interfaces.
@@ -224,7 +224,7 @@ class OrchestratorService:
         # launch (the prior behaviour) would drop every other active
         # bottle's in-memory egress tokens each time a new bottle starts,
         # since the orchestrator process holds them only in memory (#381).
-        current_hash = _source_hash(self._repo_root)
+        current_hash = source_hash(self._repo_root)
         if self.is_healthy() and self._orchestrator_source_current(current_hash):
             return self.url
 
