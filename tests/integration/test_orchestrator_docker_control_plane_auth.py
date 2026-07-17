@@ -14,7 +14,9 @@ orchestrator or gateway.
 from __future__ import annotations
 
 import json
+import os
 import secrets
+import subprocess
 import tempfile
 import unittest
 import urllib.error
@@ -50,13 +52,42 @@ class _IsolatedOrchestratorService(OrchestratorService):
 class TestDockerControlPlaneAuthIntegration(unittest.TestCase):
     def setUp(self) -> None:
         suffix = secrets.token_hex(4)
-        self._tmp = tempfile.TemporaryDirectory()
+        self._tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
         self.addCleanup(self._tmp.cleanup)
+
+        # host_control_plane_token() — both the test's own call below and the
+        # one OrchestratorService makes internally to inject the container's
+        # env var — resolves its path via the *ambient* BOT_BOTTLE_ROOT env
+        # var, not the host_root kwarg passed to the constructor (that kwarg
+        # only controls the DB bind-mount destination). Without pointing the
+        # env var at the same throwaway dir, the "isolated" test reads/writes
+        # the developer's real ~/.bot-bottle/control-plane-token.
+        previous_root = os.environ.get("BOT_BOTTLE_ROOT")
+
+        def _restore_root() -> None:
+            if previous_root is None:
+                os.environ.pop("BOT_BOTTLE_ROOT", None)
+            else:
+                os.environ["BOT_BOTTLE_ROOT"] = previous_root
+
+        os.environ["BOT_BOTTLE_ROOT"] = self._tmp.name
+        self.addCleanup(_restore_root)
+
+        # ensure_running()/DockerGateway create this network but never remove
+        # it — stop() only removes containers — so every run would otherwise
+        # leak one bridge network permanently.
+        network = f"bot-bottle-net-itest-{suffix}"
+        self.addCleanup(
+            lambda: subprocess.run(
+                ["docker", "network", "rm", network],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+            )
+        )
 
         self.svc = _IsolatedOrchestratorService(
             orchestrator_name=f"bot-bottle-orch-itest-{suffix}",
             gateway_name=f"bot-bottle-gw-itest-{suffix}",
-            network=f"bot-bottle-net-itest-{suffix}",
+            network=network,
             port=20000 + secrets.randbelow(10000),
             host_root=Path(self._tmp.name),
         )
