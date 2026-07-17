@@ -6,6 +6,7 @@ branches. Mock subprocess/os so nothing needs KVM or a live VM.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -126,6 +127,94 @@ class TestRequireFirecracker(unittest.TestCase):
              patch.object(util.Path, "is_file", return_value=False), self._die():
             with self.assertRaises(SystemExit):
                 util.require_firecracker()
+
+
+class TestBuildCommittedRootfsDir(unittest.TestCase):
+    """Resume prepares the base rootfs dir from the freezer's snapshot tar
+    with no Docker: extract, recreate the excluded mount points, inject the
+    guest boot bits."""
+
+    def _make_tar(self, tmp: Path) -> Path:
+        import tarfile
+
+        src = tmp / "src"
+        (src / "home" / "node").mkdir(parents=True)
+        (src / "home" / "node" / "hello").write_text("hi")
+        tar_path = tmp / "rootfs.tar"
+        with tarfile.open(tar_path, "w") as tar:
+            tar.add(src, arcname=".")
+        return tar_path
+
+    def test_extracts_recreates_mountpoints_and_injects_boot(self):
+        with tempfile.TemporaryDirectory(prefix="fc-committed.") as d:
+            tmp = Path(d)
+            tar_path = self._make_tar(tmp)
+            # Stand in for the static dropbear that inject_guest_boot copies.
+            dropbear = tmp / "dropbear"
+            dropbear.write_text("#!/bin/true\n")
+            cache = tmp / "cache"
+            cache.mkdir()
+
+            with patch.object(util, "cache_dir", return_value=cache), \
+                 patch.object(util, "dropbear_path", return_value=dropbear), \
+                 patch.object(util, "info"):
+                base = util.build_committed_rootfs_dir(tar_path)
+
+            self.assertEqual("hi", (base / "home" / "node" / "hello").read_text())
+            for mount_point in ("proc", "sys", "dev", "run"):
+                self.assertTrue((base / mount_point).is_dir(),
+                                f"missing recreated mount point /{mount_point}")
+            self.assertTrue((base / "bb-dropbear").is_file())
+            self.assertTrue((base / "bb-init").is_file())
+            self.assertTrue((base / ".bb-ready").is_file())
+
+    def test_caches_on_repeat_and_reextracts_after_refreeze(self):
+        with tempfile.TemporaryDirectory(prefix="fc-committed.") as d:
+            tmp = Path(d)
+            tar_path = self._make_tar(tmp)
+            dropbear = tmp / "dropbear"
+            dropbear.write_text("#!/bin/true\n")
+            cache = tmp / "cache"
+            cache.mkdir()
+
+            ctx = [
+                patch.object(util, "cache_dir", return_value=cache),
+                patch.object(util, "dropbear_path", return_value=dropbear),
+                patch.object(util, "info"),
+            ]
+            for c in ctx:
+                c.start()
+            self.addCleanup(lambda: [c.stop() for c in ctx])
+
+            real_run = subprocess.run
+            calls = {"n": 0}
+
+            def counting_run(argv, *a, **k):
+                if argv and argv[0] == "tar":
+                    calls["n"] += 1
+                return real_run(argv, *a, **k)
+
+            with patch.object(util.subprocess, "run", side_effect=counting_run):
+                first = util.build_committed_rootfs_dir(tar_path)
+                second = util.build_committed_rootfs_dir(tar_path)
+                self.assertEqual(first, second)
+                self.assertEqual(1, calls["n"])  # cached — no re-extract
+
+                # A re-freeze rewrites the tar; a new size/mtime -> new cache
+                # key -> re-extract. Force a distinct mtime so the test isn't
+                # at the mercy of filesystem timestamp granularity.
+                import tarfile
+                extra = tmp / "extra"
+                extra.mkdir()
+                (extra / "note").write_text("v2")
+                with tarfile.open(tar_path, "w") as tar:
+                    tar.add(extra, arcname=".")
+                st = tar_path.stat()
+                os.utime(tar_path, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+
+                third = util.build_committed_rootfs_dir(tar_path)
+                self.assertNotEqual(first, third)
+                self.assertEqual(2, calls["n"])
 
 
 if __name__ == "__main__":

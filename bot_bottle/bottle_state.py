@@ -44,6 +44,7 @@ from .paths import bot_bottle_root
 _STATE_SUBDIR = "state"
 _PER_BOTTLE_DOCKERFILE_NAME = "Dockerfile"
 _COMMITTED_IMAGE_NAME = "committed-image"
+_COMMITTED_ROOTFS_NAME = "committed-rootfs.tar"
 _TRANSCRIPT_SUBDIR = "transcript"
 # Per-daemon scratch subdirs. PRD 0018 chunk 2: bind-mount sources
 # live here so chunk 3's `docker compose up` can find them at stable
@@ -200,6 +201,15 @@ def committed_image_path(identity: str) -> Path:
     return bottle_state_dir(identity) / _COMMITTED_IMAGE_NAME
 
 
+def committed_rootfs_path(identity: str) -> Path:
+    """Where the Firecracker freezer stores a snapshot of the bottle's
+    guest rootfs (a plain tar). This is the resumable/migratable artifact
+    the Firecracker backend boots from — no Docker image involved. The
+    matching `committed-image` state file records that a snapshot exists
+    (and its path); `resume` boots from this tar when both are present."""
+    return bottle_state_dir(identity) / _COMMITTED_ROOTFS_NAME
+
+
 def write_committed_image(identity: str, image_tag: str) -> Path:
     """Persist the committed image tag for `identity`. The next
     `cli.py resume <identity>` will boot from this image instead of
@@ -354,6 +364,7 @@ __all__ = [
     "cleanup_state",
     "clear_preserve_marker",
     "committed_image_path",
+    "committed_rootfs_path",
     "egress_state_dir",
     "git_gate_state_dir",
     "is_preserved",

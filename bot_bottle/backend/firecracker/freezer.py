@@ -1,9 +1,12 @@
-"""FirecrackerFreezer — snapshot a running microVM to a Docker image.
+"""FirecrackerFreezer — snapshot a running microVM to a rootfs tar.
 
 The VM is live and can't be block-copied safely, so — like the macOS
 backend — we stream the guest root filesystem out over the control
-channel (SSH here) and rebuild an image from it. The bottle keeps
-running after the snapshot.
+channel (SSH here). Unlike the other backends this needs no Docker: the
+tar *is* the resumable artifact. `resume` extracts it and rebuilds a
+fresh per-bottle ext4 with `mke2fs -d` (see `util.build_committed_rootfs_dir`
+and `launch._build_agent_base`). The bottle keeps running after the
+snapshot.
 """
 
 from __future__ import annotations
@@ -11,9 +14,9 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import tempfile
 from pathlib import Path
 
+from ...bottle_state import committed_rootfs_path
 from ...log import die, info
 from .. import ActiveAgent
 from ..freeze import Freezer
@@ -30,14 +33,13 @@ class FirecrackerFreezer(Freezer):
         if not private_key.is_file() or not guest_ip:
             die(f"cannot freeze {agent.slug}: run dir {run_dir} is missing the "
                 f"SSH key or VM config (is the bottle still running?)")
-        image_tag = f"bot-bottle-committed-{agent.slug}:latest"
-        _commit_via_ssh(private_key, guest_ip, image_tag)
-        info(f"committed {agent.slug} -> {image_tag!r}")
-        return image_tag
+        tar_path = committed_rootfs_path(agent.slug)
+        _commit_rootfs_via_ssh(private_key, guest_ip, tar_path)
+        info(f"committed {agent.slug} -> {tar_path}")
+        return str(tar_path)
 
     def _export_hint(self, slug: str, image_ref: str) -> None:
-        info(f"to export for migration:      docker image save {image_ref} "
-             f"-o {slug}.tar")
+        info(f"to export for migration:      cp {image_ref} {slug}.tar")
 
 
 def _guest_ip_from_config(config_path: Path) -> str:
@@ -53,24 +55,23 @@ def _guest_ip_from_config(config_path: Path) -> str:
     return ""
 
 
-def _commit_via_ssh(private_key: Path, guest_ip: str, image_tag: str) -> None:
-    with tempfile.TemporaryDirectory(prefix="bot-bottle-fc-commit.") as tmp:
-        rootfs_tar = os.path.join(tmp, "rootfs.tar")
-        ssh = util.ssh_base_argv(private_key, guest_ip)
-        with open(rootfs_tar, "wb") as tar_out:
-            result = subprocess.run(
-                [*ssh, "--", "tar", "--create", "--one-file-system",
-                 "--exclude=./proc", "--exclude=./sys", "--exclude=./dev",
-                 "--exclude=./run", "--file=-", "--directory=/", "."],
-                stdout=tar_out, stderr=subprocess.PIPE, check=False,
-            )
-        if result.returncode != 0:
-            die(f"ssh tar for {guest_ip} failed: "
-                f"{(result.stderr or b'').decode().strip() or '<no stderr>'}")
-        with open(os.path.join(tmp, "Dockerfile"), "w", encoding="utf-8") as f:
-            f.write("FROM scratch\nADD rootfs.tar /\nUSER node\nWORKDIR /home/node\n")
-        build = subprocess.run(
-            ["docker", "build", "-t", image_tag, tmp], check=False,
+def _commit_rootfs_via_ssh(private_key: Path, guest_ip: str, tar_path: Path) -> None:
+    """Stream the guest rootfs out over SSH into `tar_path`. Excludes the
+    virtual/live mounts (proc/sys/dev/run) — resume recreates those empty
+    mount points. Written to a `.partial` sibling and renamed on success so
+    a failed freeze never leaves a truncated artifact in its place."""
+    tar_path.parent.mkdir(parents=True, exist_ok=True)
+    partial = tar_path.with_name(tar_path.name + ".partial")
+    ssh = util.ssh_base_argv(private_key, guest_ip)
+    with open(partial, "wb") as tar_out:
+        result = subprocess.run(
+            [*ssh, "--", "tar", "--create", "--one-file-system",
+             "--exclude=./proc", "--exclude=./sys", "--exclude=./dev",
+             "--exclude=./run", "--file=-", "--directory=/", "."],
+            stdout=tar_out, stderr=subprocess.PIPE, check=False,
         )
-        if build.returncode != 0:
-            die(f"docker build for {image_tag!r} failed")
+    if result.returncode != 0:
+        partial.unlink(missing_ok=True)
+        die(f"ssh tar for {guest_ip} failed: "
+            f"{(result.stderr or b'').decode().strip() or '<no stderr>'}")
+    os.replace(partial, tar_path)

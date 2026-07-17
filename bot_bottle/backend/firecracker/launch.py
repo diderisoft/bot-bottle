@@ -1,7 +1,8 @@
 """Launch flow for the Firecracker backend (PRD 0070, consolidated).
 
 Per bottle:
-  1. build the agent image (docker), export it to a cached ext4 rootfs;
+  1. build the agent rootfs in a builder VM (buildah, no host docker), or
+     resume a frozen bottle from its committed rootfs tar; cache the ext4;
   2. ensure the per-host orchestrator + shared gateway are up;
   3. claim a free TAP pool slot (rootless flock);
   4. register the bottle on the orchestrator by the VM's guest IP (the
@@ -31,6 +32,7 @@ from typing import Callable, Generator
 
 from ...agent_provider import runtime_for
 from ...bottle_state import (
+    committed_rootfs_path,
     egress_state_dir,
     git_gate_state_dir,
     read_committed_image,
@@ -45,7 +47,6 @@ from ...git_gate import (
 )
 from ...log import info, warn
 from ...supervise import SUPERVISE_PORT
-from ..docker import util as docker_mod
 from ..docker.egress import EGRESS_PORT
 from ..util import AGENT_CA_BUNDLE, AGENT_CA_PATH
 from . import firecracker_vm, image_builder, isolation_probe, netpool, util
@@ -210,16 +211,13 @@ def _build_agent_base(
 ) -> tuple[FirecrackerBottlePlan, Path]:
     """Produce the agent's base rootfs dir. Primary path: build the Dockerfile
     inside a Firecracker builder VM (buildah, no host docker), smoke-testing
-    the image before export. A committed snapshot (freeze/migrate) is still
-    exported via the host docker path until that is ported too."""
+    the image before export. A committed snapshot (freeze/migrate) is resumed
+    directly from the rootfs tar the freezer wrote — no host docker either."""
     committed = read_committed_image(plan.slug)
-    if committed and docker_mod.image_exists(committed):
-        info(f"using committed image {committed!r}")
-        plan = dataclasses.replace(
-            plan,
-            agent_provision=dataclasses.replace(plan.agent_provision, image=committed),
-        )
-        return plan, util.build_base_rootfs_dir(committed)
+    committed_tar = committed_rootfs_path(plan.slug)
+    if committed and committed_tar.is_file():
+        info(f"resuming from committed rootfs {committed_tar}")
+        return plan, util.build_committed_rootfs_dir(committed_tar)
     base = image_builder.build_agent_rootfs_dir(
         Path(plan.dockerfile_path),
         image_tag=plan.image,

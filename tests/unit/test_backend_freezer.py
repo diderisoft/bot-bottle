@@ -205,25 +205,28 @@ class TestFirecrackerFreezer(_FakeHomeMixin, unittest.TestCase):
         )
 
     def test_snapshots_running_vm_without_stopping(self):
-        """Commit should tar the running guest rootfs over SSH, not stop it."""
+        """Commit should tar the running guest rootfs over SSH into the
+        committed-rootfs artifact (no Docker), not stop the VM."""
         slug = "dev-abc12"
         self._write_meta(slug)
         self._stage_run_dir(slug)
         freezer = FirecrackerFreezer()
         agent = _make_agent(slug, "firecracker")
 
-        with patch("bot_bottle.backend.firecracker.freezer._commit_via_ssh") as mock_commit, \
+        with patch("bot_bottle.backend.firecracker.freezer._commit_rootfs_via_ssh") as mock_commit, \
              patch("bot_bottle.backend.freeze.info"), \
              patch("bot_bottle.backend.firecracker.freezer.info"):
             freezer.commit(agent)
 
-        image_tag = f"bot-bottle-committed-{slug}:latest"
+        tar_path = bottle_state.committed_rootfs_path(slug)
         self.assertEqual(1, mock_commit.call_count)
-        # (private_key, guest_ip, image_tag) — guest_ip parsed from config.
+        # (private_key, guest_ip, tar_path) — guest_ip parsed from config.
         args = mock_commit.call_args.args
         self.assertEqual("100.64.0.1", args[1])
-        self.assertEqual(image_tag, args[2])
-        self.assertEqual(image_tag, bottle_state.read_committed_image(slug))
+        self.assertEqual(tar_path, args[2])
+        # The committed-image state records the artifact path; resume boots
+        # from the tar rather than a Docker image.
+        self.assertEqual(str(tar_path), bottle_state.read_committed_image(slug))
         self.assertTrue(bottle_state.is_preserved(slug))
 
 

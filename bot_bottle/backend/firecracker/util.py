@@ -14,6 +14,7 @@ and `./cli.py backend setup --backend=firecracker`.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import platform
 import shutil
@@ -208,6 +209,49 @@ def build_base_rootfs_dir(
         )
 
     inject_guest_boot(base, init_script=init_script)
+    ready.write_text("ok\n")
+    return base
+
+
+def build_committed_rootfs_dir(tar_path: Path) -> Path:
+    """Prepare a base rootfs dir from a frozen-bottle snapshot tar (the
+    freeze/resume path — no Docker). Extracts the snapshot, recreates the
+    virtual mount points the freezer excluded, and injects the guest init +
+    static dropbear, mirroring `build_base_rootfs_dir` but sourced from a tar
+    we control rather than a Docker image.
+
+    Cached under the rootfs cache, keyed by the tar's size+mtime so a
+    re-freeze re-extracts but repeated resumes of the same snapshot don't.
+    Returns the prepared directory (read as the `mke2fs -d` source)."""
+    st = tar_path.stat()
+    fingerprint = hashlib.sha256(
+        f"{tar_path}:{st.st_size}:{st.st_mtime_ns}".encode()
+    ).hexdigest()[:16]
+    base = cache_dir() / "rootfs" / f"committed-{fingerprint}"
+    ready = base / ".bb-ready"
+    if ready.is_file():
+        return base
+
+    if base.exists():
+        shutil.rmtree(base, ignore_errors=True)
+    base.mkdir(parents=True)
+
+    info(f"extracting committed rootfs {tar_path} -> {base}")
+    result = subprocess.run(
+        ["tar", "-x", "-f", str(tar_path), "-C", str(base)],
+        capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        die(f"extracting committed rootfs {tar_path} failed: "
+            f"{result.stderr.strip() or '<no stderr>'}")
+
+    # The freezer excludes the live/virtual filesystems from the snapshot;
+    # recreate them as empty mount points so the guest init can mount
+    # proc/sys/dev and dropbear has a writable /run.
+    for mount_point in ("proc", "sys", "dev", "run"):
+        (base / mount_point).mkdir(mode=0o755, exist_ok=True)
+
+    inject_guest_boot(base)
     ready.write_text("ok\n")
     return base
 
