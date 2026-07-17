@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 from bot_bottle.backend.firecracker import firecracker_vm, freezer, netpool, util
@@ -189,7 +190,7 @@ class TestBuildCommittedRootfsDir(unittest.TestCase):
             real_run = subprocess.run
             calls = {"n": 0}
 
-            def counting_run(argv, *a, **k):
+            def counting_run(argv: list[str], *a: Any, **k: Any) -> Any:
                 if argv and argv[0] == "tar":
                     calls["n"] += 1
                 return real_run(argv, *a, **k)

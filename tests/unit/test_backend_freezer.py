@@ -213,7 +213,8 @@ class TestFirecrackerFreezer(_FakeHomeMixin, unittest.TestCase):
         freezer = FirecrackerFreezer()
         agent = _make_agent(slug, "firecracker")
 
-        with patch("bot_bottle.backend.firecracker.freezer._commit_rootfs_via_ssh") as mock_commit, \
+        commit_fn = "bot_bottle.backend.firecracker.freezer._commit_rootfs_via_ssh"
+        with patch(commit_fn) as mock_commit, \
              patch("bot_bottle.backend.freeze.info"), \
              patch("bot_bottle.backend.firecracker.freezer.info"):
             freezer.commit(agent)
