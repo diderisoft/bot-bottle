@@ -56,6 +56,15 @@ class _FakeHomeMixin:
 class TestCmdSuperviseErrorPaths(_FakeHomeMixin, unittest.TestCase):
     def setUp(self):
         self._setup_fake_home()
+        # `cmd_supervise` establishes the orchestrator client up front; these
+        # tests exercise the curses / crash-logging paths that run *after*
+        # that, so stub the client. Otherwise the outcome depends on whether a
+        # live orchestrator happens to be reachable (CI has none, so the
+        # up-front connect would error and short-circuit before curses).
+        client_patch = mock.patch.object(
+            supervise_cli, "_client", return_value=mock.MagicMock())
+        client_patch.start()
+        self.addCleanup(client_patch.stop)
 
     def tearDown(self):
         self._teardown_fake_home()
