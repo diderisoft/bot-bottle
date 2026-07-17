@@ -23,7 +23,11 @@ import time
 from pathlib import Path
 
 from ..docker_cmd import run_docker
-from ..paths import host_db_path
+from ..paths import (
+    CONTROL_PLANE_TOKEN_ENV,
+    host_control_plane_token,
+    host_db_path,
+)
 from ..supervise import DB_PATH_IN_CONTAINER
 
 # The host DB dir is bind-mounted here so the gateway's supervise daemon
@@ -215,12 +219,19 @@ class DockerGateway(Gateway):
         ]
         for port in self._host_port_bindings:
             argv += ["--publish", f"0.0.0.0:{port}:{port}"]
+        run_env = dict(os.environ)
         if self._orchestrator_url:
             # Makes the gateway's egress / git / supervise daemons multi-tenant:
             # each request resolves source-IP -> policy against the control plane.
             argv += ["--env", f"BOT_BOTTLE_ORCHESTRATOR_URL={self._orchestrator_url}"]
+            # ...and presents the control-plane secret on those /resolve calls
+            # (the control plane requires it). Bare `--env NAME` keeps the value
+            # off argv / `docker inspect`; only the gateway (not the agent) is
+            # given it. Only needed in multi-tenant mode, where /resolve is used.
+            argv += ["--env", CONTROL_PLANE_TOKEN_ENV]
+            run_env[CONTROL_PLANE_TOKEN_ENV] = host_control_plane_token()
         argv.append(self.image_ref)
-        proc = run_docker(argv)
+        proc = run_docker(argv, env=run_env)
         if proc.returncode != 0:
             raise GatewayError(f"gateway failed to start: {proc.stderr.strip()}")
 

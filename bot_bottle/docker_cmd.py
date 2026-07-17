@@ -14,13 +14,20 @@ from __future__ import annotations
 import subprocess
 
 
-def run_docker(argv: list[str]) -> subprocess.CompletedProcess[str]:
+def run_docker(
+    argv: list[str], *, env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     """Run a `docker` command, capturing stdout/stderr as text. Never raises
     on a non-zero exit — callers inspect `returncode` / `stderr` so they can
     stay fail-closed or tolerate idempotent no-ops (e.g. removing an
-    already-absent container)."""
+    already-absent container).
+
+    `env` sets the child process environment — used to hand a secret to a bare
+    `--env NAME` flag (docker inherits its value from this process) so the
+    value never lands on argv or in `docker inspect`'s recorded command line."""
     return subprocess.run(
-        argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False,
+        argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        check=False, env=env,
     )
 
 

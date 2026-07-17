@@ -38,7 +38,7 @@ class TestDockerGateway(unittest.TestCase):
     def test_ensure_running_noop_when_up_and_image_current(self) -> None:
         calls: list[list[str]] = []
 
-        def fake(argv: list[str]) -> Mock:
+        def fake(argv: list[str], **_kw: object) -> Mock:
             calls.append(argv)
             if argv[:2] == ["docker", "ps"]:
                 return _proc(stdout=self.sc.name)          # running
@@ -58,7 +58,7 @@ class TestDockerGateway(unittest.TestCase):
         # a rebuild's new flat daemons take effect.
         calls: list[list[str]] = []
 
-        def fake(argv: list[str]) -> Mock:
+        def fake(argv: list[str], **_kw: object) -> Mock:
             calls.append(argv)
             if argv[:2] == ["docker", "ps"]:
                 return _proc(stdout=self.sc.name)
@@ -76,7 +76,7 @@ class TestDockerGateway(unittest.TestCase):
     def test_ensure_running_starts_the_singleton_when_absent(self) -> None:
         calls: list[list[str]] = []
 
-        def fake(argv: list[str]) -> Mock:
+        def fake(argv: list[str], **_kw: object) -> Mock:
             calls.append(argv)
             return _proc(stdout="") if argv[:2] == ["docker", "ps"] else _proc()
 
@@ -102,7 +102,7 @@ class TestDockerGateway(unittest.TestCase):
     def test_ensure_running_creates_network_when_missing(self) -> None:
         calls: list[list[str]] = []
 
-        def fake(argv: list[str]) -> Mock:
+        def fake(argv: list[str], **_kw: object) -> Mock:
             calls.append(argv)
             if argv[:3] == ["docker", "network", "inspect"]:
                 return _proc(returncode=1, stderr="No such network")
@@ -135,7 +135,7 @@ class TestDockerGateway(unittest.TestCase):
     def test_ensure_running_reuses_existing_network(self) -> None:
         calls: list[list[str]] = []
 
-        def fake(argv: list[str]) -> Mock:
+        def fake(argv: list[str], **_kw: object) -> Mock:
             calls.append(argv)
             return _proc(stdout="") if argv[:2] == ["docker", "ps"] else _proc()
 
@@ -144,7 +144,7 @@ class TestDockerGateway(unittest.TestCase):
         self.assertEqual([], [c for c in calls if c[:3] == ["docker", "network", "create"]])
 
     def test_ensure_running_raises_on_docker_failure(self) -> None:
-        def fake(argv: list[str]) -> Mock:
+        def fake(argv: list[str], **_kw: object) -> Mock:
             if argv[:2] == ["docker", "ps"]:
                 return _proc(stdout="")
             if argv[:2] == ["docker", "run"]:
@@ -181,7 +181,7 @@ class TestDockerGatewayBuild(unittest.TestCase):
         # build-if-missing silently ran a stale single-tenant image.
         calls: list[list[str]] = []
 
-        def rec(argv: list[str]) -> Mock:
+        def rec(argv: list[str], **_kw: object) -> Mock:
             calls.append(argv)
             return _proc()  # image present, build succeeds
 
@@ -196,7 +196,7 @@ class TestDockerGatewayBuild(unittest.TestCase):
     def test_ensure_built_no_cache_env_forces_full_rebuild(self) -> None:
         calls: list[list[str]] = []
 
-        def rec(argv: list[str]) -> Mock:
+        def rec(argv: list[str], **_kw: object) -> Mock:
             calls.append(argv)
             return _proc()
 

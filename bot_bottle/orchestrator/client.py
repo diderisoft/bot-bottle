@@ -17,7 +17,20 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
+from ..paths import host_control_plane_token
+from .control_plane import CONTROL_AUTH_HEADER
+
 DEFAULT_TIMEOUT_SECONDS = 5.0
+
+
+def _host_auth_token() -> str:
+    """The per-host control-plane secret, or "" if it can't be read. "" means
+    'send no auth header' — correct against an open (unconfigured) control
+    plane, and harmlessly rejected by a secured one."""
+    try:
+        return host_control_plane_token()
+    except OSError:
+        return ""
 
 
 class OrchestratorClientError(RuntimeError):
@@ -34,11 +47,24 @@ class RegisteredBottle:
 
 
 class OrchestratorClient:
-    """Trusted host-side client for the orchestrator control plane."""
+    """Trusted host-side client for the orchestrator control plane.
 
-    def __init__(self, base_url: str, *, timeout: float = DEFAULT_TIMEOUT_SECONDS) -> None:
+    Presents the per-host control-plane secret on every call (the header the
+    control plane requires on all routes but `/health`). The secret is read
+    from the host file — this client only ever runs host-side (CLI, launcher,
+    discovery), so it can read what an agent can't. `auth_token` is overridable
+    for tests; the default reads the host file, minting it on first use."""
+
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        auth_token: str | None = None,
+    ) -> None:
         self._base = base_url.rstrip("/")
         self._timeout = timeout
+        self._auth_token = auth_token if auth_token is not None else _host_auth_token()
 
     def _request(
         self, method: str, path: str, body: dict[str, object] | None = None,
@@ -49,6 +75,8 @@ class OrchestratorClient:
         callers can treat 404 as a meaningful "no such bottle"."""
         data = json.dumps(body).encode() if body is not None else None
         headers = {"Content-Type": "application/json"} if data is not None else {}
+        if self._auth_token:
+            headers[CONTROL_AUTH_HEADER] = self._auth_token
         req = urllib.request.Request(
             f"{self._base}{path}", data=data, method=method, headers=headers,
         )

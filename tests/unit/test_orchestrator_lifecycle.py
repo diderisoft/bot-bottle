@@ -60,7 +60,7 @@ class TestOrchestratorService(unittest.TestCase):
         current = source_hash(self.svc._repo_root)
         calls: list[list[str]] = []
 
-        def fake(argv: list[str]) -> Mock:
+        def fake(argv: list[str], **_kw: object) -> Mock:
             calls.append(argv)
             if argv[:2] == ["docker", "ps"]:
                 return _proc(stdout=ORCHESTRATOR_NAME)
@@ -83,7 +83,7 @@ class TestOrchestratorService(unittest.TestCase):
         # effect, same as the gateway's image-staleness check.
         calls: list[list[str]] = []
 
-        def fake(argv: list[str]) -> Mock:
+        def fake(argv: list[str], **_kw: object) -> Mock:
             calls.append(argv)
             if argv[:2] == ["docker", "ps"]:
                 return _proc(stdout=ORCHESTRATOR_NAME)
@@ -104,7 +104,7 @@ class TestOrchestratorService(unittest.TestCase):
     def test_ensure_running_starts_orchestrator_container_when_absent(self) -> None:
         calls: list[list[str]] = []
 
-        def fake(argv: list[str]) -> Mock:
+        def fake(argv: list[str], **_kw: object) -> Mock:
             calls.append(argv)
             if argv[:2] == ["docker", "ps"]:
                 return _proc(stdout="")   # not running
@@ -127,7 +127,7 @@ class TestOrchestratorService(unittest.TestCase):
         # gateway data plane — built from Dockerfile.orchestrator when absent.
         calls: list[list[str]] = []
 
-        def fake(argv: list[str]) -> Mock:
+        def fake(argv: list[str], **_kw: object) -> Mock:
             calls.append(argv)
             if argv[:2] == ["docker", "ps"]:
                 return _proc(stdout="")                 # orchestrator not running
@@ -148,7 +148,7 @@ class TestOrchestratorService(unittest.TestCase):
     def test_ensure_running_skips_orchestrator_image_build_when_present(self) -> None:
         calls: list[list[str]] = []
 
-        def fake(argv: list[str]) -> Mock:
+        def fake(argv: list[str], **_kw: object) -> Mock:
             calls.append(argv)
             if argv[:2] == ["docker", "ps"]:
                 return _proc(stdout="")

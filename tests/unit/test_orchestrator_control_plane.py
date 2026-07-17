@@ -11,6 +11,7 @@ import secrets
 import tempfile
 import threading
 import unittest
+import urllib.error
 import urllib.request
 from pathlib import Path
 from unittest.mock import patch
@@ -241,6 +242,82 @@ class TestServerRoundTrip(unittest.TestCase):
             ), timeout=5,
         ))
         self.assertEqual(reg["bottle_id"], attr["bottle_id"])
+
+
+class TestControlPlaneAuth(unittest.TestCase):
+    """The per-host control-plane secret (issue #400): every route but /health
+    is a trusted-caller op an agent must not be able to drive just because it
+    can reach the port."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.orch = _orchestrator(Path(self._tmp.name) / "r.db")
+
+    def test_health_is_public_even_unauthorized(self) -> None:
+        status, _ = dispatch(self.orch, "GET", "/health", b"", authorized=False)
+        self.assertEqual(200, status)
+
+    def test_unauthorized_denies_every_other_route(self) -> None:
+        for method, path, body in [
+            ("GET", "/bottles", b""),
+            ("POST", "/bottles", _body({"source_ip": "10.0.0.1"})),
+            ("PUT", "/bottles/x/policy", _body({"policy": "routes: []"})),
+            ("DELETE", "/bottles/x", b""),
+            ("POST", "/resolve", _body({"source_ip": "10.0.0.1", "identity_token": "t"})),
+            ("POST", "/attribute", _body({"source_ip": "10.0.0.1", "identity_token": "t"})),
+            ("GET", "/supervise/proposals", b""),
+            ("POST", "/supervise/respond", _body({"proposal_id": "p", "bottle_slug": "s", "decision": "approve"})),
+        ]:
+            status, _ = dispatch(self.orch, method, path, body, authorized=False)
+            self.assertEqual(401, status, f"{method} {path} should be 401 unauthorized")
+
+    def test_deny_happens_before_the_registry_is_touched(self) -> None:
+        """An unauthorized DELETE must not tear a bottle down. 401, and the
+        bottle is still there."""
+        rec = self.orch.registry.register("10.0.0.9", policy="", metadata="")
+        status, _ = dispatch(
+            self.orch, "DELETE", f"/bottles/{rec.bottle_id}", b"", authorized=False)
+        self.assertEqual(401, status)
+        self.assertIsNotNone(self.orch.registry.get(rec.bottle_id))
+
+    def _server_with_secret(self, secret: str):
+        with patch.dict("os.environ", {"BOT_BOTTLE_CONTROL_PLANE_TOKEN": secret}):
+            server = make_server(self.orch, "127.0.0.1", 0)
+        self.addCleanup(server.server_close)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        host, port = server.server_address[0], server.server_address[1]
+        return f"http://{host}:{port}"
+
+    def _status(self, url: str, *, header: str | None = None) -> int:
+        req = urllib.request.Request(url)
+        if header is not None:
+            req.add_header("x-bot-bottle-control-auth", header)
+        try:
+            return urllib.request.urlopen(req, timeout=5).status
+        except urllib.error.HTTPError as e:
+            return e.code
+
+    def test_configured_server_enforces_the_header_over_http(self) -> None:
+        base = self._server_with_secret("s3cret-admin")
+        # /health is public — no header needed.
+        self.assertEqual(200, self._status(f"{base}/health"))
+        # /bottles requires the secret.
+        self.assertEqual(401, self._status(f"{base}/bottles"))
+        self.assertEqual(401, self._status(f"{base}/bottles", header="wrong"))
+        self.assertEqual(200, self._status(f"{base}/bottles", header="s3cret-admin"))
+
+    def test_unconfigured_server_runs_open(self) -> None:
+        """No secret set (tests / nft-protected Firecracker): open mode, so the
+        existing round-trip and unit behavior are unchanged."""
+        with patch.dict("os.environ", {}, clear=False):
+            import os
+            os.environ.pop("BOT_BOTTLE_CONTROL_PLANE_TOKEN", None)
+            server = make_server(self.orch, "127.0.0.1", 0)
+        self.addCleanup(server.server_close)
+        self.assertTrue(server.is_authorized(""))
+        self.assertTrue(server.is_authorized("anything"))
 
 
 class TestDispatchSupervise(unittest.TestCase):

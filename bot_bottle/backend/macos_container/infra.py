@@ -33,6 +33,7 @@ digest check.
 
 from __future__ import annotations
 
+import os
 import time
 import urllib.error
 import urllib.request
@@ -47,7 +48,11 @@ from ...orchestrator.lifecycle import (
     OrchestratorStartError,
     source_hash,
 )
-from ...paths import HOST_DB_FILENAME
+from ...paths import (
+    CONTROL_PLANE_TOKEN_ENV,
+    HOST_DB_FILENAME,
+    host_control_plane_token,
+)
 from . import util as container_mod
 from .gateway import (
     DEFAULT_CA_TIMEOUT_SECONDS,
@@ -220,11 +225,19 @@ class MacosInfraService:
             # Baked onto the container so `_source_current` can detect a real
             # control-plane code change and recreate.
             "--env", f"BOT_BOTTLE_SOURCE_HASH={current_hash}",
+            # The control-plane secret, for BOTH the control plane (to require
+            # it) and the gateway's PolicyResolver (to present it) — they share
+            # this one container. Bare `--env NAME` inherits the value from the
+            # run process below, so the secret never lands on argv or in
+            # `container inspect`'s command line. The agent runs in a SEPARATE
+            # container that is never given this var, which is the whole point.
+            "--env", CONTROL_PLANE_TOKEN_ENV,
             "--entrypoint", "sh",
             self.image,
             "-c", _init_script(self.port),
         ]
-        result = container_mod.run_container_argv(argv)
+        run_env = {**os.environ, CONTROL_PLANE_TOKEN_ENV: host_control_plane_token()}
+        result = container_mod.run_container_argv(argv, env=run_env)
         if result.returncode != 0:
             raise OrchestratorStartError(
                 f"infra container failed to start: "

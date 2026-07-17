@@ -25,7 +25,7 @@ from pathlib import Path
 
 from .. import log
 from ..docker_cmd import run_docker
-from ..paths import bot_bottle_root
+from ..paths import CONTROL_PLANE_TOKEN_ENV, bot_bottle_root, host_control_plane_token
 from .gateway import GATEWAY_IMAGE, GATEWAY_NETWORK, DockerGateway, GatewayError
 
 DEFAULT_PORT = 8099
@@ -147,7 +147,11 @@ class OrchestratorService:
             "--label", f"{ORCHESTRATOR_SOURCE_HASH_LABEL}={current_hash}",
             "--network", self.network,
             # Host CLI reaches the control plane here; bound to loopback so it
-            # is not exposed on the host's external interfaces.
+            # is not exposed on the host's external interfaces. NOTE: the
+            # container is still on `self.network` (the shared gateway network),
+            # so agents can reach it by container IP — which is exactly why the
+            # control plane requires the secret below rather than trusting the
+            # network boundary.
             "--publish", f"127.0.0.1:{self.port}:{self.port}",
             "--volume", f"{self._repo_root}:{_APP_DIR}:ro",
             "--workdir", _APP_DIR,
@@ -155,11 +159,15 @@ class OrchestratorService:
             # orchestrator opens bot-bottle.db).
             "--volume", f"{self._host_root}:{_ROOT_IN_CONTAINER}",
             "--env", f"BOT_BOTTLE_ROOT={_ROOT_IN_CONTAINER}",
+            # The control-plane secret it requires on every route but /health.
+            # Bare `--env NAME` → docker inherits the value from the run env
+            # below, so the secret never lands on argv / `docker inspect`.
+            "--env", CONTROL_PLANE_TOKEN_ENV,
             "--entrypoint", "python3",
             self.image,
             "-m", "bot_bottle.orchestrator",
             "--host", "0.0.0.0", "--port", str(self.port), "--broker", "stub",
-        ])
+        ], env={**os.environ, CONTROL_PLANE_TOKEN_ENV: host_control_plane_token()})
         if proc.returncode != 0:
             raise OrchestratorStartError(
                 f"orchestrator container failed to start: {proc.stderr.strip()}"

@@ -34,6 +34,7 @@ returned only once, to the caller that launches the bottle.
 
 from __future__ import annotations
 
+import hmac
 import http.server
 import json
 import os
@@ -42,10 +43,19 @@ import sys
 import typing
 from urllib.parse import urlsplit
 
+from ..paths import CONTROL_PLANE_TOKEN_ENV
 from .service import Orchestrator
 
 # JSON body payload type (parsed request / rendered response).
 Json = dict[str, object]
+
+# The request header carrying the per-host control-plane secret. Every route
+# except `GET /health` requires it (see `dispatch`). The trusted callers hold
+# the secret (the gateway's PolicyResolver, the host CLI's OrchestratorClient);
+# an agent that can merely *reach* the port cannot present it, so it can't
+# enumerate bottles, rewrite policy, read injected upstream tokens, or approve
+# its own supervise proposals.
+CONTROL_AUTH_HEADER = "x-bot-bottle-control-auth"
 
 
 def _parse_json_object(body: bytes) -> Json:
@@ -59,14 +69,28 @@ def _parse_json_object(body: bytes) -> Json:
 
 
 def dispatch(  # pylint: disable=too-many-return-statements,too-many-branches
-    orch: Orchestrator, method: str, path: str, body: bytes
+    orch: Orchestrator, method: str, path: str, body: bytes, *, authorized: bool = True,
 ) -> tuple[int, Json]:
     """Route one control-plane request to a (status, payload) pair. Pure —
-    no I/O beyond the orchestrator — so it is fully testable without a socket."""
+    no I/O beyond the orchestrator — so it is fully testable without a socket.
+
+    `authorized` is whether the request presented the control-plane secret (or
+    no secret is configured — see `ControlPlaneServer`). Every route except
+    `GET /health` requires it: the source-IP + identity-token checks inside
+    `/resolve` and `/attribute` authenticate the *bottle* a request is about,
+    not the *caller*, so without this gate any agent that can reach the port
+    could rewrite another bottle's policy, read the injected upstream tokens,
+    or approve its own supervise proposals. Defaults True so unit tests of the
+    routing logic don't have to thread it through."""
     route = urlsplit(path).path.rstrip("/") or "/"
 
     if method == "GET" and route == "/health":
         return 200, {"status": "ok"}
+
+    if not authorized:
+        # Everything below is a trusted-caller operation. Deny before touching
+        # the registry / broker / supervise store.
+        return 401, {"error": "control-plane authentication required"}
 
     if method == "GET" and route == "/gateway":
         return 200, orch.gateway_status()
@@ -209,8 +233,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         assert isinstance(server, ControlPlaneServer)
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length > 0 else b""
+        authorized = server.is_authorized(self.headers.get(CONTROL_AUTH_HEADER, ""))
         try:
-            status, payload = dispatch(server.orchestrator, method, self.path, body)
+            status, payload = dispatch(
+                server.orchestrator, method, self.path, body, authorized=authorized)
         except Exception as e:  # noqa: BLE001 — the control plane must stay up
             sys.stderr.write(f"orchestrator: {method} {self.path} failed: {e!r}\n")
             sys.stderr.flush()
@@ -236,14 +262,39 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 
 class ControlPlaneServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
-    """Threading HTTP server that carries the orchestrator for its handlers."""
+    """Threading HTTP server that carries the orchestrator for its handlers.
+
+    Holds the per-host control-plane secret (from `$BOT_BOTTLE_CONTROL_PLANE_TOKEN`,
+    injected by the launcher into this container only). When a secret is set,
+    every route but `/health` requires it; when it is unset the server runs
+    **open** and says so loudly at startup — a fail-visible fallback for tests
+    and any backend that hasn't wired the secret yet (e.g. Firecracker, whose
+    nft boundary already blocks agents from the control-plane port)."""
 
     daemon_threads = True
     allow_reuse_address = True
 
     def __init__(self, address: tuple[str, int], orchestrator: Orchestrator) -> None:
         self.orchestrator = orchestrator
+        self._auth_token = os.environ.get(CONTROL_PLANE_TOKEN_ENV, "").strip()
+        if not self._auth_token:
+            sys.stderr.write(
+                "orchestrator: WARNING — no control-plane secret "
+                f"(${CONTROL_PLANE_TOKEN_ENV}); running WITHOUT caller "
+                "authentication. Any client that can reach this port can drive "
+                "it. Backends that put the control plane on an agent-reachable "
+                "network MUST set this.\n"
+            )
+            sys.stderr.flush()
         super().__init__(address, Handler)
+
+    def is_authorized(self, presented: str) -> bool:
+        """True iff the request may proceed past `/health`: either no secret is
+        configured (open mode) or the presented header matches it. Constant-time
+        compare so a wrong token leaks nothing timing-wise."""
+        if not self._auth_token:
+            return True
+        return hmac.compare_digest(presented, self._auth_token)
 
 
 def make_server(
@@ -254,4 +305,7 @@ def make_server(
     return ControlPlaneServer((host, port), orchestrator)
 
 
-__all__ = ["dispatch", "Handler", "ControlPlaneServer", "make_server", "Json"]
+__all__ = [
+    "dispatch", "Handler", "ControlPlaneServer", "make_server", "Json",
+    "CONTROL_AUTH_HEADER",
+]

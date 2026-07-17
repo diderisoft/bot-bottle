@@ -445,12 +445,20 @@ def container_ipv4_on_network(name: str, network: str) -> str:
     return ip
 
 
-def run_container_argv(argv: list[str]) -> subprocess.CompletedProcess[str]:
+def run_container_argv(
+    argv: list[str], *, env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     """Run a `container` command, returning the result for the caller to
     interpret. Unlike the `die`-on-failure helpers above, this lets callers
     that raise their own typed errors (the gateway / orchestrator lifecycle)
-    keep control of the failure path."""
-    return subprocess.run(argv, capture_output=True, text=True, check=False)
+    keep control of the failure path.
+
+    `env` sets the child process environment — used to hand a secret to a bare
+    `--env NAME` flag (Apple's "just key → inherit from host" form) so the
+    value is inherited from this process, never written onto argv or into
+    `container inspect`'s recorded command line."""
+    return subprocess.run(
+        argv, capture_output=True, text=True, check=False, env=env)
 
 
 def bind_mount_spec(source: str, target: str, *, readonly: bool = False) -> str:
