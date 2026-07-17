@@ -226,6 +226,21 @@ class TestOrchestratorSupervise(unittest.TestCase):
         self.assertEqual(STATUS_APPROVED, read_response("demo", pid).status)
         self.assertEqual([], self.orch.supervise_pending())
 
+    def test_approve_by_bottle_id_applies_policy(self) -> None:
+        # Consolidated reality: the supervise server keys each proposal by the
+        # orchestrator-assigned bottle_id, not the human slug. Approval must
+        # resolve the record by that id and apply the policy (regression for
+        # the "bottle <id> is no longer registered" 409).
+        bottle_id = self._register("codex-dev-a1b2c", "routes: []\n")
+        new_routes = "routes:\n  - host: google.com\n"
+        pid = self._queue(bottle_id, new_routes)
+        ok, err = self.orch.supervise_respond(
+            pid, bottle_slug=bottle_id, decision="approve")
+        self.assertTrue(ok, err)
+        rec = self.store.get(bottle_id)
+        assert rec is not None
+        self.assertEqual(new_routes, rec.policy)
+
     def test_modify_applies_final_file_not_proposed(self) -> None:
         bottle_id = self._register("demo", "routes: []\n")
         pid = self._queue("demo", "routes:\n  - host: google.com\n")

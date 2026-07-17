@@ -157,8 +157,17 @@ class Orchestrator:
         return [p.to_dict() for p in list_all_pending_proposals()]
 
     def _record_for_slug(self, slug: str) -> BottleRecord | None:
-        """The live registry record whose metadata carries `slug`, or None
-        (e.g. the bottle was torn down before the operator responded)."""
+        """The live registry record for a proposal's bottle, or None (e.g. the
+        bottle was torn down before the operator responded).
+
+        In consolidated mode the supervise server attributes each proposal to
+        the orchestrator-assigned bottle_id and stores that as the proposal's
+        `bottle_slug` (see supervise_server `_attributed_config`), so the fast
+        path is a direct bottle_id lookup. The metadata-slug scan is the
+        fallback for legacy single-tenant proposals keyed by the human slug."""
+        rec = self.registry.get(slug)
+        if rec is not None:
+            return rec
         for rec in self.registry.all():
             try:
                 meta = json.loads(rec.metadata) if rec.metadata else {}
