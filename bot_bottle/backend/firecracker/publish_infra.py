@@ -33,6 +33,18 @@ from . import infra_artifact, infra_vm, util
 
 _CHUNK = 1 << 20
 
+# A human-readable description shipped alongside the artifact — generic packages
+# have no description field, so this file *is* the description on the package
+# page. Uploaded on every publish so it never goes stale.
+_ABOUT_NAME = "about.txt"
+_ABOUT_TEXT = (
+    "bot-bottle infra rootfs for the Firecracker backend (PRD 0069 Stage 2, "
+    "#348): the per-host infra VM (orchestrator control plane + gateway + "
+    "buildah). Prebuilt off-host, gzip ext4; the launch host downloads + "
+    "sha256-verifies + boots it, no host Docker. The version tag is a content "
+    "hash of the rootfs inputs. Files: rootfs.ext4.gz + rootfs.ext4.gz.sha256.\n"
+)
+
 
 def _gzip(src: Path, dest: Path) -> None:
     with open(src, "rb") as fh, gzip.open(dest, "wb") as out:
@@ -138,14 +150,17 @@ def main(argv: list[str] | None = None) -> int:
         version, gz, sha = build_artifact(Path(tmp))
         gz_url = infra_artifact.artifact_url(version, gz.name)
         sha_url = infra_artifact.artifact_url(version, sha.name)
+        about_url = infra_artifact.artifact_url(version, _ABOUT_NAME)
         if args.dry_run:
             print(f"dry-run: would upload -> {gz_url}")
             return 0
         if args.force:
             _delete(gz_url, token)
             _delete(sha_url, token)
+            _delete(about_url, token)
         _put(gz_url, gz, token)  # streamed from disk (hundreds of MB)
         _put(sha_url, sha.read_bytes(), token)  # tiny, in-memory is fine
+        _put(about_url, _ABOUT_TEXT.encode(), token)  # package description
     print(f"published infra rootfs {version}")
     return 0
 
