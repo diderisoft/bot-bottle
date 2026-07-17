@@ -6,6 +6,7 @@ Covers the pure `git_gate_render_gitconfig` renderer and the dynamic
 
 from __future__ import annotations
 
+import socket
 import tempfile
 import types
 import unittest
@@ -126,8 +127,9 @@ class TestProvisionDynamicKey(unittest.TestCase):
             self.assertEqual(b"PRIVATE-KEY-BYTES", key_file.read_bytes())
             id_file = Path(d) / "repo-deploy-key-id"
             self.assertEqual("kid123", id_file.read_text())
-        # owner_repo had .git stripped; title carries slug + name
-        self.assertEqual([("o/r", "bot-bottle:myslug:repo")], fake.created)
+        # owner_repo had .git stripped; title carries hostname + slug + name
+        hostname = socket.gethostname()
+        self.assertEqual([("o/r", f"bot-bottle:{hostname}:myslug:repo")], fake.created)
 
     def test_missing_token_raises(self) -> None:
         with tempfile.TemporaryDirectory() as d, \

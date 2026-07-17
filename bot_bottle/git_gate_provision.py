@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import dataclasses
+import socket
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -46,7 +47,7 @@ def _provision_dynamic_key(
     owner_repo = entry.UpstreamPath
     if owner_repo.endswith(".git"):
         owner_repo = owner_repo[:-4]
-    title = f"bot-bottle:{slug}:{entry.Name}"
+    title = f"bot-bottle:{socket.gethostname()}:{slug}:{entry.Name}"
 
     info(f"provisioning deploy key for git-gate.repos[{entry.Name!r}]")
     key_id, private_key_bytes = provisioner.create(owner_repo, title)
