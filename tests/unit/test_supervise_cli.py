@@ -176,5 +176,31 @@ class TestEditInEditor(unittest.TestCase):
                 os.environ["EDITOR"] = original_editor
 
 
+class TestResolveOrchestratorUrl(unittest.TestCase):
+    """`_resolve_orchestrator_url` starts the backend orchestrator on demand
+    when discovery finds nothing — supervise is often the first thing run."""
+
+    def test_returns_discovered_url_without_starting(self) -> None:
+        with patch.object(
+            supervise_cli, "discover_orchestrator_url",
+            return_value="http://127.0.0.1:8099",
+        ), patch("bot_bottle.backend.get_bottle_backend") as get_backend:
+            url = supervise_cli._resolve_orchestrator_url()
+        self.assertEqual(url, "http://127.0.0.1:8099")
+        get_backend.assert_not_called()  # nothing to start; discovery won
+
+    def test_starts_backend_orchestrator_when_none_running(self) -> None:
+        backend = MagicMock()
+        backend.name = "firecracker"
+        backend.ensure_orchestrator.return_value = "http://10.243.255.1:8099"
+        with patch.object(
+            supervise_cli, "discover_orchestrator_url",
+            side_effect=supervise_cli.OrchestratorClientError("none"),
+        ), patch("bot_bottle.backend.get_bottle_backend", return_value=backend):
+            url = supervise_cli._resolve_orchestrator_url()
+        self.assertEqual(url, "http://10.243.255.1:8099")
+        backend.ensure_orchestrator.assert_called_once_with()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -511,6 +511,18 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         del plan
         return ""
 
+    def ensure_orchestrator(self) -> str:
+        """Bring up this backend's per-host orchestrator + shared gateway
+        (idempotent) and return the host-reachable control-plane URL.
+
+        This is the backend-agnostic bring-up entry point: `launch` calls
+        it as part of starting a bottle, and operator tools (`supervise`)
+        call it to start the control plane on demand when none is running
+        yet. Docker starts the orchestrator + gateway containers;
+        firecracker boots the infra VM. Backends with no orchestrator
+        (macos-container) die with a pointer — the default here."""
+        die(f"backend {self.name!r} has no orchestrator control plane")
+
     @abstractmethod
     def prepare_cleanup(self) -> CleanupT:
         """Enumerate orphaned resources from previous bottles. No side

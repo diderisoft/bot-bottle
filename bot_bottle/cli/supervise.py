@@ -65,10 +65,26 @@ ApplyError = (OrchestratorClientError,)
 _client_instance: OrchestratorClient | None = None
 
 
+def _resolve_orchestrator_url() -> str:
+    """URL of the running orchestrator control plane, starting one on demand.
+
+    Supervise is often the first thing an operator runs — before any bottle
+    has booted the control plane. So when discovery finds nothing, bring up
+    the selected backend's orchestrator + gateway (idempotent) rather than
+    failing with "launch a bottle first"."""
+    try:
+        return discover_orchestrator_url()
+    except OrchestratorClientError:
+        from ..backend import get_bottle_backend
+        backend = get_bottle_backend()
+        info(f"no orchestrator control plane running; starting one ({backend.name})…")
+        return backend.ensure_orchestrator()
+
+
 def _client() -> OrchestratorClient:
     global _client_instance  # noqa: PLW0603 — CLI-session singleton
     if _client_instance is None:
-        _client_instance = OrchestratorClient(discover_orchestrator_url())
+        _client_instance = OrchestratorClient(_resolve_orchestrator_url())
     return _client_instance
 
 
@@ -204,12 +220,18 @@ def cmd_supervise(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     # Establish the orchestrator connection up front so a missing control
-    # plane is a clean one-line error, not a curses crash mid-loop.
+    # plane is a clean one-line error, not a curses crash mid-loop. This also
+    # starts the orchestrator on demand when none is running (see `_client`).
     try:
         _client()
     except OrchestratorClientError as e:
         error(str(e))
         return 1
+    except Die as e:
+        # Backend has no orchestrator to start (e.g. macos-container).
+        if e.message:
+            error(e.message)
+        return e.code if isinstance(e.code, int) else 1
 
     if args.once:
         return _list_once()

@@ -105,6 +105,10 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
         with _launch.launch(plan, provision=self.provision) as bottle:
             yield bottle
 
+    def ensure_orchestrator(self) -> str:
+        from ...orchestrator.lifecycle import OrchestratorService
+        return OrchestratorService().ensure_running()
+
     def supervise_mcp_url(self, plan: DockerBottlePlan) -> str:
         """Docker bottles reach the supervise daemon via the
         compose-network alias `supervise:9100`. No per-bottle URL

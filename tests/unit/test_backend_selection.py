@@ -244,5 +244,40 @@ class TestHasBackend(unittest.TestCase):
         self.assertFalse(has_backend("nonexistent"))
 
 
+class TestEnsureOrchestrator(unittest.TestCase):
+    """The backend-agnostic orchestrator bring-up entry point. Docker starts
+    the orchestrator + gateway containers; firecracker boots the infra VM;
+    backends without one (macos-container) die with a pointer."""
+
+    def test_docker_delegates_to_orchestrator_service(self):
+        b = get_bottle_backend("docker")
+        with patch(
+            "bot_bottle.orchestrator.lifecycle.OrchestratorService"
+        ) as service_cls:
+            service_cls.return_value.ensure_running.return_value = (
+                "http://127.0.0.1:8099"
+            )
+            url = b.ensure_orchestrator()
+        self.assertEqual(url, "http://127.0.0.1:8099")
+        service_cls.return_value.ensure_running.assert_called_once_with()
+
+    def test_firecracker_delegates_to_infra_vm(self):
+        b = get_bottle_backend("firecracker")
+        with patch(
+            "bot_bottle.backend.firecracker.infra_vm.ensure_running"
+        ) as ensure_running:
+            ensure_running.return_value.control_plane_url = (
+                "http://10.243.255.1:8099"
+            )
+            url = b.ensure_orchestrator()
+        self.assertEqual(url, "http://10.243.255.1:8099")
+
+    def test_macos_default_dies(self):
+        from bot_bottle.log import Die
+        b = get_bottle_backend("macos-container")
+        with self.assertRaises(Die):
+            b.ensure_orchestrator()
+
+
 if __name__ == "__main__":
     unittest.main()

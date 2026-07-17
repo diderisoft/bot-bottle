@@ -110,3 +110,7 @@ class FirecrackerBottleBackend(
 
     def supervise_mcp_url(self, plan: FirecrackerBottlePlan) -> str:
         return plan.agent_supervise_url
+
+    def ensure_orchestrator(self) -> str:
+        from . import infra_vm
+        return infra_vm.ensure_running().control_plane_url
