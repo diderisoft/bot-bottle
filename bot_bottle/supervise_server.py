@@ -2,14 +2,24 @@
 
 Per-bottle MCP server exposing tools the agent calls to propose egress
 config changes when stuck. The tools are `egress-allow`,
-`egress-block`, and `list-egress-routes`.
+`egress-block`, `list-egress-routes`, and `check-proposal`.
 
-Each queued tool call:
+Each queued proposal tool call:
 
   1. Validates the proposed file syntactically.
   2. Writes a Proposal to the host SQLite database.
-  3. Blocks polling for a matching Response row.
-  4. Returns the operator's `{status, notes}` to the agent.
+  3. Blocks polling for a matching Response row, up to a short grace
+     window (`SUPERVISE_RESPONSE_TIMEOUT_SECONDS`, default 30s).
+  4. On a decision within the window, returns the operator's
+     `{status, notes}`. On timeout, returns `status: pending` **with the
+     proposal id** and leaves the proposal queued — the flow is
+     non-blocking past the grace window (PRD prd-new / issue #412).
+
+`check-proposal` is the non-blocking companion: given a `proposal_id`
+returned by a `pending` response, it reports the current decision
+(`pending` | `approved` | `modified` | `rejected`) without re-proposing,
+so an approval made out-of-band (e.g. a web review console) can be resumed
+without holding an HTTP request open.
 
 One shared server fronts every bottle (PRD 0070) and attributes each
 proposal to the calling bottle by source IP, resolved from the orchestrator
@@ -22,7 +32,9 @@ Speaks MCP over HTTP+JSON-RPC. Methods handled:
   * `initialize`           — handshake; returns server info + caps.
   * `notifications/initialized` — ack-only.
   * `tools/list`           — returns the tool definitions.
-  * `tools/call`           — validates, queues, blocks, returns.
+  * `tools/call`           — validates, queues, waits out the grace
+                             window, returns (pending past it); or, for
+                             `check-proposal`, a non-blocking status poll.
 
 Everything else returns JSON-RPC error -32601 (method not found).
 
@@ -232,6 +244,31 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
         ),
         "inputSchema": _proposal_input_schema(),
     },
+    {
+        "name": _sv.TOOL_CHECK_PROPOSAL,
+        "description": (
+            "Poll a previously queued proposal for the operator's decision "
+            "WITHOUT blocking or re-proposing. Pass the `proposal_id` you "
+            "got back when an `egress-allow`/`egress-block` call returned "
+            "`status: pending`. Returns the current status: `pending` (no "
+            "decision yet — poll again later), `approved`, `modified`, "
+            "`rejected`, or `unknown` (no such queued proposal — wrong id, "
+            "or it was already resolved and read)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "proposal_id": {
+                    "type": "string",
+                    "description": (
+                        "The proposal id from a `pending` response."
+                    ),
+                },
+            },
+            "required": ["proposal_id"],
+            "additionalProperties": False,
+        },
+    },
 ]
 
 
@@ -353,7 +390,7 @@ def handle_tools_call(
             deadline=deadline,
         )
     except TimeoutError:
-        text = format_pending_response_text(config.response_timeout_seconds)
+        text = format_pending_response_text(proposal.id, config.response_timeout_seconds)
         return {
             "content": [{"type": "text", "text": text}],
             "isError": False,
@@ -370,6 +407,54 @@ def handle_tools_call(
     }
 
 
+def handle_check_proposal(
+    params: dict[str, object],
+    config: ServerConfig,
+) -> dict[str, object]:
+    """Non-blocking poll of a queued proposal's decision, by id.
+
+    Never creates a Proposal (so `check-proposal` isn't in `TOOLS`); it only
+    reads the queue. Resolution order mirrors the synchronous path's terminal
+    step — a decided proposal is archived here exactly as `handle_tools_call`
+    archives it after `wait_for_response`, so `pending` proposals stay visible
+    to the operator until they're both decided *and* polled."""
+    args_raw = params.get("arguments", {})
+    if not isinstance(args_raw, dict):
+        raise _RpcClientError(ERR_INVALID_PARAMS, "tools/call 'arguments' must be an object")
+    proposal_id = args_raw.get("proposal_id")
+    if not isinstance(proposal_id, str) or not proposal_id.strip():
+        raise _RpcClientError(
+            ERR_INVALID_PARAMS,
+            "check-proposal: 'proposal_id' is required and must be a non-empty string",
+        )
+    proposal_id = proposal_id.strip()
+
+    try:
+        response = _sv.read_response(config.bottle_slug, proposal_id)
+    except FileNotFoundError:
+        # No decision yet — distinguish "still queued" from "unknown id".
+        try:
+            _sv.read_proposal(config.bottle_slug, proposal_id)
+        except FileNotFoundError:
+            return {
+                "content": [{"type": "text", "text": format_unknown_proposal_text(proposal_id)}],
+                "isError": True,
+            }
+        return {
+            "content": [{"type": "text", "text": format_still_pending_text(proposal_id)}],
+            "isError": False,
+        }
+
+    try:
+        _sv.archive_proposal(config.bottle_slug, proposal_id)
+    except OSError as e:
+        raise _RpcInternalError(f"failed to archive proposal: {e}") from e
+    return {
+        "content": [{"type": "text", "text": format_response_text(response)}],
+        "isError": response.status == _sv.STATUS_REJECTED,
+    }
+
+
 def format_response_text(response: "_sv.Response") -> str:
     """Pretty-print a Response for the tool's text content. The agent
     reads the text and decides whether to retry / give up / surface."""
@@ -382,12 +467,35 @@ def format_response_text(response: "_sv.Response") -> str:
     return "\n".join(lines)
 
 
-def format_pending_response_text(timeout_seconds: float) -> str:
+def format_pending_response_text(proposal_id: str, timeout_seconds: float) -> str:
+    """Grace-window timeout: the proposal stays queued, and the agent is
+    told the id so it can `check-proposal` instead of re-proposing."""
     return "\n".join([
         "status: pending",
+        f"proposal_id: {proposal_id}",
         (
-            "notes: operator response timed out after "
-            f"{timeout_seconds:g}s; proposal remains queued"
+            f"notes: no operator decision within {timeout_seconds:g}s; the "
+            "proposal remains queued. Poll it (do not re-propose) by calling "
+            f"`check-proposal` with proposal_id={proposal_id!r}."
+        ),
+    ])
+
+
+def format_still_pending_text(proposal_id: str) -> str:
+    return "\n".join([
+        "status: pending",
+        f"proposal_id: {proposal_id}",
+        "notes: still queued; no operator decision yet. Call `check-proposal` again later.",
+    ])
+
+
+def format_unknown_proposal_text(proposal_id: str) -> str:
+    return "\n".join([
+        "status: unknown",
+        f"proposal_id: {proposal_id}",
+        (
+            "notes: no queued proposal with this id for this bottle — the id "
+            "may be wrong, or the proposal was already resolved and read."
         ),
     ])
 
@@ -482,6 +590,11 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
             # — silently dropping base routes like api.anthropic.com on approval.
             if req.params.get("name") == _sv.TOOL_LIST_EGRESS_ROUTES:
                 return self._resolved_routes_payload()
+            # `check-proposal` is a non-blocking read of the calling bottle's
+            # own queue — attributed by source IP like a proposal, but it
+            # never queues or blocks.
+            if req.params.get("name") == _sv.TOOL_CHECK_PROPOSAL:
+                return handle_check_proposal(req.params, self._attributed_config(config))
             # Attribute the proposal to the source-IP-resolved bottle, so the one
             # shared server queues each bottle's proposal under its own slug.
             return handle_tools_call(req.params, self._attributed_config(config))

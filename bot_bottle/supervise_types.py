@@ -20,6 +20,10 @@ TOOL_EGRESS_ALLOW = "egress-allow"
 TOOL_GITLEAKS_ALLOW = "gitleaks-allow"
 TOOL_EGRESS_TOKEN_ALLOW = "egress-token-allow"
 TOOL_LIST_EGRESS_ROUTES = "list-egress-routes"
+# Read-only agent tool: poll a queued proposal for the operator's decision
+# without blocking or re-proposing. It never becomes a `Proposal.tool` (no
+# queue record is created for it), so it is intentionally NOT in `TOOLS`.
+TOOL_CHECK_PROPOSAL = "check-proposal"
 TOOLS: tuple[str, ...] = (
     TOOL_EGRESS_ALLOW,
     TOOL_EGRESS_BLOCK,
@@ -156,6 +160,7 @@ __all__ = [
     "TOOLS",
     "TOOL_EGRESS_ALLOW",
     "TOOL_EGRESS_BLOCK",
+    "TOOL_CHECK_PROPOSAL",
     "TOOL_EGRESS_TOKEN_ALLOW",
     "TOOL_GITLEAKS_ALLOW",
     "TOOL_LIST_EGRESS_ROUTES",

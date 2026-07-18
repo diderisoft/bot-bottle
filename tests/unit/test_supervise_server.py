@@ -32,7 +32,9 @@ from bot_bottle.supervise_server import (
     _RpcError,
     _RpcInternalError,
     _response_timeout_from_env,
+    format_pending_response_text,
     format_response_text,
+    handle_check_proposal,
     handle_initialize,
     handle_tools_call,
     handle_tools_list,
@@ -218,6 +220,7 @@ class TestHandleToolsList(unittest.TestCase):
                 _sv.TOOL_EGRESS_ALLOW,
                 _sv.TOOL_EGRESS_BLOCK,
                 _sv.TOOL_LIST_EGRESS_ROUTES,
+                _sv.TOOL_CHECK_PROPOSAL,
             ]),
             sorted(names),
         )
@@ -484,9 +487,10 @@ class TestFormatResponseText(unittest.TestCase):
 
 class TestFormatPendingResponseText(unittest.TestCase):
     def test_formats_timeout_message(self):
-        text = supervise_server.format_pending_response_text(12.5)
+        text = supervise_server.format_pending_response_text("prop-9", 12.5)
         self.assertIn("status: pending", text)
         self.assertIn("12.5s", text)
+        self.assertIn("proposal_id: prop-9", text)
 
 
 # --- End-to-end HTTP sanity ------------------------------------------------
@@ -683,6 +687,130 @@ class TestResolvedRoutesPayload(unittest.TestCase):
         # than list anything.
         with self.assertRaises(_RpcInternalError):
             _handler(None)._resolved_routes_payload()
+
+
+class TestNonBlockingSupervise(unittest.TestCase):
+    """PRD prd-new / issue #412: pending responses carry the proposal id, and
+    `check-proposal` polls a queued proposal without blocking or re-proposing."""
+
+    _ROUTES = "routes:\n  - host: example.com\n"
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory(prefix="supervise-nonblock-test.")
+        self._home_patch = use_bottle_root(Path(self._tmp.name) / ".bot-bottle")
+        self.config = ServerConfig(bottle_slug="dev")
+        _qs.QueueStore("dev").migrate()
+        _as.AuditStore().migrate()
+
+    def tearDown(self):
+        self._home_patch()
+        self._tmp.cleanup()
+
+    def _seed_proposal(self) -> "_sv.Proposal":
+        p = _sv.Proposal.new(
+            bottle_slug="dev",
+            tool=_sv.TOOL_EGRESS_ALLOW,
+            proposed_file=self._ROUTES,
+            justification="need example.com",
+            current_file_hash=_sv.sha256_hex(self._ROUTES),
+        )
+        _sv.write_proposal(p)
+        return p
+
+    def _check(self, proposal_id: str) -> dict[str, object]:
+        return handle_check_proposal({"arguments": {"proposal_id": proposal_id}}, self.config)
+
+    # --- pending response carries the id ---
+
+    def test_pending_text_includes_id_and_pointer(self):
+        text = format_pending_response_text("abc-123", 30.0)
+        self.assertIn("status: pending", text)
+        self.assertIn("proposal_id: abc-123", text)
+        self.assertIn("check-proposal", text)
+
+    def test_tools_call_timeout_returns_pending_with_id_and_stays_queued(self):
+        # No responder → the grace window expires → pending, not blocked forever.
+        result = handle_tools_call(
+            {
+                "name": _sv.TOOL_EGRESS_ALLOW,
+                "arguments": {"routes_yaml": self._ROUTES, "justification": "x"},
+            },
+            ServerConfig(bottle_slug="dev", response_timeout_seconds=0.05),
+        )
+        self.assertFalse(result["isError"])  # type: ignore[index]
+        text = result["content"][0]["text"]  # type: ignore[index]
+        self.assertIn("status: pending", text)
+        pending = _sv.list_pending_proposals("dev")
+        self.assertEqual(1, len(pending))  # still queued, not archived
+        self.assertIn(pending[0].id, text)  # agent got the id to poll
+
+    # --- check-proposal poll ---
+
+    def test_check_returns_approved_and_archives(self):
+        p = self._seed_proposal()
+        _sv.write_response("dev", _sv.Response(proposal_id=p.id, status=_sv.STATUS_APPROVED, notes="ok"))
+        result = self._check(p.id)
+        self.assertFalse(result["isError"])
+        text = result["content"][0]["text"]  # type: ignore[index]
+        self.assertIn("status: approved", text)
+        self.assertIn("notes: ok", text)
+        with self.assertRaises(FileNotFoundError):  # archived on read
+            _sv.read_proposal("dev", p.id)
+
+    def test_check_rejected_sets_isError(self):
+        p = self._seed_proposal()
+        _sv.write_response("dev", _sv.Response(proposal_id=p.id, status=_sv.STATUS_REJECTED, notes="no"))
+        result = self._check(p.id)
+        self.assertTrue(result["isError"])
+        self.assertIn("status: rejected", result["content"][0]["text"])  # type: ignore[index]
+
+    def test_check_pending_when_no_decision_yet(self):
+        p = self._seed_proposal()
+        result = self._check(p.id)
+        self.assertFalse(result["isError"])
+        text = result["content"][0]["text"]  # type: ignore[index]
+        self.assertIn("status: pending", text)
+        self.assertIn(p.id, text)
+        self.assertEqual(1, len(_sv.list_pending_proposals("dev")))  # not archived
+
+    def test_check_unknown_id_is_error(self):
+        result = self._check("no-such-proposal")
+        self.assertTrue(result["isError"])
+        self.assertIn("status: unknown", result["content"][0]["text"])  # type: ignore[index]
+
+    def test_check_missing_id_raises(self):
+        with self.assertRaises(_RpcClientError) as cm:
+            handle_check_proposal({"arguments": {}}, self.config)
+        self.assertEqual(ERR_INVALID_PARAMS, cm.exception.code)
+
+    def test_check_empty_id_raises(self):
+        with self.assertRaises(_RpcClientError) as cm:
+            handle_check_proposal({"arguments": {"proposal_id": "   "}}, self.config)
+        self.assertEqual(ERR_INVALID_PARAMS, cm.exception.code)
+
+    def test_check_arguments_must_be_object(self):
+        with self.assertRaises(_RpcClientError) as cm:
+            handle_check_proposal({"arguments": []}, self.config)
+        self.assertEqual(ERR_INVALID_PARAMS, cm.exception.code)
+
+    def test_full_nonblocking_round_trip(self):
+        # 1. tools/call times out → pending with id
+        result = handle_tools_call(
+            {
+                "name": _sv.TOOL_EGRESS_ALLOW,
+                "arguments": {"routes_yaml": self._ROUTES, "justification": "x"},
+            },
+            ServerConfig(bottle_slug="dev", response_timeout_seconds=0.05),
+        )
+        pid = _sv.list_pending_proposals("dev")[0].id
+        self.assertIn(pid, result["content"][0]["text"])  # type: ignore[index]
+        # 2. operator decides out-of-band
+        _sv.write_response("dev", _sv.Response(proposal_id=pid, status=_sv.STATUS_APPROVED, notes="ok"))
+        # 3. agent resumes by polling — no re-proposing
+        poll = self._check(pid)
+        self.assertFalse(poll["isError"])
+        self.assertIn("status: approved", poll["content"][0]["text"])  # type: ignore[index]
+        self.assertEqual([], _sv.list_pending_proposals("dev"))  # resolved + archived
 
 
 if __name__ == "__main__":
