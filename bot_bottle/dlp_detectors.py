@@ -3,9 +3,8 @@
 Pure Python, no mitmproxy dependency. Each detector is a module-level
 function returning `ScanResult | None`.
 
-Ships flat into the gateway image alongside
-`egress_addon_core.py` — both this file and the package source use
-the same try/except import shim pattern.
+Available in the gateway via the installed `bot_bottle` package
+(see `Dockerfile.gateway`).
 """
 
 from __future__ import annotations
@@ -20,10 +19,7 @@ from math import log2
 from collections import Counter
 from urllib.parse import quote as url_quote
 
-try:
-    from egress_addon_core import ScanResult  # type: ignore[import-not-found]
-except ImportError:  # pragma: no cover - host-side path
-    from .egress_addon_core import ScanResult
+from .egress_addon_core import ScanResult
 
 
 # ---------------------------------------------------------------------------

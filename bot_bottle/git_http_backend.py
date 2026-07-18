@@ -26,16 +26,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
-# policy_resolver ships flat alongside this file in the gateway
-# image (see Dockerfile.gateway); the bot_bottle.* fallback is the
-# host-side / test path. Mirrors egress_addon's import shape.
-try:
-    from policy_resolver import (  # type: ignore[import-not-found]
-        PolicyResolveError,
-        PolicyResolver,
-    )
-except ImportError:  # pragma: no cover - host-side path
-    from bot_bottle.policy_resolver import PolicyResolveError, PolicyResolver
+from bot_bottle.constants import GIT_GATE_TIMEOUT_SECS, IDENTITY_HEADER
+from bot_bottle.policy_resolver import PolicyResolveError, PolicyResolver
 
 
 DEFAULT_PORT = 9420
@@ -45,12 +37,6 @@ DEFAULT_PORT = 9420
 # Mandatory — the same env the egress addon requires; there is no single flat
 # repo-root fallback.
 ORCHESTRATOR_URL_ENV = "BOT_BOTTLE_ORCHESTRATOR_URL"
-
-# App-layer identity token (defense-in-depth over the source-IP invariant);
-# the agent injects it, the backend reads it for attribution and never
-# forwards it to `git http-backend`. Mirrors egress_addon.IDENTITY_HEADER
-# (duplicated, not imported: egress_addon pulls in mitmproxy).
-IDENTITY_HEADER = "x-bot-bottle-identity"
 
 # The base under which each bottle's `<bottle_id>` repo namespace is nested.
 DEFAULT_REPO_ROOT = "/git"
@@ -88,13 +74,6 @@ def resolve_sandbox_root(
     if base not in namespace.parents:
         return None  # bottle_id tried to escape the root → deny
     return namespace
-
-# Mirrors git_gate_render.GIT_GATE_TIMEOUT_SECS. Duplicated rather than
-# imported: this module ships as a flat top-level sibling in the gateway
-# bundle image (see Dockerfile.gateway), not as part of the bot_bottle
-# package, so `bot_bottle.git_gate` and its dependency chain aren't
-# available at runtime.
-GIT_GATE_TIMEOUT_SECS = 15
 
 # Bound memory use while still allowing ordinary git push packfiles.
 MAX_BODY_BYTES = 100 * 1024 * 1024

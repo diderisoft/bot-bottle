@@ -15,7 +15,9 @@ import typing
 
 from mitmproxy import http  # type: ignore[import-not-found]  # pylint: disable=import-error
 
-from egress_addon_core import (  # type: ignore[import-not-found]  # pylint: disable=import-error
+from bot_bottle.constants import IDENTITY_HEADER
+from bot_bottle.dlp_detectors import redact_tokens, strip_crlf
+from bot_bottle.egress_addon_core import (
     LOG_BLOCKS,
     LOG_FULL,
     DEFAULT_OUTBOUND_ON_MATCH,
@@ -38,24 +40,8 @@ from egress_addon_core import (  # type: ignore[import-not-found]  # pylint: dis
     scan_inbound,
     scan_outbound,
 )
-
-try:
-    from dlp_detectors import redact_tokens, strip_crlf  # type: ignore[import-not-found]
-except ImportError:  # pragma: no cover - host-side path
-    from bot_bottle.dlp_detectors import (  # type: ignore[import-not-found]
-        redact_tokens,
-        strip_crlf,
-    )
-
-try:
-    import supervise as _sv  # type: ignore[import-not-found]
-except ImportError:  # pragma: no cover - host-side path
-    from bot_bottle import supervise as _sv  # type: ignore[import-not-found]
-
-try:
-    from policy_resolver import PolicyResolver  # type: ignore[import-not-found]
-except ImportError:  # pragma: no cover - host-side path
-    from bot_bottle.policy_resolver import PolicyResolver
+from bot_bottle import supervise as _sv
+from bot_bottle.policy_resolver import PolicyResolver
 
 
 INTROSPECT_HOST = "_egress.local"
@@ -65,13 +51,6 @@ INTROSPECT_HOST = "_egress.local"
 # is the only topology now — there is no static per-bottle routes file to fall
 # back to — so an unset value is a fatal misconfiguration (see __init__).
 ORCHESTRATOR_URL_ENV = "BOT_BOTTLE_ORCHESTRATOR_URL"
-
-# App-layer identity token. Delivered as proxy credentials
-# (`HTTPS_PROXY=http://<bottle_id>:<token>@gw`): clients honor it as part of
-# the proxy protocol without app changes, and the addon reads + strips it so
-# it never leaks upstream. The legacy `x-bot-bottle-identity` request header
-# is still stripped defensively (git-http uses that header on its own port).
-IDENTITY_HEADER = "x-bot-bottle-identity"
 
 # Per-flow key under which `request()` stashes the resolved (Config, supervise
 # slug, env) so the later `response()` and `websocket_message()` hooks scan

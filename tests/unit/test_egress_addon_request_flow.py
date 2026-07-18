@@ -190,9 +190,6 @@ def _ensure_shims() -> None:
         setattr(mh, "Response", _Response)
     if not hasattr(mh, "HTTPFlow"):
         setattr(mh, "HTTPFlow", object)
-    if "egress_addon_core" not in sys.modules:
-        import bot_bottle.egress_addon_core as _core
-        sys.modules["egress_addon_core"] = _core
 
 
 _ensure_shims()

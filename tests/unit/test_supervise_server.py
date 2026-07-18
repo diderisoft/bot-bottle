@@ -2,7 +2,6 @@
 
 import http.client
 import json
-import sys
 import tempfile
 import threading
 import time
@@ -13,15 +12,9 @@ from unittest.mock import patch
 
 from tests.unit import use_bottle_root
 
-
-# The server module loads `supervise` via same-directory import inside
-# the container (Dockerfile.supervise WORKDIRs into /app). For tests
-# we mirror that by injecting bot_bottle/ onto sys.path under the
-# bare name `supervise`.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "bot_bottle"))
-import supervise as _sv  # noqa: E402  # type: ignore
-import queue_store as _qs  # noqa: E402  # type: ignore
-import audit_store as _as  # noqa: E402  # type: ignore
+from bot_bottle import supervise as _sv
+from bot_bottle import queue_store as _qs
+from bot_bottle import audit_store as _as
 
 from bot_bottle import supervise_server  # noqa: E402
 from bot_bottle.supervise_server import (

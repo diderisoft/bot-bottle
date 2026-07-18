@@ -14,18 +14,12 @@ import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
+from .constants import GIT_GATE_TIMEOUT_SECS, IDENTITY_HEADER
 from .manifest import ManifestBottle, ManifestGitEntry
 
 # Short network alias for git-gate inside the gateway. The
 # agent's `.gitconfig` insteadOf rewrites resolve through this name.
 GIT_GATE_HOSTNAME = "git-gate"
-# App-layer identity token header the agent's git sends to git-http and the
-# gateway validates (mirrors egress_addon / git_http_backend IDENTITY_HEADER).
-IDENTITY_HEADER = "x-bot-bottle-identity"
-# Shared timeout (seconds) for all git-gate subprocess and CGI calls:
-# git daemon (--timeout/--init-timeout), the access-hook subprocess in
-# git_http_backend, and the git http-backend CGI subprocess.
-GIT_GATE_TIMEOUT_SECS = 15
 
 
 @dataclass(frozen=True)

@@ -26,9 +26,8 @@ Speaks MCP over HTTP+JSON-RPC. Methods handled:
 
 Everything else returns JSON-RPC error -32601 (method not found).
 
-Stdlib-only. The Dockerfile copies this file + bot_bottle/supervise.py
-into the image; the server imports `supervise` for the queue / Proposal
-plumbing.
+The Dockerfile copies this script to /app/supervise_server.py and installs
+the bot_bottle package so its `from bot_bottle.*` imports resolve.
 """
 
 from __future__ import annotations
@@ -42,29 +41,18 @@ import time
 import typing
 from dataclasses import dataclass, replace
 
-try:
-    # Same-directory imports inside the bundle container; these files are
-    # COPYed flat under /app by Dockerfile.gateway.
-    from egress_addon_core import (
-        LOG_OFF, load_config, resolve_client_context, route_to_yaml_dict,
-    )
-    from policy_resolver import PolicyResolveError, PolicyResolver
-    import supervise as _sv
-except ModuleNotFoundError:
-    # Package imports for host-side tests and tooling.
-    from .egress_addon_core import (
-        LOG_OFF, load_config, resolve_client_context, route_to_yaml_dict,
-    )
-    from .policy_resolver import PolicyResolveError, PolicyResolver
-    from . import supervise as _sv
+from bot_bottle.constants import IDENTITY_HEADER
+from bot_bottle.egress_addon_core import (
+    LOG_OFF, load_config, resolve_client_context, route_to_yaml_dict,
+)
+from bot_bottle.policy_resolver import PolicyResolveError, PolicyResolver
+from bot_bottle import supervise as _sv
 
 
 # --- JSON-RPC / MCP plumbing ----------------------------------------------
 
 
 MCP_PROTOCOL_VERSION = "2024-11-05"
-# App-layer identity token header (mirrors egress_addon / git_http_backend).
-IDENTITY_HEADER = "x-bot-bottle-identity"
 SERVER_NAME = "bot-bottle-supervise"
 SERVER_VERSION = "0.1.0"
 

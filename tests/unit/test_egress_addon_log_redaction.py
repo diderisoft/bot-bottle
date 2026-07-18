@@ -18,7 +18,7 @@ from unittest.mock import patch
 
 
 # ---------------------------------------------------------------------------
-# Gateway-import shims — must run before importing egress_addon
+# mitmproxy stub — must run before importing egress_addon
 # ---------------------------------------------------------------------------
 
 def _ensure_shims() -> None:
@@ -32,9 +32,6 @@ def _ensure_shims() -> None:
         setattr(_mm, "http", _mh)
         sys.modules["mitmproxy"] = _mm
         sys.modules["mitmproxy.http"] = _mh
-    if "egress_addon_core" not in sys.modules:
-        import bot_bottle.egress_addon_core as _core
-        sys.modules["egress_addon_core"] = _core
 
 
 _ensure_shims()

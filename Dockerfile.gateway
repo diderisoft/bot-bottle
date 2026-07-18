@@ -16,10 +16,13 @@
 # Layout:
 #
 #   /usr/bin/gitleaks                    gitleaks binary
-#   /app/egress_addon.py + siblings      mitmproxy addon (egress)
+#   /app/egress_addon.py                 mitmproxy addon entry point
 #   /app/egress-entrypoint.sh            mitmdump launcher
-#   /app/supervise_server.py + .py       supervise MCP server
-#   /app/gateway_init.py                 PID 1 supervisor
+#   /app/supervise_server.py             supervise MCP server entry point
+#   /app/gateway_init.py                 PID 1 supervisor entry point
+#   /app/git_http_backend.py             git-http entry point
+#   /usr/local/lib/python*/bot_bottle/   installed package (all shared modules)
+#   /etc/egress/routes.yaml              bind-mounted at run time
 #   /etc/git-gate/pre-receive            docker-cp'd at start time
 #   /git-gate-entrypoint.sh              docker-cp'd at start time
 #   /git-gate/creds/*                    docker-cp'd at start time
@@ -87,24 +90,18 @@ RUN arch="${TARGETARCH:-$(dpkg --print-architecture)}" \
  && tar -xzf /tmp/gitleaks.tar.gz -C /usr/bin gitleaks \
  && rm /tmp/gitleaks.tar.gz
 
-# Project Python: addon + server modules + the init supervisor.
-# Kept flat under /app/ so mitmdump's loader resolves them as
-# top-level siblings (absolute imports), matching the prior
-# Dockerfile.egress / Dockerfile.supervise layout.
-COPY bot_bottle/egress_addon_core.py /app/egress_addon_core.py
-COPY bot_bottle/egress_dlp_config.py /app/egress_dlp_config.py
+# Install bot_bottle as a proper package so entry-point scripts can use
+# `from bot_bottle.X import Y` absolute imports. A rename or a missing
+# module is caught at pip-install time — not at container runtime.
+COPY pyproject.toml /src/
+COPY bot_bottle/    /src/bot_bottle/
+RUN pip install --no-cache-dir /src/
+
+# Entry-point scripts invoked by gateway_init.py. These live at /app/
+# so the supervisor, shell entrypoint, and ENTRYPOINT all reach them at
+# known fixed paths. Their sibling imports all go through bot_bottle.*
+# (the installed package above), not flat /app/ neighbours.
 COPY bot_bottle/egress_addon.py      /app/egress_addon.py
-COPY bot_bottle/policy_resolver.py   /app/policy_resolver.py
-COPY bot_bottle/dlp_detectors.py     /app/dlp_detectors.py
-COPY bot_bottle/yaml_subset.py       /app/yaml_subset.py
-COPY bot_bottle/paths.py             /app/paths.py
-COPY bot_bottle/migrations.py        /app/migrations.py
-COPY bot_bottle/db_store.py          /app/db_store.py
-COPY bot_bottle/supervise_types.py   /app/supervise_types.py
-COPY bot_bottle/queue_store.py       /app/queue_store.py
-COPY bot_bottle/audit_store.py       /app/audit_store.py
-COPY bot_bottle/store_manager.py     /app/store_manager.py
-COPY bot_bottle/supervise.py         /app/supervise.py
 COPY bot_bottle/supervise_server.py  /app/supervise_server.py
 COPY bot_bottle/gateway_init.py      /app/gateway_init.py
 COPY bot_bottle/git_http_backend.py  /app/git_http_backend.py
@@ -126,8 +123,6 @@ RUN mkdir -p \
 # subset the bottle uses.
 EXPOSE 8888 9099 9418 9420 9100
 
-# WORKDIR matches Dockerfile.supervise's prior layout so the
-# in-app same-dir import in supervise_server.py stays deterministic.
 WORKDIR /app
 
 # PID 1 is the supervisor. It owns signal handling and exit-code

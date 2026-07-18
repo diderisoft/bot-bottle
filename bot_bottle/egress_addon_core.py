@@ -6,9 +6,9 @@ exercise the parse + decision functions without depending on the
 `mitmproxy.http.HTTPFlow` API and is loaded inside the gateway
 container.
 
-Imports: stdlib + `yaml_subset` (which is itself stdlib-only and
-ships flat into the gateway image alongside this file —
-see `Dockerfile.gateway`)."""
+Imports: stdlib + sibling package modules (`yaml_subset`,
+`egress_dlp_config`). Available in the gateway via the installed
+`bot_bottle` package (see `Dockerfile.gateway`)."""
 
 from __future__ import annotations
 
@@ -16,36 +16,20 @@ import re
 import typing
 from dataclasses import dataclass
 
-try:
-    from yaml_subset import YamlSubsetError, parse_yaml_subset  # type: ignore[import-not-found]
-except ImportError:  # pragma: no cover - host-side path
-    from .yaml_subset import YamlSubsetError, parse_yaml_subset
+from .yaml_subset import YamlSubsetError, parse_yaml_subset
 
-# DLP detector-config parsing lives in a sibling module (also flat-bundled
-# into the gateway — see Dockerfile.gateway). Re-exported below so existing
-# `from egress_addon_core import ON_MATCH_*` callers keep working.
-try:
-    from egress_dlp_config import (  # type: ignore[import-not-found]
-        DEFAULT_OUTBOUND_ON_MATCH,
-        INBOUND_DETECTOR_NAMES,
-        ON_MATCH_BLOCK,
-        ON_MATCH_REDACT,
-        ON_MATCH_SUPERVISE,
-        OUTBOUND_DETECTOR_NAMES,
-        OUTBOUND_ON_MATCH_VALUES,
-        parse_dlp_block,
-    )
-except ImportError:  # pragma: no cover - host-side path
-    from .egress_dlp_config import (
-        DEFAULT_OUTBOUND_ON_MATCH,
-        INBOUND_DETECTOR_NAMES,
-        ON_MATCH_BLOCK,
-        ON_MATCH_REDACT,
-        ON_MATCH_SUPERVISE,
-        OUTBOUND_DETECTOR_NAMES,
-        OUTBOUND_ON_MATCH_VALUES,
-        parse_dlp_block,
-    )
+# DLP detector-config parsing lives in a sibling module. Re-exported below
+# so existing `from egress_addon_core import ON_MATCH_*` callers keep working.
+from .egress_dlp_config import (
+    DEFAULT_OUTBOUND_ON_MATCH,
+    INBOUND_DETECTOR_NAMES,
+    ON_MATCH_BLOCK,
+    ON_MATCH_REDACT,
+    ON_MATCH_SUPERVISE,
+    OUTBOUND_DETECTOR_NAMES,
+    OUTBOUND_ON_MATCH_VALUES,
+    parse_dlp_block,
+)
 
 
 # ---------------------------------------------------------------------------

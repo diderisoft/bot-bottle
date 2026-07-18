@@ -22,8 +22,7 @@ closed too rather than silently serving stale or empty policy.
 
 The resolved value is the policy blob the orchestrator stores verbatim; the
 consumer parses it (e.g. the egress addon's `load_config`). This module is
-stdlib-only and free of bot-bottle imports so it can be COPYed flat into
-the gateway.
+stdlib-only and free of bot-bottle imports.
 """
 
 from __future__ import annotations

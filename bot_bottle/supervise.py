@@ -37,40 +37,22 @@ from abc import ABC
 from dataclasses import dataclass
 from pathlib import Path
 
-try:
-    from .supervise_types import (
-        ACTION_OPERATOR_EDIT,
-        AuditEntry,
-        Proposal,
-        Response,
-        STATUSES,
-        STATUS_APPROVED,
-        STATUS_MODIFIED,
-        STATUS_REJECTED,
-        TOOLS,
-        TOOL_EGRESS_ALLOW,
-        TOOL_EGRESS_BLOCK,
-        TOOL_EGRESS_TOKEN_ALLOW,
-        TOOL_GITLEAKS_ALLOW,
-        TOOL_LIST_EGRESS_ROUTES,
-    )
-except ImportError:
-    from supervise_types import (  # type: ignore[import-not-found,no-redef]  # pylint: disable=import-error,no-name-in-module
-        ACTION_OPERATOR_EDIT,
-        AuditEntry,
-        Proposal,
-        Response,
-        STATUSES,
-        STATUS_APPROVED,
-        STATUS_MODIFIED,
-        STATUS_REJECTED,
-        TOOLS,
-        TOOL_EGRESS_ALLOW,
-        TOOL_EGRESS_BLOCK,
-        TOOL_EGRESS_TOKEN_ALLOW,
-        TOOL_GITLEAKS_ALLOW,
-        TOOL_LIST_EGRESS_ROUTES,
-    )
+from .supervise_types import (
+    ACTION_OPERATOR_EDIT,
+    AuditEntry,
+    Proposal,
+    Response,
+    STATUSES,
+    STATUS_APPROVED,
+    STATUS_MODIFIED,
+    STATUS_REJECTED,
+    TOOLS,
+    TOOL_EGRESS_ALLOW,
+    TOOL_EGRESS_BLOCK,
+    TOOL_EGRESS_TOKEN_ALLOW,
+    TOOL_GITLEAKS_ALLOW,
+    TOOL_LIST_EGRESS_ROUTES,
+)
 
 
 try:
