@@ -23,9 +23,16 @@ on:
       - main
     paths:
       - '**.py'
+      - '.gitea/workflows/**.yml'
+      - 'scripts/**'
+      - 'README.md'
   pull_request:
     paths:
       - '**.py'
+      - '.gitea/workflows/**.yml'
+      - 'scripts/**'
+      - 'README.md'
+  workflow_dispatch:
 
 jobs:
   unit:
@@ -86,8 +93,15 @@ jobs:
   # and the network pool installed as the persistent systemd unit
   # (`./cli.py backend setup --backend=firecracker`). The preflight step
   # below fails fast with instructions if anything is missing.
+  #
+  # Security: this job executes PR-controlled code on a privileged runner
+  # (Docker, /dev/kvm, TAP/nft). It is restricted to push events (main
+  # branch) and manual workflow_dispatch by maintainers — it does NOT run
+  # on pull_request. Trusted PRs are validated by triggering workflow_dispatch
+  # on the PR branch before merging.
   coverage:
     runs-on: [self-hosted, kvm]
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -107,6 +121,8 @@ jobs:
         run: python3 -m pip install --user -r requirements-dev.txt
 
       - name: Combined coverage (unit + integration, incl. firecracker)
+        env:
+          BOT_BOTTLE_BACKEND: firecracker
         run: PYTHON=python3 bash scripts/coverage.sh critical
 
       - name: Diff-coverage gate (changed lines >= 90%)
