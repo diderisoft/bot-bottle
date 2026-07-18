@@ -1,0 +1,17 @@
+name: tracker-policy-issues
+
+on:
+  issues:
+    types: [opened, unlabeled]
+
+jobs:
+  label-issue:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure the issue has a label
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/tracker_policy.py label-issue

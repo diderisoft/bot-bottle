@@ -1,0 +1,18 @@
+name: tracker-policy-pr
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronized, labeled, unlabeled]
+
+jobs:
+  check-pr:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require an unlabeled PR linked to an issue
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/tracker_policy.py check-pr
