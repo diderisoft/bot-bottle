@@ -66,11 +66,25 @@ RUN pip install --no-cache-dir mitmproxy==11.1.3
 # would pin us to that image's cadence). python (already present) does the
 # download so we add no curl/wget. trixie apt also ships gitleaks, but an
 # older 8.16; the pinned download keeps the verified 8.30.1.
+#
+# Arch-aware: the asset + SHA are picked from the build's target
+# architecture so an arm64 host (Apple Silicon) gets the arm64 binary
+# rather than an x86_64 one that dies with "Exec format error" the first
+# time the pre-receive hook runs it. TARGETARCH is auto-populated by
+# BuildKit; the dpkg fallback keeps it correct under a legacy builder.
 ARG GITLEAKS_VERSION=8.30.1
-ARG GITLEAKS_SHA256=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
-RUN url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+ARG GITLEAKS_SHA256_AMD64=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+ARG GITLEAKS_SHA256_ARM64=e4a487ee7ccd7d3a7f7ec08657610aa3606637dab924210b3aee62570fb4b080
+ARG TARGETARCH
+RUN arch="${TARGETARCH:-$(dpkg --print-architecture)}" \
+ && case "$arch" in \
+      amd64) asset="linux_x64";   sha="${GITLEAKS_SHA256_AMD64}" ;; \
+      arm64) asset="linux_arm64"; sha="${GITLEAKS_SHA256_ARM64}" ;; \
+      *) echo "unsupported gitleaks target arch: $arch" >&2; exit 1 ;; \
+    esac \
+ && url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_${asset}.tar.gz" \
  && python3 -c "import sys,urllib.request; urllib.request.urlretrieve(sys.argv[1], '/tmp/gitleaks.tar.gz')" "$url" \
- && echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum -c - \
+ && echo "${sha}  /tmp/gitleaks.tar.gz" | sha256sum -c - \
  && tar -xzf /tmp/gitleaks.tar.gz -C /usr/bin gitleaks \
  && rm /tmp/gitleaks.tar.gz
 
