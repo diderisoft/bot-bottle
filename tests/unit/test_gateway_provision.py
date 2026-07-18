@@ -69,6 +69,18 @@ class TestProvisionGitGate(unittest.TestCase):
         self.assertEqual(1, len(exec_scripts))
         self.assertIn("repo=/git/bottle1/${name}.git", exec_scripts[0][-1])
 
+    def test_makes_access_hook_executable_on_the_gateway(self) -> None:
+        # Regression: the access-hook is exec'd directly, so it needs the x
+        # bit. The copy alone can't be trusted to carry the staged 0o700
+        # (`docker cp` preserves mode, the Apple `container cp` does not),
+        # so provisioning must re-apply +x on the gateway side.
+        calls: list[list[str]] = []
+        with patch(_RUN, side_effect=_recorder(calls)):
+            provision_git_gate(DockerGatewayTransport("gw"), "bottle1", _plan(_up("foo")))
+        self.assertIn(
+            ["docker", "exec", "gw", "chmod", "+x", "/etc/git-gate/access-hook"], calls,
+        )
+
     def test_omits_known_hosts_copy_when_absent(self) -> None:
         calls: list[list[str]] = []
         with patch(_RUN, side_effect=_recorder(calls)):

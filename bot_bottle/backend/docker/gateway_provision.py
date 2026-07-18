@@ -94,6 +94,12 @@ def provision_git_gate(
     transport.exec(["mkdir", "-p", "/etc/git-gate"])
     transport.cp_into(str(plan.hook_script), "/etc/git-gate/pre-receive")
     transport.cp_into(str(plan.access_hook_script), "/etc/git-gate/access-hook")
+    # The access-hook is exec'd directly (not via `sh`), so it needs the x bit.
+    # Set it here rather than trusting the copy to carry the staged 0o700:
+    # `docker cp` preserves source mode, but the Apple `container cp` does not,
+    # landing the hook 0o644 → EACCES when the git-http handler tries to exec it.
+    # chmod on the gateway side is backend-neutral and fixes every transport.
+    transport.exec(["chmod", "+x", "/etc/git-gate/access-hook"])
     creds = _creds_dir(bottle_id)
     transport.exec(["mkdir", "-p", creds])
     for u in plan.upstreams:

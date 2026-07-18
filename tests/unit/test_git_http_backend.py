@@ -364,6 +364,48 @@ class TestGitHttpBackend(unittest.TestCase):
                 self.assertIn("access-hook denied", logged)
                 self.assertIn("exit=2", logged)
 
+    def test_access_hook_that_cannot_run_fails_closed_503(self):
+        """Regression: when the access-hook can't be exec'd (missing / not
+        executable — a PermissionError from subprocess.run), the handler must
+        fail closed with a real HTTP status instead of letting the exception
+        kill the thread, which closes the socket with no response and the
+        client sees an opaque "empty reply from server"."""
+        from http.server import ThreadingHTTPServer
+        import io
+        import sys
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "repo.git").mkdir()
+            old_root = os.environ.get("GIT_PROJECT_ROOT")
+            os.environ["GIT_PROJECT_ROOT"] = str(root)
+            self.addCleanup(self._restore_env, old_root)
+
+            server = ThreadingHTTPServer(("127.0.0.1", 0), GitHttpHandler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            self.addCleanup(server.shutdown)
+            self.addCleanup(server.server_close)
+
+            with mock.patch(
+                "bot_bottle.git_http_backend.subprocess.run",
+                side_effect=PermissionError(13, "Permission denied"),
+            ):
+                buf = io.StringIO()
+                with mock.patch.object(sys, "stdout", buf):
+                    req = urllib.request.Request(
+                        f"http://127.0.0.1:{server.server_port}"
+                        "/repo.git/info/refs?service=git-upload-pack",
+                        method="GET",
+                    )
+                    try:
+                        urllib.request.urlopen(req, timeout=5)
+                        self.fail("expected HTTPError 503")
+                    except urllib.error.HTTPError as e:  # type: ignore
+                        self.assertEqual(503, e.code)
+
+                self.assertIn("access-hook could not run", buf.getvalue())
+
     @staticmethod
     def _restore_env(value: str | None) -> None:
         if value is None:

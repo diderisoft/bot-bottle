@@ -148,12 +148,24 @@ class GitHttpHandler(BaseHTTPRequestHandler):
                 "GIT_GATE_ACCESS_HOOK", "/etc/git-gate/access-hook",
             )
             peer = self.client_address[0]
-            hook = subprocess.run(
-                [hook_path, "upload-pack", str(repo_dir), peer, peer],
-                capture_output=True,
-                check=False,
-                timeout=GIT_GATE_TIMEOUT_SECS,
-            )
+            try:
+                hook = subprocess.run(
+                    [hook_path, "upload-pack", str(repo_dir), peer, peer],
+                    capture_output=True,
+                    check=False,
+                    timeout=GIT_GATE_TIMEOUT_SECS,
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                # The access-hook couldn't be run (missing, not executable,
+                # timed out, …). Fail closed with a real HTTP error rather
+                # than letting the exception kill the handler thread — an
+                # unhandled exception closes the socket with no response, which
+                # the client sees as an opaque "empty reply from server".
+                self.log_message(
+                    "access-hook could not run for %s: %s", parsed.path, exc,
+                )
+                self.send_error(503, "git-gate access-hook unavailable")
+                return
             if hook.returncode != 0:
                 detail = (hook.stderr or hook.stdout).decode(
                     "utf-8", errors="replace",

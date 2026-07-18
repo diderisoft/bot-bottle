@@ -112,8 +112,10 @@ class GitGate(ABC):
         access_hook = stage_dir / "git_gate_access_hook.sh"
         access_hook.write_text(git_gate_render_access_hook())
         # 0o700 (not 0o600): git daemon execs --access-hook directly,
-        # not via `sh`, so the script needs the x bit. docker cp
-        # preserves source mode into the container.
+        # not via `sh`, so the script needs the x bit. The gateway copy
+        # does not necessarily preserve this mode (`docker cp` does, the
+        # Apple `container cp` does not), so provision_git_gate re-applies
+        # +x on the gateway side — see backend/docker/gateway_provision.py.
         access_hook.chmod(0o700)
         upstreams_with_files: list[GitGateUpstream] = []
         for u in upstreams:
