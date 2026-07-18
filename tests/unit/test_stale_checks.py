@@ -7,7 +7,6 @@ calls are mocked at the module boundary."""
 from __future__ import annotations
 
 import unittest
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
@@ -94,17 +93,18 @@ class TestDockerStaleChecks(unittest.TestCase):
         cs.assert_called_once()
         self.assertIn("committed:latest", cs.call_args.args[0])
 
-    def test_no_committed_image_checks_agent_and_sidecar(self) -> None:
+    def test_no_committed_image_checks_agent(self) -> None:
         from bot_bottle.backend.docker import launch as mod
         from datetime import datetime, timezone
         ts = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        plan = self._plan()
         with patch.object(mod, "read_committed_image", return_value=""), \
              patch.object(mod.docker_mod, "image_exists", return_value=True), \
              patch.object(mod.docker_mod, "image_created_at", return_value=ts), \
              patch.object(mod, "check_stale") as cs:
-            mod.stale_checks(self._plan())
-        # Should have been called for both agent and sidecar images.
-        self.assertEqual(2, cs.call_count)
+            mod.stale_checks(plan)
+        cs.assert_called_once()
+        self.assertIn(plan.image, cs.call_args.args[0])
 
     def test_image_not_present_skips_check(self) -> None:
         from bot_bottle.backend.docker import launch as mod
@@ -173,16 +173,18 @@ class TestMacosContainerStaleChecks(unittest.TestCase):
         cs.assert_called_once()
         self.assertIn("committed:latest", cs.call_args.args[0])
 
-    def test_no_committed_image_checks_agent_and_sidecar(self) -> None:
+    def test_no_committed_image_checks_agent(self) -> None:
         from bot_bottle.backend.macos_container import launch as mod
         from datetime import datetime, timezone
         ts = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        plan = self._plan()
         with patch.object(mod, "read_committed_image", return_value=""), \
              patch.object(mod.container_mod, "image_exists", return_value=True), \
              patch.object(mod.container_mod, "image_created_at", return_value=ts), \
              patch.object(mod, "check_stale") as cs:
-            mod.stale_checks(self._plan())
-        self.assertEqual(2, cs.call_count)
+            mod.stale_checks(plan)
+        cs.assert_called_once()
+        self.assertIn(plan.image, cs.call_args.args[0])
 
     def test_image_not_present_skips_check(self) -> None:
         from bot_bottle.backend.macos_container import launch as mod
