@@ -131,6 +131,7 @@ jobs:
   # See #414 for the planned follow-up: artifact-based coverage combination
   # (run tests once in their respective jobs, combine .coverage files here).
   coverage:
+    timeout-minutes: 15
     runs-on: [self-hosted, kvm]
     if: >-
       github.event_name == 'push' ||
@@ -157,8 +158,6 @@ jobs:
       # module to install into anyway. `scripts/coverage.sh` +
       # `diff_coverage.py` need only `coverage` (not pylint/pyright).
       - name: Combined coverage (unit + integration, incl. firecracker)
-        env:
-          BOT_BOTTLE_BACKEND: firecracker
         run: PYTHON=python3 bash scripts/coverage.sh critical
 
       - name: Diff-coverage gate (changed lines >= 90%)

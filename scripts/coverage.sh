@@ -27,7 +27,8 @@ echo "== unit ==" >&2
 "$PY" -m coverage run -m unittest discover -t . -s tests/unit
 
 echo "== integration (skips without Docker) ==" >&2
-"$PY" -m coverage run --append -m unittest discover -t . -s tests/integration
+BOT_BOTTLE_BACKEND=firecracker \
+    "$PY" -m coverage run --append -m unittest discover -t . -s tests/integration
 
 echo "== combined report ==" >&2
 "$PY" -m coverage report -m
