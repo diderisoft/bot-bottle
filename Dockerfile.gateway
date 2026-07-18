@@ -18,10 +18,8 @@
 #   /usr/bin/gitleaks                    gitleaks binary
 #   /app/egress_addon.py                 mitmproxy addon entry point
 #   /app/egress-entrypoint.sh            mitmdump launcher
-#   /app/supervise_server.py             supervise MCP server entry point
-#   /app/gateway_init.py                 PID 1 supervisor entry point
-#   /app/git_http_backend.py             git-http entry point
-#   /usr/local/lib/python*/bot_bottle/   installed package (all shared modules)
+#   /usr/local/lib/python*/bot_bottle/   installed package (all daemons + shared modules)
+#   /app/egress_addon.py                 mitmdump addon (file path required by -s flag)
 #   /etc/egress/routes.yaml              bind-mounted at run time
 #   /etc/git-gate/pre-receive            docker-cp'd at start time
 #   /git-gate-entrypoint.sh              docker-cp'd at start time
@@ -97,14 +95,11 @@ COPY pyproject.toml /src/
 COPY bot_bottle/    /src/bot_bottle/
 RUN pip install --no-cache-dir /src/
 
-# Entry-point scripts invoked by gateway_init.py. These live at /app/
-# so the supervisor, shell entrypoint, and ENTRYPOINT all reach them at
-# known fixed paths. Their sibling imports all go through bot_bottle.*
-# (the installed package above), not flat /app/ neighbours.
+# egress_addon.py is loaded by `mitmdump -s /app/egress_addon.py`; the -s
+# flag requires a file path, so it cannot use `python3 -m`. The shell
+# entrypoint that runs mitmdump is also a fixed-path script. All other
+# daemons are invoked via `python3 -m bot_bottle.X` and need no copy here.
 COPY bot_bottle/egress_addon.py      /app/egress_addon.py
-COPY bot_bottle/supervise_server.py  /app/supervise_server.py
-COPY bot_bottle/gateway_init.py      /app/gateway_init.py
-COPY bot_bottle/git_http_backend.py  /app/git_http_backend.py
 COPY bot_bottle/egress_entrypoint.sh /app/egress-entrypoint.sh
 RUN chmod +x /app/egress-entrypoint.sh
 
@@ -127,4 +122,4 @@ WORKDIR /app
 
 # PID 1 is the supervisor. It owns signal handling and exit-code
 # propagation; no `exec` chain in the entrypoint itself.
-ENTRYPOINT ["python3", "/app/gateway_init.py"]
+ENTRYPOINT ["python3", "-m", "bot_bottle.gateway_init"]

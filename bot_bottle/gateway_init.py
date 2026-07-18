@@ -78,8 +78,8 @@ def _env_for_daemon(name: str, base_env: dict[str, str]) -> dict[str, str]:
 _DAEMONS: tuple[_DaemonSpec, ...] = (
     _DaemonSpec("egress", ("/bin/sh", "/app/egress-entrypoint.sh")),
     _DaemonSpec("git-gate", ("/bin/sh", "/git-gate-entrypoint.sh")),
-    _DaemonSpec("git-http", ("python3", "/app/git_http_backend.py")),
-    _DaemonSpec("supervise", ("python3", "/app/supervise_server.py")),
+    _DaemonSpec("git-http", ("python3", "-m", "bot_bottle.git_http_backend")),
+    _DaemonSpec("supervise", ("python3", "-m", "bot_bottle.supervise_server")),
 )
 
 
