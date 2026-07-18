@@ -22,10 +22,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
+      # No actions/setup-python: canaries are stdlib unittest on the image's
+      # system Python 3.12 (older act_runner mishandles setup-python's PATH).
       - name: Run canaries
         run: python3 -m unittest discover -t . -s tests/canaries -v

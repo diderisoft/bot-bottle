@@ -37,11 +37,8 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
+      # No actions/setup-python: the inline script is stdlib-only on the
+      # image's system Python 3.12 (older act_runner mishandles its PATH).
       - name: Configure git
         run: |
           git config user.name "github-actions[bot]"

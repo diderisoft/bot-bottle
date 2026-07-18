@@ -20,21 +20,18 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.12'
-
+      # No actions/setup-python: the runner image ships Python 3.12 and older
+      # act_runner engines mishandle setup-python's PATH. Install into the
+      # ephemeral job container's system Python (--break-system-packages is
+      # safe because the container is disposable).
       - name: Install dev dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
+        run: python3 -m pip install --break-system-packages -r requirements-dev.txt
 
       - name: Run coverage and extract percentage
         id: coverage
         run: |
-          python -m coverage run -m unittest discover -t . -s tests/unit > /dev/null 2>&1 || true
-          PERCENT=$(python -m coverage report 2>/dev/null | grep '^TOTAL' | grep -oP '\d+(?=%)' | tail -1)
+          python3 -m coverage run -m unittest discover -t . -s tests/unit > /dev/null 2>&1 || true
+          PERCENT=$(python3 -m coverage report 2>/dev/null | grep '^TOTAL' | grep -oP '\d+(?=%)' | tail -1)
           echo "percent=$PERCENT" >> $GITHUB_OUTPUT
           echo "Coverage: $PERCENT%"
 
@@ -45,7 +42,7 @@ jobs:
           # the single source of truth in scripts/critical-modules.txt; every
           # core module is unit-tested, so the unit-only run is accurate for it.
           INCLUDE=$(grep -vE '^[[:space:]]*(#|$)' scripts/critical-modules.txt | paste -sd, -)
-          PERCENT=$(python -m coverage report --include="$INCLUDE" 2>/dev/null | grep '^TOTAL' | grep -oP '\d+(?=%)' | tail -1)
+          PERCENT=$(python3 -m coverage report --include="$INCLUDE" 2>/dev/null | grep '^TOTAL' | grep -oP '\d+(?=%)' | tail -1)
           echo "percent=$PERCENT" >> $GITHUB_OUTPUT
           echo "Core coverage: $PERCENT%"
 
