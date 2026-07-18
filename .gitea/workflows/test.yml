@@ -103,6 +103,9 @@ jobs:
           # range overlap; it prints the exact `backend setup` fix.
           python3 cli.py backend status --backend=firecracker
 
+      - name: Install dev requirements
+        run: python3 -m pip install --user -r requirements-dev.txt
+
       - name: Combined coverage (unit + integration, incl. firecracker)
         run: PYTHON=python3 bash scripts/coverage.sh critical
 
