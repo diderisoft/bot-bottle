@@ -105,9 +105,10 @@ jobs:
           # range overlap; it prints the exact `backend setup` fix.
           python3 cli.py backend status --backend=firecracker
 
-      - name: Install dev requirements
-        run: python3 -m pip install --user -r requirements-dev.txt
-
+      # No dev-requirements install: the integration suite runs on stdlib
+      # `unittest` (pylint/pyright are lint.yml's concern, not this job's),
+      # and the self-hosted runner's Nix python env has no `pip` module
+      # (`python3 -m pip` → "No module named pip"). Nothing to install.
       - name: Run integration tests (firecracker)
         env:
           BOT_BOTTLE_BACKEND: firecracker
@@ -151,9 +152,10 @@ jobs:
           # range overlap; it prints the exact `backend setup` fix.
           python3 cli.py backend status --backend=firecracker
 
-      - name: Install dev requirements
-        run: python3 -m pip install --user -r requirements-dev.txt
-
+      # No dev-requirements install: `coverage` is already provided by the
+      # self-hosted runner's Nix python env, and that env has no `pip`
+      # module to install into anyway. `scripts/coverage.sh` +
+      # `diff_coverage.py` need only `coverage` (not pylint/pyright).
       - name: Combined coverage (unit + integration, incl. firecracker)
         env:
           BOT_BOTTLE_BACKEND: firecracker
