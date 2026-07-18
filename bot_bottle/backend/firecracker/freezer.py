@@ -5,7 +5,7 @@ backend — we stream the guest root filesystem out over the control
 channel (SSH here). Unlike the other backends this needs no Docker: the
 tar *is* the resumable artifact. `resume` extracts it and rebuilds a
 fresh per-bottle ext4 with `mke2fs -d` (see `util.build_committed_rootfs_dir`
-and `launch._build_agent_base`). The bottle keeps running after the
+and `launch.build_or_load_agent_base`). The bottle keeps running after the
 snapshot.
 """
 

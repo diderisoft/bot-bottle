@@ -7,6 +7,7 @@ calls are mocked at the module boundary."""
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
@@ -202,6 +203,62 @@ class TestMacosContainerStaleChecks(unittest.TestCase):
         with patch.object(mod, "stale_checks") as sc:
             backend.prelaunch_checks(plan)  # type: ignore[arg-type]
         sc.assert_called_once_with(plan)
+
+
+# ---------------------------------------------------------------------------
+# Firecracker cached rootfs selection and stale checks
+# ---------------------------------------------------------------------------
+
+class TestFirecrackerCachedRootfs(unittest.TestCase):
+    def _plan(self, policy: str = "cached") -> Any:
+        return cast(Any, SimpleNamespace(
+            spec=SimpleNamespace(image_policy=policy),
+            slug="dev-abc",
+            image="bot-bottle-agent:latest",
+            dockerfile_path="/repo/Dockerfile",
+            agent_provider_template="claude",
+        ))
+
+    def test_cached_policy_reuses_ready_rootfs_without_building(self) -> None:
+        from bot_bottle.backend.firecracker import launch as mod
+        cached = Path("/cache/rootfs/agent-deadbeef")
+        with patch.object(mod, "read_committed_image", return_value=""), \
+             patch.object(
+                 mod.image_builder, "cached_agent_rootfs_dir", return_value=cached,
+             ), \
+             patch.object(mod.image_builder, "build_agent_rootfs_dir") as build:
+            self.assertEqual(cached, mod.build_or_load_agent_base(self._plan()))
+        build.assert_not_called()
+
+    def test_cached_policy_fails_when_rootfs_is_missing(self) -> None:
+        from bot_bottle.backend.firecracker import launch as mod
+        with patch.object(mod, "read_committed_image", return_value=""), \
+             patch.object(
+                 mod.image_builder, "cached_agent_rootfs_dir", return_value=None,
+             ), \
+             patch.object(mod.image_builder, "build_agent_rootfs_dir") as build, \
+             self.assertRaises(SystemExit):
+            mod.build_or_load_agent_base(self._plan())
+        build.assert_not_called()
+
+    def test_stale_checks_use_ready_marker_timestamp(self) -> None:
+        from bot_bottle.backend.firecracker import launch as mod
+        cached = Path("/cache/rootfs/agent-deadbeef")
+        with patch.object(mod, "read_committed_image", return_value=""), \
+             patch.object(
+                 mod.image_builder, "cached_agent_rootfs_dir", return_value=cached,
+             ), \
+             patch.object(mod, "check_stale_path") as check:
+            mod.stale_checks(self._plan())
+        check.assert_called_once_with(f"agent rootfs {cached}", cached / ".bb-ready")
+
+    def test_backend_prelaunch_checks_delegates(self) -> None:
+        from bot_bottle.backend.firecracker.backend import FirecrackerBottleBackend
+        from bot_bottle.backend.firecracker import launch as mod
+        plan = self._plan()
+        with patch.object(mod, "stale_checks") as checks:
+            FirecrackerBottleBackend().prelaunch_checks(plan)
+        checks.assert_called_once_with(plan)
 
 
 if __name__ == "__main__":

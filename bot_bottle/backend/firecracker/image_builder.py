@@ -58,6 +58,12 @@ def _rootfs_digest(dockerfile: Path) -> str:
     return h.hexdigest()[:16]
 
 
+def cached_agent_rootfs_dir(dockerfile: Path) -> Path | None:
+    """Return the ready cached rootfs for ``dockerfile``, if one exists."""
+    base = util.cache_dir() / "rootfs" / f"agent-{_rootfs_digest(dockerfile)}"
+    return base if (base / ".bb-ready").is_file() else None
+
+
 def build_agent_rootfs_dir(
     dockerfile: Path, *, image_tag: str, smoke_test: tuple[str, ...] = (),
 ) -> Path:
@@ -72,7 +78,7 @@ def build_agent_rootfs_dir(
     silent-failure image at build time rather than at first agent use."""
     digest = _rootfs_digest(dockerfile)
     base = util.cache_dir() / "rootfs" / f"agent-{digest}"
-    if (base / ".bb-ready").is_file():
+    if cached_agent_rootfs_dir(dockerfile) is not None:
         info(f"using cached agent rootfs {base.name}")
         return base
 

@@ -93,16 +93,17 @@ class FirecrackerBottleBackend(
         )
 
     def _build_or_load_images(self, plan: FirecrackerBottlePlan) -> BottleImages:
-        # Firecracker builds its rootfs image inside _launch_impl (via buildah in
-        # a builder VM), so there is nothing to pre-resolve here.
-        return BottleImages(agent=plan.image)
+        return BottleImages(agent=_launch.build_or_load_agent_base(plan))
+
+    def prelaunch_checks(self, plan: FirecrackerBottlePlan) -> None:
+        _launch.stale_checks(plan)
 
     @contextmanager
     def _launch_impl(
         self, plan: FirecrackerBottlePlan, images: BottleImages,
     ) -> Generator[FirecrackerBottle, None, None]:
-        del images  # rootfs built inside _launch.launch; images unused here
-        with _launch.launch(plan, provision=self.provision) as bottle:
+        assert isinstance(images.agent, Path)
+        with _launch.launch(plan, images.agent, provision=self.provision) as bottle:
             yield bottle
 
     def prepare_cleanup(self) -> FirecrackerBottleCleanupPlan:

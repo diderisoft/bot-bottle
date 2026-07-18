@@ -45,7 +45,8 @@ from ...git_gate import (
     provision_git_gate_dynamic_keys,
     revoke_git_gate_provisioned_keys,
 )
-from ...log import info, warn
+from ...image_cache import check_stale_path
+from ...log import die, info, warn
 from ...supervise import SUPERVISE_PORT
 from ..docker.egress import EGRESS_PORT
 from ..util import AGENT_CA_BUNDLE, AGENT_CA_PATH
@@ -65,6 +66,7 @@ _GIT_HTTP_PORT = 9420
 @contextmanager
 def launch(
     plan: FirecrackerBottlePlan,
+    agent_base: Path,
     *,
     provision: Callable[[FirecrackerBottlePlan, "FirecrackerBottle"], str | None],
 ) -> Generator[FirecrackerBottle, None, None]:
@@ -86,11 +88,9 @@ def launch(
             raise teardown_exc
 
     try:
-        # Step 1: agent rootfs. Built from the Dockerfile inside a Firecracker
-        # builder VM (buildah, no host docker); a committed snapshot is reused
-        # when present. Returns the base dir the per-bottle ext4 is made from.
-        plan, agent_base = _build_agent_base(plan)
-
+        # Step 1 (rootfs resolution/build) runs in BottleBackend.launch before
+        # this context starts resources. ``agent_base`` is the selected cache,
+        # fresh build, or committed snapshot.
         # Step 2: mint the git-gate dynamic (gitea) deploy keys, if any.
         git_gate_plan = plan.git_gate_plan
         if git_gate_plan.upstreams:
@@ -209,9 +209,7 @@ def launch(
         teardown()
 
 
-def _build_agent_base(
-    plan: FirecrackerBottlePlan,
-) -> tuple[FirecrackerBottlePlan, Path]:
+def build_or_load_agent_base(plan: FirecrackerBottlePlan) -> Path:
     """Produce the agent's base rootfs dir. Primary path: build the Dockerfile
     inside a Firecracker builder VM (buildah, no host docker), smoke-testing
     the image before export. A committed snapshot (freeze/migrate) is resumed
@@ -220,13 +218,36 @@ def _build_agent_base(
     committed_tar = committed_rootfs_path(plan.slug)
     if committed and committed_tar.is_file():
         info(f"resuming from committed rootfs {committed_tar}")
-        return plan, util.build_committed_rootfs_dir(committed_tar)
-    base = image_builder.build_agent_rootfs_dir(
-        Path(plan.dockerfile_path),
+        return util.build_committed_rootfs_dir(committed_tar)
+    dockerfile = Path(plan.dockerfile_path)
+    if plan.spec.image_policy == "cached":
+        cached = image_builder.cached_agent_rootfs_dir(dockerfile)
+        if cached is None:
+            die(
+                f"cached agent rootfs for {plan.image!r} not found; "
+                "run without --cached-images to build it"
+            )
+        info(f"using cached agent rootfs {cached.name}")
+        return cached
+    return image_builder.build_agent_rootfs_dir(
+        dockerfile,
         image_tag=plan.image,
         smoke_test=runtime_for(plan.agent_provider_template).smoke_test,
     )
-    return plan, base
+
+
+def stale_checks(plan: FirecrackerBottlePlan) -> None:
+    """Raise when the cached rootfs selected by this plan is stale."""
+    if plan.spec.image_policy != "cached":
+        return
+    committed = read_committed_image(plan.slug)
+    committed_tar = committed_rootfs_path(plan.slug)
+    if committed and committed_tar.is_file():
+        check_stale_path(f"agent rootfs {committed_tar}", committed_tar)
+        return
+    cached = image_builder.cached_agent_rootfs_dir(Path(plan.dockerfile_path))
+    if cached is not None:
+        check_stale_path(f"agent rootfs {cached}", cached / ".bb-ready")
 
 
 # --- agent guest env -------------------------------------------------

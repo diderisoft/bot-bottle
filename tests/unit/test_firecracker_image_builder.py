@@ -35,6 +35,15 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
         build.assert_not_called()
         self.assertEqual(base, out)
 
+    def test_cached_lookup_requires_ready_marker(self):
+        digest = image_builder._dockerfile_hash(self.dockerfile)
+        base = self.cache / "rootfs" / f"agent-{digest}"
+        base.mkdir(parents=True)
+        with patch.object(image_builder.util, "cache_dir", return_value=self.cache):
+            self.assertIsNone(image_builder.cached_agent_rootfs_dir(self.dockerfile))
+            (base / ".bb-ready").write_text("ok\n")
+            self.assertEqual(base, image_builder.cached_agent_rootfs_dir(self.dockerfile))
+
     def test_cache_miss_builds_injects_and_marks_ready(self):
         with patch.object(image_builder.util, "cache_dir", return_value=self.cache), \
              patch.object(image_builder, "_build_in_infra") as build, \
