@@ -4,16 +4,15 @@
 # dependencies are required to execute it. Tests are split by directory:
 #
 #   tests/unit/         — pure unit tests; always run
-#   tests/integration/  — need a reachable Docker daemon; skip cleanly
-#                         (via tests/_docker.py:skip_unless_docker) when
-#                         Docker isn't available on the runner
+#   tests/integration/  — need a reachable backend; skip cleanly when
+#                         the backend isn't available on the runner
 #   tests/canaries/     — upstream regression canaries; run on a separate
 #                         schedule (see canaries.yml), not here
 #
-# This workflow assumes the Gitea Actions runner exposes the host Docker
-# socket to the job container so `docker` commands inside the job can
-# reach the daemon. If that's not yet configured on the runner the
-# integration tests will skip rather than fail.
+# Integration tests run once per backend in separate jobs. Each job sets
+# BOT_BOTTLE_BACKEND explicitly so the test suite uses the right backend.
+# Backends that aren't available on the runner fail the preflight step
+# rather than silently skipping inside the test output.
 
 name: test
 
@@ -55,7 +54,7 @@ jobs:
       - name: Report unit coverage
         run: python3 -m coverage report -m
 
-  integration:
+  integration-docker:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -72,7 +71,46 @@ jobs:
             echo "docker not on PATH — integration tests will skip"
           fi
 
-      - name: Run integration tests
+      - name: Run integration tests (docker)
+        env:
+          BOT_BOTTLE_BACKEND: docker
+        run: python3 -m unittest discover -t . -s tests/integration -v
+
+  # Integration tests against the Firecracker backend. Runs on a self-hosted
+  # KVM runner (label `kvm`) where /dev/kvm and the TAP/nft pool are available.
+  #
+  # Restricted to same-repo PRs, push to main, and workflow_dispatch — fork
+  # PRs don't execute untrusted code on the privileged runner.
+  #
+  # Runner prerequisites (provision once; see README "Firecracker on Linux"):
+  # `firecracker` on PATH, `/dev/kvm` accessible, Docker, cached kernel +
+  # static dropbear, and the pool as a persistent systemd unit.
+  integration-firecracker:
+    runs-on: [self-hosted, kvm]
+    if: >-
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Preflight — Firecracker host is ready
+        run: |
+          command -v firecracker >/dev/null || {
+            echo "firecracker not on PATH — provision the runner (README: Firecracker on Linux)"; exit 1; }
+          test -e /dev/kvm || { echo "/dev/kvm missing — KVM not available on this runner"; exit 1; }
+          # `backend status` exits non-zero unless the TAP pool is up + no
+          # range overlap; it prints the exact `backend setup` fix.
+          python3 cli.py backend status --backend=firecracker
+
+      - name: Install dev requirements
+        run: python3 -m pip install --user -r requirements-dev.txt
+
+      - name: Run integration tests (firecracker)
+        env:
+          BOT_BOTTLE_BACKEND: firecracker
         run: python3 -m unittest discover -t . -s tests/integration -v
 
   # Combined unit+integration coverage + the diff-coverage gate (the hard
@@ -86,22 +124,18 @@ jobs:
   # integration test skips and its ~230 orchestration lines read as
   # uncovered, so the gate can't pass there.
   #
-  # Runner prerequisites (provision once on the host; see the README
-  # "Firecracker on Linux" section): the `firecracker` binary on PATH,
-  # `/dev/kvm` accessible to the runner user, Docker, the cached guest
-  # kernel + static dropbear (BOT_BOTTLE_FC_KERNEL / BOT_BOTTLE_FC_DROPBEAR),
-  # and the network pool installed as the persistent systemd unit
-  # (`./cli.py backend setup --backend=firecracker`). The preflight step
-  # below fails fast with instructions if anything is missing.
+  # Restricted to the same events as integration-firecracker (same-repo PRs,
+  # push, workflow_dispatch) for the same security reason.
   #
-  # Security: this job executes PR-controlled code on a privileged runner
-  # (Docker, /dev/kvm, TAP/nft). It is restricted to push events (main
-  # branch) and manual workflow_dispatch by maintainers — it does NOT run
-  # on pull_request. Trusted PRs are validated by triggering workflow_dispatch
-  # on the PR branch before merging.
+  # See #414 for the planned follow-up: artifact-based coverage combination
+  # (run tests once in their respective jobs, combine .coverage files here).
   coverage:
     runs-on: [self-hosted, kvm]
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: >-
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     steps:
       - name: Checkout
         uses: actions/checkout@v4
