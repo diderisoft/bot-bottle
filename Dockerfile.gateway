@@ -19,7 +19,8 @@
 #   /app/egress_addon.py                 mitmproxy addon entry point
 #   /app/egress-entrypoint.sh            mitmdump launcher
 #   /usr/local/lib/python*/bot_bottle/   installed package (all daemons + shared modules)
-#   /app/egress_addon.py                 mitmdump addon (file path required by -s flag)
+#   /app/egress_addon.py                 one-line shim: re-exports addons from package
+#                                        (mitmdump -s requires a file path, not a module)
 #   /etc/egress/routes.yaml              bind-mounted at run time
 #   /etc/git-gate/pre-receive            docker-cp'd at start time
 #   /git-gate-entrypoint.sh              docker-cp'd at start time
@@ -95,11 +96,9 @@ COPY pyproject.toml /src/
 COPY bot_bottle/    /src/bot_bottle/
 RUN pip install --no-cache-dir /src/
 
-# egress_addon.py is loaded by `mitmdump -s /app/egress_addon.py`; the -s
-# flag requires a file path, so it cannot use `python3 -m`. The shell
-# entrypoint that runs mitmdump is also a fixed-path script. All other
-# daemons are invoked via `python3 -m bot_bottle.X` and need no copy here.
-COPY bot_bottle/egress_addon.py      /app/egress_addon.py
+# mitmdump -s requires a file path, not a module. Write a one-line shim that
+# re-exports `addons` from the installed package; mitmdump finds it there.
+RUN printf 'from bot_bottle.egress_addon import addons\n' > /app/egress_addon.py
 COPY bot_bottle/egress_entrypoint.sh /app/egress-entrypoint.sh
 RUN chmod +x /app/egress-entrypoint.sh
 
