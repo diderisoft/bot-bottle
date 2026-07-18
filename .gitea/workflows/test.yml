@@ -34,13 +34,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
+      # No actions/setup-python: the runner image already ships Python 3.12,
+      # and older act_runner engines mishandle setup-python's PATH (coverage
+      # lands in one interpreter, `python3` resolves to another). Install
+      # straight into the ephemeral job container's system Python —
+      # --break-system-packages is safe because the container is disposable.
       - name: Install dev requirements
-        run: python3 -m pip install -r requirements-dev.txt
+        run: python3 -m pip install --break-system-packages -r requirements-dev.txt
 
       - name: Run unit tests
         run: python3 -m coverage run -m unittest discover -t . -s tests/unit -v
@@ -54,11 +54,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
+      # No actions/setup-python (see the note in the `unit` job); the
+      # container's system Python 3.12 runs the stdlib test suite directly.
       - name: Show environment
         run: |
           python3 --version
@@ -88,13 +85,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
+      # No actions/setup-python: the runner image already ships Python 3.12,
+      # and older act_runner engines mishandle setup-python's PATH (coverage
+      # lands in one interpreter, `python3` resolves to another). Install
+      # straight into the ephemeral job container's system Python —
+      # --break-system-packages is safe because the container is disposable.
       - name: Install dev requirements
-        run: python3 -m pip install -r requirements-dev.txt
+        run: python3 -m pip install --break-system-packages -r requirements-dev.txt
 
       - name: Combined coverage report (unit + integration)
         run: PYTHON=python3 bash scripts/coverage.sh critical
