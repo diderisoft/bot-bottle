@@ -168,16 +168,18 @@ class TestHookRender(unittest.TestCase):
         # Stdin is buffered to a tempfile so both phases can re-read.
         self.assertIn("refs_file=$(mktemp)", hook)
 
-    def test_new_ref_scan_scoped_to_incoming_commits(self):
-        # A new branch (old=all-zeros) must scan only commits new to the
-        # gate, not the full ancestry — otherwise historical findings
-        # block every new-branch push (PRD 0028 / issue #106).
+    def test_scan_scoped_to_incoming_commits(self):
+        # Every non-delete push scans only commits new to the gate, not
+        # the full ancestry and not the `$old..$new` delta — otherwise
+        # historical fixtures block new-branch pushes (PRD 0028 / #106)
+        # and a rebase/force-push onto an advanced main drags in main's
+        # history incl. the sandbox-escape fixtures (#346).
         hook = git_gate_render_hook()
         self.assertIn('log_opts="$new --not --all"', hook)
-        # The old over-broad full-ancestry range must be gone.
+        # Neither the full-ancestry range nor the ancestry-blind delta
+        # range may survive.
         self.assertNotIn('log_opts="$new"', hook)
-        # Existing-branch delta scan is unchanged.
-        self.assertIn('log_opts="$old..$new"', hook)
+        self.assertNotIn('log_opts="$old..$new"', hook)
 
     def test_forward_ssh_is_non_interactive_and_bounded(self):
         # No prompt (BatchMode) and a connect timeout, so an unreachable

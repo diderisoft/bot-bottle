@@ -419,18 +419,24 @@ PY
 while IFS=' ' read -r old new ref; do
   [ -z "$ref" ] && continue
   [ "$new" = "$zero" ] && continue
-  if [ "$old" = "$zero" ]; then
-    # New ref: scan only the commits this push introduces — those
-    # reachable from $new but not from any ref the gate already has.
-    # Everything already on the gate arrived via upstream mirror-fetch
-    # or a previously gitleaks-scanned push, so it's already-upstream
-    # or already-scanned; re-scanning it (the old `$new` full-ancestry
-    # range) only resurfaces historical findings and blocks every new
-    # branch. See PRD 0028 / issue #106.
-    log_opts="$new --not --all"
-  else
-    log_opts="$old..$new"
-  fi
+  # Scan only the commits this push introduces — those reachable from
+  # $new but not from any ref the gate already has. Everything already
+  # on the gate arrived via upstream mirror-fetch or a previously
+  # gitleaks-scanned push, so it's already-upstream or already-scanned;
+  # re-scanning it only resurfaces historical fixture findings.
+  #
+  # Applies to both new refs and updates. The old existing-branch range
+  # `$old..$new` walks commits reachable from the new tip but not the
+  # *old branch tip*: on a rebase/force-push onto a freshly-advanced
+  # main that pulls in all of main's new history (incl. the deliberate
+  # sandbox-escape gitleaks fixtures), blocking the push. `--not --all`
+  # excludes anything already on the gate regardless of ancestry, so it
+  # is also correct for non-fast-forward pushes (a rebase can skip
+  # commits off the direct path). Security-equivalent per PRD 0028's
+  # analysis: the bare repo's refs come only from trusted upstream
+  # mirror-fetch or gitleaks-gated pushes.
+  # See PRD 0028 (open question) / issues #106, #346.
+  log_opts="$new --not --all"
   echo "git-gate: gitleaks scanning $ref ($log_opts)" >&2
   if ! gitleaks git --log-opts="$log_opts" --no-banner --redact 1>&2; then
     echo "git-gate: gitleaks rejected push to $ref" >&2
