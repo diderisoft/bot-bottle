@@ -69,11 +69,12 @@ _DUMMY_HOST_KEY = (
 
 @skip_unless_docker()
 @unittest.skipIf(
-    os.environ.get("GITEA_ACTIONS") == "true",
-    "skipped under act_runner: egress_tls_init uses a host bind mount "
-    "the runner container can't see, and the network topology hides "
-    "sibling-gateway visibility — same constraint as the other "
-    "bottle-bringup integration tests",
+    os.environ.get("GITEA_ACTIONS") == "true"
+    and os.environ.get("BOT_BOTTLE_BACKEND") != "firecracker",
+    "skipped under act_runner unless BOT_BOTTLE_BACKEND=firecracker: "
+    "egress_tls_init uses a host bind mount the runner container can't "
+    "see, and the network topology hides sibling-gateway visibility — "
+    "these constraints don't apply on the self-hosted KVM runner",
 )
 class TestSandboxEscape(unittest.TestCase):
     """End-to-end attacks against a real bottle. The bottle stays
