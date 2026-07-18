@@ -5,8 +5,8 @@
 # bot-bottle
 
 [![test](https://gitea.dideric.is/didericis/bot-bottle/actions/workflows/test.yml/badge.svg?branch=main)](https://gitea.dideric.is/didericis/bot-bottle/actions?workflow=test.yml)
-[![coverage](https://img.shields.io/badge/coverage-82%25-brightgreen)](https://coverage.readthedocs.io/)
-[![core coverage](https://img.shields.io/badge/core%20coverage-95%25-brightgreen)](https://gitea.dideric.is/didericis/bot-bottle/src/branch/main/docs/decisions/0004-coverage-policy.md)
+[![coverage](https://img.shields.io/badge/coverage-81%25-brightgreen)](https://coverage.readthedocs.io/)
+[![core coverage](https://img.shields.io/badge/core%20coverage-94%25-brightgreen)](https://gitea.dideric.is/didericis/bot-bottle/src/branch/main/docs/decisions/0004-coverage-policy.md)
 
 **Problem:** Developer wants to run a coding agent without supervision, but they don't want a prompt injected or misbehaving agent wrecking their environment or exfiltrating sensitive data.
 
