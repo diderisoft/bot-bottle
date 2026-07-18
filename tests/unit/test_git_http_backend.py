@@ -387,12 +387,13 @@ class TestGitHttpBackend(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / "repo.git").mkdir()
+            (root / _BID / "repo.git").mkdir(parents=True)
             old_root = os.environ.get("GIT_PROJECT_ROOT")
             os.environ["GIT_PROJECT_ROOT"] = str(root)
             self.addCleanup(self._restore_env, old_root)
 
             server = ThreadingHTTPServer(("127.0.0.1", 0), GitHttpHandler)
+            server.policy_resolver = _FixedResolver(_BID)  # type: ignore[attr-defined]
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             self.addCleanup(server.shutdown)
