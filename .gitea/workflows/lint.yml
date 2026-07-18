@@ -24,8 +24,19 @@ jobs:
 
       - name: Run pylint
         run: |
-          # Run pylint on all Python files in the repo
-          find . -name '*.py' -not -path './.venv/*' -not -path './.git/*' | xargs pylint --fail-under=8.0
+          # Pylint's normal exit code is nonzero for any emitted finding,
+          # regardless of --fail-under. Preserve the full report but enforce
+          # the aggregate score this workflow promises.
+          set +e
+          find . -name '*.py' -not -path './.venv/*' -not -path './.git/*' \
+            | xargs pylint --fail-under=8.0 \
+            | tee /tmp/pylint-output.txt
+          set -e
+          SCORE=$(sed -n \
+            's/^Your code has been rated at \([-0-9.]*\)\/10.*/\1/p' \
+            /tmp/pylint-output.txt | tail -1)
+          test -n "$SCORE"
+          awk -v score="$SCORE" 'BEGIN { exit !(score >= 8.0) }'
 
       - name: Run pyright
         run: |
