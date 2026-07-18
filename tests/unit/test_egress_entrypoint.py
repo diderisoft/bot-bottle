@@ -42,6 +42,11 @@ def _run_entrypoint(env: dict[str, str]) -> str:
         shim.chmod(0o755)
         run_env = {
             "PATH": f"{shim_dir}:{os.environ['PATH']}",
+            # Resolver-only egress (PRD 0070): the entrypoint fails closed
+            # without an orchestrator URL, so it's a precondition for reaching
+            # the argv construction these tests assert on. Individual tests may
+            # override it (e.g. to exercise the fail-closed guard).
+            "BOT_BOTTLE_ORCHESTRATOR_URL": "http://orchestrator:9000",
             # cat needs to find ca-certificates.crt for the
             # trust-bundle branch; we don't test that path here.
             **env,
@@ -92,6 +97,18 @@ class TestEgressEntrypointArgv(unittest.TestCase):
     def test_addon_always_loaded(self):
         argv = _run_entrypoint({})
         self.assertIn("-s\n/app/egress_addon.py", argv)
+
+    def test_missing_orchestrator_url_fails_closed(self):
+        # Resolver-only egress (PRD 0070): with no policy source the entrypoint
+        # must refuse to launch mitmdump rather than come up as a bare
+        # TLS-bumping open proxy. Exits nonzero before any argv is emitted.
+        result = subprocess.run(
+            ["sh", str(_SCRIPT)],
+            capture_output=True, text=True, check=False,
+            env={"PATH": os.environ["PATH"], "BOT_BOTTLE_ORCHESTRATOR_URL": ""},
+        )
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("BOT_BOTTLE_ORCHESTRATOR_URL is required", result.stderr)
 
 
 if __name__ == "__main__":
