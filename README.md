@@ -171,6 +171,15 @@ When an outbound DLP detector matches a token, the route's `dlp.outbound_on_matc
 
 More examples in `examples/`. Full design lives under `docs/prds/`; the trust-boundary rationale is in `docs/prds/0011-per-file-md-manifest.md`.
 
+## Tracker policy
+
+Issues are the canonical work items and own all tracker labels; every issue
+must have at least one. Pull requests stay unlabeled and deliberately reference
+an issue with `Closes #…`, `Part of #…`, or another form defined in
+[`ADR 0005`](docs/decisions/0005-issues-own-tracker-metadata.md). Gitea Actions
+enforces the convention for new work from 2026-07-18 onward. Earlier closed
+PRs are grandfathered rather than given artificial retrospective issues.
+
 ## Trademarks
 
 bot-bottle is an independent project and is not affiliated with, endorsed by, or sponsored by Anthropic, PBC. "Claude" and "Claude Code" are trademarks of Anthropic, PBC; the project name uses "claude" descriptively to indicate that the tool runs Claude Code inside a sandbox.

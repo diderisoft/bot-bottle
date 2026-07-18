@@ -1,0 +1,33 @@
+name: tracker-policy
+
+on:
+  issues:
+    types: [opened, unlabeled]
+  pull_request:
+    types: [opened, edited, reopened, synchronized, labeled, unlabeled]
+
+jobs:
+  label-issue:
+    if: ${{ github.event_name == 'issues' }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure the issue has a label
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/tracker_policy.py label-issue
+
+  check-pr:
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require an unlabeled PR linked to an issue
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/tracker_policy.py check-pr
