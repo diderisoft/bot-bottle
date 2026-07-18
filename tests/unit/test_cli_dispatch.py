@@ -95,5 +95,60 @@ class TestMainDispatch(unittest.TestCase):
             self.assertEqual(130, main(["x"]))
 
 
+class TestMigrationGate(unittest.TestCase):
+    """The dispatcher's schema-migration gate (cli/__init__.py)."""
+
+    def setUp(self) -> None:
+        # Force the "schema out of date" branch for every test here.
+        patcher = patch.object(StoreManager, "is_migrated", return_value=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(StoreManager.reset)
+
+    def test_store_command_blocks_when_stdin_cannot_confirm(self) -> None:
+        # Non-TTY stdin at EOF (as in CI): the [y/N] prompt reads "" and the
+        # command is refused rather than migrating silently.
+        ran: list[bool] = []
+
+        def handler(_rest: list[str]) -> int:
+            ran.append(True)
+            return 0
+
+        with patch.dict(climod.COMMANDS, {"list": handler}), \
+                patch("sys.stdin", io.StringIO("")), \
+                patch("sys.stderr", io.StringIO()):
+            self.assertEqual(1, main(["list"]))
+        self.assertEqual([], ran, "gated command must not dispatch")
+
+    def test_backend_command_skips_gate(self) -> None:
+        # `backend` provisions/probes the host and never opens the store, so
+        # it must run even on an unmigrated DB with unanswerable stdin.
+        ran: list[bool] = []
+
+        def handler(_rest: list[str]) -> int:
+            ran.append(True)
+            return 0
+
+        with patch.dict(climod.COMMANDS, {"backend": handler}), \
+                patch("sys.stdin", io.StringIO("")), \
+                patch("sys.stderr", io.StringIO()):
+            self.assertEqual(0, main(["backend", "status"]))
+        self.assertEqual([True], ran, "exempt command must dispatch")
+
+    def test_store_command_migrates_on_confirmation(self) -> None:
+        migrated: list[bool] = []
+
+        def handler(_rest: list[str]) -> int:
+            return 0
+
+        with patch.dict(climod.COMMANDS, {"list": handler}), \
+                patch.object(StoreManager, "migrate",
+                             side_effect=lambda: migrated.append(True)), \
+                patch("sys.stdin", io.StringIO("y\n")), \
+                patch("sys.stderr", io.StringIO()):
+            self.assertEqual(0, main(["list"]))
+        self.assertEqual([True], migrated, "confirmed gate must migrate")
+
+
 if __name__ == "__main__":
     unittest.main()

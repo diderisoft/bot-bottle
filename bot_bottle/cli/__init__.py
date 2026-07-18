@@ -38,6 +38,13 @@ COMMANDS = {
     "supervise": cmd_supervise,
 }
 
+# Commands that manage host prerequisites (or are otherwise store-free) and
+# must run before — or without — a migrated DB. `backend` provisions/probes
+# the host (TAP pool, /dev/kvm, firecracker) and never opens the store, so
+# gating it on the schema breaks preflight on a fresh CI runner where stdin
+# isn't a TTY and the migration prompt can't be answered.
+NO_MIGRATION_COMMANDS = frozenset({"backend"})
+
 
 def usage() -> None:
     sys.stderr.write(f"usage: {PROG} <command> [args...]\n\n")
@@ -80,7 +87,7 @@ def main(argv: list[str] | None = None) -> int:
         usage()
         die(f"unknown command: {command}")
     mgr = StoreManager.instance()
-    if not mgr.is_migrated():
+    if command not in NO_MIGRATION_COMMANDS and not mgr.is_migrated():
         sys.stderr.write("bot-bottle: database schema is out of date\n")
         sys.stderr.write("Migrate now? [y/N] ")
         sys.stderr.flush()
