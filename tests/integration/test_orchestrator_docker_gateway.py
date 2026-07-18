@@ -20,7 +20,11 @@ IMAGE = "busybox"
 class TestDockerGatewayIntegration(unittest.TestCase):
     def setUp(self) -> None:
         self.name = "bot-bottle-orch-gateway-itest-" + secrets.token_hex(4)
-        self.sc = DockerGateway(IMAGE, name=self.name)
+        # Resolver-only data plane (PRD 0070) requires an orchestrator URL to
+        # run; busybox never dials it, so a placeholder is enough here.
+        self.sc = DockerGateway(
+            IMAGE, name=self.name, orchestrator_url="http://orchestrator:9000",
+        )
         self.addCleanup(self.sc.stop)
 
     def _count(self) -> int:

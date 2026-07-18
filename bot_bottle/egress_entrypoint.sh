@@ -15,10 +15,22 @@
 #     mitmproxy at it. The option REPLACES mitmproxy's default
 #     trust store, so passing the upstream CA alone would break
 #     non-chained hosts.
-#   * `-s /app/egress_addon.py` loads the addon that reads
-#     /etc/egress/routes.yaml.
+#   * `-s /app/egress_addon.py` loads the addon that resolves each
+#     request's policy from the orchestrator control plane by source
+#     IP (PRD 0070). There is no static routes file.
 
 set -e
+
+# Fail closed on a missing policy source. The addon itself raises at
+# load when BOT_BOTTLE_ORCHESTRATOR_URL is unset (so mitmdump exits via
+# its errorcheck addon), but that leaves the fail-closed guarantee at the
+# mercy of a mitmproxy version keeping that behavior. Refuse here too, so
+# a misconfigured gateway can never come up as a bare TLS-bumping open
+# proxy with no policy — independent of mitmproxy's startup-error handling.
+if [ -z "$BOT_BOTTLE_ORCHESTRATOR_URL" ]; then
+  echo "egress: BOT_BOTTLE_ORCHESTRATOR_URL is required (no static routes fallback)" >&2
+  exit 1
+fi
 
 # Pin mitmproxy's config dir to the bind-mount location of its CA
 # regardless of which user mitmdump runs as. In the legacy

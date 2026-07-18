@@ -126,7 +126,10 @@ class DockerGateway(Gateway):
         self.network = network
         # The control-plane URL the gateway's data plane resolves per bottle
         # against — reached by container name over docker DNS on the shared
-        # network (container↔container, no host firewall). Empty → single-tenant.
+        # network (container↔container, no host firewall). Mandatory to *run*
+        # the gateway (see `ensure_running`); empty is tolerated only for the
+        # construct-then-read-CA path (`ca_cert_pem` on an already-running
+        # container), which never launches a container.
         self._orchestrator_url = orchestrator_url
         self._build_context = build_context or _REPO_ROOT
         self._dockerfile = dockerfile
@@ -193,6 +196,16 @@ class DockerGateway(Gateway):
             )
 
     def ensure_running(self) -> None:
+        # Fail closed on a missing policy source. The data-plane daemons are
+        # resolver-only now (PRD 0070) — without an orchestrator URL egress
+        # raises, git-http exits 1, and supervise exits 2 — so launching a
+        # gateway without one would only crash-loop its daemons. Refuse here so
+        # the misconfiguration surfaces as a clear error, not a broken container.
+        if not self._orchestrator_url:
+            raise GatewayError(
+                "gateway requires an orchestrator URL to run "
+                "(resolver-only data plane; no single-tenant fallback)"
+            )
         # Recreate when the running container's image is stale (a rebuild),
         # so source changes to the gateway's flat daemons take effect — not
         # just when the container is absent.
@@ -220,16 +233,15 @@ class DockerGateway(Gateway):
         for port in self._host_port_bindings:
             argv += ["--publish", f"0.0.0.0:{port}:{port}"]
         run_env = dict(os.environ)
-        if self._orchestrator_url:
-            # Makes the gateway's egress / git / supervise daemons multi-tenant:
-            # each request resolves source-IP -> policy against the control plane.
-            argv += ["--env", f"BOT_BOTTLE_ORCHESTRATOR_URL={self._orchestrator_url}"]
-            # ...and presents the control-plane secret on those /resolve calls
-            # (the control plane requires it). Bare `--env NAME` keeps the value
-            # off argv / `docker inspect`; only the gateway (not the agent) is
-            # given it. Only needed in multi-tenant mode, where /resolve is used.
-            argv += ["--env", CONTROL_PLANE_TOKEN_ENV]
-            run_env[CONTROL_PLANE_TOKEN_ENV] = host_control_plane_token()
+        # The gateway's egress / git / supervise daemons resolve source-IP ->
+        # policy against the control plane per request (guaranteed non-empty by
+        # the check above).
+        argv += ["--env", f"BOT_BOTTLE_ORCHESTRATOR_URL={self._orchestrator_url}"]
+        # ...and present the control-plane secret on those /resolve calls (the
+        # control plane requires it). Bare `--env NAME` keeps the value off argv
+        # / `docker inspect`; only the gateway (not the agent) is given it.
+        argv += ["--env", CONTROL_PLANE_TOKEN_ENV]
+        run_env[CONTROL_PLANE_TOKEN_ENV] = host_control_plane_token()
         argv.append(self.image_ref)
         proc = run_docker(argv, env=run_env)
         if proc.returncode != 0:

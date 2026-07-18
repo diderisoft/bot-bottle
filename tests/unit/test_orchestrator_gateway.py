@@ -22,12 +22,26 @@ def _proc(returncode: int = 0, stdout: str = "", stderr: str = "") -> Mock:
     return Mock(returncode=returncode, stdout=stdout, stderr=stderr)
 
 
+_ORCH_URL = "http://orchestrator:9000"
+
+
 class TestDockerGateway(unittest.TestCase):
     def setUp(self) -> None:
-        self.sc = DockerGateway("bot-bottle-gateway:latest")
+        # Resolver-only data plane (PRD 0070): running the gateway requires an
+        # orchestrator URL, so the fixture supplies one.
+        self.sc = DockerGateway("bot-bottle-gateway:latest", orchestrator_url=_ORCH_URL)
 
     def test_default_name(self) -> None:
         self.assertEqual(GATEWAY_NAME, self.sc.name)
+
+    def test_ensure_running_refuses_without_orchestrator_url(self) -> None:
+        # No policy source → the data-plane daemons would only crash-loop, so
+        # the launch must fail closed with a clear error rather than start one.
+        sc = DockerGateway("bot-bottle-gateway:latest")
+        with patch(_RUN_DOCKER) as m:
+            with self.assertRaises(GatewayError):
+                sc.ensure_running()
+        m.assert_not_called()
 
     def test_is_running_reads_docker_ps(self) -> None:
         with patch(_RUN_DOCKER, return_value=_proc(stdout=self.sc.name + "\n")):
@@ -98,6 +112,8 @@ class TestDockerGateway(unittest.TestCase):
             for a in runs[0]))
         self.assertTrue(any(
             a.endswith(":/run/supervise") for a in runs[0]))
+        # Data plane resolves policy against the orchestrator control plane.
+        self.assertIn(f"BOT_BOTTLE_ORCHESTRATOR_URL={_ORCH_URL}", runs[0])
 
     def test_ensure_running_creates_network_when_missing(self) -> None:
         calls: list[list[str]] = []

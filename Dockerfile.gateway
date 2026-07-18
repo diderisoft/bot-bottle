@@ -20,7 +20,6 @@
 #   /app/egress-entrypoint.sh            mitmdump launcher
 #   /app/supervise_server.py + .py       supervise MCP server
 #   /app/gateway_init.py                 PID 1 supervisor
-#   /etc/egress/routes.yaml              bind-mounted at run time
 #   /etc/git-gate/pre-receive            docker-cp'd at start time
 #   /git-gate-entrypoint.sh              docker-cp'd at start time
 #   /git-gate/creds/*                    docker-cp'd at start time
