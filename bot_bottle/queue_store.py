@@ -66,7 +66,7 @@ class QueueStore(DbStore):
         super().__init__(resolved, migrations)
 
     def write_proposal(self, proposal: Proposal) -> Path:
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO supervise_proposals (
@@ -89,7 +89,7 @@ class QueueStore(DbStore):
         return self.db_path
 
     def read_proposal(self, proposal_id: str) -> Proposal:
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 """
                 SELECT * FROM supervise_proposals
@@ -104,7 +104,7 @@ class QueueStore(DbStore):
     def list_pending_proposals(self) -> list[Proposal]:
         if not self.db_path.is_file():
             return []
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 """
                 SELECT p.* FROM supervise_proposals p
@@ -125,7 +125,7 @@ class QueueStore(DbStore):
     def list_all_pending_proposals(self) -> list[Proposal]:
         if not self.db_path.is_file():
             return []
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 """
                 SELECT p.* FROM supervise_proposals p
@@ -142,7 +142,7 @@ class QueueStore(DbStore):
         return [self._row_to_proposal(row) for row in rows]
 
     def write_response(self, response: Response) -> Path:
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO supervise_responses (
@@ -161,7 +161,7 @@ class QueueStore(DbStore):
         return self.db_path
 
     def read_response(self, proposal_id: str) -> Response:
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 """
                 SELECT * FROM supervise_responses
@@ -176,7 +176,7 @@ class QueueStore(DbStore):
     def archive_proposal(self, proposal_id: str) -> None:
         if not self.db_path.is_file():
             return
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 UPDATE supervise_proposals SET archived = 1

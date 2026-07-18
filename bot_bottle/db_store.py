@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 
 try:
@@ -28,12 +29,21 @@ class DbStore:
         conn.row_factory = sqlite3.Row
         return conn
 
+    @contextmanager
+    def _connection(self):
+        conn = self._connect()
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
+
     def is_migrated(self) -> bool:
         """Return True if the DB is fully up-to-date, False if migration is needed."""
         if not self.db_path.exists():
             return False
         try:
-            with self._connect() as conn:
+            with self._connection() as conn:
                 row = conn.execute(
                     "SELECT version FROM schema_versions WHERE module = ?",
                     (self._migrations.schema_key,),
@@ -45,7 +55,7 @@ class DbStore:
 
     def migrate(self) -> None:
         """Apply any pending migrations and set permissions on the DB file."""
-        with self._connect() as conn:
+        with self._connection() as conn:
             self._migrations.apply(conn)
         self._chmod()
 

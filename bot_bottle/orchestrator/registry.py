@@ -167,7 +167,7 @@ class RegistryStore(DbStore):
             metadata=metadata,
             policy=policy,
         )
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 "DELETE FROM orchestrator_bottles "
                 "WHERE source_ip = ? AND state = 'active' AND bottle_id != ?",
@@ -193,7 +193,7 @@ class RegistryStore(DbStore):
     def set_policy(self, bottle_id: str, policy: str) -> bool:
         """Update a bottle's policy in place (live reload). Returns True if
         the bottle exists."""
-        with self._connect() as conn:
+        with self._connection() as conn:
             cur = conn.execute(
                 "UPDATE orchestrator_bottles SET policy = ? WHERE bottle_id = ?",
                 (policy, bottle_id),
@@ -203,7 +203,7 @@ class RegistryStore(DbStore):
 
     def deregister(self, bottle_id: str) -> bool:
         """Remove a bottle. Returns True if a row was deleted."""
-        with self._connect() as conn:
+        with self._connection() as conn:
             cur = conn.execute(
                 "DELETE FROM orchestrator_bottles WHERE bottle_id = ?", (bottle_id,)
             )
@@ -211,7 +211,7 @@ class RegistryStore(DbStore):
 
     def get(self, bottle_id: str) -> BottleRecord | None:
         """Return the bottle by id, or None if absent."""
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 "SELECT * FROM orchestrator_bottles WHERE bottle_id = ?", (bottle_id,)
             ).fetchone()
@@ -219,7 +219,7 @@ class RegistryStore(DbStore):
 
     def all(self) -> list[BottleRecord]:
         """Every registered bottle, oldest first."""
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM orchestrator_bottles ORDER BY created_at"
             ).fetchall()
@@ -232,7 +232,7 @@ class RegistryStore(DbStore):
         source IP is unspoofable (Firecracker `/31` + nft) and the control
         plane is reachable only by the trusted gateway; pair with the
         identity token (`attribute`) elsewhere."""
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM orchestrator_bottles "
                 "WHERE source_ip = ? AND state = 'active'",

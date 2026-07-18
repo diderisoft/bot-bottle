@@ -42,7 +42,7 @@ class AuditStore(DbStore):
         super().__init__(db_path or host_db_path(), migrations)
 
     def write_audit_entry(self, entry: AuditEntry) -> Path:
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 INSERT INTO supervise_audit_entries (
@@ -66,7 +66,7 @@ class AuditStore(DbStore):
     def read_audit_entries(self, component: str, slug: str) -> list[AuditEntry]:
         if not self.db_path.is_file():
             return []
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 """
                 SELECT * FROM supervise_audit_entries
