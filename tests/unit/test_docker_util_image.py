@@ -35,6 +35,8 @@ class TestImageCreatedAt(unittest.TestCase):
             return_value=_ok(stdout="2026-07-06T15:33:47.123456789Z\n"),
         ) as run:
             created = docker_mod.image_created_at("bot-bottle-claude:latest")
+        self.assertIsNotNone(created)
+        assert created is not None
         self.assertEqual(2026, created.year)
         self.assertEqual(123456, created.microsecond)
         self.assertEqual(timezone.utc, created.tzinfo)

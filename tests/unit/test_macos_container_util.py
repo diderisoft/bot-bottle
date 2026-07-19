@@ -406,6 +406,8 @@ class TestMacosContainerImageCreatedAt(unittest.TestCase):
         payload = '[{"created": "2025-06-01T12:00:00"}]'
         with patch.object(util.subprocess, "run", return_value=self._ok(payload)):
             dt = util.image_created_at("bot-bottle-agent:latest")
+        self.assertIsNotNone(dt)
+        assert dt is not None
         self.assertEqual(2025, dt.year)
         self.assertEqual(6, dt.month)
         self.assertEqual(1, dt.day)
@@ -415,12 +417,16 @@ class TestMacosContainerImageCreatedAt(unittest.TestCase):
         payload = '[{"created": "2024-01-15T08:30:00"}]'
         with patch.object(util.subprocess, "run", return_value=self._ok(payload)):
             dt = util.image_created_at("some-image:latest")
+        self.assertIsNotNone(dt)
+        assert dt is not None
         self.assertEqual(2024, dt.year)
 
     def test_accepts_uppercase_Created_field(self):
         payload = '[{"Created": "2024-03-20T10:00:00"}]'
         with patch.object(util.subprocess, "run", return_value=self._ok(payload)):
             dt = util.image_created_at("some-image:latest")
+        self.assertIsNotNone(dt)
+        assert dt is not None
         self.assertEqual(2024, dt.year)
         self.assertEqual(3, dt.month)
 
