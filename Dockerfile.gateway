@@ -98,6 +98,9 @@ RUN pip install --no-cache-dir /src/
 
 # mitmdump -s requires a file path, not a module. Write a one-line shim that
 # re-exports `addons` from the installed package; mitmdump finds it there.
+# WORKDIR here also creates /app so the shim + COPYs below can write into it
+# (nothing created /app before this point).
+WORKDIR /app
 RUN printf 'from bot_bottle.egress_addon import addons\n' > /app/egress_addon.py
 COPY bot_bottle/egress_entrypoint.sh /app/egress-entrypoint.sh
 RUN chmod +x /app/egress-entrypoint.sh
@@ -116,8 +119,6 @@ RUN mkdir -p \
 # Documentation only — the compose renderer publishes whichever
 # subset the bottle uses.
 EXPOSE 8888 9099 9418 9420 9100
-
-WORKDIR /app
 
 # PID 1 is the supervisor. It owns signal handling and exit-code
 # propagation; no `exec` chain in the entrypoint itself.

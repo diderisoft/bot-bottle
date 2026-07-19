@@ -25,12 +25,20 @@ on:
       - '.gitea/workflows/**.yml'
       - 'scripts/**'
       - 'README.md'
+      # The Firecracker infra artifact the integration/coverage jobs pull is
+      # versioned by a content hash of the Dockerfiles (+ bot_bottle/, init);
+      # pyproject.toml drives the in-image package install. Changes here alter
+      # what those jobs build/pull, so they must re-run the suite.
+      - 'Dockerfile*'
+      - 'pyproject.toml'
   pull_request:
     paths:
       - '**.py'
       - '.gitea/workflows/**.yml'
       - 'scripts/**'
       - 'README.md'
+      - 'Dockerfile*'
+      - 'pyproject.toml'
   workflow_dispatch:
 
 jobs:
