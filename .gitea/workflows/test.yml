@@ -40,6 +40,21 @@ on:
   workflow_dispatch:
 
 jobs:
+  build-infra:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build infra candidate from this checkout
+        run: python3 -m bot_bottle.backend.firecracker.publish_infra --output infra-candidate
+
+      - name: Upload infra candidate
+        uses: actions/upload-artifact@v3
+        with:
+          name: infra-candidate
+          path: infra-candidate/
+
   unit:
     runs-on: ubuntu-latest
     steps:
@@ -89,9 +104,10 @@ jobs:
   # PRs don't execute untrusted code on the privileged runner.
   #
   # Runner prerequisites (provision once; see README "Firecracker on Linux"):
-  # `firecracker` on PATH, `/dev/kvm` accessible, Docker, cached kernel +
+  # `firecracker` on PATH, `/dev/kvm` accessible, cached kernel +
   # static dropbear, and the pool as a persistent systemd unit.
   integration-firecracker:
+    needs: build-infra
     runs-on: [self-hosted, kvm]
     if: >-
       github.event_name == 'push' ||
@@ -111,6 +127,15 @@ jobs:
           # range overlap; it prints the exact `backend setup` fix.
           python3 cli.py backend status --backend=firecracker
 
+      - name: Download the candidate built from this checkout
+        uses: actions/download-artifact@v3
+        with:
+          name: infra-candidate
+          path: infra-candidate
+
+      - name: Replace the persistent infra VM with the candidate
+        run: python3 -c 'from bot_bottle.backend.firecracker import infra_vm; infra_vm.stop()'
+
       # No dev-requirements install: the integration suite runs on stdlib
       # `unittest` (pylint/pyright are lint.yml's concern, not this job's),
       # and the self-hosted runner's Nix python env has no `pip` module
@@ -118,10 +143,7 @@ jobs:
       - name: Run integration tests (firecracker)
         env:
           BOT_BOTTLE_BACKEND: firecracker
-          # Build images locally from the checked-out source — never pull a
-          # pre-published artifact during tests. Publishing happens post-merge
-          # in publish-infra.yml.
-          BOT_BOTTLE_INFRA_BUILD: local
+          BOT_BOTTLE_INFRA_ARTIFACT_DIR: ${{ github.workspace }}/infra-candidate
         run: python3 -m unittest discover -t . -s tests/integration -v
 
   # Combined unit+integration coverage + the diff-coverage gate (the hard
@@ -141,10 +163,11 @@ jobs:
   # See #414 for the planned follow-up: artifact-based coverage combination
   # (run tests once in their respective jobs, combine .coverage files here).
   #
-  # BOT_BOTTLE_INFRA_BUILD=local: build images from source here, never pull a
-  # pre-published artifact. Registry publishing runs post-merge in
-  # publish-infra.yml, gated on tests passing.
+  # build-infra creates one candidate from the checkout. This job boots that
+  # same candidate after integration-firecracker has exercised it; the main
+  # push path publishes the identical bytes only after every required job.
   coverage:
+    needs: [build-infra, integration-firecracker]
     timeout-minutes: 15
     runs-on: [self-hosted, kvm]
     if: >-
@@ -167,16 +190,41 @@ jobs:
           # range overlap; it prints the exact `backend setup` fix.
           python3 cli.py backend status --backend=firecracker
 
+      - name: Download the candidate already exercised by integration
+        uses: actions/download-artifact@v3
+        with:
+          name: infra-candidate
+          path: infra-candidate
+
       # No dev-requirements install: `coverage` is already provided by the
       # self-hosted runner's Nix python env, and that env has no `pip`
       # module to install into anyway. `scripts/coverage.sh` +
       # `diff_coverage.py` need only `coverage` (not pylint/pyright).
       - name: Combined coverage (unit + integration, incl. firecracker)
         env:
-          BOT_BOTTLE_INFRA_BUILD: local
+          BOT_BOTTLE_INFRA_ARTIFACT_DIR: ${{ github.workspace }}/infra-candidate
         run: PYTHON=python3 bash scripts/coverage.sh critical
 
       - name: Diff-coverage gate (changed lines >= 90%)
         run: |
           git fetch --no-tags origin main:refs/remotes/origin/main
           python3 scripts/diff_coverage.py --base origin/main --min 90
+
+  publish-infra:
+    needs: [build-infra, unit, integration-docker, integration-firecracker, coverage]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout the tested revision
+        uses: actions/checkout@v4
+
+      - name: Download the tested candidate
+        uses: actions/download-artifact@v3
+        with:
+          name: infra-candidate
+          path: infra-candidate
+
+      - name: Publish the tested candidate
+        env:
+          BOT_BOTTLE_INFRA_ARTIFACT_TOKEN: ${{ secrets.BOT_BOTTLE_INFRA_ARTIFACT_TOKEN }}
+        run: python3 -m bot_bottle.backend.firecracker.publish_infra --publish-dir infra-candidate

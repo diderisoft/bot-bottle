@@ -113,6 +113,7 @@ def artifact_url(version: str, filename: str) -> str:
 
 _GZ_NAME = "rootfs.ext4.gz"
 _SHA_NAME = "rootfs.ext4.gz.sha256"
+_CANDIDATE_DIR_ENV = "BOT_BOTTLE_INFRA_ARTIFACT_DIR"
 
 
 def _cache_root(version: str) -> Path:
@@ -162,6 +163,28 @@ def ensure_artifact_gz(version: str) -> Path:
     """The verified, cached `rootfs.ext4.gz` for `version` — downloading it (and
     its `.sha256`) once, then reusing it. Fail-closed on a checksum mismatch:
     the partial is removed and we die rather than boot an unverified rootfs."""
+    candidate_dir = os.environ.get(_CANDIDATE_DIR_ENV, "").strip()
+    if candidate_dir:
+        root = Path(candidate_dir)
+        declared = (root / "version.txt").read_text(encoding="utf-8").strip()
+        if declared != version:
+            die(
+                f"infra candidate version mismatch: expected {version}, "
+                f"bundle contains {declared or '<empty>'}"
+            )
+        gz = root / _GZ_NAME
+        sha = root / _SHA_NAME
+        if not gz.is_file() or not sha.is_file():
+            die(f"infra candidate bundle is incomplete: {root}")
+        expected = sha.read_text().split()[0].strip().lower()
+        actual = _sha256_file(gz)
+        if actual != expected:
+            die(
+                f"infra candidate checksum mismatch for {version}:\n"
+                f"    expected {expected}\n    actual   {actual}"
+            )
+        return gz
+
     root = _cache_root(version)
     root.mkdir(parents=True, exist_ok=True)
     gz = root / _GZ_NAME

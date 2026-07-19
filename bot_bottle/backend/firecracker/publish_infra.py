@@ -11,7 +11,8 @@ The `<version>` is `infra_artifact.infra_artifact_version(...)`, the content
 hash of the rootfs inputs, so a launch host at the same code checkout resolves
 the exact artifact this produced.
 
-  python3 -m bot_bottle.backend.firecracker.publish_infra [--dry-run] [--force]
+  python3 -m bot_bottle.backend.firecracker.publish_infra --output DIR
+  python3 -m bot_bottle.backend.firecracker.publish_infra --publish-dir DIR
 
 Auth: a token with `write:package` on the target owner, from
 `BOT_BOTTLE_INFRA_ARTIFACT_TOKEN`.
@@ -24,7 +25,6 @@ import gzip
 import hashlib
 import shutil
 import sys
-import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -131,36 +131,73 @@ def build_artifact(out_dir: Path) -> tuple[str, Path, Path]:
     return version, gz, sha
 
 
+def _publish_bundle(root: Path, token: str) -> str:
+    version = (root / "version.txt").read_text(encoding="utf-8").strip()
+    expected = infra_artifact.infra_artifact_version(infra_vm._infra_init())
+    if version != expected:
+        raise SystemExit(
+            f"artifact bundle version {version!r} does not match checkout {expected!r}"
+        )
+    gz = root / "rootfs.ext4.gz"
+    sha = root / "rootfs.ext4.gz.sha256"
+    if not gz.is_file() or not sha.is_file():
+        raise SystemExit(f"incomplete artifact bundle: {root}")
+    expected_sha = sha.read_text().split()[0].strip().lower()
+    if _sha256(gz) != expected_sha:
+        raise SystemExit("artifact bundle checksum mismatch")
+
+    gz_url = infra_artifact.artifact_url(version, gz.name)
+    sha_url = infra_artifact.artifact_url(version, sha.name)
+    about_url = infra_artifact.artifact_url(version, _ABOUT_NAME)
+
+    # Publishing is idempotent. If this exact complete artifact is already
+    # present, a test-only main commit is a no-op. Otherwise clear any partial
+    # upload left by an interrupted prior attempt and upload the complete set.
+    try:
+        with urllib.request.urlopen(infra_artifact._open(sha_url)) as resp:
+            remote_sha = resp.read().decode("utf-8").split()[0].strip().lower()
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            raise SystemExit(f"checking existing artifact failed (HTTP {e.code})")
+        remote_sha = ""
+    except urllib.error.URLError as e:
+        raise SystemExit(f"registry unreachable: {sha_url} ({e.reason})")
+    if remote_sha == expected_sha:
+        print(f"infra rootfs {version} already published")
+        return version
+
+    for url in (gz_url, sha_url, about_url):
+        _delete(url, token)
+    _put(gz_url, gz, token)
+    _put(sha_url, sha.read_bytes(), token)
+    _put(about_url, _ABOUT_TEXT.encode(), token)
+    return version
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="publish_infra", description="Build + publish the infra rootfs artifact.")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="build the artifact but do not upload")
-    parser.add_argument("--force", action="store_true",
-                        help="overwrite an already-published artifact of this version")
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--output", type=Path,
+                      help="build a candidate bundle in DIR without publishing")
+    mode.add_argument("--publish-dir", type=Path,
+                      help="publish an already-built and tested candidate bundle")
     args = parser.parse_args(argv)
 
     _, _, token = infra_artifact._config()
-    if not args.dry_run and not token:
+    if args.publish_dir is not None and not token:
         raise SystemExit(
             "no publish token: set BOT_BOTTLE_INFRA_ARTIFACT_TOKEN to a token "
             "with write:package")
 
-    with tempfile.TemporaryDirectory(prefix="bb-publish-infra.") as tmp:
-        version, gz, sha = build_artifact(Path(tmp))
-        gz_url = infra_artifact.artifact_url(version, gz.name)
-        sha_url = infra_artifact.artifact_url(version, sha.name)
-        about_url = infra_artifact.artifact_url(version, _ABOUT_NAME)
-        if args.dry_run:
-            print(f"dry-run: would upload -> {gz_url}")
-            return 0
-        if args.force:
-            _delete(gz_url, token)
-            _delete(sha_url, token)
-            _delete(about_url, token)
-        _put(gz_url, gz, token)  # streamed from disk (hundreds of MB)
-        _put(sha_url, sha.read_bytes(), token)  # tiny, in-memory is fine
-        _put(about_url, _ABOUT_TEXT.encode(), token)  # package description
+    if args.output is not None:
+        args.output.mkdir(parents=True, exist_ok=True)
+        version, _gz, _sha = build_artifact(args.output)
+        (args.output / "version.txt").write_text(version + "\n", encoding="utf-8")
+        print(f"built infra rootfs candidate {version}")
+        return 0
+
+    version = _publish_bundle(args.publish_dir, token)
     print(f"published infra rootfs {version}")
     return 0
 

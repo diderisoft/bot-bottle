@@ -129,6 +129,34 @@ class TestVersionInputs(unittest.TestCase):
 
 
 class TestEnsureArtifact(_CacheMixin):
+    def test_uses_verified_ci_candidate_without_network(self) -> None:
+        version = "deadbeef00000000"
+        gz = _gz(b"candidate ext4")
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "version.txt").write_text(version + "\n")
+            (root / "rootfs.ext4.gz").write_bytes(gz)
+            digest = hashlib.sha256(gz).hexdigest()
+            (root / "rootfs.ext4.gz.sha256").write_text(
+                f"{digest}  rootfs.ext4.gz\n")
+            with mock.patch.dict(os.environ, {
+                "BOT_BOTTLE_INFRA_ARTIFACT_DIR": str(root),
+            }), mock.patch.object(ia.urllib.request, "urlopen") as net:
+                path = ia.ensure_artifact_gz(version)
+            self.assertEqual(root / "rootfs.ext4.gz", path)
+            net.assert_not_called()
+
+    def test_rejects_candidate_for_another_version(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "version.txt").write_text("wrong\n")
+            with mock.patch.dict(os.environ, {
+                "BOT_BOTTLE_INFRA_ARTIFACT_DIR": str(root),
+            }):
+                with self.assertRaises(Die) as ctx:
+                    ia.ensure_artifact_gz("expected")
+            self.assertIn("version mismatch", str(ctx.exception.message))
+
     def test_downloads_verifies_and_caches(self) -> None:
         version = "deadbeef00000000"
         gz = _gz(b"fake ext4 bytes")
