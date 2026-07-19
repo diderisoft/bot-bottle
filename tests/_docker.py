@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import unittest
 
 
 def docker_available() -> bool:
+    if os.environ.get("SKIP_DOCKER_TESTS"):
+        return False
     if shutil.which("docker") is None:
         return False
     try:
