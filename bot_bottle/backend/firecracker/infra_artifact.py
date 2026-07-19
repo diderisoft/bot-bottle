@@ -85,6 +85,8 @@ def infra_artifact_version(init_script: str, *, repo_root: Path = _REPO_ROOT) ->
         h.update(name.encode())
         h.update(b"\0")
         h.update((repo_root / name).read_bytes())
+    h.update(b"pyproject.toml\0")
+    h.update((repo_root / "pyproject.toml").read_bytes())
     h.update(b"init\0")
     h.update(init_script.encode())
     return h.hexdigest()[:16]
