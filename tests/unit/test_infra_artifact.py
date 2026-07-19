@@ -171,6 +171,30 @@ class TestEnsureArtifact(_CacheMixin):
                     ia.ensure_artifact_gz("expected")
             self.assertIn("version mismatch", str(ctx.exception.message))
 
+    def test_rejects_incomplete_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "version.txt").write_text("v1\n")
+            with mock.patch.dict(os.environ, {
+                "BOT_BOTTLE_INFRA_ARTIFACT_DIR": str(root),
+            }):
+                with self.assertRaises(Die) as ctx:
+                    ia.ensure_artifact_gz("v1")
+            self.assertIn("incomplete", str(ctx.exception.message))
+
+    def test_rejects_candidate_checksum_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "version.txt").write_text("v1\n")
+            (root / "rootfs.ext4.gz").write_bytes(b"bad")
+            (root / "rootfs.ext4.gz.sha256").write_text("0" * 64 + "  rootfs.ext4.gz\n")
+            with mock.patch.dict(os.environ, {
+                "BOT_BOTTLE_INFRA_ARTIFACT_DIR": str(root),
+            }):
+                with self.assertRaises(Die) as ctx:
+                    ia.ensure_artifact_gz("v1")
+            self.assertIn("checksum mismatch", str(ctx.exception.message))
+
     def test_downloads_verifies_and_caches(self) -> None:
         version = "deadbeef00000000"
         gz = _gz(b"fake ext4 bytes")

@@ -100,6 +100,60 @@ class TestPublishBundle(unittest.TestCase):
             self.assertEqual(3, delete.call_count)
             self.assertEqual(3, put.call_count)
 
+    def test_rejects_bundle_for_different_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._bundle(root, "old")
+            with mock.patch.object(
+                pub.infra_artifact, "infra_artifact_version", return_value="new"
+            ):
+                with self.assertRaises(SystemExit) as ctx:
+                    pub._publish_bundle(root, "token")
+            self.assertIn("does not match checkout", str(ctx.exception))
+
+    def test_rejects_bad_bundle_checksum(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._bundle(root, "v1")
+            (root / "rootfs.ext4.gz").write_bytes(b"tampered")
+            with mock.patch.object(
+                pub.infra_artifact, "infra_artifact_version", return_value="v1"
+            ):
+                with self.assertRaises(SystemExit) as ctx:
+                    pub._publish_bundle(root, "token")
+            self.assertIn("checksum mismatch", str(ctx.exception))
+
+    def test_registry_lookup_failure_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._bundle(root, "v1")
+            failure = urllib.error.URLError("offline")
+            with mock.patch.object(
+                pub.infra_artifact, "infra_artifact_version", return_value="v1"
+            ), mock.patch.object(pub.urllib.request, "urlopen", side_effect=failure):
+                with self.assertRaises(SystemExit) as ctx:
+                    pub._publish_bundle(root, "token")
+            self.assertIn("registry unreachable", str(ctx.exception))
+
+
+class TestMain(unittest.TestCase):
+    def test_output_builds_candidate_and_records_version(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "candidate"
+            with mock.patch.object(
+                pub, "build_artifact", return_value=("v1", root / "g", root / "s")
+            ) as build:
+                self.assertEqual(0, pub.main(["--output", str(root)]))
+            build.assert_called_once_with(root)
+            self.assertEqual("v1\n", (root / "version.txt").read_text())
+
+    def test_publish_dir_publishes_existing_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(pub.infra_artifact, "_config", return_value=("", "", "t")), \
+                mock.patch.object(pub, "_publish_bundle", return_value="v1") as publish:
+            self.assertEqual(0, pub.main(["--publish-dir", d]))
+            publish.assert_called_once_with(Path(d), "t")
+
 
 if __name__ == "__main__":
     unittest.main()
