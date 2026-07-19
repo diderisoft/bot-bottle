@@ -27,10 +27,14 @@ def _docker_on_path() -> bool:
 def _daemon_reachable() -> bool:
     if not _docker_on_path():
         return False
-    return subprocess.run(
-        ["docker", "info"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
-    ).returncode == 0
+    try:
+        return subprocess.run(
+            ["docker", "info"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            check=False, timeout=5,
+        ).returncode == 0
+    except subprocess.TimeoutExpired:
+        return False
 
 
 def _print_install_pointer() -> None:

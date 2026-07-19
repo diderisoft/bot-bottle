@@ -57,6 +57,14 @@ class TestCmdStartSelector(unittest.TestCase):
         self._bottle_picker_mock = self._bottle_picker_patch.start()
         self._bottle_picker_mock.return_value = ["claude"]  # default: one bottle selected
 
+        # name_color_modal opens /dev/tty and blocks on keyboard input on
+        # self-hosted runners that have a real controlling terminal. Stub it
+        # out like the other tui pickers so tests don't wait for a keypress.
+        self._modal_patch = patch.object(
+            tui_mod, "name_color_modal", return_value=("researcher", ""),
+        )
+        self._modal_patch.start()
+
         self._env_patch = patch.dict(os.environ, {}, clear=False)
         self._env_patch.start()
         os.environ.pop("BOT_BOTTLE_BACKEND", None)
@@ -66,6 +74,7 @@ class TestCmdStartSelector(unittest.TestCase):
         self._launch_patch.stop()
         self._agent_picker_patch.stop()
         self._bottle_picker_patch.stop()
+        self._modal_patch.stop()
         self._env_patch.stop()
 
     # ------------------------------------------------------------------
