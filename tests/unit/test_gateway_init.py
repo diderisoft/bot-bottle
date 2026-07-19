@@ -2,9 +2,9 @@
 
 Tests both the helper functions in `bot_bottle.gateway_init`
 and the supervisor's end-to-end signal / exit-code behavior. The
-end-to-end tests use real subprocesses (`/bin/sleep`,
-`/bin/sh -c '...'`) — short-lived, no docker required — so they
-run under `tests/unit/` rather than `tests/integration/`."""
+end-to-end tests use real subprocesses (`sleep`, `/bin/sh -c '...'`) —
+short-lived, no docker required — so they run under `tests/unit/`
+rather than `tests/integration/`."""
 
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ from bot_bottle.gateway_init import (
     _env_for_daemon,
     _selected_daemons,
 )
+from tests._bin import SLEEP
 
 
 class TestEnvForDaemon(unittest.TestCase):
@@ -182,7 +183,7 @@ class TestSupervisor(unittest.TestCase):
         # up and the supervisor never set shutdown_at.
         specs = [
             _DaemonSpec("crasher", ("/bin/sh", "-c", "exit 1")),
-            _DaemonSpec("longrun", ("/bin/sleep", "30")),
+            _DaemonSpec("longrun", (SLEEP, "30")),
         ]
         sup = _Supervisor(specs)
         sup.start_all()
@@ -214,7 +215,7 @@ class TestSupervisor(unittest.TestCase):
         # signal-killed longrun's negative returncode.
         specs = [
             _DaemonSpec("crasher", ("/bin/sh", "-c", "exit 1")),
-            _DaemonSpec("longrun", ("/bin/sleep", "30")),
+            _DaemonSpec("longrun", (SLEEP, "30")),
         ]
         sup = _Supervisor(specs)
         sup.start_all()
@@ -259,7 +260,7 @@ class TestSupervisor(unittest.TestCase):
         )
         specs = [
             _DaemonSpec("egress", sighup_marker),
-            _DaemonSpec("other",  ("/bin/sleep", "30")),
+            _DaemonSpec("other",  (SLEEP, "30")),
         ]
         sup = _Supervisor(specs)
         sup.start_all()
@@ -282,7 +283,7 @@ class TestSupervisor(unittest.TestCase):
         self._drive(sup)
 
     def test_forward_signal_unknown_daemon_no_op(self):
-        specs = [_DaemonSpec("a", ("/bin/sleep", "30"))]
+        specs = [_DaemonSpec("a", (SLEEP, "30"))]
         sup = _Supervisor(specs)
         sup.start_all()
         delivered = sup.forward_signal(signal.SIGHUP, "ghost")
@@ -294,8 +295,8 @@ class TestSupervisor(unittest.TestCase):
         # Restart one daemon; the other (supervise, the MCP server
         # in production) must remain untouched.
         specs = [
-            _DaemonSpec("git-gate", ("/bin/sleep", "30")),
-            _DaemonSpec("supervise", ("/bin/sleep", "30")),
+            _DaemonSpec("git-gate", (SLEEP, "30")),
+            _DaemonSpec("supervise", (SLEEP, "30")),
         ]
         sup = _Supervisor(specs)
         sup.start_all()
@@ -319,8 +320,8 @@ class TestSupervisor(unittest.TestCase):
 
     def test_request_restart_is_drained_by_tick(self):
         specs = [
-            _DaemonSpec("git-gate", ("/bin/sleep", "30")),
-            _DaemonSpec("supervise", ("/bin/sleep", "30")),
+            _DaemonSpec("git-gate", (SLEEP, "30")),
+            _DaemonSpec("supervise", (SLEEP, "30")),
         ]
         sup = _Supervisor(specs)
         sup.start_all()
@@ -343,7 +344,7 @@ class TestSupervisor(unittest.TestCase):
         self._drive(sup)
 
     def test_repeated_restart_requests_coalesce(self):
-        specs = [_DaemonSpec("git-gate", ("/bin/sleep", "30"))]
+        specs = [_DaemonSpec("git-gate", (SLEEP, "30"))]
         sup = _Supervisor(specs)
         sup.start_all()
         time.sleep(0.1)
@@ -366,7 +367,7 @@ class TestSupervisor(unittest.TestCase):
         self._drive(sup)
 
     def test_request_restart_unknown_daemon_no_op(self):
-        specs = [_DaemonSpec("a", ("/bin/sleep", "30"))]
+        specs = [_DaemonSpec("a", (SLEEP, "30"))]
         sup = _Supervisor(specs)
         sup.start_all()
         ok = sup.request_restart("ghost")
@@ -376,7 +377,7 @@ class TestSupervisor(unittest.TestCase):
         self._drive(sup)
 
     def test_restart_unknown_daemon_no_op(self):
-        specs = [_DaemonSpec("a", ("/bin/sleep", "30"))]
+        specs = [_DaemonSpec("a", (SLEEP, "30"))]
         sup = _Supervisor(specs)
         sup.start_all()
         ok = sup.restart_daemon("ghost")
@@ -385,7 +386,7 @@ class TestSupervisor(unittest.TestCase):
         self._drive(sup)
 
     def test_restart_during_shutdown_is_no_op(self):
-        specs = [_DaemonSpec("git-gate", ("/bin/sleep", "30"))]
+        specs = [_DaemonSpec("git-gate", (SLEEP, "30"))]
         sup = _Supervisor(specs)
         sup.start_all()
         sup.request_shutdown(reason="test")
@@ -395,7 +396,7 @@ class TestSupervisor(unittest.TestCase):
         self._drive(sup)
 
     def test_pending_restart_dropped_during_shutdown(self):
-        specs = [_DaemonSpec("git-gate", ("/bin/sleep", "30"))]
+        specs = [_DaemonSpec("git-gate", (SLEEP, "30"))]
         sup = _Supervisor(specs)
         sup.start_all()
         time.sleep(0.1)
@@ -413,8 +414,8 @@ class TestSupervisor(unittest.TestCase):
         # both should receive SIGTERM and exit. Signal-only
         # shutdown clamps to a zero supervisor exit code.
         specs = [
-            _DaemonSpec("a", ("/bin/sleep", "60")),
-            _DaemonSpec("b", ("/bin/sleep", "60")),
+            _DaemonSpec("a", (SLEEP, "60")),
+            _DaemonSpec("b", (SLEEP, "60")),
         ]
         sup = _Supervisor(specs)
         sup.start_all()
@@ -449,7 +450,7 @@ class TestSupervisor(unittest.TestCase):
         self.assertEqual(0, rc)
 
     def test_idempotent_shutdown_requests(self):
-        specs = [_DaemonSpec("a", ("/bin/sleep", "60"))]
+        specs = [_DaemonSpec("a", (SLEEP, "60"))]
         sup = _Supervisor(specs)
         sup.start_all()
         time.sleep(0.1)
@@ -470,7 +471,7 @@ class TestMainEndToEnd(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        for p in ("/bin/sh", "/bin/sleep"):
+        for p in ("/bin/sh", SLEEP):
             if not Path(p).exists():
                 raise unittest.SkipTest(f"missing {p}")
 
@@ -485,8 +486,8 @@ class TestMainEndToEnd(unittest.TestCase):
             "import os, runpy, sys\n"
             "from bot_bottle import gateway_init as si\n"
             "si._DAEMONS = (\n"
-            "  si._DaemonSpec('alpha', ('/bin/sleep','30')),\n"
-            "  si._DaemonSpec('beta',  ('/bin/sleep','30')),\n"
+            f"  si._DaemonSpec('alpha', ({SLEEP!r},'30')),\n"
+            f"  si._DaemonSpec('beta',  ({SLEEP!r},'30')),\n"
             ")\n"
             "sys.exit(si.main([]))\n"
         )
