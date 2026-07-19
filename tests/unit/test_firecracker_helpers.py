@@ -63,9 +63,12 @@ class TestNetpoolProbes(unittest.TestCase):
         self.assertEqual(2, ok.call_count)
 
     def test_missing_taps(self):
+        # Derive the expected iface from netpool's (env-driven) config rather
+        # than hardcoding "bbfc1": the KVM CI runner sets BOT_BOTTLE_FC_* for
+        # its isolated pool, so the prefix there is not the default.
         with patch.dict("os.environ", {"BOT_BOTTLE_FC_POOL_SIZE": "2"}), \
              patch.object(netpool, "tap_present", side_effect=[True, False]):
-            self.assertEqual(["bbfc1"], netpool.missing_taps())
+            self.assertEqual([netpool.slot(1).iface], netpool.missing_taps())
 
     def test_orch_slot_is_top_of_ip_base_16(self):
         # Dedicated orchestrator link: /31 at the top of the IP_BASE /16,

@@ -35,9 +35,12 @@ class TestNetpoolSlots(unittest.TestCase):
     def test_slot_ip_math_31_pairs(self):
         with patch.dict(os.environ, {"BOT_BOTTLE_FC_IP_BASE": "100.64.0.0"}):
             s0, s1 = netpool.slot(0), netpool.slot(1)
-        self.assertEqual(("bbfc0", "100.64.0.0", "100.64.0.1"),
+        # Iface names track netpool's (env-driven) prefix — the KVM CI runner
+        # overrides it for its isolated pool, so don't hardcode "bbfc".
+        pfx = netpool.IFACE_PREFIX
+        self.assertEqual((f"{pfx}0", "100.64.0.0", "100.64.0.1"),
                          (s0.iface, s0.host_ip, s0.guest_ip))
-        self.assertEqual(("bbfc1", "100.64.0.2", "100.64.0.3"),
+        self.assertEqual((f"{pfx}1", "100.64.0.2", "100.64.0.3"),
                          (s1.iface, s1.host_ip, s1.guest_ip))
 
     def test_guest_cidr_is_31(self):
@@ -180,11 +183,14 @@ class TestNetpoolOverlap(unittest.TestCase):
         self.assertEqual("tailscale0", conflicts[0].dev)
 
     def test_ignores_own_taps_and_default(self):
+        # The "own tap" route uses netpool's (env-driven) iface name, so the
+        # test still exercises the self-ignore path on the KVM CI runner, whose
+        # BOT_BOTTLE_FC_IFACE_PREFIX differs from the default.
         with patch.dict(os.environ, {"BOT_BOTTLE_FC_IP_BASE": "10.243.0.0",
                                      "BOT_BOTTLE_FC_POOL_SIZE": "8"}), \
              self._routes([
                  {"dst": "default", "dev": "enp4s0"},
-                 {"dst": "10.243.0.0/31", "dev": "bbfc0"},
+                 {"dst": "10.243.0.0/31", "dev": netpool.slot(0).iface},
                  {"dst": "192.168.1.0/24", "dev": "enp4s0"},
              ]):
             self.assertEqual([], netpool.overlapping_routes())
@@ -203,7 +209,7 @@ class TestNetpoolAllocation(unittest.TestCase):
             # over (and here, exhaust the pool).
             slot, lock = netpool.allocate("first")
             self.addCleanup(lock.close)
-            self.assertEqual("bbfc0", slot.iface)
+            self.assertEqual(netpool.slot(0).iface, slot.iface)
             with patch.object(netpool, "die",
                               side_effect=SystemExit("exhausted")):
                 with self.assertRaises(SystemExit):
@@ -323,9 +329,14 @@ class TestNetpoolDefaultsSingleSource(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(int(d["BOT_BOTTLE_FC_POOL_SIZE"]), netpool.pool_size())
             self.assertEqual(d["BOT_BOTTLE_FC_IP_BASE"], netpool.ip_base())
-        # Module constants resolve through the same shared file.
-        self.assertEqual(d["BOT_BOTTLE_FC_IFACE_PREFIX"], netpool.IFACE_PREFIX)
-        self.assertEqual(d["BOT_BOTTLE_FC_NFT_TABLE"], netpool.NFT_TABLE)
+        # The module's *defaults* come from the same shared file. Assert the
+        # parsed defaults (not IFACE_PREFIX/NFT_TABLE, which layer a live env
+        # override on top — the KVM CI runner sets those for its isolated pool,
+        # which would otherwise mask this single-source check).
+        self.assertEqual(d["BOT_BOTTLE_FC_IFACE_PREFIX"],
+                         netpool._DEFAULTS["BOT_BOTTLE_FC_IFACE_PREFIX"])
+        self.assertEqual(d["BOT_BOTTLE_FC_NFT_TABLE"],
+                         netpool._DEFAULTS["BOT_BOTTLE_FC_NFT_TABLE"])
 
     def test_env_var_overrides_the_shared_default(self):
         with patch.dict(os.environ, {"BOT_BOTTLE_FC_IP_BASE": "10.99.0.0"}):
