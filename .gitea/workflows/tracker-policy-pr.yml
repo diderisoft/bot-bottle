@@ -2,7 +2,7 @@ name: tracker-policy-pr
 
 on:
   pull_request:
-    types: [opened, edited, reopened, synchronized, labeled, unlabeled]
+    types: [opened, edited, reopened, synchronize, labeled, unlabeled]
 
 jobs:
   check-pr:
