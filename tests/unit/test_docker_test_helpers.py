@@ -28,7 +28,7 @@ class TestSkipUnlessDockerOrFirecracker(unittest.TestCase):
         ):
             decorated = skip_unless_docker_or_firecracker()(type("Case", (), {}))
 
-        self.assertTrue(decorated.__unittest_skip__)
+        self.assertTrue(getattr(decorated, "__unittest_skip__", False))
 
 
 if __name__ == "__main__":

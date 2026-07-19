@@ -219,7 +219,7 @@ class TestKillPidfile(unittest.TestCase):
 
 
 class TestAdoptable(unittest.TestCase):
-    def _dir(self, td, *, key=True, version=None):
+    def _dir(self, td: str, *, key: bool = True, version: str | None = None) -> Path:
         d = Path(td)
         if key:
             (d / "id_ed25519").write_text("k")
@@ -259,7 +259,7 @@ class TestAdoptable(unittest.TestCase):
 
 
 class TestKillInfraFirecrackers(unittest.TestCase):
-    def _fake_proc(self, root, pid, comm, cmdline):
+    def _fake_proc(self, root: Path, pid: int, comm: str, cmdline: list[str]) -> None:
         p = root / str(pid)
         p.mkdir()
         (p / "comm").write_text(comm + "\n")
