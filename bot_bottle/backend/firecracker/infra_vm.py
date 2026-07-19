@@ -161,20 +161,23 @@ def ensure_running() -> InfraVm:
     slot = netpool.orch_slot()
     url = f"http://{slot.guest_ip}:{CONTROL_PLANE_PORT}"
     key = _infra_dir() / "id_ed25519"
-    if key.exists() and _health_ok(url):
+    want = _expected_version()
+    if _adoptable(key, url, want):
         info(f"adopting running infra VM at {url}")
         return InfraVm(guest_ip=slot.guest_ip, private_key=key)
 
     with _singleton_lock():
         # Re-check under the lock: another launcher may have booted it while
         # we waited for the lock (double-checked, so we adopt not re-boot).
-        if key.exists() and _health_ok(url):
+        if _adoptable(key, url, want):
             info(f"adopting running infra VM at {url}")
             return InfraVm(guest_ip=slot.guest_ip, private_key=key)
-        stop()  # clear a stale/hung VM holding the link before booting fresh
+        # Clear a stale/hung/OUTDATED VM holding the link before booting fresh.
+        stop()
         ensure_built()
         infra = boot()
         wait_for_health(infra)
+        _record_booted_version(want)
         return infra
 
 
@@ -193,9 +196,15 @@ def _singleton_lock() -> Generator[None, None, None]:
 
 
 def stop() -> None:
-    """Stop the infra VM singleton (idempotent — absent is success)."""
+    """Stop the infra VM singleton (idempotent — absent is success). Reaps the
+    recorded VMM AND any orphaned firecracker still bound to the infra config —
+    the PID file drifts after crashes / out-of-band kills, and a survivor would
+    hold the orchestrator TAP so the next boot dies with "tap … Resource busy".
+    Drops the version marker so a stopped VM is never treated as adoptable."""
     _kill_pidfile()
+    _kill_infra_firecrackers()
     _pid_file().unlink(missing_ok=True)
+    _version_file().unlink(missing_ok=True)
 
 
 def boot() -> InfraVm:
@@ -236,6 +245,36 @@ def _infra_dir() -> Path:
 
 def _pid_file() -> Path:
     return _infra_dir() / "vm.pid"
+
+
+def _version_file() -> Path:
+    """Records the infra-artifact version the *running* VM booted from, so a
+    later launcher can tell whether the singleton it found is the current code.
+    Without it, a healthy VM built from an older image gets adopted forever and
+    the new code never boots — every infra change would need an out-of-band
+    kill to dislodge the stale VM (and races whatever launched next)."""
+    return _infra_dir() / "booted-version"
+
+
+def _expected_version() -> str:
+    return infra_artifact.infra_artifact_version(_infra_init())
+
+
+def _adoptable(key: Path, url: str, want: str) -> bool:
+    """Adopt a running infra VM only if it booted from the CURRENT version and
+    its control plane is healthy. A missing/mismatched marker means a prior
+    launcher booted an older infra image — reboot rather than reuse stale code."""
+    if not key.exists():
+        return False
+    try:
+        booted = _version_file().read_text(encoding="utf-8").strip()
+    except OSError:
+        return False
+    return booted == want and _health_ok(url)
+
+
+def _record_booted_version(version: str) -> None:
+    _version_file().write_text(version + "\n", encoding="utf-8")
 
 
 # The registry "volume": a host-side ext4 file attached to the infra VM as a
@@ -307,6 +346,28 @@ def _kill_pidfile() -> None:
         os.kill(pid, signal.SIGKILL)
     except OSError:
         pass
+
+
+def _kill_infra_firecrackers(proc_root: Path = Path("/proc")) -> None:
+    """SIGKILL any firecracker VMM whose `--config-file` is this host's infra
+    config, independent of the PID file — reaps orphans it lost track of so the
+    orchestrator TAP is free to rebind. Scoped to the infra config path, so the
+    interactive pool's agent/infra VMs (other config paths) are untouched."""
+    cfg = str(_infra_dir() / "config.json")
+    for entry in proc_root.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            if (entry / "comm").read_text().strip() != "firecracker":
+                continue
+            args = (entry / "cmdline").read_bytes().split(b"\0")
+        except OSError:
+            continue  # process vanished / not ours
+        if any(a.decode("utf-8", "replace") == cfg for a in args):
+            try:
+                os.kill(int(entry.name), signal.SIGKILL)
+            except (OSError, ValueError):
+                pass
 
 
 def _health_ok(url: str) -> bool:

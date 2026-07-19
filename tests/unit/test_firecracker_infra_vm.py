@@ -140,27 +140,58 @@ class TestWaitForHealth(unittest.TestCase):
 
 
 class TestEnsureRunningSingleton(unittest.TestCase):
-    def test_adopts_when_healthy(self):
-        # A healthy control plane + existing key -> adopt (no boot), vm=None.
-        with patch.object(infra_vm, "_health_ok", return_value=True), \
-             patch.object(infra_vm, "_infra_dir") as d, \
-             patch.object(infra_vm, "boot") as boot:
-            keydir = MagicMock()
-            (keydir / "id_ed25519").exists.return_value = True
-            d.return_value = keydir
-            infra = infra_vm.ensure_running()
+    def test_adopts_when_healthy_and_version_matches(self):
+        # Healthy control plane + existing key + matching version marker
+        # -> adopt (no boot), vm=None.
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            (d / "id_ed25519").write_text("k")
+            (d / "booted-version").write_text("v-current\n")
+            with patch.object(infra_vm, "_infra_dir", return_value=d), \
+                 patch.object(infra_vm, "_expected_version", return_value="v-current"), \
+                 patch.object(infra_vm, "_health_ok", return_value=True), \
+                 patch.object(infra_vm, "boot") as boot:
+                infra = infra_vm.ensure_running()
         boot.assert_not_called()
         self.assertIsNone(infra.vm)
 
+    def test_reboots_when_version_stale(self):
+        # Healthy control plane but the running VM booted an OLDER image
+        # (marker mismatch) -> reboot rather than adopt stale code.
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            (d / "id_ed25519").write_text("k")
+            (d / "booted-version").write_text("v-old\n")
+            with patch.object(infra_vm, "_infra_dir", return_value=d), \
+                 patch.object(infra_vm, "_expected_version", return_value="v-current"), \
+                 patch.object(infra_vm, "_health_ok", return_value=True), \
+                 patch.object(infra_vm, "stop") as stop, \
+                 patch.object(infra_vm, "ensure_built"), \
+                 patch.object(infra_vm, "wait_for_health"), \
+                 patch.object(infra_vm, "boot") as boot:
+                boot.return_value = infra_vm.InfraVm(
+                    guest_ip="10.243.255.1", private_key=Path("/k"), vm=MagicMock())
+                infra_vm.ensure_running()
+            stop.assert_called_once()      # dislodge the outdated VM
+            boot.assert_called_once()
+            # The fresh boot records the current version for the next launcher.
+            self.assertEqual("v-current\n", (d / "booted-version").read_text())
+
     def test_boots_when_unhealthy(self):
-        with patch.object(infra_vm, "_health_ok", return_value=False), \
-             patch.object(infra_vm, "stop") as stop, \
-             patch.object(infra_vm, "ensure_built") as built, \
-             patch.object(infra_vm, "boot") as boot, \
-             patch.object(infra_vm, "wait_for_health") as wait:
-            boot.return_value = infra_vm.InfraVm(
-                guest_ip="10.243.255.1", private_key=Path("/k"), vm=MagicMock())
-            infra_vm.ensure_running()
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            with patch.object(infra_vm, "_infra_dir", return_value=Path(td)), \
+                 patch.object(infra_vm, "_expected_version", return_value="v-current"), \
+                 patch.object(infra_vm, "_health_ok", return_value=False), \
+                 patch.object(infra_vm, "stop") as stop, \
+                 patch.object(infra_vm, "ensure_built") as built, \
+                 patch.object(infra_vm, "boot") as boot, \
+                 patch.object(infra_vm, "wait_for_health") as wait:
+                boot.return_value = infra_vm.InfraVm(
+                    guest_ip="10.243.255.1", private_key=Path("/k"), vm=MagicMock())
+                infra_vm.ensure_running()
         stop.assert_called_once()      # clear a stale VM first
         built.assert_called_once()
         boot.assert_called_once()
@@ -185,6 +216,75 @@ class TestKillPidfile(unittest.TestCase):
                  patch.object(infra_vm.os, "kill") as kill:
                 infra_vm._kill_pidfile()
             kill.assert_not_called()
+
+
+class TestAdoptable(unittest.TestCase):
+    def _dir(self, td, *, key=True, version=None):
+        d = Path(td)
+        if key:
+            (d / "id_ed25519").write_text("k")
+        if version is not None:
+            (d / "booted-version").write_text(version + "\n")
+        return d
+
+    def test_true_when_key_version_and_health(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            d = self._dir(td, version="v1")
+            with patch.object(infra_vm, "_infra_dir", return_value=d), \
+                 patch.object(infra_vm, "_health_ok", return_value=True):
+                self.assertTrue(infra_vm._adoptable(d / "id_ed25519", "u", "v1"))
+
+    def test_false_when_key_missing(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            d = self._dir(td, key=False, version="v1")
+            with patch.object(infra_vm, "_infra_dir", return_value=d):
+                self.assertFalse(infra_vm._adoptable(d / "id_ed25519", "u", "v1"))
+
+    def test_false_when_no_version_marker(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            d = self._dir(td)  # key present, no booted-version
+            with patch.object(infra_vm, "_infra_dir", return_value=d):
+                self.assertFalse(infra_vm._adoptable(d / "id_ed25519", "u", "v1"))
+
+    def test_false_when_version_mismatch(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            d = self._dir(td, version="v-old")
+            with patch.object(infra_vm, "_infra_dir", return_value=d), \
+                 patch.object(infra_vm, "_health_ok", return_value=True):
+                self.assertFalse(infra_vm._adoptable(d / "id_ed25519", "u", "v1"))
+
+
+class TestKillInfraFirecrackers(unittest.TestCase):
+    def _fake_proc(self, root, pid, comm, cmdline):
+        p = root / str(pid)
+        p.mkdir()
+        (p / "comm").write_text(comm + "\n")
+        (p / "cmdline").write_bytes(b"\0".join(a.encode() for a in cmdline) + b"\0")
+
+    def test_kills_only_matching_infra_firecracker(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td, \
+             tempfile.TemporaryDirectory() as proc:
+            infra_dir = Path(td)
+            cfg = str(infra_dir / "config.json")
+            root = Path(proc)
+            # target: firecracker bound to the infra config -> killed
+            self._fake_proc(root, 111, "firecracker",
+                            ["firecracker", "--no-api", "--config-file", cfg])
+            # a firecracker for a different (interactive) VM -> spared
+            self._fake_proc(root, 222, "firecracker",
+                            ["firecracker", "--config-file", "/home/u/other.json"])
+            # a non-firecracker process on the same config path -> spared
+            self._fake_proc(root, 333, "python3", ["python3", cfg])
+            (root / "not-a-pid").mkdir()
+            with patch.object(infra_vm, "_infra_dir", return_value=infra_dir), \
+                 patch.object(infra_vm.os, "kill") as kill:
+                infra_vm._kill_infra_firecrackers(proc_root=root)
+            kill.assert_called_once_with(111, infra_vm.signal.SIGKILL)
 
 
 if __name__ == "__main__":
