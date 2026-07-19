@@ -38,11 +38,24 @@ _BUILD_TIMEOUT_SECONDS = 900.0
 
 
 def _dockerfile_hash(dockerfile: Path) -> str:
-    """Cache key: the Dockerfile's content. The shipped agent Dockerfiles
-    COPY nothing from the build context (see .dockerignore), so their content
-    fully determines the image; a Dockerfile that adds COPY will want the
+    """The Dockerfile's content hash. The shipped agent Dockerfiles COPY
+    nothing from the build context (see .dockerignore), so their content fully
+    determines the built image; a Dockerfile that adds COPY will want the
     context folded in here too."""
     return hashlib.sha256(dockerfile.read_bytes()).hexdigest()[:16]
+
+
+def _rootfs_digest(dockerfile: Path) -> str:
+    """Cache key for the built AND boot-injected agent rootfs. Two inputs
+    determine the on-disk rootfs: the Dockerfile (the image) and the guest init
+    injected into it (`util._GUEST_INIT`). Folding the init in means a fix to
+    it — e.g. making /tmp world-writable — busts the cache instead of silently
+    reusing a stale rootfs built with the old init."""
+    h = hashlib.sha256()
+    h.update(_dockerfile_hash(dockerfile).encode())
+    h.update(b"\0")
+    h.update(util._GUEST_INIT.encode())
+    return h.hexdigest()[:16]
 
 
 def build_agent_rootfs_dir(
@@ -50,13 +63,14 @@ def build_agent_rootfs_dir(
 ) -> Path:
     """Build `dockerfile` in the infra VM (buildah, no host docker), export its
     rootfs, inject the guest boot bits, and return the cached base dir — the
-    same shape `util.build_rootfs_ext4` consumes. Cached by Dockerfile content,
-    so a repeat launch skips the rebuild.
+    same shape `util.build_rootfs_ext4` consumes. Cached by Dockerfile content
+    + injected guest init, so a repeat launch skips the rebuild but an init or
+    Dockerfile change rebuilds.
 
     `smoke_test` (the provider's declared argv, e.g. `("claude","--version")`)
     is run in the freshly built image before export, catching an npm
     silent-failure image at build time rather than at first agent use."""
-    digest = _dockerfile_hash(dockerfile)
+    digest = _rootfs_digest(dockerfile)
     base = util.cache_dir() / "rootfs" / f"agent-{digest}"
     if (base / ".bb-ready").is_file():
         info(f"using cached agent rootfs {base.name}")

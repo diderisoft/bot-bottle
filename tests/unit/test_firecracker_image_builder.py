@@ -24,7 +24,7 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
 
     def test_cache_hit_skips_rebuild(self):
-        digest = image_builder._dockerfile_hash(self.dockerfile)
+        digest = image_builder._rootfs_digest(self.dockerfile)
         base = self.cache / "rootfs" / f"agent-{digest}"
         base.mkdir(parents=True)
         (base / ".bb-ready").write_text("ok\n")
@@ -54,6 +54,17 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
             image_builder._dockerfile_hash(self.dockerfile),
             image_builder._dockerfile_hash(other),
         )
+
+    def test_rootfs_digest_tracks_dockerfile_and_init(self):
+        # Same Dockerfile, different injected init -> different rootfs key, so
+        # an init fix (e.g. /tmp perms) rebuilds instead of reusing a stale
+        # rootfs; different Dockerfiles also differ.
+        base = image_builder._rootfs_digest(self.dockerfile)
+        with patch.object(image_builder.util, "_GUEST_INIT", "#!/bin/sh\n# changed\n"):
+            self.assertNotEqual(base, image_builder._rootfs_digest(self.dockerfile))
+        other = self.cache / "Dockerfile2"
+        other.write_text("FROM python:3.12-slim\n")
+        self.assertNotEqual(base, image_builder._rootfs_digest(other))
 
 
 class TestSmokeTest(unittest.TestCase):
