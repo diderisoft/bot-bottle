@@ -215,6 +215,18 @@ class TestDockerSetupStatus(unittest.TestCase):
         with patch.object(dk.shutil, "which", return_value=None):
             self.assertFalse(dk._daemon_reachable())
 
+    def test_daemon_reachable_true_when_daemon_responds(self):
+        with patch.object(dk.shutil, "which", return_value="/usr/bin/docker"), \
+             patch.object(dk.subprocess, "run",
+                          return_value=subprocess.CompletedProcess([], 0)):
+            self.assertTrue(dk._daemon_reachable())
+
+    def test_daemon_reachable_false_on_timeout(self):
+        with patch.object(dk.shutil, "which", return_value="/usr/bin/docker"), \
+             patch.object(dk.subprocess, "run",
+                          side_effect=subprocess.TimeoutExpired(["docker", "info"], 5)):
+            self.assertFalse(dk._daemon_reachable())
+
     def test_status_reports_missing_docker(self):
         with patch.object(dk.shutil, "which", return_value=None):
             rc, out = _cap(dk.status)
