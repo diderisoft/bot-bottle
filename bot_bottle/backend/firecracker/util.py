@@ -368,6 +368,11 @@ mount -t devtmpfs dev /dev 2>/dev/null
 mkdir -p /dev/pts && mount -t devpts devpts /dev/pts 2>/dev/null
 mount -o remount,rw / 2>/dev/null
 
+# /tmp must be world-writable + sticky. The rootless rootfs build can land
+# it 0755/root-owned, leaving the agent (uid 1000 node) unable to create
+# scratch dirs there — git worktrees, build temp, `git init /tmp/...`, etc.
+mkdir -p /tmp && chmod 1777 /tmp
+
 # Install the per-bottle SSH pubkey from the kernel cmdline.
 KEY=$(sed -n 's/.*bb_pubkey=\([^ ]*\).*/\1/p' /proc/cmdline | base64 -d 2>/dev/null)
 if [ -n "$KEY" ]; then

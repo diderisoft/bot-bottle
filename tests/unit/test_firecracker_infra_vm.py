@@ -38,7 +38,9 @@ class TestBuildInfraRootfs(unittest.TestCase):
         # and exports PATH so gateway_init's subprocess daemons find python3.
         init = build.call_args.kwargs["init_script"]
         self.assertIn("bot_bottle.orchestrator", init)
-        self.assertIn("gateway_init.py", init)
+        # Gateway launches via the installed package (there is no
+        # /app/gateway_init.py file since the daemons moved into bot_bottle).
+        self.assertIn("bot_bottle.gateway_init", init)
         self.assertIn("export PATH=", init)
         # Persistent registry volume mounted at the DB dir before the CP starts.
         self.assertIn("/dev/vdb", init)
