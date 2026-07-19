@@ -30,3 +30,16 @@ def docker_available() -> bool:
 
 def skip_unless_docker(reason: str = "docker unreachable"):
     return unittest.skipUnless(docker_available(), reason)
+
+
+def skip_unless_docker_or_firecracker(
+    reason: str = "neither Docker nor Firecracker selected",
+):
+    """Skip a backend-agnostic test unless one supported backend can run.
+
+    Firecracker does not require the host Docker daemon. The KVM coverage job
+    deliberately sets ``SKIP_DOCKER_TESTS`` to exclude Docker-only integration
+    classes while still exercising this path.
+    """
+    firecracker_selected = os.environ.get("BOT_BOTTLE_BACKEND") == "firecracker"
+    return unittest.skipUnless(firecracker_selected or docker_available(), reason)

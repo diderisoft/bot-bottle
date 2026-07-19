@@ -31,7 +31,7 @@ from pathlib import Path
 from bot_bottle.backend import BottleSpec, get_bottle_backend
 from bot_bottle.bottle_state import cleanup_state
 from bot_bottle.manifest import ManifestIndex
-from tests._docker import skip_unless_docker
+from tests._docker import skip_unless_docker_or_firecracker
 
 
 # Secrets planted in the bottle env as literals (agents substitute via
@@ -67,7 +67,7 @@ _DUMMY_HOST_KEY = (
 )
 
 
-@skip_unless_docker()
+@skip_unless_docker_or_firecracker()
 @unittest.skipIf(
     os.environ.get("GITEA_ACTIONS") == "true"
     and os.environ.get("BOT_BOTTLE_BACKEND") != "firecracker",
@@ -91,11 +91,9 @@ class TestSandboxEscape(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        # Docker is always required (the agent + companion containers run under it,
-        # and VM backends still use it for the gateway); the
-        # class-level @skip_unless_docker already covers that. Pin
-        # Docker when BOT_BOTTLE_BACKEND is unset to preserve the
-        # Docker-backed CI path.
+        # Pin Docker when BOT_BOTTLE_BACKEND is unset to preserve the
+        # Docker-backed CI path. Firecracker uses its persistent infra VM for
+        # the shared gateway and therefore does not require host Docker.
         cls._backend_name = os.environ.get("BOT_BOTTLE_BACKEND", "docker")
 
         # Throwaway static key for the git-gate fixture. It need not
