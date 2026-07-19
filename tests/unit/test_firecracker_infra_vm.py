@@ -100,7 +100,11 @@ class TestRegistryVolume(unittest.TestCase):
 class TestEnsureBuilt(unittest.TestCase):
     def test_default_pulls_artifact_without_docker(self):
         # PRD 0069 Stage 2: the launch host pulls the prebuilt rootfs; no Docker.
-        with patch.object(infra_vm.docker_mod, "build_image") as build, \
+        # Pin BOT_BOTTLE_INFRA_BUILD off: the coverage CI job exports it =local
+        # for the integration suite, and that ambient value would otherwise send
+        # this default-path test down the local Docker-build branch.
+        with patch.dict(os.environ, {"BOT_BOTTLE_INFRA_BUILD": ""}), \
+                patch.object(infra_vm.docker_mod, "build_image") as build, \
                 patch.object(infra_vm.infra_artifact, "ensure_artifact_gz") as pull:
             infra_vm.ensure_built()
         build.assert_not_called()
