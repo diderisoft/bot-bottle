@@ -235,7 +235,11 @@ def stale_checks(plan: DockerBottlePlan) -> None:
         return
     committed = read_committed_image(plan.slug)
     if committed and docker_mod.image_exists(committed):
-        check_stale(f"agent image {committed!r}", docker_mod.image_created_at(committed))
+        ts = docker_mod.image_created_at(committed)
+        if ts is not None:
+            check_stale(f"agent image {committed!r}", ts)
         return
     if docker_mod.image_exists(plan.image):
-        check_stale(f"agent image {plan.image!r}", docker_mod.image_created_at(plan.image))
+        ts = docker_mod.image_created_at(plan.image)
+        if ts is not None:
+            check_stale(f"agent image {plan.image!r}", ts)

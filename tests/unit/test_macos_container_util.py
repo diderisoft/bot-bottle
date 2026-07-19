@@ -439,22 +439,17 @@ class TestMacosContainerImageCreatedAt(unittest.TestCase):
                 util.image_created_at("some:tag")
         die.assert_called_once()
 
-    def test_dies_when_no_created_field(self):
+    def test_returns_none_when_no_created_field(self):
         payload = '[{"id": "sha256:abc123"}]'
-        with patch.object(util.subprocess, "run", return_value=self._ok(payload)), \
-             patch.object(util, "die", side_effect=SystemExit("die")) as die:
-            with self.assertRaises(SystemExit):
-                util.image_created_at("some:tag")
-        die.assert_called_once()
-        self.assertIn("creation timestamp", die.call_args.args[0])
+        with patch.object(util.subprocess, "run", return_value=self._ok(payload)):
+            result = util.image_created_at("some:tag")
+        self.assertIsNone(result)
 
-    def test_dies_on_invalid_timestamp_format(self):
+    def test_returns_none_on_invalid_timestamp_format(self):
         payload = '[{"created": "not-a-date"}]'
-        with patch.object(util.subprocess, "run", return_value=self._ok(payload)), \
-             patch.object(util, "die", side_effect=SystemExit("die")) as die:
-            with self.assertRaises(SystemExit):
-                util.image_created_at("some:tag")
-        die.assert_called_once()
+        with patch.object(util.subprocess, "run", return_value=self._ok(payload)):
+            result = util.image_created_at("some:tag")
+        self.assertIsNone(result)
 
 
 if __name__ == "__main__":

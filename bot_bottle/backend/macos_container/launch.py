@@ -227,10 +227,14 @@ def stale_checks(plan: MacosContainerBottlePlan) -> None:
         return
     committed = read_committed_image(plan.slug)
     if committed and container_mod.image_exists(committed):
-        check_stale(f"agent image {committed!r}", container_mod.image_created_at(committed))
+        ts = container_mod.image_created_at(committed)
+        if ts is not None:
+            check_stale(f"agent image {committed!r}", ts)
         return
     if container_mod.image_exists(plan.image):
-        check_stale(f"agent image {plan.image!r}", container_mod.image_created_at(plan.image))
+        ts = container_mod.image_created_at(plan.image)
+        if ts is not None:
+            check_stale(f"agent image {plan.image!r}", ts)
 
 
 def _provision_git_gate_keys(

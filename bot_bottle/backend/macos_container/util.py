@@ -662,10 +662,11 @@ def image_id(ref: str) -> str:
     raise AssertionError("unreachable")
 
 
-def image_created_at(ref: str) -> datetime:
-    """Return the image creation timestamp as an aware UTC datetime.
-
-    Parses the `created` field from `container image inspect` JSON output."""
+def image_created_at(ref: str) -> datetime | None:
+    """Return the image creation timestamp as an aware UTC datetime, or None
+    when the field is absent or unparseable (e.g. FROM-scratch images, images
+    pulled from registries that omit the field). Callers should skip the stale
+    check when None is returned rather than treating it as an error."""
     result = subprocess.run(
         [_CONTAINER, "image", "inspect", ref],
         capture_output=True,
@@ -691,8 +692,7 @@ def image_created_at(ref: str) -> datetime:
                 return datetime.fromisoformat(ts).replace(tzinfo=timezone.utc)
             except ValueError:
                 pass
-    die(f"container image inspect for {ref!r} did not include a creation timestamp")
-    raise AssertionError("unreachable")
+    return None
 
 
 def save(ref: str, output: str) -> None:

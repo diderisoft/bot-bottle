@@ -200,8 +200,10 @@ def commit_container(container_name: str, image_tag: str) -> None:
     info(f"committed {container_name!r} → {image_tag!r}")
 
 
-def image_created_at(ref: str) -> datetime:
-    """Return Docker's image Created timestamp as an aware UTC datetime."""
+def image_created_at(ref: str) -> datetime | None:
+    """Return Docker's image Created timestamp as an aware UTC datetime, or
+    None when the field is absent or unparseable. Callers should skip the
+    stale check when None is returned."""
     r = subprocess.run(
         ["docker", "image", "inspect", "--format", "{{.Created}}", ref],
         capture_output=True,
@@ -214,10 +216,12 @@ def image_created_at(ref: str) -> datetime:
             f"{(r.stderr or '').strip() or '<no stderr>'}"
         )
     raw = r.stdout.strip()
+    if not raw:
+        return None
     try:
         return _parse_docker_timestamp(raw)
     except ValueError:
-        die(f"docker image inspect for {ref!r} returned invalid Created timestamp: {raw!r}")
+        return None
 
 
 def _parse_docker_timestamp(raw: str) -> datetime:

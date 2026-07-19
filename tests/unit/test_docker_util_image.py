@@ -54,17 +54,21 @@ class TestImageCreatedAt(unittest.TestCase):
         die.assert_called_once()
         self.assertIn("missing:tag", die.call_args.args[0])
 
-    def test_dies_on_invalid_timestamp(self):
+    def test_returns_none_on_invalid_timestamp(self):
         with patch.object(
             docker_mod.subprocess, "run",
             return_value=_ok(stdout="not-a-timestamp\n"),
-        ), patch.object(
-            docker_mod, "die", side_effect=SystemExit("die"),
-        ) as die:
-            with self.assertRaises(SystemExit):
-                docker_mod.image_created_at("some:tag")
-        die.assert_called_once()
-        self.assertIn("some:tag", die.call_args.args[0])
+        ):
+            result = docker_mod.image_created_at("some:tag")
+        self.assertIsNone(result)
+
+    def test_returns_none_on_empty_stdout(self):
+        with patch.object(
+            docker_mod.subprocess, "run",
+            return_value=_ok(stdout=""),
+        ):
+            result = docker_mod.image_created_at("some:tag")
+        self.assertIsNone(result)
 
     def test_parse_docker_timestamp_no_tzinfo_defaults_to_utc(self):
         # A bare datetime with no tz offset should be treated as UTC.
