@@ -105,6 +105,20 @@ class TestVersionInputs(unittest.TestCase):
             after = ia.infra_artifact_version("init", repo_root=root)
         self.assertNotEqual(before, after)
 
+    def test_dropbear_change_bumps_version(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._fake_repo(root)
+            dropbear = root / "dropbear"
+            dropbear.write_bytes(b"dropbear-v1")
+            with mock.patch.dict(os.environ, {
+                "BOT_BOTTLE_FC_DROPBEAR": str(dropbear),
+            }):
+                before = ia.infra_artifact_version("init", repo_root=root)
+                dropbear.write_bytes(b"dropbear-v2")
+                after = ia.infra_artifact_version("init", repo_root=root)
+        self.assertNotEqual(before, after)
+
     def test_non_python_file_change_bumps_version(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)

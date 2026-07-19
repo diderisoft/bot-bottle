@@ -197,6 +197,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"built infra rootfs candidate {version}")
         return 0
 
+    assert args.publish_dir is not None
     version = _publish_bundle(args.publish_dir, token)
     print(f"published infra rootfs {version}")
     return 0

@@ -7,6 +7,7 @@ read it into memory. Network is mocked; no Docker, no real build.
 from __future__ import annotations
 
 import hashlib
+from email.message import Message
 import tempfile
 import unittest
 import urllib.error
@@ -88,7 +89,7 @@ class TestPublishBundle(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             self._bundle(root, "v1")
-            missing = urllib.error.HTTPError("u", 404, "missing", {}, None)
+            missing = urllib.error.HTTPError("u", 404, "missing", Message(), None)
             with mock.patch.object(
                 pub.infra_artifact, "infra_artifact_version", return_value="v1"
             ), mock.patch.object(

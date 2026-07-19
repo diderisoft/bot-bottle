@@ -40,13 +40,36 @@ on:
   workflow_dispatch:
 
 jobs:
+  stage-firecracker-inputs:
+    runs-on: [self-hosted, kvm]
+    steps:
+      - name: Stage the provisioned static dropbear
+        run: |
+          mkdir -p firecracker-inputs
+          cp /var/cache/bot-bottle-fc/dropbear firecracker-inputs/dropbear
+
+      - name: Upload Firecracker build inputs
+        uses: actions/upload-artifact@v3
+        with:
+          name: firecracker-inputs
+          path: firecracker-inputs/
+
   build-infra:
+    needs: stage-firecracker-inputs
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Download Firecracker build inputs
+        uses: actions/download-artifact@v3
+        with:
+          name: firecracker-inputs
+          path: firecracker-inputs
+
       - name: Build infra candidate from this checkout
+        env:
+          BOT_BOTTLE_FC_DROPBEAR: ${{ github.workspace }}/firecracker-inputs/dropbear
         run: python3 -m bot_bottle.backend.firecracker.publish_infra --output infra-candidate
 
       - name: Upload infra candidate
