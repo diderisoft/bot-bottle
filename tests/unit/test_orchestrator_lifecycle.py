@@ -8,6 +8,7 @@ import urllib.error
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
+from bot_bottle.orchestrator.gateway import GatewayError
 from bot_bottle.orchestrator.lifecycle import (
     INFRA_NAME,
     INFRA_SOURCE_HASH_LABEL,
@@ -143,6 +144,45 @@ class TestOrchestratorService(unittest.TestCase):
                 patch(_SLEEP), patch(_MONOTONIC, side_effect=[0.0, 0.5, 2.0]):
             with self.assertRaises(OrchestratorStartError):
                 self.svc.ensure_running(startup_timeout=1.0)
+
+    def test_noop_when_healthy_and_inspect_fails(self) -> None:
+        """If docker inspect fails (e.g. docker daemon hiccup), leave the
+        working container alone rather than churning it."""
+        def fake(argv: list[str], **_kw: object) -> Mock:
+            if argv[:2] == ["docker", "ps"]:
+                return _proc(stdout=INFRA_NAME)
+            if argv[:2] == ["docker", "inspect"]:
+                return _proc(returncode=1, stderr="daemon error")
+            return _proc()
+
+        with patch(_URLOPEN, return_value=_health(200)), \
+                patch(_RUN, side_effect=fake), patch(_SLEEP):
+            self.svc.ensure_running()
+        # no docker run — the working container was left alone
+
+    def test_build_failure_raises(self) -> None:
+        with patch(_URLOPEN, side_effect=urllib.error.URLError("down")), \
+                patch(_RUN, return_value=_proc(returncode=1, stderr="no space left on device")):
+            with self.assertRaises(GatewayError):
+                self.svc.ensure_running()
+
+    def test_ensure_network_creates_if_missing(self) -> None:
+        """If the gateway network doesn't exist yet, create it."""
+        calls: list[list[str]] = []
+
+        def fake(argv: list[str], **_kw: object) -> Mock:
+            calls.append(argv)
+            if argv[:3] == ["docker", "network", "inspect"]:
+                return _proc(returncode=1, stderr="not found")
+            if argv[:2] == ["docker", "ps"]:
+                return _proc(stdout="")
+            return _proc()
+
+        with patch(_URLOPEN, side_effect=[urllib.error.URLError("down"), _health(200)]), \
+                patch(_RUN, side_effect=fake), patch(_SLEEP):
+            self.svc.ensure_running()
+        creates = [c for c in calls if c[:3] == ["docker", "network", "create"]]
+        self.assertEqual(1, len(creates))
 
     def test_stop_removes_infra_container(self) -> None:
         with patch(_RUN) as run:
