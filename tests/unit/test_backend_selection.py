@@ -66,7 +66,7 @@ class TestGetBottleBackend(unittest.TestCase):
                  "macos-container": _FakeBackend("macos-container", False),
                  "docker": _FakeBackend("docker", True),
              }), \
-             patch.object(backend_mod, "_read_tty_line", return_value="d"):
+             patch.object(backend_mod, "read_tty_line", return_value="d"):
             b = get_bottle_backend()
         self.assertEqual("docker", b.name)
 
@@ -136,7 +136,7 @@ class TestGetBottleBackend(unittest.TestCase):
                  "macos-container": _FakeBackend("macos-container", False),
                  "docker": _FakeBackend("docker", True),
              }), \
-             patch.object(backend_mod, "_read_tty_line", return_value="q"), \
+             patch.object(backend_mod, "read_tty_line", return_value="q"), \
              patch.object(backend_mod, "die", side_effect=SystemExit("die")):
             with self.assertRaises(SystemExit):
                 get_bottle_backend()
@@ -159,7 +159,7 @@ class TestGetBottleBackend(unittest.TestCase):
                  "macos-container": _FakeBackend("macos-container", False),
                  "docker": _FakeBackend("docker", True),
              }), \
-             patch.object(backend_mod, "_read_tty_line", return_value="i"), \
+             patch.object(backend_mod, "read_tty_line", return_value="i"), \
              patch.object(backend_mod, "_print_vm_install_instructions") as mock_inst, \
              patch.object(backend_mod, "die", side_effect=SystemExit("die")):
             with self.assertRaises(SystemExit):
@@ -168,26 +168,26 @@ class TestGetBottleBackend(unittest.TestCase):
 
 
 class TestReadTtyLine(unittest.TestCase):
-    """Unit tests for the _read_tty_line helper."""
+    """Unit tests for the shared read_tty_line helper in bot_bottle.util."""
 
     def test_reads_from_dev_tty(self):
         from unittest.mock import mock_open
-        from bot_bottle.backend import _read_tty_line
+        from bot_bottle.util import read_tty_line
 
         m = mock_open(read_data="hello\n")
         with patch("builtins.open", m):
-            result = _read_tty_line()
+            result = read_tty_line()
         self.assertEqual("hello", result)
         m.assert_called_once_with("/dev/tty", "r", encoding="utf-8")
 
     def test_falls_back_to_stdin_on_oserror(self):
         import io
-        from bot_bottle.backend import _read_tty_line
+        from bot_bottle.util import read_tty_line
         import sys as _sys
 
         with patch("builtins.open", side_effect=OSError("no tty")), \
              patch.object(_sys, "stdin", io.StringIO("world\n")):
-            result = _read_tty_line()
+            result = read_tty_line()
         self.assertEqual("world", result)
 
 

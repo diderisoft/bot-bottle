@@ -46,6 +46,7 @@ from ..agent_provider import AgentProvisionPlan, get_provider, build_agent_provi
 from ..egress import EgressPlan
 from ..git_gate import GitGatePlan
 from ..log import die, info, warn
+from ..util import read_tty_line
 from ..manifest import Manifest, ManifestIndex
 from ..supervise import SupervisePlan
 from ..util import expand_tilde
@@ -668,15 +669,6 @@ def get_bottle_backend(
     return backends[resolved]
 
 
-def _read_tty_line() -> str:
-    """Read a line from /dev/tty, falling back to stdin."""
-    try:
-        with open("/dev/tty", "r", encoding="utf-8") as tty:
-            return tty.readline().rstrip("\n")
-    except OSError:
-        return sys.stdin.readline().rstrip("\n")
-
-
 def _platform_vm_suggestion() -> str:
     """Platform-appropriate VM backend name for install suggestions."""
     return "macos-container" if sys.platform == "darwin" else "firecracker"
@@ -733,7 +725,7 @@ def _auto_select_backend() -> str:
         "bot-bottle: choice [i/d/q]: "
     )
     sys.stderr.flush()
-    reply = _read_tty_line().strip().lower()
+    reply = read_tty_line().strip().lower()
     if reply == "d":
         return "docker"
     if reply == "i":

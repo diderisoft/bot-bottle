@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import sys
 
 
 def is_ip_literal(value: str) -> bool:
@@ -15,6 +16,15 @@ def is_ip_literal(value: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+def read_tty_line() -> str:
+    """Mirror `IFS= read -r REPLY </dev/tty`. Falls back to stdin."""
+    try:
+        with open("/dev/tty", "r", encoding="utf-8") as tty:
+            return tty.readline().rstrip("\n")
+    except OSError:
+        return sys.stdin.readline().rstrip("\n")
 
 
 def expand_tilde(path: str) -> str:
