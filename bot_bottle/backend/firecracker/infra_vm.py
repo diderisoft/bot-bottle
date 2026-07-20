@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Generator
 
 from ...log import die, info
+from .. import util as backend_util
 from ..docker import util as docker_mod
 from ..docker.gateway_provision import GatewayProvisionError
 from . import firecracker_vm, infra_artifact, netpool, util
@@ -93,19 +94,18 @@ class InfraVm:
         """The gateway's mitmproxy CA (PEM) that agents install to trust its
         TLS interception. Generated a moment after boot, so this polls over
         SSH until it appears (mirrors DockerGateway.ca_cert_pem)."""
-        deadline = time.monotonic() + timeout
-        while True:
+        def _fetch() -> str | None:
             proc = subprocess.run(
                 util.ssh_base_argv(self.private_key, self.guest_ip)
                 + [f"cat {_GATEWAY_CA_PATH}"],
                 capture_output=True, text=True, timeout=15, check=False,
             )
-            if proc.returncode == 0 and "BEGIN CERTIFICATE" in proc.stdout:
-                return proc.stdout
-            if time.monotonic() >= deadline:
-                die(f"gateway CA not available after {timeout:g}s: "
-                    f"{proc.stderr.strip() or 'empty'}")
-            time.sleep(_HEALTH_POLL_SECONDS)
+            ok = proc.returncode == 0 and "BEGIN CERTIFICATE" in proc.stdout
+            return proc.stdout if ok else None
+        try:
+            return backend_util.poll_ca_cert(_fetch, timeout=timeout)
+        except TimeoutError as exc:
+            die(str(exc))
 
 
 def ensure_built() -> None:

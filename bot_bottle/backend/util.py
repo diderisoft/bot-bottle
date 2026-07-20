@@ -7,6 +7,8 @@ from __future__ import annotations
 import hashlib
 import os
 import ssl
+import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -14,6 +16,24 @@ from ..log import die, info
 
 if TYPE_CHECKING:
     from ..egress import EgressPlan
+
+_CA_POLL_INTERVAL = 0.5
+
+
+def poll_ca_cert(fetch: Callable[[], str | None], *, timeout: float) -> str:
+    """Poll `fetch` until it returns a non-empty PEM string or `timeout` expires.
+
+    `fetch` should return the PEM on success and `None` (or empty string) when
+    the cert is not yet available. Raises `TimeoutError` if the cert never
+    appears within `timeout` seconds."""
+    deadline = time.monotonic() + timeout
+    while True:
+        result = fetch()
+        if result:
+            return result
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"CA cert not available after {timeout:g}s")
+        time.sleep(_CA_POLL_INTERVAL)
 
 
 # Debian-family CA layout, shared by every backend (all guest images

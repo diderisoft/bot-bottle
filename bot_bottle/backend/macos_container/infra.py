@@ -53,6 +53,7 @@ from ...paths import (
     HOST_DB_FILENAME,
     host_control_plane_token,
 )
+from .. import util as backend_util
 from . import util as container_mod
 from .gateway import (
     DEFAULT_CA_TIMEOUT_SECONDS,
@@ -263,18 +264,16 @@ class MacosInfraService:
         interception. Read out of the container (the CA lives on a
         container-internal path, not a host mount); polls because mitmproxy
         writes it a beat after start."""
-        deadline = time.monotonic() + timeout
-        while True:
+        def _fetch() -> str | None:
             result = container_mod.run_container_argv(
                 ["container", "exec", self._name, "cat", GATEWAY_CA_CERT])
-            if result.returncode == 0 and result.stdout.strip():
-                return result.stdout
-            if time.monotonic() >= deadline:
-                raise GatewayError(
-                    f"gateway CA not available in {self._name} after {timeout:g}s: "
-                    f"{(result.stderr or '').strip() or 'empty'}"
-                )
-            time.sleep(_CA_POLL_SECONDS)
+            return result.stdout if result.returncode == 0 and result.stdout.strip() else None
+        try:
+            return backend_util.poll_ca_cert(_fetch, timeout=timeout)
+        except TimeoutError as exc:
+            raise GatewayError(
+                f"gateway CA not available in {self._name} after {timeout:g}s"
+            ) from exc
 
     def stop(self) -> None:
         """Remove the infra container (idempotent). The DB volume persists."""
