@@ -45,7 +45,7 @@ from typing import TYPE_CHECKING, Any, Generic, Sequence, TypeVar
 from ..agent_provider import AgentProvisionPlan, get_provider, build_agent_provision_plan
 from ..egress import EgressPlan
 from ..git_gate import GitGatePlan
-from ..log import die, info
+from ..log import die, info, warn
 from ..manifest import Manifest, ManifestIndex
 from ..supervise import SupervisePlan
 from ..util import expand_tilde
@@ -652,15 +652,15 @@ def get_bottle_backend(
     """Resolve the bottle backend.
 
     `name` precedence:
-      1. explicit arg (CLI `--backend=<name>` passes through here)
+      1. explicit arg (e.g. resume passes the recorded backend name)
       2. BOT_BOTTLE_BACKEND env var
-      3. `macos-container` on compatible macOS hosts
-      4. `firecracker` on KVM-capable Linux hosts
-      5. default `docker`
+      3. auto-selection: VM backend first, docker fallback with prompt
 
     Dies with a pointer at the known backends if the chosen name
     isn't implemented."""
-    resolved = name or os.environ.get("BOT_BOTTLE_BACKEND") or _default_backend_name()
+    resolved = name or os.environ.get("BOT_BOTTLE_BACKEND")
+    if resolved is None:
+        resolved = _auto_select_backend()
     backends = _get_backends()
     if resolved not in backends:
         known = ", ".join(sorted(backends))
@@ -668,7 +668,42 @@ def get_bottle_backend(
     return backends[resolved]
 
 
-def _default_backend_name() -> str:
+def _read_tty_line() -> str:
+    """Read a line from /dev/tty, falling back to stdin."""
+    try:
+        with open("/dev/tty", "r", encoding="utf-8") as tty:
+            return tty.readline().rstrip("\n")
+    except OSError:
+        return sys.stdin.readline().rstrip("\n")
+
+
+def _platform_vm_suggestion() -> str:
+    """Platform-appropriate VM backend name for install suggestions."""
+    return "macos-container" if sys.platform == "darwin" else "firecracker"
+
+
+def _print_vm_install_instructions() -> None:
+    """Print platform-appropriate VM backend install instructions to stderr."""
+    vm = _platform_vm_suggestion()
+    if vm == "macos-container":
+        info("Install Apple Container: https://github.com/apple/container/releases")
+        info("Then start the service:  container system start")
+    else:
+        info("Install Firecracker: https://github.com/firecracker-microvm/firecracker/releases")
+        info("Configure the host:  ./cli.py backend setup")
+
+
+def _auto_select_backend() -> str:
+    """Tier-1 / tier-2 backend auto-selection.
+
+    Tier 1: VM backend — macos-container on macOS when Apple Container is
+    installed; firecracker on KVM-capable Linux even before the binary is
+    present (its preflight prints an install pointer).
+
+    Tier 2: docker, with a security warning and an interactive prompt.
+    When docker is also absent, prints VM install instructions and exits.
+    """
+    # --- Tier 1: VM backend -----------------------------------------
     if has_backend("macos-container"):
         return "macos-container"
     # A KVM-capable Linux host defaults to firecracker even when the
@@ -678,7 +713,32 @@ def _default_backend_name() -> str:
     from .firecracker import FirecrackerBottleBackend
     if FirecrackerBottleBackend.is_host_capable():
         return "firecracker"
-    return "docker"
+
+    # --- Tier 2: docker fallback ------------------------------------
+    if not has_backend("docker"):
+        info("No backend available on this host.")
+        _print_vm_install_instructions()
+        die("no backend available; install a VM backend and re-run")
+
+    vm = _platform_vm_suggestion()
+    warn(
+        "docker is less secure than VM backends — "
+        "containers share the host kernel."
+    )
+    sys.stderr.write(
+        f"bot-bottle: For better isolation, install the {vm!r} backend.\n"
+        f"  [i] show {vm} install instructions and exit\n"
+        "  [d] use docker anyway\n"
+        "  [q] quit\n"
+        "bot-bottle: choice [i/d/q]: "
+    )
+    sys.stderr.flush()
+    reply = _read_tty_line().strip().lower()
+    if reply == "d":
+        return "docker"
+    if reply == "i":
+        _print_vm_install_instructions()
+    die("not proceeding with docker; install a VM backend or set BOT_BOTTLE_BACKEND=docker")
 
 
 def known_backend_names() -> tuple[str, ...]:

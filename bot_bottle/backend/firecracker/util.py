@@ -88,7 +88,7 @@ def require_firecracker() -> None:
     booting a VM without it."""
     if not is_linux():
         die("firecracker backend is only supported on Linux (KVM). "
-            "On macOS use --backend=macos-container.")
+            "On macOS use the macos-container backend.")
     if shutil.which("firecracker") is None:
         info("Firecracker is required but was not found on PATH.")
         info("Install: https://github.com/firecracker-microvm/firecracker/releases")

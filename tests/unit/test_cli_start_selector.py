@@ -82,7 +82,7 @@ class TestCmdStartSelector(unittest.TestCase):
     # ------------------------------------------------------------------
 
     def test_explicit_agent_skips_agent_picker(self):
-        rc = start_mod.cmd_start(["--backend=docker", "researcher"])
+        rc = start_mod.cmd_start(["researcher"])
         self.assertEqual(0, rc)
         self._agent_picker_mock.assert_not_called()
         self._bottle_picker_mock.assert_called_once()
@@ -100,7 +100,7 @@ class TestCmdStartSelector(unittest.TestCase):
 
     def test_agent_absent_shows_agent_picker(self):
         self._agent_picker_mock.return_value = "researcher"
-        rc = start_mod.cmd_start(["--backend=docker"])
+        rc = start_mod.cmd_start([])
         self.assertEqual(0, rc)
         self._agent_picker_mock.assert_called_once()
         call_kwargs = self._agent_picker_mock.call_args
@@ -111,7 +111,7 @@ class TestCmdStartSelector(unittest.TestCase):
 
     def test_agent_picker_cancel_skips_bottle_picker(self):
         self._agent_picker_mock.return_value = None
-        rc = start_mod.cmd_start(["--backend=docker"])
+        rc = start_mod.cmd_start([])
         self.assertEqual(0, rc)
         self._bottle_picker_mock.assert_not_called()
         self._launch_mock.assert_not_called()
@@ -167,16 +167,6 @@ class TestCmdStartSelector(unittest.TestCase):
     # ------------------------------------------------------------------
     # Backend wiring
     # ------------------------------------------------------------------
-
-    def test_explicit_backend_forwarded(self):
-        start_mod.cmd_start(["--backend=docker", "researcher"])
-        _, kwargs = self._launch_mock.call_args
-        self.assertEqual("docker", kwargs["backend_name"])
-
-    def test_absent_backend_uses_default(self):
-        start_mod.cmd_start(["researcher"])
-        _, kwargs = self._launch_mock.call_args
-        self.assertIsNone(kwargs["backend_name"])
 
     def test_bot_bottle_backend_env_skips_backend_picker(self):
         os.environ["BOT_BOTTLE_BACKEND"] = "docker"

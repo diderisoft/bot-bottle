@@ -27,7 +27,6 @@ from ..backend import (
     BottleSpec,
     enumerate_active_agents,
     get_bottle_backend,
-    known_backend_names,
 )
 from ..backend.docker import util as docker_mod
 from ..backend.docker.bottle_plan import DockerBottlePlan
@@ -55,15 +54,6 @@ def cmd_start(argv: list[str]) -> int:
             "dependency bump — e.g. an installer's optionalDependencies "
             "fetch silently no-op'd on a transient failure and got baked "
             "into a cached layer."
-        ),
-    )
-    parser.add_argument(
-        "--backend",
-        choices=known_backend_names(),
-        default=None,
-        help=(
-            "backend to launch the bottle on (default: $BOT_BOTTLE_BACKEND "
-            "or host auto-selection). Overrides the env var when set."
         ),
     )
     parser.add_argument(
@@ -115,11 +105,10 @@ def cmd_start(argv: list[str]) -> int:
         os.environ["BOT_BOTTLE_NO_CACHE"] = "1"
 
     manifest = ManifestIndex.resolve(USER_CWD)
-    backend_name: str | None = args.backend
 
     if args.headless:
         return _start_headless(
-            manifest, args, dry_run=dry_run, backend_name=backend_name
+            manifest, args, dry_run=dry_run
         )
 
     agent_name: str | None = args.name
@@ -170,7 +159,6 @@ def cmd_start(argv: list[str]) -> int:
     return _launch_bottle(
         spec,
         dry_run=dry_run,
-        backend_name=backend_name,
     )
 
 
@@ -182,7 +170,6 @@ def _start_headless(
     args: argparse.Namespace,
     *,
     dry_run: bool,
-    backend_name: str | None,
 ) -> int:
     """Non-interactive launch path for orchestrators / CI / webhooks.
 
@@ -230,7 +217,6 @@ def _start_headless(
     return _launch_bottle(
         spec,
         dry_run=dry_run,
-        backend_name=backend_name,
         assume_yes=True,
         headless_prompt_text=prompt,
     )

@@ -21,16 +21,20 @@ from __future__ import annotations
 
 import sys
 
-from ..backend import get_bottle_backend, known_backend_names
+from ..backend import get_bottle_backend, has_backend, known_backend_names
 from ..log import info
 from ._common import read_tty_line
 
 
 def cmd_cleanup(_argv: list[str]) -> int:
     # Order: stable backend iteration so the y/N output is
-    # deterministic across runs.
+    # deterministic across runs. Skip backends whose runtime
+    # isn't available on this host so e.g. macos-container
+    # doesn't error on Linux.
     plans = [
-        (name, get_bottle_backend(name)) for name in known_backend_names()
+        (name, get_bottle_backend(name))
+        for name in known_backend_names()
+        if has_backend(name)
     ]
     prepared = [(name, b, b.prepare_cleanup()) for name, b in plans]
 

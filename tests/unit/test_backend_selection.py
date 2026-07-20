@@ -57,14 +57,16 @@ class TestGetBottleBackend(unittest.TestCase):
                 return self._available
 
         # No macOS container and the host can't run firecracker (no
-        # KVM / not Linux) → docker is the last resort.
+        # KVM / not Linux) → docker fallback with a prompt. Simulate
+        # the user picking "d" (use docker anyway).
         with patch.dict(os.environ, {}, clear=True), \
              patch.object(backend_mod.FirecrackerBottleBackend,
                           "is_host_capable", classmethod(lambda cls: False)), \
              patch.object(backend_mod, "_backends", {
                  "macos-container": _FakeBackend("macos-container", False),
                  "docker": _FakeBackend("docker", True),
-             }):
+             }), \
+             patch.object(backend_mod, "_read_tty_line", return_value="d"):
             b = get_bottle_backend()
         self.assertEqual("docker", b.name)
 
@@ -95,6 +97,49 @@ class TestGetBottleBackend(unittest.TestCase):
         with patch.object(backend_mod, "die", side_effect=SystemExit("die")):
             with self.assertRaises(SystemExit):
                 get_bottle_backend("nonexistent")
+
+    def test_no_backend_available_dies(self):
+        # No VM and no docker → print install instructions and die.
+        class _FakeBackend:
+            def __init__(self, name: str, available: bool) -> None:
+                self.name = name
+                self._available = available
+
+            def is_available(self) -> bool:
+                return self._available
+
+        with patch.dict(os.environ, {}, clear=True), \
+             patch.object(backend_mod.FirecrackerBottleBackend,
+                          "is_host_capable", classmethod(lambda cls: False)), \
+             patch.object(backend_mod, "_backends", {
+                 "macos-container": _FakeBackend("macos-container", False),
+                 "docker": _FakeBackend("docker", False),
+             }), \
+             patch.object(backend_mod, "die", side_effect=SystemExit("die")):
+            with self.assertRaises(SystemExit):
+                get_bottle_backend()
+
+    def test_docker_fallback_user_quits(self):
+        # VM unavailable, docker available, user picks "q" → die.
+        class _FakeBackend:
+            def __init__(self, name: str, available: bool) -> None:
+                self.name = name
+                self._available = available
+
+            def is_available(self) -> bool:
+                return self._available
+
+        with patch.dict(os.environ, {}, clear=True), \
+             patch.object(backend_mod.FirecrackerBottleBackend,
+                          "is_host_capable", classmethod(lambda cls: False)), \
+             patch.object(backend_mod, "_backends", {
+                 "macos-container": _FakeBackend("macos-container", False),
+                 "docker": _FakeBackend("docker", True),
+             }), \
+             patch.object(backend_mod, "_read_tty_line", return_value="q"), \
+             patch.object(backend_mod, "die", side_effect=SystemExit("die")):
+            with self.assertRaises(SystemExit):
+                get_bottle_backend()
 
 
 class TestKnownBackendNames(unittest.TestCase):

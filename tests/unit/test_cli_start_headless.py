@@ -175,14 +175,6 @@ class TestCmdStartHeadless(unittest.TestCase):
             )
         self.assertEqual("researcher-2", self._spec().label)
 
-    # -- backend wiring ------------------------------------------------
-
-    def test_backend_flag_forwarded(self):
-        start_mod.cmd_start(
-            ["--headless", "--backend=docker", "researcher", "--bottle", "claude",
-             "--prompt", "Do it"]
-        )
-        self.assertEqual("docker", self._launch_mock.call_args[1]["backend_name"])
 
 
 class TestPrepareWithPreflight(unittest.TestCase):
