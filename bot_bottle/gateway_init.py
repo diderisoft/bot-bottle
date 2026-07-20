@@ -378,8 +378,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     # --signal HUP <bundle>` after writing routes.yaml. The kernel
     # delivers SIGHUP to PID 1 (this supervisor); forward it to
     # mitmdump so it reloads its addon.
-    signal.signal(  # type: ignore
-        signal.SIGHUP, lambda *_: sup.forward_signal(signal.SIGHUP, "egress")
+    signal.signal(
+        signal.SIGHUP,
+        lambda *_: sup.forward_signal(signal.SIGHUP, "egress"),  # type: ignore[misc]
     )
 
     while not sup.tick():

@@ -10,7 +10,6 @@ from unittest.mock import MagicMock, Mock, patch
 
 from bot_bottle.orchestrator.lifecycle import (
     INFRA_NAME,
-    INFRA_IMAGE,
     INFRA_SOURCE_HASH_LABEL,
     OrchestratorService,
     OrchestratorStartError,
@@ -113,7 +112,8 @@ class TestOrchestratorService(unittest.TestCase):
         # Both processes in one container — no separate entrypoint override.
         self.assertNotIn("--entrypoint", argv)
         # Gateway daemons + orchestrator explicitly opted in.
-        self.assertIn("orchestrator", argv[argv.index("BOT_BOTTLE_GATEWAY_DAEMONS=egress,git-http,supervise,orchestrator")])
+        daemons_flag = "BOT_BOTTLE_GATEWAY_DAEMONS=egress,git-http,supervise,orchestrator"
+        self.assertIn("orchestrator", argv[argv.index(daemons_flag)])
 
     def test_ensure_running_builds_both_images(self) -> None:
         calls: list[list[str]] = []
@@ -147,7 +147,10 @@ class TestOrchestratorService(unittest.TestCase):
     def test_stop_removes_infra_container(self) -> None:
         with patch(_RUN) as run:
             self.svc.stop()
-        rms = [c.args[0] for c in run.call_args_list if c.args[0][:3] == ["docker", "rm", "--force"]]
+        rms = [
+            c.args[0] for c in run.call_args_list
+            if c.args[0][:3] == ["docker", "rm", "--force"]
+        ]
         self.assertTrue(any(INFRA_NAME in a for a in rms))
 
 
