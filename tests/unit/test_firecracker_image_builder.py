@@ -36,7 +36,7 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
         self.assertEqual(base, out)
 
     def test_cached_lookup_requires_ready_marker(self):
-        digest = image_builder._dockerfile_hash(self.dockerfile)
+        digest = image_builder._rootfs_digest(self.dockerfile)
         base = self.cache / "rootfs" / f"agent-{digest}"
         base.mkdir(parents=True)
         with patch.object(image_builder.util, "cache_dir", return_value=self.cache):

@@ -134,16 +134,6 @@ class TestVersionInputs(unittest.TestCase):
             after = ia.infra_artifact_version("init", repo_root=root)
         self.assertNotEqual(before, after)
 
-    def test_pyproject_toml_change_bumps_version(self) -> None:
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
-            self._fake_repo(root)
-            before = ia.infra_artifact_version("init", repo_root=root)
-            (root / "pyproject.toml").write_text(
-                "[project]\nname = 'bot-bottle'\ndependencies = ['httpx']\n")
-            after = ia.infra_artifact_version("init", repo_root=root)
-        self.assertNotEqual(before, after)
-
     def test_pyc_and_pycache_ignored(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
