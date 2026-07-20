@@ -19,6 +19,7 @@ from .commit import cmd_commit
 from .edit import cmd_edit
 from .info import cmd_info
 from .init import cmd_init
+from .login import cmd_login
 from .resume import cmd_resume
 from .start import cmd_start
 from .supervise import cmd_supervise
@@ -33,6 +34,7 @@ COMMANDS = {
     "info": cmd_info,
     "init": cmd_init,
     "list": cmd_list,
+    "login": cmd_login,
     "resume": cmd_resume,
     "start": cmd_start,
     "supervise": cmd_supervise,
@@ -43,7 +45,7 @@ COMMANDS = {
 # the host (TAP pool, /dev/kvm, firecracker) and never opens the store, so
 # gating it on the schema breaks preflight on a fresh CI runner where stdin
 # isn't a TTY and the migration prompt can't be answered.
-NO_MIGRATION_COMMANDS = frozenset({"backend"})
+NO_MIGRATION_COMMANDS = frozenset({"backend", "login"})
 
 
 def usage() -> None:
@@ -56,6 +58,7 @@ def usage() -> None:
     sys.stderr.write("  info      print env, skills, and prompt details for a named agent\n")
     sys.stderr.write("  init      interactively create a new agent and add it to bot-bottle.json\n")
     sys.stderr.write("  list      list available agents or active containers\n")
+    sys.stderr.write("  login     register this host with a bot-bottle console\n")
     sys.stderr.write(
         "  resume    re-launch a bottle by its identity "
         "(continues state from PRD 0016)\n"
