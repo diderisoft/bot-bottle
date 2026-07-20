@@ -116,7 +116,7 @@ class TestOrchestratorService(unittest.TestCase):
         daemons_flag = "BOT_BOTTLE_GATEWAY_DAEMONS=egress,git-http,supervise,orchestrator"
         self.assertIn("orchestrator", argv[argv.index(daemons_flag)])
 
-    def test_ensure_running_builds_both_images(self) -> None:
+    def test_ensure_running_builds_all_images(self) -> None:
         calls: list[list[str]] = []
 
         def fake(argv: list[str], **_kw: object) -> Mock:
@@ -129,14 +129,36 @@ class TestOrchestratorService(unittest.TestCase):
                 patch(_RUN, side_effect=fake), patch(_SLEEP):
             self.svc.ensure_running()
         builds = [c for c in calls if c[:2] == ["docker", "build"]]
-        # Orchestrator (build intermediate) + infra image both built.
-        self.assertEqual(2, len(builds))
+        # Gateway base + orchestrator intermediate + infra image — all three built.
+        self.assertEqual(3, len(builds))
         dockerfiles = [next(a for a in b if "Dockerfile" in a) for b in builds]
-        self.assertIn("Dockerfile.orchestrator", dockerfiles[0])
-        self.assertIn("Dockerfile.infra", dockerfiles[1])
-        # Images are distinct — the point of the split.
+        self.assertIn("Dockerfile.gateway", dockerfiles[0])
+        self.assertIn("Dockerfile.orchestrator", dockerfiles[1])
+        self.assertIn("Dockerfile.infra", dockerfiles[2])
+        # All three images are distinct.
         tags = [b[b.index("-t") + 1] for b in builds]
-        self.assertNotEqual(tags[0], tags[1])
+        self.assertEqual(3, len(set(tags)))
+
+    def test_publish_maps_host_port_to_fixed_internal_port(self) -> None:
+        """A non-default self.port is published to the fixed internal port 8099,
+        not to self.port:self.port — the orchestrator always listens on 8099."""
+        calls: list[list[str]] = []
+
+        def fake(argv: list[str], **_kw: object) -> Mock:
+            calls.append(argv)
+            if argv[:2] == ["docker", "ps"]:
+                return _proc(stdout="")
+            return _proc()
+
+        svc = OrchestratorService(port=20001)
+        with patch(_URLOPEN, side_effect=[urllib.error.URLError("down"), _health(200)]), \
+                patch(_RUN, side_effect=fake), patch(_SLEEP):
+            svc.ensure_running()
+        runs = [c for c in calls if c[:2] == ["docker", "run"]]
+        argv = runs[0]
+        self.assertEqual("127.0.0.1:20001:8099", argv[argv.index("--publish") + 1])
+        orch_url = next(a for a in argv if "BOT_BOTTLE_ORCHESTRATOR_URL" in a)
+        self.assertIn(":8099", orch_url)
 
     def test_ensure_running_raises_on_timeout(self) -> None:
         with patch(_URLOPEN, side_effect=urllib.error.URLError("down")), \

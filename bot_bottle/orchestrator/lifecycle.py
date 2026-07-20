@@ -27,6 +27,8 @@ from ..paths import CONTROL_PLANE_TOKEN_ENV, bot_bottle_root, host_control_plane
 from ..supervise import DB_PATH_IN_CONTAINER
 from .gateway import (
     GATEWAY_CA_VOLUME,
+    GATEWAY_DOCKERFILE,
+    GATEWAY_IMAGE,
     GATEWAY_NETWORK,
     GatewayError,
     MITMPROXY_HOME,
@@ -160,9 +162,10 @@ class OrchestratorService:
             )
 
     def _build_images(self) -> None:
-        """Build the orchestrator image (build intermediate), then the infra
-        image. Both are cache-aware: a no-op when nothing changed."""
+        """Build the gateway base, the orchestrator intermediate, then the
+        infra image. All are cache-aware: a no-op when nothing changed."""
         for tag, dockerfile in (
+            (GATEWAY_IMAGE, GATEWAY_DOCKERFILE),
             (ORCHESTRATOR_IMAGE, ORCHESTRATOR_DOCKERFILE),
             (self.image, INFRA_DOCKERFILE),
         ):
@@ -188,7 +191,9 @@ class OrchestratorService:
             "--label", f"{INFRA_SOURCE_HASH_LABEL}={current_hash}",
             "--network", self.network,
             # Host CLI reaches the control plane here (loopback only).
-            "--publish", f"127.0.0.1:{self.port}:{self.port}",
+            # gateway_init always starts the orchestrator on DEFAULT_PORT (8099)
+            # inside the container; self.port is the host-side published port.
+            "--publish", f"127.0.0.1:{self.port}:{DEFAULT_PORT}",
             # Persist the mitmproxy CA so it survives container recreation.
             "--volume", f"{GATEWAY_CA_VOLUME}:{MITMPROXY_HOME}",
             # Shared supervise DB (same file the operator reads over HTTP).
@@ -206,8 +211,9 @@ class OrchestratorService:
             # Control-plane secret: required by the orchestrator (to enforce)
             # and by the gateway daemons (to present on /resolve calls).
             "--env", CONTROL_PLANE_TOKEN_ENV,
-            # Gateway daemons reach the orchestrator over loopback.
-            "--env", f"BOT_BOTTLE_ORCHESTRATOR_URL=http://127.0.0.1:{self.port}",
+            # Gateway daemons reach the orchestrator over loopback at its
+            # fixed internal port (DEFAULT_PORT), independent of self.port.
+            "--env", f"BOT_BOTTLE_ORCHESTRATOR_URL=http://127.0.0.1:{DEFAULT_PORT}",
             # Opt the orchestrator into gateway_init's supervise tree.
             "--env", f"BOT_BOTTLE_GATEWAY_DAEMONS={_INFRA_DAEMONS}",
             self.image,
