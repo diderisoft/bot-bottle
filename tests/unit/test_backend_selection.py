@@ -142,6 +142,81 @@ class TestGetBottleBackend(unittest.TestCase):
                 get_bottle_backend()
 
 
+    def test_docker_fallback_user_picks_install(self):
+        # User picks [i] → print install instructions then die.
+        class _FakeBackend:
+            def __init__(self, name: str, available: bool) -> None:
+                self.name = name
+                self._available = available
+
+            def is_available(self) -> bool:
+                return self._available
+
+        with patch.dict(os.environ, {}, clear=True), \
+             patch.object(backend_mod.FirecrackerBottleBackend,
+                          "is_host_capable", classmethod(lambda cls: False)), \
+             patch.object(backend_mod, "_backends", {
+                 "macos-container": _FakeBackend("macos-container", False),
+                 "docker": _FakeBackend("docker", True),
+             }), \
+             patch.object(backend_mod, "_read_tty_line", return_value="i"), \
+             patch.object(backend_mod, "_print_vm_install_instructions") as mock_inst, \
+             patch.object(backend_mod, "die", side_effect=SystemExit("die")):
+            with self.assertRaises(SystemExit):
+                get_bottle_backend()
+        mock_inst.assert_called_once()
+
+
+class TestReadTtyLine(unittest.TestCase):
+    """Unit tests for the _read_tty_line helper."""
+
+    def test_reads_from_dev_tty(self):
+        from unittest.mock import mock_open
+        from bot_bottle.backend import _read_tty_line
+
+        m = mock_open(read_data="hello\n")
+        with patch("builtins.open", m):
+            result = _read_tty_line()
+        self.assertEqual("hello", result)
+        m.assert_called_once_with("/dev/tty", "r", encoding="utf-8")
+
+    def test_falls_back_to_stdin_on_oserror(self):
+        import io
+        from bot_bottle.backend import _read_tty_line
+        import sys as _sys
+
+        with patch("builtins.open", side_effect=OSError("no tty")), \
+             patch.object(_sys, "stdin", io.StringIO("world\n")):
+            result = _read_tty_line()
+        self.assertEqual("world", result)
+
+
+class TestPrintVmInstallInstructions(unittest.TestCase):
+    """Unit tests for _print_vm_install_instructions platform branches."""
+
+    def test_linux_prints_firecracker_instructions(self):
+        from bot_bottle.backend import _print_vm_install_instructions
+
+        with patch.object(backend_mod, "_platform_vm_suggestion",
+                          return_value="firecracker"), \
+             patch.object(backend_mod, "info") as mock_info:
+            _print_vm_install_instructions()
+
+        messages = [str(c[0][0]) for c in mock_info.call_args_list]
+        self.assertTrue(any("Firecracker" in m for m in messages))
+
+    def test_macos_prints_apple_container_instructions(self):
+        from bot_bottle.backend import _print_vm_install_instructions
+
+        with patch.object(backend_mod, "_platform_vm_suggestion",
+                          return_value="macos-container"), \
+             patch.object(backend_mod, "info") as mock_info:
+            _print_vm_install_instructions()
+
+        messages = [str(c[0][0]) for c in mock_info.call_args_list]
+        self.assertTrue(any("Apple Container" in m for m in messages))
+
+
 class TestKnownBackendNames(unittest.TestCase):
     def test_returns_backends_sorted(self):
         self.assertEqual(
