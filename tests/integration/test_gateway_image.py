@@ -86,13 +86,12 @@ class TestGatewayImage(unittest.TestCase):
         self.assertIn("Mitmproxy", out)
 
     def test_python_imports_supervise_module(self):
-        # The bundle's supervise daemon imports `supervise` as a
-        # same-directory sibling of `supervise_server`. Probe the
-        # import resolves with `python3 -c` from /app (the
-        # Dockerfile's WORKDIR).
+        # The supervise daemon is installed as part of the bot_bottle
+        # package (5ad3449), not as flat sibling modules under /app.
+        # Probe that the package imports resolve inside the image.
         rc, out = self._run_in_image(
             "python3", "-c",
-            "import supervise; import supervise_server; print('ok')",
+            "from bot_bottle import supervise, supervise_server; print('ok')",
         )
         self.assertEqual(0, rc, msg=out)
         self.assertIn("ok", out)
