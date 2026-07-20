@@ -61,6 +61,11 @@ class _DaemonSpec:
 _EGRESS_ONLY_ENV_PREFIXES: tuple[str, ...] = ("EGRESS_TOKEN_",)
 _READY_GATED_DAEMONS: tuple[str, ...] = ("git-gate", "git-http")
 
+# Daemons that must be requested explicitly via BOT_BOTTLE_GATEWAY_DAEMONS
+# and are NOT started in the default (env-var-unset) case. The orchestrator
+# only runs in the combined infra container, never in a standalone gateway.
+_OPT_IN_DAEMONS: frozenset[str] = frozenset({"orchestrator"})
+
 
 def _env_for_daemon(name: str, base_env: dict[str, str]) -> dict[str, str]:
     """Egress sees the full bundle env. Everyone else gets a copy
@@ -75,7 +80,14 @@ def _env_for_daemon(name: str, base_env: dict[str, str]) -> dict[str, str]:
     }
 
 
+# The orchestrator is listed first so it starts before the gateway daemons,
+# giving the control plane a head start to accept /resolve calls. The gateway
+# daemons tolerate early /resolve failures and retry per-request.
 _DAEMONS: tuple[_DaemonSpec, ...] = (
+    _DaemonSpec("orchestrator", (
+        "python3", "-m", "bot_bottle.orchestrator",
+        "--host", "0.0.0.0", "--port", "8099", "--broker", "stub",
+    )),
     _DaemonSpec("egress", ("/bin/sh", "/app/egress-entrypoint.sh")),
     _DaemonSpec("git-gate", ("/bin/sh", "/git-gate-entrypoint.sh")),
     _DaemonSpec("git-http", ("python3", "-m", "bot_bottle.git_http_backend")),
@@ -103,18 +115,20 @@ def _selected_daemons(
     env: dict[str, str],
     all_daemons: Sequence[_DaemonSpec] | None = None,
 ) -> tuple[_DaemonSpec, ...]:
-    """Filter the daemon set by the BOT_BOTTLE_GATEWAY_DAEMONS env
-    var. Unknown names in the list are ignored — the caller is the
-    source of truth for which daemons are wired.
+    """Filter the daemon set by the BOT_BOTTLE_GATEWAY_DAEMONS env var.
 
-    `all_daemons` defaults to `_DAEMONS` resolved at call time (not
-    at definition time), so tests can monkey-patch the module-level
-    `_DAEMONS` and have the new value take effect."""
+    When the var is unset/empty, return all non-opt-in daemons (the
+    standard gateway subset). Opt-in daemons (e.g. `orchestrator`) only
+    run when explicitly named — they never start in a plain gateway
+    container that doesn't set the env var. Unknown names are ignored.
+
+    `all_daemons` defaults to `_DAEMONS` resolved at call time (not at
+    definition time), so tests can pass a custom list."""
     if all_daemons is None:
         all_daemons = _DAEMONS
     raw = env.get("BOT_BOTTLE_GATEWAY_DAEMONS", "").strip()
     if not raw:
-        return tuple(all_daemons)
+        return tuple(d for d in all_daemons if d.name not in _OPT_IN_DAEMONS)
     wanted = {n.strip() for n in raw.split(",") if n.strip()}
     return tuple(d for d in all_daemons if d.name in wanted)
 

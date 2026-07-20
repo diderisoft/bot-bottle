@@ -33,8 +33,7 @@ from ...orchestrator.client import OrchestratorClient
 from ...orchestrator.lifecycle import (
     OrchestratorStartError,  # re-exported so callers can catch it
 )
-from ...orchestrator.registration import registration_inputs
-from ..docker.gateway_provision import deprovision_git_gate, provision_git_gate
+from ..consolidated_util import provision_bottle, teardown_consolidated as _teardown_util
 from . import infra_vm
 
 
@@ -68,18 +67,11 @@ def launch_consolidated(
     url = infra.control_plane_url
     client = OrchestratorClient(url)
 
-    inputs = registration_inputs(egress_plan)
-    reg = client.register_bottle(
-        guest_ip, image_ref=image_ref, policy=inputs.policy,
-        metadata=inputs.metadata, tokens=tokens,
+    transport = infra_vm.gateway_transport()
+    reg = provision_bottle(
+        client, guest_ip, egress_plan, git_gate_plan, transport,
+        image_ref=image_ref, tokens=tokens,
     )
-    try:
-        provision_git_gate(
-            infra_vm.gateway_transport(), reg.bottle_id, git_gate_plan)
-    except Exception:
-        client.teardown_bottle(reg.bottle_id)
-        raise
-
     # The shared gateway CA every agent on this host trusts for TLS
     # interception — fetched from the infra VM over SSH.
     return LaunchContext(
@@ -98,12 +90,8 @@ def teardown_consolidated(
     VM. Both steps are idempotent so this is safe from a cleanup trap. Does
     NOT stop the infra VM — it's a persistent per-host singleton shared by
     every bottle."""
-    from ...orchestrator.config_store import DEFAULT_TEARDOWN_TIMEOUT_SECONDS
-    OrchestratorClient(
-        orchestrator_url,
-        timeout=timeout if timeout is not None else DEFAULT_TEARDOWN_TIMEOUT_SECONDS,
-    ).teardown_bottle(bottle_id)
-    deprovision_git_gate(infra_vm.gateway_transport(), bottle_id)
+    _teardown_util(bottle_id, infra_vm.gateway_transport(),
+                   orchestrator_url=orchestrator_url, timeout=timeout)
 
 
 __all__ = [

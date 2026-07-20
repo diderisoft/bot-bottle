@@ -17,6 +17,7 @@ from bot_bottle.git_gate import GitGatePlan
 from bot_bottle.orchestrator.client import RegisteredBottle
 
 _MOD = "bot_bottle.backend.macos_container.consolidated_launch"
+_UTIL = "bot_bottle.backend.consolidated_util"
 
 
 def _egress_plan() -> EgressPlan:
@@ -87,7 +88,7 @@ class TestRegisterAgent(unittest.TestCase):
         *, source_ip: str = "192.168.128.9",
     ):
         with patch(f"{_MOD}.OrchestratorClient", return_value=client), \
-                patch(f"{_MOD}.provision_git_gate", provision or Mock()), \
+                patch(f"{_UTIL}.provision_git_gate", provision or Mock()), \
                 patch(f"{_MOD}.live_source_ips", return_value=[]):
             return register_agent(
                 _egress_plan(), _git_plan(),
@@ -126,8 +127,8 @@ class TestTeardown(unittest.TestCase):
     def test_deregisters_and_deprovisions(self) -> None:
         client = Mock()
         deprovision = Mock()
-        with patch(f"{_MOD}.OrchestratorClient", return_value=client), \
-                patch(f"{_MOD}.deprovision_git_gate", deprovision):
+        with patch(f"{_UTIL}.OrchestratorClient", return_value=client), \
+                patch(f"{_UTIL}.deprovision_git_gate", deprovision):
             teardown_consolidated("b1", orchestrator_url="http://o:8099")
         client.teardown_bottle.assert_called_once_with("b1")
         self.assertEqual("b1", deprovision.call_args.args[1])
@@ -190,7 +191,7 @@ class TestRegisterAgentReconciles(unittest.TestCase):
 
     def _register(self, client: Mock) -> None:
         with patch(f"{_MOD}.OrchestratorClient", return_value=client), \
-                patch(f"{_MOD}.provision_git_gate"), \
+                patch(f"{_UTIL}.provision_git_gate"), \
                 patch(f"{_MOD}.live_source_ips", return_value=["10.0.0.7"]):
             register_agent(
                 _egress_plan(), _git_plan(),
@@ -228,7 +229,7 @@ class TestRegisterAgentReconciles(unittest.TestCase):
         from bot_bottle.backend.macos_container.enumerate import EnumerationError
         client = _client()
         with patch(f"{_MOD}.OrchestratorClient", return_value=client), \
-                patch(f"{_MOD}.provision_git_gate"), \
+                patch(f"{_UTIL}.provision_git_gate"), \
                 patch(f"{_MOD}.live_source_ips",
                       side_effect=EnumerationError("container list failed")):
             register_agent(

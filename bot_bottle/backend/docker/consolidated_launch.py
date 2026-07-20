@@ -1,19 +1,13 @@
 """Consolidated bottle launch sequence for the docker backend (PRD 0070).
 
-Composes the orchestrator primitives into the register/teardown sequence that
-replaces the per-bottle gateway:
+Composes the orchestrator primitives into the register/teardown sequence:
 
-  1. ensure the orchestrator control plane + shared gateway are up;
-  2. allocate the bottle a pinned source IP on the gateway network (the
-     attribution key), skipping the gateway's own address + live bottles;
-  3. register it (egress policy blob + slug metadata) → bottle id + identity
-     token;
-  4. provision its git-gate repos/creds into the running gateway.
+  1. ensure the single infra container (control plane + gateway) is up;
+  2. allocate the bottle a pinned source IP on the gateway network;
+  3. register it and provision its git-gate repos/creds into the gateway.
 
-It returns a `LaunchContext` with everything the agent container needs to
-attach — network, pinned IP, the gateway's address (its proxy target), the
-orchestrator URL, and the identity token. The agent `docker run` itself is
-the backend's job (it owns provider provisioning); this owns the
+Returns a `LaunchContext` with everything the agent container needs to
+attach. The agent `docker run` itself is the backend's job; this owns the
 orchestrator-facing wiring so that sequence stays testable in isolation.
 """
 
@@ -25,15 +19,12 @@ from ...docker_cmd import run_docker
 from ...egress import EgressPlan
 from ...git_gate import GitGatePlan
 from ...orchestrator.client import OrchestratorClient
-from ...orchestrator.gateway import GATEWAY_NAME, GATEWAY_NETWORK
-from ...orchestrator.lifecycle import OrchestratorService
-from ...orchestrator.registration import registration_inputs
+from ...orchestrator.gateway import GATEWAY_NETWORK
+from ...orchestrator.lifecycle import INFRA_NAME, OrchestratorService
+from ..consolidated_util import provision_bottle
+from ..consolidated_util import teardown_consolidated as _teardown_util
+from .gateway_provision import DockerGatewayTransport
 from .gateway_net import next_free_ip
-from .gateway_provision import (
-    DockerGatewayTransport,
-    deprovision_git_gate,
-    provision_git_gate,
-)
 
 
 class ConsolidatedLaunchError(RuntimeError):
@@ -75,24 +66,21 @@ def _container_ip(name: str, network: str) -> str:
     ip = proc.stdout.strip()
     if proc.returncode != 0 or not ip:
         raise ConsolidatedLaunchError(
-            f"gateway {name} has no address on {network}: {proc.stderr.strip()}"
+            f"container {name} has no address on {network}: {proc.stderr.strip()}"
         )
     return ip
 
 
 def _network_container_ips(network: str) -> list[str]:
     """Every address currently assigned on the gateway network — the ground
-    truth for "in use": the gateway + orchestrator infrastructure containers
-    and every live agent. Read from the network so a new bottle can't collide
-    with anything actually attached (a registry-only view would miss the
-    orchestrator/gateway containers)."""
+    truth for "in use": the infra container and every live agent. Read from
+    the network so a new bottle can't collide with anything actually attached."""
     proc = run_docker([
         "docker", "network", "inspect", "--format",
         "{{range .Containers}}{{.IPv4Address}} {{end}}", network,
     ])
     ips: list[str] = []
     for entry in proc.stdout.split():
-        # entries look like "172.20.0.2/16" — keep the address.
         ips.append(entry.split("/", 1)[0])
     return ips
 
@@ -104,33 +92,24 @@ def launch_consolidated(
     image_ref: str = "",
     tokens: dict[str, str] | None = None,
     service: OrchestratorService | None = None,
-    gateway_name: str = GATEWAY_NAME,
+    infra_name: str = INFRA_NAME,
     network: str = GATEWAY_NETWORK,
 ) -> LaunchContext:
-    """Ensure the orchestrator + gateway are up, allocate + register the
-    bottle, and provision its git-gate state. Returns the agent's attach
-    context. Raises `ConsolidatedLaunchError` (or the primitives' own errors)
-    if any step fails — the caller tears down on failure."""
+    """Ensure the infra container is up, allocate + register the bottle, and
+    provision its git-gate state. Returns the agent's attach context."""
     service = service or OrchestratorService()
     url = service.ensure_running()
     client = OrchestratorClient(url)
 
     cidr = _network_cidr(network)
-    gateway_ip = _container_ip(gateway_name, network)
+    gateway_ip = _container_ip(infra_name, network)
     source_ip = next_free_ip(cidr, _network_container_ips(network))
 
-    inputs = registration_inputs(egress_plan)
-    reg = client.register_bottle(
-        source_ip, image_ref=image_ref, policy=inputs.policy,
-        metadata=inputs.metadata, tokens=tokens,
+    transport = DockerGatewayTransport(infra_name)
+    reg = provision_bottle(
+        client, source_ip, egress_plan, git_gate_plan, transport,
+        image_ref=image_ref, tokens=tokens,
     )
-    try:
-        provision_git_gate(
-            DockerGatewayTransport(gateway_name), reg.bottle_id, git_gate_plan)
-    except Exception:
-        # Roll the registration back so a provisioning failure leaves no orphan.
-        client.teardown_bottle(reg.bottle_id)
-        raise
     return LaunchContext(
         bottle_id=reg.bottle_id,
         identity_token=reg.identity_token,
@@ -142,20 +121,12 @@ def launch_consolidated(
 
 
 def teardown_consolidated(
-    bottle_id: str,
-    *,
-    orchestrator_url: str,
-    gateway_name: str = GATEWAY_NAME,
+    bottle_id: str, *, orchestrator_url: str, infra_name: str = INFRA_NAME,
     timeout: float | None = None,
 ) -> None:
-    """Deregister the bottle and remove its git-gate state from the gateway.
-    Both steps are idempotent so this is safe from a cleanup trap."""
-    from ...orchestrator.config_store import DEFAULT_TEARDOWN_TIMEOUT_SECONDS
-    OrchestratorClient(
-        orchestrator_url,
-        timeout=timeout if timeout is not None else DEFAULT_TEARDOWN_TIMEOUT_SECONDS,
-    ).teardown_bottle(bottle_id)
-    deprovision_git_gate(DockerGatewayTransport(gateway_name), bottle_id)
+    """Deregister the bottle and remove its git-gate state. Idempotent."""
+    _teardown_util(bottle_id, DockerGatewayTransport(infra_name),
+                   orchestrator_url=orchestrator_url, timeout=timeout)
 
 
 __all__ = [

@@ -38,8 +38,7 @@ from ...egress import EgressPlan
 from ...git_gate import GitGatePlan
 from ...log import info
 from ...orchestrator.client import OrchestratorClient, OrchestratorClientError
-from ...orchestrator.registration import registration_inputs
-from ..docker.gateway_provision import deprovision_git_gate, provision_git_gate
+from ..consolidated_util import provision_bottle, teardown_consolidated as _teardown_util
 from . import util as container_mod
 from .enumerate import CONTAINER_NAME_PREFIX, EnumerationError, enumerate_active
 from .gateway import GATEWAY_NETWORK
@@ -142,17 +141,10 @@ def register_agent(
         client.reconcile(live_source_ips(endpoint.network))
     except (OrchestratorClientError, EnumerationError) as e:
         info(f"registry reconciliation skipped: {e}")
-    inputs = registration_inputs(egress_plan)
-    reg = client.register_bottle(
-        source_ip, image_ref=image_ref, policy=inputs.policy,
-        metadata=inputs.metadata, tokens=tokens,
+    reg = provision_bottle(
+        client, source_ip, egress_plan, git_gate_plan, AppleGatewayTransport(),
+        image_ref=image_ref, tokens=tokens,
     )
-    try:
-        provision_git_gate(AppleGatewayTransport(), reg.bottle_id, git_gate_plan)
-    except Exception:
-        # Roll the registration back so a provisioning failure leaves no orphan.
-        client.teardown_bottle(reg.bottle_id)
-        raise
     return LaunchContext(
         bottle_id=reg.bottle_id,
         identity_token=reg.identity_token,
@@ -169,12 +161,8 @@ def teardown_consolidated(
     """Deregister the bottle and remove its git-gate state from the gateway.
     Both steps are idempotent so this is safe from a cleanup trap. Does NOT
     stop the gateway — it's a persistent per-host singleton."""
-    from ...orchestrator.config_store import DEFAULT_TEARDOWN_TIMEOUT_SECONDS
-    OrchestratorClient(
-        orchestrator_url,
-        timeout=timeout if timeout is not None else DEFAULT_TEARDOWN_TIMEOUT_SECONDS,
-    ).teardown_bottle(bottle_id)
-    deprovision_git_gate(AppleGatewayTransport(), bottle_id)
+    _teardown_util(bottle_id, AppleGatewayTransport(),
+                   orchestrator_url=orchestrator_url, timeout=timeout)
 
 
 __all__ = [

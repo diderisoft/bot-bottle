@@ -96,7 +96,7 @@ class TestVersionInputs(unittest.TestCase):
         (pkg / "app.py").write_text("print('hi')\n")
         (pkg / "egress_entrypoint.sh").write_text("#!/bin/sh\nexec mitmdump\n")
         (pkg / "netpool.defaults.env").write_text("FOO=1\n")
-        for name in ("Dockerfile.orchestrator", "Dockerfile.gateway", "Dockerfile.infra"):
+        for name in ("Dockerfile.orchestrator", "Dockerfile.gateway", "Dockerfile.infra", "Dockerfile.infra.fc"):
             (root / name).write_text(f"FROM scratch  # {name}\n")
         (root / "pyproject.toml").write_text("[project]\nname = 'bot-bottle'\n")
 

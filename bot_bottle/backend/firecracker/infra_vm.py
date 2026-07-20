@@ -125,16 +125,19 @@ def ensure_built() -> None:
 
 
 def build_infra_images_with_docker() -> None:
-    """Build the three fixed images from source with host Docker: orchestrator,
-    gateway, then the combined infra image (`COPY --from` orchestrator, `FROM`
-    gateway). The launch host uses this only in `BOT_BOTTLE_INFRA_BUILD=local`
-    mode; `publish_infra` uses it off-host to produce the published artifact."""
+    """Build the four fixed images from source with host Docker: orchestrator,
+    gateway, the shared infra base (Dockerfile.infra), then the Firecracker
+    infra image (Dockerfile.infra.fc: FROM infra + buildah). The launch host
+    uses this only in `BOT_BOTTLE_INFRA_BUILD=local` mode; `publish_infra`
+    uses it off-host to produce the published artifact."""
     docker_mod.build_image(
         _ORCHESTRATOR_IMAGE, str(_REPO_ROOT), dockerfile="Dockerfile.orchestrator")
     docker_mod.build_image(
         _GATEWAY_IMAGE, str(_REPO_ROOT), dockerfile="Dockerfile.gateway")
     docker_mod.build_image(
-        _INFRA_IMAGE, str(_REPO_ROOT), dockerfile="Dockerfile.infra")
+        "bot-bottle-infra:latest", str(_REPO_ROOT), dockerfile="Dockerfile.infra")
+    docker_mod.build_image(
+        _INFRA_IMAGE, str(_REPO_ROOT), dockerfile="Dockerfile.infra.fc")
 
 
 def build_infra_rootfs_dir() -> Path:

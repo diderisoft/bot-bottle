@@ -15,6 +15,7 @@ from bot_bottle.git_gate import GitGatePlan
 from bot_bottle.orchestrator.client import RegisteredBottle
 
 _MOD = "bot_bottle.backend.docker.consolidated_launch"
+_UTIL = "bot_bottle.backend.consolidated_util"
 
 
 def _egress_plan() -> EgressPlan:
@@ -49,7 +50,7 @@ class TestLaunchConsolidated(unittest.TestCase):
                 patch(f"{_MOD}._container_ip", return_value="172.18.0.2"), \
                 patch(f"{_MOD}._network_container_ips", return_value=list(on_network)), \
                 patch(f"{_MOD}.OrchestratorClient", return_value=client), \
-                patch(f"{_MOD}.provision_git_gate", provision or Mock()):
+                patch(f"{_UTIL}.provision_git_gate", provision or Mock()):
             return launch_consolidated(_egress_plan(), _git_plan(), service=service)
 
     def test_allocates_ip_registers_and_provisions(self) -> None:
@@ -84,8 +85,8 @@ class TestLaunchConsolidated(unittest.TestCase):
 class TestTeardownConsolidated(unittest.TestCase):
     def test_deregisters_and_deprovisions(self) -> None:
         client = Mock()
-        with patch(f"{_MOD}.OrchestratorClient", return_value=client), \
-                patch(f"{_MOD}.deprovision_git_gate") as deprov:
+        with patch(f"{_UTIL}.OrchestratorClient", return_value=client), \
+                patch(f"{_UTIL}.deprovision_git_gate") as deprov:
             teardown_consolidated("b1", orchestrator_url="http://orch:8080")
         client.teardown_bottle.assert_called_once_with("b1")
         deprov.assert_called_once()
