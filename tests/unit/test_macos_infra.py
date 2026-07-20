@@ -153,6 +153,14 @@ class TestCaCertPem(unittest.TestCase):
         argv = mod.run_container_argv.call_args.args[0]
         self.assertEqual(["container", "exec", "bot-bottle-mac-infra", "cat"], argv[:4])
 
+    def test_raises_gateway_error_when_cert_never_appears(self) -> None:
+        from bot_bottle.backend.macos_container.gateway import GatewayError
+        svc = MacosInfraService(repo_root=Path("/r"))
+        with patch(f"{_INFRA}.container_mod") as mod:
+            mod.run_container_argv.return_value = _fail()
+            with self.assertRaises(GatewayError):
+                svc.ca_cert_pem(timeout=0)
+
 
 class TestProbeControlPlane(unittest.TestCase):
     def test_returns_url_when_running(self) -> None:

@@ -71,6 +71,16 @@ class TestSshGatewayTransport(unittest.TestCase):
             t.exec(["mkdir", "-p", "/git-gate"])
 
 
+class TestGatewayCaPem(unittest.TestCase):
+    def test_dies_when_cert_never_appears(self) -> None:
+        from subprocess import CompletedProcess
+        infra = infra_vm.InfraVm(vm=None, guest_ip="10.0.0.1", private_key=Path("/k"))
+        with patch.object(infra_vm.subprocess, "run",
+                          return_value=CompletedProcess([], 1, stdout="", stderr="")), \
+             self.assertRaises(SystemExit):
+            infra.gateway_ca_pem(timeout=0)
+
+
 class TestRegistryVolume(unittest.TestCase):
     def test_reuses_existing_volume(self):
         import tempfile
