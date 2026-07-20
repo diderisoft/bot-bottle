@@ -62,6 +62,7 @@ from .compose import (
     write_compose_file,
 )
 from .consolidated_compose import consolidated_agent_compose
+from ...orchestrator.config_store import resolve_teardown_timeout
 from .consolidated_launch import launch_consolidated, teardown_consolidated
 from ...orchestrator.gateway import DockerGateway
 
@@ -137,7 +138,9 @@ def launch(
             plan.egress_plan, git_gate_plan, image_ref=plan.image, tokens=token_values,
         )
         stack.callback(
-            teardown_consolidated, ctx.bottle_id, orchestrator_url=ctx.orchestrator_url,
+            teardown_consolidated, ctx.bottle_id,
+            orchestrator_url=ctx.orchestrator_url,
+            timeout=resolve_teardown_timeout(),
         )
 
         # Step 4: install the SHARED gateway CA into the agent (replaces the

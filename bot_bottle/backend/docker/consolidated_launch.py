@@ -142,11 +142,19 @@ def launch_consolidated(
 
 
 def teardown_consolidated(
-    bottle_id: str, *, orchestrator_url: str, gateway_name: str = GATEWAY_NAME,
+    bottle_id: str,
+    *,
+    orchestrator_url: str,
+    gateway_name: str = GATEWAY_NAME,
+    timeout: float | None = None,
 ) -> None:
     """Deregister the bottle and remove its git-gate state from the gateway.
     Both steps are idempotent so this is safe from a cleanup trap."""
-    OrchestratorClient(orchestrator_url).teardown_bottle(bottle_id)
+    from ...orchestrator.config_store import DEFAULT_TEARDOWN_TIMEOUT_SECONDS
+    OrchestratorClient(
+        orchestrator_url,
+        timeout=timeout if timeout is not None else DEFAULT_TEARDOWN_TIMEOUT_SECONDS,
+    ).teardown_bottle(bottle_id)
     deprovision_git_gate(DockerGatewayTransport(gateway_name), bottle_id)
 
 

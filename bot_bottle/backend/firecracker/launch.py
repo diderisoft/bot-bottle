@@ -52,6 +52,7 @@ from ..util import AGENT_CA_BUNDLE, AGENT_CA_PATH
 from . import firecracker_vm, image_builder, isolation_probe, netpool, util
 from .bottle import FirecrackerBottle
 from .bottle_plan import FirecrackerBottlePlan
+from ...orchestrator.config_store import resolve_teardown_timeout
 from .consolidated_launch import (
     launch_consolidated,
     teardown_consolidated,
@@ -121,6 +122,7 @@ def launch(
         stack.callback(
             teardown_consolidated, ctx.bottle_id,
             orchestrator_url=ctx.orchestrator_url,
+            timeout=resolve_teardown_timeout(),
         )
 
         # Step 5: install the SHARED gateway CA (replaces the per-bottle CA).

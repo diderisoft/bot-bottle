@@ -65,6 +65,7 @@ from .gateway_hosts import (
     set_gateway_host,
 )
 from .bottle_plan import MacosContainerBottlePlan
+from ...orchestrator.config_store import resolve_teardown_timeout
 from .consolidated_launch import (
     GatewayEndpoint,
     ensure_gateway,
@@ -153,6 +154,7 @@ def launch(
         stack.callback(
             teardown_consolidated, ctx.bottle_id,
             orchestrator_url=ctx.orchestrator_url,
+            timeout=resolve_teardown_timeout(),
         )
         info(
             f"agent {plan.container_name} registered "
