@@ -150,7 +150,7 @@ def _pump(name: str, stream: IO[bytes]) -> None:
 
 def _spawn(spec: _DaemonSpec) -> subprocess.Popen[bytes]:
     env = _env_for_daemon(spec.name, dict(os.environ))
-    proc = subprocess.Popen(
+    proc = subprocess.Popen(  # pylint: disable=consider-using-with
         _argv_for_daemon(spec.name, spec.argv, env),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -194,6 +194,14 @@ class _Supervisor:
             if p.poll() is None:
                 try:
                     p.terminate()
+                except ProcessLookupError:
+                    pass
+
+    def _sigkill_all(self) -> None:
+        for _, p in self.procs:
+            if p.poll() is None:
+                try:
+                    p.kill()
                 except ProcessLookupError:
                     pass
 
@@ -249,12 +257,7 @@ class _Supervisor:
                         f"grace ({_GRACE_SECONDS:.0f}s) elapsed; SIGKILL on "
                         f"{', '.join(still_running)}"
                     )
-                    for _, p in self.procs:
-                        if p.poll() is None:
-                            try:
-                                p.kill()
-                            except ProcessLookupError:
-                                pass
+                    self._sigkill_all()
 
         done = all(p.poll() is not None for _, p in self.procs)
         if done:
@@ -375,7 +378,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     # --signal HUP <bundle>` after writing routes.yaml. The kernel
     # delivers SIGHUP to PID 1 (this supervisor); forward it to
     # mitmdump so it reloads its addon.
-    signal.signal(signal.SIGHUP, lambda *_: sup.forward_signal(signal.SIGHUP, "egress"))  # type: ignore
+    signal.signal(  # type: ignore
+        signal.SIGHUP, lambda *_: sup.forward_signal(signal.SIGHUP, "egress")
+    )
 
     while not sup.tick():
         time.sleep(_POLL_INTERVAL)
