@@ -132,7 +132,12 @@ def build_artifact(out_dir: Path) -> tuple[str, Path, Path]:
 
 
 def _publish_bundle(root: Path, token: str) -> str:
-    version = (root / "version.txt").read_text(encoding="utf-8").strip()
+    version_file = root / "version.txt"
+    # Guard the read so a missing version.txt is a clean error, not a raw
+    # FileNotFoundError.
+    if not version_file.is_file():
+        raise SystemExit(f"incomplete artifact bundle: {root}")
+    version = version_file.read_text(encoding="utf-8").strip()
     expected = infra_artifact.infra_artifact_version(infra_vm._infra_init())
     if version != expected:
         raise SystemExit(

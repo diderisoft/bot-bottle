@@ -169,7 +169,12 @@ def ensure_artifact_gz(version: str) -> Path:
     candidate_dir = os.environ.get(_CANDIDATE_DIR_ENV, "").strip()
     if candidate_dir:
         root = Path(candidate_dir)
-        declared = (root / "version.txt").read_text(encoding="utf-8").strip()
+        version_file = root / "version.txt"
+        # Guard the read so a missing version.txt is a clean error, not a raw
+        # FileNotFoundError.
+        if not version_file.is_file():
+            die(f"infra candidate bundle is incomplete: {root}")
+        declared = version_file.read_text(encoding="utf-8").strip()
         if declared != version:
             die(
                 f"infra candidate version mismatch: expected {version}, "

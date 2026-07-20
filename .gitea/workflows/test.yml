@@ -42,6 +42,15 @@ on:
 jobs:
   stage-firecracker-inputs:
     runs-on: [self-hosted, kvm]
+    # Same guard as the other KVM-runner jobs: don't spin the privileged
+    # runner for fork PRs (this only copies a non-secret static binary, but
+    # keep the posture consistent — build-infra/integration/coverage all
+    # depend on it, so gating here gates the whole Firecracker chain).
+    if: >-
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     steps:
       - name: Stage the provisioned static dropbear
         run: |
@@ -234,7 +243,7 @@ jobs:
           python3 scripts/diff_coverage.py --base origin/main --min 90
 
   publish-infra:
-    needs: [build-infra, unit, integration-docker, integration-firecracker, coverage]
+    needs: [stage-firecracker-inputs, build-infra, unit, integration-docker, integration-firecracker, coverage]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
@@ -247,7 +256,18 @@ jobs:
           name: infra-candidate
           path: infra-candidate
 
+      # publish_infra re-derives the version from the checkout to confirm the
+      # bundle matches before uploading, and the version hashes the dropbear
+      # bytes. Stage the SAME dropbear build-infra used, or the recheck
+      # computes a "<missing>"-dropbear version and rejects the candidate.
+      - name: Download the staged dropbear (matches build-infra's version)
+        uses: actions/download-artifact@v3
+        with:
+          name: firecracker-inputs
+          path: firecracker-inputs
+
       - name: Publish the tested candidate
         env:
           BOT_BOTTLE_INFRA_ARTIFACT_TOKEN: ${{ secrets.BOT_BOTTLE_INFRA_ARTIFACT_TOKEN }}
+          BOT_BOTTLE_FC_DROPBEAR: ${{ github.workspace }}/firecracker-inputs/dropbear
         run: python3 -m bot_bottle.backend.firecracker.publish_infra --publish-dir infra-candidate

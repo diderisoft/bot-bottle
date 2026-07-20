@@ -50,7 +50,12 @@ class _CacheMixin(unittest.TestCase):
         self._env = mock.patch.dict(
             os.environ,
             {"BOT_BOTTLE_FC_CACHE": self._tmp.name,
-             "BOT_BOTTLE_INFRA_ARTIFACT_TOKEN": ""},
+             "BOT_BOTTLE_INFRA_ARTIFACT_TOKEN": "",
+             # Pin the candidate-dir override off: the coverage CI job exports a
+             # candidate dir for the integration suite, and an ambient value
+             # would send these registry-pull tests down the local-bundle path.
+             # Cases that exercise the candidate path set it explicitly.
+             "BOT_BOTTLE_INFRA_ARTIFACT_DIR": ""},
             clear=False,
         )
         self._env.start()
