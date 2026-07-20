@@ -46,7 +46,9 @@ class TestInfraRun(unittest.TestCase):
         argv = self._run_container(MacosInfraService(repo_root=Path("/r")))
         script = argv[-1]
         self.assertIn("bot_bottle.orchestrator", script)
-        self.assertIn("gateway_init.py", script)
+        # Gateway launches via the installed package (there is no
+        # /app/gateway_init.py file since the daemons moved into bot_bottle).
+        self.assertIn("bot_bottle.gateway_init", script)
         self.assertIn("127.0.0.1", script)  # they reach each other on loopback
 
     def test_db_is_a_container_only_volume(self) -> None:

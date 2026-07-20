@@ -101,7 +101,7 @@ def _init_script(port: int) -> str:
         # Gateway data plane, multi-tenant against the local control plane.
         f"( cd /app && BOT_BOTTLE_GATEWAY_DAEMONS={_GATEWAY_DAEMONS} "
         f"BOT_BOTTLE_ORCHESTRATOR_URL=http://127.0.0.1:{port} "
-        f"SUPERVISE_DB_PATH={_DB_PATH_IN_CONTAINER} python3 /app/gateway_init.py ) &\n"
+        f"SUPERVISE_DB_PATH={_DB_PATH_IN_CONTAINER} python3 -m bot_bottle.gateway_init ) &\n"
         "while : ; do wait ; done\n"
     )
 
