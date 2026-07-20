@@ -649,6 +649,8 @@ def __getattr__(name: str) -> Any:
 
 def get_bottle_backend(
     name: str | None = None,
+    *,
+    prompt: bool = True,
 ) -> BottleBackend[Any, Any]:
     """Resolve the bottle backend.
 
@@ -657,11 +659,16 @@ def get_bottle_backend(
       2. BOT_BOTTLE_BACKEND env var
       3. auto-selection: VM backend first, docker fallback with prompt
 
+    `prompt` controls whether auto-selection may block on an interactive
+    [i/d/q] prompt when falling back to docker. Pass `prompt=False` in
+    non-interactive contexts (headless launches, CI) so the call dies
+    with an actionable message instead of hanging.
+
     Dies with a pointer at the known backends if the chosen name
     isn't implemented."""
     resolved = name or os.environ.get("BOT_BOTTLE_BACKEND")
     if resolved is None:
-        resolved = _auto_select_backend()
+        resolved = _auto_select_backend(prompt=prompt)
     backends = _get_backends()
     if resolved not in backends:
         known = ", ".join(sorted(backends))
@@ -685,7 +692,7 @@ def _print_vm_install_instructions() -> None:
         info("Configure the host:  ./cli.py backend setup")
 
 
-def _auto_select_backend() -> str:
+def _auto_select_backend(prompt: bool = True) -> str:
     """Tier-1 / tier-2 backend auto-selection.
 
     Tier 1: VM backend — macos-container on macOS when Apple Container is
@@ -693,7 +700,9 @@ def _auto_select_backend() -> str:
     present (its preflight prints an install pointer).
 
     Tier 2: docker, with a security warning and an interactive prompt.
-    When docker is also absent, prints VM install instructions and exits.
+    When `prompt=False` (headless / CI), dies with an actionable message
+    instead of blocking on a TTY read. When docker is also absent, prints
+    VM install instructions and exits.
     """
     # --- Tier 1: VM backend -----------------------------------------
     if has_backend("macos-container"):
@@ -717,6 +726,11 @@ def _auto_select_backend() -> str:
         "docker is less secure than VM backends — "
         "containers share the host kernel."
     )
+    if not prompt:
+        die(
+            f"no VM backend available; set BOT_BOTTLE_BACKEND=docker to proceed "
+            f"with docker, or install the {vm!r} backend."
+        )
     sys.stderr.write(
         f"bot-bottle: For better isolation, install the {vm!r} backend.\n"
         f"  [i] show {vm} install instructions and exit\n"

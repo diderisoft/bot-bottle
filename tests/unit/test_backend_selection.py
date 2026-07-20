@@ -142,6 +142,27 @@ class TestGetBottleBackend(unittest.TestCase):
                 get_bottle_backend()
 
 
+    def test_docker_fallback_non_interactive_dies(self):
+        # prompt=False: headless/CI contexts must not block on a TTY read.
+        class _FakeBackend:
+            def __init__(self, name: str, available: bool) -> None:
+                self.name = name
+                self._available = available
+
+            def is_available(self) -> bool:
+                return self._available
+
+        with patch.dict(os.environ, {}, clear=True), \
+             patch.object(backend_mod.FirecrackerBottleBackend,
+                          "is_host_capable", classmethod(lambda cls: False)), \
+             patch.object(backend_mod, "_backends", {
+                 "macos-container": _FakeBackend("macos-container", False),
+                 "docker": _FakeBackend("docker", True),
+             }), \
+             patch.object(backend_mod, "die", side_effect=SystemExit("die")):
+            with self.assertRaises(SystemExit):
+                get_bottle_backend(prompt=False)
+
     def test_docker_fallback_user_picks_install(self):
         # User picks [i] → print install instructions then die.
         class _FakeBackend:

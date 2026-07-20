@@ -254,15 +254,18 @@ def prepare_with_preflight(
     injected callable, prompt y/N via the injected callable.
 
     `backend_name` selects which backend prepares the plan
-    (`None` → `$BOT_BOTTLE_BACKEND` → host auto-selection). The CLI
-    passes whatever `--backend` resolved to.
+    (`None` → `$BOT_BOTTLE_BACKEND` → host auto-selection).
+
+    When `spec.headless` is True the docker-fallback prompt is suppressed:
+    auto-selection dies with an actionable message rather than blocking
+    on a TTY read (which would hang CI, webhook dispatch, and orchestrators).
 
     Returns `(plan, identity)`. `plan` is None on dry-run or
     operator-N, but `identity` is set as soon as `backend.prepare`
     returns so callers can reap the prepare-time state dir via
     `settle_state(identity)` in their finally — exactly the existing
     semantics."""
-    backend = get_bottle_backend(backend_name)
+    backend = get_bottle_backend(backend_name, prompt=not spec.headless)
     plan = backend.prepare(spec, stage_dir=stage_dir)
     identity = _identity_from_plan(plan)
 
