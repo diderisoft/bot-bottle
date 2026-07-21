@@ -66,7 +66,7 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: coverage-unit
-          path: .coverage.unit
+          path: ${{ github.workspace }}/.coverage.unit
 
   integration-docker:
     runs-on: ubuntu-latest
@@ -97,7 +97,7 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: coverage-docker
-          path: .coverage.docker
+          path: ${{ github.workspace }}/.coverage.docker
 
   # Integration tests against the Firecracker backend. Runs on a self-hosted
   # KVM runner (label `kvm`) where /dev/kvm and the TAP/nft pool are available.
@@ -157,7 +157,7 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: coverage-firecracker
-          path: .coverage.firecracker
+          path: ${{ github.workspace }}/.coverage.firecracker
 
       # Only upload the large rootfs artifact on main-branch pushes;
       # PRs avoid the ~194 MB transfer. publish-infra only runs on main
@@ -206,19 +206,19 @@ jobs:
         uses: actions/download-artifact@v3
         with:
           name: coverage-unit
-          path: .
+          path: ${{ github.workspace }}
 
       - name: Download docker coverage artifact
         uses: actions/download-artifact@v3
         with:
           name: coverage-docker
-          path: .
+          path: ${{ github.workspace }}
 
       - name: Download firecracker coverage artifact
         uses: actions/download-artifact@v3
         with:
           name: coverage-firecracker
-          path: .
+          path: ${{ github.workspace }}
 
       - name: Combined coverage (unit + integration, incl. firecracker)
         run: PYTHON=python3 bash scripts/coverage.sh aggregate critical
