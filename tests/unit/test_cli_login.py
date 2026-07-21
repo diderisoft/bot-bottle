@@ -105,6 +105,18 @@ class TestSaveCredentials(unittest.TestCase):
                 self.assertEqual(oct(tmp_perms_at_replace[0]), oct(0o600))
                 self.assertEqual(oct(path.stat().st_mode & 0o777), oct(0o600))
 
+    def test_cleanup_on_write_failure(self) -> None:
+        """Temp file is removed and no credentials remain if replace fails."""
+        from bot_bottle.cli.login import _save_credentials
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(os.environ, {"BOT_BOTTLE_ROOT": tmp}):
+                with patch("os.replace", side_effect=OSError("disk full")):
+                    with self.assertRaises(OSError):
+                        _save_credentials("http://c", "hid", "at", "rt")
+            leftovers = [f for f in os.listdir(tmp) if f.startswith(".console-")]
+            self.assertEqual(leftovers, [])
+
 
 class TestCmdLoginMissingUrl(unittest.TestCase):
     def test_help_returns_0(self) -> None:
@@ -160,11 +172,7 @@ class TestCmdLoginFlow(unittest.TestCase):
             return start_resp
 
         def _fake_get(_url: str) -> tuple[int, dict[str, Any]]:
-            try:
-                resp = next(poll_iter)
-            except StopIteration:
-                return 200, {"status": "pending"}
-            return 200, resp
+            return 200, next(poll_iter, {"status": "pending"})
 
         with patch.dict(os.environ, {"BOT_BOTTLE_ROOT": tmp}):
             with patch("bot_bottle.cli.login._post", side_effect=_fake_post):
@@ -184,7 +192,7 @@ class TestCmdLoginFlow(unittest.TestCase):
                 [{"status": "pending"}, approved], tmp
             )
             self.assertEqual(result, 0)
-            with open(os.path.join(tmp, "console.json")) as f:
+            with open(os.path.join(tmp, "console.json"), encoding="utf-8") as f:
                 creds = json.loads(f.read())
             self.assertEqual(creds["host_id"], "hid")
 

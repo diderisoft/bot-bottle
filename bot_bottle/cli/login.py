@@ -92,7 +92,7 @@ def _save_credentials(
         with os.fdopen(fd, "w") as f:
             f.write(content)
         os.replace(tmp, path)
-    except Exception:
+    except OSError:
         try:
             tmp.unlink()
         except OSError:
@@ -118,7 +118,7 @@ def cmd_login(argv: list[str]) -> int:
 
     try:
         resp = _post(f"{console_url}/api/v1/hosts/authorize", {"label": label})
-    except Exception as exc:
+    except (OSError, ValueError) as exc:
         sys.stderr.write(f"bb login: failed to start authorization: {exc}\n")
         return 1
 
@@ -143,7 +143,7 @@ def cmd_login(argv: list[str]) -> int:
             code, result = _get(
                 f"{console_url}/api/v1/hosts/authorize/{device_code}"
             )
-        except Exception:
+        except (OSError, ValueError):
             continue
 
         if code == 410:
