@@ -10,7 +10,7 @@
 
 # Current Node LTS; slim variant keeps the image small while still
 # providing apt-get for any future additions.
-FROM node:22-slim
+FROM node:22-trixie-slim
 
 # Install runtime system deps. claude-code shells out to git for several
 # features (status checks, commits, PR creation) — without git in the
@@ -21,7 +21,14 @@ FROM node:22-slim
 # to it) works against egress's bumped TLS without the agent needing
 # local DNS.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends git ca-certificates curl ripgrep iproute2 dnsutils \
+  && apt-get install -y --no-install-recommends \
+  git \
+  ca-certificates \
+  curl \
+  podman \
+  ripgrep \
+  iproute2 \
+  dnsutils \
   && rm -rf /var/lib/apt/lists/*
 
 # App-specific deps. Python isn't required by claude-code itself

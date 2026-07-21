@@ -3,10 +3,16 @@
 # Mirrors the default Claude image shape: Node LTS, git/network tooling,
 # non-root node user, and the provider CLI installed for that user.
 
-FROM node:22-slim
+FROM node:22-trixie-slim
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends git ca-certificates curl procps ripgrep \
+  && apt-get install -y --no-install-recommends \
+  git \
+  ca-certificates \
+  curl \
+  podman \
+  procps \
+  ripgrep \
   && rm -rf /var/lib/apt/lists/*
 
 # App-specific deps. Python isn't required by codex itself

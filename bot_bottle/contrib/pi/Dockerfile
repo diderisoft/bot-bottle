@@ -2,7 +2,7 @@
 #
 # Node LTS, git/network tooling, and the Pi coding-agent CLI installed globally.
 
-FROM node:22-slim
+FROM node:22-trixie-slim
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
@@ -10,6 +10,7 @@ RUN apt-get update \
   ca-certificates \
   curl \
   fd-find \
+  podman \
   ripgrep \
   && ln -s /usr/bin/fdfind /usr/local/bin/fd \
   && rm -rf /var/lib/apt/lists/*
