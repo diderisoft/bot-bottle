@@ -1,8 +1,8 @@
 # bot-bottle Pi provider image.
 #
-# Node LTS, git/network tooling, and the Pi coding-agent CLI installed globally.
+# Debian stable, git/network tooling, and the Pi coding-agent CLI.
 
-FROM node:22-trixie-slim
+FROM debian:trixie-slim
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
@@ -13,8 +13,13 @@ RUN apt-get update \
   openssh-client \
   podman \
   ripgrep \
+  nodejs \
+  npm \
   && ln -s /usr/bin/fdfind /usr/local/bin/fd \
   && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --gid 1000 node \
+  && useradd --uid 1000 --gid node --shell /bin/bash --create-home node
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 python3-pip python3-venv \

@@ -18,7 +18,18 @@ class TestBuiltinAgentImages(unittest.TestCase):
             with self.subTest(provider=dockerfile.parent.name):
                 self.assertRegex(
                     dockerfile.read_text(),
-                    r"(?m)^FROM node:22-trixie-slim\s*$",
+                    r"(?m)^FROM debian:trixie-slim\s*$",
+                )
+
+    def test_all_create_node_runtime_user(self):
+        for dockerfile in _AGENT_DOCKERFILES:
+            with self.subTest(provider=dockerfile.parent.name):
+                dockerfile_text = dockerfile.read_text()
+                self.assertIn("groupadd --gid 1000 node", dockerfile_text)
+                self.assertIn(
+                    "useradd --uid 1000 --gid node --shell /bin/bash "
+                    "--create-home node",
+                    dockerfile_text,
                 )
 
     def test_all_install_podman(self):
