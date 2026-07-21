@@ -8,15 +8,15 @@
 # Layer ordering is deliberate: the npm install lives in its own layer so
 # changes to the rest of the repo (or to the CMD) don't bust it.
 
-# Debian stable is the supported userspace. The provider's Node.js runtime is
-# installed explicitly below rather than inherited from a language image.
-FROM debian:trixie-slim
+# Current Node LTS; slim variant keeps the image small while still
+# providing apt-get for any future additions.
+FROM node:22-trixie-slim
 
 # Install runtime system deps. claude-code shells out to git for several
 # features (status checks, commits, PR creation) — without git in the
 # image, those features fail in surprising ways once the user does any
-# real work. ca-certificates is installed explicitly for TLS clients. curl is
-# here so any
+# real work. ca-certificates is already in the slim base; listed for
+# clarity in case the base ever drops it. curl is here so any
 # HTTPS_PROXY-aware tool (curl itself, plus anything that shells out
 # to it) works against egress's bumped TLS without the agent needing
 # local DNS.
@@ -30,12 +30,7 @@ RUN apt-get update \
   ripgrep \
   iproute2 \
   dnsutils \
-  nodejs \
-  npm \
   && rm -rf /var/lib/apt/lists/*
-
-RUN groupadd --gid 1000 node \
-  && useradd --uid 1000 --gid node --shell /bin/bash --create-home node
 
 # App-specific deps. Python isn't required by claude-code itself
 # (claude-code is a Node CLI), but is convenient for the agent to
@@ -57,8 +52,9 @@ RUN npm install -g --no-fund --no-audit @anthropic-ai/claude-code@2.1.172 \
 # suppress bot-bottle's git-gate insteadOf rules.
 RUN install -d -o node -g node -m 755 /home/node/.config /home/node/.config/git
 
-# Run as the explicitly-created non-root user. Claude Code writes its session
-# state under this user's home directory.
+# Run as a non-root user. The node image already provides a `node` user
+# (uid 1000) with a home directory, which is where claude-code will write
+# its session state.
 USER node
 WORKDIR /home/node
 
