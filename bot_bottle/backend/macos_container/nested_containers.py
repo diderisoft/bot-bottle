@@ -82,12 +82,21 @@ def build_image(
             "COPY --from=docker_cli /usr/local/libexec/docker/cli-plugins/"
             "docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose\n"
             "RUN apt-get update \\\n"
-            # passt provides `pasta`, which podman 5 uses by default for
-            # rootless networking (podman 4 defaulted to slirp4netns). Without
-            # it every container fails to start with "could not find pasta".
-            # slirp4netns stays as the documented fallback.
+            # podman 5's networking stack, installed explicitly because the
+            # base image's `--no-install-recommends` podman does not pull it
+            # in and each piece fails at a different, misleading layer:
+            #   passt        -> `pasta`, the default rootless netns helper
+            #                   (podman 4 used slirp4netns); without it
+            #                   nothing starts: "could not find pasta"
+            #   nftables     -> `nft`, which netavark shells out to for the
+            #                   bridge network every compose file expects
+            #   aardvark-dns -> name resolution *inside* nested containers;
+            #                   without it DNS fails while everything else
+            #                   looks healthy
+            # slirp4netns stays as the documented fallback for pasta.
             " && apt-get install -y --no-install-recommends "
-            "fuse-overlayfs passt slirp4netns uidmap \\\n"
+            "aardvark-dns fuse-overlayfs netavark nftables passt "
+            "slirp4netns uidmap \\\n"
             " && rm -rf /var/lib/apt/lists/* \\\n"
             # Deliberate: an empty subordinate range keeps podman on the
             # single-UID mapping that needs no CAP_SYS_ADMIN.  Adding ranges

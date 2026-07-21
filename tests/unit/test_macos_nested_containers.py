@@ -108,7 +108,7 @@ class TestNestedContainersImage(unittest.TestCase):
             calls.append((image, context, dockerfile))
             text = Path(dockerfile).read_text(encoding="utf-8")
             self.assertIn("FROM agent:base", text)
-            self.assertIn("fuse-overlayfs passt slirp4netns uidmap", text)
+            self.assertIn("aardvark-dns fuse-overlayfs netavark nftables passt", text)
             self.assertIn("USER node", text)
             self.assertTrue((Path(context) / "nested-containers-init.sh").is_file())
 
@@ -116,18 +116,20 @@ class TestNestedContainersImage(unittest.TestCase):
         self.assertEqual("agent:base-nested-containers", image)
         self.assertEqual("agent:base-nested-containers", calls[0][0])
 
-    def test_installs_pasta_for_podman_5_rootless_networking(self) -> None:
-        """podman 5 defaults to pasta where podman 4 used slirp4netns. Without
-        the passt package every nested container fails to start with "could
-        not find pasta" — pulls still work, which makes it look like a
-        compat-API bug rather than a missing dependency."""
+    def test_installs_the_whole_podman_5_networking_stack(self) -> None:
+        """Each missing piece fails at a different, misleading layer: no pasta
+        and nothing starts; no nft and netavark cannot build the bridge that
+        compose expects; no aardvark-dns and DNS inside nested containers
+        fails while everything else looks healthy. Image pulls keep working
+        throughout, which is what made these read as compat-API bugs."""
         seen: list[str] = []
 
         def build(_image: str, _context: str, *, dockerfile: str) -> None:
             seen.append(Path(dockerfile).read_text(encoding="utf-8"))
 
         nested_containers.build_image("agent:base", build)
-        self.assertIn("passt", seen[0])
+        for package in ("passt", "nftables", "aardvark-dns"):
+            self.assertIn(package, seen[0])
 
     def test_strips_subordinate_ranges_so_podman_avoids_newuidmap(self) -> None:
         """The single-UID fallback is the entire reason podman works here.

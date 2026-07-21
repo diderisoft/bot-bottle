@@ -7,10 +7,12 @@ if [ "$uid" -eq 0 ]; then
     exit 1
 fi
 
-# pasta is podman 5's default rootless network helper. Checked here so a
-# missing package fails the bootstrap with a clear message rather than
-# letting every later `docker run` die with "could not find pasta".
-for command in podman docker fuse-overlayfs pasta slirp4netns; do
+# Every piece of podman 5's networking stack is checked here, because each
+# one fails at a different and misleading layer if it is absent: no pasta and
+# nothing starts at all; no nft and netavark cannot build the bridge every
+# compose file expects; no aardvark-dns and DNS inside nested containers fails
+# while everything else looks healthy.
+for command in podman docker fuse-overlayfs pasta nft slirp4netns; do
     command -v "$command" >/dev/null 2>&1 || {
         echo "missing nested-container prerequisite: $command" >&2
         exit 1
