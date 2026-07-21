@@ -44,6 +44,17 @@ class TestBottleValidation(unittest.TestCase):
         with self.assertRaises(ManifestError):
             ManifestBottle.from_dict("b", {"supervise": "yes"})
 
+    def test_nested_containers_not_bool(self) -> None:
+        with self.assertRaises(ManifestError):
+            ManifestBottle.from_dict("b", {"nested_containers": "yes"})
+
+    def test_nested_containers_defaults_off(self) -> None:
+        self.assertFalse(ManifestBottle.from_dict("b", {}).nested_containers)
+        self.assertTrue(
+            ManifestBottle.from_dict("b", {"nested_containers": True})
+            .nested_containers
+        )
+
     def test_removed_runtime_field(self) -> None:
         with self.assertRaises(ManifestError):
             ManifestBottle.from_dict("b", {"runtime": "runsc"})

@@ -20,6 +20,9 @@ class MacosContainerBottlePlan(BottlePlan):
     # bottle is registered. See launch.py's stamp for why it lives here and not
     # only in the exec-time proxy env.
     identity_token: str = ""
+    # Guest-local container engine (issue #392). Gates the derived image, the
+    # device-mode relaxation, and the resident podman service.
+    nested_containers: bool = False
 
     @property
     def container_name(self) -> str:

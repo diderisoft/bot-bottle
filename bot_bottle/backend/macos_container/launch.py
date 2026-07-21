@@ -66,6 +66,7 @@ from .gateway_hosts import (
     refresh_gateway_host,
     set_gateway_host,
 )
+from . import nested_containers as nested_containers_mod
 from .bottle_plan import MacosContainerBottlePlan
 from ...orchestrator.config_store import resolve_teardown_timeout
 from .consolidated_launch import (
@@ -82,10 +83,14 @@ _AGENT_SLEEP_SECONDS = "2147483647"
 def build_or_load_images(plan: MacosContainerBottlePlan) -> BottleImages:
     """Resolve the agent image ref for this plan. The gateway's own image is
     built by `ensure_gateway` — it belongs to the shared singleton."""
+    return BottleImages(agent=_layer_nested_containers(plan, _agent_image(plan)))
+
+
+def _agent_image(plan: MacosContainerBottlePlan) -> str:
     committed = read_committed_image(plan.slug)
     if committed and container_mod.image_exists(committed):
         info(f"using committed image {committed!r}")
-        return BottleImages(agent=committed)
+        return committed
     if plan.spec.image_policy == "cached":
         if not container_mod.image_exists(plan.image):
             die(
@@ -93,9 +98,31 @@ def build_or_load_images(plan: MacosContainerBottlePlan) -> BottleImages:
                 "run without --cached-images to build it"
             )
         info(f"using cached agent image {plan.image!r}")
-        return BottleImages(agent=plan.image)
+        return plan.image
     container_mod.build_image(plan.image, _REPO_DIR, dockerfile=plan.dockerfile_path)
-    return BottleImages(agent=plan.image)
+    return plan.image
+
+
+def _layer_nested_containers(
+    plan: MacosContainerBottlePlan, agent_image: str,
+) -> str:
+    """Add the guest-local container tooling on top of the agent image.
+
+    A separate derived tag, not the provider Dockerfile, so bottles that never
+    ask for nested containers carry none of its weight.
+    """
+    if not plan.nested_containers:
+        return agent_image
+    derived = f"{agent_image}{nested_containers_mod.IMAGE_SUFFIX}"
+    if plan.spec.image_policy == "cached":
+        if not container_mod.image_exists(derived):
+            die(
+                f"cached nested-container image {derived!r} not found; "
+                "run without --cached-images to build it"
+            )
+        info(f"using cached nested-container image {derived!r}")
+        return derived
+    return nested_containers_mod.build_image(agent_image, container_mod.build_image)
 
 
 @contextmanager
@@ -196,6 +223,10 @@ def launch(
         # token above, so — unlike the run-time env — the plan CAN carry it.
         plan = dataclasses.replace(plan, identity_token=ctx.identity_token)
 
+        exec_env = {
+            **_identity_proxy_env(endpoint, ctx.identity_token),
+            **nested_containers_mod.guest_env(plan.nested_containers),
+        }
         bottle = MacosContainerBottle(
             plan.container_name,
             teardown,
@@ -209,9 +240,15 @@ def launch(
             ),
             terminal_color=plan.spec.color,
             agent_workdir=plan.workspace_plan.workdir,
-            exec_env=_identity_proxy_env(endpoint, ctx.identity_token),
+            exec_env=exec_env,
         )
         bottle.prompt_path = provision(plan, bottle)
+
+        if plan.nested_containers:
+            nested_containers_mod.prepare_guest_devices(
+                plan.container_name, container_mod.exec_container_as_root,
+            )
+            nested_containers_mod.start(bottle)
 
         yield bottle
     finally:

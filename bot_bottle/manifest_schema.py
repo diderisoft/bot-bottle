@@ -16,7 +16,10 @@ _FILENAME_RX = re.compile(r"^[a-z][a-z0-9-]*$")
 # sets dies with a "did you mean" pointer: typos should not silently
 # ghost into an empty config.
 BOTTLE_KEYS = frozenset(
-    {"env", "extends", "agent_provider", "git-gate", "egress", "supervise"}
+    {
+        "env", "extends", "agent_provider", "git-gate", "egress",
+        "supervise", "nested_containers",
+    }
 )
 AGENT_KEYS_REQUIRED: frozenset[str] = frozenset()
 AGENT_KEYS_OPTIONAL = frozenset({"bottle", "skills", "git-gate"})

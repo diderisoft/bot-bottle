@@ -26,6 +26,7 @@ from ..bottle_state import (
 )
 from ..egress import Egress, EgressPlan
 from ..git_gate import GitGate, GitGatePlan
+from ..log import die
 from ..manifest import Manifest, ManifestBottle
 from ..supervise import Supervise, SupervisePlan
 from . import BottleSpec
@@ -112,6 +113,22 @@ def merge_provision_env_vars(provision: AgentProvisionPlan) -> AgentProvisionPla
     return replace(provision, guest_env=merged)
 
 
+def reject_nested_containers(backend: str, manifest: Manifest) -> None:
+    """Fail loudly when a backend cannot honor `nested_containers: true`.
+
+    Silently ignoring it would hand the agent a bottle where `docker` is not
+    there — and the only sound alternatives on these backends (a host daemon
+    socket, a privileged container) are exactly what issue #392 rules out.
+    """
+    if not manifest.bottle.nested_containers:
+        return
+    die(
+        f"nested_containers is not supported on the {backend} backend. "
+        "Only macos-container runs a guest-local container engine today; "
+        "mounting the host Docker socket is not an option bot-bottle offers."
+    )
+
+
 def resolve_manifest_dockerfile(path_value: str, spec: BottleSpec) -> str:
     """Resolve a manifest-supplied dockerfile path relative to user_cwd."""
     path = Path(os.path.expanduser(path_value))
@@ -122,6 +139,7 @@ def resolve_manifest_dockerfile(path_value: str, spec: BottleSpec) -> str:
 
 __all__ = [
     "merge_provision_env_vars",
+    "reject_nested_containers",
     "mint_slug",
     "prepare_agent_state_dir",
     "prepare_egress",

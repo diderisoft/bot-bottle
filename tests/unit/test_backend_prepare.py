@@ -21,7 +21,7 @@ from bot_bottle.backend.firecracker import FirecrackerBottleBackend
 from bot_bottle.manifest import ManifestIndex
 
 
-def _manifest() -> ManifestIndex:
+def _manifest(*, nested_containers: bool = False) -> ManifestIndex:
     return ManifestIndex.from_json_obj({
         "bottles": {
             "dev": {
@@ -29,6 +29,7 @@ def _manifest() -> ManifestIndex:
                     "LITERAL_ENV": "literal-value",
                     "FORWARDED_ENV": "${HOST_SECRET_ENV}",
                 },
+                "nested_containers": nested_containers,
             },
         },
         "agents": {
@@ -41,9 +42,11 @@ def _manifest() -> ManifestIndex:
     })
 
 
-def _spec(tmp: Path, *, identity: str) -> BottleSpec:
+def _spec(
+    tmp: Path, *, identity: str, nested_containers: bool = False,
+) -> BottleSpec:
     return BottleSpec(
-        manifest=_manifest(),
+        manifest=_manifest(nested_containers=nested_containers),
         agent_name="demo",
         copy_cwd=False,
         user_cwd=str(tmp),
@@ -111,6 +114,42 @@ class TestFirecrackerPrepare(_FakeStateMixin, unittest.TestCase):
             "literal-value", plan.agent_provision.guest_env["LITERAL_ENV"],
         )
         self.assertEqual({"FORWARDED_ENV": "secret-value"}, plan.forwarded_env)
+
+
+class TestNestedContainersRejection(_FakeStateMixin, unittest.TestCase):
+    """A backend with no guest-local engine must refuse the flag outright.
+
+    Ignoring it would leave the agent without `docker`, and the only ways to
+    fake it here (a host daemon socket, a privileged container) are what
+    issue #392 rules out.
+    """
+
+    def test_docker_backend_refuses_the_flag(self) -> None:
+        backend = DockerBottleBackend()
+        spec = _spec(
+            Path(self.tmp.name), identity="demo-docker", nested_containers=True,
+        )
+        with (
+            patch(
+                "bot_bottle.backend.resolve_common.die", side_effect=RuntimeError,
+            ) as die,
+            self.assertRaises(RuntimeError),
+        ):
+            backend.prepare(spec, Path(self.tmp.name) / "stage")
+        self.assertIn("nested_containers", die.call_args.args[0])
+        self.assertIn("docker", die.call_args.args[0])
+
+    def test_firecracker_backend_refuses_the_flag(self) -> None:
+        backend = FirecrackerBottleBackend()
+        spec = _spec(Path(self.tmp.name), identity="demo-fc", nested_containers=True)
+        with (
+            patch(
+                "bot_bottle.backend.resolve_common.die", side_effect=RuntimeError,
+            ) as die,
+            self.assertRaises(RuntimeError),
+        ):
+            backend.prepare(spec, Path(self.tmp.name) / "stage")
+        self.assertIn("firecracker", die.call_args.args[0])
 
 
 class TestMintSlug(unittest.TestCase):

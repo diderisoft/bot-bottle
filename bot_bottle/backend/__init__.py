@@ -302,6 +302,11 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
 
     name: str
 
+    # Whether this backend can run a container engine *inside* the bottle.
+    # Backends that cannot must reject `nested_containers: true` rather than
+    # reach for a host daemon socket (issue #392).
+    supports_nested_containers: bool = False
+
     def prepare(self, spec: BottleSpec, stage_dir: Path) -> PlanT:
         """Template method: run cross-backend host-side validation, then
         delegate to the subclass's `_resolve_plan` for the
@@ -315,11 +320,15 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
             prepare_egress,
             prepare_git_gate,
             prepare_supervise,
+            reject_nested_containers,
             resolve_manifest_dockerfile,
             write_launch_metadata,
         )
 
         manifest = self._validate(spec)
+
+        if not self.supports_nested_containers:
+            reject_nested_containers(self.name, manifest)
 
         self._preflight()
 

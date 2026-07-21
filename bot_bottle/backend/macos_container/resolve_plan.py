@@ -44,4 +44,5 @@ def resolve_plan(
         egress_plan=egress_plan,
         supervise_plan=supervise_plan,
         agent_provision=agent_provision_plan,
+        nested_containers=manifest.bottle.nested_containers,
     )

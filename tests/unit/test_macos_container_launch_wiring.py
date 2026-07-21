@@ -49,6 +49,7 @@ def _plan(
     agent_git_gate_url: str = "",
     agent_supervise_url: str = "",
     image_policy: str = "fresh",
+    nested_containers: bool = False,
 ) -> MacosContainerBottlePlan:
     routes_path = stage_dir / "routes.yaml"
     routes_path.write_text("routes: []\n", encoding="utf-8")
@@ -67,6 +68,7 @@ def _plan(
         manifest=_MANIFEST,
         stage_dir=stage_dir,
         slug="dev-abc",
+        nested_containers=nested_containers,
         container_name="bot-bottle-dev-abc",
         image="bot-bottle-agent:latest",
         dockerfile_path="/repo/Dockerfile",

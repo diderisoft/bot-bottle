@@ -31,6 +31,7 @@ class MacosContainerBottleBackend(
     `--backend=macos-container`."""
 
     name = "macos-container"
+    supports_nested_containers = True
 
     @classmethod
     def is_available(cls) -> bool:

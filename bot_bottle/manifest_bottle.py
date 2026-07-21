@@ -44,6 +44,11 @@ class ManifestBottle:
     # daemon that exposes egress MCP tools to the agent. Set
     # `supervise: false` to skip the gateway.
     supervise: bool = True
+    # Guest-local container engine (issue #392). Not a host-daemon grant:
+    # backends implement it inside the bottle or reject it. Gated because it
+    # costs image weight, a resident service, and relaxed guest device modes
+    # that the majority of bottles never need.
+    nested_containers: bool = False
 
     @classmethod
     def from_dict(cls, name: str, raw: object) -> "ManifestBottle":
@@ -123,7 +128,15 @@ class ManifestBottle:
                 f"(was {type(supervise_raw).__name__})"
             )
 
+        nested_raw = d.get("nested_containers", False)
+        if not isinstance(nested_raw, bool):
+            raise ManifestError(
+                f"bottle '{name}' nested_containers must be a boolean "
+                f"(was {type(nested_raw).__name__})"
+            )
+
         return cls(
             env=env, agent_provider=agent_provider, git=git,
             git_user=git_user, egress=egress, supervise=supervise_raw,
+            nested_containers=nested_raw,
         )

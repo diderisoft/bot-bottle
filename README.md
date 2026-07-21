@@ -75,6 +75,49 @@ On compatible macOS hosts, the default backend requires Apple's `container` CLI 
 
 Use `BOT_BOTTLE_BACKEND=docker ./cli.py start <agent>` on hosts where neither Apple Container nor KVM is available and Docker is the desired backend.
 
+### Containers inside a bottle
+
+A bottle may set `nested_containers: true`. On the macOS backend this starts a
+guest-local, rootless **podman** service after the bottle is registered and
+exposes its Docker-compatible API socket, so the agent still runs `docker` and
+`docker compose`. Nothing is mounted from the host: Docker Desktop's socket
+stays out of the bottle and the guest gains no outer VM capabilities. Backends
+that cannot do this (`docker`, `firecracker`) reject the flag rather than
+silently ignore it.
+
+Rootless Docker was tried first and does not work here at all: Apple
+Container's capability bounding set omits `CAP_SYS_ADMIN`, which the kernel
+requires to write a multi-range `uid_map`. See
+[`docs/research/rootless-docker-in-apple-container-spike.md`](docs/research/rootless-docker-in-apple-container-spike.md).
+
+The tradeoff to understand before enabling it: podman avoids that requirement
+by falling back to a single-UID mapping, so nested containers provide **no
+isolation from the agent itself** — `root` inside a nested container is the
+agent user outside it. Nested containers are a build/test convenience, not a
+security boundary. The bottle remains the boundary.
+
+Pulling images goes through the bottle's egress proxy like every other
+request, so each registry needs a route. Docker Hub and GHCR additionally need
+`preserve_auth: true` (their token dance uses a client-fetched per-scope bearer
+token that the proxy would otherwise strip), and large layer pulls should skip
+body scanning:
+
+```yaml
+nested_containers: true
+egress:
+  routes:
+    - host: registry-1.docker.io
+      preserve_auth: true
+      dlp: { outbound_detectors: false, inbound_detectors: false }
+    - host: auth.docker.io
+      preserve_auth: true
+    - host: ghcr.io
+      preserve_auth: true
+      dlp: { outbound_detectors: false, inbound_detectors: false }
+    - host: quay.io
+      dlp: { outbound_detectors: false, inbound_detectors: false }
+```
+
 ### Firecracker on Linux
 
 On Linux, a KVM-capable host defaults to the Firecracker backend. It needs:
