@@ -13,7 +13,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from types import ModuleType
 
 from bot_bottle.orchestrator.config_store import (
     DEFAULT_TEARDOWN_TIMEOUT_SECONDS,
@@ -120,7 +120,7 @@ class TestTeardownTimeoutResolvedBeforeRegistration(unittest.TestCase):
     """Ordering invariant: if resolve_teardown_timeout() raises, the bottle
     must not yet be registered — no orphaned state can result."""
 
-    def _src(self, module) -> str:
+    def _src(self, module: ModuleType) -> str:
         return inspect.getsource(module)
 
     def test_docker_resolves_timeout_before_launch_consolidated(self) -> None:
