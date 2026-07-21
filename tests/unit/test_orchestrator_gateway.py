@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from bot_bottle.orchestrator.gateway import (
@@ -10,7 +12,10 @@ from bot_bottle.orchestrator.gateway import (
     GATEWAY_NAME,
     DockerGateway,
     GatewayError,
+    rotate_gateway_ca,
 )
+from bot_bottle.paths import GATEWAY_CA_DIRNAME, host_gateway_ca_dir
+from tests.unit import use_bottle_root
 
 
 _CA_PEM = "-----BEGIN CERTIFICATE-----\nMII...\n-----END CERTIFICATE-----\n"
@@ -27,6 +32,11 @@ _ORCH_URL = "http://orchestrator:9000"
 
 class TestDockerGateway(unittest.TestCase):
     def setUp(self) -> None:
+        # Redirect the app-data root so ensure_running's host-dir mkdirs (CA +
+        # DB) land in a throwaway dir, not the real ~/.bot-bottle.
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.addCleanup(use_bottle_root(Path(self._tmp.name)))
         # Resolver-only data plane (PRD 0070): running the gateway requires an
         # orchestrator URL, so the fixture supplies one.
         self.sc = DockerGateway("bot-bottle-gateway:latest", orchestrator_url=_ORCH_URL)
@@ -103,8 +113,17 @@ class TestDockerGateway(unittest.TestCase):
         self.assertIn("bot-bottle-gateway:latest", runs[0])
         # Runs on the shared gateway network so agents can reach it by IP.
         self.assertEqual(self.sc.network, runs[0][runs[0].index("--network") + 1])
-        # Persists its CA on a named volume so agents keep trusting it.
-        self.assertTrue(any("mitmproxy" in a for a in runs[0]))
+        # Persists its CA on a HOST bind-mount (not a docker named volume, which
+        # `docker volume prune` would wipe — issue #450) so agents keep trusting
+        # it across restarts. The mount source is the host gateway-CA dir.
+        ca_mounts = [
+            a for a in runs[0]
+            if a.endswith(":/home/mitmproxy/.mitmproxy")
+        ]
+        self.assertEqual(1, len(ca_mounts))
+        src = ca_mounts[0].rsplit(":", 1)[0]
+        self.assertTrue(src.endswith("/" + GATEWAY_CA_DIRNAME), src)
+        self.assertTrue(Path(src).is_absolute(), src)
         # Shares the ONE host DB: the supervise daemon queues into the same
         # file the orchestrator + operator (over HTTP) use.
         self.assertTrue(any(
@@ -232,6 +251,50 @@ class TestDockerGatewayBuild(unittest.TestCase):
         with patch(_RUN_DOCKER, return_value=_proc(returncode=1, stderr="build boom")):
             with self.assertRaises(GatewayError):
                 self.sc.ensure_built()
+
+
+class TestRotateGatewayCa(unittest.TestCase):
+    """rotate_gateway_ca clears the persisted CA so the next start remints it."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.addCleanup(use_bottle_root(Path(self._tmp.name)))
+
+    def _seed_ca(self) -> Path:
+        ca_dir = host_gateway_ca_dir()
+        # A representative mitmproxy confdir: the CA identity + derived encodings,
+        # plus one non-CA file that rotation must leave untouched.
+        for name in (
+            "mitmproxy-ca.pem",
+            "mitmproxy-ca-cert.pem",
+            "mitmproxy-ca-cert.cer",
+            "mitmproxy-ca-cert.p12",
+        ):
+            (ca_dir / name).write_text("x")
+        (ca_dir / "combined-trust.pem").write_text("keep")
+        return ca_dir
+
+    def test_removes_ca_material_only(self) -> None:
+        ca_dir = self._seed_ca()
+        removed = rotate_gateway_ca(ca_dir)
+        self.assertEqual(4, len(removed))
+        self.assertTrue(all(p.name.startswith("mitmproxy-ca") for p in removed))
+        # The CA files are gone; the non-CA trust bundle survives.
+        self.assertEqual(
+            {"combined-trust.pem"}, {p.name for p in ca_dir.iterdir()}
+        )
+
+    def test_defaults_to_host_ca_dir(self) -> None:
+        self._seed_ca()
+        removed = rotate_gateway_ca()  # no arg → host_gateway_ca_dir()
+        self.assertTrue(removed)
+        self.assertEqual(
+            [], list(host_gateway_ca_dir().glob("mitmproxy-ca*"))
+        )
+
+    def test_idempotent_when_no_ca(self) -> None:
+        self.assertEqual([], rotate_gateway_ca(host_gateway_ca_dir()))
 
 
 if __name__ == "__main__":

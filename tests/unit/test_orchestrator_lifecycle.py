@@ -16,6 +16,7 @@ from bot_bottle.orchestrator.lifecycle import (
     OrchestratorStartError,
     source_hash,
 )
+from bot_bottle.paths import GATEWAY_CA_DIRNAME
 from tests.unit import use_bottle_root
 
 _URLOPEN = "bot_bottle.orchestrator.lifecycle.urllib.request.urlopen"
@@ -115,6 +116,14 @@ class TestOrchestratorService(unittest.TestCase):
         # Gateway daemons + orchestrator explicitly opted in.
         daemons_flag = "BOT_BOTTLE_GATEWAY_DAEMONS=egress,git-http,supervise,orchestrator"
         self.assertIn("orchestrator", argv[argv.index(daemons_flag)])
+        # The mitmproxy CA persists on a HOST bind-mount under the app-data root
+        # (not a docker named volume `docker volume prune` would wipe — #450), so
+        # a restarted infra container keeps the CA every running bottle trusts.
+        ca_mounts = [a for a in argv if a.endswith(":/home/mitmproxy/.mitmproxy")]
+        self.assertEqual(1, len(ca_mounts))
+        src = ca_mounts[0].rsplit(":", 1)[0]
+        self.assertTrue(src.startswith(self._tmp.name), src)
+        self.assertTrue(src.endswith("/" + GATEWAY_CA_DIRNAME), src)
 
     def test_ensure_running_builds_all_images(self) -> None:
         calls: list[list[str]] = []

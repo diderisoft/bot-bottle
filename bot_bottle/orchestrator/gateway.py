@@ -27,6 +27,7 @@ from ..paths import (
     CONTROL_PLANE_TOKEN_ENV,
     host_control_plane_token,
     host_db_path,
+    host_gateway_ca_dir,
 )
 from ..supervise import DB_PATH_IN_CONTAINER
 
@@ -48,13 +49,22 @@ GATEWAY_LABEL = "bot-bottle-orch-gateway=1"
 # the source IP the gateway attributes by is the address on this network.
 GATEWAY_NETWORK = "bot-bottle-gateway"
 
-# mitmproxy's CA dir in the bundle. A persistent named volume here keeps the
-# gateway's self-generated CA STABLE across container recreation — every agent
-# installs this one CA to trust the shared gateway's TLS interception, so it
-# must not rotate when the gateway restarts.
+# mitmproxy's CA dir in the bundle. The host's gateway-CA dir (see
+# `host_gateway_ca_dir`) is bind-mounted here so the gateway's self-generated
+# CA stays STABLE across container recreation — every agent installs this one
+# CA to trust the shared gateway's TLS interception, so it must not rotate when
+# the gateway restarts. A host bind-mount rather than a named volume: a named
+# volume is silently wiped by `docker volume prune`, minting a fresh CA that
+# breaks every running bottle (issue #450).
 MITMPROXY_HOME = "/home/mitmproxy/.mitmproxy"
-GATEWAY_CA_VOLUME = "bot-bottle-gateway-mitmproxy"
 GATEWAY_CA_CERT = f"{MITMPROXY_HOME}/mitmproxy-ca-cert.pem"
+
+# The CA material mitmproxy writes into its confdir. mitmproxy reuses these on
+# startup when present and generates them only on first run, so persisting them
+# is what makes the CA stable; deleting them (see `rotate_gateway_ca`) forces a
+# fresh CA on the next start. `mitmproxy-ca.pem` (cert + private key) is the
+# signing identity; the rest are derived encodings agents/clients consume.
+GATEWAY_CA_GLOB = "mitmproxy-ca*"
 
 # The gateway data-plane image + its Dockerfile. Kept as a local constant
 # rather than imported from the backend layer, which would drag
@@ -71,6 +81,26 @@ def _host_db_dir() -> str:
     db_dir = host_db_path().parent
     db_dir.mkdir(parents=True, exist_ok=True)
     return str(db_dir)
+
+
+def rotate_gateway_ca(ca_dir: Path | None = None) -> list[Path]:
+    """Delete the persisted mitmproxy CA so the next gateway start mints a
+    fresh one — the explicit, deliberate CA-rollover path (issue #450).
+
+    Persistence keeps the CA stable across restarts precisely because mitmproxy
+    reuses the on-disk CA; rotation is therefore just removing that material.
+    Returns the files removed (empty when there was no CA yet); idempotent.
+
+    This only clears the on-disk CA. It does NOT stop the running gateway (whose
+    mitmproxy still holds the old CA in memory) or re-provision agents — the
+    caller recreates the gateway to mint the new CA and re-attaches bottles.
+    `rotate-ca` on the orchestrator CLI wires those steps together."""
+    ca_dir = ca_dir if ca_dir is not None else host_gateway_ca_dir()
+    removed: list[Path] = []
+    for path in sorted(ca_dir.glob(GATEWAY_CA_GLOB)):
+        path.unlink()
+        removed.append(path)
+    return removed
 
 
 class GatewayError(Exception):
@@ -221,9 +251,10 @@ class DockerGateway(Gateway):
             "--name", self.name,
             "--label", GATEWAY_LABEL,
             "--network", self.network,
-            # Persist the self-generated CA so it survives restarts (agents
-            # trust it) — see GATEWAY_CA_VOLUME.
-            "--volume", f"{GATEWAY_CA_VOLUME}:{MITMPROXY_HOME}",
+            # Persist the self-generated CA on the host so it survives both
+            # container recreation AND docker volume pruning (agents trust it)
+            # — see host_gateway_ca_dir / issue #450.
+            "--volume", f"{host_gateway_ca_dir()}:{MITMPROXY_HOME}",
             # Share the one host DB: the supervise daemon queues proposals
             # into the same file the orchestrator (and the operator, over
             # HTTP) reads — no second, disconnected DB in the container.
@@ -272,7 +303,7 @@ class DockerGateway(Gateway):
 
 
 __all__ = [
-    "Gateway", "DockerGateway", "GatewayError",
+    "Gateway", "DockerGateway", "GatewayError", "rotate_gateway_ca",
     "GATEWAY_NAME", "GATEWAY_LABEL", "GATEWAY_IMAGE", "GATEWAY_NETWORK",
-    "GATEWAY_CA_VOLUME", "GATEWAY_CA_CERT",
+    "GATEWAY_CA_CERT", "GATEWAY_CA_GLOB",
 ]

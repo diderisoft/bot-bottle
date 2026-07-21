@@ -23,10 +23,14 @@ from pathlib import Path
 
 from .. import log
 from ..docker_cmd import run_docker
-from ..paths import CONTROL_PLANE_TOKEN_ENV, bot_bottle_root, host_control_plane_token
+from ..paths import (
+    CONTROL_PLANE_TOKEN_ENV,
+    bot_bottle_root,
+    host_control_plane_token,
+    host_gateway_ca_dir,
+)
 from ..supervise import DB_PATH_IN_CONTAINER
 from .gateway import (
-    GATEWAY_CA_VOLUME,
     GATEWAY_DOCKERFILE,
     GATEWAY_IMAGE,
     GATEWAY_NETWORK,
@@ -194,8 +198,10 @@ class OrchestratorService:
             # gateway_init always starts the orchestrator on DEFAULT_PORT (8099)
             # inside the container; self.port is the host-side published port.
             "--publish", f"127.0.0.1:{self.port}:{DEFAULT_PORT}",
-            # Persist the mitmproxy CA so it survives container recreation.
-            "--volume", f"{GATEWAY_CA_VOLUME}:{MITMPROXY_HOME}",
+            # Persist the mitmproxy CA on the host so it survives container
+            # recreation AND docker volume pruning (issue #450): every agent
+            # trusts this one CA, so a fresh one would break all running bottles.
+            "--volume", f"{host_gateway_ca_dir()}:{MITMPROXY_HOME}",
             # Shared supervise DB (same file the operator reads over HTTP).
             "--volume", f"{_host_db_dir()}:{_SUPERVISE_DB_DIR_IN_CONTAINER}",
             "--env", f"SUPERVISE_DB_PATH={DB_PATH_IN_CONTAINER}",

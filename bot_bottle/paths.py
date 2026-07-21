@@ -33,6 +33,13 @@ HOST_DB_FILENAME = "bot-bottle.db"
 CONTROL_PLANE_TOKEN_FILENAME = "control-plane-token"
 CONTROL_PLANE_TOKEN_ENV = "BOT_BOTTLE_CONTROL_PLANE_TOKEN"
 
+# The host directory holding the gateway's persistent mitmproxy CA. Bind-mounted
+# into the infra/gateway container at mitmproxy's confdir so the self-generated
+# CA survives container recreation — every agent installs this one CA to trust
+# the shared gateway's TLS interception, so it must not rotate on restart. See
+# host_gateway_ca_dir() for why this is a host bind-mount, not a named volume.
+GATEWAY_CA_DIRNAME = "gateway-ca"
+
 
 def bot_bottle_root() -> Path:
     """The app data root — `$BOT_BOTTLE_ROOT` if set, else `~/.bot-bottle`."""
@@ -57,6 +64,23 @@ def host_db_dir() -> Path:
     db_dir = host_db_path().parent
     db_dir.mkdir(parents=True, exist_ok=True)
     return db_dir
+
+
+def host_gateway_ca_dir() -> Path:
+    """The directory holding the gateway's persistent mitmproxy CA, created if
+    missing. Backends bind-mount this into the infra/gateway container at
+    mitmproxy's confdir so the CA persists across container recreation.
+
+    A host bind-mount under the app-data root — deliberately NOT a Docker
+    named volume. A named volume survives `docker rm` but is silently wiped by
+    `docker volume prune` / `docker system prune --volumes` during routine host
+    maintenance; the gateway then mints a fresh CA that every already-running
+    bottle distrusts, failing the TLS handshake even after it reconnects to the
+    moved gateway (issue #450). A path under the root docker never prunes it,
+    and it stays directly inspectable + rotatable from the host."""
+    ca_dir = bot_bottle_root() / GATEWAY_CA_DIRNAME
+    ca_dir.mkdir(parents=True, exist_ok=True)
+    return ca_dir
 
 
 def host_control_plane_token() -> str:
@@ -94,8 +118,10 @@ __all__ = [
     "HOST_DB_FILENAME",
     "CONTROL_PLANE_TOKEN_FILENAME",
     "CONTROL_PLANE_TOKEN_ENV",
+    "GATEWAY_CA_DIRNAME",
     "bot_bottle_root",
     "host_db_path",
     "host_db_dir",
+    "host_gateway_ca_dir",
     "host_control_plane_token",
 ]
