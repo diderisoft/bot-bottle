@@ -18,7 +18,6 @@ from types import ModuleType
 from bot_bottle.orchestrator.config_store import (
     DEFAULT_TEARDOWN_TIMEOUT_SECONDS,
     TEARDOWN_TIMEOUT_ENV,
-    TEARDOWN_TIMEOUT_KEY,
     OrchestratorConfigStore,
     resolve_teardown_timeout,
 )
@@ -34,26 +33,26 @@ class TestOrchestratorConfigStore(unittest.TestCase):
     def tearDown(self) -> None:
         self._tmp.cleanup()
 
-    def test_get_returns_none_for_absent_key(self) -> None:
-        self.assertIsNone(self.store.get("missing"))
+    def test_get_returns_none_when_not_set(self) -> None:
+        self.assertIsNone(self.store.get_teardown_timeout_seconds())
 
     def test_set_and_get_roundtrip(self) -> None:
-        self.store.set("foo", "bar")
-        self.assertEqual("bar", self.store.get("foo"))
+        self.store.set_teardown_timeout_seconds(42.5)
+        self.assertEqual(42.5, self.store.get_teardown_timeout_seconds())
 
-    def test_set_upserts_existing_key(self) -> None:
-        self.store.set("k", "v1")
-        self.store.set("k", "v2")
-        self.assertEqual("v2", self.store.get("k"))
+    def test_set_overwrites_existing_value(self) -> None:
+        self.store.set_teardown_timeout_seconds(10.0)
+        self.store.set_teardown_timeout_seconds(20.0)
+        self.assertEqual(20.0, self.store.get_teardown_timeout_seconds())
 
-    def test_delete_removes_key(self) -> None:
-        self.store.set("k", "v")
-        deleted = self.store.delete("k")
+    def test_delete_clears_value_and_returns_true(self) -> None:
+        self.store.set_teardown_timeout_seconds(30.0)
+        deleted = self.store.delete_teardown_timeout_seconds()
         self.assertTrue(deleted)
-        self.assertIsNone(self.store.get("k"))
+        self.assertIsNone(self.store.get_teardown_timeout_seconds())
 
     def test_delete_absent_returns_false(self) -> None:
-        self.assertFalse(self.store.delete("nope"))
+        self.assertFalse(self.store.delete_teardown_timeout_seconds())
 
     def test_is_migrated_true_after_migrate(self) -> None:
         self.assertTrue(self.store.is_migrated())
@@ -85,14 +84,14 @@ class TestResolveTeardownTimeout(unittest.TestCase):
     def test_env_var_overrides_db_value(self) -> None:
         store = OrchestratorConfigStore(self.db)
         store.migrate()
-        store.set(TEARDOWN_TIMEOUT_KEY, "55")
+        store.set_teardown_timeout_seconds(55.0)
         os.environ[TEARDOWN_TIMEOUT_ENV] = "77"
         self.assertEqual(77.0, resolve_teardown_timeout(self.db))
 
     def test_db_value_overrides_default(self) -> None:
         store = OrchestratorConfigStore(self.db)
         store.migrate()
-        store.set(TEARDOWN_TIMEOUT_KEY, "42")
+        store.set_teardown_timeout_seconds(42.0)
         self.assertEqual(42.0, resolve_teardown_timeout(self.db))
 
     def test_invalid_env_var_falls_through_to_default(self) -> None:
@@ -103,14 +102,13 @@ class TestResolveTeardownTimeout(unittest.TestCase):
         os.environ[TEARDOWN_TIMEOUT_ENV] = "0"
         self.assertEqual(DEFAULT_TEARDOWN_TIMEOUT_SECONDS, resolve_teardown_timeout(self.db))
 
-    def test_invalid_db_value_falls_through_to_default(self) -> None:
+    def test_non_positive_db_value_falls_through_to_default(self) -> None:
         store = OrchestratorConfigStore(self.db)
         store.migrate()
-        store.set(TEARDOWN_TIMEOUT_KEY, "bad")
+        store.set_teardown_timeout_seconds(0.0)
         self.assertEqual(DEFAULT_TEARDOWN_TIMEOUT_SECONDS, resolve_teardown_timeout(self.db))
 
     def test_migrates_db_on_first_call(self) -> None:
-        # DB does not exist yet; resolve_teardown_timeout must not raise.
         result = resolve_teardown_timeout(self.db)
         self.assertEqual(DEFAULT_TEARDOWN_TIMEOUT_SECONDS, result)
         self.assertTrue(OrchestratorConfigStore(self.db).is_migrated())
