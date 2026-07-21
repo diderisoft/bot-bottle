@@ -125,6 +125,20 @@ class TestProvisionGitUser(unittest.TestCase):
         _PROVIDER.provision_git(bottle, _plan(stage_dir=self.stage))
         self.assertEqual([], _git_config_exec_calls(bottle))
 
+    def test_repairs_git_xdg_directory_for_runtime_user(self):
+        bottle = _make_bottle()
+        _PROVIDER.provision_git(bottle, _plan(stage_dir=self.stage))
+
+        script, user = next(
+            (call.args[0], call.kwargs.get("user", "node"))
+            for call in bottle.exec.call_args_list
+            if "/home/node/.config/git" in call.args[0]
+        )
+        self.assertEqual("root", user)
+        self.assertIn("mkdir -p /home/node/.config/git", script)
+        self.assertIn("chown -R node:node /home/node/.config", script)
+        self.assertIn("chmod 755 /home/node/.config /home/node/.config/git", script)
+
     def test_sets_name_and_email(self):
         plan = _plan(
             git_user={"name": "Eric Bauerfeld", "email": "eric@dideric.is"},

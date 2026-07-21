@@ -263,6 +263,21 @@ class AgentProvider(ABC):
         BottleBackend.provision_workspace against the running bottle."""
         from .log import info
 
+        # Firecracker exports image rootfs files through an unprivileged host
+        # tar extraction, so image-time ownership of XDG directories is not
+        # preserved.  Git consults ~/.config/git even when the actual config
+        # is ~/.gitconfig; an unreadable directory there can prevent the
+        # git-gate insteadOf rules below from taking effect.  Repair this at
+        # runtime, after every backend's copy/export path has completed.
+        git_xdg_dir = f"{plan.guest_home}/.config/git"
+        bottle.exec(
+            f"mkdir -p {shlex.quote(git_xdg_dir)} && "
+            f"chown -R node:node {shlex.quote(f'{plan.guest_home}/.config')} && "
+            f"chmod 755 {shlex.quote(f'{plan.guest_home}/.config')} "
+            f"{shlex.quote(git_xdg_dir)}",
+            user="root",
+        )
+
         manifest_bottle = plan.manifest.bottle
         if manifest_bottle.git:
             from .git_gate import GIT_GATE_HOSTNAME, git_gate_render_gitconfig
