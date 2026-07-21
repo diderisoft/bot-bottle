@@ -261,7 +261,7 @@ class AgentProvider(ABC):
         Default: Debian/node — writes the git-gate insteadOf gitconfig
         and sets user.name/email as node. Workspace copy runs through
         BottleBackend.provision_workspace against the running bottle."""
-        from .log import info
+        from .log import die, info
 
         # Firecracker exports image rootfs files through an unprivileged host
         # tar extraction, so image-time ownership of XDG directories is not
@@ -270,13 +270,17 @@ class AgentProvider(ABC):
         # git-gate insteadOf rules below from taking effect.  Repair this at
         # runtime, after every backend's copy/export path has completed.
         git_xdg_dir = f"{plan.guest_home}/.config/git"
-        bottle.exec(
+        repair = bottle.exec(
             f"mkdir -p {shlex.quote(git_xdg_dir)} && "
             f"chown -R node:node {shlex.quote(f'{plan.guest_home}/.config')} && "
-            f"chmod 755 {shlex.quote(f'{plan.guest_home}/.config')} "
-            f"{shlex.quote(git_xdg_dir)}",
+            f"chmod -R u+rwX,go+rX {shlex.quote(f'{plan.guest_home}/.config')}",
             user="root",
         )
+        if repair.returncode != 0:
+            die(
+                "git provisioning: could not make the runtime Git config "
+                f"directory readable: {(repair.stderr or repair.stdout).strip()}"
+            )
 
         manifest_bottle = plan.manifest.bottle
         if manifest_bottle.git:
@@ -299,11 +303,27 @@ class AgentProvider(ABC):
                 f"{len(manifest_bottle.git)} insteadOf rule(s)"
             )
             bottle.cp_in(str(config_file), guest_gitconfig)
-            bottle.exec(
+            permissions = bottle.exec(
                 f"chown node:node {shlex.quote(guest_gitconfig)} && "
                 f"chmod 644 {shlex.quote(guest_gitconfig)}",
                 user="root",
             )
+            if permissions.returncode != 0:
+                die(
+                    "git provisioning: could not set ownership on "
+                    f"{guest_gitconfig}: "
+                    f"{(permissions.stderr or permissions.stdout).strip()}"
+                )
+            configured = bottle.exec(
+                "git config --global --get-regexp '^url\\..*\\.insteadof$'",
+                user="node",
+            )
+            if configured.returncode != 0:
+                die(
+                    "git provisioning: the runtime user cannot read the "
+                    f"git-gate insteadOf rules from {guest_gitconfig}: "
+                    f"{(configured.stderr or configured.stdout).strip()}"
+                )
 
         gu = manifest_bottle.git_user
         if not gu.is_empty():

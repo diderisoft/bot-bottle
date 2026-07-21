@@ -263,6 +263,11 @@ def _agent_guest_env(plan: FirecrackerBottlePlan, host_ip: str) -> dict[str, str
         "HTTPS_PROXY": proxy_url, "HTTP_PROXY": proxy_url,
         "https_proxy": proxy_url, "http_proxy": proxy_url,
         "NO_PROXY": no_proxy, "no_proxy": no_proxy,
+        # Rootfs export can leave Git's implicit XDG paths unreadable even
+        # after the runtime repair. Bypass that discovery and name the
+        # provisioned global config explicitly so insteadOf can never fall
+        # through to the credential-bearing upstream URL.
+        "GIT_CONFIG_GLOBAL": f"{plan.guest_home}/.gitconfig",
         "NODE_EXTRA_CA_CERTS": AGENT_CA_PATH,
         "SSL_CERT_FILE": AGENT_CA_BUNDLE,
         "REQUESTS_CA_BUNDLE": AGENT_CA_BUNDLE,

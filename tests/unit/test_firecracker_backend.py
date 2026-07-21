@@ -422,10 +422,15 @@ class TestBottlePlanProperties(unittest.TestCase):
         ap.command = "claude"
         ap.prompt_mode = "append_file"
         ap.template = "claude"
+        ap.guest_home = "/home/node"
+        ap.guest_env = {}
+        egress_plan = cast(Any, MagicMock())
+        egress_plan.canary = ""
+        egress_plan.canary_env = ""
         fields = dict(
             spec=cast(Any, MagicMock()), manifest=cast(Any, MagicMock()),
             stage_dir=Path("/stage"), git_gate_plan=cast(Any, MagicMock()),
-            egress_plan=cast(Any, MagicMock()), supervise_plan=None,
+            egress_plan=egress_plan, supervise_plan=None,
             agent_provision=ap, slug="demo-x", forwarded_env={},
         )
         fields.update(overrides)
@@ -450,6 +455,12 @@ class TestBottlePlanProperties(unittest.TestCase):
         p = self._plan(agent_git_gate_url="http://10.243.0.0:9420/")
         self.assertEqual("10.243.0.0:9420", p.git_gate_insteadof_host)
         self.assertEqual("http", p.git_gate_insteadof_scheme)
+
+    def test_guest_env_pins_global_git_config(self):
+        from bot_bottle.backend.firecracker.launch import _agent_guest_env
+
+        env = _agent_guest_env(self._plan(), "10.243.0.0")
+        self.assertEqual("/home/node/.gitconfig", env["GIT_CONFIG_GLOBAL"])
 
 
 if __name__ == "__main__":

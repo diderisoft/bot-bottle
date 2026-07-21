@@ -137,7 +137,7 @@ class TestProvisionGitUser(unittest.TestCase):
         self.assertEqual("root", user)
         self.assertIn("mkdir -p /home/node/.config/git", script)
         self.assertIn("chown -R node:node /home/node/.config", script)
-        self.assertIn("chmod 755 /home/node/.config /home/node/.config/git", script)
+        self.assertIn("chmod -R u+rwX,go+rX /home/node/.config", script)
 
     def test_sets_name_and_email(self):
         plan = _plan(
