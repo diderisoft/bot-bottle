@@ -78,6 +78,7 @@ class Route:
     inbound_detectors: tuple[str, ...] | None = None
     # "" means unset → DEFAULT_OUTBOUND_ON_MATCH. See OUTBOUND_ON_MATCH_VALUES.
     outbound_on_match: str = ""
+    preserve_auth: bool = False
 
 
 LOG_OFF = 0    # no logging
@@ -308,11 +309,18 @@ def _parse_one(idx: int, raw: object) -> Route:
         idx, host, raw_dict,
     )
 
+    preserve_auth_raw = raw_dict.get("preserve_auth", False)
+    if preserve_auth_raw is not True and preserve_auth_raw is not False:
+        raise ValueError(
+            f"{label} ({host}): 'preserve_auth' must be a boolean"
+        )
+    preserve_auth: bool = preserve_auth_raw
+
     for k in raw_dict:
-        if k not in ("host", "matches", "auth_scheme", "token_env", "dlp", "git"):
+        if k not in ("host", "matches", "auth_scheme", "token_env", "dlp", "git", "preserve_auth"):
             raise ValueError(
                 f"{label} ({host}): unknown key {k!r}; accepted keys "
-                f"are 'host', 'matches', 'auth_scheme', 'token_env', 'dlp', 'git'"
+                f"are 'host', 'matches', 'auth_scheme', 'token_env', 'dlp', 'git', 'preserve_auth'"
             )
 
     return Route(
@@ -324,6 +332,7 @@ def _parse_one(idx: int, raw: object) -> Route:
         outbound_detectors=outbound_detectors,
         inbound_detectors=inbound_detectors,
         outbound_on_match=outbound_on_match,
+        preserve_auth=preserve_auth,
     )
 
 
@@ -376,6 +385,8 @@ def route_to_yaml_dict(r: Route) -> dict[str, object]:
         dlp["outbound_on_match"] = r.outbound_on_match
     if dlp:
         d["dlp"] = dlp
+    if r.preserve_auth:
+        d["preserve_auth"] = True
     return d
 
 

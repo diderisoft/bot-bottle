@@ -413,6 +413,28 @@ class TestAuthInjection(unittest.TestCase):
         assert flow.response is not None
         self.assertEqual(403, flow.response.status_code)
 
+    def test_preserve_auth_passes_agent_token_through(self) -> None:
+        route = Route(host="registry-1.docker.io", preserve_auth=True)
+        addon = _addon(Config(routes=(route,)))
+        flow = _Flow(_Request(
+            host="registry-1.docker.io",
+            headers={"authorization": "Bearer agent-registry-token"},
+        ))
+        _run_request(addon, flow)
+        self.assertEqual("Bearer agent-registry-token", flow.request.headers.get("authorization"))
+        self.assertIsNone(flow.response)
+
+    def test_default_route_strips_agent_auth(self) -> None:
+        route = Route(host="registry-1.docker.io")
+        addon = _addon(Config(routes=(route,)))
+        flow = _Flow(_Request(
+            host="registry-1.docker.io",
+            headers={"authorization": "Bearer agent-registry-token"},
+        ))
+        _run_request(addon, flow)
+        self.assertIsNone(flow.request.headers.get("authorization"))
+        self.assertIsNone(flow.response)
+
 
 # ---------------------------------------------------------------------------
 # git push / fetch over HTTPS

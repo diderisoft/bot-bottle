@@ -146,6 +146,7 @@ def egress_manifest_routes(
             outbound_detectors=r.OutboundDetectors,
             inbound_detectors=r.InboundDetectors,
             outbound_on_match=r.OutboundOnMatch,
+            preserve_auth=r.PreserveAuth,
         ))
     return tuple(out)
 

@@ -458,6 +458,24 @@ class TestRole(unittest.TestCase):
             _bottle([{"host": "x.example", "role": ["x", 42]}])
 
 
+class TestPreserveAuth(unittest.TestCase):
+    def test_omitted_defaults_false(self):
+        b = _bottle([{"host": "registry-1.docker.io"}])
+        self.assertFalse(b.egress.routes[0].PreserveAuth)
+
+    def test_true_accepted(self):
+        b = _bottle([{"host": "registry-1.docker.io", "preserve_auth": True}])
+        self.assertTrue(b.egress.routes[0].PreserveAuth)
+
+    def test_false_accepted(self):
+        b = _bottle([{"host": "registry-1.docker.io", "preserve_auth": False}])
+        self.assertFalse(b.egress.routes[0].PreserveAuth)
+
+    def test_non_bool_rejected(self):
+        with self.assertRaises(ManifestError):
+            _bottle([{"host": "registry-1.docker.io", "preserve_auth": "yes"}])
+
+
 class TestPipelockKeyRejected(unittest.TestCase):
     def test_pipelock_key_rejected_as_unknown(self):
         with self.assertRaises(ManifestError):

@@ -367,7 +367,10 @@ class EgressAddon:
 
         # Strip agent-set Authorization after DLP scan so smuggled tokens
         # are caught above; the route may inject gateway-owned auth below.
-        flow.request.headers.pop("authorization", None)
+        # Routes with preserve_auth=True pass the header through as-is so the
+        # agent's own credentials (e.g. registry bearer tokens) reach the upstream.
+        if route is None or not route.preserve_auth:
+            flow.request.headers.pop("authorization", None)
 
         # Build headers mapping for match evaluation
         req_headers = {k.lower(): v for k, v in flow.request.headers.items()}

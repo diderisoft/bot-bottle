@@ -71,6 +71,7 @@ class ManifestEgressRoute:
     OutboundDetectors: tuple[str, ...] | None = None
     InboundDetectors: tuple[str, ...] | None = None
     OutboundOnMatch: str = ""
+    PreserveAuth: bool = False
 
     @classmethod
     def from_dict(cls, bottle_name: str, idx: int, raw: object) -> "ManifestEgressRoute":
@@ -190,11 +191,22 @@ class ManifestEgressRoute:
                         f"only 'fetch' is accepted"
                     )
 
+        # --- preserve_auth ---
+        preserve_auth = False
+        if "preserve_auth" in d:
+            raw_preserve_auth = d.get("preserve_auth")
+            if not isinstance(raw_preserve_auth, bool):
+                raise ManifestError(
+                    f"{label} preserve_auth must be a boolean "
+                    f"(was {type(raw_preserve_auth).__name__})"
+                )
+            preserve_auth = raw_preserve_auth
+
         for k in d:
-            if k not in ("host", "matches", "auth", "role", "dlp", "git"):
+            if k not in ("host", "matches", "auth", "role", "dlp", "git", "preserve_auth"):
                 raise ManifestError(
                     f"{label} has unknown key {k!r}; accepted keys are "
-                    f"'host', 'matches', 'auth', 'role', 'dlp', 'git'"
+                    f"'host', 'matches', 'auth', 'role', 'dlp', 'git', 'preserve_auth'"
                 )
 
         return cls(
@@ -207,6 +219,7 @@ class ManifestEgressRoute:
             OutboundDetectors=outbound_detectors,
             InboundDetectors=inbound_detectors,
             OutboundOnMatch=outbound_on_match,
+            PreserveAuth=preserve_auth,
         )
 
 
