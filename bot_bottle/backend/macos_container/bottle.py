@@ -68,9 +68,14 @@ class MacosContainerBottle(Bottle):
         # reaches the agent (PRD 0070): registration mints it *after* the
         # container exists — its source IP is the registration key and Apple
         # Container assigns that by DHCP — so it cannot be in the run-time env
-        # the way docker's compose spec does it. `container exec --env` wins
-        # over the run-time value, so the token-bearing proxy URL set here
-        # supersedes the token-less one baked in at launch.
+        # the way docker's compose spec does it.
+        #
+        # `container exec --env` does NOT override a run-time value — it
+        # appends, leaving duplicate entries in the agent's `environ` whose
+        # resolution is runtime-specific (Node last-wins, Rust first-wins). So
+        # nothing here may rely on superseding: the proxy vars are supplied
+        # *only* at exec time and are deliberately absent from the run-time
+        # env. See `launch._agent_env_entries`.
         self._exec_env = dict(exec_env or {})
         self._closed = False
 

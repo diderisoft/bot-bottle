@@ -265,9 +265,15 @@ def _no_proxy(gateway_ip: str) -> str:
 def _identity_proxy_env(
     endpoint: GatewayEndpoint, identity_token: str,
 ) -> dict[str, str]:
-    """The token-bearing proxy env applied at `container exec`. It supersedes
-    the token-less run-time value (exec `--env` wins), which is the only way to
-    get the token in: it does not exist until after the container runs."""
+    """The token-bearing proxy env applied at `container exec` — the only way
+    to get the token in, since it does not exist until after the container
+    runs (registration keys on the DHCP-assigned address).
+
+    This is the *sole* source of `*_PROXY` for the agent. It deliberately does
+    not rely on overriding a run-time value: `container exec --env` appends
+    rather than replaces, so a run-time `HTTPS_PROXY` would survive alongside
+    this one and first-wins runtimes would read the wrong entry. See
+    `_agent_env_entries`."""
     if not identity_token:
         return {}
     url = _proxy_url(endpoint.gateway_ip, identity_token)
@@ -317,16 +323,23 @@ def _agent_run_argv(
 def _agent_env_entries(
     plan: MacosContainerBottlePlan, endpoint: GatewayEndpoint,
 ) -> tuple[str, ...]:
-    # Token-less at run time — the token does not exist yet (see
-    # `_identity_proxy_env`). Anything egressing before the exec-time override
-    # is denied by `/resolve`, which is the safe direction.
-    proxy_url = _proxy_url(endpoint.gateway_ip)
+    # No `*_PROXY` here on purpose. The token-bearing URL is applied at
+    # `container exec` (`_identity_proxy_env`), and Apple's `container exec
+    # --env` **appends** to the run-time environment rather than replacing it:
+    # setting a token-less value here leaves two `HTTPS_PROXY` entries in the
+    # agent's `environ`, token-less first. Which one a runtime reads is then
+    # pure luck — Node takes the last (and worked), Rust's `std::env::var`
+    # takes the first, so Codex proxied without its identity token and
+    # `/resolve` fail-closed on every request.
+    #
+    # A token-less proxy URL has no legitimate consumer anyway: the init
+    # process is `sleep` and everything that egresses arrives via exec. Its
+    # only value was a tidy 403 for unattributed callers, which is not worth
+    # silently dropping attribution for. Without it a process that egresses
+    # before the exec-time env still fails closed — the agent network is
+    # host-only, so there is no route off it except the gateway.
     no_proxy = _no_proxy(endpoint.gateway_ip)
     env = [
-        f"HTTPS_PROXY={proxy_url}",
-        f"HTTP_PROXY={proxy_url}",
-        f"https_proxy={proxy_url}",
-        f"http_proxy={proxy_url}",
         f"NO_PROXY={no_proxy}",
         f"no_proxy={no_proxy}",
         f"NODE_EXTRA_CA_CERTS={AGENT_CA_PATH}",

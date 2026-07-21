@@ -20,7 +20,6 @@ from bot_bottle.backend.macos_container.consolidated_launch import GatewayEndpoi
 from bot_bottle.backend.macos_container.launch import (
     _agent_run_argv,
     _identity_proxy_env,
-    _proxy_url,
 )
 from bot_bottle.manifest import ManifestIndex
 
@@ -104,13 +103,26 @@ class TestAgentRunArgv(unittest.TestCase):
         read back after start."""
         self.assertNotIn("--ip", self.argv)
 
-    def test_run_time_proxy_carries_no_identity_token(self) -> None:
-        """The token is minted by registration, which happens after this run —
-        so it cannot be here. `/resolve` denies the token-less pair (#366),
-        which is the safe direction; the real value arrives at exec time."""
-        joined = " ".join(self.argv)
-        self.assertIn(f"HTTP_PROXY={_proxy_url('192.168.128.3')}", joined)
-        self.assertNotIn("bottle:", joined)
+    def test_run_time_env_sets_no_proxy_vars_at_all(self) -> None:
+        """Regression: the proxy vars must exist *only* in the exec-time env.
+
+        `container exec --env` appends rather than replaces, so a token-less
+        `HTTPS_PROXY` here would survive next to the token-bearing one and
+        leave two entries in the agent's `environ`. Resolution is then
+        runtime-specific — Node reads the last, Rust's `std::env::var` reads
+        the first — so Codex proxied without its identity token and every
+        request fail-closed at `/resolve`.
+        """
+        for entry in self.argv:
+            self.assertFalse(
+                entry.upper().startswith(("HTTP_PROXY=", "HTTPS_PROXY=")),
+                f"run-time env must not set a proxy var, got {entry!r}",
+            )
+
+    def test_run_time_env_carries_no_identity_token(self) -> None:
+        """The token is minted by registration, which happens after this run,
+        so it cannot be here under any name."""
+        self.assertNotIn("bottle:", " ".join(self.argv))
 
     def test_gateway_bypasses_the_proxy(self) -> None:
         """git-http + supervise live on the gateway and must be reached
