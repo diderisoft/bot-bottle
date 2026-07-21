@@ -418,10 +418,11 @@ class PolicyResolverLike(typing.Protocol):
 # to begin with — the failure mode that made a bricked registration read like
 # a misconfigured allowlist.
 DENY_UNATTRIBUTED = (
-    "egress: this bottle is not registered with the orchestrator, so it has "
-    "no egress policy at all and every host is denied. The bottle's registry "
-    "row is missing or ambiguous — it was torn down, or another bottle claimed "
-    "its source IP. Relaunch the bottle; this is not an allowlist problem."
+    "egress: this request was not attributed to any bottle, so no egress "
+    "policy applies and every host is denied. Either the bottle's registry "
+    "row is missing/ambiguous (torn down, or another bottle claimed its "
+    "source IP), or the request carried no matching identity token — check "
+    "that the caller's proxy URL includes it. This is not an allowlist problem."
 )
 DENY_UNPARSEABLE = (
     "egress: this bottle's egress policy could not be parsed, so it is being "

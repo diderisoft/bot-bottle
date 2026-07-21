@@ -130,13 +130,17 @@ class TestDenyReasonNamesTheRealFault(unittest.TestCase):
         cfg = resolve_client_config(resolver, "10.243.0.1")  # type: ignore[arg-type]
         return decide(cfg.routes, host, "/v1/x", {}, deny_reason=cfg.deny_reason).reason
 
-    def test_unattributed_says_unregistered_not_allowlist(self) -> None:
+    def test_unattributed_says_unattributed_not_allowlist(self) -> None:
         reason = self._reason(_FakeResolver(result=None))
         self.assertEqual(DENY_UNATTRIBUTED, reason)
         # The misleading claim is the one that must be gone: the host was
         # never "not in the allowlist" — there was no allowlist at all.
         self.assertNotIn("is not in the bottle's egress.routes allowlist", reason)
-        self.assertIn("not registered", reason)
+        # Both causes must be named. `/resolve` fail-closes on a missing row
+        # *and* on a token mismatch, and the message pointing only at the row
+        # sent us hunting for a deregistered bottle that was registered fine.
+        self.assertIn("registry row", reason)
+        self.assertIn("identity token", reason)
 
     def test_resolver_error_says_orchestrator_unreachable(self) -> None:
         self.assertEqual(DENY_RESOLVER_ERROR, self._reason(_FakeResolver(raises=True)))
