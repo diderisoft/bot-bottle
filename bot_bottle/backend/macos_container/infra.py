@@ -41,7 +41,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ... import log
-from ...orchestrator.gateway import GATEWAY_CA_CERT
+from ...orchestrator.gateway import GATEWAY_CA_CERT, MITMPROXY_HOME
 from ...orchestrator.lifecycle import (
     DEFAULT_PORT,
     DEFAULT_STARTUP_TIMEOUT_SECONDS,
@@ -52,6 +52,7 @@ from ...paths import (
     CONTROL_PLANE_TOKEN_ENV,
     HOST_DB_FILENAME,
     host_control_plane_token,
+    host_gateway_ca_dir,
 )
 from .. import util as backend_util
 from . import util as container_mod
@@ -218,6 +219,14 @@ class MacosInfraService:
             # Container-only DB volume: one kernel writes bot-bottle.db, never
             # shared with the host or another guest.
             "--volume", f"{self._db_volume}:{_DB_ROOT_IN_CONTAINER}",
+            # The DB needs a container-only ext4 volume for coherent SQLite
+            # locking, but the CA has no such constraint. Keep it in the host
+            # app-data root so infra-container recreation and Apple Container
+            # volume pruning cannot silently rotate every bottle's trust
+            # anchor (issue #450).
+            "--mount",
+            container_mod.bind_mount_spec(
+                str(host_gateway_ca_dir()), MITMPROXY_HOME),
             # Bind-mount the control-plane source (read-only); a code change
             # takes effect on relaunch with no image rebuild.
             "--mount",
@@ -261,9 +270,9 @@ class MacosInfraService:
 
     def ca_cert_pem(self, *, timeout: float = DEFAULT_CA_TIMEOUT_SECONDS) -> str:
         """The gateway's mitmproxy CA (PEM) agents install to trust its TLS
-        interception. Read out of the container (the CA lives on a
-        container-internal path, not a host mount); polls because mitmproxy
-        writes it a beat after start."""
+        interception. Read through the container path backed by the persistent
+        host CA directory; polls because mitmproxy writes it a beat after
+        start."""
         def _fetch() -> str | None:
             result = container_mod.run_container_argv(
                 ["container", "exec", self._name, "cat", GATEWAY_CA_CERT])

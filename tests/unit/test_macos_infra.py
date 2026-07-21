@@ -61,6 +61,20 @@ class TestInfraRun(unittest.TestCase):
         mounts = [argv[i + 1] for i, a in enumerate(argv) if a == "--mount"]
         self.assertTrue(all("bot-bottle.db" not in m for m in mounts))
 
+    def test_ca_is_persisted_on_the_host_not_the_container_volume(self) -> None:
+        """The CA survives infra recreation and cannot be removed by Apple
+        Container's volume-prune command."""
+        argv = self._run_container(MacosInfraService(repo_root=Path("/r")))
+        mounts = [argv[i + 1] for i, a in enumerate(argv) if a == "--mount"]
+        ca_mounts = [
+            m for m in mounts
+            if "target=/home/mitmproxy/.mitmproxy" in m
+        ]
+        self.assertEqual(1, len(ca_mounts))
+        self.assertIn("source=", ca_mounts[0])
+        self.assertIn("/gateway-ca", ca_mounts[0])
+        self.assertNotIn(",readonly", ca_mounts[0])
+
     def test_nat_network_precedes_the_host_only_network(self) -> None:
         argv = self._run_container(MacosInfraService(repo_root=Path("/r")))
         nets = [argv[i + 1] for i, a in enumerate(argv) if a == "--network"]
