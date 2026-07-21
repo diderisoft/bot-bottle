@@ -45,12 +45,15 @@ _PROVIDER = _Provider()
 
 
 def _plan(*, git_user: dict | None = None,  # type: ignore
+          git_repos: dict | None = None,  # type: ignore
           copy_cwd: bool = False,
           user_cwd: str = "/tmp/x",
           stage_dir: Path | None = None) -> DockerBottlePlan:
     bottle_json: dict = {}  # type: ignore
     if git_user is not None:
         bottle_json["git-gate"] = {"user": git_user}
+    if git_repos is not None:
+        bottle_json.setdefault("git-gate", {})["repos"] = git_repos
     index = ManifestIndex.from_json_obj({
         "bottles": {"dev": bottle_json},
         "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
@@ -140,6 +143,46 @@ class TestProvisionGitUser(unittest.TestCase):
         self.assertIn("mkdir -p /home/node/.config/git", script)
         self.assertIn("chown -R node:node /home/node/.config", script)
         self.assertIn("chmod -R u+rwX,go+rX /home/node/.config", script)
+
+    def test_fails_closed_when_home_permissions_cannot_be_repaired(self):
+        bottle = _make_bottle()
+        bottle.exec.return_value = ExecResult(1, "", "read-only filesystem")
+
+        with self.assertRaises(SystemExit):
+            _PROVIDER.provision_git(bottle, _plan(stage_dir=self.stage))
+
+    def _git_plan(self) -> DockerBottlePlan:
+        return _plan(
+            git_repos={
+                "repo": {
+                    "url": "ssh://git@example.com/repo.git",
+                    "key": {"provider": "static", "path": "/dev/null"},
+                    "host_key": "ssh-ed25519 AAAA",
+                },
+            },
+            stage_dir=self.stage,
+        )
+
+    def test_fails_closed_when_gitconfig_permissions_cannot_be_set(self):
+        bottle = _make_bottle()
+        bottle.exec.side_effect = [
+            ExecResult(0, "", ""),
+            ExecResult(1, "", "chown failed"),
+        ]
+
+        with self.assertRaises(SystemExit):
+            _PROVIDER.provision_git(bottle, self._git_plan())
+
+    def test_fails_closed_when_runtime_user_cannot_read_gitconfig(self):
+        bottle = _make_bottle()
+        bottle.exec.side_effect = [
+            ExecResult(0, "", ""),
+            ExecResult(0, "", ""),
+            ExecResult(1, "", "permission denied"),
+        ]
+
+        with self.assertRaises(SystemExit):
+            _PROVIDER.provision_git(bottle, self._git_plan())
 
     def test_sets_name_and_email(self):
         plan = _plan(
