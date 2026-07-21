@@ -39,6 +39,14 @@ done
 
 # Short by necessity, not by accident: conmon's attach socket lives under
 # this directory and must fit in a 108-byte sun_path. See nested_containers.py.
+# Must stay in step with AGENT_CA_BUNDLE in bot_bottle/backend/util.py; a unit
+# test pins the two together.
+CA_BUNDLE="/etc/ssl/certs/ca-certificates.crt"
+[ -r "$CA_BUNDLE" ] || {
+    echo "gateway CA bundle $CA_BUNDLE is missing or unreadable" >&2
+    exit 1
+}
+
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/bbp}"
 config="$HOME/.config/containers"
 mkdir -p "$XDG_RUNTIME_DIR" "$config"
@@ -57,9 +65,32 @@ CONF
 
 # No cgroup delegation reaches this guest, so asking podman to manage cgroups
 # fails; events_logger=file avoids the journald socket that is equally absent.
-cat > "$config/containers.conf" <<'CONF'
+#
+# The rest of this block is what makes a nested container reach the network at
+# all. podman already forwards the proxy env, but that alone is useless here:
+#
+#   base_hosts_file  the proxy URL names `bot-bottle-gateway`, which resolves
+#                    only through the bottle's own /etc/hosts. Without this a
+#                    container fails at "Could not resolve proxy", which reads
+#                    like broken DNS but is a missing hosts entry — public DNS
+#                    is *supposed* to fail, since everything egresses via the
+#                    proxy.
+#   volumes/env      the gateway TLS-intercepts, so a container that does not
+#                    trust the bottle's CA bundle gets "unable to get local
+#                    issuer certificate". Mounting the bundle read-only and
+#                    pointing the usual env vars at it covers curl, wget,
+#                    python, and node without distro-specific trust commands.
+cat > "$config/containers.conf" <<CONF
 [containers]
 cgroups="disabled"
+base_hosts_file="/etc/hosts"
+volumes=["${CA_BUNDLE}:${CA_BUNDLE}:ro"]
+env=[
+  "SSL_CERT_FILE=${CA_BUNDLE}",
+  "CURL_CA_BUNDLE=${CA_BUNDLE}",
+  "REQUESTS_CA_BUNDLE=${CA_BUNDLE}",
+  "NODE_EXTRA_CA_CERTS=${CA_BUNDLE}",
+]
 [engine]
 cgroup_manager="cgroupfs"
 events_logger="file"

@@ -151,6 +151,39 @@ class TestNestedContainersImage(unittest.TestCase):
         ))
 
 
+class TestInitScript(unittest.TestCase):
+    """The bootstrap runs inside the bottle, so its wiring is only checkable
+    here or on a live macOS host."""
+
+    def setUp(self) -> None:
+        self.script = (
+            Path(nested_containers.__file__).with_name("nested-containers-init.sh")
+            .read_text(encoding="utf-8")
+        )
+
+    def test_ca_bundle_path_matches_the_backend_constant(self) -> None:
+        from bot_bottle.backend.util import AGENT_CA_BUNDLE
+        self.assertIn(f'CA_BUNDLE="{AGENT_CA_BUNDLE}"', self.script)
+
+    def test_propagates_the_bottle_hosts_file_into_containers(self) -> None:
+        """The proxy URL names bot-bottle-gateway, which resolves only via the
+        bottle's /etc/hosts. Without this a nested container dies at "Could
+        not resolve proxy" — which reads as broken DNS but is a missing hosts
+        entry; public DNS is meant to fail."""
+        self.assertIn('base_hosts_file="/etc/hosts"', self.script)
+
+    def test_mounts_and_trusts_the_gateway_ca(self) -> None:
+        """The gateway TLS-intercepts, so without the bundle every HTTPS call
+        from a nested container fails with "unable to get local issuer
+        certificate"."""
+        self.assertIn("volumes=[", self.script)
+        for var in (
+            "SSL_CERT_FILE", "CURL_CA_BUNDLE", "REQUESTS_CA_BUNDLE",
+            "NODE_EXTRA_CA_CERTS",
+        ):
+            self.assertIn(f'"{var}=${{CA_BUNDLE}}"', self.script)
+
+
 class TestGuestEnvironment(unittest.TestCase):
     def test_disabled_bottle_gets_no_docker_environment(self) -> None:
         self.assertEqual({}, nested_containers.guest_env(False))
