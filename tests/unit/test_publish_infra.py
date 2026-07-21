@@ -136,6 +136,49 @@ class TestPublishBundle(unittest.TestCase):
             self.assertIn("registry unreachable", str(ctx.exception))
 
 
+class TestTryDownloadPublished(unittest.TestCase):
+    def test_downloads_existing_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(pub.infra_vm, "_infra_init", return_value="init"), \
+                mock.patch.object(
+                    pub.infra_artifact, "infra_artifact_version", return_value="v1"
+                ), mock.patch.object(
+                    pub.urllib.request, "urlopen", return_value=_Resp()
+                ), mock.patch.object(pub.infra_artifact, "_download") as download:
+            root = Path(d)
+            result = pub._try_download_published(root)
+
+        self.assertEqual(
+            ("v1", root / "rootfs.ext4.gz", root / "rootfs.ext4.gz.sha256"),
+            result,
+        )
+        self.assertEqual(2, download.call_count)
+
+    def test_missing_artifact_returns_none(self) -> None:
+        missing = urllib.error.HTTPError("u", 404, "missing", Message(), None)
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(
+            pub.urllib.request, "urlopen", side_effect=missing
+        ):
+            self.assertIsNone(pub._try_download_published(Path(d)))
+
+    def test_registry_http_failure_is_reported(self) -> None:
+        failure = urllib.error.HTTPError("u", 500, "failed", Message(), None)
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(
+            pub.urllib.request, "urlopen", side_effect=failure
+        ):
+            with self.assertRaises(SystemExit) as ctx:
+                pub._try_download_published(Path(d))
+        self.assertIn("registry check failed (HTTP 500)", str(ctx.exception))
+
+    def test_registry_connection_failure_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(
+            pub.urllib.request, "urlopen", side_effect=urllib.error.URLError("offline")
+        ):
+            with self.assertRaises(SystemExit) as ctx:
+                pub._try_download_published(Path(d))
+        self.assertIn("registry unreachable", str(ctx.exception))
+
+
 class TestMain(unittest.TestCase):
     def test_output_builds_candidate_and_records_version(self) -> None:
         with tempfile.TemporaryDirectory() as d:
@@ -145,6 +188,20 @@ class TestMain(unittest.TestCase):
             ) as build:
                 self.assertEqual(0, pub.main(["--output", str(root)]))
             build.assert_called_once_with(root)
+            self.assertEqual("v1\n", (root / "version.txt").read_text())
+
+    def test_output_reuses_published_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "candidate"
+            reused = ("v1", root / "rootfs.ext4.gz", root / "rootfs.ext4.gz.sha256")
+            with mock.patch.object(
+                pub, "_try_download_published", return_value=reused
+            ) as reuse, mock.patch.object(pub, "build_artifact") as build:
+                self.assertEqual(
+                    0, pub.main(["--output", str(root), "--reuse-published"])
+                )
+            reuse.assert_called_once_with(root)
+            build.assert_not_called()
             self.assertEqual("v1\n", (root / "version.txt").read_text())
 
     def test_publish_dir_publishes_existing_candidate(self) -> None:
