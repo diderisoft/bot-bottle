@@ -18,6 +18,7 @@ import json
 import os
 import socket
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -71,7 +72,7 @@ def _save_credentials(
 ) -> Path:
     path = bot_bottle_root() / "console.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
+    content = (
         json.dumps(
             {
                 "url": console_url,
@@ -83,7 +84,19 @@ def _save_credentials(
         )
         + "\n"
     )
-    path.chmod(0o600)
+    fd, tmp_path_str = tempfile.mkstemp(dir=path.parent, prefix=".console-")
+    tmp = Path(tmp_path_str)
+    try:
+        tmp.chmod(0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(content)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
     return path
 
 
@@ -111,6 +124,7 @@ def cmd_login(argv: list[str]) -> int:
     device_code = resp["device_code"]
     user_code = resp["user_code"]
     expires_in = resp.get("expires_in", 300)
+    poll_sleep = max(1, min(int(resp.get("poll_interval", _POLL_SLEEP)), 60))
 
     sys.stderr.write(
         f"\nOpen this URL in your browser to authorize this host:\n\n"
@@ -122,7 +136,7 @@ def cmd_login(argv: list[str]) -> int:
     while time.monotonic() < deadline:
         sys.stderr.write(".")
         sys.stderr.flush()
-        time.sleep(_POLL_SLEEP)
+        time.sleep(poll_sleep)
 
         try:
             code, result = _get(

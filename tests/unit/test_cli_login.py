@@ -42,6 +42,26 @@ class TestSaveCredentials(unittest.TestCase):
             self.assertEqual(data["refresh_token"], "rt")
             self.assertEqual(oct(path.stat().st_mode & 0o777), oct(0o600))
 
+    def test_temp_file_is_private_before_replace(self) -> None:
+        """Temp file must be 0600 at the moment os.replace is called."""
+        from bot_bottle.cli.login import _save_credentials
+        from pathlib import Path as _Path
+
+        tmp_perms_at_replace: list[int] = []
+        real_replace = os.replace
+
+        def _spy_replace(src: "str | os.PathLike", dst: "str | os.PathLike") -> None:
+            tmp_perms_at_replace.append(_Path(src).stat().st_mode & 0o777)
+            real_replace(src, dst)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(os.environ, {"BOT_BOTTLE_ROOT": tmp}):
+                with patch("os.replace", side_effect=_spy_replace):
+                    path = _save_credentials("http://c", "hid", "at", "rt")
+                self.assertEqual(len(tmp_perms_at_replace), 1)
+                self.assertEqual(oct(tmp_perms_at_replace[0]), oct(0o600))
+                self.assertEqual(oct(path.stat().st_mode & 0o777), oct(0o600))
+
 
 class TestCmdLoginMissingUrl(unittest.TestCase):
     def test_returns_1_without_url(self) -> None:
@@ -91,7 +111,7 @@ class TestCmdLoginFlow(unittest.TestCase):
         with patch.dict(os.environ, {"BOT_BOTTLE_ROOT": tmp}):
             with patch("bot_bottle.cli.login._post", side_effect=_fake_post):
                 with patch("bot_bottle.cli.login._get", side_effect=_fake_get):
-                    with patch("bot_bottle.cli.login._POLL_SLEEP", 0):
+                    with patch("time.sleep"):
                         return cmd_login(["--console-url", "http://console"])
 
     def test_approved_flow_returns_0(self) -> None:
@@ -121,16 +141,46 @@ class TestCmdLoginFlow(unittest.TestCase):
         start_resp = {
             "device_code": "dc",
             "user_code": "ZZZ-ZZZ",
-            "expires_in": 0,  # already expired
-            "poll_interval": 0,
+            "expires_in": 0,  # already expired; loop never runs
+            "poll_interval": 2,
         }
 
         with tempfile.TemporaryDirectory() as tmp:
             with patch.dict(os.environ, {"BOT_BOTTLE_ROOT": tmp}):
                 with patch("bot_bottle.cli.login._post", return_value=start_resp):
-                    with patch("bot_bottle.cli.login._POLL_SLEEP", 0):
-                        result = cmd_login(["--console-url", "http://console"])
+                    result = cmd_login(["--console-url", "http://console"])
         self.assertEqual(result, 1)
+
+    def test_poll_interval_from_server_is_used(self) -> None:
+        """time.sleep must be called with the server-provided poll_interval."""
+        from bot_bottle.cli.login import cmd_login
+
+        server_interval = 7
+        start_resp = {
+            "device_code": "dc",
+            "user_code": "ABC-DEF",
+            "expires_in": 300,
+            "poll_interval": server_interval,
+        }
+        approved = {
+            "status": "approved",
+            "host_id": "hid",
+            "access_token": "at",
+            "refresh_token": "rt",
+        }
+        poll_iter = iter([{"status": "pending"}, approved])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(os.environ, {"BOT_BOTTLE_ROOT": tmp}):
+                with patch("bot_bottle.cli.login._post", return_value=start_resp):
+                    with patch("bot_bottle.cli.login._get", side_effect=lambda u: (200, next(poll_iter))):
+                        with patch("time.sleep") as mock_sleep:
+                            result = cmd_login(["--console-url", "http://console"])
+
+        self.assertEqual(result, 0)
+        self.assertTrue(mock_sleep.called)
+        for call in mock_sleep.call_args_list:
+            self.assertEqual(call.args[0], server_interval)
 
 
 class TestDispatcherRegistration(unittest.TestCase):
