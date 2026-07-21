@@ -131,6 +131,29 @@ def build_artifact(out_dir: Path) -> tuple[str, Path, Path]:
     return version, gz, sha
 
 
+def _try_download_published(out_dir: Path) -> tuple[str, Path, Path] | None:
+    """If this version's artifact is already in the registry, download the gz
+    and sha to out_dir and return (version, gz_path, sha_path). Returns None
+    when not yet published."""
+    version = infra_artifact.infra_artifact_version(infra_vm._infra_init())
+    sha_url = infra_artifact.artifact_url(version, "rootfs.ext4.gz.sha256")
+    try:
+        with urllib.request.urlopen(infra_artifact._open(sha_url)):
+            pass
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None
+        raise SystemExit(f"registry check failed (HTTP {e.code}): {sha_url}")
+    except urllib.error.URLError as e:
+        raise SystemExit(f"registry unreachable: {sha_url} ({e.reason})")
+    print(f"infra rootfs {version} already published — downloading instead of building")
+    gz = out_dir / "rootfs.ext4.gz"
+    sha = out_dir / "rootfs.ext4.gz.sha256"
+    infra_artifact._download(infra_artifact.artifact_url(version, "rootfs.ext4.gz"), gz)
+    infra_artifact._download(infra_artifact.artifact_url(version, "rootfs.ext4.gz.sha256"), sha)
+    return version, gz, sha
+
+
 def _publish_bundle(root: Path, token: str) -> str:
     version_file = root / "version.txt"
     # Guard the read so a missing version.txt is a clean error, not a raw
@@ -187,6 +210,8 @@ def main(argv: list[str] | None = None) -> int:
                       help="build a candidate bundle in DIR without publishing")
     mode.add_argument("--publish-dir", type=Path,
                       help="publish an already-built and tested candidate bundle")
+    parser.add_argument("--reuse-published", action="store_true",
+                        help="with --output: download from registry if already published instead of building")
     args = parser.parse_args(argv)
 
     _, _, token = infra_artifact._config()
@@ -197,6 +222,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.output is not None:
         args.output.mkdir(parents=True, exist_ok=True)
+        reused = None
+        if args.reuse_published:
+            reused = _try_download_published(args.output)
+        if reused is not None:
+            version, _, _ = reused
+            (args.output / "version.txt").write_text(version + "\n", encoding="utf-8")
+            print(f"reused published infra rootfs candidate {version}")
+            return 0
         version, _gz, _sha = build_artifact(args.output)
         (args.output / "version.txt").write_text(version + "\n", encoding="utf-8")
         print(f"built infra rootfs candidate {version}")

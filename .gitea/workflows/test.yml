@@ -57,10 +57,14 @@ jobs:
         run: python3 -m pip install --break-system-packages -r requirements-dev.txt
 
       - name: Run unit tests with coverage
-        run: python3 -m coverage run --data-file=.coverage.unit -m unittest discover -t . -s tests/unit -v
+        env:
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage.unit
+        run: python3 -m coverage run -m unittest discover -t . -s tests/unit -v
 
       - name: Report unit coverage
-        run: python3 -m coverage report --data-file=.coverage.unit -m
+        env:
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage.unit
+        run: python3 -m coverage report -m
 
       - name: Upload unit coverage artifact
         uses: actions/upload-artifact@v3
@@ -91,7 +95,8 @@ jobs:
       - name: Run integration tests (docker) with coverage
         env:
           BOT_BOTTLE_BACKEND: docker
-        run: python3 -m coverage run --data-file=.coverage.docker -m unittest discover -t . -s tests/integration -v
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage.docker
+        run: python3 -m coverage run -m unittest discover -t . -s tests/integration -v
 
       - name: Upload docker coverage artifact
         uses: actions/upload-artifact@v3
@@ -139,7 +144,7 @@ jobs:
       - name: Build infra candidate from this checkout
         env:
           BOT_BOTTLE_FC_DROPBEAR: /var/cache/bot-bottle-fc/dropbear
-        run: python3 -m bot_bottle.backend.firecracker.publish_infra --output infra-candidate
+        run: python3 -m bot_bottle.backend.firecracker.publish_infra --output infra-candidate --reuse-published
 
       - name: Replace the persistent infra VM with the candidate
         run: python3 -c 'from bot_bottle.backend.firecracker import infra_vm; infra_vm.stop()'
@@ -151,7 +156,8 @@ jobs:
         env:
           BOT_BOTTLE_BACKEND: firecracker
           BOT_BOTTLE_INFRA_ARTIFACT_DIR: ${{ github.workspace }}/infra-candidate
-        run: python3 -m coverage run --data-file=.coverage.firecracker -m unittest discover -t . -s tests/integration -v
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage.firecracker
+        run: python3 -m coverage run -m unittest discover -t . -s tests/integration -v
 
       - name: Upload firecracker coverage artifact
         uses: actions/upload-artifact@v3
@@ -181,6 +187,8 @@ jobs:
   #
   # Runs on ubuntu-latest — no KVM needed, no test reruns. Coverage files use
   # relative_files = True (.coveragerc) so they combine cleanly across runners.
+  # Each test job sets COVERAGE_FILE to an absolute path so coverage.py writes
+  # to a known location that upload-artifact can find regardless of runner env.
   #
   # Restricted to the same events as integration-firecracker: it depends on
   # that job's coverage artifact and skips for fork PRs alongside it.
