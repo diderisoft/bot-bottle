@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 from bot_bottle.backend.macos_container.bottle import MacosContainerBottle
 from bot_bottle.backend.macos_container.bottle_plan import MacosContainerBottlePlan
@@ -21,7 +21,9 @@ from bot_bottle.backend.macos_container.gateway_hosts import GATEWAY_HOSTNAME
 from bot_bottle.backend.macos_container.launch import (
     _agent_run_argv,
     _identity_proxy_env,
+    build_or_load_images,
 )
+from bot_bottle.log import Die
 from bot_bottle.manifest import ManifestIndex
 
 _BOTTLE = "bot_bottle.backend.macos_container.bottle"
@@ -46,6 +48,7 @@ def _plan(
     *,
     agent_git_gate_url: str = "",
     agent_supervise_url: str = "",
+    image_policy: str = "fresh",
 ) -> MacosContainerBottlePlan:
     routes_path = stage_dir / "routes.yaml"
     routes_path.write_text("routes: []\n", encoding="utf-8")
@@ -60,12 +63,13 @@ def _plan(
         canary_env="",
     )
     return cast(MacosContainerBottlePlan, SimpleNamespace(
-        spec=SimpleNamespace(),
+        spec=SimpleNamespace(image_policy=image_policy),
         manifest=_MANIFEST,
         stage_dir=stage_dir,
         slug="dev-abc",
         container_name="bot-bottle-dev-abc",
         image="bot-bottle-agent:latest",
+        dockerfile_path="/repo/Dockerfile",
         forwarded_env={"OAUTH_TOKEN": "host-value"},
         egress_plan=egress_plan,
         git_gate_plan=SimpleNamespace(upstreams=()),
@@ -77,6 +81,88 @@ def _plan(
         agent_git_gate_url=agent_git_gate_url,
         agent_supervise_url=agent_supervise_url,
     ))
+
+
+class TestBuildOrLoadImages(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.plan = _plan(Path(self._tmp.name))
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_reuses_present_committed_image(self) -> None:
+        with (
+            patch(
+                "bot_bottle.backend.macos_container.launch.read_committed_image",
+                return_value="committed:latest",
+            ),
+            patch(
+                "bot_bottle.backend.macos_container.launch.container_mod.image_exists",
+                return_value=True,
+            ),
+            patch(
+                "bot_bottle.backend.macos_container.launch.container_mod.build_image"
+            ) as build,
+        ):
+            images = build_or_load_images(self.plan)
+
+        self.assertEqual("committed:latest", images.agent)
+        build.assert_not_called()
+
+    def test_reuses_present_cached_image(self) -> None:
+        plan = _plan(Path(self._tmp.name), image_policy="cached")
+        with (
+            patch(
+                "bot_bottle.backend.macos_container.launch.read_committed_image",
+                return_value=None,
+            ),
+            patch(
+                "bot_bottle.backend.macos_container.launch.container_mod.image_exists",
+                return_value=True,
+            ),
+            patch(
+                "bot_bottle.backend.macos_container.launch.container_mod.build_image"
+            ) as build,
+        ):
+            images = build_or_load_images(plan)
+
+        self.assertEqual(plan.image, images.agent)
+        build.assert_not_called()
+
+    def test_cached_policy_rejects_missing_image(self) -> None:
+        plan = _plan(Path(self._tmp.name), image_policy="cached")
+        with (
+            patch(
+                "bot_bottle.backend.macos_container.launch.read_committed_image",
+                return_value=None,
+            ),
+            patch(
+                "bot_bottle.backend.macos_container.launch.container_mod.image_exists",
+                return_value=False,
+            ),
+        ):
+            with self.assertRaises(Die):
+                build_or_load_images(plan)
+
+    def test_fresh_policy_builds_image(self) -> None:
+        with (
+            patch(
+                "bot_bottle.backend.macos_container.launch.read_committed_image",
+                return_value=None,
+            ),
+            patch(
+                "bot_bottle.backend.macos_container.launch.container_mod.build_image"
+            ) as build,
+        ):
+            images = build_or_load_images(self.plan)
+
+        self.assertEqual(self.plan.image, images.agent)
+        build.assert_called_once_with(
+            self.plan.image,
+            ANY,
+            dockerfile=self.plan.dockerfile_path,
+        )
 
 
 class TestAgentRunArgv(unittest.TestCase):
