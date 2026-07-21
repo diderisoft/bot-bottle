@@ -272,6 +272,30 @@ resolver #2
                 ),
             )
 
+    def test_exec_container_as_root_selects_root_user(self):
+        completed = util.subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr="",
+        )
+        with patch.object(util, "_run_container_op", return_value=completed) as run:
+            util.exec_container_as_root("bot-bottle-demo", ["true"])
+
+        run.assert_called_once_with([
+            "container", "exec", "--user", "root", "bot-bottle-demo", "true",
+        ])
+
+    def test_exec_container_as_root_reports_failure(self):
+        failed = util.subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="permission denied\n",
+        )
+        with patch.object(util, "_run_container_op", return_value=failed), \
+             patch.object(util, "die", side_effect=SystemExit("die")) as die:
+            with self.assertRaises(SystemExit):
+                util.exec_container_as_root("bot-bottle-demo", ["true"])
+
+        die.assert_called_once_with(
+            "container exec (root) in bot-bottle-demo failed: permission denied",
+        )
+
 
 def _completed(stdout: str, returncode: int = 0):
     return util.subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr="")
