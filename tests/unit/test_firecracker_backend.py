@@ -61,6 +61,12 @@ class TestNetpoolSlots(unittest.TestCase):
 
 
 class TestNetpoolRenderers(unittest.TestCase):
+    def test_guest_init_restores_node_home_boundary(self):
+        from bot_bottle.backend.firecracker import util
+
+        self.assertIn("chown node:node /home/node", util._GUEST_INIT)
+        self.assertIn("chmod 755 /home/node", util._GUEST_INIT)
+
     def test_nixos_module_is_non_invasive(self):
         # The NixOS module must NOT flip the host firewall backend or
         # hand interfaces to systemd-networkd; it brings the pool up via

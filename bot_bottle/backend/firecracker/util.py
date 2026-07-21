@@ -373,6 +373,12 @@ mount -o remount,rw / 2>/dev/null
 # scratch dirs there — git worktrees, build temp, `git init /tmp/...`, etc.
 mkdir -p /tmp && chmod 1777 /tmp
 
+# Rootfs export also maps the image's original owners to the unprivileged
+# host build uid. That uid is not guaranteed to be node's uid in the guest;
+# restore the home-directory boundary before any SSH provisioning runs.
+chown node:node /home/node 2>/dev/null || true
+chmod 755 /home/node 2>/dev/null || true
+
 # Install the per-bottle SSH pubkey from the kernel cmdline.
 KEY=$(sed -n 's/.*bb_pubkey=\([^ ]*\).*/\1/p' /proc/cmdline | base64 -d 2>/dev/null)
 if [ -n "$KEY" ]; then

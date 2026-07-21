@@ -135,6 +135,8 @@ class TestProvisionGitUser(unittest.TestCase):
             if "/home/node/.config/git" in call.args[0]
         )
         self.assertEqual("root", user)
+        self.assertIn("chown node:node /home/node", script)
+        self.assertIn("chmod 755 /home/node", script)
         self.assertIn("mkdir -p /home/node/.config/git", script)
         self.assertIn("chown -R node:node /home/node/.config", script)
         self.assertIn("chmod -R u+rwX,go+rX /home/node/.config", script)

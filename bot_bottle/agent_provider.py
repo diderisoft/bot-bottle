@@ -271,6 +271,8 @@ class AgentProvider(ABC):
         # runtime, after every backend's copy/export path has completed.
         git_xdg_dir = f"{plan.guest_home}/.config/git"
         repair = bottle.exec(
+            f"chown node:node {shlex.quote(plan.guest_home)} && "
+            f"chmod 755 {shlex.quote(plan.guest_home)} && "
             f"mkdir -p {shlex.quote(git_xdg_dir)} && "
             f"chown -R node:node {shlex.quote(f'{plan.guest_home}/.config')} && "
             f"chmod -R u+rwX,go+rX {shlex.quote(f'{plan.guest_home}/.config')}",
