@@ -10,6 +10,7 @@ RUN apt-get update \
   ca-certificates \
   curl \
   fd-find \
+  openssh-client \
   podman \
   ripgrep \
   && ln -s /usr/bin/fdfind /usr/local/bin/fd \

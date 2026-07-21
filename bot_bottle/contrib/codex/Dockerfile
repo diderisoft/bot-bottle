@@ -10,6 +10,7 @@ RUN apt-get update \
   git \
   ca-certificates \
   curl \
+  openssh-client \
   podman \
   procps \
   ripgrep \

@@ -25,6 +25,7 @@ RUN apt-get update \
   git \
   ca-certificates \
   curl \
+  openssh-client \
   podman \
   ripgrep \
   iproute2 \

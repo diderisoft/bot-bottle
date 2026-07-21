@@ -172,7 +172,7 @@ class TestSandboxEscape(unittest.TestCase):
         # base image without producing five confusing
         # command-not-found failures down the suite.
         missing: list[str] = []
-        for tool in ("curl", "git", "dig"):
+        for tool in ("curl", "git", "dig", "ssh"):
             r = cls._bottle.exec(f"command -v {tool} >/dev/null 2>&1")
             if r.returncode != 0:
                 missing.append(tool)

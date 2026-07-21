@@ -29,6 +29,14 @@ class TestBuiltinAgentImages(unittest.TestCase):
                     re.compile(r"(?m)^\s*podman(?:\s|\\|$)"),
                 )
 
+    def test_all_install_ssh_client(self):
+        for dockerfile in _AGENT_DOCKERFILES:
+            with self.subTest(provider=dockerfile.parent.name):
+                self.assertRegex(
+                    dockerfile.read_text(),
+                    re.compile(r"(?m)^\s*openssh-client(?:\s|\\|$)"),
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
