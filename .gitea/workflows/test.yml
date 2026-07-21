@@ -9,10 +9,12 @@
 #   tests/canaries/     — upstream regression canaries; run on a separate
 #                         schedule (see canaries.yml), not here
 #
-# Integration tests run once per backend in separate jobs. Each job sets
-# BOT_BOTTLE_BACKEND explicitly so the test suite uses the right backend.
-# Backends that aren't available on the runner fail the preflight step
-# rather than silently skipping inside the test output.
+# Each test job runs once under coverage and uploads a small .coverage.*
+# artifact. The `coverage` job combines them — no test reruns, no KVM
+# dependency on that job. For main-branch pushes only, the tested rootfs
+# and matching dropbear are uploaded so `publish-infra` can publish the
+# byte-identical artifact that was tested. PRs avoid the ~194 MB rootfs
+# transfer entirely.
 
 name: test
 
@@ -40,53 +42,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  stage-firecracker-inputs:
-    runs-on: [self-hosted, kvm]
-    # Same guard as the other KVM-runner jobs: don't spin the privileged
-    # runner for fork PRs (this only copies a non-secret static binary, but
-    # keep the posture consistent — build-infra/integration/coverage all
-    # depend on it, so gating here gates the whole Firecracker chain).
-    if: >-
-      github.event_name == 'push' ||
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' &&
-       github.event.pull_request.head.repo.full_name == github.repository)
-    steps:
-      - name: Stage the provisioned static dropbear
-        run: |
-          mkdir -p firecracker-inputs
-          cp /var/cache/bot-bottle-fc/dropbear firecracker-inputs/dropbear
-
-      - name: Upload Firecracker build inputs
-        uses: actions/upload-artifact@v3
-        with:
-          name: firecracker-inputs
-          path: firecracker-inputs/
-
-  build-infra:
-    needs: stage-firecracker-inputs
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download Firecracker build inputs
-        uses: actions/download-artifact@v3
-        with:
-          name: firecracker-inputs
-          path: firecracker-inputs
-
-      - name: Build infra candidate from this checkout
-        env:
-          BOT_BOTTLE_FC_DROPBEAR: ${{ github.workspace }}/firecracker-inputs/dropbear
-        run: python3 -m bot_bottle.backend.firecracker.publish_infra --output infra-candidate
-
-      - name: Upload infra candidate
-        uses: actions/upload-artifact@v3
-        with:
-          name: infra-candidate
-          path: infra-candidate/
-
   unit:
     runs-on: ubuntu-latest
     steps:
@@ -101,11 +56,17 @@ jobs:
       - name: Install dev requirements
         run: python3 -m pip install --break-system-packages -r requirements-dev.txt
 
-      - name: Run unit tests
-        run: python3 -m coverage run -m unittest discover -t . -s tests/unit -v
+      - name: Run unit tests with coverage
+        run: python3 -m coverage run --data-file=.coverage.unit -m unittest discover -t . -s tests/unit -v
 
       - name: Report unit coverage
-        run: python3 -m coverage report -m
+        run: python3 -m coverage report --data-file=.coverage.unit -m
+
+      - name: Upload unit coverage artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: coverage-unit
+          path: .coverage.unit
 
   integration-docker:
     runs-on: ubuntu-latest
@@ -115,6 +76,9 @@ jobs:
 
       # No actions/setup-python (see the note in the `unit` job); the
       # container's system Python 3.12 runs the stdlib test suite directly.
+      - name: Install coverage
+        run: python3 -m pip install --break-system-packages coverage
+
       - name: Show environment
         run: |
           python3 --version
@@ -124,10 +88,16 @@ jobs:
             echo "docker not on PATH — integration tests will skip"
           fi
 
-      - name: Run integration tests (docker)
+      - name: Run integration tests (docker) with coverage
         env:
           BOT_BOTTLE_BACKEND: docker
-        run: python3 -m unittest discover -t . -s tests/integration -v
+        run: python3 -m coverage run --data-file=.coverage.docker -m unittest discover -t . -s tests/integration -v
+
+      - name: Upload docker coverage artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: coverage-docker
+          path: .coverage.docker
 
   # Integration tests against the Firecracker backend. Runs on a self-hosted
   # KVM runner (label `kvm`) where /dev/kvm and the TAP/nft pool are available.
@@ -137,9 +107,16 @@ jobs:
   #
   # Runner prerequisites (provision once; see README "Firecracker on Linux"):
   # `firecracker` on PATH, `/dev/kvm` accessible, cached kernel +
-  # static dropbear, and the pool as a persistent systemd unit.
+  # static dropbear at /var/cache/bot-bottle-fc/dropbear, and the pool as a
+  # persistent systemd unit.
+  #
+  # The infra candidate is built here directly (no artifact download) to
+  # eliminate the ~70 s ubuntu-latest upload + ~83 s combined download that
+  # the old build-infra → integration-firecracker + coverage chain incurred.
+  # For main-branch pushes the tested rootfs and matching dropbear are
+  # uploaded so publish-infra can publish the byte-identical artifact; PRs
+  # skip those uploads entirely.
   integration-firecracker:
-    needs: build-infra
     runs-on: [self-hosted, kvm]
     if: >-
       github.event_name == 'push' ||
@@ -159,49 +136,58 @@ jobs:
           # range overlap; it prints the exact `backend setup` fix.
           python3 cli.py backend status --backend=firecracker
 
-      - name: Download the candidate built from this checkout
-        uses: actions/download-artifact@v3
-        with:
-          name: infra-candidate
-          path: infra-candidate
+      - name: Build infra candidate from this checkout
+        env:
+          BOT_BOTTLE_FC_DROPBEAR: /var/cache/bot-bottle-fc/dropbear
+        run: python3 -m bot_bottle.backend.firecracker.publish_infra --output infra-candidate
 
       - name: Replace the persistent infra VM with the candidate
         run: python3 -c 'from bot_bottle.backend.firecracker import infra_vm; infra_vm.stop()'
 
-      # No dev-requirements install: the integration suite runs on stdlib
-      # `unittest` (pylint/pyright are lint.yml's concern, not this job's),
-      # and the self-hosted runner's Nix python env has no `pip` module
-      # (`python3 -m pip` → "No module named pip"). Nothing to install.
-      - name: Run integration tests (firecracker)
+      # No dev-requirements install: `coverage` is already provided by the
+      # self-hosted runner's Nix python env, and that env has no `pip`
+      # module to install into anyway.
+      - name: Run integration tests (firecracker) with coverage
         env:
           BOT_BOTTLE_BACKEND: firecracker
           BOT_BOTTLE_INFRA_ARTIFACT_DIR: ${{ github.workspace }}/infra-candidate
-        run: python3 -m unittest discover -t . -s tests/integration -v
+        run: python3 -m coverage run --data-file=.coverage.firecracker -m unittest discover -t . -s tests/integration -v
 
-  # Combined unit+integration coverage + the diff-coverage gate (the hard
-  # gate: new/changed lines >= 90%). See docs/decisions/0004-coverage-policy.md.
+      - name: Upload firecracker coverage artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: coverage-firecracker
+          path: .coverage.firecracker
+
+      # Only upload the large rootfs artifact on main-branch pushes;
+      # PRs avoid the ~194 MB transfer. publish-infra only runs on main
+      # and downloads these to publish the byte-identical tested rootfs.
+      - name: Upload tested rootfs (main branch only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v3
+        with:
+          name: infra-candidate
+          path: infra-candidate/
+
+      - name: Upload dropbear for publish verification (main branch only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v3
+        with:
+          name: firecracker-inputs
+          path: /var/cache/bot-bottle-fc/dropbear
+
+  # Combined coverage gate: aggregates .coverage.* artifacts uploaded by each
+  # test job, then runs the diff-coverage gate (new/changed lines >= 90%).
   #
-  # This runs on a self-hosted KVM runner (label `kvm`), NOT ubuntu-latest,
-  # because the Firecracker backend's subprocess/VM orchestration
-  # (launch/boot/SSH/isolation-probe) is covered by the integration suite,
-  # and that suite needs `/dev/kvm` + the provisioned TAP/nft pool — which a
-  # container-based runner doesn't have. On such a runner the firecracker
-  # integration test skips and its ~230 orchestration lines read as
-  # uncovered, so the gate can't pass there.
+  # Runs on ubuntu-latest — no KVM needed, no test reruns. Coverage files use
+  # relative_files = True (.coveragerc) so they combine cleanly across runners.
   #
-  # Restricted to the same events as integration-firecracker (same-repo PRs,
-  # push, workflow_dispatch) for the same security reason.
-  #
-  # See #414 for the planned follow-up: artifact-based coverage combination
-  # (run tests once in their respective jobs, combine .coverage files here).
-  #
-  # build-infra creates one candidate from the checkout. This job boots that
-  # same candidate after integration-firecracker has exercised it; the main
-  # push path publishes the identical bytes only after every required job.
+  # Restricted to the same events as integration-firecracker: it depends on
+  # that job's coverage artifact and skips for fork PRs alongside it.
   coverage:
-    needs: [build-infra, integration-firecracker]
+    needs: [unit, integration-docker, integration-firecracker]
     timeout-minutes: 15
-    runs-on: [self-hosted, kvm]
+    runs-on: ubuntu-latest
     if: >-
       github.event_name == 'push' ||
       github.event_name == 'workflow_dispatch' ||
@@ -213,29 +199,29 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Preflight — Firecracker host is ready
-        run: |
-          command -v firecracker >/dev/null || {
-            echo "firecracker not on PATH — provision the runner (README: Firecracker on Linux)"; exit 1; }
-          test -e /dev/kvm || { echo "/dev/kvm missing — KVM not available on this runner"; exit 1; }
-          # `backend status` exits non-zero unless the TAP pool is up + no
-          # range overlap; it prints the exact `backend setup` fix.
-          python3 cli.py backend status --backend=firecracker
+      - name: Install coverage
+        run: python3 -m pip install --break-system-packages coverage
 
-      - name: Download the candidate already exercised by integration
+      - name: Download unit coverage artifact
         uses: actions/download-artifact@v3
         with:
-          name: infra-candidate
-          path: infra-candidate
+          name: coverage-unit
+          path: .
 
-      # No dev-requirements install: `coverage` is already provided by the
-      # self-hosted runner's Nix python env, and that env has no `pip`
-      # module to install into anyway. `scripts/coverage.sh` +
-      # `diff_coverage.py` need only `coverage` (not pylint/pyright).
+      - name: Download docker coverage artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: coverage-docker
+          path: .
+
+      - name: Download firecracker coverage artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: coverage-firecracker
+          path: .
+
       - name: Combined coverage (unit + integration, incl. firecracker)
-        env:
-          BOT_BOTTLE_CI_INFRA_ARTIFACT_DIR: ${{ github.workspace }}/infra-candidate
-        run: PYTHON=python3 bash scripts/coverage.sh critical
+        run: PYTHON=python3 bash scripts/coverage.sh aggregate critical
 
       - name: Diff-coverage gate (changed lines >= 90%)
         run: |
@@ -243,14 +229,14 @@ jobs:
           python3 scripts/diff_coverage.py --base origin/main --min 90
 
   publish-infra:
-    needs: [stage-firecracker-inputs, build-infra, unit, integration-docker, integration-firecracker, coverage]
+    needs: [unit, integration-docker, integration-firecracker, coverage]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - name: Checkout the tested revision
         uses: actions/checkout@v4
 
-      - name: Download the tested candidate
+      - name: Download the tested rootfs
         uses: actions/download-artifact@v3
         with:
           name: infra-candidate
@@ -258,9 +244,10 @@ jobs:
 
       # publish_infra re-derives the version from the checkout to confirm the
       # bundle matches before uploading, and the version hashes the dropbear
-      # bytes. Stage the SAME dropbear build-infra used, or the recheck
-      # computes a "<missing>"-dropbear version and rejects the candidate.
-      - name: Download the staged dropbear (matches build-infra's version)
+      # bytes. Download the SAME dropbear integration-firecracker used, or
+      # the recheck computes a "<missing>"-dropbear version and rejects the
+      # candidate.
+      - name: Download the staged dropbear (matches build's version)
         uses: actions/download-artifact@v3
         with:
           name: firecracker-inputs

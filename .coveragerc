@@ -1,6 +1,10 @@
 [run]
 branch = True
 source = .
+# Store paths relative to the project root so .coverage.* files produced on
+# different runners (ubuntu-latest vs self-hosted KVM) can be combined by the
+# coverage job without a [paths] remapping section.
+relative_files = True
 
 [report]
 # Coverage policy: see docs/decisions/0004-coverage-policy.md.
