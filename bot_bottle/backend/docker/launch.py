@@ -134,13 +134,14 @@ def launch(
         token_values = egress_resolve_token_values(
             plan.egress_plan.token_env_map, effective_env,
         )
+        teardown_timeout = resolve_teardown_timeout()
         ctx = launch_consolidated(
             plan.egress_plan, git_gate_plan, image_ref=plan.image, tokens=token_values,
         )
         stack.callback(
             teardown_consolidated, ctx.bottle_id,
             orchestrator_url=ctx.orchestrator_url,
-            timeout=resolve_teardown_timeout(),
+            timeout=teardown_timeout,
         )
 
         # Step 4: install the SHARED gateway CA into the agent (replaces the

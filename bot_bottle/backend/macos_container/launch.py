@@ -143,6 +143,7 @@ def launch(
         token_values = egress_resolve_token_values(
             plan.egress_plan.token_env_map, effective_env,
         )
+        teardown_timeout = resolve_teardown_timeout()
         ctx = register_agent(
             plan.egress_plan,
             plan.git_gate_plan,
@@ -154,7 +155,7 @@ def launch(
         stack.callback(
             teardown_consolidated, ctx.bottle_id,
             orchestrator_url=ctx.orchestrator_url,
-            timeout=resolve_teardown_timeout(),
+            timeout=teardown_timeout,
         )
         info(
             f"agent {plan.container_name} registered "
