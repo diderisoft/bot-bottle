@@ -129,7 +129,7 @@ def cmd_login(argv: list[str]) -> int:
 
     sys.stderr.write(
         f"\nOpen this URL in your browser to authorize this host:\n\n"
-        f"  {console_url}/authorize?code={user_code}\n\n"
+        f"  {console_url}/hosts/authorize?code={user_code}\n\n"
         f"Waiting for approval"
     )
 
