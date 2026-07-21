@@ -524,6 +524,8 @@ def _manifest_to_yaml(manifest: Manifest) -> str:
                 lines.append(f"          scheme: {r.AuthScheme}")
 
     lines.append(f"  supervise: {'true' if bottle.supervise else 'false'}")
+    if bottle.nested_containers:
+        lines.append("  nested_containers: true")
 
     return "\n".join(lines)
 

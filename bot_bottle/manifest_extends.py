@@ -15,8 +15,16 @@ def merge_bottles_runtime(bottles: "list[ManifestBottle]") -> "ManifestBottle":
     the same field-merge rules as the file-based extends machinery:
       env: dict merge, later wins; git_user: per-field overlay, later
       wins on non-empty; git (repos): union by name, later wins; egress
-      routes: concatenate; agent_provider, supervise,
-      nested_containers: later replaces.
+      routes: concatenate; agent_provider, supervise: later
+      replaces; nested_containers: OR (see below).
+
+    nested_containers is OR'd rather than replaced because these objects
+    are already resolved: a bottle that never mentions the key is
+    indistinguishable from one that sets it false, so "later replaces"
+    would let any bottle composed after a container-enabled one silently
+    drop the capability. The file-based `extends:` path still sees the
+    raw keys, so there an explicit `nested_containers: false` in a child
+    turns it back off.
     """
     if not bottles:
         raise ValueError("merge_bottles_runtime requires at least one bottle")
@@ -55,7 +63,7 @@ def _merge_two_bottles_runtime(base: "ManifestBottle", override: "ManifestBottle
         git_user=merged_git_user,
         egress=merged_egress,
         supervise=override.supervise,
-        nested_containers=override.nested_containers,
+        nested_containers=base.nested_containers or override.nested_containers,
     )
 
 
@@ -208,7 +216,7 @@ def _fold_two_bottles(
         git_user=merged_git_user,
         egress=merged_egress,
         supervise=later.supervise,
-        nested_containers=later.nested_containers,
+        nested_containers=earlier.nested_containers or later.nested_containers,
     ), merged_repos_raw
 
 

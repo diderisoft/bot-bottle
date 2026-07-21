@@ -20,6 +20,7 @@ Bottle schema (frontmatter):
   egress: { routes: [ <egress-route>, ... ] }
     # route keys: host, matches, auth, role, dlp
   supervise:    <bool>                          # optional (default true)
+  nested_containers: <bool>                     # optional (default false)
 
 Agent schema (frontmatter):
   bottle:        <bottle-name>          # required

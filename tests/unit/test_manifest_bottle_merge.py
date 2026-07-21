@@ -56,11 +56,15 @@ class TestMergeBottlesRuntime(unittest.TestCase):
         result = merge_bottles_runtime([base, override])
         self.assertFalse(result.supervise)
 
-    def test_nested_containers_later_wins(self):
-        base = _bottle(nested_containers=True)
-        override = _bottle(nested_containers=False)
-        self.assertFalse(merge_bottles_runtime([base, override]).nested_containers)
-        self.assertTrue(merge_bottles_runtime([override, base]).nested_containers)
+    def test_nested_containers_survives_a_later_bottle(self):
+        """OR, not replace: a resolved bottle that never mentioned the key is
+        indistinguishable from one that set it false, so `--bottle with-docker
+        --bottle claude-dev` must not silently drop the capability."""
+        enabled = _bottle(nested_containers=True)
+        quiet = _bottle(env={"X": "1"})
+        self.assertTrue(merge_bottles_runtime([enabled, quiet]).nested_containers)
+        self.assertTrue(merge_bottles_runtime([quiet, enabled]).nested_containers)
+        self.assertFalse(merge_bottles_runtime([quiet, quiet]).nested_containers)
 
     def test_three_bottles_merged_left_to_right(self):
         b1 = _bottle(env={"A": "1", "B": "1", "C": "1"})
