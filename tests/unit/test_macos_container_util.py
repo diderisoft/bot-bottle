@@ -334,6 +334,50 @@ class TestInspectDigests(unittest.TestCase):
             self.assertEqual({}, util.container_env("x"))
 
 
+class TestInspectContainerNetworkIp(unittest.TestCase):
+    """inspect_container_network_ip must distinguish inspect failure (None)
+    from 'no DHCP address yet' (""), which is the invariant live_source_ips
+    relies on to skip reconciliation on partial snapshots."""
+
+    _NETWORK = "bot-bottle-mac-gateway"
+
+    def _inspect(self, stdout: str, returncode: int = 0) -> str | None:
+        cp = util.subprocess.CompletedProcess(
+            args=[], returncode=returncode, stdout=stdout, stderr="",
+        )
+        with patch.object(util.subprocess, "run", return_value=cp):
+            return util.inspect_container_network_ip("bot-bottle-abc", self._NETWORK)
+
+    def _entry(self, ip: str = "192.168.128.5") -> str:
+        return (
+            f'[{{"status":{{"networks":['
+            f'{{"network":"{self._NETWORK}","ipv4Address":"{ip}"}}'
+            f']}}}}]'
+        )
+
+    def test_returns_ip_when_inspect_succeeds(self) -> None:
+        self.assertEqual("192.168.128.5", self._inspect(self._entry()))
+
+    def test_strips_cidr_prefix(self) -> None:
+        self.assertEqual("192.168.128.5", self._inspect(self._entry("192.168.128.5/24")))
+
+    def test_returns_empty_string_when_no_address_assigned_yet(self) -> None:
+        no_ip = f'[{{"status":{{"networks":[{{"network":"{self._NETWORK}","ipv4Address":""}}]}}}}]'
+        self.assertEqual("", self._inspect(no_ip))
+
+    def test_returns_empty_string_when_network_list_absent(self) -> None:
+        self.assertEqual("", self._inspect('[{"status":{}}]'))
+
+    def test_returns_none_on_nonzero_exit(self) -> None:
+        self.assertIsNone(self._inspect("", returncode=1))
+
+    def test_returns_none_on_malformed_json(self) -> None:
+        self.assertIsNone(self._inspect("not-json"))
+
+    def test_returns_none_on_unexpected_json_shape(self) -> None:
+        self.assertIsNone(self._inspect("null"))
+
+
 class TestWaitContainerIpv4(unittest.TestCase):
     def test_returns_address_once_dhcp_assigns_it(self):
         with patch.object(util, "try_container_ipv4_on_network", side_effect=["", "", "192.168.128.4"]), \
