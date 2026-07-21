@@ -114,7 +114,3 @@ def main(argv: list[str] | None = None) -> int:
         return e.code if isinstance(e.code, int) else 1
     except KeyboardInterrupt:
         return 130
-
-
-if __name__ == "__main__":
-    sys.exit(main())
