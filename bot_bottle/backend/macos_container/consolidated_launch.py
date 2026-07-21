@@ -36,9 +36,12 @@ from dataclasses import dataclass
 
 from ...egress import EgressPlan
 from ...git_gate import GitGatePlan
-from ...orchestrator.client import OrchestratorClient
+from ...log import info
+from ...orchestrator.client import OrchestratorClient, OrchestratorClientError
 from ...orchestrator.registration import registration_inputs
 from ..docker.gateway_provision import deprovision_git_gate, provision_git_gate
+from . import util as container_mod
+from .enumerate import CONTAINER_NAME_PREFIX, enumerate_active
 from .gateway import GATEWAY_NETWORK
 from .gateway_provision import AppleGatewayTransport
 from .infra import MacosInfraService, OrchestratorStartError
@@ -89,6 +92,25 @@ def ensure_gateway(
     )
 
 
+def live_source_ips(network: str) -> list[str]:
+    """Every running agent container's address on `network`.
+
+    The reconciliation input: the orchestrator lives inside the infra
+    container and cannot enumerate the host's containers, so the host has to
+    tell it which bottles are actually up. Containers that have not been
+    assigned an address yet contribute nothing (the read is non-fatal) — the
+    reap's grace window, not this list, is what protects an in-flight
+    launch."""
+    ips: list[str] = []
+    for agent in enumerate_active():
+        ip = container_mod.try_container_ipv4_on_network(
+            f"{CONTAINER_NAME_PREFIX}{agent.slug}", network,
+        )
+        if ip:
+            ips.append(ip)
+    return ips
+
+
 def register_agent(
     egress_plan: EgressPlan,
     git_gate_plan: GitGatePlan,
@@ -103,6 +125,16 @@ def register_agent(
     container — it is the attribution key the gateway resolves policy by.
     Raises on failure; the caller tears down."""
     client = OrchestratorClient(endpoint.orchestrator_url)
+    # Self-heal before registering: a launcher that died hard (SIGKILL, closed
+    # terminal, host sleep) never ran its teardown callback, leaving an active
+    # row with no container. vmnet recycles addresses, so such a row can
+    # collide with this bottle's — and `by_source_ip` fail-closes on ambiguity,
+    # which would resolve no policy at all and deny every host. Best-effort: a
+    # reconciliation failure must not block an otherwise-fine launch.
+    try:
+        client.reconcile(live_source_ips(endpoint.network))
+    except OrchestratorClientError as e:
+        info(f"registry reconciliation skipped: {e}")
     inputs = registration_inputs(egress_plan)
     reg = client.register_bottle(
         source_ip, image_ref=image_ref, policy=inputs.policy,
@@ -136,6 +168,7 @@ __all__ = [
     "GatewayEndpoint",
     "LaunchContext",
     "ensure_gateway",
+    "live_source_ips",
     "register_agent",
     "teardown_consolidated",
     "ConsolidatedLaunchError",

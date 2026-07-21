@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from ..paths import host_control_plane_token
@@ -146,6 +147,20 @@ class OrchestratorClient:
         if not 200 <= status < 300:
             raise OrchestratorClientError(f"teardown {bottle_id}: HTTP {status}")
         return True
+
+    def reconcile(
+        self, live_source_ips: Iterable[str], *, grace_seconds: float | None = None,
+    ) -> list[str]:
+        """Drop registry rows for bottles that are no longer running
+        (`POST /reconcile`), returning the reaped bottle ids. `live_source_ips`
+        is the caller's enumeration of its live bottles — the orchestrator
+        can't see the backend from inside the infra container."""
+        body: dict[str, object] = {"live_source_ips": list(live_source_ips)}
+        if grace_seconds is not None:
+            body["grace_seconds"] = grace_seconds
+        payload = self._ok("POST", "/reconcile", body)
+        reaped = payload.get("reaped")
+        return [r for r in reaped if isinstance(r, str)] if isinstance(reaped, list) else []
 
     def set_policy(self, bottle_id: str, policy: str) -> bool:
         """Live-reload a bottle's policy (`PUT /bottles/<id>/policy`). False on

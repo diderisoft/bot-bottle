@@ -104,3 +104,32 @@ class TestHealthAndPolicy(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestReconcile(unittest.TestCase):
+    def setUp(self) -> None:
+        self.c = OrchestratorClient("http://orch:8080")
+
+    def test_posts_live_ips_and_returns_reaped(self) -> None:
+        with patch(_URLOPEN, return_value=_resp(200, {"reaped": ["b1", "b2"]})) as m:
+            got = self.c.reconcile(["10.0.0.2", "10.0.0.3"])
+        self.assertEqual(["b1", "b2"], got)
+        sent = json.loads(m.call_args.args[0].data)
+        self.assertEqual(["10.0.0.2", "10.0.0.3"], sent["live_source_ips"])
+        self.assertNotIn("grace_seconds", sent)  # omitted -> server default
+
+    def test_grace_seconds_is_forwarded_when_given(self) -> None:
+        with patch(_URLOPEN, return_value=_resp(200, {"reaped": []})) as m:
+            self.c.reconcile([], grace_seconds=30)
+        self.assertEqual(30, json.loads(m.call_args.args[0].data)["grace_seconds"])
+
+    def test_malformed_reaped_is_tolerated(self) -> None:
+        with patch(_URLOPEN, return_value=_resp(200, {"reaped": ["ok", 5, None]})):
+            self.assertEqual(["ok"], self.c.reconcile([]))
+        with patch(_URLOPEN, return_value=_resp(200, {})):
+            self.assertEqual([], self.c.reconcile([]))
+
+    def test_error_status_raises(self) -> None:
+        with patch(_URLOPEN, side_effect=_http_error(500)):
+            with self.assertRaises(OrchestratorClientError):
+                self.c.reconcile([])

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import secrets
+import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
@@ -304,3 +306,55 @@ class TestOrchestratorSupervise(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestOrchestratorReconcile(unittest.TestCase):
+    """`reconcile` — drop rows for bottles that are no longer running."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.secret = secrets.token_bytes(16)
+        self.db = Path(self._tmp.name) / "r.db"
+        self.store = RegistryStore(self.db)
+        self.store.migrate()
+        self.broker = StubBroker(self.secret)
+        self.orch = Orchestrator(self.store, self.broker, self.secret)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _age_all(self, seconds: float) -> None:
+        """Backdate every row past the reap grace window."""
+        with closing(sqlite3.connect(self.db)) as conn:
+            conn.execute(
+                "UPDATE orchestrator_bottles SET created_at = created_at - ?", (seconds,))
+            conn.commit()
+
+    def test_reaps_dead_bottle_and_forgets_its_tokens(self) -> None:
+        dead = self.orch.launch_bottle("10.243.0.1", tokens={"EGRESS_TOKEN_0": "s3cret"})
+        live = self.orch.launch_bottle("10.243.0.2", tokens={"EGRESS_TOKEN_0": "keep"})
+        self._age_all(600)
+
+        self.assertEqual([dead.bottle_id], self.orch.reconcile(["10.243.0.2"]))
+        self.assertIsNone(self.store.get(dead.bottle_id))
+        self.assertIsNotNone(self.store.get(live.bottle_id))
+        # The in-memory egress credential goes with the row.
+        self.assertEqual({}, self.orch.tokens_for(dead.bottle_id))
+        self.assertEqual({"EGRESS_TOKEN_0": "keep"}, self.orch.tokens_for(live.bottle_id))
+
+    def test_reconcile_does_not_broker_a_teardown(self) -> None:
+        """The container is already gone — there is nothing to stop, and a
+        broker error must not stop the sweep clearing the row."""
+        self.orch.launch_bottle("10.243.0.1")
+        self._age_all(600)
+        self.broker.launched.clear()
+        self.orch.reconcile([])
+        self.assertEqual([], self.broker.torn_down)
+
+    def test_reconcile_keeps_everything_when_all_are_live(self) -> None:
+        a = self.orch.launch_bottle("10.243.0.1")
+        b = self.orch.launch_bottle("10.243.0.2")
+        self._age_all(600)
+        self.assertEqual([], self.orch.reconcile(["10.243.0.1", "10.243.0.2"]))
+        self.assertIsNotNone(self.store.get(a.bottle_id))
+        self.assertIsNotNone(self.store.get(b.bottle_id))

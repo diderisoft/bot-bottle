@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import sqlite3
 import tempfile
+import time
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from bot_bottle.orchestrator.registry import (
@@ -169,3 +171,81 @@ class TestRegistryStore(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestReapAbsent(unittest.TestCase):
+    """`reap_absent` — the self-heal for rows whose bottle is gone.
+
+    An orphan is not merely untidy: source IPs get recycled, and
+    `by_source_ip` fail-closes on ambiguity, so a leftover row at a reused
+    address resolves *no* policy for the next bottle that lands there and
+    every host it asks for is denied.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.db = Path(self._tmp.name) / "registry.db"
+        self.store = RegistryStore(self.db)
+        self.store.migrate()
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _aged(self, source_ip: str, *, age: float) -> BottleRecord:
+        """Register a bottle and backdate it past the grace window."""
+        rec = self.store.register(source_ip)
+        with closing(sqlite3.connect(self.db)) as conn:
+            conn.execute(
+                "UPDATE orchestrator_bottles SET created_at = ? WHERE bottle_id = ?",
+                (time.time() - age, rec.bottle_id),
+            )
+            conn.commit()
+        return rec
+
+    def test_reaps_row_with_no_live_container(self) -> None:
+        gone = self._aged("10.243.0.9", age=600)
+        reaped = self.store.reap_absent([])
+        self.assertEqual([gone.bottle_id], [r.bottle_id for r in reaped])
+        self.assertIsNone(self.store.get(gone.bottle_id))
+
+    def test_keeps_row_whose_ip_is_live(self) -> None:
+        alive = self._aged("10.243.0.9", age=600)
+        self.assertEqual([], self.store.reap_absent(["10.243.0.9"]))
+        self.assertIsNotNone(self.store.get(alive.bottle_id))
+
+    def test_grace_window_protects_an_in_flight_launch(self) -> None:
+        """A bottle registered moments ago is never reaped, even though the
+        caller's enumeration didn't see its address yet."""
+        fresh = self.store.register("10.243.0.10")
+        self.assertEqual([], self.store.reap_absent([]))
+        self.assertIsNotNone(self.store.get(fresh.bottle_id))
+
+    def test_reaping_the_orphan_unbricks_the_reused_address(self) -> None:
+        """The regression this exists for: an orphan at an address that vmnet
+        later hands to a new bottle makes `by_source_ip` ambiguous, so the new
+        bottle resolves no policy at all."""
+        orphan = self._aged("10.243.0.11", age=600)
+        # A new bottle lands on the recycled address. Force the row in directly
+        # so `register`'s own supersede sweep doesn't mask the ambiguity.
+        with closing(sqlite3.connect(self.db)) as conn:
+            conn.execute(
+                "INSERT INTO orchestrator_bottles "
+                "(bottle_id, source_ip, identity_token, state, created_at, metadata, policy) "
+                "VALUES ('newbottle', '10.243.0.11', 'tok-new', 'active', ?, '', 'routes: []')",
+                (time.time(),),
+            )
+            conn.commit()
+        self.assertIsNone(self.store.by_source_ip("10.243.0.11"))  # bricked
+
+        reaped = self.store.reap_absent(["10.243.0.11"], grace_seconds=60)
+        self.assertEqual([orphan.bottle_id], [r.bottle_id for r in reaped])
+        rec = self.store.by_source_ip("10.243.0.11")
+        assert rec is not None
+        self.assertEqual("newbottle", rec.bottle_id)
+
+    def test_ignores_empty_ips_in_the_live_set(self) -> None:
+        gone = self._aged("10.243.0.12", age=600)
+        self.assertEqual(
+            [gone.bottle_id],
+            [r.bottle_id for r in self.store.reap_absent(["", "10.243.0.99"])],
+        )

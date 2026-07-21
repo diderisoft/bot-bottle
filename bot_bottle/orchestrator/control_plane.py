@@ -13,6 +13,9 @@ vsock / unix-socket portability caveats):
     PUT    /bottles/<bottle_id>/policy -> 200 {"updated": true} | 404  (live reload)
                                          body: {"policy"}
     DELETE /bottles/<bottle_id>        -> 200 {"torn_down": true} | 404  (teardown)
+    POST   /reconcile                 -> 200 {"reaped": [bottle_id, ...]}
+                                         body: {"live_source_ips": [...],
+                                                ["grace_seconds"]}
     POST   /attribute                 -> 200 {"bottle_id"} | 403
     POST   /resolve                   -> 200 {"bottle_id","policy"} | 403
                                          body: {"source_ip","identity_token"}
@@ -140,6 +143,27 @@ def dispatch(  # pylint: disable=too-many-return-statements,too-many-branches
         if orch.teardown_bottle(bottle_id):
             return 200, {"torn_down": True}
         return 404, {"error": "no such bottle"}
+
+    if method == "POST" and route == "/reconcile":
+        # Host-driven self-heal: the caller enumerates its live bottles (only
+        # the host can see the backend) and the orchestrator drops rows for
+        # every other active bottle. Trusted-caller only — an agent that could
+        # reach this would be able to unregister its neighbours.
+        try:
+            data = _parse_json_object(body)
+        except ValueError as e:
+            return 400, {"error": f"invalid JSON: {e}"}
+        raw_ips = data.get("live_source_ips")
+        if not isinstance(raw_ips, list):
+            return 400, {"error": "live_source_ips (list of strings) is required"}
+        live = [ip for ip in raw_ips if isinstance(ip, str) and ip]
+        grace = data.get("grace_seconds")
+        kwargs = (
+            {"grace_seconds": float(grace)}
+            if isinstance(grace, (int, float)) and not isinstance(grace, bool)
+            else {}
+        )
+        return 200, {"reaped": orch.reconcile(live, **kwargs)}
 
     if method == "POST" and route == "/attribute":
         try:

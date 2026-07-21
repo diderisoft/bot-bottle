@@ -32,6 +32,7 @@ import hmac
 import secrets
 import sqlite3
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -41,6 +42,12 @@ from ..paths import host_db_path
 
 # 256 bits of urandom, URL-safe — unguessable per-bottle identity token.
 IDENTITY_TOKEN_BYTES = 32
+
+# How recently a row must have been registered to be exempt from
+# `reap_absent`. Covers the window between `container run` and the address
+# becoming visible to another launch's enumeration, so reconciliation never
+# reaps a bottle that is still coming up.
+DEFAULT_REAP_GRACE_SECONDS = 120.0
 
 
 def new_identity_token() -> str:
@@ -225,6 +232,70 @@ class RegistryStore(DbStore):
             ).fetchall()
         return [_row_to_record(r) for r in rows]
 
+    def reap_absent(
+        self,
+        live_source_ips: Iterable[str],
+        *,
+        grace_seconds: float = DEFAULT_REAP_GRACE_SECONDS,
+        now: float | None = None,
+    ) -> list[BottleRecord]:
+        """Delete active rows whose source IP is not held by a live bottle.
+
+        A row only ever leaves the registry two ways: an explicit
+        `teardown_bottle` (the launcher's cleanup callback) or the supersede
+        sweep in `register`. Neither runs when the launching CLI dies hard —
+        SIGKILL, a closed terminal, a host sleep/crash — so the row outlives
+        its container. That orphan is not inert: source IPs are recycled by
+        the backend's DHCP, and `by_source_ip` fail-closes on ambiguity, so a
+        leftover row at a reused address can brick the *next* bottle that
+        lands on it (no policy resolved -> every host denied, reported to the
+        agent as "not in the allowlist"). Reconciling against the live set at
+        launch keeps the registry from accumulating those landmines.
+
+        Restores the invariant the data plane needs: **at most one active row
+        per live address, and none at all for a dead one.** Two cases, because
+        a dead bottle's address may already have been handed to a live one:
+
+          * no live bottle holds the address — every row there is an orphan;
+          * a live bottle holds it but several rows claim it — the newest
+            registration is authoritative and the rest are orphans, the same
+            rule `register`'s same-IP supersede sweep applies. Without this
+            second case a recycled address stays ambiguous, which is exactly
+            the state that resolves no policy.
+
+        `grace_seconds` protects an in-flight launch: registration happens
+        moments after `container run`, and a concurrent launch's address may
+        not be visible to the caller's enumeration yet. Rows younger than the
+        grace window are never reaped, so reconciliation can't race a bottle
+        that is still coming up. Returns the deleted records."""
+        live = {ip for ip in live_source_ips if ip}
+        cutoff = (time.time() if now is None else now) - grace_seconds
+        with self._connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM orchestrator_bottles WHERE state = 'active'",
+            ).fetchall()
+            by_ip: dict[str, list[BottleRecord]] = {}
+            for row in rows:
+                rec = _row_to_record(row)
+                by_ip.setdefault(rec.source_ip, []).append(rec)
+            candidates: list[BottleRecord] = []
+            for ip, recs in by_ip.items():
+                if ip not in live:
+                    candidates.extend(recs)
+                    continue
+                # Keep the newest claim on a live address; supersede the rest.
+                recs.sort(key=lambda r: r.created_at)
+                candidates.extend(recs[:-1])
+            doomed = [r for r in candidates if r.created_at <= cutoff]
+            for rec in doomed:
+                conn.execute(
+                    "DELETE FROM orchestrator_bottles WHERE bottle_id = ?",
+                    (rec.bottle_id,),
+                )
+        if doomed:
+            self._chmod()
+        return doomed
+
     def by_source_ip(self, source_ip: str) -> BottleRecord | None:
         """Network-layer attribution: the single active bottle at this source
         IP, or None if unknown or ambiguous (more than one — a
@@ -262,4 +333,5 @@ __all__ = [
     "new_identity_token",
     "default_db_path",
     "IDENTITY_TOKEN_BYTES",
+    "DEFAULT_REAP_GRACE_SECONDS",
 ]

@@ -13,15 +13,20 @@ Launch lifecycle:
     and returns the record. If the broker rejects/fails, the registry entry
     is rolled back so a failed launch leaves no orphan.
   * `teardown_bottle` sends a signed teardown request, then deregisters.
+  * `reconcile` sweeps rows whose bottle is no longer running — the
+    self-heal for the teardown paths that never got to run (a hard-killed
+    launcher), since an orphan row at a recycled source IP bricks the next
+    bottle that lands on it.
 """
 
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from datetime import datetime, timezone
 
 from .broker import LaunchBroker, LaunchRequest, sign_request
-from .registry import BottleRecord, RegistryStore
+from .registry import DEFAULT_REAP_GRACE_SECONDS, BottleRecord, RegistryStore
 from .gateway import Gateway
 from ..supervise import (
     AuditEntry,
@@ -116,6 +121,30 @@ class Orchestrator:
         self.registry.deregister(bottle_id)
         self._tokens.pop(bottle_id, None)
         return True
+
+    def reconcile(
+        self,
+        live_source_ips: Iterable[str],
+        *,
+        grace_seconds: float = DEFAULT_REAP_GRACE_SECONDS,
+    ) -> list[str]:
+        """Drop registry rows for bottles that are no longer running, and
+        forget their in-memory egress tokens. Returns the reaped bottle ids.
+
+        The caller supplies the live set because only the host can enumerate
+        its own containers — the orchestrator runs *inside* the infra
+        container and has no view of the backend. Deliberately does not
+        broker a teardown: the container is already gone, so there is nothing
+        to stop, and a broker error must not stop the sweep from clearing
+        the row that would otherwise brick the next bottle at that address.
+
+        See `RegistryStore.reap_absent` for why orphans accumulate and why
+        they are harmful rather than merely untidy."""
+        reaped = self.registry.reap_absent(
+            live_source_ips, grace_seconds=grace_seconds)
+        for rec in reaped:
+            self._tokens.pop(rec.bottle_id, None)
+        return [rec.bottle_id for rec in reaped]
 
     def tokens_for(self, bottle_id: str) -> dict[str, str]:
         """The bottle's in-memory egress auth tokens (env_name -> value), or

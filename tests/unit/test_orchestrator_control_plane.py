@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import json
 import secrets
+import sqlite3
 import tempfile
 import threading
 import unittest
 import urllib.error
 import urllib.request
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
@@ -264,6 +266,7 @@ class TestControlPlaneAuth(unittest.TestCase):
             ("POST", "/bottles", _body({"source_ip": "10.0.0.1"})),
             ("PUT", "/bottles/x/policy", _body({"policy": "routes: []"})),
             ("DELETE", "/bottles/x", b""),
+            ("POST", "/reconcile", _body({"live_source_ips": []})),
             ("POST", "/resolve", _body({"source_ip": "10.0.0.1", "identity_token": "t"})),
             ("POST", "/attribute", _body({"source_ip": "10.0.0.1", "identity_token": "t"})),
             ("GET", "/supervise/proposals", b""),
@@ -387,3 +390,56 @@ class TestDispatchSupervise(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestReconcileRoute(unittest.TestCase):
+    """`POST /reconcile` — the host tells the orchestrator which bottles are
+    actually up, since the orchestrator can't see the backend from inside the
+    infra container."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.orch = _orchestrator(Path(self._tmp.name) / "r.db")
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _old(self, source_ip: str) -> str:
+        rec = self.orch.registry.register(source_ip)
+        with closing(sqlite3.connect(self.orch.registry.db_path)) as conn:
+            conn.execute(
+                "UPDATE orchestrator_bottles SET created_at = 0.0 WHERE bottle_id = ?",
+                (rec.bottle_id,))
+            conn.commit()
+        return rec.bottle_id
+
+    def test_reaps_absent_and_reports_ids(self) -> None:
+        dead = self._old("10.0.0.1")
+        alive = self._old("10.0.0.2")
+        status, payload = dispatch(
+            self.orch, "POST", "/reconcile", _body({"live_source_ips": ["10.0.0.2"]}))
+        self.assertEqual(200, status)
+        self.assertEqual([dead], payload["reaped"])
+        self.assertIsNone(self.orch.registry.get(dead))
+        self.assertIsNotNone(self.orch.registry.get(alive))
+
+    def test_missing_live_source_ips_is_400(self) -> None:
+        status, _ = dispatch(self.orch, "POST", "/reconcile", _body({}))
+        self.assertEqual(400, status)
+
+    def test_grace_seconds_is_honoured(self) -> None:
+        """A grace window wide enough to cover the row protects it."""
+        self.orch.registry.register("10.0.0.3")
+        status, payload = dispatch(
+            self.orch, "POST", "/reconcile",
+            _body({"live_source_ips": [], "grace_seconds": 3600}))
+        self.assertEqual(200, status)
+        self.assertEqual([], payload["reaped"])
+
+    def test_non_string_entries_are_ignored(self) -> None:
+        dead = self._old("10.0.0.4")
+        status, payload = dispatch(
+            self.orch, "POST", "/reconcile",
+            _body({"live_source_ips": [None, 7, "10.0.0.9"]}))
+        self.assertEqual(200, status)
+        self.assertEqual([dead], payload["reaped"])

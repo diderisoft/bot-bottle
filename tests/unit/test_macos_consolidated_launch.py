@@ -134,3 +134,69 @@ class TestTeardown(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestLiveSourceIps(unittest.TestCase):
+    """The reconciliation input: the host enumerates its own bottles because
+    the orchestrator, inside the infra container, cannot see the backend."""
+
+    def _agents(self, *slugs: str) -> list[Mock]:
+        return [Mock(slug=s) for s in slugs]
+
+    def test_maps_slugs_to_container_addresses(self) -> None:
+        from bot_bottle.backend.macos_container.consolidated_launch import live_source_ips
+        with patch(f"{_MOD}.enumerate_active", return_value=self._agents("a", "b")), \
+                patch(f"{_MOD}.container_mod.try_container_ipv4_on_network",
+                      side_effect=["10.0.0.1", "10.0.0.2"]) as ip:
+            got = live_source_ips("net0")
+        self.assertEqual(["10.0.0.1", "10.0.0.2"], got)
+        self.assertEqual("bot-bottle-a", ip.call_args_list[0].args[0])
+
+    def test_containers_without_an_address_are_skipped(self) -> None:
+        """A container that hasn't been given a DHCP address yet contributes
+        nothing — the reap's grace window, not this list, protects it."""
+        from bot_bottle.backend.macos_container.consolidated_launch import live_source_ips
+        with patch(f"{_MOD}.enumerate_active", return_value=self._agents("a", "b")), \
+                patch(f"{_MOD}.container_mod.try_container_ipv4_on_network",
+                      side_effect=["", "10.0.0.2"]):
+            self.assertEqual(["10.0.0.2"], live_source_ips("net0"))
+
+
+class TestRegisterAgentReconciles(unittest.TestCase):
+    """Registration self-heals the registry first: an orphan row at a recycled
+    address makes attribution ambiguous, which resolves no policy at all and
+    denies every host for the bottle being launched."""
+
+    def _register(self, client: Mock) -> None:
+        with patch(f"{_MOD}.OrchestratorClient", return_value=client), \
+                patch(f"{_MOD}.provision_git_gate"), \
+                patch(f"{_MOD}.live_source_ips", return_value=["10.0.0.7"]):
+            register_agent(
+                _egress_plan(), _git_plan(),
+                source_ip="10.0.0.7", endpoint=_endpoint(),
+            )
+
+    def test_reconciles_before_registering(self) -> None:
+        client = _client()
+        calls: list[str] = []
+
+        def _reconcile(*_args: object, **_kwargs: object) -> list[str]:
+            calls.append("reconcile")
+            return []
+
+        def _register_bottle(*_args: object, **_kwargs: object) -> RegisteredBottle:
+            calls.append("register")
+            return RegisteredBottle("b1", "tok")
+
+        client.reconcile.side_effect = _reconcile
+        client.register_bottle.side_effect = _register_bottle
+        self._register(client)
+        self.assertEqual(["reconcile", "register"], calls)
+        client.reconcile.assert_called_once_with(["10.0.0.7"])
+
+    def test_a_reconcile_failure_does_not_block_the_launch(self) -> None:
+        from bot_bottle.orchestrator.client import OrchestratorClientError
+        client = _client()
+        client.reconcile.side_effect = OrchestratorClientError("unreachable")
+        self._register(client)
+        client.register_bottle.assert_called_once()
