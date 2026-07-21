@@ -59,6 +59,11 @@ from ..docker.egress import EGRESS_PORT
 from ..util import AGENT_CA_BUNDLE, AGENT_CA_PATH
 from . import util as container_mod
 from .bottle import MacosContainerBottle
+from .gateway_hosts import (
+    GATEWAY_HOSTNAME,
+    refresh_gateway_host,
+    set_gateway_host,
+)
 from .bottle_plan import MacosContainerBottlePlan
 from .consolidated_launch import (
     GatewayEndpoint,
@@ -100,6 +105,11 @@ def launch(
         # Step 1: the per-host singletons. Must precede the agent run — its
         # proxy env needs the gateway's address at `container run` time.
         endpoint = ensure_gateway()
+        # The gateway's address may have changed since these bottles launched
+        # (any infra recreate re-runs DHCP). They name the gateway rather than
+        # address it, so re-pointing /etc/hosts re-attaches them in place
+        # instead of leaving them stranded until relaunch.
+        refresh_gateway_host(endpoint.gateway_ip)
 
         # Step 2: mint this bottle's deploy keys, then point it at the SHARED
         # gateway's CA + git-http/supervise ports.
@@ -117,6 +127,9 @@ def launch(
         # attribution key; `--cap-drop CAP_NET_RAW` at run is what makes it
         # unforgeable. Poll: `container run --detach` can return before vmnet's
         # DHCP has assigned the address.
+        # Resolve the gateway name before anything execs: every agent-facing
+        # URL uses it, so the entry must exist for the first connection.
+        set_gateway_host(plan.container_name, endpoint.gateway_ip)
         source_ip = container_mod.wait_container_ipv4_on_network(
             plan.container_name, endpoint.network,
         )
@@ -231,13 +244,20 @@ def _stamp_agent_urls(
 ) -> MacosContainerBottlePlan:
     """Point the agent's git-gate insteadOf rewrites + supervise MCP at the
     shared gateway's ports. Both bypass the egress proxy (NO_PROXY covers the
-    gateway address)."""
+    gateway name).
+
+    Addressed by `GATEWAY_HOSTNAME`, never by IP: these URLs are baked into
+    the agent's gitconfig and MCP config at provision time, so an address here
+    would strand the bottle the moment the gateway moved. The name is resolved
+    per connection through `/etc/hosts`, which stays rewritable while the
+    bottle runs."""
+    del endpoint  # addressed by name; the address reaches the bottle via /etc/hosts
     git_gate_url = (
-        f"http://{endpoint.gateway_ip}:{_GIT_HTTP_PORT}"
+        f"http://{GATEWAY_HOSTNAME}:{_GIT_HTTP_PORT}"
         if plan.git_gate_plan.upstreams else ""
     )
     supervise_url = (
-        f"http://{endpoint.gateway_ip}:{SUPERVISE_PORT}/"
+        f"http://{GATEWAY_HOSTNAME}:{SUPERVISE_PORT}/"
         if plan.supervise_plan is not None else ""
     )
     return dataclasses.replace(
@@ -247,19 +267,25 @@ def _stamp_agent_urls(
     )
 
 
-def _proxy_url(gateway_ip: str, identity_token: str = "") -> str:
+def _proxy_url(identity_token: str = "") -> str:
     """The agent's egress proxy URL. The identity token rides as proxy
     credentials — the gateway reads Proxy-Authorization, resolves the
     (source_ip, token) pair against the control plane, and strips it before
-    upstream. Without a valid pair `/resolve` denies the request (#366)."""
+    upstream. Without a valid pair `/resolve` denies the request (#366).
+
+    Names the gateway rather than addressing it: this URL reaches the agent as
+    process environment, which cannot be rewritten once the agent is running,
+    so an address baked here is unfixable if the gateway moves."""
     cred = f"bottle:{identity_token}@" if identity_token else ""
-    return f"http://{cred}{gateway_ip}:{EGRESS_PORT}"
+    return f"http://{cred}{GATEWAY_HOSTNAME}:{EGRESS_PORT}"
 
 
-def _no_proxy(gateway_ip: str) -> str:
+def _no_proxy() -> str:
     # git-http + supervise live on the gateway and must NOT go through the
-    # egress proxy — the agent reaches them directly by its address.
-    return f"localhost,127.0.0.1,{gateway_ip}"
+    # egress proxy — the agent reaches them directly by name. Deliberately
+    # address-free: NO_PROXY is baked into the run-time env and is therefore
+    # just as unfixable as the proxy URL if the gateway moves.
+    return f"localhost,127.0.0.1,{GATEWAY_HOSTNAME}"
 
 
 def _identity_proxy_env(
@@ -276,7 +302,8 @@ def _identity_proxy_env(
     `_agent_env_entries`."""
     if not identity_token:
         return {}
-    url = _proxy_url(endpoint.gateway_ip, identity_token)
+    del endpoint  # the gateway is named, not addressed
+    url = _proxy_url(identity_token)
     return {
         "HTTPS_PROXY": url, "HTTP_PROXY": url,
         "https_proxy": url, "http_proxy": url,
@@ -338,7 +365,7 @@ def _agent_env_entries(
     # silently dropping attribution for. Without it a process that egresses
     # before the exec-time env still fails closed — the agent network is
     # host-only, so there is no route off it except the gateway.
-    no_proxy = _no_proxy(endpoint.gateway_ip)
+    no_proxy = _no_proxy()
     env = [
         f"NO_PROXY={no_proxy}",
         f"no_proxy={no_proxy}",

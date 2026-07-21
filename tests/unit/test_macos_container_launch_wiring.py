@@ -17,6 +17,7 @@ from unittest.mock import patch
 from bot_bottle.backend.macos_container.bottle import MacosContainerBottle
 from bot_bottle.backend.macos_container.bottle_plan import MacosContainerBottlePlan
 from bot_bottle.backend.macos_container.consolidated_launch import GatewayEndpoint
+from bot_bottle.backend.macos_container.gateway_hosts import GATEWAY_HOSTNAME
 from bot_bottle.backend.macos_container.launch import (
     _agent_run_argv,
     _identity_proxy_env,
@@ -128,7 +129,13 @@ class TestAgentRunArgv(unittest.TestCase):
         """git-http + supervise live on the gateway and must be reached
         directly, not through its own egress proxy."""
         entry = next(a for a in self.argv if a.startswith("NO_PROXY="))
-        self.assertIn("192.168.128.3", entry)
+        self.assertIn(GATEWAY_HOSTNAME, entry)
+
+    def test_no_proxy_names_the_gateway_and_never_addresses_it(self) -> None:
+        """NO_PROXY is baked into the run-time env, so an address here is as
+        unfixable as the proxy URL if the gateway moves."""
+        entry = next(a for a in self.argv if a.startswith("NO_PROXY="))
+        self.assertNotIn("192.168.128.3", entry)
 
     def test_forwarded_secrets_stay_off_argv(self) -> None:
         """Bare name → inherited from the run process env, so the value never
@@ -146,7 +153,7 @@ class TestIdentityTokenDelivery(unittest.TestCase):
     def test_exec_env_carries_the_token_as_proxy_credentials(self) -> None:
         env = _identity_proxy_env(_endpoint(), "s3cret")
         self.assertEqual(
-            "http://bottle:s3cret@192.168.128.3:9099", env["HTTP_PROXY"],
+            f"http://bottle:s3cret@{GATEWAY_HOSTNAME}:9099", env["HTTP_PROXY"],
         )
         self.assertEqual(env["HTTP_PROXY"], env["https_proxy"])
 
@@ -214,7 +221,7 @@ class TestPlanIdentityToken(unittest.TestCase):
         self.assertIn("HTTP_PROXY", argv)
         self.assertNotIn("s3cret", " ".join(argv))
         self.assertEqual(
-            "http://bottle:s3cret@192.168.128.3:9099", kwargs["env"]["HTTP_PROXY"],
+            f"http://bottle:s3cret@{GATEWAY_HOSTNAME}:9099", kwargs["env"]["HTTP_PROXY"],
         )
 
 

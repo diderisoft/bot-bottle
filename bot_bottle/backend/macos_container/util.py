@@ -360,6 +360,21 @@ def exec_container(name: str, argv: list[str]) -> None:
         )
 
 
+def exec_container_as_root(name: str, argv: list[str]) -> None:
+    """`exec_container`, but as uid 0 inside the container.
+
+    For host-driven maintenance the agent itself must not be able to perform —
+    rewriting `/etc/hosts` to point the gateway name at an address. The agent
+    runs as `node`, so it cannot repoint its own gateway; the host can.
+    """
+    result = _run_container_op([_CONTAINER, "exec", "--user", "root", name, *argv])
+    if result.returncode != 0:
+        die(
+            f"container exec (root) in {name} failed: "
+            f"{(result.stderr or '').strip() or '<no stderr>'}"
+        )
+
+
 def _run_container_op(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
         cmd,
