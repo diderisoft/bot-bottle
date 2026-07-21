@@ -87,7 +87,8 @@ class TestRegisterAgent(unittest.TestCase):
         *, source_ip: str = "192.168.128.9",
     ):
         with patch(f"{_MOD}.OrchestratorClient", return_value=client), \
-                patch(f"{_MOD}.provision_git_gate", provision or Mock()):
+                patch(f"{_MOD}.provision_git_gate", provision or Mock()), \
+                patch(f"{_MOD}.live_source_ips", return_value=[]):
             return register_agent(
                 _egress_plan(), _git_plan(),
                 source_ip=source_ip, endpoint=_endpoint(), image_ref="img:1",
