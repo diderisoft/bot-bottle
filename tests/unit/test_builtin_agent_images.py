@@ -37,6 +37,13 @@ class TestBuiltinAgentImages(unittest.TestCase):
                     re.compile(r"(?m)^\s*openssh-client(?:\s|\\|$)"),
                 )
 
+    def test_all_prepare_node_git_config_directory(self):
+        for dockerfile in _AGENT_DOCKERFILES:
+            with self.subTest(provider=dockerfile.parent.name):
+                dockerfile_text = dockerfile.read_text()
+                self.assertIn("install -d -o node -g node", dockerfile_text)
+                self.assertIn("/home/node/.config/git", dockerfile_text)
+
 
 if __name__ == "__main__":
     unittest.main()

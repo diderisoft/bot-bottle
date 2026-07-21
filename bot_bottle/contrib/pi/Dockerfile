@@ -23,7 +23,8 @@ RUN apt-get update \
 RUN npm install -g --ignore-scripts --no-fund --no-audit @earendil-works/pi-coding-agent \
   && npm cache clean --force
 
-RUN mkdir -p /home/node/.pi/agent \
+RUN install -d -o node -g node -m 755 /home/node/.config /home/node/.config/git \
+  && mkdir -p /home/node/.pi/agent \
   /home/node/.pi/context-mode/sessions \
   /tmp/pi-subagents-uid-1000 \
   && chown -R node:node /home/node/.pi /tmp \

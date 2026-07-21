@@ -24,6 +24,8 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 python3-pip python3-venv \
   && rm -rf /var/lib/apt/lists/*
 
+RUN install -d -o node -g node -m 755 /home/node/.config /home/node/.config/git
+
 USER node
 WORKDIR /home/node
 

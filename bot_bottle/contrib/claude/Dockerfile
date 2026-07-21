@@ -47,6 +47,11 @@ RUN apt-get update \
 RUN npm install -g --no-fund --no-audit @anthropic-ai/claude-code@2.1.172 \
   && npm cache clean --force
 
+# Git reads both ~/.gitconfig and ~/.config/git/config. Keep its XDG config
+# path traversable by the non-root runtime user so permission errors do not
+# suppress bot-bottle's git-gate insteadOf rules.
+RUN install -d -o node -g node -m 755 /home/node/.config /home/node/.config/git
+
 # Run as a non-root user. The node image already provides a `node` user
 # (uid 1000) with a home directory, which is where claude-code will write
 # its session state.
