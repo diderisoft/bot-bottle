@@ -142,10 +142,19 @@ class TestGuestEnvironment(unittest.TestCase):
 
     def test_enabled_bottle_uses_only_the_guest_local_socket(self) -> None:
         env = nested_containers.guest_env(True)
-        self.assertEqual(
-            "unix:///tmp/bot-bottle-podman-run/podman.sock", env["DOCKER_HOST"],
-        )
+        self.assertEqual("unix:///tmp/bbp/podman.sock", env["DOCKER_HOST"])
         self.assertNotIn("/var/run/docker.sock", " ".join(env.values()))
+
+    def test_runtime_dir_leaves_room_for_conmons_attach_socket(self) -> None:
+        """podman builds `$XDG_RUNTIME_DIR/libpod/tmp/socket/<64-hex>/attach`,
+        which must fit in sun_path (108 bytes). A descriptive runtime dir blew
+        past it and every attached `docker run` failed with "unable to upgrade
+        to tcp, received 500" while pulls and detached runs looked fine."""
+        attach = (
+            nested_containers.guest_env(True)["XDG_RUNTIME_DIR"]
+            + "/libpod/tmp/socket/" + "a" * 64 + "/attach"
+        )
+        self.assertLessEqual(len(attach), 107, attach)
 
     def test_macos_backend_declares_support(self) -> None:
         from bot_bottle.backend.macos_container.backend import (

@@ -32,7 +32,9 @@ for device in /dev/fuse /dev/net/tun; do
     }
 done
 
-export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/bot-bottle-podman-run}"
+# Short by necessity, not by accident: conmon's attach socket lives under
+# this directory and must fit in a 108-byte sun_path. See nested_containers.py.
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/bbp}"
 config="$HOME/.config/containers"
 mkdir -p "$XDG_RUNTIME_DIR" "$config"
 chmod 700 "$XDG_RUNTIME_DIR"

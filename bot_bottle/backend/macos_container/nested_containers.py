@@ -38,7 +38,14 @@ from typing import Callable
 from ...log import die, info
 
 _INIT = "/usr/local/libexec/bot-bottle/nested-containers-init"
-_RUNTIME_DIR = "/tmp/bot-bottle-podman-run"
+# Deliberately cryptic and short. podman derives conmon's attach socket as
+# `$XDG_RUNTIME_DIR/libpod/tmp/socket/<64-hex-id>/attach`, and a Unix socket
+# path may not exceed 108 bytes (`sun_path`). The descriptive
+# `/tmp/bot-bottle-podman-run` produced a 116-byte path, so every attached
+# `docker run` failed with "unable to upgrade to tcp, received 500" while
+# detached runs and image pulls worked fine. Do not lengthen this for
+# readability — it buys 8 bytes of headroom over the limit.
+_RUNTIME_DIR = "/tmp/bbp"
 _SOCKET = f"{_RUNTIME_DIR}/podman.sock"
 _LOG = "/tmp/bot-bottle-nested-containers.log"
 IMAGE_SUFFIX = "-nested-containers"
