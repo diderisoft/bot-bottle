@@ -89,6 +89,14 @@ LOG_FULL = 2    # log block/warn events + full request and response bodies
 class Config:
     routes: tuple[Route, ...]
     log: int = LOG_OFF
+    # Why this Config is a deny-all, when it is one for a reason *other* than
+    # the bottle's own policy genuinely not listing the host. A deny-all is
+    # indistinguishable from "policy loaded, host not allowed" at the decision
+    # point — both are simply "no matching route" — so without this the
+    # operator sees `host X is not in the allowlist` and goes hunting for a
+    # missing route that was never the problem. Empty for a normally-parsed
+    # policy; `decide` prefers it over the allowlist wording when set.
+    deny_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -405,16 +413,39 @@ class PolicyResolverLike(typing.Protocol):
         ...
 
 
+# Deny-all explanations. Each names the *actual* failure so an operator isn't
+# sent looking for a missing egress route when the bottle never had a policy
+# to begin with — the failure mode that made a bricked registration read like
+# a misconfigured allowlist.
+DENY_UNATTRIBUTED = (
+    "egress: this bottle is not registered with the orchestrator, so it has "
+    "no egress policy at all and every host is denied. The bottle's registry "
+    "row is missing or ambiguous — it was torn down, or another bottle claimed "
+    "its source IP. Relaunch the bottle; this is not an allowlist problem."
+)
+DENY_UNPARSEABLE = (
+    "egress: this bottle's egress policy could not be parsed, so it is being "
+    "treated as deny-all. Fix the bottle's egress.routes; every host is denied "
+    "until it loads."
+)
+DENY_RESOLVER_ERROR = (
+    "egress: the orchestrator could not be reached to resolve this bottle's "
+    "egress policy, so every host is denied (fail-closed). Check that the "
+    "control plane is up; this is not an allowlist problem."
+)
+
+
 def _config_from_policy(policy: "str | None") -> "Config":
     """Parse a resolved policy blob into a Config, fail-closed: None / empty /
     unparseable all become a deny-all Config (no routes → every request
-    blocked)."""
+    blocked). Each deny-all carries the reason it is one, so the block message
+    names the real fault instead of blaming the allowlist."""
     if not policy:
-        return Config(routes=())  # unattributed or empty → deny-all
+        return Config(routes=(), deny_reason=DENY_UNATTRIBUTED)
     try:
         return load_config(policy)
     except ValueError:
-        return Config(routes=())  # unparseable policy → deny
+        return Config(routes=(), deny_reason=DENY_UNPARSEABLE)
 
 
 def resolve_client_config(
@@ -428,7 +459,7 @@ def resolve_client_config(
     try:
         policy = resolver.resolve(client_ip, identity_token)
     except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
-        return Config(routes=())  # orchestrator unreachable/errored → deny
+        return Config(routes=(), deny_reason=DENY_RESOLVER_ERROR)
     return _config_from_policy(policy)
 
 
@@ -457,7 +488,7 @@ def resolve_client_context(
             client_ip, identity_token,
         )
     except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
-        return Config(routes=()), "", {}  # orchestrator unreachable/errored → deny
+        return Config(routes=(), deny_reason=DENY_RESOLVER_ERROR), "", {}
     return _config_from_policy(policy), (bottle_id or ""), tokens
 
 
@@ -572,12 +603,16 @@ def decide(
     *,
     request_method: str = "GET",
     request_headers: typing.Mapping[str, str] | None = None,
+    deny_reason: str = "",
 ) -> Decision:
+    """`deny_reason` is `Config.deny_reason`: when the deny-all came from a
+    missing/unparseable policy rather than the bottle's own allowlist, report
+    that instead of implying a route is merely absent."""
     route = match_route(routes, request_host)
     if route is None:
         return Decision(
             action="block",
-            reason=(
+            reason=deny_reason or (
                 f"egress: host {request_host!r} is not in the "
                 f"bottle's egress.routes allowlist. Declare a "
                 f"route for it or remove the request."
@@ -852,6 +887,9 @@ __all__ = [
     "is_git_push_request",
     "is_git_fetch_request",
     "load_config",
+    "DENY_UNATTRIBUTED",
+    "DENY_UNPARSEABLE",
+    "DENY_RESOLVER_ERROR",
     "resolve_client_config",
     "resolve_client_context",
     "PolicyResolverLike",

@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import unittest
 
-from bot_bottle.egress_addon_core import resolve_client_config, resolve_client_context
+from bot_bottle.egress_addon_core import (
+    DENY_RESOLVER_ERROR,
+    DENY_UNATTRIBUTED,
+    DENY_UNPARSEABLE,
+    decide,
+    resolve_client_config,
+    resolve_client_context,
+)
 from bot_bottle.policy_resolver import PolicyResolveError
 
 
@@ -108,3 +115,51 @@ class TestResolveClientContext(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDenyReasonNamesTheRealFault(unittest.TestCase):
+    """A deny-all must not masquerade as a missing allowlist entry.
+
+    Regression: an unregistered bottle resolves no policy, so *every* host is
+    denied — but the block message said `host X is not in the allowlist`,
+    which reads as a config problem and sends the operator hunting for a route
+    that was never missing. The structural reason wins over that wording.
+    """
+
+    def _reason(self, resolver: object, host: str = "chatgpt.com") -> str:
+        cfg = resolve_client_config(resolver, "10.243.0.1")  # type: ignore[arg-type]
+        return decide(cfg.routes, host, "/v1/x", {}, deny_reason=cfg.deny_reason).reason
+
+    def test_unattributed_says_unregistered_not_allowlist(self) -> None:
+        reason = self._reason(_FakeResolver(result=None))
+        self.assertEqual(DENY_UNATTRIBUTED, reason)
+        # The misleading claim is the one that must be gone: the host was
+        # never "not in the allowlist" — there was no allowlist at all.
+        self.assertNotIn("is not in the bottle's egress.routes allowlist", reason)
+        self.assertIn("not registered", reason)
+
+    def test_resolver_error_says_orchestrator_unreachable(self) -> None:
+        self.assertEqual(DENY_RESOLVER_ERROR, self._reason(_FakeResolver(raises=True)))
+
+    def test_unparseable_policy_says_so(self) -> None:
+        self.assertEqual(
+            DENY_UNPARSEABLE, self._reason(_FakeResolver(result="routes: notalist\n")))
+
+    def test_a_real_allowlist_miss_keeps_the_allowlist_wording(self) -> None:
+        """The message only changes for structural deny-alls — a loaded policy
+        that genuinely lacks the host still points at the allowlist."""
+        reason = self._reason(_FakeResolver(result='routes:\n  - host: "api.example.com"\n'))
+        self.assertIn("is not in the bottle's egress.routes allowlist", reason)
+        self.assertIn("chatgpt.com", reason)
+
+    def test_allowed_host_is_still_forwarded(self) -> None:
+        cfg = resolve_client_config(
+            _FakeResolver(result='routes:\n  - host: "api.example.com"\n'), "10.243.0.1")
+        decision = decide(
+            cfg.routes, "api.example.com", "/v1/x", {}, deny_reason=cfg.deny_reason)
+        self.assertEqual("forward", decision.action)
+
+    def test_a_parsed_policy_carries_no_deny_reason(self) -> None:
+        cfg = resolve_client_config(
+            _FakeResolver(result='routes:\n  - host: "api.example.com"\n'), "10.243.0.1")
+        self.assertEqual("", cfg.deny_reason)

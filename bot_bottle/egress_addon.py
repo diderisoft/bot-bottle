@@ -379,6 +379,7 @@ class EgressAddon:
             env,
             request_method=flow.request.method,
             request_headers=req_headers,
+            deny_reason=config.deny_reason,
         )
 
         if decision.action == "block":
