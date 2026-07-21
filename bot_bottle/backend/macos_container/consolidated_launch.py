@@ -41,7 +41,7 @@ from ...orchestrator.client import OrchestratorClient, OrchestratorClientError
 from ...orchestrator.registration import registration_inputs
 from ..docker.gateway_provision import deprovision_git_gate, provision_git_gate
 from . import util as container_mod
-from .enumerate import CONTAINER_NAME_PREFIX, enumerate_active
+from .enumerate import CONTAINER_NAME_PREFIX, EnumerationError, enumerate_active
 from .gateway import GATEWAY_NETWORK
 from .gateway_provision import AppleGatewayTransport
 from .infra import MacosInfraService, OrchestratorStartError
@@ -98,14 +98,21 @@ def live_source_ips(network: str) -> list[str]:
     The reconciliation input: the orchestrator lives inside the infra
     container and cannot enumerate the host's containers, so the host has to
     tell it which bottles are actually up. Containers that have not been
-    assigned an address yet contribute nothing (the read is non-fatal) — the
-    reap's grace window, not this list, is what protects an in-flight
-    launch."""
+    assigned an address yet contribute nothing — the reap's grace window, not
+    this list, is what protects an in-flight launch.
+
+    Raises `EnumerationError` when the live set cannot be determined
+    authoritatively: either the container listing fails or any individual
+    inspect fails. Callers must skip reconciliation in that case to avoid
+    unregistering healthy bottles."""
     ips: list[str] = []
     for agent in enumerate_active():
-        ip = container_mod.try_container_ipv4_on_network(
-            f"{CONTAINER_NAME_PREFIX}{agent.slug}", network,
-        )
+        name = f"{CONTAINER_NAME_PREFIX}{agent.slug}"
+        ip = container_mod.inspect_container_network_ip(name, network)
+        if ip is None:
+            raise EnumerationError(
+                f"container inspect {name!r} failed; live set is not authoritative"
+            )
         if ip:
             ips.append(ip)
     return ips
@@ -133,7 +140,7 @@ def register_agent(
     # reconciliation failure must not block an otherwise-fine launch.
     try:
         client.reconcile(live_source_ips(endpoint.network))
-    except OrchestratorClientError as e:
+    except (OrchestratorClientError, EnumerationError) as e:
         info(f"registry reconciliation skipped: {e}")
     inputs = registration_inputs(egress_plan)
     reg = client.register_bottle(

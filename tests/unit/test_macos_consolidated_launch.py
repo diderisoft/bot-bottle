@@ -147,7 +147,7 @@ class TestLiveSourceIps(unittest.TestCase):
     def test_maps_slugs_to_container_addresses(self) -> None:
         from bot_bottle.backend.macos_container.consolidated_launch import live_source_ips
         with patch(f"{_MOD}.enumerate_active", return_value=self._agents("a", "b")), \
-                patch(f"{_MOD}.container_mod.try_container_ipv4_on_network",
+                patch(f"{_MOD}.container_mod.inspect_container_network_ip",
                       side_effect=["10.0.0.1", "10.0.0.2"]) as ip:
             got = live_source_ips("net0")
         self.assertEqual(["10.0.0.1", "10.0.0.2"], got)
@@ -158,9 +158,29 @@ class TestLiveSourceIps(unittest.TestCase):
         nothing — the reap's grace window, not this list, protects it."""
         from bot_bottle.backend.macos_container.consolidated_launch import live_source_ips
         with patch(f"{_MOD}.enumerate_active", return_value=self._agents("a", "b")), \
-                patch(f"{_MOD}.container_mod.try_container_ipv4_on_network",
+                patch(f"{_MOD}.container_mod.inspect_container_network_ip",
                       side_effect=["", "10.0.0.2"]):
             self.assertEqual(["10.0.0.2"], live_source_ips("net0"))
+
+    def test_container_list_failure_raises(self) -> None:
+        """If container list fails, the live set is not authoritative and
+        reconciliation must be skipped."""
+        from bot_bottle.backend.macos_container.consolidated_launch import live_source_ips
+        from bot_bottle.backend.macos_container.enumerate import EnumerationError
+        with patch(f"{_MOD}.enumerate_active",
+                   side_effect=EnumerationError("container list failed")):
+            with self.assertRaises(EnumerationError):
+                live_source_ips("net0")
+
+    def test_per_container_inspect_failure_raises(self) -> None:
+        """If any individual inspect fails, the live set is not authoritative."""
+        from bot_bottle.backend.macos_container.consolidated_launch import live_source_ips
+        from bot_bottle.backend.macos_container.enumerate import EnumerationError
+        with patch(f"{_MOD}.enumerate_active", return_value=self._agents("a", "b")), \
+                patch(f"{_MOD}.container_mod.inspect_container_network_ip",
+                      side_effect=["10.0.0.1", None]):
+            with self.assertRaises(EnumerationError):
+                live_source_ips("net0")
 
 
 class TestRegisterAgentReconciles(unittest.TestCase):
@@ -200,4 +220,19 @@ class TestRegisterAgentReconciles(unittest.TestCase):
         client = _client()
         client.reconcile.side_effect = OrchestratorClientError("unreachable")
         self._register(client)
+        client.register_bottle.assert_called_once()
+
+    def test_enumeration_error_does_not_block_the_launch(self) -> None:
+        """A partial container listing must not abort the launch — skip
+        reconciliation and proceed, just as with an unreachable orchestrator."""
+        from bot_bottle.backend.macos_container.enumerate import EnumerationError
+        client = _client()
+        with patch(f"{_MOD}.OrchestratorClient", return_value=client), \
+                patch(f"{_MOD}.provision_git_gate"), \
+                patch(f"{_MOD}.live_source_ips",
+                      side_effect=EnumerationError("container list failed")):
+            register_agent(
+                _egress_plan(), _git_plan(),
+                source_ip="10.0.0.7", endpoint=_endpoint(),
+            )
         client.register_bottle.assert_called_once()

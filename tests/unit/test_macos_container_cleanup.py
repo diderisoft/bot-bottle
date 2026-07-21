@@ -66,8 +66,10 @@ class TestMacosContainerEnumerate(unittest.TestCase):
         agents = self._enumerate("bot-bottle-mac-infra\nbot-bottle-dev-abc\n")
         self.assertEqual(["dev-abc"], [a.slug for a in agents])
 
-    def test_empty_when_the_cli_fails(self):
-        self.assertEqual([], self._enumerate("", returncode=1))
+    def test_raises_when_the_cli_fails(self):
+        from bot_bottle.backend.macos_container.enumerate import EnumerationError
+        with self.assertRaises(EnumerationError):
+            self._enumerate("", returncode=1)
 
 
 if __name__ == "__main__":

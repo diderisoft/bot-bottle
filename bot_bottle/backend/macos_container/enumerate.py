@@ -19,6 +19,10 @@ CONTAINER_NAME_PREFIX = "bot-bottle-"
 _INFRA_NAMES = frozenset({INFRA_NAME})
 
 
+class EnumerationError(RuntimeError):
+    """container list failed; the resulting live set is not authoritative."""
+
+
 def enumerate_active() -> list[ActiveAgent]:
     result = subprocess.run(
         ["container", "list", "--quiet"],
@@ -27,7 +31,10 @@ def enumerate_active() -> list[ActiveAgent]:
         check=False,
     )
     if result.returncode != 0:
-        return []
+        raise EnumerationError(
+            f"container list failed: "
+            f"{(result.stderr or '').strip() or '<no stderr>'}"
+        )
     out: list[ActiveAgent] = []
     for name in sorted(line.strip() for line in result.stdout.splitlines()):
         if not name.startswith(CONTAINER_NAME_PREFIX) or name in _INFRA_NAMES:

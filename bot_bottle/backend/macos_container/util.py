@@ -572,6 +572,41 @@ def try_container_ipv4_on_network(name: str, network: str) -> str:
     return ""
 
 
+def inspect_container_network_ip(name: str, network: str) -> str | None:
+    """IP of `name` on `network`, distinguishing inspect failure from "not yet".
+
+    Returns:
+      - the IP string when the container has one on `network`
+      - "" when inspect succeeds but no address is assigned yet (in-flight DHCP)
+      - None when the inspect command itself fails (authoritative list impossible)
+    """
+    result = subprocess.run(
+        [_CONTAINER, "inspect", name],
+        capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        data = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError:
+        return None
+    if isinstance(data, list):
+        data = data[0] if data else {}
+    if not isinstance(data, dict):
+        return None
+    status = data.get("status")
+    networks = status.get("networks") if isinstance(status, dict) else None
+    if not isinstance(networks, list):
+        return ""
+    for entry in networks:
+        if not isinstance(entry, dict) or entry.get("network") != network:
+            continue
+        raw = entry.get("ipv4Address")
+        if isinstance(raw, str) and raw:
+            return raw.split("/", 1)[0]
+    return ""
+
+
 def wait_container_ipv4_on_network(
     name: str, network: str, *, timeout: float = 15.0, poll: float = 0.25,
 ) -> str:
