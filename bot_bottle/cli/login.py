@@ -23,6 +23,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 from ..paths import bot_bottle_root
 
@@ -49,7 +50,7 @@ def _flag(argv: list[str], name: str) -> str | None:
     return None
 
 
-def _post(url: str, payload: dict) -> dict:
+def _post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
     data = json.dumps(payload).encode()
     req = urllib.request.Request(
         url, data=data, headers={"Content-Type": "application/json"}
@@ -58,7 +59,7 @@ def _post(url: str, payload: dict) -> dict:
         return json.loads(resp.read())
 
 
-def _get(url: str) -> tuple[int, dict]:
+def _get(url: str) -> tuple[int, dict[str, Any]]:
     req = urllib.request.Request(url)
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
