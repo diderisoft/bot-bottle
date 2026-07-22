@@ -79,6 +79,8 @@ class Route:
     # "" means unset → DEFAULT_OUTBOUND_ON_MATCH. See OUTBOUND_ON_MATCH_VALUES.
     outbound_on_match: str = ""
     preserve_auth: bool = False
+    # dlp: false — skip all scanning; HTTPS flows tunnel without TLS interception.
+    dlp_passthrough: bool = False
 
 
 LOG_OFF = 0    # no logging
@@ -305,7 +307,7 @@ def _parse_one(idx: int, raw: object) -> Route:
                 )
 
     # dlp detectors
-    outbound_detectors, inbound_detectors, outbound_on_match = parse_dlp_block(
+    outbound_detectors, inbound_detectors, outbound_on_match, dlp_passthrough = parse_dlp_block(
         idx, host, raw_dict,
     )
 
@@ -333,6 +335,7 @@ def _parse_one(idx: int, raw: object) -> Route:
         inbound_detectors=inbound_detectors,
         outbound_on_match=outbound_on_match,
         preserve_auth=preserve_auth,
+        dlp_passthrough=dlp_passthrough,
     )
 
 
@@ -376,15 +379,18 @@ def route_to_yaml_dict(r: Route) -> dict[str, object]:
         d["matches"] = [_match_entry_to_dict(m) for m in r.matches]
     if r.git_fetch:
         d["git"] = {"fetch": True}
-    dlp: dict[str, object] = {}
-    if r.outbound_detectors is not None:
-        dlp["outbound_detectors"] = list(r.outbound_detectors)
-    if r.inbound_detectors is not None:
-        dlp["inbound_detectors"] = list(r.inbound_detectors)
-    if r.outbound_on_match:
-        dlp["outbound_on_match"] = r.outbound_on_match
-    if dlp:
-        d["dlp"] = dlp
+    if r.dlp_passthrough:
+        d["dlp"] = False
+    else:
+        dlp: dict[str, object] = {}
+        if r.outbound_detectors is not None:
+            dlp["outbound_detectors"] = list(r.outbound_detectors)
+        if r.inbound_detectors is not None:
+            dlp["inbound_detectors"] = list(r.inbound_detectors)
+        if r.outbound_on_match:
+            dlp["outbound_on_match"] = r.outbound_on_match
+        if dlp:
+            d["dlp"] = dlp
     if r.preserve_auth:
         d["preserve_auth"] = True
     return d
@@ -758,6 +764,8 @@ def scan_outbound(
     safe_tokens: typing.AbstractSet[str] | None = None,
     crlf_text: str | None = None,
 ) -> ScanResult | None:
+    if route.dlp_passthrough:
+        return None
     # Lazy import to avoid circular deps and keep dlp_detectors optional
     # at import time (the gateway copies it flat alongside this file).
     try:
@@ -855,6 +863,8 @@ def scan_inbound(
     route: Route,
     body: str | bytes,
 ) -> ScanResult | None:
+    if route.dlp_passthrough:
+        return None
     try:
         from dlp_detectors import scan_naive_injection  # type: ignore[import-not-found]
     except ImportError:  # pragma: no cover - host-side path

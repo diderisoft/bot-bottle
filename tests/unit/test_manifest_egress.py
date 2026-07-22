@@ -337,6 +337,19 @@ class TestDlp(unittest.TestCase):
                 "bogus": True,
             }}])
 
+    def test_dlp_false_sets_passthrough(self):
+        b = _bottle([{"host": "x.example", "dlp": False}])
+        r = b.egress.routes[0]
+        self.assertTrue(r.DlpPassthrough)
+
+    def test_dlp_passthrough_default_false(self):
+        b = _bottle([{"host": "x.example"}])
+        self.assertFalse(b.egress.routes[0].DlpPassthrough)
+
+    def test_dlp_not_dict_or_false_rejected(self):
+        with self.assertRaises(ManifestError):
+            _bottle([{"host": "x.example", "dlp": "nope"}])
+
     def test_outbound_on_match_omitted_is_empty(self):
         b = _bottle([{"host": "x.example"}])
         self.assertEqual("", b.egress.routes[0].OutboundOnMatch)

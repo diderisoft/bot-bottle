@@ -30,15 +30,20 @@ def parse_dlp_block(
     idx: int,
     host: str,
     raw_dict: dict[str, object],
-) -> tuple[tuple[str, ...] | None, tuple[str, ...] | None, str]:
+) -> tuple[tuple[str, ...] | None, tuple[str, ...] | None, str, bool]:
     """Parse the optional `dlp` block on a route, returning
-    (outbound_detectors, inbound_detectors, outbound_on_match)."""
+    (outbound_detectors, inbound_detectors, outbound_on_match, passthrough).
+
+    `dlp: false` sets passthrough=True: all scanning is skipped and HTTPS
+    connections are tunnelled without TLS interception."""
     dlp_raw = raw_dict.get("dlp")
     if dlp_raw is None:
-        return None, None, ""
+        return None, None, "", False
     label = f"route[{idx}] ({host})"
+    if dlp_raw is False:
+        return None, None, "", True
     if not isinstance(dlp_raw, dict):
-        raise ValueError(f"{label}: 'dlp' must be an object")
+        raise ValueError(f"{label}: 'dlp' must be false or an object")
     dlp = typing.cast(dict[str, object], dlp_raw)
 
     def _parse_detector_field(
@@ -89,4 +94,4 @@ def parse_dlp_block(
                 f"are 'outbound_detectors', 'inbound_detectors', "
                 f"'outbound_on_match'"
             )
-    return outbound, inbound, on_match
+    return outbound, inbound, on_match, False

@@ -97,10 +97,11 @@ class EgressAddon:
     # comes from the orchestrator's /resolve (PRD 0070); there is no static
     # per-bottle routes file, SIGHUP reload, or single-tenant fallback.
     _resolver: "PolicyResolver"
-    # Class default so __new__-built addons have it (real runs get a fresh
-    # per-instance dict in __init__; only http_connect mutates it, which the
-    # request-flow tests don't exercise).
+    # Class defaults so __new__-built addons have them (real runs get fresh
+    # per-instance collections in __init__; only http_connect mutates them,
+    # which request-flow tests don't exercise unless they call http_connect).
     _conn_tokens: "dict[str, str]" = {}
+    _passthrough_conns: "set[str]" = set()
 
     def __init__(self) -> None:
         # Resolver-only: the gateway is always multi-tenant, resolving each
@@ -125,6 +126,10 @@ class EgressAddon:
         # `Proxy-Authorization` (HTTPS tunnels don't repeat it on the bumped
         # inner requests). Keyed by client_conn.id; cleared on disconnect.
         self._conn_tokens: dict[str, str] = {}
+        # Connections whose route carries `dlp: false` — mitmproxy tunnels
+        # these without TLS interception so the client sees the server's real
+        # cert. Keyed by client_conn.id; cleared on disconnect.
+        self._passthrough_conns: set[str] = set()
         self._token_allow_timeout = _token_allow_timeout_from_env(os.environ)
 
     @staticmethod
@@ -305,17 +310,53 @@ class EgressAddon:
     def http_connect(self, flow: http.HTTPFlow) -> None:
         """Capture the identity token from an HTTPS tunnel's CONNECT (the inner
         bumped requests won't carry `Proxy-Authorization`), keyed by client
-        connection, and strip it so it never reaches upstream."""
+        connection, and strip it so it never reaches upstream.
+
+        For `dlp: false` routes, also resolve the policy here to make the
+        allowlist decision before the TLS handshake: the tunnel is either
+        blocked immediately or marked for passthrough in `_passthrough_conns`
+        so `tls_clienthello` skips interception."""
         token = _token_from_proxy_auth(
             flow.request.headers.get("Proxy-Authorization", ""))
         flow.request.headers.pop("Proxy-Authorization", None)
         conn = flow.client_conn
-        if conn is not None and getattr(conn, "id", ""):
-            self._conn_tokens[conn.id] = token
+        conn_id = getattr(conn, "id", "") if conn is not None else ""
+        if conn_id:
+            self._conn_tokens[conn_id] = token
+
+        # Resolve once to check if this host is a dlp: false route. For
+        # non-passthrough hosts nothing changes — the allowlist check happens
+        # in request() as normal. For passthrough hosts we must decide here
+        # because the inner requests never reach request() after the bypass.
+        client_ip = conn.peername[0] if conn is not None and conn.peername else ""
+        config, _slug, env = resolve_client_context(self._resolver, client_ip, token)
+        host = flow.request.pretty_host
+        route = match_route(config.routes, host)
+        if route is not None and route.dlp_passthrough:
+            decision = decide(config.routes, host, "/", env, deny_reason=config.deny_reason)
+            if decision.action == "block":
+                flow.response = http.Response.make(
+                    403,
+                    decision.reason.encode("utf-8"),
+                    {"Content-Type": "text/plain; charset=utf-8"},
+                )
+                return
+            if conn_id:
+                self._passthrough_conns.add(conn_id)
+
+    def tls_clienthello(self, client_hello: typing.Any) -> None:
+        """Skip TLS interception for `dlp: false` routes so the client sees
+        the server's real certificate rather than the MITM CA's leaf."""
+        conn_id = getattr(client_hello.context.client, "id", "")
+        if conn_id in self._passthrough_conns:
+            client_hello.ignore_connection = True
 
     def client_disconnected(self, client: typing.Any) -> None:
-        """Drop the per-connection token when the client goes away."""
-        self._conn_tokens.pop(getattr(client, "id", ""), None)
+        """Drop the per-connection token and passthrough flag when the client
+        goes away."""
+        conn_id = getattr(client, "id", "")
+        self._conn_tokens.pop(conn_id, None)
+        self._passthrough_conns.discard(conn_id)
 
     async def request(self, flow: http.HTTPFlow) -> None:
         request_path, _, query = flow.request.path.partition("?")
@@ -335,8 +376,10 @@ class EgressAddon:
         # DLP outbound scan BEFORE stripping auth — catches tokens the
         # agent tried to smuggle in any header, path, query param, or body.
         # Hostname is included to catch DNS-tunnelling exfiltration attempts.
+        # `dlp: false` routes skip scanning entirely (TLS is also not
+        # intercepted for HTTPS, so this branch only fires for plain HTTP).
         route = match_route(config.routes, flow.request.pretty_host)
-        if route is not None:
+        if route is not None and not route.dlp_passthrough:
             if not await self._handle_outbound_dlp(flow, route, slug, env):
                 return
             # The redact policy may have rewritten the request line; recompute
@@ -606,7 +649,7 @@ class EgressAddon:
         bottle's resolved config (`request()` stashed it — see `_flow_ctx`)."""
         config, _slug, env = self._flow_ctx(flow)
         route = match_route(config.routes, flow.request.pretty_host)
-        if route is None:
+        if route is None or route.dlp_passthrough:
             return
         if flow.response is None:
             return
@@ -652,7 +695,7 @@ class EgressAddon:
             return
         config, slug, env = self._flow_ctx(flow)
         route = match_route(config.routes, flow.request.pretty_host)
-        if route is None:
+        if route is None or route.dlp_passthrough:
             return
         message = flow.websocket.messages[-1]  # type: ignore[union-attr]
         content = message.content.decode("utf-8", errors="replace")

@@ -173,6 +173,18 @@ class TestRouteValidAccepts(unittest.TestCase):
         r = _route({"host": "h", "dlp": {"outbound_detectors": False}})
         self.assertEqual((), r.outbound_detectors)
 
+    def test_dlp_false_sets_passthrough(self) -> None:
+        r = _route({"host": "h", "dlp": False})
+        self.assertTrue(r.dlp_passthrough)
+
+    def test_dlp_false_passthrough_default_is_false(self) -> None:
+        r = _route({"host": "h"})
+        self.assertFalse(r.dlp_passthrough)
+
+    def test_dlp_not_a_dict_or_false_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            _route({"host": "h", "dlp": "no"})
+
 
 class TestParseConfig(unittest.TestCase):
     def test_log_must_be_valid_level(self) -> None:
@@ -220,6 +232,14 @@ class TestRouteToYamlDict(unittest.TestCase):
             },
             d["dlp"],
         )
+
+    def test_dlp_passthrough_serializes_as_false(self) -> None:
+        d = route_to_yaml_dict(Route(host="h", dlp_passthrough=True))
+        self.assertIs(False, d["dlp"])
+
+    def test_dlp_passthrough_roundtrip(self) -> None:
+        r = _route({"host": "h", "dlp": False})
+        self.assertIs(False, route_to_yaml_dict(r)["dlp"])
 
     def test_matches_serialization_omits_defaults(self) -> None:
         route = Route(host="h", matches=(MatchEntry(

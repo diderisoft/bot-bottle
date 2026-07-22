@@ -72,6 +72,7 @@ class ManifestEgressRoute:
     InboundDetectors: tuple[str, ...] | None = None
     OutboundOnMatch: str = ""
     PreserveAuth: bool = False
+    DlpPassthrough: bool = False
 
     @classmethod
     def from_dict(cls, bottle_name: str, idx: int, raw: object) -> "ManifestEgressRoute":
@@ -167,8 +168,9 @@ class ManifestEgressRoute:
         outbound_detectors: tuple[str, ...] | None = None
         inbound_detectors: tuple[str, ...] | None = None
         outbound_on_match = ""
+        dlp_passthrough = False
         if "dlp" in d:
-            outbound_detectors, inbound_detectors, outbound_on_match = _parse_dlp_block(
+            outbound_detectors, inbound_detectors, outbound_on_match, dlp_passthrough = _parse_dlp_block(
                 label, d.get("dlp"),
             )
 
@@ -220,6 +222,7 @@ class ManifestEgressRoute:
             InboundDetectors=inbound_detectors,
             OutboundOnMatch=outbound_on_match,
             PreserveAuth=preserve_auth,
+            DlpPassthrough=dlp_passthrough,
         )
 
 
@@ -342,7 +345,13 @@ def _parse_header_match(
 def _parse_dlp_block(
     route_label: str,
     raw: object,
-) -> tuple[tuple[str, ...] | None, tuple[str, ...] | None, str]:
+) -> tuple[tuple[str, ...] | None, tuple[str, ...] | None, str, bool]:
+    """Parse the `dlp` value on a route.
+
+    `dlp: false` is a full bypass: no scanning, HTTPS tunnelled without
+    TLS interception. Returns (outbound, inbound, on_match, passthrough)."""
+    if raw is False:
+        return None, None, "", True
     label = f"{route_label} dlp"
     d = as_json_object(raw, label)
 
@@ -394,7 +403,7 @@ def _parse_dlp_block(
                 f"'outbound_detectors', 'inbound_detectors', "
                 f"'outbound_on_match'"
             )
-    return outbound, inbound, on_match
+    return outbound, inbound, on_match, False
 
 
 LOG_LEVELS = frozenset({0, 1, 2})
