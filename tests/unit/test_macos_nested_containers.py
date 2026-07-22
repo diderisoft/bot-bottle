@@ -165,23 +165,39 @@ class TestInitScript(unittest.TestCase):
         from bot_bottle.backend.util import AGENT_CA_BUNDLE
         self.assertIn(f'CA_BUNDLE="{AGENT_CA_BUNDLE}"', self.script)
 
-    def test_propagates_the_bottle_hosts_file_into_containers(self) -> None:
-        """The proxy URL names bot-bottle-gateway, which resolves only via the
-        bottle's /etc/hosts. Without this a nested container dies at "Could
-        not resolve proxy" — which reads as broken DNS but is a missing hosts
-        entry; public DNS is meant to fail."""
-        self.assertIn('base_hosts_file="/etc/hosts"', self.script)
+    def test_resolves_the_gateway_address_for_nested_containers(self) -> None:
+        """podman's hosts_file only applies to native `podman run` — the
+        Docker-compat API ignores it, and the agent types `docker`. So the
+        gateway name is resolved here and the *address* goes into the proxy
+        URL; otherwise every nested container dies at "Could not resolve
+        proxy", which reads like broken DNS but is a missing hosts entry."""
+        self.assertIn('$2 == name { print $1; exit }', self.script)
+        self.assertIn('value.replace(name, ip)', self.script)
+
+    def test_keeps_the_gateway_name_in_no_proxy(self) -> None:
+        """NO_PROXY is matched against what a client asks for, and code inside
+        a nested container still says bot-bottle-gateway."""
+        no_proxy = self.script[self.script.index('for var in ("NO_PROXY"'):]
+        self.assertIn('entries.append(f"{var}={value}")', no_proxy)
+        self.assertNotIn("replace(name, ip)", no_proxy)
+
+    def test_fails_closed_without_a_gateway_address(self) -> None:
+        self.assertIn('[ -n "$gateway_ip" ] || {', self.script)
 
     def test_mounts_and_trusts_the_gateway_ca(self) -> None:
         """The gateway TLS-intercepts, so without the bundle every HTTPS call
         from a nested container fails with "unable to get local issuer
         certificate"."""
-        self.assertIn("volumes=[", self.script)
+        self.assertIn('volumes=["{ca}:{ca}:ro"]', self.script)
         for var in (
             "SSL_CERT_FILE", "CURL_CA_BUNDLE", "REQUESTS_CA_BUNDLE",
             "NODE_EXTRA_CA_CERTS",
         ):
-            self.assertIn(f'"{var}=${{CA_BUNDLE}}"', self.script)
+            self.assertIn(f'f"{var}={{ca}}"', self.script)
+
+    def test_writes_the_token_bearing_config_unreadable_to_others(self) -> None:
+        """The proxy URL carries the bottle's identity token."""
+        self.assertIn("path.chmod(0o600)", self.script)
 
 
 class TestGuestEnvironment(unittest.TestCase):

@@ -47,6 +47,27 @@ CA_BUNDLE="/etc/ssl/certs/ca-certificates.crt"
     exit 1
 }
 
+# The proxy URL the agent inherits names `bot-bottle-gateway`, which resolves
+# only through this bottle's /etc/hosts. A nested container gets its own hosts
+# file, so it cannot resolve the name and dies at "Could not resolve proxy".
+#
+# podman's containers.conf `hosts_file` would fix that, except the
+# Docker-compatible API ignores it — it only takes effect for native
+# `podman run`, and the agent types `docker`. So the name is resolved *here*
+# and the address, not the name, goes into the proxy URL the nested container
+# receives. Verified on macOS 26 / podman 5.4.2: with the address in place,
+# https://quay.io returns 200 and a non-allowlisted host still gets 403, so
+# the egress boundary applies inside nested containers too.
+GATEWAY_NAME="bot-bottle-gateway"
+gateway_ip="$(
+    awk -v name="$GATEWAY_NAME" '$2 == name { print $1; exit }' /etc/hosts
+)"
+[ -n "$gateway_ip" ] || {
+    echo "no /etc/hosts entry for $GATEWAY_NAME; the gateway address is" >&2
+    echo "needed so nested containers can reach the egress proxy" >&2
+    exit 1
+}
+
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/bbp}"
 config="$HOME/.config/containers"
 mkdir -p "$XDG_RUNTIME_DIR" "$config"
@@ -66,35 +87,67 @@ CONF
 # No cgroup delegation reaches this guest, so asking podman to manage cgroups
 # fails; events_logger=file avoids the journald socket that is equally absent.
 #
-# The rest of this block is what makes a nested container reach the network at
-# all. podman already forwards the proxy env, but that alone is useless here:
+# The rest of this config is what lets a nested container reach the network:
 #
-#   base_hosts_file  the proxy URL names `bot-bottle-gateway`, which resolves
-#                    only through the bottle's own /etc/hosts. Without this a
-#                    container fails at "Could not resolve proxy", which reads
-#                    like broken DNS but is a missing hosts entry — public DNS
-#                    is *supposed* to fail, since everything egresses via the
-#                    proxy.
-#   volumes/env      the gateway TLS-intercepts, so a container that does not
-#                    trust the bottle's CA bundle gets "unable to get local
-#                    issuer certificate". Mounting the bundle read-only and
-#                    pointing the usual env vars at it covers curl, wget,
-#                    python, and node without distro-specific trust commands.
-cat > "$config/containers.conf" <<CONF
-[containers]
-cgroups="disabled"
-base_hosts_file="/etc/hosts"
-volumes=["${CA_BUNDLE}:${CA_BUNDLE}:ro"]
-env=[
-  "SSL_CERT_FILE=${CA_BUNDLE}",
-  "CURL_CA_BUNDLE=${CA_BUNDLE}",
-  "REQUESTS_CA_BUNDLE=${CA_BUNDLE}",
-  "NODE_EXTRA_CA_CERTS=${CA_BUNDLE}",
+#   hosts_file   only takes effect for native `podman run` — the
+#                Docker-compatible API ignores it, and the agent types
+#                `docker`. Kept anyway because it costs nothing and makes
+#                podman-native use behave; the compat path is covered by the
+#                address-bearing proxy URL below.
+#   volumes/env  the gateway TLS-intercepts, so a container that does not
+#                trust the bottle's CA bundle gets "unable to get local issuer
+#                certificate". Mounting the bundle read-only and pointing the
+#                usual env vars at it covers curl, wget, python, and node
+#                without distro-specific trust commands.
+#
+# The proxy URL carries the bottle's identity token. podman already forwards
+# that same URL into every nested container from the agent's own environment,
+# so writing it to a 0600 file inside this disposable VM hands it to nobody
+# new. It is never echoed.
+CA_BUNDLE="$CA_BUNDLE" GATEWAY_NAME="$GATEWAY_NAME" GATEWAY_IP="$gateway_ip" \
+CONTAINERS_CONF="$config/containers.conf" python3 - <<'PY'
+import os
+from pathlib import Path
+
+ca = os.environ["CA_BUNDLE"]
+name = os.environ["GATEWAY_NAME"]
+ip = os.environ["GATEWAY_IP"]
+
+entries = [
+    f"SSL_CERT_FILE={ca}",
+    f"CURL_CA_BUNDLE={ca}",
+    f"REQUESTS_CA_BUNDLE={ca}",
+    f"NODE_EXTRA_CA_CERTS={ca}",
 ]
-[engine]
-cgroup_manager="cgroupfs"
-events_logger="file"
-CONF
+# The gateway name resolves only through the bottle's /etc/hosts, which a
+# nested container does not inherit, so hand it the address instead.
+for var in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+    value = os.environ.get(var)
+    if value:
+        entries.append(f"{var}={value.replace(name, ip)}")
+# NO_PROXY keeps the name: it is matched against what a client asks for, and
+# code inside a nested container still says "bot-bottle-gateway".
+for var in ("NO_PROXY", "no_proxy"):
+    value = os.environ.get(var)
+    if value:
+        entries.append(f"{var}={value}")
+
+path = Path(os.environ["CONTAINERS_CONF"])
+path.write_text("\n".join([
+    "[containers]",
+    'cgroups="disabled"',
+    'hosts_file="/etc/hosts"',
+    f'volumes=["{ca}:{ca}:ro"]',
+    "env=[",
+    *[f'  "{entry}",' for entry in entries],
+    "]",
+    "[engine]",
+    'cgroup_manager="cgroupfs"',
+    'events_logger="file"',
+    "",
+]), encoding="utf-8")
+path.chmod(0o600)
+PY
 
 # Registry pulls egress through the bottle's proxy like everything else. The
 # token-bearing proxy URL is already in the agent's environment; persisting it
