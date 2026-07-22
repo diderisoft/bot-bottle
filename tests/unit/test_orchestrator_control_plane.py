@@ -75,6 +75,7 @@ class TestDispatch(unittest.TestCase):
         )
         self.assertEqual(201, status)
         bottle_id = payload["bottle_id"]
+        assert isinstance(bottle_id, str)
         self.orch._tokens.clear()
         status, response = dispatch(
             self.orch, "POST", f"/bottles/{bottle_id}/reprovision_gateway",

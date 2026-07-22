@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import unittest
 
 from bot_bottle.backend.docker.consolidated_compose import consolidated_agent_compose
@@ -48,7 +49,7 @@ class TestConsolidatedAgentCompose(unittest.TestCase):
 
     def test_env_var_secret_stays_a_bare_name(self) -> None:
         plan = _plan(with_egress=True, supervise=True, with_git=True)
-        plan = type(plan)(**{**vars(plan), "env_var_secret": "secret-value"})
+        plan = dataclasses.replace(plan, env_var_secret="secret-value")
         env = consolidated_agent_compose(
             plan, gateway_ip=_GW, source_ip=_IP, network=_NET,
         )["services"]["agent"]["environment"]

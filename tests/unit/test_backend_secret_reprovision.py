@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, call, patch
+from unittest.mock import Mock, patch
 
 from bot_bottle.orchestrator.reprovision import reprovision_bottles
 from bot_bottle.backend.firecracker import consolidated_launch as fc
