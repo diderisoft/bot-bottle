@@ -56,15 +56,26 @@ class TestMergeBottlesRuntime(unittest.TestCase):
         result = merge_bottles_runtime([base, override])
         self.assertFalse(result.supervise)
 
-    def test_nested_containers_survives_a_later_bottle(self):
-        """OR, not replace: a resolved bottle that never mentioned the key is
-        indistinguishable from one that set it false, so `--bottle with-docker
-        --bottle claude-dev` must not silently drop the capability."""
+    def test_nested_containers_survives_a_later_bottle_that_omits_the_key(self):
+        """A bottle that never mentions nested_containers must not silently
+        drop the capability: `--bottle with-docker --bottle claude-dev`."""
         enabled = _bottle(nested_containers=True)
         quiet = _bottle(env={"X": "1"})
         self.assertTrue(merge_bottles_runtime([enabled, quiet]).nested_containers)
         self.assertTrue(merge_bottles_runtime([quiet, enabled]).nested_containers)
         self.assertFalse(merge_bottles_runtime([quiet, quiet]).nested_containers)
+
+    def test_nested_containers_explicit_false_overrides_earlier_true(self):
+        """An explicit nested_containers: false in a later bottle must win
+        over an earlier true (last-wins, presence-aware)."""
+        enabled = _bottle(nested_containers=True)
+        disabled = _bottle(nested_containers=False)
+        self.assertFalse(merge_bottles_runtime([enabled, disabled]).nested_containers)
+
+    def test_nested_containers_explicit_true_overrides_earlier_false(self):
+        enabled = _bottle(nested_containers=True)
+        disabled = _bottle(nested_containers=False)
+        self.assertTrue(merge_bottles_runtime([disabled, enabled]).nested_containers)
 
     def test_three_bottles_merged_left_to_right(self):
         b1 = _bottle(env={"A": "1", "B": "1", "C": "1"})

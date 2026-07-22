@@ -15,16 +15,14 @@ def merge_bottles_runtime(bottles: "list[ManifestBottle]") -> "ManifestBottle":
     the same field-merge rules as the file-based extends machinery:
       env: dict merge, later wins; git_user: per-field overlay, later
       wins on non-empty; git (repos): union by name, later wins; egress
-      routes: concatenate; agent_provider, supervise: later
-      replaces; nested_containers: OR (see below).
+      routes: concatenate; agent_provider, supervise, nested_containers:
+      later replaces (presence-aware).
 
-    nested_containers is OR'd rather than replaced because these objects
-    are already resolved: a bottle that never mentions the key is
-    indistinguishable from one that sets it false, so "later replaces"
-    would let any bottle composed after a container-enabled one silently
-    drop the capability. The file-based `extends:` path still sees the
-    raw keys, so there an explicit `nested_containers: false` in a child
-    turns it back off.
+    nested_containers uses presence-aware replacement: if the later bottle
+    was loaded from a source that explicitly declared the key, its value
+    wins (so an explicit `false` can override an earlier `true`). If the
+    later bottle never mentioned the key, the earlier value is preserved
+    (so a bottle that only sets env does not silently drop the capability).
     """
     if not bottles:
         raise ValueError("merge_bottles_runtime requires at least one bottle")
@@ -56,6 +54,11 @@ def _merge_two_bottles_runtime(base: "ManifestBottle", override: "ManifestBottle
     merged_routes = base.egress.routes + override.egress.routes
     merged_egress = ManifestEgressConfig(routes=merged_routes, Log=override.egress.Log)
 
+    merged_nc = (
+        override.nested_containers
+        if override.nested_containers_explicit
+        else base.nested_containers
+    )
     return ManifestBottle(
         env=merged_env,
         agent_provider=override.agent_provider,
@@ -63,7 +66,8 @@ def _merge_two_bottles_runtime(base: "ManifestBottle", override: "ManifestBottle
         git_user=merged_git_user,
         egress=merged_egress,
         supervise=override.supervise,
-        nested_containers=base.nested_containers or override.nested_containers,
+        nested_containers=merged_nc,
+        nested_containers_explicit=base.nested_containers_explicit or override.nested_containers_explicit,
     )
 
 
@@ -209,6 +213,11 @@ def _fold_two_bottles(
         Log=later.egress.Log,
     )
 
+    folded_nc = (
+        later.nested_containers
+        if later.nested_containers_explicit
+        else earlier.nested_containers
+    )
     return ManifestBottle(
         env=merged_env,
         agent_provider=later.agent_provider,
@@ -216,7 +225,8 @@ def _fold_two_bottles(
         git_user=merged_git_user,
         egress=merged_egress,
         supervise=later.supervise,
-        nested_containers=earlier.nested_containers or later.nested_containers,
+        nested_containers=folded_nc,
+        nested_containers_explicit=earlier.nested_containers_explicit or later.nested_containers_explicit,
     ), merged_repos_raw
 
 
