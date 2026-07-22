@@ -56,6 +56,16 @@ class TestMergeBottlesRuntime(unittest.TestCase):
         result = merge_bottles_runtime([base, override])
         self.assertFalse(result.supervise)
 
+    def test_supervise_survives_a_later_bottle_that_omits_the_key(self):
+        disabled = _bottle(supervise=False)
+        quiet = _bottle(env={"X": "1"})
+        self.assertFalse(merge_bottles_runtime([disabled, quiet]).supervise)
+
+    def test_supervise_explicit_true_overrides_earlier_false(self):
+        disabled = _bottle(supervise=False)
+        enabled = _bottle(supervise=True)
+        self.assertTrue(merge_bottles_runtime([disabled, enabled]).supervise)
+
     def test_nested_containers_survives_a_later_bottle_that_omits_the_key(self):
         """A bottle that never mentions nested_containers must not silently
         drop the capability: `--bottle with-docker --bottle claude-dev`."""
@@ -76,6 +86,25 @@ class TestMergeBottlesRuntime(unittest.TestCase):
         enabled = _bottle(nested_containers=True)
         disabled = _bottle(nested_containers=False)
         self.assertTrue(merge_bottles_runtime([disabled, enabled]).nested_containers)
+
+    def test_extended_boolean_values_remain_explicit_at_runtime(self):
+        idx = _index(
+            bottles={
+                "enabled": {"nested_containers": True, "supervise": True},
+                "parent": {},
+                "disabled_child": {
+                    "extends": "parent",
+                    "nested_containers": False,
+                    "supervise": False,
+                },
+            },
+            agents={"impl": {"bottle": "enabled", "skills": [], "prompt": ""}},
+        )
+        result = idx.load_for_agent(
+            "impl", ("enabled", "disabled_child")
+        ).bottle
+        self.assertFalse(result.nested_containers)
+        self.assertFalse(result.supervise)
 
     def test_three_bottles_merged_left_to_right(self):
         b1 = _bottle(env={"A": "1", "B": "1", "C": "1"})

@@ -8,6 +8,17 @@ from .manifest_git import ManifestGitUser, parse_git_gate_config
 from .manifest_util import ManifestError, as_json_object
 
 
+def _overlay_declared_bool(
+    base: ManifestBottle,
+    override: ManifestBottle,
+    field: str,
+) -> bool:
+    """Overlay a defaulted boolean only when override declared it."""
+    value = getattr(override if field in override.declared_fields else base, field)
+    assert isinstance(value, bool)
+    return value
+
+
 def merge_bottles_runtime(bottles: "list[ManifestBottle]") -> "ManifestBottle":
     """Merge an ordered list of pre-resolved ManifestBottle objects.
 
@@ -18,11 +29,10 @@ def merge_bottles_runtime(bottles: "list[ManifestBottle]") -> "ManifestBottle":
       routes: concatenate; agent_provider, supervise, nested_containers:
       later replaces (presence-aware).
 
-    nested_containers uses presence-aware replacement: if the later bottle
+    Defaulted booleans use presence-aware replacement: if the later bottle
     was loaded from a source that explicitly declared the key, its value
     wins (so an explicit `false` can override an earlier `true`). If the
-    later bottle never mentioned the key, the earlier value is preserved
-    (so a bottle that only sets env does not silently drop the capability).
+    later bottle never mentioned the key, the earlier value is preserved.
     """
     if not bottles:
         raise ValueError("merge_bottles_runtime requires at least one bottle")
@@ -54,20 +64,17 @@ def _merge_two_bottles_runtime(base: "ManifestBottle", override: "ManifestBottle
     merged_routes = base.egress.routes + override.egress.routes
     merged_egress = ManifestEgressConfig(routes=merged_routes, Log=override.egress.Log)
 
-    merged_nc = (
-        override.nested_containers
-        if override.nested_containers_explicit
-        else base.nested_containers
-    )
     return ManifestBottle(
         env=merged_env,
         agent_provider=override.agent_provider,
         git=merged_git,
         git_user=merged_git_user,
         egress=merged_egress,
-        supervise=override.supervise,
-        nested_containers=merged_nc,
-        nested_containers_explicit=base.nested_containers_explicit or override.nested_containers_explicit,
+        supervise=_overlay_declared_bool(base, override, "supervise"),
+        nested_containers=_overlay_declared_bool(
+            base, override, "nested_containers"
+        ),
+        declared_fields=base.declared_fields | override.declared_fields,
     )
 
 
@@ -213,20 +220,17 @@ def _fold_two_bottles(
         Log=later.egress.Log,
     )
 
-    folded_nc = (
-        later.nested_containers
-        if later.nested_containers_explicit
-        else earlier.nested_containers
-    )
     return ManifestBottle(
         env=merged_env,
         agent_provider=later.agent_provider,
         git=merged_git,
         git_user=merged_git_user,
         egress=merged_egress,
-        supervise=later.supervise,
-        nested_containers=folded_nc,
-        nested_containers_explicit=earlier.nested_containers_explicit or later.nested_containers_explicit,
+        supervise=_overlay_declared_bool(earlier, later, "supervise"),
+        nested_containers=_overlay_declared_bool(
+            earlier, later, "nested_containers"
+        ),
+        declared_fields=earlier.declared_fields | later.declared_fields,
     ), merged_repos_raw
 
 
@@ -284,13 +288,9 @@ def _merge_bottles(
         if "agent_provider" in child_raw
         else parent.agent_provider
     )
-    merged_supervise = (
-        child.supervise if "supervise" in child_raw else parent.supervise
-    )
-    merged_nested_containers = (
-        child.nested_containers
-        if "nested_containers" in child_raw
-        else parent.nested_containers
+    merged_supervise = _overlay_declared_bool(parent, child, "supervise")
+    merged_nested_containers = _overlay_declared_bool(
+        parent, child, "nested_containers"
     )
     validate_egress_routes(name, merged_egress.routes)
 
@@ -302,6 +302,7 @@ def _merge_bottles(
         egress=merged_egress,
         supervise=merged_supervise,
         nested_containers=merged_nested_containers,
+        declared_fields=parent.declared_fields | child.declared_fields,
     )
 
 

@@ -68,6 +68,23 @@ class TestExtendsBasic(unittest.TestCase):
         self.assertTrue(m.bottles["base"].supervise)
         self.assertFalse(m.bottles["off"].supervise)
 
+    def test_child_overrides_nested_containers_scalar(self):
+        m = _build(
+            base={"nested_containers": True},
+            off={"extends": "base", "nested_containers": False},
+        )
+        self.assertTrue(m.bottles["base"].nested_containers)
+        self.assertFalse(m.bottles["off"].nested_containers)
+
+    def test_inherited_boolean_declaration_is_preserved(self):
+        m = _build(
+            base={"nested_containers": True, "supervise": False},
+            child={"extends": "base"},
+        )
+        child = m.bottles["child"]
+        self.assertIn("nested_containers", child.declared_fields)
+        self.assertIn("supervise", child.declared_fields)
+
     def test_parent_resolved_once_for_multiple_children(self):
         # Two children sharing one parent: both inherit; the parent
         # is resolved once + cached. (Cache behavior is internal; we
@@ -476,6 +493,26 @@ class TestExtendsMultiParent(unittest.TestCase):
             child={"extends": ["p1", "p2"]},
         )
         self.assertTrue(m.bottles["child"].supervise)
+
+    def test_later_parent_omitting_boole_preserves_earlier_values(self):
+        m = _build(
+            p1={"nested_containers": True, "supervise": False},
+            p2={"env": {"FROM_P2": "1"}},
+            child={"extends": ["p1", "p2"]},
+        )
+        child = m.bottles["child"]
+        self.assertTrue(child.nested_containers)
+        self.assertFalse(child.supervise)
+
+    def test_later_parent_explicit_boole_override_earlier_values(self):
+        m = _build(
+            p1={"nested_containers": True, "supervise": False},
+            p2={"nested_containers": False, "supervise": True},
+            child={"extends": ["p1", "p2"]},
+        )
+        child = m.bottles["child"]
+        self.assertFalse(child.nested_containers)
+        self.assertTrue(child.supervise)
 
     def test_child_supervise_overrides_all_parents(self):
         m = _build(

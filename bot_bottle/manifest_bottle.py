@@ -49,12 +49,10 @@ class ManifestBottle:
     # costs image weight, a resident service, and relaxed guest device modes
     # that the majority of bottles never need.
     nested_containers: bool = False
-    # True when nested_containers was explicitly present in the source dict.
-    # Used by the runtime merge path to distinguish "omitted → default False"
-    # from "explicitly set to False", so an explicit false in a later bottle
-    # can override an earlier true while a bottle that never mentions the key
-    # does not silently drop the capability.
-    nested_containers_explicit: bool = False
+    # Source fields retained across extends/runtime composition. Boolean
+    # defaults otherwise erase the distinction between "omitted" and an
+    # explicitly declared value (especially False).
+    declared_fields: frozenset[str] = frozenset()
 
     @classmethod
     def from_dict(cls, name: str, raw: object) -> "ManifestBottle":
@@ -145,5 +143,5 @@ class ManifestBottle:
             env=env, agent_provider=agent_provider, git=git,
             git_user=git_user, egress=egress, supervise=supervise_raw,
             nested_containers=nested_raw,
-            nested_containers_explicit="nested_containers" in d,
+            declared_fields=frozenset(d),
         )
