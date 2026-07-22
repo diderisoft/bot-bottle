@@ -173,6 +173,58 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class TestAgentSecrets(unittest.TestCase):
+    """store/get/delete for the bottled_agent_secrets table."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.db = Path(self._tmp.name) / "registry.db"
+        self.store = RegistryStore(self.db)
+        self.store.migrate()
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_store_and_get_roundtrip(self) -> None:
+        self.store.store_agent_secrets("bottle-1", {"EGRESS_TOKEN_1": "enc-val-a"})
+        got = self.store.get_agent_secrets("bottle-1")
+        self.assertEqual({"EGRESS_TOKEN_1": "enc-val-a"}, got)
+
+    def test_get_returns_empty_when_none_stored(self) -> None:
+        self.assertEqual({}, self.store.get_agent_secrets("no-such-bottle"))
+
+    def test_store_replaces_existing_rows(self) -> None:
+        self.store.store_agent_secrets("bottle-1", {"K": "old"})
+        self.store.store_agent_secrets("bottle-1", {"K": "new", "K2": "v2"})
+        got = self.store.get_agent_secrets("bottle-1")
+        self.assertEqual({"K": "new", "K2": "v2"}, got)
+
+    def test_delete_removes_secrets(self) -> None:
+        self.store.store_agent_secrets("bottle-1", {"K": "v"})
+        self.store.delete_agent_secrets("bottle-1")
+        self.assertEqual({}, self.store.get_agent_secrets("bottle-1"))
+
+    def test_delete_is_idempotent_on_missing(self) -> None:
+        self.store.delete_agent_secrets("no-such-bottle")  # must not raise
+
+    def test_secrets_are_isolated_by_bottle_id(self) -> None:
+        self.store.store_agent_secrets("bottle-1", {"K": "for-1"})
+        self.store.store_agent_secrets("bottle-2", {"K": "for-2"})
+        self.assertEqual({"K": "for-1"}, self.store.get_agent_secrets("bottle-1"))
+        self.assertEqual({"K": "for-2"}, self.store.get_agent_secrets("bottle-2"))
+
+    def test_secrets_isolated_by_type(self) -> None:
+        self.store.store_agent_secrets("bottle-1", {"K": "injected"}, secret_type="injected_env_var")
+        self.store.store_agent_secrets("bottle-1", {"K": "other"}, secret_type="other_type")
+        self.assertEqual({"K": "injected"}, self.store.get_agent_secrets("bottle-1"))
+        self.assertEqual({"K": "other"}, self.store.get_agent_secrets("bottle-1", secret_type="other_type"))
+
+    def test_secrets_persist_across_reopen(self) -> None:
+        self.store.store_agent_secrets("bottle-1", {"K": "v"})
+        reopened = RegistryStore(self.db)
+        self.assertEqual({"K": "v"}, reopened.get_agent_secrets("bottle-1"))
+
+
 class TestReapAbsent(unittest.TestCase):
     """`reap_absent` — the self-heal for rows whose bottle is gone.
 
