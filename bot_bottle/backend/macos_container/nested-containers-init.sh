@@ -178,6 +178,21 @@ if docker info >/dev/null 2>&1; then
     exit 0
 fi
 
+# The service's own environment is the last word on what a nested container
+# gets. podman's Docker-compatible API injects proxy settings from the daemon
+# environment *after* containers.conf is applied, so neither the `env` list
+# below nor `http_proxy=false` can override it — the same blind spot the
+# compat path has for `hosts_file`. Substituting here, before the service
+# starts, is therefore the only place the address actually sticks.
+#
+# Assigned via command substitution, never echoed: these carry the bottle's
+# identity token.
+for var in HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; do
+    eval "value=\${$var:-}"
+    [ -n "$value" ] || continue
+    eval "export $var=\"\${value%%$GATEWAY_NAME*}$gateway_ip\${value#*$GATEWAY_NAME}\""
+done
+
 log=/tmp/bot-bottle-nested-containers.log
 nohup podman system service --time=0 \
     "unix://$XDG_RUNTIME_DIR/podman.sock" \

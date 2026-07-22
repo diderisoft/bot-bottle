@@ -174,6 +174,18 @@ class TestInitScript(unittest.TestCase):
         self.assertIn('$2 == name { print $1; exit }', self.script)
         self.assertIn('value.replace(name, ip)', self.script)
 
+    def test_substitutes_the_address_into_the_service_environment(self) -> None:
+        """The compat API injects proxy settings from the daemon environment
+        after containers.conf is applied, so neither the env list nor
+        http_proxy=false can override it — the same blind spot it has for
+        hosts_file. Substituting before the service starts is the only place
+        the address sticks."""
+        launch = self.script[self.script.index("podman system service"):]
+        self.assertNotIn("$GATEWAY_NAME", launch)  # substitution precedes it
+        setup = self.script[:self.script.index("podman system service")]
+        self.assertIn("for var in HTTP_PROXY HTTPS_PROXY http_proxy https_proxy",
+                      setup)
+
     def test_disables_podmans_own_proxy_passthrough(self) -> None:
         """podman copies the host's proxy vars into every container by
         default, and that copy overrides the env we set — putting the
