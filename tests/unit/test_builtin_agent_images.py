@@ -21,10 +21,12 @@ class TestBuiltinAgentImages(unittest.TestCase):
                     r"(?m)^FROM node:22-trixie-slim\s*$",
                 )
 
-    def test_all_install_podman(self):
+    def test_none_install_podman(self):
+        # podman lives in the nested-containers derived layer (nested_containers.py),
+        # not in the base agent images, so bottles without the flag pay no cost.
         for dockerfile in _AGENT_DOCKERFILES:
             with self.subTest(provider=dockerfile.parent.name):
-                self.assertRegex(
+                self.assertNotRegex(
                     dockerfile.read_text(),
                     re.compile(r"(?m)^\s*podman(?:\s|\\|$)"),
                 )

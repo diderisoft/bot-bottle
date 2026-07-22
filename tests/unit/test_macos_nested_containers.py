@@ -108,7 +108,7 @@ class TestNestedContainersImage(unittest.TestCase):
             calls.append((image, context, dockerfile))
             text = Path(dockerfile).read_text(encoding="utf-8")
             self.assertIn("FROM agent:base", text)
-            self.assertIn("aardvark-dns fuse-overlayfs netavark nftables passt", text)
+            self.assertIn("aardvark-dns fuse-overlayfs netavark nftables passt podman", text)
             self.assertIn("USER node", text)
             self.assertTrue((Path(context) / "nested-containers-init.sh").is_file())
 
@@ -128,7 +128,7 @@ class TestNestedContainersImage(unittest.TestCase):
             seen.append(Path(dockerfile).read_text(encoding="utf-8"))
 
         nested_containers.build_image("agent:base", build)
-        for package in ("passt", "nftables", "aardvark-dns"):
+        for package in ("podman", "passt", "nftables", "aardvark-dns"):
             self.assertIn(package, seen[0])
 
     def test_strips_subordinate_ranges_so_podman_avoids_newuidmap(self) -> None:
