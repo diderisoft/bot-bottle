@@ -255,6 +255,8 @@ def _route_to_yaml_fields(r: Route) -> dict[str, object]:
         fields["matches"] = matches_data
     if r.git_fetch:
         fields["git"] = {"fetch": True}
+    if r.preserve_auth:
+        fields["preserve_auth"] = True
     if (
         r.outbound_detectors is not None
         or r.inbound_detectors is not None
@@ -335,6 +337,8 @@ def egress_render_routes(
             lines.append("    git:")
             if git_dict.get("fetch") is True:
                 lines.append("      fetch: true")
+        if f.get("preserve_auth") is True:
+            lines.append("    preserve_auth: true")
         if "dlp" in f:
             dlp_dict: dict[str, object] = f["dlp"]  # type: ignore
             lines.append("    dlp:")

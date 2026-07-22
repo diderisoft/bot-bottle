@@ -379,6 +379,25 @@ class TestRenderRoutes(unittest.TestCase):
         addon_routes = load_config(rendered).routes
         self.assertTrue(addon_routes[0].git_fetch)
 
+    def test_preserve_auth_round_trips_to_the_addon(self):
+        """Regression: the manifest parsed preserve_auth and the addon honored
+        it, but the renderer in between dropped it — so the flag never reached
+        the proxy and registry pulls kept failing with "unauthorized" while
+        the config looked correct everywhere it was inspected."""
+        from bot_bottle.egress_addon_core import load_config
+        b = _bottle([{"host": "registry-1.docker.io", "preserve_auth": True}])
+        routes = egress_routes_for_bottle(b)
+        rendered = egress_render_routes(routes)
+        self.assertIn("preserve_auth: true", rendered)
+        self.assertTrue(load_config(rendered).routes[0].preserve_auth)
+
+    def test_preserve_auth_omitted_when_unset(self):
+        b = _bottle([{"host": "x.example"}])
+        rendered = egress_render_routes(egress_routes_for_bottle(b))
+        self.assertNotIn("preserve_auth", rendered)
+        from bot_bottle.egress_addon_core import load_config
+        self.assertFalse(load_config(rendered).routes[0].preserve_auth)
+
     def test_log_zero_omitted_from_render(self):
         b = _bottle([{"host": "x.example"}])
         routes = egress_routes_for_bottle(b)
