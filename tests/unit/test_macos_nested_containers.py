@@ -174,12 +174,19 @@ class TestInitScript(unittest.TestCase):
         self.assertIn('$2 == name { print $1; exit }', self.script)
         self.assertIn('value.replace(name, ip)', self.script)
 
+    def test_docker_cli_proxy_config_uses_the_address(self) -> None:
+        """The Docker CLI copies ~/.docker/config.json's proxies block into
+        every container it starts. Being client-side it beats the podman
+        service, so this — not containers.conf — is what decides whether a
+        nested container can reach the proxy."""
+        block = self.script[self.script.index('"proxies"'):]
+        self.assertIn('"httpProxy": proxy.replace(name, ip)', block)
+        self.assertIn('"httpsProxy": proxy.replace(name, ip)', block)
+        self.assertIn('"noProxy": no_proxy', block)
+
     def test_substitutes_the_address_into_the_service_environment(self) -> None:
-        """The compat API injects proxy settings from the daemon environment
-        after containers.conf is applied, so neither the env list nor
-        http_proxy=false can override it — the same blind spot it has for
-        hosts_file. Substituting before the service starts is the only place
-        the address sticks."""
+        """Covers what the Docker CLI does not stamp: podman's own registry
+        pulls, and containers created through the API by another client."""
         launch = self.script[self.script.index("podman system service"):]
         self.assertNotIn("$GATEWAY_NAME", launch)  # substitution precedes it
         setup = self.script[:self.script.index("podman system service")]
@@ -196,9 +203,11 @@ class TestInitScript(unittest.TestCase):
     def test_keeps_the_gateway_name_in_no_proxy(self) -> None:
         """NO_PROXY is matched against what a client asks for, and code inside
         a nested container still says bot-bottle-gateway."""
-        no_proxy = self.script[self.script.index('for var in ("NO_PROXY"'):]
-        self.assertIn('entries.append(f"{var}={value}")', no_proxy)
-        self.assertNotIn("replace(name, ip)", no_proxy)
+        start = self.script.index('for var in ("NO_PROXY"')
+        loop = self.script[start:self.script.index("path = Path(", start)]
+        self.assertIn('entries.append(f"{var}={value}")', loop)
+        self.assertNotIn("replace(name, ip)", loop)
+        self.assertIn('"noProxy": no_proxy', self.script)
 
     def test_fails_closed_without_a_gateway_address(self) -> None:
         self.assertIn('[ -n "$gateway_ip" ] || {', self.script)

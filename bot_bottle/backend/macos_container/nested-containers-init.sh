@@ -156,16 +156,28 @@ PY
 # Registry pulls egress through the bottle's proxy like everything else. The
 # token-bearing proxy URL is already in the agent's environment; persisting it
 # inside this disposable VM does not broaden its authority.
-python3 - <<'PY'
+#
+# This file is also what the Docker CLI copies into every container it starts,
+# and being client-side it beats anything the podman service does — it is why
+# containers.conf `env`, `http_proxy=false`, and the service's own environment
+# all failed to change what a nested container saw. The address goes in here
+# for the same reason it goes everywhere else: `bot-bottle-gateway` resolves
+# in the bottle, never inside a nested container.
+GATEWAY_NAME="$GATEWAY_NAME" GATEWAY_IP="$gateway_ip" python3 - <<'PY'
 import json
 import os
 from pathlib import Path
 
+name = os.environ["GATEWAY_NAME"]
+ip = os.environ["GATEWAY_IP"]
+
 proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy", "")
+# NO_PROXY keeps the name: it is matched against what a client asks for, and
+# code inside a nested container still says "bot-bottle-gateway".
 no_proxy = os.environ.get("NO_PROXY") or os.environ.get("no_proxy", "")
 config = {"proxies": {"default": {
-    "httpProxy": proxy,
-    "httpsProxy": proxy,
+    "httpProxy": proxy.replace(name, ip),
+    "httpsProxy": proxy.replace(name, ip),
     "noProxy": no_proxy,
 }}}
 path = Path.home() / ".docker" / "config.json"
@@ -178,14 +190,13 @@ if docker info >/dev/null 2>&1; then
     exit 0
 fi
 
-# The service's own environment is the last word on what a nested container
-# gets. podman's Docker-compatible API injects proxy settings from the daemon
-# environment *after* containers.conf is applied, so neither the `env` list
-# below nor `http_proxy=false` can override it — the same blind spot the
-# compat path has for `hosts_file`. Substituting here, before the service
-# starts, is therefore the only place the address actually sticks.
+# Belt to the ~/.docker/config.json braces above, which is what actually
+# decides this for `docker run`. The service environment is what podman falls
+# back to for anything the CLI does not stamp — its own registry pulls, and
+# containers created through the API by something other than the Docker CLI.
+# Cheap, and it keeps the address consistent across both paths.
 #
-# Assigned via command substitution, never echoed: these carry the bottle's
+# Assigned via parameter expansion, never echoed: these carry the bottle's
 # identity token.
 for var in HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; do
     eval "value=\${$var:-}"
