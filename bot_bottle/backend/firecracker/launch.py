@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import shutil
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Callable, Generator
@@ -167,6 +168,10 @@ def launch(
         # Step 6: build the per-bottle rootfs + SSH key, then boot.
         run_dir = util.cache_dir() / "run" / plan.slug
         run_dir.mkdir(parents=True, exist_ok=True)
+        # Remove the run dir on teardown so the per-bottle rootfs.ext4 (~1G)
+        # doesn't leak. Registered before vm.terminate below so it runs *after*
+        # it (ExitStack is LIFO): the VM is gone before we rm its rootfs.
+        stack.callback(lambda: shutil.rmtree(run_dir, ignore_errors=True))
         rootfs = run_dir / "rootfs.ext4"
         util.build_rootfs_ext4(agent_base, rootfs)
         private_key, pubkey = util.generate_keypair(run_dir)
