@@ -26,7 +26,6 @@ RUN apt-get update \
   ca-certificates \
   curl \
   openssh-client \
-  podman \
   ripgrep \
   iproute2 \
   dnsutils \

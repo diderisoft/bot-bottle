@@ -11,7 +11,6 @@ RUN apt-get update \
   ca-certificates \
   curl \
   openssh-client \
-  podman \
   procps \
   ripgrep \
   && rm -rf /var/lib/apt/lists/*

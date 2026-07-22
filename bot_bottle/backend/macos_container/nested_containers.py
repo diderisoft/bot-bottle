@@ -19,11 +19,6 @@ what would send podman down the `newuidmap` path that cannot work here.
 The agent still talks to `docker` and `docker compose`; those speak to
 podman's Docker-compatible API socket, so nothing in the agent's habits
 changes.
-
-Nested containers run *within* the bottle boundary, not inside a new one: the
-single-UID mapping means `root` in a nested container is the agent user
-outside it.  This is for build and test workloads, not for sandboxing
-untrusted code.
 """
 
 from __future__ import annotations
@@ -65,9 +60,11 @@ def build_image(
 ) -> str:
     """Layer the nested-container tooling onto an already-built agent image.
 
-    Only what the flag is meant to gate lands here.  Podman itself is already
-    in every built-in agent image (issue #451); the storage/network helpers,
-    the Docker CLI, and the compose plugin are the ~100MB this flag buys.
+    Podman and its networking stack live here rather than in the base agent
+    images so that bottles without the flag pay no image-size cost.
+
+    # TODO(#394): replace this hand-rolled Dockerfile with a docker-layer
+    # abstraction once that infrastructure exists.
     """
     image = f"{base_image}{IMAGE_SUFFIX}"
     init_script = Path(__file__).with_name("nested-containers-init.sh")
@@ -82,9 +79,11 @@ def build_image(
             "COPY --from=docker_cli /usr/local/libexec/docker/cli-plugins/"
             "docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose\n"
             "RUN apt-get update \\\n"
-            # podman 5's networking stack, installed explicitly because the
-            # base image's `--no-install-recommends` podman does not pull it
-            # in and each piece fails at a different, misleading layer:
+            # podman 5's networking stack, installed explicitly because
+            # --no-install-recommends omits it and each missing piece fails
+            # at a different, misleading layer:
+            #   podman       -> moved here from the base agent images so that
+            #                   bottles without nested_containers pay no cost
             #   passt        -> `pasta`, the default rootless netns helper
             #                   (podman 4 used slirp4netns); without it
             #                   nothing starts: "could not find pasta"
@@ -95,7 +94,7 @@ def build_image(
             #                   looks healthy
             # slirp4netns stays as the documented fallback for pasta.
             " && apt-get install -y --no-install-recommends "
-            "aardvark-dns fuse-overlayfs netavark nftables passt "
+            "aardvark-dns fuse-overlayfs netavark nftables passt podman "
             "slirp4netns uidmap \\\n"
             " && rm -rf /var/lib/apt/lists/* \\\n"
             # Deliberate: an empty subordinate range keeps podman on the

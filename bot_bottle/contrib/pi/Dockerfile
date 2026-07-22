@@ -11,7 +11,6 @@ RUN apt-get update \
   curl \
   fd-find \
   openssh-client \
-  podman \
   ripgrep \
   && ln -s /usr/bin/fdfind /usr/local/bin/fd \
   && rm -rf /var/lib/apt/lists/*
