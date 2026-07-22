@@ -136,6 +136,10 @@ path = Path(os.environ["CONTAINERS_CONF"])
 path.write_text("\n".join([
     "[containers]",
     'cgroups="disabled"',
+    # podman copies the host's proxy vars into every container by default,
+    # and that copy *wins* over the env below — putting the unresolvable
+    # gateway name back. Turn it off so the address-bearing URLs stand.
+    "http_proxy=false",
     'hosts_file="/etc/hosts"',
     f'volumes=["{ca}:{ca}:ro"]',
     "env=[",

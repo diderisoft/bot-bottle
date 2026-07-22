@@ -174,6 +174,13 @@ class TestInitScript(unittest.TestCase):
         self.assertIn('$2 == name { print $1; exit }', self.script)
         self.assertIn('value.replace(name, ip)', self.script)
 
+    def test_disables_podmans_own_proxy_passthrough(self) -> None:
+        """podman copies the host's proxy vars into every container by
+        default, and that copy overrides the env we set — putting the
+        unresolvable gateway name back and leaving nested containers at
+        "bad address 'bot-bottle-gateway'"."""
+        self.assertIn('"http_proxy=false"', self.script)
+
     def test_keeps_the_gateway_name_in_no_proxy(self) -> None:
         """NO_PROXY is matched against what a client asks for, and code inside
         a nested container still says bot-bottle-gateway."""
