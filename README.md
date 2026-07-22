@@ -97,38 +97,65 @@ agent user outside it. Nested containers are a build/test convenience, not a
 security boundary. The bottle remains the boundary.
 
 Pulling images goes through the bottle's egress proxy like every other
-request, so each registry needs a route. Docker Hub and GHCR additionally need
-`preserve_auth: true` (their token dance uses a client-fetched per-scope bearer
-token that the proxy would otherwise strip), and large layer pulls should skip
-body scanning:
+request, so each registry needs a route — **and so does the CDN it redirects
+layer blobs to**, which is a different host. Without the CDN route the pull
+authenticates, fetches the manifest, then 403s partway through.
+
+Docker Hub and GHCR additionally need `preserve_auth: true`: their token dance
+uses a client-fetched per-scope bearer token that the proxy would otherwise
+strip. Turn DLP off on every registry and CDN route — the bodies are
+compressed layer blobs that no detector can read, and buffering them is what
+triggers the shared-proxy OOM in #455.
 
 ```yaml
 nested_containers: true
 egress:
   routes:
+    # Docker Hub: registry, token endpoint, blob CDN.
     - host: registry-1.docker.io
       preserve_auth: true
       dlp: { outbound_detectors: false, inbound_detectors: false }
     - host: auth.docker.io
       preserve_auth: true
+      dlp: { outbound_detectors: false, inbound_detectors: false }
+    - host: production.cloudfront.docker.com
+      dlp: { outbound_detectors: false, inbound_detectors: false }
+    # GHCR: registry + blob CDN.
     - host: ghcr.io
       preserve_auth: true
       dlp: { outbound_detectors: false, inbound_detectors: false }
+    - host: pkg-containers.githubusercontent.com
+      dlp: { outbound_detectors: false, inbound_detectors: false }
+    # quay.io: registry + blob CDNs. No preserve_auth needed for public pulls.
     - host: quay.io
       dlp: { outbound_detectors: false, inbound_detectors: false }
-    # Registries redirect layer blobs to a separate CDN host, which needs its
-    # own route or the pull 403s partway through.
-    - host: production.cloudfront.docker.com
-    - host: pkg-containers.githubusercontent.com
     - host: cdn01.quay.io
+      dlp: { outbound_detectors: false, inbound_detectors: false }
+    - host: cdn02.quay.io
+      dlp: { outbound_detectors: false, inbound_detectors: false }
+    - host: cdn03.quay.io
+      dlp: { outbound_detectors: false, inbound_detectors: false }
 ```
 
-Inside a nested container the same allowlist applies — an allowlisted host
-returns 200 and anything else gets a 403 from the proxy. The gateway's CA and
-proxy settings are wired in automatically, so `docker run … curl https://…`
-works with no extra flags. One caveat: Alpine's BusyBox `wget` drops the
-connection after TLS interception and reports "error getting response"; `curl`
-against the same host works, so reach for `curl` when testing egress.
+`mcr.microsoft.com` and `registry.k8s.io` follow the same shape and also
+redirect blobs elsewhere (`*.data.mcr.microsoft.com` and
+`us-*-docker.pkg.dev` respectively); route whichever host the 403 names.
+
+Inside a nested container the same allowlist applies: an allowlisted host
+returns 200 and anything else gets a 403 straight from the proxy. The
+gateway's CA bundle and proxy settings are wired in automatically, so
+`docker run … curl https://…` works with no extra flags — no `--add-host`,
+`-e`, or `-v`.
+
+Two things worth knowing when testing that:
+
+- Public DNS inside a nested container fails **by design**. Everything
+  egresses through the proxy, so `nslookup` failing is expected and is not
+  evidence of a problem.
+- Alpine's BusyBox `wget` drops the connection after the proxy's TLS
+  interception and reports `error getting response`, even though the proxy
+  logs the decrypted request and returns a response. Use `curl` to test
+  egress; BusyBox `wget` will lie to you.
 
 ### Firecracker on Linux
 
