@@ -116,7 +116,19 @@ egress:
       dlp: { outbound_detectors: false, inbound_detectors: false }
     - host: quay.io
       dlp: { outbound_detectors: false, inbound_detectors: false }
+    # Registries redirect layer blobs to a separate CDN host, which needs its
+    # own route or the pull 403s partway through.
+    - host: production.cloudfront.docker.com
+    - host: pkg-containers.githubusercontent.com
+    - host: cdn01.quay.io
 ```
+
+Inside a nested container the same allowlist applies — an allowlisted host
+returns 200 and anything else gets a 403 from the proxy. The gateway's CA and
+proxy settings are wired in automatically, so `docker run … curl https://…`
+works with no extra flags. One caveat: Alpine's BusyBox `wget` drops the
+connection after TLS interception and reports "error getting response"; `curl`
+against the same host works, so reach for `curl` when testing egress.
 
 ### Firecracker on Linux
 
