@@ -1,4 +1,5 @@
-# Run the project's test suite on every PR push and on push to main.
+# Run the project's test suite when package or runtime inputs change on a PR
+# or on push to main.
 #
 # The suite uses stdlib `unittest` discovery — no external Python
 # dependencies are required to execute it. Tests are split by directory:
@@ -23,22 +24,34 @@ on:
     branches:
       - main
     paths:
-      - '**.py'
-      - '.gitea/workflows/**.yml'
-      - 'scripts/**'
-      - 'README.md'
-      # Dockerfiles and pyproject.toml are baked into the infra rootfs; a
-      # change here alters what the integration/coverage jobs build locally.
+      - 'bot_bottle/**'
+      - 'tests/**/*.py'
+      - 'cli.py'
+      - 'scripts/coverage.sh'
+      - 'scripts/critical-modules.txt'
+      - 'scripts/diff_coverage.py'
+      - 'scripts/tracker_policy.py'
+      - 'scripts/firecracker-netpool.sh'
       - 'Dockerfile*'
       - 'pyproject.toml'
+      - 'requirements-dev.txt'
+      - '.coveragerc'
+      - '.dockerignore'
   pull_request:
     paths:
-      - '**.py'
-      - '.gitea/workflows/**.yml'
-      - 'scripts/**'
-      - 'README.md'
+      - 'bot_bottle/**'
+      - 'tests/**/*.py'
+      - 'cli.py'
+      - 'scripts/coverage.sh'
+      - 'scripts/critical-modules.txt'
+      - 'scripts/diff_coverage.py'
+      - 'scripts/tracker_policy.py'
+      - 'scripts/firecracker-netpool.sh'
       - 'Dockerfile*'
       - 'pyproject.toml'
+      - 'requirements-dev.txt'
+      - '.coveragerc'
+      - '.dockerignore'
   workflow_dispatch:
 
 jobs:
