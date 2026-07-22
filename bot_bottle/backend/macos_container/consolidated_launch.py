@@ -38,7 +38,12 @@ from ...egress import EgressPlan
 from ...git_gate import GitGatePlan
 from ...log import info
 from ...orchestrator.client import OrchestratorClient, OrchestratorClientError
-from ..consolidated_util import provision_bottle, teardown_consolidated as _teardown_util
+from ...orchestrator.reprovision import reprovision_bottles
+from ...orchestrator.secret_store import ENV_VAR_SECRET_NAME
+from ..consolidated_util import (
+    provision_bottle,
+    teardown_consolidated as _teardown_util,
+)
 from . import util as container_mod
 from .enumerate import CONTAINER_NAME_PREFIX, EnumerationError, enumerate_active
 from .gateway import GATEWAY_NETWORK
@@ -84,12 +89,35 @@ def ensure_gateway(
     needs `gateway_ip` at run time."""
     service = service or MacosInfraService()
     infra = service.ensure_running()
-    return GatewayEndpoint(
+    endpoint = GatewayEndpoint(
         orchestrator_url=infra.control_plane_url,
         gateway_ip=infra.gateway_ip,
         gateway_ca_pem=service.ca_cert_pem(),
         network=service.network,
     )
+    _reprovision_running_bottles(endpoint)
+    return endpoint
+
+
+def _reprovision_running_bottles(endpoint: GatewayEndpoint) -> None:
+    """Recover keys from live Apple containers and restore gateway tokens."""
+    try:
+        secrets_by_ip: dict[str, str] = {}
+        for agent in enumerate_active():
+            name = f"{CONTAINER_NAME_PREFIX}{agent.slug}"
+            source_ip = container_mod.inspect_container_network_ip(name, endpoint.network)
+            if not source_ip:
+                continue
+            secret = container_mod.read_container_env(name, ENV_VAR_SECRET_NAME)
+            if secret:
+                secrets_by_ip[source_ip] = secret
+        count = reprovision_bottles(
+            OrchestratorClient(endpoint.orchestrator_url), secrets_by_ip,
+        )
+        if count:
+            info(f"reprovisioned egress tokens for {count} macOS bottle(s)")
+    except (OrchestratorClientError, EnumerationError, OSError) as exc:
+        info(f"egress token reprovision skipped: {exc}")
 
 
 def live_source_ips(network: str) -> list[str]:
@@ -126,6 +154,7 @@ def register_agent(
     endpoint: GatewayEndpoint,
     image_ref: str = "",
     tokens: dict[str, str] | None = None,
+    env_var_secret: str | None = None,
 ) -> LaunchContext:
     """Register the (already running) agent by its address and provision its
     git-gate state into the gateway. `source_ip` must be read from the live
@@ -145,6 +174,7 @@ def register_agent(
     reg = provision_bottle(
         client, source_ip, egress_plan, git_gate_plan, AppleGatewayTransport(),
         image_ref=image_ref, tokens=tokens,
+        env_var_secret=env_var_secret,
     )
     return LaunchContext(
         bottle_id=reg.bottle_id,

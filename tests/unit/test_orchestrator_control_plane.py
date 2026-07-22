@@ -6,6 +6,7 @@ server tests), plus one real-socket round-trip to prove the handler wiring.
 
 from __future__ import annotations
 
+import base64
 import json
 import secrets
 import sqlite3
@@ -62,6 +63,42 @@ class TestDispatch(unittest.TestCase):
         self.assertEqual(201, status)
         self.assertTrue(payload["bottle_id"])
         self.assertTrue(payload["identity_token"])
+
+    def test_register_and_reprovision_encrypted_tokens(self) -> None:
+        key = base64.urlsafe_b64encode(b"unit-test-key").rstrip(b"=").decode()
+        status, payload = dispatch(
+            self.orch, "POST", "/bottles", _body({
+                "source_ip": "10.243.0.11",
+                "tokens": {"EGRESS_TOKEN_0": "upstream-secret"},
+                "env_var_secret": key,
+            }),
+        )
+        self.assertEqual(201, status)
+        bottle_id = payload["bottle_id"]
+        self.orch._tokens.clear()
+        status, response = dispatch(
+            self.orch, "POST", f"/bottles/{bottle_id}/reprovision_gateway",
+            _body({"env_var_secret": key}),
+        )
+        self.assertEqual((200, {"reprovisioned": True}), (status, response))
+        self.assertEqual(
+            {"EGRESS_TOKEN_0": "upstream-secret"}, self.orch.tokens_for(bottle_id),
+        )
+
+    def test_reprovision_validates_request_and_missing_rows(self) -> None:
+        status, _ = dispatch(
+            self.orch, "POST", "/bottles/b1/reprovision_gateway", b"not-json",
+        )
+        self.assertEqual(400, status)
+        status, _ = dispatch(
+            self.orch, "POST", "/bottles/b1/reprovision_gateway", _body({}),
+        )
+        self.assertEqual(400, status)
+        status, _ = dispatch(
+            self.orch, "POST", "/bottles/b1/reprovision_gateway",
+            _body({"env_var_secret": "key"}),
+        )
+        self.assertEqual(404, status)
 
     def test_register_requires_source_ip(self) -> None:
         status, _ = dispatch(self.orch, "POST", "/bottles", _body({}))

@@ -91,6 +91,7 @@ class TestTeardownWarning(unittest.TestCase):
             bottle_id="b1", identity_token="t", source_ip="172.20.0.4",
             network="bot-bottle-gateway", gateway_ip="172.20.0.2",
             orchestrator_url="http://orch:8099",
+            env_var_secret="encryption-key",
         )
 
         images = BottleImages(agent="bot-bottle-claude:latest", sidecar="bot-bottle-sidecars:latest")
@@ -107,7 +108,7 @@ class TestTeardownWarning(unittest.TestCase):
              mock.patch.object(
                  launch_mod, "write_compose_file", return_value=Path("/tmp/compose.yml"),
              ), \
-             mock.patch.object(launch_mod, "compose_up"), \
+             mock.patch.object(launch_mod, "compose_up") as compose_up, \
              mock.patch.object(launch_mod, "compose_dump_logs"), \
              mock.patch.object(
                  launch_mod, "compose_down",
@@ -122,6 +123,9 @@ class TestTeardownWarning(unittest.TestCase):
         self.assertIn("bot-bottle: warning:", output)
         self.assertIn("bot-bottle-test-teardown-abc", output)
         self.assertIn("compose-down", output)
+        self.assertEqual(
+            "encryption-key", compose_up.call_args.kwargs["env"]["ENV_VAR_SECRET"],
+        )
 
 
 if __name__ == "__main__":

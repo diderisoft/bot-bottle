@@ -55,8 +55,10 @@ from . import firecracker_vm, image_builder, isolation_probe, netpool, util
 from .bottle import FirecrackerBottle
 from .bottle_plan import FirecrackerBottlePlan
 from ...orchestrator.config_store import resolve_teardown_timeout
+from ...orchestrator.secret_store import ENV_VAR_SECRET_NAME
 from .consolidated_launch import (
     launch_consolidated,
+    persist_env_var_secret,
     teardown_consolidated,
 )
 
@@ -153,6 +155,7 @@ def launch(
             git_gate_plan=git_gate_plan,
             egress_plan=egress_plan,
             identity_token=ctx.identity_token,
+            env_var_secret=ctx.env_var_secret,
             # Deliver the identity token as egress proxy credentials — clients
             # honor `HTTPS_PROXY=http://id:token@gw` without app changes; the
             # gateway reads Proxy-Authorization, validates the (source_ip,
@@ -187,6 +190,7 @@ def launch(
         )
         stack.callback(vm.terminate)
         firecracker_vm.wait_for_ssh(vm, private_key)
+        persist_env_var_secret(private_key, slot.guest_ip, ctx.env_var_secret)
 
         # Authoritative fail-closed egress-boundary check, before the agent
         # runs: prove the VM cannot reach the host directly.
@@ -281,6 +285,8 @@ def _agent_guest_env(plan: FirecrackerBottlePlan, host_ip: str) -> dict[str, str
         env["GIT_GATE_URL"] = plan.agent_git_gate_url
     if plan.agent_supervise_url:
         env["MCP_SUPERVISE_URL"] = plan.agent_supervise_url
+    if plan.env_var_secret:
+        env[ENV_VAR_SECRET_NAME] = plan.env_var_secret
     for entry in egress_agent_env_entries(plan.egress_plan):
         key, _, value = entry.partition("=")
         env[key] = value

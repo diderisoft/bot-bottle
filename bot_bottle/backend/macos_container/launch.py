@@ -69,6 +69,7 @@ from .gateway_hosts import (
 from . import nested_containers as nested_containers_mod
 from .bottle_plan import MacosContainerBottlePlan
 from ...orchestrator.config_store import resolve_teardown_timeout
+from ...orchestrator.secret_store import ENV_VAR_SECRET_NAME, new_env_var_secret
 from .consolidated_launch import (
     GatewayEndpoint,
     ensure_gateway,
@@ -169,6 +170,7 @@ def launch(
         plan = _provision_git_gate_keys(plan)
         plan = _install_gateway_ca(plan, endpoint)
         plan = _stamp_agent_urls(plan, endpoint)
+        plan = dataclasses.replace(plan, env_var_secret=new_env_var_secret())
 
         # Step 3: run the agent. It has no identity token yet — registration
         # needs the address this run assigns.
@@ -203,6 +205,7 @@ def launch(
             endpoint=endpoint,
             image_ref=plan.image,
             tokens=token_values,
+            env_var_secret=plan.env_var_secret,
         )
         stack.callback(
             teardown_consolidated, ctx.bottle_id,
@@ -443,6 +446,8 @@ def _agent_env_entries(
         env.append(f"GIT_GATE_URL={plan.agent_git_gate_url}")
     if plan.agent_supervise_url:
         env.append(f"MCP_SUPERVISE_URL={plan.agent_supervise_url}")
+    if getattr(plan, "env_var_secret", ""):
+        env.append(f"{ENV_VAR_SECRET_NAME}={plan.env_var_secret}")
     for name, value in sorted(plan.agent_provision.guest_env.items()):
         env.append(f"{name}={value}")
     # Forwarded vars: bare name → inherits from the `container run` process env

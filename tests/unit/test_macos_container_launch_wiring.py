@@ -50,6 +50,7 @@ def _plan(
     agent_supervise_url: str = "",
     image_policy: str = "fresh",
     nested_containers: bool = False,
+    env_var_secret: str = "",
 ) -> MacosContainerBottlePlan:
     routes_path = stage_dir / "routes.yaml"
     routes_path.write_text("routes: []\n", encoding="utf-8")
@@ -82,6 +83,7 @@ def _plan(
         ),
         agent_git_gate_url=agent_git_gate_url,
         agent_supervise_url=agent_supervise_url,
+        env_var_secret=env_var_secret,
     ))
 
 
@@ -186,6 +188,12 @@ class TestAgentRunArgv(unittest.TestCase):
         self.assertEqual(
             "bot-bottle-mac-gateway", self.argv[self.argv.index("--network") + 1],
         )
+
+    def test_env_var_secret_is_in_configured_container_environment(self) -> None:
+        argv = _agent_run_argv(
+            _plan(Path(self._tmp.name), env_var_secret="key-material"), _endpoint(),
+        )
+        self.assertIn("ENV_VAR_SECRET=key-material", argv)
 
     def test_never_pins_an_ip(self) -> None:
         """Apple Container 1.0.0 has no --ip: the address is DHCP-assigned and

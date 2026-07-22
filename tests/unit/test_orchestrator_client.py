@@ -76,6 +76,27 @@ class TestTeardown(unittest.TestCase):
         self.assertEqual("DELETE", m.call_args.args[0].get_method())
 
 
+class TestReprovisionGateway(unittest.TestCase):
+    def setUp(self) -> None:
+        self.c = OrchestratorClient("http://orch:8080")
+
+    def test_success_posts_key(self) -> None:
+        with patch(_URLOPEN, return_value=_resp(200, {"reprovisioned": True})) as opened:
+            self.assertTrue(self.c.reprovision_gateway("b1", "key"))
+        request = opened.call_args.args[0]
+        self.assertEqual("POST", request.get_method())
+        self.assertEqual({"env_var_secret": "key"}, json.loads(request.data))
+
+    def test_missing_stored_secret_is_false(self) -> None:
+        with patch(_URLOPEN, side_effect=_http_error(404)):
+            self.assertFalse(self.c.reprovision_gateway("b1", "key"))
+
+    def test_other_status_raises(self) -> None:
+        with patch(_URLOPEN, side_effect=_http_error(400)):
+            with self.assertRaises(OrchestratorClientError):
+                self.c.reprovision_gateway("b1", "key")
+
+
 class TestHealthAndPolicy(unittest.TestCase):
     def setUp(self) -> None:
         self.c = OrchestratorClient("http://orch:8080")

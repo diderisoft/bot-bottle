@@ -26,6 +26,7 @@ def provision_bottle(
     *,
     image_ref: str = "",
     tokens: dict[str, str] | None = None,
+    env_var_secret: str | None = None,
 ) -> RegisteredBottle:
     """Register the bottle and provision its git-gate state. Rolls back the
     registration if provisioning fails so no orphan is left.
@@ -35,7 +36,7 @@ def provision_bottle(
     ``RegisteredBottle`` so callers can inject it into the agent container's
     environment."""
     inputs = registration_inputs(egress_plan)
-    env_var_secret = new_env_var_secret()
+    env_var_secret = env_var_secret or new_env_var_secret()
     reg = client.register_bottle(
         source_ip, image_ref=image_ref, policy=inputs.policy,
         metadata=inputs.metadata, tokens=tokens, env_var_secret=env_var_secret,

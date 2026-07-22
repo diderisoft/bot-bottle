@@ -23,6 +23,7 @@ from ...orchestrator.client import OrchestratorClient
 from ...orchestrator.gateway import GATEWAY_NETWORK
 from ...orchestrator.lifecycle import INFRA_NAME, OrchestratorService
 from ...orchestrator.secret_store import ENV_VAR_SECRET_NAME
+from ...orchestrator.reprovision import reprovision_bottles
 from ..consolidated_util import provision_bottle
 from ..consolidated_util import teardown_consolidated as _teardown_util
 from .gateway_provision import DockerGatewayTransport
@@ -102,17 +103,17 @@ def _reprovision_running_bottles(
     when the orchestrator already has all tokens loaded. Best-effort: a single
     container exec failure never blocks a new bottle launch."""
     client = OrchestratorClient(orchestrator_url)
-    bottles = client.list_bottles()
-    if not bottles:
-        return
-
     # Build {source_ip: container_name} from live containers on the gateway
     # network, excluding the infra container itself.
-    proc = run_docker([
-        "docker", "network", "inspect",
-        "--format", "{{range .Containers}}{{.Name}} {{.IPv4Address}}\n{{end}}",
-        network,
-    ])
+    try:
+        proc = run_docker([
+            "docker", "network", "inspect",
+            "--format", "{{range .Containers}}{{.Name}} {{.IPv4Address}}\n{{end}}",
+            network,
+        ])
+    except OSError as exc:
+        log.info(f"egress token reprovision skipped: {exc}")
+        return
     ip_to_container: dict[str, str] = {}
     for line in proc.stdout.splitlines():
         parts = line.strip().split()
@@ -121,26 +122,15 @@ def _reprovision_running_bottles(
             if ip:
                 ip_to_container[ip] = parts[0]
 
-    reprovisioned = 0
-    for bottle in bottles:
-        bottle_id = bottle.get("bottle_id")
-        source_ip = bottle.get("source_ip")
-        if not isinstance(bottle_id, str) or not isinstance(source_ip, str):
-            continue
-        container_name = ip_to_container.get(source_ip)
-        if not container_name:
-            continue
+    secrets_by_ip: dict[str, str] = {}
+    for source_ip, container_name in ip_to_container.items():
         proc = run_docker(
             ["docker", "exec", container_name, "printenv", ENV_VAR_SECRET_NAME]
         )
-        if proc.returncode != 0 or not proc.stdout.strip():
-            continue
-        try:
-            if client.reprovision_gateway(bottle_id, proc.stdout.strip()):
-                reprovisioned += 1
-        except Exception:  # noqa: BLE001 — best-effort, never block a launch
-            pass
+        if proc.returncode == 0 and proc.stdout.strip():
+            secrets_by_ip[source_ip] = proc.stdout.strip()
 
+    reprovisioned = reprovision_bottles(client, secrets_by_ip)
     if reprovisioned:
         log.info(
             "reprovisioned egress tokens",

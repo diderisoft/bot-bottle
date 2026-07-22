@@ -399,6 +399,9 @@ fi
 chown -R 0:0 /root 2>/dev/null || true
 
 mkdir -p /etc/dropbear /run
+# Keep restart-recovery key material memory-backed, separate from both the
+# agent rootfs and the infra VM's persistent registry volume.
+mount -t tmpfs -o mode=0755 tmpfs /run 2>/dev/null || true
 # -R: generate host keys on demand. -E: log auth failures to stderr,
 # captured in the host-side console.log for debugging.
 /bb-dropbear -R -E -p 22 &

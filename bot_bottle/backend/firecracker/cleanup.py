@@ -88,6 +88,12 @@ def _scan_processes(run_root: Path) -> tuple[set[str], list[int]]:
     return live, orphan_pids
 
 
+def live_run_dirs() -> tuple[Path, ...]:
+    """Run directories backed by currently running agent microVMs."""
+    live, _ = _scan_processes(_run_root())
+    return tuple(Path(path) for path in sorted(live))
+
+
 def _orphan_run_dirs(run_root: Path, live: set[str]) -> list[str]:
     """Run dirs with no live VM behind them — the leaked ones to remove."""
     if not run_root.is_dir():

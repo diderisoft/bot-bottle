@@ -15,6 +15,7 @@ from bot_bottle.orchestrator.broker import LaunchBroker, LaunchRequest, StubBrok
 from bot_bottle.orchestrator.registry import RegistryStore
 from bot_bottle.orchestrator.service import Orchestrator
 from bot_bottle.orchestrator.gateway import Gateway
+from bot_bottle.orchestrator.secret_store import new_env_var_secret
 from bot_bottle.store_manager import StoreManager
 from bot_bottle.supervise import (
     Proposal,
@@ -116,6 +117,25 @@ class TestOrchestrator(unittest.TestCase):
     def test_tokens_default_empty(self) -> None:
         rec = self.orch.launch_bottle("10.243.0.6")
         self.assertEqual({}, self.orch.tokens_for(rec.bottle_id))
+
+    def test_encrypted_tokens_can_be_reprovisioned_after_memory_loss(self) -> None:
+        key = new_env_var_secret()
+        rec = self.orch.launch_bottle(
+            "10.243.0.12", tokens={"EGRESS_TOKEN_0": "secret"},
+            env_var_secret=key,
+        )
+        self.assertNotEqual({}, self.store.get_agent_secrets(rec.bottle_id))
+        self.orch._tokens.clear()
+        self.assertTrue(self.orch.reprovision_from_secret(rec.bottle_id, key))
+        self.assertEqual({"EGRESS_TOKEN_0": "secret"}, self.orch.tokens_for(rec.bottle_id))
+
+    def test_reprovision_rejects_missing_rows_and_wrong_key(self) -> None:
+        self.assertFalse(self.orch.reprovision_from_secret("missing", new_env_var_secret()))
+        rec = self.orch.launch_bottle(
+            "10.243.0.13", tokens={"K": "value"},
+            env_var_secret=new_env_var_secret(),
+        )
+        self.assertFalse(self.orch.reprovision_from_secret(rec.bottle_id, new_env_var_secret()))
 
     def test_set_policy_live_reload(self) -> None:
         rec = self.orch.launch_bottle("10.243.0.3")

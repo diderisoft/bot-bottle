@@ -66,6 +66,7 @@ class TestNetpoolRenderers(unittest.TestCase):
 
         self.assertIn("chown node:node /home/node", util._GUEST_INIT)
         self.assertIn("chmod 755 /home/node", util._GUEST_INIT)
+        self.assertIn("mount -t tmpfs -o mode=0755 tmpfs /run", util._GUEST_INIT)
 
     def test_nixos_module_is_non_invasive(self):
         # The NixOS module must NOT flip the host firewall backend or

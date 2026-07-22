@@ -22,6 +22,9 @@ class FirecrackerBottlePlan(BottlePlan):
     # (egress proxy credentials, git-gate/supervise headers); set by launch
     # from the orchestrator registration. Empty pre-registration.
     identity_token: str = ""
+    # Applied to every agent SSH exec and mirrored into /run inside the VM so
+    # the host can recover it after the infra VM restarts.
+    env_var_secret: str = ""
 
     @property
     def container_name(self) -> str:

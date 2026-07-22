@@ -23,6 +23,9 @@ class MacosContainerBottlePlan(BottlePlan):
     # Guest-local container engine (issue #392). Gates the derived image, the
     # device-mode relaxation, and the resident podman service.
     nested_containers: bool = False
+    # Generated before `container run` so it becomes part of the container's
+    # configured environment and can be read back after an infra restart.
+    env_var_secret: str = ""
 
     @property
     def container_name(self) -> str:

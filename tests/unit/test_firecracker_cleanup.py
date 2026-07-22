@@ -62,6 +62,14 @@ class TestProcessScan(unittest.TestCase):
         with patch.object(fc_cleanup.subprocess, "run", return_value=_proc(returncode=1)):
             self.assertEqual((set(), []), fc_cleanup._scan_processes(Path("/x")))
 
+    def test_live_run_dirs_returns_paths_in_stable_order(self):
+        with patch.object(fc_cleanup, "_run_root", return_value=Path("/run")), \
+             patch.object(fc_cleanup, "_scan_processes",
+                          return_value=({"/run/b", "/run/a"}, [])):
+            self.assertEqual(
+                (Path("/run/a"), Path("/run/b")), fc_cleanup.live_run_dirs(),
+            )
+
     def test_orphan_run_dirs_excludes_live_and_missing_root(self):
         with tempfile.TemporaryDirectory() as tmp:
             run_root = Path(tmp)

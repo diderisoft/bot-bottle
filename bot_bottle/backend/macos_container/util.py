@@ -361,6 +361,12 @@ def exec_container(name: str, argv: list[str]) -> None:
         )
 
 
+def read_container_env(name: str, env_name: str) -> str:
+    """Read one configured env value from a running container, or ``""``."""
+    result = _run_container_op([_CONTAINER, "exec", name, "printenv", env_name])
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
 def exec_container_as_root(name: str, argv: list[str]) -> None:
     """`exec_container`, but as uid 0 inside the container.
 

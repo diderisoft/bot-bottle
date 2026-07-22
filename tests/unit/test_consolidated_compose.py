@@ -46,6 +46,15 @@ class TestConsolidatedAgentCompose(unittest.TestCase):
         # forwarded secrets are bare names (value inherited from process env).
         self.assertIn("CLAUDE_CODE_OAUTH_TOKEN", env)
 
+    def test_env_var_secret_stays_a_bare_name(self) -> None:
+        plan = _plan(with_egress=True, supervise=True, with_git=True)
+        plan = type(plan)(**{**vars(plan), "env_var_secret": "secret-value"})
+        env = consolidated_agent_compose(
+            plan, gateway_ip=_GW, source_ip=_IP, network=_NET,
+        )["services"]["agent"]["environment"]
+        self.assertIn("ENV_VAR_SECRET", env)
+        self.assertNotIn("ENV_VAR_SECRET=secret-value", env)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -68,15 +68,21 @@ class TestDecryptErrors(unittest.TestCase):
     def test_wrong_key_raises_value_error(self) -> None:
         ct = encrypt_value(self.secret, "secret-token")
         other_key = new_env_var_secret()
-        # Wrong key produces garbage bytes; decrypt_value raises ValueError
-        # when the result is non-UTF-8 (which is very likely for 12-char data).
-        # We allow it to succeed only if garbage happens to be valid UTF-8, but
-        # the plaintext must not match.
-        try:
-            result = decrypt_value(other_key, ct)
-            self.assertNotEqual("secret-token", result)
-        except ValueError:
-            pass
+        with self.assertRaisesRegex(ValueError, "authentication failed"):
+            decrypt_value(other_key, ct)
+
+    def test_modified_ciphertext_raises_value_error(self) -> None:
+        ct = encrypt_value(self.secret, "secret-token")
+        replacement = "A" if ct[-10] != "A" else "B"
+        tampered = ct[:-10] + replacement + ct[-9:]
+        with self.assertRaisesRegex(ValueError, "authentication failed"):
+            decrypt_value(self.secret, tampered)
+
+    def test_modified_tag_raises_value_error(self) -> None:
+        ct = encrypt_value(self.secret, "secret-token")
+        replacement = "A" if ct[-1] != "A" else "B"
+        with self.assertRaisesRegex(ValueError, "authentication failed"):
+            decrypt_value(self.secret, ct[:-1] + replacement)
 
     def test_truncated_blob_raises_value_error(self) -> None:
         with self.assertRaises(ValueError):
