@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@v3
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITEA_TOKEN }}
+          token: ${{ secrets.BADGE_PUSH_TOKEN }}
 
       # No actions/setup-python: the runner image ships Python 3.12 and older
       # act_runner engines mishandle setup-python's PATH. Install into the
