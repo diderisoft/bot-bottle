@@ -10,7 +10,9 @@ classmethods forward to their module.
 from __future__ import annotations
 
 import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from bot_bottle.backend.firecracker import cleanup as fc_cleanup
@@ -23,32 +25,69 @@ def _proc(stdout: str = "", returncode: int = 0) -> "subprocess.CompletedProcess
     return subprocess.CompletedProcess([], returncode, stdout=stdout, stderr="")
 
 
-class TestOrphanEnumeration(unittest.TestCase):
-    def test_orphan_vm_pids_filters_by_run_dir(self):
-        run_root = str(fc_cleanup._run_root())
-        out = (
-            f"111 firecracker --config-file {run_root}/dev-a/config.json\n"
-            "222 firecracker --config-file /somewhere/else/config.json\n"
-            "notanint firecracker --config-file " + run_root + "/x\n"
+class TestProcessScan(unittest.TestCase):
+    def test_run_dir_of_matches_only_direct_children(self):
+        run_root = Path("/cache/run")
+        self.assertEqual(
+            Path("/cache/run/dev-a"),
+            fc_cleanup._run_dir_of(
+                f"firecracker --config-file {run_root}/dev-a/config.json", run_root
+            ),
         )
-        with patch.object(fc_cleanup.subprocess, "run", return_value=_proc(out)):
-            self.assertEqual([111], fc_cleanup._orphan_vm_pids())
+        # infra/builder VMs elsewhere, or nested paths, are not ours.
+        self.assertIsNone(
+            fc_cleanup._run_dir_of("firecracker --config-file /elsewhere/config.json", run_root)
+        )
+        self.assertIsNone(
+            fc_cleanup._run_dir_of("firecracker --no-config", run_root)
+        )
 
-    def test_orphan_vm_pids_empty_when_pgrep_fails(self):
+    def test_scan_splits_live_dirs_from_orphan_pids(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run_root = Path(tmp)
+            (run_root / "live-a").mkdir()  # dir present -> live VM, protected
+            # "gone-b" dir intentionally absent -> lingering VMM, orphan pid
+            out = (
+                f"111 firecracker --config-file {run_root}/live-a/config.json\n"
+                f"222 firecracker --config-file {run_root}/gone-b/config.json\n"
+                "333 firecracker --config-file /elsewhere/config.json\n"
+                "notanint firecracker --config-file x\n"
+            )
+            with patch.object(fc_cleanup.subprocess, "run", return_value=_proc(out)):
+                live, orphan_pids = fc_cleanup._scan_processes(run_root)
+        self.assertEqual({str(run_root / "live-a")}, live)
+        self.assertEqual([222], orphan_pids)
+
+    def test_scan_empty_when_pgrep_fails(self):
         with patch.object(fc_cleanup.subprocess, "run", return_value=_proc(returncode=1)):
-            self.assertEqual([], fc_cleanup._orphan_vm_pids())
+            self.assertEqual((set(), []), fc_cleanup._scan_processes(Path("/x")))
 
-    def test_run_dirs_empty_when_absent(self):
-        with patch.object(fc_cleanup.util, "cache_dir") as cache:
-            cache.return_value.__truediv__.return_value.is_dir.return_value = False
-            self.assertEqual([], fc_cleanup._run_dirs())
+    def test_orphan_run_dirs_excludes_live_and_missing_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run_root = Path(tmp)
+            (run_root / "live-a").mkdir()
+            (run_root / "dead-b").mkdir()
+            live = {str(run_root / "live-a")}
+            self.assertEqual(
+                [str(run_root / "dead-b")],
+                fc_cleanup._orphan_run_dirs(run_root, live),
+            )
+        # absent run root -> nothing to reap
+        self.assertEqual([], fc_cleanup._orphan_run_dirs(Path("/nope/run"), set()))
 
-    def test_prepare_cleanup_assembles_plan(self):
-        with patch.object(fc_cleanup, "_orphan_vm_pids", return_value=[7]), \
-             patch.object(fc_cleanup, "_run_dirs", return_value=["/run/x"]):
-            plan = fc_cleanup.prepare_cleanup()
-        self.assertEqual((7,), plan.vm_pids)
-        self.assertEqual(("/run/x",), plan.run_dirs)
+    def test_prepare_cleanup_reaps_orphans_only(self):
+        """The live VM's dir is never in the plan; the dead one is."""
+        with tempfile.TemporaryDirectory() as tmp:
+            run_root = Path(tmp)
+            (run_root / "live-a").mkdir()
+            (run_root / "dead-b").mkdir()
+            out = f"111 firecracker --config-file {run_root}/live-a/config.json\n"
+            with patch.object(fc_cleanup, "_run_root", return_value=run_root), \
+                 patch.object(fc_cleanup.subprocess, "run", return_value=_proc(out)):
+                plan = fc_cleanup.prepare_cleanup()
+        self.assertEqual((), plan.vm_pids)
+        self.assertEqual((str(run_root / "dead-b"),), plan.run_dirs)
+        self.assertNotIn(str(run_root / "live-a"), plan.run_dirs)
 
 
 class TestCleanupRemoval(unittest.TestCase):
