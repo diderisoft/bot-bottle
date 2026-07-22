@@ -72,6 +72,7 @@ class LaunchContext:
     gateway_ip: str
     network: str
     orchestrator_url: str
+    env_var_secret: str = ""  # encryption key injected into the agent's env
 
 
 def ensure_gateway(
@@ -152,6 +153,7 @@ def register_agent(
         gateway_ip=endpoint.gateway_ip,
         network=endpoint.network,
         orchestrator_url=endpoint.orchestrator_url,
+        env_var_secret=reg.env_var_secret,
     )
 
 

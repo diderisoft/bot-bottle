@@ -87,13 +87,22 @@ class Orchestrator:
         metadata: str = "",
         policy: str = "",
         tokens: dict[str, str] | None = None,
+        env_var_secret: str = "",
     ) -> BottleRecord:
         """Register a bottle (with its gateway policy + in-memory egress auth
         tokens) and broker its launch. Rolls the registry entry back if the
-        launch doesn't take, so a failure leaves no orphan."""
+        launch doesn't take, so a failure leaves no orphan.
+
+        When *env_var_secret* is provided alongside *tokens*, the token values
+        are also encrypted and written to ``bottled_agent_secrets`` so they can
+        survive an orchestrator restart (see ``reprovision_from_secret``)."""
         rec = self.registry.register(source_ip, metadata=metadata, policy=policy)
         if tokens:
             self._tokens[rec.bottle_id] = dict(tokens)
+            if env_var_secret:
+                from .secret_store import encrypt_value
+                encrypted = {k: encrypt_value(env_var_secret, v) for k, v in tokens.items()}
+                self.registry.store_agent_secrets(rec.bottle_id, encrypted)
         req = LaunchRequest(
             op="launch",
             bottle_id=rec.bottle_id,
@@ -283,6 +292,26 @@ class Orchestrator:
                 diff=render_diff(diff_before, diff_after, label=component),
             ))
         return True, ""
+
+    # --- secret reprovision -----------------------------------------------
+
+    def reprovision_from_secret(self, bottle_id: str, env_var_secret: str) -> bool:
+        """Re-inject a bottle's egress tokens from its ENV_VAR_SECRET.
+
+        Reads the encrypted rows from ``bottled_agent_secrets``, decrypts each
+        value with *env_var_secret*, and restores ``_tokens[bottle_id]``.
+        Returns True on success, False when no stored secrets exist for this
+        bottle or decryption fails (wrong key / corrupt data)."""
+        from .secret_store import decrypt_value
+        encrypted = self.registry.get_agent_secrets(bottle_id)
+        if not encrypted:
+            return False
+        try:
+            self._tokens[bottle_id] = {k: decrypt_value(env_var_secret, v)
+                                       for k, v in encrypted.items()}
+        except ValueError:
+            return False
+        return True
 
     # --- consolidated gateway ----------------------------------------------
 

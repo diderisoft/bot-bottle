@@ -41,10 +41,13 @@ class OrchestratorClientError(RuntimeError):
 @dataclass(frozen=True)
 class RegisteredBottle:
     """What `POST /bottles` returns: the minted bottle id and the per-bottle
-    identity token the agent presents for app-layer attribution."""
+    identity token the agent presents for app-layer attribution. `env_var_secret`
+    is set by the caller (not from the server response) and carries the
+    encryption key so it can be injected into the agent container's env."""
 
     bottle_id: str
     identity_token: str
+    env_var_secret: str = ""
 
 
 class OrchestratorClient:
@@ -120,23 +123,45 @@ class OrchestratorClient:
         metadata: str = "",
         policy: str = "",
         tokens: dict[str, str] | None = None,
+        env_var_secret: str = "",
     ) -> RegisteredBottle:
         """Register a bottle and broker its launch (`POST /bottles`). `tokens`
         are the per-bottle egress auth values (env_name -> value) the
-        orchestrator holds in memory for the gateway to inject. Returns the
-        minted id + identity token."""
+        orchestrator holds in memory for the gateway to inject. When
+        *env_var_secret* is provided, the orchestrator also encrypts the token
+        values and stores them in ``bottled_agent_secrets`` for restart
+        recovery. Returns the minted id + identity token."""
         payload = self._ok("POST", "/bottles", {
             "source_ip": source_ip,
             "image_ref": image_ref,
             "metadata": metadata,
             "policy": policy,
             "tokens": tokens or {},
+            "env_var_secret": env_var_secret,
         })
         bottle_id = payload.get("bottle_id")
         token = payload.get("identity_token")
         if not isinstance(bottle_id, str) or not isinstance(token, str):
             raise OrchestratorClientError("register: response missing bottle_id/identity_token")
         return RegisteredBottle(bottle_id=bottle_id, identity_token=token)
+
+    def reprovision_gateway(self, bottle_id: str, env_var_secret: str) -> bool:
+        """Re-inject a bottle's egress tokens from its ENV_VAR_SECRET
+        (`POST /bottles/<id>/reprovision_gateway`). Returns True when the
+        orchestrator successfully decrypted and restored the tokens, False
+        when it had no stored secrets for this bottle (404)."""
+        status, _ = self._request(
+            "POST",
+            f"/bottles/{bottle_id}/reprovision_gateway",
+            {"env_var_secret": env_var_secret},
+        )
+        if status == 404:
+            return False
+        if not 200 <= status < 300:
+            raise OrchestratorClientError(
+                f"reprovision_gateway {bottle_id}: HTTP {status}"
+            )
+        return True
 
     def teardown_bottle(self, bottle_id: str) -> bool:
         """Tear a bottle down (`DELETE /bottles/<id>`). False if the

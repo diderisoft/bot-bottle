@@ -186,6 +186,7 @@ def launch(
             agent_git_gate_url=git_gate_url,
             agent_supervise_url=supervise_url,
             identity_token=ctx.identity_token,
+            env_var_secret=ctx.env_var_secret,
         )
 
         # Step 5: render + up the agent-only compose, pinned on the shared
@@ -198,7 +199,12 @@ def launch(
         project = compose_project_name(plan.slug)
         # Forwarded vars (OAuth token, host interpolations) flow through the
         # subprocess env as bare names so values never land in the file.
+        # ENV_VAR_SECRET follows the same pattern: bare name in the compose
+        # spec, value only in the subprocess env so it is never written to disk.
         compose_env: dict[str, str] = {**os.environ, **plan.forwarded_env}
+        if plan.env_var_secret:
+            from ...orchestrator.secret_store import ENV_VAR_SECRET_NAME
+            compose_env[ENV_VAR_SECRET_NAME] = plan.env_var_secret
         info(
             f"docker compose up -d  (project {project}, agent on shared "
             f"gateway {ctx.gateway_ip}, ip {ctx.source_ip})"

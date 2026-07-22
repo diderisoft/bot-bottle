@@ -113,6 +113,22 @@ _MIGRATIONS = TableMigrations(
         # egress allowlist / routes / git config selected by source IP. The
         # multi-tenant gateway resolves it per request via `attribute`.
         "ALTER TABLE orchestrator_bottles ADD COLUMN policy TEXT NOT NULL DEFAULT ''",
+        # v4 — per-bottle encrypted egress secrets (PRD prd-new-secret-provider).
+        # One row per env-var: key (env-var name) is plaintext for auditing;
+        # value is the encrypted token string. The encryption key (ENV_VAR_SECRET)
+        # lives only in the agent's environment — a row alone cannot recover the
+        # credential.
+        """
+        CREATE TABLE IF NOT EXISTS bottled_agent_secrets (
+            bottled_agent_id TEXT NOT NULL,
+            key              TEXT NOT NULL,
+            value            TEXT NOT NULL,
+            type             TEXT NOT NULL DEFAULT 'injected_env_var'
+        )
+        """,
+        # v5 — index for fast per-bottle lookups and bulk DELETE on teardown.
+        "CREATE INDEX IF NOT EXISTS idx_bottled_agent_secrets_id "
+        "ON bottled_agent_secrets (bottled_agent_id, type)",
     ],
 )
 
@@ -325,6 +341,57 @@ class RegistryStore(DbStore):
         if not hmac.compare_digest(rec.identity_token, identity_token):
             return None
         return rec
+
+    # --- encrypted egress secret store ------------------------------------
+
+    def store_agent_secrets(
+        self,
+        bottle_id: str,
+        encrypted_values: dict[str, str],
+        secret_type: str = "injected_env_var",
+    ) -> None:
+        """Replace all stored secrets for *bottle_id* with *encrypted_values*
+        (env-var name → encrypted ciphertext). Deletes then re-inserts so a
+        re-registration is always consistent with the current token set."""
+        with self._connection() as conn:
+            conn.execute(
+                "DELETE FROM bottled_agent_secrets "
+                "WHERE bottled_agent_id = ? AND type = ?",
+                (bottle_id, secret_type),
+            )
+            conn.executemany(
+                "INSERT INTO bottled_agent_secrets "
+                "(bottled_agent_id, key, value, type) VALUES (?, ?, ?, ?)",
+                [(bottle_id, k, v, secret_type) for k, v in encrypted_values.items()],
+            )
+        self._chmod()
+
+    def get_agent_secrets(
+        self,
+        bottle_id: str,
+        secret_type: str = "injected_env_var",
+    ) -> dict[str, str]:
+        """Return {env_var_name: encrypted_value} for *bottle_id*, or {} if none."""
+        with self._connection() as conn:
+            rows = conn.execute(
+                "SELECT key, value FROM bottled_agent_secrets "
+                "WHERE bottled_agent_id = ? AND type = ?",
+                (bottle_id, secret_type),
+            ).fetchall()
+        return {row[0]: row[1] for row in rows}
+
+    def delete_agent_secrets(
+        self,
+        bottle_id: str,
+        secret_type: str = "injected_env_var",
+    ) -> None:
+        """Remove all stored secrets for *bottle_id* (e.g. on teardown)."""
+        with self._connection() as conn:
+            conn.execute(
+                "DELETE FROM bottled_agent_secrets "
+                "WHERE bottled_agent_id = ? AND type = ?",
+                (bottle_id, secret_type),
+            )
 
 
 __all__ = [

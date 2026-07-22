@@ -7,10 +7,13 @@ imports it rather than re-implementing it.
 
 from __future__ import annotations
 
+import dataclasses
+
 from ..egress import EgressPlan
 from ..git_gate import GitGatePlan
-from ..orchestrator.client import OrchestratorClient
+from ..orchestrator.client import OrchestratorClient, RegisteredBottle
 from ..orchestrator.registration import registration_inputs
+from ..orchestrator.secret_store import new_env_var_secret
 from .docker.gateway_provision import GatewayTransport, deprovision_git_gate, provision_git_gate
 
 
@@ -23,21 +26,26 @@ def provision_bottle(
     *,
     image_ref: str = "",
     tokens: dict[str, str] | None = None,
-):
+) -> RegisteredBottle:
     """Register the bottle and provision its git-gate state. Rolls back the
-    registration if provisioning fails so no orphan is left. Returns the
-    `RegisteredBottle` from the orchestrator."""
+    registration if provisioning fails so no orphan is left.
+
+    Generates a fresh ENV_VAR_SECRET, passes it to the orchestrator so it can
+    encrypt the token values at rest, and stamps the secret onto the returned
+    ``RegisteredBottle`` so callers can inject it into the agent container's
+    environment."""
     inputs = registration_inputs(egress_plan)
+    env_var_secret = new_env_var_secret()
     reg = client.register_bottle(
         source_ip, image_ref=image_ref, policy=inputs.policy,
-        metadata=inputs.metadata, tokens=tokens,
+        metadata=inputs.metadata, tokens=tokens, env_var_secret=env_var_secret,
     )
     try:
         provision_git_gate(transport, reg.bottle_id, git_gate_plan)
     except Exception:
         client.teardown_bottle(reg.bottle_id)
         raise
-    return reg
+    return dataclasses.replace(reg, env_var_secret=env_var_secret)
 
 
 def teardown_consolidated(

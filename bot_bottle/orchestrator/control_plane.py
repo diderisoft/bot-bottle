@@ -9,9 +9,13 @@ vsock / unix-socket portability caveats):
     GET    /bottles                   -> 200 {"bottles": [ <redacted record>, ...]}
     POST   /bottles                   -> 201 {"bottle_id","identity_token"}  (launch)
                                          body: {"source_ip", ["image_ref"],
-                                                ["metadata"], ["policy"]}
+                                                ["metadata"], ["policy"],
+                                                ["tokens"], ["env_var_secret"]}
     PUT    /bottles/<bottle_id>/policy -> 200 {"updated": true} | 404  (live reload)
                                          body: {"policy"}
+    POST   /bottles/<bottle_id>/reprovision_gateway
+                                      -> 200 {"reprovisioned": true} | 404
+                                         body: {"env_var_secret"}
     DELETE /bottles/<bottle_id>        -> 200 {"torn_down": true} | 404  (teardown)
     POST   /reconcile                 -> 200 {"reaped": [bottle_id, ...]}
                                          body: {"live_source_ips": [...],
@@ -116,12 +120,14 @@ def dispatch(  # pylint: disable=too-many-return-statements,too-many-branches
         tokens = {
             k: v for k, v in raw_tokens.items() if isinstance(k, str) and isinstance(v, str)
         } if isinstance(raw_tokens, dict) else {}
+        env_var_secret = data.get("env_var_secret", "")
         rec = orch.launch_bottle(
             source_ip,
             image_ref=image_ref if isinstance(image_ref, str) else "",
             metadata=metadata if isinstance(metadata, str) else "",
             policy=policy if isinstance(policy, str) else "",
             tokens=tokens,
+            env_var_secret=env_var_secret if isinstance(env_var_secret, str) else "",
         )
         return 201, {"bottle_id": rec.bottle_id, "identity_token": rec.identity_token}
 
@@ -137,6 +143,23 @@ def dispatch(  # pylint: disable=too-many-return-statements,too-many-branches
         if orch.set_policy(bottle_id, policy):
             return 200, {"updated": True}
         return 404, {"error": "no such bottle"}
+
+    if (
+        method == "POST"
+        and route.startswith("/bottles/")
+        and route.endswith("/reprovision_gateway")
+    ):
+        bottle_id = route[len("/bottles/") : -len("/reprovision_gateway")]
+        try:
+            data = _parse_json_object(body)
+        except ValueError as e:
+            return 400, {"error": f"invalid JSON: {e}"}
+        env_var_secret = data.get("env_var_secret")
+        if not isinstance(env_var_secret, str) or not env_var_secret:
+            return 400, {"error": "env_var_secret (string) is required"}
+        if orch.reprovision_from_secret(bottle_id, env_var_secret):
+            return 200, {"reprovisioned": True}
+        return 404, {"error": "no stored secrets for this bottle"}
 
     if method == "DELETE" and route.startswith("/bottles/"):
         bottle_id = route[len("/bottles/"):]

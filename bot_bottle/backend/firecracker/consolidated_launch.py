@@ -50,6 +50,7 @@ class LaunchContext:
     source_ip: str          # the VM's guest IP — the attribution key
     gateway_ca_pem: str     # the shared gateway CA the provisioner installs
     orchestrator_url: str
+    env_var_secret: str = ""  # encryption key injected into the agent's env
 
 
 def launch_consolidated(
@@ -80,6 +81,7 @@ def launch_consolidated(
         source_ip=guest_ip,
         gateway_ca_pem=infra.gateway_ca_pem(),
         orchestrator_url=url,
+        env_var_secret=reg.env_var_secret,
     )
 
 

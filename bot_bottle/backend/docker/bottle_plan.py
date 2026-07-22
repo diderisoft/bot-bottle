@@ -39,6 +39,10 @@ class DockerBottlePlan(BottlePlan):
     # (egress proxy credentials, git-gate/supervise headers); set by launch
     # from the orchestrator registration. Empty pre-registration.
     identity_token: str = ""
+    # Encryption key for the agent's stored egress secrets; injected into the
+    # agent container as ENV_VAR_SECRET via the compose subprocess env (bare
+    # name — value never written to the compose file). Empty pre-registration.
+    env_var_secret: str = ""
 
     @property
     def container_name(self) -> str:

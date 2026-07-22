@@ -15,12 +15,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ... import log
 from ...docker_cmd import run_docker
 from ...egress import EgressPlan
 from ...git_gate import GitGatePlan
 from ...orchestrator.client import OrchestratorClient
 from ...orchestrator.gateway import GATEWAY_NETWORK
 from ...orchestrator.lifecycle import INFRA_NAME, OrchestratorService
+from ...orchestrator.secret_store import ENV_VAR_SECRET_NAME
 from ..consolidated_util import provision_bottle
 from ..consolidated_util import teardown_consolidated as _teardown_util
 from .gateway_provision import DockerGatewayTransport
@@ -41,6 +43,7 @@ class LaunchContext:
     network: str            # the shared gateway network to attach to
     gateway_ip: str         # the gateway's address — the agent's proxy target
     orchestrator_url: str
+    env_var_secret: str = ""  # encryption key injected into the agent's env
 
 
 def _network_cidr(network: str) -> str:
@@ -85,6 +88,66 @@ def _network_container_ips(network: str) -> list[str]:
     return ips
 
 
+def _reprovision_running_bottles(
+    orchestrator_url: str,
+    network: str = GATEWAY_NETWORK,
+    infra_name: str = INFRA_NAME,
+) -> None:
+    """Re-inject egress tokens for any registered bottles that lost their
+    in-memory tokens (e.g., after an infra container restart).
+
+    For each registered bottle whose source IP maps to a live container on the
+    gateway network, reads ENV_VAR_SECRET via ``docker exec … printenv`` and
+    calls ``POST /bottles/<id>/reprovision_gateway``. Idempotent — a no-op
+    when the orchestrator already has all tokens loaded. Best-effort: a single
+    container exec failure never blocks a new bottle launch."""
+    client = OrchestratorClient(orchestrator_url)
+    bottles = client.list_bottles()
+    if not bottles:
+        return
+
+    # Build {source_ip: container_name} from live containers on the gateway
+    # network, excluding the infra container itself.
+    proc = run_docker([
+        "docker", "network", "inspect",
+        "--format", "{{range .Containers}}{{.Name}} {{.IPv4Address}}\n{{end}}",
+        network,
+    ])
+    ip_to_container: dict[str, str] = {}
+    for line in proc.stdout.splitlines():
+        parts = line.strip().split()
+        if len(parts) >= 2 and parts[0] != infra_name:
+            ip = parts[1].split("/", 1)[0]
+            if ip:
+                ip_to_container[ip] = parts[0]
+
+    reprovisioned = 0
+    for bottle in bottles:
+        bottle_id = bottle.get("bottle_id")
+        source_ip = bottle.get("source_ip")
+        if not isinstance(bottle_id, str) or not isinstance(source_ip, str):
+            continue
+        container_name = ip_to_container.get(source_ip)
+        if not container_name:
+            continue
+        proc = run_docker(
+            ["docker", "exec", container_name, "printenv", ENV_VAR_SECRET_NAME]
+        )
+        if proc.returncode != 0 or not proc.stdout.strip():
+            continue
+        try:
+            if client.reprovision_gateway(bottle_id, proc.stdout.strip()):
+                reprovisioned += 1
+        except Exception:  # noqa: BLE001 — best-effort, never block a launch
+            pass
+
+    if reprovisioned:
+        log.info(
+            "reprovisioned egress tokens",
+            context={"count": reprovisioned},
+        )
+
+
 def launch_consolidated(
     egress_plan: EgressPlan,
     git_gate_plan: GitGatePlan,
@@ -96,9 +159,14 @@ def launch_consolidated(
     network: str = GATEWAY_NETWORK,
 ) -> LaunchContext:
     """Ensure the infra container is up, allocate + register the bottle, and
-    provision its git-gate state. Returns the agent's attach context."""
+    provision its git-gate state. Returns the agent's attach context.
+
+    Also reprovisiones egress tokens for any already-running bottles that lost
+    their in-memory credentials (e.g. after an infra container restart), so
+    they regain egress access before the new bottle is registered."""
     service = service or OrchestratorService()
     url = service.ensure_running()
+    _reprovision_running_bottles(url, network=network, infra_name=infra_name)
     client = OrchestratorClient(url)
 
     cidr = _network_cidr(network)
@@ -117,6 +185,7 @@ def launch_consolidated(
         network=network,
         gateway_ip=gateway_ip,
         orchestrator_url=url,
+        env_var_secret=reg.env_var_secret,
     )
 
 
