@@ -147,6 +147,7 @@ def egress_manifest_routes(
             inbound_detectors=r.InboundDetectors,
             outbound_on_match=r.OutboundOnMatch,
             preserve_auth=r.PreserveAuth,
+            inspect=r.Inspect,
         ))
     return tuple(out)
 
@@ -226,9 +227,13 @@ def _yaml_str_escape(s: str) -> str:
 
 def _route_to_yaml_fields(r: Route) -> dict[str, object]:
     fields: dict[str, object] = {"host": r.host}
+    if not r.inspect:
+        fields["inspect"] = False
+        return fields
+    inspect: dict[str, object] = {}
     if r.auth_scheme and r.token_env:
-        fields["auth_scheme"] = r.auth_scheme
-        fields["token_env"] = r.token_env
+        inspect["auth_scheme"] = r.auth_scheme
+        inspect["token_env"] = r.token_env
     if r.matches:
         matches_data: list[dict[str, object]] = []
         for entry in r.matches:
@@ -252,30 +257,30 @@ def _route_to_yaml_fields(r: Route) -> dict[str, object]:
                     headers_data.append(hd)
                 entry_data["headers"] = headers_data
             matches_data.append(entry_data)
-        fields["matches"] = matches_data
+        inspect["matches"] = matches_data
     if r.git_fetch:
-        fields["git"] = {"fetch": True}
+        inspect["git"] = {"fetch": True}
     if r.preserve_auth:
-        fields["preserve_auth"] = True
+        inspect["preserve_auth"] = True
     if (
         r.outbound_detectors is not None
         or r.inbound_detectors is not None
         or r.outbound_on_match
     ):
-        dlp: dict[str, object] = {}
         if r.outbound_detectors is not None:
-            dlp["outbound_detectors"] = (
+            inspect["outbound_detectors"] = (
                 False if not r.outbound_detectors
                 else list(r.outbound_detectors)
             )
         if r.inbound_detectors is not None:
-            dlp["inbound_detectors"] = (
+            inspect["inbound_detectors"] = (
                 False if not r.inbound_detectors
                 else list(r.inbound_detectors)
             )
         if r.outbound_on_match:
-            dlp["outbound_on_match"] = r.outbound_on_match
-        fields["dlp"] = dlp
+            inspect["outbound_on_match"] = r.outbound_on_match
+    if inspect:
+        fields["inspect"] = inspect
     return fields
 
 
@@ -283,30 +288,30 @@ def _render_match_entry(entry: dict[str, object]) -> list[str]:
     lines: list[str] = []
     first_key = True
     if "paths" in entry:
-        lines.append("      - paths:")
+        lines.append("        - paths:")
         first_key = False
         for pd in entry["paths"]:  # type: ignore[union-attr]
             pd_dict: dict[str, str] = pd  # type: ignore[assignment]
             if "type" in pd_dict:
-                lines.append(f'          - type: "{_yaml_str_escape(pd_dict["type"])}"')
-                lines.append(f'            value: "{_yaml_str_escape(pd_dict["value"])}"')
+                lines.append(f'            - type: "{_yaml_str_escape(pd_dict["type"])}"')
+                lines.append(f'              value: "{_yaml_str_escape(pd_dict["value"])}"')
             else:
-                lines.append(f'          - value: "{_yaml_str_escape(pd_dict["value"])}"')
+                lines.append(f'            - value: "{_yaml_str_escape(pd_dict["value"])}"')
     if "methods" in entry:
         methods_str = ", ".join(f'"{_yaml_str_escape(m)}"' for m in entry["methods"])  # type: ignore[union-attr]
-        prefix = "      - " if first_key else "        "
+        prefix = "        - " if first_key else "          "
         lines.append(f'{prefix}methods: [{methods_str}]')
         first_key = False
     if "headers" in entry:
-        prefix = "      - " if first_key else "        "
+        prefix = "        - " if first_key else "          "
         lines.append(f"{prefix}headers:")
         first_key = False
         for hd in entry["headers"]:  # type: ignore[union-attr]
             hd_dict: dict[str, str] = hd  # type: ignore[assignment]
-            lines.append(f'          - name: "{_yaml_str_escape(hd_dict["name"])}"')
-            lines.append(f'            value: "{_yaml_str_escape(hd_dict["value"])}"')
+            lines.append(f'            - name: "{_yaml_str_escape(hd_dict["name"])}"')
+            lines.append(f'              value: "{_yaml_str_escape(hd_dict["value"])}"')
     if first_key:
-        lines.append("      - {}")
+        lines.append("        - {}")
     return lines
 
 
@@ -325,24 +330,30 @@ def egress_render_routes(
     for r in routes:
         f = _route_to_yaml_fields(r)
         lines.append(f'  - host: "{_yaml_str_escape(str(f["host"]))}"')
-        if "auth_scheme" in f:
-            lines.append(f'    auth_scheme: "{_yaml_str_escape(str(f["auth_scheme"]))}"')
-            lines.append(f'    token_env: "{_yaml_str_escape(str(f["token_env"]))}"')
-        if "matches" in f:
-            lines.append("    matches:")
-            for entry in f["matches"]:  # type: ignore[union-attr]
+        if f.get("inspect") is False:
+            lines.append("    inspect: false")
+            continue
+        inspect: dict[str, object] = f.get("inspect", {})  # type: ignore[assignment]
+        if not inspect:
+            continue
+        lines.append("    inspect:")
+        if "auth_scheme" in inspect:
+            lines.append(f'      auth_scheme: "{_yaml_str_escape(str(inspect["auth_scheme"]))}"')
+            lines.append(f'      token_env: "{_yaml_str_escape(str(inspect["token_env"]))}"')
+        if "matches" in inspect:
+            lines.append("      matches:")
+            for entry in inspect["matches"]:  # type: ignore[union-attr]
                 lines.extend(_render_match_entry(entry))  # type: ignore[arg-type]
-        if "git" in f:
-            git_dict: dict[str, object] = f["git"]  # type: ignore
-            lines.append("    git:")
+        if "git" in inspect:
+            git_dict: dict[str, object] = inspect["git"]  # type: ignore
+            lines.append("      git:")
             if git_dict.get("fetch") is True:
-                lines.append("      fetch: true")
-        if f.get("preserve_auth") is True:
-            lines.append("    preserve_auth: true")
-        if "dlp" in f:
-            dlp_dict: dict[str, object] = f["dlp"]  # type: ignore
-            lines.append("    dlp:")
-            for dk, dv in dlp_dict.items():
+                lines.append("        fetch: true")
+        if inspect.get("preserve_auth") is True:
+            lines.append("      preserve_auth: true")
+        for dk in ("outbound_detectors", "inbound_detectors", "outbound_on_match"):
+            if dk in inspect:
+                dv = inspect[dk]
                 if dv is False:
                     lines.append(f"      {dk}: false")
                 elif isinstance(dv, list):

@@ -12,9 +12,30 @@ import unittest
 from bot_bottle.manifest import ManifestError, ManifestIndex
 
 
+def _inspect_routes(routes):  # type: ignore
+    out = []
+    for route in routes:
+        route = dict(route)
+        if "dlp" in route:
+            dlp = route.pop("dlp")
+            if dlp is False:
+                route["inspect"] = False
+                out.append(route)
+                continue
+            route["inspect"] = dlp
+        controls = ("matches", "auth", "git", "preserve_auth")
+        moved = {key: route.pop(key) for key in controls if key in route}
+        if moved:
+            inspected = dict(route.get("inspect", {}))
+            inspected.update(moved)
+            route["inspect"] = inspected
+        out.append(route)
+    return out
+
+
 def _bottle(routes):  # type: ignore
     return ManifestIndex.from_json_obj({
-        "bottles": {"dev": {"egress": {"routes": routes}}},
+        "bottles": {"dev": {"egress": {"routes": _inspect_routes(routes)}}},
         "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
     }).bottles["dev"]
 
@@ -24,7 +45,7 @@ def _provider_bottle(provider, routes):  # type: ignore
         "bottles": {
             "dev": {
                 "agent_provider": {"template": provider},
-                "egress": {"routes": routes},
+                "egress": {"routes": _inspect_routes(routes)},
             }
         },
         "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
@@ -337,18 +358,18 @@ class TestDlp(unittest.TestCase):
                 "bogus": True,
             }}])
 
-    def test_dlp_false_sets_passthrough(self):
-        b = _bottle([{"host": "x.example", "dlp": False}])
+    def test_inspect_false_sets_passthrough(self):
+        b = _bottle([{"host": "x.example", "inspect": False}])
         r = b.egress.routes[0]
-        self.assertTrue(r.DlpPassthrough)
+        self.assertFalse(r.Inspect)
 
-    def test_dlp_passthrough_default_false(self):
+    def test_inspect_defaults_true(self):
         b = _bottle([{"host": "x.example"}])
-        self.assertFalse(b.egress.routes[0].DlpPassthrough)
+        self.assertTrue(b.egress.routes[0].Inspect)
 
-    def test_dlp_not_dict_or_false_rejected(self):
+    def test_inspect_not_dict_or_false_rejected(self):
         with self.assertRaises(ManifestError):
-            _bottle([{"host": "x.example", "dlp": "nope"}])
+            _bottle([{"host": "x.example", "inspect": "nope"}])
 
     def test_outbound_on_match_omitted_is_empty(self):
         b = _bottle([{"host": "x.example"}])

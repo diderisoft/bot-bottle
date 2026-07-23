@@ -72,7 +72,7 @@ class ManifestEgressRoute:
     InboundDetectors: tuple[str, ...] | None = None
     OutboundOnMatch: str = ""
     PreserveAuth: bool = False
-    DlpPassthrough: bool = False
+    Inspect: bool = True
 
     @classmethod
     def from_dict(cls, bottle_name: str, idx: int, raw: object) -> "ManifestEgressRoute":
@@ -82,9 +82,17 @@ class ManifestEgressRoute:
         if not isinstance(host, str) or not host:
             raise ManifestError(f"{label} missing required string field 'host'")
 
+        inspect_raw = d.get("inspect", {})
+        if inspect_raw is False:
+            inspect = False
+            inspect_d: dict[str, object] = {}
+        else:
+            inspect = True
+            inspect_d = as_json_object(inspect_raw, f"{label} inspect")
+
         # --- matches ---
         matches: tuple[ManifestMatchEntry, ...] = ()
-        matches_raw = d.get("matches")
+        matches_raw = inspect_d.get("matches")
         if matches_raw is not None:
             if not isinstance(matches_raw, list):
                 raise ManifestError(
@@ -102,9 +110,9 @@ class ManifestEgressRoute:
         # --- auth ---
         auth_scheme = ""
         token_ref = ""
-        if "auth" in d:
-            auth_raw = d.get("auth")
-            auth_d = as_json_object(auth_raw, f"{label} auth")
+        if "auth" in inspect_d:
+            auth_raw = inspect_d.get("auth")
+            auth_d = as_json_object(auth_raw, f"{label} inspect.auth")
             if not auth_d:
                 raise ManifestError(
                     f"{label} auth is empty ({{}}); omit the 'auth' key "
@@ -164,20 +172,19 @@ class ManifestEgressRoute:
                 f"the 'role' field is reserved for future use"
             )
 
-        # --- dlp ---
+        # --- DLP settings (inspection-only) ---
         outbound_detectors: tuple[str, ...] | None = None
         inbound_detectors: tuple[str, ...] | None = None
         outbound_on_match = ""
-        dlp_passthrough = False
-        if "dlp" in d:
-            outbound_detectors, inbound_detectors, outbound_on_match, dlp_passthrough = _parse_dlp_block(
-                label, d.get("dlp"),
+        if inspect:
+            outbound_detectors, inbound_detectors, outbound_on_match = _parse_inspect_block(
+                label, inspect_d,
             )
 
         # --- git-over-HTTPS policy ---
         git_fetch = False
-        if "git" in d:
-            git_d = as_json_object(d.get("git"), f"{label} git")
+        if "git" in inspect_d:
+            git_d = as_json_object(inspect_d.get("git"), f"{label} inspect.git")
             raw_fetch = git_d.get("fetch", False)
             if isinstance(raw_fetch, bool):
                 git_fetch = raw_fetch
@@ -195,8 +202,8 @@ class ManifestEgressRoute:
 
         # --- preserve_auth ---
         preserve_auth = False
-        if "preserve_auth" in d:
-            raw_preserve_auth = d.get("preserve_auth")
+        if "preserve_auth" in inspect_d:
+            raw_preserve_auth = inspect_d.get("preserve_auth")
             if not isinstance(raw_preserve_auth, bool):
                 raise ManifestError(
                     f"{label} preserve_auth must be a boolean "
@@ -204,11 +211,22 @@ class ManifestEgressRoute:
                 )
             preserve_auth = raw_preserve_auth
 
+        for k in inspect_d:
+            if k not in (
+                "matches", "auth", "git", "preserve_auth",
+                "outbound_detectors", "inbound_detectors", "outbound_on_match",
+            ):
+                raise ManifestError(
+                    f"{label} inspect has unknown key {k!r}; accepted keys are "
+                    f"'matches', 'auth', 'git', 'preserve_auth', "
+                    f"'outbound_detectors', 'inbound_detectors', "
+                    f"'outbound_on_match'"
+                )
         for k in d:
-            if k not in ("host", "matches", "auth", "role", "dlp", "git", "preserve_auth"):
+            if k not in ("host", "role", "inspect"):
                 raise ManifestError(
                     f"{label} has unknown key {k!r}; accepted keys are "
-                    f"'host', 'matches', 'auth', 'role', 'dlp', 'git', 'preserve_auth'"
+                    f"'host', 'role', and 'inspect'"
                 )
 
         return cls(
@@ -222,7 +240,7 @@ class ManifestEgressRoute:
             InboundDetectors=inbound_detectors,
             OutboundOnMatch=outbound_on_match,
             PreserveAuth=preserve_auth,
-            DlpPassthrough=dlp_passthrough,
+            Inspect=inspect,
         )
 
 
@@ -342,18 +360,13 @@ def _parse_header_match(
     return ManifestHeaderMatch(Name=name, Value=value, Type=htype)
 
 
-def _parse_dlp_block(
+def _parse_inspect_block(
     route_label: str,
-    raw: object,
-) -> tuple[tuple[str, ...] | None, tuple[str, ...] | None, str, bool]:
-    """Parse the `dlp` value on a route.
-
-    `dlp: false` is a full bypass: no scanning, HTTPS tunnelled without
-    TLS interception. Returns (outbound, inbound, on_match, passthrough)."""
-    if raw is False:
-        return None, None, "", True
-    label = f"{route_label} dlp"
-    d = as_json_object(raw, label)
+    inspect: dict[str, object],
+) -> tuple[tuple[str, ...] | None, tuple[str, ...] | None, str]:
+    """Parse DLP settings from an inspected route."""
+    label = f"{route_label} inspect"
+    d = inspect
 
     def _parse_field(
         field: str,
@@ -396,14 +409,7 @@ def _parse_dlp_block(
             )
         on_match = on_match_raw
 
-    for k in d:
-        if k not in ("outbound_detectors", "inbound_detectors", "outbound_on_match"):
-            raise ManifestError(
-                f"{label} has unknown key {k!r}; accepted keys are "
-                f"'outbound_detectors', 'inbound_detectors', "
-                f"'outbound_on_match'"
-            )
-    return outbound, inbound, on_match, False
+    return outbound, inbound, on_match
 
 
 LOG_LEVELS = frozenset({0, 1, 2})

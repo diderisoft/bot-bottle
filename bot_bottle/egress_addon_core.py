@@ -28,7 +28,7 @@ from .egress_dlp_config import (
     ON_MATCH_SUPERVISE,
     OUTBOUND_DETECTOR_NAMES,
     OUTBOUND_ON_MATCH_VALUES,
-    parse_dlp_block,
+    parse_inspect_block,
 )
 
 
@@ -79,8 +79,8 @@ class Route:
     # "" means unset → DEFAULT_OUTBOUND_ON_MATCH. See OUTBOUND_ON_MATCH_VALUES.
     outbound_on_match: str = ""
     preserve_auth: bool = False
-    # dlp: false — skip all scanning; HTTPS flows tunnel without TLS interception.
-    dlp_passthrough: bool = False
+    # False tunnels HTTPS without TLS interception or HTTP-level controls.
+    inspect: bool = True
 
 
 LOG_OFF = 0    # no logging
@@ -261,10 +261,31 @@ def _parse_one(idx: int, raw: object) -> Route:
     host: object = raw_dict.get("host")
     if not isinstance(host, str) or not host:
         raise ValueError(f"{label}: 'host' must be a non-empty string")
+    legacy_flat = "inspect" not in raw_dict
+    inspect_raw = raw_dict.get("inspect", {})
+    if inspect_raw is False:
+        inspect = False
+        settings: dict[str, object] = {}
+    elif isinstance(inspect_raw, dict):
+        inspect = True
+        settings = (
+            {k: v for k, v in raw_dict.items() if k != "host"}
+            if legacy_flat
+            else typing.cast(dict[str, object], inspect_raw)
+        )
+        legacy_dlp = settings.pop("dlp", None)
+        if isinstance(legacy_dlp, dict):
+            settings.update(typing.cast(dict[str, object], legacy_dlp))
+        elif legacy_dlp is not None:
+            raise ValueError(
+                f"{label} ({host}): legacy 'dlp' must be an object"
+            )
+    else:
+        raise ValueError(f"{label} ({host}): 'inspect' must be false or an object")
 
     # matches
     matches: tuple[MatchEntry, ...] = ()
-    matches_raw = raw_dict.get("matches")
+    matches_raw = settings.get("matches")
     if matches_raw is not None:
         if not isinstance(matches_raw, list):
             raise ValueError(f"{label} ({host}): 'matches' must be a list")
@@ -274,8 +295,8 @@ def _parse_one(idx: int, raw: object) -> Route:
         )
 
     # auth (unchanged wire format)
-    auth_scheme: object = raw_dict.get("auth_scheme", "")
-    token_env: object = raw_dict.get("token_env", "")
+    auth_scheme: object = settings.get("auth_scheme", "")
+    token_env: object = settings.get("token_env", "")
     if not isinstance(auth_scheme, str):
         raise ValueError(f"{label} ({host}): 'auth_scheme' must be a string")
     if not isinstance(token_env, str):
@@ -289,7 +310,7 @@ def _parse_one(idx: int, raw: object) -> Route:
 
     # git-over-HTTPS policy
     git_fetch = False
-    git_raw = raw_dict.get("git")
+    git_raw = settings.get("git")
     if git_raw is not None:
         if not isinstance(git_raw, dict):
             raise ValueError(f"{label} ({host}): 'git' must be an object")
@@ -307,22 +328,30 @@ def _parse_one(idx: int, raw: object) -> Route:
                 )
 
     # dlp detectors
-    outbound_detectors, inbound_detectors, outbound_on_match, dlp_passthrough = parse_dlp_block(
-        idx, host, raw_dict,
+    outbound_detectors, inbound_detectors, outbound_on_match = parse_inspect_block(
+        idx, host, settings,
     )
 
-    preserve_auth_raw = raw_dict.get("preserve_auth", False)
+    preserve_auth_raw = settings.get("preserve_auth", False)
     if preserve_auth_raw is not True and preserve_auth_raw is not False:
         raise ValueError(
             f"{label} ({host}): 'preserve_auth' must be a boolean"
         )
     preserve_auth: bool = preserve_auth_raw
 
+    for k in settings:
+        if k not in (
+            "matches", "auth_scheme", "token_env", "git", "preserve_auth",
+            "outbound_detectors", "inbound_detectors", "outbound_on_match",
+        ):
+            raise ValueError(
+                f"{label} ({host}): inspect has unknown key {k!r}"
+            )
     for k in raw_dict:
-        if k not in ("host", "matches", "auth_scheme", "token_env", "dlp", "git", "preserve_auth"):
+        if not legacy_flat and k not in ("host", "inspect"):
             raise ValueError(
                 f"{label} ({host}): unknown key {k!r}; accepted keys "
-                f"are 'host', 'matches', 'auth_scheme', 'token_env', 'dlp', 'git', 'preserve_auth'"
+                f"are 'host' and 'inspect'"
             )
 
     return Route(
@@ -335,7 +364,7 @@ def _parse_one(idx: int, raw: object) -> Route:
         inbound_detectors=inbound_detectors,
         outbound_on_match=outbound_on_match,
         preserve_auth=preserve_auth,
-        dlp_passthrough=dlp_passthrough,
+        inspect=inspect,
     )
 
 
@@ -372,27 +401,27 @@ def route_to_yaml_dict(r: Route) -> dict[str, object]:
     proposal without translation. Fields that are empty/default are
     omitted so the agent doesn't copy irrelevant keys."""
     d: dict[str, object] = {"host": r.host}
+    if not r.inspect:
+        d["inspect"] = False
+        return d
+    inspected: dict[str, object] = {}
     if r.auth_scheme:
-        d["auth_scheme"] = r.auth_scheme
-        d["token_env"] = r.token_env
+        inspected["auth_scheme"] = r.auth_scheme
+        inspected["token_env"] = r.token_env
     if r.matches:
-        d["matches"] = [_match_entry_to_dict(m) for m in r.matches]
+        inspected["matches"] = [_match_entry_to_dict(m) for m in r.matches]
     if r.git_fetch:
-        d["git"] = {"fetch": True}
-    if r.dlp_passthrough:
-        d["dlp"] = False
-    else:
-        dlp: dict[str, object] = {}
-        if r.outbound_detectors is not None:
-            dlp["outbound_detectors"] = list(r.outbound_detectors)
-        if r.inbound_detectors is not None:
-            dlp["inbound_detectors"] = list(r.inbound_detectors)
-        if r.outbound_on_match:
-            dlp["outbound_on_match"] = r.outbound_on_match
-        if dlp:
-            d["dlp"] = dlp
+        inspected["git"] = {"fetch": True}
+    if r.outbound_detectors is not None:
+        inspected["outbound_detectors"] = list(r.outbound_detectors)
+    if r.inbound_detectors is not None:
+        inspected["inbound_detectors"] = list(r.inbound_detectors)
+    if r.outbound_on_match:
+        inspected["outbound_on_match"] = r.outbound_on_match
     if r.preserve_auth:
-        d["preserve_auth"] = True
+        inspected["preserve_auth"] = True
+    if inspected:
+        d["inspect"] = inspected
     return d
 
 
@@ -764,7 +793,7 @@ def scan_outbound(
     safe_tokens: typing.AbstractSet[str] | None = None,
     crlf_text: str | None = None,
 ) -> ScanResult | None:
-    if route.dlp_passthrough:
+    if not route.inspect:
         return None
     # Lazy import to avoid circular deps and keep dlp_detectors optional
     # at import time (the gateway copies it flat alongside this file).
@@ -863,7 +892,7 @@ def scan_inbound(
     route: Route,
     body: str | bytes,
 ) -> ScanResult | None:
-    if route.dlp_passthrough:
+    if not route.inspect:
         return None
     try:
         from dlp_detectors import scan_naive_injection  # type: ignore[import-not-found]
@@ -892,7 +921,7 @@ __all__ = [
     "DEFAULT_OUTBOUND_ON_MATCH",
     "OUTBOUND_DETECTOR_NAMES",
     "INBOUND_DETECTOR_NAMES",
-    "parse_dlp_block",
+    "parse_inspect_block",
     "Config",
     "Decision",
     "HeaderMatch",

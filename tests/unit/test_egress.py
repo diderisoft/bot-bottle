@@ -24,9 +24,30 @@ from bot_bottle.manifest import ManifestIndex
 from bot_bottle.yaml_subset import parse_yaml_subset
 
 
+def _inspect_routes(routes):  # type: ignore
+    out = []
+    for route in routes:
+        route = dict(route)
+        if "dlp" in route:
+            dlp = route.pop("dlp")
+            if dlp is False:
+                route["inspect"] = False
+                out.append(route)
+                continue
+            route["inspect"] = dlp
+        controls = ("matches", "auth", "git", "preserve_auth")
+        moved = {key: route.pop(key) for key in controls if key in route}
+        if moved:
+            inspected = dict(route.get("inspect", {}))
+            inspected.update(moved)
+            route["inspect"] = inspected
+        out.append(route)
+    return out
+
+
 def _bottle(routes):  # type: ignore
     return ManifestIndex.from_json_obj({
-        "bottles": {"dev": {"egress": {"routes": routes}}},
+        "bottles": {"dev": {"egress": {"routes": _inspect_routes(routes)}}},
         "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
     }).bottles["dev"]
 
@@ -297,9 +318,9 @@ class TestRenderRoutes(unittest.TestCase):
         parsed = self._parsed(routes)
         self.assertEqual(1, len(parsed))
         self.assertEqual("api.github.com", parsed[0]["host"])
-        self.assertEqual("Bearer", parsed[0]["auth_scheme"])
-        self.assertEqual("EGRESS_TOKEN_0", parsed[0]["token_env"])
-        self.assertIn("matches", parsed[0])
+        self.assertEqual("Bearer", parsed[0]["inspect"]["auth_scheme"])
+        self.assertEqual("EGRESS_TOKEN_0", parsed[0]["inspect"]["token_env"])
+        self.assertIn("matches", parsed[0]["inspect"])
 
     def test_unauthenticated_route_omits_auth_fields(self):
         b = _bottle([{"host": "github.com", "matches": [
@@ -307,8 +328,8 @@ class TestRenderRoutes(unittest.TestCase):
         ]}])
         routes = egress_routes_for_bottle(b)
         entry = self._parsed(routes)[0]
-        self.assertNotIn("auth_scheme", entry)
-        self.assertNotIn("token_env", entry)
+        self.assertNotIn("auth_scheme", entry["inspect"])
+        self.assertNotIn("token_env", entry["inspect"])
 
     def test_no_matches_omits_field(self):
         b = _bottle([{
@@ -316,7 +337,7 @@ class TestRenderRoutes(unittest.TestCase):
             "auth": {"scheme": "Bearer", "token_ref": "CL"},
         }])
         routes = egress_routes_for_bottle(b)
-        self.assertNotIn("matches", self._parsed(routes)[0])
+        self.assertNotIn("matches", self._parsed(routes)[0]["inspect"])
 
     def test_empty_routes_round_trips(self):
         rendered = egress_render_routes(())
@@ -375,7 +396,7 @@ class TestRenderRoutes(unittest.TestCase):
         b = _bottle([{"host": "github.com", "git": {"fetch": True}}])
         routes = egress_routes_for_bottle(b)
         rendered = egress_render_routes(routes)
-        self.assertEqual({"fetch": True}, self._parsed(routes)[0]["git"])
+        self.assertEqual({"fetch": True}, self._parsed(routes)[0]["inspect"]["git"])
         addon_routes = load_config(rendered).routes
         self.assertTrue(addon_routes[0].git_fetch)
 
@@ -488,7 +509,7 @@ class TestRenderRoutesEscaping(unittest.TestCase):
             token_env="EGRESS_TOKEN_0",
         ),)
         parsed = self._parsed(routes)
-        self.assertEqual('Bear"er', parsed[0]["auth_scheme"])
+        self.assertEqual('Bear"er', parsed[0]["inspect"]["auth_scheme"])
 
     def test_path_value_with_double_quote_round_trips(self):
         from bot_bottle.egress_addon_core import PathMatch, MatchEntry
@@ -497,7 +518,7 @@ class TestRenderRoutesEscaping(unittest.TestCase):
             matches=(MatchEntry(paths=(PathMatch(type="prefix", value='/v1/"quoted"/'),)),),
         ),)
         parsed = self._parsed(routes)
-        self.assertEqual('/v1/"quoted"/', parsed[0]["matches"][0]["paths"][0]["value"])
+        self.assertEqual('/v1/"quoted"/', parsed[0]["inspect"]["matches"][0]["paths"][0]["value"])
 
     def test_header_value_with_double_quote_round_trips(self):
         from bot_bottle.egress_addon_core import HeaderMatch, MatchEntry
@@ -506,7 +527,7 @@ class TestRenderRoutesEscaping(unittest.TestCase):
             matches=(MatchEntry(headers=(HeaderMatch(name="x-h", value='val"ue'),)),),
         ),)
         parsed = self._parsed(routes)
-        self.assertEqual('val"ue', parsed[0]["matches"][0]["headers"][0]["value"])
+        self.assertEqual('val"ue', parsed[0]["inspect"]["matches"][0]["headers"][0]["value"])
 
 
 class TestResolveTokenValues(unittest.TestCase):

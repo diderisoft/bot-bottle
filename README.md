@@ -205,14 +205,14 @@ git:
 egress:
   routes:
     - host: gitea.dideric.is
-      auth:
-        scheme: token        # Bearer | token
-        token_ref: BOT_BOTTLE_GITEA_TOKEN
-      matches:               # optional — restrict to specific paths/methods/headers
-        - paths:
-            - {type: prefix, value: /api/v1/}
-          methods: [GET, POST, PATCH, DELETE]
-      dlp:                   # optional — per-route detector overrides (default: all on)
+      inspect:
+        auth:
+          scheme: token        # Bearer | token
+          token_ref: BOT_BOTTLE_GITEA_TOKEN
+        matches:               # optional — restrict to specific paths/methods/headers
+          - paths:
+              - {type: prefix, value: /api/v1/}
+            methods: [GET, POST, PATCH, DELETE]
         outbound_detectors: [token_patterns, known_secrets]
         inbound_detectors: false   # disable response scanning for this host
 ---

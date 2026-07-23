@@ -126,7 +126,7 @@ class EgressAddon:
         # `Proxy-Authorization` (HTTPS tunnels don't repeat it on the bumped
         # inner requests). Keyed by client_conn.id; cleared on disconnect.
         self._conn_tokens: dict[str, str] = {}
-        # Connections whose route carries `dlp: false` — mitmproxy tunnels
+        # Connections whose route carries `inspect: false` — mitmproxy tunnels
         # these without TLS interception so the client sees the server's real
         # cert. Keyed by client_conn.id; cleared on disconnect.
         self._passthrough_conns: set[str] = set()
@@ -312,7 +312,7 @@ class EgressAddon:
         bumped requests won't carry `Proxy-Authorization`), keyed by client
         connection, and strip it so it never reaches upstream.
 
-        For `dlp: false` routes, also resolve the policy here to make the
+        For `inspect: false` routes, also resolve the policy here to make the
         allowlist decision before the TLS handshake: the tunnel is either
         blocked immediately or marked for passthrough in `_passthrough_conns`
         so `tls_clienthello` skips interception."""
@@ -333,7 +333,7 @@ class EgressAddon:
         self._stash_flow_ctx(flow, config, slug, env)
         host = flow.request.pretty_host
         route = match_route(config.routes, host)
-        if route is not None and route.dlp_passthrough:
+        if route is not None and not route.inspect:
             decision = decide(config.routes, host, "/", env, deny_reason=config.deny_reason)
             if decision.action == "block":
                 flow.response = http.Response.make(
@@ -346,7 +346,7 @@ class EgressAddon:
                 self._passthrough_conns.add(conn_id)
 
     def tls_clienthello(self, client_hello: typing.Any) -> None:
-        """Skip TLS interception for `dlp: false` routes so the client sees
+        """Skip TLS interception for `inspect: false` routes so the client sees
         the server's real certificate rather than the MITM CA's leaf."""
         conn_id = getattr(client_hello.context.client, "id", "")
         if conn_id in self._passthrough_conns:
@@ -383,10 +383,10 @@ class EgressAddon:
         # DLP outbound scan BEFORE stripping auth — catches tokens the
         # agent tried to smuggle in any header, path, query param, or body.
         # Hostname is included to catch DNS-tunnelling exfiltration attempts.
-        # `dlp: false` routes skip scanning entirely (TLS is also not
+        # `inspect: false` routes skip scanning entirely (TLS is also not
         # intercepted for HTTPS, so this branch only fires for plain HTTP).
         route = match_route(config.routes, flow.request.pretty_host)
-        if route is not None and not route.dlp_passthrough:
+        if route is not None and route.inspect:
             if not await self._handle_outbound_dlp(flow, route, slug, env):
                 return
             # The redact policy may have rewritten the request line; recompute
@@ -656,7 +656,7 @@ class EgressAddon:
         bottle's resolved config (`request()` stashed it — see `_flow_ctx`)."""
         config, _slug, env = self._flow_ctx(flow)
         route = match_route(config.routes, flow.request.pretty_host)
-        if route is None or route.dlp_passthrough:
+        if route is None or not route.inspect:
             return
         if flow.response is None:
             return
@@ -702,7 +702,7 @@ class EgressAddon:
             return
         config, slug, env = self._flow_ctx(flow)
         route = match_route(config.routes, flow.request.pretty_host)
-        if route is None or route.dlp_passthrough:
+        if route is None or not route.inspect:
             return
         message = flow.websocket.messages[-1]  # type: ignore[union-attr]
         content = message.content.decode("utf-8", errors="replace")

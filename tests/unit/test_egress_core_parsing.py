@@ -22,7 +22,25 @@ from bot_bottle.egress_addon_core import (
 
 
 def _route(d: dict[str, object]) -> Route:
+    d = _inspect_shape(d)
     return parse_routes({"routes": [d]})[0]
+
+def _inspect_shape(d: dict[str, object]) -> dict[str, object]:
+    """Keep legacy test cases compact while exercising the new wire shape."""
+    out = dict(d)
+    if "dlp" in out:
+        dlp = out.pop("dlp")
+        if dlp is False:
+            out["inspect"] = False
+            return out
+        out["inspect"] = dlp
+    controls = ("matches", "auth_scheme", "token_env", "git", "preserve_auth")
+    moved = {key: out.pop(key) for key in controls if key in out}
+    if moved:
+        inspected = dict(out.get("inspect", {}))  # type: ignore[arg-type]
+        inspected.update(moved)
+        out["inspect"] = inspected
+    return out
 
 
 class TestRouteValidationErrors(unittest.TestCase):
@@ -173,17 +191,17 @@ class TestRouteValidAccepts(unittest.TestCase):
         r = _route({"host": "h", "dlp": {"outbound_detectors": False}})
         self.assertEqual((), r.outbound_detectors)
 
-    def test_dlp_false_sets_passthrough(self) -> None:
-        r = _route({"host": "h", "dlp": False})
-        self.assertTrue(r.dlp_passthrough)
+    def test_inspect_false_sets_passthrough(self) -> None:
+        r = _route({"host": "h", "inspect": False})
+        self.assertFalse(r.inspect)
 
-    def test_dlp_false_passthrough_default_is_false(self) -> None:
+    def test_inspect_defaults_true(self) -> None:
         r = _route({"host": "h"})
-        self.assertFalse(r.dlp_passthrough)
+        self.assertTrue(r.inspect)
 
-    def test_dlp_not_a_dict_or_false_rejected(self) -> None:
+    def test_inspect_not_a_dict_or_false_rejected(self) -> None:
         with self.assertRaises(ValueError):
-            _route({"host": "h", "dlp": "no"})
+            _route({"host": "h", "inspect": "no"})
 
 
 class TestParseConfig(unittest.TestCase):
@@ -210,12 +228,12 @@ class TestRouteToYamlDict(unittest.TestCase):
 
     def test_auth_fields(self) -> None:
         d = route_to_yaml_dict(Route(host="h", auth_scheme="Bearer", token_env="T"))
-        self.assertEqual("Bearer", d["auth_scheme"])
-        self.assertEqual("T", d["token_env"])
+        self.assertEqual("Bearer", d["inspect"]["auth_scheme"])  # type: ignore[index]
+        self.assertEqual("T", d["inspect"]["token_env"])  # type: ignore[index]
 
     def test_git_fetch(self) -> None:
         d = route_to_yaml_dict(Route(host="h", git_fetch=True))
-        self.assertEqual({"fetch": True}, d["git"])
+        self.assertEqual({"fetch": True}, d["inspect"]["git"])  # type: ignore[index]
 
     def test_dlp_fields(self) -> None:
         d = route_to_yaml_dict(Route(
@@ -230,16 +248,16 @@ class TestRouteToYamlDict(unittest.TestCase):
                 "inbound_detectors": ["naive_injection_detection"],
                 "outbound_on_match": "redact",
             },
-            d["dlp"],
+            d["inspect"],
         )
 
-    def test_dlp_passthrough_serializes_as_false(self) -> None:
-        d = route_to_yaml_dict(Route(host="h", dlp_passthrough=True))
-        self.assertIs(False, d["dlp"])
+    def test_inspect_false_serializes_as_false(self) -> None:
+        d = route_to_yaml_dict(Route(host="h", inspect=False))
+        self.assertIs(False, d["inspect"])
 
-    def test_dlp_passthrough_roundtrip(self) -> None:
-        r = _route({"host": "h", "dlp": False})
-        self.assertIs(False, route_to_yaml_dict(r)["dlp"])
+    def test_inspect_false_roundtrip(self) -> None:
+        r = _route({"host": "h", "inspect": False})
+        self.assertIs(False, route_to_yaml_dict(r)["inspect"])
 
     def test_matches_serialization_omits_defaults(self) -> None:
         route = Route(host="h", matches=(MatchEntry(
@@ -254,7 +272,7 @@ class TestRouteToYamlDict(unittest.TestCase):
             ),
         ),))
         d = route_to_yaml_dict(route)
-        matches = d["matches"]
+        matches = d["inspect"]["matches"]  # type: ignore[index]
         assert isinstance(matches, list)
         entry = matches[0]
         self.assertEqual(

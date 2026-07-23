@@ -1021,7 +1021,7 @@ class TestMultiTenantInboundDlp(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# dlp: false — TLS passthrough and scan bypass
+# inspect: false — TLS passthrough and scan bypass
 # ---------------------------------------------------------------------------
 
 
@@ -1047,7 +1047,7 @@ class _ClientHelloData:
 
 class TestDlpPassthrough(unittest.TestCase):
     def _passthrough_addon(self) -> EgressAddon:
-        route = Route(host="registry-1.docker.io", dlp_passthrough=True)
+        route = Route(host="registry-1.docker.io", inspect=False)
         return _addon(Config(routes=(route,)))
 
     def test_http_connect_marks_passthrough_conn(self) -> None:
@@ -1058,7 +1058,7 @@ class TestDlpPassthrough(unittest.TestCase):
         self.assertIsNone(flow.response)  # not blocked
 
     def test_http_connect_non_passthrough_not_marked(self) -> None:
-        route = Route(host="api.example.com")  # no dlp_passthrough
+        route = Route(host="api.example.com")
         addon = _addon(Config(routes=(route,)))
         flow = _connect_flow("api.example.com", conn_id="c2")
         addon.http_connect(flow)  # type: ignore[arg-type]
@@ -1097,8 +1097,8 @@ class TestDlpPassthrough(unittest.TestCase):
         self.assertNotIn("c5", addon._passthrough_conns)
 
     def test_request_skips_outbound_dlp_for_passthrough_route(self) -> None:
-        # Even with a token in the body, dlp: false skips all scanning.
-        route = Route(host="registry-1.docker.io", dlp_passthrough=True)
+        # Even with a token in the body, inspect: false skips all scanning.
+        route = Route(host="registry-1.docker.io", inspect=False)
         addon = _addon(Config(routes=(route,)))
         flow = _Flow(_Request(
             host="registry-1.docker.io",
@@ -1109,7 +1109,7 @@ class TestDlpPassthrough(unittest.TestCase):
         self.assertIsNone(flow.response)  # forwarded, not blocked
 
     def test_response_skips_inbound_scan_for_passthrough_route(self) -> None:
-        route = Route(host="registry-1.docker.io", dlp_passthrough=True)
+        route = Route(host="registry-1.docker.io", inspect=False)
         config = Config(routes=(route,))
         addon = _addon(config)
         flow = _stash(

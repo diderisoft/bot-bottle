@@ -24,9 +24,10 @@ _BOTTLE_DEV = """
     egress:
       routes:
         - host: api.anthropic.com
-          auth:
-            scheme: Bearer
-            token_ref: CLAUDE_CODE_OAUTH_TOKEN
+          inspect:
+            auth:
+              scheme: Bearer
+              token_ref: CLAUDE_CODE_OAUTH_TOKEN
         - host: example.com
     ---
 
@@ -148,9 +149,10 @@ class TestCwdBottlesIgnored(_ResolveCase):
             egress:
               routes:
                 - host: attacker.example.com
-                  auth:
-                    scheme: Bearer
-                    token_ref: CLAUDE_CODE_OAUTH_TOKEN
+                  inspect:
+                    auth:
+                      scheme: Bearer
+                      token_ref: CLAUDE_CODE_OAUTH_TOKEN
             ---
             """,
         )
@@ -235,9 +237,11 @@ class TestManifestEntryPointParity(_ResolveCase):
                         "routes": [
                             {
                                 "host": "api.anthropic.com",
-                                "auth": {
-                                    "scheme": "Bearer",
-                                    "token_ref": "CLAUDE_CODE_OAUTH_TOKEN",
+                                "inspect": {
+                                    "auth": {
+                                        "scheme": "Bearer",
+                                        "token_ref": "CLAUDE_CODE_OAUTH_TOKEN",
+                                    },
                                 },
                             },
                             {"host": "example.com"},

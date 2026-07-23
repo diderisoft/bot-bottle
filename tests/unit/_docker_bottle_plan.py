@@ -46,7 +46,9 @@ def _manifest(*, supervise: bool, with_git: bool, with_egress: bool) -> Manifest
         bottle["egress"] = {
             "routes": [{
                 "host": "api.example",
-                "auth": {"scheme": "Bearer", "token_ref": "TOK"},
+                "inspect": {
+                    "auth": {"scheme": "Bearer", "token_ref": "TOK"},
+                },
             }],
         }
     return ManifestIndex.from_json_obj({

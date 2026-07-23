@@ -1,6 +1,6 @@
-"""DLP detector-config parsing for egress routes (PRD 0053, PRD 0062).
+"""Inspection and DLP configuration parsing for egress routes.
 
-A route's optional `dlp:` block names which outbound/inbound detectors run
+A route's optional `inspect:` object names which outbound/inbound detectors run
 and what the proxy does when an outbound detector matches a token
 (`outbound_on_match`). This module owns parsing and validating that block,
 kept apart from the request-time scan/decision flow in `egress_addon_core`
@@ -26,25 +26,14 @@ OUTBOUND_ON_MATCH_VALUES = (ON_MATCH_BLOCK, ON_MATCH_REDACT, ON_MATCH_SUPERVISE)
 DEFAULT_OUTBOUND_ON_MATCH = ON_MATCH_SUPERVISE
 
 
-def parse_dlp_block(
+def parse_inspect_block(
     idx: int,
     host: str,
-    raw_dict: dict[str, object],
-) -> tuple[tuple[str, ...] | None, tuple[str, ...] | None, str, bool]:
-    """Parse the optional `dlp` block on a route, returning
-    (outbound_detectors, inbound_detectors, outbound_on_match, passthrough).
-
-    `dlp: false` sets passthrough=True: all scanning is skipped and HTTPS
-    connections are tunnelled without TLS interception."""
-    dlp_raw = raw_dict.get("dlp")
-    if dlp_raw is None:
-        return None, None, "", False
+    inspect: dict[str, object],
+) -> tuple[tuple[str, ...] | None, tuple[str, ...] | None, str]:
+    """Parse DLP settings from an inspected route."""
     label = f"route[{idx}] ({host})"
-    if dlp_raw is False:
-        return None, None, "", True
-    if not isinstance(dlp_raw, dict):
-        raise ValueError(f"{label}: 'dlp' must be false or an object")
-    dlp = typing.cast(dict[str, object], dlp_raw)
+    dlp = inspect
 
     def _parse_detector_field(
         field: str,
@@ -57,18 +46,18 @@ def parse_dlp_block(
             return ()
         if not isinstance(val, list):
             raise ValueError(
-                f"{label}: dlp.{field} must be false, a list, or omitted"
+                f"{label}: inspect.{field} must be false, a list, or omitted"
             )
         items = typing.cast(list[object], val)
         names: list[str] = []
         for j, item in enumerate(items):
             if not isinstance(item, str):
                 raise ValueError(
-                    f"{label}: dlp.{field}[{j}] must be a string"
+                    f"{label}: inspect.{field}[{j}] must be a string"
                 )
             if item not in valid_names:
                 raise ValueError(
-                    f"{label}: dlp.{field}[{j}] {item!r} is not a valid "
+                    f"{label}: inspect.{field}[{j}] {item!r} is not a valid "
                     f"detector name; valid names: {', '.join(sorted(valid_names))}"
                 )
             names.append(item)
@@ -82,16 +71,9 @@ def parse_dlp_block(
     if on_match_raw is not None:
         if not isinstance(on_match_raw, str) or on_match_raw not in OUTBOUND_ON_MATCH_VALUES:
             raise ValueError(
-                f"{label}: dlp.outbound_on_match must be one of "
+                f"{label}: inspect.outbound_on_match must be one of "
                 f"{', '.join(OUTBOUND_ON_MATCH_VALUES)} (got {on_match_raw!r})"
             )
         on_match = on_match_raw
 
-    for k in dlp:
-        if k not in ("outbound_detectors", "inbound_detectors", "outbound_on_match"):
-            raise ValueError(
-                f"{label}: dlp has unknown key {k!r}; accepted keys "
-                f"are 'outbound_detectors', 'inbound_detectors', "
-                f"'outbound_on_match'"
-            )
-    return outbound, inbound, on_match, False
+    return outbound, inbound, on_match
