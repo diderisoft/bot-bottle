@@ -37,7 +37,9 @@ def _inspect_shape(d: dict[str, object]) -> dict[str, object]:
     controls = ("matches", "auth_scheme", "token_env", "git", "preserve_auth")
     moved = {key: out.pop(key) for key in controls if key in out}
     if moved:
-        inspected = dict(out.get("inspect", {}))  # type: ignore[arg-type]
+        inspected: dict[str, object] = dict(
+            out.get("inspect", {})  # type: ignore[arg-type]
+        )
         inspected.update(moved)
         out["inspect"] = inspected
     return out
