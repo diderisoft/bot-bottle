@@ -324,12 +324,13 @@ class EgressAddon:
         if conn_id:
             self._conn_tokens[conn_id] = token
 
-        # Resolve once to check if this host is a dlp: false route. For
-        # non-passthrough hosts nothing changes — the allowlist check happens
-        # in request() as normal. For passthrough hosts we must decide here
-        # because the inner requests never reach request() after the bypass.
+        # Resolve the policy here for all HTTPS connections and stash it so
+        # request() reuses it without a second orchestrator round-trip.  For
+        # passthrough hosts we also make the allowlist decision now because
+        # inner requests never reach request() after the TLS bypass.
         client_ip = conn.peername[0] if conn is not None and conn.peername else ""
-        config, _slug, env = resolve_client_context(self._resolver, client_ip, token)
+        config, slug, env = resolve_client_context(self._resolver, client_ip, token)
+        self._stash_flow_ctx(flow, config, slug, env)
         host = flow.request.pretty_host
         route = match_route(config.routes, host)
         if route is not None and route.dlp_passthrough:
@@ -361,10 +362,16 @@ class EgressAddon:
     async def request(self, flow: http.HTTPFlow) -> None:
         request_path, _, query = flow.request.path.partition("?")
 
-        config, slug, env = self._resolve_flow(flow)
-        # Stash for the response / websocket hooks so their DLP scans reuse this
-        # bottle's resolved policy (one /resolve per flow — see _flow_ctx).
-        self._stash_flow_ctx(flow, config, slug, env)
+        # Reuse the context stashed by http_connect for HTTPS flows (one
+        # orchestrator round-trip per connection). Plain-HTTP flows have no
+        # prior CONNECT stash, so resolve now and stash for response/websocket.
+        meta = getattr(flow, "metadata", None)
+        if isinstance(meta, dict) and _FLOW_CTX_KEY in meta:
+            config, slug, env = meta[_FLOW_CTX_KEY]
+            self._request_token(flow)  # strip identity headers; token already resolved
+        else:
+            config, slug, env = self._resolve_flow(flow)
+            self._stash_flow_ctx(flow, config, slug, env)
 
         # Introspection ("_egress.local/allowlist") reports the calling bottle's
         # own resolved routes — served after resolution so it reflects this
