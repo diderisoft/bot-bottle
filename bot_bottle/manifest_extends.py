@@ -57,7 +57,7 @@ def _merge_two_bottles_runtime(base: "ManifestBottle", override: "ManifestBottle
         n for n in override_repos_by_name if n not in base_repos_by_name
     ]
     merged_git = tuple(
-        override_repos_by_name.get(n, base_repos_by_name[n])
+        override_repos_by_name[n] if n in override_repos_by_name else base_repos_by_name[n]
         for n in merged_repos_names
     )
 
