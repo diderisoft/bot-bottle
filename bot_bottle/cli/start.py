@@ -14,6 +14,7 @@ the private orchestrator `_launch_bottle`.
 from __future__ import annotations
 
 import argparse
+import io
 import os
 import shutil
 import sys
@@ -195,7 +196,11 @@ def _start_headless(
     path, so the agent still execs on the inherited stdio/PTY — an
     orchestrator allocates that PTY and relays it to its
     desktop/mobile clients."""
-    if not os.isatty(sys.stdin.fileno()):
+    try:
+        stdin_fd = sys.stdin.fileno()
+    except io.UnsupportedOperation:
+        stdin_fd = -1
+    if not os.isatty(stdin_fd):
         die(
             "--headless requires a PTY on stdin; run via:\n"
             "  script -q /dev/null ./cli.py start ..."

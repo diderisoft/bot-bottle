@@ -69,6 +69,9 @@ class TestCmdStartHeadless(unittest.TestCase):
         self._modal = patch.object(tui_mod, "name_color_modal").start()
         patch.dict(os.environ, {}, clear=False).start()
         os.environ.pop("BOT_BOTTLE_BACKEND", None)
+        # PTY check uses os.isatty(sys.stdin.fileno()); stub both so
+        # headless unit tests aren't blocked on a real TTY.
+        patch("bot_bottle.cli.start.os.isatty", return_value=True).start()
         self.addCleanup(patch.stopall)
 
     def _spec(self):
