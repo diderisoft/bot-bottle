@@ -162,16 +162,17 @@ class TestSupervisor(unittest.TestCase):
         return sup.exit_code()
 
     def test_all_children_succeed_returns_zero(self):
-        # `sh -c :` exits 0 immediately. With the new failure
-        # policy a child dying doesn't trigger shutdown, so the
-        # loop only converges once BOTH have exited on their own.
-        # Both exit 0 → max(0, 0) = 0.
+        # `sh -c :` exits 0 immediately. Start shutdown before driving
+        # the loop so the intentionally short-lived fixtures are not
+        # treated as unexpected deaths and restarted.
         specs = [
             _DaemonSpec("a", ("/bin/sh", "-c", ":")),
             _DaemonSpec("b", ("/bin/sh", "-c", ":")),
         ]
         sup = _Supervisor(specs)
         sup.start_all()
+        time.sleep(0.1)
+        sup.request_shutdown(reason="test")
         rc = self._drive(sup)
         self.assertEqual(0, rc)
 
@@ -208,6 +209,23 @@ class TestSupervisor(unittest.TestCase):
         sup.request_shutdown(reason="test-teardown")
         self._drive(sup)
 
+    def test_single_daemon_crash_is_restarted_before_tick_completes(self):
+        specs = [_DaemonSpec("crasher", ("/bin/sh", "-c", "exit 1"))]
+        sup = _Supervisor(specs)
+        sup.start_all()
+        original_pid = sup.procs[0][1].pid
+        time.sleep(0.1)
+
+        done = sup.tick()
+
+        self.assertFalse(done)
+        self.assertNotEqual(original_pid, sup.procs[0][1].pid)
+        self.assertEqual(set(), sup._restart_requested)
+        self.assertIsNone(sup.shutdown_at)
+
+        sup.request_shutdown(reason="test-teardown")
+        self._drive(sup)
+
     def test_crash_then_signal_surfaces_nonzero_exit_code(self):
         # The crasher's exit code is what reaches the container
         # exit even though shutdown was triggered by SIGTERM.
@@ -224,19 +242,24 @@ class TestSupervisor(unittest.TestCase):
         rc = self._drive(sup)
         self.assertEqual(1, rc)
 
-    def test_all_children_die_unattended_loop_converges(self):
-        # If nobody sends a signal but every child eventually
-        # dies on its own, the supervisor still exits — nothing
-        # left to supervise.
+    def test_all_children_die_unattended_are_restarted(self):
         specs = [
             _DaemonSpec("a", ("/bin/sh", "-c", "exit 0")),
             _DaemonSpec("b", ("/bin/sh", "-c", "exit 2")),
         ]
         sup = _Supervisor(specs)
         sup.start_all()
-        rc = self._drive(sup)
-        self.assertEqual(2, rc)
+        original_pids = [p.pid for _, p in sup.procs]
+        time.sleep(0.1)
+
+        done = sup.tick()
+
+        self.assertFalse(done)
+        self.assertNotEqual(original_pids, [p.pid for _, p in sup.procs])
         self.assertIsNone(sup.shutdown_at)
+
+        sup.request_shutdown(reason="test-teardown")
+        self._drive(sup)
 
     def test_forward_signal_to_named_child(self):
         # SIGHUP needs to reach mitmdump inside the bundle so
