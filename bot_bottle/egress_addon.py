@@ -78,6 +78,15 @@ def _token_from_proxy_auth(header: str) -> str:
 # Seconds the egress proxy holds a token-blocked request open waiting for the
 # operator's supervisor decision (PRD 0062), overridable via env.
 DEFAULT_TOKEN_ALLOW_TIMEOUT_SECONDS = 300.0
+
+# Maximum bytes of a response body passed to the DLP inbound scan. mitmproxy
+# buffers the full response before the hook fires; capping at scan time limits
+# the additional memory amplification from decoded text and regex match strings.
+# A cap is a security trade-off (content above the threshold is not scanned),
+# but without it a single large download OOM-kills the shared egress process
+# (issue #455). Override with EGRESS_INBOUND_SCAN_LIMIT_BYTES; set to 0 to
+# disable the cap.
+DEFAULT_INBOUND_SCAN_LIMIT_BYTES = 1 * 1024 * 1024  # 1 MiB
 # Filesystem poll cadence while awaiting the operator's response.
 TOKEN_ALLOW_POLL_INTERVAL_SECONDS = 0.5
 
@@ -102,6 +111,7 @@ class EgressAddon:
     # which request-flow tests don't exercise unless they call http_connect).
     _conn_tokens: "dict[str, str]" = {}
     _passthrough_conns: "set[str]" = set()
+    _inbound_scan_limit: int = DEFAULT_INBOUND_SCAN_LIMIT_BYTES
 
     def __init__(self) -> None:
         # Resolver-only: the gateway is always multi-tenant, resolving each
@@ -131,6 +141,7 @@ class EgressAddon:
         # cert. Keyed by client_conn.id; cleared on disconnect.
         self._passthrough_conns: set[str] = set()
         self._token_allow_timeout = _token_allow_timeout_from_env(os.environ)
+        self._inbound_scan_limit = _inbound_scan_limit_from_env(os.environ)
 
     @staticmethod
     def _supervise_available(slug: str) -> bool:
@@ -664,6 +675,14 @@ class EgressAddon:
             self._log_response(flow, env)
         resp_headers = {k.lower(): v for k, v in flow.response.headers.items()}
         body = flow.response.get_text(strict=False) or ""
+        if self._inbound_scan_limit and len(body) > self._inbound_scan_limit:
+            sys.stderr.write(json.dumps({
+                "event": "egress_scan_truncated",
+                "host": flow.request.pretty_host,
+                "body_bytes": len(body),
+                "scan_limit_bytes": self._inbound_scan_limit,
+            }) + "\n")
+            body = body[:self._inbound_scan_limit]
         scan_text = build_inbound_scan_text(resp_headers, body)
         if not scan_text:
             return
@@ -724,6 +743,25 @@ class EgressAddon:
                     flow.kill()  # type: ignore[union-attr]
                 elif result.severity == "warn":
                     sys.stderr.write(f"egress DLP warn: {result.reason}\n")
+
+
+def _inbound_scan_limit_from_env(env: "os._Environ[str]") -> int:
+    """Read EGRESS_INBOUND_SCAN_LIMIT_BYTES; fall back to the default on an
+    unset or invalid value. Returns 0 to disable the cap."""
+    raw = env.get("EGRESS_INBOUND_SCAN_LIMIT_BYTES", "").strip()
+    if not raw:
+        return DEFAULT_INBOUND_SCAN_LIMIT_BYTES
+    try:
+        value = int(raw)
+    except ValueError:
+        value = -1
+    if value < 0:
+        sys.stderr.write(
+            "egress: invalid EGRESS_INBOUND_SCAN_LIMIT_BYTES="
+            f"{raw!r}; using default {DEFAULT_INBOUND_SCAN_LIMIT_BYTES}\n"
+        )
+        return DEFAULT_INBOUND_SCAN_LIMIT_BYTES
+    return value
 
 
 def _token_allow_timeout_from_env(env: "os._Environ[str]") -> float:

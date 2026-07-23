@@ -175,30 +175,30 @@ class TestSupervisor(unittest.TestCase):
         rc = self._drive(sup)
         self.assertEqual(0, rc)
 
-    def test_child_crash_does_not_initiate_shutdown(self):
-        # Failure policy (PRD 0024, interim): a child dying
-        # unexpectedly is logged but the supervisor does NOT tear
-        # down the survivors. Verified by giving the crasher
-        # ~0.3s to die, then asserting the long-runner is still
-        # up and the supervisor never set shutdown_at.
+    def test_child_crash_triggers_restart_not_shutdown(self):
+        # Failure policy: a child dying unexpectedly is restarted by the
+        # supervisor rather than leaving egress dead. Verified by waiting for
+        # the original pid to die, then confirming the supervisor spawned a
+        # replacement with a different pid, and that shutdown was never requested.
         specs = [
             _DaemonSpec("crasher", ("/bin/sh", "-c", "exit 1")),
             _DaemonSpec("longrun", (SLEEP, "30")),
         ]
         sup = _Supervisor(specs)
         sup.start_all()
-        # Drive ticks for a while; crasher should die, longrun
-        # should survive.
-        deadline = time.monotonic() + 1.0
+        original_pid = sup.procs[0][1].pid
+
+        # Drive ticks until the restart fires (crasher dies → restart queued →
+        # next tick drains the queue and spawns a replacement).
+        deadline = time.monotonic() + 3.0
         while time.monotonic() < deadline:
-            done = sup.tick()
-            self.assertFalse(done, "loop converged with a child still alive")
-            if sup.procs[0][1].poll() is not None:
+            sup.tick()
+            if sup.procs[0][1].pid != original_pid:
                 break
             time.sleep(0.05)
 
-        self.assertEqual(1, sup.procs[0][1].returncode,
-                         "crasher should have exited 1")
+        self.assertNotEqual(original_pid, sup.procs[0][1].pid,
+                            "crasher should have been restarted with a new pid")
         self.assertIsNone(sup.procs[1][1].poll(),
                           "longrun should still be running")
         self.assertIsNone(sup.shutdown_at,

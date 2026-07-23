@@ -5,18 +5,12 @@ the configured daemons (egress, git-gate, supervise),
 forwards SIGTERM/SIGINT to each child, and propagates per-daemon
 stdout+stderr to the container log with a `[name] ` prefix.
 
-Failure policy (interim): when a child dies unexpectedly, the
-supervisor logs the death and leaves the surviving children
-running. The gateway stays up; whatever the dead daemon served
-will start failing, surfacing in the agent's own error path.
-The supervisor itself exits only when (a) the operator sends
-SIGTERM/SIGINT, or (b) every child has died.
-
-Failure policy (eventual): on unexpected death, the supervisor
-restarts the daemon and emits a notification to the supervise
-daemon so the operator sees the event. That lands in a later
-PR; the interim policy is "don't take the gateway down for one
-sick daemon."
+Failure policy: when a child dies unexpectedly, the supervisor
+restarts it automatically and logs the restart. The gateway stays
+up; a temporary loss of one daemon (e.g. egress OOM-killed) is
+recovered without manual container recreation. The supervisor
+itself exits only when (a) the operator sends SIGTERM/SIGINT, or
+(b) every child has died.
 
 Daemon subset is env-driven via `BOT_BOTTLE_GATEWAY_DAEMONS=egress`
 for callers that don't use git-gate or supervise. Default: all
@@ -238,11 +232,8 @@ class _Supervisor:
                 continue
             self._logged_dead.add(spec.name)
             if self.shutdown_at is None:
-                _log(
-                    f"{spec.name} exited with code {rc}; leaving "
-                    f"surviving daemons running (operator-visible "
-                    f"via agent-side failure)"
-                )
+                _log(f"{spec.name} exited with code {rc}; scheduling restart")
+                self._restart_requested.add(spec.name)
             else:
                 _log(f"{spec.name} exited with code {rc}")
 
