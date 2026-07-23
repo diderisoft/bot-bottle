@@ -1,8 +1,14 @@
 """Foundational filesystem paths for bot-bottle.
 
-`bot_bottle_root()` is the app data root — state, queue, audit logs,
-git-gate keys, and the shared DB all live under it. It defaults to
-`~/.bot-bottle` and is overridable with the **`BOT_BOTTLE_ROOT`** env var.
+`bot_bottle_root()` is the app data root — per-bottle state, git-gate
+keys, the gateway CA, and the shared SQLite DB all live under it. It
+defaults to `~/.bot-bottle` and is overridable with the
+**`BOT_BOTTLE_ROOT`** env var.
+
+Note that the supervise queue and the audit log are *tables in the shared
+DB*, not directories under the root — see `queue_store.py` / `audit_store.py`.
+The root held a `queue/` directory before the SQLite migration (PRD 0067);
+nothing writes there now.
 
 The env override is the single knob for redirecting the root: the test
 suite points it at a throwaway dir instead of monkey-patching the function
