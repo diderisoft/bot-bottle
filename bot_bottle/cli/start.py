@@ -195,6 +195,12 @@ def _start_headless(
     path, so the agent still execs on the inherited stdio/PTY — an
     orchestrator allocates that PTY and relays it to its
     desktop/mobile clients."""
+    if not os.isatty(sys.stdin.fileno()):
+        die(
+            "--headless requires a PTY on stdin; run via:\n"
+            "  script -q /dev/null ./cli.py start ..."
+        )
+
     agent_name = args.name
     if not agent_name:
         die("--headless requires an agent name: ./cli.py start <agent> --headless")
