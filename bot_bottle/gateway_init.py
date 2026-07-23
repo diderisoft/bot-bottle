@@ -9,8 +9,7 @@ Failure policy: when a child dies unexpectedly, the supervisor
 restarts it automatically and logs the restart. The gateway stays
 up; a temporary loss of one daemon (e.g. egress OOM-killed) is
 recovered without manual container recreation. The supervisor
-itself exits only when (a) the operator sends SIGTERM/SIGINT, or
-(b) every child has died.
+itself exits only when the operator sends SIGTERM/SIGINT.
 
 Daemon subset is env-driven via `BOT_BOTTLE_GATEWAY_DAEMONS=egress`
 for callers that don't use git-gate or supervise. Default: all
@@ -221,9 +220,10 @@ class _Supervisor:
         """One iteration of the watch loop. Returns True when every
         child has exited and the supervisor can return.
 
-        A child dying unexpectedly is logged but does NOT initiate
-        shutdown — see the module docstring's failure-policy
-        section. Shutdown is signal-driven only."""
+        A child dying unexpectedly is logged and restarted but does
+        NOT initiate shutdown — see the module docstring's
+        failure-policy section. Shutdown is signal-driven only."""
+        restarted_children = bool(self._restart_requested)
         self._drain_restart_requests()
 
         for spec, p in self.procs:
@@ -236,6 +236,13 @@ class _Supervisor:
                 self._restart_requested.add(spec.name)
             else:
                 _log(f"{spec.name} exited with code {rc}")
+
+        # Restart deaths discovered above before checking whether all
+        # processes are done. Deferring this until the next tick would make a
+        # single-daemon supervisor return True and exit with the restart still
+        # queued.
+        restarted_children |= bool(self._restart_requested)
+        self._drain_restart_requests()
 
         if self.shutdown_at is not None:
             elapsed = time.monotonic() - self.shutdown_at
@@ -250,7 +257,10 @@ class _Supervisor:
                     )
                     self._sigkill_all()
 
-        done = all(p.poll() is not None for _, p in self.procs)
+        done = (
+            not restarted_children
+            and all(p.poll() is not None for _, p in self.procs)
+        )
         if done:
             for _, p in self.procs:
                 if p.stdout is not None:
