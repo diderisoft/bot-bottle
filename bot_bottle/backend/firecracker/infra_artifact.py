@@ -66,7 +66,7 @@ def infra_artifact_version(init_script: str, *, repo_root: Path = _REPO_ROOT) ->
 
     The package is `COPY bot_bottle /app/bot_bottle`'d wholesale into the image,
     so hash *every* regular file under it — not just `*.py`. Non-Python inputs
-    (e.g. `egress_entrypoint.sh`, `netpool.defaults.env`) are baked in too, and
+    (e.g. `gateway/egress/entrypoint.sh`, `netpool.defaults.env`) are baked in too, and
     a change to one must bump the version or a launch host could boot a stale
     rootfs whose code differs from its checkout. `__pycache__`/`.pyc` are the
     only exclusions — build artifacts, never copied."""

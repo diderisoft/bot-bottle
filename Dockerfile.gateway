@@ -103,7 +103,7 @@ RUN pip install --no-cache-dir /src/
 # (nothing created /app before this point).
 WORKDIR /app
 RUN printf 'from bot_bottle.gateway.egress.addon import addons\n' > /app/egress_addon.py
-COPY bot_bottle/egress_entrypoint.sh /app/egress-entrypoint.sh
+COPY bot_bottle/gateway/egress/entrypoint.sh /app/egress-entrypoint.sh
 RUN chmod +x /app/egress-entrypoint.sh
 
 # Pre-create runtime directories the compose renderer + start
