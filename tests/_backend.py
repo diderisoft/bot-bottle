@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import unittest
 
-from bot_bottle.backend import is_backend_available, is_backend_ready
+from bot_bottle.backend import is_backend_ready
 
 # Default when ``BOT_BOTTLE_BACKEND`` is unset. Docker preserves the historical
 # Docker-backed CI path (and mirrors the pin in ``test_sandbox_escape``).

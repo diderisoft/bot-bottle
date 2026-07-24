@@ -1,7 +1,7 @@
 """Tests for the backend-aware skip guards in ``tests/_backend.py``.
 
 The guards delegate their readiness check to
-``bot_bottle.backend.has_backend`` (the probe behind ``./cli.py backend
+``bot_bottle.backend.is_backend_ready`` (the probe behind ``./cli.py backend
 status``); here that probe is mocked so the unit job asserts the
 selection/skip logic without either backend present on the runner.
 """
@@ -41,20 +41,20 @@ class TestSkipUnlessBackend(unittest.TestCase):
     def test_skips_when_other_backend_selected(self):
         # A different backend is selected — no host probe needed, skip.
         with patch.dict(os.environ, {"BOT_BOTTLE_BACKEND": "firecracker"}, clear=True), \
-                patch("tests._backend.has_backend") as has:
+                patch("tests._backend.is_backend_ready") as has:
             decorated = skip_unless_backend("docker")(_new_case())
         self.assertTrue(_skipped(decorated))
         has.assert_not_called()
 
     def test_runs_when_selected_and_available(self):
         with patch.dict(os.environ, {"BOT_BOTTLE_BACKEND": "docker"}, clear=True), \
-                patch("tests._backend.has_backend", return_value=True):
+                patch("tests._backend.is_backend_ready", return_value=True):
             decorated = skip_unless_backend("docker")(_new_case())
         self.assertFalse(_skipped(decorated))
 
     def test_skips_when_selected_but_unavailable(self):
         with patch.dict(os.environ, {"BOT_BOTTLE_BACKEND": "docker"}, clear=True), \
-                patch("tests._backend.has_backend", return_value=False):
+                patch("tests._backend.is_backend_ready", return_value=False):
             decorated = skip_unless_backend("docker")(_new_case())
         self.assertTrue(_skipped(decorated))
 
@@ -62,14 +62,14 @@ class TestSkipUnlessBackend(unittest.TestCase):
 class TestSkipUnlessSelectedBackendAvailable(unittest.TestCase):
     def test_runs_when_selected_backend_available(self):
         with patch.dict(os.environ, {"BOT_BOTTLE_BACKEND": "firecracker"}, clear=True), \
-                patch("tests._backend.has_backend", return_value=True) as has:
+                patch("tests._backend.is_backend_ready", return_value=True) as has:
             decorated = skip_unless_selected_backend_available()(_new_case())
         self.assertFalse(_skipped(decorated))
-        has.assert_called_once_with("firecracker")
+        has.assert_called_once_with("firecracker", quiet=False)
 
     def test_skips_when_selected_backend_unavailable(self):
         with patch.dict(os.environ, {"BOT_BOTTLE_BACKEND": "firecracker"}, clear=True), \
-                patch("tests._backend.has_backend", return_value=False):
+                patch("tests._backend.is_backend_ready", return_value=False):
             decorated = skip_unless_selected_backend_available()(_new_case())
         self.assertTrue(_skipped(decorated))
 
