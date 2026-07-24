@@ -19,7 +19,7 @@ from math import log2
 from collections import Counter
 from urllib.parse import quote as url_quote
 
-from .egress_addon_core import ScanResult
+from .addon_core import ScanResult
 
 
 # ---------------------------------------------------------------------------

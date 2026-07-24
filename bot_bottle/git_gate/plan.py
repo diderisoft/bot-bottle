@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..gateway.git_gate_render import GitGateUpstream
+from ..gateway.git_gate.render import GitGateUpstream
 
 
 @dataclass(frozen=True)

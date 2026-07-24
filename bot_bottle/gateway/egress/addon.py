@@ -16,8 +16,8 @@ import typing
 from mitmproxy import http  # type: ignore[import-not-found]  # pylint: disable=import-error
 
 from bot_bottle.constants import IDENTITY_HEADER
-from bot_bottle.gateway.dlp_detectors import redact_tokens, strip_crlf
-from bot_bottle.gateway.egress_addon_core import (
+from bot_bottle.gateway.egress.dlp_detectors import redact_tokens, strip_crlf
+from bot_bottle.gateway.egress.addon_core import (
     LOG_BLOCKS,
     LOG_FULL,
     DEFAULT_OUTBOUND_ON_MATCH,

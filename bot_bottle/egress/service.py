@@ -4,7 +4,7 @@
 routes, render the gateway's `routes.yaml`, assign per-route token slots, and
 plant the exfil canary. The service also resolves the launch-time token values
 and the agent/gateway env entries the backend injects. The runtime enforcement
-(the mitmproxy addon) lives in `bot_bottle.gateway.egress_addon*`.
+(the mitmproxy addon) lives in `bot_bottle.gateway.egress.addon*`.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import secrets
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ..gateway.egress_addon_core import (
+from ..gateway.egress.addon_core import (
     ON_MATCH_REDACT,
     HeaderMatch as CoreHeaderMatch,
     MatchEntry as CoreMatchEntry,

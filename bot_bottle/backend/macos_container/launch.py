@@ -46,7 +46,7 @@ from ...bottle_state import (
 )
 from ...egress import Egress
 from ...git_gate import GitGate
-from ...gateway.git_http_backend import DEFAULT_PORT as _GIT_HTTP_PORT
+from ...gateway.git_gate.http_backend import DEFAULT_PORT as _GIT_HTTP_PORT
 from ...image_cache import check_stale
 from ...log import die, info, warn
 from .. import BottleImages

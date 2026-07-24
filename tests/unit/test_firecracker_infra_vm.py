@@ -72,7 +72,7 @@ class TestBuildInfraRootfs(unittest.TestCase):
         self.assertIn("bot_bottle.orchestrator", init)
         # Gateway launches via the installed package (there is no
         # /app/gateway_init.py file since the daemons moved into bot_bottle).
-        self.assertIn("bot_bottle.gateway.gateway_init", init)
+        self.assertIn("bot_bottle.gateway.bootstrap", init)
         self.assertIn("export PATH=", init)
         # Persistent registry volume mounted at the DB dir before the CP starts.
         self.assertIn("/dev/vdb", init)

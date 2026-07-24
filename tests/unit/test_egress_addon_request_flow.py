@@ -194,15 +194,15 @@ def _ensure_shims() -> None:
 
 _ensure_shims()
 
-import bot_bottle.gateway.egress_addon as _ea_mod  # noqa: E402  (after shims)
-from bot_bottle.gateway.egress_addon import EgressAddon  # noqa: E402  (after shims)
-from bot_bottle.gateway.egress_addon import (  # noqa: E402
+import bot_bottle.gateway.egress.addon as _ea_mod  # noqa: E402  (after shims)
+from bot_bottle.gateway.egress.addon import EgressAddon  # noqa: E402  (after shims)
+from bot_bottle.gateway.egress.addon import (  # noqa: E402
     DEFAULT_INBOUND_SCAN_LIMIT_BYTES,
     DEFAULT_TOKEN_ALLOW_TIMEOUT_SECONDS,
     _inbound_scan_limit_from_env,
     _token_allow_timeout_from_env,
 )
-from bot_bottle.gateway.egress_addon_core import (  # noqa: E402
+from bot_bottle.gateway.egress.addon_core import (  # noqa: E402
     Config,
     LOG_BLOCKS,
     LOG_FULL,

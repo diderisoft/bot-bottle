@@ -14,8 +14,8 @@ import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..constants import GIT_GATE_TIMEOUT_SECS, IDENTITY_HEADER
-from ..manifest import ManifestBottle, ManifestGitEntry
+from ...constants import GIT_GATE_TIMEOUT_SECS, IDENTITY_HEADER
+from ...manifest import ManifestBottle, ManifestGitEntry
 
 # Short network alias for git-gate inside the gateway. The
 # agent's `.gitconfig` insteadOf rewrites resolve through this name.

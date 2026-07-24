@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from bot_bottle.gateway.egress_addon_core import (
+from bot_bottle.gateway.egress.addon_core import (
     DENY_RESOLVER_ERROR,
     DENY_UNATTRIBUTED,
     DENY_UNPARSEABLE,

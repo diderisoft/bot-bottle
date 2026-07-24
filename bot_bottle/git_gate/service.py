@@ -8,7 +8,7 @@ upstream before fetches. The agent never sees the upstream credential.
 `GitGate` is the host-side service the backend drives at launch: build the plan
 (`prepare`), provision / revoke the per-upstream deploy keys, and preflight the
 upstream host keys. The rendering it emits + the in-gateway hook execution live
-in `bot_bottle.gateway.git_gate_render`.
+in `bot_bottle.gateway.git_gate.render`.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..manifest import Manifest, ManifestBottle
-from ..gateway.git_gate_render import (
+from ..gateway.git_gate.render import (
     GitGateUpstream,
     git_gate_known_hosts_line,
     git_gate_render_access_hook,

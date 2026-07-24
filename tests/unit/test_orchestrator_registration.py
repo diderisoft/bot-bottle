@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from bot_bottle.egress import EgressPlan, EgressRoute
-from bot_bottle.gateway.egress_addon_core import LOG_BLOCKS, load_config
+from bot_bottle.gateway.egress.addon_core import LOG_BLOCKS, load_config
 from bot_bottle.orchestrator.registration import (
     RegistrationInputs,
     egress_policy,

@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..gateway.egress_addon_core import Route
+from ..gateway.egress.addon_core import Route
 
 
 @dataclass(frozen=True)

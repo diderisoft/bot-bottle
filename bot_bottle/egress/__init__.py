@@ -13,7 +13,7 @@ Layout:
     contract).
 
 The runtime enforcement (the mitmproxy addon) lives in
-`bot_bottle.gateway.egress_addon*`. Public names are re-exported lazily via
+`bot_bottle.gateway.egress.addon*`. Public names are re-exported lazily via
 `__getattr__`, so `from bot_bottle.egress import …` keeps working and importing
 `egress.plan` (the contract's dependency) stays light.
 """
