@@ -173,7 +173,7 @@ def _spawn(spec: _DaemonSpec) -> subprocess.Popen[bytes]:
     return proc
 
 
-class _Supervisor:
+class _DaemonManager:
     """Holds the running children + shutdown state. Pulled out so
     the test suite can drive it with fake commands."""
 
@@ -387,7 +387,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _log("no daemons selected; nothing to do")
         return 0
 
-    sup = _Supervisor(specs)
+    sup = _DaemonManager(specs)
     sup.start_all()
 
     signal.signal(signal.SIGTERM, lambda *_: sup.request_shutdown("SIGTERM"))  # type: ignore

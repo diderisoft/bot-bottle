@@ -20,7 +20,7 @@ from unittest.mock import patch
 
 from bot_bottle.gateway.bootstrap import (
     _DaemonSpec,
-    _Supervisor,
+    _DaemonManager,
     _argv_for_daemon,
     _env_for_daemon,
     _selected_daemons,
@@ -169,7 +169,7 @@ class TestDaemonArgv(unittest.TestCase):
 
 
 class TestSupervisor(unittest.TestCase):
-    """End-to-end: drive `_Supervisor` directly with fake commands.
+    """End-to-end: drive `_DaemonManager` directly with fake commands.
     We don't go through `main()` because main installs signal
     handlers process-wide, which collides with the test runner."""
 
@@ -177,7 +177,7 @@ class TestSupervisor(unittest.TestCase):
         warnings.simplefilter("error", ResourceWarning)
         self.addCleanup(warnings.resetwarnings)
 
-    def _drive(self, sup: _Supervisor, max_wait_s: float = 6.0) -> int:
+    def _drive(self, sup: _DaemonManager, max_wait_s: float = 6.0) -> int:
         deadline = time.monotonic() + max_wait_s
         while not sup.tick():
             if time.monotonic() > deadline:
@@ -193,7 +193,7 @@ class TestSupervisor(unittest.TestCase):
             _DaemonSpec("a", ("/bin/sh", "-c", ":")),
             _DaemonSpec("b", ("/bin/sh", "-c", ":")),
         ]
-        sup = _Supervisor(specs)
+        sup = _DaemonManager(specs)
         sup.start_all()
         time.sleep(0.1)
         sup.request_shutdown(reason="test")
@@ -209,7 +209,7 @@ class TestSupervisor(unittest.TestCase):
             _DaemonSpec("crasher", ("/bin/sh", "-c", "exit 1")),
             _DaemonSpec("longrun", (SLEEP, "30")),
         ]
-        sup = _Supervisor(specs)
+        sup = _DaemonManager(specs)
         sup.start_all()
         original_pid = sup.procs[0][1].pid
 
@@ -235,7 +235,7 @@ class TestSupervisor(unittest.TestCase):
 
     def test_single_daemon_crash_is_restarted_before_tick_completes(self):
         specs = [_DaemonSpec("crasher", ("/bin/sh", "-c", "exit 1"))]
-        sup = _Supervisor(specs)
+        sup = _DaemonManager(specs)
         sup.start_all()
         original_pid = sup.procs[0][1].pid
         time.sleep(0.1)
@@ -259,7 +259,7 @@ class TestSupervisor(unittest.TestCase):
             _DaemonSpec("crasher", ("/bin/sh", "-c", "exit 1")),
             _DaemonSpec("longrun", (SLEEP, "30")),
         ]
-        sup = _Supervisor(specs)
+        sup = _DaemonManager(specs)
         sup.start_all()
         time.sleep(0.3)  # let crasher die
         sup.request_shutdown(reason="test")
@@ -271,7 +271,7 @@ class TestSupervisor(unittest.TestCase):
             _DaemonSpec("a", ("/bin/sh", "-c", "exit 0")),
             _DaemonSpec("b", ("/bin/sh", "-c", "exit 2")),
         ]
-        sup = _Supervisor(specs)
+        sup = _DaemonManager(specs)
         sup.start_all()
         original_pids = [p.pid for _, p in sup.procs]
         time.sleep(0.1)
@@ -309,7 +309,7 @@ class TestSupervisor(unittest.TestCase):
             _DaemonSpec("egress", sighup_marker),
             _DaemonSpec("other",  (SLEEP, "30")),
         ]
-        sup = _Supervisor(specs)
+        sup = _DaemonManager(specs)
         sup.start_all()
         time.sleep(0.3)  # let Python install the handler
 
@@ -331,7 +331,7 @@ class TestSupervisor(unittest.TestCase):
 
     def test_forward_signal_unknown_daemon_no_op(self):
         specs = [_DaemonSpec("a", (SLEEP, "30"))]
-        sup = _Supervisor(specs)
+        sup = _DaemonManager(specs)
         sup.start_all()
         delivered = sup.forward_signal(signal.SIGHUP, "ghost")
         self.assertFalse(delivered)
@@ -345,7 +345,7 @@ class TestSupervisor(unittest.TestCase):
             _DaemonSpec("git-gate", (SLEEP, "30")),
             _DaemonSpec("supervise", (SLEEP, "30")),
         ]
-        sup = _Supervisor(specs)
+        sup = _DaemonManager(specs)
         sup.start_all()
         time.sleep(0.1)
         old_git_gate_pid = sup.procs[0][1].pid
@@ -370,7 +370,7 @@ class TestSupervisor(unittest.TestCase):
             _DaemonSpec("git-gate", (SLEEP, "30")),
             _DaemonSpec("supervise", (SLEEP, "30")),
         ]
-        sup = _Supervisor(specs)
+        sup = _DaemonManager(specs)
         sup.start_all()
         time.sleep(0.1)
         old_git_gate_pid = sup.procs[0][1].pid
@@ -392,7 +392,7 @@ class TestSupervisor(unittest.TestCase):
 
     def test_repeated_restart_requests_coalesce(self):
         specs = [_DaemonSpec("git-gate", (SLEEP, "30"))]
-        sup = _Supervisor(specs)
+        sup = _DaemonManager(specs)
         sup.start_all()
         time.sleep(0.1)
 
@@ -415,7 +415,7 @@ class TestSupervisor(unittest.TestCase):
 
     def test_request_restart_unknown_daemon_no_op(self):
         specs = [_DaemonSpec("a", (SLEEP, "30"))]
-        sup = _Supervisor(specs)
+        sup = _DaemonManager(specs)
         sup.start_all()
         ok = sup.request_restart("ghost")
         self.assertFalse(ok)
@@ -425,7 +425,7 @@ class TestSupervisor(unittest.TestCase):
 
     def test_restart_unknown_daemon_no_op(self):
         specs = [_DaemonSpec("a", (SLEEP, "30"))]
-        sup = _Supervisor(specs)
+        sup = _DaemonManager(specs)
         sup.start_all()
         ok = sup.restart_daemon("ghost")
         self.assertFalse(ok)
@@ -434,7 +434,7 @@ class TestSupervisor(unittest.TestCase):
 
     def test_restart_during_shutdown_is_no_op(self):
         specs = [_DaemonSpec("git-gate", (SLEEP, "30"))]
-        sup = _Supervisor(specs)
+        sup = _DaemonManager(specs)
         sup.start_all()
         sup.request_shutdown(reason="test")
         ok = sup.restart_daemon("git-gate")
@@ -444,7 +444,7 @@ class TestSupervisor(unittest.TestCase):
 
     def test_pending_restart_dropped_during_shutdown(self):
         specs = [_DaemonSpec("git-gate", (SLEEP, "30"))]
-        sup = _Supervisor(specs)
+        sup = _DaemonManager(specs)
         sup.start_all()
         time.sleep(0.1)
         old_pid = sup.procs[0][1].pid
@@ -464,7 +464,7 @@ class TestSupervisor(unittest.TestCase):
             _DaemonSpec("a", (SLEEP, "60")),
             _DaemonSpec("b", (SLEEP, "60")),
         ]
-        sup = _Supervisor(specs)
+        sup = _DaemonManager(specs)
         sup.start_all()
         time.sleep(0.2)  # let them actually start
         sup.request_shutdown(reason="test")
@@ -484,7 +484,7 @@ class TestSupervisor(unittest.TestCase):
             "trap '' TERM; sleep 30",
         )
         specs = [_DaemonSpec("stubborn", ignore_term)]
-        sup = _Supervisor(specs)
+        sup = _DaemonManager(specs)
         sup.start_all()
         time.sleep(0.3)  # let `trap` register
         sup.request_shutdown(reason="test")
@@ -498,7 +498,7 @@ class TestSupervisor(unittest.TestCase):
 
     def test_idempotent_shutdown_requests(self):
         specs = [_DaemonSpec("a", (SLEEP, "60"))]
-        sup = _Supervisor(specs)
+        sup = _DaemonManager(specs)
         sup.start_all()
         time.sleep(0.1)
         first_at = None
