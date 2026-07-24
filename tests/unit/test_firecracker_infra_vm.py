@@ -8,7 +8,6 @@ decisions that must hold without a VM.
 from __future__ import annotations
 
 import os
-import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -16,35 +15,36 @@ from unittest.mock import MagicMock, patch
 from bot_bottle.backend.firecracker import infra_vm
 
 
-class TestSigningKeySync(unittest.TestCase):
-    """`_with_signing_key` mirrors the VM's control-plane signing key into the
-    host token file so the CLI signs `cli` tokens the VM verifies (issue #469)."""
+class TestPushSigningKey(unittest.TestCase):
+    """`_push_signing_key` pushes the host-canonical key into the guest over SSH
+    (the init waits for it). The host token file stays the single source of
+    truth, never clobbered per-backend (issue #469)."""
 
     def _infra(self) -> infra_vm.InfraVm:
         return infra_vm.InfraVm(guest_ip="10.0.0.1", private_key=Path("/k"))
 
-    def test_mirrors_guest_key_to_host_file(self):
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
-            proc = MagicMock(returncode=0, stdout="the-signing-key\n")
-            with patch.object(infra_vm.subprocess, "run", return_value=proc) as run, \
-                    patch.object(infra_vm, "bot_bottle_root", return_value=root):
-                out = infra_vm._with_signing_key(self._infra())
-            self.assertIsInstance(out, infra_vm.InfraVm)  # returned for chaining
-            token = root / infra_vm.ORCHESTRATOR_TOKEN_FILENAME
-            self.assertEqual("the-signing-key", token.read_text())
-            self.assertEqual(0o600, token.stat().st_mode & 0o777)
-            # It cat'd the guest volume path over SSH.
-            self.assertIn(infra_vm._GUEST_SIGNING_KEY_PATH, run.call_args.args[0][-1])
+    def test_writes_host_key_over_ssh_atomically(self):
+        proc = MagicMock(returncode=0, stderr="")
+        with patch.object(infra_vm, "host_orchestrator_token", return_value="host-key"), \
+                patch.object(infra_vm.subprocess, "run", return_value=proc) as run:
+            infra_vm._push_signing_key(self._infra())
+        # Piped the key to an atomic write of the guest token path.
+        self.assertEqual("host-key", run.call_args.kwargs["input"])
+        remote_cmd = run.call_args.args[0][-1]
+        self.assertIn(f"cat > {infra_vm._GUEST_SIGNING_KEY_PATH}.tmp", remote_cmd)
+        self.assertIn(f"mv {infra_vm._GUEST_SIGNING_KEY_PATH}.tmp "
+                      f"{infra_vm._GUEST_SIGNING_KEY_PATH}", remote_cmd)
 
-    def test_unreadable_key_is_not_fatal(self):
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
-            proc = MagicMock(returncode=255, stdout="")
-            with patch.object(infra_vm.subprocess, "run", return_value=proc), \
-                    patch.object(infra_vm, "bot_bottle_root", return_value=root):
-                infra_vm._with_signing_key(self._infra())  # no raise
-            self.assertFalse((root / infra_vm.ORCHESTRATOR_TOKEN_FILENAME).exists())
+    def test_dies_when_push_never_succeeds(self):
+        proc = MagicMock(returncode=255, stderr="ssh: connect refused")
+        with patch.object(infra_vm, "host_orchestrator_token", return_value="host-key"), \
+                patch.object(infra_vm, "_SIGNING_KEY_PUSH_TIMEOUT_SECONDS", 0.05), \
+                patch.object(infra_vm, "_SIGNING_KEY_PUSH_POLL_SECONDS", 0.0), \
+                patch.object(infra_vm.subprocess, "run", return_value=proc), \
+                patch.object(infra_vm, "die", side_effect=SystemExit) as die:
+            with self.assertRaises(SystemExit):
+                infra_vm._push_signing_key(self._infra())
+        die.assert_called_once()
 
 
 class TestOrchestratorUrl(unittest.TestCase):
@@ -79,10 +79,11 @@ class TestBuildInfraRootfs(unittest.TestCase):
         # VM backend uses git-http (9420); the git:// daemon is left out.
         self.assertIn("BOT_BOTTLE_GATEWAY_DAEMONS=egress,git-http,supervise", init)
         # Role-scoped control-plane auth (issue #469 review): the orchestrator
-        # gets the signing key, the gateway daemons get a pre-minted `gateway`
-        # JWT — never open mode in the infra VM.
-        self.assertIn("host_orchestrator_token", init)  # key generated on the volume
-        self.assertIn("mint, ROLE_GATEWAY", init)         # gateway JWT minted from it
+        # gets the host-seeded signing key, the gateway daemons get a pre-minted
+        # `gateway` JWT, and the VM refuses to run OPEN if the key is missing.
+        self.assertIn("cat /var/lib/bot-bottle/orchestrator-token", init)  # host-seeded key
+        self.assertIn("refusing to start the control plane", init)          # no open mode
+        self.assertIn("mint, ROLE_GATEWAY", init)                           # gateway JWT
         self.assertIn('BOT_BOTTLE_ORCHESTRATOR_TOKEN="$CP_KEY" python3 -m bot_bottle.orchestrator',
                       init)  # key -> orchestrator only
         self.assertIn('BOT_BOTTLE_ORCHESTRATOR_AUTH_JWT="$GW_JWT"', init)  # JWT -> gateway daemons
