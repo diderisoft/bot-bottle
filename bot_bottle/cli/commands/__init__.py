@@ -1,40 +1,51 @@
 """CLI subcommand registry.
 
 One module per `bot-bottle <command>`, each exposing a `cmd_<name>(argv)`
-handler. This package `__init__` assembles them into the COMMANDS table
-the dispatcher (`bot_bottle.cli.__main__`) reads. Shared CLI helpers
-(`constants`, `tui`) stay one level up in the `cli` package.
+handler. This package `__init__` maps command names to their handlers
+**lazily**: a short-lived CLI run dispatches exactly one command, so
+importing all twelve handlers (and their transitive deps — backend,
+manifest, orchestrator, …) up front is wasted work. Each COMMANDS value is
+a thin wrapper that imports its handler's module on first call. Shared CLI
+helpers (`constants`, `tui`) stay one level up in the `cli` package.
 """
 
 from __future__ import annotations
 
-from .backend import cmd_backend
-from .cleanup import cmd_cleanup
-from .commit import cmd_commit
-from .edit import cmd_edit
-from .help import cmd_help
-from .info import cmd_info
-from .init import cmd_init
-from .list import cmd_list
-from .login import cmd_login
-from .resume import cmd_resume
-from .start import cmd_start
-from .supervise import cmd_supervise
+from importlib import import_module
+from typing import Callable
 
-COMMANDS = {
-    "backend": cmd_backend,
-    "cleanup": cmd_cleanup,
-    "commit": cmd_commit,
-    "edit": cmd_edit,
-    "help": cmd_help,
-    "info": cmd_info,
-    "init": cmd_init,
-    "list": cmd_list,
-    "login": cmd_login,
-    "resume": cmd_resume,
-    "start": cmd_start,
-    "supervise": cmd_supervise,
+# command name -> "<submodule>:<handler attr>". Kept as strings so building
+# the registry imports nothing; the module loads only when dispatched.
+_HANDLERS: dict[str, str] = {
+    "backend": "backend:cmd_backend",
+    "cleanup": "cleanup:cmd_cleanup",
+    "commit": "commit:cmd_commit",
+    "edit": "edit:cmd_edit",
+    "help": "help:cmd_help",
+    "info": "info:cmd_info",
+    "init": "init:cmd_init",
+    "list": "list:cmd_list",
+    "login": "login:cmd_login",
+    "resume": "resume:cmd_resume",
+    "start": "start:cmd_start",
+    "supervise": "supervise:cmd_supervise",
 }
+
+
+def _lazy(spec: str) -> Callable[[list[str]], "int | None"]:
+    """Wrap a `<module>:<attr>` handler so its module is imported only when
+    the command is actually dispatched, not when the registry is built."""
+    module, attr = spec.split(":")
+
+    def run(argv: list[str]) -> "int | None":
+        handler = getattr(import_module(f".{module}", __name__), attr)
+        return handler(argv)
+
+    run.__name__ = attr
+    return run
+
+
+COMMANDS = {name: _lazy(spec) for name, spec in _HANDLERS.items()}
 
 # Commands that manage host prerequisites (or are otherwise store-free) and
 # must run before — or without — a migrated DB. `backend` provisions/probes
