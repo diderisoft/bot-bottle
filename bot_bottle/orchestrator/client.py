@@ -18,6 +18,7 @@ import urllib.request
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+from ..control_auth import ROLE_CLI, mint
 from ..paths import host_control_plane_token
 from .control_plane import CONTROL_AUTH_HEADER
 
@@ -25,12 +26,14 @@ DEFAULT_TIMEOUT_SECONDS = 5.0
 
 
 def _host_auth_token() -> str:
-    """The per-host control-plane secret, or "" if it can't be read. "" means
-    'send no auth header' — correct against an open (unconfigured) control
-    plane, and harmlessly rejected by a secured one."""
+    """A freshly minted `cli`-role token, signed with the host control-plane
+    key, or "" if the key can't be read. The host CLI shares the orchestrator's
+    trust domain, so it holds the signing key and mints its own operator token;
+    "" means 'send no auth header' — correct against an open (unconfigured)
+    control plane, and harmlessly rejected by a secured one."""
     try:
-        return host_control_plane_token()
-    except OSError:
+        return mint(ROLE_CLI, host_control_plane_token())
+    except (OSError, ValueError):
         return ""
 
 

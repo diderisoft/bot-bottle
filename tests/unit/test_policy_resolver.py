@@ -7,7 +7,13 @@ import unittest
 import urllib.error
 from unittest.mock import MagicMock, patch
 
-from bot_bottle.policy_resolver import PolicyResolveError, PolicyResolver
+from bot_bottle.policy_resolver import (
+    CONTROL_AUTH_HEADER,
+    CONTROL_AUTH_JWT_ENV,
+    PolicyResolveError,
+    PolicyResolver,
+    _control_auth_headers,
+)
 
 _URLOPEN = "bot_bottle.policy_resolver.urllib.request.urlopen"
 
@@ -21,6 +27,18 @@ def _resp(payload: object) -> MagicMock:
 
 def _http_error(code: int) -> urllib.error.HTTPError:
     return urllib.error.HTTPError("http://x/resolve", code, "err", {}, None)  # type: ignore[arg-type]
+
+
+class TestControlAuthHeaders(unittest.TestCase):
+    def test_sends_the_gateway_jwt_when_configured(self) -> None:
+        with patch.dict("os.environ", {CONTROL_AUTH_JWT_ENV: "gateway.jwt.tok"}):
+            self.assertEqual({CONTROL_AUTH_HEADER: "gateway.jwt.tok"}, _control_auth_headers())
+
+    def test_sends_nothing_when_unset(self) -> None:
+        import os
+        with patch.dict("os.environ", {}, clear=False):
+            os.environ.pop(CONTROL_AUTH_JWT_ENV, None)
+            self.assertEqual({}, _control_auth_headers())
 
 
 class TestPolicyResolver(unittest.TestCase):

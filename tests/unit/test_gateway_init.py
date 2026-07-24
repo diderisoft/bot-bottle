@@ -64,6 +64,30 @@ class TestEnvForDaemon(unittest.TestCase):
         self.assertNotIn("X", self._BASE)
 
 
+class TestControlPlaneEnvScoping(unittest.TestCase):
+    """The control-plane signing key stays with the orchestrator; the pre-minted
+    `gateway` JWT goes to the data-plane daemons (issue #469 review). Scoping
+    them per-process keeps a compromised data-plane daemon from reading the key
+    and minting a higher-privilege token, even in the combined infra container."""
+
+    _BASE = {
+        "PATH": "/usr/bin",
+        "BOT_BOTTLE_CONTROL_PLANE_TOKEN": "sk-x",
+        "BOT_BOTTLE_CONTROL_AUTH_JWT": "gw-jwt",
+    }
+
+    def test_orchestrator_gets_key_not_jwt(self):
+        env = _env_for_daemon("orchestrator", self._BASE)
+        self.assertEqual("sk-x", env["BOT_BOTTLE_CONTROL_PLANE_TOKEN"])
+        self.assertNotIn("BOT_BOTTLE_CONTROL_AUTH_JWT", env)
+
+    def test_data_plane_daemons_get_jwt_not_key(self):
+        for name in ("egress", "git-gate", "git-http", "supervise"):
+            env = _env_for_daemon(name, self._BASE)
+            self.assertNotIn("BOT_BOTTLE_CONTROL_PLANE_TOKEN", env, name)
+            self.assertEqual("gw-jwt", env["BOT_BOTTLE_CONTROL_AUTH_JWT"], name)
+
+
 class TestSelectedDaemons(unittest.TestCase):
     """Env-var subset filtering. The compose renderer is the source
     of truth for which daemons are wired; the supervisor just

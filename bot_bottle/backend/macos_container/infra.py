@@ -48,7 +48,9 @@ from ...orchestrator.lifecycle import (
     OrchestratorStartError,
     source_hash,
 )
+from ...control_auth import ROLE_GATEWAY, mint
 from ...paths import (
+    CONTROL_AUTH_JWT_ENV,
     CONTROL_PLANE_TOKEN_ENV,
     HOST_DB_FILENAME,
     host_control_plane_token,
@@ -237,18 +239,26 @@ class MacosInfraService:
             # Baked onto the container so `_source_current` can detect a real
             # control-plane code change and recreate.
             "--env", f"BOT_BOTTLE_SOURCE_HASH={current_hash}",
-            # The control-plane secret, for BOTH the control plane (to require
-            # it) and the gateway's PolicyResolver (to present it) — they share
-            # this one container. Bare `--env NAME` inherits the value from the
-            # run process below, so the secret never lands on argv or in
-            # `container inspect`'s command line. The agent runs in a SEPARATE
-            # container that is never given this var, which is the whole point.
+            # The control-plane signing key (control plane: verifies tokens) and
+            # the pre-minted `gateway` JWT (the gateway's PolicyResolver: presents
+            # it) — they share this one container, and gateway_init scopes each to
+            # its process so a compromised data-plane daemon never sees the key
+            # (issue #469 review). Bare `--env NAME` inherits the value from the
+            # run process below, so neither lands on argv or in `container
+            # inspect`'s command line. The agent runs in a SEPARATE container that
+            # is never given these vars, which is the whole point.
             "--env", CONTROL_PLANE_TOKEN_ENV,
+            "--env", CONTROL_AUTH_JWT_ENV,
             "--entrypoint", "sh",
             self.image,
             "-c", _init_script(self.port),
         ]
-        run_env = {**os.environ, CONTROL_PLANE_TOKEN_ENV: host_control_plane_token()}
+        _signing_key = host_control_plane_token()
+        run_env = {
+            **os.environ,
+            CONTROL_PLANE_TOKEN_ENV: _signing_key,
+            CONTROL_AUTH_JWT_ENV: mint(ROLE_GATEWAY, _signing_key),
+        }
         result = container_mod.run_container_argv(argv, env=run_env)
         if result.returncode != 0:
             raise OrchestratorStartError(

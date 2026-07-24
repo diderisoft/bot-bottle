@@ -54,6 +54,15 @@ class _DaemonSpec:
 _EGRESS_ONLY_ENV_PREFIXES: tuple[str, ...] = ("EGRESS_TOKEN_",)
 _READY_GATED_DAEMONS: tuple[str, ...] = ("git-gate", "git-http")
 
+# The control-plane signing key is the orchestrator's alone — verifying tokens.
+# The data-plane daemons instead hold the pre-minted `gateway` JWT they present.
+# Scoping each to its process (even in the combined infra container) keeps a
+# compromised data-plane daemon from reading the key and minting a `cli` token
+# (issue #469 review). Values match paths.CONTROL_PLANE_TOKEN_ENV /
+# CONTROL_AUTH_JWT_ENV; hardcoded here so this supervisor stays import-light.
+_SIGNING_KEY_ENV = "BOT_BOTTLE_CONTROL_PLANE_TOKEN"
+_GATEWAY_JWT_ENV = "BOT_BOTTLE_CONTROL_AUTH_JWT"
+
 # Daemons that must be requested explicitly via BOT_BOTTLE_GATEWAY_DAEMONS
 # and are NOT started in the default (env-var-unset) case. The orchestrator
 # only runs in the combined infra container, never in a standalone gateway.
@@ -61,16 +70,24 @@ _OPT_IN_DAEMONS: frozenset[str] = frozenset({"orchestrator"})
 
 
 def _env_for_daemon(name: str, base_env: dict[str, str]) -> dict[str, str]:
-    """Egress sees the full bundle env. Everyone else gets a copy
-    with `EGRESS_TOKEN_*` (and any other future egress-only
-    credential slots) stripped. Returns a fresh dict — callers
-    can mutate without affecting `base_env`."""
-    if name == "egress":
-        return dict(base_env)
-    return {
-        k: v for k, v in base_env.items()
-        if not any(k.startswith(p) for p in _EGRESS_ONLY_ENV_PREFIXES)
-    }
+    """Per-daemon env, scoped to what each process legitimately needs.
+    Returns a fresh dict — callers can mutate without affecting `base_env`.
+
+      * `EGRESS_TOKEN_*` upstream-auth slots go to egress only.
+      * the control-plane signing key goes to the orchestrator only.
+      * the pre-minted `gateway` JWT goes to the data-plane daemons only (the
+        orchestrator verifies tokens, it never presents one)."""
+    env = dict(base_env)
+    if name != "egress":
+        env = {
+            k: v for k, v in env.items()
+            if not any(k.startswith(p) for p in _EGRESS_ONLY_ENV_PREFIXES)
+        }
+    if name == "orchestrator":
+        env.pop(_GATEWAY_JWT_ENV, None)
+    else:
+        env.pop(_SIGNING_KEY_ENV, None)
+    return env
 
 
 # The orchestrator is listed first so it starts before the gateway daemons,

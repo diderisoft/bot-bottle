@@ -25,6 +25,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from bot_bottle.control_auth import ROLE_CLI, ROLE_GATEWAY, mint
 from bot_bottle.orchestrator.client import OrchestratorClient
 from bot_bottle.orchestrator.lifecycle import OrchestratorService
 from bot_bottle.paths import host_control_plane_token
@@ -85,7 +86,11 @@ class TestDockerControlPlaneAuthIntegration(unittest.TestCase):
             host_root=host_root,
         )
         cls.svc.ensure_running()
-        cls.token = host_control_plane_token()
+        # The control plane now verifies role-scoped signed tokens, not the raw
+        # key. Mint one of each role from the host signing key (issue #469 review).
+        signing_key = host_control_plane_token()
+        cls.cli_token = mint(ROLE_CLI, signing_key)
+        cls.gateway_token = mint(ROLE_GATEWAY, signing_key)
 
     @staticmethod
     def _teardown_docker(
@@ -136,10 +141,16 @@ class TestDockerControlPlaneAuthIntegration(unittest.TestCase):
         status, _ = self._request("GET", "/bottles", token="not-the-real-secret")
         self.assertEqual(401, status)
 
-    def test_bottles_accepts_the_real_token(self) -> None:
-        status, payload = self._request("GET", "/bottles", token=self.token)
+    def test_bottles_accepts_the_cli_token(self) -> None:
+        status, payload = self._request("GET", "/bottles", token=self.cli_token)
         self.assertEqual(200, status)
         self.assertEqual([], payload["bottles"])
+
+    def test_bottles_rejects_the_gateway_token(self) -> None:
+        """A compromised gateway holds only a `gateway` token — it must not be
+        able to enumerate bottles (an operator route) with it (issue #469)."""
+        status, _ = self._request("GET", "/bottles", token=self.gateway_token)
+        self.assertEqual(403, status)
 
     def test_resolve_rejects_a_caller_with_no_token(self) -> None:
         """The credential-lift attack from issue #400: an agent could POST
@@ -147,6 +158,13 @@ class TestDockerControlPlaneAuthIntegration(unittest.TestCase):
         to see."""
         status, _ = self._request("POST", "/resolve")
         self.assertEqual(401, status)
+
+    def test_resolve_accepts_the_gateway_token(self) -> None:
+        """The gateway's own token DOES reach /resolve: with an empty body it
+        gets 400 (missing source_ip) rather than the 401 a rejected caller sees
+        — proving the role gate let the gateway token through."""
+        status, _ = self._request("POST", "/resolve", token=self.gateway_token)
+        self.assertEqual(400, status)  # past the role gate; body validation fails
 
 
 if __name__ == "__main__":

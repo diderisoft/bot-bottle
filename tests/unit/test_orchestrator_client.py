@@ -7,13 +7,28 @@ import unittest
 import urllib.error
 from unittest.mock import MagicMock, patch
 
+from bot_bottle.control_auth import ROLE_CLI, verify
 from bot_bottle.orchestrator.client import (
     OrchestratorClient,
     OrchestratorClientError,
     RegisteredBottle,
+    _host_auth_token,
 )
 
 _URLOPEN = "bot_bottle.orchestrator.client.urllib.request.urlopen"
+
+
+class TestHostAuthToken(unittest.TestCase):
+    def test_mints_a_cli_token_from_the_host_key(self) -> None:
+        with patch("bot_bottle.orchestrator.client.host_control_plane_token",
+                   return_value="signing-key"):
+            tok = _host_auth_token()
+        self.assertEqual(ROLE_CLI, verify(tok, "signing-key"))
+
+    def test_returns_empty_when_key_unreadable(self) -> None:
+        with patch("bot_bottle.orchestrator.client.host_control_plane_token",
+                   side_effect=OSError("no host root")):
+            self.assertEqual("", _host_auth_token())
 
 
 def _resp(status: int, payload: object) -> MagicMock:

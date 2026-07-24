@@ -34,21 +34,22 @@ import urllib.request
 
 DEFAULT_TIMEOUT_SECONDS = 2.0
 
-# The control-plane secret this gateway presents on every /resolve call, read
-# from the env the launcher injects into the gateway container. The control
-# plane requires it (orchestrator/control_plane.py). Constant + env-var name are
-# duplicated here rather than imported because this module is COPYed flat into
-# the gateway image, free of bot-bottle imports — same rationale as
-# IDENTITY_HEADER in egress_addon / git_http_backend.
+# The role-scoped `gateway` token this data plane presents on every control-plane
+# call, read from the env the launcher injects into the gateway (a pre-minted
+# signed JWT — the gateway never holds the signing key, so it can't forge a
+# higher-privilege `cli` token). Constant + env-var name are duplicated here
+# rather than imported because this module is COPYed flat into the gateway image,
+# free of bot-bottle imports — same rationale as IDENTITY_HEADER in egress_addon
+# / git_http_backend.
 CONTROL_AUTH_HEADER = "x-bot-bottle-control-auth"
-CONTROL_PLANE_TOKEN_ENV = "BOT_BOTTLE_CONTROL_PLANE_TOKEN"
+CONTROL_AUTH_JWT_ENV = "BOT_BOTTLE_CONTROL_AUTH_JWT"
 
 
 def _control_auth_headers() -> dict[str, str]:
-    """The auth header to send, or {} when no secret is configured (an open
+    """The auth header to send, or {} when no token is configured (an open
     control plane, e.g. Firecracker behind its nft boundary — sending nothing
     is correct there and harmlessly ignored)."""
-    token = os.environ.get(CONTROL_PLANE_TOKEN_ENV, "").strip()
+    token = os.environ.get(CONTROL_AUTH_JWT_ENV, "").strip()
     return {CONTROL_AUTH_HEADER: token} if token else {}
 
 

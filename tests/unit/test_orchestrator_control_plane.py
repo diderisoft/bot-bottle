@@ -19,6 +19,7 @@ from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
+from bot_bottle.control_auth import ROLE_CLI, ROLE_GATEWAY, mint
 from bot_bottle.orchestrator.broker import StubBroker
 from bot_bottle.orchestrator.control_plane import dispatch, make_server
 from bot_bottle.orchestrator.registry import BottleRecord, RegistryStore
@@ -285,45 +286,71 @@ class TestServerRoundTrip(unittest.TestCase):
 
 
 class TestControlPlaneAuth(unittest.TestCase):
-    """The per-host control-plane secret (issue #400): every route but /health
-    is a trusted-caller op an agent must not be able to drive just because it
-    can reach the port."""
+    """Role-scoped control-plane tokens (issue #400 / #469 review): every route
+    but /health needs a valid token, and the token's role gates which routes it
+    reaches — a `gateway` data-plane token can't drive the operator routes."""
+
+    _OPERATOR_ROUTES = [
+        ("GET", "/bottles", b""),
+        ("POST", "/bottles", _body({"source_ip": "10.0.0.1"})),
+        ("PUT", "/bottles/x/policy", _body({"policy": "routes: []"})),
+        ("DELETE", "/bottles/x", b""),
+        ("POST", "/reconcile", _body({"live_source_ips": []})),
+        ("POST", "/attribute", _body({"source_ip": "10.0.0.1", "identity_token": "t"})),
+        ("GET", "/supervise/proposals", b""),
+        ("POST", "/supervise/respond",
+         _body({"proposal_id": "p", "bottle_slug": "s", "decision": "a"})),
+    ]
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.orch = _orchestrator(Path(self._tmp.name) / "r.db")
 
-    def test_health_is_public_even_unauthorized(self) -> None:
-        status, _ = dispatch(self.orch, "GET", "/health", b"", authorized=False)
+    def test_health_is_public_even_unauthenticated(self) -> None:
+        status, _ = dispatch(self.orch, "GET", "/health", b"", role=None)
         self.assertEqual(200, status)
 
-    def test_unauthorized_denies_every_other_route(self) -> None:
-        for method, path, body in [
-            ("GET", "/bottles", b""),
-            ("POST", "/bottles", _body({"source_ip": "10.0.0.1"})),
-            ("PUT", "/bottles/x/policy", _body({"policy": "routes: []"})),
-            ("DELETE", "/bottles/x", b""),
-            ("POST", "/reconcile", _body({"live_source_ips": []})),
+    def test_unauthenticated_denies_every_other_route(self) -> None:
+        routes = self._OPERATOR_ROUTES + [
             ("POST", "/resolve", _body({"source_ip": "10.0.0.1", "identity_token": "t"})),
-            ("POST", "/attribute", _body({"source_ip": "10.0.0.1", "identity_token": "t"})),
-            ("GET", "/supervise/proposals", b""),
-            ("POST", "/supervise/respond", _body({"proposal_id": "p", "bottle_slug": "s", "decision": "approve"})),
-        ]:
-            status, _ = dispatch(self.orch, method, path, body, authorized=False)
-            self.assertEqual(401, status, f"{method} {path} should be 401 unauthorized")
+            ("POST", "/supervise/propose",
+             _body({"source_ip": "1", "tool": "egress-allow", "proposed_file": "x", "justification": "j"})),
+            ("POST", "/supervise/poll", _body({"source_ip": "1", "proposal_id": "p"})),
+        ]
+        for method, path, body in routes:
+            status, _ = dispatch(self.orch, method, path, body, role=None)
+            self.assertEqual(401, status, f"{method} {path} should be 401 unauthenticated")
+
+    def test_gateway_role_denied_on_operator_routes(self) -> None:
+        # A compromised data-plane process holds only a `gateway` token — it must
+        # not reach the operator routes (approve proposals, rewrite policy, …).
+        for method, path, body in self._OPERATOR_ROUTES:
+            status, payload = dispatch(self.orch, method, path, body, role=ROLE_GATEWAY)
+            self.assertEqual(403, status, f"{method} {path} should be 403 for gateway")
+            self.assertIn("insufficient role", str(payload.get("error")))
+
+    def test_gateway_role_allowed_on_data_routes(self) -> None:
+        # The gateway CAN reach its own lookups. Register a bottle so /resolve
+        # returns 200 rather than a 403 — proving the role gate let it through.
+        rec = self.orch.registry.register("10.0.0.9", policy="routes: []", metadata="")
+        status, _ = dispatch(
+            self.orch, "POST", "/resolve",
+            _body({"source_ip": "10.0.0.9", "identity_token": rec.identity_token}),
+            role=ROLE_GATEWAY)
+        self.assertEqual(200, status)
 
     def test_deny_happens_before_the_registry_is_touched(self) -> None:
-        """An unauthorized DELETE must not tear a bottle down. 401, and the
+        """An unauthenticated DELETE must not tear a bottle down. 401, and the
         bottle is still there."""
         rec = self.orch.registry.register("10.0.0.9", policy="", metadata="")
         status, _ = dispatch(
-            self.orch, "DELETE", f"/bottles/{rec.bottle_id}", b"", authorized=False)
+            self.orch, "DELETE", f"/bottles/{rec.bottle_id}", b"", role=None)
         self.assertEqual(401, status)
         self.assertIsNotNone(self.orch.registry.get(rec.bottle_id))
 
-    def _server_with_secret(self, secret: str):
-        with patch.dict("os.environ", {"BOT_BOTTLE_CONTROL_PLANE_TOKEN": secret}):
+    def _server_with_key(self, signing_key: str):
+        with patch.dict("os.environ", {"BOT_BOTTLE_CONTROL_PLANE_TOKEN": signing_key}):
             server = make_server(self.orch, "127.0.0.1", 0)
         self.addCleanup(server.server_close)
         threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -340,25 +367,29 @@ class TestControlPlaneAuth(unittest.TestCase):
         except urllib.error.HTTPError as e:
             return e.code
 
-    def test_configured_server_enforces_the_header_over_http(self) -> None:
-        base = self._server_with_secret("s3cret-admin")
+    def test_configured_server_enforces_roles_over_http(self) -> None:
+        key = "test-key"
+        base = self._server_with_key(key)
+        gateway_tok = mint(ROLE_GATEWAY, key)
+        cli_tok = mint(ROLE_CLI, key)
         # /health is public — no header needed.
         self.assertEqual(200, self._status(f"{base}/health"))
-        # /bottles requires the secret.
+        # /bottles (operator) needs a valid cli token.
         self.assertEqual(401, self._status(f"{base}/bottles"))
         self.assertEqual(401, self._status(f"{base}/bottles", header="wrong"))
-        self.assertEqual(200, self._status(f"{base}/bottles", header="s3cret-admin"))
+        self.assertEqual(403, self._status(f"{base}/bottles", header=gateway_tok))
+        self.assertEqual(200, self._status(f"{base}/bottles", header=cli_tok))
 
     def test_unconfigured_server_runs_open(self) -> None:
-        """No secret set (tests / nft-protected Firecracker): open mode, so the
-        existing round-trip and unit behavior are unchanged."""
+        """No signing key set (tests / nft-protected Firecracker): open mode
+        grants full cli access, so existing round-trip behavior is unchanged."""
         with patch.dict("os.environ", {}, clear=False):
             import os
             os.environ.pop("BOT_BOTTLE_CONTROL_PLANE_TOKEN", None)
             server = make_server(self.orch, "127.0.0.1", 0)
         self.addCleanup(server.server_close)
-        self.assertTrue(server.is_authorized(""))
-        self.assertTrue(server.is_authorized("anything"))
+        self.assertEqual(ROLE_CLI, server.role_for(""))
+        self.assertEqual(ROLE_CLI, server.role_for("anything"))
 
 
 class TestDispatchSupervise(unittest.TestCase):

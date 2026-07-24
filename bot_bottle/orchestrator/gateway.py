@@ -22,9 +22,10 @@ import os
 import time
 from pathlib import Path
 
+from ..control_auth import ROLE_GATEWAY, mint
 from ..docker_cmd import run_docker
 from ..paths import (
-    CONTROL_PLANE_TOKEN_ENV,
+    CONTROL_AUTH_JWT_ENV,
     host_control_plane_token,
     host_gateway_ca_dir,
 )
@@ -252,11 +253,14 @@ class DockerGateway(Gateway):
         # policy against the control plane per request (guaranteed non-empty by
         # the check above).
         argv += ["--env", f"BOT_BOTTLE_ORCHESTRATOR_URL={self._orchestrator_url}"]
-        # ...and present the control-plane secret on those /resolve calls (the
-        # control plane requires it). Bare `--env NAME` keeps the value off argv
-        # / `docker inspect`; only the gateway (not the agent) is given it.
-        argv += ["--env", CONTROL_PLANE_TOKEN_ENV]
-        run_env[CONTROL_PLANE_TOKEN_ENV] = host_control_plane_token()
+        # ...presenting a role-scoped `gateway` token (a signed JWT minted from
+        # the host signing key) on those calls. The gateway never receives the
+        # signing key — only this pre-minted token, which it cannot rewrite into
+        # a `cli` token, so a compromised data-plane process can't drive the
+        # operator routes (issue #469 review). Bare `--env NAME` keeps the value
+        # off argv / `docker inspect`; only the gateway (not the agent) is given it.
+        argv += ["--env", CONTROL_AUTH_JWT_ENV]
+        run_env[CONTROL_AUTH_JWT_ENV] = mint(ROLE_GATEWAY, host_control_plane_token())
         argv.append(self.image_ref)
         proc = run_docker(argv, env=run_env)
         if proc.returncode != 0:

@@ -37,7 +37,16 @@ HOST_DB_FILENAME = "bot-bottle.db"
 # trusted callers (control plane, gateway, host CLI) and never handed to an
 # agent, so an agent that can reach the control-plane port still can't drive it.
 CONTROL_PLANE_TOKEN_FILENAME = "control-plane-token"
+# The env var carrying the control-plane *signing key* — held only by the
+# orchestrator (to verify tokens) and the host CLI (to mint its own), never by
+# the data plane. Same value as the host token file; the name is unchanged for
+# backward compatibility with existing launchers.
 CONTROL_PLANE_TOKEN_ENV = "BOT_BOTTLE_CONTROL_PLANE_TOKEN"
+# The env var carrying the data plane's pre-minted `gateway`-role token (a
+# signed JWT the launcher mints from the signing key). The gateway presents this
+# on /resolve + /supervise/{propose,poll}; it never holds the signing key, so it
+# cannot forge a higher-privilege `cli` token (issue #469 review).
+CONTROL_AUTH_JWT_ENV = "BOT_BOTTLE_CONTROL_AUTH_JWT"
 
 # The host directory holding the gateway's persistent mitmproxy CA. Bind-mounted
 # into the infra/gateway container at mitmproxy's confdir so the self-generated
@@ -124,6 +133,7 @@ __all__ = [
     "HOST_DB_FILENAME",
     "CONTROL_PLANE_TOKEN_FILENAME",
     "CONTROL_PLANE_TOKEN_ENV",
+    "CONTROL_AUTH_JWT_ENV",
     "GATEWAY_CA_DIRNAME",
     "bot_bottle_root",
     "host_db_path",

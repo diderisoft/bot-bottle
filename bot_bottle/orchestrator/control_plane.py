@@ -53,7 +53,6 @@ returned only once, to the caller that launches the bottle.
 
 from __future__ import annotations
 
-import hmac
 import http.server
 import json
 import os
@@ -62,6 +61,7 @@ import sys
 import typing
 from urllib.parse import urlsplit
 
+from ..control_auth import ROLE_CLI, ROLES, verify
 from ..paths import CONTROL_PLANE_TOKEN_ENV
 from ..supervise_types import TOOLS
 from .service import Orchestrator
@@ -69,13 +69,31 @@ from .service import Orchestrator
 # JSON body payload type (parsed request / rendered response).
 Json = dict[str, object]
 
-# The request header carrying the per-host control-plane secret. Every route
-# except `GET /health` requires it (see `dispatch`). The trusted callers hold
-# the secret (the gateway's PolicyResolver, the host CLI's OrchestratorClient);
-# an agent that can merely *reach* the port cannot present it, so it can't
-# enumerate bottles, rewrite policy, read injected upstream tokens, or approve
-# its own supervise proposals.
+# The request header carrying the caller's role-scoped control-plane token (a
+# signed JWT naming the caller's role — see control_auth). The role gates which
+# routes the caller may reach: the data plane holds a `gateway` token good only
+# for the agent-facing lookups; the host CLI holds a `cli` token for the
+# operator/mutating routes. An agent that can merely *reach* the port holds no
+# token at all, and a compromised gateway holds only `gateway` — neither can
+# drive the operator routes (approve proposals, rewrite policy, read tokens).
 CONTROL_AUTH_HEADER = "x-bot-bottle-control-auth"
+
+# The routes the data plane (role `gateway`) is allowed to reach — exactly the
+# per-request lookups PolicyResolver makes. Every other authenticated route is
+# operator-only. `cli` is a superset role: it may reach any route.
+_GATEWAY_ROUTES: frozenset[tuple[str, str]] = frozenset({
+    ("POST", "/resolve"),
+    ("POST", "/supervise/propose"),
+    ("POST", "/supervise/poll"),
+})
+
+
+def _allowed_roles(method: str, route: str) -> frozenset[str]:
+    """The roles permitted on `(method, route)`: `gateway` or `cli` on the
+    data-plane routes, `cli`-only everywhere else."""
+    if (method, route) in _GATEWAY_ROUTES:
+        return ROLES
+    return frozenset({ROLE_CLI})
 
 
 def _parse_json_object(body: bytes) -> Json:
@@ -89,28 +107,33 @@ def _parse_json_object(body: bytes) -> Json:
 
 
 def dispatch(  # pylint: disable=too-many-return-statements,too-many-branches
-    orch: Orchestrator, method: str, path: str, body: bytes, *, authorized: bool = True,
+    orch: Orchestrator, method: str, path: str, body: bytes, *, role: str | None = ROLE_CLI,
 ) -> tuple[int, Json]:
     """Route one control-plane request to a (status, payload) pair. Pure —
     no I/O beyond the orchestrator — so it is fully testable without a socket.
 
-    `authorized` is whether the request presented the control-plane secret (or
-    no secret is configured — see `ControlPlaneServer`). Every route except
-    `GET /health` requires it: the source-IP + identity-token checks inside
-    `/resolve` and `/attribute` authenticate the *bottle* a request is about,
-    not the *caller*, so without this gate any agent that can reach the port
-    could rewrite another bottle's policy, read the injected upstream tokens,
-    or approve its own supervise proposals. Defaults True so unit tests of the
-    routing logic don't have to thread it through."""
+    `role` is the caller's verified control-plane role (`gateway` or `cli`), or
+    None for an unauthenticated request; an open-mode server (no signing key
+    configured — see `ControlPlaneServer`) passes `cli`. Every route except
+    `GET /health` requires a role: a missing role is 401, and a role that
+    doesn't cover the route is 403 — so a `gateway` data-plane token can reach
+    `/resolve` + `/supervise/{propose,poll}` but not the operator routes
+    (rewrite policy, read injected tokens, approve its own supervise proposals).
+    The source-IP + identity-token checks inside `/resolve` and `/attribute`
+    authenticate the *bottle* a request is about, not the *caller*, so this role
+    gate is what protects the caller-privileged routes. Defaults `cli` so unit
+    tests of the routing logic don't have to thread it through."""
     route = urlsplit(path).path.rstrip("/") or "/"
 
     if method == "GET" and route == "/health":
         return 200, {"status": "ok"}
 
-    if not authorized:
-        # Everything below is a trusted-caller operation. Deny before touching
-        # the registry / broker / supervise store.
+    # Role gate — every route below is a trusted-caller operation. Deny before
+    # touching the registry / broker / supervise store.
+    if role is None:
         return 401, {"error": "control-plane authentication required"}
+    if role not in _allowed_roles(method, route):
+        return 403, {"error": "insufficient role for this route"}
 
     if method == "GET" and route == "/gateway":
         return 200, orch.gateway_status()
@@ -343,10 +366,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         assert isinstance(server, ControlPlaneServer)
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length > 0 else b""
-        authorized = server.is_authorized(self.headers.get(CONTROL_AUTH_HEADER, ""))
+        role = server.role_for(self.headers.get(CONTROL_AUTH_HEADER, ""))
         try:
             status, payload = dispatch(
-                server.orchestrator, method, self.path, body, authorized=authorized)
+                server.orchestrator, method, self.path, body, role=role)
         except Exception as e:  # noqa: BLE001 — the control plane must stay up
             sys.stderr.write(f"orchestrator: {method} {self.path} failed: {e!r}\n")
             sys.stderr.flush()
@@ -374,22 +397,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
 class ControlPlaneServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     """Threading HTTP server that carries the orchestrator for its handlers.
 
-    Holds the per-host control-plane secret (from `$BOT_BOTTLE_CONTROL_PLANE_TOKEN`,
-    injected by the launcher into this container only). When a secret is set,
-    every route but `/health` requires it; when it is unset the server runs
-    **open** and says so loudly at startup — a fail-visible fallback for tests
-    and any backend that hasn't wired the secret yet (e.g. Firecracker, whose
-    nft boundary already blocks agents from the control-plane port)."""
+    Holds the per-host control-plane *signing key* (from
+    `$BOT_BOTTLE_CONTROL_PLANE_TOKEN`, injected by the launcher into the
+    orchestrator process only) and verifies each request's role-scoped token
+    against it. When a key is set, every route but `/health` requires a valid
+    token whose role covers the route; when it is unset the server runs **open**
+    (full `cli` access) and says so loudly at startup — a fail-visible fallback
+    for tests and any backend that hasn't wired the key yet (e.g. Firecracker,
+    whose nft boundary already blocks agents from the control-plane port)."""
 
     daemon_threads = True
     allow_reuse_address = True
 
     def __init__(self, address: tuple[str, int], orchestrator: Orchestrator) -> None:
         self.orchestrator = orchestrator
-        self._auth_token = os.environ.get(CONTROL_PLANE_TOKEN_ENV, "").strip()
-        if not self._auth_token:
+        self._signing_key = os.environ.get(CONTROL_PLANE_TOKEN_ENV, "").strip()
+        if not self._signing_key:
             sys.stderr.write(
-                "orchestrator: WARNING — no control-plane secret "
+                "orchestrator: WARNING — no control-plane signing key "
                 f"(${CONTROL_PLANE_TOKEN_ENV}); running WITHOUT caller "
                 "authentication. Any client that can reach this port can drive "
                 "it. Backends that put the control plane on an agent-reachable "
@@ -398,13 +423,15 @@ class ControlPlaneServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
             sys.stderr.flush()
         super().__init__(address, Handler)
 
-    def is_authorized(self, presented: str) -> bool:
-        """True iff the request may proceed past `/health`: either no secret is
-        configured (open mode) or the presented header matches it. Constant-time
-        compare so a wrong token leaks nothing timing-wise."""
-        if not self._auth_token:
-            return True
-        return hmac.compare_digest(presented, self._auth_token)
+    def role_for(self, presented: str) -> str | None:
+        """The role the request is authorized as, or None if unauthenticated.
+        Open mode (no signing key) grants full `cli` access — the fail-visible
+        fallback. Otherwise verify the presented signed token; a missing/invalid
+        token yields None (→ 401), a valid one yields its `gateway`/`cli`
+        role (→ per-route 401/403 in `dispatch`)."""
+        if not self._signing_key:
+            return ROLE_CLI
+        return verify(presented, self._signing_key)
 
 
 def make_server(

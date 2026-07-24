@@ -22,8 +22,10 @@ import urllib.request
 from pathlib import Path
 
 from .. import log
+from ..control_auth import ROLE_GATEWAY, mint
 from ..docker_cmd import run_docker
 from ..paths import (
+    CONTROL_AUTH_JWT_ENV,
     CONTROL_PLANE_TOKEN_ENV,
     bot_bottle_root,
     host_control_plane_token,
@@ -186,6 +188,7 @@ class OrchestratorService:
         so a later `ensure_running` can detect a real code change."""
         self._ensure_network()
         run_docker(["docker", "rm", "--force", self._infra_name])
+        _signing_key = host_control_plane_token()
         proc = run_docker([
             "docker", "run", "--detach",
             "--name", self._infra_name,
@@ -209,16 +212,23 @@ class OrchestratorService:
             # Orchestrator registry DB on the host (sole writer: control plane).
             "--volume", f"{self._host_root}:{_ROOT_IN_CONTAINER}",
             "--env", f"BOT_BOTTLE_ROOT={_ROOT_IN_CONTAINER}",
-            # Control-plane secret: required by the orchestrator (to enforce)
-            # and by the gateway daemons (to present on /resolve calls).
+            # Control-plane signing key (orchestrator: verifies tokens) + the
+            # pre-minted `gateway` JWT (data-plane daemons: present it). gateway_init
+            # scopes each to its process, so a compromised data-plane daemon never
+            # sees the key and can't mint a `cli` token (issue #469 review).
             "--env", CONTROL_PLANE_TOKEN_ENV,
+            "--env", CONTROL_AUTH_JWT_ENV,
             # Gateway daemons reach the orchestrator over loopback at its
             # fixed internal port (DEFAULT_PORT), independent of self.port.
             "--env", f"BOT_BOTTLE_ORCHESTRATOR_URL=http://127.0.0.1:{DEFAULT_PORT}",
             # Opt the orchestrator into gateway_init's supervise tree.
             "--env", f"BOT_BOTTLE_GATEWAY_DAEMONS={_INFRA_DAEMONS}",
             self.image,
-        ], env={**os.environ, CONTROL_PLANE_TOKEN_ENV: host_control_plane_token()})
+        ], env={
+            **os.environ,
+            CONTROL_PLANE_TOKEN_ENV: _signing_key,
+            CONTROL_AUTH_JWT_ENV: mint(ROLE_GATEWAY, _signing_key),
+        })
         if proc.returncode != 0:
             raise OrchestratorStartError(
                 f"infra container failed to start: {proc.stderr.strip()}"
