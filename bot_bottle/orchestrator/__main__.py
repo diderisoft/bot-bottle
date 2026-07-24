@@ -22,7 +22,6 @@ from .control_plane import make_server
 from .docker_broker import DockerBroker
 from .registry import RegistryStore, default_db_path
 from .service import Orchestrator
-from .gateway import DockerGateway, Gateway
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -37,10 +36,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--broker", choices=("stub", "docker"), default="stub",
         help="launch broker: 'stub' records requests; 'docker' runs containers",
-    )
-    parser.add_argument(
-        "--gateway", action="store_true",
-        help="run one consolidated per-host gateway (build-if-missing)",
     )
     args = parser.parse_args(argv)
 
@@ -57,20 +52,7 @@ def main(argv: list[str] | None = None) -> int:
     # anything; 'docker' runs real containers (firecracker drops in later).
     secret = secrets.token_bytes(32)
     broker: LaunchBroker = DockerBroker(secret) if args.broker == "docker" else StubBroker(secret)
-    # Standalone `--gateway` (not the consolidated flow, where the host
-    # lifecycle runs the gateway). The gateway resolves against this same
-    # process; the URL is only reachable when they share a docker network.
-    gateway: Gateway | None = (
-        DockerGateway(orchestrator_url=f"http://{args.host}:{args.port}")
-        if args.gateway else None
-    )
-    orchestrator = Orchestrator(registry, broker, secret, gateway)
-
-    # One persistent per-host gateway, shared by every bottle: build the
-    # bundle image if missing, then bring the singleton up (idempotent).
-    if gateway is not None:
-        orchestrator.ensure_gateway()
-        log.info("consolidated gateway ensured", context={"name": gateway.name})
+    orchestrator = Orchestrator(registry, broker, secret)
 
     server = make_server(orchestrator, host=args.host, port=args.port)
     bound_host, bound_port = server.server_address[0], server.server_address[1]

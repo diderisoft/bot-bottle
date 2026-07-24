@@ -66,7 +66,8 @@ from .compose import (
 from .consolidated_compose import consolidated_agent_compose
 from ...orchestrator.config_store import resolve_teardown_timeout
 from .consolidated_launch import launch_consolidated, teardown_consolidated
-from ...orchestrator.gateway import DockerGateway
+from ...orchestrator.lifecycle import INFRA_NAME
+from .gateway import DockerGateway
 
 
 # Where the repo root lives, for `docker build` context. Computed once.
@@ -159,11 +160,14 @@ def launch(
         )
 
         # Step 4: install the SHARED gateway CA into the agent (replaces the
-        # per-bottle CA) — read it out of the running gateway.
+        # per-bottle CA) — read it out of the running gateway. The consolidated
+        # flow runs the gateway data plane inside the per-host infra container
+        # (INFRA_NAME), so read the CA from there, not the legacy standalone
+        # gateway container name.
         ca_dir = egress_state_dir(plan.slug) / "gateway-ca"
         ca_dir.mkdir(parents=True, exist_ok=True)
         ca_file = ca_dir / "gateway-ca.pem"
-        ca_file.write_text(DockerGateway(network=ctx.network).ca_cert_pem())
+        ca_file.write_text(DockerGateway(name=INFRA_NAME).ca_cert_pem())
         egress_plan = dataclasses.replace(
             plan.egress_plan,
             mitmproxy_ca_host_path=ca_file,

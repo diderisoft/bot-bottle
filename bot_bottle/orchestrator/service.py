@@ -27,7 +27,6 @@ from datetime import datetime, timezone
 
 from .broker import LaunchBroker, LaunchRequest, sign_request
 from .registry import DEFAULT_REAP_GRACE_SECONDS, BottleRecord, RegistryStore
-from .gateway import Gateway
 from ..supervise import (
     AuditEntry,
     COMPONENT_FOR_TOOL,
@@ -72,12 +71,10 @@ class Orchestrator:
         registry: RegistryStore,
         broker: LaunchBroker,
         sign_secret: bytes,
-        gateway: Gateway | None = None,
     ) -> None:
         self.registry = registry
         self._broker = broker
         self._secret = sign_secret
-        self._gateway = gateway
         # Per-bottle egress auth tokens (env_name -> value), keyed by bottle_id.
         # Held **in memory only** — never written to the registry DB — so the
         # gateway can inject each bottle's upstream credential without secrets
@@ -383,22 +380,15 @@ class Orchestrator:
 
     # --- consolidated gateway ----------------------------------------------
 
-    def ensure_gateway(self) -> None:
-        """Ensure the single per-host gateway is built and up (idempotent).
-        No-op when no gateway is configured."""
-        if self._gateway is not None:
-            self._gateway.ensure_built()
-            self._gateway.ensure_running()
-
     def gateway_status(self) -> dict[str, object]:
-        """Report the shared gateway for the control plane / console."""
-        if self._gateway is None:
-            return {"configured": False}
-        return {
-            "configured": True,
-            "name": self._gateway.name,
-            "running": self._gateway.is_running(),
-        }
+        """Report the shared gateway for the control plane / console.
+
+        The orchestrator no longer owns a standalone gateway lifecycle — the
+        consolidated flow runs the gateway data plane inside the per-host infra
+        container/VM (see `backend/*/gateway`), so this reports `configured:
+        false`. Retained for the documented `GET /gateway` control-plane
+        contract."""
+        return {"configured": False}
 
 
 __all__ = ["Orchestrator"]

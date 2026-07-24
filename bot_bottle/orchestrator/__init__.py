@@ -10,10 +10,10 @@ backend-neutral "consolidation core" that needs no VM packaging:
   * `broker`        — the signed, structured launch-request contract + a
                       `LaunchBroker` (stub for the harness) that verifies
                       provenance before acting.
-  * `gateway`       — the consolidated per-host gateway: a `Gateway`
-                      lifecycle contract (idempotent singleton) + a
-                      `DockerGateway` impl. One gateway shared by all
-                      bottles instead of one per bottle.
+  * `gateway`       — the consolidated per-host gateway: the `Gateway`
+                      lifecycle contract (idempotent singleton). One
+                      gateway shared by all bottles instead of one per
+                      bottle; backend impls live under `backend/*/gateway`.
   * `service`       — the `Orchestrator`: owns the registry, brokers the
                       launch lifecycle (launch/teardown), manages the
                       shared gateway, attributes.
@@ -38,7 +38,7 @@ from .broker import (
     verify_request,
 )
 from .docker_broker import DockerBroker, DockerBrokerError
-from .gateway import DockerGateway, Gateway, GatewayError
+from .gateway import Gateway, GatewayError
 from .service import Orchestrator
 from .control_plane import ControlPlaneServer, dispatch, make_server
 
@@ -53,7 +53,6 @@ __all__ = [
     "DockerBroker",
     "DockerBrokerError",
     "Gateway",
-    "DockerGateway",
     "GatewayError",
     "sign_request",
     "verify_request",

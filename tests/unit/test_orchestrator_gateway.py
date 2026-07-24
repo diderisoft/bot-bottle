@@ -7,10 +7,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from bot_bottle.backend.docker.gateway import DockerGateway
 from bot_bottle.orchestrator.gateway import (
     GATEWAY_CA_CERT,
     GATEWAY_NAME,
-    DockerGateway,
     GatewayError,
     rotate_gateway_ca,
 )
@@ -20,7 +20,7 @@ from tests.unit import use_bottle_root
 
 _CA_PEM = "-----BEGIN CERTIFICATE-----\nMII...\n-----END CERTIFICATE-----\n"
 
-_RUN_DOCKER = "bot_bottle.orchestrator.gateway.run_docker"
+_RUN_DOCKER = "bot_bottle.backend.docker.gateway.run_docker"
 
 
 def _proc(returncode: int = 0, stdout: str = "", stderr: str = "") -> Mock:
@@ -162,7 +162,7 @@ class TestDockerGateway(unittest.TestCase):
         # First read: CA not there yet; second read: present.
         seq = [_proc(returncode=1, stderr="No such file"), _proc(stdout=_CA_PEM)]
         with patch(_RUN_DOCKER, side_effect=seq), \
-                patch("bot_bottle.orchestrator.gateway.time.sleep"):
+                patch("bot_bottle.backend.docker.gateway.time.sleep"):
             self.assertEqual(_CA_PEM, self.sc.ca_cert_pem(timeout=5))
 
     def test_ensure_running_reuses_existing_network(self) -> None:

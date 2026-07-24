@@ -14,7 +14,6 @@ from unittest.mock import patch
 from bot_bottle.orchestrator.broker import LaunchBroker, LaunchRequest, StubBroker
 from bot_bottle.orchestrator.registry import RegistryStore
 from bot_bottle.orchestrator.service import Orchestrator
-from bot_bottle.orchestrator.gateway import Gateway
 from bot_bottle.orchestrator.secret_store import new_env_var_secret
 from bot_bottle.store_manager import StoreManager
 from bot_bottle.supervise import (
@@ -36,29 +35,6 @@ class _FailingBroker(LaunchBroker):
 
     def _teardown(self, req: LaunchRequest) -> None:
         pass
-
-
-class _FakeGateway(Gateway):
-    """In-memory gateway for wiring tests."""
-
-    def __init__(self) -> None:
-        self.name = "fake-gateway"
-        self.ensured = 0
-        self.built = 0
-        self._running = False
-
-    def ensure_built(self) -> None:
-        self.built += 1
-
-    def ensure_running(self) -> None:
-        self.ensured += 1
-        self._running = True
-
-    def is_running(self) -> bool:
-        return self._running
-
-    def stop(self) -> None:
-        self._running = False
 
 
 class TestOrchestrator(unittest.TestCase):
@@ -168,24 +144,11 @@ class TestOrchestrator(unittest.TestCase):
             orch.launch_bottle("10.243.0.9")
         self.assertEqual([], self.store.all())  # no orphan
 
-    def test_gateway_unconfigured_by_default(self) -> None:
+    def test_gateway_status_reports_unconfigured(self) -> None:
+        # The orchestrator no longer owns a standalone gateway lifecycle; the
+        # consolidated flow runs the gateway data plane in the per-host infra
+        # container/VM. `GET /gateway` therefore always reports unconfigured.
         self.assertEqual({"configured": False}, self.orch.gateway_status())
-        self.orch.ensure_gateway()  # no-op, must not raise
-
-    def test_gateway_wired_and_ensured(self) -> None:
-        sc = _FakeGateway()
-        orch = Orchestrator(self.store, self.broker, self.secret, gateway=sc)
-        self.assertEqual(
-            {"configured": True, "name": "fake-gateway", "running": False},
-            orch.gateway_status(),
-        )
-        orch.ensure_gateway()
-        self.assertEqual(1, sc.built)   # ensure_gateway builds first,
-        self.assertEqual(1, sc.ensured)  # then runs
-        self.assertEqual(
-            {"configured": True, "name": "fake-gateway", "running": True},
-            orch.gateway_status(),
-        )
 
 
 class TestOrchestratorSupervise(unittest.TestCase):

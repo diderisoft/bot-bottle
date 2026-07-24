@@ -11,7 +11,7 @@ from __future__ import annotations
 import subprocess
 import unittest
 
-from bot_bottle.orchestrator.gateway import DockerGateway
+from bot_bottle.backend.docker.gateway import DockerGateway
 from tests._docker import skip_unless_docker
 
 IMAGE = "busybox"
