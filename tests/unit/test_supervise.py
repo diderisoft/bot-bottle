@@ -7,7 +7,7 @@ from pathlib import Path
 
 from bot_bottle.orchestrator import supervisor as supervise
 from bot_bottle.paths import host_db_path
-from bot_bottle.util import sha256_hex
+from bot_bottle.util import render_diff, sha256_hex
 from tests.unit import use_bottle_root
 from bot_bottle.store.audit_store import AuditStore
 from bot_bottle.orchestrator.store.queue_store import QueueStore
@@ -21,7 +21,6 @@ from bot_bottle.orchestrator.supervisor import (
     Supervisor,
     TOOL_EGRESS_ALLOW,
     TOOL_GITLEAKS_ALLOW,
-    render_diff,
 )
 
 _SV = Supervisor()
@@ -249,10 +248,10 @@ class TestAuditLog(unittest.TestCase):
 
 class TestDiffAndHash(unittest.TestCase):
     def test_render_diff_returns_empty_when_unchanged(self):
-        self.assertEqual("", render_diff("a\nb\n", "a\nb\n"))
+        self.assertEqual("", render_diff("a\nb\n", "a\nb\n", before_title="current", after_label="proposed"))
 
     def test_render_diff_shows_changes(self):
-        diff = render_diff("a\nb\nc\n", "a\nB\nc\n", label="routes.yaml")
+        diff = render_diff("a\nb\nc\n", "a\nB\nc\n", label="routes.yaml", before_title="current", after_label="proposed")
         self.assertIn("routes.yaml (current)", diff)
         self.assertIn("routes.yaml (proposed)", diff)
         self.assertIn("-b", diff)

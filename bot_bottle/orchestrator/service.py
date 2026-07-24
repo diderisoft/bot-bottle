@@ -40,8 +40,8 @@ from .supervisor import (
     TOOL_EGRESS_ALLOW,
     TOOL_EGRESS_BLOCK,
     Supervisor,
-    render_diff,
 )
+from ..util import render_diff
 
 
 # Operator decision → Response.status. The apply half (egress tools) runs
@@ -350,7 +350,10 @@ class Orchestrator:
                 operator_action=status,
                 operator_notes=notes,
                 justification=proposal.justification,
-                diff=render_diff(diff_before, diff_after, label=component),
+                diff=render_diff(
+                    diff_before, diff_after, label=component,
+                    before_title="current", after_label="proposed",
+                ),
             ))
         return True, ""
 
