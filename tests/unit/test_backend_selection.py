@@ -385,6 +385,60 @@ class TestHasBackend(unittest.TestCase):
         self.assertFalse(has_backend("nonexistent"))
 
 
+class TestIsBackendAvailable(unittest.TestCase):
+    def test_delegates_to_has_backend(self):
+        from bot_bottle.backend import is_backend_available
+        with patch.object(backend_mod, "_backends", {}):
+            self.assertFalse(is_backend_available("docker"))
+
+    def test_known_and_available(self):
+        class _Ready:
+            def is_available(self):
+                return True
+
+        from bot_bottle.backend import is_backend_available
+        with patch.object(backend_mod, "_backends", {"docker": _Ready()}):
+            self.assertTrue(is_backend_available("docker"))
+
+
+class TestIsBackendReady(unittest.TestCase):
+    def test_unknown_backend_returns_false(self):
+        from bot_bottle.backend import is_backend_ready
+        with patch.object(backend_mod, "_backends", {}):
+            self.assertFalse(is_backend_ready("docker"))
+
+    def test_ready_when_status_returns_zero(self):
+        class _ReadyBackend:
+            def status(self, *, quiet=False):
+                return 0
+
+        from bot_bottle.backend import is_backend_ready
+        with patch.object(backend_mod, "_backends", {"docker": _ReadyBackend()}):
+            self.assertTrue(is_backend_ready("docker"))
+
+    def test_not_ready_when_status_nonzero(self):
+        class _BrokenBackend:
+            def status(self, *, quiet=False):
+                return 1
+
+        from bot_bottle.backend import is_backend_ready
+        with patch.object(backend_mod, "_backends", {"docker": _BrokenBackend()}):
+            self.assertFalse(is_backend_ready("docker"))
+
+    def test_quiet_flag_forwarded(self):
+        calls = []
+
+        class _SpyBackend:
+            def status(self, *, quiet=False):
+                calls.append(quiet)
+                return 0
+
+        from bot_bottle.backend import is_backend_ready
+        with patch.object(backend_mod, "_backends", {"docker": _SpyBackend()}):
+            is_backend_ready("docker", quiet=True)
+        self.assertEqual([True], calls)
+
+
 class TestEnsureOrchestrator(unittest.TestCase):
     """The backend-agnostic orchestrator bring-up entry point. Docker starts
     the orchestrator + gateway containers; firecracker boots the infra VM;

@@ -328,5 +328,44 @@ class TestNetpoolShellRenderers(unittest.TestCase):
         self.assertIn("BOT_BOTTLE_FC_POOL_SIZE=4", out)
 
 
+class TestBackendStatusQuiet(unittest.TestCase):
+    """status(quiet=True) routes the underlying status() call through
+    redirect_stderr so diagnostic output is suppressed. Verify the return
+    code is propagated and that calling with quiet=False leaves the non-quiet
+    path active (covered by the other TestDockerSetupStatus tests)."""
+
+    def test_docker_quiet_true_propagates_return_code(self):
+        from bot_bottle.backend.docker.backend import DockerBottleBackend
+        with patch.object(dk, "status", return_value=0):
+            self.assertEqual(0, DockerBottleBackend.status(quiet=True))
+
+    def test_docker_quiet_true_suppresses_stderr(self):
+        import io as _io
+        from bot_bottle.backend.docker.backend import DockerBottleBackend
+        written = []
+        real_status = dk.status
+
+        def _loud_status():
+            import sys
+            print("should be suppressed", file=sys.stderr)
+            return 0
+
+        with patch.object(dk, "status", side_effect=_loud_status):
+            buf = _io.StringIO()
+            with contextlib.redirect_stderr(buf):
+                DockerBottleBackend.status(quiet=True)
+        self.assertEqual("", buf.getvalue())
+
+    def test_firecracker_quiet_true_propagates_return_code(self):
+        from bot_bottle.backend.firecracker.backend import FirecrackerBottleBackend
+        with patch.object(fc, "status", return_value=1):
+            self.assertEqual(1, FirecrackerBottleBackend.status(quiet=True))
+
+    def test_macos_quiet_true_propagates_return_code(self):
+        from bot_bottle.backend.macos_container.backend import MacosContainerBottleBackend
+        with patch.object(mc, "status", return_value=0):
+            self.assertEqual(0, MacosContainerBottleBackend.status(quiet=True))
+
+
 if __name__ == "__main__":
     unittest.main()
