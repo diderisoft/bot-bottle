@@ -50,6 +50,11 @@ from bot_bottle.gateway.supervise_server import (
     validate_proposed_file,
 )
 
+# The orchestrator's supervise service, backing the fake resolver's queue reads
+# and writes (the fake stands in for the RPC; state still goes through the real
+# queue store).
+_SV = _sv.Supervisor()
+
 # Fixed caller identity for the handler tests. The control plane attributes by
 # (source_ip, identity_token); the fake resolver ignores them and answers for a
 # fixed bottle, since attribution itself is covered by the orchestrator tests.
@@ -89,7 +94,7 @@ class _FakeSuperviseResolver:
             bottle_slug=self.bottle_id, tool=tool, proposed_file=proposed_file,
             justification=justification, current_file_hash=_sv.sha256_hex(proposed_file),
         )
-        _sv.write_proposal(proposal)
+        _SV.write_proposal(proposal)
         return proposal.id
 
     def poll_supervise(
@@ -101,10 +106,10 @@ class _FakeSuperviseResolver:
         if self.bottle_id is None or self.poll_none:
             return None
         try:
-            response = _sv.read_response(self.bottle_id, proposal_id)
+            response = _SV.read_response(self.bottle_id, proposal_id)
         except FileNotFoundError:
             try:
-                _sv.read_proposal(self.bottle_id, proposal_id)
+                _SV.read_proposal(self.bottle_id, proposal_id)
             except FileNotFoundError:
                 return {"status": _sv.POLL_STATUS_UNKNOWN}
             return {"status": _sv.POLL_STATUS_PENDING}
@@ -377,10 +382,10 @@ class TestHandleToolsCall(unittest.TestCase):
         matching response — the operator half, out of band."""
         def runner():
             for _ in range(200):
-                pending = _sv.list_pending_proposals("dev")
+                pending = _SV.list_pending_proposals("dev")
                 if pending:
                     p = pending[0]
-                    _sv.write_response("dev", _sv.Response(
+                    _SV.write_response("dev", _sv.Response(
                         proposal_id=p.id, status=status, notes=notes,
                     ))
                     return
@@ -487,7 +492,7 @@ class TestHandleToolsCall(unittest.TestCase):
             responder.join()
         # A decided proposal drops off the operator's pending list (a response
         # row exists) — poll itself no longer archives (issue #469 review).
-        self.assertEqual([], _sv.list_pending_proposals("dev"))
+        self.assertEqual([], _SV.list_pending_proposals("dev"))
 
     def test_pending_response_times_out_without_archive(self):
         result = _tools_call(
@@ -505,7 +510,7 @@ class TestHandleToolsCall(unittest.TestCase):
         text = result["content"][0]["text"]  # type: ignore[index]
         self.assertIn("status: pending", text)
         self.assertIn("proposal remains queued", text)
-        self.assertEqual(1, len(_sv.list_pending_proposals("dev")))
+        self.assertEqual(1, len(_SV.list_pending_proposals("dev")))
 
     _ALLOW: dict[str, object] = {
         "name": _sv.TOOL_EGRESS_ALLOW,
@@ -747,7 +752,7 @@ class TestNonBlockingSupervise(unittest.TestCase):
             justification="need example.com",
             current_file_hash=_sv.sha256_hex(self._ROUTES),
         )
-        _sv.write_proposal(p)
+        _SV.write_proposal(p)
         return p
 
     # --- pending response carries the id ---
@@ -771,7 +776,7 @@ class TestNonBlockingSupervise(unittest.TestCase):
         self.assertFalse(result["isError"])  # type: ignore[index]
         text = result["content"][0]["text"]  # type: ignore[index]
         self.assertIn("status: pending", text)
-        pending = _sv.list_pending_proposals("dev")
+        pending = _SV.list_pending_proposals("dev")
         self.assertEqual(1, len(pending))  # still queued, not archived
         self.assertIn(pending[0].id, text)  # agent got the id to poll
 
@@ -779,7 +784,7 @@ class TestNonBlockingSupervise(unittest.TestCase):
 
     def test_check_returns_approved_idempotently(self):
         p = self._seed_proposal()
-        _sv.write_response("dev", _sv.Response(proposal_id=p.id, status=_sv.STATUS_APPROVED, notes="ok"))
+        _SV.write_response("dev", _sv.Response(proposal_id=p.id, status=_sv.STATUS_APPROVED, notes="ok"))
         result = _check(self.resolver, {"arguments": {"proposal_id": p.id}})
         self.assertFalse(result["isError"])
         text = result["content"][0]["text"]  # type: ignore[index]
@@ -792,7 +797,7 @@ class TestNonBlockingSupervise(unittest.TestCase):
 
     def test_check_rejected_sets_isError(self):
         p = self._seed_proposal()
-        _sv.write_response("dev", _sv.Response(proposal_id=p.id, status=_sv.STATUS_REJECTED, notes="no"))
+        _SV.write_response("dev", _sv.Response(proposal_id=p.id, status=_sv.STATUS_REJECTED, notes="no"))
         result = _check(self.resolver, {"arguments": {"proposal_id": p.id}})
         self.assertTrue(result["isError"])
         self.assertIn("status: rejected", result["content"][0]["text"])  # type: ignore[index]
@@ -804,7 +809,7 @@ class TestNonBlockingSupervise(unittest.TestCase):
         text = result["content"][0]["text"]  # type: ignore[index]
         self.assertIn("status: pending", text)
         self.assertIn(p.id, text)
-        self.assertEqual(1, len(_sv.list_pending_proposals("dev")))  # not archived
+        self.assertEqual(1, len(_SV.list_pending_proposals("dev")))  # not archived
 
     def test_check_unknown_id_is_error(self):
         result = _check(self.resolver, {"arguments": {"proposal_id": "no-such-proposal"}})
@@ -848,15 +853,15 @@ class TestNonBlockingSupervise(unittest.TestCase):
             },
             ServerConfig(response_timeout_seconds=0.05),
         )
-        pid = _sv.list_pending_proposals("dev")[0].id
+        pid = _SV.list_pending_proposals("dev")[0].id
         self.assertIn(pid, result["content"][0]["text"])  # type: ignore[index]
         # 2. operator decides out-of-band
-        _sv.write_response("dev", _sv.Response(proposal_id=pid, status=_sv.STATUS_APPROVED, notes="ok"))
+        _SV.write_response("dev", _sv.Response(proposal_id=pid, status=_sv.STATUS_APPROVED, notes="ok"))
         # 3. agent resumes by polling — no re-proposing
         poll = _check(self.resolver, {"arguments": {"proposal_id": pid}})
         self.assertFalse(poll["isError"])
         self.assertIn("status: approved", poll["content"][0]["text"])  # type: ignore[index]
-        self.assertEqual([], _sv.list_pending_proposals("dev"))  # resolved (response exists)
+        self.assertEqual([], _SV.list_pending_proposals("dev"))  # resolved (response exists)
 
 
 if __name__ == "__main__":

@@ -17,13 +17,11 @@ from bot_bottle.orchestrator.supervisor import (
     AuditEntry,
     Proposal,
     STATUS_APPROVED,
+    Supervisor,
     TOOL_EGRESS_ALLOW,
-    list_pending_proposals,
-    read_audit_entries,
-    read_proposal,
-    read_response,
-    write_audit_entry,
 )
+
+_SV = Supervisor()
 
 
 def _proposal() -> Proposal:
@@ -47,21 +45,21 @@ class TestReadMalformed(unittest.TestCase):
             with patch.dict("os.environ", {"HOME": d}):
                 QueueStore("slug").migrate()
                 with self.assertRaises(FileNotFoundError):
-                    read_proposal("slug", "p")
+                    _SV.read_proposal("slug", "p")
 
     def test_read_response_missing_row(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             with patch.dict("os.environ", {"HOME": d}):
                 QueueStore("slug").migrate()
                 with self.assertRaises(FileNotFoundError):
-                    read_response("slug", "p")
+                    _SV.read_response("slug", "p")
 
     def test_list_pending_reads_db_only(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             with patch.dict("os.environ", {"HOME": d}):
                 QueueStore("slug").migrate()
-                supervise.write_proposal(_proposal())
-                pending = list_pending_proposals("slug")
+                _SV.write_proposal(_proposal())
+                pending = _SV.list_pending_proposals("slug")
             self.assertEqual(1, len(pending))
             self.assertEqual("slug", pending[0].bottle_slug)
 
@@ -70,26 +68,26 @@ class TestReadMalformed(unittest.TestCase):
             with patch.dict("os.environ", {"HOME": d}):
                 QueueStore("slug").migrate()
                 p = _proposal()
-                supervise.write_proposal(p)
-                supervise.write_response("slug", supervise.Response(
+                _SV.write_proposal(p)
+                _SV.write_response("slug", supervise.Response(
                     proposal_id=p.id,
                     status=STATUS_APPROVED,
                     notes="",
                 ))
-                self.assertEqual([], list_pending_proposals("slug"))
+                self.assertEqual([], _SV.list_pending_proposals("slug"))
 
 
 class TestReadAuditEntries(unittest.TestCase):
     def test_missing_log_returns_empty(self) -> None:
         with tempfile.TemporaryDirectory() as home, \
                 patch.dict("os.environ", {"HOME": home}):
-            self.assertEqual([], read_audit_entries("egress", "nope"))
+            self.assertEqual([], _SV.read_audit_entries("egress", "nope"))
 
     def test_reads_entries_from_db(self) -> None:
         with tempfile.TemporaryDirectory() as home, \
                 patch.dict("os.environ", {"HOME": home}):
             AuditStore().migrate()
-            write_audit_entry(AuditEntry(
+            _SV.write_audit_entry(AuditEntry(
                 timestamp="t",
                 bottle_slug="slug",
                 component="egress",
@@ -98,7 +96,7 @@ class TestReadAuditEntries(unittest.TestCase):
                 justification="",
                 diff="",
             ))
-            write_audit_entry(AuditEntry(
+            _SV.write_audit_entry(AuditEntry(
                 timestamp="t",
                 bottle_slug="other",
                 component="egress",
@@ -107,7 +105,7 @@ class TestReadAuditEntries(unittest.TestCase):
                 justification="",
                 diff="",
             ))
-            entries = read_audit_entries("egress", "slug")
+            entries = _SV.read_audit_entries("egress", "slug")
             self.assertEqual(1, len(entries))
             self.assertEqual("approve", entries[0].operator_action)
 

@@ -39,15 +39,9 @@ from .supervisor import (
     STATUS_REJECTED,
     TOOL_EGRESS_ALLOW,
     TOOL_EGRESS_BLOCK,
-    archive_all_proposals,
-    list_all_pending_proposals,
-    read_proposal,
-    read_response,
+    Supervisor,
     render_diff,
     sha256_hex,
-    write_audit_entry,
-    write_proposal,
-    write_response,
 )
 
 
@@ -71,10 +65,14 @@ class Orchestrator:
         registry: RegistryStore,
         broker: LaunchBroker,
         sign_secret: bytes,
+        supervisor: Supervisor | None = None,
     ) -> None:
         self.registry = registry
         self._broker = broker
         self._secret = sign_secret
+        # The supervise service (queue + audit I/O). Injectable so tests can
+        # point it at a temp DB; defaults to the host DB.
+        self._supervisor = supervisor or Supervisor()
         # Per-bottle egress auth tokens (env_name -> value), keyed by bottle_id.
         # Held **in memory only** — never written to the registry DB — so the
         # gateway can inject each bottle's upstream credential without secrets
@@ -134,7 +132,7 @@ class Orchestrator:
         self.registry.deregister(bottle_id)
         self._tokens.pop(bottle_id, None)
         # Reap any supervise proposals the gone bottle never acknowledged.
-        archive_all_proposals(bottle_id)
+        self._supervisor.archive_all_proposals(bottle_id)
         return True
 
     def reconcile(
@@ -160,7 +158,7 @@ class Orchestrator:
         for rec in reaped:
             self._tokens.pop(rec.bottle_id, None)
             # Reap any supervise proposals the gone bottle never acknowledged.
-            archive_all_proposals(rec.bottle_id)
+            self._supervisor.archive_all_proposals(rec.bottle_id)
         return [rec.bottle_id for rec in reaped]
 
     def tokens_for(self, bottle_id: str) -> dict[str, str]:
@@ -220,7 +218,7 @@ class Orchestrator:
             justification=justification,
             current_file_hash=sha256_hex(proposed_file),
         )
-        write_proposal(proposal)
+        self._supervisor.write_proposal(proposal)
         return proposal.id
 
     def supervise_poll_response(self, bottle_id: str, proposal_id: str) -> dict[str, object]:
@@ -241,10 +239,10 @@ class Orchestrator:
         Reads are scoped to `bottle_id` (the queue key), so a caller can never
         read another bottle's proposal even with a guessed id."""
         try:
-            response = read_response(bottle_id, proposal_id)
+            response = self._supervisor.read_response(bottle_id, proposal_id)
         except FileNotFoundError:
             try:
-                read_proposal(bottle_id, proposal_id)
+                self._supervisor.read_proposal(bottle_id, proposal_id)
             except FileNotFoundError:
                 return {"status": POLL_STATUS_UNKNOWN}
             return {"status": POLL_STATUS_PENDING}
@@ -263,7 +261,7 @@ class Orchestrator:
         orchestrator-assigned bottle_id, which is opaque to an operator). The
         CLI renders the label but still responds against `bottle_slug`."""
         out: list[dict[str, object]] = []
-        for p in list_all_pending_proposals():
+        for p in self._supervisor.list_all_pending_proposals():
             d = p.to_dict()
             d["bottle_label"] = self._label_for(p.bottle_slug)
             out.append(d)
@@ -326,7 +324,7 @@ class Orchestrator:
         if status is None:
             return False, f"unknown decision {decision!r}"
         try:
-            proposal = read_proposal(bottle_slug, proposal_id)
+            proposal = self._supervisor.read_proposal(bottle_slug, proposal_id)
         except FileNotFoundError:
             return False, "no such proposal"
 
@@ -342,12 +340,12 @@ class Orchestrator:
             diff_before, diff_after = rec.policy, new_policy
             self.set_policy(rec.bottle_id, new_policy)
 
-        write_response(bottle_slug, Response(
+        self._supervisor.write_response(bottle_slug, Response(
             proposal_id=proposal_id, status=status, notes=notes, final_file=final_file,
         ))
         component = COMPONENT_FOR_TOOL.get(proposal.tool)
         if component is not None:
-            write_audit_entry(AuditEntry(
+            self._supervisor.write_audit_entry(AuditEntry(
                 timestamp=datetime.now(timezone.utc).isoformat(),
                 bottle_slug=bottle_slug,
                 component=component,

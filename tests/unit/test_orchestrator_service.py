@@ -20,9 +20,8 @@ from bot_bottle.orchestrator.supervisor import (
     Proposal,
     STATUS_APPROVED,
     TOOL_EGRESS_ALLOW,
-    read_response,
     sha256_hex,
-    write_proposal,
+    Supervisor,
 )
 
 
@@ -185,7 +184,7 @@ class TestOrchestratorSupervise(unittest.TestCase):
         p = Proposal.new(
             bottle_slug=slug, tool=TOOL_EGRESS_ALLOW, proposed_file=proposed,
             justification="need it", current_file_hash=sha256_hex(proposed))
-        write_proposal(p)
+        Supervisor().write_proposal(p)
         return p.id
 
     def test_pending_lists_queued_proposal(self) -> None:
@@ -208,7 +207,7 @@ class TestOrchestratorSupervise(unittest.TestCase):
         assert rec is not None
         self.assertEqual(new_routes, rec.policy)
         # response written -> agent unblocks, proposal no longer pending
-        self.assertEqual(STATUS_APPROVED, read_response("demo", pid).status)
+        self.assertEqual(STATUS_APPROVED, Supervisor().read_response("demo", pid).status)
         self.assertEqual([], self.orch.supervise_pending())
 
     def test_pending_carries_human_label(self) -> None:
@@ -261,7 +260,7 @@ class TestOrchestratorSupervise(unittest.TestCase):
         rec = self.store.get(bottle_id)
         assert rec is not None
         self.assertEqual("routes:\n  - host: existing.com\n", rec.policy)
-        self.assertEqual("rejected", read_response("demo", pid).status)
+        self.assertEqual("rejected", Supervisor().read_response("demo", pid).status)
 
     def test_unknown_proposal_is_error(self) -> None:
         ok, err = self.orch.supervise_respond(
