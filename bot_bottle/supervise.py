@@ -98,9 +98,9 @@ def audit_log_path(component: str, slug: str) -> Path:
 
 
 try:
-    from .queue_store import QueueStore
-    from .audit_store import AuditStore
-    from .store_manager import StoreManager
+    from .store.queue_store import QueueStore
+    from .store.audit_store import AuditStore
+    from .store.store_manager import StoreManager
 except ImportError:
     # Gateway: files are flat-copied under /app, not a package.
     from queue_store import QueueStore  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module

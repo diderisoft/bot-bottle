@@ -26,7 +26,7 @@ class StoreManager:
     def __init__(self, db_path: Path | None = None) -> None:
         if db_path is None:
             try:
-                from .paths import host_db_path
+                from ..paths import host_db_path
             except ImportError:
                 from paths import host_db_path  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
             db_path = host_db_path()

@@ -15,7 +15,7 @@ from bot_bottle.orchestrator.broker import LaunchBroker, LaunchRequest, StubBrok
 from bot_bottle.orchestrator.registry import RegistryStore
 from bot_bottle.orchestrator.service import Orchestrator
 from bot_bottle.orchestrator.secret_store import new_env_var_secret
-from bot_bottle.store_manager import StoreManager
+from bot_bottle.store.store_manager import StoreManager
 from bot_bottle.supervise import (
     Proposal,
     STATUS_APPROVED,

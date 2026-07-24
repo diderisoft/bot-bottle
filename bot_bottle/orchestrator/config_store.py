@@ -11,8 +11,8 @@ import os
 import sqlite3
 from pathlib import Path
 
-from ..db_store import DbStore
-from ..migrations import TableMigrations
+from ..store.db_store import DbStore
+from ..store.migrations import TableMigrations
 from ..paths import host_db_path
 
 TEARDOWN_TIMEOUT_ENV = "BOT_BOTTLE_ORCHESTRATOR_TEARDOWN_TIMEOUT_SECONDS"

@@ -36,8 +36,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..db_store import DbStore
-from ..migrations import TableMigrations
+from ..store.db_store import DbStore
+from ..store.migrations import TableMigrations
 from ..paths import host_db_path
 
 # 256 bits of urandom, URL-safe — unguessable per-bottle identity token.

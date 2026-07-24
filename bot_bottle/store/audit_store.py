@@ -6,8 +6,8 @@ import sqlite3
 from pathlib import Path
 
 try:
-    from .supervise_types import AuditEntry
-    from .paths import host_db_path
+    from ..supervise_types import AuditEntry
+    from ..paths import host_db_path
     from .db_store import DbStore
     from .migrations import TableMigrations
 except ImportError:

@@ -7,7 +7,7 @@ from pathlib import Path
 try:
     from .db_store import DbStore
     from .migrations import TableMigrations
-    from .paths import host_db_path
+    from ..paths import host_db_path
 except ImportError:
     from db_store import DbStore  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
     from migrations import TableMigrations  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module

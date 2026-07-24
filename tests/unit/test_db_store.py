@@ -7,8 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from bot_bottle.db_store import DbStore
-from bot_bottle.migrations import TableMigrations
+from bot_bottle.store.db_store import DbStore
+from bot_bottle.store.migrations import TableMigrations
 
 
 def _store(tmp: Path) -> DbStore:

@@ -11,9 +11,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from bot_bottle import supervise
-from bot_bottle.audit_store import AuditStore
+from bot_bottle.store.audit_store import AuditStore
 from bot_bottle.paths import bot_bottle_root
-from bot_bottle.queue_store import QueueStore
+from bot_bottle.store.queue_store import QueueStore
 from bot_bottle.supervise import (
     AuditEntry,
     Proposal,

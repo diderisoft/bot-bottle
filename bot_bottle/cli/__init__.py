@@ -10,7 +10,7 @@ import sys
 from ..errors import MissingEnvVarError
 from ..log import Die, die, error
 from ..manifest import ManifestError
-from ..store_manager import StoreManager
+from ..store.store_manager import StoreManager
 from ._common import PROG
 from . import list as _list_mod
 from .backend import cmd_backend
