@@ -9,7 +9,7 @@ import unittest
 from contextlib import closing
 from pathlib import Path
 
-from bot_bottle.orchestrator.registry import (
+from bot_bottle.orchestrator.store.registry_store import (
     BottleRecord,
     RegistryStore,
     new_identity_token,

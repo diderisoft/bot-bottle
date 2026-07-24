@@ -20,7 +20,7 @@ from .store.store_manager import StoreManager
 from .broker import LaunchBroker, StubBroker
 from .server import make_server
 from .docker_broker import DockerBroker
-from .registry import RegistryStore, default_db_path
+from .store.registry_store import RegistryStore, default_db_path
 from .service import Orchestrator
 
 

@@ -28,7 +28,7 @@ orchestrator -> firecracker).
 
 from __future__ import annotations
 
-from .registry import BottleRecord, RegistryStore, new_identity_token
+from .store.registry_store import BottleRecord, RegistryStore, new_identity_token
 from .broker import (
     BrokerAuthError,
     LaunchBroker,

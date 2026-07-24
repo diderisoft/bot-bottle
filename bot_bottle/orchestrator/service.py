@@ -26,7 +26,7 @@ from collections.abc import Iterable
 from datetime import datetime, timezone
 
 from .broker import LaunchBroker, LaunchRequest, sign_request
-from .registry import DEFAULT_REAP_GRACE_SECONDS, BottleRecord, RegistryStore
+from .store.registry_store import DEFAULT_REAP_GRACE_SECONDS, BottleRecord, RegistryStore
 from .supervisor import (
     AuditEntry,
     COMPONENT_FOR_TOOL,
