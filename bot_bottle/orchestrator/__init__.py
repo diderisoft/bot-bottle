@@ -82,4 +82,22 @@ def __getattr__(name: str) -> Any:
     return value
 
 
-__all__ = list(_LAZY)
+__all__ = [
+    "BottleRecord",
+    "RegistryStore",
+    "new_identity_token",
+    "BrokerAuthError",
+    "LaunchBroker",
+    "LaunchRequest",
+    "StubBroker",
+    "sign_request",
+    "verify_request",
+    "DockerBroker",
+    "DockerBrokerError",
+    "Gateway",
+    "GatewayError",
+    "Orchestrator",
+    "OrchestratorServer",
+    "dispatch",
+    "make_server",
+]

@@ -16,15 +16,10 @@ from typing import Mapping
 
 from ..log import warn
 from .util import ManifestError, as_json_object
-from .agent import ManifestAgent, ManifestAgentProvider
+from .agent import ManifestAgent
 from .bottle import ManifestBottle
-from .egress import (
-    EGRESS_AUTH_SCHEMES,
-    ManifestEgressConfig,
-    ManifestEgressRoute,
-)
 from .extends import merge_bottles_runtime, resolve_bottles
-from .git import ManifestGitEntry, ManifestGitUser, ManifestKeyConfig
+from .git import ManifestGitUser
 from .loader import (
     check_stale_json,
     load_bottle_chain_from_dir,
