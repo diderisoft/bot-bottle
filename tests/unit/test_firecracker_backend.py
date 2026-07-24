@@ -136,7 +136,9 @@ class TestFirecrackerStatus(unittest.TestCase):
         from bot_bottle.backend.firecracker import setup as fc_setup
         with patch.object(fc_setup.netpool, "missing_taps", return_value=[]), \
              patch.object(fc_setup.netpool, "overlapping_routes", return_value=[]), \
-             patch.object(fc_setup.shutil, "which", return_value=None):
+             patch.object(fc_setup.shutil, "which", return_value=None), \
+             patch.object(fc_setup, "_firecracker_binary_ok", return_value=True), \
+             patch.object(fc_setup, "_kvm_accessible", return_value=True):
             rc, out = self._run()
         self.assertEqual(0, rc)
         self.assertIn("unverified", out)

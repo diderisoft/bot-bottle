@@ -328,6 +328,107 @@ class TestNetpoolShellRenderers(unittest.TestCase):
         self.assertIn("BOT_BOTTLE_FC_POOL_SIZE=4", out)
 
 
+class TestFirecrackerBinaryCheck(unittest.TestCase):
+    def test_binary_missing_returns_false(self):
+        with patch.object(fc.shutil, "which", return_value=None):
+            self.assertFalse(fc._firecracker_binary_ok())
+
+    def test_binary_present_and_runs_ok(self):
+        with patch.object(fc.shutil, "which", return_value="/usr/bin/firecracker"), \
+             patch.object(fc.subprocess, "run",
+                          return_value=subprocess.CompletedProcess([], 0)):
+            self.assertTrue(fc._firecracker_binary_ok())
+
+    def test_binary_found_but_exits_nonzero(self):
+        with patch.object(fc.shutil, "which", return_value="/usr/bin/firecracker"), \
+             patch.object(fc.subprocess, "run",
+                          return_value=subprocess.CompletedProcess([], 1)):
+            self.assertFalse(fc._firecracker_binary_ok())
+
+    def test_binary_found_but_oserror(self):
+        with patch.object(fc.shutil, "which", return_value="/usr/bin/firecracker"), \
+             patch.object(fc.subprocess, "run", side_effect=OSError("exec failed")):
+            self.assertFalse(fc._firecracker_binary_ok())
+
+
+class TestFirecrackerKvmCheck(unittest.TestCase):
+    def test_kvm_device_absent_returns_false(self):
+        with patch.object(fc.os.path, "exists", return_value=False):
+            self.assertFalse(fc._kvm_accessible())
+
+    def test_kvm_accessible_when_ioctl_succeeds(self):
+        m = MagicMock()
+        m.__enter__ = MagicMock(return_value=m)
+        m.__exit__ = MagicMock(return_value=False)
+        with patch.object(fc.os.path, "exists", return_value=True), \
+             patch("builtins.open", return_value=m), \
+             patch.object(fc.fcntl, "ioctl", return_value=12):
+            self.assertTrue(fc._kvm_accessible())
+
+    def test_kvm_present_but_ioctl_fails(self):
+        m = MagicMock()
+        m.__enter__ = MagicMock(return_value=m)
+        m.__exit__ = MagicMock(return_value=False)
+        with patch.object(fc.os.path, "exists", return_value=True), \
+             patch("builtins.open", return_value=m), \
+             patch.object(fc.fcntl, "ioctl", side_effect=OSError("permission denied")):
+            self.assertFalse(fc._kvm_accessible())
+
+
+class TestFirecrackerStatusRuntime(unittest.TestCase):
+    """status() reports binary and KVM problems and returns non-zero."""
+
+    def _apply_pool_ok(self, stack: contextlib.ExitStack) -> None:
+        stack.enter_context(patch.object(netpool, "missing_taps", return_value=[]))
+        stack.enter_context(patch.object(netpool, "pool_size", return_value=8))
+        stack.enter_context(patch.object(netpool, "overlapping_routes", return_value=[]))
+        stack.enter_context(patch.object(fc, "_report_persistence", lambda: None))
+
+    def test_status_fails_when_binary_missing(self):
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(
+                patch.object(fc, "_firecracker_binary_ok", return_value=False))
+            stack.enter_context(
+                patch.object(fc, "_kvm_accessible", return_value=True))
+            stack.enter_context(
+                patch.object(fc.shutil, "which", return_value=None))
+            self._apply_pool_ok(stack)
+            rc, out = _cap(fc.status)
+        self.assertEqual(1, rc)
+        self.assertIn("NOT found on PATH", out)
+
+    def test_status_fails_when_kvm_not_accessible(self):
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(
+                patch.object(fc, "_firecracker_binary_ok", return_value=True))
+            stack.enter_context(
+                patch.object(fc.shutil, "which", return_value="/usr/bin/firecracker"))
+            stack.enter_context(
+                patch.object(fc, "_kvm_accessible", return_value=False))
+            stack.enter_context(
+                patch.object(fc.os.path, "exists", return_value=True))
+            self._apply_pool_ok(stack)
+            rc, out = _cap(fc.status)
+        self.assertEqual(1, rc)
+        self.assertIn("not accessible", out)
+
+    def test_status_ok_when_binary_and_kvm_ready(self):
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(
+                patch.object(fc, "_firecracker_binary_ok", return_value=True))
+            stack.enter_context(
+                patch.object(fc.shutil, "which", return_value="/usr/bin/firecracker"))
+            stack.enter_context(
+                patch.object(fc, "_kvm_accessible", return_value=True))
+            stack.enter_context(
+                patch.object(netpool, "nft_table_present", return_value=True))
+            self._apply_pool_ok(stack)
+            rc, out = _cap(fc.status)
+        self.assertEqual(0, rc)
+        self.assertIn("firecracker binary: ok", out)
+        self.assertIn("KVM:", out)
+
+
 class TestBackendStatusQuiet(unittest.TestCase):
     """status(quiet=True) routes the underlying status() call through
     redirect_stderr so diagnostic output is suppressed. Verify the return
