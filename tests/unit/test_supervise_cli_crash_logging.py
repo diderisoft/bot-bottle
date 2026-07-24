@@ -18,7 +18,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.unit import use_bottle_root
-from bot_bottle.cli import supervise as supervise_cli
+from bot_bottle.cli.commands import supervise as supervise_cli
 from bot_bottle.log import Die, die
 
 

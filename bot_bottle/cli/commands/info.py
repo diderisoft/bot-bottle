@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import argparse
 
-from ..log import info
-from ..manifest import ManifestIndex
-from ._common import PROG, USER_CWD
+from ...log import info
+from ...manifest import ManifestIndex
+from .._common import PROG, USER_CWD
 
 
 def cmd_info(argv: list[str]) -> int:

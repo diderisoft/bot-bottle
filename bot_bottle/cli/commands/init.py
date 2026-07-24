@@ -10,8 +10,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from ..log import die, info, warn
-from ._common import PROG, USER_CWD, read_tty_line
+from ...log import die, info, warn
+from .._common import PROG, USER_CWD, read_tty_line
 
 
 def cmd_init(argv: list[str]) -> int:

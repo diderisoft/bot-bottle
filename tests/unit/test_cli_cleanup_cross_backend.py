@@ -11,7 +11,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch, MagicMock
 
-from bot_bottle.cli import cleanup as cmd
+from bot_bottle.cli.commands import cleanup as cmd
 
 
 def _make_backend(empty: bool = True):

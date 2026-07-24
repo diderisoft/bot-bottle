@@ -19,22 +19,22 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..paths import bot_bottle_root
-from ..log import Die, error, info
-from ..orchestrator.client import (
+from ...paths import bot_bottle_root
+from ...log import Die, error, info
+from ...orchestrator.client import (
     OrchestratorClient,
     OrchestratorClientError,
     discover_orchestrator_url,
 )
 
-from ..supervisor.types import (
+from ...supervisor.types import (
     Proposal,
     TOOL_EGRESS_ALLOW,
     TOOL_EGRESS_BLOCK,
     TOOL_GITLEAKS_ALLOW,
     TOOL_EGRESS_TOKEN_ALLOW,
 )
-from ._common import PROG
+from .._common import PROG
 
 
 _REFRESH_INTERVAL_MS = 1000
@@ -81,7 +81,7 @@ def _resolve_orchestrator_url() -> str:
     try:
         return discover_orchestrator_url()
     except OrchestratorClientError:
-        from ..backend import get_bottle_backend
+        from ...backend import get_bottle_backend
         backend = get_bottle_backend()
         info(f"no orchestrator control plane running; starting one ({backend.name})…")
         return backend.ensure_orchestrator()

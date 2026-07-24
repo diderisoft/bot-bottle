@@ -12,7 +12,7 @@ import subprocess
 import unittest
 from unittest.mock import MagicMock, patch
 
-from bot_bottle.cli import backend as cmd
+from bot_bottle.cli.commands import backend as cmd
 from bot_bottle.backend.docker import setup as docker_setup
 
 

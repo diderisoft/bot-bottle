@@ -22,25 +22,25 @@ import tempfile
 from pathlib import Path
 from typing import Callable
 
-from ..agent_provider import get_provider, runtime_for
-from ..backend import (
+from ...agent_provider import get_provider, runtime_for
+from ...backend import (
     Bottle,
     BottleSpec,
     enumerate_active_agents,
     get_bottle_backend,
 )
-from ..backend.docker import util as docker_mod
-from ..backend.docker.bottle_plan import DockerBottlePlan
-from ..bottle_state import (
+from ...backend.docker import util as docker_mod
+from ...backend.docker.bottle_plan import DockerBottlePlan
+from ...bottle_state import (
     cleanup_state,
     is_preserved,
     mark_preserved,
 )
-from ..image_cache import StaleImageError
-from ..log import info, die
-from ..manifest import Manifest, ManifestIndex
-from ._common import PROG, USER_CWD, read_tty_line
-from . import tui
+from ...image_cache import StaleImageError
+from ...log import info, die
+from ...manifest import Manifest, ManifestIndex
+from .._common import PROG, USER_CWD, read_tty_line
+from .. import tui
 
 
 def cmd_start(argv: list[str]) -> int:
@@ -380,8 +380,8 @@ def _peek_agent_bottle(manifest: ManifestIndex, agent_name: str) -> str:
             return manifest.agents[agent_name].bottle
         return ""
 
-    from ..manifest.loader import scan_agent_names
-    from ..yaml_subset import YamlSubsetError, parse_frontmatter
+    from ...manifest.loader import scan_agent_names
+    from ...yaml_subset import YamlSubsetError, parse_frontmatter
 
     home_agents = scan_agent_names(manifest.home_md / "agents")
     cwd_agents: dict[str, Path] = {}
@@ -449,7 +449,7 @@ def _bottle_lineage(manifest: ManifestIndex) -> dict[str, str]:
     if not bottles_dir.is_dir():
         return {}
 
-    from ..yaml_subset import YamlSubsetError, parse_frontmatter
+    from ...yaml_subset import YamlSubsetError, parse_frontmatter
 
     extends_of: dict[str, str] = {}
     for path in bottles_dir.glob("*.md"):

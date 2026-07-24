@@ -25,7 +25,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from ..paths import bot_bottle_root
+from ...paths import bot_bottle_root
 
 _CONSOLE_URL_ENV = "BB_CONSOLE_URL"
 _POLL_SLEEP = 2  # seconds between polls; matches console's poll_interval default

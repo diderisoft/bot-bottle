@@ -14,7 +14,7 @@ import unittest
 from collections.abc import Mapping, Sequence
 from unittest.mock import MagicMock, patch
 
-import bot_bottle.cli.start as start_mod
+import bot_bottle.cli.commands.start as start_mod
 import bot_bottle.cli.tui as tui_mod
 from bot_bottle.backend import ActiveAgent
 
@@ -38,13 +38,13 @@ class TestCmdStartSelector(unittest.TestCase):
     def setUp(self):
         self._manifest = _make_manifest(["researcher", "implementer"], ["claude", "dev"])
         self._resolve_patch = patch(
-            "bot_bottle.cli.start.ManifestIndex.resolve",
+            "bot_bottle.cli.commands.start.ManifestIndex.resolve",
             return_value=self._manifest,
         )
         self._resolve_patch.start()
 
         self._launch_patch = patch(
-            "bot_bottle.cli.start._launch_bottle",
+            "bot_bottle.cli.commands.start._launch_bottle",
             return_value=0,
         )
         self._launch_mock = self._launch_patch.start()
@@ -66,7 +66,7 @@ class TestCmdStartSelector(unittest.TestCase):
         self._modal_patch.start()
 
         self._image_policy_patch = patch(
-            "bot_bottle.cli.start._select_image_policy",
+            "bot_bottle.cli.commands.start._select_image_policy",
             return_value="fresh",
         )
         self._image_policy_patch.start()
@@ -141,14 +141,14 @@ class TestCmdStartSelector(unittest.TestCase):
         self.assertEqual(("claude", "dev"), spec.bottle_names)
 
     def test_image_policy_forwarded_to_spec(self):
-        with patch("bot_bottle.cli.start._select_image_policy", return_value="cached"):
+        with patch("bot_bottle.cli.commands.start._select_image_policy", return_value="cached"):
             start_mod.cmd_start(["researcher"])
         self._launch_mock.assert_called_once()
         spec = self._launch_mock.call_args[0][0]
         self.assertEqual("cached", spec.image_policy)
 
     def test_image_policy_cancel_returns_0(self):
-        with patch("bot_bottle.cli.start._select_image_policy", return_value=None):
+        with patch("bot_bottle.cli.commands.start._select_image_policy", return_value=None):
             rc = start_mod.cmd_start(["researcher"])
         self.assertEqual(0, rc)
         self._launch_mock.assert_not_called()
@@ -169,7 +169,7 @@ class TestCmdStartSelector(unittest.TestCase):
             ["implementer"], ["claude", "dev"], agent_bottle="claude"
         )
         with patch(
-            "bot_bottle.cli.start.ManifestIndex.resolve", return_value=manifest
+            "bot_bottle.cli.commands.start.ManifestIndex.resolve", return_value=manifest
         ):
             start_mod.cmd_start(["implementer"])
         call_kwargs = self._bottle_picker_mock.call_args
@@ -178,7 +178,7 @@ class TestCmdStartSelector(unittest.TestCase):
     def test_no_agent_bottle_empty_initial(self):
         manifest = _make_manifest(["researcher"], ["claude", "dev"], agent_bottle="")
         with patch(
-            "bot_bottle.cli.start.ManifestIndex.resolve", return_value=manifest
+            "bot_bottle.cli.commands.start.ManifestIndex.resolve", return_value=manifest
         ):
             start_mod.cmd_start(["researcher"])
         call_kwargs = self._bottle_picker_mock.call_args
@@ -228,19 +228,19 @@ class TestCmdStartLabelCollision(unittest.TestCase):
 
     def setUp(self):
         self._manifest = _make_manifest(["researcher"], ["claude"])
-        patch("bot_bottle.cli.start.ManifestIndex.resolve", return_value=self._manifest).start()
+        patch("bot_bottle.cli.commands.start.ManifestIndex.resolve", return_value=self._manifest).start()
         self._launch_mock = patch(
-            "bot_bottle.cli.start._launch_bottle", return_value=0,
+            "bot_bottle.cli.commands.start._launch_bottle", return_value=0,
         ).start()
         # Stub the bottle picker to always return a selection.
         patch.object(tui_mod, "filter_multiselect", return_value=["claude"]).start()
-        patch("bot_bottle.cli.start._select_image_policy", return_value="fresh").start()
+        patch("bot_bottle.cli.commands.start._select_image_policy", return_value="fresh").start()
         self.addCleanup(patch.stopall)
 
     def test_no_collision_proceeds_without_reprompt(self):
         with (
             patch.object(tui_mod, "name_color_modal", return_value=("researcher", "")) as modal,
-            patch("bot_bottle.cli.start.enumerate_active_agents", return_value=[]),
+            patch("bot_bottle.cli.commands.start.enumerate_active_agents", return_value=[]),
         ):
             rc = start_mod.cmd_start(["researcher"])
         self.assertEqual(0, rc)
@@ -261,7 +261,7 @@ class TestCmdStartLabelCollision(unittest.TestCase):
         with (
             patch.object(tui_mod, "name_color_modal", side_effect=_modal) as modal,
             patch(
-                "bot_bottle.cli.start.enumerate_active_agents",
+                "bot_bottle.cli.commands.start.enumerate_active_agents",
                 side_effect=[[collision_agent], []],
             ),
         ):

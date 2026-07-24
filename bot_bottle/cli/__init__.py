@@ -12,17 +12,17 @@ from ..log import Die, die, error
 from ..manifest import ManifestError
 from ..orchestrator.store.store_manager import StoreManager
 from ._common import PROG
-from . import list as _list_mod
-from .backend import cmd_backend
-from .cleanup import cmd_cleanup
-from .commit import cmd_commit
-from .edit import cmd_edit
-from .info import cmd_info
-from .init import cmd_init
-from .login import cmd_login
-from .resume import cmd_resume
-from .start import cmd_start
-from .supervise import cmd_supervise
+from .commands import list as _list_mod
+from .commands.backend import cmd_backend
+from .commands.cleanup import cmd_cleanup
+from .commands.commit import cmd_commit
+from .commands.edit import cmd_edit
+from .commands.info import cmd_info
+from .commands.init import cmd_init
+from .commands.login import cmd_login
+from .commands.resume import cmd_resume
+from .commands.start import cmd_start
+from .commands.supervise import cmd_supervise
 
 cmd_list = _list_mod.cmd_list
 

@@ -6,9 +6,9 @@ import argparse
 import os
 import sys
 
-from ..backend import enumerate_active_agents
-from ..manifest import ManifestIndex
-from ._common import PROG, USER_CWD
+from ...backend import enumerate_active_agents
+from ...manifest import ManifestIndex
+from .._common import PROG, USER_CWD
 
 _ANSI_COLOR_CODES: dict[str, str] = {
     "red": "\033[91m",

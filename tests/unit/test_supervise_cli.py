@@ -12,7 +12,7 @@ import unittest
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
-from bot_bottle.cli import supervise as supervise_cli
+from bot_bottle.cli.commands import supervise as supervise_cli
 from bot_bottle.orchestrator.supervisor import (
     Proposal,
     TOOL_EGRESS_ALLOW,

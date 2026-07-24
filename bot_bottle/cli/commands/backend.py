@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import argparse
 
-from ..backend import get_bottle_backend, known_backend_names
-from ._common import PROG
+from ...backend import get_bottle_backend, known_backend_names
+from .._common import PROG
 
 
 def cmd_backend(args: list[str]) -> int:

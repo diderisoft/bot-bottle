@@ -7,8 +7,8 @@ import json
 import os
 from pathlib import Path
 
-from ..log import die
-from ._common import PROG, USER_CWD
+from ...log import die
+from .._common import PROG, USER_CWD
 
 
 def cmd_edit(argv: list[str]) -> int:

@@ -14,7 +14,7 @@ import os
 import unittest
 from unittest.mock import MagicMock, patch
 
-import bot_bottle.cli.start as start_mod
+import bot_bottle.cli.commands.start as start_mod
 import bot_bottle.cli.tui as tui_mod
 from bot_bottle.backend import ActiveAgent
 from bot_bottle.log import Die
@@ -53,15 +53,15 @@ class TestCmdStartHeadless(unittest.TestCase):
             ["researcher", "implementer"], ["claude", "dev"], agent_bottle="claude"
         )
         patch(
-            "bot_bottle.cli.start.ManifestIndex.resolve",
+            "bot_bottle.cli.commands.start.ManifestIndex.resolve",
             return_value=self._manifest,
         ).start()
         self._launch_mock = patch(
-            "bot_bottle.cli.start._launch_bottle", return_value=0
+            "bot_bottle.cli.commands.start._launch_bottle", return_value=0
         ).start()
         # No bottles running by default → no label collision.
         patch(
-            "bot_bottle.cli.start.enumerate_active_agents", return_value=[]
+            "bot_bottle.cli.commands.start.enumerate_active_agents", return_value=[]
         ).start()
         # If any TUI picker fires in headless mode, that's a bug.
         self._agent_picker = patch.object(tui_mod, "filter_select").start()
@@ -71,7 +71,7 @@ class TestCmdStartHeadless(unittest.TestCase):
         os.environ.pop("BOT_BOTTLE_BACKEND", None)
         # PTY check uses os.isatty(sys.stdin.fileno()); stub both so
         # headless unit tests aren't blocked on a real TTY.
-        patch("bot_bottle.cli.start.os.isatty", return_value=True).start()
+        patch("bot_bottle.cli.commands.start.os.isatty", return_value=True).start()
         self.addCleanup(patch.stopall)
 
     def _spec(self):
@@ -128,7 +128,7 @@ class TestCmdStartHeadless(unittest.TestCase):
     def test_no_bottle_and_no_default_dies(self):
         manifest = _make_manifest(["researcher"], ["claude"], agent_bottle="")
         with patch(
-            "bot_bottle.cli.start.ManifestIndex.resolve", return_value=manifest
+            "bot_bottle.cli.commands.start.ManifestIndex.resolve", return_value=manifest
         ):
             with self.assertRaises(Die):
                 start_mod.cmd_start(
@@ -170,7 +170,7 @@ class TestCmdStartHeadless(unittest.TestCase):
 
     def test_label_collision_uniquifies(self):
         with patch(
-            "bot_bottle.cli.start.enumerate_active_agents",
+            "bot_bottle.cli.commands.start.enumerate_active_agents",
             return_value=[_active_agent("researcher")],
         ):
             start_mod.cmd_start(
@@ -203,9 +203,9 @@ class TestPrepareWithPreflight(unittest.TestCase):
         mock_backend.name = "test-backend"
         render = MagicMock()
 
-        with patch("bot_bottle.cli.start.get_bottle_backend", return_value=mock_backend), \
-             patch("bot_bottle.cli.start._identity_from_plan", return_value="id"), \
-             patch("bot_bottle.cli.start.info"):
+        with patch("bot_bottle.cli.commands.start.get_bottle_backend", return_value=mock_backend), \
+             patch("bot_bottle.cli.commands.start._identity_from_plan", return_value="id"), \
+             patch("bot_bottle.cli.commands.start.info"):
             start_mod.prepare_with_preflight(
                 MagicMock(),
                 stage_dir=Path("/tmp"),
@@ -223,7 +223,7 @@ class TestNoAgentsDefined(unittest.TestCase):
     def test_no_agents_defined_returns_1(self):
         manifest = _make_manifest([], [])
         with patch(
-            "bot_bottle.cli.start.ManifestIndex.resolve", return_value=manifest
+            "bot_bottle.cli.commands.start.ManifestIndex.resolve", return_value=manifest
         ), patch("sys.stderr", io.StringIO()) as err:
             rc = start_mod.cmd_start([])
         self.assertEqual(1, rc)
@@ -236,7 +236,7 @@ class TestTextRenderPreflight(unittest.TestCase):
     def test_backend_name_in_output(self):
         render = start_mod._text_render_preflight()
         plan = MagicMock()
-        with patch("bot_bottle.cli.start._manifest_to_yaml", return_value=""), \
+        with patch("bot_bottle.cli.commands.start._manifest_to_yaml", return_value=""), \
              patch("sys.stderr", io.StringIO()) as err:
             render(plan, "my-backend")
         self.assertIn("my-backend", err.getvalue())
