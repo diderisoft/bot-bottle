@@ -10,7 +10,6 @@ from bot_bottle.egress import (
     Egress,
     EgressPlan,
     EgressRoute,
-    _yaml_str_escape,
     egress_agent_env_entries,
     egress_manifest_routes,
     egress_render_routes,
@@ -19,6 +18,7 @@ from bot_bottle.egress import (
     egress_gateway_env_entries,
     egress_token_env_map,
 )
+from bot_bottle.egress.service import _yaml_str_escape
 from bot_bottle.errors import MissingEnvVarError
 from bot_bottle.manifest import ManifestIndex
 from bot_bottle.yaml_subset import parse_yaml_subset

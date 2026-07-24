@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import Callable, Generator
 
 from ...agent_provider import runtime_for
-from ...egress import egress_resolve_token_values
+from ...egress import Egress
 from ...git_gate import GitGate
 from ...image_cache import check_stale
 from ...log import die, info, warn
@@ -143,7 +143,7 @@ def launch(
         # handed to the orchestrator (in memory) for the gateway to inject —
         # the agent never sees them.
         effective_env = {**os.environ, **plan.agent_provision.provisioned_env}
-        token_values = egress_resolve_token_values(
+        token_values = Egress().resolve_token_values(
             plan.egress_plan.token_env_map, effective_env,
         )
         teardown_timeout = resolve_teardown_timeout()

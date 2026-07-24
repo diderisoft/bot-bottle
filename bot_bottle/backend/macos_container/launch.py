@@ -44,10 +44,7 @@ from ...bottle_state import (
     git_gate_state_dir,
     read_committed_image,
 )
-from ...egress import (
-    egress_agent_env_entries,
-    egress_resolve_token_values,
-)
+from ...egress import Egress
 from ...git_gate import GitGate
 from ...gateway.git_http_backend import DEFAULT_PORT as _GIT_HTTP_PORT
 from ...image_cache import check_stale
@@ -191,7 +188,7 @@ def launch(
                 f"{endpoint.network}"
             )
         effective_env = {**os.environ, **plan.agent_provision.provisioned_env}
-        token_values = egress_resolve_token_values(
+        token_values = Egress().resolve_token_values(
             plan.egress_plan.token_env_map, effective_env,
         )
         teardown_timeout = resolve_teardown_timeout()
@@ -451,7 +448,7 @@ def _agent_env_entries(
     # so the secret value never lands on argv.
     for name in sorted(plan.forwarded_env.keys()):
         env.append(name)
-    env.extend(egress_agent_env_entries(plan.egress_plan))
+    env.extend(Egress().agent_env_entries(plan.egress_plan))
     return tuple(env)
 
 

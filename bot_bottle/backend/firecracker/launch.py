@@ -38,10 +38,7 @@ from ...bottle_state import (
     git_gate_state_dir,
     read_committed_image,
 )
-from ...egress import (
-    egress_agent_env_entries,
-    egress_resolve_token_values,
-)
+from ...egress import Egress
 from ...git_gate import GitGate
 from ...image_cache import check_stale_path
 from ...log import die, info, warn
@@ -110,7 +107,7 @@ def launch(
         # (in memory) for the gateway to inject — the agent never sees them.
         # Attribution is by the VM's guest IP (unspoofable via /31 TAP + nft).
         effective_env = {**os.environ, **plan.agent_provision.provisioned_env}
-        token_values = egress_resolve_token_values(
+        token_values = Egress().resolve_token_values(
             plan.egress_plan.token_env_map, effective_env,
         )
         teardown_timeout = resolve_teardown_timeout()
@@ -284,7 +281,7 @@ def _agent_guest_env(plan: FirecrackerBottlePlan, host_ip: str) -> dict[str, str
         env["MCP_SUPERVISE_URL"] = plan.agent_supervise_url
     if plan.env_var_secret:
         env[ENV_VAR_SECRET_NAME] = plan.env_var_secret
-    for entry in egress_agent_env_entries(plan.egress_plan):
+    for entry in Egress().agent_env_entries(plan.egress_plan):
         key, _, value = entry.partition("=")
         env[key] = value
     env.update(plan.agent_provision.guest_env)

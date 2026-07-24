@@ -1,33 +1,33 @@
-"""Per-bottle egress proxy (PRD 0017, PRD 0053).
+"""The `Egress` host-side service (PRD 0017).
 
-This module defines the abstract proxy (`Egress`), its plan
-dataclass (`EgressPlan`), and the resolved per-route shape
-(`EgressRoute`). The gateway's start/stop lifecycle is backend-
-specific and lives on concrete subclasses (see
-`bot_bottle/backend/docker/egress.py`).
+`Egress` builds a bottle's egress plan at launch: resolve the manifest's egress
+routes, render the gateway's `routes.yaml`, assign per-route token slots, and
+plant the exfil canary. The service also resolves the launch-time token values
+and the agent/gateway env entries the backend injects. The runtime enforcement
+(the mitmproxy addon) lives in `bot_bottle.gateway.egress_addon*`.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import secrets
-from abc import ABC
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .gateway.egress_addon_core import (
+from ..gateway.egress_addon_core import (
     ON_MATCH_REDACT,
     HeaderMatch as CoreHeaderMatch,
     MatchEntry as CoreMatchEntry,
     PathMatch as CorePathMatch,
     Route,
 )
-from .errors import MissingEnvVarError
-from .log import die
+from ..errors import MissingEnvVarError
+from ..log import die
+from .plan import EgressPlan, EgressRoute
 
 if TYPE_CHECKING:
-    from .manifest import ManifestBottle
+    from ..manifest import ManifestBottle
+
 
 CODEX_HOST_CREDENTIAL_TOKEN_REF = "BOT_BOTTLE_CODEX_HOST_ACCESS_TOKEN"
 CLAUDE_HOST_CREDENTIAL_TOKEN_REF = "BOT_BOTTLE_CLAUDE_HOST_ACCESS_TOKEN"
@@ -81,39 +81,6 @@ def egress_agent_env_entries(plan: "EgressPlan") -> tuple[str, ...]:
         return (f"{plan.canary_env}={plan.canary}",)
     return ()
 
-
-@dataclass(frozen=True)
-class EgressRoute(Route):
-    """Host-side extension of the addon's `Route`.
-
-    Inherits `host`, `matches`, `auth_scheme`, and `token_env`
-    from `egress_addon_core.Route` — those are the fields that cross the
-    YAML wire into the gateway. The fields below are host-only and
-    are never serialised to the addon.
-
-    `token_ref` is the host env var the CLI reads at launch and forwards
-    into the container's environ under `token_env`.
-
-    `roles` carries the manifest route's role tuple (reserved for
-    future use; always empty today)."""
-
-    token_ref: str = ""
-    roles: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True)
-class EgressPlan:
-    slug: str
-    routes_path: Path
-    routes: tuple[EgressRoute, ...]
-    token_env_map: dict[str, str]
-    internal_network: str = ""
-    egress_network: str = ""
-    mitmproxy_ca_host_path: Path = Path()
-    mitmproxy_ca_cert_only_host_path: Path = Path()
-    log: int = 0
-    canary: str = ""
-    canary_env: str = ""
 
 
 def egress_manifest_routes(
@@ -389,7 +356,11 @@ def egress_resolve_token_values(
     return out
 
 
-class Egress(ABC):
+class Egress:
+    """The host-side egress service. The backend drives `prepare` at launch,
+    then `resolve_token_values` to resolve the routes' upstream credentials and
+    `agent_env_entries` for the agent's egress env. Stateless."""
+
     def prepare(
         self,
         bottle: ManifestBottle,
@@ -416,20 +387,13 @@ class Egress(ABC):
             canary_env=_random_canary_env(),
         )
 
-__all__ = [
-    "CLAUDE_HOST_CREDENTIAL_TOKEN_REF",
-    "CODEX_HOST_CREDENTIAL_TOKEN_REF",
-    "EGRESS_HOSTNAME",
-    "EGRESS_ROUTES_FILENAME",
-    "EGRESS_ROUTES_IN_CONTAINER",
-    "Egress",
-    "EgressPlan",
-    "EgressRoute",
-    "egress_manifest_routes",
-    "egress_render_routes",
-    "egress_resolve_token_values",
-    "egress_routes_for_bottle",
-    "egress_agent_env_entries",
-    "egress_gateway_env_entries",
-    "egress_token_env_map",
-]
+    def resolve_token_values(
+        self, token_env_map: dict[str, str], host_env: dict[str, str],
+    ) -> dict[str, str]:
+        """Resolve each route's upstream credential from the host env at launch.
+        Raises `MissingEnvVarError` for an unset/empty referenced host var."""
+        return egress_resolve_token_values(token_env_map, host_env)
+
+    def agent_env_entries(self, plan: EgressPlan) -> tuple[str, ...]:
+        """The agent-visible egress env entries (the exfil canary)."""
+        return egress_agent_env_entries(plan)
