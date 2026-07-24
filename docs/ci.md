@@ -8,15 +8,15 @@ It runs the unit suite plus one integration job per backend
 - every push to `main`.
 
 Each integration job selects its backend via `BOT_BOTTLE_BACKEND` and
-runs a **preflight** (`python3 -m tests.backend_preflight <backend>`)
-that prints a clear PASS/FAIL capability line and fails the job when the
+runs a **preflight** (`./cli.py backend status --backend=<name>`) that
+prints a clear per-check readiness summary and fails the job when the
 backend is missing — so absent infrastructure is visible at the job level
-rather than hidden among per-test `unittest.skip` lines. The same
-capability probes back the skip guards in
-[`tests/_backend.py`](../tests/_backend.py): backend-agnostic tests use
+rather than hidden among per-test `unittest.skip` lines. The skip guards in
+[`tests/_backend.py`](../tests/_backend.py) gate on the same readiness
+check (`bot_bottle.backend.has_backend`): backend-agnostic tests use
 `skip_unless_selected_backend_available()` and run through whichever
-backend is selected (checking, e.g., `/dev/kvm` for Firecracker rather
-than unrelated Docker availability); Docker-implementation tests use
+backend is selected (checking, e.g., Linux + `/dev/kvm` for Firecracker
+rather than unrelated Docker availability); Docker-implementation tests use
 `skip_unless_backend("docker")` and no-op under a non-Docker run.
 
 A small subset of integration tests skip when running specifically

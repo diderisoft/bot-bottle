@@ -10,8 +10,7 @@ tests run through the backend named by `BOT_BOTTLE_BACKEND` (default
 ```
 tests/
   fixtures.py                       # JSON manifest builders (shared)
-  _backend.py                       # backend capability probes + skip guards
-  backend_preflight.py              # `python -m tests.backend_preflight` (CI)
+  _backend.py                       # backend selection + skip guards (shared)
   unit/
     test_egress.py
     test_egress_addon_core.py
@@ -90,16 +89,19 @@ BOT_BOTTLE_RUN_CANARIES=1 python -m unittest discover -t . -s tests/canaries -v
    if __name__ == "__main__":
        unittest.main()
    ```
-4. Skip guards live in `tests._backend`:
+4. Skip guards live in `tests._backend` and gate on the backend's own
+   readiness check, `bot_bottle.backend.has_backend` — the same probe
+   behind `./cli.py backend status`:
    - Backend-agnostic tests (go through `get_bottle_backend()`) decorate
      the class with `@skip_unless_selected_backend_available()` — the test
      runs against whichever backend `BOT_BOTTLE_BACKEND` selects and skips
-     unless that backend's capability is present (a reachable Docker daemon,
-     or an accessible `/dev/kvm` + `firecracker` for Firecracker).
+     unless that backend is available (checking, e.g., Linux + `/dev/kvm`
+     for Firecracker rather than unrelated Docker availability).
    - Backend-specific tests (exercise `DockerBroker`, `DockerGateway`,
      `backend.docker.*`, …) decorate with `@skip_unless_backend("docker")`
      so they no-op under a run targeting a different backend.
 
-   The same capability probes back the CI preflight,
-   `python -m tests.backend_preflight [<backend>]`, which prints a clear
-   PASS/FAIL line and exits non-zero when the selected backend is missing.
+   Each CI integration job runs `./cli.py backend status --backend=<name>`
+   as a preflight, which prints a clear per-check summary and exits non-zero
+   when the backend is missing — so absent infrastructure fails the job
+   instead of hiding among per-test `unittest.skip` lines.
