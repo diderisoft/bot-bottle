@@ -19,12 +19,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ...supervisor.types import *  # noqa: F401,F403 — re-export the neutral vocabulary
-from ...supervisor.plan import SupervisePlan
-from ..store.store_manager import StoreManager
-from ..store.queue_store import QueueStore
-from ...store.audit_store import AuditStore
-from ...supervisor.types import AuditEntry, Proposal, Response
+from ..supervisor.types import *  # noqa: F401,F403 — re-export the neutral vocabulary
+from ..supervisor.plan import SupervisePlan
+from .store.store_manager import StoreManager
+from .store.queue_store import QueueStore
+from ..store.audit_store import AuditStore
+from ..supervisor.types import AuditEntry, Proposal, Response
 
 
 class Supervisor:
