@@ -13,14 +13,14 @@ import dataclasses
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .bottle_state import globalize_slug
-from .errors import MissingEnvVarError
-from .log import info
-from .manifest import ManifestBottle, ManifestGitEntry
-from .gateway.git_gate_render import GitGateUpstream
+from ..bottle_state import globalize_slug
+from ..errors import MissingEnvVarError
+from ..log import info
+from ..manifest import ManifestBottle, ManifestGitEntry
+from ..gateway.git_gate_render import GitGateUpstream
 
 if TYPE_CHECKING:
-    from .git_gate import GitGatePlan
+    from .plan import GitGatePlan
 
 def _provision_dynamic_key(
     entry: ManifestGitEntry,
@@ -32,7 +32,7 @@ def _provision_dynamic_key(
 
     Returns the host-side path to the private key file so the caller
     can inject it into the GitGateUpstream as `identity_file`."""
-    from .deploy_key_provisioner import get_provisioner
+    from ..deploy_key_provisioner import get_provisioner
     pk = entry.Key
     token = os.environ.get(pk.forge_token_env)
     if token is None:
@@ -70,7 +70,7 @@ def revoke_git_gate_provisioned_keys(bottle: ManifestBottle, stage_dir: Path) ->
     Called at teardown after containers stop. Raises if any revocation
     fails — a stranded key is a security concern that the operator must
     address manually."""
-    from .deploy_key_provisioner import get_provisioner
+    from ..deploy_key_provisioner import get_provisioner
     for entry in bottle.git:
         if entry.Key.provider != "gitea":
             continue

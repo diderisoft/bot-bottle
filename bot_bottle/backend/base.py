@@ -309,8 +309,8 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
 
         self._preflight()
 
-        from ..git_gate_host_key import preflight_host_keys
-        manifest = preflight_host_keys(
+        from ..git_gate import GitGate
+        manifest = GitGate().preflight_host_keys(
             manifest,
             headless=spec.headless,
             home_md=spec.manifest.home_md,

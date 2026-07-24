@@ -385,13 +385,13 @@ class TestDynamicKeyProvisioning(unittest.TestCase):
 
     def test_resolve_identity_file_gitea_provisions_key(self):
         entry = self._gitea_manifest().bottles["dev"].git[0]
-        with patch("bot_bottle.git_gate_provision._provision_dynamic_key", return_value="/tmp/provisioned-key") as mock_provision:
+        with patch("bot_bottle.git_gate.provision._provision_dynamic_key", return_value="/tmp/provisioned-key") as mock_provision:
             self.assertEqual("/tmp/provisioned-key", _resolve_identity_file(entry, "demo", self.stage))
         mock_provision.assert_called_once()
 
     def test_prepare_defers_gitea_key_provisioning(self):
         bottle = self._gitea_manifest().bottles["dev"]
-        with patch("bot_bottle.git_gate_provision._provision_dynamic_key") as mock_provision:
+        with patch("bot_bottle.git_gate.provision._provision_dynamic_key") as mock_provision:
             plan = _StubGate().prepare(bottle, "demo", self.stage)
 
         mock_provision.assert_not_called()
@@ -402,7 +402,7 @@ class TestDynamicKeyProvisioning(unittest.TestCase):
         plan = _StubGate().prepare(bottle, "demo", self.stage)
 
         with patch(
-            "bot_bottle.git_gate_provision._provision_dynamic_key",
+            "bot_bottle.git_gate.provision._provision_dynamic_key",
             return_value="/tmp/provisioned-key",
         ) as mock_provision:
             updated = provision_git_gate_dynamic_keys(bottle, plan, self.stage)

@@ -48,10 +48,7 @@ from ...egress import (
     egress_agent_env_entries,
     egress_resolve_token_values,
 )
-from ...git_gate import (
-    provision_git_gate_dynamic_keys,
-    revoke_git_gate_provisioned_keys,
-)
+from ...git_gate import GitGate
 from ...gateway.git_http_backend import DEFAULT_PORT as _GIT_HTTP_PORT
 from ...image_cache import check_stale
 from ...log import die, info, warn
@@ -151,7 +148,7 @@ def launch(
         except BaseException as exc:  # noqa: W0718 - teardown must continue
             teardown_exc = exc
             warn(f"macos-container teardown failed: {exc!r}")
-        revoke_git_gate_provisioned_keys(bottle_for_revoke, git_gate_dir_for_revoke)
+        GitGate().revoke_provisioned_keys(bottle_for_revoke, git_gate_dir_for_revoke)
         if teardown_exc is not None:
             raise teardown_exc
 
@@ -282,7 +279,7 @@ def _provision_git_gate_keys(
 ) -> MacosContainerBottlePlan:
     if not plan.git_gate_plan.upstreams:
         return plan
-    git_gate_plan = provision_git_gate_dynamic_keys(
+    git_gate_plan = GitGate().provision_dynamic_keys(
         plan.manifest.bottle,
         plan.git_gate_plan,
         git_gate_state_dir(plan.slug),

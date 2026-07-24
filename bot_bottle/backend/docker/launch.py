@@ -38,10 +38,7 @@ from typing import Callable, Generator
 
 from ...agent_provider import runtime_for
 from ...egress import egress_resolve_token_values
-from ...git_gate import (
-    provision_git_gate_dynamic_keys,
-    revoke_git_gate_provisioned_keys,
-)
+from ...git_gate import GitGate
 from ...image_cache import check_stale
 from ...log import die, info, warn
 from .. import BottleImages
@@ -126,7 +123,7 @@ def launch(
                 f"teardown failed for container {plan.container_name}"
                 f" (compose-down): {exc!r}"
             )
-        revoke_git_gate_provisioned_keys(
+        GitGate().revoke_provisioned_keys(
             _bottle_for_revoke, _git_gate_dir_for_revoke
         )
 
@@ -135,7 +132,7 @@ def launch(
         # provisioning the bottle's repos into the shared gateway.
         git_gate_plan = plan.git_gate_plan
         if git_gate_plan.upstreams:
-            git_gate_plan = provision_git_gate_dynamic_keys(
+            git_gate_plan = GitGate().provision_dynamic_keys(
                 plan.manifest.bottle, git_gate_plan, git_gate_state_dir(plan.slug),
             )
 
