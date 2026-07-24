@@ -33,6 +33,7 @@ backend field; the host picks.
 
 from __future__ import annotations
 
+import enum
 import os
 import shlex
 import sys
@@ -57,6 +58,12 @@ from .util import host_skill_dir
 
 if TYPE_CHECKING:
     from .freeze import CommitCancelled, Freezer, get_freezer
+
+
+class BackendStatus(enum.IntEnum):
+    """Return codes for BottleBackend.status(). READY == 0 so callsites
+    can compare against 0 or the named constant interchangeably."""
+    READY = 0
 
 
 @dataclass(frozen=True)
@@ -611,12 +618,18 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
 
     @classmethod
     @abstractmethod
-    def status(cls) -> int:
+    def status(cls, *, quiet: bool = False) -> int:
         """Report whether this backend's prerequisites are satisfied on
         the host — binaries, daemon reachability, network pool, range
-        conflicts, etc. Prints a human-readable summary; returns 0 when
-        the backend is ready to launch and non-zero when something is
-        missing. Invoked by `./cli.py backend status [--backend=…]`."""
+        conflicts, etc. Returns BackendStatus.READY (0) when the backend
+        is ready to launch and non-zero when something is missing.
+
+        When quiet=False (default) prints a human-readable summary to
+        stderr. When quiet=True returns the status code silently —
+        useful for cheap programmatic checks.
+
+        Invoked by `./cli.py backend status [--backend=…]` (quiet=False)
+        and by is_backend_ready() (caller-controlled)."""
 
     @classmethod
     @abstractmethod
@@ -811,6 +824,29 @@ def has_backend(name: str) -> bool:
     return backends[name].is_available()
 
 
+def is_backend_available(name: str) -> bool:
+    """Cheap availability check: is the backend's binary on PATH?
+
+    Suitable for cleanup enumeration and auto-selection — does NOT probe
+    the daemon or network pool. Use is_backend_ready() for a full
+    readiness check before launching tests."""
+    return has_backend(name)
+
+
+def is_backend_ready(name: str, *, quiet: bool = False) -> bool:
+    """Full readiness check: passes all of the backend's status() checks.
+
+    When quiet=False the backend prints diagnostic output explaining what
+    is missing — intended for test-suite guards that run at discovery time
+    so the operator sees a concrete failure reason for each skip.
+
+    Returns False for unknown backend names."""
+    backends = _get_backends()
+    if name not in backends:
+        return False
+    return backends[name].status(quiet=quiet) == BackendStatus.READY
+
+
 def enumerate_active_agents() -> list[ActiveAgent]:
     """All currently-running agents, across every available
     backend. Used by CLI `active` and the dashboard's agents
@@ -835,6 +871,7 @@ def enumerate_active_agents() -> list[ActiveAgent]:
 
 __all__ = [
     "ActiveAgent",
+    "BackendStatus",
     "Bottle",
     "BottleBackend",
     "BottleCleanupPlan",
@@ -847,5 +884,7 @@ __all__ = [
     "get_bottle_backend",
     "get_freezer",
     "has_backend",
+    "is_backend_available",
+    "is_backend_ready",
     "known_backend_names",
 ]
