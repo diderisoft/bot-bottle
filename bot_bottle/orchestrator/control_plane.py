@@ -35,10 +35,12 @@ vsock / unix-socket portability caveats):
                                                 "proposal_id"}
 
 The `/supervise/propose` + `/supervise/poll` pair is the **agent** half of the
-supervise flow: the data plane (supervise / egress / git-gate) queues a
-proposal and polls for its response over RPC instead of opening `bot-bottle.db`
-directly. Both attribute the caller by `(source_ip, identity_token)` exactly
-like `/resolve`, so a bottle can only ever queue or read its own proposals.
+supervise flow: the data plane (supervise / egress / git-gate) queues a proposal
+and polls for its response over RPC instead of opening `bot-bottle.db` directly.
+`poll` is idempotent — it never archives, so a dropped connection can't lose an
+operator decision (the row is reaped when the bottle is torn down / reconciled).
+Both attribute the caller by `(source_ip, identity_token)` exactly like
+`/resolve`, so a bottle can only ever queue or read its own proposals.
 
 `POST /bottles` / `DELETE` drive the full launch lifecycle: they mint (or
 tear down) the bottle in the registry AND broker the backend-native launch

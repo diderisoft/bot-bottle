@@ -108,7 +108,7 @@ class _FakeSuperviseResolver:
             except FileNotFoundError:
                 return {"status": _sv.POLL_STATUS_UNKNOWN}
             return {"status": _sv.POLL_STATUS_PENDING}
-        _sv.archive_proposal(self.bottle_id, proposal_id)
+        # Idempotent: poll never archives (issue #469 review).
         return {
             "status": response.status, "notes": response.notes,
             "final_file": response.final_file,
@@ -473,7 +473,7 @@ class TestHandleToolsCall(unittest.TestCase):
         self.assertEqual(ERR_INVALID_PARAMS, cm.exception.code)
         self.assertIn("unknown tool", cm.exception.message)
 
-    def test_archives_proposal_after_response(self):
+    def test_decided_proposal_drops_off_pending(self):
         responder = self._respond_when_proposal_appears(_sv.STATUS_APPROVED)
         try:
             _tools_call(self.resolver, {
@@ -485,7 +485,8 @@ class TestHandleToolsCall(unittest.TestCase):
             })
         finally:
             responder.join()
-        # No pending proposals left after the decided poll archives it.
+        # A decided proposal drops off the operator's pending list (a response
+        # row exists) — poll itself no longer archives (issue #469 review).
         self.assertEqual([], _sv.list_pending_proposals("dev"))
 
     def test_pending_response_times_out_without_archive(self):
@@ -776,7 +777,7 @@ class TestNonBlockingSupervise(unittest.TestCase):
 
     # --- check-proposal poll ---
 
-    def test_check_returns_approved_and_archives(self):
+    def test_check_returns_approved_idempotently(self):
         p = self._seed_proposal()
         _sv.write_response("dev", _sv.Response(proposal_id=p.id, status=_sv.STATUS_APPROVED, notes="ok"))
         result = _check(self.resolver, {"arguments": {"proposal_id": p.id}})
@@ -784,8 +785,10 @@ class TestNonBlockingSupervise(unittest.TestCase):
         text = result["content"][0]["text"]  # type: ignore[index]
         self.assertIn("status: approved", text)
         self.assertIn("notes: ok", text)
-        with self.assertRaises(FileNotFoundError):  # archived on read
-            _sv.read_proposal("dev", p.id)
+        # Poll doesn't archive, so a re-check returns the same decision
+        # (issue #469 review) rather than 'unknown'.
+        again = _check(self.resolver, {"arguments": {"proposal_id": p.id}})
+        self.assertEqual(result, again)
 
     def test_check_rejected_sets_isError(self):
         p = self._seed_proposal()
@@ -853,7 +856,7 @@ class TestNonBlockingSupervise(unittest.TestCase):
         poll = _check(self.resolver, {"arguments": {"proposal_id": pid}})
         self.assertFalse(poll["isError"])
         self.assertIn("status: approved", poll["content"][0]["text"])  # type: ignore[index]
-        self.assertEqual([], _sv.list_pending_proposals("dev"))  # resolved + archived
+        self.assertEqual([], _sv.list_pending_proposals("dev"))  # resolved (response exists)
 
 
 if __name__ == "__main__":

@@ -171,6 +171,12 @@ def archive_proposal(bottle_slug: str, proposal_id: str) -> None:
     QueueStore(bottle_slug).archive_proposal(proposal_id)
 
 
+def archive_all_proposals(bottle_slug: str) -> None:
+    """Archive every proposal + response for `bottle_slug` (bottle teardown /
+    reconcile cleanup). Idempotent."""
+    QueueStore(bottle_slug).archive_all()
+
+
 # --- Audit log -------------------------------------------------------------
 
 
@@ -275,6 +281,7 @@ __all__ = [
     "TOOL_EGRESS_TOKEN_ALLOW",
     "TOOL_LIST_EGRESS_ROUTES",
     "archive_proposal",
+    "archive_all_proposals",
     "audit_dir",
     "audit_log_path",
     "list_pending_proposals",

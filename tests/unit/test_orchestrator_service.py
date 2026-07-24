@@ -336,7 +336,7 @@ class TestOrchestratorSupervise(unittest.TestCase):
         self.assertEqual(
             {"status": "pending"}, self.orch.supervise_poll_response(bottle_id, pid))
 
-    def test_poll_returns_decision_and_archives(self) -> None:
+    def test_poll_is_idempotent_and_leaves_no_pending(self) -> None:
         bottle_id = self._register("demo", "routes: []\n")
         pid = self.orch.supervise_queue_proposal(
             bottle_id, tool=TOOL_EGRESS_ALLOW,
@@ -346,10 +346,34 @@ class TestOrchestratorSupervise(unittest.TestCase):
         decided = self.orch.supervise_poll_response(bottle_id, pid)
         self.assertEqual("approved", decided["status"])
         self.assertEqual("ok", decided["notes"])
-        # Archived on read → gone from pending, and a re-poll is 'unknown'.
+        # Decided proposal drops off the operator's pending list (a response row
+        # exists), but poll does NOT archive — a re-poll returns the same
+        # decision so a dropped connection can't lose it (issue #469 review).
         self.assertEqual([], self.orch.supervise_pending())
+        self.assertEqual(decided, self.orch.supervise_poll_response(bottle_id, pid))
+
+    def test_teardown_reaps_the_bottles_proposals(self) -> None:
+        rec = self.store.register("10.243.0.20", policy="routes: []\n")
+        pid = self.orch.supervise_queue_proposal(
+            rec.bottle_id, tool=TOOL_EGRESS_ALLOW,
+            proposed_file="routes:\n  - host: google.com\n", justification="j")
+        self.orch.supervise_respond(
+            pid, bottle_slug=rec.bottle_id, decision="approve", notes="ok")
+        self.assertTrue(self.orch.teardown_bottle(rec.bottle_id))
+        # The gone bottle's decided-but-unconsumed proposal is archived, so a
+        # late poll returns 'unknown' rather than lingering forever.
         self.assertEqual(
-            {"status": "unknown"}, self.orch.supervise_poll_response(bottle_id, pid))
+            {"status": "unknown"}, self.orch.supervise_poll_response(rec.bottle_id, pid))
+
+    def test_reconcile_reaps_the_bottles_proposals(self) -> None:
+        rec = self.store.register("10.243.0.21", policy="routes: []\n")
+        pid = self.orch.supervise_queue_proposal(
+            rec.bottle_id, tool=TOOL_EGRESS_ALLOW,
+            proposed_file="routes:\n  - host: google.com\n", justification="j")
+        # No live source IPs -> the bottle is reaped (grace 0 so it's immediate).
+        self.assertEqual([rec.bottle_id], self.orch.reconcile([], grace_seconds=0))
+        self.assertEqual(
+            {"status": "unknown"}, self.orch.supervise_poll_response(rec.bottle_id, pid))
 
     def test_poll_unknown_for_other_bottle(self) -> None:
         bottle_id = self._register("demo", "routes: []\n")

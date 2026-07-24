@@ -82,7 +82,11 @@ ERR_INVALID_PARAMS = -32602
 ERR_INTERNAL = -32603
 
 DEFAULT_RESPONSE_TIMEOUT_SECONDS = 30.0
-MIN_RESPONSE_POLL_INTERVAL_SECONDS = 0.05
+# Grace-window poll cadence. 250 ms keeps the operator-visible latency low while
+# staying gentle on the shared control plane — each poll is now an HTTP round
+# trip, not a local file read, so the old 50 ms would be ~20 req/s per pending
+# proposal across every waiting agent (issue #469 review).
+MIN_RESPONSE_POLL_INTERVAL_SECONDS = 0.25
 
 # The per-host orchestrator control plane the shared supervise server attributes
 # each proposal to, by source IP. Mandatory — there is no single-tenant

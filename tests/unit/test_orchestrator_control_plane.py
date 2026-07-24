@@ -527,7 +527,7 @@ class TestDispatchSuperviseAgentRpc(unittest.TestCase):
         }))
         self.assertEqual(400, status)
 
-    def test_poll_pending_then_decided_then_archived(self) -> None:
+    def test_poll_pending_then_decided_then_idempotent(self) -> None:
         rec = self._register()
         _, proposed = self._propose(rec)
         pid = proposed["proposal_id"]
@@ -546,12 +546,12 @@ class TestDispatchSuperviseAgentRpc(unittest.TestCase):
         self.assertEqual("approved", decided["status"])
         self.assertEqual("ok", decided["notes"])
 
-        # The decided poll archived it: gone from pending, and a re-poll is
-        # 'unknown' rather than replaying the decision forever.
+        # Poll doesn't archive: it's gone from the operator's pending list, but a
+        # re-poll returns the same decision so a dropped connection can't lose it.
         _, listing = dispatch(self.orch, "GET", "/supervise/proposals", b"")
         self.assertEqual([], listing["proposals"])
         _, again = self._poll(rec, pid)
-        self.assertEqual("unknown", again["status"])
+        self.assertEqual(decided, again)
 
     def test_poll_cannot_read_another_bottles_proposal(self) -> None:
         rec_a = self._register("10.0.0.1", "a")

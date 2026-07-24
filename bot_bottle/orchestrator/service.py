@@ -40,7 +40,7 @@ from ..supervise import (
     STATUS_REJECTED,
     TOOL_EGRESS_ALLOW,
     TOOL_EGRESS_BLOCK,
-    archive_proposal,
+    archive_all_proposals,
     list_all_pending_proposals,
     read_proposal,
     read_response,
@@ -136,6 +136,8 @@ class Orchestrator:
         self._broker.submit(sign_request(req, self._secret))
         self.registry.deregister(bottle_id)
         self._tokens.pop(bottle_id, None)
+        # Reap any supervise proposals the gone bottle never acknowledged.
+        archive_all_proposals(bottle_id)
         return True
 
     def reconcile(
@@ -160,6 +162,8 @@ class Orchestrator:
             live_source_ips, grace_seconds=grace_seconds)
         for rec in reaped:
             self._tokens.pop(rec.bottle_id, None)
+            # Reap any supervise proposals the gone bottle never acknowledged.
+            archive_all_proposals(rec.bottle_id)
         return [rec.bottle_id for rec in reaped]
 
     def tokens_for(self, bottle_id: str) -> dict[str, str]:
@@ -223,15 +227,19 @@ class Orchestrator:
         return proposal.id
 
     def supervise_poll_response(self, bottle_id: str, proposal_id: str) -> dict[str, object]:
-        """Non-blocking poll of one of `bottle_id`'s queued proposals.
+        """Non-blocking, **idempotent** poll of one of `bottle_id`'s proposals.
 
         Returns `{"status": ...}`: a terminal decision (`approved`/`modified`/
         `rejected`, with `notes` + `final_file`) once the operator has responded,
         `pending` while it's still queued undecided, or `unknown` when no such
-        queued proposal exists for this bottle (wrong id, or already resolved and
-        read). A decided proposal is archived here — the same terminal step the
-        data plane used to run after reading the response — so `pending`
-        proposals stay visible to the operator until decided *and* polled.
+        queued proposal exists for this bottle (wrong id, or already archived).
+
+        Poll does **not** archive — a decided proposal keeps returning the same
+        decision so a client whose connection drops after the decision but before
+        it consumes the response still gets it on retry (issue #469 review). A
+        decided proposal is already excluded from the operator's pending list (a
+        response row exists), so it doesn't linger there; the row itself is reaped
+        when the bottle is torn down / reconciled.
 
         Reads are scoped to `bottle_id` (the queue key), so a caller can never
         read another bottle's proposal even with a guessed id."""
@@ -243,7 +251,6 @@ class Orchestrator:
             except FileNotFoundError:
                 return {"status": POLL_STATUS_UNKNOWN}
             return {"status": POLL_STATUS_PENDING}
-        archive_proposal(bottle_id, proposal_id)
         return {
             "status": response.status,
             "notes": response.notes,

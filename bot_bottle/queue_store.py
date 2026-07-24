@@ -192,6 +192,23 @@ class QueueStore(DbStore):
                 (self.queue_key, proposal_id),
             )
 
+    def archive_all(self) -> None:
+        """Archive every proposal + response for this queue key. Used to reap a
+        bottle's supervise records when it is torn down or reconciled away —
+        the retention path for a client that received a decision but died before
+        acknowledging it. Idempotent."""
+        if not self.db_path.is_file():
+            return
+        with self._connection() as conn:
+            conn.execute(
+                "UPDATE supervise_proposals SET archived = 1 WHERE queue_key = ?",
+                (self.queue_key,),
+            )
+            conn.execute(
+                "UPDATE supervise_responses SET archived = 1 WHERE queue_key = ?",
+                (self.queue_key,),
+            )
+
     @staticmethod
     def _row_to_proposal(row: sqlite3.Row) -> Proposal:
         return Proposal(
