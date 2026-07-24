@@ -21,7 +21,7 @@ from unittest.mock import patch
 
 from bot_bottle.control_auth import ROLE_CLI, ROLE_GATEWAY, mint
 from bot_bottle.orchestrator.broker import StubBroker
-from bot_bottle.orchestrator.control_plane import dispatch, make_server
+from bot_bottle.orchestrator.server import dispatch, make_server
 from bot_bottle.orchestrator.registry import BottleRecord, RegistryStore
 from bot_bottle.orchestrator.service import Orchestrator
 from bot_bottle.orchestrator.store.store_manager import StoreManager

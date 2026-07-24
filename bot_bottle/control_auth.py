@@ -15,8 +15,8 @@ Only the orchestrator (and the host CLI, which shares the host trust domain)
 holds the signing key; the gateway is handed a pre-minted ``gateway`` token it
 cannot rewrite into a ``cli`` token. So a compromised data-plane process can no
 longer approve its own supervise proposals or drive operator routes — it can
-only present the ``gateway`` role it was issued (control_plane rejects it on
-operator routes with 403).
+only present the ``gateway`` role it was issued (the control plane rejects it
+on operator routes with 403).
 
 Stdlib-only (HMAC-SHA256 over a JSON payload); no JWT dependency — the project
 carries no runtime pip deps. Tokens are **signed, not encrypted** (the role is

@@ -33,7 +33,7 @@ HOST_DB_FILENAME = "bot-bottle.db"
 
 # The per-host control-plane secret file, and the env var the launchers inject
 # its value into. The control plane requires this secret on every mutating /
-# reading route (see orchestrator/control_plane.py); it is held only by the
+# reading route (see orchestrator/server.py); it is held only by the
 # trusted callers (control plane, gateway, host CLI) and never handed to an
 # agent, so an agent that can reach the control-plane port still can't drive it.
 CONTROL_PLANE_TOKEN_FILENAME = "control-plane-token"

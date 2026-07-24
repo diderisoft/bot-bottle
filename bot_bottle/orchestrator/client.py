@@ -20,7 +20,7 @@ from dataclasses import dataclass
 
 from ..control_auth import ROLE_CLI, mint
 from ..paths import host_control_plane_token
-from .control_plane import CONTROL_AUTH_HEADER
+from .server import CONTROL_AUTH_HEADER
 
 DEFAULT_TIMEOUT_SECONDS = 5.0
 

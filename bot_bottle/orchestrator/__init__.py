@@ -40,7 +40,7 @@ from .broker import (
 from .docker_broker import DockerBroker, DockerBrokerError
 from ..gateway import Gateway, GatewayError
 from .service import Orchestrator
-from .control_plane import ControlPlaneServer, dispatch, make_server
+from .server import ControlPlaneServer, dispatch, make_server
 
 __all__ = [
     "BottleRecord",
