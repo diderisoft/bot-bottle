@@ -230,7 +230,7 @@ class TestHookRender(unittest.TestCase):
         # execute from the bare repo directory, so the embedded Python must
         # include /app and support both import layouts.
         self.assertIn('PYTHONPATH="/app${PYTHONPATH:+:$PYTHONPATH}"', hook)
-        self.assertIn("from bot_bottle.policy_resolver import PolicyResolver", hook)
+        self.assertIn("from bot_bottle.gateway.policy_resolver import PolicyResolver", hook)
         self.assertIn("from policy_resolver import PolicyResolver", hook)
 
     def test_inline_gitleaks_allow_fails_closed_without_supervisor(self):

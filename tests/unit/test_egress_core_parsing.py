@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import unittest
 
-from bot_bottle.egress_addon_core import (
+from bot_bottle.gateway.egress_addon_core import (
     HeaderMatch,
     MatchEntry,
     PathMatch,

@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 from bot_bottle.git_gate import GIT_GATE_TIMEOUT_SECS
-from bot_bottle.git_http_backend import GitHttpHandler, MAX_BODY_BYTES
+from bot_bottle.gateway.git_http_backend import GitHttpHandler, MAX_BODY_BYTES
 
 
 # The git-http backend is resolver-only: every request is attributed to a
@@ -199,7 +199,7 @@ class TestGitHttpBackend(unittest.TestCase):
                 subprocess.CompletedProcess(["git"], 0, backend_response, b""),
             ]
             with mock.patch(
-                "bot_bottle.git_http_backend.subprocess.run",
+                "bot_bottle.gateway.git_http_backend.subprocess.run",
                 side_effect=calls,
             ) as run:
                 request = urllib.request.Request(
@@ -265,7 +265,7 @@ class TestGitHttpBackend(unittest.TestCase):
                 subprocess.CompletedProcess(["git"], 0, backend_response, b""),
             ]
             with mock.patch(
-                "bot_bottle.git_http_backend.subprocess.run",
+                "bot_bottle.gateway.git_http_backend.subprocess.run",
                 side_effect=calls,
             ) as run:
                 req = urllib.request.Request(
@@ -309,7 +309,7 @@ class TestGitHttpBackend(unittest.TestCase):
 
             denial = b"git-gate: upstream fetch failed; refusing to serve stale data\n"
             with mock.patch(
-                "bot_bottle.git_http_backend.subprocess.run",
+                "bot_bottle.gateway.git_http_backend.subprocess.run",
                 return_value=subprocess.CompletedProcess(
                     ["hook"], 1, b"", denial,
                 ),
@@ -355,7 +355,7 @@ class TestGitHttpBackend(unittest.TestCase):
             self.addCleanup(server.server_close)
 
             with mock.patch(
-                "bot_bottle.git_http_backend.subprocess.run",
+                "bot_bottle.gateway.git_http_backend.subprocess.run",
                 return_value=subprocess.CompletedProcess(
                     ["hook"], 2, b"", b"",
                 ),
@@ -402,7 +402,7 @@ class TestGitHttpBackend(unittest.TestCase):
             self.addCleanup(server.server_close)
 
             with mock.patch(
-                "bot_bottle.git_http_backend.subprocess.run",
+                "bot_bottle.gateway.git_http_backend.subprocess.run",
                 side_effect=PermissionError(13, "Permission denied"),
             ):
                 buf = io.StringIO()
@@ -461,7 +461,7 @@ class TestMalformedStatusHeader(unittest.TestCase):
 
     def _get_with_backend_response(self, cgi_response: bytes) -> int:
         with mock.patch(
-            "bot_bottle.git_http_backend.subprocess.run",
+            "bot_bottle.gateway.git_http_backend.subprocess.run",
             return_value=mock.Mock(returncode=0, stdout=cgi_response),
         ):
             req = urllib.request.Request(
@@ -545,7 +545,7 @@ class TestContentLengthBounds(unittest.TestCase):
         # With a valid Content-Length the handler proceeds into
         # git http-backend; that will fail (no real git repo) but the
         # status won't be 400 or 413.
-        with mock.patch("bot_bottle.git_http_backend.subprocess.run") as run:
+        with mock.patch("bot_bottle.gateway.git_http_backend.subprocess.run") as run:
             run.return_value = mock.Mock(
                 returncode=0,
                 stdout=(

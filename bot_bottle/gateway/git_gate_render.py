@@ -14,8 +14,8 @@ import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
-from .constants import GIT_GATE_TIMEOUT_SECS, IDENTITY_HEADER
-from .manifest import ManifestBottle, ManifestGitEntry
+from ..constants import GIT_GATE_TIMEOUT_SECS, IDENTITY_HEADER
+from ..manifest import ManifestBottle, ManifestGitEntry
 
 # Short network alias for git-gate inside the gateway. The
 # agent's `.gitconfig` insteadOf rewrites resolve through this name.
@@ -282,7 +282,7 @@ from pathlib import Path
 # identity_token), resolved server-side, so the proposal lands under the
 # calling bottle exactly as a direct write once did.
 try:
-    from bot_bottle.policy_resolver import PolicyResolver, PolicyResolveError
+    from bot_bottle.gateway.policy_resolver import PolicyResolver, PolicyResolveError
     from bot_bottle.supervise_types import TOOL_GITLEAKS_ALLOW
 except ImportError:
     from policy_resolver import PolicyResolver, PolicyResolveError
@@ -374,7 +374,7 @@ import sys
 # Non-blocking poll over the control plane. A decided proposal is archived
 # server-side on read, so no separate archive step is needed here.
 try:
-    from bot_bottle.policy_resolver import PolicyResolver, PolicyResolveError
+    from bot_bottle.gateway.policy_resolver import PolicyResolver, PolicyResolveError
 except ImportError:
     from policy_resolver import PolicyResolver, PolicyResolveError
 

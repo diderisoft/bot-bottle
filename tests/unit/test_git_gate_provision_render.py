@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from bot_bottle.git_gate_render import (
+from bot_bottle.gateway.git_gate_render import (
     GitGateUpstream,
     git_gate_render_entrypoint,
     git_gate_render_provision,

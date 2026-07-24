@@ -58,10 +58,10 @@ import typing
 from dataclasses import dataclass
 
 from bot_bottle.constants import IDENTITY_HEADER
-from bot_bottle.egress_addon_core import (
+from bot_bottle.gateway.egress_addon_core import (
     LOG_OFF, load_config, resolve_client_context, route_to_yaml_dict,
 )
-from bot_bottle.policy_resolver import PolicyResolveError, PolicyResolver
+from bot_bottle.gateway.policy_resolver import PolicyResolveError, PolicyResolver
 from bot_bottle import supervise as _sv
 
 

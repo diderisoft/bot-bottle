@@ -11,7 +11,7 @@ from ...paths import (
     host_control_plane_token,
     host_gateway_ca_dir,
 )
-from ...orchestrator.gateway import (
+from ...gateway import (
   Gateway, GATEWAY_IMAGE, GATEWAY_NAME, GATEWAY_NETWORK, GATEWAY_DOCKERFILE,
   REPO_ROOT, GATEWAY_LABEL, MITMPROXY_HOME, DEFAULT_CA_TIMEOUT_SECONDS,
   CA_POLL_SECONDS, GATEWAY_CA_CERT, GatewayError

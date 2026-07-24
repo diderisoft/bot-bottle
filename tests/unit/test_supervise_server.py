@@ -22,8 +22,8 @@ from bot_bottle import supervise as _sv
 from bot_bottle.store import queue_store as _qs
 from bot_bottle.store import audit_store as _as
 
-from bot_bottle import supervise_server  # noqa: E402
-from bot_bottle.supervise_server import (
+from bot_bottle.gateway import supervise_server  # noqa: E402
+from bot_bottle.gateway.supervise_server import (
     ERR_INTERNAL,
     ERR_INVALID_PARAMS,
     ERR_INVALID_REQUEST,

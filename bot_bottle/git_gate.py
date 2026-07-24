@@ -39,7 +39,7 @@ from .manifest import ManifestBottle
 # Rendering and the deploy-key lifecycle live in sibling modules; the
 # names are re-exported here (see __all__) so existing
 # `from bot_bottle.git_gate import …` callers are unchanged.
-from .git_gate_render import (
+from .gateway.git_gate_render import (
     GIT_GATE_HOSTNAME,
     GIT_GATE_TIMEOUT_SECS,
     GitGateUpstream,

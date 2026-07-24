@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from bot_bottle.orchestrator import rotate_ca
-from bot_bottle.orchestrator.gateway import GATEWAY_NAME
+from bot_bottle.gateway import GATEWAY_NAME
 from bot_bottle.orchestrator.lifecycle import INFRA_NAME
 from bot_bottle.paths import host_gateway_ca_dir
 from tests.unit import use_bottle_root

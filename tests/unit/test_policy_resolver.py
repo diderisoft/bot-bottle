@@ -7,7 +7,7 @@ import unittest
 import urllib.error
 from unittest.mock import MagicMock, patch
 
-from bot_bottle.policy_resolver import (
+from bot_bottle.gateway.policy_resolver import (
     CONTROL_AUTH_HEADER,
     CONTROL_AUTH_JWT_ENV,
     PolicyResolveError,
@@ -15,7 +15,7 @@ from bot_bottle.policy_resolver import (
     _control_auth_headers,
 )
 
-_URLOPEN = "bot_bottle.policy_resolver.urllib.request.urlopen"
+_URLOPEN = "bot_bottle.gateway.policy_resolver.urllib.request.urlopen"
 
 
 def _resp(payload: object) -> MagicMock:

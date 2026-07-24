@@ -38,7 +38,7 @@ from .broker import (
     verify_request,
 )
 from .docker_broker import DockerBroker, DockerBrokerError
-from .gateway import Gateway, GatewayError
+from ..gateway import Gateway, GatewayError
 from .service import Orchestrator
 from .control_plane import ControlPlaneServer, dispatch, make_server
 

@@ -102,7 +102,7 @@ RUN pip install --no-cache-dir /src/
 # WORKDIR here also creates /app so the shim + COPYs below can write into it
 # (nothing created /app before this point).
 WORKDIR /app
-RUN printf 'from bot_bottle.egress_addon import addons\n' > /app/egress_addon.py
+RUN printf 'from bot_bottle.gateway.egress_addon import addons\n' > /app/egress_addon.py
 COPY bot_bottle/egress_entrypoint.sh /app/egress-entrypoint.sh
 RUN chmod +x /app/egress-entrypoint.sh
 
@@ -123,4 +123,4 @@ EXPOSE 8888 9099 9418 9420 9100
 
 # PID 1 is the supervisor. It owns signal handling and exit-code
 # propagation; no `exec` chain in the entrypoint itself.
-ENTRYPOINT ["python3", "-m", "bot_bottle.gateway_init"]
+ENTRYPOINT ["python3", "-m", "bot_bottle.gateway.gateway_init"]

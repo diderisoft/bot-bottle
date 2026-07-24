@@ -29,7 +29,7 @@ from bot_bottle.backend.docker.consolidated_launch import (
 from bot_bottle.backend.docker.egress import EGRESS_PORT
 from bot_bottle.backend.docker.gateway_net import next_free_ip
 from bot_bottle.orchestrator.client import OrchestratorClient
-from bot_bottle.orchestrator.gateway import GATEWAY_IMAGE, GATEWAY_NAME, GATEWAY_NETWORK
+from bot_bottle.gateway import GATEWAY_IMAGE, GATEWAY_NAME, GATEWAY_NETWORK
 from bot_bottle.orchestrator.lifecycle import OrchestratorService
 from tests._docker import skip_unless_docker
 

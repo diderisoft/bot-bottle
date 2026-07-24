@@ -8,7 +8,7 @@ import urllib.error
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
-from bot_bottle.orchestrator.gateway import GatewayError
+from bot_bottle.gateway import GatewayError
 from bot_bottle.orchestrator.lifecycle import (
     INFRA_NAME,
     INFRA_SOURCE_HASH_LABEL,

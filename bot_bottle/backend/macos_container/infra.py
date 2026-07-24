@@ -41,7 +41,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ... import log
-from ...orchestrator.gateway import GATEWAY_CA_CERT, MITMPROXY_HOME
+from ...gateway import GATEWAY_CA_CERT, MITMPROXY_HOME
 from ...orchestrator.lifecycle import (
     DEFAULT_PORT,
     DEFAULT_STARTUP_TIMEOUT_SECONDS,
@@ -107,7 +107,7 @@ def _init_script(port: int) -> str:
         # control-plane RPC and never opens bot-bottle.db (PRD 0070 / #469).
         f"( cd /app && BOT_BOTTLE_GATEWAY_DAEMONS={_GATEWAY_DAEMONS} "
         f"BOT_BOTTLE_ORCHESTRATOR_URL=http://127.0.0.1:{port} "
-        f"python3 -m bot_bottle.gateway_init ) &\n"
+        f"python3 -m bot_bottle.gateway.gateway_init ) &\n"
         "while : ; do wait ; done\n"
     )
 

@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .egress_addon_core import (
+from .gateway.egress_addon_core import (
     ON_MATCH_REDACT,
     HeaderMatch as CoreHeaderMatch,
     MatchEntry as CoreMatchEntry,

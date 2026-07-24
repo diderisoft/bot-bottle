@@ -27,7 +27,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from bot_bottle.constants import GIT_GATE_TIMEOUT_SECS, IDENTITY_HEADER
-from bot_bottle.policy_resolver import PolicyResolveError, PolicyResolver
+from bot_bottle.gateway.policy_resolver import PolicyResolveError, PolicyResolver
 
 
 DEFAULT_PORT = 9420

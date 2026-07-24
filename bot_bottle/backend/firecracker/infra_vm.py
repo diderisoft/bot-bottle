@@ -542,7 +542,7 @@ BOT_BOTTLE_ROOT=/var/lib/bot-bottle BOT_BOTTLE_CONTROL_PLANE_TOKEN="$CP_KEY" pyt
 BOT_BOTTLE_GATEWAY_DAEMONS=egress,git-http,supervise \\
 BOT_BOTTLE_ORCHESTRATOR_URL=http://127.0.0.1:{CONTROL_PLANE_PORT} \\
 BOT_BOTTLE_CONTROL_AUTH_JWT="$GW_JWT" \\
-    python3 -m bot_bottle.gateway_init &
+    python3 -m bot_bottle.gateway.gateway_init &
 
 # Reap as PID 1; children are backgrounded, so `wait` blocks.
 while : ; do wait ; done

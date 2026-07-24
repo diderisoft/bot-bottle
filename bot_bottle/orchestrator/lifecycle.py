@@ -31,7 +31,7 @@ from ..paths import (
     host_control_plane_token,
     host_gateway_ca_dir,
 )
-from .gateway import (
+from ..gateway import (
     GATEWAY_DOCKERFILE,
     GATEWAY_IMAGE,
     GATEWAY_NETWORK,

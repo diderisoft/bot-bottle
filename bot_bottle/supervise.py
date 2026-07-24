@@ -1,7 +1,7 @@
 """Per-bottle supervise plane (PRD 0013).
 
 The supervise plane is the per-bottle MCP daemon plus its host-side
-queue/audit support. The daemon (bot_bottle.supervise_server)
+queue/audit support. The daemon (bot_bottle.gateway.supervise_server)
 sits on the bottle's internal network and exposes MCP tools the agent
 calls when it needs an operator-reviewed egress change:
 
@@ -18,7 +18,7 @@ the response and returns `{status, notes}` to the agent.
 This module defines the host-side library: dataclasses for the queue
 record shapes, queue read/write helpers, the audit log writer, and the
 diff renderer. The in-gateway daemon lives in
-bot_bottle/supervise_server.py; the supervise daemon's container
+bot_bottle/gateway/supervise_server.py; the supervise daemon's container
 lifecycle is owned by the gateway (PRD 0024).
 
 For 0013 the supervisor's approval handlers are deliberately no-ops:

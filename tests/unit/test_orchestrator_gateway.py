@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from bot_bottle.backend.docker.gateway import DockerGateway
-from bot_bottle.orchestrator.gateway import (
+from bot_bottle.gateway import (
     GATEWAY_CA_CERT,
     GATEWAY_NAME,
     GatewayError,

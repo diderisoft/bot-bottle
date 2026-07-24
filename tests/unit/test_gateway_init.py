@@ -1,6 +1,6 @@
 """Unit: gateway data-plane init supervisor (PRD 0070; PRD 0024 bundle shape).
 
-Tests both the helper functions in `bot_bottle.gateway_init`
+Tests both the helper functions in `bot_bottle.gateway.gateway_init`
 and the supervisor's end-to-end signal / exit-code behavior. The
 end-to-end tests use real subprocesses (`sleep`, `/bin/sh -c '...'`) —
 short-lived, no docker required — so they run under `tests/unit/`
@@ -18,7 +18,7 @@ import warnings
 from pathlib import Path
 from unittest.mock import patch
 
-from bot_bottle.gateway_init import (
+from bot_bottle.gateway.gateway_init import (
     _DaemonSpec,
     _Supervisor,
     _argv_for_daemon,
@@ -489,7 +489,7 @@ class TestSupervisor(unittest.TestCase):
         time.sleep(0.3)  # let `trap` register
         sup.request_shutdown(reason="test")
 
-        with patch("bot_bottle.gateway_init._GRACE_SECONDS", 0.3):
+        with patch("bot_bottle.gateway.gateway_init._GRACE_SECONDS", 0.3):
             rc = self._drive(sup, max_wait_s=4.0)
 
         # Process was SIGKILL'd → returncode -9 on POSIX.
@@ -531,7 +531,7 @@ class TestMainEndToEnd(unittest.TestCase):
 
         helper = (
             "import os, runpy, sys\n"
-            "from bot_bottle import gateway_init as si\n"
+            "from bot_bottle.gateway import gateway_init as si\n"
             "si._DAEMONS = (\n"
             f"  si._DaemonSpec('alpha', ({SLEEP!r},'30')),\n"
             f"  si._DaemonSpec('beta',  ({SLEEP!r},'30')),\n"

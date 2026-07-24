@@ -52,7 +52,7 @@ from ...git_gate import (
     provision_git_gate_dynamic_keys,
     revoke_git_gate_provisioned_keys,
 )
-from ...git_http_backend import DEFAULT_PORT as _GIT_HTTP_PORT
+from ...gateway.git_http_backend import DEFAULT_PORT as _GIT_HTTP_PORT
 from ...image_cache import check_stale
 from ...log import die, info, warn
 from .. import BottleImages

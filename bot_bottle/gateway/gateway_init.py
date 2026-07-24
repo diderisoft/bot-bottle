@@ -100,8 +100,8 @@ _DAEMONS: tuple[_DaemonSpec, ...] = (
     )),
     _DaemonSpec("egress", ("/bin/sh", "/app/egress-entrypoint.sh")),
     _DaemonSpec("git-gate", ("/bin/sh", "/git-gate-entrypoint.sh")),
-    _DaemonSpec("git-http", ("python3", "-m", "bot_bottle.git_http_backend")),
-    _DaemonSpec("supervise", ("python3", "-m", "bot_bottle.supervise_server")),
+    _DaemonSpec("git-http", ("python3", "-m", "bot_bottle.gateway.git_http_backend")),
+    _DaemonSpec("supervise", ("python3", "-m", "bot_bottle.gateway.supervise_server")),
 )
 
 

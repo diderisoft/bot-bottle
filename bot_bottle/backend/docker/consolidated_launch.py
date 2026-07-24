@@ -20,7 +20,7 @@ from ...docker_cmd import run_docker
 from ...egress import EgressPlan
 from ...git_gate import GitGatePlan
 from ...orchestrator.client import OrchestratorClient
-from ...orchestrator.gateway import GATEWAY_NETWORK
+from ...gateway import GATEWAY_NETWORK
 from ...orchestrator.lifecycle import INFRA_NAME, OrchestratorService
 from ...orchestrator.secret_store import ENV_VAR_SECRET_NAME
 from ...orchestrator.reprovision import reprovision_bottles

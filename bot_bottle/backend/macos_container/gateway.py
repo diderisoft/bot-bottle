@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import os
 
-from ...orchestrator.gateway import GatewayError
+from ...gateway import GatewayError
 from . import util as container_mod
 
 # The shared host-only network the infra container and every agent bottle sit

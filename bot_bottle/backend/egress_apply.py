@@ -11,7 +11,7 @@ from pathlib import Path
 
 from ..bottle_state import egress_state_dir
 from ..egress import EGRESS_ROUTES_FILENAME
-from ..egress_addon_core import LOG_OFF, load_config
+from ..gateway.egress_addon_core import LOG_OFF, load_config
 
 
 class EgressApplyError(RuntimeError):
