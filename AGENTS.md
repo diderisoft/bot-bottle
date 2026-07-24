@@ -35,6 +35,7 @@ backend remains available with `BOT_BOTTLE_BACKEND=docker` or
 - `.bot-bottle/` — per-repo agent and bottle manifests (YAML markdown format).
 - `examples/` — example bottles and agents showing the manifest format.
 - `docs/README.md` — docs overview; when to write which document.
+- `docs/glossary.md` — canonical term definitions (Agent Provider, Bottle, Sealed Bottle, etc.).
 - `docs/prds/` — product requirement docs (see `docs/prds/README.md` for format).
 - `docs/research/` — research notes (see `docs/research/README.md`).
 - `docs/decisions/` — decision records (ADR-lite).
