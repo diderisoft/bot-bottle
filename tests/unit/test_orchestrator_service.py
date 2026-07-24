@@ -14,9 +14,9 @@ from unittest.mock import patch
 from bot_bottle.orchestrator.broker import LaunchBroker, LaunchRequest, StubBroker
 from bot_bottle.orchestrator.registry import RegistryStore
 from bot_bottle.orchestrator.service import Orchestrator
-from bot_bottle.orchestrator.secret_store import new_env_var_secret
-from bot_bottle.store.store_manager import StoreManager
-from bot_bottle.supervise import (
+from bot_bottle.orchestrator.store.secret_store import new_env_var_secret
+from bot_bottle.orchestrator.store.store_manager import StoreManager
+from bot_bottle.orchestrator.supervisor import (
     Proposal,
     STATUS_APPROVED,
     TOOL_EGRESS_ALLOW,

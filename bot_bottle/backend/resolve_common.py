@@ -28,7 +28,8 @@ from ..egress import Egress, EgressPlan
 from ..git_gate import GitGate, GitGatePlan
 from ..log import die
 from ..manifest import Manifest, ManifestBottle
-from ..supervise import Supervise, SupervisePlan
+from ..supervisor.plan import SupervisePlan
+from ..orchestrator.supervisor.supervise import Supervise
 from . import BottleSpec
 
 

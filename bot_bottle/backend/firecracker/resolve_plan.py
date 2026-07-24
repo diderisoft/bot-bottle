@@ -9,7 +9,7 @@ from ...egress import EgressPlan
 from ...env import ResolvedEnv
 from ...git_gate import GitGatePlan
 from ...manifest import Manifest
-from ...supervise import SupervisePlan
+from ...supervisor.plan import SupervisePlan
 from .. import BottleSpec
 from . import util
 from .bottle_plan import FirecrackerBottlePlan

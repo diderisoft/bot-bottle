@@ -19,7 +19,7 @@ from ...env import ResolvedEnv
 from ...agent_provider import AgentProvisionPlan
 from ...egress import EgressPlan
 from ...manifest import Manifest
-from ...supervise import SupervisePlan
+from ...supervisor.plan import SupervisePlan
 from ...git_gate import GitGatePlan
 
 def preflight() -> None:

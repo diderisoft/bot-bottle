@@ -62,7 +62,7 @@ from bot_bottle.gateway.egress_addon_core import (
     LOG_OFF, load_config, resolve_client_context, route_to_yaml_dict,
 )
 from bot_bottle.gateway.policy_resolver import PolicyResolveError, PolicyResolver
-from bot_bottle import supervise as _sv
+from bot_bottle.supervisor import types as _sv
 
 
 # --- JSON-RPC / MCP plumbing ----------------------------------------------

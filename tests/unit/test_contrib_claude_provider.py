@@ -25,7 +25,7 @@ from bot_bottle.contrib.claude.agent_provider import ClaudeAgentProvider
 from bot_bottle.egress import EgressPlan
 from bot_bottle.git_gate import GitGatePlan
 from bot_bottle.manifest import ManifestIndex
-from bot_bottle.supervise import SupervisePlan
+from bot_bottle.supervisor.plan import SupervisePlan
 
 
 _URL = "http://supervise:9100/"

@@ -1,34 +1,34 @@
-"""Singleton manager for all bot-bottle SQLite stores (PRD 0013)."""
+"""The orchestrator's store manager (PRD 0013 / 0070).
+
+One store manager per service. Post-PRD-0070 the orchestrator is the sole
+opener of `bot-bottle.db`, so it owns migrating every table in it: the supervise
+`queue_store` (local to `orchestrator.store`) plus the `audit_store` and
+`config_store` from the shared `bot_bottle.store` base. The data plane never
+touches these — it reaches state over the control-plane RPC.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-try:
-    from .audit_store import AuditStore
-    from .config_store import ConfigStore
-    from .queue_store import QueueStore
-except ImportError:
-    from audit_store import AuditStore  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
-    from config_store import ConfigStore  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
-    from queue_store import QueueStore  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
+from .queue_store import QueueStore
+from ...store.audit_store import AuditStore
+from ...store.config_store import ConfigStore
 
 _instance: StoreManager | None = None
 
 
 class StoreManager:
-    """Owns db_path and delegates migrate/is_migrated across all stores.
+    """Owns db_path and delegates migrate/is_migrated across the orchestrator's
+    stores.
 
-    Use instance() for normal access. Call reset(db_path) in tests to swap
-    the singleton to a temp path, then reset() with no args to restore the
+    Use instance() for normal access. Call reset(db_path) in tests to swap the
+    singleton to a temp path, then reset() with no args to restore the
     default."""
 
     def __init__(self, db_path: Path | None = None) -> None:
         if db_path is None:
-            try:
-                from ..paths import host_db_path
-            except ImportError:
-                from paths import host_db_path  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
+            from ...paths import host_db_path
             db_path = host_db_path()
         self.db_path = db_path
 

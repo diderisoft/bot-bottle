@@ -17,7 +17,7 @@ from ...egress import EgressPlan
 from ...env import ResolvedEnv
 from ...git_gate import GitGatePlan
 from ...manifest import Manifest
-from ...supervise import SupervisePlan
+from ...supervisor.plan import SupervisePlan
 from .. import ActiveAgent, BottleBackend, BottleImages, BottleSpec
 from . import cleanup as _cleanup
 from . import enumerate as _enumerate

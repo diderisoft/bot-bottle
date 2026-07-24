@@ -39,7 +39,7 @@ from ...git_gate import GitGatePlan
 from ...log import info
 from ...orchestrator.client import OrchestratorClient, OrchestratorClientError
 from ...orchestrator.reprovision import reprovision_bottles
-from ...orchestrator.secret_store import ENV_VAR_SECRET_NAME
+from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
 from ..consolidated_util import (
     provision_bottle,
     teardown_consolidated as _teardown_util,

@@ -16,7 +16,7 @@ import secrets
 from pathlib import Path
 
 from .. import log
-from ..store.store_manager import StoreManager
+from .store.store_manager import StoreManager
 from .broker import LaunchBroker, StubBroker
 from .control_plane import make_server
 from .docker_broker import DockerBroker

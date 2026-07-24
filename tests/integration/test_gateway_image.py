@@ -91,7 +91,7 @@ class TestGatewayImage(unittest.TestCase):
         # Probe that the package imports resolve inside the image.
         rc, out = self._run_in_image(
             "python3", "-c",
-            "from bot_bottle import supervise; from bot_bottle.gateway import supervise_server; print('ok')",
+            "from bot_bottle.supervisor import types; from bot_bottle.gateway import supervise_server; print('ok')",
         )
         self.assertEqual(0, rc, msg=out)
         self.assertIn("ok", out)

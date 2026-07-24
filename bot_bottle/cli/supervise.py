@@ -27,7 +27,7 @@ from ..orchestrator.client import (
     discover_orchestrator_url,
 )
 
-from ..supervise import (
+from ..supervisor.types import (
     Proposal,
     TOOL_EGRESS_ALLOW,
     TOOL_EGRESS_BLOCK,

@@ -15,7 +15,7 @@ from bot_bottle.cli import main
 from bot_bottle.store.db_store import DbStore
 from bot_bottle.log import Die
 from bot_bottle.manifest import ManifestError
-from bot_bottle.store.store_manager import StoreManager
+from bot_bottle.orchestrator.store.store_manager import StoreManager
 
 
 class TestMainDispatch(unittest.TestCase):

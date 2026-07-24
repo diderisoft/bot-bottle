@@ -64,7 +64,7 @@ from .compose import (
     write_compose_file,
 )
 from .consolidated_compose import consolidated_agent_compose
-from ...orchestrator.config_store import resolve_teardown_timeout
+from ...orchestrator.store.config_store import resolve_teardown_timeout
 from .consolidated_launch import launch_consolidated, teardown_consolidated
 from ...orchestrator.lifecycle import INFRA_NAME
 from .gateway import DockerGateway
@@ -207,7 +207,7 @@ def launch(
         # spec, value only in the subprocess env so it is never written to disk.
         compose_env: dict[str, str] = {**os.environ, **plan.forwarded_env}
         if plan.env_var_secret:
-            from ...orchestrator.secret_store import ENV_VAR_SECRET_NAME
+            from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
             compose_env[ENV_VAR_SECRET_NAME] = plan.env_var_secret
         info(
             f"docker compose up -d  (project {project}, agent on shared "

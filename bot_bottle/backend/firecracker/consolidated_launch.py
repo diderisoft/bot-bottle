@@ -38,7 +38,7 @@ from ...orchestrator.lifecycle import (
     OrchestratorStartError,  # re-exported so callers can catch it
 )
 from ...orchestrator.reprovision import reprovision_bottles
-from ...orchestrator.secret_store import ENV_VAR_SECRET_NAME
+from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
 from ..consolidated_util import (
     provision_bottle,
     teardown_consolidated as _teardown_util,

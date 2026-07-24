@@ -41,7 +41,7 @@ from bot_bottle.gateway.egress_addon_core import (
     scan_outbound,
 )
 from bot_bottle.gateway.policy_resolver import PolicyResolveError, PolicyResolver
-from bot_bottle.supervise_types import (
+from bot_bottle.supervisor.types import (
     STATUS_APPROVED,
     STATUS_MODIFIED,
     STATUSES,

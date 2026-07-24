@@ -22,7 +22,7 @@ from ...git_gate import GitGatePlan
 from ...orchestrator.client import OrchestratorClient
 from ...gateway import GATEWAY_NETWORK
 from ...orchestrator.lifecycle import INFRA_NAME, OrchestratorService
-from ...orchestrator.secret_store import ENV_VAR_SECRET_NAME
+from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
 from ...orchestrator.reprovision import reprovision_bottles
 from ..consolidated_util import provision_bottle
 from ..consolidated_util import teardown_consolidated as _teardown_util

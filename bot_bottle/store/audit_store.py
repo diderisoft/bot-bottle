@@ -6,12 +6,12 @@ import sqlite3
 from pathlib import Path
 
 try:
-    from ..supervise_types import AuditEntry
+    from ..supervisor.types import AuditEntry
     from ..paths import host_db_path
     from .db_store import DbStore
     from .migrations import TableMigrations
 except ImportError:
-    from supervise_types import AuditEntry  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
+    from supervisor.types import AuditEntry  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
     from paths import host_db_path  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
     from db_store import DbStore  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
     from migrations import TableMigrations  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module

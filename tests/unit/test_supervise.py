@@ -7,12 +7,12 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from bot_bottle import supervise
+from bot_bottle.orchestrator import supervisor as supervise
 from bot_bottle.paths import host_db_path
 from tests.unit import use_bottle_root
 from bot_bottle.store.audit_store import AuditStore
-from bot_bottle.store.queue_store import QueueStore
-from bot_bottle.supervise import (
+from bot_bottle.orchestrator.store.queue_store import QueueStore
+from bot_bottle.orchestrator.supervisor import (
     AuditEntry,
     Proposal,
     Response,

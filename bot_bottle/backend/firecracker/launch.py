@@ -48,14 +48,14 @@ from ...git_gate import (
 )
 from ...image_cache import check_stale_path
 from ...log import die, info, warn
-from ...supervise import SUPERVISE_PORT
+from ...supervisor.types import SUPERVISE_PORT
 from ..docker.egress import EGRESS_PORT
 from ..util import AGENT_CA_BUNDLE, AGENT_CA_PATH
 from . import firecracker_vm, image_builder, isolation_probe, netpool, util
 from .bottle import FirecrackerBottle
 from .bottle_plan import FirecrackerBottlePlan
-from ...orchestrator.config_store import resolve_teardown_timeout
-from ...orchestrator.secret_store import ENV_VAR_SECRET_NAME
+from ...orchestrator.store.config_store import resolve_teardown_timeout
+from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
 from .consolidated_launch import (
     launch_consolidated,
     persist_env_var_secret,

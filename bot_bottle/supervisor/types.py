@@ -48,6 +48,24 @@ POLL_STATUS_UNKNOWN = "unknown"
 
 ACTION_OPERATOR_EDIT = "operator-edit"
 
+# Shared supervise-daemon constants. The gateway `supervise_server` and the
+# backend read these, so they live with the wire types in the neutral package
+# (never in the orchestrator's private code the data plane can't import).
+SUPERVISE_HOSTNAME = "supervise"
+SUPERVISE_PORT = 9100
+# The supervise daemon queries egress's introspection endpoint for the
+# `list-egress-routes` tool over loopback (egress runs alongside it in the
+# gateway), stable across docker / firecracker / Apple Container backends.
+EGRESS_FORWARD_PROXY = "http://127.0.0.1:9099"
+EGRESS_INTROSPECT_URL = "http://_egress.local/allowlist"
+DB_PATH_IN_CONTAINER = "/run/supervise/bot-bottle.db"
+DEFAULT_POLL_INTERVAL_SEC = 0.5
+
+COMPONENT_FOR_TOOL: dict[str, str] = {
+    TOOL_EGRESS_ALLOW: "egress",
+    TOOL_EGRESS_BLOCK: "egress",
+}
+
 
 def _require_str(raw: dict[str, object], key: str) -> str:
     value = raw.get(key)
@@ -175,4 +193,11 @@ __all__ = [
     "TOOL_EGRESS_TOKEN_ALLOW",
     "TOOL_GITLEAKS_ALLOW",
     "TOOL_LIST_EGRESS_ROUTES",
+    "SUPERVISE_HOSTNAME",
+    "SUPERVISE_PORT",
+    "EGRESS_FORWARD_PROXY",
+    "EGRESS_INTROSPECT_URL",
+    "DB_PATH_IN_CONTAINER",
+    "DEFAULT_POLL_INTERVAL_SEC",
+    "COMPONENT_FOR_TOOL",
 ]

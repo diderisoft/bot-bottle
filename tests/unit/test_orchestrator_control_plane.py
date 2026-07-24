@@ -24,8 +24,8 @@ from bot_bottle.orchestrator.broker import StubBroker
 from bot_bottle.orchestrator.control_plane import dispatch, make_server
 from bot_bottle.orchestrator.registry import BottleRecord, RegistryStore
 from bot_bottle.orchestrator.service import Orchestrator
-from bot_bottle.store.store_manager import StoreManager
-from bot_bottle.supervise import (
+from bot_bottle.orchestrator.store.store_manager import StoreManager
+from bot_bottle.orchestrator.supervisor import (
     Proposal,
     TOOL_EGRESS_ALLOW,
     sha256_hex,

@@ -48,7 +48,7 @@ from ..git_gate import GitGatePlan
 from ..log import die, info, warn
 from ..util import read_tty_line
 from ..manifest import Manifest, ManifestIndex
-from ..supervise import SupervisePlan
+from ..supervisor.plan import SupervisePlan
 from ..util import expand_tilde
 from ..env import resolve_env, ResolvedEnv
 from ..workspace import WorkspacePlan, workspace_plan

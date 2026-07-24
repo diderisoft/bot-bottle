@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 
 from .broker import LaunchBroker, LaunchRequest, sign_request
 from .registry import DEFAULT_REAP_GRACE_SECONDS, BottleRecord, RegistryStore
-from ..supervise import (
+from .supervisor import (
     AuditEntry,
     COMPONENT_FOR_TOOL,
     POLL_STATUS_PENDING,
@@ -104,7 +104,7 @@ class Orchestrator:
         if tokens:
             self._tokens[rec.bottle_id] = dict(tokens)
             if env_var_secret:
-                from .secret_store import encrypt_value
+                from .store.secret_store import encrypt_value
                 encrypted = {k: encrypt_value(env_var_secret, v) for k, v in tokens.items()}
                 self.registry.store_agent_secrets(rec.bottle_id, encrypted)
         req = LaunchRequest(
@@ -367,7 +367,7 @@ class Orchestrator:
         value with *env_var_secret*, and restores ``_tokens[bottle_id]``.
         Returns True on success, False when no stored secrets exist for this
         bottle or decryption fails (wrong key / corrupt data)."""
-        from .secret_store import decrypt_value
+        from .store.secret_store import decrypt_value
         encrypted = self.registry.get_agent_secrets(bottle_id)
         if not encrypted:
             return False

@@ -283,10 +283,10 @@ from pathlib import Path
 # calling bottle exactly as a direct write once did.
 try:
     from bot_bottle.gateway.policy_resolver import PolicyResolver, PolicyResolveError
-    from bot_bottle.supervise_types import TOOL_GITLEAKS_ALLOW
+    from bot_bottle.supervisor.types import TOOL_GITLEAKS_ALLOW
 except ImportError:
     from policy_resolver import PolicyResolver, PolicyResolveError
-    from supervise_types import TOOL_GITLEAKS_ALLOW
+    from supervisor.types import TOOL_GITLEAKS_ALLOW
 
 report_path = Path(sys.argv[1])
 source_ip = os.environ.get("SUPERVISE_SOURCE_IP", "")

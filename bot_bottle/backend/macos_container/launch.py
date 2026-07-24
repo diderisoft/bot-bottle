@@ -56,7 +56,7 @@ from ...gateway.git_http_backend import DEFAULT_PORT as _GIT_HTTP_PORT
 from ...image_cache import check_stale
 from ...log import die, info, warn
 from .. import BottleImages
-from ...supervise import SUPERVISE_PORT
+from ...supervisor.types import SUPERVISE_PORT
 from ..docker.egress import EGRESS_PORT
 from ..util import AGENT_CA_BUNDLE, AGENT_CA_PATH
 from . import util as container_mod
@@ -68,8 +68,8 @@ from .gateway_hosts import (
 )
 from . import nested_containers as nested_containers_mod
 from .bottle_plan import MacosContainerBottlePlan
-from ...orchestrator.config_store import resolve_teardown_timeout
-from ...orchestrator.secret_store import ENV_VAR_SECRET_NAME, new_env_var_secret
+from ...orchestrator.store.config_store import resolve_teardown_timeout
+from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME, new_env_var_secret
 from .consolidated_launch import (
     GatewayEndpoint,
     ensure_gateway,

@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 from ...egress import egress_agent_env_entries
-from ...orchestrator.secret_store import ENV_VAR_SECRET_NAME
+from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
 from ..util import AGENT_CA_BUNDLE, AGENT_CA_PATH
 from .bottle_plan import DockerBottlePlan
 from .egress import EGRESS_PORT

@@ -8,7 +8,7 @@ from ...agent_provider import AgentProvisionPlan
 from ...egress import EgressPlan
 from ...env import ResolvedEnv
 from ...git_gate import GitGatePlan
-from ...supervise import SupervisePlan
+from ...supervisor.plan import SupervisePlan
 from ...manifest import Manifest
 from .. import BottleSpec
 from . import util as container_mod

@@ -13,7 +13,7 @@ from ..egress import EgressPlan
 from ..git_gate import GitGatePlan
 from ..orchestrator.client import OrchestratorClient, RegisteredBottle
 from ..orchestrator.registration import registration_inputs
-from ..orchestrator.secret_store import new_env_var_secret
+from ..orchestrator.store.secret_store import new_env_var_secret
 from .docker.gateway_provision import GatewayTransport, deprovision_git_gate, provision_git_gate
 
 
@@ -58,7 +58,7 @@ def teardown_consolidated(
 ) -> None:
     """Deregister the bottle and remove its git-gate state. Both steps are
     idempotent so this is safe from a cleanup trap."""
-    from ..orchestrator.config_store import DEFAULT_TEARDOWN_TIMEOUT_SECONDS
+    from ..orchestrator.store.config_store import DEFAULT_TEARDOWN_TIMEOUT_SECONDS
     OrchestratorClient(
         orchestrator_url,
         timeout=timeout if timeout is not None else DEFAULT_TEARDOWN_TIMEOUT_SECONDS,

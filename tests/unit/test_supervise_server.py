@@ -18,8 +18,8 @@ from pathlib import Path
 
 from tests.unit import use_bottle_root
 
-from bot_bottle import supervise as _sv
-from bot_bottle.store import queue_store as _qs
+from bot_bottle.orchestrator import supervisor as _sv
+from bot_bottle.orchestrator.store import queue_store as _qs
 from bot_bottle.store import audit_store as _as
 
 from bot_bottle.gateway import supervise_server  # noqa: E402

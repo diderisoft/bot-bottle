@@ -65,7 +65,7 @@ from urllib.parse import urlsplit
 
 from ..control_auth import ROLE_CLI, ROLES, verify
 from ..paths import CONTROL_PLANE_TOKEN_ENV
-from ..supervise_types import TOOLS
+from ..supervisor.types import TOOLS
 from .service import Orchestrator
 
 # JSON body payload type (parsed request / rendered response).
