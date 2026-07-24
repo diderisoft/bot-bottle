@@ -27,7 +27,7 @@ def cmd_commit(argv: list[str]) -> int:
         nargs="?",
         default=None,
         help=(
-            "bottle slug from `cli.py list active` "
+            "bottle slug from `cli.py active` "
             "(omit to pick interactively)"
         ),
     )

@@ -21,7 +21,7 @@ backend exposes five methods:
 
   enumerate_active() -> Sequence[ActiveAgent]
       Return every currently-running bottle on this backend, with
-      enough metadata for callers (CLI `list active`, dashboard
+      enough metadata for callers (CLI `active`, dashboard
       agents pane) to render a row.
 
 Selection is driven by `--backend` on `start` or BOT_BOTTLE_BACKEND
@@ -200,7 +200,7 @@ class ExecResult:
 
 @dataclass(frozen=True)
 class ActiveAgent:
-    """One currently-running agent, as the CLI `list active` and
+    """One currently-running agent, as the CLI `active` and
     dashboard agents pane render it. ("Agent" is the project's
     consistent name for the thing running inside a bottle — the
     bottle is the container, the agent is what runs in it.)
@@ -593,7 +593,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         Linux + KVM. Used by the cross-backend
         `enumerate_active_agents` / `cmd_cleanup` to skip backends
         the operator hasn't installed, so a docker-only host
-        doesn't fail when `cli.py list active` walks past
+        doesn't fail when `cli.py active` walks past
         firecracker."""
 
     @classmethod
@@ -813,7 +813,7 @@ def has_backend(name: str) -> bool:
 
 def enumerate_active_agents() -> list[ActiveAgent]:
     """All currently-running agents, across every available
-    backend. Used by CLI `list active` and the dashboard's agents
+    backend. Used by CLI `active` and the dashboard's agents
     pane so neither has to know which backends exist. Skips
     backends whose `is_available()` reports False.
 

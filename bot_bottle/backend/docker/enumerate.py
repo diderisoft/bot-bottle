@@ -1,6 +1,6 @@
 """Active-agent enumeration for the docker backend.
 
-Returns `ActiveAgent` records the CLI `list active` command and the
+Returns `ActiveAgent` records the CLI `active` command and the
 dashboard agents pane consume. Empty when docker isn't reachable
 — gated by `has_backend('docker')` at the cross-backend caller
 so this module trusts that docker is available when called.
@@ -60,7 +60,7 @@ def _parse_services_by_project(stdout: str) -> dict[str, set[str]]:
 
 def _query_services_by_project() -> dict[str, set[str]]:
     """One `docker ps` call → `{project: {service, ...}}`. Used
-    by the CLI's `list active` and the dashboard's agents pane —
+    by the CLI's `active` and the dashboard's agents pane —
     one subprocess per refresh tick, not one per bottle."""
     try:
         r = subprocess.run(
