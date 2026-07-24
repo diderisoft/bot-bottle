@@ -27,6 +27,18 @@ vsock / unix-socket portability caveats):
     POST   /supervise/respond         -> 200 {"responded": true} | 409  (operator)
                                          body: {"proposal_id","bottle_slug",
                                                 "decision", ["notes"],["final_file"]}
+    POST   /supervise/propose         -> 201 {"proposal_id"} | 403  (agent)
+                                         body: {"source_ip","identity_token",
+                                                "tool","proposed_file","justification"}
+    POST   /supervise/poll            -> 200 {"status", ["notes"],["final_file"]} | 403
+                                         body: {"source_ip","identity_token",
+                                                "proposal_id"}
+
+The `/supervise/propose` + `/supervise/poll` pair is the **agent** half of the
+supervise flow: the data plane (supervise / egress / git-gate) queues a
+proposal and polls for its response over RPC instead of opening `bot-bottle.db`
+directly. Both attribute the caller by `(source_ip, identity_token)` exactly
+like `/resolve`, so a bottle can only ever queue or read its own proposals.
 
 `POST /bottles` / `DELETE` drive the full launch lifecycle: they mint (or
 tear down) the bottle in the registry AND broker the backend-native launch
@@ -51,6 +63,7 @@ import typing
 from urllib.parse import urlsplit
 
 from ..paths import CONTROL_PLANE_TOKEN_ENV
+from ..supervise_types import TOOLS
 from .service import Orchestrator
 
 # JSON body payload type (parsed request / rendered response).
@@ -234,6 +247,56 @@ def dispatch(  # pylint: disable=too-many-return-statements,too-many-branches
         if ok:
             return 200, {"responded": True}
         return 409, {"error": err}
+
+    if method == "POST" and route == "/supervise/propose":
+        # Agent half: queue a proposal, attributed to the caller resolved from
+        # (source_ip, identity_token) — never a caller-supplied slug — so the
+        # data plane can't forge attribution. Fail-closed 403 when unattributed.
+        try:
+            data = _parse_json_object(body)
+        except ValueError as e:
+            return 400, {"error": f"invalid JSON: {e}"}
+        source_ip = data.get("source_ip")
+        token = data.get("identity_token")
+        tool = data.get("tool")
+        proposed_file = data.get("proposed_file")
+        justification = data.get("justification")
+        if not isinstance(source_ip, str) or not source_ip:
+            return 400, {"error": "source_ip (string) is required"}
+        if not isinstance(tool, str) or tool not in TOOLS:
+            return 400, {"error": f"tool (string) must be one of {TOOLS}"}
+        if not isinstance(proposed_file, str) or not proposed_file:
+            return 400, {"error": "proposed_file (string) is required"}
+        if not isinstance(justification, str) or not justification:
+            return 400, {"error": "justification (string) is required"}
+        rec = orch.resolve(source_ip, token if isinstance(token, str) else "")
+        if rec is None:
+            return 403, {"error": "unattributed"}
+        proposal_id = orch.supervise_queue_proposal(
+            rec.bottle_id, tool=tool, proposed_file=proposed_file,
+            justification=justification,
+        )
+        return 201, {"proposal_id": proposal_id}
+
+    if method == "POST" and route == "/supervise/poll":
+        # Agent half: non-blocking read of the caller's own proposal decision.
+        # Attributed like /propose, and scoped to the resolved bottle id, so a
+        # guessed proposal_id can never read another bottle's response.
+        try:
+            data = _parse_json_object(body)
+        except ValueError as e:
+            return 400, {"error": f"invalid JSON: {e}"}
+        source_ip = data.get("source_ip")
+        token = data.get("identity_token")
+        proposal_id = data.get("proposal_id")
+        if not isinstance(source_ip, str) or not source_ip:
+            return 400, {"error": "source_ip (string) is required"}
+        if not isinstance(proposal_id, str) or not proposal_id:
+            return 400, {"error": "proposal_id (string) is required"}
+        rec = orch.resolve(source_ip, token if isinstance(token, str) else "")
+        if rec is None:
+            return 403, {"error": "unattributed"}
+        return 200, orch.supervise_poll_response(rec.bottle_id, proposal_id)
 
     if method == "POST" and route == "/resolve":
         # The per-request lookup the multi-tenant gateway makes: returns the

@@ -26,15 +26,8 @@ from ..docker_cmd import run_docker
 from ..paths import (
     CONTROL_PLANE_TOKEN_ENV,
     host_control_plane_token,
-    host_db_path,
     host_gateway_ca_dir,
 )
-from ..supervise import DB_PATH_IN_CONTAINER
-
-# The host DB dir is bind-mounted here so the gateway's supervise daemon
-# writes its queued proposals into the ONE host DB (the same file the
-# orchestrator container opens and the operator reaches over HTTP).
-_SUPERVISE_DB_DIR_IN_CONTAINER = os.path.dirname(DB_PATH_IN_CONTAINER)
 
 # The gateway's mitmproxy writes its CA a beat after the container starts, so
 # reads poll for it rather than assuming it's there on a fresh launch.
@@ -73,14 +66,6 @@ GATEWAY_CA_GLOB = "mitmproxy-ca*"
 GATEWAY_IMAGE = os.environ.get("BOT_BOTTLE_GATEWAY_IMAGE", "bot-bottle-gateway:latest")
 GATEWAY_DOCKERFILE = "Dockerfile.gateway"
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-
-
-def _host_db_dir() -> str:
-    """The host DB directory (created if missing), for the gateway's
-    supervise-DB bind-mount."""
-    db_dir = host_db_path().parent
-    db_dir.mkdir(parents=True, exist_ok=True)
-    return str(db_dir)
 
 
 def rotate_gateway_ca(ca_dir: Path | None = None) -> list[Path]:
@@ -255,11 +240,10 @@ class DockerGateway(Gateway):
             # container recreation AND docker volume pruning (agents trust it)
             # — see host_gateway_ca_dir / issue #450.
             "--volume", f"{host_gateway_ca_dir()}:{MITMPROXY_HOME}",
-            # Share the one host DB: the supervise daemon queues proposals
-            # into the same file the orchestrator (and the operator, over
-            # HTTP) reads — no second, disconnected DB in the container.
-            "--volume", f"{_host_db_dir()}:{_SUPERVISE_DB_DIR_IN_CONTAINER}",
-            "--env", f"SUPERVISE_DB_PATH={DB_PATH_IN_CONTAINER}",
+            # No DB mount: the data plane (egress / supervise / git-gate) reaches
+            # the supervise queue over the control-plane RPC and never opens
+            # bot-bottle.db, so the gateway container gets no file handle on it
+            # (PRD 0070 / issue #469).
         ]
         for port in self._host_port_bindings:
             argv += ["--publish", f"0.0.0.0:{port}:{port}"]

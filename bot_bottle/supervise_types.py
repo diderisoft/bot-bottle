@@ -37,6 +37,15 @@ STATUS_MODIFIED = "modified"
 STATUS_REJECTED = "rejected"
 STATUSES: tuple[str, ...] = (STATUS_APPROVED, STATUS_MODIFIED, STATUS_REJECTED)
 
+# Non-terminal markers the control-plane supervise-poll RPC returns when a
+# proposal has no operator decision yet (`PENDING`) or no queued proposal with
+# that id exists for the calling bottle (`UNKNOWN`). They are never a
+# `Response.status` — only the poll wire contract (see
+# `Orchestrator.supervise_poll_response`) — so they are deliberately outside
+# `STATUSES`.
+POLL_STATUS_PENDING = "pending"
+POLL_STATUS_UNKNOWN = "unknown"
+
 ACTION_OPERATOR_EDIT = "operator-edit"
 
 
@@ -157,6 +166,8 @@ __all__ = [
     "STATUS_APPROVED",
     "STATUS_MODIFIED",
     "STATUS_REJECTED",
+    "POLL_STATUS_PENDING",
+    "POLL_STATUS_UNKNOWN",
     "TOOLS",
     "TOOL_EGRESS_ALLOW",
     "TOOL_EGRESS_BLOCK",

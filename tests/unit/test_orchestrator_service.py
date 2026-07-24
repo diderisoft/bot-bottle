@@ -323,6 +323,43 @@ class TestOrchestratorSupervise(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("no longer registered", err)
 
+    # --- agent half: queue + poll (issue #469) -----------------------------
+
+    def test_queue_proposal_then_poll_pending(self) -> None:
+        bottle_id = self._register("demo", "routes: []\n")
+        pid = self.orch.supervise_queue_proposal(
+            bottle_id, tool=TOOL_EGRESS_ALLOW,
+            proposed_file="routes:\n  - host: google.com\n", justification="need it")
+        # Visible to the operator, keyed by the bottle id.
+        pending = self.orch.supervise_pending()
+        self.assertEqual([pid], [p["id"] for p in pending])
+        self.assertEqual(
+            {"status": "pending"}, self.orch.supervise_poll_response(bottle_id, pid))
+
+    def test_poll_returns_decision_and_archives(self) -> None:
+        bottle_id = self._register("demo", "routes: []\n")
+        pid = self.orch.supervise_queue_proposal(
+            bottle_id, tool=TOOL_EGRESS_ALLOW,
+            proposed_file="routes:\n  - host: google.com\n", justification="need it")
+        self.orch.supervise_respond(
+            pid, bottle_slug=bottle_id, decision="approve", notes="ok")
+        decided = self.orch.supervise_poll_response(bottle_id, pid)
+        self.assertEqual("approved", decided["status"])
+        self.assertEqual("ok", decided["notes"])
+        # Archived on read → gone from pending, and a re-poll is 'unknown'.
+        self.assertEqual([], self.orch.supervise_pending())
+        self.assertEqual(
+            {"status": "unknown"}, self.orch.supervise_poll_response(bottle_id, pid))
+
+    def test_poll_unknown_for_other_bottle(self) -> None:
+        bottle_id = self._register("demo", "routes: []\n")
+        pid = self.orch.supervise_queue_proposal(
+            bottle_id, tool=TOOL_EGRESS_ALLOW,
+            proposed_file="routes:\n  - host: google.com\n", justification="j")
+        # A different bottle id can't read demo's proposal (scoped by queue key).
+        self.assertEqual(
+            {"status": "unknown"}, self.orch.supervise_poll_response("other-bottle", pid))
+
 
 if __name__ == "__main__":
     unittest.main()

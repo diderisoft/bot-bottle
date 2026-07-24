@@ -167,11 +167,14 @@ class GitHttpHandler(BaseHTTPRequestHandler):
             "SERVER_PORT": str(self.server.server_port),  # type: ignore
             "SERVER_PROTOCOL": self.request_version,
         })
-        # Attribute the gitleaks-allow supervise proposal (written by
+        # Attribute the gitleaks-allow supervise proposal (queued by
         # receive-pack's pre-receive hook, a child of the CGI we spawn below) to
-        # the calling bottle. The namespaced root is `<base>/<bottle_id>`, so its
-        # final component is the bottle id — the same per-bottle key egress uses.
-        env["SUPERVISE_BOTTLE_SLUG"] = sandbox_root.name
+        # the calling bottle. The hook queues over the control-plane RPC (PRD
+        # 0070 / issue #469), which re-resolves the bottle from these — the same
+        # (source_ip, identity_token) pair that selected the namespaced root
+        # above — so it can only ever queue its own proposals.
+        env["SUPERVISE_SOURCE_IP"] = self.client_address[0]
+        env["SUPERVISE_IDENTITY_TOKEN"] = self.headers.get(IDENTITY_HEADER, "")
         for header, variable in (
             ("accept", "HTTP_ACCEPT"),
             ("content-encoding", "HTTP_CONTENT_ENCODING"),

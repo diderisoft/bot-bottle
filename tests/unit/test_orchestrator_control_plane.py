@@ -426,6 +426,112 @@ class TestDispatchSupervise(unittest.TestCase):
         self.assertIn("no such proposal", str(payload["error"]))
 
 
+class TestDispatchSuperviseAgentRpc(unittest.TestCase):
+    """The agent half — `/supervise/propose` + `/supervise/poll` — attributed by
+    (source_ip, identity_token) like /resolve, so a bottle can only ever queue
+    or read its own proposals (PRD 0070 / issue #469)."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        root = Path(self._tmp.name)
+        db = root / "db" / "bot-bottle.db"
+        db.parent.mkdir(parents=True)
+        self._env = patch.dict("os.environ", {
+            "BOT_BOTTLE_ROOT": str(root),
+            "SUPERVISE_DB_PATH": str(db),
+        })
+        self._env.start()
+        self.store = RegistryStore(db)
+        self.store.migrate()
+        StoreManager(db).migrate()
+        secret = secrets.token_bytes(16)
+        self.orch = Orchestrator(self.store, StubBroker(secret), secret)
+
+    def tearDown(self) -> None:
+        self._env.stop()
+        self._tmp.cleanup()
+
+    def _register(self, source_ip: str = "10.243.0.9", slug: str = "demo"):
+        return self.store.register(
+            source_ip, metadata=json.dumps({"slug": slug}), policy="routes: []\n")
+
+    def _propose(self, rec, proposed: str = "routes:\n  - host: g.com\n"):
+        return dispatch(self.orch, "POST", "/supervise/propose", _body({
+            "source_ip": rec.source_ip, "identity_token": rec.identity_token,
+            "tool": TOOL_EGRESS_ALLOW, "proposed_file": proposed, "justification": "need it",
+        }))
+
+    def _poll(self, rec, proposal_id: str):
+        return dispatch(self.orch, "POST", "/supervise/poll", _body({
+            "source_ip": rec.source_ip, "identity_token": rec.identity_token,
+            "proposal_id": proposal_id,
+        }))
+
+    def test_propose_queues_under_the_resolved_bottle(self) -> None:
+        rec = self._register()
+        status, payload = self._propose(rec)
+        self.assertEqual(201, status)
+        pid = payload["proposal_id"]
+        assert isinstance(pid, str) and pid
+        _, listing = dispatch(self.orch, "GET", "/supervise/proposals", b"")
+        self.assertEqual(pid, listing["proposals"][0]["id"])
+        # Queued under the orchestrator-resolved bottle id, never a caller slug.
+        self.assertEqual(rec.bottle_id, listing["proposals"][0]["bottle_slug"])
+
+    def test_propose_unattributed_is_403(self) -> None:
+        status, payload = dispatch(self.orch, "POST", "/supervise/propose", _body({
+            "source_ip": "10.9.9.9", "identity_token": "wrong",
+            "tool": TOOL_EGRESS_ALLOW, "proposed_file": "x\n", "justification": "j",
+        }))
+        self.assertEqual(403, status)
+        self.assertIn("unattributed", str(payload["error"]))
+
+    def test_propose_rejects_unknown_tool(self) -> None:
+        rec = self._register()
+        status, _ = dispatch(self.orch, "POST", "/supervise/propose", _body({
+            "source_ip": rec.source_ip, "identity_token": rec.identity_token,
+            "tool": "not-a-tool", "proposed_file": "x\n", "justification": "j",
+        }))
+        self.assertEqual(400, status)
+
+    def test_poll_pending_then_decided_then_archived(self) -> None:
+        rec = self._register()
+        _, proposed = self._propose(rec)
+        pid = proposed["proposal_id"]
+        assert isinstance(pid, str)
+
+        status, poll = self._poll(rec, pid)
+        self.assertEqual(200, status)
+        self.assertEqual("pending", poll["status"])
+
+        # Operator decides server-side.
+        dispatch(self.orch, "POST", "/supervise/respond", _body({
+            "proposal_id": pid, "bottle_slug": rec.bottle_id,
+            "decision": "approve", "notes": "ok",
+        }))
+        _, decided = self._poll(rec, pid)
+        self.assertEqual("approved", decided["status"])
+        self.assertEqual("ok", decided["notes"])
+
+        # The decided poll archived it: gone from pending, and a re-poll is
+        # 'unknown' rather than replaying the decision forever.
+        _, listing = dispatch(self.orch, "GET", "/supervise/proposals", b"")
+        self.assertEqual([], listing["proposals"])
+        _, again = self._poll(rec, pid)
+        self.assertEqual("unknown", again["status"])
+
+    def test_poll_cannot_read_another_bottles_proposal(self) -> None:
+        rec_a = self._register("10.0.0.1", "a")
+        rec_b = self._register("10.0.0.2", "b")
+        _, proposed = self._propose(rec_a)
+        pid = proposed["proposal_id"]
+        assert isinstance(pid, str)
+        # b polls a's proposal id: scoped to b's own queue → never a's response.
+        status, poll = self._poll(rec_b, pid)
+        self.assertEqual(200, status)
+        self.assertEqual("unknown", poll["status"])
+
+
 if __name__ == "__main__":
     unittest.main()
 

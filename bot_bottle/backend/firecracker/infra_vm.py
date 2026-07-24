@@ -493,10 +493,11 @@ BOT_BOTTLE_ROOT=/var/lib/bot-bottle python3 -m bot_bottle.orchestrator \\
 # Gateway data plane, multi-tenant: each request resolves source-IP ->
 # policy against the local control plane. The VM backend reaches git over
 # git-http (9420), so the git:// daemon (git-gate, needs a per-bottle
-# entrypoint the consolidated model doesn't use) is left out.
+# entrypoint the consolidated model doesn't use) is left out. No
+# SUPERVISE_DB_PATH: the data plane reaches the supervise queue over the
+# control-plane RPC and never opens bot-bottle.db (PRD 0070 / #469).
 BOT_BOTTLE_GATEWAY_DAEMONS=egress,git-http,supervise \\
 BOT_BOTTLE_ORCHESTRATOR_URL=http://127.0.0.1:{CONTROL_PLANE_PORT} \\
-SUPERVISE_DB_PATH=/var/lib/bot-bottle/db/bot-bottle.db \\
     python3 -m bot_bottle.gateway_init &
 
 # Reap as PID 1; children are backgrounded, so `wait` blocks.

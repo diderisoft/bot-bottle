@@ -209,6 +209,7 @@ from bot_bottle.egress_addon_core import (  # noqa: E402
     Route,
     route_to_yaml_dict,
 )
+from bot_bottle.policy_resolver import PolicyResolveError  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -266,7 +267,42 @@ def _config_to_policy(config: Config) -> str:
     }) + "\n"
 
 
-class _StaticResolver:
+class _SuperviseRpcFake:
+    """Mixin adding the control-plane supervise RPCs to a fake resolver, now
+    that the egress data plane queues/polls proposals over RPC instead of
+    opening the DB (issue #469). `supervise_status` is the operator's eventual
+    decision (None models a timeout — poll stays `pending`); `propose_error`
+    models an unreachable orchestrator. `propose_calls` records what was queued
+    so a test can assert the proposal was attributed by the caller's source IP."""
+
+    supervise_status: "str | None" = None
+    propose_error: bool = False
+
+    @property
+    def propose_calls(self) -> list:
+        if not hasattr(self, "_propose_calls"):
+            self._propose_calls: list = []
+        return self._propose_calls
+
+    def propose_supervise(
+        self, source_ip, identity_token, *, tool, proposed_file, justification,
+    ):
+        del proposed_file, justification
+        self.propose_calls.append(
+            {"source_ip": source_ip, "identity_token": identity_token, "tool": tool}
+        )
+        if self.propose_error:
+            raise PolicyResolveError("orchestrator down")
+        return "prop-1"
+
+    def poll_supervise(self, source_ip, identity_token, proposal_id):
+        del source_ip, identity_token, proposal_id
+        if self.supervise_status is None:
+            return {"status": "pending"}
+        return {"status": self.supervise_status, "notes": "", "final_file": None}
+
+
+class _StaticResolver(_SuperviseRpcFake):
     """Fake orchestrator resolver that serves one Config (+ optional bottle id
     and per-bottle tokens) for every client — the host-test stand-in for a
     bottle's policy now that egress is resolver-only."""
@@ -323,7 +359,7 @@ def _with_client_ip(flow: _Flow, ip: str) -> _Flow:
     return flow
 
 
-class _CtxResolver:
+class _CtxResolver(_SuperviseRpcFake):
     """Fake orchestrator resolver: maps source IP -> bottle id, and grants the
     same allow-list to any attributed bottle (unattributed -> deny)."""
 
@@ -516,66 +552,33 @@ class TestOutboundDlpPolicy(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
-def _fake_sv(response_status: str | None) -> types.SimpleNamespace:
-    """Stand-in for the `supervise` module the adapter queues proposals to.
-
-    `response_status` of None models a timeout (read_response never returns a
-    decision); a status string models the operator's eventual answer."""
-    def _new_proposal(**_kw: Any) -> Any:
-        return types.SimpleNamespace(id="prop-1")
-
-    def _sha256_hex(_payload: Any) -> str:
-        return "hash"
-
-    def _noop(*_args: Any) -> None:
-        return None
-
-    def _read_response(_slug: Any, _pid: Any) -> Any:
-        if response_status is None:
-            raise OSError("not written yet")  # forces poll -> timeout
-        return types.SimpleNamespace(status=response_status)
-
-    ns = types.SimpleNamespace()
-    ns.STATUS_APPROVED = "approved"
-    ns.STATUS_MODIFIED = "modified"
-    ns.TOOL_EGRESS_TOKEN_ALLOW = "egress_token_allow"
-    ns.Proposal = types.SimpleNamespace(new=_new_proposal)
-    ns.sha256_hex = _sha256_hex
-    ns.write_proposal = _noop
-    ns.archive_proposal = _noop
-    ns.read_response = _read_response
-    return ns
-
-
 class TestSuperviseBranch(unittest.TestCase):
-    def _supervised_addon(self) -> EgressAddon:
+    def _supervised_addon(self, status: str | None) -> EgressAddon:
         addon = _addon(Config(routes=(Route(host="api.example.com"),)), slug="test-bottle")
         addon._token_allow_timeout = 0.05
+        cast(Any, addon._resolver).supervise_status = status
         return addon
 
     def test_operator_approval_allows_token_and_forwards(self) -> None:
-        addon = self._supervised_addon()
+        addon = self._supervised_addon("approved")
         flow = _Flow(_Request(host="api.example.com", method="POST", body=f"k={_OPENAI_KEY}"))
-        with patch.object(_ea_mod, "_sv", _fake_sv("approved")):
-            _run_request(addon, flow)
+        _run_request(addon, flow)
         self.assertIsNone(flow.response)  # forwarded after approval
         # Approval lands in the calling bottle's safelist (keyed by slug).
         self.assertIn(_OPENAI_KEY, addon._safe_tokens_for("test-bottle"))
 
     def test_operator_rejection_blocks(self) -> None:
-        addon = self._supervised_addon()
+        addon = self._supervised_addon("rejected")
         flow = _Flow(_Request(host="api.example.com", method="POST", body=f"k={_OPENAI_KEY}"))
-        with patch.object(_ea_mod, "_sv", _fake_sv("rejected")):
-            _run_request(addon, flow)
+        _run_request(addon, flow)
         assert flow.response is not None
         self.assertEqual(403, flow.response.status_code)
         self.assertIn("rejected", flow.response.get_text())
 
     def test_supervise_timeout_blocks(self) -> None:
-        addon = self._supervised_addon()
+        addon = self._supervised_addon(None)  # poll stays pending -> timeout
         flow = _Flow(_Request(host="api.example.com", method="POST", body=f"k={_OPENAI_KEY}"))
-        with patch.object(_ea_mod, "_sv", _fake_sv(None)):
-            _run_request(addon, flow)
+        _run_request(addon, flow)
         assert flow.response is not None
         self.assertEqual(403, flow.response.status_code)
         self.assertIn("timed out", flow.response.get_text())
@@ -772,19 +775,14 @@ class TestRedactSurfaces(unittest.TestCase):
 
 
 class TestSuperviseWriteFailure(unittest.TestCase):
-    def test_write_proposal_oserror_blocks(self) -> None:
+    def test_propose_rpc_error_blocks(self) -> None:
+        # An unreachable orchestrator (propose RPC raises) fails closed: the
+        # request is blocked rather than forwarded unsupervised.
         addon = _addon(Config(routes=(Route(host="api.example.com"),)), slug="test-bottle")
         addon._token_allow_timeout = 0.05
+        cast(Any, addon._resolver).propose_error = True
         flow = _Flow(_Request(host="api.example.com", method="POST", body=f"k={_OPENAI_KEY}"))
-
-        fake = _fake_sv("approved")
-
-        def _raise(_p: Any) -> None:
-            raise OSError("disk full")
-
-        fake.write_proposal = _raise
-        with patch.object(_ea_mod, "_sv", fake):
-            _run_request(addon, flow)
+        _run_request(addon, flow)
         assert flow.response is not None
         self.assertEqual(403, flow.response.status_code)
 
@@ -844,22 +842,23 @@ class TestSuperviseMultiTenant(unittest.TestCase):
     """Consolidated gateway: supervise proposals + the DLP safelist are keyed
     per bottle, resolved by source IP (PRD 0070)."""
 
-    def _consolidated_addon(self) -> EgressAddon:
+    def _consolidated_addon(self, status: str | None = "approved") -> EgressAddon:
         # Static config is empty; the resolver supplies each bottle's config.
         addon = _addon(Config(routes=()))
-        addon._resolver = cast(Any, _CtxResolver({"10.0.0.1": "bottle-a", "10.0.0.2": "bottle-b"}))
+        resolver = _CtxResolver({"10.0.0.1": "bottle-a", "10.0.0.2": "bottle-b"})
+        resolver.supervise_status = status
+        addon._resolver = cast(Any, resolver)
         addon._token_allow_timeout = 0.05
         return addon
 
     def test_approval_is_scoped_to_the_calling_bottle(self) -> None:
-        addon = self._consolidated_addon()
+        addon = self._consolidated_addon("approved")
         # bottle-a (10.0.0.1) sends the token; the operator approves.
         flow = _with_client_ip(
             _Flow(_Request(host="api.example.com", method="POST", body=f"k={_OPENAI_KEY}")),
             "10.0.0.1",
         )
-        with patch.object(_ea_mod, "_sv", _fake_sv("approved")):
-            _run_request(addon, flow)
+        _run_request(addon, flow)
         self.assertIsNone(flow.response)  # forwarded after approval
         # The approval lands ONLY in bottle-a's safelist — never bottle-b's.
         # A global set here would be the cross-tenant leak this slice closes.
@@ -867,22 +866,19 @@ class TestSuperviseMultiTenant(unittest.TestCase):
         self.assertNotIn(_OPENAI_KEY, addon._safe_tokens_for("bottle-b"))
 
     def test_proposal_is_attributed_to_the_source_ip_bottle(self) -> None:
-        addon = self._consolidated_addon()
-        seen: list[str] = []
-        fake = _fake_sv("approved")
-
-        def _capture(**kw: Any) -> Any:
-            seen.append(kw["bottle_slug"])
-            return types.SimpleNamespace(id="p")
-
-        fake.Proposal = types.SimpleNamespace(new=_capture)
+        addon = self._consolidated_addon("approved")
         flow = _with_client_ip(
             _Flow(_Request(host="api.example.com", method="POST", body=f"k={_OPENAI_KEY}")),
             "10.0.0.2",
         )
-        with patch.object(_ea_mod, "_sv", fake):
-            _run_request(addon, flow)
-        self.assertEqual(["bottle-b"], seen)  # proposal keyed by the resolved bottle
+        _run_request(addon, flow)
+        # The addon forwards the caller's source IP to the control plane, which
+        # attributes the proposal server-side by (source_ip, identity_token) —
+        # the addon never asserts a slug. The resolved bottle keys the safelist.
+        calls = cast(Any, addon._resolver).propose_calls
+        self.assertEqual(["10.0.0.2"], [c["source_ip"] for c in calls])
+        self.assertIn(_OPENAI_KEY, addon._safe_tokens_for("bottle-b"))
+        self.assertNotIn(_OPENAI_KEY, addon._safe_tokens_for("bottle-a"))
 
     def test_auth_token_injected_from_resolved_tokens(self) -> None:
         # The bottle's upstream token comes from /resolve (in-memory on the
@@ -925,16 +921,17 @@ class TestSuperviseMultiTenant(unittest.TestCase):
         self.assertIsNotNone(flow.response)  # blocked — token unset
 
     def test_unattributed_source_ip_cannot_supervise(self) -> None:
-        addon = self._consolidated_addon()
+        addon = self._consolidated_addon("approved")
         # 10.9.9.9 is not in the resolver map -> deny-all config, empty slug.
         flow = _with_client_ip(
             _Flow(_Request(host="api.example.com", method="POST", body=f"k={_OPENAI_KEY}")),
             "10.9.9.9",
         )
-        with patch.object(_ea_mod, "_sv", _fake_sv("approved")):
-            _run_request(addon, flow)
+        _run_request(addon, flow)
         self.assertIsNotNone(flow.response)  # blocked (no route, no supervise)
         self.assertNotIn(_OPENAI_KEY, addon._safe_tokens_for(""))
+        # Never even reached the queue — no route means no supervise proposal.
+        self.assertEqual([], cast(Any, addon._resolver).propose_calls)
 
 
 class TestMultiTenantInboundDlp(unittest.TestCase):

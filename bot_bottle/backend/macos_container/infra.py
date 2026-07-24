@@ -100,10 +100,12 @@ def _init_script(port: int) -> str:
         f"( cd {_SRC_IN_CONTAINER} && BOT_BOTTLE_ROOT={_DB_ROOT_IN_CONTAINER} "
         f"python3 -m bot_bottle.orchestrator --host 0.0.0.0 --port {port} "
         "--broker stub ) &\n"
-        # Gateway data plane, multi-tenant against the local control plane.
+        # Gateway data plane, multi-tenant against the local control plane. No
+        # SUPERVISE_DB_PATH: the data plane reaches the supervise queue over the
+        # control-plane RPC and never opens bot-bottle.db (PRD 0070 / #469).
         f"( cd /app && BOT_BOTTLE_GATEWAY_DAEMONS={_GATEWAY_DAEMONS} "
         f"BOT_BOTTLE_ORCHESTRATOR_URL=http://127.0.0.1:{port} "
-        f"SUPERVISE_DB_PATH={_DB_PATH_IN_CONTAINER} python3 -m bot_bottle.gateway_init ) &\n"
+        f"python3 -m bot_bottle.gateway_init ) &\n"
         "while : ; do wait ; done\n"
     )
 

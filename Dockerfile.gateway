@@ -26,8 +26,9 @@
 #   /git-gate-entrypoint.sh              docker-cp'd at start time
 #   /git-gate/creds/*                    docker-cp'd at start time
 #   /git/*                               bare repos, populated at runtime
-#   /run/supervise/bot-bottle.db         bind-mounted at run time
 #   /home/mitmproxy/.mitmproxy/          mitmproxy CA dir
+# (No bot-bottle.db mount: the data plane reaches the supervise queue over the
+#  control-plane RPC and never opens the DB — PRD 0070 / issue #469.)
 #
 # Exposed ports inside the container:
 #   9099  egress (mitmproxy, agent-facing HTTPS proxy)

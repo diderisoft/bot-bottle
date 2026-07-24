@@ -40,6 +40,8 @@ from pathlib import Path
 from .supervise_types import (
     ACTION_OPERATOR_EDIT,
     AuditEntry,
+    POLL_STATUS_PENDING,
+    POLL_STATUS_UNKNOWN,
     Proposal,
     Response,
     STATUSES,
@@ -257,6 +259,8 @@ __all__ = [
     "STATUS_APPROVED",
     "STATUS_MODIFIED",
     "STATUS_REJECTED",
+    "POLL_STATUS_PENDING",
+    "POLL_STATUS_UNKNOWN",
     "SUPERVISE_HOSTNAME",
     "SUPERVISE_PORT",
     "Supervise",

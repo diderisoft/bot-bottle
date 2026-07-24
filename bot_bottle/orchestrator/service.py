@@ -31,16 +31,23 @@ from .gateway import Gateway
 from ..supervise import (
     AuditEntry,
     COMPONENT_FOR_TOOL,
+    POLL_STATUS_PENDING,
+    POLL_STATUS_UNKNOWN,
+    Proposal,
     Response,
     STATUS_APPROVED,
     STATUS_MODIFIED,
     STATUS_REJECTED,
     TOOL_EGRESS_ALLOW,
     TOOL_EGRESS_BLOCK,
+    archive_proposal,
     list_all_pending_proposals,
     read_proposal,
+    read_response,
     render_diff,
+    sha256_hex,
     write_audit_entry,
+    write_proposal,
     write_response,
 )
 
@@ -188,6 +195,60 @@ class Orchestrator:
     # The orchestrator owns the single DB *and* the live policy, so operator
     # decisions are applied here, server-side, and reached over HTTP by the
     # host TUI (no direct-DB access, one path for every backend).
+    #
+    # The *agent* half of the queue (queue a proposal, poll for its response)
+    # is served here too (PRD 0070): the data plane no longer opens the DB, so
+    # supervise_server / egress / git-gate reach the queue over the control
+    # plane. Both are keyed on the caller's orchestrator-resolved bottle id —
+    # never a caller-supplied slug — so a bottle can only queue or read its own
+    # proposals even if the data plane is compromised.
+
+    def supervise_queue_proposal(
+        self, bottle_id: str, *, tool: str, proposed_file: str, justification: str,
+    ) -> str:
+        """Queue an agent-side proposal under `bottle_id` and return its id.
+
+        `bottle_id` is the caller resolved from `(source_ip, identity_token)` by
+        the control plane, so the proposal is attributed to the calling bottle,
+        not to anything the (possibly hostile) data plane asserts. The
+        proposed-file self-hash is computed here so the agent never supplies it."""
+        proposal = Proposal.new(
+            bottle_slug=bottle_id,
+            tool=tool,
+            proposed_file=proposed_file,
+            justification=justification,
+            current_file_hash=sha256_hex(proposed_file),
+        )
+        write_proposal(proposal)
+        return proposal.id
+
+    def supervise_poll_response(self, bottle_id: str, proposal_id: str) -> dict[str, object]:
+        """Non-blocking poll of one of `bottle_id`'s queued proposals.
+
+        Returns `{"status": ...}`: a terminal decision (`approved`/`modified`/
+        `rejected`, with `notes` + `final_file`) once the operator has responded,
+        `pending` while it's still queued undecided, or `unknown` when no such
+        queued proposal exists for this bottle (wrong id, or already resolved and
+        read). A decided proposal is archived here — the same terminal step the
+        data plane used to run after reading the response — so `pending`
+        proposals stay visible to the operator until decided *and* polled.
+
+        Reads are scoped to `bottle_id` (the queue key), so a caller can never
+        read another bottle's proposal even with a guessed id."""
+        try:
+            response = read_response(bottle_id, proposal_id)
+        except FileNotFoundError:
+            try:
+                read_proposal(bottle_id, proposal_id)
+            except FileNotFoundError:
+                return {"status": POLL_STATUS_UNKNOWN}
+            return {"status": POLL_STATUS_PENDING}
+        archive_proposal(bottle_id, proposal_id)
+        return {
+            "status": response.status,
+            "notes": response.notes,
+            "final_file": response.final_file,
+        }
 
     def supervise_pending(self) -> list[dict[str, object]]:
         """All pending proposals across bottles, FIFO, as JSON dicts

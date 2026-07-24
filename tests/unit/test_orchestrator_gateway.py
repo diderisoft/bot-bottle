@@ -124,13 +124,11 @@ class TestDockerGateway(unittest.TestCase):
         src = ca_mounts[0].rsplit(":", 1)[0]
         self.assertTrue(src.endswith("/" + GATEWAY_CA_DIRNAME), src)
         self.assertTrue(Path(src).is_absolute(), src)
-        # Shares the ONE host DB: the supervise daemon queues into the same
-        # file the orchestrator + operator (over HTTP) use.
-        self.assertTrue(any(
-            a.startswith("SUPERVISE_DB_PATH=") and a.endswith("/run/supervise/bot-bottle.db")
-            for a in runs[0]))
-        self.assertTrue(any(
-            a.endswith(":/run/supervise") for a in runs[0]))
+        # No DB handle on the data plane: the supervise queue is reached over
+        # the control-plane RPC, so the gateway container carries neither the
+        # DB bind-mount nor SUPERVISE_DB_PATH (PRD 0070 / issue #469).
+        self.assertFalse(any(a.startswith("SUPERVISE_DB_PATH=") for a in runs[0]))
+        self.assertFalse(any(a.endswith(":/run/supervise") for a in runs[0]))
         # Data plane resolves policy against the orchestrator control plane.
         self.assertIn(f"BOT_BOTTLE_ORCHESTRATOR_URL={_ORCH_URL}", runs[0])
 

@@ -7,9 +7,13 @@ config changes when stuck. The tools are `egress-allow`,
 Each queued proposal tool call:
 
   1. Validates the proposed file syntactically.
-  2. Writes a Proposal to the host SQLite database.
-  3. Blocks polling for a matching Response row, up to a short grace
-     window (`SUPERVISE_RESPONSE_TIMEOUT_SECONDS`, default 30s).
+  2. Queues a Proposal over the control-plane RPC (`POST /supervise/propose`),
+     which attributes it to the calling bottle by (source_ip, identity_token)
+     and writes it to the one orchestrator-owned SQLite database. This daemon
+     never opens `bot-bottle.db` itself (PRD 0070 / issue #469).
+  3. Polls the control plane (`POST /supervise/poll`) for a matching Response,
+     up to a short grace window (`SUPERVISE_RESPONSE_TIMEOUT_SECONDS`,
+     default 30s).
   4. On a decision within the window, returns the operator's
      `{status, notes}`. On timeout, returns `status: pending` **with the
      proposal id** and leaves the proposal queued — the flow is
@@ -24,8 +28,8 @@ without holding an HTTP request open.
 One shared server fronts every bottle (PRD 0070) and attributes each
 proposal to the calling bottle by source IP, resolved from the orchestrator
 — an unattributed or unreachable source fails closed. BOT_BOTTLE_ORCHESTRATOR_URL
-is mandatory: there is no fixed-slug single-tenant fallback. SUPERVISE_DB_PATH
-points at the bind-mounted host database.
+is mandatory: there is no fixed-slug single-tenant fallback, and the queue is
+reached only over that control-plane RPC (no direct database handle).
 
 Speaks MCP over HTTP+JSON-RPC. Methods handled:
 
@@ -51,7 +55,7 @@ import socketserver
 import sys
 import time
 import typing
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 from bot_bottle.constants import IDENTITY_HEADER
 from bot_bottle.egress_addon_core import (
@@ -312,7 +316,9 @@ def validate_proposed_file(tool: str, content: str) -> None:
 
 @dataclass(frozen=True)
 class ServerConfig:
-    bottle_slug: str
+    # No bottle_slug: the calling bottle is attributed per request by the
+    # control plane from (source_ip, identity_token), so nothing on this daemon
+    # is keyed by a single slug (PRD 0070 / issue #469).
     response_timeout_seconds: float = DEFAULT_RESPONSE_TIMEOUT_SECONDS
 
 
@@ -331,14 +337,22 @@ def handle_tools_list(_params: dict[str, object]) -> dict[str, object]:
 def handle_tools_call(
     params: dict[str, object],
     config: ServerConfig,
+    *,
+    resolver: "PolicyResolver",
+    source_ip: str,
+    identity_token: str,
 ) -> dict[str, object]:
-    """Validates the proposal, writes it to the queue, blocks waiting
-    for a Response, returns the result wrapped in MCP `content`.
+    """Validates the proposal, queues it over the control-plane RPC, polls for
+    a Response through the grace window, and returns the result wrapped in MCP
+    `content`.
 
-    `list-egress-routes` never reaches here — the handler answers it from
-    the calling bottle's resolved policy before dispatching (see
-    `MCPHandler._dispatch`); this path is the queued, operator-approved
-    `egress-allow` / `egress-block` tools."""
+    The queue lives behind the orchestrator now — `propose_supervise` attributes
+    the proposal to the calling bottle by `(source_ip, identity_token)` and
+    `poll_supervise` reads only that bottle's own responses, so this daemon
+    never opens `bot-bottle.db`. `list-egress-routes` never reaches here — the
+    handler answers it from the calling bottle's resolved policy before
+    dispatching (see `MCPHandler._dispatch`); this path is the queued,
+    operator-approved `egress-allow` / `egress-block` tools."""
     name = params.get("name")
     if not isinstance(name, str):
         raise _RpcClientError(ERR_INVALID_PARAMS, "tools/call missing 'name'")
@@ -366,59 +380,100 @@ def handle_tools_call(
     else:
         raise _RpcClientError(ERR_INVALID_PARAMS, f"unknown tool {name!r}")
 
-    proposal = _sv.Proposal.new(
-        bottle_slug=config.bottle_slug,
-        tool=name,
-        proposed_file=proposed_file,
-        justification=justification,
-        current_file_hash=_sv.sha256_hex(proposed_file),
+    proposal_id = _queue_proposal(
+        resolver, source_ip, identity_token,
+        tool=name, proposed_file=proposed_file, justification=justification,
     )
-    try:
-        _sv.write_proposal(proposal)
-    except OSError as e:
-        raise _RpcInternalError(f"failed to write proposal to queue: {e}") from e
     sys.stderr.write(
-        f"supervise: queued proposal {proposal.id} ({name}) "
-        f"for bottle {config.bottle_slug}; waiting for operator...\n"
+        f"supervise: queued proposal {proposal_id} ({name}); waiting for operator...\n"
     )
     sys.stderr.flush()
-    deadline = time.monotonic() + config.response_timeout_seconds
-    try:
-        response = _sv.wait_for_response(
-            config.bottle_slug,
-            proposal.id,
-            poll_interval=MIN_RESPONSE_POLL_INTERVAL_SECONDS,
-            deadline=deadline,
-        )
-    except TimeoutError:
-        text = format_pending_response_text(proposal.id, config.response_timeout_seconds)
-        return {
-            "content": [{"type": "text", "text": text}],
-            "isError": False,
-        }
-    try:
-        _sv.archive_proposal(config.bottle_slug, proposal.id)
-    except OSError as e:
-        raise _RpcInternalError(f"failed to archive proposal: {e}") from e
 
-    text = format_response_text(response)
+    deadline = time.monotonic() + config.response_timeout_seconds
+    while time.monotonic() < deadline:
+        response = _poll_response(resolver, source_ip, identity_token, proposal_id)
+        if response is not None:
+            return {
+                "content": [{"type": "text", "text": format_response_text(response)}],
+                "isError": response.status == _sv.STATUS_REJECTED,
+            }
+        time.sleep(MIN_RESPONSE_POLL_INTERVAL_SECONDS)
+
+    text = format_pending_response_text(proposal_id, config.response_timeout_seconds)
     return {
         "content": [{"type": "text", "text": text}],
-        "isError": response.status == _sv.STATUS_REJECTED,
+        "isError": False,
     }
+
+
+def _queue_proposal(
+    resolver: "PolicyResolver",
+    source_ip: str,
+    identity_token: str,
+    *,
+    tool: str,
+    proposed_file: str,
+    justification: str,
+) -> str:
+    """Queue a proposal over the control plane and return its id, mapping the
+    resolver's fail-closed outcomes to internal errors so `do_POST` returns a
+    clean -32603 rather than leaking the cause to the agent."""
+    try:
+        proposal_id = resolver.propose_supervise(
+            source_ip, identity_token,
+            tool=tool, proposed_file=proposed_file, justification=justification,
+        )
+    except PolicyResolveError as e:
+        raise _RpcInternalError(f"orchestrator unreachable, cannot queue proposal: {e}") from e
+    if proposal_id is None:
+        raise _RpcInternalError("request source is not attributed to a bottle")
+    return proposal_id
+
+
+def _poll_response(
+    resolver: "PolicyResolver", source_ip: str, identity_token: str, proposal_id: str,
+) -> "_sv.Response | None":
+    """One non-blocking control-plane poll for `proposal_id`'s decision. Returns
+    the operator's Response once decided, or None while it is still pending
+    (or `unknown` — treated as still-waiting so a transient blip degrades to the
+    pending-timeout path rather than a spurious error mid grace window)."""
+    try:
+        result = resolver.poll_supervise(source_ip, identity_token, proposal_id)
+    except PolicyResolveError as e:
+        raise _RpcInternalError(f"orchestrator unreachable, cannot poll proposal: {e}") from e
+    if result is None:
+        raise _RpcInternalError("request source is not attributed to a bottle")
+    if result.get("status") in _sv.STATUSES:
+        return _response_from_poll(proposal_id, result)
+    return None
+
+
+def _response_from_poll(proposal_id: str, result: "dict[str, object]") -> "_sv.Response":
+    """Build a Response from a decided `/supervise/poll` payload."""
+    final_file = result.get("final_file")
+    return _sv.Response(
+        proposal_id=proposal_id,
+        status=str(result.get("status")),
+        notes=str(result.get("notes") or ""),
+        final_file=final_file if isinstance(final_file, str) else None,
+    )
 
 
 def handle_check_proposal(
     params: dict[str, object],
-    config: ServerConfig,
+    *,
+    resolver: "PolicyResolver",
+    source_ip: str,
+    identity_token: str,
 ) -> dict[str, object]:
     """Non-blocking poll of a queued proposal's decision, by id.
 
     Never creates a Proposal (so `check-proposal` isn't in `TOOLS`); it only
-    reads the queue. Resolution order mirrors the synchronous path's terminal
-    step — a decided proposal is archived here exactly as `handle_tools_call`
-    archives it after `wait_for_response`, so `pending` proposals stay visible
-    to the operator until they're both decided *and* polled."""
+    reads the queue over the control-plane RPC, attributed by
+    `(source_ip, identity_token)` so it can only read *this* bottle's own
+    proposals. The orchestrator archives a decided proposal on read — the same
+    terminal step the synchronous path triggers — so `pending` proposals stay
+    visible to the operator until they're both decided *and* polled."""
     args_raw = params.get("arguments", {})
     if not isinstance(args_raw, dict):
         raise _RpcClientError(ERR_INVALID_PARAMS, "tools/call 'arguments' must be an object")
@@ -431,25 +486,24 @@ def handle_check_proposal(
     proposal_id = proposal_id.strip()
 
     try:
-        response = _sv.read_response(config.bottle_slug, proposal_id)
-    except FileNotFoundError:
-        # No decision yet — distinguish "still queued" from "unknown id".
-        try:
-            _sv.read_proposal(config.bottle_slug, proposal_id)
-        except FileNotFoundError:
-            return {
-                "content": [{"type": "text", "text": format_unknown_proposal_text(proposal_id)}],
-                "isError": True,
-            }
+        result = resolver.poll_supervise(source_ip, identity_token, proposal_id)
+    except PolicyResolveError as e:
+        raise _RpcInternalError(f"orchestrator unreachable, cannot poll proposal: {e}") from e
+    if result is None:
+        raise _RpcInternalError("request source is not attributed to a bottle")
+    status = result.get("status")
+
+    if status == _sv.POLL_STATUS_UNKNOWN:
+        return {
+            "content": [{"type": "text", "text": format_unknown_proposal_text(proposal_id)}],
+            "isError": True,
+        }
+    if status == _sv.POLL_STATUS_PENDING:
         return {
             "content": [{"type": "text", "text": format_still_pending_text(proposal_id)}],
             "isError": False,
         }
-
-    try:
-        _sv.archive_proposal(config.bottle_slug, proposal_id)
-    except OSError as e:
-        raise _RpcInternalError(f"failed to archive proposal: {e}") from e
+    response = _response_from_poll(proposal_id, result)
     return {
         "content": [{"type": "text", "text": format_response_text(response)}],
         "isError": response.status == _sv.STATUS_REJECTED,
@@ -591,15 +645,33 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
             # — silently dropping base routes like api.anthropic.com on approval.
             if req.params.get("name") == _sv.TOOL_LIST_EGRESS_ROUTES:
                 return self._resolved_routes_payload()
+            resolver = self._resolver_or_fail()
+            source_ip = self.client_address[0]
+            token = self._identity_token()
             # `check-proposal` is a non-blocking read of the calling bottle's
-            # own queue — attributed by source IP like a proposal, but it
-            # never queues or blocks.
+            # own queue — attributed by (source_ip, identity_token) like a
+            # proposal, but it never queues or blocks.
             if req.params.get("name") == _sv.TOOL_CHECK_PROPOSAL:
-                return handle_check_proposal(req.params, self._attributed_config(config))
-            # Attribute the proposal to the source-IP-resolved bottle, so the one
-            # shared server queues each bottle's proposal under its own slug.
-            return handle_tools_call(req.params, self._attributed_config(config))
+                return handle_check_proposal(
+                    req.params, resolver=resolver,
+                    source_ip=source_ip, identity_token=token,
+                )
+            # The control plane attributes the proposal to the source-IP + token
+            # resolved bottle, so the one shared queue holds each bottle's
+            # proposal under its own id — no slug is asserted by this daemon.
+            return handle_tools_call(
+                req.params, config, resolver=resolver,
+                source_ip=source_ip, identity_token=token,
+            )
         raise _RpcClientError(ERR_METHOD_NOT_FOUND, f"method not found: {method}")
+
+    def _identity_token(self) -> str:
+        """The agent's per-bottle identity token from the request header (the
+        MCP client sends it via `mcp add --header`), or empty. The control plane
+        requires the (source_ip, token) pair, so a missing/wrong token
+        fail-closes there."""
+        headers = getattr(self, "headers", None)
+        return headers.get(IDENTITY_HEADER, "") if headers is not None else ""
 
     def _resolver_or_fail(self) -> "PolicyResolver":
         """This server's policy resolver. A server started without one is a
@@ -612,39 +684,17 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
 
     def _resolved_routes_payload(self) -> dict[str, object]:
         """The calling bottle's live egress routes as the `list-egress-routes`
-        JSON payload, resolved by (source_ip, identity token). Fail-closed like
-        `_attributed_config`: an unattributed source or an unreachable
-        orchestrator yields an empty route list (never another bottle's),
-        courtesy of `resolve_client_context`."""
+        JSON payload, resolved by (source_ip, identity token). Fail-closed: an
+        unattributed source or an unreachable orchestrator yields an empty route
+        list (never another bottle's), courtesy of `resolve_client_context`."""
         resolver = self._resolver_or_fail()
-        headers = getattr(self, "headers", None)
-        token = headers.get(IDENTITY_HEADER, "") if headers is not None else ""
         conf, _slug, _tokens = resolve_client_context(
-            resolver, self.client_address[0], token,
+            resolver, self.client_address[0], self._identity_token(),
         )
         body = json.dumps(
             {"routes": [route_to_yaml_dict(r) for r in conf.routes]}, indent=2,
         )
         return {"content": [{"type": "text", "text": body}], "isError": False}
-
-    def _attributed_config(self, config: ServerConfig) -> ServerConfig:
-        """The ServerConfig with `bottle_slug` bound to *this request's* bottle:
-        the bottle id attributed from the source IP — **fail-closed**, an
-        unattributed or unreachable source raises so no proposal is queued under
-        the wrong (or empty) slug."""
-        resolver = self._resolver_or_fail()
-        # The agent's MCP client sends the identity token as a request header
-        # (provisioned via `mcp add --header`); the orchestrator requires the
-        # (source_ip, token) pair, so a missing/wrong token fail-closes below.
-        headers = getattr(self, "headers", None)
-        token = headers.get(IDENTITY_HEADER, "") if headers is not None else ""
-        try:
-            bottle_id = resolver.resolve_bottle_id(self.client_address[0], token)
-        except PolicyResolveError as e:
-            raise _RpcInternalError(f"orchestrator unreachable, cannot attribute: {e}") from e
-        if not bottle_id:
-            raise _RpcInternalError("request source is not attributed to a bottle")
-        return replace(config, bottle_slug=bottle_id)
 
     def _write_jsonrpc(self, body: bytes) -> None:
         self.send_response(200)
@@ -668,10 +718,10 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
 class MCPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     allow_reuse_address = True
     daemon_threads = True
-    config: ServerConfig = ServerConfig(bottle_slug="")
-    # Set by `serve`; every proposal is attributed to the source-IP-resolved
-    # bottle. The class default is a placeholder — a server without a resolver
-    # fails closed per request (see `_resolver_or_fail`).
+    config: ServerConfig = ServerConfig()
+    # Set by `serve`; every proposal is attributed to the source-IP + token
+    # resolved bottle by the control plane. A server without a resolver fails
+    # closed per request (see `_resolver_or_fail`).
     policy_resolver: "PolicyResolver | None" = None
 
 
@@ -686,12 +736,9 @@ def serve(
     response_timeout_seconds: float = DEFAULT_RESPONSE_TIMEOUT_SECONDS,
 ) -> typing.NoReturn:
     server = MCPServer((bind, port), MCPHandler)
-    # bottle_slug is a placeholder: every request's proposal is attributed to
-    # the source-IP-resolved bottle (see MCPHandler._attributed_config).
-    server.config = ServerConfig(
-        bottle_slug="",
-        response_timeout_seconds=response_timeout_seconds,
-    )
+    # Every request's proposal is attributed to the source-IP + token resolved
+    # bottle by the control plane (see MCPHandler._dispatch).
+    server.config = ServerConfig(response_timeout_seconds=response_timeout_seconds)
     server.policy_resolver = resolver
     sys.stderr.write(
         f"supervise listening on {bind}:{port}; multi-tenant; "

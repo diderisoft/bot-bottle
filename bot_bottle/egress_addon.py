@@ -40,8 +40,13 @@ from bot_bottle.egress_addon_core import (
     scan_inbound,
     scan_outbound,
 )
-from bot_bottle import supervise as _sv
-from bot_bottle.policy_resolver import PolicyResolver
+from bot_bottle.policy_resolver import PolicyResolveError, PolicyResolver
+from bot_bottle.supervise_types import (
+    STATUS_APPROVED,
+    STATUS_MODIFIED,
+    STATUSES,
+    TOOL_EGRESS_TOKEN_ALLOW,
+)
 
 
 INTROSPECT_HOST = "_egress.local"
@@ -314,8 +319,15 @@ class EgressAddon:
         flow.request.headers.pop("Proxy-Authorization", None)
         flow.request.headers.pop(IDENTITY_HEADER, None)
         conn = flow.client_conn
-        if not token and conn is not None:
-            token = self._conn_tokens.get(getattr(conn, "id", ""), "")
+        conn_id = getattr(conn, "id", "") if conn is not None else ""
+        if not token and conn_id:
+            token = self._conn_tokens.get(conn_id, "")
+        # Remember the token per connection so a later token-block on this flow
+        # can attribute its supervise proposal by (source_ip, identity_token)
+        # over RPC — plain-HTTP requests carry it here, HTTPS tunnels captured
+        # it at CONNECT (http_connect); both land in `_conn_tokens`.
+        if token and conn_id:
+            self._conn_tokens[conn_id] = token
         return token
 
     def http_connect(self, flow: http.HTTPFlow) -> None:
@@ -592,42 +604,48 @@ class EgressAddon:
             redact_tokens(request_path, env=env),
             result,
         )
-        proposal = _sv.Proposal.new(
-            bottle_slug=slug,
-            tool=_sv.TOOL_EGRESS_TOKEN_ALLOW,
-            proposed_file=payload,
-            justification=_TOKEN_ALLOW_JUSTIFICATION,
-            current_file_hash=_sv.sha256_hex(payload),
-        )
+        # Attribute the proposal by (source_ip, identity_token) over the control
+        # plane — the data plane no longer opens bot-bottle.db (PRD 0070 / #469).
+        # source_ip + token come from this bottle's connection; `slug` is kept
+        # only for its own DLP safelist.
+        conn = flow.client_conn
+        source_ip = conn.peername[0] if conn is not None and conn.peername else ""
+        token = self._conn_tokens.get(getattr(conn, "id", ""), "") if conn is not None else ""
         try:
-            _sv.write_proposal(proposal)
-        except OSError as e:
+            proposal_id = self._resolver.propose_supervise(
+                source_ip, token,
+                tool=TOOL_EGRESS_TOKEN_ALLOW,
+                proposed_file=payload,
+                justification=_TOKEN_ALLOW_JUSTIFICATION,
+            )
+        except PolicyResolveError as e:
             sys.stderr.write(
                 f"egress: could not queue token-allow proposal: {e}; "
                 "blocking request\n"
             )
+            proposal_id = None
+        if proposal_id is None:
             self._block(flow, f"egress DLP: {result.reason}", ctx=self._req_ctx(flow))
             return False
 
         sys.stderr.write(json.dumps({
             "event": "egress_token_supervise",
             "reason": f"egress DLP: {result.reason}",
-            "proposal": proposal.id,
+            "proposal": proposal_id,
             **self._req_ctx(flow),
         }) + "\n")
 
-        response = await self._await_token_response(proposal.id, slug)
-        _sv.archive_proposal(slug, proposal.id)
+        response = await self._await_token_response(proposal_id, source_ip, token)
 
-        if response is not None and response.status in (
-            _sv.STATUS_APPROVED, _sv.STATUS_MODIFIED,
+        if response is not None and response.get("status") in (
+            STATUS_APPROVED, STATUS_MODIFIED,
         ):
             self._safe_tokens_for(slug).add(result.matched)
             if self._flow_log(flow) >= LOG_BLOCKS:
                 sys.stderr.write(json.dumps({
                     "event": "egress_token_allowed",
                     "reason": f"egress DLP: {result.reason}",
-                    "proposal": proposal.id,
+                    "proposal": proposal_id,
                     **self._req_ctx(flow),
                 }) + "\n")
             return True
@@ -645,19 +663,23 @@ class EgressAddon:
     async def _await_token_response(
         self,
         proposal_id: str,
-        slug: str,
-    ) -> "_sv.Response | None":
-        """Poll the DB for the operator's response without blocking the
-        proxy event loop. Returns the Response, or None on timeout."""
+        source_ip: str,
+        token: str,
+    ) -> "dict[str, object] | None":
+        """Poll the control plane for the operator's decision without blocking
+        the proxy event loop. Returns the terminal `{status, ...}` payload once
+        decided, or None on timeout. A transient orchestrator error (or a
+        `pending`/`unknown` status) is retried until the deadline, then fails
+        closed — the caller blocks the request."""
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self._token_allow_timeout
         while True:
             try:
-                return _sv.read_response(slug, proposal_id)
-            except (OSError, ValueError, KeyError):
-                # Not written yet, or a partial/malformed write — retry until
-                # the deadline, then fail closed.
-                pass
+                result = self._resolver.poll_supervise(source_ip, token, proposal_id)
+            except PolicyResolveError:
+                result = None
+            if result is not None and result.get("status") in STATUSES:
+                return result
             if loop.time() >= deadline:
                 return None
             await asyncio.sleep(TOKEN_ALLOW_POLL_INTERVAL_SECONDS)

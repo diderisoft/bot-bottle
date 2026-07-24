@@ -112,11 +112,13 @@ class TestGitHttpBackend(unittest.TestCase):
             ).strip()
             self.assertEqual(head, cloned)
 
-    def test_consolidated_push_stamps_bottle_slug_for_the_hook(self):
-        # In consolidated mode the backend attributes the push by source IP and
-        # stamps SUPERVISE_BOTTLE_SLUG=<bottle_id> into the CGI env, so the
-        # gitleaks-allow pre-receive hook queues its proposal under the right
-        # bottle. The hook here just records what it received.
+    def test_consolidated_push_stamps_supervise_attribution_for_the_hook(self):
+        # In consolidated mode the backend attributes the push by (source IP,
+        # identity token) and stamps SUPERVISE_SOURCE_IP + SUPERVISE_IDENTITY_TOKEN
+        # into the CGI env, so the gitleaks-allow pre-receive hook can queue its
+        # proposal over the control-plane RPC (which re-resolves the bottle from
+        # exactly that pair — PRD 0070 / issue #469). The hook here just records
+        # the source IP it received.
         from http.server import ThreadingHTTPServer
 
         bottle_id = "bottleab12"
@@ -130,10 +132,10 @@ class TestGitHttpBackend(unittest.TestCase):
                 ["git", "-C", str(bare), "config", "http.receivepack", "true"],
                 check=True,
             )
-            capture = root / "slug-capture"
+            capture = root / "source-ip-capture"
             hook = bare / "hooks" / "pre-receive"
             hook.write_text(
-                f"#!/bin/sh\nprintf '%s' \"${{SUPERVISE_BOTTLE_SLUG:-UNSET}}\" > "
+                f"#!/bin/sh\nprintf '%s' \"${{SUPERVISE_SOURCE_IP:-UNSET}}\" > "
                 f"{capture}\ncat >/dev/null\nexit 0\n"
             )
             hook.chmod(0o755)
@@ -166,7 +168,7 @@ class TestGitHttpBackend(unittest.TestCase):
                 ["git", "push", url, "HEAD:refs/heads/main"],
                 cwd=work, check=True, capture_output=True, text=True, timeout=5,
             )
-            self.assertEqual(bottle_id, capture.read_text())
+            self.assertEqual("127.0.0.1", capture.read_text())
 
     def test_post_forwards_git_cgi_headers(self):
         from http.server import ThreadingHTTPServer

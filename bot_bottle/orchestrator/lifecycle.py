@@ -29,14 +29,12 @@ from ..paths import (
     host_control_plane_token,
     host_gateway_ca_dir,
 )
-from ..supervise import DB_PATH_IN_CONTAINER
 from .gateway import (
     GATEWAY_DOCKERFILE,
     GATEWAY_IMAGE,
     GATEWAY_NETWORK,
     GatewayError,
     MITMPROXY_HOME,
-    _host_db_dir,
 )
 
 DEFAULT_PORT = 8099
@@ -69,11 +67,11 @@ _INFRA_DAEMONS = "egress,git-http,supervise,orchestrator"
 # container. Separate from /app so the gateway's baked scripts
 # (egress_addon.py, egress-entrypoint.sh) are not overlaid.
 _SRC_IN_CONTAINER = "/bot-bottle-src"
-# Bot-bottle host-root bind-mount inside the container (DB + state).
+# Bot-bottle host-root bind-mount inside the container (DB + state). The
+# orchestrator control plane opens bot-bottle.db under here (via BOT_BOTTLE_ROOT
+# -> host_db_path()); it is the ONLY process in the container with a file
+# handle on it (PRD 0070 / issue #469).
 _ROOT_IN_CONTAINER = "/bot-bottle-root"
-
-# The supervise daemon writes proposals into the host DB directory.
-_SUPERVISE_DB_DIR_IN_CONTAINER = os.path.dirname(DB_PATH_IN_CONTAINER)
 
 _HEALTH_POLL_SECONDS = 0.25
 _HEALTH_REQUEST_TIMEOUT_SECONDS = 1.0
@@ -202,9 +200,6 @@ class OrchestratorService:
             # recreation AND docker volume pruning (issue #450): every agent
             # trusts this one CA, so a fresh one would break all running bottles.
             "--volume", f"{host_gateway_ca_dir()}:{MITMPROXY_HOME}",
-            # Shared supervise DB (same file the operator reads over HTTP).
-            "--volume", f"{_host_db_dir()}:{_SUPERVISE_DB_DIR_IN_CONTAINER}",
-            "--env", f"SUPERVISE_DB_PATH={DB_PATH_IN_CONTAINER}",
             # Live control-plane source, mounted to a path that does not
             # overlay the gateway's baked /app scripts.
             "--volume", f"{self._repo_root}:{_SRC_IN_CONTAINER}:ro",

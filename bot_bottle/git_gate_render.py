@@ -272,21 +272,27 @@ supervise_gitleaks_allow() {
 
   proposal_id=$(
     PYTHONPATH="/app${PYTHONPATH:+:$PYTHONPATH}" GITLEAKS_ALLOW_REF="$ref" python3 - "$report_file" <<'PY'
-import datetime
-import hashlib
 import json
 import os
 import sys
 from pathlib import Path
 
+# Queue over the control-plane RPC — the git-gate data plane no longer opens
+# bot-bottle.db (PRD 0070 / issue #469). Attribution is by (source_ip,
+# identity_token), resolved server-side, so the proposal lands under the
+# calling bottle exactly as a direct write once did.
 try:
-    import supervise as _sv
+    from bot_bottle.policy_resolver import PolicyResolver, PolicyResolveError
+    from bot_bottle.supervise_types import TOOL_GITLEAKS_ALLOW
 except ImportError:
-    from bot_bottle import supervise as _sv
+    from policy_resolver import PolicyResolver, PolicyResolveError
+    from supervise_types import TOOL_GITLEAKS_ALLOW
 
 report_path = Path(sys.argv[1])
-slug = os.environ.get("SUPERVISE_BOTTLE_SLUG", "")
-if not slug:
+source_ip = os.environ.get("SUPERVISE_SOURCE_IP", "")
+token = os.environ.get("SUPERVISE_IDENTITY_TOKEN", "")
+orch_url = os.environ.get("BOT_BOTTLE_ORCHESTRATOR_URL", "")
+if not source_ip or not orch_url:
     sys.exit(2)
 
 try:
@@ -323,19 +329,21 @@ for i, finding in enumerate(raw, 1):
     ])
 
 payload = "\n".join(lines).rstrip() + "\n"
-proposal = _sv.Proposal.new(
-    bottle_slug=slug,
-    tool=_sv.TOOL_GITLEAKS_ALLOW,
-    proposed_file=payload,
-    justification=(
-        "git-gate found gitleaks findings hidden by # gitleaks:allow; "
-        "approve only for dummy test fixtures or confirmed false positives"
-    ),
-    current_file_hash=hashlib.sha256(payload.encode("utf-8")).hexdigest(),
-    now=datetime.datetime.now(datetime.timezone.utc),
-)
-_sv.write_proposal(proposal)
-print(proposal.id)
+try:
+    proposal_id = PolicyResolver(orch_url).propose_supervise(
+        source_ip, token,
+        tool=TOOL_GITLEAKS_ALLOW,
+        proposed_file=payload,
+        justification=(
+            "git-gate found gitleaks findings hidden by # gitleaks:allow; "
+            "approve only for dummy test fixtures or confirmed false positives"
+        ),
+    )
+except PolicyResolveError:
+    sys.exit(4)
+if not proposal_id:
+    sys.exit(2)
+print(proposal_id)
 PY
   )
   rc=$?
@@ -348,7 +356,6 @@ PY
     return 1
   fi
 
-  slug=${SUPERVISE_BOTTLE_SLUG:-}
   timeout=${SUPERVISE_GITLEAKS_ALLOW_TIMEOUT_SECONDS:-300}
   case "$timeout" in
     ''|*[!0-9]*)
@@ -360,20 +367,30 @@ PY
   echo "git-gate: approve with './cli.py supervise' to continue this push" >&2
   waited=0
   while [ "$waited" -lt "$timeout" ]; do
-    status=$(PYTHONPATH="/app${PYTHONPATH:+:$PYTHONPATH}" python3 - "$slug" "$proposal_id" <<'PY'
+    status=$(PYTHONPATH="/app${PYTHONPATH:+:$PYTHONPATH}" python3 - "$proposal_id" <<'PY'
+import os
 import sys
 
+# Non-blocking poll over the control plane. A decided proposal is archived
+# server-side on read, so no separate archive step is needed here.
 try:
-    import supervise as _sv
+    from bot_bottle.policy_resolver import PolicyResolver, PolicyResolveError
 except ImportError:
-    from bot_bottle import supervise as _sv
+    from policy_resolver import PolicyResolver, PolicyResolveError
 
-slug = sys.argv[1]
+source_ip = os.environ.get("SUPERVISE_SOURCE_IP", "")
+token = os.environ.get("SUPERVISE_IDENTITY_TOKEN", "")
+orch_url = os.environ.get("BOT_BOTTLE_ORCHESTRATOR_URL", "")
 try:
-    response = _sv.read_response(slug, sys.argv[2])
-except FileNotFoundError:
+    result = PolicyResolver(orch_url).poll_supervise(source_ip, token, sys.argv[1])
+except PolicyResolveError:
     sys.exit(2)
-print(response.status)
+if result is None:
+    sys.exit(2)
+status = result.get("status", "")
+if status in ("pending", "unknown"):
+    sys.exit(2)
+print(status)
 PY
     )
     rc=$?
@@ -385,16 +402,6 @@ PY
     if [ -n "$status" ]; then
       case "$status" in
         approved|modified)
-          PYTHONPATH="/app${PYTHONPATH:+:$PYTHONPATH}" python3 - "$slug" "$proposal_id" <<'PY' || true
-import sys
-
-try:
-    import supervise as _sv
-except ImportError:
-    from bot_bottle import supervise as _sv
-
-_sv.archive_proposal(sys.argv[1], sys.argv[2])
-PY
           echo "git-gate: supervisor approved # gitleaks:allow for $ref" >&2
           return 0
           ;;

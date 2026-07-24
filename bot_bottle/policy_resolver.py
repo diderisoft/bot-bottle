@@ -64,28 +64,80 @@ class PolicyResolver:
         self._base = base_url.rstrip("/")
         self._timeout = timeout
 
+    def _post_json(self, path: str, payload: dict[str, object]) -> dict[str, object] | None:
+        """POST `payload` to control-plane `path`, returning the JSON object body
+        — or None when the orchestrator answers `403` (unattributed / fail
+        closed). Raises `PolicyResolveError` on an unreachable / unexpected-status
+        / malformed response so every caller can fail closed. Shared by
+        `_post_resolve` and the supervise propose/poll RPCs."""
+        body = json.dumps(payload).encode()
+        req = urllib.request.Request(
+            f"{self._base}{path}", data=body, method="POST",
+            headers={"Content-Type": "application/json", **_control_auth_headers()},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+                data = json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            if e.code == 403:
+                return None  # unattributed → fail closed (caller denies)
+            raise PolicyResolveError(f"{path} returned HTTP {e.code}") from e
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
+            raise PolicyResolveError(f"{path} unreachable or malformed: {e}") from e
+        return data if isinstance(data, dict) else {}
+
     def _post_resolve(self, source_ip: str, identity_token: str) -> dict[str, object] | None:
         """The orchestrator's `/resolve` payload for this client, or None if
         unattributed (a clean `403`). Raises `PolicyResolveError` on an
         unreachable / unexpected-status / malformed response so every caller
         can fail closed. Shared by `resolve` and `resolve_bottle_id`."""
-        body = json.dumps(
-            {"source_ip": source_ip, "identity_token": identity_token}
-        ).encode()
-        req = urllib.request.Request(
-            f"{self._base}/resolve", data=body, method="POST",
-            headers={"Content-Type": "application/json", **_control_auth_headers()},
+        return self._post_json(
+            "/resolve", {"source_ip": source_ip, "identity_token": identity_token},
         )
-        try:
-            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
-                payload = json.loads(resp.read())
-        except urllib.error.HTTPError as e:
-            if e.code == 403:
-                return None  # unattributed → fail closed (caller denies)
-            raise PolicyResolveError(f"/resolve returned HTTP {e.code}") from e
-        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
-            raise PolicyResolveError(f"/resolve unreachable or malformed: {e}") from e
-        return payload if isinstance(payload, dict) else {}
+
+    def propose_supervise(
+        self,
+        source_ip: str,
+        identity_token: str,
+        *,
+        tool: str,
+        proposed_file: str,
+        justification: str,
+    ) -> str | None:
+        """Queue a supervise proposal on the control plane and return its
+        `proposal_id`. The orchestrator attributes the proposal to the calling
+        bottle by `(source_ip, identity_token)` — exactly like `/resolve` — so a
+        bottle can only ever queue its *own* proposals. Returns None when the
+        pair is unattributed (a clean `403`); raises `PolicyResolveError` if the
+        orchestrator can't be reached, so the data-plane caller fails closed
+        (blocks / refuses) rather than silently dropping the proposal."""
+        payload = self._post_json("/supervise/propose", {
+            "source_ip": source_ip,
+            "identity_token": identity_token,
+            "tool": tool,
+            "proposed_file": proposed_file,
+            "justification": justification,
+        })
+        if payload is None:
+            return None
+        proposal_id = payload.get("proposal_id")
+        return proposal_id if isinstance(proposal_id, str) and proposal_id else None
+
+    def poll_supervise(
+        self, source_ip: str, identity_token: str, proposal_id: str,
+    ) -> dict[str, object] | None:
+        """Poll a queued proposal for the operator's decision, **non-blocking**.
+        Attributed by `(source_ip, identity_token)` so a bottle can only read its
+        *own* proposal's response. Returns `{"status": ...}` where status is one
+        of the terminal decisions (`approved`/`modified`/`rejected`, carrying
+        `notes` + `final_file`), `pending` (queued, no decision yet), or
+        `unknown` (no such queued proposal for this bottle). Returns None when
+        unattributed; raises `PolicyResolveError` if unreachable."""
+        return self._post_json("/supervise/poll", {
+            "source_ip": source_ip,
+            "identity_token": identity_token,
+            "proposal_id": proposal_id,
+        })
 
     def resolve(self, source_ip: str, identity_token: str = "") -> str | None:
         """The calling bottle's policy blob, or None if unattributed. Always

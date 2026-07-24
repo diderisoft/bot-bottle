@@ -1,4 +1,11 @@
-"""Unit: supervise daemon MCP server (PRD 0013)."""
+"""Unit: supervise daemon MCP server (PRD 0013, PRD 0070).
+
+The daemon no longer opens bot-bottle.db: it queues proposals and polls for
+their responses over the control-plane RPC (issue #469). These tests drive the
+handlers with `_FakeSuperviseResolver`, an in-process stand-in for
+`PolicyResolver.propose_supervise` / `poll_supervise` backed by the real queue
+store — so the operator-response and archive contracts are still exercised
+end-to-end, just through the RPC seam instead of a direct file handle."""
 
 import http.client
 import json
@@ -43,6 +50,81 @@ from bot_bottle.supervise_server import (
     parse_jsonrpc,
     validate_proposed_file,
 )
+
+# Fixed caller identity for the handler tests. The control plane attributes by
+# (source_ip, identity_token); the fake resolver ignores them and answers for a
+# fixed bottle, since attribution itself is covered by the orchestrator tests.
+_SRC = "10.0.0.7"
+_TOK = "tok"
+
+
+class _FakeSuperviseResolver:
+    """Stand-in for `PolicyResolver`'s supervise RPCs, backed by the real queue
+    store (as the orchestrator is). `bottle_id=None` models an unattributed
+    caller (a clean 403 → None); `raises=True` models an unreachable
+    orchestrator (`PolicyResolveError`)."""
+
+    def __init__(
+        self, bottle_id: str | None = "dev", raises: bool = False, policy: str = "",
+    ) -> None:
+        self.bottle_id = bottle_id
+        self.raises = raises
+        self._policy = policy
+
+    def propose_supervise(
+        self, source_ip, identity_token, *, tool, proposed_file, justification,
+    ):
+        del source_ip, identity_token
+        if self.raises:
+            raise supervise_server.PolicyResolveError("orchestrator down")
+        if self.bottle_id is None:
+            return None
+        proposal = _sv.Proposal.new(
+            bottle_slug=self.bottle_id, tool=tool, proposed_file=proposed_file,
+            justification=justification, current_file_hash=_sv.sha256_hex(proposed_file),
+        )
+        _sv.write_proposal(proposal)
+        return proposal.id
+
+    def poll_supervise(self, source_ip, identity_token, proposal_id):
+        del source_ip, identity_token
+        if self.raises:
+            raise supervise_server.PolicyResolveError("orchestrator down")
+        if self.bottle_id is None:
+            return None
+        try:
+            response = _sv.read_response(self.bottle_id, proposal_id)
+        except FileNotFoundError:
+            try:
+                _sv.read_proposal(self.bottle_id, proposal_id)
+            except FileNotFoundError:
+                return {"status": _sv.POLL_STATUS_UNKNOWN}
+            return {"status": _sv.POLL_STATUS_PENDING}
+        _sv.archive_proposal(self.bottle_id, proposal_id)
+        return {
+            "status": response.status, "notes": response.notes,
+            "final_file": response.final_file,
+        }
+
+    # Used by list-egress-routes (`_resolved_routes_payload`), unchanged path.
+    def resolve_policy_and_bottle_id(self, source_ip, identity_token=""):
+        del source_ip, identity_token
+        if self.raises:
+            raise supervise_server.PolicyResolveError("orchestrator down")
+        return self._policy, self.bottle_id, {}
+
+
+def _tools_call(resolver, params, config=None):
+    return handle_tools_call(
+        params, config or ServerConfig(),
+        resolver=resolver, source_ip=_SRC, identity_token=_TOK,
+    )
+
+
+def _check(resolver, params):
+    return handle_check_proposal(
+        params, resolver=resolver, source_ip=_SRC, identity_token=_TOK,
+    )
 
 
 # --- Validation ------------------------------------------------------------
@@ -111,31 +193,34 @@ class TestRpcErrorTaxonomy(unittest.TestCase):
             validate_proposed_file(_sv.TOOL_EGRESS_ALLOW, "routes: nope\n")
 
     def test_unknown_tool_in_tools_call_is_client_error(self):
-        config = ServerConfig(bottle_slug="dev")
         with self.assertRaises(_RpcClientError) as cm:
-            handle_tools_call({"name": "no-such-tool", "arguments": {}}, config)
+            _tools_call(_FakeSuperviseResolver(), {"name": "no-such-tool", "arguments": {}})
         self.assertEqual(ERR_INVALID_PARAMS, cm.exception.code)
 
 
-class TestRpcInternalErrorOnIoFailure(unittest.TestCase):
-    def test_write_proposal_os_error_raises_internal(self):
-        config = ServerConfig(
-            bottle_slug="dev",
-        )
-        with patch.object(_sv, "write_proposal", side_effect=OSError("disk full")), \
-                self.assertRaises(_RpcInternalError) as cm:
-            handle_tools_call(
-                {
-                    "name": _sv.TOOL_EGRESS_ALLOW,
-                    "arguments": {
-                        "routes_yaml": "routes:\n  - host: example.com\n",
-                        "justification": "x",
-                    },
-                },
-                config,
-            )
+class TestRpcInternalErrorOnRpcFailure(unittest.TestCase):
+    """A queue RPC that can't reach the orchestrator (or returns unattributed)
+    surfaces as ERR_INTERNAL — the daemon fails closed rather than leaking the
+    cause to the agent."""
+
+    _ARGS = {
+        "name": _sv.TOOL_EGRESS_ALLOW,
+        "arguments": {
+            "routes_yaml": "routes:\n  - host: example.com\n",
+            "justification": "x",
+        },
+    }
+
+    def test_unreachable_orchestrator_raises_internal(self):
+        with self.assertRaises(_RpcInternalError) as cm:
+            _tools_call(_FakeSuperviseResolver(raises=True), self._ARGS)
         self.assertEqual(ERR_INTERNAL, cm.exception.code)
         self.assertIsNotNone(cm.exception.__cause__)
+
+    def test_unattributed_source_raises_internal(self):
+        with self.assertRaises(_RpcInternalError) as cm:
+            _tools_call(_FakeSuperviseResolver(bottle_id=None), self._ARGS)
+        self.assertEqual(ERR_INTERNAL, cm.exception.code)
 
 
 # --- JSON-RPC parsing ------------------------------------------------------
@@ -265,8 +350,8 @@ class TestHandleToolsList(unittest.TestCase):
 class TestHandleToolsCall(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory(prefix="supervise-server-test.")
-        self._home_patch = self._patch_home(Path(self._tmp.name))
-        self.config = ServerConfig(bottle_slug="dev")
+        self._home_patch = use_bottle_root(Path(self._tmp.name) / ".bot-bottle")
+        self.resolver = _FakeSuperviseResolver("dev")
         _qs.QueueStore("dev").migrate()
         _as.AuditStore().migrate()
 
@@ -274,12 +359,9 @@ class TestHandleToolsCall(unittest.TestCase):
         self._home_patch()
         self._tmp.cleanup()
 
-    def _patch_home(self, fake_home: Path):
-        return use_bottle_root(fake_home / ".bot-bottle")
-
     def _respond_when_proposal_appears(self, status: str, notes: str = "") -> threading.Thread:
         """Background thread: poll the queue for a fresh proposal, write a
-        matching response. Returns the thread so the test can join it."""
+        matching response — the operator half, out of band."""
         def runner():
             for _ in range(200):
                 pending = _sv.list_pending_proposals("dev")
@@ -298,16 +380,13 @@ class TestHandleToolsCall(unittest.TestCase):
     def test_call_round_trips_through_queue(self):
         responder = self._respond_when_proposal_appears(_sv.STATUS_APPROVED, notes="lgtm")
         try:
-            result = handle_tools_call(
-                {
-                    "name": _sv.TOOL_EGRESS_BLOCK,
-                    "arguments": {
-                        "routes_yaml": "routes:\n  - host: example.com\n",
-                        "justification": "need example.com",
-                    },
+            result = _tools_call(self.resolver, {
+                "name": _sv.TOOL_EGRESS_BLOCK,
+                "arguments": {
+                    "routes_yaml": "routes:\n  - host: example.com\n",
+                    "justification": "need example.com",
                 },
-                self.config,
-            )
+            })
         finally:
             responder.join()
         self.assertFalse(result["isError"])  # type: ignore[index]
@@ -318,16 +397,13 @@ class TestHandleToolsCall(unittest.TestCase):
     def test_allow_round_trips_through_queue(self):
         responder = self._respond_when_proposal_appears(_sv.STATUS_APPROVED, notes="ok")
         try:
-            result = handle_tools_call(
-                {
-                    "name": _sv.TOOL_EGRESS_ALLOW,
-                    "arguments": {
-                        "routes_yaml": "routes:\n  - host: example.com\n",
-                        "justification": "need example.com",
-                    },
+            result = _tools_call(self.resolver, {
+                "name": _sv.TOOL_EGRESS_ALLOW,
+                "arguments": {
+                    "routes_yaml": "routes:\n  - host: example.com\n",
+                    "justification": "need example.com",
                 },
-                self.config,
-            )
+            })
         finally:
             responder.join()
         self.assertFalse(result["isError"])  # type: ignore[index]
@@ -338,94 +414,70 @@ class TestHandleToolsCall(unittest.TestCase):
     def test_rejected_response_sets_isError(self):
         responder = self._respond_when_proposal_appears(_sv.STATUS_REJECTED, notes="nope")
         try:
-            result = handle_tools_call(
-                {
-                    "name": _sv.TOOL_EGRESS_ALLOW,
-                    "arguments": {
-                        "routes_yaml": "routes:\n  - host: example.com\n",
-                        "justification": "needed for tests",
-                    },
+            result = _tools_call(self.resolver, {
+                "name": _sv.TOOL_EGRESS_ALLOW,
+                "arguments": {
+                    "routes_yaml": "routes:\n  - host: example.com\n",
+                    "justification": "needed for tests",
                 },
-                self.config,
-            )
+            })
         finally:
             responder.join()
         self.assertTrue(result["isError"])  # type: ignore[index]
 
     def test_invalid_tool_name_raises(self):
         with self.assertRaises(_RpcError) as cm:
-            handle_tools_call(
-                {"name": "not-a-tool", "arguments": {}},
-                self.config,
-            )
+            _tools_call(self.resolver, {"name": "not-a-tool", "arguments": {}})
         self.assertEqual(ERR_INVALID_PARAMS, cm.exception.code)
 
     def test_missing_justification_raises(self):
         with self.assertRaises(_RpcError):
-            handle_tools_call(
-                {
-                    "name": _sv.TOOL_EGRESS_ALLOW,
-                    "arguments": {"routes_yaml": "routes:\n  - host: example.com\n"},
-                },
-                self.config,
-            )
+            _tools_call(self.resolver, {
+                "name": _sv.TOOL_EGRESS_ALLOW,
+                "arguments": {"routes_yaml": "routes:\n  - host: example.com\n"},
+            })
 
     def test_missing_name_raises(self):
         with self.assertRaises(_RpcError) as cm:
-            handle_tools_call({"arguments": {}}, self.config)
+            _tools_call(self.resolver, {"arguments": {}})
         self.assertEqual(ERR_INVALID_PARAMS, cm.exception.code)
 
     def test_arguments_must_be_object(self):
         with self.assertRaises(_RpcError) as cm:
-            handle_tools_call(
-                {
-                    "name": _sv.TOOL_EGRESS_ALLOW,
-                    "arguments": [],
-                },
-                self.config,
-            )
+            _tools_call(self.resolver, {"name": _sv.TOOL_EGRESS_ALLOW, "arguments": []})
         self.assertEqual(ERR_INVALID_PARAMS, cm.exception.code)
         self.assertIn("must be an object", cm.exception.message)
 
     def test_capability_block_call_raises_unknown_tool(self):
         with self.assertRaises(_RpcError) as cm:
-            handle_tools_call(
-                {
-                    "name": "capability-block",
-                    "arguments": {
-                        "dockerfile": "FROM python:3.13\n",
-                        "justification": "need git",
-                    },
+            _tools_call(self.resolver, {
+                "name": "capability-block",
+                "arguments": {
+                    "dockerfile": "FROM python:3.13\n",
+                    "justification": "need git",
                 },
-                self.config,
-            )
+            })
         self.assertEqual(ERR_INVALID_PARAMS, cm.exception.code)
         self.assertIn("unknown tool", cm.exception.message)
 
     def test_archives_proposal_after_response(self):
         responder = self._respond_when_proposal_appears(_sv.STATUS_APPROVED)
         try:
-            handle_tools_call(
-                {
-                    "name": _sv.TOOL_EGRESS_ALLOW,
-                    "arguments": {
-                        "routes_yaml": "routes:\n  - host: example.com\n",
-                        "justification": "x",
-                    },
+            _tools_call(self.resolver, {
+                "name": _sv.TOOL_EGRESS_ALLOW,
+                "arguments": {
+                    "routes_yaml": "routes:\n  - host: example.com\n",
+                    "justification": "x",
                 },
-                self.config,
-            )
+            })
         finally:
             responder.join()
-        # No pending proposals left after archive.
+        # No pending proposals left after the decided poll archives it.
         self.assertEqual([], _sv.list_pending_proposals("dev"))
 
     def test_pending_response_times_out_without_archive(self):
-        config = ServerConfig(
-            bottle_slug="dev",
-            response_timeout_seconds=0.05,
-        )
-        result = handle_tools_call(
+        result = _tools_call(
+            self.resolver,
             {
                 "name": _sv.TOOL_EGRESS_ALLOW,
                 "arguments": {
@@ -433,9 +485,8 @@ class TestHandleToolsCall(unittest.TestCase):
                     "justification": "need egress",
                 },
             },
-            config,
+            ServerConfig(response_timeout_seconds=0.05),
         )
-
         self.assertFalse(result["isError"])  # type: ignore[index]
         text = result["content"][0]["text"]  # type: ignore[index]
         self.assertIn("status: pending", text)
@@ -510,7 +561,7 @@ class TestHttpEndToEnd(unittest.TestCase):
         self.port = s.getsockname()[1]
         s.close()
         self.server = MCPServer(("127.0.0.1", self.port), MCPHandler)
-        self.server.config = ServerConfig(bottle_slug="dev")
+        self.server.config = ServerConfig()
         self.thread = threading.Thread(
             target=self.server.serve_forever, daemon=True,
         )
@@ -552,23 +603,21 @@ class TestHttpEndToEnd(unittest.TestCase):
         )
         self.assertEqual(ERR_METHOD_NOT_FOUND, result["error"]["code"])  # type: ignore[index]
 
-    def test_internal_error_returns_err_internal_over_http(self):
-        with patch.object(
-            supervise_server._sv, "write_proposal",
-            side_effect=OSError("disk full"),
-        ):
-            result = self._post_jsonrpc({
-                "jsonrpc": "2.0",
-                "id": 99,
-                "method": "tools/call",
-                "params": {
-                    "name": _sv.TOOL_EGRESS_ALLOW,
-                    "arguments": {
-                        "routes_yaml": "routes:\n  - host: example.com\n",
-                        "justification": "x",
-                    },
+    def test_no_resolver_fails_closed_over_http(self):
+        # The test server has no policy_resolver wired, so a proposal tools/call
+        # fails closed with ERR_INTERNAL rather than queuing anything.
+        result = self._post_jsonrpc({
+            "jsonrpc": "2.0",
+            "id": 99,
+            "method": "tools/call",
+            "params": {
+                "name": _sv.TOOL_EGRESS_ALLOW,
+                "arguments": {
+                    "routes_yaml": "routes:\n  - host: example.com\n",
+                    "justification": "x",
                 },
-            })
+            },
+        })
         self.assertIn("error", result)
         self.assertEqual(ERR_INTERNAL, result["error"]["code"])  # type: ignore[index]
 
@@ -583,72 +632,23 @@ class TestHttpEndToEnd(unittest.TestCase):
             conn.close()
 
 
-class _FakeResolver:
-    def __init__(
-        self,
-        bottle_id: str | None = None,
-        raises: bool = False,
-        policy: str = "",
-    ) -> None:
-        self._bottle_id = bottle_id
-        self._raises = raises
-        self._policy = policy
-        self.calls: list[str] = []
-
-    def resolve_bottle_id(self, source_ip: str, identity_token: str = "") -> str | None:
-        del identity_token
-        self.calls.append(source_ip)
-        if self._raises:
-            # Raise the exact class supervise_server catches (it imports
-            # policy_resolver flat inside the bundle, package-side in tests).
-            raise supervise_server.PolicyResolveError("orchestrator down")
-        return self._bottle_id
-
-    def resolve_policy_and_bottle_id(
-        self, source_ip: str, identity_token: str = "",
-    ) -> "tuple[str, str | None, dict[str, str]]":
-        del identity_token
-        self.calls.append(source_ip)
-        if self._raises:
-            raise supervise_server.PolicyResolveError("orchestrator down")
-        return self._policy, self._bottle_id, {}
-
-
 def _handler(resolver: object) -> MCPHandler:
     """A bare MCPHandler wired with a server (carrying the resolver) and a
-    client address, enough to exercise `_attributed_config` off-socket."""
+    client address, enough to exercise the resolver-backed paths off-socket."""
     h: MCPHandler = MCPHandler.__new__(MCPHandler)
     h.server = types.SimpleNamespace(policy_resolver=resolver)  # type: ignore[assignment]
     h.client_address = ("10.0.0.7", 4321)
+    h.headers = {}  # type: ignore[assignment]
     return h
 
 
-class TestAttributedConfig(unittest.TestCase):
-    """Each proposal is attributed to the calling bottle by source IP (PRD
-    0070); a server without a resolver fails closed rather than queuing under an
-    unattributed slug."""
+class TestResolverFailClosed(unittest.TestCase):
+    """A dispatch without a resolver is a misconfiguration, not a tenancy mode
+    — fail closed rather than queue (or list) anything (PRD 0070)."""
 
-    def test_missing_resolver_fails_closed(self) -> None:
+    def test_missing_resolver_raises(self) -> None:
         with self.assertRaises(_RpcInternalError):
-            _handler(None)._attributed_config(ServerConfig(bottle_slug="dev"))
-
-    def test_consolidated_binds_source_ip_bottle(self) -> None:
-        r = _FakeResolver(bottle_id="bottle-x")
-        cfg = _handler(r)._attributed_config(ServerConfig(bottle_slug="ignored"))
-        self.assertEqual("bottle-x", cfg.bottle_slug)  # resolved slug wins
-        self.assertEqual(["10.0.0.7"], r.calls)
-
-    def test_unattributed_source_fails_closed(self) -> None:
-        with self.assertRaises(_RpcInternalError):
-            _handler(_FakeResolver(bottle_id=None))._attributed_config(
-                ServerConfig(bottle_slug="x")
-            )
-
-    def test_resolver_error_fails_closed(self) -> None:
-        with self.assertRaises(_RpcInternalError):
-            _handler(_FakeResolver(raises=True))._attributed_config(
-                ServerConfig(bottle_slug="x")
-            )
+            _handler(None)._resolver_or_fail()
 
 
 class TestResolvedRoutesPayload(unittest.TestCase):
@@ -664,7 +664,7 @@ class TestResolvedRoutesPayload(unittest.TestCase):
             "  - host: www.google.com\n"
         )
         payload = _handler(
-            _FakeResolver(bottle_id="b1", policy=policy)
+            _FakeSuperviseResolver(bottle_id="b1", policy=policy)
         )._resolved_routes_payload()
         assert payload is not None
         self.assertFalse(payload["isError"])  # type: ignore[index]
@@ -676,7 +676,7 @@ class TestResolvedRoutesPayload(unittest.TestCase):
         # resolve_client_context swallows resolver errors → deny-all (empty),
         # never another bottle's routes.
         payload = _handler(
-            _FakeResolver(raises=True)
+            _FakeSuperviseResolver(raises=True)
         )._resolved_routes_payload()
         assert payload is not None
         data = json.loads(payload["content"][0]["text"])  # type: ignore[index]
@@ -698,7 +698,7 @@ class TestNonBlockingSupervise(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory(prefix="supervise-nonblock-test.")
         self._home_patch = use_bottle_root(Path(self._tmp.name) / ".bot-bottle")
-        self.config = ServerConfig(bottle_slug="dev")
+        self.resolver = _FakeSuperviseResolver("dev")
         _qs.QueueStore("dev").migrate()
         _as.AuditStore().migrate()
 
@@ -717,9 +717,6 @@ class TestNonBlockingSupervise(unittest.TestCase):
         _sv.write_proposal(p)
         return p
 
-    def _check(self, proposal_id: str) -> dict[str, object]:
-        return handle_check_proposal({"arguments": {"proposal_id": proposal_id}}, self.config)
-
     # --- pending response carries the id ---
 
     def test_pending_text_includes_id_and_pointer(self):
@@ -730,12 +727,13 @@ class TestNonBlockingSupervise(unittest.TestCase):
 
     def test_tools_call_timeout_returns_pending_with_id_and_stays_queued(self):
         # No responder → the grace window expires → pending, not blocked forever.
-        result = handle_tools_call(
+        result = _tools_call(
+            self.resolver,
             {
                 "name": _sv.TOOL_EGRESS_ALLOW,
                 "arguments": {"routes_yaml": self._ROUTES, "justification": "x"},
             },
-            ServerConfig(bottle_slug="dev", response_timeout_seconds=0.05),
+            ServerConfig(response_timeout_seconds=0.05),
         )
         self.assertFalse(result["isError"])  # type: ignore[index]
         text = result["content"][0]["text"]  # type: ignore[index]
@@ -749,7 +747,7 @@ class TestNonBlockingSupervise(unittest.TestCase):
     def test_check_returns_approved_and_archives(self):
         p = self._seed_proposal()
         _sv.write_response("dev", _sv.Response(proposal_id=p.id, status=_sv.STATUS_APPROVED, notes="ok"))
-        result = self._check(p.id)
+        result = _check(self.resolver, {"arguments": {"proposal_id": p.id}})
         self.assertFalse(result["isError"])
         text = result["content"][0]["text"]  # type: ignore[index]
         self.assertIn("status: approved", text)
@@ -760,13 +758,13 @@ class TestNonBlockingSupervise(unittest.TestCase):
     def test_check_rejected_sets_isError(self):
         p = self._seed_proposal()
         _sv.write_response("dev", _sv.Response(proposal_id=p.id, status=_sv.STATUS_REJECTED, notes="no"))
-        result = self._check(p.id)
+        result = _check(self.resolver, {"arguments": {"proposal_id": p.id}})
         self.assertTrue(result["isError"])
         self.assertIn("status: rejected", result["content"][0]["text"])  # type: ignore[index]
 
     def test_check_pending_when_no_decision_yet(self):
         p = self._seed_proposal()
-        result = self._check(p.id)
+        result = _check(self.resolver, {"arguments": {"proposal_id": p.id}})
         self.assertFalse(result["isError"])
         text = result["content"][0]["text"]  # type: ignore[index]
         self.assertIn("status: pending", text)
@@ -774,40 +772,41 @@ class TestNonBlockingSupervise(unittest.TestCase):
         self.assertEqual(1, len(_sv.list_pending_proposals("dev")))  # not archived
 
     def test_check_unknown_id_is_error(self):
-        result = self._check("no-such-proposal")
+        result = _check(self.resolver, {"arguments": {"proposal_id": "no-such-proposal"}})
         self.assertTrue(result["isError"])
         self.assertIn("status: unknown", result["content"][0]["text"])  # type: ignore[index]
 
     def test_check_missing_id_raises(self):
         with self.assertRaises(_RpcClientError) as cm:
-            handle_check_proposal({"arguments": {}}, self.config)
+            _check(self.resolver, {"arguments": {}})
         self.assertEqual(ERR_INVALID_PARAMS, cm.exception.code)
 
     def test_check_empty_id_raises(self):
         with self.assertRaises(_RpcClientError) as cm:
-            handle_check_proposal({"arguments": {"proposal_id": "   "}}, self.config)
+            _check(self.resolver, {"arguments": {"proposal_id": "   "}})
         self.assertEqual(ERR_INVALID_PARAMS, cm.exception.code)
 
     def test_check_arguments_must_be_object(self):
         with self.assertRaises(_RpcClientError) as cm:
-            handle_check_proposal({"arguments": []}, self.config)
+            _check(self.resolver, {"arguments": []})
         self.assertEqual(ERR_INVALID_PARAMS, cm.exception.code)
 
     def test_full_nonblocking_round_trip(self):
         # 1. tools/call times out → pending with id
-        result = handle_tools_call(
+        result = _tools_call(
+            self.resolver,
             {
                 "name": _sv.TOOL_EGRESS_ALLOW,
                 "arguments": {"routes_yaml": self._ROUTES, "justification": "x"},
             },
-            ServerConfig(bottle_slug="dev", response_timeout_seconds=0.05),
+            ServerConfig(response_timeout_seconds=0.05),
         )
         pid = _sv.list_pending_proposals("dev")[0].id
         self.assertIn(pid, result["content"][0]["text"])  # type: ignore[index]
         # 2. operator decides out-of-band
         _sv.write_response("dev", _sv.Response(proposal_id=pid, status=_sv.STATUS_APPROVED, notes="ok"))
         # 3. agent resumes by polling — no re-proposing
-        poll = self._check(pid)
+        poll = _check(self.resolver, {"arguments": {"proposal_id": pid}})
         self.assertFalse(poll["isError"])
         self.assertIn("status: approved", poll["content"][0]["text"])  # type: ignore[index]
         self.assertEqual([], _sv.list_pending_proposals("dev"))  # resolved + archived
