@@ -26,7 +26,7 @@ from pathlib import Path
 from ..docker_cmd import run_docker
 from ..paths import host_gateway_ca_dir
 from ..gateway import GATEWAY_NAME, rotate_gateway_ca
-from .lifecycle import INFRA_NAME
+from ..backend.docker.infra import INFRA_NAME
 
 # The containers whose mitmproxy would still be serving the old CA from memory:
 # the consolidated infra container and the standalone per-host gateway.

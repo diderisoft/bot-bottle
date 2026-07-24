@@ -27,7 +27,7 @@ from pathlib import Path
 
 from bot_bottle.control_auth import ROLE_CLI, ROLE_GATEWAY, mint
 from bot_bottle.orchestrator.client import OrchestratorClient
-from bot_bottle.orchestrator.lifecycle import OrchestratorService
+from bot_bottle.backend.docker.infra import DockerInfraService
 from bot_bottle.paths import host_control_plane_token
 from tests._docker import skip_unless_docker
 
@@ -54,7 +54,7 @@ class TestDockerControlPlaneAuthIntegration(unittest.TestCase):
         cls.addClassCleanup(cls._tmp.cleanup)
 
         # host_control_plane_token() — both the token read below and the one
-        # OrchestratorService injects into the container's env — resolves its
+        # DockerInfraService injects into the container's env — resolves its
         # path via the *ambient* BOT_BOTTLE_ROOT env var, not the host_root
         # kwarg passed to the constructor (that kwarg only controls the DB
         # bind-mount destination). Without pointing the env var at the same
@@ -78,7 +78,7 @@ class TestDockerControlPlaneAuthIntegration(unittest.TestCase):
             cls._teardown_docker, infra_name, network, host_root
         )
 
-        cls.svc = OrchestratorService(
+        cls.svc = DockerInfraService(
             infra_name=infra_name,
             network=network,
             image=_TEST_INFRA_IMAGE,

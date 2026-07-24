@@ -9,20 +9,22 @@ from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
 from bot_bottle.gateway import GatewayError
-from bot_bottle.orchestrator.lifecycle import (
+from bot_bottle.backend.docker.infra import (
     INFRA_NAME,
     INFRA_SOURCE_HASH_LABEL,
-    OrchestratorService,
+    DockerInfraService,
+)
+from bot_bottle.orchestrator.lifecycle import (
     OrchestratorStartError,
     source_hash,
 )
 from bot_bottle.paths import GATEWAY_CA_DIRNAME
 from tests.unit import use_bottle_root
 
-_URLOPEN = "bot_bottle.orchestrator.lifecycle.urllib.request.urlopen"
-_RUN = "bot_bottle.orchestrator.lifecycle.run_docker"
-_SLEEP = "bot_bottle.orchestrator.lifecycle.time.sleep"
-_MONOTONIC = "bot_bottle.orchestrator.lifecycle.time.monotonic"
+_URLOPEN = "bot_bottle.backend.docker.infra.urllib.request.urlopen"
+_RUN = "bot_bottle.backend.docker.infra.run_docker"
+_SLEEP = "bot_bottle.backend.docker.infra.time.sleep"
+_MONOTONIC = "bot_bottle.backend.docker.infra.time.monotonic"
 
 
 def _health(status: int) -> MagicMock:
@@ -35,12 +37,12 @@ def _proc(returncode: int = 0, stdout: str = "", stderr: str = "") -> Mock:
     return Mock(returncode=returncode, stdout=stdout, stderr=stderr)
 
 
-class TestOrchestratorService(unittest.TestCase):
+class TestDockerInfraService(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.addCleanup(use_bottle_root(Path(self._tmp.name)))
-        self.svc = OrchestratorService(port=8099)
+        self.svc = DockerInfraService(port=8099)
 
     def test_url(self) -> None:
         self.assertEqual("http://127.0.0.1:8099", self.svc.url)
@@ -159,7 +161,7 @@ class TestOrchestratorService(unittest.TestCase):
                 return _proc(stdout="")
             return _proc()
 
-        svc = OrchestratorService(port=20001)
+        svc = DockerInfraService(port=20001)
         with patch(_URLOPEN, side_effect=[urllib.error.URLError("down"), _health(200)]), \
                 patch(_RUN, side_effect=fake), patch(_SLEEP):
             svc.ensure_running()

@@ -66,7 +66,7 @@ from .compose import (
 from .consolidated_compose import consolidated_agent_compose
 from ...orchestrator.store.config_store import resolve_teardown_timeout
 from .consolidated_launch import launch_consolidated, teardown_consolidated
-from ...orchestrator.lifecycle import INFRA_NAME
+from .infra import INFRA_NAME
 from .gateway import DockerGateway
 
 

@@ -21,7 +21,7 @@ from ...egress import EgressPlan
 from ...git_gate import GitGatePlan
 from ...orchestrator.client import OrchestratorClient
 from ...gateway import GATEWAY_NETWORK
-from ...orchestrator.lifecycle import INFRA_NAME, OrchestratorService
+from .infra import INFRA_NAME, DockerInfraService
 from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
 from ...orchestrator.reprovision import reprovision_bottles
 from ..consolidated_util import provision_bottle
@@ -144,7 +144,7 @@ def launch_consolidated(
     *,
     image_ref: str = "",
     tokens: dict[str, str] | None = None,
-    service: OrchestratorService | None = None,
+    service: DockerInfraService | None = None,
     infra_name: str = INFRA_NAME,
     network: str = GATEWAY_NETWORK,
 ) -> LaunchContext:
@@ -154,7 +154,7 @@ def launch_consolidated(
     Also reprovisiones egress tokens for any already-running bottles that lost
     their in-memory credentials (e.g. after an infra container restart), so
     they regain egress access before the new bottle is registered."""
-    service = service or OrchestratorService()
+    service = service or DockerInfraService()
     url = service.ensure_running()
     _reprovision_running_bottles(url, network=network, infra_name=infra_name)
     client = OrchestratorClient(url)

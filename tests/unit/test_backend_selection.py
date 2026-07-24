@@ -390,10 +390,10 @@ class TestEnsureOrchestrator(unittest.TestCase):
     the orchestrator + gateway containers; firecracker boots the infra VM;
     macos-container starts the infra container."""
 
-    def test_docker_delegates_to_orchestrator_service(self):
+    def test_docker_delegates_to_infra_service(self):
         b = get_bottle_backend("docker")
         with patch(
-            "bot_bottle.orchestrator.lifecycle.OrchestratorService"
+            "bot_bottle.backend.docker.infra.DockerInfraService"
         ) as service_cls:
             service_cls.return_value.ensure_running.return_value = (
                 "http://127.0.0.1:8099"

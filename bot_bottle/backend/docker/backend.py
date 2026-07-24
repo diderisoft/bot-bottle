@@ -112,8 +112,8 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
             yield bottle
 
     def ensure_orchestrator(self) -> str:
-        from ...orchestrator.lifecycle import OrchestratorService
-        return OrchestratorService().ensure_running()
+        from .infra import DockerInfraService
+        return DockerInfraService().ensure_running()
 
     def supervise_mcp_url(self, plan: DockerBottlePlan) -> str:
         """Docker bottles reach the supervise daemon via the
