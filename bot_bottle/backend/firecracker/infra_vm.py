@@ -33,10 +33,16 @@ from pathlib import Path
 from typing import Generator
 
 from ...log import die, info
+from ...paths import CONTROL_PLANE_TOKEN_FILENAME, bot_bottle_root
 from .. import util as backend_util
 from ..docker import util as docker_mod
 from ..docker.gateway_provision import GatewayProvisionError
 from . import firecracker_vm, infra_artifact, netpool, util
+
+# Where the infra VM keeps its control-plane signing key (generated on the
+# persistent /dev/vdb volume mounted at BOT_BOTTLE_ROOT). The host mirrors it
+# back so the CLI signs `cli` tokens the VM verifies (issue #469 review).
+_GUEST_SIGNING_KEY_PATH = "/var/lib/bot-bottle/control-plane-token"
 
 # The single infra-VM image: gateway data plane + baked control-plane source
 # (Dockerfile.infra FROM the gateway image). Built from source by default;
@@ -167,21 +173,45 @@ def ensure_running() -> InfraVm:
     want = _expected_version()
     if _adoptable(key, url, want):
         info(f"adopting running infra VM at {url}")
-        return InfraVm(guest_ip=slot.guest_ip, private_key=key)
+        return _with_signing_key(InfraVm(guest_ip=slot.guest_ip, private_key=key))
 
     with _singleton_lock():
         # Re-check under the lock: another launcher may have booted it while
         # we waited for the lock (double-checked, so we adopt not re-boot).
         if _adoptable(key, url, want):
             info(f"adopting running infra VM at {url}")
-            return InfraVm(guest_ip=slot.guest_ip, private_key=key)
+            return _with_signing_key(InfraVm(guest_ip=slot.guest_ip, private_key=key))
         # Clear a stale/hung/OUTDATED VM holding the link before booting fresh.
         stop()
         ensure_built()
         infra = boot()
         wait_for_health(infra)
         _record_booted_version(want)
+        return _with_signing_key(infra)
+
+
+def _with_signing_key(infra: InfraVm) -> InfraVm:
+    """Mirror the infra VM's control-plane signing key (generated on its
+    persistent volume) into the host's control-plane-token file, so the host CLI
+    signs `cli` tokens the VM verifies (issue #469 review). Best-effort: an
+    unreadable key is logged, not fatal — the VM still enforces auth, but the CLI
+    may then be rejected until the key is readable. Returns `infra` for chaining."""
+    proc = subprocess.run(
+        util.ssh_base_argv(infra.private_key, infra.guest_ip)
+        + [f"cat {_GUEST_SIGNING_KEY_PATH}"],
+        capture_output=True, text=True, check=False,
+    )
+    signing_key = proc.stdout.strip()
+    if proc.returncode != 0 or not signing_key:
+        info("infra signing key not yet readable; control-plane auth may fail")
         return infra
+    path = bot_bottle_root() / CONTROL_PLANE_TOKEN_FILENAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(signing_key)
+    os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
+    return infra
 
 
 @contextmanager
@@ -487,7 +517,18 @@ mount -t ext4 /dev/vdb /var/lib/bot-bottle 2>/dev/null || true
 
 # Control plane. Source is baked at /app; the package is stdlib-only.
 cd /app
-BOT_BOTTLE_ROOT=/var/lib/bot-bottle python3 -m bot_bottle.orchestrator \\
+# Control-plane signing key + a pre-minted `gateway` JWT, scoped per-process
+# (issue #469 review). The key is generated once on the persistent volume and
+# handed ONLY to the orchestrator (to verify tokens); the data-plane daemons get
+# the `gateway` JWT they present, never the key. Without this the control plane
+# would run OPEN and a compromised egress / supervise / git-http daemon in this
+# same VM — reaching the orchestrator over 127.0.0.1, past the nft boundary that
+# only fences off the separate agent VM — could drive the operator routes
+# (approve its own supervise proposals, rewrite policy, read injected tokens).
+CP_KEY=$(BOT_BOTTLE_ROOT=/var/lib/bot-bottle python3 -c 'from bot_bottle.paths import host_control_plane_token as t; print(t())')
+GW_JWT=$(BB_SIGNING_KEY="$CP_KEY" python3 -c 'import os; from bot_bottle.control_auth import mint, ROLE_GATEWAY; print(mint(ROLE_GATEWAY, os.environ["BB_SIGNING_KEY"]))')
+
+BOT_BOTTLE_ROOT=/var/lib/bot-bottle BOT_BOTTLE_CONTROL_PLANE_TOKEN="$CP_KEY" python3 -m bot_bottle.orchestrator \\
     --host 0.0.0.0 --port {CONTROL_PLANE_PORT} --broker stub &
 
 # Gateway data plane, multi-tenant: each request resolves source-IP ->
@@ -495,9 +536,12 @@ BOT_BOTTLE_ROOT=/var/lib/bot-bottle python3 -m bot_bottle.orchestrator \\
 # git-http (9420), so the git:// daemon (git-gate, needs a per-bottle
 # entrypoint the consolidated model doesn't use) is left out. No
 # SUPERVISE_DB_PATH: the data plane reaches the supervise queue over the
-# control-plane RPC and never opens bot-bottle.db (PRD 0070 / #469).
+# control-plane RPC and never opens bot-bottle.db (PRD 0070 / #469). It presents
+# the pre-minted `gateway` JWT; gateway_init keeps the signing key out of the
+# data-plane daemons' env.
 BOT_BOTTLE_GATEWAY_DAEMONS=egress,git-http,supervise \\
 BOT_BOTTLE_ORCHESTRATOR_URL=http://127.0.0.1:{CONTROL_PLANE_PORT} \\
+BOT_BOTTLE_CONTROL_AUTH_JWT="$GW_JWT" \\
     python3 -m bot_bottle.gateway_init &
 
 # Reap as PID 1; children are backgrounded, so `wait` blocks.

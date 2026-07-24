@@ -8,11 +8,43 @@ decisions that must hold without a VM.
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from bot_bottle.backend.firecracker import infra_vm
+
+
+class TestSigningKeySync(unittest.TestCase):
+    """`_with_signing_key` mirrors the VM's control-plane signing key into the
+    host token file so the CLI signs `cli` tokens the VM verifies (issue #469)."""
+
+    def _infra(self) -> infra_vm.InfraVm:
+        return infra_vm.InfraVm(guest_ip="10.0.0.1", private_key=Path("/k"))
+
+    def test_mirrors_guest_key_to_host_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            proc = MagicMock(returncode=0, stdout="the-signing-key\n")
+            with patch.object(infra_vm.subprocess, "run", return_value=proc) as run, \
+                    patch.object(infra_vm, "bot_bottle_root", return_value=root):
+                out = infra_vm._with_signing_key(self._infra())
+            self.assertIsInstance(out, infra_vm.InfraVm)  # returned for chaining
+            token = root / infra_vm.CONTROL_PLANE_TOKEN_FILENAME
+            self.assertEqual("the-signing-key", token.read_text())
+            self.assertEqual(0o600, token.stat().st_mode & 0o777)
+            # It cat'd the guest volume path over SSH.
+            self.assertIn(infra_vm._GUEST_SIGNING_KEY_PATH, run.call_args.args[0][-1])
+
+    def test_unreadable_key_is_not_fatal(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            proc = MagicMock(returncode=255, stdout="")
+            with patch.object(infra_vm.subprocess, "run", return_value=proc), \
+                    patch.object(infra_vm, "bot_bottle_root", return_value=root):
+                infra_vm._with_signing_key(self._infra())  # no raise
+            self.assertFalse((root / infra_vm.CONTROL_PLANE_TOKEN_FILENAME).exists())
 
 
 class TestControlPlaneUrl(unittest.TestCase):
@@ -46,6 +78,14 @@ class TestBuildInfraRootfs(unittest.TestCase):
         self.assertIn("/dev/vdb", init)
         # VM backend uses git-http (9420); the git:// daemon is left out.
         self.assertIn("BOT_BOTTLE_GATEWAY_DAEMONS=egress,git-http,supervise", init)
+        # Role-scoped control-plane auth (issue #469 review): the orchestrator
+        # gets the signing key, the gateway daemons get a pre-minted `gateway`
+        # JWT — never open mode in the infra VM.
+        self.assertIn("host_control_plane_token", init)  # key generated on the volume
+        self.assertIn("mint, ROLE_GATEWAY", init)         # gateway JWT minted from it
+        self.assertIn('BOT_BOTTLE_CONTROL_PLANE_TOKEN="$CP_KEY" python3 -m bot_bottle.orchestrator',
+                      init)  # key -> orchestrator only
+        self.assertIn('BOT_BOTTLE_CONTROL_AUTH_JWT="$GW_JWT"', init)  # JWT -> gateway daemons
 
 
 class TestSshGatewayTransport(unittest.TestCase):
