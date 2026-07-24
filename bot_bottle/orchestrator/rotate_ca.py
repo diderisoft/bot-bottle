@@ -23,7 +23,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from ..docker_cmd import run_docker
+from ..backend.docker.util import run_docker
 from ..paths import host_gateway_ca_dir
 from ..gateway import GATEWAY_NAME, rotate_gateway_ca
 from ..backend.docker.infra import INFRA_NAME

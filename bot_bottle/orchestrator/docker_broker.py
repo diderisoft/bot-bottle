@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import subprocess
 
-from ..docker_cmd import run_docker
+from ..backend.docker.util import run_docker
 from .broker import LaunchBroker, LaunchRequest
 
 CONTAINER_PREFIX = "bot-bottle-orch-"

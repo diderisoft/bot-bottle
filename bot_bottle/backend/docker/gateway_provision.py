@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 from typing import Protocol
 
-from ...docker_cmd import run_docker
+from .util import run_docker
 from ...git_gate import GitGatePlan, git_gate_render_provision
 
 # bottle ids index the gateway's per-bottle repo + creds dirs; they land in

@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 
 from ...control_auth import ROLE_GATEWAY, mint
-from ...docker_cmd import run_docker
+from .util import run_docker
 from ...paths import (
     CONTROL_AUTH_JWT_ENV,
     host_control_plane_token,

@@ -26,7 +26,7 @@ from pathlib import Path
 
 from ... import log
 from ...control_auth import ROLE_GATEWAY, mint
-from ...docker_cmd import run_docker
+from .util import run_docker
 from ...paths import (
     CONTROL_AUTH_JWT_ENV,
     CONTROL_PLANE_TOKEN_ENV,
