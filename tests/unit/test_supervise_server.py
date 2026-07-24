@@ -15,7 +15,6 @@ import time
 import types
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 from tests.unit import use_bottle_root
 
@@ -66,14 +65,21 @@ class _FakeSuperviseResolver:
 
     def __init__(
         self, bottle_id: str | None = "dev", raises: bool = False, policy: str = "",
+        poll_raises: bool = False, poll_none: bool = False,
     ) -> None:
         self.bottle_id = bottle_id
         self.raises = raises
         self._policy = policy
+        # propose succeeds, but the later poll fails — models an orchestrator
+        # that becomes unreachable (poll_raises) or unattributes mid-flight
+        # (poll_none) after the proposal was queued.
+        self.poll_raises = poll_raises
+        self.poll_none = poll_none
 
     def propose_supervise(
-        self, source_ip, identity_token, *, tool, proposed_file, justification,
-    ):
+        self, source_ip: str, identity_token: str, *,
+        tool: str, proposed_file: str, justification: str,
+    ) -> str | None:
         del source_ip, identity_token
         if self.raises:
             raise supervise_server.PolicyResolveError("orchestrator down")
@@ -86,11 +92,13 @@ class _FakeSuperviseResolver:
         _sv.write_proposal(proposal)
         return proposal.id
 
-    def poll_supervise(self, source_ip, identity_token, proposal_id):
+    def poll_supervise(
+        self, source_ip: str, identity_token: str, proposal_id: str,
+    ) -> dict[str, object] | None:
         del source_ip, identity_token
-        if self.raises:
+        if self.raises or self.poll_raises:
             raise supervise_server.PolicyResolveError("orchestrator down")
-        if self.bottle_id is None:
+        if self.bottle_id is None or self.poll_none:
             return None
         try:
             response = _sv.read_response(self.bottle_id, proposal_id)
@@ -107,23 +115,28 @@ class _FakeSuperviseResolver:
         }
 
     # Used by list-egress-routes (`_resolved_routes_payload`), unchanged path.
-    def resolve_policy_and_bottle_id(self, source_ip, identity_token=""):
+    def resolve_policy_and_bottle_id(
+        self, source_ip: str, identity_token: str = "",
+    ) -> tuple[str | None, str | None, dict[str, str]]:
         del source_ip, identity_token
         if self.raises:
             raise supervise_server.PolicyResolveError("orchestrator down")
         return self._policy, self.bottle_id, {}
 
 
-def _tools_call(resolver, params, config=None):
+def _tools_call(
+    resolver: object, params: dict[str, object],
+    config: "ServerConfig | None" = None,
+) -> dict[str, object]:
     return handle_tools_call(
         params, config or ServerConfig(),
-        resolver=resolver, source_ip=_SRC, identity_token=_TOK,
+        resolver=resolver, source_ip=_SRC, identity_token=_TOK,  # type: ignore[arg-type]
     )
 
 
-def _check(resolver, params):
+def _check(resolver: object, params: dict[str, object]) -> dict[str, object]:
     return handle_check_proposal(
-        params, resolver=resolver, source_ip=_SRC, identity_token=_TOK,
+        params, resolver=resolver, source_ip=_SRC, identity_token=_TOK,  # type: ignore[arg-type]
     )
 
 
@@ -203,7 +216,7 @@ class TestRpcInternalErrorOnRpcFailure(unittest.TestCase):
     surfaces as ERR_INTERNAL — the daemon fails closed rather than leaking the
     cause to the agent."""
 
-    _ARGS = {
+    _ARGS: dict[str, object] = {
         "name": _sv.TOOL_EGRESS_ALLOW,
         "arguments": {
             "routes_yaml": "routes:\n  - host: example.com\n",
@@ -493,6 +506,25 @@ class TestHandleToolsCall(unittest.TestCase):
         self.assertIn("proposal remains queued", text)
         self.assertEqual(1, len(_sv.list_pending_proposals("dev")))
 
+    _ALLOW: dict[str, object] = {
+        "name": _sv.TOOL_EGRESS_ALLOW,
+        "arguments": {"routes_yaml": "routes:\n  - host: example.com\n", "justification": "x"},
+    }
+
+    def test_poll_unreachable_after_queue_raises_internal(self):
+        # Proposal queues, then the orchestrator becomes unreachable on poll.
+        self.resolver.poll_raises = True
+        with self.assertRaises(_RpcInternalError) as cm:
+            _tools_call(self.resolver, self._ALLOW, ServerConfig(response_timeout_seconds=5))
+        self.assertEqual(ERR_INTERNAL, cm.exception.code)
+
+    def test_poll_unattributed_after_queue_raises_internal(self):
+        # Proposal queues, then poll comes back unattributed (fail-closed).
+        self.resolver.poll_none = True
+        with self.assertRaises(_RpcInternalError) as cm:
+            _tools_call(self.resolver, self._ALLOW, ServerConfig(response_timeout_seconds=5))
+        self.assertEqual(ERR_INTERNAL, cm.exception.code)
+
 
 class TestResponseTimeoutEnv(unittest.TestCase):
     def test_unset_uses_default(self):
@@ -775,6 +807,18 @@ class TestNonBlockingSupervise(unittest.TestCase):
         result = _check(self.resolver, {"arguments": {"proposal_id": "no-such-proposal"}})
         self.assertTrue(result["isError"])
         self.assertIn("status: unknown", result["content"][0]["text"])  # type: ignore[index]
+
+    def test_check_poll_unreachable_raises_internal(self):
+        self.resolver.poll_raises = True
+        with self.assertRaises(_RpcInternalError) as cm:
+            _check(self.resolver, {"arguments": {"proposal_id": "p"}})
+        self.assertEqual(ERR_INTERNAL, cm.exception.code)
+
+    def test_check_poll_unattributed_raises_internal(self):
+        self.resolver.poll_none = True
+        with self.assertRaises(_RpcInternalError) as cm:
+            _check(self.resolver, {"arguments": {"proposal_id": "p"}})
+        self.assertEqual(ERR_INTERNAL, cm.exception.code)
 
     def test_check_missing_id_raises(self):
         with self.assertRaises(_RpcClientError) as cm:

@@ -277,16 +277,18 @@ class _SuperviseRpcFake:
 
     supervise_status: "str | None" = None
     propose_error: bool = False
+    poll_error: bool = False
 
     @property
-    def propose_calls(self) -> list:
+    def propose_calls(self) -> list[dict[str, str]]:
         if not hasattr(self, "_propose_calls"):
-            self._propose_calls: list = []
+            self._propose_calls: list[dict[str, str]] = []
         return self._propose_calls
 
     def propose_supervise(
-        self, source_ip, identity_token, *, tool, proposed_file, justification,
-    ):
+        self, source_ip: str, identity_token: str, *,
+        tool: str, proposed_file: str, justification: str,
+    ) -> str:
         del proposed_file, justification
         self.propose_calls.append(
             {"source_ip": source_ip, "identity_token": identity_token, "tool": tool}
@@ -295,8 +297,12 @@ class _SuperviseRpcFake:
             raise PolicyResolveError("orchestrator down")
         return "prop-1"
 
-    def poll_supervise(self, source_ip, identity_token, proposal_id):
+    def poll_supervise(
+        self, source_ip: str, identity_token: str, proposal_id: str,
+    ) -> dict[str, object]:
         del source_ip, identity_token, proposal_id
+        if self.poll_error:
+            raise PolicyResolveError("orchestrator down")
         if self.supervise_status is None:
             return {"status": "pending"}
         return {"status": self.supervise_status, "notes": "", "final_file": None}
@@ -582,6 +588,16 @@ class TestSuperviseBranch(unittest.TestCase):
         assert flow.response is not None
         self.assertEqual(403, flow.response.status_code)
         self.assertIn("timed out", flow.response.get_text())
+
+    def test_poll_error_during_wait_times_out_and_blocks(self) -> None:
+        # A transient orchestrator error on each poll is retried until the
+        # deadline, then fails closed (blocked) — never forwarded unsupervised.
+        addon = self._supervised_addon("approved")
+        cast(Any, addon._resolver).poll_error = True
+        flow = _Flow(_Request(host="api.example.com", method="POST", body=f"k={_OPENAI_KEY}"))
+        _run_request(addon, flow)
+        assert flow.response is not None
+        self.assertEqual(403, flow.response.status_code)
 
 
 # ---------------------------------------------------------------------------

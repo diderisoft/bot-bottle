@@ -144,6 +144,7 @@ class TestPolicyResolver(unittest.TestCase):
             {"status": "approved", "notes": "ok", "final_file": None})
         ) as m:
             result = self.r.poll_supervise("10.243.0.7", "tok", "p-7")
+        assert result is not None
         self.assertEqual("approved", result["status"])
         req = m.call_args.args[0]
         self.assertTrue(req.full_url.endswith("/supervise/poll"))

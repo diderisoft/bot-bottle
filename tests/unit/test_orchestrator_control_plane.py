@@ -21,7 +21,7 @@ from unittest.mock import patch
 
 from bot_bottle.orchestrator.broker import StubBroker
 from bot_bottle.orchestrator.control_plane import dispatch, make_server
-from bot_bottle.orchestrator.registry import RegistryStore
+from bot_bottle.orchestrator.registry import BottleRecord, RegistryStore
 from bot_bottle.orchestrator.service import Orchestrator
 from bot_bottle.store_manager import StoreManager
 from bot_bottle.supervise import (
@@ -455,13 +455,13 @@ class TestDispatchSuperviseAgentRpc(unittest.TestCase):
         return self.store.register(
             source_ip, metadata=json.dumps({"slug": slug}), policy="routes: []\n")
 
-    def _propose(self, rec, proposed: str = "routes:\n  - host: g.com\n"):
+    def _propose(self, rec: BottleRecord, proposed: str = "routes:\n  - host: g.com\n"):
         return dispatch(self.orch, "POST", "/supervise/propose", _body({
             "source_ip": rec.source_ip, "identity_token": rec.identity_token,
             "tool": TOOL_EGRESS_ALLOW, "proposed_file": proposed, "justification": "need it",
         }))
 
-    def _poll(self, rec, proposal_id: str):
+    def _poll(self, rec: BottleRecord, proposal_id: str):
         return dispatch(self.orch, "POST", "/supervise/poll", _body({
             "source_ip": rec.source_ip, "identity_token": rec.identity_token,
             "proposal_id": proposal_id,
@@ -474,9 +474,11 @@ class TestDispatchSuperviseAgentRpc(unittest.TestCase):
         pid = payload["proposal_id"]
         assert isinstance(pid, str) and pid
         _, listing = dispatch(self.orch, "GET", "/supervise/proposals", b"")
-        self.assertEqual(pid, listing["proposals"][0]["id"])
+        proposals = listing["proposals"]
+        assert isinstance(proposals, list)
+        self.assertEqual(pid, proposals[0]["id"])
         # Queued under the orchestrator-resolved bottle id, never a caller slug.
-        self.assertEqual(rec.bottle_id, listing["proposals"][0]["bottle_slug"])
+        self.assertEqual(rec.bottle_id, proposals[0]["bottle_slug"])
 
     def test_propose_unattributed_is_403(self) -> None:
         status, payload = dispatch(self.orch, "POST", "/supervise/propose", _body({
@@ -530,6 +532,41 @@ class TestDispatchSuperviseAgentRpc(unittest.TestCase):
         status, poll = self._poll(rec_b, pid)
         self.assertEqual(200, status)
         self.assertEqual("unknown", poll["status"])
+
+    # --- request validation (400) + fail-closed (403) ----------------------
+
+    def test_propose_invalid_json_is_400(self) -> None:
+        status, _ = dispatch(self.orch, "POST", "/supervise/propose", b"{not json")
+        self.assertEqual(400, status)
+
+    def test_propose_missing_fields_are_400(self) -> None:
+        rec = self._register()
+        base = {
+            "source_ip": rec.source_ip, "identity_token": rec.identity_token,
+            "tool": TOOL_EGRESS_ALLOW, "proposed_file": "routes:\n", "justification": "j",
+        }
+        for drop in ("source_ip", "proposed_file", "justification"):
+            body = {k: v for k, v in base.items() if k != drop}
+            status, _ = dispatch(self.orch, "POST", "/supervise/propose", _body(body))
+            self.assertEqual(400, status, drop)
+
+    def test_poll_invalid_json_is_400(self) -> None:
+        status, _ = dispatch(self.orch, "POST", "/supervise/poll", b"{not json")
+        self.assertEqual(400, status)
+
+    def test_poll_missing_fields_are_400(self) -> None:
+        rec = self._register()
+        for body in ({"identity_token": rec.identity_token, "proposal_id": "p"},
+                     {"source_ip": rec.source_ip, "identity_token": rec.identity_token}):
+            status, _ = dispatch(self.orch, "POST", "/supervise/poll", _body(body))
+            self.assertEqual(400, status)
+
+    def test_poll_unattributed_is_403(self) -> None:
+        status, payload = dispatch(self.orch, "POST", "/supervise/poll", _body({
+            "source_ip": "10.9.9.9", "identity_token": "wrong", "proposal_id": "p",
+        }))
+        self.assertEqual(403, status)
+        self.assertIn("unattributed", str(payload["error"]))
 
 
 if __name__ == "__main__":
