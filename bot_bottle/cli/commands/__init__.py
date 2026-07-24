@@ -17,12 +17,12 @@ from typing import Callable
 # command name -> "<submodule>:<handler attr>". Kept as strings so building
 # the registry imports nothing; the module loads only when dispatched.
 _HANDLERS: dict[str, str] = {
+    "active": "active:cmd_active",
     "backend": "backend:cmd_backend",
     "cleanup": "cleanup:cmd_cleanup",
     "commit": "commit:cmd_commit",
     "edit": "edit:cmd_edit",
     "help": "help:cmd_help",
-    "info": "info:cmd_info",
     "init": "init:cmd_init",
     "list": "list:cmd_list",
     "login": "login:cmd_login",

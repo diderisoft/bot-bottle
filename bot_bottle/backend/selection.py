@@ -168,7 +168,7 @@ def has_backend(name: str) -> bool:
 
 def enumerate_active_agents() -> list[ActiveAgent]:
     """All currently-running agents, across every available
-    backend. Used by CLI `list active` and the dashboard's agents
+    backend. Used by CLI `active` and the dashboard's agents
     pane so neither has to know which backends exist. Skips
     backends whose `is_available()` reports False.
 

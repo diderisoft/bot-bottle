@@ -7,6 +7,7 @@ picking the right document for what you're capturing.
 
 | Artifact | For |
 |---|---|
+| **Glossary** (`docs/glossary.md`) | Canonical term definitions — what words mean in this project. |
 | **PRD** (`docs/prds/`) | A feature: what to build, scope, success criteria. |
 | **Research note** (`docs/research/`) | A landscape/tradeoff investigation. |
 | **Decision record** (`docs/decisions/`) | A decision that isn't itself a feature — a policy, a convention, a "we will / won't do this," or a load-bearing choice made inside a larger PRD that deserves to be discoverable on its own. |

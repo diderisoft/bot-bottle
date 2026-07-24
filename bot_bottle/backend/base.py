@@ -177,7 +177,7 @@ class ExecResult:
 
 @dataclass(frozen=True)
 class ActiveAgent:
-    """One currently-running agent, as the CLI `list active` and
+    """One currently-running agent, as the CLI `active` and
     dashboard agents pane render it. ("Agent" is the project's
     consistent name for the thing running inside a bottle — the
     bottle is the container, the agent is what runs in it.)
@@ -570,7 +570,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         Linux + KVM. Used by the cross-backend
         `enumerate_active_agents` / `cmd_cleanup` to skip backends
         the operator hasn't installed, so a docker-only host
-        doesn't fail when `cli.py list active` walks past
+        doesn't fail when `cli.py active` walks past
         firecracker."""
 
     @classmethod
