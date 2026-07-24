@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import os
 
 from ...log import info
 from ...manifest import ManifestIndex
-from .._common import PROG, USER_CWD
+from ..constants import PROG
 
 
 def cmd_info(argv: list[str]) -> int:
@@ -14,7 +15,7 @@ def cmd_info(argv: list[str]) -> int:
     parser.add_argument("name", help="agent name defined in bot-bottle.json")
     args = parser.parse_args(argv)
 
-    names = ManifestIndex.resolve(USER_CWD)
+    names = ManifestIndex.resolve(os.getcwd())
     names.require_agent(args.name)
     manifest = names.load_for_agent(args.name)
 

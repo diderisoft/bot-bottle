@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import Any
 
 from ...log import die, info, warn
-from .._common import PROG, USER_CWD, read_tty_line
+from ..constants import PROG
+from ...util import read_tty_line
 
 
 def cmd_init(argv: list[str]) -> int:
@@ -22,7 +23,7 @@ def cmd_init(argv: list[str]) -> int:
     if args.scope == "user":
         target_file = Path(os.environ["HOME"]) / "bot-bottle.json"
     else:
-        target_file = Path(USER_CWD) / "bot-bottle.json"
+        target_file = Path(os.getcwd()) / "bot-bottle.json"
 
     print(file=sys.stderr)
     info(f"bot-bottle init — adding a new agent to {target_file}")

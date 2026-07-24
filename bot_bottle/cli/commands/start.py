@@ -39,7 +39,8 @@ from ...bottle_state import (
 from ...image_cache import StaleImageError
 from ...log import info, die
 from ...manifest import Manifest, ManifestIndex
-from .._common import PROG, USER_CWD, read_tty_line
+from ..constants import PROG
+from ...util import read_tty_line
 from .. import tui
 
 
@@ -116,7 +117,7 @@ def cmd_start(argv: list[str]) -> int:
         # threading a no_cache field through every backend's plan dataclass.
         os.environ["BOT_BOTTLE_NO_CACHE"] = "1"
 
-    manifest = ManifestIndex.resolve(USER_CWD)
+    manifest = ManifestIndex.resolve(os.getcwd())
 
     if args.headless:
         return _start_headless(
@@ -167,7 +168,7 @@ def cmd_start(argv: list[str]) -> int:
         manifest=manifest,
         agent_name=agent_name,
         copy_cwd=args.cwd,
-        user_cwd=USER_CWD,
+        user_cwd=os.getcwd(),
         label=label,
         color=color,
         bottle_names=bottle_names,
@@ -235,7 +236,7 @@ def _start_headless(
         manifest=manifest,
         agent_name=agent_name,
         copy_cwd=args.cwd,
-        user_cwd=USER_CWD,
+        user_cwd=os.getcwd(),
         label=label,
         color=args.color or "",
         bottle_names=bottle_names,

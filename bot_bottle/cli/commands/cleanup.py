@@ -23,7 +23,7 @@ import sys
 
 from ...backend import get_bottle_backend, has_backend, known_backend_names
 from ...log import info
-from .._common import read_tty_line
+from ...util import read_tty_line
 
 
 def cmd_cleanup(_argv: list[str]) -> int:

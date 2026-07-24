@@ -15,12 +15,13 @@ to bring up the replacement from the recorded state.
 from __future__ import annotations
 
 import argparse
+import os
 
 from ...backend import BottleSpec
 from ...bottle_state import read_metadata
 from ...log import die
 from ...manifest import ManifestIndex
-from .._common import PROG, USER_CWD
+from ..constants import PROG
 from .start import _launch_bottle
 
 
@@ -40,14 +41,14 @@ def cmd_resume(argv: list[str]) -> int:
             f"check ~/.bot-bottle/state/ or run `cli.py start` to create a new bottle"
         )
 
-    manifest = ManifestIndex.resolve(USER_CWD)
+    manifest = ManifestIndex.resolve(os.getcwd())
     manifest.require_agent(metadata.agent_name)
 
     spec = BottleSpec(
         manifest=manifest,
         agent_name=metadata.agent_name,
         copy_cwd=metadata.copy_cwd,
-        user_cwd=metadata.cwd or USER_CWD,
+        user_cwd=metadata.cwd or os.getcwd(),
         identity=metadata.identity,
         bottle_names=tuple(metadata.bottle_names),
     )

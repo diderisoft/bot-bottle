@@ -34,7 +34,7 @@ from ...supervisor.types import (
     TOOL_GITLEAKS_ALLOW,
     TOOL_EGRESS_TOKEN_ALLOW,
 )
-from .._common import PROG
+from ..constants import PROG
 
 
 _REFRESH_INTERVAL_MS = 1000

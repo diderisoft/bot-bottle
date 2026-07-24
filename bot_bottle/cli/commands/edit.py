@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 
 from ...log import die
-from .._common import PROG, USER_CWD
+from ..constants import PROG
 
 
 def cmd_edit(argv: list[str]) -> int:
@@ -20,7 +20,7 @@ def cmd_edit(argv: list[str]) -> int:
     if args.scope == "user":
         target_file = Path(os.environ["HOME"]) / "bot-bottle.json"
     else:
-        target_file = Path(USER_CWD) / "bot-bottle.json"
+        target_file = Path(os.getcwd()) / "bot-bottle.json"
 
     if not target_file.is_file():
         die(f"{target_file} does not exist")

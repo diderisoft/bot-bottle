@@ -11,7 +11,7 @@ from ..errors import MissingEnvVarError
 from ..log import Die, die, error
 from ..manifest import ManifestError
 from ..orchestrator.store.store_manager import StoreManager
-from ._common import PROG
+from .constants import PROG
 from .commands import list as _list_mod
 from .commands.backend import cmd_backend
 from .commands.cleanup import cmd_cleanup
