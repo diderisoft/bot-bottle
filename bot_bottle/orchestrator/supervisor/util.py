@@ -1,14 +1,13 @@
-"""Pure supervise helpers — diff rendering and content hashing.
+"""Pure supervise helpers — diff rendering.
 
-Stateless utilities used alongside the `Supervisor` service. Kept as plain
-functions (not methods) because they carry no state and are also handy to
-callers that only need to hash or diff.
+Stateless utility used alongside the `Supervisor` service. Kept as a plain
+function (not a method) because it carries no state. (Content hashing is a
+generic helper — `bot_bottle.util.sha256_hex`.)
 """
 
 from __future__ import annotations
 
 import difflib
-import hashlib
 
 
 def render_diff(before: str, after: str, *, label: str = "config") -> str:
@@ -25,7 +24,3 @@ def render_diff(before: str, after: str, *, label: str = "config") -> str:
     if not parts:
         return ""
     return "".join(p if p.endswith("\n") else p + "\n" for p in parts).rstrip("\n")
-
-
-def sha256_hex(content: str) -> str:
-    return hashlib.sha256(content.encode("utf-8")).hexdigest()

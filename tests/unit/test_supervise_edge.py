@@ -30,7 +30,6 @@ def _proposal() -> Proposal:
         tool=TOOL_EGRESS_ALLOW,
         proposed_file="x",
         justification="j",
-        current_file_hash="h",
     )
 
 

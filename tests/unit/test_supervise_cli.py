@@ -19,7 +19,6 @@ from bot_bottle.orchestrator.supervisor import (
     TOOL_EGRESS_BLOCK,
     TOOL_GITLEAKS_ALLOW,
     TOOL_EGRESS_TOKEN_ALLOW,
-    sha256_hex,
 )
 
 
@@ -37,7 +36,7 @@ def _proposal(slug: str = "dev", tool: str = TOOL_EGRESS_ALLOW,
     payload = payloads.get(tool, "")
     return Proposal.new(
         bottle_slug=slug, tool=tool, proposed_file=payload,
-        justification=f"needed for {slug}", current_file_hash=sha256_hex(payload),
+        justification=f"needed for {slug}",
         now=now,
     )
 

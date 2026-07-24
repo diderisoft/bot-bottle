@@ -41,7 +41,6 @@ from .supervisor import (
     TOOL_EGRESS_BLOCK,
     Supervisor,
     render_diff,
-    sha256_hex,
 )
 
 
@@ -216,7 +215,6 @@ class Orchestrator:
             tool=tool,
             proposed_file=proposed_file,
             justification=justification,
-            current_file_hash=sha256_hex(proposed_file),
         )
         self._supervisor.write_proposal(proposal)
         return proposal.id

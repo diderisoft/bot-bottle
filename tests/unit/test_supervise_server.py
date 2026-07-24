@@ -92,7 +92,7 @@ class _FakeSuperviseResolver:
             return None
         proposal = _sv.Proposal.new(
             bottle_slug=self.bottle_id, tool=tool, proposed_file=proposed_file,
-            justification=justification, current_file_hash=_sv.sha256_hex(proposed_file),
+            justification=justification,
         )
         _SV.write_proposal(proposal)
         return proposal.id
@@ -750,7 +750,6 @@ class TestNonBlockingSupervise(unittest.TestCase):
             tool=_sv.TOOL_EGRESS_ALLOW,
             proposed_file=self._ROUTES,
             justification="need example.com",
-            current_file_hash=_sv.sha256_hex(self._ROUTES),
         )
         _SV.write_proposal(p)
         return p

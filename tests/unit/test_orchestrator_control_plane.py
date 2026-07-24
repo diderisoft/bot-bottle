@@ -28,7 +28,6 @@ from bot_bottle.orchestrator.store.store_manager import StoreManager
 from bot_bottle.orchestrator.supervisor import (
     Proposal,
     TOOL_EGRESS_ALLOW,
-    sha256_hex,
     Supervisor,
 )
 
@@ -420,7 +419,7 @@ class TestDispatchSupervise(unittest.TestCase):
             "10.243.0.1", metadata=json.dumps({"slug": slug}), policy="routes: []\n")
         p = Proposal.new(
             bottle_slug=slug, tool=TOOL_EGRESS_ALLOW, proposed_file=proposed,
-            justification="need it", current_file_hash=sha256_hex(proposed))
+            justification="need it")
         Supervisor().write_proposal(p)
         return p.id
 

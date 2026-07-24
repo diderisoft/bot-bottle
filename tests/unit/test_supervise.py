@@ -7,6 +7,7 @@ from pathlib import Path
 
 from bot_bottle.orchestrator import supervisor as supervise
 from bot_bottle.paths import host_db_path
+from bot_bottle.util import sha256_hex
 from tests.unit import use_bottle_root
 from bot_bottle.store.audit_store import AuditStore
 from bot_bottle.orchestrator.store.queue_store import QueueStore
@@ -21,7 +22,6 @@ from bot_bottle.orchestrator.supervisor import (
     TOOL_EGRESS_ALLOW,
     TOOL_GITLEAKS_ALLOW,
     render_diff,
-    sha256_hex,
 )
 
 _SV = Supervisor()
@@ -40,7 +40,6 @@ def _proposal(
         tool=tool,
         proposed_file=proposed,
         justification=justification,
-        current_file_hash=sha256_hex(proposed),
         now=FIXED_TS,
     )
 
@@ -145,13 +144,11 @@ class TestQueueIO(unittest.TestCase):
         a = Proposal.new(
             bottle_slug="dev", tool=TOOL_EGRESS_ALLOW,
             proposed_file="routes:\n  - host: early.example.com\n", justification="early",
-            current_file_hash="x",
             now=datetime(2026, 5, 25, 10, 0, 0, tzinfo=timezone.utc),
         )
         b = Proposal.new(
             bottle_slug="dev", tool=TOOL_EGRESS_ALLOW,
             proposed_file="routes:\n  - host: late.example.com\n", justification="late",
-            current_file_hash="x",
             now=datetime(2026, 5, 25, 14, 0, 0, tzinfo=timezone.utc),
         )
         # Write in reverse order.
@@ -288,7 +285,6 @@ class TestToolConstants(unittest.TestCase):
             tool=supervise.TOOL_EGRESS_TOKEN_ALLOW,
             proposed_file="host: api.example.com\n",
             justification="false positive",
-            current_file_hash="h",
         )
         self.assertEqual(p, Proposal.from_dict(p.to_dict()))
 

@@ -20,7 +20,6 @@ from bot_bottle.orchestrator.supervisor import (
     Proposal,
     STATUS_APPROVED,
     TOOL_EGRESS_ALLOW,
-    sha256_hex,
     Supervisor,
 )
 
@@ -183,7 +182,7 @@ class TestOrchestratorSupervise(unittest.TestCase):
     def _queue(self, slug: str, proposed: str) -> str:
         p = Proposal.new(
             bottle_slug=slug, tool=TOOL_EGRESS_ALLOW, proposed_file=proposed,
-            justification="need it", current_file_hash=sha256_hex(proposed))
+            justification="need it")
         Supervisor().write_proposal(p)
         return p.id
 

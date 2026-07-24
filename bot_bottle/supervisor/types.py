@@ -15,6 +15,8 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from ..util import sha256_hex
+
 TOOL_EGRESS_BLOCK = "egress-block"
 TOOL_EGRESS_ALLOW = "egress-allow"
 TOOL_GITLEAKS_ALLOW = "gitleaks-allow"
@@ -94,7 +96,6 @@ class Proposal:
         tool: str,
         proposed_file: str,
         justification: str,
-        current_file_hash: str,
         now: datetime | None = None,
     ) -> "Proposal":
         ts = (now or datetime.now(timezone.utc)).isoformat()
@@ -105,7 +106,7 @@ class Proposal:
             proposed_file=proposed_file,
             justification=justification,
             arrival_timestamp=ts,
-            current_file_hash=current_file_hash,
+            current_file_hash=sha256_hex(proposed_file),
         )
 
     def to_dict(self) -> dict[str, object]:

@@ -8,8 +8,8 @@ dependency explicit and injectable in tests.
 
 For convenience this package also re-exports the neutral vocabulary
 (`bot_bottle.supervisor`'s types + `SupervisePlan`) and the pure `render_diff`
-/ `sha256_hex` helpers (`util`), so orchestrator-side callers import from one
-place. The data plane must NOT import this package — it imports
+helper (`util`), so orchestrator-side callers import from one place. The data
+plane must NOT import this package — it imports
 `bot_bottle.supervisor` (neutral) directly and reaches the queue over the
 control-plane RPC.
 """
@@ -24,7 +24,7 @@ from ..store.store_manager import StoreManager
 from ..store.queue_store import QueueStore
 from ...store.audit_store import AuditStore
 from ...supervisor.types import AuditEntry, Proposal, Response
-from .util import render_diff, sha256_hex  # noqa: F401 — re-exported for callers
+from .util import render_diff  # noqa: F401 — re-exported for callers
 
 
 class Supervisor:

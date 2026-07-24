@@ -5,9 +5,15 @@ level deeper, under their backend package."""
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import os
 import sys
+
+
+def sha256_hex(content: str) -> str:
+    """Hex SHA-256 of a UTF-8 string."""
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
 def is_ip_literal(value: str) -> bool:
