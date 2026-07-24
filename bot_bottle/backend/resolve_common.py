@@ -29,7 +29,7 @@ from ..git_gate import GitGate, GitGatePlan
 from ..log import die
 from ..manifest import Manifest, ManifestBottle
 from ..supervisor.plan import SupervisePlan
-from ..orchestrator.supervisor.supervise import Supervise
+from ..orchestrator.supervisor import Supervisor
 from . import BottleSpec
 
 
@@ -102,7 +102,7 @@ def prepare_supervise(bottle: ManifestBottle, slug: str) -> SupervisePlan | None
         return None
     supervise_dir = supervise_state_dir(slug)
     supervise_dir.mkdir(parents=True, exist_ok=True)
-    return Supervise().prepare(slug, supervise_dir)
+    return Supervisor().prepare(slug, supervise_dir)
 
 
 def merge_provision_env_vars(provision: AgentProvisionPlan) -> AgentProvisionPlan:

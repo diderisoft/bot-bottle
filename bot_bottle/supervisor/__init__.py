@@ -11,6 +11,6 @@ tier's private code, importable by `bot_bottle.gateway` **and**
     status / poll-status constants, and the shared daemon constants.
   * `plan`  — `SupervisePlan`, the launch-time staging DTO.
 
-The orchestrator-only half (queue I/O, diff rendering, the `Supervise`
+The orchestrator-only half (queue I/O, diff rendering, the `Supervisor`
 lifecycle) lives under `bot_bottle.orchestrator.supervisor`.
 """

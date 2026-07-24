@@ -352,7 +352,7 @@ class TestToolConstants(unittest.TestCase):
         )
 
 
-class _StubSupervise(supervise.Supervise):
+class _StubSupervise(supervise.Supervisor):
     """Concrete Supervise subclass for testing the prepare template."""
 
     def start(self, plan):  # type: ignore

@@ -6,10 +6,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
-try:
-    from .migrations import TableMigrations
-except ImportError:
-    from migrations import TableMigrations  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
+from .migrations import TableMigrations
 
 
 class DbVersionError(Exception):
