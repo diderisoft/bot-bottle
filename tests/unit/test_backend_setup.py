@@ -357,28 +357,86 @@ class TestFirecrackerKvmCheck(unittest.TestCase):
             self.assertFalse(fc._kvm_accessible())
 
     def test_kvm_accessible_when_ioctl_succeeds(self):
-        m = MagicMock()
-        m.__enter__ = MagicMock(return_value=m)
-        m.__exit__ = MagicMock(return_value=False)
         with patch.object(fc.os.path, "exists", return_value=True), \
-             patch("builtins.open", return_value=m), \
+             patch.object(fc.os, "open", return_value=42), \
+             patch.object(fc.os, "close"), \
              patch.object(fc.fcntl, "ioctl", return_value=12):
             self.assertTrue(fc._kvm_accessible())
 
-    def test_kvm_present_but_ioctl_fails(self):
-        m = MagicMock()
-        m.__enter__ = MagicMock(return_value=m)
-        m.__exit__ = MagicMock(return_value=False)
+    def test_kvm_open_rdwr_fails(self):
         with patch.object(fc.os.path, "exists", return_value=True), \
-             patch("builtins.open", return_value=m), \
+             patch.object(fc.os, "open", side_effect=OSError("Permission denied")):
+            self.assertFalse(fc._kvm_accessible())
+
+    def test_kvm_present_but_ioctl_fails(self):
+        with patch.object(fc.os.path, "exists", return_value=True), \
+             patch.object(fc.os, "open", return_value=42), \
+             patch.object(fc.os, "close"), \
              patch.object(fc.fcntl, "ioctl", side_effect=OSError("permission denied")):
             self.assertFalse(fc._kvm_accessible())
+
+
+class TestFirecrackerArtifactCheck(unittest.TestCase):
+    """status() reports missing guest kernel, dropbear binary, and mke2fs."""
+
+    def _apply_all_ok(self, stack: contextlib.ExitStack) -> None:
+        """Stub every status() check to pass except what the test overrides."""
+        stack.enter_context(patch.object(fc, "_firecracker_binary_ok", return_value=True))
+        stack.enter_context(patch.object(fc, "_kvm_accessible", return_value=True))
+        k: MagicMock = MagicMock()
+        k.is_file.return_value = True
+        stack.enter_context(patch.object(fc.util, "kernel_path", return_value=k))
+        d: MagicMock = MagicMock()
+        d.is_file.return_value = True
+        stack.enter_context(patch.object(fc.util, "dropbear_path", return_value=d))
+        stack.enter_context(patch.object(fc.shutil, "which", return_value="/usr/bin/x"))
+        stack.enter_context(patch.object(netpool, "missing_taps", return_value=[]))
+        stack.enter_context(patch.object(netpool, "pool_size", return_value=8))
+        stack.enter_context(patch.object(netpool, "overlapping_routes", return_value=[]))
+        stack.enter_context(patch.object(fc, "_report_persistence", lambda: None))
+
+    def test_status_fails_when_kernel_missing(self):
+        with contextlib.ExitStack() as stack:
+            self._apply_all_ok(stack)
+            k: MagicMock = MagicMock()
+            k.is_file.return_value = False
+            stack.enter_context(patch.object(fc.util, "kernel_path", return_value=k))
+            rc, out = _cap(fc.status)
+        self.assertEqual(1, rc)
+        self.assertIn("guest kernel: NOT found", out)
+
+    def test_status_fails_when_dropbear_missing(self):
+        with contextlib.ExitStack() as stack:
+            self._apply_all_ok(stack)
+            d: MagicMock = MagicMock()
+            d.is_file.return_value = False
+            stack.enter_context(patch.object(fc.util, "dropbear_path", return_value=d))
+            rc, out = _cap(fc.status)
+        self.assertEqual(1, rc)
+        self.assertIn("dropbear: NOT found", out)
+
+    def test_status_fails_when_mke2fs_missing(self):
+        with contextlib.ExitStack() as stack:
+            self._apply_all_ok(stack)
+            stack.enter_context(patch.object(
+                fc.shutil, "which",
+                side_effect=lambda cmd: (None if cmd == "mke2fs" else "/usr/bin/x"),  # type: ignore[misc]
+            ))
+            rc, out = _cap(fc.status)
+        self.assertEqual(1, rc)
+        self.assertIn("mke2fs: NOT found", out)
 
 
 class TestFirecrackerStatusRuntime(unittest.TestCase):
     """status() reports binary and KVM problems and returns non-zero."""
 
     def _apply_pool_ok(self, stack: contextlib.ExitStack) -> None:
+        kernel_mock = MagicMock()
+        kernel_mock.is_file.return_value = True
+        dropbear_mock = MagicMock()
+        dropbear_mock.is_file.return_value = True
+        stack.enter_context(patch.object(fc.util, "kernel_path", return_value=kernel_mock))
+        stack.enter_context(patch.object(fc.util, "dropbear_path", return_value=dropbear_mock))
         stack.enter_context(patch.object(netpool, "missing_taps", return_value=[]))
         stack.enter_context(patch.object(netpool, "pool_size", return_value=8))
         stack.enter_context(patch.object(netpool, "overlapping_routes", return_value=[]))

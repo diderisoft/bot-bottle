@@ -237,16 +237,18 @@ def _firecracker_binary_ok() -> bool:
 
 
 def _kvm_accessible() -> bool:
-    """True iff /dev/kvm can be opened and responds to KVM_GET_API_VERSION.
+    """True iff /dev/kvm can be opened read-write and responds to KVM_GET_API_VERSION.
 
-    Uses an ioctl rather than os.access() so that a device with correct
-    permission bits but a non-functional KVM subsystem is caught here
-    rather than at VM boot time."""
+    VM creation requires write access; opening read-only may satisfy the
+    ioctl but fails at boot time, so O_RDWR is the permission check."""
     if not os.path.exists(util._KVM_DEVICE):
         return False
     try:
-        with open(util._KVM_DEVICE, "rb") as kvm:
-            fcntl.ioctl(kvm, _KVM_GET_API_VERSION)
+        fd = os.open(util._KVM_DEVICE, os.O_RDWR | os.O_CLOEXEC)
+        try:
+            fcntl.ioctl(fd, _KVM_GET_API_VERSION)
+        finally:
+            os.close(fd)
         return True
     except OSError:
         return False
@@ -280,6 +282,30 @@ def status() -> int:
             sys.stderr.write(
                 f"KVM: {util._KVM_DEVICE} not accessible (open/ioctl failed)\n"
             )
+        ok = False
+    kernel = util.kernel_path()
+    if kernel.is_file():
+        sys.stderr.write(f"guest kernel: {kernel}\n")
+    else:
+        sys.stderr.write(
+            f"guest kernel: NOT found at {kernel} "
+            f"(set BOT_BOTTLE_FC_KERNEL or cache a vmlinux there)\n"
+        )
+        ok = False
+    dropbear = util.dropbear_path()
+    if dropbear.is_file():
+        sys.stderr.write(f"dropbear: {dropbear}\n")
+    else:
+        sys.stderr.write(
+            f"dropbear: NOT found at {dropbear} "
+            f"(set BOT_BOTTLE_FC_DROPBEAR or cache a static binary)\n"
+        )
+        ok = False
+    mke2fs = shutil.which("mke2fs")
+    if mke2fs is not None:
+        sys.stderr.write(f"mke2fs: {mke2fs}\n")
+    else:
+        sys.stderr.write("mke2fs: NOT found on PATH (install e2fsprogs)\n")
         ok = False
     missing = netpool.missing_taps()
     total = netpool.pool_size()
