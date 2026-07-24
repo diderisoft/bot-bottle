@@ -1,13 +1,13 @@
 """The `ManifestBottle` value type.
 
-Split out of `manifest.py` so the `extends:`/loader resolvers can import it
-without a circular dependency: `manifest.py` imports those resolvers, while
-they only need this value type. Everything here depends on leaf modules
-(`manifest_util`, `manifest_agent`, `manifest_egress`, `manifest_git`,
-`manifest_schema`), so this module sits at the bottom of the manifest layer.
+Split out of the package facade (`manifest/__init__.py`) so the `extends:`/
+loader resolvers can import it without a circular dependency: the facade
+imports those resolvers, while they only need this value type. Everything here
+depends on leaf modules (`util`, `agent`, `egress`, `git`, `schema`), so this
+module sits at the bottom of the manifest layer.
 
-`manifest.py` re-exports `ManifestBottle`, so existing
-`from .manifest import ManifestBottle` callers are unaffected.
+The facade re-exports `ManifestBottle`, so existing
+`from bot_bottle.manifest import ManifestBottle` callers are unaffected.
 """
 
 from __future__ import annotations
@@ -15,11 +15,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Mapping
 
-from .manifest_util import ManifestError, as_json_object
-from .manifest_agent import ManifestAgentProvider
-from .manifest_egress import ManifestEgressConfig
-from .manifest_git import ManifestGitEntry, ManifestGitUser, parse_git_gate_config
-from .manifest_schema import BOTTLE_KEYS
+from .util import ManifestError, as_json_object
+from .agent import ManifestAgentProvider
+from .egress import ManifestEgressConfig
+from .git import ManifestGitEntry, ManifestGitUser, parse_git_gate_config
+from .schema import BOTTLE_KEYS
 
 __all__ = ["ManifestBottle"]
 

@@ -380,7 +380,7 @@ def _peek_agent_bottle(manifest: ManifestIndex, agent_name: str) -> str:
             return manifest.agents[agent_name].bottle
         return ""
 
-    from ..manifest_loader import scan_agent_names
+    from ..manifest.loader import scan_agent_names
     from ..yaml_subset import YamlSubsetError, parse_frontmatter
 
     home_agents = scan_agent_names(manifest.home_md / "agents")

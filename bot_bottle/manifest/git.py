@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from .manifest_util import ManifestError, as_json_object
+from .util import ManifestError, as_json_object
 
 # Shell-safe characters for git-gate repo names. Names are embedded in
 # the generated entrypoint shell script (shlex.quote is the primary

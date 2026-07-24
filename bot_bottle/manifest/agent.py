@@ -5,10 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import cast
 
-from .agent_provider import PROVIDER_TEMPLATES
-from .manifest_util import ManifestError, as_json_object
-from .manifest_git import ManifestGitUser
-from .manifest_schema import AGENT_MODEL_KEYS, is_valid_entity_name
+from ..agent_provider import PROVIDER_TEMPLATES
+from .util import ManifestError, as_json_object
+from .git import ManifestGitUser
+from .schema import AGENT_MODEL_KEYS, is_valid_entity_name
 
 
 @dataclass(frozen=True)

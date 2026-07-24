@@ -4,15 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .log import warn
-from .manifest_bottle import ManifestBottle
-from .manifest_extends import resolve_bottles
-from .manifest_schema import (
+from ..log import warn
+from .bottle import ManifestBottle
+from .extends import resolve_bottles
+from .schema import (
     entity_name_from_path,
     validate_bottle_frontmatter_keys,
 )
-from .manifest_util import ManifestError
-from .yaml_subset import YamlSubsetError, parse_frontmatter
+from .util import ManifestError
+from ..yaml_subset import YamlSubsetError, parse_frontmatter
 
 
 def check_stale_json(dir_path: Path, md_dir: Path, label: str) -> None:

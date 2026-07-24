@@ -49,7 +49,7 @@ def get_provisioner(
             GiteaDeployKeyProvisioner,
         )
         return GiteaDeployKeyProvisioner(token=token, api_url=api_url)
-    from .manifest_util import ManifestError
+    from .manifest.util import ManifestError
     raise ManifestError(
         f"unknown provisioned_key provider: {provider!r}; "
         f"available: gitea"

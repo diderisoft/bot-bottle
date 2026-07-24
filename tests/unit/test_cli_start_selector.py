@@ -336,7 +336,7 @@ class TestManifestToYaml(unittest.TestCase):
         agent_provider_template: str = "claude",
     ):
         from bot_bottle.manifest import Manifest, ManifestBottle
-        from bot_bottle.manifest_agent import ManifestAgent, ManifestAgentProvider
+        from bot_bottle.manifest.agent import ManifestAgent, ManifestAgentProvider
 
         agent = ManifestAgent(skills=tuple(skills))
         bottle = ManifestBottle(

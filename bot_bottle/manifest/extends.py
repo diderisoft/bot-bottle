@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from .manifest_bottle import ManifestBottle
-from .manifest_egress import ManifestEgressConfig, validate_egress_routes
-from .manifest_git import ManifestGitUser, parse_git_gate_config
-from .manifest_util import ManifestError, as_json_object
+from .bottle import ManifestBottle
+from .egress import ManifestEgressConfig, validate_egress_routes
+from .git import ManifestGitUser, parse_git_gate_config
+from .util import ManifestError, as_json_object
 
 
 def _overlay_declared_bool(

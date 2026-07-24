@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import cast
 
-from .manifest_util import ManifestError, as_json_object
+from .util import ManifestError, as_json_object
 
 EGRESS_AUTH_SCHEMES = ("Bearer", "token")
 

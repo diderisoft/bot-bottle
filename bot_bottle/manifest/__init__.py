@@ -63,25 +63,25 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Mapping
 
-from .log import warn
-from .manifest_util import ManifestError, as_json_object
-from .manifest_agent import ManifestAgent, ManifestAgentProvider
-from .manifest_bottle import ManifestBottle
-from .manifest_egress import (
+from ..log import warn
+from .util import ManifestError, as_json_object
+from .agent import ManifestAgent, ManifestAgentProvider
+from .bottle import ManifestBottle
+from .egress import (
     EGRESS_AUTH_SCHEMES,
     ManifestEgressConfig,
     ManifestEgressRoute,
 )
-from .manifest_extends import merge_bottles_runtime, resolve_bottles
-from .manifest_git import ManifestGitEntry, ManifestGitUser, ManifestKeyConfig
-from .manifest_loader import (
+from .extends import merge_bottles_runtime, resolve_bottles
+from .git import ManifestGitEntry, ManifestGitUser, ManifestKeyConfig
+from .loader import (
     check_stale_json,
     load_bottle_chain_from_dir,
     scan_agent_names,
     scan_bottle_names,
 )
-from .manifest_schema import validate_agent_frontmatter_keys
-from .yaml_subset import YamlSubsetError, parse_frontmatter
+from .schema import validate_agent_frontmatter_keys
+from ..yaml_subset import YamlSubsetError, parse_frontmatter
 
 # Re-export everything that callers currently import from this module.
 __all__ = [
