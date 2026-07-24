@@ -409,7 +409,7 @@ class TestIsBackendReady(unittest.TestCase):
 
     def test_ready_when_status_returns_zero(self):
         class _ReadyBackend:
-            def status(self, *, quiet=False):
+            def status(self, *, quiet: bool = False) -> int:
                 return 0
 
         from bot_bottle.backend import is_backend_ready
@@ -418,7 +418,7 @@ class TestIsBackendReady(unittest.TestCase):
 
     def test_not_ready_when_status_nonzero(self):
         class _BrokenBackend:
-            def status(self, *, quiet=False):
+            def status(self, *, quiet: bool = False) -> int:
                 return 1
 
         from bot_bottle.backend import is_backend_ready
@@ -429,7 +429,7 @@ class TestIsBackendReady(unittest.TestCase):
         calls = []
 
         class _SpyBackend:
-            def status(self, *, quiet=False):
+            def status(self, *, quiet: bool = False) -> int:
                 calls.append(quiet)
                 return 0
 

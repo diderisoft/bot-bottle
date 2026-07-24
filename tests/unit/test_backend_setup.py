@@ -342,8 +342,6 @@ class TestBackendStatusQuiet(unittest.TestCase):
     def test_docker_quiet_true_suppresses_stderr(self):
         import io as _io
         from bot_bottle.backend.docker.backend import DockerBottleBackend
-        written = []
-        real_status = dk.status
 
         def _loud_status():
             import sys
