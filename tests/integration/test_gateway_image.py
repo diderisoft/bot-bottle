@@ -25,14 +25,14 @@ import os
 import subprocess
 import unittest
 
-from tests._docker import skip_unless_docker
+from tests._backend import skip_unless_backend
 
 
 _IMAGE = "bot-bottle-gateway-test:chunk1"
 _DOCKERFILE = "Dockerfile.gateway"
 
 
-@skip_unless_docker()
+@skip_unless_backend("docker")
 @unittest.skipIf(
     os.environ.get("GITEA_ACTIONS") == "true",
     "skipped under act_runner: multi-stage build pulls a 200+MB "

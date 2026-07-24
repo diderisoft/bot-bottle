@@ -13,12 +13,12 @@ import unittest
 
 from bot_bottle.orchestrator.broker import LaunchRequest, sign_request
 from bot_bottle.orchestrator.docker_broker import DockerBroker, container_name
-from tests._docker import skip_unless_docker
+from tests._backend import skip_unless_backend
 
 IMAGE = "busybox"
 
 
-@skip_unless_docker()
+@skip_unless_backend("docker")
 class TestDockerBrokerIntegration(unittest.TestCase):
     def setUp(self) -> None:
         self.secret = secrets.token_bytes(16)

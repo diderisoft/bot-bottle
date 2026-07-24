@@ -31,7 +31,7 @@ from pathlib import Path
 from bot_bottle.backend import BottleSpec, get_bottle_backend
 from bot_bottle.bottle_state import cleanup_state
 from bot_bottle.manifest import ManifestIndex
-from tests._docker import skip_unless_docker_or_firecracker
+from tests._backend import skip_unless_selected_backend_available
 
 
 # Secrets planted in the bottle env as literals (agents substitute via
@@ -67,7 +67,7 @@ _DUMMY_HOST_KEY = (
 )
 
 
-@skip_unless_docker_or_firecracker()
+@skip_unless_selected_backend_available()
 @unittest.skipIf(
     os.environ.get("GITEA_ACTIONS") == "true"
     and os.environ.get("BOT_BOTTLE_BACKEND") != "firecracker",

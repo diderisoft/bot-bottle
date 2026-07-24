@@ -103,14 +103,15 @@ jobs:
       - name: Install coverage
         run: python3 -m pip install --break-system-packages coverage
 
-      - name: Show environment
+      # Fail loudly if the backend this job promises isn't actually usable,
+      # rather than letting every test silently `unittest.skip` and the job
+      # go green on zero coverage. Same capability probe the skip guards use.
+      - name: Preflight — Docker backend is ready
+        env:
+          BOT_BOTTLE_BACKEND: docker
         run: |
           python3 --version
-          if command -v docker >/dev/null 2>&1; then
-            docker version || true
-          else
-            echo "docker not on PATH — integration tests will skip"
-          fi
+          python3 -m tests.backend_preflight docker
 
       - name: Run integration tests (docker) with coverage
         env:
@@ -157,10 +158,13 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Preflight — Firecracker host is ready
+        env:
+          BOT_BOTTLE_BACKEND: firecracker
         run: |
-          command -v firecracker >/dev/null || {
-            echo "firecracker not on PATH — provision the runner (README: Firecracker on Linux)"; exit 1; }
-          test -e /dev/kvm || { echo "/dev/kvm missing — KVM not available on this runner"; exit 1; }
+          # Standardized capability line — same probe (and PASS/FAIL wording)
+          # the integration skip guards use, so a missing backend is visible
+          # at the job level rather than hidden among `unittest.skip` lines.
+          python3 -m tests.backend_preflight firecracker
           # `backend status` exits non-zero unless the TAP pool is up + no
           # range overlap; it prints the exact `backend setup` fix.
           python3 cli.py backend status --backend=firecracker

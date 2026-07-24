@@ -31,7 +31,7 @@ from bot_bottle.backend.docker.gateway_net import next_free_ip
 from bot_bottle.orchestrator.client import OrchestratorClient
 from bot_bottle.orchestrator.gateway import GATEWAY_IMAGE, GATEWAY_NAME, GATEWAY_NETWORK
 from bot_bottle.orchestrator.lifecycle import OrchestratorService
-from tests._docker import skip_unless_docker
+from tests._backend import skip_unless_backend
 
 # One upstream reachable under two names; reflects the Authorization header so
 # the probe can see exactly what the gateway injected (or didn't).
@@ -72,7 +72,7 @@ _PROBE_SRC = (
 )
 
 
-@skip_unless_docker()
+@skip_unless_backend("docker")
 @unittest.skipIf(
     os.environ.get("GITEA_ACTIONS") == "true",
     "skipped under act_runner: the orchestrator container bind-mounts the repo "

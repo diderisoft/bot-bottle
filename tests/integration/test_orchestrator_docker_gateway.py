@@ -11,12 +11,12 @@ import subprocess
 import unittest
 
 from bot_bottle.orchestrator.gateway import DockerGateway
-from tests._docker import skip_unless_docker
+from tests._backend import skip_unless_backend
 
 IMAGE = "busybox"
 
 
-@skip_unless_docker()
+@skip_unless_backend("docker")
 class TestDockerGatewayIntegration(unittest.TestCase):
     def setUp(self) -> None:
         self.name = "bot-bottle-orch-gateway-itest-" + secrets.token_hex(4)

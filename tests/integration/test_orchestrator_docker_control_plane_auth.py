@@ -28,7 +28,7 @@ from pathlib import Path
 from bot_bottle.orchestrator.client import OrchestratorClient
 from bot_bottle.orchestrator.lifecycle import OrchestratorService
 from bot_bottle.paths import host_control_plane_token
-from tests._docker import skip_unless_docker
+from tests._backend import skip_unless_backend
 
 # Fixed (not per-run-suffixed) so repeated runs reuse the same layer-cached
 # image instead of leaking a new dangling tag on every invocation.
@@ -37,7 +37,7 @@ _TEST_GATEWAY_IMAGE = "bot-bottle-gateway:itest"
 _TEST_INFRA_IMAGE = "bot-bottle-infra:itest"
 
 
-@skip_unless_docker()
+@skip_unless_backend("docker")
 @unittest.skipIf(
     os.environ.get("GITEA_ACTIONS") == "true",
     "skipped under act_runner: the orchestrator container bind-mounts the repo "
