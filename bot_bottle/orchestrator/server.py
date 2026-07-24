@@ -48,7 +48,7 @@ via the orchestrator. Register/deregister without a launch are internal to
 `Orchestrator`, not exposed here.
 
 Routing/handling is the pure function `dispatch()` so it is unit-testable
-without a socket; `Handler` / `ControlPlaneServer` / `make_server` are a
+without a socket; `Handler` / `OrchestratorServer` / `make_server` are a
 thin stdlib adapter around it. Listing redacts identity tokens — they are
 returned only once, to the caller that launches the bottle.
 """
@@ -63,8 +63,8 @@ import sys
 import typing
 from urllib.parse import urlsplit
 
-from ..control_auth import ROLE_CLI, ROLES, verify
-from ..paths import CONTROL_PLANE_TOKEN_ENV
+from ..orchestrator_auth import ROLE_CLI, ROLES, verify
+from ..paths import ORCHESTRATOR_TOKEN_ENV
 from ..supervisor.types import TOOLS
 from .service import Orchestrator
 
@@ -72,13 +72,13 @@ from .service import Orchestrator
 Json = dict[str, object]
 
 # The request header carrying the caller's role-scoped control-plane token (a
-# signed JWT naming the caller's role — see control_auth). The role gates which
+# signed JWT naming the caller's role — see orchestrator_auth). The role gates which
 # routes the caller may reach: the data plane holds a `gateway` token good only
 # for the agent-facing lookups; the host CLI holds a `cli` token for the
 # operator/mutating routes. An agent that can merely *reach* the port holds no
 # token at all, and a compromised gateway holds only `gateway` — neither can
 # drive the operator routes (approve proposals, rewrite policy, read tokens).
-CONTROL_AUTH_HEADER = "x-bot-bottle-control-auth"
+ORCHESTRATOR_AUTH_HEADER = "x-bot-bottle-orchestrator-auth"
 
 # The routes the data plane (role `gateway`) is allowed to reach — exactly the
 # per-request lookups PolicyResolver makes. Every other authenticated route is
@@ -116,7 +116,7 @@ def dispatch(  # pylint: disable=too-many-return-statements,too-many-branches
 
     `role` is the caller's verified control-plane role (`gateway` or `cli`), or
     None for an unauthenticated request; an open-mode server (no signing key
-    configured — see `ControlPlaneServer`) passes `cli`. Every route except
+    configured — see `OrchestratorServer`) passes `cli`. Every route except
     `GET /health` requires a role: a missing role is 401, and a role that
     doesn't cover the route is 403 — so a `gateway` data-plane token can reach
     `/resolve` + `/supervise/{propose,poll}` but not the operator routes
@@ -365,10 +365,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         crashing the connection, so one bad request can't take the control
         plane down for the caller."""
         server = self.server
-        assert isinstance(server, ControlPlaneServer)
+        assert isinstance(server, OrchestratorServer)
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length > 0 else b""
-        role = server.role_for(self.headers.get(CONTROL_AUTH_HEADER, ""))
+        role = server.role_for(self.headers.get(ORCHESTRATOR_AUTH_HEADER, ""))
         try:
             status, payload = dispatch(
                 server.orchestrator, method, self.path, body, role=role)
@@ -396,11 +396,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self._serve("DELETE")
 
 
-class ControlPlaneServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+class OrchestratorServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     """Threading HTTP server that carries the orchestrator for its handlers.
 
     Holds the per-host control-plane *signing key* (from
-    `$BOT_BOTTLE_CONTROL_PLANE_TOKEN`, injected by the launcher into the
+    `$BOT_BOTTLE_ORCHESTRATOR_TOKEN`, injected by the launcher into the
     orchestrator process only) and verifies each request's role-scoped token
     against it. When a key is set, every route but `/health` requires a valid
     token whose role covers the route; when it is unset the server runs **open**
@@ -413,11 +413,11 @@ class ControlPlaneServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
     def __init__(self, address: tuple[str, int], orchestrator: Orchestrator) -> None:
         self.orchestrator = orchestrator
-        self._signing_key = os.environ.get(CONTROL_PLANE_TOKEN_ENV, "").strip()
+        self._signing_key = os.environ.get(ORCHESTRATOR_TOKEN_ENV, "").strip()
         if not self._signing_key:
             sys.stderr.write(
                 "orchestrator: WARNING — no control-plane signing key "
-                f"(${CONTROL_PLANE_TOKEN_ENV}); running WITHOUT caller "
+                f"(${ORCHESTRATOR_TOKEN_ENV}); running WITHOUT caller "
                 "authentication. Any client that can reach this port can drive "
                 "it. Backends that put the control plane on an agent-reachable "
                 "network MUST set this.\n"
@@ -438,13 +438,13 @@ class ControlPlaneServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 def make_server(
     orchestrator: Orchestrator, host: str = "127.0.0.1", port: int = 0
-) -> ControlPlaneServer:
+) -> OrchestratorServer:
     """Build (but do not start) a control-plane server. `port=0` binds an
     ephemeral port — read `server.server_address` for the actual one."""
-    return ControlPlaneServer((host, port), orchestrator)
+    return OrchestratorServer((host, port), orchestrator)
 
 
 __all__ = [
-    "dispatch", "Handler", "ControlPlaneServer", "make_server", "Json",
-    "CONTROL_AUTH_HEADER",
+    "dispatch", "Handler", "OrchestratorServer", "make_server", "Json",
+    "ORCHESTRATOR_AUTH_HEADER",
 ]

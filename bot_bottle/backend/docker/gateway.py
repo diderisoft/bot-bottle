@@ -4,11 +4,11 @@ import os
 import time
 from pathlib import Path
 
-from ...control_auth import ROLE_GATEWAY, mint
+from ...orchestrator_auth import ROLE_GATEWAY, mint
 from .util import run_docker
 from ...paths import (
-    CONTROL_AUTH_JWT_ENV,
-    host_control_plane_token,
+    ORCHESTRATOR_AUTH_JWT_ENV,
+    host_orchestrator_token,
     host_gateway_ca_dir,
 )
 from ...gateway import (
@@ -158,8 +158,8 @@ class DockerGateway(Gateway):
         # a `cli` token, so a compromised data-plane process can't drive the
         # operator routes (issue #469 review). Bare `--env NAME` keeps the value
         # off argv / `docker inspect`; only the gateway (not the agent) is given it.
-        argv += ["--env", CONTROL_AUTH_JWT_ENV]
-        run_env[CONTROL_AUTH_JWT_ENV] = mint(ROLE_GATEWAY, host_control_plane_token())
+        argv += ["--env", ORCHESTRATOR_AUTH_JWT_ENV]
+        run_env[ORCHESTRATOR_AUTH_JWT_ENV] = mint(ROLE_GATEWAY, host_orchestrator_token())
         argv.append(self.image_ref)
         proc = run_docker(argv, env=run_env)
         if proc.returncode != 0:

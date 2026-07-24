@@ -25,10 +25,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from bot_bottle.control_auth import ROLE_CLI, ROLE_GATEWAY, mint
+from bot_bottle.orchestrator_auth import ROLE_CLI, ROLE_GATEWAY, mint
 from bot_bottle.orchestrator.client import OrchestratorClient
 from bot_bottle.backend.docker.infra import DockerInfraService
-from bot_bottle.paths import host_control_plane_token
+from bot_bottle.paths import host_orchestrator_token
 from tests._docker import skip_unless_docker
 
 # Fixed (not per-run-suffixed) so repeated runs reuse the same layer-cached
@@ -46,20 +46,20 @@ _TEST_INFRA_IMAGE = "bot-bottle-infra:itest"
     "runner's /workspace — same host-bind-mount constraint as the other "
     "bottle-bringup integration tests",
 )
-class TestDockerControlPlaneAuthIntegration(unittest.TestCase):
+class TestDockerOrchestratorAuthIntegration(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         suffix = secrets.token_hex(4)
         cls._tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
         cls.addClassCleanup(cls._tmp.cleanup)
 
-        # host_control_plane_token() — both the token read below and the one
+        # host_orchestrator_token() — both the token read below and the one
         # DockerInfraService injects into the container's env — resolves its
         # path via the *ambient* BOT_BOTTLE_ROOT env var, not the host_root
         # kwarg passed to the constructor (that kwarg only controls the DB
         # bind-mount destination). Without pointing the env var at the same
         # throwaway dir, this "isolated" test would read/write the developer's
-        # real ~/.bot-bottle/control-plane-token.
+        # real ~/.bot-bottle/orchestrator-token.
         previous_root = os.environ.get("BOT_BOTTLE_ROOT")
 
         def _restore_root() -> None:
@@ -88,7 +88,7 @@ class TestDockerControlPlaneAuthIntegration(unittest.TestCase):
         cls.svc.ensure_running()
         # The control plane now verifies role-scoped signed tokens, not the raw
         # key. Mint one of each role from the host signing key (issue #469 review).
-        signing_key = host_control_plane_token()
+        signing_key = host_orchestrator_token()
         cls.cli_token = mint(ROLE_CLI, signing_key)
         cls.gateway_token = mint(ROLE_GATEWAY, signing_key)
 

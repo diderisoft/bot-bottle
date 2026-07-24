@@ -36,17 +36,16 @@ HOST_DB_FILENAME = "bot-bottle.db"
 # reading route (see orchestrator/server.py); it is held only by the
 # trusted callers (control plane, gateway, host CLI) and never handed to an
 # agent, so an agent that can reach the control-plane port still can't drive it.
-CONTROL_PLANE_TOKEN_FILENAME = "control-plane-token"
-# The env var carrying the control-plane *signing key* — held only by the
+ORCHESTRATOR_TOKEN_FILENAME = "orchestrator-token"
+# The env var carrying the orchestrator's *signing key* — held only by the
 # orchestrator (to verify tokens) and the host CLI (to mint its own), never by
-# the data plane. Same value as the host token file; the name is unchanged for
-# backward compatibility with existing launchers.
-CONTROL_PLANE_TOKEN_ENV = "BOT_BOTTLE_CONTROL_PLANE_TOKEN"
+# the data plane. Same value as the host token file.
+ORCHESTRATOR_TOKEN_ENV = "BOT_BOTTLE_ORCHESTRATOR_TOKEN"
 # The env var carrying the data plane's pre-minted `gateway`-role token (a
 # signed JWT the launcher mints from the signing key). The gateway presents this
 # on /resolve + /supervise/{propose,poll}; it never holds the signing key, so it
 # cannot forge a higher-privilege `cli` token (issue #469 review).
-CONTROL_AUTH_JWT_ENV = "BOT_BOTTLE_CONTROL_AUTH_JWT"
+ORCHESTRATOR_AUTH_JWT_ENV = "BOT_BOTTLE_ORCHESTRATOR_AUTH_JWT"
 
 # The host directory holding the gateway's persistent mitmproxy CA. Bind-mounted
 # into the infra/gateway container at mitmproxy's confdir so the self-generated
@@ -98,7 +97,7 @@ def host_gateway_ca_dir() -> Path:
     return ca_dir
 
 
-def host_control_plane_token() -> str:
+def host_orchestrator_token() -> str:
     """The per-host control-plane secret, minted (256-bit, url-safe) and
     persisted 0600 on first use, then reused.
 
@@ -107,7 +106,7 @@ def host_control_plane_token() -> str:
     *host* artifact — the file lives under the root the agent never mounts, and
     the env var is set only on the trusted containers — so reading it here is
     safe on the host launch path but the value never reaches a bottle."""
-    path = bot_bottle_root() / CONTROL_PLANE_TOKEN_FILENAME
+    path = bot_bottle_root() / ORCHESTRATOR_TOKEN_FILENAME
     try:
         existing = path.read_text().strip()
         if existing:
@@ -131,13 +130,13 @@ def host_control_plane_token() -> str:
 
 __all__ = [
     "HOST_DB_FILENAME",
-    "CONTROL_PLANE_TOKEN_FILENAME",
-    "CONTROL_PLANE_TOKEN_ENV",
-    "CONTROL_AUTH_JWT_ENV",
+    "ORCHESTRATOR_TOKEN_FILENAME",
+    "ORCHESTRATOR_TOKEN_ENV",
+    "ORCHESTRATOR_AUTH_JWT_ENV",
     "GATEWAY_CA_DIRNAME",
     "bot_bottle_root",
     "host_db_path",
     "host_db_dir",
     "host_gateway_ca_dir",
-    "host_control_plane_token",
+    "host_orchestrator_token",
 ]

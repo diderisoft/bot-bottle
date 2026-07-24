@@ -31,7 +31,7 @@ class TestSigningKeySync(unittest.TestCase):
                     patch.object(infra_vm, "bot_bottle_root", return_value=root):
                 out = infra_vm._with_signing_key(self._infra())
             self.assertIsInstance(out, infra_vm.InfraVm)  # returned for chaining
-            token = root / infra_vm.CONTROL_PLANE_TOKEN_FILENAME
+            token = root / infra_vm.ORCHESTRATOR_TOKEN_FILENAME
             self.assertEqual("the-signing-key", token.read_text())
             self.assertEqual(0o600, token.stat().st_mode & 0o777)
             # It cat'd the guest volume path over SSH.
@@ -44,16 +44,16 @@ class TestSigningKeySync(unittest.TestCase):
             with patch.object(infra_vm.subprocess, "run", return_value=proc), \
                     patch.object(infra_vm, "bot_bottle_root", return_value=root):
                 infra_vm._with_signing_key(self._infra())  # no raise
-            self.assertFalse((root / infra_vm.CONTROL_PLANE_TOKEN_FILENAME).exists())
+            self.assertFalse((root / infra_vm.ORCHESTRATOR_TOKEN_FILENAME).exists())
 
 
-class TestControlPlaneUrl(unittest.TestCase):
+class TestOrchestratorUrl(unittest.TestCase):
     def test_url_uses_guest_ip_and_port(self):
         infra = infra_vm.InfraVm(
             vm=MagicMock(), guest_ip="10.243.255.1", private_key=Path("/k"))
         self.assertEqual(
-            f"http://10.243.255.1:{infra_vm.CONTROL_PLANE_PORT}",
-            infra.control_plane_url,
+            f"http://10.243.255.1:{infra_vm.ORCHESTRATOR_PORT}",
+            infra.orchestrator_url,
         )
 
 
@@ -81,11 +81,11 @@ class TestBuildInfraRootfs(unittest.TestCase):
         # Role-scoped control-plane auth (issue #469 review): the orchestrator
         # gets the signing key, the gateway daemons get a pre-minted `gateway`
         # JWT — never open mode in the infra VM.
-        self.assertIn("host_control_plane_token", init)  # key generated on the volume
+        self.assertIn("host_orchestrator_token", init)  # key generated on the volume
         self.assertIn("mint, ROLE_GATEWAY", init)         # gateway JWT minted from it
-        self.assertIn('BOT_BOTTLE_CONTROL_PLANE_TOKEN="$CP_KEY" python3 -m bot_bottle.orchestrator',
+        self.assertIn('BOT_BOTTLE_ORCHESTRATOR_TOKEN="$CP_KEY" python3 -m bot_bottle.orchestrator',
                       init)  # key -> orchestrator only
-        self.assertIn('BOT_BOTTLE_CONTROL_AUTH_JWT="$GW_JWT"', init)  # JWT -> gateway daemons
+        self.assertIn('BOT_BOTTLE_ORCHESTRATOR_AUTH_JWT="$GW_JWT"', init)  # JWT -> gateway daemons
 
 
 class TestSshGatewayTransport(unittest.TestCase):

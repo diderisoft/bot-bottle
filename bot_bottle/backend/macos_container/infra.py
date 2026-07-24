@@ -48,12 +48,12 @@ from ...orchestrator.lifecycle import (
     OrchestratorStartError,
     source_hash,
 )
-from ...control_auth import ROLE_GATEWAY, mint
+from ...orchestrator_auth import ROLE_GATEWAY, mint
 from ...paths import (
-    CONTROL_AUTH_JWT_ENV,
-    CONTROL_PLANE_TOKEN_ENV,
+    ORCHESTRATOR_AUTH_JWT_ENV,
+    ORCHESTRATOR_TOKEN_ENV,
     HOST_DB_FILENAME,
-    host_control_plane_token,
+    host_orchestrator_token,
     host_gateway_ca_dir,
 )
 from .. import util as backend_util
@@ -117,7 +117,7 @@ class InfraEndpoint:
     """How to reach the running infra container. The control plane and the
     gateway are the same container, so one address serves both."""
 
-    control_plane_url: str   # http://<infra ip>:8099 — host CLI + registration
+    orchestrator_url: str   # http://<infra ip>:8099 — host CLI + registration
     gateway_ip: str          # same container; agents' proxy / git-http / MCP target
 
 
@@ -181,7 +181,7 @@ class MacosInfraService:
             return None
         url = self._resolve_url()
         if url and self.is_healthy(url):
-            return InfraEndpoint(control_plane_url=url, gateway_ip=_ip_of(url))
+            return InfraEndpoint(orchestrator_url=url, gateway_ip=_ip_of(url))
         return None
 
     def ensure_built(self) -> None:
@@ -247,17 +247,17 @@ class MacosInfraService:
             # run process below, so neither lands on argv or in `container
             # inspect`'s command line. The agent runs in a SEPARATE container that
             # is never given these vars, which is the whole point.
-            "--env", CONTROL_PLANE_TOKEN_ENV,
-            "--env", CONTROL_AUTH_JWT_ENV,
+            "--env", ORCHESTRATOR_TOKEN_ENV,
+            "--env", ORCHESTRATOR_AUTH_JWT_ENV,
             "--entrypoint", "sh",
             self.image,
             "-c", _init_script(self.port),
         ]
-        _signing_key = host_control_plane_token()
+        _signing_key = host_orchestrator_token()
         run_env = {
             **os.environ,
-            CONTROL_PLANE_TOKEN_ENV: _signing_key,
-            CONTROL_AUTH_JWT_ENV: mint(ROLE_GATEWAY, _signing_key),
+            ORCHESTRATOR_TOKEN_ENV: _signing_key,
+            ORCHESTRATOR_AUTH_JWT_ENV: mint(ROLE_GATEWAY, _signing_key),
         }
         result = container_mod.run_container_argv(argv, env=run_env)
         if result.returncode != 0:
@@ -272,7 +272,7 @@ class MacosInfraService:
             url = self._resolve_url()
             if url and self.is_healthy(url):
                 log.info("infra container healthy", context={"url": url})
-                return InfraEndpoint(control_plane_url=url, gateway_ip=_ip_of(url))
+                return InfraEndpoint(orchestrator_url=url, gateway_ip=_ip_of(url))
             if time.monotonic() >= deadline:
                 raise OrchestratorStartError(
                     f"infra container did not become healthy within "
@@ -306,7 +306,7 @@ def _ip_of(url: str) -> str:
     return url.split("://", 1)[-1].rsplit(":", 1)[0]
 
 
-def probe_control_plane_url(port: int = DEFAULT_PORT) -> str:
+def probe_orchestrator_url(port: int = DEFAULT_PORT) -> str:
     """The running infra container's control-plane URL, or "" if it isn't up.
     Used by host-side control-plane discovery (`discover_orchestrator_url`);
     safe to call on any host — returns "" when the container or the `container`

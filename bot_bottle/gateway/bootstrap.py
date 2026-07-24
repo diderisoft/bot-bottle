@@ -58,10 +58,10 @@ _READY_GATED_DAEMONS: tuple[str, ...] = ("git-gate", "git-http")
 # The data-plane daemons instead hold the pre-minted `gateway` JWT they present.
 # Scoping each to its process (even in the combined infra container) keeps a
 # compromised data-plane daemon from reading the key and minting a `cli` token
-# (issue #469 review). Values match paths.CONTROL_PLANE_TOKEN_ENV /
-# CONTROL_AUTH_JWT_ENV; hardcoded here so this supervisor stays import-light.
-_SIGNING_KEY_ENV = "BOT_BOTTLE_CONTROL_PLANE_TOKEN"
-_GATEWAY_JWT_ENV = "BOT_BOTTLE_CONTROL_AUTH_JWT"
+# (issue #469 review). Values match paths.ORCHESTRATOR_TOKEN_ENV /
+# ORCHESTRATOR_AUTH_JWT_ENV; hardcoded here so this supervisor stays import-light.
+_SIGNING_KEY_ENV = "BOT_BOTTLE_ORCHESTRATOR_TOKEN"
+_GATEWAY_JWT_ENV = "BOT_BOTTLE_ORCHESTRATOR_AUTH_JWT"
 
 # Daemons that must be requested explicitly via BOT_BOTTLE_GATEWAY_DAEMONS
 # and are NOT started in the default (env-var-unset) case. The orchestrator

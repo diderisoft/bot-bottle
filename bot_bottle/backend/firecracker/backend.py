@@ -120,4 +120,4 @@ class FirecrackerBottleBackend(
 
     def ensure_orchestrator(self) -> str:
         from . import infra_vm
-        return infra_vm.ensure_running().control_plane_url
+        return infra_vm.ensure_running().orchestrator_url

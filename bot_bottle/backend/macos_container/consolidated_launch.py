@@ -90,7 +90,7 @@ def ensure_gateway(
     service = service or MacosInfraService()
     infra = service.ensure_running()
     endpoint = GatewayEndpoint(
-        orchestrator_url=infra.control_plane_url,
+        orchestrator_url=infra.orchestrator_url,
         gateway_ip=infra.gateway_ip,
         gateway_ca_pem=service.ca_cert_pem(),
         network=service.network,

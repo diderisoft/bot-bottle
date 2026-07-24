@@ -19,7 +19,7 @@ from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
-from bot_bottle.control_auth import ROLE_CLI, ROLE_GATEWAY, mint
+from bot_bottle.orchestrator_auth import ROLE_CLI, ROLE_GATEWAY, mint
 from bot_bottle.orchestrator.broker import StubBroker
 from bot_bottle.orchestrator.server import dispatch, make_server
 from bot_bottle.orchestrator.registry import BottleRecord, RegistryStore
@@ -284,7 +284,7 @@ class TestServerRoundTrip(unittest.TestCase):
         self.assertEqual(reg["bottle_id"], attr["bottle_id"])
 
 
-class TestControlPlaneAuth(unittest.TestCase):
+class TestOrchestratorAuth(unittest.TestCase):
     """Role-scoped control-plane tokens (issue #400 / #469 review): every route
     but /health needs a valid token, and the token's role gates which routes it
     reaches — a `gateway` data-plane token can't drive the operator routes."""
@@ -349,7 +349,7 @@ class TestControlPlaneAuth(unittest.TestCase):
         self.assertIsNotNone(self.orch.registry.get(rec.bottle_id))
 
     def _server_with_key(self, signing_key: str):
-        with patch.dict("os.environ", {"BOT_BOTTLE_CONTROL_PLANE_TOKEN": signing_key}):
+        with patch.dict("os.environ", {"BOT_BOTTLE_ORCHESTRATOR_TOKEN": signing_key}):
             server = make_server(self.orch, "127.0.0.1", 0)
         self.addCleanup(server.server_close)
         threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -360,7 +360,7 @@ class TestControlPlaneAuth(unittest.TestCase):
     def _status(self, url: str, *, header: str | None = None) -> int:
         req = urllib.request.Request(url)
         if header is not None:
-            req.add_header("x-bot-bottle-control-auth", header)
+            req.add_header("x-bot-bottle-orchestrator-auth", header)
         try:
             return urllib.request.urlopen(req, timeout=5).status
         except urllib.error.HTTPError as e:
@@ -384,7 +384,7 @@ class TestControlPlaneAuth(unittest.TestCase):
         grants full cli access, so existing round-trip behavior is unchanged."""
         with patch.dict("os.environ", {}, clear=False):
             import os
-            os.environ.pop("BOT_BOTTLE_CONTROL_PLANE_TOKEN", None)
+            os.environ.pop("BOT_BOTTLE_ORCHESTRATOR_TOKEN", None)
             server = make_server(self.orch, "127.0.0.1", 0)
         self.addCleanup(server.server_close)
         self.assertEqual(ROLE_CLI, server.role_for(""))

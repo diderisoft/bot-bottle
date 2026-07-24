@@ -408,7 +408,7 @@ class TestEnsureOrchestrator(unittest.TestCase):
         with patch(
             "bot_bottle.backend.firecracker.infra_vm.ensure_running"
         ) as ensure_running:
-            ensure_running.return_value.control_plane_url = (
+            ensure_running.return_value.orchestrator_url = (
                 "http://10.243.255.1:8099"
             )
             url = b.ensure_orchestrator()
@@ -419,7 +419,7 @@ class TestEnsureOrchestrator(unittest.TestCase):
         with patch(
             "bot_bottle.backend.macos_container.infra.MacosInfraService"
         ) as service_cls:
-            service_cls.return_value.ensure_running.return_value.control_plane_url = (
+            service_cls.return_value.ensure_running.return_value.orchestrator_url = (
                 "http://192.168.128.2:8099"
             )
             url = b.ensure_orchestrator()

@@ -10,7 +10,7 @@ from bot_bottle.backend.macos_container.infra import (
     INFRA_DB_VOLUME,
     MacosInfraService,
     OrchestratorStartError,
-    probe_control_plane_url,
+    probe_orchestrator_url,
 )
 
 _INFRA = "bot_bottle.backend.macos_container.infra"
@@ -110,7 +110,7 @@ class TestInfraEnsureRunning(unittest.TestCase):
             mod.try_container_ipv4_on_network.return_value = "192.168.128.2"
             endpoint = svc.ensure_running()
         run.assert_not_called()
-        self.assertEqual("http://192.168.128.2:8099", endpoint.control_plane_url)
+        self.assertEqual("http://192.168.128.2:8099", endpoint.orchestrator_url)
         self.assertEqual("192.168.128.2", endpoint.gateway_ip)
 
     def test_changed_source_recreates(self) -> None:
@@ -176,16 +176,16 @@ class TestCaCertPem(unittest.TestCase):
                 svc.ca_cert_pem(timeout=0)
 
 
-class TestProbeControlPlane(unittest.TestCase):
+class TestProbeOrchestrator(unittest.TestCase):
     def test_returns_url_when_running(self) -> None:
         with patch(f"{_INFRA}.container_mod") as mod:
             mod.try_container_ipv4_on_network.return_value = "192.168.128.2"
-            self.assertEqual("http://192.168.128.2:8099", probe_control_plane_url())
+            self.assertEqual("http://192.168.128.2:8099", probe_orchestrator_url())
 
     def test_empty_when_absent(self) -> None:
         with patch(f"{_INFRA}.container_mod") as mod:
             mod.try_container_ipv4_on_network.return_value = ""
-            self.assertEqual("", probe_control_plane_url())
+            self.assertEqual("", probe_orchestrator_url())
 
 
 if __name__ == "__main__":

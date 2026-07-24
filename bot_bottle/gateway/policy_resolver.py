@@ -41,16 +41,16 @@ DEFAULT_TIMEOUT_SECONDS = 2.0
 # rather than imported because this module is COPYed flat into the gateway image,
 # free of bot-bottle imports — same rationale as IDENTITY_HEADER in egress_addon
 # / git_http_backend.
-CONTROL_AUTH_HEADER = "x-bot-bottle-control-auth"
-CONTROL_AUTH_JWT_ENV = "BOT_BOTTLE_CONTROL_AUTH_JWT"
+ORCHESTRATOR_AUTH_HEADER = "x-bot-bottle-orchestrator-auth"
+ORCHESTRATOR_AUTH_JWT_ENV = "BOT_BOTTLE_ORCHESTRATOR_AUTH_JWT"
 
 
-def _control_auth_headers() -> dict[str, str]:
+def _orchestrator_auth_headers() -> dict[str, str]:
     """The auth header to send, or {} when no token is configured (an open
     control plane, e.g. Firecracker behind its nft boundary — sending nothing
     is correct there and harmlessly ignored)."""
-    token = os.environ.get(CONTROL_AUTH_JWT_ENV, "").strip()
-    return {CONTROL_AUTH_HEADER: token} if token else {}
+    token = os.environ.get(ORCHESTRATOR_AUTH_JWT_ENV, "").strip()
+    return {ORCHESTRATOR_AUTH_HEADER: token} if token else {}
 
 
 class PolicyResolveError(RuntimeError):
@@ -74,7 +74,7 @@ class PolicyResolver:
         body = json.dumps(payload).encode()
         req = urllib.request.Request(
             f"{self._base}{path}", data=body, method="POST",
-            headers={"Content-Type": "application/json", **_control_auth_headers()},
+            headers={"Content-Type": "application/json", **_orchestrator_auth_headers()},
         )
         try:
             with urllib.request.urlopen(req, timeout=self._timeout) as resp:

@@ -58,7 +58,7 @@ class TestEnsureGateway(unittest.TestCase):
         from bot_bottle.backend.macos_container.infra import InfraEndpoint
         service = MagicMock()
         service.ensure_running.return_value = InfraEndpoint(
-            control_plane_url="http://192.168.128.2:8099",
+            orchestrator_url="http://192.168.128.2:8099",
             gateway_ip="192.168.128.2",
         )
         service.network = "bot-bottle-mac-gateway"
@@ -72,7 +72,7 @@ class TestEnsureGateway(unittest.TestCase):
         self.assertEqual("PEM", endpoint.gateway_ca_pem)
         self.assertEqual("bot-bottle-mac-gateway", endpoint.network)
 
-    def test_control_plane_and_gateway_share_one_address(self) -> None:
+    def test_orchestrator_and_gateway_share_one_address(self) -> None:
         """One infra container hosts both, so the gateway IP and the
         control-plane host are the same."""
         endpoint = self._run(self._service())

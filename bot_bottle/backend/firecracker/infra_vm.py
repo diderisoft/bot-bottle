@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Generator
 
 from ...log import die, info
-from ...paths import CONTROL_PLANE_TOKEN_FILENAME, bot_bottle_root
+from ...paths import ORCHESTRATOR_TOKEN_FILENAME, bot_bottle_root
 from .. import util as backend_util
 from ..docker import util as docker_mod
 from ..docker.gateway_provision import GatewayProvisionError
@@ -42,7 +42,7 @@ from . import firecracker_vm, infra_artifact, netpool, util
 # Where the infra VM keeps its control-plane signing key (generated on the
 # persistent /dev/vdb volume mounted at BOT_BOTTLE_ROOT). The host mirrors it
 # back so the CLI signs `cli` tokens the VM verifies (issue #469 review).
-_GUEST_SIGNING_KEY_PATH = "/var/lib/bot-bottle/control-plane-token"
+_GUEST_SIGNING_KEY_PATH = "/var/lib/bot-bottle/orchestrator-token"
 
 # The single infra-VM image: gateway data plane + baked control-plane source
 # (Dockerfile.infra FROM the gateway image). Built from source by default;
@@ -52,7 +52,7 @@ _GATEWAY_IMAGE = "bot-bottle-gateway:latest"
 _ORCHESTRATOR_IMAGE = "bot-bottle-orchestrator:latest"
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
-CONTROL_PLANE_PORT = 8099
+ORCHESTRATOR_PORT = 8099
 # Gateway data-plane ports (agent-facing): egress proxy, supervise MCP,
 # git-http. Reached by agent VMs over VM-to-VM routing (added next).
 EGRESS_PORT = 9099
@@ -84,8 +84,8 @@ class InfraVm:
     vm: firecracker_vm.VmHandle | None = None
 
     @property
-    def control_plane_url(self) -> str:
-        return f"http://{self.guest_ip}:{CONTROL_PLANE_PORT}"
+    def orchestrator_url(self) -> str:
+        return f"http://{self.guest_ip}:{ORCHESTRATOR_PORT}"
 
     def terminate(self) -> None:
         """Stop the infra VM — via the live handle if we booted it, else the
@@ -168,7 +168,7 @@ def ensure_running() -> InfraVm:
     flock, so two simultaneous first launches don't both boot on the same
     rootfs/PID. The healthy fast-path takes no lock."""
     slot = netpool.orch_slot()
-    url = f"http://{slot.guest_ip}:{CONTROL_PLANE_PORT}"
+    url = f"http://{slot.guest_ip}:{ORCHESTRATOR_PORT}"
     key = _infra_dir() / "id_ed25519"
     want = _expected_version()
     if _adoptable(key, url, want):
@@ -192,7 +192,7 @@ def ensure_running() -> InfraVm:
 
 def _with_signing_key(infra: InfraVm) -> InfraVm:
     """Mirror the infra VM's control-plane signing key (generated on its
-    persistent volume) into the host's control-plane-token file, so the host CLI
+    persistent volume) into the host's orchestrator-token file, so the host CLI
     signs `cli` tokens the VM verifies (issue #469 review). Best-effort: an
     unreadable key is logged, not fatal — the VM still enforces auth, but the CLI
     may then be rejected until the key is readable. Returns `infra` for chaining."""
@@ -205,7 +205,7 @@ def _with_signing_key(infra: InfraVm) -> InfraVm:
     if proc.returncode != 0 or not signing_key:
         info("infra signing key not yet readable; control-plane auth may fail")
         return infra
-    path = bot_bottle_root() / CONTROL_PLANE_TOKEN_FILENAME
+    path = bot_bottle_root() / ORCHESTRATOR_TOKEN_FILENAME
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
@@ -458,7 +458,7 @@ def wait_for_health(
 ) -> None:
     """Poll the control plane's /health until it answers 200 or the deadline
     passes. Dies (with the console tail) if the VMM exits early."""
-    url = f"{infra.control_plane_url}/health"
+    url = f"{infra.orchestrator_url}/health"
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if infra.vm is not None and not infra.vm.is_alive():
@@ -467,7 +467,7 @@ def wait_for_health(
         try:
             with urllib.request.urlopen(url, timeout=1.0) as resp:
                 if resp.status == 200:
-                    info(f"infra control plane healthy at {infra.control_plane_url}")
+                    info(f"infra control plane healthy at {infra.orchestrator_url}")
                     return
         except (urllib.error.URLError, TimeoutError, OSError):
             pass
@@ -525,11 +525,11 @@ cd /app
 # same VM — reaching the orchestrator over 127.0.0.1, past the nft boundary that
 # only fences off the separate agent VM — could drive the operator routes
 # (approve its own supervise proposals, rewrite policy, read injected tokens).
-CP_KEY=$(BOT_BOTTLE_ROOT=/var/lib/bot-bottle python3 -c 'from bot_bottle.paths import host_control_plane_token as t; print(t())')
-GW_JWT=$(BB_SIGNING_KEY="$CP_KEY" python3 -c 'import os; from bot_bottle.control_auth import mint, ROLE_GATEWAY; print(mint(ROLE_GATEWAY, os.environ["BB_SIGNING_KEY"]))')
+CP_KEY=$(BOT_BOTTLE_ROOT=/var/lib/bot-bottle python3 -c 'from bot_bottle.paths import host_orchestrator_token as t; print(t())')
+GW_JWT=$(BB_SIGNING_KEY="$CP_KEY" python3 -c 'import os; from bot_bottle.orchestrator_auth import mint, ROLE_GATEWAY; print(mint(ROLE_GATEWAY, os.environ["BB_SIGNING_KEY"]))')
 
-BOT_BOTTLE_ROOT=/var/lib/bot-bottle BOT_BOTTLE_CONTROL_PLANE_TOKEN="$CP_KEY" python3 -m bot_bottle.orchestrator \\
-    --host 0.0.0.0 --port {CONTROL_PLANE_PORT} --broker stub &
+BOT_BOTTLE_ROOT=/var/lib/bot-bottle BOT_BOTTLE_ORCHESTRATOR_TOKEN="$CP_KEY" python3 -m bot_bottle.orchestrator \\
+    --host 0.0.0.0 --port {ORCHESTRATOR_PORT} --broker stub &
 
 # Gateway data plane, multi-tenant: each request resolves source-IP ->
 # policy against the local control plane. The VM backend reaches git over
@@ -540,8 +540,8 @@ BOT_BOTTLE_ROOT=/var/lib/bot-bottle BOT_BOTTLE_CONTROL_PLANE_TOKEN="$CP_KEY" pyt
 # the pre-minted `gateway` JWT; gateway_init keeps the signing key out of the
 # data-plane daemons' env.
 BOT_BOTTLE_GATEWAY_DAEMONS=egress,git-http,supervise \\
-BOT_BOTTLE_ORCHESTRATOR_URL=http://127.0.0.1:{CONTROL_PLANE_PORT} \\
-BOT_BOTTLE_CONTROL_AUTH_JWT="$GW_JWT" \\
+BOT_BOTTLE_ORCHESTRATOR_URL=http://127.0.0.1:{ORCHESTRATOR_PORT} \\
+BOT_BOTTLE_ORCHESTRATOR_AUTH_JWT="$GW_JWT" \\
     python3 -m bot_bottle.gateway.bootstrap &
 
 # Reap as PID 1; children are backgrounded, so `wait` blocks.

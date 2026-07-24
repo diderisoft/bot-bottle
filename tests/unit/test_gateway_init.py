@@ -64,7 +64,7 @@ class TestEnvForDaemon(unittest.TestCase):
         self.assertNotIn("X", self._BASE)
 
 
-class TestControlPlaneEnvScoping(unittest.TestCase):
+class TestOrchestratorEnvScoping(unittest.TestCase):
     """The control-plane signing key stays with the orchestrator; the pre-minted
     `gateway` JWT goes to the data-plane daemons (issue #469 review). Scoping
     them per-process keeps a compromised data-plane daemon from reading the key
@@ -72,20 +72,20 @@ class TestControlPlaneEnvScoping(unittest.TestCase):
 
     _BASE = {
         "PATH": "/usr/bin",
-        "BOT_BOTTLE_CONTROL_PLANE_TOKEN": "sk-x",
-        "BOT_BOTTLE_CONTROL_AUTH_JWT": "gw-jwt",
+        "BOT_BOTTLE_ORCHESTRATOR_TOKEN": "sk-x",
+        "BOT_BOTTLE_ORCHESTRATOR_AUTH_JWT": "gw-jwt",
     }
 
     def test_orchestrator_gets_key_not_jwt(self):
         env = _env_for_daemon("orchestrator", self._BASE)
-        self.assertEqual("sk-x", env["BOT_BOTTLE_CONTROL_PLANE_TOKEN"])
-        self.assertNotIn("BOT_BOTTLE_CONTROL_AUTH_JWT", env)
+        self.assertEqual("sk-x", env["BOT_BOTTLE_ORCHESTRATOR_TOKEN"])
+        self.assertNotIn("BOT_BOTTLE_ORCHESTRATOR_AUTH_JWT", env)
 
     def test_data_plane_daemons_get_jwt_not_key(self):
         for name in ("egress", "git-gate", "git-http", "supervise"):
             env = _env_for_daemon(name, self._BASE)
-            self.assertNotIn("BOT_BOTTLE_CONTROL_PLANE_TOKEN", env, name)
-            self.assertEqual("gw-jwt", env["BOT_BOTTLE_CONTROL_AUTH_JWT"], name)
+            self.assertNotIn("BOT_BOTTLE_ORCHESTRATOR_TOKEN", env, name)
+            self.assertEqual("gw-jwt", env["BOT_BOTTLE_ORCHESTRATOR_AUTH_JWT"], name)
 
 
 class TestSelectedDaemons(unittest.TestCase):

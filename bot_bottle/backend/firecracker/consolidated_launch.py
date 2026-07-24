@@ -124,7 +124,7 @@ def launch_consolidated(
     provision its git-gate state into the gateway VM. Returns the context the
     agent-VM launch needs. Raises on failure — the caller tears down."""
     infra = infra_vm.ensure_running()
-    url = infra.control_plane_url
+    url = infra.orchestrator_url
     client = OrchestratorClient(url)
     _reprovision_running_bottles(client)
 

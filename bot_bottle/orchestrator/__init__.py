@@ -17,7 +17,7 @@ backend-neutral "consolidation core" that needs no VM packaging:
   * `service`       — the `Orchestrator`: owns the registry, brokers the
                       launch lifecycle (launch/teardown), manages the
                       shared gateway, attributes.
-  * `control_plane` — the HTTP control-plane RPC (launch / teardown /
+  * `server` — the HTTP control-plane RPC (launch / teardown /
                       list / attribute / gateway / health).
 
 The actual backend-native launch (a real docker/firecracker broker) and
@@ -40,7 +40,7 @@ from .broker import (
 from .docker_broker import DockerBroker, DockerBrokerError
 from ..gateway import Gateway, GatewayError
 from .service import Orchestrator
-from .server import ControlPlaneServer, dispatch, make_server
+from .server import OrchestratorServer, dispatch, make_server
 
 __all__ = [
     "BottleRecord",
@@ -57,7 +57,7 @@ __all__ = [
     "sign_request",
     "verify_request",
     "Orchestrator",
-    "ControlPlaneServer",
+    "OrchestratorServer",
     "dispatch",
     "make_server",
 ]

@@ -25,13 +25,13 @@ import urllib.request
 from pathlib import Path
 
 from ... import log
-from ...control_auth import ROLE_GATEWAY, mint
+from ...orchestrator_auth import ROLE_GATEWAY, mint
 from .util import run_docker
 from ...paths import (
-    CONTROL_AUTH_JWT_ENV,
-    CONTROL_PLANE_TOKEN_ENV,
+    ORCHESTRATOR_AUTH_JWT_ENV,
+    ORCHESTRATOR_TOKEN_ENV,
     bot_bottle_root,
-    host_control_plane_token,
+    host_orchestrator_token,
     host_gateway_ca_dir,
 )
 from ...gateway import (
@@ -176,7 +176,7 @@ class DockerInfraService:
         so a later `ensure_running` can detect a real code change."""
         self._ensure_network()
         run_docker(["docker", "rm", "--force", self._infra_name])
-        _signing_key = host_control_plane_token()
+        _signing_key = host_orchestrator_token()
         proc = run_docker([
             "docker", "run", "--detach",
             "--name", self._infra_name,
@@ -204,8 +204,8 @@ class DockerInfraService:
             # pre-minted `gateway` JWT (data-plane daemons: present it). gateway_init
             # scopes each to its process, so a compromised data-plane daemon never
             # sees the key and can't mint a `cli` token (issue #469 review).
-            "--env", CONTROL_PLANE_TOKEN_ENV,
-            "--env", CONTROL_AUTH_JWT_ENV,
+            "--env", ORCHESTRATOR_TOKEN_ENV,
+            "--env", ORCHESTRATOR_AUTH_JWT_ENV,
             # Gateway daemons reach the orchestrator over loopback at its
             # fixed internal port (DEFAULT_PORT), independent of self.port.
             "--env", f"BOT_BOTTLE_ORCHESTRATOR_URL=http://127.0.0.1:{DEFAULT_PORT}",
@@ -214,8 +214,8 @@ class DockerInfraService:
             self.image,
         ], env={
             **os.environ,
-            CONTROL_PLANE_TOKEN_ENV: _signing_key,
-            CONTROL_AUTH_JWT_ENV: mint(ROLE_GATEWAY, _signing_key),
+            ORCHESTRATOR_TOKEN_ENV: _signing_key,
+            ORCHESTRATOR_AUTH_JWT_ENV: mint(ROLE_GATEWAY, _signing_key),
         })
         if proc.returncode != 0:
             raise OrchestratorStartError(

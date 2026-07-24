@@ -18,9 +18,9 @@ import urllib.request
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from ..control_auth import ROLE_CLI, mint
-from ..paths import host_control_plane_token
-from .server import CONTROL_AUTH_HEADER
+from ..orchestrator_auth import ROLE_CLI, mint
+from ..paths import host_orchestrator_token
+from .server import ORCHESTRATOR_AUTH_HEADER
 
 DEFAULT_TIMEOUT_SECONDS = 5.0
 
@@ -32,7 +32,7 @@ def _host_auth_token() -> str:
     "" means 'send no auth header' — correct against an open (unconfigured)
     control plane, and harmlessly rejected by a secured one."""
     try:
-        return mint(ROLE_CLI, host_control_plane_token())
+        return mint(ROLE_CLI, host_orchestrator_token())
     except (OSError, ValueError):
         return ""
 
@@ -83,7 +83,7 @@ class OrchestratorClient:
         data = json.dumps(body).encode() if body is not None else None
         headers = {"Content-Type": "application/json"} if data is not None else {}
         if self._auth_token:
-            headers[CONTROL_AUTH_HEADER] = self._auth_token
+            headers[ORCHESTRATOR_AUTH_HEADER] = self._auth_token
         req = urllib.request.Request(
             f"{self._base}{path}", data=data, method=method, headers=headers,
         )
@@ -252,14 +252,14 @@ def discover_orchestrator_url(*, timeout: float = 2.0) -> str:
         candidates.append("http://127.0.0.1:8099")
     try:  # firecracker: infra VM control plane on the orchestrator TAP
         from ..backend.firecracker import netpool
-        from ..backend.firecracker.infra_vm import CONTROL_PLANE_PORT
+        from ..backend.firecracker.infra_vm import ORCHESTRATOR_PORT
         candidates.append(
-            f"http://{netpool.orch_slot().guest_ip}:{CONTROL_PLANE_PORT}")
+            f"http://{netpool.orch_slot().guest_ip}:{ORCHESTRATOR_PORT}")
     except Exception:  # noqa: BLE001 — backend optional / not firecracker
         pass
     try:  # macOS: infra container control plane on its host-only address
-        from ..backend.macos_container.infra import probe_control_plane_url
-        url = probe_control_plane_url()
+        from ..backend.macos_container.infra import probe_orchestrator_url
+        url = probe_orchestrator_url()
         if url:
             candidates.append(url)
     except Exception:  # noqa: BLE001 — backend optional / not macOS
