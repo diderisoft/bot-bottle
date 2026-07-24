@@ -5,7 +5,6 @@ fallback paths."""
 from __future__ import annotations
 
 import tempfile
-import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -23,7 +22,6 @@ from bot_bottle.orchestrator.supervisor import (
     read_audit_entries,
     read_proposal,
     read_response,
-    wait_for_response,
     write_audit_entry,
 )
 
@@ -81,22 +79,6 @@ class TestReadMalformed(unittest.TestCase):
                 self.assertEqual([], list_pending_proposals("slug"))
 
 
-class TestWaitForResponse(unittest.TestCase):
-    def test_missing_response_times_out(self) -> None:
-        with tempfile.TemporaryDirectory() as d:
-            with patch.dict("os.environ", {"HOME": d}):
-                QueueStore("slug").migrate()
-                with self.assertRaises(TimeoutError):
-                    wait_for_response("slug", "p", deadline=time.monotonic())
-
-    def test_empty_db_response_does_not_count(self) -> None:
-        with tempfile.TemporaryDirectory() as d:
-            with patch.dict("os.environ", {"HOME": d}):
-                QueueStore("slug").migrate()
-                with self.assertRaises(TimeoutError):
-                    wait_for_response("slug", "p", deadline=time.monotonic())
-
-
 class TestReadAuditEntries(unittest.TestCase):
     def test_missing_log_returns_empty(self) -> None:
         with tempfile.TemporaryDirectory() as home, \
@@ -129,19 +111,6 @@ class TestReadAuditEntries(unittest.TestCase):
             self.assertEqual(1, len(entries))
             self.assertEqual("approve", entries[0].operator_action)
 
-    def test_legacy_audit_log_file_does_not_count(self) -> None:
-        with tempfile.TemporaryDirectory() as home, \
-                patch.dict("os.environ", {"HOME": home}):
-            path = supervise.audit_log_path("egress", "slug")
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
-                '{"timestamp": "t", "bottle_slug": "slug", "component": "egress",'
-                ' "operator_action": "approve", "operator_notes": "",'
-                ' "justification": "", "diff": ""}\n'
-            )
-            entries = read_audit_entries("egress", "slug")
-            self.assertEqual([], entries)
-
 
 class TestStoreGuardBranches(unittest.TestCase):
     """Direct QueueStore / AuditStore construction and early-return guard branches."""
@@ -169,14 +138,6 @@ class TestStoreGuardBranches(unittest.TestCase):
             store.migrate()
             db.unlink()
             self.assertEqual([], store.list_all_pending_proposals())
-
-    def test_queue_store_missing_db_archive_is_noop(self):
-        with tempfile.TemporaryDirectory() as d:
-            db = Path(d) / "q.db"
-            store = QueueStore("key", db_path=db)
-            store.migrate()
-            db.unlink()
-            store.archive_proposal("anything")  # must not raise
 
     def test_queue_store_chmod_oserror_is_swallowed(self):
         with tempfile.TemporaryDirectory() as d:

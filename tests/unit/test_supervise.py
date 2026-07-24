@@ -1,8 +1,6 @@
 """Unit: supervise queue + audit log + diff helpers (PRD 0013)."""
 
 import tempfile
-import threading
-import time
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,14 +19,12 @@ from bot_bottle.orchestrator.supervisor import (
     STATUS_REJECTED,
     TOOL_EGRESS_ALLOW,
     TOOL_GITLEAKS_ALLOW,
-    archive_proposal,
     list_pending_proposals,
     read_audit_entries,
     read_proposal,
     read_response,
     render_diff,
     sha256_hex,
-    wait_for_response,
     write_audit_entry,
     write_proposal,
     write_response,
@@ -172,48 +168,6 @@ class TestQueueIO(unittest.TestCase):
         r = Response(proposal_id="xyz", status=STATUS_REJECTED, notes="no")
         write_response(self.slug, r)
         self.assertEqual(r, read_response(self.slug, "xyz"))
-
-    def test_wait_for_response_returns_when_file_appears(self):
-        p = _proposal()
-        write_proposal(p)
-
-        def write_after_delay():
-            time.sleep(0.05)
-            write_response(self.slug, Response(
-                proposal_id=p.id, status=STATUS_APPROVED, notes="ok",
-            ))
-
-        t = threading.Thread(target=write_after_delay)
-        t.start()
-        try:
-            r = wait_for_response(self.slug, p.id, poll_interval=0.01)
-        finally:
-            t.join()
-        self.assertEqual(STATUS_APPROVED, r.status)
-        self.assertEqual("ok", r.notes)
-
-    def test_wait_for_response_times_out(self):
-        deadline = time.monotonic() + 0.05
-        with self.assertRaises(TimeoutError):
-            wait_for_response(
-                self.slug, "never",
-                poll_interval=0.01, deadline=deadline,
-            )
-
-    def test_archive_proposal_hides_rows(self):
-        p = _proposal()
-        write_proposal(p)
-        write_response(self.slug, Response(
-            proposal_id=p.id, status=STATUS_APPROVED, notes="",
-        ))
-        archive_proposal(self.slug, p.id)
-        self.assertEqual([], list_pending_proposals(self.slug))
-        with self.assertRaises(FileNotFoundError):
-            read_response(self.slug, p.id)
-
-    def test_archive_is_idempotent_on_missing_files(self):
-        # Should not raise.
-        archive_proposal(self.slug, "nope")
 
 
 class TestAuditLog(unittest.TestCase):

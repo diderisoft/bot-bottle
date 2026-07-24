@@ -20,9 +20,6 @@ from ...supervisor.plan import SupervisePlan
 from ..store.store_manager import StoreManager
 from .queue import (
     archive_all_proposals,
-    archive_proposal,
-    audit_dir,
-    audit_log_path,
     list_all_pending_proposals,
     list_pending_proposals,
     read_audit_entries,
@@ -30,7 +27,6 @@ from .queue import (
     read_response,
     render_diff,
     sha256_hex,
-    wait_for_response,
     write_audit_entry,
     write_proposal,
     write_response,

@@ -167,25 +167,6 @@ class QueueStore(DbStore):
             raise FileNotFoundError(proposal_id)
         return self._row_to_response(row)
 
-    def archive_proposal(self, proposal_id: str) -> None:
-        if not self.db_path.is_file():
-            return
-        with self._connection() as conn:
-            conn.execute(
-                """
-                UPDATE supervise_proposals SET archived = 1
-                WHERE queue_key = ? AND id = ?
-                """,
-                (self.queue_key, proposal_id),
-            )
-            conn.execute(
-                """
-                UPDATE supervise_responses SET archived = 1
-                WHERE queue_key = ? AND proposal_id = ?
-                """,
-                (self.queue_key, proposal_id),
-            )
-
     def archive_all(self) -> None:
         """Archive every proposal + response for this queue key. Used to reap a
         bottle's supervise records when it is torn down or reconciled away —
