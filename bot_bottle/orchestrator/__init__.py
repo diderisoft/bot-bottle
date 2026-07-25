@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     )
     from .docker_broker import DockerBroker, DockerBrokerError
     from ..gateway import Gateway, GatewayError
+    from .lifecycle import Orchestrator
     from .service import OrchestratorCore
     from .server import OrchestratorServer, dispatch, make_server
 
@@ -64,6 +65,7 @@ _LAZY: dict[str, str] = {
     "DockerBrokerError": ".docker_broker",
     "Gateway": "..gateway",
     "GatewayError": "..gateway",
+    "Orchestrator": ".lifecycle",
     "OrchestratorCore": ".service",
     "OrchestratorServer": ".server",
     "dispatch": ".server",
@@ -96,6 +98,7 @@ __all__ = [
     "DockerBrokerError",
     "Gateway",
     "GatewayError",
+    "Orchestrator",
     "OrchestratorCore",
     "OrchestratorServer",
     "dispatch",
