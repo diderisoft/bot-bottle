@@ -64,12 +64,13 @@ IP_BASE="${BOT_BOTTLE_FC_IP_BASE:-$(_default BOT_BOTTLE_FC_IP_BASE)}"
 PREFIX="${BOT_BOTTLE_FC_IFACE_PREFIX:-$(_default BOT_BOTTLE_FC_IFACE_PREFIX)}"
 TABLE="${BOT_BOTTLE_FC_NFT_TABLE:-$(_default BOT_BOTTLE_FC_NFT_TABLE)}"
 ORCH_IFACE="${BOT_BOTTLE_FC_ORCH_IFACE:-$(_default BOT_BOTTLE_FC_ORCH_IFACE)}"
+GW_IFACE="${BOT_BOTTLE_FC_GW_IFACE:-$(_default BOT_BOTTLE_FC_GW_IFACE)}"
 OWNER="${BOT_BOTTLE_FC_OWNER:-${SUDO_USER:-$USER}}"
 GROUP="${BOT_BOTTLE_FC_GROUP:-}"
 
 # Fail loudly rather than provisioning a half/empty range if a value
 # resolved to nothing (env unset AND the shared file unreadable).
-for _v in POOL_SIZE IP_BASE PREFIX TABLE ORCH_IFACE; do
+for _v in POOL_SIZE IP_BASE PREFIX TABLE ORCH_IFACE GW_IFACE; do
     [ -n "${!_v}" ] || { echo "error: $_v unresolved (set BOT_BOTTLE_FC_* or fix $_DEFAULTS)" >&2; exit 1; }
 done
 
@@ -90,12 +91,19 @@ host_ip() { _int_to_ip $(( $(_ip_to_int "$IP_BASE") + 2*$1 )); }
 guest_ip() { _int_to_ip $(( $(_ip_to_int "$IP_BASE") + 2*$1 + 1 )); }
 iface()   { echo "${PREFIX}$1"; }
 
-# Orchestrator/gateway VM link: a /31 at the TOP of the IP_BASE /16
-# (host x.y.255.0, guest x.y.255.1), well clear of the agent pool near
-# the bottom of the block. Must match netpool.py:orch_slot().
+# Orchestrator VM link: a /31 at the TOP of the IP_BASE /16 (host
+# x.y.255.0, guest x.y.255.1), well clear of the agent pool near the
+# bottom of the block. Must match netpool.py:orch_slot().
 _orch_base() { echo $(( ($(_ip_to_int "$IP_BASE") & 0xFFFF0000) + 0xFF00 )); }
 orch_host()  { _int_to_ip "$(_orch_base)"; }
 orch_guest() { _int_to_ip $(( $(_orch_base) + 1 )); }
+
+# Gateway (data-plane) VM link: the /31 immediately above the
+# orchestrator link (host x.y.255.2, guest x.y.255.3). Must match
+# netpool.py:gw_slot().
+_gw_base() { echo $(( ($(_ip_to_int "$IP_BASE") & 0xFFFF0000) + 0xFF02 )); }
+gw_host()  { _int_to_ip "$(_gw_base)"; }
+gw_guest() { _int_to_ip $(( $(_gw_base) + 1 )); }
 
 require_root() {
     if [ "$(id -u)" -ne 0 ]; then
@@ -133,21 +141,26 @@ cmd_up() {
         echo "  $dev  host=$host  guest=$(guest_ip "$i")  $own_desc"
     done
 
-    # The orchestrator/gateway VM's dedicated link. Same rootless-open
-    # ownership as the pool, but NAT'd to the internet (below) — it is
-    # trusted infra, not an isolated agent slot.
-    ip link show "$ORCH_IFACE" >/dev/null 2>&1 \
-        || ip tuntap add dev "$ORCH_IFACE" mode tap "${own_args[@]}"
-    ip addr replace "$(orch_host)/31" dev "$ORCH_IFACE"
-    ip link set "$ORCH_IFACE" up
+    # The two infra VM links (orchestrator control plane + gateway data
+    # plane). Same rootless-open ownership as the pool, but NAT'd to the
+    # internet (below) — trusted infra, not isolated agent slots.
+    local pair ifc iaddr
+    for pair in "$ORCH_IFACE:$(orch_host)" "$GW_IFACE:$(gw_host)"; do
+        ifc="${pair%%:*}" ; iaddr="${pair##*:}"
+        ip link show "$ifc" >/dev/null 2>&1 \
+            || ip tuntap add dev "$ifc" mode tap "${own_args[@]}"
+        ip addr replace "$iaddr/31" dev "$ifc"
+        ip link set "$ifc" up
+    done
     echo "  $ORCH_IFACE  host=$(orch_host)  guest=$(orch_guest)  (NAT'd egress)  $own_desc"
+    echo "  $GW_IFACE  host=$(gw_host)  guest=$(gw_guest)  (NAT'd egress)  $own_desc"
 
     _install_nft
     echo "nftables table inet $TABLE installed (fail-closed boundary)"
-    _install_orch_egress
-    echo "orchestrator egress installed ($ORCH_IFACE -> NAT out)"
+    _install_infra_egress
+    echo "infra egress installed ($ORCH_IFACE, $GW_IFACE -> NAT out; $GW_IFACE -> $ORCH_IFACE)"
     _install_gateway_route
-    echo "agent->gateway route installed (${PREFIX}* :$GATEWAY_PORTS -> $(orch_guest))"
+    echo "agent->gateway route installed (${PREFIX}* :$GATEWAY_PORTS -> $(gw_guest))"
     echo "done."
 }
 
@@ -200,22 +213,27 @@ ${antispoof}        ct state established,related accept
 EOF
 }
 
-# Give the orchestrator/gateway VM real internet egress (agent VMs get
-# none — that's the isolation table above). Three parts, because the
-# path must work both during bootstrap (Docker still present) and after
-# Docker is removed:
-#   * masquerade   — SNAT the orch guest /31 out the host uplink so its
-#                    RFC-1918 address can reach the internet.
-#   * nft forward  — accept the orch link's forward path (load-bearing
+# Give the two infra VMs (orchestrator control plane + gateway data
+# plane) real internet egress, and let the gateway reach the
+# orchestrator (agent VMs get neither — that's the isolation table
+# above). Three parts, because the path must work both during bootstrap
+# (Docker still present) and after Docker is removed:
+#   * masquerade   — SNAT each infra guest /31 out the host uplink so its
+#                    RFC-1918 address can reach the internet. Excludes
+#                    BOTH infra links, so gateway<->orchestrator traffic
+#                    keeps its real source IP (never SNAT'd internally).
+#   * nft forward  — accept each infra link's forward path (load-bearing
 #                    on a pure-nft host whose FORWARD policy drops; a
-#                    harmless no-op where forwarding is already open).
-#                    It never drops, so it can't weaken the isolation
-#                    table's agent drops.
+#                    harmless no-op where forwarding is already open). The
+#                    gateway link's `iifname "$GW_IFACE" accept` is what
+#                    lets the gateway VM reach the orchestrator's control
+#                    plane at orch_guest:8099. It never drops, so it can't
+#                    weaken the isolation table's agent drops.
 #   * DOCKER-USER  — during bootstrap Docker's FORWARD chain policy is
 #                    DROP; its sanctioned DOCKER-USER hook is the only
 #                    place a user ACCEPT survives. Best-effort + guarded
 #                    (skipped once Docker is gone).
-_install_orch_egress() {
+_install_infra_egress() {
     nft -f - <<EOF
 table inet ${TABLE}_nat {}
 delete table inet ${TABLE}_nat
@@ -224,40 +242,47 @@ table inet ${TABLE}_nat {
         type filter hook forward priority -10; policy accept;
         iifname "$ORCH_IFACE" accept
         oifname "$ORCH_IFACE" ct state established,related accept
+        iifname "$GW_IFACE" accept
+        oifname "$GW_IFACE" ct state established,related accept
     }
     chain postrouting {
         type nat hook postrouting priority 100; policy accept;
-        ip saddr $(orch_guest) oifname != "$ORCH_IFACE" masquerade
+        ip saddr $(orch_guest) oifname != "$ORCH_IFACE" oifname != "$GW_IFACE" masquerade
+        ip saddr $(gw_guest) oifname != "$ORCH_IFACE" oifname != "$GW_IFACE" masquerade
     }
 }
 EOF
-    _docker_user_orch add
+    _docker_user_infra add
 }
 
-# Insert (add) or delete (del) the DOCKER-USER ACCEPT rules for the
-# orchestrator link, idempotently, only when the chain exists.
-_docker_user_orch() {
-    local op="$1" flag
+# Insert (add) or delete (del) the DOCKER-USER ACCEPT rules for both
+# infra links, idempotently, only when the chain exists.
+_docker_user_infra() {
+    local op="$1" flag ifc
     command -v iptables >/dev/null 2>&1 || return 0
     iptables -t filter -L DOCKER-USER >/dev/null 2>&1 || return 0
-    for flag in "-i" "-o"; do
-        if [ "$op" = add ]; then
-            iptables -C DOCKER-USER "$flag" "$ORCH_IFACE" -j ACCEPT 2>/dev/null \
-                || iptables -I DOCKER-USER "$flag" "$ORCH_IFACE" -j ACCEPT
-        else
-            iptables -D DOCKER-USER "$flag" "$ORCH_IFACE" -j ACCEPT 2>/dev/null || true
-        fi
+    for ifc in "$ORCH_IFACE" "$GW_IFACE"; do
+        for flag in "-i" "-o"; do
+            if [ "$op" = add ]; then
+                iptables -C DOCKER-USER "$flag" "$ifc" -j ACCEPT 2>/dev/null \
+                    || iptables -I DOCKER-USER "$flag" "$ifc" -j ACCEPT
+            else
+                iptables -D DOCKER-USER "$flag" "$ifc" -j ACCEPT 2>/dev/null || true
+            fi
+        done
     done
 }
 
 # Agent -> gateway VM routing. The shared gateway (egress / supervise /
-# git-http) runs in the orchestrator/infra VM at $(orch_guest). Agents keep
-# addressing their own host-side TAP IP on the gateway ports; a PREROUTING
-# DNAT redirects that to the infra VM, and the isolation table's
-# `ct status dnat accept` forward rule lets it through — every other agent
-# egress stays dropped. Source IP is deliberately NOT masqueraded: the
-# gateway attributes each request to the originating bottle by its (nft +
-# /31 unspoofable) guest IP.
+# git-http) runs in its own data-plane VM at $(gw_guest), split from the
+# orchestrator per PRD 0070 so a breached agent has no L3 route to the
+# control plane. Agents keep addressing their own host-side TAP IP on the
+# gateway ports; a PREROUTING DNAT redirects that to the gateway VM, and
+# the isolation table's `ct status dnat accept` forward rule lets it
+# through — every other agent egress stays dropped, including any packet
+# aimed at the orchestrator link. Source IP is deliberately NOT
+# masqueraded: the gateway attributes each request to the originating
+# bottle by its (nft + /31 unspoofable) guest IP.
 _install_gateway_route() {
     nft -f - <<EOF
 table ip ${TABLE}_gw {}
@@ -265,7 +290,7 @@ delete table ip ${TABLE}_gw
 table ip ${TABLE}_gw {
     chain prerouting {
         type nat hook prerouting priority -100; policy accept;
-        iifname "${PREFIX}*" tcp dport { $GATEWAY_PORTS } dnat to $(orch_guest)
+        iifname "${PREFIX}*" tcp dport { $GATEWAY_PORTS } dnat to $(gw_guest)
     }
 }
 EOF
@@ -273,14 +298,17 @@ EOF
 
 cmd_down() {
     require_root down
-    _docker_user_orch del
+    _docker_user_infra del
     nft delete table ip "${TABLE}_gw" 2>/dev/null || true
     nft delete table inet "${TABLE}_nat" 2>/dev/null || true
-    if ip link show "$ORCH_IFACE" >/dev/null 2>&1; then
-        ip link set "$ORCH_IFACE" down 2>/dev/null || true
-        ip tuntap del dev "$ORCH_IFACE" mode tap 2>/dev/null || true
-        echo "  removed $ORCH_IFACE"
-    fi
+    local ifc
+    for ifc in "$ORCH_IFACE" "$GW_IFACE"; do
+        if ip link show "$ifc" >/dev/null 2>&1; then
+            ip link set "$ifc" down 2>/dev/null || true
+            ip tuntap del dev "$ifc" mode tap 2>/dev/null || true
+            echo "  removed $ifc"
+        fi
+    done
     nft delete table inet "$TABLE" 2>/dev/null || true
     for i in $(seq 0 $((POOL_SIZE-1))); do
         local dev ; dev="$(iface "$i")"
@@ -296,7 +324,7 @@ cmd_down() {
 cmd_status() {
     echo "table inet $TABLE:"
     nft list table inet "$TABLE" 2>/dev/null || echo "  (absent)"
-    echo "table inet ${TABLE}_nat (orchestrator egress):"
+    echo "table inet ${TABLE}_nat (infra egress: orchestrator + gateway):"
     nft list table inet "${TABLE}_nat" 2>/dev/null || echo "  (absent)"
     echo "table ip ${TABLE}_gw (agent->gateway route):"
     nft list table ip "${TABLE}_gw" 2>/dev/null || echo "  (absent)"
@@ -307,9 +335,12 @@ cmd_status() {
             ip -brief addr show "$dev" | sed 's/^/  /'
         fi
     done
-    if ip -brief addr show "$ORCH_IFACE" >/dev/null 2>&1; then
-        ip -brief addr show "$ORCH_IFACE" | sed 's/^/  /'
-    fi
+    local ifc
+    for ifc in "$ORCH_IFACE" "$GW_IFACE"; do
+        if ip -brief addr show "$ifc" >/dev/null 2>&1; then
+            ip -brief addr show "$ifc" | sed 's/^/  /'
+        fi
+    done
 }
 
 case "${1:-}" in

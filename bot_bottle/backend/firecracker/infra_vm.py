@@ -1,18 +1,30 @@
-"""The per-host infra VM for the Firecracker backend (PRD 0070 Stage B).
+"""The per-host infra VMs for the Firecracker backend (PRD 0070).
 
-A single persistent microVM that runs the orchestrator **control plane** (and,
-in a following step, the gateway **data plane**) — the trusted per-host service
-the docker backend runs as containers. It boots on the NAT'd orchestrator link
-(`netpool.orch_slot()`): the host CLI reaches its control plane over HTTP at the
-guest IP, and agent VMs reach its gateway ports over VM-to-VM routing.
+Two persistent microVMs, split now that #469 got the DB off the data plane
+(PRD 0070 "Separating the planes"):
 
-Build-from-source (the default while the design churns): the rootfs is exported
-from the locally built orchestrator image, which bakes the stdlib-only
-control-plane source. A pull-from-registry mode (Gitea's OCI registry) becomes
-the default later.
+  * **orchestrator VM** — the control plane. Boots on the NAT'd orchestrator
+    link (`netpool.orch_slot()`); the host CLI reaches its `/health` +
+    operator routes over HTTP at the guest IP. Sole opener of `bot-bottle.db`
+    (on its persistent /dev/vdb registry volume); holds the host-canonical
+    signing key (pushed post-boot). Also carries buildah, so in-VM agent-image
+    builds run here (PRD 0070 v1: builds stay with the control plane).
+  * **gateway VM** — the data plane. Boots on its own NAT'd link
+    (`netpool.gw_slot()`); runs the egress / git-http / supervise daemons that
+    agent VMs reach (their gateway-port traffic is DNAT'd here — never to the
+    orchestrator, so a breached agent has no L3 route to the control plane).
+    Holds the mitmproxy CA + a pre-minted `gateway` JWT (never the signing
+    key); reaches the orchestrator's control plane at `orch_guest:8099` over
+    the one nft forward rule that link allows.
 
-SSH is left enabled for debugging; the control plane is the load-bearing
-surface.
+Both VMs boot the **same** shared infra rootfs (gateway + orchestrator +
+buildah); a `bb_role=` kernel-cmdline arg selects which plane a VM's PID-1
+init starts, so there is still a single published artifact to build/pull. The
+gateway VM's slimmer memory ceiling (buildah is present on disk but unused
+there) is set at boot.
+
+SSH is left enabled for debugging + provisioning; the control plane is the
+load-bearing surface.
 """
 
 from __future__ import annotations
@@ -33,22 +45,27 @@ from pathlib import Path
 from typing import Generator
 
 from ...log import die, info
+from ...orchestrator_auth import ROLE_GATEWAY, mint
 from ...paths import host_orchestrator_token
 from .. import util as backend_util
 from ..docker import util as docker_mod
 from ..docker.gateway_provision import GatewayProvisionError
 from . import firecracker_vm, infra_artifact, netpool, util
 
-# The infra VM's control-plane signing-key path on its persistent /dev/vdb
-# volume (mounted at BOT_BOTTLE_ROOT=/var/lib/bot-bottle). The launcher seeds
-# this file with the host-canonical key BEFORE boot, so the VM verifies tokens
-# with the same key the host CLI signs with — the host token file stays the
-# single source of truth, never clobbered per-backend (issue #469 review).
+# The orchestrator VM's signing-key path on its persistent /dev/vdb volume
+# (mounted at BOT_BOTTLE_ROOT=/var/lib/bot-bottle). The launcher seeds this
+# file with the host-canonical key AFTER boot (over SSH), so the VM verifies
+# tokens with the same key the host CLI signs with — the host token file stays
+# the single source of truth, never clobbered per-backend (issue #469 review).
 _GUEST_SIGNING_KEY_PATH = "/var/lib/bot-bottle/orchestrator-token"
+# The gateway VM's pre-minted `gateway` JWT path (rootfs, not /dev/vdb — the
+# data plane has no registry volume and never opens the DB). Pushed post-boot;
+# the gateway daemons present it to the orchestrator, and never see the key.
+_GUEST_GATEWAY_JWT_PATH = "/var/lib/bot-bottle/gateway-jwt"
 
-# The single infra-VM image: gateway data plane + baked control-plane source
-# (Dockerfile.infra FROM the gateway image). Built from source by default;
-# a pull-from-registry mode lands later.
+# The single shared infra image: gateway data plane + baked control-plane
+# source + buildah (Dockerfile.infra.fc). Built from source by default; a
+# pull-from-registry mode lands later. Both VMs boot from it.
 _INFRA_IMAGE = "bot-bottle-infra:latest"
 _GATEWAY_IMAGE = "bot-bottle-gateway:latest"
 _ORCHESTRATOR_IMAGE = "bot-bottle-orchestrator:latest"
@@ -56,7 +73,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 ORCHESTRATOR_PORT = 8099
 # Gateway data-plane ports (agent-facing): egress proxy, supervise MCP,
-# git-http. Reached by agent VMs over VM-to-VM routing (added next).
+# git-http. Reached by agent VMs via the PREROUTING DNAT to the gateway VM.
 EGRESS_PORT = 9099
 SUPERVISE_PORT = 9100
 GIT_HTTP_PORT = 9420
@@ -64,7 +81,14 @@ GIT_HTTP_PORT = 9420
 # the gateway's TLS interception.
 _GATEWAY_CA_PATH = "/home/mitmproxy/.mitmproxy/mitmproxy-ca-cert.pem"
 
-# The infra VM makes direct upstream connections (gateway egress, and buildah
+# Memory ceilings (fixed at boot, demand-paged — no balloon reclaim). The
+# orchestrator keeps the build headroom (buildah's 2-4 GB working set during
+# in-VM agent builds); the gateway is the slim unit (mitmproxy TLS bump + DLP
+# body buffering, ~1 GB) — PRD 0070 "Memory: fixed ceilings".
+_ORCH_MEM_MIB = 4096
+_GW_MEM_MIB = 2048
+
+# The infra VMs make direct upstream connections (gateway egress, and buildah
 # during builds), and the kernel `ip=` cmdline sets no resolver. Public for
 # now; routing DNS through a filtered path is a later refinement.
 _INFRA_RESOLVER = "1.1.1.1"
@@ -72,16 +96,16 @@ _INFRA_RESOLVER = "1.1.1.1"
 _HEALTH_TIMEOUT_SECONDS = 45.0
 _HEALTH_POLL_SECONDS = 0.5
 _CA_TIMEOUT_SECONDS = 30.0
-# How long the launcher retries pushing the signing key while the guest's SSH
-# comes up. Below the init's own wait window, so a failed push dies here first.
-_SIGNING_KEY_PUSH_TIMEOUT_SECONDS = 30.0
-_SIGNING_KEY_PUSH_POLL_SECONDS = 0.5
+# How long the launcher retries pushing a secret while the guest's SSH comes
+# up. Below the init's own wait window, so a failed push dies here first.
+_SECRET_PUSH_TIMEOUT_SECONDS = 30.0
+_SECRET_PUSH_POLL_SECONDS = 0.5
 
 
 @dataclass
 class InfraVm:
-    """A handle to the per-host infra VM: its guest IP and the stable SSH key
-    used to fetch the gateway CA / provision git-gate. `vm` is the live VMM
+    """A handle to one infra VM: its guest IP and the stable SSH key used to
+    seed secrets / fetch the CA / provision git-gate. `vm` is the live VMM
     handle when this process booted it, and None when adopting a singleton a
     prior launcher started (teardown then goes through the PID file)."""
 
@@ -93,19 +117,11 @@ class InfraVm:
     def orchestrator_url(self) -> str:
         return f"http://{self.guest_ip}:{ORCHESTRATOR_PORT}"
 
-    def terminate(self) -> None:
-        """Stop the infra VM — via the live handle if we booted it, else the
-        PID file (adopting-process case)."""
-        if self.vm is not None:
-            self.vm.terminate()
-        else:
-            _kill_pidfile()
-        _pid_file().unlink(missing_ok=True)
-
     def gateway_ca_pem(self, *, timeout: float = _CA_TIMEOUT_SECONDS) -> str:
         """The gateway's mitmproxy CA (PEM) that agents install to trust its
         TLS interception. Generated a moment after boot, so this polls over
-        SSH until it appears (mirrors DockerGateway.ca_cert_pem)."""
+        SSH until it appears (mirrors DockerGateway.ca_cert_pem). Call on the
+        gateway VM handle."""
         def _fetch() -> str | None:
             proc = subprocess.run(
                 util.ssh_base_argv(self.private_key, self.guest_ip)
@@ -120,13 +136,31 @@ class InfraVm:
             die(str(exc))
 
 
+@dataclass
+class InfraEndpoint:
+    """How to reach the running per-host pair. `orchestrator` is the control
+    plane (host CLI + registration + in-VM builds); `gateway` is the data
+    plane (agent egress / git-http / supervise, CA fetch, git-gate
+    provisioning). Mirrors the docker/macOS `InfraEndpoint` shape."""
+
+    orchestrator: InfraVm
+    gateway: InfraVm
+
+    @property
+    def orchestrator_url(self) -> str:
+        return self.orchestrator.orchestrator_url
+
+    def gateway_ca_pem(self, *, timeout: float = _CA_TIMEOUT_SECONDS) -> str:
+        return self.gateway.gateway_ca_pem(timeout=timeout)
+
+
 def ensure_built() -> None:
     """Ensure the infra rootfs is available before boot.
 
     Default (docker-free, PRD 0069 Stage 2): download + verify the prebuilt
     rootfs artifact matching this code version (see `infra_artifact`); the
     launch host needs no Docker. `BOT_BOTTLE_INFRA_BUILD=local` instead builds
-    the three fixed images from source with host Docker — the infra image
+    the fixed images from source with host Docker — the infra image
     `COPY --from`s the orchestrator image and is `FROM` the gateway image, so
     both must exist first — for iterating on the Dockerfiles."""
     if infra_artifact.local_build_requested():
@@ -153,10 +187,10 @@ def build_infra_images_with_docker() -> None:
 
 
 def build_infra_rootfs_dir() -> Path:
-    """The infra VM's base rootfs: the infra image prepared with the
-    control-plane + gateway init as PID 1. The init's content is folded into
-    the cache key so an init change rebuilds the rootfs (the base image digest
-    alone wouldn't catch it)."""
+    """The infra VMs' shared base rootfs: the infra image prepared with the
+    role-branched init as PID 1. The init's content is folded into the cache
+    key so an init change rebuilds the rootfs (the base image digest alone
+    wouldn't catch it)."""
     init = _infra_init()
     tag = hashlib.sha256(init.encode()).hexdigest()[:8]
     return util.build_base_rootfs_dir(
@@ -164,41 +198,55 @@ def build_infra_rootfs_dir() -> Path:
     )
 
 
-def ensure_running() -> InfraVm:
-    """Idempotent per-host singleton. Adopt the infra VM if its control plane
-    is already healthy (a prior launcher booted it — it outlives short-lived
-    `start` processes); otherwise clear any stale VM and boot a fresh one.
-    Returns a handle usable for CA fetch / git-gate provisioning.
+def ensure_running() -> InfraEndpoint:
+    """Idempotent per-host singleton pair. Adopt the running VMs if the
+    orchestrator's control plane is healthy AND the gateway VM is alive AND
+    both booted the CURRENT code version (a prior launcher booted them — they
+    outlive short-lived `start` processes); otherwise clear any stale VMs and
+    boot a fresh pair (orchestrator first, then the gateway that resolves
+    policy against it). Returns handles usable for builds / CA fetch / git-gate
+    provisioning.
 
     Concurrency-safe: the cold stop/build/boot path is serialized by a host
     flock, so two simultaneous first launches don't both boot on the same
-    rootfs/PID. The healthy fast-path takes no lock."""
-    slot = netpool.orch_slot()
-    url = f"http://{slot.guest_ip}:{ORCHESTRATOR_PORT}"
+    links/PIDs. The healthy fast-path takes no lock."""
     key = _infra_dir() / "id_ed25519"
+    url = f"http://{netpool.orch_slot().guest_ip}:{ORCHESTRATOR_PORT}"
     want = _expected_version()
     if _adoptable(key, url, want):
-        info(f"adopting running infra VM at {url}")
-        return InfraVm(guest_ip=slot.guest_ip, private_key=key)
+        info(f"adopting running infra VMs (orchestrator at {url})")
+        return _adopt(key)
 
     with _singleton_lock():
-        # Re-check under the lock: another launcher may have booted it while
+        # Re-check under the lock: another launcher may have booted them while
         # we waited for the lock (double-checked, so we adopt not re-boot).
         if _adoptable(key, url, want):
-            info(f"adopting running infra VM at {url}")
-            return InfraVm(guest_ip=slot.guest_ip, private_key=key)
-        # Clear a stale/hung/OUTDATED VM holding the link before booting fresh.
+            info(f"adopting running infra VMs (orchestrator at {url})")
+            return _adopt(key)
+        # Clear stale/hung/OUTDATED VMs holding either link before booting fresh.
         stop()
         ensure_built()
-        infra = boot()
-        wait_for_health(infra)
+        orchestrator = boot_orchestrator()
+        wait_for_health(orchestrator)
+        gateway = boot_gateway(orchestrator.guest_ip)
         _record_booted_version(want)
-        return infra
+        return InfraEndpoint(orchestrator=orchestrator, gateway=gateway)
+
+
+def _adopt(key: Path) -> InfraEndpoint:
+    """Build handles to the already-running pair from the stable key + the
+    fixed links (vm=None — teardown then goes through the PID files)."""
+    return InfraEndpoint(
+        orchestrator=InfraVm(
+            guest_ip=netpool.orch_slot().guest_ip, private_key=key),
+        gateway=InfraVm(
+            guest_ip=netpool.gw_slot().guest_ip, private_key=key),
+    )
 
 
 @contextmanager
 def _singleton_lock() -> Generator[None, None, None]:
-    """Host-level exclusive lock serializing the infra VM's cold create path
+    """Host-level exclusive lock serializing the infra pair's cold create path
     (`stop`/`ensure_built`/`boot`). flock auto-releases if the launcher
     crashes, so the lock is never leaked."""
     lock_path = _infra_dir() / "singleton.lock"
@@ -211,26 +259,72 @@ def _singleton_lock() -> Generator[None, None, None]:
 
 
 def stop() -> None:
-    """Stop the infra VM singleton (idempotent — absent is success). Reaps the
-    recorded VMM AND any orphaned firecracker still bound to the infra config —
-    the PID file drifts after crashes / out-of-band kills, and a survivor would
-    hold the orchestrator TAP so the next boot dies with "tap … Resource busy".
-    Drops the version marker so a stopped VM is never treated as adoptable."""
-    _kill_pidfile()
+    """Stop BOTH infra VMs (idempotent — absent is success). Reaps the
+    recorded VMMs AND any orphaned firecracker still bound to either infra
+    config — the PID files drift after crashes / out-of-band kills, and a
+    survivor would hold a link's TAP so the next boot dies with "tap …
+    Resource busy". Drops the version marker so a stopped pair is never
+    treated as adoptable."""
+    _kill_pidfile(_orch_dir())
+    _kill_pidfile(_gw_dir())
     _kill_infra_firecrackers()
-    _pid_file().unlink(missing_ok=True)
+    _pid_file(_orch_dir()).unlink(missing_ok=True)
+    _pid_file(_gw_dir()).unlink(missing_ok=True)
     _version_file().unlink(missing_ok=True)
 
 
-def boot() -> InfraVm:
-    """Boot the infra VM (detached, so it outlives the launcher) on the
-    orchestrator link, recording its PID. Prefer `ensure_running`."""
+def boot_orchestrator() -> InfraVm:
+    """Boot the orchestrator (control-plane) VM (detached, so it outlives the
+    launcher) on the orchestrator link, and seed its signing key. Prefer
+    `ensure_running`."""
     slot = netpool.orch_slot()
+    orch = _boot_vm(
+        name="bot-bottle-orchestrator", slot=slot, run_dir=_orch_dir(),
+        role="orchestrator", mem_mib=_ORCH_MEM_MIB,
+        data_drive=_ensure_registry_volume(),
+    )
+    # Push the host-canonical signing key over SSH (the init waits for it
+    # before starting the control plane). The host token file stays the single
+    # source of truth, so a co-running Docker/macOS control plane keeps working.
+    _push_signing_key(orch)
+    return orch
+
+
+def boot_gateway(orchestrator_guest_ip: str) -> InfraVm:
+    """Boot the gateway (data-plane) VM (detached) on the gateway link, and
+    seed its pre-minted `gateway` JWT. Its daemons resolve policy against the
+    orchestrator at `orchestrator_guest_ip:8099` (passed on the cmdline, so the
+    baked init stays IP-independent). Boot the orchestrator first — the gateway
+    daemons reach it at startup. Prefer `ensure_running`."""
+    slot = netpool.gw_slot()
+    gateway = _boot_vm(
+        name="bot-bottle-gateway", slot=slot, run_dir=_gw_dir(),
+        role="gateway", mem_mib=_GW_MEM_MIB,
+        extra_boot_args=f"bb_orch={orchestrator_guest_ip}",
+    )
+    # Push the pre-minted `gateway` JWT (never the signing key — issue #469).
+    # The init waits for it before starting the data plane.
+    _push_gateway_jwt(gateway)
+    return gateway
+
+
+def _boot_vm(
+    *,
+    name: str,
+    slot: netpool.Slot,
+    run_dir: Path,
+    role: str,
+    mem_mib: int,
+    data_drive: Path | None = None,
+    extra_boot_args: str = "",
+) -> InfraVm:
+    """Boot one infra VM from the shared rootfs on `slot`'s link, tagged with
+    its `bb_role` so the guest init starts the right plane. Records the PID."""
     if not netpool.tap_present(slot.iface):
-        die(f"orchestrator link {slot.iface} not present.\n"
+        die(f"infra link {slot.iface} not present.\n"
             f"    ./cli.py backend setup --backend=firecracker")
 
-    run_dir = _infra_dir()
+    run_dir.mkdir(parents=True, exist_ok=True)
     rootfs = run_dir / "rootfs.ext4"
     if infra_artifact.local_build_requested():
         util.build_rootfs_ext4(build_infra_rootfs_dir(), rootfs, slack_mib=8192)
@@ -241,21 +335,18 @@ def boot() -> InfraVm:
             infra_artifact.infra_artifact_version(_infra_init()), rootfs)
     private_key, pubkey = _stable_keypair()
 
-    info(f"booting infra VM on {slot.iface} (guest {slot.guest_ip})")
+    info(f"booting {role} VM on {slot.iface} (guest {slot.guest_ip})")
+    boot_args = f"bb_role={role}"
+    if extra_boot_args:
+        boot_args = f"{boot_args} {extra_boot_args}"
     vm = firecracker_vm.boot(
-        name="bot-bottle-infra", rootfs=rootfs, tap=slot.iface,
+        name=name, rootfs=rootfs, tap=slot.iface,
         guest_ip=slot.guest_ip, host_ip=slot.host_ip, pubkey=pubkey,
-        run_dir=run_dir, mem_mib=4096, detached=True,
-        data_drive=_ensure_registry_volume(),
+        run_dir=run_dir, mem_mib=mem_mib, detached=True,
+        data_drive=data_drive, extra_boot_args=boot_args,
     )
-    _pid_file().write_text(str(vm.process.pid))
-    infra = InfraVm(guest_ip=slot.guest_ip, private_key=private_key, vm=vm)
-    # Push the host-canonical control-plane signing key into the guest over SSH
-    # (the init waits for it before starting the control plane). The host token
-    # file stays the single source of truth, so a co-running Docker/macOS control
-    # plane keeps working (issue #469 review).
-    _push_signing_key(infra)
-    return infra
+    _pid_file(run_dir).write_text(str(vm.process.pid))
+    return InfraVm(guest_ip=slot.guest_ip, private_key=private_key, vm=vm)
 
 
 def _infra_dir() -> Path:
@@ -264,16 +355,29 @@ def _infra_dir() -> Path:
     return d
 
 
-def _pid_file() -> Path:
-    return _infra_dir() / "vm.pid"
+def _orch_dir() -> Path:
+    d = _infra_dir() / "orchestrator"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _gw_dir() -> Path:
+    d = _infra_dir() / "gateway"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _pid_file(run_dir: Path) -> Path:
+    return run_dir / "vm.pid"
 
 
 def _version_file() -> Path:
-    """Records the infra-artifact version the *running* VM booted from, so a
-    later launcher can tell whether the singleton it found is the current code.
-    Without it, a healthy VM built from an older image gets adopted forever and
-    the new code never boots — every infra change would need an out-of-band
-    kill to dislodge the stale VM (and races whatever launched next)."""
+    """Records the infra-artifact version the *running* pair booted from, so a
+    later launcher can tell whether the singletons it found are the current
+    code. Without it, a healthy pair built from an older image gets adopted
+    forever and the new code never boots — every infra change would need an
+    out-of-band kill to dislodge the stale VMs (and races whatever launched
+    next). Both VMs boot the same artifact, so one marker covers the pair."""
     return _infra_dir() / "booted-version"
 
 
@@ -282,28 +386,35 @@ def _expected_version() -> str:
 
 
 def _adoptable(key: Path, url: str, want: str) -> bool:
-    """Adopt a running infra VM only if it booted from the CURRENT version and
-    its control plane is healthy. A missing/mismatched marker means a prior
-    launcher booted an older infra image — reboot rather than reuse stale code."""
+    """Adopt the running pair only if it booted from the CURRENT version, the
+    orchestrator's control plane is healthy, and the gateway VM is still alive.
+    A missing/mismatched marker means a prior launcher booted an older infra
+    image; a dead gateway means the pair is half-down — reboot both rather than
+    reuse stale or partial state."""
     if not key.exists():
         return False
     try:
         booted = _version_file().read_text(encoding="utf-8").strip()
     except OSError:
         return False
-    return booted == want and _health_ok(url)
+    if booted != want:
+        return False
+    if not _health_ok(url):
+        return False
+    return _pidfile_alive(_gw_dir())
 
 
 def _record_booted_version(version: str) -> None:
     _version_file().write_text(version + "\n", encoding="utf-8")
 
 
-# The registry "volume": a host-side ext4 file attached to the infra VM as a
-# second virtio-block device (guest /dev/vdb), mounted at the control plane's
-# DB dir. It outlives the ephemeral rootfs, so the bottle registry survives an
-# infra-VM restart — the firecracker analogue of a docker volume. It is a
-# plain ext4 file: `sudo mount -o loop <path>` on the host (with the VM
-# stopped) to inspect bot-bottle.db directly.
+# The registry "volume": a host-side ext4 file attached to the orchestrator VM
+# as a second virtio-block device (guest /dev/vdb), mounted at the control
+# plane's DB dir. It outlives the ephemeral rootfs, so the bottle registry
+# survives an orchestrator-VM restart — the firecracker analogue of a docker
+# volume. It is a plain ext4 file: `sudo mount -o loop <path>` on the host
+# (with the VM stopped) to inspect bot-bottle.db directly. The gateway VM has
+# no such volume — the data plane never opens the DB (#469).
 _REGISTRY_SIZE = "512M"
 
 
@@ -328,36 +439,55 @@ def _ensure_registry_volume() -> Path:
 
 
 def _push_signing_key(infra: InfraVm) -> None:
-    """Push the host-canonical control-plane signing key into the freshly booted
-    infra VM over SSH (atomic write), so its orchestrator verifies tokens with
-    the same key the host CLI signs from. Mirrors the existing
-    `persist_env_var_secret` transport. Retries until the guest's SSH is up (it
-    comes up before the init waits for this file); dies if it never lands, since
-    the VM then refuses to start its control plane rather than run OPEN."""
-    key = host_orchestrator_token()
-    push = (
-        f"umask 077; cat > {_GUEST_SIGNING_KEY_PATH}.tmp "
-        f"&& mv {_GUEST_SIGNING_KEY_PATH}.tmp {_GUEST_SIGNING_KEY_PATH}"
+    """Push the host-canonical signing key into the freshly booted orchestrator
+    VM over SSH (atomic write), so its control plane verifies tokens with the
+    same key the host CLI signs from. Retries until the guest's SSH is up (it
+    comes up before the init waits for this file); dies if it never lands,
+    since the VM then refuses to start its control plane rather than run OPEN."""
+    _push_secret(
+        infra, host_orchestrator_token(), _GUEST_SIGNING_KEY_PATH,
+        "the control-plane signing key to the orchestrator VM "
+        "(its control plane will not start)",
     )
-    deadline = time.monotonic() + _SIGNING_KEY_PUSH_TIMEOUT_SECONDS
+
+
+def _push_gateway_jwt(infra: InfraVm) -> None:
+    """Push the pre-minted `gateway` JWT into the freshly booted gateway VM
+    over SSH (atomic write). Minted on the HOST from the canonical signing key
+    so the data plane never holds the key itself (issue #469); the gateway
+    daemons present it to the orchestrator. Retries until SSH is up; dies if it
+    never lands, since the VM then refuses to start the data plane."""
+    _push_secret(
+        infra, mint(ROLE_GATEWAY, host_orchestrator_token()),
+        _GUEST_GATEWAY_JWT_PATH,
+        "the gateway JWT to the gateway VM (its data plane will not start)",
+    )
+
+
+def _push_secret(infra: InfraVm, secret: str, dest: str, what: str) -> None:
+    """Pipe `secret` to an atomic write of `dest` in the guest over SSH,
+    retrying while the guest's SSH comes up; die (naming `what`) if it never
+    succeeds. Bare-pipe input keeps the value off argv."""
+    push = f"umask 077; cat > {dest}.tmp && mv {dest}.tmp {dest}"
+    deadline = time.monotonic() + _SECRET_PUSH_TIMEOUT_SECONDS
     last = ""
     while time.monotonic() < deadline:
         proc = subprocess.run(
             util.ssh_base_argv(infra.private_key, infra.guest_ip) + [push],
-            input=key, capture_output=True, text=True, check=False,
+            input=secret, capture_output=True, text=True, check=False,
         )
         if proc.returncode == 0:
             return
         last = proc.stderr.strip()
-        time.sleep(_SIGNING_KEY_PUSH_POLL_SECONDS)
-    die("could not push the control-plane signing key to the infra VM "
-        f"(its control plane will not start): {last or '<no stderr>'}")
+        time.sleep(_SECRET_PUSH_POLL_SECONDS)
+    die(f"could not push {what}: {last or '<no stderr>'}")
 
 
 def _stable_keypair() -> tuple[Path, str]:
-    """The infra VM's SSH keypair — generated once and reused, so any later
-    launcher can SSH in (fetch CA / provision) even though a different process
-    booted the VM. The pubkey is re-injected on every boot via the cmdline."""
+    """The infra VMs' shared SSH keypair — generated once and reused, so any
+    later launcher can SSH in (seed secrets / fetch CA / provision) even though
+    a different process booted the VMs. Both VMs get the same pubkey re-injected
+    on every boot via the cmdline."""
     d = _infra_dir()
     key, pub = d / "id_ed25519", d / "id_ed25519.pub"
     if key.exists() and pub.exists():
@@ -372,11 +502,24 @@ def _stable_keypair() -> tuple[Path, str]:
     return key, pub.read_text().strip()
 
 
-def _kill_pidfile() -> None:
-    """SIGTERM (then SIGKILL) the recorded infra VMM, if it's still ours.
+def _pidfile_alive(run_dir: Path) -> bool:
+    """True iff `run_dir`'s recorded VMM is still a live firecracker (guards a
+    recycled PID by checking `comm`)."""
+    try:
+        pid = int(_pid_file(run_dir).read_text().strip())
+    except (OSError, ValueError):
+        return False
+    try:
+        return Path(f"/proc/{pid}/comm").read_text().strip() == "firecracker"
+    except OSError:
+        return False
+
+
+def _kill_pidfile(run_dir: Path) -> None:
+    """SIGTERM (then SIGKILL) the VMM recorded in `run_dir`, if it's still ours.
     Guards against a recycled PID by checking the process is firecracker."""
     try:
-        pid = int(_pid_file().read_text().strip())
+        pid = int(_pid_file(run_dir).read_text().strip())
     except (OSError, ValueError):
         return
     try:
@@ -397,11 +540,12 @@ def _kill_pidfile() -> None:
 
 
 def _kill_infra_firecrackers(proc_root: Path = Path("/proc")) -> None:
-    """SIGKILL any firecracker VMM whose `--config-file` is this host's infra
-    config, independent of the PID file — reaps orphans it lost track of so the
-    orchestrator TAP is free to rebind. Scoped to the infra config path, so the
-    interactive pool's agent/infra VMs (other config paths) are untouched."""
-    cfg = str(_infra_dir() / "config.json")
+    """SIGKILL any firecracker VMM whose `--config-file` is one of this host's
+    infra configs (orchestrator or gateway), independent of the PID files —
+    reaps orphans it lost track of so both links' TAPs are free to rebind.
+    Scoped to the two infra config paths, so the interactive pool's agent VMs
+    (other config paths) are untouched."""
+    cfgs = {str(_orch_dir() / "config.json"), str(_gw_dir() / "config.json")}
     for entry in proc_root.iterdir():
         if not entry.name.isdigit():
             continue
@@ -411,7 +555,7 @@ def _kill_infra_firecrackers(proc_root: Path = Path("/proc")) -> None:
             args = (entry / "cmdline").read_bytes().split(b"\0")
         except OSError:
             continue  # process vanished / not ours
-        if any(a.decode("utf-8", "replace") == cfg for a in args):
+        if any(a.decode("utf-8", "replace") in cfgs for a in args):
             try:
                 os.kill(int(entry.name), signal.SIGKILL)
             except (OSError, ValueError):
@@ -427,8 +571,8 @@ def _health_ok(url: str) -> bool:
 
 
 class SshGatewayTransport:
-    """`GatewayTransport` for the gateway running in the infra VM — the docker
-    exec/cp equivalents over SSH (dropbear + the stable infra key)."""
+    """`GatewayTransport` for the gateway running in the gateway VM — the
+    docker exec/cp equivalents over SSH (dropbear + the stable infra key)."""
 
     def __init__(self, private_key: Path, guest_ip: str) -> None:
         self._key = private_key
@@ -461,42 +605,51 @@ class SshGatewayTransport:
 
 
 def gateway_transport() -> SshGatewayTransport:
-    """git-gate provisioning transport for the gateway in the infra VM, built
-    from the stable key + the orchestrator link's guest IP. Needs no live VM
-    handle, so teardown can use it too."""
+    """git-gate provisioning transport for the gateway VM, built from the
+    stable key + the gateway link's guest IP. Needs no live VM handle, so
+    teardown can use it too."""
     return SshGatewayTransport(
-        _infra_dir() / "id_ed25519", netpool.orch_slot().guest_ip)
+        _infra_dir() / "id_ed25519", netpool.gw_slot().guest_ip)
 
 
 def wait_for_health(
     infra: InfraVm, *, timeout: float = _HEALTH_TIMEOUT_SECONDS,
 ) -> None:
-    """Poll the control plane's /health until it answers 200 or the deadline
+    """Poll the orchestrator's /health until it answers 200 or the deadline
     passes. Dies (with the console tail) if the VMM exits early."""
     url = f"{infra.orchestrator_url}/health"
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if infra.vm is not None and not infra.vm.is_alive():
-            die(f"infra VM exited during boot (rc={infra.vm.process.returncode}).\n"
+            die(f"orchestrator VM exited during boot (rc={infra.vm.process.returncode}).\n"
                 f"{firecracker_vm._console_tail(infra.vm.console_log)}")
         try:
             with urllib.request.urlopen(url, timeout=1.0) as resp:
                 if resp.status == 200:
-                    info(f"infra control plane healthy at {infra.orchestrator_url}")
+                    info(f"orchestrator control plane healthy at {infra.orchestrator_url}")
                     return
         except (urllib.error.URLError, TimeoutError, OSError):
             pass
         time.sleep(_HEALTH_POLL_SECONDS)
     tail = (firecracker_vm._console_tail(infra.vm.console_log)
             if infra.vm is not None else "")
-    die(f"infra control plane at {url} did not become healthy within "
+    die(f"orchestrator control plane at {url} did not become healthy within "
         f"{timeout:.0f}s.\n{tail}")
 
 
 def _infra_init() -> str:
-    """PID-1 init for the infra VM: mount the pseudo-filesystems, wire a
-    resolver, start dropbear (debug SSH), then launch the control plane and
-    the gateway data plane (multi-tenant against the local control plane)."""
+    """PID-1 init for the infra VMs. Shared setup (pseudo-filesystems, PATH,
+    resolver, debug SSH), then a `bb_role` cmdline branch selecting the plane:
+
+      * orchestrator — mount the persistent registry volume, wait for the
+        host-seeded signing key, start ONLY the control plane;
+      * gateway — wait for the host-seeded `gateway` JWT, start ONLY the
+        data-plane daemons (multi-tenant against the orchestrator at the
+        `bb_orch` cmdline address).
+
+    Both VMs boot this same init (one published artifact); the cmdline selects
+    the role, so no orchestrator IP is baked in (an IP_BASE override doesn't
+    change the artifact version)."""
     return f"""#!/bin/sh
 # bot-bottle Firecracker infra VM init (PID 1).
 mount -t proc proc /proc 2>/dev/null
@@ -524,50 +677,62 @@ fi
 chown -R 0:0 /root 2>/dev/null || true
 mkdir -p /etc/dropbear /run /var/lib/bot-bottle
 
-# Persistent registry volume (second virtio-block device, /dev/vdb) mounted
-# at the control plane's DB dir, so bot-bottle.db survives infra-VM restarts.
-mount -t ext4 /dev/vdb /var/lib/bot-bottle 2>/dev/null || true
-
 /bb-dropbear -R -E -p 22 &
 
-# Control plane. Source is baked at /app; the package is stdlib-only.
+ROLE=$(sed -n 's/.*bb_role=\\([^ ]*\\).*/\\1/p' /proc/cmdline)
 cd /app
-# Wait for the launcher to push the host-canonical control-plane signing key
-# over SSH, then hand it ONLY to the orchestrator (to verify tokens); the
-# data-plane daemons get a pre-minted `gateway` JWT they present, never the key.
-# If it never arrives, REFUSE to start the control plane rather than run OPEN —
-# open mode would grant every unauthenticated caller the `cli` role, and a
-# compromised egress / supervise / git-http daemon in this same VM (reaching the
-# orchestrator over 127.0.0.1, past the nft boundary that only fences off the
-# separate agent VM) could then drive the operator routes (issue #469).
-CP_KEY=""
-i=0
-while [ "$i" -lt 600 ]; do
-    CP_KEY=$(cat /var/lib/bot-bottle/orchestrator-token 2>/dev/null)
-    [ -n "$CP_KEY" ] && break
-    i=$((i + 1))
-    sleep 0.1
-done
-if [ -z "$CP_KEY" ]; then
-    echo "infra: control-plane signing key never arrived; refusing to start the control plane (would run OPEN)" >&2
-else
-    chmod 600 /var/lib/bot-bottle/orchestrator-token 2>/dev/null || true
-    GW_JWT=$(BB_SIGNING_KEY="$CP_KEY" python3 -c 'import os; from bot_bottle.orchestrator_auth import mint, ROLE_GATEWAY; print(mint(ROLE_GATEWAY, os.environ["BB_SIGNING_KEY"]))')
-    BOT_BOTTLE_ROOT=/var/lib/bot-bottle BOT_BOTTLE_ORCHESTRATOR_TOKEN="$CP_KEY" python3 -m bot_bottle.orchestrator \\
-        --host 0.0.0.0 --port {ORCHESTRATOR_PORT} --broker stub &
 
+if [ "$ROLE" = gateway ]; then
     # Gateway data plane, multi-tenant: each request resolves source-IP ->
-    # policy against the local control plane. The VM backend reaches git over
-    # git-http (9420), so the git:// daemon (git-gate, needs a per-bottle
-    # entrypoint the consolidated model doesn't use) is left out. No
-    # SUPERVISE_DB_PATH: the data plane reaches the supervise queue over the
-    # control-plane RPC and never opens bot-bottle.db (PRD 0070 / #469). It
-    # presents the pre-minted `gateway` JWT; gateway_init keeps the signing key
-    # out of the data-plane daemons' env.
-    BOT_BOTTLE_GATEWAY_DAEMONS=egress,git-http,supervise \\
-    BOT_BOTTLE_ORCHESTRATOR_URL=http://127.0.0.1:{ORCHESTRATOR_PORT} \\
-    BOT_BOTTLE_ORCHESTRATOR_AUTH_JWT="$GW_JWT" \\
-        python3 -m bot_bottle.gateway.bootstrap &
+    # policy against the orchestrator VM (its guest IP is on the cmdline as
+    # bb_orch). The VM backend reaches git over git-http (9420), so the git://
+    # daemon (git-gate, needs a per-bottle entrypoint the consolidated model
+    # doesn't use) is left out. No SUPERVISE_DB_PATH: the data plane reaches the
+    # supervise queue over the control-plane RPC and never opens bot-bottle.db
+    # (PRD 0070 / #469). It presents the pre-minted `gateway` JWT the launcher
+    # pushed; if it never arrives, REFUSE to start rather than run without auth.
+    ORCH=$(sed -n 's/.*bb_orch=\\([^ ]*\\).*/\\1/p' /proc/cmdline)
+    GW_JWT=""
+    i=0
+    while [ "$i" -lt 600 ]; do
+        GW_JWT=$(cat {_GUEST_GATEWAY_JWT_PATH} 2>/dev/null)
+        [ -n "$GW_JWT" ] && break
+        i=$((i + 1))
+        sleep 0.1
+    done
+    if [ -z "$GW_JWT" ]; then
+        echo "infra gateway: gateway JWT never arrived; refusing to start the data plane" >&2
+    else
+        chmod 600 {_GUEST_GATEWAY_JWT_PATH} 2>/dev/null || true
+        BOT_BOTTLE_GATEWAY_DAEMONS=egress,git-http,supervise \\
+        BOT_BOTTLE_ORCHESTRATOR_URL=http://$ORCH:{ORCHESTRATOR_PORT} \\
+        BOT_BOTTLE_ORCHESTRATOR_AUTH_JWT="$GW_JWT" \\
+            python3 -m bot_bottle.gateway.bootstrap &
+    fi
+else
+    # Control plane. Source is baked at /app; the package is stdlib-only.
+    # Persistent registry volume (second virtio-block device, /dev/vdb) mounted
+    # at the DB dir, so bot-bottle.db survives orchestrator-VM restarts.
+    mount -t ext4 /dev/vdb /var/lib/bot-bottle 2>/dev/null || true
+    # Wait for the launcher to push the host-canonical signing key over SSH,
+    # then hand it ONLY to the orchestrator (to verify tokens). If it never
+    # arrives, REFUSE to start rather than run OPEN — open mode would grant
+    # every unauthenticated caller the `cli` role (issue #469).
+    CP_KEY=""
+    i=0
+    while [ "$i" -lt 600 ]; do
+        CP_KEY=$(cat {_GUEST_SIGNING_KEY_PATH} 2>/dev/null)
+        [ -n "$CP_KEY" ] && break
+        i=$((i + 1))
+        sleep 0.1
+    done
+    if [ -z "$CP_KEY" ]; then
+        echo "infra: control-plane signing key never arrived; refusing to start the control plane (would run OPEN)" >&2
+    else
+        chmod 600 {_GUEST_SIGNING_KEY_PATH} 2>/dev/null || true
+        BOT_BOTTLE_ROOT=/var/lib/bot-bottle BOT_BOTTLE_ORCHESTRATOR_TOKEN="$CP_KEY" python3 -m bot_bottle.orchestrator \\
+            --host 0.0.0.0 --port {ORCHESTRATOR_PORT} --broker stub &
+    fi
 fi
 
 # Reap as PID 1; children are backgrounded, so `wait` blocks.

@@ -1,22 +1,23 @@
 """Consolidated bottle launch sequence for the Firecracker backend
 (PRD 0070, Stage B).
 
-The shared gateway + orchestrator control plane run in a single persistent
-per-host **infra VM** (`infra_vm.py`), not Docker containers. Agent VMs reach
-the gateway's egress / supervise / git-http ports at the infra VM via a
-PREROUTING DNAT on their own host-side TAP IP (see
-`scripts/firecracker-netpool.sh`), and the host CLI reaches the control plane
-over HTTP at the infra VM's guest IP.
+The orchestrator control plane and the shared gateway run in **two** persistent
+per-host **infra VMs** (`infra_vm.py`), split per PRD 0070 — not Docker
+containers. Agent VMs reach the gateway's egress / supervise / git-http ports
+via a PREROUTING DNAT on their own host-side TAP IP that redirects to the
+**gateway** VM (see `scripts/firecracker-netpool.sh`) — never the orchestrator,
+so a breached agent has no L3 route to the control plane. The host CLI reaches
+the control plane over HTTP at the orchestrator VM's guest IP.
 
 Attribution is by the agent VM's guest IP, unspoofable by construction: the
 /31 point-to-point TAP + the `bot_bottle_fc` nft table ensure only the
 expected VM can source-IP that address.
 
 Sequence:
-  1. ensure the infra VM (control plane + gateway) is up (a singleton — a
-     prior launcher may already have booted it);
-  2. register the bottle by its guest IP (attribution key) → bottle id +
-     identity token;
+  1. ensure the infra VMs (orchestrator control plane + gateway data plane)
+     are up (a singleton pair — a prior launcher may already have booted them);
+  2. register the bottle on the orchestrator by its guest IP (attribution key)
+     → bottle id + identity token;
   3. provision its git-gate repos/creds into the gateway VM (over SSH);
   4. fetch the shared gateway CA for the provisioner to install in the rootfs.
 
@@ -150,7 +151,7 @@ def teardown_consolidated(
 ) -> None:
     """Deregister the bottle and remove its git-gate state from the gateway
     VM. Both steps are idempotent so this is safe from a cleanup trap. Does
-    NOT stop the infra VM — it's a persistent per-host singleton shared by
+    NOT stop the infra VMs — they're persistent per-host singletons shared by
     every bottle."""
     _teardown_util(bottle_id, infra_vm.gateway_transport(),
                    orchestrator_url=orchestrator_url, timeout=timeout)

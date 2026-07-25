@@ -85,6 +85,22 @@ class TestNetpoolProbes(unittest.TestCase):
             pool_guests = {sl.guest_ip for sl in netpool.all_slots()}
         self.assertNotIn(s.guest_ip, pool_guests)
 
+    def test_gw_slot_is_second_link_above_orch(self):
+        # Dedicated gateway (data-plane) link: the /31 immediately above the
+        # orchestrator link. Must match the shell script's gw_host()/gw_guest()
+        # and be a distinct non-pool index that never collides with the
+        # orchestrator link or the agent pool.
+        with patch.dict("os.environ", {"BOT_BOTTLE_FC_IP_BASE": "10.243.0.0"}):
+            s = netpool.gw_slot()
+            orch = netpool.orch_slot()
+            pool_guests = {sl.guest_ip for sl in netpool.all_slots()}
+        self.assertEqual(netpool.GW_IFACE, s.iface)
+        self.assertEqual("10.243.255.2", s.host_ip)
+        self.assertEqual("10.243.255.3", s.guest_ip)
+        self.assertEqual(-2, s.index)
+        self.assertNotEqual(orch.guest_ip, s.guest_ip)  # distinct from the orch link
+        self.assertNotIn(s.guest_ip, pool_guests)       # distinct from the pool
+
 
 class TestConsoleTail(unittest.TestCase):
     def test_reads_tail(self):

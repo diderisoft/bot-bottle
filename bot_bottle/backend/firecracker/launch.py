@@ -11,15 +11,16 @@ Per bottle:
   6. provision (shared gateway CA, prompt, skills, workspace, git, supervise)
      over SSH.
 
-The per-bottle Docker sidecar bundle is gone. The shared gateway handles
-egress / git-gate / supervise for every VM; Docker's PREROUTING DNAT routes
-the VMs' traffic to it, and the nft table's `ct status dnat accept` rule
-in the forward chain lets it pass. The VM still sends to `host_tap_ip:PORT`
-— the address its world is, by nft design, limited to.
+The per-bottle Docker sidecar bundle is gone. The shared gateway (its own
+data-plane VM) handles egress / git-gate / supervise for every VM; the nft
+netpool's PREROUTING DNAT routes the VMs' gateway-port traffic to that gateway
+VM, and the nft table's `ct status dnat accept` rule in the forward chain lets
+it pass. The VM still sends to `host_tap_ip:PORT` — the address its world is,
+by nft design, limited to.
 
 Isolation is enforced by the operator-provisioned nft table (checked
-fail-closed in preflight): a VM reaches only the sidecar (DNAT'd from
-the host TAP IP) and nothing else.
+fail-closed in preflight): a VM reaches only the gateway (DNAT'd from the host
+TAP IP) and nothing else — not even the orchestrator control plane.
 """
 
 from __future__ import annotations
@@ -136,7 +137,7 @@ def launch(
         )
         # Point the agent's git-gate insteadOf rewrites and supervise MCP URL
         # at the shared gateway (reached at the slot's host TAP IP — the VM
-        # sends there and Docker DNAT routes to the gateway container).
+        # sends there and the nft netpool DNAT routes to the gateway VM).
         git_gate_url = (
             f"http://{slot.host_ip}:{_GIT_HTTP_PORT}" if git_gate_plan.upstreams else ""
         )
