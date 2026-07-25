@@ -4,5 +4,42 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bot-bottle"
-version = "0.0.0"
+version = "0.1.0"
+description = "Self-hosted sandbox for running AI coding agents with egress controls"
+readme = "README.md"
 requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "didericis" }]
+keywords = ["ai", "agents", "sandbox", "security", "egress"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+]
+# The package itself has no runtime pip dependencies (stdlib-only); the
+# only language runtime is the Python interpreter. Keep this empty.
+dependencies = []
+
+[project.urls]
+Homepage = "https://gitea.dideric.is/didericis/bot-bottle"
+Source = "https://gitea.dideric.is/didericis/bot-bottle"
+
+[project.scripts]
+bot-bottle = "bot_bottle.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["bot_bottle*"]
+
+# Non-Python assets the runtime reads from inside the package (container
+# build contexts, entrypoints, netpool defaults). Keep in sync with the
+# files shipped under bot_bottle/; test_pyproject.py asserts they exist.
+[tool.setuptools.package-data]
+bot_bottle = [
+    "egress_entrypoint.sh",
+    "contrib/claude/Dockerfile",
+    "contrib/codex/Dockerfile",
+    "contrib/pi/Dockerfile",
+    "backend/firecracker/netpool.defaults.env",
+    "backend/macos_container/nested-containers-init.sh",
+]

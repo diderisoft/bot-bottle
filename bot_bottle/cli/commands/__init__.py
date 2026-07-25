@@ -21,6 +21,7 @@ _HANDLERS: dict[str, str] = {
     "backend": "backend:cmd_backend",
     "cleanup": "cleanup:cmd_cleanup",
     "commit": "commit:cmd_commit",
+    "doctor": "doctor:cmd_doctor",
     "edit": "edit:cmd_edit",
     "help": "help:cmd_help",
     "init": "init:cmd_init",
@@ -53,6 +54,6 @@ COMMANDS = {name: _lazy(spec) for name, spec in _HANDLERS.items()}
 # gating it on the schema breaks preflight on a fresh CI runner where stdin
 # isn't a TTY and the migration prompt can't be answered. `help` and `login`
 # likewise never touch the store.
-NO_MIGRATION_COMMANDS = frozenset({"backend", "help", "login"})
+NO_MIGRATION_COMMANDS = frozenset({"backend", "doctor", "help", "login"})
 
 __all__ = ["COMMANDS", "NO_MIGRATION_COMMANDS"]

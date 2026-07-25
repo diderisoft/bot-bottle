@@ -25,6 +25,7 @@ def cmd_help(argv: list[str] | None = None) -> int:
     w("  backend   set up / check / undo a backend's host prerequisites (setup|status|teardown)\n")
     w("  cleanup   stop and remove all active bot-bottle containers\n")
     w("  commit    snapshot a running bottle's container state to a Docker image\n")
+    w("  doctor    check host prerequisites (Python, backend, config dir)\n")
     w("  edit      open an agent in vim for editing\n")
     w("  help      show this command list\n")
     w("  init      interactively create a new agent and add it to bot-bottle.json\n")
