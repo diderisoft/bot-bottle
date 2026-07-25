@@ -212,6 +212,69 @@ jobs:
           name: firecracker-inputs
           path: /var/cache/bot-bottle-fc/dropbear
 
+  # Integration tests against the macOS Apple Container backend. Runs on a
+  # self-hosted macOS runner (label `macos`) registered in HOST mode — Apple
+  # Container needs the host `container` CLI + virtualization framework and
+  # cannot run inside a Linux container, so this cannot reuse the KVM runner.
+  #
+  # Advisory only: push-to-main and workflow_dispatch, never pull_request. A
+  # single non-redundant laptop that sleeps/roams must not be able to block a
+  # PR merge, so this job is deliberately NOT in the `coverage` job's `needs`
+  # and its coverage never feeds the diff-coverage gate. Not gating on PRs also
+  # means no fork PR ever executes on the host-mode runner.
+  #
+  # The infra container is a singleton (`bot-bottle-mac-infra`); the
+  # `concurrency` group serializes runs so two never collide on it (#425), and
+  # the always-run teardown removes it so a crashed run can't wedge the next.
+  #
+  # Runner prerequisites (provision once; see README "macOS Apple Container"):
+  # the `container` CLI on PATH with `container system status` running, and a
+  # Python >=3.11 with `coverage` importable on the launchd service PATH.
+  integration-macos:
+    runs-on: [self-hosted, macos]
+    if: >-
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch'
+    concurrency:
+      group: integration-macos-infra
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Fail loudly if the backend this job promises isn't actually usable,
+      # rather than letting every test silently `unittest.skip` and the job go
+      # green on zero coverage. `backend status` exits non-zero (and prints the
+      # per-check summary) when the `container` CLI or its system service is
+      # missing — the same readiness check the skip guards gate on.
+      - name: Preflight — Apple Container backend is ready
+        run: |
+          command -v container >/dev/null || {
+            echo "container CLI not on PATH — provision the runner (README: macOS Apple Container)"; exit 1; }
+          container system status || {
+            echo "container system service not running — run 'container system start'"; exit 1; }
+          python3 cli.py backend status --backend=macos-container
+
+      # `coverage` comes from the runner's provisioned Python (no pip install
+      # into the host interpreter). Advisory job: report coverage in-line for
+      # visibility but don't upload — it never feeds the combined gate.
+      - name: Run integration tests (macos-container) with coverage
+        env:
+          BOT_BOTTLE_BACKEND: macos-container
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage.macos
+        run: python3 -m coverage run -m unittest discover -t . -s tests/integration -v
+
+      - name: Report macos coverage
+        env:
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage.macos
+        run: python3 -m coverage report -m
+
+      # Remove the singleton infra container so a crashed or cancelled run
+      # cannot leave `bot-bottle-mac-infra` wedged for the next job.
+      - name: Teardown infra singleton
+        if: always()
+        run: python3 -c 'from bot_bottle.backend.macos_container.infra import MacosInfraService; MacosInfraService().stop()'
+
   # Combined coverage gate: aggregates .coverage.* artifacts uploaded by each
   # test job, then runs the diff-coverage gate (new/changed lines >= 90%).
   #

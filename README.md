@@ -75,6 +75,8 @@ On compatible macOS hosts, the default backend requires Apple's `container` CLI 
 
 Use `BOT_BOTTLE_BACKEND=docker ./cli.py start <agent>` on hosts where neither Apple Container nor KVM is available and Docker is the desired backend.
 
+> **CI (macOS Apple Container):** the `integration-macos` job (`.gitea/workflows/test.yml`) runs the integration suite against `BOT_BOTTLE_BACKEND=macos-container` on a self-hosted macOS runner labelled `macos`, because Apple Container needs the host virtualization framework and cannot run in a Linux container (so it can't reuse the `kvm` runner). Provision an Apple Silicon host with the `container` CLI on `PATH` and `container system status` running, then register the runner in **host mode** (not docker mode) with the `macos` label — `brew install gitea-runner` (the `act_runner` rename). Give it a Python ≥ 3.11 with `coverage` importable on the launchd service's `PATH` (a launchd service doesn't inherit your shell profile, so pin `node` and the Python env explicitly). The job is **advisory** — push-to-main and `workflow_dispatch` only, never a required PR check — since a single laptop that sleeps/roams must not block merges; its coverage doesn't feed the gate. The infra container is a singleton (`bot-bottle-mac-infra`), so keep runner concurrency at 1.
+
 ### Containers inside a bottle
 
 A bottle may set `nested_containers: true`. On the macOS backend this starts a
