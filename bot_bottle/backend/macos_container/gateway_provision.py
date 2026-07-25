@@ -9,15 +9,15 @@ CLI's equivalents against the infra container that hosts the gateway daemons.
 
 from __future__ import annotations
 
-from ..docker.gateway_provision import GatewayProvisionError
+from ...gateway import GatewayProvisionError
 from . import util as container_mod
-from .infra import INFRA_NAME
+from .gateway import GATEWAY_NAME
 
 
 class AppleGatewayTransport:
     """`GatewayTransport` for the gateway daemons in the Apple infra container."""
 
-    def __init__(self, gateway: str = INFRA_NAME) -> None:
+    def __init__(self, gateway: str = GATEWAY_NAME) -> None:
         self.gateway = gateway
 
     def exec(self, argv: list[str]) -> None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from bot_bottle.backend.macos_container.infra import (
     INFRA_DB_VOLUME,
@@ -73,63 +73,48 @@ class TestOrchestratorRun(unittest.TestCase):
                 svc._run_orchestrator_container("h1")
 
 
-class TestGatewayRun(unittest.TestCase):
-    def _run(self, svc: MacosInfraService, url: str = "http://10.0.0.5:8099") -> list[str]:
-        run = Mock(return_value=_ok())
-        with patch(f"{_INFRA}.container_mod") as mod, \
-                patch(f"{_INFRA}.host_orchestrator_token", return_value="k"), \
-                patch(f"{_INFRA}.mint", return_value="jwt"):
-            mod.dns_server.return_value = "1.1.1.1"
-            mod.bind_mount_spec.side_effect = _spec
-            mod.run_container_argv = run
-            svc._ensure_gateway_container(url)
-        return run.call_args.args[0]
+class TestInfraEnsureRunning(unittest.TestCase):
+    """Isolate the orchestrator-container logic; the gateway is brought up by
+    `MacosGateway` (its own module, tested separately), so mock `svc.gateway`.
+    `ensure_running` mints the `gateway` token, so `mint` /
+    `host_orchestrator_token` are stubbed."""
 
-    def test_gateway_is_triple_homed(self) -> None:
-        argv = self._run(MacosInfraService(repo_root=Path("/r")))
-        nets = [argv[i + 1] for i, a in enumerate(argv) if a == "--network"]
-        self.assertEqual(
-            ["bot-bottle-mac-egress", "bot-bottle-mac-gateway", "bot-bottle-mac-control"],
-            nets,
+    def _patches(self, svc: MacosInfraService):
+        gw = MagicMock()
+        return gw, (
+            patch.object(svc, "ensure_built"),
+            patch.object(svc, "gateway", return_value=gw),
+            patch(f"{_INFRA}.host_orchestrator_token", return_value="k"),
+            patch(f"{_INFRA}.mint", return_value="jwt"),
         )
 
-    def test_gateway_resolves_orchestrator_by_url_and_holds_ca(self) -> None:
-        argv = self._run(MacosInfraService(repo_root=Path("/r")), "http://10.0.0.5:8099")
-        self.assertIn("BOT_BOTTLE_ORCHESTRATOR_URL=http://10.0.0.5:8099", argv)
-        mounts = [argv[i + 1] for i, a in enumerate(argv) if a == "--mount"]
-        self.assertTrue([m for m in mounts if "target=/home/mitmproxy/.mitmproxy" in m])
-        self.assertIn("bot-bottle-gateway:latest", argv)
-        self.assertIn(
-            "BOT_BOTTLE_GATEWAY_DAEMONS=egress,git-http,supervise", argv)
-
-
-class TestInfraEnsureRunning(unittest.TestCase):
     def test_current_healthy_orchestrator_left_alone(self) -> None:
         svc = MacosInfraService(repo_root=Path("/r"))
         run = Mock()
+        gw, extra = self._patches(svc)
         with patch(f"{_INFRA}.container_mod") as mod, \
                 patch(f"{_INFRA}.source_hash", return_value="h1"), \
-                patch.object(svc, "ensure_built"), \
                 patch.object(svc, "_run_orchestrator_container", run), \
-                patch.object(svc, "_ensure_gateway_container"), \
-                patch.object(svc, "is_healthy", return_value=True):
+                patch.object(svc, "is_healthy", return_value=True), \
+                extra[0], extra[1], extra[2], extra[3]:
             mod.container_is_running.return_value = True
             mod.container_env.return_value = {"BOT_BOTTLE_SOURCE_HASH": "h1"}
             mod.try_container_ipv4_on_network.return_value = "192.168.128.2"
             endpoint = svc.ensure_running()
         run.assert_not_called()
+        gw.connect_to_orchestrator.assert_called_once()
         self.assertEqual("http://192.168.128.2:8099", endpoint.orchestrator_url)
         self.assertEqual("192.168.128.2", endpoint.gateway_ip)
 
     def test_changed_source_recreates_orchestrator(self) -> None:
         svc = MacosInfraService(repo_root=Path("/r"))
         run = Mock()
+        _gw, extra = self._patches(svc)
         with patch(f"{_INFRA}.container_mod") as mod, \
                 patch(f"{_INFRA}.source_hash", return_value="h2"), \
-                patch.object(svc, "ensure_built"), \
                 patch.object(svc, "_run_orchestrator_container", run), \
-                patch.object(svc, "_ensure_gateway_container"), \
-                patch.object(svc, "is_healthy", return_value=True):
+                patch.object(svc, "is_healthy", return_value=True), \
+                extra[0], extra[1], extra[2], extra[3]:
             mod.container_is_running.return_value = True
             mod.container_env.return_value = {"BOT_BOTTLE_SOURCE_HASH": "h1"}
             mod.try_container_ipv4_on_network.return_value = "192.168.128.2"
@@ -139,12 +124,12 @@ class TestInfraEnsureRunning(unittest.TestCase):
     def test_wedged_but_current_orchestrator_recreated(self) -> None:
         svc = MacosInfraService(repo_root=Path("/r"))
         run = Mock()
+        _gw, extra = self._patches(svc)
         with patch(f"{_INFRA}.container_mod") as mod, \
                 patch(f"{_INFRA}.source_hash", return_value="h1"), \
-                patch.object(svc, "ensure_built"), \
                 patch.object(svc, "_run_orchestrator_container", run), \
-                patch.object(svc, "_ensure_gateway_container"), \
-                patch.object(svc, "is_healthy", Mock(side_effect=[False, True])):
+                patch.object(svc, "is_healthy", Mock(side_effect=[False, True])), \
+                extra[0], extra[1], extra[2], extra[3]:
             mod.container_is_running.return_value = True
             mod.container_env.return_value = {"BOT_BOTTLE_SOURCE_HASH": "h1"}
             mod.try_container_ipv4_on_network.return_value = "192.168.128.2"
@@ -153,12 +138,12 @@ class TestInfraEnsureRunning(unittest.TestCase):
 
     def test_never_healthy_raises(self) -> None:
         svc = MacosInfraService(repo_root=Path("/r"))
+        _gw, extra = self._patches(svc)
         with patch(f"{_INFRA}.container_mod") as mod, \
                 patch(f"{_INFRA}.source_hash", return_value="h1"), \
-                patch.object(svc, "ensure_built"), \
                 patch.object(svc, "_run_orchestrator_container"), \
-                patch.object(svc, "_ensure_gateway_container"), \
-                patch.object(svc, "is_healthy", return_value=False):
+                patch.object(svc, "is_healthy", return_value=False), \
+                extra[0], extra[1], extra[2], extra[3]:
             mod.container_is_running.return_value = False
             mod.try_container_ipv4_on_network.return_value = "192.168.128.2"
             with self.assertRaises(OrchestratorStartError):
@@ -166,22 +151,14 @@ class TestInfraEnsureRunning(unittest.TestCase):
 
 
 class TestCaCertPem(unittest.TestCase):
-    def test_reads_ca_out_of_the_gateway_container(self) -> None:
+    def test_delegates_to_the_gateway_service(self) -> None:
         svc = MacosInfraService(repo_root=Path("/r"))
-        with patch(f"{_INFRA}.container_mod") as mod:
-            mod.run_container_argv.return_value = _ok("-----BEGIN CERTIFICATE-----\n")
-            pem = svc.ca_cert_pem()
+        gw = MagicMock()
+        gw.ca_cert_pem.return_value = "-----BEGIN CERTIFICATE-----\n"
+        with patch.object(svc, "gateway", return_value=gw):
+            pem = svc.ca_cert_pem(timeout=5)
         self.assertTrue(pem.startswith("-----BEGIN CERTIFICATE-----"))
-        argv = mod.run_container_argv.call_args.args[0]
-        self.assertEqual(["container", "exec", "bot-bottle-mac-infra", "cat"], argv[:4])
-
-    def test_raises_gateway_error_when_cert_never_appears(self) -> None:
-        from bot_bottle.backend.macos_container.gateway import GatewayError
-        svc = MacosInfraService(repo_root=Path("/r"))
-        with patch(f"{_INFRA}.container_mod") as mod:
-            mod.run_container_argv.return_value = _fail()
-            with self.assertRaises(GatewayError):
-                svc.ca_cert_pem(timeout=0)
+        gw.ca_cert_pem.assert_called_once_with(timeout=5)
 
 
 class TestProbeOrchestrator(unittest.TestCase):

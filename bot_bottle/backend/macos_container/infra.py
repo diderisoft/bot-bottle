@@ -29,7 +29,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ... import log
-from ...gateway import GATEWAY_CA_CERT, MITMPROXY_HOME
 from ...orchestrator.lifecycle import (
     DEFAULT_PORT,
     DEFAULT_STARTUP_TIMEOUT_SECONDS,
@@ -38,32 +37,30 @@ from ...orchestrator.lifecycle import (
 )
 from ...orchestrator_auth import ROLE_GATEWAY, mint
 from ...paths import (
-    ORCHESTRATOR_AUTH_JWT_ENV,
     ORCHESTRATOR_TOKEN_ENV,
     HOST_DB_FILENAME,
     host_orchestrator_token,
-    host_gateway_ca_dir,
 )
-from .. import util as backend_util
 from . import util as container_mod
 from .gateway import (
     CONTROL_NETWORK,
     DEFAULT_CA_TIMEOUT_SECONDS,
     GATEWAY_EGRESS_NETWORK,
     GATEWAY_IMAGE,
+    GATEWAY_NAME,
     GATEWAY_NETWORK,
     GatewayError,
+    MacosGateway,
     ORCHESTRATOR_IMAGE,
     ensure_networks,
 )
 
-# The orchestrator (control plane) container + the gateway (data plane)
-# container. `INFRA_NAME` is kept — now the gateway container — for callers that
-# still import it (probe / reprovision attribute against the gateway).
+# The orchestrator (control plane) container. `INFRA_NAME` is kept — now aliasing
+# the gateway container — for callers that still import it (probe / reprovision
+# attribute against the gateway).
 ORCHESTRATOR_NAME = "bot-bottle-mac-orchestrator"
 ORCHESTRATOR_LABEL = "bot-bottle-mac-orchestrator=1"
-INFRA_NAME = "bot-bottle-mac-infra"  # the gateway container
-INFRA_LABEL = "bot-bottle-mac-infra=1"
+INFRA_NAME = GATEWAY_NAME  # the container agents attribute against is the gateway
 # Container-only volume holding bot-bottle.db, mounted ONLY into the
 # orchestrator. One kernel writes it (never host-shared or cross-guest).
 INFRA_DB_VOLUME = "bot-bottle-mac-db"
@@ -78,9 +75,6 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 _HEALTH_POLL_SECONDS = 0.25
 _HEALTH_REQUEST_TIMEOUT_SECONDS = 1.0
-
-# The gateway subset the consolidated model runs (no per-bottle git:// daemon).
-_GATEWAY_DAEMONS = "egress,git-http,supervise"
 
 
 @dataclass(frozen=True)
@@ -125,6 +119,19 @@ class MacosInfraService:
     @property
     def gateway_name(self) -> str:
         return self._gateway_name
+
+    def gateway(self) -> MacosGateway:
+        """The data-plane gateway service, triple-homed on the egress + agent +
+        control networks. Cheap to reconstruct — the launch flow reads its
+        `address()` / CA / provisioning transport off it, and `ensure_running`
+        connects it to the control plane."""
+        return MacosGateway(
+            self.gateway_image,
+            name=self._gateway_name,
+            network=self.network,
+            egress_network=self.egress_network,
+            control_network=self.control_network,
+        )
 
     def _resolve_orchestrator_url(self) -> str:
         """The control-plane URL (orchestrator's control-network address), or ""
@@ -190,8 +197,12 @@ class MacosInfraService:
             url = self._wait_healthy(startup_timeout)
 
         # (Re)ensure the gateway once the control plane it resolves against is
-        # healthy — it needs the orchestrator's control-network address.
-        self._ensure_gateway_container(url)
+        # healthy — it needs the orchestrator's control-network address. The
+        # orchestrator (which holds the signing key) mints the role-scoped
+        # `gateway` JWT and hands it to the gateway, which never sees the key
+        # (#469).
+        gateway_token = mint(ROLE_GATEWAY, host_orchestrator_token())
+        self.gateway().connect_to_orchestrator(url, gateway_token)
         return InfraEndpoint(orchestrator_url=url, gateway_ip=self._resolve_gateway_ip())
 
     def _run_orchestrator_container(self, current_hash: str) -> None:
@@ -230,44 +241,6 @@ class MacosInfraService:
                 f"{(result.stderr or '').strip() or '<no stderr>'}"
             )
 
-    def _ensure_gateway_container(self, orchestrator_url: str) -> None:
-        """Start (recreate) the gateway container, dual-homed on the agent +
-        control networks, resolving policy against `orchestrator_url` (the
-        orchestrator's control-network address — Apple has no DNS)."""
-        container_mod.force_remove_container(self._gateway_name)
-        _signing_key = host_orchestrator_token()
-        argv = [
-            "container", "run", "--detach",
-            "--name", self._gateway_name,
-            "--label", "bot-bottle.backend=macos-container",
-            "--label", INFRA_LABEL,
-            # NAT egress FIRST (default route out); the host-only agent network
-            # is where agents reach the gateway; the control network reaches the
-            # orchestrator.
-            "--network", self.egress_network,
-            "--network", self.network,
-            "--network", self.control_network,
-            "--dns", container_mod.dns_server(),
-            # The mitmproxy CA on a host bind-mount (survives recreation +
-            # volume pruning — issue #450). No DB mount: the data plane never
-            # opens bot-bottle.db (#469).
-            "--mount",
-            container_mod.bind_mount_spec(str(host_gateway_ca_dir()), MITMPROXY_HOME),
-            "--env", f"BOT_BOTTLE_GATEWAY_DAEMONS={_GATEWAY_DAEMONS}",
-            "--env", f"BOT_BOTTLE_ORCHESTRATOR_URL={orchestrator_url}",
-            # The pre-minted `gateway` JWT (never the signing key). Bare
-            # `--env NAME` inherits the value from run_env below.
-            "--env", ORCHESTRATOR_AUTH_JWT_ENV,
-            self.gateway_image,
-        ]
-        run_env = {**os.environ, ORCHESTRATOR_AUTH_JWT_ENV: mint(ROLE_GATEWAY, _signing_key)}
-        result = container_mod.run_container_argv(argv, env=run_env)
-        if result.returncode != 0:
-            raise GatewayError(
-                f"gateway container failed to start: "
-                f"{(result.stderr or '').strip() or '<no stderr>'}"
-            )
-
     def _wait_healthy(self, startup_timeout: float) -> str:
         deadline = time.monotonic() + startup_timeout
         while True:
@@ -284,18 +257,9 @@ class MacosInfraService:
 
     def ca_cert_pem(self, *, timeout: float = DEFAULT_CA_TIMEOUT_SECONDS) -> str:
         """The gateway's mitmproxy CA (PEM) agents install to trust its TLS
-        interception. Read from the gateway container; polls because mitmproxy
-        writes it a beat after start."""
-        def _fetch() -> str | None:
-            result = container_mod.run_container_argv(
-                ["container", "exec", self._gateway_name, "cat", GATEWAY_CA_CERT])
-            return result.stdout if result.returncode == 0 and result.stdout.strip() else None
-        try:
-            return backend_util.poll_ca_cert(_fetch, timeout=timeout)
-        except TimeoutError as exc:
-            raise GatewayError(
-                f"gateway CA not available in {self._gateway_name} after {timeout:g}s"
-            ) from exc
+        interception — delegated to the gateway service (reads it out of the
+        gateway container, polling until mitmproxy writes it)."""
+        return self.gateway().ca_cert_pem(timeout=timeout)
 
     def stop(self) -> None:
         """Remove both containers (idempotent). The DB volume persists."""
