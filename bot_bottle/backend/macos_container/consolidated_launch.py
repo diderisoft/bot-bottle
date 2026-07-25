@@ -87,10 +87,10 @@ def ensure_gateway(
     launches share it. Call before starting the agent container: the agent's
     proxy env needs `gateway_ip` at run time."""
     service = service or MacosInfraService()
-    infra = service.ensure_running()
+    orchestrator_url = service.ensure_running()
     endpoint = GatewayEndpoint(
-        orchestrator_url=infra.orchestrator_url,
-        gateway_ip=infra.gateway_ip,
+        orchestrator_url=orchestrator_url,
+        gateway_ip=service.gateway().address(),
         gateway_ca_pem=service.ca_cert_pem(),
         network=service.network,
     )

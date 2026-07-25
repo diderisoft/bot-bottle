@@ -1,8 +1,8 @@
-"""Unit tests for the Firecracker infra VMs (orchestrator + gateway boot).
+"""Unit tests for the Firecracker infra-VM substrate (boot primitives + inits).
 
 The KVM boot / HTTP reachability is integration-tested on a KVM host; here we
-cover the URL shape, the shared-rootfs role wiring, the secret-push decisions,
-and the two-VM singleton lifecycle that must hold without a VM.
+cover the per-plane role inits, rootfs build, the secret-push retry, and the
+pidfile/adoption helpers. The pair coordinator is tested in test_firecracker_infra.
 """
 
 from __future__ import annotations
@@ -41,31 +41,6 @@ class TestPushSecret(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 infra_vm.push_secret(self._infra(), "secret", "/dest", "the thing")
         die.assert_called_once()
-
-
-class TestInfraEndpoint(unittest.TestCase):
-    """The endpoint mirrors docker/macOS: it exposes the orchestrator service's
-    URL and delegates the CA fetch to the gateway service."""
-
-    def _endpoint(self) -> infra_vm.InfraEndpoint:
-        from bot_bottle.backend.firecracker.gateway import FirecrackerGateway
-        from bot_bottle.backend.firecracker.orchestrator import FirecrackerOrchestrator
-        return infra_vm.InfraEndpoint(
-            orchestrator=FirecrackerOrchestrator(),
-            gateway=FirecrackerGateway(
-                infra_vm.InfraVm(guest_ip="10.243.255.3", private_key=Path("/k"))),
-        )
-
-    def test_orchestrator_url_is_the_orchestrator_service(self):
-        ep = self._endpoint()
-        ip = infra_vm.netpool.orch_slot().guest_ip
-        self.assertEqual(f"http://{ip}:{infra_vm.ORCHESTRATOR_PORT}", ep.orchestrator_url)
-
-    def test_gateway_ca_pem_delegates_to_the_gateway_service(self):
-        ep = self._endpoint()
-        with patch.object(ep.gateway, "ca_cert_pem", return_value="PEM") as ca:
-            self.assertEqual("PEM", ep.gateway_ca_pem(timeout=1))
-        ca.assert_called_once_with(timeout=1)
 
 
 class TestRoleInits(unittest.TestCase):
@@ -143,105 +118,6 @@ class TestEnsureBuilt(unittest.TestCase):
                         tags.index(infra_vm._ORCHESTRATOR_FC_IMAGE))
 
 
-# The orchestrator + gateway services are imported lazily inside ensure_running
-# / _adopt (to break the infra_vm <-> service import cycle), so patch them at
-# their home modules.
-_ORCH_CLS = "bot_bottle.backend.firecracker.orchestrator.FirecrackerOrchestrator"
-_GW_CLS = "bot_bottle.backend.firecracker.gateway.FirecrackerGateway"
-
-
-class TestEnsureRunningSingleton(unittest.TestCase):
-    def test_adopts_when_healthy_alive_and_version_matches(self):
-        # Healthy control plane + live gateway + existing key + matching version
-        # marker -> adopt (no boot).
-        from bot_bottle.backend.firecracker.gateway import FirecrackerGateway
-        from bot_bottle.backend.firecracker.orchestrator import FirecrackerOrchestrator
-        import tempfile
-        with tempfile.TemporaryDirectory() as td:
-            d = Path(td)
-            (d / "id_ed25519").write_text("k")
-            (d / "booted-version").write_text("v-current\n")
-            with patch.object(infra_vm, "_infra_dir", return_value=d), \
-                 patch.object(infra_vm, "_expected_version", return_value="v-current"), \
-                 patch.object(infra_vm, "_health_ok", return_value=True), \
-                 patch.object(infra_vm, "_pidfile_alive", return_value=True):
-                ep = infra_vm.ensure_running()
-        # Adopted service handles addressing the two distinct infra links.
-        self.assertIsInstance(ep.orchestrator, FirecrackerOrchestrator)
-        self.assertEqual(
-            infra_vm.netpool.orch_slot().guest_ip,
-            ep.orchestrator_url.split("://")[1].split(":")[0])
-        self.assertIsInstance(ep.gateway, FirecrackerGateway)
-        self.assertEqual(infra_vm.netpool.gw_slot().guest_ip, ep.gateway.address())
-
-    def test_reboots_both_when_version_stale(self):
-        # Healthy control plane but the running pair booted an OLDER image
-        # (marker mismatch) -> reboot rather than adopt stale code.
-        import tempfile
-        with tempfile.TemporaryDirectory() as td:
-            d = Path(td)
-            (d / "id_ed25519").write_text("k")
-            (d / "booted-version").write_text("v-old\n")
-            with patch.object(infra_vm, "_infra_dir", return_value=d), \
-                 patch.object(infra_vm, "_expected_version", return_value="v-current"), \
-                 patch.object(infra_vm, "_health_ok", return_value=True), \
-                 patch.object(infra_vm, "_pidfile_alive", return_value=True), \
-                 patch.object(infra_vm, "stop") as stop, \
-                 patch.object(infra_vm, "ensure_built"), \
-                 patch(_ORCH_CLS) as orch_cls, \
-                 patch(_GW_CLS) as gw_cls:
-                orch_cls.return_value.gateway_url.return_value = "http://10.243.255.1:8099"
-                orch_cls.return_value.mint_gateway_token.return_value = "gw.jwt"
-                infra_vm.ensure_running()
-            stop.assert_called_once()          # dislodge the outdated pair
-            orch_cls.return_value.ensure_running.assert_called_once()
-            # The gateway service is bound to the orchestrator's gateway URL,
-            # carrying the orchestrator-minted `gateway` token.
-            gw_cls.return_value.connect_to_orchestrator.assert_called_once_with(
-                "http://10.243.255.1:8099", "gw.jwt")
-            # The fresh boot records the current version for the next launcher.
-            self.assertEqual("v-current\n", (d / "booted-version").read_text())
-
-    def test_reboots_when_gateway_dead(self):
-        # Orchestrator healthy + marker current, but the gateway VM is gone ->
-        # the pair is half-down, so reboot both rather than adopt partial state.
-        import tempfile
-        with tempfile.TemporaryDirectory() as td:
-            d = Path(td)
-            (d / "id_ed25519").write_text("k")
-            (d / "booted-version").write_text("v-current\n")
-            with patch.object(infra_vm, "_infra_dir", return_value=d), \
-                 patch.object(infra_vm, "_expected_version", return_value="v-current"), \
-                 patch.object(infra_vm, "_health_ok", return_value=True), \
-                 patch.object(infra_vm, "_pidfile_alive", return_value=False), \
-                 patch.object(infra_vm, "stop") as stop, \
-                 patch.object(infra_vm, "ensure_built"), \
-                 patch(_ORCH_CLS) as orch_cls, \
-                 patch(_GW_CLS) as gw_cls:
-                infra_vm.ensure_running()
-            stop.assert_called_once()
-            orch_cls.return_value.ensure_running.assert_called_once()
-            gw_cls.return_value.connect_to_orchestrator.assert_called_once()
-
-    def test_boots_both_when_unhealthy(self):
-        import tempfile
-        with tempfile.TemporaryDirectory() as td:
-            with patch.object(infra_vm, "_infra_dir", return_value=Path(td)), \
-                 patch.object(infra_vm, "_expected_version", return_value="v-current"), \
-                 patch.object(infra_vm, "_health_ok", return_value=False), \
-                 patch.object(infra_vm, "stop") as stop, \
-                 patch.object(infra_vm, "ensure_built") as built, \
-                 patch(_ORCH_CLS) as orch_cls, \
-                 patch(_GW_CLS) as gw_cls:
-                infra_vm.ensure_running()
-        stop.assert_called_once()      # clear stale VMs first
-        built.assert_called_once()
-        # Orchestrator is brought up BEFORE the gateway is connected (its daemons
-        # reach the control plane at startup).
-        orch_cls.return_value.ensure_running.assert_called_once()
-        gw_cls.return_value.connect_to_orchestrator.assert_called_once()
-
-
 class TestStop(unittest.TestCase):
     def test_stops_both_vms_and_drops_marker(self):
         import tempfile
@@ -306,21 +182,21 @@ class TestAdoptable(unittest.TestCase):
             with patch.object(infra_vm, "_infra_dir", return_value=d), \
                  patch.object(infra_vm, "_health_ok", return_value=True), \
                  patch.object(infra_vm, "_pidfile_alive", return_value=True):
-                self.assertTrue(infra_vm._adoptable(d / "id_ed25519", "u", "v1"))
+                self.assertTrue(infra_vm.adoptable(d / "id_ed25519", "u", "v1"))
 
     def test_false_when_key_missing(self):
         import tempfile
         with tempfile.TemporaryDirectory() as td:
             d = self._dir(td, key=False, version="v1")
             with patch.object(infra_vm, "_infra_dir", return_value=d):
-                self.assertFalse(infra_vm._adoptable(d / "id_ed25519", "u", "v1"))
+                self.assertFalse(infra_vm.adoptable(d / "id_ed25519", "u", "v1"))
 
     def test_false_when_no_version_marker(self):
         import tempfile
         with tempfile.TemporaryDirectory() as td:
             d = self._dir(td)  # key present, no booted-version
             with patch.object(infra_vm, "_infra_dir", return_value=d):
-                self.assertFalse(infra_vm._adoptable(d / "id_ed25519", "u", "v1"))
+                self.assertFalse(infra_vm.adoptable(d / "id_ed25519", "u", "v1"))
 
     def test_false_when_version_mismatch(self):
         import tempfile
@@ -329,7 +205,7 @@ class TestAdoptable(unittest.TestCase):
             with patch.object(infra_vm, "_infra_dir", return_value=d), \
                  patch.object(infra_vm, "_health_ok", return_value=True), \
                  patch.object(infra_vm, "_pidfile_alive", return_value=True):
-                self.assertFalse(infra_vm._adoptable(d / "id_ed25519", "u", "v1"))
+                self.assertFalse(infra_vm.adoptable(d / "id_ed25519", "u", "v1"))
 
     def test_false_when_gateway_dead(self):
         import tempfile
@@ -338,7 +214,7 @@ class TestAdoptable(unittest.TestCase):
             with patch.object(infra_vm, "_infra_dir", return_value=d), \
                  patch.object(infra_vm, "_health_ok", return_value=True), \
                  patch.object(infra_vm, "_pidfile_alive", return_value=False):
-                self.assertFalse(infra_vm._adoptable(d / "id_ed25519", "u", "v1"))
+                self.assertFalse(infra_vm.adoptable(d / "id_ed25519", "u", "v1"))
 
 
 class TestKillInfraFirecrackers(unittest.TestCase):

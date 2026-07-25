@@ -123,5 +123,5 @@ class FirecrackerBottleBackend(
         return plan.agent_supervise_url
 
     def ensure_orchestrator(self) -> str:
-        from . import infra_vm
-        return infra_vm.ensure_running().orchestrator_url
+        from .infra import FirecrackerInfraService
+        return FirecrackerInfraService().ensure_running()

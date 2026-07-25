@@ -130,7 +130,7 @@ class TestDockerOrchestratorAuthIntegration(unittest.TestCase):
         # than hand-rolling urllib here; _request (not one of the named
         # wrapper methods) is what exposes raw status codes for arbitrary
         # paths/tokens, which is exactly what these auth-boundary tests need.
-        client = OrchestratorClient(self.svc.url, auth_token=token)
+        client = OrchestratorClient(self.svc.url(), auth_token=token)
         return client._request(method, path)  # pylint: disable=protected-access
 
     def test_health_is_open_without_a_token(self) -> None:

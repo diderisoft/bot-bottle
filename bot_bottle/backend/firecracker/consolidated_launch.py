@@ -41,8 +41,9 @@ from ...orchestrator.lifecycle import (
 from ...orchestrator.reprovision import reprovision_bottles
 from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
 from ..provision_bottle import deprovision_bottle, provision_bottle
-from . import cleanup, infra_vm, util
+from . import cleanup, util
 from .gateway import FirecrackerGateway
+from .infra import FirecrackerInfraService
 
 _ENV_VAR_SECRET_PATH = "/run/bot-bottle/env-var-secret"
 
@@ -122,13 +123,13 @@ def launch_consolidated(
     """Ensure the infra VM is up, register the bottle by its guest IP, and
     provision its git-gate state into the gateway VM. Returns the context the
     agent-VM launch needs. Raises on failure — the caller tears down."""
-    infra = infra_vm.ensure_running()
-    url = infra.orchestrator_url
+    service = FirecrackerInfraService()
+    url = service.ensure_running()
     client = OrchestratorClient(url)
     _reprovision_running_bottles(client)
 
     # Read the gateway's provisioning transport + CA off the Gateway service.
-    gateway = infra.gateway
+    gateway = service.gateway()
     transport = gateway.provisioning_transport()
     reg = provision_bottle(
         client, guest_ip, egress_plan, git_gate_plan, transport,

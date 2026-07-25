@@ -40,6 +40,7 @@ from ...gateway import (
     GATEWAY_NAME,
     GATEWAY_NETWORK,
 )
+from ..infra_service import InfraService
 from ...orchestrator.lifecycle import (
     DEFAULT_PORT,
     DEFAULT_STARTUP_TIMEOUT_SECONDS,
@@ -53,7 +54,7 @@ INFRA_NAME = GATEWAY_NAME  # the container agents attribute against is the gatew
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-class DockerInfraService:
+class DockerInfraService(InfraService):
     """Composes the per-host control plane + gateway as two containers.
 
     `orchestrator_name` / `gateway_name` let callers run independent pairs on
@@ -90,14 +91,6 @@ class DockerInfraService:
         """The gateway container — the address the launch flow attributes agents
         against (gateway IP, git-gate provisioning transport, CA fetch)."""
         return self._gateway_name
-
-    @property
-    def url(self) -> str:
-        """Host-side control-plane URL (the orchestrator's published loopback)."""
-        return self.orchestrator().url()
-
-    def is_healthy(self) -> bool:
-        return self.orchestrator().is_healthy()
 
     def orchestrator(self) -> DockerOrchestrator:
         """The control-plane service. Cheap to reconstruct — `ensure_built`

@@ -30,21 +30,17 @@ class TestInfraEnsureRunning(unittest.TestCase):
             self.addCleanup(p.stop)
 
     def test_composes_networks_builds_and_brings_up_orchestrator_first(self) -> None:
-        with patch(f"{_INFRA}.ensure_networks") as nets, \
-                patch(f"{_INFRA}.container_mod") as mod:
-            mod.try_container_ipv4_on_network.return_value = "192.168.128.3"
-            endpoint = self.svc.ensure_running()
+        with patch(f"{_INFRA}.ensure_networks") as nets:
+            url = self.svc.ensure_running()
         nets.assert_called_once()
         self.orch.ensure_built.assert_called_once()
         self.gw.ensure_built.assert_called_once()
         self.orch.ensure_running.assert_called_once()
-        self.assertEqual("http://192.168.128.2:8099", endpoint.orchestrator_url)
-        self.assertEqual("192.168.128.3", endpoint.gateway_ip)
+        # Returns the host control-plane URL (the InfraService contract).
+        self.assertEqual("http://192.168.128.2:8099", url)
 
     def test_connects_gateway_with_orchestrator_url_and_minted_token(self) -> None:
-        with patch(f"{_INFRA}.ensure_networks"), \
-                patch(f"{_INFRA}.container_mod") as mod:
-            mod.try_container_ipv4_on_network.return_value = "192.168.128.3"
+        with patch(f"{_INFRA}.ensure_networks"):
             self.svc.ensure_running()
         self.gw.connect_to_orchestrator.assert_called_once_with(
             "http://192.168.128.2:8099", "gw.jwt")

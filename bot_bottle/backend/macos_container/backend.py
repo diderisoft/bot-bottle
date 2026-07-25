@@ -106,7 +106,7 @@ class MacosContainerBottleBackend(
         (`supervise`) call when no control plane is running yet. Mirrors
         firecracker's infra bring-up."""
         from .infra import MacosInfraService
-        return MacosInfraService().ensure_running().orchestrator_url
+        return MacosInfraService().ensure_running()
 
     def prepare_cleanup(self) -> MacosContainerBottleCleanupPlan:
         return _cleanup.prepare_cleanup()

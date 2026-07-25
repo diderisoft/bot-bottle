@@ -7,12 +7,11 @@ volume (/dev/vdb — the sole opener of `bot-bottle.db`), seeding the host-canon
 signing key over SSH, and waiting for `/health`. The host CLI reaches it at its
 guest IP, and so does the gateway (`bb_orch` cmdline), so `url()` == `gateway_url()`.
 
-What deliberately stays in `infra_vm` (not moved here): the plane-agnostic VM
-substrate the gateway VM also uses — booting a VM from a per-plane rootfs
-(`boot_vm`), the stable SSH keypair, the secret-push retry, the PID lifecycle —
-plus the pair coordinator (`ensure_running`: adopt-or-boot-both under a singleton
-lock with a combined version marker) and the per-plane guest inits (`role_init`).
-Those are the shared seam.
+The plane-agnostic VM substrate the gateway VM also uses stays in `infra_vm` —
+booting a VM from a per-plane rootfs (`boot_vm`), the stable SSH keypair, the
+secret-push retry, the PID lifecycle, the adoption/version helpers, and the
+per-plane guest inits (`role_init`). The pair coordinator (adopt-or-boot-both
+under a singleton flock) is `FirecrackerInfraService` (`infra.py`).
 """
 
 from __future__ import annotations
@@ -90,7 +89,7 @@ class FirecrackerOrchestrator(Orchestrator):
 
     def stop(self) -> None:
         """Stop only the orchestrator VM (idempotent). A dead orchestrator fails
-        `infra_vm._adoptable`'s health check, so no version marker to clear."""
+        `infra_vm.adoptable`'s health check, so no version marker to clear."""
         infra_vm._kill_pidfile(infra_vm._orch_dir())
         infra_vm._pid_file(infra_vm._orch_dir()).unlink(missing_ok=True)
 

@@ -37,7 +37,7 @@ class TestDockerInfraService(unittest.TestCase):
         self.assertEqual(GATEWAY_NAME, self.svc.gateway_name)
 
     def test_url_delegates_to_the_orchestrator(self) -> None:
-        self.assertEqual("http://127.0.0.1:8099", self.svc.url)
+        self.assertEqual("http://127.0.0.1:8099", self.svc.url())
 
     def test_is_healthy_delegates_to_the_orchestrator(self) -> None:
         self.orch.is_healthy.return_value = True

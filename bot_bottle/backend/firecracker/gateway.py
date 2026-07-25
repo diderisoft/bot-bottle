@@ -7,14 +7,13 @@ fetching the mitmproxy CA, and the SSH exec/cp provisioning transport. The
 gateway VM never opens `bot-bottle.db` (#469), so it holds no signing key —
 only the token the host hands it via `connect_to_orchestrator`.
 
-What deliberately stays in `infra_vm` (not moved here): the plane-agnostic VM
-substrate the orchestrator VM also uses — booting a VM from a per-plane rootfs
-(`boot_vm`), the stable SSH keypair, the secret-push retry loop, and the PID
-lifecycle — plus the pair coordinator (`ensure_running`: orchestrator-first
-health gate, singleton lock, adoption/version marker). The guest-side gateway
-daemon startup lives in the gateway rootfs's guest init (`_gateway_init` in
-`infra_vm`), so it can't live in a host-side method either. These are the shared
-seam.
+The plane-agnostic VM substrate the orchestrator VM also uses stays in
+`infra_vm` — booting a VM from a per-plane rootfs (`boot_vm`), the stable SSH
+keypair, the secret-push retry loop, the PID lifecycle, and the
+adoption/version helpers. The guest-side gateway daemon startup lives in the
+gateway rootfs's guest init (`_gateway_init` in `infra_vm`), so it can't live in
+a host-side method either. The pair coordinator (orchestrator-first, under a
+singleton flock) is `FirecrackerInfraService` (`infra.py`).
 """
 
 from __future__ import annotations
@@ -112,7 +111,7 @@ class FirecrackerGateway(Gateway):
 
     def stop(self) -> None:
         """Stop only the gateway VM (idempotent — absent is success). A dead
-        gateway already fails `infra_vm._adoptable`, so no version marker to
+        gateway already fails `infra_vm.adoptable`, so no version marker to
         clear here."""
         infra_vm._kill_pidfile(infra_vm._gw_dir())
         infra_vm._pid_file(infra_vm._gw_dir()).unlink(missing_ok=True)

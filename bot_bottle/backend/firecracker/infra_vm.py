@@ -40,15 +40,11 @@ import urllib.request
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Generator
+from typing import Generator
 
 from ...log import die, info
 from ..docker import util as docker_mod
 from . import firecracker_vm, infra_artifact, netpool, util
-
-if TYPE_CHECKING:
-    from .gateway import FirecrackerGateway
-    from .orchestrator import FirecrackerOrchestrator
 
 # The orchestrator VM's signing-key path on its persistent /dev/vdb volume
 # (mounted at BOT_BOTTLE_ROOT=/var/lib/bot-bottle). The launcher seeds this
@@ -89,7 +85,6 @@ GIT_HTTP_PORT = 9420
 # now; routing DNS through a filtered path is a later refinement.
 _INFRA_RESOLVER = "1.1.1.1"
 
-_CA_TIMEOUT_SECONDS = 30.0
 # How long the launcher retries pushing a secret while the guest's SSH comes
 # up. Below the init's own wait window, so a failed push dies here first.
 _SECRET_PUSH_TIMEOUT_SECONDS = 30.0
@@ -106,24 +101,6 @@ class InfraVm:
     guest_ip: str
     private_key: Path
     vm: firecracker_vm.VmHandle | None = None
-
-
-@dataclass
-class InfraEndpoint:
-    """How to reach the running per-host pair. `orchestrator` is the control-plane
-    `Orchestrator` service (host CLI + registration + in-VM builds); `gateway` is
-    the data-plane `Gateway` service (agent egress / git-http / supervise, CA
-    fetch, git-gate provisioning). Mirrors the docker/macOS `InfraEndpoint`."""
-
-    orchestrator: "FirecrackerOrchestrator"
-    gateway: "FirecrackerGateway"
-
-    @property
-    def orchestrator_url(self) -> str:
-        return self.orchestrator.url()
-
-    def gateway_ca_pem(self, *, timeout: float = _CA_TIMEOUT_SECONDS) -> str:
-        return self.gateway.ca_cert_pem(timeout=timeout)
 
 
 def role_init(role: str) -> str:
@@ -177,67 +154,8 @@ def build_rootfs_dir(role: str) -> Path:
     )
 
 
-def ensure_running() -> InfraEndpoint:
-    """Idempotent per-host singleton pair. Adopt the running VMs if the
-    orchestrator's control plane is healthy AND the gateway VM is alive AND
-    both booted the CURRENT code version (a prior launcher booted them — they
-    outlive short-lived `start` processes); otherwise clear any stale VMs and
-    boot a fresh pair (orchestrator first, then the gateway that resolves
-    policy against it). Returns handles usable for builds / CA fetch / git-gate
-    provisioning.
-
-    Concurrency-safe: the cold stop/build/boot path is serialized by a host
-    flock, so two simultaneous first launches don't both boot on the same
-    links/PIDs. The healthy fast-path takes no lock."""
-    # Local imports: the orchestrator + gateway services import this module for
-    # the shared VM substrate, so importing them at module scope would cycle.
-    from .orchestrator import FirecrackerOrchestrator
-    from .gateway import FirecrackerGateway
-
-    key = _infra_dir() / "id_ed25519"
-    orchestrator = FirecrackerOrchestrator()
-    url = orchestrator.url()
-    want = _expected_version()
-    if _adoptable(key, url, want):
-        info(f"adopting running infra VMs (orchestrator at {url})")
-        return _adopt(key)
-
-    with _singleton_lock():
-        # Re-check under the lock: another launcher may have booted them while
-        # we waited for the lock (double-checked, so we adopt not re-boot).
-        if _adoptable(key, url, want):
-            info(f"adopting running infra VMs (orchestrator at {url})")
-            return _adopt(key)
-        # Clear stale/hung/OUTDATED VMs holding either link before booting fresh.
-        stop()
-        ensure_built()
-        # Orchestrator first — the gateway daemons reach the control plane at
-        # startup. Each service owns its own boot; the orchestrator (which holds
-        # the signing key) mints the role-scoped `gateway` JWT for the gateway,
-        # which never sees the key (#469).
-        orchestrator.ensure_running()
-        gateway = FirecrackerGateway()
-        gateway.connect_to_orchestrator(
-            orchestrator.gateway_url(), orchestrator.mint_gateway_token())
-        _record_booted_version(want)
-        return InfraEndpoint(orchestrator=orchestrator, gateway=gateway)
-
-
-def _adopt(key: Path) -> "InfraEndpoint":
-    """Build the service handles for the already-running pair from the stable key
-    + the fixed links (no live VM handle — teardown / CA fetch go through the PID
-    files + stable key)."""
-    from .orchestrator import FirecrackerOrchestrator
-    from .gateway import FirecrackerGateway
-    return InfraEndpoint(
-        orchestrator=FirecrackerOrchestrator(),
-        gateway=FirecrackerGateway(
-            InfraVm(guest_ip=netpool.gw_slot().guest_ip, private_key=key)),
-    )
-
-
 @contextmanager
-def _singleton_lock() -> Generator[None, None, None]:
+def singleton_lock() -> Generator[None, None, None]:
     """Host-level exclusive lock serializing the infra pair's cold create path
     (`stop`/`ensure_built`/`boot`). flock auto-releases if the launcher
     crashes, so the lock is never leaked."""
@@ -336,13 +254,13 @@ def _version_file() -> Path:
     return _infra_dir() / "booted-version"
 
 
-def _expected_version() -> str:
+def expected_version() -> str:
     """The combined marker for the running pair: both per-plane artifact
     versions, so a change to either rootfs dislodges the adopted pair."""
     return " ".join(f"{role}={_role_version(role)}" for role in infra_artifact.ROLES)
 
 
-def _adoptable(key: Path, url: str, want: str) -> bool:
+def adoptable(key: Path, url: str, want: str) -> bool:
     """Adopt the running pair only if it booted from the CURRENT version, the
     orchestrator's control plane is healthy, and the gateway VM is still alive.
     A missing/mismatched marker means a prior launcher booted an older infra
@@ -361,7 +279,7 @@ def _adoptable(key: Path, url: str, want: str) -> bool:
     return _pidfile_alive(_gw_dir())
 
 
-def _record_booted_version(version: str) -> None:
+def record_booted_version(version: str) -> None:
     _version_file().write_text(version + "\n", encoding="utf-8")
 
 

@@ -22,7 +22,6 @@ so they have no route to the control plane (the L3 block, not just the JWT).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 
 from ...orchestrator.lifecycle import (
@@ -30,6 +29,7 @@ from ...orchestrator.lifecycle import (
     DEFAULT_STARTUP_TIMEOUT_SECONDS,
     OrchestratorStartError,
 )
+from ..infra_service import InfraService
 from . import util as container_mod
 from .gateway import (
     CONTROL_NETWORK,
@@ -59,19 +59,10 @@ INFRA_DB_VOLUME = ORCHESTRATOR_DB_VOLUME
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-@dataclass(frozen=True)
-class InfraEndpoint:
-    """How to reach the running pair. `orchestrator_url` is the orchestrator's
-    control-network address (host CLI + registration); `gateway_ip` is the
-    gateway's agent-network address (proxy / git-http / MCP target)."""
-
-    orchestrator_url: str
-    gateway_ip: str
-
-
-class MacosInfraService:
+class MacosInfraService(InfraService):
     """Composes the per-host orchestrator + gateway containers. Callers use
-    `ensure_running()` (returns the endpoint) and `ca_cert_pem()`."""
+    `ensure_running()` (returns the control-plane URL), the `orchestrator()` /
+    `gateway()` accessors, and `ca_cert_pem()`."""
 
     def __init__(
         self,
@@ -129,20 +120,12 @@ class MacosInfraService:
             repo_root=self._repo_root,
         )
 
-    def _resolve_gateway_ip(self) -> str:
-        """The gateway's agent-network address, or "" while it has none."""
-        return container_mod.try_container_ipv4_on_network(
-            self._gateway_name, self.network)
-
-    def is_healthy(self) -> bool:
-        return self.orchestrator().is_healthy()
-
     def ensure_running(
         self, *, startup_timeout: float = DEFAULT_STARTUP_TIMEOUT_SECONDS,
-    ) -> InfraEndpoint:
-        """Ensure the orchestrator + gateway containers are up; return how to
-        reach them. Idempotent per-host singleton — a healthy orchestrator on
-        current source is left untouched. Raises `OrchestratorStartError` on
+    ) -> str:
+        """Ensure the orchestrator + gateway containers are up; return the host
+        control-plane URL. Idempotent per-host singleton — a healthy orchestrator
+        on current source is left untouched. Raises `OrchestratorStartError` on
         control-plane startup timeout."""
         # The networks (host-only agent + NAT egress + host-only control) are a
         # shared concern — create them before either plane comes up.
@@ -162,7 +145,7 @@ class MacosInfraService:
         # (#469).
         url = orchestrator.url()
         gateway.connect_to_orchestrator(url, orchestrator.mint_gateway_token())
-        return InfraEndpoint(orchestrator_url=url, gateway_ip=self._resolve_gateway_ip())
+        return url
 
     def ca_cert_pem(self, *, timeout: float = DEFAULT_CA_TIMEOUT_SECONDS) -> str:
         """The gateway's mitmproxy CA (PEM) agents install to trust its TLS
@@ -178,7 +161,6 @@ class MacosInfraService:
 
 __all__ = [
     "MacosInfraService",
-    "InfraEndpoint",
     "OrchestratorStartError",
     "GatewayError",
     "ORCHESTRATOR_NAME",

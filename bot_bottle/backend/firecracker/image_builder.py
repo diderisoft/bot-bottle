@@ -26,7 +26,8 @@ from pathlib import Path
 from typing import Generator
 
 from ...log import die, info
-from . import infra_vm, util
+from . import util
+from .infra import FirecrackerInfraService
 
 # vfs + chroot: buildah works as root in the microVM (no fuse-overlayfs /
 # overlay module / subuid maps). `--isolation` is a build/run-only flag;
@@ -125,8 +126,9 @@ def _build_in_infra(
     orchestrator VM (the build-capable control plane), smoke test the image,
     and stream its rootfs into `base`. The infra VMs persist; only the
     per-build container/image/context are cleaned up."""
-    orchestrator = infra_vm.ensure_running().orchestrator
-    key, ip = orchestrator.ssh_target()
+    service = FirecrackerInfraService()
+    service.ensure_running()
+    key, ip = service.orchestrator().ssh_target()
     tag = f"bot-bottle-agent-build-{digest}"
     ctx = f"/tmp/agent-build-{digest}"
     smoke_ctr, export_ctr = f"{tag}-smoke", f"{tag}-export"

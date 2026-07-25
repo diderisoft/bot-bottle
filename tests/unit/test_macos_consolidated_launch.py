@@ -55,14 +55,13 @@ class TestEnsureGateway(unittest.TestCase):
             return ensure_gateway()
 
     def _service(self) -> MagicMock:
-        from bot_bottle.backend.macos_container.infra import InfraEndpoint
         service = MagicMock()
         # Two containers now: the orchestrator on the control network, the
-        # gateway on the agent network — distinct addresses.
-        service.ensure_running.return_value = InfraEndpoint(
-            orchestrator_url="http://192.168.128.2:8099",
-            gateway_ip="192.168.128.3",
-        )
+        # gateway on the agent network — distinct addresses. `ensure_running`
+        # returns the control-plane URL; the gateway address comes off the
+        # gateway service.
+        service.ensure_running.return_value = "http://192.168.128.2:8099"
+        service.gateway.return_value.address.return_value = "192.168.128.3"
         service.network = "bot-bottle-mac-gateway"
         service.ca_cert_pem.return_value = "PEM"
         return service
