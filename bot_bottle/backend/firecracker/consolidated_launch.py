@@ -40,7 +40,7 @@ from ...orchestrator.lifecycle import (
 )
 from ...orchestrator.reprovision import reprovision_bottles
 from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
-from ..bottle_provision import deprovision_bottle, provision_bottle
+from ..provision_bottle import deprovision_bottle, provision_bottle
 from . import cleanup, infra_vm, util
 from .gateway import FirecrackerGateway
 

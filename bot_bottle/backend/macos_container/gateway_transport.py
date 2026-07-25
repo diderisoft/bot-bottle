@@ -2,7 +2,7 @@
 
 How the launcher stages files + runs commands in the running gateway container:
 the `container` CLI's exec/cp equivalents. The backend-neutral provisioning
-logic that drives it lives in `backend.gateway_provision`; Docker uses
+logic that drives it lives in `backend.provision_gateway`; Docker uses
 `docker exec`/`docker cp` and Firecracker uses SSH.
 """
 

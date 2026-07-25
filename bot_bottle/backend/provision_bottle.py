@@ -4,7 +4,7 @@ Register a bottle with the orchestrator and provision its git-gate state into
 the shared gateway (`provision_bottle`), and the inverse teardown
 (`deprovision_bottle`). Backend-neutral — each backend's consolidated_launch
 drives these through its own `GatewayTransport` rather than re-implementing
-them. The git-gate half of the work lives in `gateway_provision`.
+them. The git-gate half of the work lives in `provision_gateway`.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from ..git_gate import GitGatePlan
 from ..orchestrator.client import OrchestratorClient, RegisteredBottle
 from ..orchestrator.registration import registration_inputs
 from ..orchestrator.store.secret_store import new_env_var_secret
-from .gateway_provision import GatewayTransport, deprovision_git_gate, provision_git_gate
+from .provision_gateway import GatewayTransport, deprovision_git_gate, provision_git_gate
 
 
 def provision_bottle(

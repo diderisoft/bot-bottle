@@ -17,7 +17,7 @@ from bot_bottle.git_gate import GitGatePlan
 from bot_bottle.orchestrator.client import RegisteredBottle
 
 _MOD = "bot_bottle.backend.macos_container.consolidated_launch"
-_UTIL = "bot_bottle.backend.bottle_provision"
+_UTIL = "bot_bottle.backend.provision_bottle"
 
 
 def _egress_plan() -> EgressPlan:

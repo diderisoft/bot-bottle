@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from bot_bottle.backend.gateway_provision import (
+from bot_bottle.backend.provision_gateway import (
     GatewayProvisionError,
     deprovision_git_gate,
     provision_git_gate,

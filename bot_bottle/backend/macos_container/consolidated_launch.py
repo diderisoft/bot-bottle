@@ -40,7 +40,7 @@ from ...log import info
 from ...orchestrator.client import OrchestratorClient, OrchestratorClientError
 from ...orchestrator.reprovision import reprovision_bottles
 from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
-from ..bottle_provision import deprovision_bottle, provision_bottle
+from ..provision_bottle import deprovision_bottle, provision_bottle
 from . import util as container_mod
 from .enumerate import CONTAINER_NAME_PREFIX, EnumerationError, enumerate_active
 from .gateway import GATEWAY_NETWORK

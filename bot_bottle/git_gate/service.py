@@ -60,7 +60,7 @@ class GitGate:
         # `sh`, so the script needs the x bit. The gateway copy does not
         # necessarily preserve this mode (`docker cp` does, the Apple `container
         # cp` does not), so provisioning re-applies +x on the gateway side — see
-        # backend/gateway_provision.py.
+        # backend/provision_gateway.py.
         access_hook.chmod(0o700)
         upstreams_with_files: list[GitGateUpstream] = []
         for u in upstreams:

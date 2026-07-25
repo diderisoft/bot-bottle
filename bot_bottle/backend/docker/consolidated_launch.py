@@ -24,7 +24,7 @@ from ...gateway import GATEWAY_NETWORK
 from .infra import INFRA_NAME, DockerInfraService
 from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
 from ...orchestrator.reprovision import reprovision_bottles
-from ..bottle_provision import deprovision_bottle, provision_bottle
+from ..provision_bottle import deprovision_bottle, provision_bottle
 from .gateway_transport import DockerGatewayTransport
 from .gateway_net import next_free_ip
 
