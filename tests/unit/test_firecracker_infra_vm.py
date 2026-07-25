@@ -68,48 +68,55 @@ class TestInfraEndpoint(unittest.TestCase):
         ca.assert_called_once_with(timeout=1)
 
 
-class TestBuildInfraRootfs(unittest.TestCase):
-    def test_uses_infra_variant_and_role_branched_init(self):
-        with patch.object(infra_vm.util, "build_base_rootfs_dir") as build:
-            build.return_value = Path("/cache/rootfs/x-infra")
-            infra_vm.build_infra_rootfs_dir()
-        build.assert_called_once()
-        self.assertEqual(infra_vm._INFRA_IMAGE, build.call_args.args[0])
-        # variant is "-infra-<init-hash>" so an init change rebuilds the rootfs.
-        self.assertTrue(build.call_args.kwargs["variant"].startswith("-infra-"))
-        init = build.call_args.kwargs["init_script"]
-        # One shared init, role-branched off the kernel cmdline: it starts the
-        # control plane OR the gateway data plane, and exports PATH so the
-        # gateway daemons' subprocesses find python3.
-        self.assertIn("bb_role=", init)
-        self.assertIn('if [ "$ROLE" = gateway ]; then', init)
-        self.assertIn("bot_bottle.orchestrator", init)
-        self.assertIn("bot_bottle.gateway.bootstrap", init)
-        self.assertIn("export PATH=", init)
+class TestRoleInits(unittest.TestCase):
+    def test_orchestrator_init_starts_only_the_control_plane(self):
+        init = infra_vm.role_init("orchestrator")
+        # No bb_role branch — the rootfs *is* the role.
+        self.assertNotIn("bb_role=", init)
+        self.assertNotIn("bot_bottle.gateway.bootstrap", init)
+        self.assertIn("export PATH=", init)  # shared preamble
         # Persistent registry volume mounted at the DB dir on the orchestrator.
         self.assertIn("/dev/vdb", init)
-        # VM backend uses git-http (9420); the git:// daemon is left out.
-        self.assertIn("BOT_BOTTLE_GATEWAY_DAEMONS=egress,git-http,supervise", init)
-        # Role-scoped auth (#469): the orchestrator gets the host-seeded signing
-        # key; the gateway gets the host-minted `gateway` JWT (NOT the key — the
-        # JWT is minted on the host now, so the init never touches the key to
-        # mint it); each plane refuses to start without its secret.
         self.assertIn(f"cat {infra_vm._GUEST_SIGNING_KEY_PATH}", init)  # host-seeded key
-        self.assertIn(f"cat {infra_vm._GUEST_GATEWAY_JWT_PATH}", init)  # host-minted JWT
-        self.assertNotIn("ROLE_GATEWAY", init)  # minting moved to the host
         self.assertIn("refusing to start the control plane", init)     # no open mode
-        self.assertIn("refusing to start the data plane", init)        # gateway fail-closed
         self.assertIn('BOT_BOTTLE_ORCHESTRATOR_TOKEN="$CP_KEY" python3 -m bot_bottle.orchestrator',
                       init)  # key -> orchestrator only
-        self.assertIn('BOT_BOTTLE_ORCHESTRATOR_AUTH_JWT="$GW_JWT"', init)  # JWT -> gateway daemons
+
+    def test_gateway_init_starts_only_the_data_plane(self):
+        init = infra_vm.role_init("gateway")
+        self.assertNotIn("bb_role=", init)
+        self.assertNotIn("bot_bottle.orchestrator", init)
+        self.assertNotIn("/dev/vdb", init)  # no registry volume on the data plane
+        self.assertIn("export PATH=", init)  # shared preamble
+        self.assertIn("BOT_BOTTLE_GATEWAY_DAEMONS=egress,git-http,supervise", init)
+        self.assertIn(f"cat {infra_vm._GUEST_GATEWAY_JWT_PATH}", init)  # host-minted JWT
+        self.assertNotIn("ROLE_GATEWAY", init)  # minting moved to the host
+        self.assertIn("refusing to start the data plane", init)        # fail-closed
+        self.assertIn('BOT_BOTTLE_ORCHESTRATOR_AUTH_JWT="$GW_JWT"', init)  # JWT -> daemons
         # The gateway resolves the orchestrator's address off the cmdline
         # (bb_orch), so no IP is baked into the artifact.
         self.assertIn("bb_orch=", init)
         self.assertIn("BOT_BOTTLE_ORCHESTRATOR_URL=http://$ORCH:", init)
 
 
+class TestBuildRootfsDir(unittest.TestCase):
+    def test_orchestrator_rootfs_uses_the_fc_image_and_role_variant(self):
+        with patch.object(infra_vm.util, "build_base_rootfs_dir") as build:
+            build.return_value = Path("/cache/rootfs/x")
+            infra_vm.build_rootfs_dir("orchestrator")
+        self.assertEqual(infra_vm._ORCHESTRATOR_FC_IMAGE, build.call_args.args[0])
+        self.assertTrue(build.call_args.kwargs["variant"].startswith("-orchestrator-"))
+
+    def test_gateway_rootfs_uses_the_gateway_image_directly(self):
+        with patch.object(infra_vm.util, "build_base_rootfs_dir") as build:
+            build.return_value = Path("/cache/rootfs/x")
+            infra_vm.build_rootfs_dir("gateway")
+        self.assertEqual(infra_vm._GATEWAY_IMAGE, build.call_args.args[0])
+        self.assertTrue(build.call_args.kwargs["variant"].startswith("-gateway-"))
+
+
 class TestEnsureBuilt(unittest.TestCase):
-    def test_default_pulls_artifact_without_docker(self):
+    def test_default_pulls_both_artifacts_without_docker(self):
         # PRD 0069 Stage 2: the launch host pulls the prebuilt rootfs; no Docker.
         # Pin BOT_BOTTLE_INFRA_BUILD off: the coverage CI job exports it =local
         # for the integration suite, and that ambient value would otherwise send
@@ -119,17 +126,21 @@ class TestEnsureBuilt(unittest.TestCase):
                 patch.object(infra_vm.infra_artifact, "ensure_artifact_gz") as pull:
             infra_vm.ensure_built()
         build.assert_not_called()
-        pull.assert_called_once()
+        # One pull per plane.
+        roles = {c.kwargs["role"] for c in pull.call_args_list}
+        self.assertEqual({"orchestrator", "gateway"}, roles)
 
-    def test_local_mode_builds_deps_before_infra(self):
+    def test_local_mode_builds_orchestrator_before_its_fc_image(self):
         with patch.dict(os.environ, {"BOT_BOTTLE_INFRA_BUILD": "local"}), \
                 patch.object(infra_vm.docker_mod, "build_image") as build:
             infra_vm.ensure_built()
         tags = [c.args[0] for c in build.call_args_list]
-        # infra is FROM gateway and COPY --from orchestrator, so both first.
-        self.assertEqual(infra_vm._INFRA_IMAGE, tags[-1])
-        self.assertIn(infra_vm._ORCHESTRATOR_IMAGE, tags[:-1])
-        self.assertIn(infra_vm._GATEWAY_IMAGE, tags[:-1])
+        # orchestrator-fc is FROM orchestrator, so the base is built first.
+        self.assertIn(infra_vm._ORCHESTRATOR_IMAGE, tags)
+        self.assertIn(infra_vm._GATEWAY_IMAGE, tags)
+        self.assertEqual(infra_vm._ORCHESTRATOR_FC_IMAGE, tags[-1])
+        self.assertLess(tags.index(infra_vm._ORCHESTRATOR_IMAGE),
+                        tags.index(infra_vm._ORCHESTRATOR_FC_IMAGE))
 
 
 # The orchestrator + gateway services are imported lazily inside ensure_running

@@ -17,11 +17,11 @@ Two persistent microVMs, split now that #469 got the DB off the data plane
     key); reaches the orchestrator's control plane at `orch_guest:8099` over
     the one nft forward rule that link allows.
 
-Both VMs boot the **same** shared infra rootfs (gateway + orchestrator +
-buildah); a `bb_role=` kernel-cmdline arg selects which plane a VM's PID-1
-init starts, so there is still a single published artifact to build/pull. The
-gateway VM's slimmer memory ceiling (buildah is present on disk but unused
-there) is set at boot.
+Each VM boots its **own** per-plane rootfs — the orchestrator rootfs carries the
+control plane + buildah (in-VM agent builds), the gateway rootfs is the slim
+data plane with no build tooling on the exposed VM. Two artifacts, built/pulled
+per role (`infra_artifact`); each rootfs bakes only its own role init as PID 1.
+The gateway VM also runs a slimmer memory ceiling.
 
 SSH is left enabled for debugging + provisioning; the control plane is the
 load-bearing surface.
@@ -61,14 +61,21 @@ _GUEST_SIGNING_KEY_PATH = "/var/lib/bot-bottle/orchestrator-token"
 # the gateway daemons present it to the orchestrator, and never see the key.
 _GUEST_GATEWAY_JWT_PATH = "/var/lib/bot-bottle/gateway-jwt"
 
-# The single shared infra image: gateway data plane + COPY'd control-plane
-# `bot_bottle` package + buildah (Dockerfile.infra.fc, FROM gateway). Built from
-# source by default; a pull-from-registry mode lands later. Both VMs boot from
-# it, the `bb_role` cmdline selecting the plane.
-_INFRA_IMAGE = "bot-bottle-infra:latest"
+# The two per-plane rootfs source images. The orchestrator VM boots a control
+# plane + buildah rootfs (Dockerfile.orchestrator.fc, FROM orchestrator); the
+# gateway VM boots the slim data-plane image directly (no build tooling on the
+# exposed VM). Built from source by default; the launch host pulls prebuilt
+# artifacts instead (`infra_artifact`).
 _GATEWAY_IMAGE = "bot-bottle-gateway:latest"
 _ORCHESTRATOR_IMAGE = "bot-bottle-orchestrator:latest"
+_ORCHESTRATOR_FC_IMAGE = "bot-bottle-orchestrator-fc:latest"
 _REPO_ROOT = Path(__file__).resolve().parents[3]
+
+# Per-role rootfs source image + the extra free space `mke2fs` leaves for the
+# guest to grow into. The orchestrator keeps buildah's large build slack; the
+# gateway carries no build tooling, so its rootfs is much smaller.
+_ROOTFS_IMAGE = {"orchestrator": _ORCHESTRATOR_FC_IMAGE, "gateway": _GATEWAY_IMAGE}
+_ROOTFS_SLACK_MIB = {"orchestrator": 8192, "gateway": 1024}
 
 ORCHESTRATOR_PORT = 8099
 # Gateway data-plane ports (agent-facing): egress proxy, supervise MCP,
@@ -119,45 +126,54 @@ class InfraEndpoint:
         return self.gateway.ca_cert_pem(timeout=timeout)
 
 
+def role_init(role: str) -> str:
+    """The guest PID-1 init for `role` (each per-plane rootfs bakes only its
+    own — no `bb_role` branch, since the rootfs *is* the role)."""
+    return _orchestrator_init() if role == "orchestrator" else _gateway_init()
+
+
+def _role_version(role: str) -> str:
+    return infra_artifact.infra_artifact_version(role_init(role), role)
+
+
 def ensure_built() -> None:
-    """Ensure the infra rootfs is available before boot.
+    """Ensure both infra rootfs artifacts are available before boot.
 
     Default (docker-free, PRD 0069 Stage 2): download + verify the prebuilt
-    rootfs artifact matching this code version (see `infra_artifact`); the
-    launch host needs no Docker. `BOT_BOTTLE_INFRA_BUILD=local` instead builds
-    the fixed images from source with host Docker — the infra image is `FROM`
-    the gateway image and `COPY --from`s the orchestrator image, so both must
-    exist first — for iterating on the Dockerfiles."""
+    orchestrator + gateway rootfs artifacts matching this code version (see
+    `infra_artifact`); the launch host needs no Docker.
+    `BOT_BOTTLE_INFRA_BUILD=local` instead builds the images from source with
+    host Docker (the orchestrator-fc image is `FROM` the orchestrator image, so
+    it must exist first) — for iterating on the Dockerfiles."""
     if infra_artifact.local_build_requested():
         build_infra_images_with_docker()
         return
-    infra_artifact.ensure_artifact_gz(
-        infra_artifact.infra_artifact_version(_infra_init()))
+    for role in infra_artifact.ROLES:
+        infra_artifact.ensure_artifact_gz(_role_version(role), role=role)
 
 
 def build_infra_images_with_docker() -> None:
-    """Build the three fixed images from source with host Docker: orchestrator,
-    gateway, then the Firecracker infra image (Dockerfile.infra.fc: FROM gateway
-    + COPY --from orchestrator + buildah). The launch host uses this only in
-    `BOT_BOTTLE_INFRA_BUILD=local` mode; `publish_infra` uses it off-host to
-    produce the published artifact."""
+    """Build the fixed images from source with host Docker: orchestrator,
+    gateway, then the orchestrator-fc image (Dockerfile.orchestrator.fc: FROM
+    orchestrator + buildah). The gateway VM boots the gateway image directly.
+    The launch host uses this only in `BOT_BOTTLE_INFRA_BUILD=local` mode;
+    `publish_infra` uses it off-host to produce the published artifacts."""
     docker_mod.build_image(
         _ORCHESTRATOR_IMAGE, str(_REPO_ROOT), dockerfile="Dockerfile.orchestrator")
     docker_mod.build_image(
         _GATEWAY_IMAGE, str(_REPO_ROOT), dockerfile="Dockerfile.gateway")
     docker_mod.build_image(
-        _INFRA_IMAGE, str(_REPO_ROOT), dockerfile="Dockerfile.infra.fc")
+        _ORCHESTRATOR_FC_IMAGE, str(_REPO_ROOT), dockerfile="Dockerfile.orchestrator.fc")
 
 
-def build_infra_rootfs_dir() -> Path:
-    """The infra VMs' shared base rootfs: the infra image prepared with the
-    role-branched init as PID 1. The init's content is folded into the cache
-    key so an init change rebuilds the rootfs (the base image digest alone
-    wouldn't catch it)."""
-    init = _infra_init()
+def build_rootfs_dir(role: str) -> Path:
+    """`role`'s base rootfs dir: its source image prepared with the role init as
+    PID 1. The init's content is folded into the cache key so an init change
+    rebuilds the rootfs (the base image digest alone wouldn't catch it)."""
+    init = role_init(role)
     tag = hashlib.sha256(init.encode()).hexdigest()[:8]
     return util.build_base_rootfs_dir(
-        _INFRA_IMAGE, variant=f"-infra-{tag}", init_script=init,
+        _ROOTFS_IMAGE[role], variant=f"-{role}-{tag}", init_script=init,
     )
 
 
@@ -259,8 +275,8 @@ def boot_vm(
     data_drive: Path | None = None,
     extra_boot_args: str = "",
 ) -> InfraVm:
-    """Boot one infra VM from the shared rootfs on `slot`'s link, tagged with
-    its `bb_role` so the guest init starts the right plane. Records the PID."""
+    """Boot the `role` infra VM from its per-plane rootfs on `slot`'s link.
+    Records the PID."""
     if not netpool.tap_present(slot.iface):
         die(f"infra link {slot.iface} not present.\n"
             f"    ./cli.py backend setup --backend=firecracker")
@@ -268,18 +284,16 @@ def boot_vm(
     run_dir.mkdir(parents=True, exist_ok=True)
     rootfs = run_dir / "rootfs.ext4"
     if infra_artifact.local_build_requested():
-        util.build_rootfs_ext4(build_infra_rootfs_dir(), rootfs, slack_mib=8192)
+        util.build_rootfs_ext4(
+            build_rootfs_dir(role), rootfs, slack_mib=_ROOTFS_SLACK_MIB[role])
     else:
-        # Prebuilt artifact already carries the buildah build slack; expand it
-        # to a fresh writable rootfs for this boot.
-        infra_artifact.materialize_ext4(
-            infra_artifact.infra_artifact_version(_infra_init()), rootfs)
+        # Prebuilt artifact already carries the role's build slack; expand it to
+        # a fresh writable rootfs for this boot.
+        infra_artifact.materialize_ext4(_role_version(role), rootfs, role=role)
     private_key, pubkey = _stable_keypair()
 
     info(f"booting {role} VM on {slot.iface} (guest {slot.guest_ip})")
-    boot_args = f"bb_role={role}"
-    if extra_boot_args:
-        boot_args = f"{boot_args} {extra_boot_args}"
+    boot_args = extra_boot_args
     vm = firecracker_vm.boot(
         name=name, rootfs=rootfs, tap=slot.iface,
         guest_ip=slot.guest_ip, host_ip=slot.host_ip, pubkey=pubkey,
@@ -323,7 +337,9 @@ def _version_file() -> Path:
 
 
 def _expected_version() -> str:
-    return infra_artifact.infra_artifact_version(_infra_init())
+    """The combined marker for the running pair: both per-plane artifact
+    versions, so a change to either rootfs dislodges the adopted pair."""
+    return " ".join(f"{role}={_role_version(role)}" for role in infra_artifact.ROLES)
 
 
 def _adoptable(key: Path, url: str, want: str) -> bool:
@@ -455,19 +471,12 @@ def _health_ok(url: str) -> bool:
         return False
 
 
-def _infra_init() -> str:
-    """PID-1 init for the infra VMs. Shared setup (pseudo-filesystems, PATH,
-    resolver, debug SSH), then a `bb_role` cmdline branch selecting the plane:
-
-      * orchestrator — mount the persistent registry volume, wait for the
-        host-seeded signing key, start ONLY the control plane;
-      * gateway — wait for the host-seeded `gateway` JWT, start ONLY the
-        data-plane daemons (multi-tenant against the orchestrator at the
-        `bb_orch` cmdline address).
-
-    Both VMs boot this same init (one published artifact); the cmdline selects
-    the role, so no orchestrator IP is baked in (an IP_BASE override doesn't
-    change the artifact version)."""
+def _init_head() -> str:
+    """The shared PID-1 preamble both role inits open with: mount the pseudo-
+    filesystems, export a real PATH (a bare-init shell's built-in exec path
+    isn't in the *environment*, so backgrounded `python3 ...` children would
+    find no PATH), set the direct upstream resolver, install the per-boot SSH
+    pubkey from the cmdline, and start dropbear for debug/provisioning."""
     return f"""#!/bin/sh
 # bot-bottle Firecracker infra VM init (PID 1).
 mount -t proc proc /proc 2>/dev/null
@@ -476,10 +485,6 @@ mount -t devtmpfs dev /dev 2>/dev/null
 mkdir -p /dev/pts && mount -t devpts devpts /dev/pts 2>/dev/null
 mount -o remount,rw / 2>/dev/null
 
-# Export a real PATH: a bare-init shell resolves its own execs via a
-# built-in default path, but that isn't in the *environment*, so
-# gateway_init's subprocess daemons (spawned as `python3 ...`) would
-# inherit no PATH and fail to find python3. Export it for all children.
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Direct upstream resolver (control-plane / gateway egress + buildah).
@@ -497,62 +502,70 @@ mkdir -p /etc/dropbear /run /var/lib/bot-bottle
 
 /bb-dropbear -R -E -p 22 &
 
-ROLE=$(sed -n 's/.*bb_role=\\([^ ]*\\).*/\\1/p' /proc/cmdline)
 cd /app
+"""
 
-if [ "$ROLE" = gateway ]; then
-    # Gateway data plane, multi-tenant: each request resolves source-IP ->
-    # policy against the orchestrator VM (its guest IP is on the cmdline as
-    # bb_orch). The VM backend reaches git over git-http (9420), so the git://
-    # daemon (git-gate, needs a per-bottle entrypoint the consolidated model
-    # doesn't use) is left out. No SUPERVISE_DB_PATH: the data plane reaches the
-    # supervise queue over the control-plane RPC and never opens bot-bottle.db
-    # (PRD 0070 / #469). It presents the pre-minted `gateway` JWT the launcher
-    # pushed; if it never arrives, REFUSE to start rather than run without auth.
-    ORCH=$(sed -n 's/.*bb_orch=\\([^ ]*\\).*/\\1/p' /proc/cmdline)
-    GW_JWT=""
-    i=0
-    while [ "$i" -lt 600 ]; do
-        GW_JWT=$(cat {_GUEST_GATEWAY_JWT_PATH} 2>/dev/null)
-        [ -n "$GW_JWT" ] && break
-        i=$((i + 1))
-        sleep 0.1
-    done
-    if [ -z "$GW_JWT" ]; then
-        echo "infra gateway: gateway JWT never arrived; refusing to start the data plane" >&2
-    else
-        chmod 600 {_GUEST_GATEWAY_JWT_PATH} 2>/dev/null || true
-        BOT_BOTTLE_GATEWAY_DAEMONS=egress,git-http,supervise \\
-        BOT_BOTTLE_ORCHESTRATOR_URL=http://$ORCH:{ORCHESTRATOR_PORT} \\
-        BOT_BOTTLE_ORCHESTRATOR_AUTH_JWT="$GW_JWT" \\
-            python3 -m bot_bottle.gateway.bootstrap &
-    fi
-else
-    # Control plane. Source is baked at /app; the package is stdlib-only.
-    # Persistent registry volume (second virtio-block device, /dev/vdb) mounted
-    # at the DB dir, so bot-bottle.db survives orchestrator-VM restarts.
-    mount -t ext4 /dev/vdb /var/lib/bot-bottle 2>/dev/null || true
-    # Wait for the launcher to push the host-canonical signing key over SSH,
-    # then hand it ONLY to the orchestrator (to verify tokens). If it never
-    # arrives, REFUSE to start rather than run OPEN — open mode would grant
-    # every unauthenticated caller the `cli` role (issue #469).
-    CP_KEY=""
-    i=0
-    while [ "$i" -lt 600 ]; do
-        CP_KEY=$(cat {_GUEST_SIGNING_KEY_PATH} 2>/dev/null)
-        [ -n "$CP_KEY" ] && break
-        i=$((i + 1))
-        sleep 0.1
-    done
-    if [ -z "$CP_KEY" ]; then
-        echo "infra: control-plane signing key never arrived; refusing to start the control plane (would run OPEN)" >&2
-    else
-        chmod 600 {_GUEST_SIGNING_KEY_PATH} 2>/dev/null || true
-        BOT_BOTTLE_ROOT=/var/lib/bot-bottle BOT_BOTTLE_ORCHESTRATOR_TOKEN="$CP_KEY" python3 -m bot_bottle.orchestrator \\
-            --host 0.0.0.0 --port {ORCHESTRATOR_PORT} --broker stub &
-    fi
-fi
 
+_INIT_TAIL = """
 # Reap as PID 1; children are backgrounded, so `wait` blocks.
 while : ; do wait ; done
 """
+
+
+def _gateway_init() -> str:
+    """PID-1 init for the gateway (data-plane) VM. Waits for the host-seeded
+    `gateway` JWT, then starts ONLY the data-plane daemons, multi-tenant against
+    the orchestrator at the `bb_orch` cmdline address. The VM backend reaches git
+    over git-http (9420), so the git:// daemon (a per-bottle entrypoint the
+    consolidated model doesn't use) is left out. No SUPERVISE_DB_PATH: the data
+    plane reaches the supervise queue over the control-plane RPC and never opens
+    bot-bottle.db (PRD 0070 / #469). If the JWT never arrives, REFUSE to start
+    rather than run without auth."""
+    return _init_head() + f"""
+ORCH=$(sed -n 's/.*bb_orch=\\([^ ]*\\).*/\\1/p' /proc/cmdline)
+GW_JWT=""
+i=0
+while [ "$i" -lt 600 ]; do
+    GW_JWT=$(cat {_GUEST_GATEWAY_JWT_PATH} 2>/dev/null)
+    [ -n "$GW_JWT" ] && break
+    i=$((i + 1))
+    sleep 0.1
+done
+if [ -z "$GW_JWT" ]; then
+    echo "infra gateway: gateway JWT never arrived; refusing to start the data plane" >&2
+else
+    chmod 600 {_GUEST_GATEWAY_JWT_PATH} 2>/dev/null || true
+    BOT_BOTTLE_GATEWAY_DAEMONS=egress,git-http,supervise \\
+    BOT_BOTTLE_ORCHESTRATOR_URL=http://$ORCH:{ORCHESTRATOR_PORT} \\
+    BOT_BOTTLE_ORCHESTRATOR_AUTH_JWT="$GW_JWT" \\
+        python3 -m bot_bottle.gateway.bootstrap &
+fi
+""" + _INIT_TAIL
+
+
+def _orchestrator_init() -> str:
+    """PID-1 init for the orchestrator (control-plane) VM. Mounts the persistent
+    registry volume (/dev/vdb — bot-bottle.db survives a VM restart), waits for
+    the host-seeded signing key, then starts ONLY the control plane. If the key
+    never arrives, REFUSE to start rather than run OPEN — open mode would grant
+    every unauthenticated caller the `cli` role (#469)."""
+    return _init_head() + f"""
+# Persistent registry volume (second virtio-block device, /dev/vdb) mounted at
+# the DB dir, so bot-bottle.db survives orchestrator-VM restarts.
+mount -t ext4 /dev/vdb /var/lib/bot-bottle 2>/dev/null || true
+CP_KEY=""
+i=0
+while [ "$i" -lt 600 ]; do
+    CP_KEY=$(cat {_GUEST_SIGNING_KEY_PATH} 2>/dev/null)
+    [ -n "$CP_KEY" ] && break
+    i=$((i + 1))
+    sleep 0.1
+done
+if [ -z "$CP_KEY" ]; then
+    echo "infra: control-plane signing key never arrived; refusing to start the control plane (would run OPEN)" >&2
+else
+    chmod 600 {_GUEST_SIGNING_KEY_PATH} 2>/dev/null || true
+    BOT_BOTTLE_ROOT=/var/lib/bot-bottle BOT_BOTTLE_ORCHESTRATOR_TOKEN="$CP_KEY" python3 -m bot_bottle.orchestrator \\
+        --host 0.0.0.0 --port {ORCHESTRATOR_PORT} --broker stub &
+fi
+""" + _INIT_TAIL
