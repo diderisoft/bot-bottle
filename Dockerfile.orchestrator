@@ -4,21 +4,19 @@
 # `bot_bottle` package baked onto a Python runtime — referenced by BOTH:
 #   * the docker backend, which runs this image directly as the lean
 #     control-plane container; and
-#   * the firecracker infra image (Dockerfile.infra), which `COPY --from`s
-#     this image's `/app/bot_bottle` so the single infra VM runs the same
-#     control plane. Keeping it in one place means future orchestrator deps
-#     (e.g. iroh) are added here once, not duplicated per backend.
+#   * the firecracker orchestrator VM image (Dockerfile.orchestrator.fc),
+#     which is `FROM` this image and adds buildah for in-VM agent builds.
+#     Keeping the content in one place means future orchestrator deps (e.g.
+#     iroh) are added here once, not duplicated per backend.
 #
 # It stays deliberately lean: the control plane is **stdlib-only** today, so
 # no third-party payload — none of the gateway's mitmproxy/git/gitleaks
 # (that's Dockerfile.gateway) and no buildah (that's the firecracker
-# builder, and lives only in Dockerfile.infra). Keeping the secret-dense
-# control plane on a minimal dependency surface is the point (PRD 0070's
-# "secret concentration").
+# builder, and lives only in Dockerfile.orchestrator.fc). Keeping the
+# secret-dense control plane on a minimal dependency surface is the point
+# (PRD 0070's "secret concentration").
 #
-# Shares the trixie `python:3.12-slim` base with the gateway image, so when
-# the orchestrator grows real deps they can be `COPY --from`'d into the
-# infra image cleanly (same base/python — installed packages copy safely).
+# Shares the trixie `python:3.12-slim` base with the gateway image.
 
 FROM python:3.12-slim
 

@@ -57,9 +57,11 @@ class TestEnsureGateway(unittest.TestCase):
     def _service(self) -> MagicMock:
         from bot_bottle.backend.macos_container.infra import InfraEndpoint
         service = MagicMock()
+        # Two containers now: the orchestrator on the control network, the
+        # gateway on the agent network — distinct addresses.
         service.ensure_running.return_value = InfraEndpoint(
             orchestrator_url="http://192.168.128.2:8099",
-            gateway_ip="192.168.128.2",
+            gateway_ip="192.168.128.3",
         )
         service.network = "bot-bottle-mac-gateway"
         service.ca_cert_pem.return_value = "PEM"
@@ -68,18 +70,16 @@ class TestEnsureGateway(unittest.TestCase):
     def test_reports_gateway_endpoint(self) -> None:
         endpoint = self._run(self._service())
         self.assertEqual("http://192.168.128.2:8099", endpoint.orchestrator_url)
-        self.assertEqual("192.168.128.2", endpoint.gateway_ip)
+        self.assertEqual("192.168.128.3", endpoint.gateway_ip)
         self.assertEqual("PEM", endpoint.gateway_ca_pem)
         self.assertEqual("bot-bottle-mac-gateway", endpoint.network)
 
-    def test_orchestrator_and_gateway_share_one_address(self) -> None:
-        """One infra container hosts both, so the gateway IP and the
-        control-plane host are the same."""
+    def test_gateway_ip_is_distinct_from_the_control_plane(self) -> None:
+        # The planes are separate containers, so the agent's proxy target (the
+        # gateway) is a different address from the control-plane host.
         endpoint = self._run(self._service())
-        self.assertEqual(
-            endpoint.gateway_ip,
-            endpoint.orchestrator_url.split("://")[1].split(":")[0],
-        )
+        orch_host = endpoint.orchestrator_url.split("://")[1].split(":")[0]
+        self.assertNotEqual(orch_host, endpoint.gateway_ip)
 
 
 class TestRegisterAgent(unittest.TestCase):

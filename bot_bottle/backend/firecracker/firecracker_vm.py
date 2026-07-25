@@ -69,8 +69,8 @@ def _boot_args(
     pub_b64 = base64.b64encode(pubkey.encode()).decode()
     args = f"{_BASE_BOOT_ARGS} {ip_arg} bb_pubkey={pub_b64}"
     # `extra` carries caller-supplied cmdline params the guest init reads
-    # (e.g. `bb_role=orchestrator|gateway` selecting which infra plane a
-    # shared-rootfs infra VM runs). Agent VMs pass nothing.
+    # (e.g. the gateway VM's `bb_orch=<orchestrator guest IP>`). Agent VMs pass
+    # nothing.
     return f"{args} {extra}".rstrip() if extra else args
 
 

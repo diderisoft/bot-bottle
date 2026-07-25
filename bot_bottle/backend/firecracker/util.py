@@ -258,8 +258,8 @@ def build_committed_rootfs_dir(tar_path: Path) -> Path:
 
 def inject_guest_boot(rootfs: Path, init_script: str | None = None) -> None:
     """Drop the static dropbear and the PID-1 init into the rootfs.
-    `init_script` defaults to the SSH-only agent init; the infra VM
-    passes its own (control plane + gateway) init.
+    `init_script` defaults to the SSH-only agent init; each infra VM
+    passes its own per-plane init (orchestrator or gateway).
 
     A committed snapshot is guest-controlled, so `bb-dropbear`/`bb-init`
     may already exist as symlinks aimed at a host file (e.g. bb-init ->

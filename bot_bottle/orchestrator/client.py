@@ -182,7 +182,7 @@ class OrchestratorClient:
         """Drop registry rows for bottles that are no longer running
         (`POST /reconcile`), returning the reaped bottle ids. `live_source_ips`
         is the caller's enumeration of its live bottles — the orchestrator
-        can't see the backend from inside the infra container."""
+        can't see the backend from inside the orchestrator container/VM."""
         body: dict[str, object] = {"live_source_ips": list(live_source_ips)}
         if grace_seconds is not None:
             body["grace_seconds"] = grace_seconds
@@ -257,7 +257,7 @@ def discover_orchestrator_url(*, timeout: float = 2.0) -> str:
             f"http://{netpool.orch_slot().guest_ip}:{ORCHESTRATOR_PORT}")
     except Exception:  # noqa: BLE001 — backend optional / not firecracker
         pass
-    try:  # macOS: infra container control plane on its host-only address
+    try:  # macOS: orchestrator container on its host-only address
         from ..backend.macos_container.infra import probe_orchestrator_url
         url = probe_orchestrator_url()
         if url:

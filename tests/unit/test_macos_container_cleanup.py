@@ -60,10 +60,12 @@ class TestMacosContainerEnumerate(unittest.TestCase):
         self.assertEqual(["dev-abc"], [a.slug for a in agents])
         self.assertEqual(["macos-container"], [a.backend_name for a in agents])
 
-    def test_excludes_the_infra_singleton(self):
-        """The infra container shares the bot-bottle- prefix but is
-        infrastructure — listing it would invent an agent per host."""
-        agents = self._enumerate("bot-bottle-mac-infra\nbot-bottle-dev-abc\n")
+    def test_excludes_both_infra_containers(self):
+        """Both infra containers (orchestrator + gateway) share the bot-bottle-
+        prefix but are infrastructure — listing either would invent a phantom
+        agent per host."""
+        agents = self._enumerate(
+            "bot-bottle-mac-infra\nbot-bottle-mac-orchestrator\nbot-bottle-dev-abc\n")
         self.assertEqual(["dev-abc"], [a.slug for a in agents])
 
     def test_raises_when_the_cli_fails(self):

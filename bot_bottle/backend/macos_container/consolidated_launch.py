@@ -15,8 +15,10 @@ caller has to start the agent in between. `ensure_gateway` runs first because
 the agent's proxy env needs the gateway's address at `container run` time; the
 agent's *own* address (the attribution key) only exists afterwards.
 
-The control plane and the gateway are one **infra container** here (see
-`infra`), so `gateway_ip` and the control-plane host are the same address.
+The control plane and the gateway are **separate containers** here (see
+`infra`): the orchestrator on the host-only control network, the gateway on the
+agent network — `gateway_ip` is the gateway container's agent-network address,
+distinct from the orchestrator's control-network host.
 
 The consequence for the identity token: it is minted by registration, i.e.
 *after* the agent container exists, so it cannot be baked into the run-time
@@ -54,9 +56,9 @@ class ConsolidatedLaunchError(RuntimeError):
 
 @dataclass(frozen=True)
 class GatewayEndpoint:
-    """What the agent `container run` needs to reach the shared gateway (the
-    infra container). `gateway_ip` is that container's host-only address, the
-    same host the control-plane URL points at."""
+    """What the agent `container run` needs to reach the shared gateway.
+    `gateway_ip` is the gateway container's agent-network address (the agent's
+    proxy target); `orchestrator_url` points at the separate control plane."""
 
     orchestrator_url: str
     gateway_ip: str         # the gateway's address — the agent's proxy target
@@ -80,10 +82,10 @@ class LaunchContext:
 def ensure_gateway(
     *, service: MacosInfraService | None = None,
 ) -> GatewayEndpoint:
-    """Ensure the per-host infra container (control plane + gateway) is up and
-    report how to reach it. Idempotent — one singleton, so N bottle launches
-    share it. Call before starting the agent container: the agent's proxy env
-    needs `gateway_ip` at run time."""
+    """Ensure the per-host pair (orchestrator + gateway containers) is up and
+    report how to reach the gateway. Idempotent — one singleton pair, so N bottle
+    launches share it. Call before starting the agent container: the agent's
+    proxy env needs `gateway_ip` at run time."""
     service = service or MacosInfraService()
     infra = service.ensure_running()
     endpoint = GatewayEndpoint(

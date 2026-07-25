@@ -8,14 +8,13 @@ gateway VM never opens `bot-bottle.db` (#469), so it holds no signing key —
 only the token the host hands it via `connect_to_orchestrator`.
 
 What deliberately stays in `infra_vm` (not moved here): the plane-agnostic VM
-substrate the orchestrator VM shares — booting a VM from the shared rootfs
+substrate the orchestrator VM also uses — booting a VM from a per-plane rootfs
 (`boot_vm`), the stable SSH keypair, the secret-push retry loop, and the PID
 lifecycle — plus the pair coordinator (`ensure_running`: orchestrator-first
 health gate, singleton lock, adoption/version marker). The guest-side gateway
-daemon startup lives in the shared `bb_role=gateway` init branch baked into the
-one published rootfs both VMs boot, so it can't live in a host-side method
-either. These are the shared seam that moves to a neutral module when the
-Orchestrator service lands and `infra_vm` is dissolved.
+daemon startup lives in the gateway rootfs's guest init (`_gateway_init` in
+`infra_vm`), so it can't live in a host-side method either. These are the shared
+seam.
 """
 
 from __future__ import annotations
@@ -33,18 +32,19 @@ from .. import util as backend_util
 from . import infra_vm, netpool, util
 from .gateway_transport import FirecrackerGatewayTransport
 
-# The gateway microVM's name (the `bb_role=gateway` boot tag / run dir). Fixed
-# per host — one gateway VM, shared by every agent VM.
+# The gateway microVM's name (its run dir). Fixed per host — one gateway VM,
+# shared by every agent VM.
 GATEWAY_NAME = "bot-bottle-gateway"
 
-# The gateway VM's slim memory ceiling (buildah is present on the shared rootfs
-# but unused on the data plane) — PRD 0070 "Memory: fixed ceilings".
+# The gateway VM's slim memory ceiling — the data plane carries no build
+# tooling (buildah lives only on the orchestrator rootfs) — PRD 0070
+# "Memory: fixed ceilings".
 _GW_MEM_MIB = 2048
 
-# The pre-minted `gateway` JWT path in the guest. The *shared* init (both planes
-# boot one rootfs) waits for it before starting the data plane, so its canonical
-# definition lives with that init in `infra_vm`; imported here for the push so
-# the load-bearing path isn't duplicated.
+# The pre-minted `gateway` JWT path in the guest. The gateway init (in
+# `infra_vm`) waits for it before starting the data plane, so its canonical
+# definition lives with that init; imported here for the push so the
+# load-bearing path isn't duplicated.
 _GUEST_GATEWAY_JWT_PATH = infra_vm._GUEST_GATEWAY_JWT_PATH
 # mitmproxy writes its CA here a beat after start; agents install it to trust
 # the gateway's TLS interception. Host-side only (SSH cat), so it lives here.
@@ -56,7 +56,7 @@ _CA_FETCH_TIMEOUT_SECONDS = 15.0
 class FirecrackerGateway(Gateway):
     """The consolidated gateway as a Firecracker microVM on the gateway link.
 
-    The shared rootfs is built/downloaded by `infra_vm.ensure_built` (the ABC's
+    The gateway rootfs is built/downloaded by `infra_vm.ensure_built` (the ABC's
     `ensure_built` no-op here); `connect_to_orchestrator` boots the VM resolving
     policy against the orchestrator and seeds the pre-minted `gateway` token."""
 
@@ -94,8 +94,8 @@ class FirecrackerGateway(Gateway):
             raise GatewayError(
                 f"cannot resolve orchestrator guest IP from {self._orchestrator_url!r}"
             )
-        # Boot on the gateway link from the shared rootfs (bb_role=gateway), then
-        # push the token the init waits for before starting the data plane.
+        # Boot on the gateway link from the gateway rootfs, then push the token
+        # the init waits for before starting the data plane.
         vm = infra_vm.boot_vm(
             name=GATEWAY_NAME, slot=netpool.gw_slot(), run_dir=infra_vm._gw_dir(),
             role="gateway", mem_mib=_GW_MEM_MIB,

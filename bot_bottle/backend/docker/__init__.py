@@ -11,7 +11,7 @@ The bulk of the implementation lives in sibling modules:
   - launch:               bring-up + teardown context manager
   - cleanup:              orphan enumeration, removal, active listing
   - backend:              DockerBottleBackend façade wiring the above
-  - infra:                DockerInfraService (the per-host infra container)
+  - infra:                DockerInfraService (the per-host orchestrator + gateway pair)
 
 Thin by design: the public names are re-exported lazily via `__getattr__`, so
 importing a leaf like `backend.docker.util` doesn't drag `DockerBottleBackend`

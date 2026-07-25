@@ -37,12 +37,9 @@
 #   9100  supervise (MCP HTTP)
 
 # Based on `python:3.12-slim` (Debian trixie) rather than the
-# `mitmproxy/mitmproxy` image (Debian bookworm) so the whole stack —
-# gateway here, and the firecracker infra image that builds FROM this —
-# lands on trixie, whose buildah (1.39) can build agent Dockerfiles that
-# use heredocs. mitmproxy is pip-installed to the same effect as the
-# upstream image. (bookworm's buildah is 1.28, which can't parse
-# `RUN ... <<EOF`; see the infra image + PR discussion.)
+# `mitmproxy/mitmproxy` image (Debian bookworm), matching the trixie base the
+# orchestrator image needs for buildah (Dockerfile.orchestrator.fc). mitmproxy
+# is pip-installed to the same effect as the upstream image.
 FROM python:3.12-slim
 
 # Runtime system deps:

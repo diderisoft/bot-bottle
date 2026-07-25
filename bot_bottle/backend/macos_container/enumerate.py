@@ -6,17 +6,18 @@ import subprocess
 
 from ...bottle_state import read_metadata
 from .. import ActiveAgent
-from .infra import INFRA_NAME
+from .infra import INFRA_NAME, ORCHESTRATOR_NAME
 
 # The name every agent container carries: `bot-bottle-<slug>`. Exported
 # because callers that act on a running bottle (gateway-host rewrites,
 # registry reconciliation) have to map an enumerated slug back to a
 # container name.
 CONTAINER_NAME_PREFIX = "bot-bottle-"
-# The shared per-host infra container carries the same prefix as agent
-# containers but is infrastructure, not a bottle — one control plane + gateway
-# serves every agent, so listing it as an agent would invent one per host.
-_INFRA_NAMES = frozenset({INFRA_NAME})
+# The two shared per-host infra containers (orchestrator + gateway) carry the
+# same `bot-bottle-` prefix as agent containers but are infrastructure, not
+# bottles — one pair serves every agent, so enumerating either as an agent would
+# invent a phantom bottle per host.
+_INFRA_NAMES = frozenset({INFRA_NAME, ORCHESTRATOR_NAME})
 
 
 class EnumerationError(RuntimeError):

@@ -8,11 +8,11 @@ signing key over SSH, and waiting for `/health`. The host CLI reaches it at its
 guest IP, and so does the gateway (`bb_orch` cmdline), so `url()` == `gateway_url()`.
 
 What deliberately stays in `infra_vm` (not moved here): the plane-agnostic VM
-substrate the gateway VM also shares — booting a VM from the shared rootfs
+substrate the gateway VM also uses — booting a VM from a per-plane rootfs
 (`boot_vm`), the stable SSH keypair, the secret-push retry, the PID lifecycle —
 plus the pair coordinator (`ensure_running`: adopt-or-boot-both under a singleton
-lock with a shared version marker) and the single shared `bb_role`-branched init
-baked into the one published rootfs. Those are the shared seam.
+lock with a combined version marker) and the per-plane guest inits (`role_init`).
+Those are the shared seam.
 """
 
 from __future__ import annotations
@@ -30,8 +30,8 @@ from ...orchestrator.lifecycle import (
 from . import firecracker_vm, infra_vm, netpool
 from .infra_vm import ORCHESTRATOR_PORT
 
-# The orchestrator microVM's name (the `bb_role=orchestrator` boot tag / run
-# dir). Fixed per host — one control-plane VM.
+# The orchestrator microVM's name (its run dir). Fixed per host — one
+# control-plane VM.
 ORCHESTRATOR_NAME = "bot-bottle-orchestrator"
 
 # Memory ceiling (fixed at boot, demand-paged). The orchestrator keeps the build
@@ -58,9 +58,9 @@ def registry_volume_path() -> Path:
 class FirecrackerOrchestrator(Orchestrator):
     """The control plane as a Firecracker microVM on the orchestrator link.
 
-    The shared rootfs is built/downloaded by `infra_vm.ensure_built` (the ABC's
-    `ensure_built` no-op here); `ensure_running` boots the VM, seeds the signing
-    key, and blocks until `/health` answers."""
+    The orchestrator rootfs is built/downloaded by `infra_vm.ensure_built` (the
+    ABC's `ensure_built` no-op here); `ensure_running` boots the VM, seeds the
+    signing key, and blocks until `/health` answers."""
 
     name = ORCHESTRATOR_NAME
 

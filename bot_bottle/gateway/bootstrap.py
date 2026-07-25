@@ -54,19 +54,15 @@ class _DaemonSpec:
 _EGRESS_ONLY_ENV_PREFIXES: tuple[str, ...] = ("EGRESS_TOKEN_",)
 _READY_GATED_DAEMONS: tuple[str, ...] = ("git-gate", "git-http")
 
-# The control-plane signing key is the orchestrator's alone — verifying tokens.
-# The data-plane daemons instead hold the pre-minted `gateway` JWT they present.
-# Scoping each to its process (even in the combined infra container) keeps a
-# compromised data-plane daemon from reading the key and minting a `cli` token
-# (issue #469 review). Values match paths.ORCHESTRATOR_TOKEN_ENV /
-# ORCHESTRATOR_AUTH_JWT_ENV; hardcoded here so this supervisor stays import-light.
+# The control-plane signing key is the orchestrator's alone (it verifies
+# tokens), and the orchestrator runs in a separate container/VM — the gateway
+# only ever holds the pre-minted `gateway` JWT its daemons present. Strip the
+# key from every daemon's env as defense-in-depth, so a compromised data-plane
+# daemon can't read it and mint a `cli` token even if it somehow leaked into the
+# gateway container (issue #469 review). Value matches
+# paths.ORCHESTRATOR_TOKEN_ENV; hardcoded here so this supervisor stays
+# import-light.
 _SIGNING_KEY_ENV = "BOT_BOTTLE_ORCHESTRATOR_TOKEN"
-_GATEWAY_JWT_ENV = "BOT_BOTTLE_ORCHESTRATOR_AUTH_JWT"
-
-# Daemons that must be requested explicitly via BOT_BOTTLE_GATEWAY_DAEMONS
-# and are NOT started in the default (env-var-unset) case. The orchestrator
-# only runs in the combined infra container, never in a standalone gateway.
-_OPT_IN_DAEMONS: frozenset[str] = frozenset({"orchestrator"})
 
 
 def _env_for_daemon(name: str, base_env: dict[str, str]) -> dict[str, str]:
@@ -74,30 +70,20 @@ def _env_for_daemon(name: str, base_env: dict[str, str]) -> dict[str, str]:
     Returns a fresh dict — callers can mutate without affecting `base_env`.
 
       * `EGRESS_TOKEN_*` upstream-auth slots go to egress only.
-      * the control-plane signing key goes to the orchestrator only.
-      * the pre-minted `gateway` JWT goes to the data-plane daemons only (the
-        orchestrator verifies tokens, it never presents one)."""
+      * the control-plane signing key is stripped from every daemon — the
+        gateway never holds it (it's the orchestrator's); the data-plane daemons
+        present the pre-minted `gateway` JWT instead."""
     env = dict(base_env)
     if name != "egress":
         env = {
             k: v for k, v in env.items()
             if not any(k.startswith(p) for p in _EGRESS_ONLY_ENV_PREFIXES)
         }
-    if name == "orchestrator":
-        env.pop(_GATEWAY_JWT_ENV, None)
-    else:
-        env.pop(_SIGNING_KEY_ENV, None)
+    env.pop(_SIGNING_KEY_ENV, None)
     return env
 
 
-# The orchestrator is listed first so it starts before the gateway daemons,
-# giving the control plane a head start to accept /resolve calls. The gateway
-# daemons tolerate early /resolve failures and retry per-request.
 _DAEMONS: tuple[_DaemonSpec, ...] = (
-    _DaemonSpec("orchestrator", (
-        "python3", "-m", "bot_bottle.orchestrator",
-        "--host", "0.0.0.0", "--port", "8099", "--broker", "stub",
-    )),
     _DaemonSpec("egress", ("/bin/sh", "/app/egress-entrypoint.sh")),
     _DaemonSpec("git-gate", ("/bin/sh", "/git-gate-entrypoint.sh")),
     _DaemonSpec("git-http", ("python3", "-m", "bot_bottle.gateway.git_gate.http_backend")),
@@ -127,10 +113,8 @@ def _selected_daemons(
 ) -> tuple[_DaemonSpec, ...]:
     """Filter the daemon set by the BOT_BOTTLE_GATEWAY_DAEMONS env var.
 
-    When the var is unset/empty, return all non-opt-in daemons (the
-    standard gateway subset). Opt-in daemons (e.g. `orchestrator`) only
-    run when explicitly named — they never start in a plain gateway
-    container that doesn't set the env var. Unknown names are ignored.
+    When the var is unset/empty, return all daemons (the standard gateway
+    subset). Unknown names are ignored.
 
     `all_daemons` defaults to `_DAEMONS` resolved at call time (not at
     definition time), so tests can pass a custom list."""
@@ -138,7 +122,7 @@ def _selected_daemons(
         all_daemons = _DAEMONS
     raw = env.get("BOT_BOTTLE_GATEWAY_DAEMONS", "").strip()
     if not raw:
-        return tuple(d for d in all_daemons if d.name not in _OPT_IN_DAEMONS)
+        return tuple(all_daemons)
     wanted = {n.strip() for n in raw.split(",") if n.strip()}
     return tuple(d for d in all_daemons if d.name in wanted)
 

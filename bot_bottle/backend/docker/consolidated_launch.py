@@ -2,7 +2,7 @@
 
 Composes the orchestrator primitives into the register/teardown sequence:
 
-  1. ensure the single infra container (control plane + gateway) is up;
+  1. ensure the per-host pair (orchestrator + gateway containers) is up;
   2. allocate the bottle a pinned source IP on the gateway network;
   3. register it and provision its git-gate repos/creds into the gateway.
 
@@ -62,7 +62,7 @@ def _network_cidr(network: str) -> str:
 
 def _network_container_ips(network: str) -> list[str]:
     """Every address currently assigned on the gateway network — the ground
-    truth for "in use": the infra container and every live agent. Read from
+    truth for "in use": the gateway container and every live agent. Read from
     the network so a new bottle can't collide with anything actually attached."""
     proc = run_docker([
         "docker", "network", "inspect", "--format",
@@ -80,7 +80,7 @@ def _reprovision_running_bottles(
     infra_name: str = INFRA_NAME,
 ) -> None:
     """Re-inject egress tokens for any registered bottles that lost their
-    in-memory tokens (e.g., after an infra container restart).
+    in-memory tokens (e.g., after an orchestrator restart).
 
     For each registered bottle whose source IP maps to a live container on the
     gateway network, reads ENV_VAR_SECRET via ``docker exec … printenv`` and
@@ -89,7 +89,7 @@ def _reprovision_running_bottles(
     container exec failure never blocks a new bottle launch."""
     client = OrchestratorClient(orchestrator_url)
     # Build {source_ip: container_name} from live containers on the gateway
-    # network, excluding the infra container itself.
+    # network, excluding the gateway container itself.
     try:
         proc = run_docker([
             "docker", "network", "inspect",
@@ -133,11 +133,11 @@ def launch_consolidated(
     infra_name: str = INFRA_NAME,
     network: str = GATEWAY_NETWORK,
 ) -> LaunchContext:
-    """Ensure the infra container is up, allocate + register the bottle, and
+    """Ensure the orchestrator + gateway pair is up, allocate + register the bottle, and
     provision its git-gate state. Returns the agent's attach context.
 
     Also reprovisiones egress tokens for any already-running bottles that lost
-    their in-memory credentials (e.g. after an infra container restart), so
+    their in-memory credentials (e.g. after an orchestrator restart), so
     they regain egress access before the new bottle is registered."""
     service = service or DockerInfraService()
     url = service.ensure_running()
