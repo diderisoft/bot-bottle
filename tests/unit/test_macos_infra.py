@@ -108,6 +108,7 @@ class TestInfraEnsureRunning(unittest.TestCase):
         svc = MacosInfraService(repo_root=Path("/r"))
         run = Mock()
         with patch(f"{_INFRA}.container_mod") as mod, \
+                patch(f"{_INFRA}.ensure_networks"), \
                 patch(f"{_INFRA}.source_hash", return_value="h1"), \
                 patch.object(svc, "ensure_built"), \
                 patch.object(svc, "_run_orchestrator_container", run), \
@@ -125,6 +126,7 @@ class TestInfraEnsureRunning(unittest.TestCase):
         svc = MacosInfraService(repo_root=Path("/r"))
         run = Mock()
         with patch(f"{_INFRA}.container_mod") as mod, \
+                patch(f"{_INFRA}.ensure_networks"), \
                 patch(f"{_INFRA}.source_hash", return_value="h2"), \
                 patch.object(svc, "ensure_built"), \
                 patch.object(svc, "_run_orchestrator_container", run), \
@@ -140,6 +142,7 @@ class TestInfraEnsureRunning(unittest.TestCase):
         svc = MacosInfraService(repo_root=Path("/r"))
         run = Mock()
         with patch(f"{_INFRA}.container_mod") as mod, \
+                patch(f"{_INFRA}.ensure_networks"), \
                 patch(f"{_INFRA}.source_hash", return_value="h1"), \
                 patch.object(svc, "ensure_built"), \
                 patch.object(svc, "_run_orchestrator_container", run), \
@@ -154,6 +157,7 @@ class TestInfraEnsureRunning(unittest.TestCase):
     def test_never_healthy_raises(self) -> None:
         svc = MacosInfraService(repo_root=Path("/r"))
         with patch(f"{_INFRA}.container_mod") as mod, \
+                patch(f"{_INFRA}.ensure_networks"), \
                 patch(f"{_INFRA}.source_hash", return_value="h1"), \
                 patch.object(svc, "ensure_built"), \
                 patch.object(svc, "_run_orchestrator_container"), \
