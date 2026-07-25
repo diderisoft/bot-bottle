@@ -21,6 +21,7 @@ import asyncio
 import json
 import os
 import sys
+import threading
 import types
 import unittest
 from io import StringIO
@@ -598,6 +599,35 @@ class TestSuperviseBranch(unittest.TestCase):
         _run_request(addon, flow)
         assert flow.response is not None
         self.assertEqual(403, flow.response.status_code)
+
+    def test_supervise_rpcs_run_off_the_event_loop_thread(self) -> None:
+        # The propose/poll RPCs block on urllib, and the poll loop runs for the
+        # whole operator-approval window; calling them inline would freeze the
+        # proxy event loop for every other bottle's traffic. They must run in a
+        # worker thread instead (#471 review). Prove it by recording the thread
+        # the RPCs execute on and asserting it isn't the loop's (main) thread.
+        loop_ident = threading.get_ident()
+        rpc_idents: list[int] = []
+
+        class _ThreadRecordingResolver(_StaticResolver):
+            def propose_supervise(self, *a: Any, **k: Any) -> str:
+                rpc_idents.append(threading.get_ident())
+                return super().propose_supervise(*a, **k)
+
+            def poll_supervise(self, *a: Any, **k: Any) -> "dict[str, object]":
+                rpc_idents.append(threading.get_ident())
+                return super().poll_supervise(*a, **k)
+
+        config = Config(routes=(Route(host="api.example.com"),))
+        addon = _addon(config, slug="test-bottle")
+        resolver = _ThreadRecordingResolver(config, bottle_id="test-bottle")
+        resolver.supervise_status = "approved"
+        addon._resolver = cast(Any, resolver)
+        addon._token_allow_timeout = 0.05
+        flow = _Flow(_Request(host="api.example.com", method="POST", body=f"k={_OPENAI_KEY}"))
+        _run_request(addon, flow)
+        self.assertTrue(rpc_idents, "propose/poll were never invoked")
+        self.assertNotIn(loop_ident, rpc_idents)  # every RPC ran off the loop thread
 
 
 # ---------------------------------------------------------------------------

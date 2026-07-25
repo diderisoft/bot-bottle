@@ -612,7 +612,11 @@ class EgressAddon:
         source_ip = conn.peername[0] if conn is not None and conn.peername else ""
         token = self._conn_tokens.get(getattr(conn, "id", ""), "") if conn is not None else ""
         try:
-            proposal_id = self._resolver.propose_supervise(
+            # The resolver RPC is synchronous (blocking urllib); run it off the
+            # event loop so a slow/unreachable orchestrator can't freeze the
+            # proxy for every other bottle's traffic (#471 review).
+            proposal_id = await asyncio.to_thread(
+                self._resolver.propose_supervise,
                 source_ip, token,
                 tool=TOOL_EGRESS_TOKEN_ALLOW,
                 proposed_file=payload,
@@ -675,7 +679,13 @@ class EgressAddon:
         deadline = loop.time() + self._token_allow_timeout
         while True:
             try:
-                result = self._resolver.poll_supervise(source_ip, token, proposal_id)
+                # Poll off the event loop — the resolver RPC blocks on urllib,
+                # and this loop runs for the whole operator-approval window, so
+                # calling it inline would repeatedly freeze all proxy traffic
+                # until a decision or timeout (#471 review).
+                result = await asyncio.to_thread(
+                    self._resolver.poll_supervise, source_ip, token, proposal_id,
+                )
             except PolicyResolveError:
                 result = None
             if result is not None and result.get("status") in STATUSES:
