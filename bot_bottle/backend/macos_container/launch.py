@@ -68,7 +68,7 @@ from .consolidated_launch import (
     GatewayEndpoint,
     ensure_gateway,
     register_agent,
-    teardown_consolidated,
+    deprovision_consolidated,
 )
 
 _REPO_DIR = str(Path(__file__).resolve().parent.parent.parent.parent)
@@ -202,7 +202,7 @@ def launch(
             env_var_secret=plan.env_var_secret,
         )
         stack.callback(
-            teardown_consolidated, ctx.bottle_id,
+            deprovision_consolidated, ctx.bottle_id,
             orchestrator_url=ctx.orchestrator_url,
             timeout=teardown_timeout,
         )

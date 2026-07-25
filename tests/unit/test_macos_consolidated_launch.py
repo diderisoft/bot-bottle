@@ -10,7 +10,7 @@ from bot_bottle.backend.macos_container.consolidated_launch import (
     GatewayEndpoint,
     ensure_gateway,
     register_agent,
-    teardown_consolidated,
+    deprovision_consolidated,
 )
 from bot_bottle.egress import EgressPlan, EgressRoute
 from bot_bottle.git_gate import GitGatePlan
@@ -129,7 +129,7 @@ class TestTeardown(unittest.TestCase):
         deprovision = Mock()
         with patch(f"{_UTIL}.OrchestratorClient", return_value=client), \
                 patch(f"{_UTIL}.deprovision_git_gate", deprovision):
-            teardown_consolidated("b1", orchestrator_url="http://o:8099")
+            deprovision_consolidated("b1", orchestrator_url="http://o:8099")
         client.teardown_bottle.assert_called_once_with("b1")
         self.assertEqual("b1", deprovision.call_args.args[1])
 

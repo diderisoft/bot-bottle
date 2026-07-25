@@ -62,7 +62,7 @@ from .compose import (
 )
 from .consolidated_compose import consolidated_agent_compose
 from ...orchestrator.store.config_store import resolve_teardown_timeout
-from .consolidated_launch import launch_consolidated, teardown_consolidated
+from .consolidated_launch import launch_consolidated, deprovision_consolidated
 from .infra import INFRA_NAME
 from .gateway import DockerGateway
 
@@ -151,7 +151,7 @@ def launch(
             plan.egress_plan, git_gate_plan, image_ref=plan.image, tokens=token_values,
         )
         stack.callback(
-            teardown_consolidated, ctx.bottle_id,
+            deprovision_consolidated, ctx.bottle_id,
             orchestrator_url=ctx.orchestrator_url,
             timeout=teardown_timeout,
         )

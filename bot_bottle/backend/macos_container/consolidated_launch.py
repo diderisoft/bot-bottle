@@ -184,7 +184,7 @@ def register_agent(
     )
 
 
-def teardown_consolidated(
+def deprovision_consolidated(
     bottle_id: str, *, orchestrator_url: str, timeout: float | None = None,
 ) -> None:
     """Deregister the bottle and remove its git-gate state from the gateway.
@@ -200,7 +200,7 @@ __all__ = [
     "ensure_gateway",
     "live_source_ips",
     "register_agent",
-    "teardown_consolidated",
+    "deprovision_consolidated",
     "ConsolidatedLaunchError",
     "OrchestratorStartError",
     "GATEWAY_NETWORK",

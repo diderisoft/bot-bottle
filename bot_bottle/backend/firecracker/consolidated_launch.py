@@ -146,7 +146,7 @@ def launch_consolidated(
     )
 
 
-def teardown_consolidated(
+def deprovision_consolidated(
     bottle_id: str, *, orchestrator_url: str, timeout: float | None = None,
 ) -> None:
     """Deregister the bottle and remove its git-gate state from the gateway
@@ -160,7 +160,7 @@ def teardown_consolidated(
 __all__ = [
     "LaunchContext",
     "launch_consolidated",
-    "teardown_consolidated",
+    "deprovision_consolidated",
     "ConsolidatedLaunchError",
     "OrchestratorStartError",
 ]

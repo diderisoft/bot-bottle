@@ -99,7 +99,7 @@ class TestTeardownWarning(unittest.TestCase):
         with mock.patch.object(launch_mod.docker_mod, "build_image"), \
              mock.patch.object(launch_mod.docker_mod, "verify_agent_image"), \
              mock.patch.object(launch_mod, "launch_consolidated", return_value=ctx), \
-             mock.patch.object(launch_mod, "teardown_consolidated"), \
+             mock.patch.object(launch_mod, "deprovision_consolidated"), \
              mock.patch.object(launch_mod, "DockerGateway", return_value=gw), \
              mock.patch.object(
                  launch_mod, "consolidated_agent_compose",

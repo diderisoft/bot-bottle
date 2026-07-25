@@ -54,7 +54,7 @@ from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
 from .consolidated_launch import (
     launch_consolidated,
     persist_env_var_secret,
-    teardown_consolidated,
+    deprovision_consolidated,
 )
 
 
@@ -119,7 +119,7 @@ def launch(
             tokens=token_values,
         )
         stack.callback(
-            teardown_consolidated, ctx.bottle_id,
+            deprovision_consolidated, ctx.bottle_id,
             orchestrator_url=ctx.orchestrator_url,
             timeout=teardown_timeout,
         )

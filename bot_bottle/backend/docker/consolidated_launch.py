@@ -168,7 +168,7 @@ def launch_consolidated(
     )
 
 
-def teardown_consolidated(
+def deprovision_consolidated(
     bottle_id: str, *, orchestrator_url: str, infra_name: str = INFRA_NAME,
     timeout: float | None = None,
 ) -> None:
@@ -180,6 +180,6 @@ def teardown_consolidated(
 __all__ = [
     "LaunchContext",
     "launch_consolidated",
-    "teardown_consolidated",
+    "deprovision_consolidated",
     "ConsolidatedLaunchError",
 ]

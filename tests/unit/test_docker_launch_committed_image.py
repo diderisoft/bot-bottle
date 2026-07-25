@@ -96,7 +96,7 @@ class TestLaunchCommittedImage(unittest.TestCase):
                 mock.patch.object(launch_mod.docker_mod, "verify_agent_image"), \
                 mock.patch.object(launch_mod.docker_mod, "image_created_at"), \
                 mock.patch.object(launch_mod, "launch_consolidated", return_value=_CTX), \
-                mock.patch.object(launch_mod, "teardown_consolidated"), \
+                mock.patch.object(launch_mod, "deprovision_consolidated"), \
                 mock.patch.object(launch_mod, "DockerGateway", return_value=gw), \
                 mock.patch.object(launch_mod, "consolidated_agent_compose", side_effect=compose), \
                 mock.patch.object(launch_mod, "write_compose_file", return_value=Path("/tmp/c.yml")), \

@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 from bot_bottle.backend.docker.consolidated_launch import (
     launch_consolidated,
-    teardown_consolidated,
+    deprovision_consolidated,
 )
 from bot_bottle.egress import EgressPlan, EgressRoute
 from bot_bottle.git_gate import GitGatePlan
@@ -91,7 +91,7 @@ class TestTeardownConsolidated(unittest.TestCase):
         client = Mock()
         with patch(f"{_UTIL}.OrchestratorClient", return_value=client), \
                 patch(f"{_UTIL}.deprovision_git_gate") as deprov:
-            teardown_consolidated("b1", orchestrator_url="http://orch:8080")
+            deprovision_consolidated("b1", orchestrator_url="http://orch:8080")
         client.teardown_bottle.assert_called_once_with("b1")
         deprov.assert_called_once()
 
