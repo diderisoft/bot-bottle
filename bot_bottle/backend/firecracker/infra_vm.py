@@ -168,13 +168,19 @@ def stop() -> None:
     recorded VMMs AND any orphaned firecracker still bound to either infra
     config — the PID files drift after crashes / out-of-band kills, and a
     survivor would hold a link's TAP so the next boot dies with "tap …
-    Resource busy". Drops the version marker so a stopped pair is never
-    treated as adoptable."""
+    Resource busy". Also reaps a surviving *legacy* single combined-VM (the
+    pre-split layout booted from `<infra>/config.json` on the orchestrator
+    link): the two-VM `stop` otherwise wouldn't know about it, and it would
+    hold the orchestrator TAP so the first split boot fails — so the cutover
+    is self-healing, no manual host teardown. Drops the version marker so a
+    stopped pair is never treated as adoptable."""
     _kill_pidfile(_orch_dir())
     _kill_pidfile(_gw_dir())
+    _kill_pidfile(_infra_dir())  # legacy pre-split combined VM (migration)
     _kill_infra_firecrackers()
     _pid_file(_orch_dir()).unlink(missing_ok=True)
     _pid_file(_gw_dir()).unlink(missing_ok=True)
+    _pid_file(_infra_dir()).unlink(missing_ok=True)  # legacy
     _version_file().unlink(missing_ok=True)
 
 
@@ -357,9 +363,15 @@ def _kill_infra_firecrackers(proc_root: Path = Path("/proc")) -> None:
     """SIGKILL any firecracker VMM whose `--config-file` is one of this host's
     infra configs (orchestrator or gateway), independent of the PID files —
     reaps orphans it lost track of so both links' TAPs are free to rebind.
-    Scoped to the two infra config paths, so the interactive pool's agent VMs
-    (other config paths) are untouched."""
-    cfgs = {str(_orch_dir() / "config.json"), str(_gw_dir() / "config.json")}
+    Also matches the *legacy* pre-split combined-VM config (`<infra>/config.json`)
+    so a surviving old singleton is cleared off the orchestrator link during the
+    cutover. Scoped to these infra config paths, so the pool's agent VMs (other
+    config paths) are untouched."""
+    cfgs = {
+        str(_orch_dir() / "config.json"),
+        str(_gw_dir() / "config.json"),
+        str(_infra_dir() / "config.json"),  # legacy pre-split combined VM
+    }
     for entry in proc_root.iterdir():
         if not entry.name.isdigit():
             continue
