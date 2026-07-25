@@ -6,40 +6,29 @@ model existed only because two Apple-Container guests writing one `bot-bottle.db
 over virtiofs would race incoherent `fcntl` locks; with the data plane no longer
 opening the DB at all, only the orchestrator does, so the split is safe.
 
-  * `bot-bottle-mac-orchestrator` — the lean control plane. Joins the host-only
-    **control network** (`bot-bottle-mac-control`) only. Sole opener of the
-    container-only DB volume; holds the signing key. The host CLI reaches it at
-    its control-network address; the gateway reaches it there too.
-  * `bot-bottle-mac-infra` — the gateway data plane. Triple-homed: the NAT
-    egress network (route out), the host-only agent network (agents + CLI reach
-    the gateway), and the control network (reach the orchestrator by IP — Apple
-    has no container DNS). Holds the mitmproxy CA + the `gateway` JWT.
+  * `bot-bottle-mac-orchestrator` — the lean control plane (`MacosOrchestrator`).
+    Joins the host-only **control network** (`bot-bottle-mac-control`) only. Sole
+    opener of the container-only DB volume; holds the signing key. The host CLI
+    reaches it at its control-network address; the gateway reaches it there too.
+  * `bot-bottle-mac-infra` — the gateway data plane (`MacosGateway`). Triple-homed:
+    the NAT egress network (route out), the host-only agent network (agents + CLI
+    reach the gateway), and the control network (reach the orchestrator by IP —
+    Apple has no container DNS). Holds the mitmproxy CA + the `gateway` JWT.
 
-Agents sit on the agent network only, never the control network, so they have no
-route to the control plane (the L3 block, not just the JWT).
+`MacosInfraService` composes the two services and brings them up as an idempotent
+per-host pair. Agents sit on the agent network only, never the control network,
+so they have no route to the control plane (the L3 block, not just the JWT).
 """
 
 from __future__ import annotations
 
-import os
-import time
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-from ... import log
 from ...orchestrator.lifecycle import (
     DEFAULT_PORT,
     DEFAULT_STARTUP_TIMEOUT_SECONDS,
     OrchestratorStartError,
-    source_hash,
-)
-from ...orchestrator_auth import ROLE_GATEWAY, mint
-from ...paths import (
-    ORCHESTRATOR_TOKEN_ENV,
-    HOST_DB_FILENAME,
-    host_orchestrator_token,
 )
 from . import util as container_mod
 from .gateway import (
@@ -51,30 +40,23 @@ from .gateway import (
     GATEWAY_NETWORK,
     GatewayError,
     MacosGateway,
-    ORCHESTRATOR_IMAGE,
     ensure_networks,
 )
+from .orchestrator import (
+    ORCHESTRATOR_DB_VOLUME,
+    ORCHESTRATOR_IMAGE,
+    ORCHESTRATOR_NAME,
+    MacosOrchestrator,
+    probe_orchestrator_url,
+)
 
-# The orchestrator (control plane) container. `INFRA_NAME` is kept — now aliasing
-# the gateway container — for callers that still import it (probe / reprovision
-# attribute against the gateway).
-ORCHESTRATOR_NAME = "bot-bottle-mac-orchestrator"
-ORCHESTRATOR_LABEL = "bot-bottle-mac-orchestrator=1"
-INFRA_NAME = GATEWAY_NAME  # the container agents attribute against is the gateway
-# Container-only volume holding bot-bottle.db, mounted ONLY into the
-# orchestrator. One kernel writes it (never host-shared or cross-guest).
-INFRA_DB_VOLUME = "bot-bottle-mac-db"
-
-# BOT_BOTTLE_ROOT inside the orchestrator; host_db_path() resolves the DB to
-# <root>/db/<filename>.
-_DB_ROOT_IN_CONTAINER = "/var/lib/bot-bottle"
-_DB_PATH_IN_CONTAINER = f"{_DB_ROOT_IN_CONTAINER}/db/{HOST_DB_FILENAME}"
-_SRC_IN_CONTAINER = "/bot-bottle-src"
+# `INFRA_NAME` is kept — now aliasing the gateway container — for callers that
+# still import it (probe / reprovision attribute against the gateway).
+INFRA_NAME = GATEWAY_NAME
+# Back-compat alias: the DB volume moved to the orchestrator module.
+INFRA_DB_VOLUME = ORCHESTRATOR_DB_VOLUME
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-
-_HEALTH_POLL_SECONDS = 0.25
-_HEALTH_REQUEST_TIMEOUT_SECONDS = 1.0
 
 
 @dataclass(frozen=True)
@@ -88,7 +70,7 @@ class InfraEndpoint:
 
 
 class MacosInfraService:
-    """Manages the per-host orchestrator + gateway containers. Callers use
+    """Composes the per-host orchestrator + gateway containers. Callers use
     `ensure_running()` (returns the endpoint) and `ca_cert_pem()`."""
 
     def __init__(
@@ -103,7 +85,7 @@ class MacosInfraService:
         repo_root: Path = _REPO_ROOT,
         orchestrator_name: str = ORCHESTRATOR_NAME,
         gateway_name: str = INFRA_NAME,
-        db_volume: str = INFRA_DB_VOLUME,
+        db_volume: str = ORCHESTRATOR_DB_VOLUME,
     ) -> None:
         self.port = port
         self.network = network
@@ -120,6 +102,19 @@ class MacosInfraService:
     def gateway_name(self) -> str:
         return self._gateway_name
 
+    def orchestrator(self) -> MacosOrchestrator:
+        """The control-plane service on the host-only control network. Cheap to
+        reconstruct — the launch flow reads its `url()` / `gateway_url()` /
+        `mint_gateway_token()` off it."""
+        return MacosOrchestrator(
+            self.orchestrator_image,
+            name=self._orchestrator_name,
+            port=self.port,
+            control_network=self.control_network,
+            repo_root=self._repo_root,
+            db_volume=self._db_volume,
+        )
+
     def gateway(self) -> MacosGateway:
         """The data-plane gateway service, triple-homed on the egress + agent +
         control networks. Cheap to reconstruct — the launch flow reads its
@@ -131,51 +126,16 @@ class MacosInfraService:
             network=self.network,
             egress_network=self.egress_network,
             control_network=self.control_network,
+            repo_root=self._repo_root,
         )
-
-    def _resolve_orchestrator_url(self) -> str:
-        """The control-plane URL (orchestrator's control-network address), or ""
-        while it has no address."""
-        ip = container_mod.try_container_ipv4_on_network(
-            self._orchestrator_name, self.control_network)
-        return f"http://{ip}:{self.port}" if ip else ""
 
     def _resolve_gateway_ip(self) -> str:
         """The gateway's agent-network address, or "" while it has none."""
         return container_mod.try_container_ipv4_on_network(
             self._gateway_name, self.network)
 
-    def is_healthy(
-        self, url: str, *, timeout: float = _HEALTH_REQUEST_TIMEOUT_SECONDS,
-    ) -> bool:
-        if not url:
-            return False
-        try:
-            with urllib.request.urlopen(f"{url}/health", timeout=timeout) as resp:
-                return resp.status == 200
-        except (urllib.error.URLError, TimeoutError, OSError):
-            return False
-
-    def _orchestrator_source_current(self, current_hash: str) -> bool:
-        """True iff the running orchestrator was created from the current
-        bind-mounted control-plane source (it loads that code at startup and
-        won't reload it)."""
-        if not container_mod.container_is_running(self._orchestrator_name):
-            return False
-        env = container_mod.container_env(self._orchestrator_name)
-        if not env:
-            return True  # can't compare → don't churn a working container
-        return env.get("BOT_BOTTLE_SOURCE_HASH") == current_hash
-
-    def ensure_built(self) -> None:
-        """Ensure the gateway + orchestrator images exist. The control-plane
-        source is bind-mounted, so a code change takes effect without a rebuild;
-        the images still carry the package for their entrypoints."""
-        container_mod.build_image(
-            self.gateway_image, str(self._repo_root), dockerfile="Dockerfile.gateway")
-        container_mod.build_image(
-            self.orchestrator_image, str(self._repo_root),
-            dockerfile="Dockerfile.orchestrator")
+    def is_healthy(self) -> bool:
+        return self.orchestrator().is_healthy()
 
     def ensure_running(
         self, *, startup_timeout: float = DEFAULT_STARTUP_TIMEOUT_SECONDS,
@@ -184,76 +144,25 @@ class MacosInfraService:
         reach them. Idempotent per-host singleton — a healthy orchestrator on
         current source is left untouched. Raises `OrchestratorStartError` on
         control-plane startup timeout."""
-        self.ensure_built()
+        # The networks (host-only agent + NAT egress + host-only control) are a
+        # shared concern — create them before either plane comes up.
         ensure_networks(self.network, self.egress_network, self.control_network)
 
-        current_hash = source_hash(self._repo_root)
-        url = self._resolve_orchestrator_url()
-        if not (self._orchestrator_source_current(current_hash)
-                and url and self.is_healthy(url)):
-            log.info("starting orchestrator container",
-                     context={"name": self._orchestrator_name})
-            self._run_orchestrator_container(current_hash)
-            url = self._wait_healthy(startup_timeout)
+        orchestrator = self.orchestrator()
+        gateway = self.gateway()
+        orchestrator.ensure_built()
+        gateway.ensure_built()
+
+        orchestrator.ensure_running(startup_timeout=startup_timeout)
 
         # (Re)ensure the gateway once the control plane it resolves against is
         # healthy — it needs the orchestrator's control-network address. The
         # orchestrator (which holds the signing key) mints the role-scoped
         # `gateway` JWT and hands it to the gateway, which never sees the key
         # (#469).
-        gateway_token = mint(ROLE_GATEWAY, host_orchestrator_token())
-        self.gateway().connect_to_orchestrator(url, gateway_token)
+        url = orchestrator.url()
+        gateway.connect_to_orchestrator(url, orchestrator.mint_gateway_token())
         return InfraEndpoint(orchestrator_url=url, gateway_ip=self._resolve_gateway_ip())
-
-    def _run_orchestrator_container(self, current_hash: str) -> None:
-        container_mod.force_remove_container(self._orchestrator_name)
-        _signing_key = host_orchestrator_token()
-        argv = [
-            "container", "run", "--detach",
-            "--name", self._orchestrator_name,
-            "--label", "bot-bottle.backend=macos-container",
-            "--label", ORCHESTRATOR_LABEL,
-            # Control network only — agents are never on it (L3-isolated).
-            "--network", self.control_network,
-            "--dns", container_mod.dns_server(),
-            # Container-only DB volume: exactly one kernel writes bot-bottle.db.
-            "--volume", f"{self._db_volume}:{_DB_ROOT_IN_CONTAINER}",
-            # Live control-plane source (a code change takes effect on relaunch).
-            "--mount",
-            container_mod.bind_mount_spec(
-                str(self._repo_root), _SRC_IN_CONTAINER, readonly=True),
-            "--env", f"PYTHONPATH={_SRC_IN_CONTAINER}",
-            "--env", f"BOT_BOTTLE_ROOT={_DB_ROOT_IN_CONTAINER}",
-            # Detect a real control-plane code change and recreate.
-            "--env", f"BOT_BOTTLE_SOURCE_HASH={current_hash}",
-            # The signing key — held ONLY by the orchestrator (issue #469). Bare
-            # `--env NAME` keeps the value off argv / `container inspect`.
-            "--env", ORCHESTRATOR_TOKEN_ENV,
-            self.orchestrator_image,
-            # Dockerfile.orchestrator ENTRYPOINT is `-m bot_bottle.orchestrator`.
-            "--host", "0.0.0.0", "--port", str(self.port), "--broker", "stub",
-        ]
-        result = container_mod.run_container_argv(
-            argv, env={**os.environ, ORCHESTRATOR_TOKEN_ENV: _signing_key})
-        if result.returncode != 0:
-            raise OrchestratorStartError(
-                f"orchestrator container failed to start: "
-                f"{(result.stderr or '').strip() or '<no stderr>'}"
-            )
-
-    def _wait_healthy(self, startup_timeout: float) -> str:
-        deadline = time.monotonic() + startup_timeout
-        while True:
-            url = self._resolve_orchestrator_url()
-            if url and self.is_healthy(url):
-                log.info("orchestrator healthy", context={"url": url})
-                return url
-            if time.monotonic() >= deadline:
-                raise OrchestratorStartError(
-                    f"orchestrator did not become healthy within "
-                    f"{startup_timeout:g}s"
-                )
-            time.sleep(_HEALTH_POLL_SECONDS)
 
     def ca_cert_pem(self, *, timeout: float = DEFAULT_CA_TIMEOUT_SECONDS) -> str:
         """The gateway's mitmproxy CA (PEM) agents install to trust its TLS
@@ -267,14 +176,6 @@ class MacosInfraService:
         container_mod.force_remove_container(self._orchestrator_name)
 
 
-def probe_orchestrator_url(port: int = DEFAULT_PORT) -> str:
-    """The running orchestrator's control-plane URL, or "" if it isn't up. Used
-    by host-side control-plane discovery; safe on any host (returns "" when the
-    container or the `container` CLI isn't present)."""
-    ip = container_mod.try_container_ipv4_on_network(ORCHESTRATOR_NAME, CONTROL_NETWORK)
-    return f"http://{ip}:{port}" if ip else ""
-
-
 __all__ = [
     "MacosInfraService",
     "InfraEndpoint",
@@ -283,4 +184,5 @@ __all__ = [
     "ORCHESTRATOR_NAME",
     "INFRA_NAME",
     "INFRA_DB_VOLUME",
+    "probe_orchestrator_url",
 ]

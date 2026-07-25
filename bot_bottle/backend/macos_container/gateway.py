@@ -14,6 +14,7 @@ share: the network names, the gateway image, and the network-creation helper.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from ...gateway import (
     DEFAULT_CA_TIMEOUT_SECONDS,
@@ -50,9 +51,8 @@ GATEWAY_LABEL = "bot-bottle-mac-infra=1"
 GATEWAY_DAEMONS = "egress,git-http,supervise"
 
 GATEWAY_IMAGE = os.environ.get("BOT_BOTTLE_GATEWAY_IMAGE", "bot-bottle-gateway:latest")
-ORCHESTRATOR_IMAGE = os.environ.get(
-    "BOT_BOTTLE_ORCHESTRATOR_IMAGE", "bot-bottle-orchestrator:latest"
-)
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def ensure_networks(
@@ -72,9 +72,9 @@ class MacosGateway(Gateway):
     """The consolidated gateway as a single Apple container, triple-homed on the
     NAT egress, host-only agent, and control networks.
 
-    Images are built by the infra service (`ensure_built` here is the ABC's
-    no-op); the networks are ensured there too. `connect_to_orchestrator` runs
-    the container carrying the mitmproxy CA + the pre-minted `gateway` token."""
+    `ensure_built` builds `Dockerfile.gateway`; the networks are ensured by the
+    composer. `connect_to_orchestrator` runs the container carrying the mitmproxy
+    CA + the pre-minted `gateway` token."""
 
     def __init__(
         self,
@@ -84,17 +84,24 @@ class MacosGateway(Gateway):
         network: str = GATEWAY_NETWORK,
         egress_network: str = GATEWAY_EGRESS_NETWORK,
         control_network: str = CONTROL_NETWORK,
+        repo_root: Path = _REPO_ROOT,
     ) -> None:
         self.image_ref = image_ref
         self.name = name
         self.network = network
         self.egress_network = egress_network
         self.control_network = control_network
+        self._repo_root = repo_root
         # Set by `connect_to_orchestrator`: the URL the daemons resolve policy
         # against + the pre-minted `gateway` token they present. The gateway
         # never mints, so it never holds the signing key (#469).
         self._orchestrator_url = ""
         self._gateway_token = ""
+
+    def ensure_built(self) -> None:
+        """Build the data-plane image from `Dockerfile.gateway`."""
+        container_mod.build_image(
+            self.image_ref, str(self._repo_root), dockerfile="Dockerfile.gateway")
 
     def connect_to_orchestrator(self, orchestrator_url: str, gateway_token: str) -> None:
         """Bind the gateway to this orchestrator and (re)start it, dual-homed on
@@ -198,7 +205,6 @@ __all__ = [
     "GATEWAY_LABEL",
     "GATEWAY_DAEMONS",
     "GATEWAY_IMAGE",
-    "ORCHESTRATOR_IMAGE",
     "GatewayError",
     "DEFAULT_CA_TIMEOUT_SECONDS",
     "ensure_networks",
