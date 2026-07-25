@@ -45,6 +45,7 @@ from ..consolidated_util import (
     teardown_consolidated as _teardown_util,
 )
 from . import cleanup, infra_vm, util
+from .gateway import FirecrackerGateway
 
 _ENV_VAR_SECRET_PATH = "/run/bot-bottle/env-var-secret"
 
@@ -129,18 +130,21 @@ def launch_consolidated(
     client = OrchestratorClient(url)
     _reprovision_running_bottles(client)
 
-    transport = infra_vm.gateway_transport()
+    # Read the gateway's provisioning transport + CA off the Gateway service
+    # (adapting the running gateway VM).
+    gateway = FirecrackerGateway(infra.gateway)
+    transport = gateway.provisioning_transport()
     reg = provision_bottle(
         client, guest_ip, egress_plan, git_gate_plan, transport,
         image_ref=image_ref, tokens=tokens,
     )
     # The shared gateway CA every agent on this host trusts for TLS
-    # interception — fetched from the infra VM over SSH.
+    # interception — fetched from the gateway VM over SSH.
     return LaunchContext(
         bottle_id=reg.bottle_id,
         identity_token=reg.identity_token,
         source_ip=guest_ip,
-        gateway_ca_pem=infra.gateway_ca_pem(),
+        gateway_ca_pem=gateway.ca_cert_pem(),
         orchestrator_url=url,
         env_var_secret=reg.env_var_secret,
     )
@@ -153,7 +157,7 @@ def teardown_consolidated(
     VM. Both steps are idempotent so this is safe from a cleanup trap. Does
     NOT stop the infra VMs — they're persistent per-host singletons shared by
     every bottle."""
-    _teardown_util(bottle_id, infra_vm.gateway_transport(),
+    _teardown_util(bottle_id, FirecrackerGateway().provisioning_transport(),
                    orchestrator_url=orchestrator_url, timeout=timeout)
 
 

@@ -36,15 +36,13 @@ class TestPushSecrets(unittest.TestCase):
         self.assertIn(f"mv {infra_vm._GUEST_SIGNING_KEY_PATH}.tmp "
                       f"{infra_vm._GUEST_SIGNING_KEY_PATH}", remote_cmd)
 
-    def test_gateway_jwt_is_minted_gateway_role_not_the_key(self):
+    def test_gateway_jwt_is_the_pre_minted_token_not_the_key(self):
+        # The host mints the `gateway` JWT and hands it in; `_push_gateway_jwt`
+        # only writes it. It is the JWT (never the key itself) that lands in the
+        # gateway VM.
         proc = MagicMock(returncode=0, stderr="")
-        with patch.object(infra_vm, "host_orchestrator_token", return_value="host-key"), \
-                patch.object(infra_vm, "mint", return_value="gw.jwt") as mint, \
-                patch.object(infra_vm.subprocess, "run", return_value=proc) as run:
-            infra_vm._push_gateway_jwt(self._infra())
-        # Minted on the HOST from the signing key with the gateway role, and it
-        # is the JWT (never the key itself) that lands in the gateway VM.
-        mint.assert_called_once_with(infra_vm.ROLE_GATEWAY, "host-key")
+        with patch.object(infra_vm.subprocess, "run", return_value=proc) as run:
+            infra_vm._push_gateway_jwt(self._infra(), "gw.jwt")
         self.assertEqual("gw.jwt", run.call_args.kwargs["input"])
         remote_cmd = run.call_args.args[0][-1]
         self.assertIn(f"cat > {infra_vm._GUEST_GATEWAY_JWT_PATH}.tmp", remote_cmd)
@@ -175,13 +173,14 @@ class TestBootRole(unittest.TestCase):
                 patch.object(infra_vm, "_push_gateway_jwt") as push, \
                 patch.object(infra_vm.firecracker_vm, "boot", return_value=vm) as boot, \
                 patch.object(infra_vm, "_gw_dir", return_value=Path(td)):
-            infra_vm.boot_gateway("10.243.255.1")
+            infra_vm.boot_gateway("10.243.255.1", "gw.jwt")
         kw = boot.call_args.kwargs
         self.assertIn("bb_role=gateway", kw["extra_boot_args"])
         self.assertIn("bb_orch=10.243.255.1", kw["extra_boot_args"])  # reaches the CP
         self.assertEqual(infra_vm._GW_MEM_MIB, kw["mem_mib"])
         self.assertIsNone(kw["data_drive"])  # data plane never opens the DB
-        push.assert_called_once()  # gateway JWT seeded
+        # The host-minted token is threaded through to the JWT push.
+        self.assertEqual("gw.jwt", push.call_args.args[1])
 
 
 class TestSshGatewayTransport(unittest.TestCase):
@@ -335,6 +334,8 @@ class TestEnsureRunningSingleton(unittest.TestCase):
                  patch.object(infra_vm, "stop") as stop, \
                  patch.object(infra_vm, "ensure_built"), \
                  patch.object(infra_vm, "wait_for_health"), \
+                 patch.object(infra_vm, "host_orchestrator_token", return_value="k"), \
+                 patch.object(infra_vm, "mint", return_value="gw.jwt"), \
                  patch.object(infra_vm, "boot_orchestrator") as boot_o, \
                  patch.object(infra_vm, "boot_gateway") as boot_g:
                 boot_o.return_value = infra_vm.InfraVm(
@@ -345,8 +346,10 @@ class TestEnsureRunningSingleton(unittest.TestCase):
             stop.assert_called_once()          # dislodge the outdated pair
             boot_o.assert_called_once()
             boot_g.assert_called_once()
-            # The gateway is booted pointing at the orchestrator's guest IP.
+            # The gateway is booted pointing at the orchestrator's guest IP,
+            # carrying the host-minted `gateway` token.
             self.assertEqual("10.243.255.1", boot_g.call_args.args[0])
+            self.assertEqual("gw.jwt", boot_g.call_args.args[1])
             # The fresh boot records the current version for the next launcher.
             self.assertEqual("v-current\n", (d / "booted-version").read_text())
 
@@ -365,6 +368,8 @@ class TestEnsureRunningSingleton(unittest.TestCase):
                  patch.object(infra_vm, "stop") as stop, \
                  patch.object(infra_vm, "ensure_built"), \
                  patch.object(infra_vm, "wait_for_health"), \
+                 patch.object(infra_vm, "host_orchestrator_token", return_value="k"), \
+                 patch.object(infra_vm, "mint", return_value="gw.jwt"), \
                  patch.object(infra_vm, "boot_orchestrator") as boot_o, \
                  patch.object(infra_vm, "boot_gateway") as boot_g:
                 boot_o.return_value = infra_vm.InfraVm(
@@ -384,6 +389,8 @@ class TestEnsureRunningSingleton(unittest.TestCase):
                  patch.object(infra_vm, "_health_ok", return_value=False), \
                  patch.object(infra_vm, "stop") as stop, \
                  patch.object(infra_vm, "ensure_built") as built, \
+                 patch.object(infra_vm, "host_orchestrator_token", return_value="k"), \
+                 patch.object(infra_vm, "mint", return_value="gw.jwt"), \
                  patch.object(infra_vm, "boot_orchestrator") as boot_o, \
                  patch.object(infra_vm, "boot_gateway") as boot_g, \
                  patch.object(infra_vm, "wait_for_health") as wait:

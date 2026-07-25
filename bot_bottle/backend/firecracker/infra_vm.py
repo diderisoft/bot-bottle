@@ -49,7 +49,7 @@ from ...orchestrator_auth import ROLE_GATEWAY, mint
 from ...paths import host_orchestrator_token
 from .. import util as backend_util
 from ..docker import util as docker_mod
-from ..docker.gateway_provision import GatewayProvisionError
+from ...gateway import GatewayProvisionError
 from . import firecracker_vm, infra_artifact, netpool, util
 
 # The orchestrator VM's signing-key path on its persistent /dev/vdb volume
@@ -228,7 +228,11 @@ def ensure_running() -> InfraEndpoint:
         ensure_built()
         orchestrator = boot_orchestrator()
         wait_for_health(orchestrator)
-        gateway = boot_gateway(orchestrator.guest_ip)
+        # The orchestrator holds the signing key; mint the role-scoped `gateway`
+        # JWT on the host and hand it to the gateway VM, which never sees the key
+        # (#469).
+        gateway_token = mint(ROLE_GATEWAY, host_orchestrator_token())
+        gateway = boot_gateway(orchestrator.guest_ip, gateway_token)
         _record_booted_version(want)
         return InfraEndpoint(orchestrator=orchestrator, gateway=gateway)
 
@@ -290,12 +294,13 @@ def boot_orchestrator() -> InfraVm:
     return orch
 
 
-def boot_gateway(orchestrator_guest_ip: str) -> InfraVm:
+def boot_gateway(orchestrator_guest_ip: str, gateway_token: str) -> InfraVm:
     """Boot the gateway (data-plane) VM (detached) on the gateway link, and
-    seed its pre-minted `gateway` JWT. Its daemons resolve policy against the
-    orchestrator at `orchestrator_guest_ip:8099` (passed on the cmdline, so the
-    baked init stays IP-independent). Boot the orchestrator first — the gateway
-    daemons reach it at startup. Prefer `ensure_running`."""
+    seed the pre-minted `gateway` JWT `gateway_token`. Its daemons resolve
+    policy against the orchestrator at `orchestrator_guest_ip:8099` (passed on
+    the cmdline, so the baked init stays IP-independent). Boot the orchestrator
+    first — the gateway daemons reach it at startup. The gateway never holds the
+    signing key, only this token (#469). Prefer `ensure_running`."""
     slot = netpool.gw_slot()
     gateway = _boot_vm(
         name="bot-bottle-gateway", slot=slot, run_dir=_gw_dir(),
@@ -304,7 +309,7 @@ def boot_gateway(orchestrator_guest_ip: str) -> InfraVm:
     )
     # Push the pre-minted `gateway` JWT (never the signing key — issue #469).
     # The init waits for it before starting the data plane.
-    _push_gateway_jwt(gateway)
+    _push_gateway_jwt(gateway, gateway_token)
     return gateway
 
 
@@ -451,15 +456,14 @@ def _push_signing_key(infra: InfraVm) -> None:
     )
 
 
-def _push_gateway_jwt(infra: InfraVm) -> None:
+def _push_gateway_jwt(infra: InfraVm, gateway_token: str) -> None:
     """Push the pre-minted `gateway` JWT into the freshly booted gateway VM
     over SSH (atomic write). Minted on the HOST from the canonical signing key
     so the data plane never holds the key itself (issue #469); the gateway
     daemons present it to the orchestrator. Retries until SSH is up; dies if it
     never lands, since the VM then refuses to start the data plane."""
     _push_secret(
-        infra, mint(ROLE_GATEWAY, host_orchestrator_token()),
-        _GUEST_GATEWAY_JWT_PATH,
+        infra, gateway_token, _GUEST_GATEWAY_JWT_PATH,
         "the gateway JWT to the gateway VM (its data plane will not start)",
     )
 
@@ -610,6 +614,35 @@ def gateway_transport() -> SshGatewayTransport:
     teardown can use it too."""
     return SshGatewayTransport(
         _infra_dir() / "id_ed25519", netpool.gw_slot().guest_ip)
+
+
+def gateway_guest_ip() -> str:
+    """The gateway VM's fixed guest IP on its link — the agent-facing address
+    agent VMs' gateway-port traffic is DNAT'd to (PRD 0070)."""
+    return netpool.gw_slot().guest_ip
+
+
+def gateway_running() -> bool:
+    """True iff the gateway VM is still a live VMM."""
+    return _pidfile_alive(_gw_dir())
+
+
+def stop_gateway() -> None:
+    """Stop only the gateway VM (idempotent — absent is success). Drops the pair
+    version marker so a half-stopped pair is never adopted (`_adoptable`)."""
+    _kill_pidfile(_gw_dir())
+    _pid_file(_gw_dir()).unlink(missing_ok=True)
+    _version_file().unlink(missing_ok=True)
+
+
+def adopted_gateway_vm() -> InfraVm:
+    """A handle to the already-running gateway VM from the stable key + the
+    fixed gateway link (vm=None — CA fetch / provisioning work from any later
+    launcher, not only the process that booted it)."""
+    return InfraVm(
+        guest_ip=netpool.gw_slot().guest_ip,
+        private_key=_infra_dir() / "id_ed25519",
+    )
 
 
 def wait_for_health(
