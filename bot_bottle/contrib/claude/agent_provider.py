@@ -35,6 +35,11 @@ if TYPE_CHECKING:
 _SUPERVISE_MCP_NAME = "supervise"
 # App-layer identity token header (mirrors egress_addon / git_http_backend).
 _IDENTITY_HEADER = "x-bot-bottle-identity"
+# Placeholder stood in for the real identity token in the manual-recovery hint.
+# The token is a per-bottle credential, so it must never be rendered into the
+# host-side launch log (#476 review); the operator substitutes the value from
+# inside the bottle (it rides in the agent's HTTPS_PROXY credentials).
+_IDENTITY_TOKEN_PLACEHOLDER = "<bottle-identity-token>"
 
 
 def _skills_dir(guest_home: str) -> str:
@@ -327,13 +332,18 @@ class ClaudeAgentProvider(AgentProvider):
             user="node",
         )
         if r.returncode != 0:
+            # A placeholder — never the real token — keeps this per-bottle
+            # credential out of the host launch log (#476 review). The operator
+            # substitutes it from inside the bottle (it rides in the agent's
+            # HTTPS_PROXY credentials).
             manual_header = (
-                f" --header {shlex.quote(f'{_IDENTITY_HEADER}: {token}')}" if token else ""
+                f" --header {shlex.quote(f'{_IDENTITY_HEADER}: {_IDENTITY_TOKEN_PLACEHOLDER}')}"
+                if token else ""
             )
             warn(
                 f"`claude mcp add supervise` failed (exit {r.returncode}): "
                 f"{(r.stderr or r.stdout or '').strip()}. Inside the bottle, "
-                f"register manually with: "
+                f"register manually (substitute the bottle's identity token) with: "
                 f"claude mcp add --scope user --transport http "
                 f"supervise {supervise_url}{manual_header}"
             )

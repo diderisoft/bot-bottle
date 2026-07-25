@@ -353,7 +353,9 @@ class TestClaudeSuperviseMcp(unittest.TestCase):
             _plan(supervise=True), bottle, _URL,
         )
 
-    def test_fallback_warning_includes_identity_header(self):
+    def test_fallback_warning_includes_header_but_not_raw_token(self):
+        # The recovery hint must show the header is required, but must NOT
+        # render the per-bottle identity token into the host log (#476 review).
         bottle = _make_bottle(
             exec_result=ExecResult(returncode=1, stdout="", stderr="boom"),
         )
@@ -363,7 +365,8 @@ class TestClaudeSuperviseMcp(unittest.TestCase):
             )
         msg = warn_mock.call_args.args[0]
         self.assertIn("x-bot-bottle-identity", msg)
-        self.assertIn("tok-xyz", msg)
+        self.assertNotIn("tok-xyz", msg)
+        self.assertIn("<bottle-identity-token>", msg)
 
     def test_fallback_warning_omits_header_when_no_token(self):
         bottle = _make_bottle(
