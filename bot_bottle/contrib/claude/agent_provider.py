@@ -327,11 +327,15 @@ class ClaudeAgentProvider(AgentProvider):
             user="node",
         )
         if r.returncode != 0:
+            manual_header = (
+                f" --header {shlex.quote(f'{_IDENTITY_HEADER}: {token}')}" if token else ""
+            )
             warn(
                 f"`claude mcp add supervise` failed (exit {r.returncode}): "
                 f"{(r.stderr or r.stdout or '').strip()}. Inside the bottle, "
                 f"register manually with: "
-                f"claude mcp add --scope user --transport http supervise {supervise_url}"
+                f"claude mcp add --scope user --transport http "
+                f"supervise {supervise_url}{manual_header}"
             )
 
     def headless_prompt(self, prompt: str) -> list[str]:
