@@ -1,8 +1,10 @@
-"""Shared helpers for the consolidated launch sequence (PRD 0070).
+"""Bottle-level provisioning for the consolidated launch sequence (PRD 0070).
 
-Logic that was duplicated across the docker, macos_container, and
-firecracker consolidated_launch modules — extracted so each backend
-imports it rather than re-implementing it.
+Register a bottle with the orchestrator and provision its git-gate state into
+the shared gateway (`provision_bottle`), and the inverse teardown
+(`deprovision_bottle`). Backend-neutral — each backend's consolidated_launch
+drives these through its own `GatewayTransport` rather than re-implementing
+them. The git-gate half of the work lives in `gateway_provision`.
 """
 
 from __future__ import annotations
@@ -49,7 +51,7 @@ def provision_bottle(
     return dataclasses.replace(reg, env_var_secret=env_var_secret)
 
 
-def teardown_consolidated(
+def deprovision_bottle(
     bottle_id: str,
     transport: GatewayTransport,
     *,
@@ -66,4 +68,4 @@ def teardown_consolidated(
     deprovision_git_gate(transport, bottle_id)
 
 
-__all__ = ["provision_bottle", "teardown_consolidated"]
+__all__ = ["provision_bottle", "deprovision_bottle"]

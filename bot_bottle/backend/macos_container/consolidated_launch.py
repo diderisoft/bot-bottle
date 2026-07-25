@@ -40,10 +40,7 @@ from ...log import info
 from ...orchestrator.client import OrchestratorClient, OrchestratorClientError
 from ...orchestrator.reprovision import reprovision_bottles
 from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
-from ..consolidated_util import (
-    provision_bottle,
-    teardown_consolidated as _teardown_util,
-)
+from ..bottle_provision import deprovision_bottle, provision_bottle
 from . import util as container_mod
 from .enumerate import CONTAINER_NAME_PREFIX, EnumerationError, enumerate_active
 from .gateway import GATEWAY_NETWORK
@@ -193,7 +190,7 @@ def teardown_consolidated(
     """Deregister the bottle and remove its git-gate state from the gateway.
     Both steps are idempotent so this is safe from a cleanup trap. Does NOT
     stop the gateway — it's a persistent per-host singleton."""
-    _teardown_util(bottle_id, MacosGatewayTransport(),
+    deprovision_bottle(bottle_id, MacosGatewayTransport(),
                    orchestrator_url=orchestrator_url, timeout=timeout)
 
 

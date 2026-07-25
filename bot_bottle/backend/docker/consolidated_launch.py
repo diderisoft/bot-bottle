@@ -24,8 +24,7 @@ from ...gateway import GATEWAY_NETWORK
 from .infra import INFRA_NAME, DockerInfraService
 from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
 from ...orchestrator.reprovision import reprovision_bottles
-from ..consolidated_util import provision_bottle
-from ..consolidated_util import teardown_consolidated as _teardown_util
+from ..bottle_provision import deprovision_bottle, provision_bottle
 from .gateway_transport import DockerGatewayTransport
 from .gateway_net import next_free_ip
 
@@ -174,7 +173,7 @@ def teardown_consolidated(
     timeout: float | None = None,
 ) -> None:
     """Deregister the bottle and remove its git-gate state. Idempotent."""
-    _teardown_util(bottle_id, DockerGatewayTransport(infra_name),
+    deprovision_bottle(bottle_id, DockerGatewayTransport(infra_name),
                    orchestrator_url=orchestrator_url, timeout=timeout)
 
 

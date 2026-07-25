@@ -40,10 +40,7 @@ from ...orchestrator.lifecycle import (
 )
 from ...orchestrator.reprovision import reprovision_bottles
 from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
-from ..consolidated_util import (
-    provision_bottle,
-    teardown_consolidated as _teardown_util,
-)
+from ..bottle_provision import deprovision_bottle, provision_bottle
 from . import cleanup, infra_vm, util
 from .gateway import FirecrackerGateway
 
@@ -156,7 +153,7 @@ def teardown_consolidated(
     VM. Both steps are idempotent so this is safe from a cleanup trap. Does
     NOT stop the infra VMs — they're persistent per-host singletons shared by
     every bottle."""
-    _teardown_util(bottle_id, FirecrackerGateway().provisioning_transport(),
+    deprovision_bottle(bottle_id, FirecrackerGateway().provisioning_transport(),
                    orchestrator_url=orchestrator_url, timeout=timeout)
 
 
