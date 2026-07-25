@@ -18,10 +18,10 @@ from bot_bottle.backend.docker.network import (
     network_create_internal,
     network_remove,
 )
-from tests._docker import skip_unless_docker
+from tests._backend import skip_unless_backend
 
 
-@skip_unless_docker()
+@skip_unless_backend("docker")
 class TestOrphanCleanup(unittest.TestCase):
     def setUp(self):
         self.slug = f"cb-test-orphan-{os.getpid()}"

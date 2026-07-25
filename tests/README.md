@@ -2,14 +2,15 @@
 
 Plain-Python test suite using stdlib `unittest`. No external
 dependencies. Unit tests run anywhere Python 3 is present; integration
-tests need Docker and skip cleanly otherwise.
+tests run through the backend named by `BOT_BOTTLE_BACKEND` (default
+`docker`) and skip cleanly when that backend isn't available on the host.
 
 ## Layout
 
 ```
 tests/
   fixtures.py                       # JSON manifest builders (shared)
-  _docker.py                        # docker-availability skip helper (shared)
+  _backend.py                       # backend selection + skip guards (shared)
   unit/
     test_egress.py
     test_egress_addon_core.py
@@ -73,7 +74,7 @@ BOT_BOTTLE_RUN_CANARIES=1 python -m unittest discover -t . -s tests/canaries -v
 ## Adding a test
 
 1. Pick the directory: `tests/unit/` for a pure unit test,
-   `tests/integration/` for one that needs Docker.
+   `tests/integration/` for one that needs a backend.
 2. Filename: `test_<topic>.py`.
 3. Boilerplate:
    ```python
@@ -88,5 +89,19 @@ BOT_BOTTLE_RUN_CANARIES=1 python -m unittest discover -t . -s tests/canaries -v
    if __name__ == "__main__":
        unittest.main()
    ```
-4. For Docker-dependent tests, decorate the class with
-   `@skip_unless_docker()` from `tests._docker`.
+4. Skip guards live in `tests._backend` and gate on the backend's own
+   readiness check, `bot_bottle.backend.has_backend` — the same probe
+   behind `./cli.py backend status`:
+   - Backend-agnostic tests (go through `get_bottle_backend()`) decorate
+     the class with `@skip_unless_selected_backend_available()` — the test
+     runs against whichever backend `BOT_BOTTLE_BACKEND` selects and skips
+     unless that backend is available (checking, e.g., Linux + `/dev/kvm`
+     for Firecracker rather than unrelated Docker availability).
+   - Backend-specific tests (exercise `DockerBroker`, `DockerGateway`,
+     `backend.docker.*`, …) decorate with `@skip_unless_backend("docker")`
+     so they no-op under a run targeting a different backend.
+
+   Each CI integration job runs `./cli.py backend status --backend=<name>`
+   as a preflight, which prints a clear per-check summary and exits non-zero
+   when the backend is missing — so absent infrastructure fails the job
+   instead of hiding among per-test `unittest.skip` lines.

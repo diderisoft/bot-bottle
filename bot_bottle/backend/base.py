@@ -13,6 +13,7 @@ thin package `__init__` re-exports these names lazily.
 
 from __future__ import annotations
 
+import enum
 import os
 import shlex
 import sys
@@ -34,6 +35,11 @@ from ..workspace import WorkspacePlan, workspace_plan
 from .print_util import print_multi, visible_agent_env_names
 from .util import host_skill_dir
 
+
+class BackendStatus(enum.IntEnum):
+    """Return codes for BottleBackend.status(). READY == 0 so callsites
+    can compare against 0 or the named constant interchangeably."""
+    READY = 0
 
 
 @dataclass(frozen=True)
@@ -588,12 +594,18 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
 
     @classmethod
     @abstractmethod
-    def status(cls) -> int:
+    def status(cls, *, quiet: bool = False) -> int:
         """Report whether this backend's prerequisites are satisfied on
         the host — binaries, daemon reachability, network pool, range
-        conflicts, etc. Prints a human-readable summary; returns 0 when
-        the backend is ready to launch and non-zero when something is
-        missing. Invoked by `./cli.py backend status [--backend=…]`."""
+        conflicts, etc. Returns BackendStatus.READY (0) when the backend
+        is ready to launch and non-zero when something is missing.
+
+        When quiet=False (default) prints a human-readable summary to
+        stderr. When quiet=True returns the status code silently —
+        useful for cheap programmatic checks.
+
+        Invoked by `./cli.py backend status [--backend=…]` (quiet=False)
+        and by is_backend_ready() (caller-controlled)."""
 
     @classmethod
     @abstractmethod

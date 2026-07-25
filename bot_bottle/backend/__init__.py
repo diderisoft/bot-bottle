@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .base import (
         ActiveAgent,
+        BackendStatus,
         Bottle,
         BottleBackend,
         BottleCleanupPlan,
@@ -35,6 +36,8 @@ if TYPE_CHECKING:
         enumerate_active_agents,
         get_bottle_backend,
         has_backend,
+        is_backend_available,
+        is_backend_ready,
         known_backend_names,
     )
     from .docker import DockerBottleBackend
@@ -55,9 +58,12 @@ _LAZY_MODULES: dict[str, str] = {
     "Bottle": "base",
     "BottleImages": "base",
     "BottleBackend": "base",
+    "BackendStatus": "base",
     "get_bottle_backend": "selection",
     "known_backend_names": "selection",
     "has_backend": "selection",
+    "is_backend_available": "selection",
+    "is_backend_ready": "selection",
     "enumerate_active_agents": "selection",
     "_print_vm_install_instructions": "selection",
     "DockerBottleBackend": "docker",
@@ -86,6 +92,7 @@ def __getattr__(name: str) -> Any:
 
 __all__ = [
     "ActiveAgent",
+    "BackendStatus",
     "Bottle",
     "BottleBackend",
     "BottleCleanupPlan",
@@ -102,5 +109,7 @@ __all__ = [
     "enumerate_active_agents",
     "get_bottle_backend",
     "has_backend",
+    "is_backend_available",
+    "is_backend_ready",
     "known_backend_names",
 ]

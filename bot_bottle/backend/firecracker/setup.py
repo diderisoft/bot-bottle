@@ -13,6 +13,7 @@ generic `./cli.py backend {setup,status}` command dispatches to.
 
 from __future__ import annotations
 
+import fcntl
 import os
 import shutil
 import subprocess
@@ -21,6 +22,9 @@ from pathlib import Path
 
 from . import netpool
 from . import util
+
+# KVM_GET_API_VERSION = _IO(KVMIO=0xAE, 0x00): cheapest proof of KVM access.
+_KVM_GET_API_VERSION = 0xAE00
 
 
 _FC_RELEASES = "https://github.com/firecracker-microvm/firecracker/releases"
@@ -219,14 +223,90 @@ def teardown() -> int:
     return 0
 
 
+def _firecracker_binary_ok() -> bool:
+    """True iff the firecracker binary is on PATH and `--version` exits 0."""
+    if shutil.which("firecracker") is None:
+        return False
+    try:
+        return subprocess.run(
+            ["firecracker", "--version"],
+            capture_output=True, check=False, timeout=5,
+        ).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _kvm_accessible() -> bool:
+    """True iff /dev/kvm can be opened read-write and responds to KVM_GET_API_VERSION.
+
+    VM creation requires write access; opening read-only may satisfy the
+    ioctl but fails at boot time, so O_RDWR is the permission check."""
+    if not os.path.exists(util._KVM_DEVICE):
+        return False
+    try:
+        fd = os.open(util._KVM_DEVICE, os.O_RDWR | os.O_CLOEXEC)
+        try:
+            fcntl.ioctl(fd, _KVM_GET_API_VERSION)
+        finally:
+            os.close(fd)
+        return True
+    except OSError:
+        return False
+
+
 def status() -> int:
-    # Readiness == what the launch preflight hard-requires: the TAP pool
-    # present (unprivileged, authoritative) and no range overlap. Listing
-    # the nft table usually needs root, so — like the preflight — an
-    # unconfirmable table is reported but NOT treated as not-ready; the
-    # post-boot isolation probe is the authoritative check. This keeps an
-    # unprivileged `backend status` usable as a launch gate.
+    # Readiness == what the launch preflight hard-requires: the binary
+    # executable, /dev/kvm accessible, the TAP pool present, and no range
+    # overlap. Listing the nft table usually needs root, so — like the
+    # preflight — an unconfirmable table is reported but NOT treated as
+    # not-ready; the post-boot isolation probe is the authoritative check.
+    # This keeps an unprivileged `backend status` usable as a launch gate.
     ok = True
+    if _firecracker_binary_ok():
+        sys.stderr.write(f"firecracker binary: ok ({shutil.which('firecracker')})\n")
+    else:
+        fc_path = shutil.which("firecracker")
+        if fc_path is None:
+            sys.stderr.write("firecracker binary: NOT found on PATH\n")
+        else:
+            sys.stderr.write(
+                f"firecracker binary: found ({fc_path}) but `--version` failed\n"
+            )
+        ok = False
+    if _kvm_accessible():
+        sys.stderr.write(f"KVM: {util._KVM_DEVICE} accessible\n")
+    else:
+        if not os.path.exists(util._KVM_DEVICE):
+            sys.stderr.write(f"KVM: {util._KVM_DEVICE} not present\n")
+        else:
+            sys.stderr.write(
+                f"KVM: {util._KVM_DEVICE} not accessible (open/ioctl failed)\n"
+            )
+        ok = False
+    kernel = util.kernel_path()
+    if kernel.is_file():
+        sys.stderr.write(f"guest kernel: {kernel}\n")
+    else:
+        sys.stderr.write(
+            f"guest kernel: NOT found at {kernel} "
+            f"(set BOT_BOTTLE_FC_KERNEL or cache a vmlinux there)\n"
+        )
+        ok = False
+    dropbear = util.dropbear_path()
+    if dropbear.is_file():
+        sys.stderr.write(f"dropbear: {dropbear}\n")
+    else:
+        sys.stderr.write(
+            f"dropbear: NOT found at {dropbear} "
+            f"(set BOT_BOTTLE_FC_DROPBEAR or cache a static binary)\n"
+        )
+        ok = False
+    mke2fs = shutil.which("mke2fs")
+    if mke2fs is not None:
+        sys.stderr.write(f"mke2fs: {mke2fs}\n")
+    else:
+        sys.stderr.write("mke2fs: NOT found on PATH (install e2fsprogs)\n")
+        ok = False
     missing = netpool.missing_taps()
     total = netpool.pool_size()
     if missing:

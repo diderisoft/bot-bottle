@@ -14,7 +14,7 @@ from typing import Any
 
 from ..log import die, info, warn
 from ..util import read_tty_line
-from .base import ActiveAgent, BottleBackend
+from .base import ActiveAgent, BackendStatus, BottleBackend
 
 
 # _backends is None until the first call to _get_backends(), at which
@@ -164,6 +164,29 @@ def has_backend(name: str) -> bool:
     if name not in backends:
         return False
     return backends[name].is_available()
+
+
+def is_backend_available(name: str) -> bool:
+    """Cheap availability check: is the backend's binary on PATH?
+
+    Suitable for cleanup enumeration and auto-selection — does NOT probe
+    the daemon or network pool. Use is_backend_ready() for a full
+    readiness check before launching tests."""
+    return has_backend(name)
+
+
+def is_backend_ready(name: str, *, quiet: bool = False) -> bool:
+    """Full readiness check: passes all of the backend's status() checks.
+
+    When quiet=False the backend prints diagnostic output explaining what
+    is missing — intended for test-suite guards that run at discovery time
+    so the operator sees a concrete failure reason for each skip.
+
+    Returns False for unknown backend names."""
+    backends = _get_backends()
+    if name not in backends:
+        return False
+    return backends[name].status(quiet=quiet) == BackendStatus.READY
 
 
 def enumerate_active_agents() -> list[ActiveAgent]:

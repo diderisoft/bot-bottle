@@ -328,5 +328,201 @@ class TestNetpoolShellRenderers(unittest.TestCase):
         self.assertIn("BOT_BOTTLE_FC_POOL_SIZE=4", out)
 
 
+class TestFirecrackerBinaryCheck(unittest.TestCase):
+    def test_binary_missing_returns_false(self):
+        with patch.object(fc.shutil, "which", return_value=None):
+            self.assertFalse(fc._firecracker_binary_ok())
+
+    def test_binary_present_and_runs_ok(self):
+        with patch.object(fc.shutil, "which", return_value="/usr/bin/firecracker"), \
+             patch.object(fc.subprocess, "run",
+                          return_value=subprocess.CompletedProcess([], 0)):
+            self.assertTrue(fc._firecracker_binary_ok())
+
+    def test_binary_found_but_exits_nonzero(self):
+        with patch.object(fc.shutil, "which", return_value="/usr/bin/firecracker"), \
+             patch.object(fc.subprocess, "run",
+                          return_value=subprocess.CompletedProcess([], 1)):
+            self.assertFalse(fc._firecracker_binary_ok())
+
+    def test_binary_found_but_oserror(self):
+        with patch.object(fc.shutil, "which", return_value="/usr/bin/firecracker"), \
+             patch.object(fc.subprocess, "run", side_effect=OSError("exec failed")):
+            self.assertFalse(fc._firecracker_binary_ok())
+
+
+class TestFirecrackerKvmCheck(unittest.TestCase):
+    def test_kvm_device_absent_returns_false(self):
+        with patch.object(fc.os.path, "exists", return_value=False):
+            self.assertFalse(fc._kvm_accessible())
+
+    def test_kvm_accessible_when_ioctl_succeeds(self):
+        with patch.object(fc.os.path, "exists", return_value=True), \
+             patch.object(fc.os, "open", return_value=42), \
+             patch.object(fc.os, "close"), \
+             patch.object(fc.fcntl, "ioctl", return_value=12):
+            self.assertTrue(fc._kvm_accessible())
+
+    def test_kvm_open_rdwr_fails(self):
+        with patch.object(fc.os.path, "exists", return_value=True), \
+             patch.object(fc.os, "open", side_effect=OSError("Permission denied")):
+            self.assertFalse(fc._kvm_accessible())
+
+    def test_kvm_present_but_ioctl_fails(self):
+        with patch.object(fc.os.path, "exists", return_value=True), \
+             patch.object(fc.os, "open", return_value=42), \
+             patch.object(fc.os, "close"), \
+             patch.object(fc.fcntl, "ioctl", side_effect=OSError("permission denied")):
+            self.assertFalse(fc._kvm_accessible())
+
+
+class TestFirecrackerArtifactCheck(unittest.TestCase):
+    """status() reports missing guest kernel, dropbear binary, and mke2fs."""
+
+    def _apply_all_ok(self, stack: contextlib.ExitStack) -> None:
+        """Stub every status() check to pass except what the test overrides."""
+        stack.enter_context(patch.object(fc, "_firecracker_binary_ok", return_value=True))
+        stack.enter_context(patch.object(fc, "_kvm_accessible", return_value=True))
+        k: MagicMock = MagicMock()
+        k.is_file.return_value = True
+        stack.enter_context(patch.object(fc.util, "kernel_path", return_value=k))
+        d: MagicMock = MagicMock()
+        d.is_file.return_value = True
+        stack.enter_context(patch.object(fc.util, "dropbear_path", return_value=d))
+        stack.enter_context(patch.object(fc.shutil, "which", return_value="/usr/bin/x"))
+        stack.enter_context(patch.object(netpool, "missing_taps", return_value=[]))
+        stack.enter_context(patch.object(netpool, "pool_size", return_value=8))
+        stack.enter_context(patch.object(netpool, "overlapping_routes", return_value=[]))
+        stack.enter_context(patch.object(fc, "_report_persistence", lambda: None))
+
+    def test_status_fails_when_kernel_missing(self):
+        with contextlib.ExitStack() as stack:
+            self._apply_all_ok(stack)
+            k: MagicMock = MagicMock()
+            k.is_file.return_value = False
+            stack.enter_context(patch.object(fc.util, "kernel_path", return_value=k))
+            rc, out = _cap(fc.status)
+        self.assertEqual(1, rc)
+        self.assertIn("guest kernel: NOT found", out)
+
+    def test_status_fails_when_dropbear_missing(self):
+        with contextlib.ExitStack() as stack:
+            self._apply_all_ok(stack)
+            d: MagicMock = MagicMock()
+            d.is_file.return_value = False
+            stack.enter_context(patch.object(fc.util, "dropbear_path", return_value=d))
+            rc, out = _cap(fc.status)
+        self.assertEqual(1, rc)
+        self.assertIn("dropbear: NOT found", out)
+
+    def test_status_fails_when_mke2fs_missing(self):
+        with contextlib.ExitStack() as stack:
+            self._apply_all_ok(stack)
+            stack.enter_context(patch.object(
+                fc.shutil, "which",
+                side_effect=lambda cmd: (None if cmd == "mke2fs" else "/usr/bin/x"),  # type: ignore[misc]
+            ))
+            rc, out = _cap(fc.status)
+        self.assertEqual(1, rc)
+        self.assertIn("mke2fs: NOT found", out)
+
+
+class TestFirecrackerStatusRuntime(unittest.TestCase):
+    """status() reports binary and KVM problems and returns non-zero."""
+
+    def _apply_pool_ok(self, stack: contextlib.ExitStack) -> None:
+        kernel_mock = MagicMock()
+        kernel_mock.is_file.return_value = True
+        dropbear_mock = MagicMock()
+        dropbear_mock.is_file.return_value = True
+        stack.enter_context(patch.object(fc.util, "kernel_path", return_value=kernel_mock))
+        stack.enter_context(patch.object(fc.util, "dropbear_path", return_value=dropbear_mock))
+        stack.enter_context(patch.object(netpool, "missing_taps", return_value=[]))
+        stack.enter_context(patch.object(netpool, "pool_size", return_value=8))
+        stack.enter_context(patch.object(netpool, "overlapping_routes", return_value=[]))
+        stack.enter_context(patch.object(fc, "_report_persistence", lambda: None))
+
+    def test_status_fails_when_binary_missing(self):
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(
+                patch.object(fc, "_firecracker_binary_ok", return_value=False))
+            stack.enter_context(
+                patch.object(fc, "_kvm_accessible", return_value=True))
+            stack.enter_context(
+                patch.object(fc.shutil, "which", return_value=None))
+            self._apply_pool_ok(stack)
+            rc, out = _cap(fc.status)
+        self.assertEqual(1, rc)
+        self.assertIn("NOT found on PATH", out)
+
+    def test_status_fails_when_kvm_not_accessible(self):
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(
+                patch.object(fc, "_firecracker_binary_ok", return_value=True))
+            stack.enter_context(
+                patch.object(fc.shutil, "which", return_value="/usr/bin/firecracker"))
+            stack.enter_context(
+                patch.object(fc, "_kvm_accessible", return_value=False))
+            stack.enter_context(
+                patch.object(fc.os.path, "exists", return_value=True))
+            self._apply_pool_ok(stack)
+            rc, out = _cap(fc.status)
+        self.assertEqual(1, rc)
+        self.assertIn("not accessible", out)
+
+    def test_status_ok_when_binary_and_kvm_ready(self):
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(
+                patch.object(fc, "_firecracker_binary_ok", return_value=True))
+            stack.enter_context(
+                patch.object(fc.shutil, "which", return_value="/usr/bin/firecracker"))
+            stack.enter_context(
+                patch.object(fc, "_kvm_accessible", return_value=True))
+            stack.enter_context(
+                patch.object(netpool, "nft_table_present", return_value=True))
+            self._apply_pool_ok(stack)
+            rc, out = _cap(fc.status)
+        self.assertEqual(0, rc)
+        self.assertIn("firecracker binary: ok", out)
+        self.assertIn("KVM:", out)
+
+
+class TestBackendStatusQuiet(unittest.TestCase):
+    """status(quiet=True) routes the underlying status() call through
+    redirect_stderr so diagnostic output is suppressed. Verify the return
+    code is propagated and that calling with quiet=False leaves the non-quiet
+    path active (covered by the other TestDockerSetupStatus tests)."""
+
+    def test_docker_quiet_true_propagates_return_code(self):
+        from bot_bottle.backend.docker.backend import DockerBottleBackend
+        with patch.object(dk, "status", return_value=0):
+            self.assertEqual(0, DockerBottleBackend.status(quiet=True))
+
+    def test_docker_quiet_true_suppresses_stderr(self):
+        import io as _io
+        from bot_bottle.backend.docker.backend import DockerBottleBackend
+
+        def _loud_status():
+            import sys
+            print("should be suppressed", file=sys.stderr)
+            return 0
+
+        with patch.object(dk, "status", side_effect=_loud_status):
+            buf = _io.StringIO()
+            with contextlib.redirect_stderr(buf):
+                DockerBottleBackend.status(quiet=True)
+        self.assertEqual("", buf.getvalue())
+
+    def test_firecracker_quiet_true_propagates_return_code(self):
+        from bot_bottle.backend.firecracker.backend import FirecrackerBottleBackend
+        with patch.object(fc, "status", return_value=1):
+            self.assertEqual(1, FirecrackerBottleBackend.status(quiet=True))
+
+    def test_macos_quiet_true_propagates_return_code(self):
+        from bot_bottle.backend.macos_container.backend import MacosContainerBottleBackend
+        with patch.object(mc, "status", return_value=0):
+            self.assertEqual(0, MacosContainerBottleBackend.status(quiet=True))
+
+
 if __name__ == "__main__":
     unittest.main()

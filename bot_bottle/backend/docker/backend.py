@@ -20,7 +20,8 @@ infrastructure: CA install and git copy-in.
 from __future__ import annotations
 
 import shutil
-from contextlib import contextmanager
+import io
+from contextlib import contextmanager, redirect_stderr
 from pathlib import Path
 from typing import Generator, Sequence
 
@@ -60,8 +61,11 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
         return _setup.setup()
 
     @classmethod
-    def status(cls) -> int:
+    def status(cls, *, quiet: bool = False) -> int:
         from . import setup as _setup
+        if quiet:
+            with redirect_stderr(io.StringIO()):
+                return _setup.status()
         return _setup.status()
 
     @classmethod

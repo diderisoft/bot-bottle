@@ -103,14 +103,16 @@ jobs:
       - name: Install coverage
         run: python3 -m pip install --break-system-packages coverage
 
-      - name: Show environment
+      # Fail loudly if the backend this job promises isn't actually usable,
+      # rather than letting every test silently `unittest.skip` and the job
+      # go green on zero coverage. `backend status` prints a clear per-check
+      # summary (docker on PATH, daemon reachable) and exits non-zero when a
+      # prerequisite is missing — the same readiness check the skip guards
+      # gate on via `has_backend`.
+      - name: Preflight — Docker backend is ready
         run: |
           python3 --version
-          if command -v docker >/dev/null 2>&1; then
-            docker version || true
-          else
-            echo "docker not on PATH — integration tests will skip"
-          fi
+          python3 cli.py backend status --backend=docker
 
       - name: Run integration tests (docker) with coverage
         env:

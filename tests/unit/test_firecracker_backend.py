@@ -132,30 +132,56 @@ class TestFirecrackerStatus(unittest.TestCase):
             rc = fc_setup.status()
         return rc, buf.getvalue()
 
+    def _stub_artifacts(self, fc_setup: object) -> tuple[MagicMock, MagicMock]:
+        k: MagicMock = MagicMock()
+        k.is_file.return_value = True
+        d: MagicMock = MagicMock()
+        d.is_file.return_value = True
+        return k, d
+
     def test_ready_when_taps_present_even_if_nft_unverifiable(self):
         from bot_bottle.backend.firecracker import setup as fc_setup
+
+        def _which(cmd: str) -> str | None:
+            return None if cmd == "nft" else f"/usr/bin/{cmd}"
+
+        k, d = self._stub_artifacts(fc_setup)
         with patch.object(fc_setup.netpool, "missing_taps", return_value=[]), \
              patch.object(fc_setup.netpool, "overlapping_routes", return_value=[]), \
-             patch.object(fc_setup.shutil, "which", return_value=None):
+             patch.object(fc_setup.shutil, "which", side_effect=_which), \
+             patch.object(fc_setup, "_firecracker_binary_ok", return_value=True), \
+             patch.object(fc_setup, "_kvm_accessible", return_value=True), \
+             patch.object(fc_setup.util, "kernel_path", return_value=k), \
+             patch.object(fc_setup.util, "dropbear_path", return_value=d):
             rc, out = self._run()
         self.assertEqual(0, rc)
         self.assertIn("unverified", out)
 
     def test_not_ready_when_taps_missing(self):
         from bot_bottle.backend.firecracker import setup as fc_setup
+        k, d = self._stub_artifacts(fc_setup)
         with patch.object(fc_setup.netpool, "missing_taps", return_value=["bbfc0"]), \
              patch.object(fc_setup.netpool, "overlapping_routes", return_value=[]), \
-             patch.object(fc_setup.shutil, "which", return_value=None):
+             patch.object(fc_setup.shutil, "which", return_value=None), \
+             patch.object(fc_setup, "_firecracker_binary_ok", return_value=True), \
+             patch.object(fc_setup, "_kvm_accessible", return_value=True), \
+             patch.object(fc_setup.util, "kernel_path", return_value=k), \
+             patch.object(fc_setup.util, "dropbear_path", return_value=d):
             rc, _ = self._run()
         self.assertEqual(1, rc)
 
     def test_not_ready_on_range_overlap(self):
         from bot_bottle.backend.firecracker import netpool
         from bot_bottle.backend.firecracker import setup as fc_setup
+        k, d = self._stub_artifacts(fc_setup)
         conflict = netpool.RouteConflict(dst="10.243.0.0/24", dev="eth0")
         with patch.object(fc_setup.netpool, "missing_taps", return_value=[]), \
              patch.object(fc_setup.netpool, "overlapping_routes", return_value=[conflict]), \
-             patch.object(fc_setup.shutil, "which", return_value=None):
+             patch.object(fc_setup.shutil, "which", return_value=None), \
+             patch.object(fc_setup, "_firecracker_binary_ok", return_value=True), \
+             patch.object(fc_setup, "_kvm_accessible", return_value=True), \
+             patch.object(fc_setup.util, "kernel_path", return_value=k), \
+             patch.object(fc_setup.util, "dropbear_path", return_value=d):
             rc, out = self._run()
         self.assertEqual(1, rc)
         self.assertIn("CLASHES", out)
