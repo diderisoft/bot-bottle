@@ -31,6 +31,7 @@ class DockerGateway(Gateway):
         *,
         name: str = GATEWAY_NAME,
         network: str = GATEWAY_NETWORK,
+        control_network: str = "",
         orchestrator_url: str = "",
         build_context: Path | None = None,
         dockerfile: str | None = GATEWAY_DOCKERFILE,
@@ -39,6 +40,11 @@ class DockerGateway(Gateway):
         self.image_ref = image_ref
         self.name = name
         self.network = network
+        # When set, the gateway is dual-homed: it also joins this `--internal`
+        # control network (shared only with the orchestrator) so it can resolve
+        # `orchestrator_url` by container name over docker DNS. Agents are never
+        # on it, so they get no route to the control plane (PRD 0070).
+        self._control_network = control_network
         # The control-plane URL the gateway's data plane resolves per bottle
         # against — reached by container name over docker DNS on the shared
         # network (container↔container, no host firewall). Mandatory to *run*
@@ -164,6 +170,30 @@ class DockerGateway(Gateway):
         proc = run_docker(argv, env=run_env)
         if proc.returncode != 0:
             raise GatewayError(f"gateway failed to start: {proc.stderr.strip()}")
+        # Dual-home onto the control network so the daemons resolve the
+        # orchestrator by name. Docker attaches only one network at `run`, so
+        # the second is a `network connect` — the daemons tolerate the brief
+        # pre-connect window (they retry /resolve per request).
+        if self._control_network:
+            self._connect_control_network()
+
+    def _connect_control_network(self) -> None:
+        """Ensure the `--internal` control network exists and attach the gateway
+        to it (idempotent — an already-connected container is a tolerated
+        no-op)."""
+        if run_docker(["docker", "network", "inspect", self._control_network]).returncode != 0:
+            proc = run_docker(["docker", "network", "create", "--internal", self._control_network])
+            if proc.returncode != 0 and "already exists" not in proc.stderr:
+                raise GatewayError(
+                    f"control network {self._control_network} failed to create: "
+                    f"{proc.stderr.strip()}"
+                )
+        proc = run_docker(["docker", "network", "connect", self._control_network, self.name])
+        if proc.returncode != 0 and "already exists" not in proc.stderr:
+            raise GatewayError(
+                f"gateway failed to join control network {self._control_network}: "
+                f"{proc.stderr.strip()}"
+            )
 
     def ca_cert_pem(self, *, timeout: float = DEFAULT_CA_TIMEOUT_SECONDS) -> str:
         """The gateway's CA certificate (PEM) that agents install to trust its

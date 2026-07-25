@@ -35,7 +35,6 @@ from tests._backend import skip_unless_backend
 # image instead of leaking a new dangling tag on every invocation.
 _TEST_ORCHESTRATOR_IMAGE = "bot-bottle-orchestrator:itest"
 _TEST_GATEWAY_IMAGE = "bot-bottle-gateway:itest"
-_TEST_INFRA_IMAGE = "bot-bottle-infra:itest"
 
 
 @skip_unless_backend("docker")
@@ -71,17 +70,23 @@ class TestDockerOrchestratorAuthIntegration(unittest.TestCase):
         os.environ["BOT_BOTTLE_ROOT"] = cls._tmp.name
         cls.addClassCleanup(_restore_root)
 
-        infra_name = f"bot-bottle-infra-itest-{suffix}"
+        orchestrator_name = f"bot-bottle-orchestrator-itest-{suffix}"
+        gateway_name = f"bot-bottle-gateway-itest-{suffix}"
         network = f"bot-bottle-net-itest-{suffix}"
+        control_network = f"bot-bottle-ctrl-itest-{suffix}"
         host_root = Path(cls._tmp.name)
         cls.addClassCleanup(
-            cls._teardown_docker, infra_name, network, host_root
+            cls._teardown_docker,
+            orchestrator_name, gateway_name, network, control_network, host_root,
         )
 
         cls.svc = DockerInfraService(
-            infra_name=infra_name,
+            orchestrator_name=orchestrator_name,
+            gateway_name=gateway_name,
             network=network,
-            image=_TEST_INFRA_IMAGE,
+            control_network=control_network,
+            orchestrator_image=_TEST_ORCHESTRATOR_IMAGE,
+            gateway_image=_TEST_GATEWAY_IMAGE,
             port=20000 + secrets.randbelow(10000),
             host_root=host_root,
         )
@@ -94,23 +99,26 @@ class TestDockerOrchestratorAuthIntegration(unittest.TestCase):
 
     @staticmethod
     def _teardown_docker(
-        infra_name: str, network: str, host_root: Path
+        orchestrator_name: str, gateway_name: str,
+        network: str, control_network: str, host_root: Path,
     ) -> None:
-        subprocess.run(
-            ["docker", "rm", "--force", infra_name],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
-        )
-        subprocess.run(
-            ["docker", "network", "rm", network],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
-        )
-        # The infra container (no USER directive) wrote the registry
+        for name in (gateway_name, orchestrator_name):
+            subprocess.run(
+                ["docker", "rm", "--force", name],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+            )
+        for net in (network, control_network):
+            subprocess.run(
+                ["docker", "network", "rm", net],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+            )
+        # The orchestrator container (no USER directive) wrote the registry
         # DB as root into the throwaway host_root; chown it back so the
         # (non-root) tempdir cleanup can remove it. Same workaround
         # test_multitenant_isolation.py uses for the identical bind mount.
         subprocess.run(
             ["docker", "run", "--rm", "-v", f"{host_root}:/r",
-             "--entrypoint", "chown", _TEST_INFRA_IMAGE, "-R",
+             "--entrypoint", "chown", _TEST_ORCHESTRATOR_IMAGE, "-R",
              f"{os.getuid()}:{os.getgid()}", "/r"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
         )

@@ -157,10 +157,9 @@ def launch(
         )
 
         # Step 4: install the SHARED gateway CA into the agent (replaces the
-        # per-bottle CA) — read it out of the running gateway. The consolidated
-        # flow runs the gateway data plane inside the per-host infra container
-        # (INFRA_NAME), so read the CA from there, not the legacy standalone
-        # gateway container name.
+        # per-bottle CA) — read it out of the running gateway container
+        # (INFRA_NAME now aliases the gateway container name; the orchestrator,
+        # split into its own container, holds no CA).
         ca_dir = egress_state_dir(plan.slug) / "gateway-ca"
         ca_dir.mkdir(parents=True, exist_ok=True)
         ca_file = ca_dir / "gateway-ca.pem"

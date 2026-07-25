@@ -156,14 +156,17 @@ def launch_consolidated(
     they regain egress access before the new bottle is registered."""
     service = service or DockerInfraService()
     url = service.ensure_running()
-    _reprovision_running_bottles(url, network=network, infra_name=infra_name)
+    # Agents attribute against the *gateway* container (data plane), not the
+    # orchestrator — the two planes are now separate containers.
+    gateway_name = service.gateway_name
+    _reprovision_running_bottles(url, network=network, infra_name=gateway_name)
     client = OrchestratorClient(url)
 
     cidr = _network_cidr(network)
-    gateway_ip = _container_ip(infra_name, network)
+    gateway_ip = _container_ip(gateway_name, network)
     source_ip = next_free_ip(cidr, _network_container_ips(network))
 
-    transport = DockerGatewayTransport(infra_name)
+    transport = DockerGatewayTransport(gateway_name)
     reg = provision_bottle(
         client, source_ip, egress_plan, git_gate_plan, transport,
         image_ref=image_ref, tokens=tokens,

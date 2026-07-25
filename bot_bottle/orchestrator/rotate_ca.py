@@ -26,11 +26,11 @@ from pathlib import Path
 from ..backend.docker.util import run_docker
 from ..paths import host_gateway_ca_dir
 from ..gateway import GATEWAY_NAME, rotate_gateway_ca
-from ..backend.docker.infra import INFRA_NAME
 
-# The containers whose mitmproxy would still be serving the old CA from memory:
-# the consolidated infra container and the standalone per-host gateway.
-_GATEWAY_CONTAINERS = (INFRA_NAME, GATEWAY_NAME)
+# The container whose mitmproxy would still be serving the old CA from memory:
+# the per-host gateway (the data plane holds the CA; the split-out orchestrator
+# never does).
+_GATEWAY_CONTAINERS = (GATEWAY_NAME,)
 
 
 def _out(msg: str) -> None:
