@@ -30,7 +30,7 @@
 
 ## Architecture
 
-On the default macOS Apple Container backend, a bottle is an agent container on a host-only internal network plus a gateway attached to both that internal network and a NAT egress network. The agent gets HTTP(S)_PROXY and CA bundle env vars pointing at the gateway's internal-network IP, so HTTP/HTTPS traffic flows through the gateway instead of direct egress. `bottle.git` / git-gate is intentionally deferred on this backend until a safe Apple Container key-delivery path exists.
+On the default macOS Apple Container backend, a bottle is an agent container on a host-only internal network plus a gateway attached to both that internal network and a NAT egress network. The agent gets HTTP(S)_PROXY and CA bundle env vars pointing at the gateway's internal-network IP, so HTTP/HTTPS traffic flows through the gateway instead of direct egress. git-gate runs over the gateway's consolidated `git-http` daemon (the legacy per-bottle `git://` daemon is not used on this backend); keys are provisioned dynamically at launch and revoked on teardown.
 
 On the Firecracker backend, a bottle is an agent microVM plus a Docker gateway for egress, git-gate, and supervise. The VM reaches the gateway over a per-bottle point-to-point TAP link; a dedicated fail-closed `nftables` table (`inet bot_bottle_fc`) confines the guest to that link, so nothing leaves the box except through the gateway. The TAP pool and nft table are provisioned once (root); per-launch needs no privilege.
 
