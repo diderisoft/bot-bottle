@@ -41,7 +41,7 @@ from . import util
 _ARTIFACT_FORMAT = "1"
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_DOCKERFILES = ("Dockerfile.orchestrator", "Dockerfile.gateway", "Dockerfile.infra", "Dockerfile.infra.fc")
+_DOCKERFILES = ("Dockerfile.orchestrator", "Dockerfile.gateway", "Dockerfile.infra.fc")
 
 _DEFAULT_BASE = "https://gitea.dideric.is"
 _DEFAULT_OWNER = "didericis"

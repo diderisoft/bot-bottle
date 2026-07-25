@@ -61,9 +61,10 @@ _GUEST_SIGNING_KEY_PATH = "/var/lib/bot-bottle/orchestrator-token"
 # the gateway daemons present it to the orchestrator, and never see the key.
 _GUEST_GATEWAY_JWT_PATH = "/var/lib/bot-bottle/gateway-jwt"
 
-# The single shared infra image: gateway data plane + baked control-plane
-# source + buildah (Dockerfile.infra.fc). Built from source by default; a
-# pull-from-registry mode lands later. Both VMs boot from it.
+# The single shared infra image: gateway data plane + COPY'd control-plane
+# `bot_bottle` package + buildah (Dockerfile.infra.fc, FROM gateway). Built from
+# source by default; a pull-from-registry mode lands later. Both VMs boot from
+# it, the `bb_role` cmdline selecting the plane.
 _INFRA_IMAGE = "bot-bottle-infra:latest"
 _GATEWAY_IMAGE = "bot-bottle-gateway:latest"
 _ORCHESTRATOR_IMAGE = "bot-bottle-orchestrator:latest"
@@ -124,9 +125,9 @@ def ensure_built() -> None:
     Default (docker-free, PRD 0069 Stage 2): download + verify the prebuilt
     rootfs artifact matching this code version (see `infra_artifact`); the
     launch host needs no Docker. `BOT_BOTTLE_INFRA_BUILD=local` instead builds
-    the fixed images from source with host Docker — the infra image
-    `COPY --from`s the orchestrator image and is `FROM` the gateway image, so
-    both must exist first — for iterating on the Dockerfiles."""
+    the fixed images from source with host Docker — the infra image is `FROM`
+    the gateway image and `COPY --from`s the orchestrator image, so both must
+    exist first — for iterating on the Dockerfiles."""
     if infra_artifact.local_build_requested():
         build_infra_images_with_docker()
         return
@@ -135,17 +136,15 @@ def ensure_built() -> None:
 
 
 def build_infra_images_with_docker() -> None:
-    """Build the four fixed images from source with host Docker: orchestrator,
-    gateway, the shared infra base (Dockerfile.infra), then the Firecracker
-    infra image (Dockerfile.infra.fc: FROM infra + buildah). The launch host
-    uses this only in `BOT_BOTTLE_INFRA_BUILD=local` mode; `publish_infra`
-    uses it off-host to produce the published artifact."""
+    """Build the three fixed images from source with host Docker: orchestrator,
+    gateway, then the Firecracker infra image (Dockerfile.infra.fc: FROM gateway
+    + COPY --from orchestrator + buildah). The launch host uses this only in
+    `BOT_BOTTLE_INFRA_BUILD=local` mode; `publish_infra` uses it off-host to
+    produce the published artifact."""
     docker_mod.build_image(
         _ORCHESTRATOR_IMAGE, str(_REPO_ROOT), dockerfile="Dockerfile.orchestrator")
     docker_mod.build_image(
         _GATEWAY_IMAGE, str(_REPO_ROOT), dockerfile="Dockerfile.gateway")
-    docker_mod.build_image(
-        "bot-bottle-infra:latest", str(_REPO_ROOT), dockerfile="Dockerfile.infra")
     docker_mod.build_image(
         _INFRA_IMAGE, str(_REPO_ROOT), dockerfile="Dockerfile.infra.fc")
 
