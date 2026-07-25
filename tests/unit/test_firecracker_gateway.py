@@ -1,7 +1,7 @@
 """Unit: the Firecracker gateway data plane as a microVM (PRD 0070).
 
 The gateway service owns its host-side logic directly: booting the gateway VM
-(via the shared `infra_vm._boot_vm` substrate), seeding the pre-minted token,
+(via the shared `infra_vm.boot_vm` substrate), seeding the pre-minted token,
 fetching the CA over SSH, and the SSH exec/cp provisioning transport.
 """
 
@@ -37,21 +37,21 @@ class TestFirecrackerGatewayConnect(unittest.TestCase):
 
     def test_refuses_without_orchestrator_url(self) -> None:
         gw = FirecrackerGateway()
-        with patch.object(infra_vm, "_boot_vm") as boot:
+        with patch.object(infra_vm, "boot_vm") as boot:
             with self.assertRaises(GatewayError):
                 gw.connect_to_orchestrator("", _TOKEN)
             boot.assert_not_called()
 
     def test_refuses_without_gateway_token(self) -> None:
         gw = FirecrackerGateway()
-        with patch.object(infra_vm, "_boot_vm") as boot:
+        with patch.object(infra_vm, "boot_vm") as boot:
             with self.assertRaises(GatewayError):
                 gw.connect_to_orchestrator(_ORCH_URL, "")
             boot.assert_not_called()
 
     def test_refuses_a_url_without_a_host(self) -> None:
         gw = FirecrackerGateway()
-        with patch.object(infra_vm, "_boot_vm") as boot:
+        with patch.object(infra_vm, "boot_vm") as boot:
             with self.assertRaises(GatewayError):
                 gw.connect_to_orchestrator("http://:8099", _TOKEN)
             boot.assert_not_called()
@@ -59,8 +59,8 @@ class TestFirecrackerGatewayConnect(unittest.TestCase):
     def test_boots_the_gateway_vm_and_seeds_the_token(self) -> None:
         gw = FirecrackerGateway()
         booted = infra_vm.InfraVm(guest_ip="10.243.255.3", private_key=Path("/k"))
-        with patch.object(infra_vm, "_boot_vm", return_value=booted) as boot, \
-                patch.object(infra_vm, "_push_secret") as push:
+        with patch.object(infra_vm, "boot_vm", return_value=booted) as boot, \
+                patch.object(infra_vm, "push_secret") as push:
             gw.connect_to_orchestrator(_ORCH_URL, _TOKEN)
         # Booted on the gateway link with the gateway role; the orchestrator's
         # guest IP (parsed off the URL) rides the cmdline as bb_orch.

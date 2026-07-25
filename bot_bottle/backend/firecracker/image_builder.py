@@ -126,7 +126,7 @@ def _build_in_infra(
     and stream its rootfs into `base`. The infra VMs persist; only the
     per-build container/image/context are cleaned up."""
     orchestrator = infra_vm.ensure_running().orchestrator
-    key, ip = orchestrator.private_key, orchestrator.guest_ip
+    key, ip = orchestrator.ssh_target()
     tag = f"bot-bottle-agent-build-{digest}"
     ctx = f"/tmp/agent-build-{digest}"
     smoke_ctr, export_ctr = f"{tag}-smoke", f"{tag}-export"

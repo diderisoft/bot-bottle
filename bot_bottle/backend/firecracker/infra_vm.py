@@ -43,13 +43,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Generator
 
 from ...log import die, info
-from ...orchestrator_auth import ROLE_GATEWAY, mint
-from ...paths import host_orchestrator_token
 from ..docker import util as docker_mod
 from . import firecracker_vm, infra_artifact, netpool, util
 
 if TYPE_CHECKING:
     from .gateway import FirecrackerGateway
+    from .orchestrator import FirecrackerOrchestrator
 
 # The orchestrator VM's signing-key path on its persistent /dev/vdb volume
 # (mounted at BOT_BOTTLE_ROOT=/var/lib/bot-bottle). The launcher seeds this
@@ -76,19 +75,12 @@ ORCHESTRATOR_PORT = 8099
 EGRESS_PORT = 9099
 SUPERVISE_PORT = 9100
 GIT_HTTP_PORT = 9420
-# Memory ceiling (fixed at boot, demand-paged — no balloon reclaim). The
-# orchestrator keeps the build headroom (buildah's 2-4 GB working set during
-# in-VM agent builds); the gateway's slimmer ceiling is set by the gateway
-# service — PRD 0070 "Memory: fixed ceilings".
-_ORCH_MEM_MIB = 4096
 
 # The infra VMs make direct upstream connections (gateway egress, and buildah
 # during builds), and the kernel `ip=` cmdline sets no resolver. Public for
 # now; routing DNS through a filtered path is a later refinement.
 _INFRA_RESOLVER = "1.1.1.1"
 
-_HEALTH_TIMEOUT_SECONDS = 45.0
-_HEALTH_POLL_SECONDS = 0.5
 _CA_TIMEOUT_SECONDS = 30.0
 # How long the launcher retries pushing a secret while the guest's SSH comes
 # up. Below the init's own wait window, so a failed push dies here first.
@@ -107,24 +99,20 @@ class InfraVm:
     private_key: Path
     vm: firecracker_vm.VmHandle | None = None
 
-    @property
-    def orchestrator_url(self) -> str:
-        return f"http://{self.guest_ip}:{ORCHESTRATOR_PORT}"
-
 
 @dataclass
 class InfraEndpoint:
-    """How to reach the running per-host pair. `orchestrator` is the control
-    plane (host CLI + registration + in-VM builds); `gateway` is the data-plane
-    `Gateway` service (agent egress / git-http / supervise, CA fetch, git-gate
-    provisioning). Mirrors the docker/macOS `InfraEndpoint` shape."""
+    """How to reach the running per-host pair. `orchestrator` is the control-plane
+    `Orchestrator` service (host CLI + registration + in-VM builds); `gateway` is
+    the data-plane `Gateway` service (agent egress / git-http / supervise, CA
+    fetch, git-gate provisioning). Mirrors the docker/macOS `InfraEndpoint`."""
 
-    orchestrator: InfraVm
+    orchestrator: "FirecrackerOrchestrator"
     gateway: "FirecrackerGateway"
 
     @property
     def orchestrator_url(self) -> str:
-        return self.orchestrator.orchestrator_url
+        return self.orchestrator.url()
 
     def gateway_ca_pem(self, *, timeout: float = _CA_TIMEOUT_SECONDS) -> str:
         return self.gateway.ca_cert_pem(timeout=timeout)
@@ -186,8 +174,14 @@ def ensure_running() -> InfraEndpoint:
     Concurrency-safe: the cold stop/build/boot path is serialized by a host
     flock, so two simultaneous first launches don't both boot on the same
     links/PIDs. The healthy fast-path takes no lock."""
+    # Local imports: the orchestrator + gateway services import this module for
+    # the shared VM substrate, so importing them at module scope would cycle.
+    from .orchestrator import FirecrackerOrchestrator
+    from .gateway import FirecrackerGateway
+
     key = _infra_dir() / "id_ed25519"
-    url = f"http://{netpool.orch_slot().guest_ip}:{ORCHESTRATOR_PORT}"
+    orchestrator = FirecrackerOrchestrator()
+    url = orchestrator.url()
     want = _expected_version()
     if _adoptable(key, url, want):
         info(f"adopting running infra VMs (orchestrator at {url})")
@@ -202,29 +196,26 @@ def ensure_running() -> InfraEndpoint:
         # Clear stale/hung/OUTDATED VMs holding either link before booting fresh.
         stop()
         ensure_built()
-        orchestrator = boot_orchestrator()
-        wait_for_health(orchestrator)
-        # The orchestrator holds the signing key; mint the role-scoped `gateway`
-        # JWT on the host and hand it to the gateway service, which never sees
-        # the key (#469). The gateway owns its own boot — see FirecrackerGateway.
-        # Local import: the gateway service imports this module for the shared VM
-        # substrate, so importing it at module scope would cycle.
-        from .gateway import FirecrackerGateway
-        gateway_token = mint(ROLE_GATEWAY, host_orchestrator_token())
+        # Orchestrator first — the gateway daemons reach the control plane at
+        # startup. Each service owns its own boot; the orchestrator (which holds
+        # the signing key) mints the role-scoped `gateway` JWT for the gateway,
+        # which never sees the key (#469).
+        orchestrator.ensure_running()
         gateway = FirecrackerGateway()
-        gateway.connect_to_orchestrator(orchestrator.orchestrator_url, gateway_token)
+        gateway.connect_to_orchestrator(
+            orchestrator.gateway_url(), orchestrator.mint_gateway_token())
         _record_booted_version(want)
         return InfraEndpoint(orchestrator=orchestrator, gateway=gateway)
 
 
-def _adopt(key: Path) -> InfraEndpoint:
-    """Build handles to the already-running pair from the stable key + the
-    fixed links (no live VM handle — teardown / CA fetch go through the PID
+def _adopt(key: Path) -> "InfraEndpoint":
+    """Build the service handles for the already-running pair from the stable key
+    + the fixed links (no live VM handle — teardown / CA fetch go through the PID
     files + stable key)."""
+    from .orchestrator import FirecrackerOrchestrator
     from .gateway import FirecrackerGateway
     return InfraEndpoint(
-        orchestrator=InfraVm(
-            guest_ip=netpool.orch_slot().guest_ip, private_key=key),
+        orchestrator=FirecrackerOrchestrator(),
         gateway=FirecrackerGateway(
             InfraVm(guest_ip=netpool.gw_slot().guest_ip, private_key=key)),
     )
@@ -259,24 +250,7 @@ def stop() -> None:
     _version_file().unlink(missing_ok=True)
 
 
-def boot_orchestrator() -> InfraVm:
-    """Boot the orchestrator (control-plane) VM (detached, so it outlives the
-    launcher) on the orchestrator link, and seed its signing key. Prefer
-    `ensure_running`."""
-    slot = netpool.orch_slot()
-    orch = _boot_vm(
-        name="bot-bottle-orchestrator", slot=slot, run_dir=_orch_dir(),
-        role="orchestrator", mem_mib=_ORCH_MEM_MIB,
-        data_drive=_ensure_registry_volume(),
-    )
-    # Push the host-canonical signing key over SSH (the init waits for it
-    # before starting the control plane). The host token file stays the single
-    # source of truth, so a co-running Docker/macOS control plane keeps working.
-    _push_signing_key(orch)
-    return orch
-
-
-def _boot_vm(
+def boot_vm(
     *,
     name: str,
     slot: netpool.Slot,
@@ -376,50 +350,7 @@ def _record_booted_version(version: str) -> None:
     _version_file().write_text(version + "\n", encoding="utf-8")
 
 
-# The registry "volume": a host-side ext4 file attached to the orchestrator VM
-# as a second virtio-block device (guest /dev/vdb), mounted at the control
-# plane's DB dir. It outlives the ephemeral rootfs, so the bottle registry
-# survives an orchestrator-VM restart — the firecracker analogue of a docker
-# volume. It is a plain ext4 file: `sudo mount -o loop <path>` on the host
-# (with the VM stopped) to inspect bot-bottle.db directly. The gateway VM has
-# no such volume — the data plane never opens the DB (#469).
-_REGISTRY_SIZE = "512M"
-
-
-def registry_volume_path() -> Path:
-    return _infra_dir() / "registry.ext4"
-
-
-def _ensure_registry_volume() -> Path:
-    """Create the empty ext4 registry volume on first use; reuse it after."""
-    vol = registry_volume_path()
-    if vol.exists():
-        return vol
-    info(f"creating infra registry volume {vol} ({_REGISTRY_SIZE})")
-    proc = subprocess.run(
-        ["mke2fs", "-q", "-t", "ext4", "-F", str(vol), _REGISTRY_SIZE],
-        capture_output=True, text=True, check=False,
-    )
-    if proc.returncode != 0:
-        vol.unlink(missing_ok=True)
-        die(f"creating registry volume failed: {proc.stderr.strip()}")
-    return vol
-
-
-def _push_signing_key(infra: InfraVm) -> None:
-    """Push the host-canonical signing key into the freshly booted orchestrator
-    VM over SSH (atomic write), so its control plane verifies tokens with the
-    same key the host CLI signs from. Retries until the guest's SSH is up (it
-    comes up before the init waits for this file); dies if it never lands,
-    since the VM then refuses to start its control plane rather than run OPEN."""
-    _push_secret(
-        infra, host_orchestrator_token(), _GUEST_SIGNING_KEY_PATH,
-        "the control-plane signing key to the orchestrator VM "
-        "(its control plane will not start)",
-    )
-
-
-def _push_secret(infra: InfraVm, secret: str, dest: str, what: str) -> None:
+def push_secret(infra: InfraVm, secret: str, dest: str, what: str) -> None:
     """Pipe `secret` to an atomic write of `dest` in the guest over SSH,
     retrying while the guest's SSH comes up; die (naming `what`) if it never
     succeeds. Bare-pipe input keeps the value off argv."""
@@ -523,31 +454,6 @@ def _health_ok(url: str) -> bool:
             return resp.status == 200
     except (urllib.error.URLError, TimeoutError, OSError):
         return False
-
-
-def wait_for_health(
-    infra: InfraVm, *, timeout: float = _HEALTH_TIMEOUT_SECONDS,
-) -> None:
-    """Poll the orchestrator's /health until it answers 200 or the deadline
-    passes. Dies (with the console tail) if the VMM exits early."""
-    url = f"{infra.orchestrator_url}/health"
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if infra.vm is not None and not infra.vm.is_alive():
-            die(f"orchestrator VM exited during boot (rc={infra.vm.process.returncode}).\n"
-                f"{firecracker_vm._console_tail(infra.vm.console_log)}")
-        try:
-            with urllib.request.urlopen(url, timeout=1.0) as resp:
-                if resp.status == 200:
-                    info(f"orchestrator control plane healthy at {infra.orchestrator_url}")
-                    return
-        except (urllib.error.URLError, TimeoutError, OSError):
-            pass
-        time.sleep(_HEALTH_POLL_SECONDS)
-    tail = (firecracker_vm._console_tail(infra.vm.console_log)
-            if infra.vm is not None else "")
-    die(f"orchestrator control plane at {url} did not become healthy within "
-        f"{timeout:.0f}s.\n{tail}")
 
 
 def _infra_init() -> str:

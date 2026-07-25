@@ -15,65 +15,51 @@ from unittest.mock import MagicMock, patch
 from bot_bottle.backend.firecracker import infra_vm
 
 
-class TestPushSecrets(unittest.TestCase):
-    """`_push_signing_key` (orchestrator) seeds the guest's secret over SSH via
-    `_push_secret`. The host token file stays the single source of truth, never
-    clobbered per-backend (#469). The gateway's own JWT push lives with the
-    gateway service (test_firecracker_gateway)."""
+class TestPushSecret(unittest.TestCase):
+    """`push_secret` is the shared substrate both services seed a guest secret
+    over SSH with (atomic write, retry while SSH comes up). The per-plane pushes
+    live with each service (orchestrator: signing key; gateway: JWT)."""
 
     def _infra(self) -> infra_vm.InfraVm:
         return infra_vm.InfraVm(guest_ip="10.0.0.1", private_key=Path("/k"))
 
-    def test_signing_key_written_atomically(self):
+    def test_written_atomically(self):
         proc = MagicMock(returncode=0, stderr="")
-        with patch.object(infra_vm, "host_orchestrator_token", return_value="host-key"), \
-                patch.object(infra_vm.subprocess, "run", return_value=proc) as run:
-            infra_vm._push_signing_key(self._infra())
-        # Piped the key to an atomic write of the guest token path.
-        self.assertEqual("host-key", run.call_args.kwargs["input"])
+        with patch.object(infra_vm.subprocess, "run", return_value=proc) as run:
+            infra_vm.push_secret(self._infra(), "secret", "/dest", "the thing")
+        self.assertEqual("secret", run.call_args.kwargs["input"])
         remote_cmd = run.call_args.args[0][-1]
-        self.assertIn(f"cat > {infra_vm._GUEST_SIGNING_KEY_PATH}.tmp", remote_cmd)
-        self.assertIn(f"mv {infra_vm._GUEST_SIGNING_KEY_PATH}.tmp "
-                      f"{infra_vm._GUEST_SIGNING_KEY_PATH}", remote_cmd)
+        self.assertIn("cat > /dest.tmp", remote_cmd)
+        self.assertIn("mv /dest.tmp /dest", remote_cmd)
 
     def test_dies_when_push_never_succeeds(self):
         proc = MagicMock(returncode=255, stderr="ssh: connect refused")
-        with patch.object(infra_vm, "host_orchestrator_token", return_value="host-key"), \
-                patch.object(infra_vm, "_SECRET_PUSH_TIMEOUT_SECONDS", 0.05), \
+        with patch.object(infra_vm, "_SECRET_PUSH_TIMEOUT_SECONDS", 0.05), \
                 patch.object(infra_vm, "_SECRET_PUSH_POLL_SECONDS", 0.0), \
                 patch.object(infra_vm.subprocess, "run", return_value=proc), \
                 patch.object(infra_vm, "die", side_effect=SystemExit) as die:
             with self.assertRaises(SystemExit):
-                infra_vm._push_signing_key(self._infra())
+                infra_vm.push_secret(self._infra(), "secret", "/dest", "the thing")
         die.assert_called_once()
 
 
-class TestOrchestratorUrl(unittest.TestCase):
-    def test_url_uses_guest_ip_and_port(self):
-        infra = infra_vm.InfraVm(
-            vm=MagicMock(), guest_ip="10.243.255.1", private_key=Path("/k"))
-        self.assertEqual(
-            f"http://10.243.255.1:{infra_vm.ORCHESTRATOR_PORT}",
-            infra.orchestrator_url,
-        )
-
-
 class TestInfraEndpoint(unittest.TestCase):
-    """The endpoint mirrors docker/macOS: it exposes the orchestrator's URL and
-    delegates the CA fetch to the gateway service."""
+    """The endpoint mirrors docker/macOS: it exposes the orchestrator service's
+    URL and delegates the CA fetch to the gateway service."""
 
     def _endpoint(self) -> infra_vm.InfraEndpoint:
         from bot_bottle.backend.firecracker.gateway import FirecrackerGateway
+        from bot_bottle.backend.firecracker.orchestrator import FirecrackerOrchestrator
         return infra_vm.InfraEndpoint(
-            orchestrator=infra_vm.InfraVm(guest_ip="10.243.255.1", private_key=Path("/k")),
+            orchestrator=FirecrackerOrchestrator(),
             gateway=FirecrackerGateway(
                 infra_vm.InfraVm(guest_ip="10.243.255.3", private_key=Path("/k"))),
         )
 
-    def test_orchestrator_url_is_the_orchestrator_vm(self):
+    def test_orchestrator_url_is_the_orchestrator_service(self):
         ep = self._endpoint()
-        self.assertEqual(
-            f"http://10.243.255.1:{infra_vm.ORCHESTRATOR_PORT}", ep.orchestrator_url)
+        ip = infra_vm.netpool.orch_slot().guest_ip
+        self.assertEqual(f"http://{ip}:{infra_vm.ORCHESTRATOR_PORT}", ep.orchestrator_url)
 
     def test_gateway_ca_pem_delegates_to_the_gateway_service(self):
         ep = self._endpoint()
@@ -122,64 +108,6 @@ class TestBuildInfraRootfs(unittest.TestCase):
         self.assertIn("BOT_BOTTLE_ORCHESTRATOR_URL=http://$ORCH:", init)
 
 
-class TestBootRole(unittest.TestCase):
-    """`boot_orchestrator` boots the shared rootfs with the `bb_role=orchestrator`
-    cmdline, the orchestrator memory ceiling + registry volume, and seeds the
-    signing key. (The gateway's boot lives in the gateway service —
-    test_firecracker_gateway.)"""
-
-    def _boot_env(self):
-        vm = MagicMock()
-        vm.process.pid = 4242
-        return vm
-
-    def test_orchestrator_role_mem_and_registry(self):
-        import tempfile
-        vm = self._boot_env()
-        with tempfile.TemporaryDirectory() as td, \
-                patch.object(infra_vm.netpool, "tap_present", return_value=True), \
-                patch.object(infra_vm.infra_artifact, "local_build_requested", return_value=False), \
-                patch.object(infra_vm.infra_artifact, "materialize_ext4"), \
-                patch.object(infra_vm.infra_artifact, "infra_artifact_version", return_value="v"), \
-                patch.object(infra_vm, "_stable_keypair", return_value=(Path("/k"), "pub")), \
-                patch.object(infra_vm, "_ensure_registry_volume", return_value=Path("/reg")), \
-                patch.object(infra_vm, "_push_signing_key") as push, \
-                patch.object(infra_vm.firecracker_vm, "boot", return_value=vm) as boot, \
-                patch.object(infra_vm, "_orch_dir", return_value=Path(td)):
-            infra_vm.boot_orchestrator()
-        kw = boot.call_args.kwargs
-        self.assertIn("bb_role=orchestrator", kw["extra_boot_args"])
-        self.assertEqual(infra_vm._ORCH_MEM_MIB, kw["mem_mib"])
-        self.assertEqual(Path("/reg"), kw["data_drive"])  # DB volume on the CP
-        push.assert_called_once()  # signing key seeded
-
-
-class TestRegistryVolume(unittest.TestCase):
-    def test_reuses_existing_volume(self):
-        import tempfile
-        with tempfile.TemporaryDirectory() as td:
-            vol = Path(td) / "registry.ext4"
-            vol.write_bytes(b"")  # already present
-            with patch.object(infra_vm, "registry_volume_path", return_value=vol), \
-                 patch.object(infra_vm.subprocess, "run") as run:
-                out = infra_vm._ensure_registry_volume()
-            run.assert_not_called()  # no mke2fs when it exists
-            self.assertEqual(vol, out)
-
-    def test_creates_volume_when_missing(self):
-        import tempfile
-        from subprocess import CompletedProcess
-        with tempfile.TemporaryDirectory() as td:
-            vol = Path(td) / "registry.ext4"
-            with patch.object(infra_vm, "registry_volume_path", return_value=vol), \
-                 patch.object(infra_vm.subprocess, "run",
-                              return_value=CompletedProcess([], 0)) as run:
-                infra_vm._ensure_registry_volume()
-            argv = run.call_args.args[0]
-            self.assertIn("mke2fs", argv)
-            self.assertIn(str(vol), argv)
-
-
 class TestEnsureBuilt(unittest.TestCase):
     def test_default_pulls_artifact_without_docker(self):
         # PRD 0069 Stage 2: the launch host pulls the prebuilt rootfs; no Docker.
@@ -204,30 +132,10 @@ class TestEnsureBuilt(unittest.TestCase):
         self.assertIn(infra_vm._GATEWAY_IMAGE, tags[:-1])
 
 
-class TestWaitForHealth(unittest.TestCase):
-    def _infra(self, alive: bool = True) -> infra_vm.InfraVm:
-        vm = MagicMock()
-        vm.is_alive.return_value = alive
-        return infra_vm.InfraVm(vm=vm, guest_ip="10.0.0.1", private_key=Path("/k"))
-
-    def test_returns_on_200(self):
-        infra = self._infra()
-        cm = MagicMock()
-        cm.__enter__.return_value.status = 200
-        with patch.object(infra_vm.urllib.request, "urlopen", return_value=cm):
-            infra_vm.wait_for_health(infra, timeout=5)  # must not raise
-
-    def test_dies_when_vm_exits(self):
-        infra = self._infra(alive=False)
-        assert infra.vm is not None  # narrow for the type checker (it's a mock)
-        infra.vm.process.returncode = 1
-        with patch.object(infra_vm.firecracker_vm, "_console_tail", return_value=""), \
-             self.assertRaises(SystemExit):
-            infra_vm.wait_for_health(infra, timeout=5)
-
-
-# The gateway service is imported lazily inside ensure_running / _adopt (to
-# break the infra_vm <-> gateway import cycle), so patch it at its home module.
+# The orchestrator + gateway services are imported lazily inside ensure_running
+# / _adopt (to break the infra_vm <-> service import cycle), so patch them at
+# their home modules.
+_ORCH_CLS = "bot_bottle.backend.firecracker.orchestrator.FirecrackerOrchestrator"
 _GW_CLS = "bot_bottle.backend.firecracker.gateway.FirecrackerGateway"
 
 
@@ -236,6 +144,7 @@ class TestEnsureRunningSingleton(unittest.TestCase):
         # Healthy control plane + live gateway + existing key + matching version
         # marker -> adopt (no boot).
         from bot_bottle.backend.firecracker.gateway import FirecrackerGateway
+        from bot_bottle.backend.firecracker.orchestrator import FirecrackerOrchestrator
         import tempfile
         with tempfile.TemporaryDirectory() as td:
             d = Path(td)
@@ -244,14 +153,13 @@ class TestEnsureRunningSingleton(unittest.TestCase):
             with patch.object(infra_vm, "_infra_dir", return_value=d), \
                  patch.object(infra_vm, "_expected_version", return_value="v-current"), \
                  patch.object(infra_vm, "_health_ok", return_value=True), \
-                 patch.object(infra_vm, "_pidfile_alive", return_value=True), \
-                 patch.object(infra_vm, "boot_orchestrator") as boot_o:
+                 patch.object(infra_vm, "_pidfile_alive", return_value=True):
                 ep = infra_vm.ensure_running()
-        boot_o.assert_not_called()
-        self.assertIsNone(ep.orchestrator.vm)
-        # The orchestrator handle + the adopted gateway service address the two
-        # distinct infra links.
-        self.assertEqual(infra_vm.netpool.orch_slot().guest_ip, ep.orchestrator.guest_ip)
+        # Adopted service handles addressing the two distinct infra links.
+        self.assertIsInstance(ep.orchestrator, FirecrackerOrchestrator)
+        self.assertEqual(
+            infra_vm.netpool.orch_slot().guest_ip,
+            ep.orchestrator_url.split("://")[1].split(":")[0])
         self.assertIsInstance(ep.gateway, FirecrackerGateway)
         self.assertEqual(infra_vm.netpool.gw_slot().guest_ip, ep.gateway.address())
 
@@ -269,18 +177,15 @@ class TestEnsureRunningSingleton(unittest.TestCase):
                  patch.object(infra_vm, "_pidfile_alive", return_value=True), \
                  patch.object(infra_vm, "stop") as stop, \
                  patch.object(infra_vm, "ensure_built"), \
-                 patch.object(infra_vm, "wait_for_health"), \
-                 patch.object(infra_vm, "host_orchestrator_token", return_value="k"), \
-                 patch.object(infra_vm, "mint", return_value="gw.jwt"), \
-                 patch.object(infra_vm, "boot_orchestrator") as boot_o, \
+                 patch(_ORCH_CLS) as orch_cls, \
                  patch(_GW_CLS) as gw_cls:
-                boot_o.return_value = infra_vm.InfraVm(
-                    guest_ip="10.243.255.1", private_key=Path("/k"), vm=MagicMock())
+                orch_cls.return_value.gateway_url.return_value = "http://10.243.255.1:8099"
+                orch_cls.return_value.mint_gateway_token.return_value = "gw.jwt"
                 infra_vm.ensure_running()
             stop.assert_called_once()          # dislodge the outdated pair
-            boot_o.assert_called_once()
-            # The gateway service is bound to the orchestrator's URL, carrying
-            # the host-minted `gateway` token.
+            orch_cls.return_value.ensure_running.assert_called_once()
+            # The gateway service is bound to the orchestrator's gateway URL,
+            # carrying the orchestrator-minted `gateway` token.
             gw_cls.return_value.connect_to_orchestrator.assert_called_once_with(
                 "http://10.243.255.1:8099", "gw.jwt")
             # The fresh boot records the current version for the next launcher.
@@ -300,16 +205,11 @@ class TestEnsureRunningSingleton(unittest.TestCase):
                  patch.object(infra_vm, "_pidfile_alive", return_value=False), \
                  patch.object(infra_vm, "stop") as stop, \
                  patch.object(infra_vm, "ensure_built"), \
-                 patch.object(infra_vm, "wait_for_health"), \
-                 patch.object(infra_vm, "host_orchestrator_token", return_value="k"), \
-                 patch.object(infra_vm, "mint", return_value="gw.jwt"), \
-                 patch.object(infra_vm, "boot_orchestrator") as boot_o, \
+                 patch(_ORCH_CLS) as orch_cls, \
                  patch(_GW_CLS) as gw_cls:
-                boot_o.return_value = infra_vm.InfraVm(
-                    guest_ip="10.243.255.1", private_key=Path("/k"), vm=MagicMock())
                 infra_vm.ensure_running()
             stop.assert_called_once()
-            boot_o.assert_called_once()
+            orch_cls.return_value.ensure_running.assert_called_once()
             gw_cls.return_value.connect_to_orchestrator.assert_called_once()
 
     def test_boots_both_when_unhealthy(self):
@@ -320,20 +220,14 @@ class TestEnsureRunningSingleton(unittest.TestCase):
                  patch.object(infra_vm, "_health_ok", return_value=False), \
                  patch.object(infra_vm, "stop") as stop, \
                  patch.object(infra_vm, "ensure_built") as built, \
-                 patch.object(infra_vm, "host_orchestrator_token", return_value="k"), \
-                 patch.object(infra_vm, "mint", return_value="gw.jwt"), \
-                 patch.object(infra_vm, "boot_orchestrator") as boot_o, \
-                 patch(_GW_CLS) as gw_cls, \
-                 patch.object(infra_vm, "wait_for_health") as wait:
-                boot_o.return_value = infra_vm.InfraVm(
-                    guest_ip="10.243.255.1", private_key=Path("/k"), vm=MagicMock())
+                 patch(_ORCH_CLS) as orch_cls, \
+                 patch(_GW_CLS) as gw_cls:
                 infra_vm.ensure_running()
         stop.assert_called_once()      # clear stale VMs first
         built.assert_called_once()
-        # Orchestrator boots + becomes healthy BEFORE the gateway is connected
-        # (its daemons reach the control plane at startup).
-        boot_o.assert_called_once()
-        wait.assert_called_once()
+        # Orchestrator is brought up BEFORE the gateway is connected (its daemons
+        # reach the control plane at startup).
+        orch_cls.return_value.ensure_running.assert_called_once()
         gw_cls.return_value.connect_to_orchestrator.assert_called_once()
 
 

@@ -9,7 +9,7 @@ only the token the host hands it via `connect_to_orchestrator`.
 
 What deliberately stays in `infra_vm` (not moved here): the plane-agnostic VM
 substrate the orchestrator VM shares — booting a VM from the shared rootfs
-(`_boot_vm`), the stable SSH keypair, the secret-push retry loop, and the PID
+(`boot_vm`), the stable SSH keypair, the secret-push retry loop, and the PID
 lifecycle — plus the pair coordinator (`ensure_running`: orchestrator-first
 health gate, singleton lock, adoption/version marker). The guest-side gateway
 daemon startup lives in the shared `bb_role=gateway` init branch baked into the
@@ -96,12 +96,12 @@ class FirecrackerGateway(Gateway):
             )
         # Boot on the gateway link from the shared rootfs (bb_role=gateway), then
         # push the token the init waits for before starting the data plane.
-        vm = infra_vm._boot_vm(
+        vm = infra_vm.boot_vm(
             name=GATEWAY_NAME, slot=netpool.gw_slot(), run_dir=infra_vm._gw_dir(),
             role="gateway", mem_mib=_GW_MEM_MIB,
             extra_boot_args=f"bb_orch={orchestrator_guest_ip}",
         )
-        infra_vm._push_secret(
+        infra_vm.push_secret(
             vm, self._gateway_token, _GUEST_GATEWAY_JWT_PATH,
             "the gateway JWT to the gateway VM (its data plane will not start)",
         )
