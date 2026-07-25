@@ -44,19 +44,13 @@ from ...bottle_state import (
     git_gate_state_dir,
     read_committed_image,
 )
-from ...egress import (
-    egress_agent_env_entries,
-    egress_resolve_token_values,
-)
-from ...git_gate import (
-    provision_git_gate_dynamic_keys,
-    revoke_git_gate_provisioned_keys,
-)
-from ...git_http_backend import DEFAULT_PORT as _GIT_HTTP_PORT
+from ...egress import Egress
+from ...git_gate import GitGate
+from ...gateway.git_gate.http_backend import DEFAULT_PORT as _GIT_HTTP_PORT
 from ...image_cache import check_stale
 from ...log import die, info, warn
 from .. import BottleImages
-from ...supervise import SUPERVISE_PORT
+from ...supervisor.types import SUPERVISE_PORT
 from ..docker.egress import EGRESS_PORT
 from ..util import AGENT_CA_BUNDLE, AGENT_CA_PATH
 from . import util as container_mod
@@ -68,13 +62,13 @@ from .gateway_hosts import (
 )
 from . import nested_containers as nested_containers_mod
 from .bottle_plan import MacosContainerBottlePlan
-from ...orchestrator.config_store import resolve_teardown_timeout
-from ...orchestrator.secret_store import ENV_VAR_SECRET_NAME, new_env_var_secret
+from ...orchestrator.store.config_store import resolve_teardown_timeout
+from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME, new_env_var_secret
 from .consolidated_launch import (
     GatewayEndpoint,
     ensure_gateway,
     register_agent,
-    teardown_consolidated,
+    deprovision_consolidated,
 )
 
 _REPO_DIR = str(Path(__file__).resolve().parent.parent.parent.parent)
@@ -151,7 +145,7 @@ def launch(
         except BaseException as exc:  # noqa: W0718 - teardown must continue
             teardown_exc = exc
             warn(f"macos-container teardown failed: {exc!r}")
-        revoke_git_gate_provisioned_keys(bottle_for_revoke, git_gate_dir_for_revoke)
+        GitGate().revoke_provisioned_keys(bottle_for_revoke, git_gate_dir_for_revoke)
         if teardown_exc is not None:
             raise teardown_exc
 
@@ -194,7 +188,7 @@ def launch(
                 f"{endpoint.network}"
             )
         effective_env = {**os.environ, **plan.agent_provision.provisioned_env}
-        token_values = egress_resolve_token_values(
+        token_values = Egress().resolve_token_values(
             plan.egress_plan.token_env_map, effective_env,
         )
         teardown_timeout = resolve_teardown_timeout()
@@ -208,7 +202,7 @@ def launch(
             env_var_secret=plan.env_var_secret,
         )
         stack.callback(
-            teardown_consolidated, ctx.bottle_id,
+            deprovision_consolidated, ctx.bottle_id,
             orchestrator_url=ctx.orchestrator_url,
             timeout=teardown_timeout,
         )
@@ -282,7 +276,7 @@ def _provision_git_gate_keys(
 ) -> MacosContainerBottlePlan:
     if not plan.git_gate_plan.upstreams:
         return plan
-    git_gate_plan = provision_git_gate_dynamic_keys(
+    git_gate_plan = GitGate().provision_dynamic_keys(
         plan.manifest.bottle,
         plan.git_gate_plan,
         git_gate_state_dir(plan.slug),
@@ -454,7 +448,7 @@ def _agent_env_entries(
     # so the secret value never lands on argv.
     for name in sorted(plan.forwarded_env.keys()):
         env.append(name)
-    env.extend(egress_agent_env_entries(plan.egress_plan))
+    env.extend(Egress().agent_env_entries(plan.egress_plan))
     return tuple(env)
 
 

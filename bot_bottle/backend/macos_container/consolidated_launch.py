@@ -15,8 +15,10 @@ caller has to start the agent in between. `ensure_gateway` runs first because
 the agent's proxy env needs the gateway's address at `container run` time; the
 agent's *own* address (the attribution key) only exists afterwards.
 
-The control plane and the gateway are one **infra container** here (see
-`infra`), so `gateway_ip` and the control-plane host are the same address.
+The control plane and the gateway are **separate containers** here (see
+`infra`): the orchestrator on the host-only control network, the gateway on the
+agent network — `gateway_ip` is the gateway container's agent-network address,
+distinct from the orchestrator's control-network host.
 
 The consequence for the identity token: it is minted by registration, i.e.
 *after* the agent container exists, so it cannot be baked into the run-time
@@ -39,15 +41,12 @@ from ...git_gate import GitGatePlan
 from ...log import info
 from ...orchestrator.client import OrchestratorClient, OrchestratorClientError
 from ...orchestrator.reprovision import reprovision_bottles
-from ...orchestrator.secret_store import ENV_VAR_SECRET_NAME
-from ..consolidated_util import (
-    provision_bottle,
-    teardown_consolidated as _teardown_util,
-)
+from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
+from ..provision_bottle import deprovision_bottle, provision_bottle
 from . import util as container_mod
 from .enumerate import CONTAINER_NAME_PREFIX, EnumerationError, enumerate_active
 from .gateway import GATEWAY_NETWORK
-from .gateway_provision import AppleGatewayTransport
+from .gateway_transport import MacosGatewayTransport
 from .infra import MacosInfraService, OrchestratorStartError
 
 
@@ -57,9 +56,9 @@ class ConsolidatedLaunchError(RuntimeError):
 
 @dataclass(frozen=True)
 class GatewayEndpoint:
-    """What the agent `container run` needs to reach the shared gateway (the
-    infra container). `gateway_ip` is that container's host-only address, the
-    same host the control-plane URL points at."""
+    """What the agent `container run` needs to reach the shared gateway.
+    `gateway_ip` is the gateway container's agent-network address (the agent's
+    proxy target); `orchestrator_url` points at the separate control plane."""
 
     orchestrator_url: str
     gateway_ip: str         # the gateway's address — the agent's proxy target
@@ -83,15 +82,15 @@ class LaunchContext:
 def ensure_gateway(
     *, service: MacosInfraService | None = None,
 ) -> GatewayEndpoint:
-    """Ensure the per-host infra container (control plane + gateway) is up and
-    report how to reach it. Idempotent — one singleton, so N bottle launches
-    share it. Call before starting the agent container: the agent's proxy env
-    needs `gateway_ip` at run time."""
+    """Ensure the per-host pair (orchestrator + gateway containers) is up and
+    report how to reach the gateway. Idempotent — one singleton pair, so N bottle
+    launches share it. Call before starting the agent container: the agent's
+    proxy env needs `gateway_ip` at run time."""
     service = service or MacosInfraService()
-    infra = service.ensure_running()
+    orchestrator_url = service.ensure_running()
     endpoint = GatewayEndpoint(
-        orchestrator_url=infra.control_plane_url,
-        gateway_ip=infra.gateway_ip,
+        orchestrator_url=orchestrator_url,
+        gateway_ip=service.gateway().address(),
         gateway_ca_pem=service.ca_cert_pem(),
         network=service.network,
     )
@@ -172,7 +171,7 @@ def register_agent(
     except (OrchestratorClientError, EnumerationError) as e:
         info(f"registry reconciliation skipped: {e}")
     reg = provision_bottle(
-        client, source_ip, egress_plan, git_gate_plan, AppleGatewayTransport(),
+        client, source_ip, egress_plan, git_gate_plan, MacosGatewayTransport(),
         image_ref=image_ref, tokens=tokens,
         env_var_secret=env_var_secret,
     )
@@ -187,13 +186,13 @@ def register_agent(
     )
 
 
-def teardown_consolidated(
+def deprovision_consolidated(
     bottle_id: str, *, orchestrator_url: str, timeout: float | None = None,
 ) -> None:
     """Deregister the bottle and remove its git-gate state from the gateway.
     Both steps are idempotent so this is safe from a cleanup trap. Does NOT
     stop the gateway — it's a persistent per-host singleton."""
-    _teardown_util(bottle_id, AppleGatewayTransport(),
+    deprovision_bottle(bottle_id, MacosGatewayTransport(),
                    orchestrator_url=orchestrator_url, timeout=timeout)
 
 
@@ -203,7 +202,7 @@ __all__ = [
     "ensure_gateway",
     "live_source_ips",
     "register_agent",
-    "teardown_consolidated",
+    "deprovision_consolidated",
     "ConsolidatedLaunchError",
     "OrchestratorStartError",
     "GATEWAY_NETWORK",

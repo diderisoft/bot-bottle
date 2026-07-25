@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from bot_bottle.orchestrator.secret_store import (
+from bot_bottle.orchestrator.store.secret_store import (
     ENV_VAR_SECRET_NAME,
     decrypt_value,
     encrypt_value,

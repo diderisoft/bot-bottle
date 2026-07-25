@@ -7,10 +7,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from bot_bottle.orchestrator.gateway import (
+from bot_bottle.backend.docker.gateway import DockerGateway
+from bot_bottle.gateway import (
     GATEWAY_CA_CERT,
     GATEWAY_NAME,
-    DockerGateway,
     GatewayError,
     rotate_gateway_ca,
 )
@@ -20,7 +20,7 @@ from tests.unit import use_bottle_root
 
 _CA_PEM = "-----BEGIN CERTIFICATE-----\nMII...\n-----END CERTIFICATE-----\n"
 
-_RUN_DOCKER = "bot_bottle.orchestrator.gateway.run_docker"
+_RUN_DOCKER = "bot_bottle.backend.docker.gateway.run_docker"
 
 
 def _proc(returncode: int = 0, stdout: str = "", stderr: str = "") -> Mock:
@@ -28,6 +28,7 @@ def _proc(returncode: int = 0, stdout: str = "", stderr: str = "") -> Mock:
 
 
 _ORCH_URL = "http://orchestrator:9000"
+_TOKEN = "gw-jwt-token"
 
 
 class TestDockerGateway(unittest.TestCase):
@@ -39,18 +40,27 @@ class TestDockerGateway(unittest.TestCase):
         self.addCleanup(use_bottle_root(Path(self._tmp.name)))
         # Resolver-only data plane (PRD 0070): running the gateway requires an
         # orchestrator URL, so the fixture supplies one.
-        self.sc = DockerGateway("bot-bottle-gateway:latest", orchestrator_url=_ORCH_URL)
+        self.sc = DockerGateway("bot-bottle-gateway:latest")
 
     def test_default_name(self) -> None:
         self.assertEqual(GATEWAY_NAME, self.sc.name)
 
-    def test_ensure_running_refuses_without_orchestrator_url(self) -> None:
+    def test_connect_refuses_without_orchestrator_url(self) -> None:
         # No policy source → the data-plane daemons would only crash-loop, so
         # the launch must fail closed with a clear error rather than start one.
         sc = DockerGateway("bot-bottle-gateway:latest")
         with patch(_RUN_DOCKER) as m:
             with self.assertRaises(GatewayError):
-                sc.ensure_running()
+                sc.connect_to_orchestrator("", _TOKEN)
+        m.assert_not_called()
+
+    def test_connect_refuses_without_gateway_token(self) -> None:
+        # The gateway never mints — it must be handed a pre-minted `gateway`
+        # token. Missing one is a misconfiguration, so fail closed before start.
+        sc = DockerGateway("bot-bottle-gateway:latest")
+        with patch(_RUN_DOCKER) as m:
+            with self.assertRaises(GatewayError):
+                sc.connect_to_orchestrator(_ORCH_URL, "")
         m.assert_not_called()
 
     def test_is_running_reads_docker_ps(self) -> None:
@@ -73,7 +83,7 @@ class TestDockerGateway(unittest.TestCase):
             return _proc()
 
         with patch(_RUN_DOCKER, side_effect=fake):
-            self.sc.ensure_running()
+            self.sc.connect_to_orchestrator(_ORCH_URL, _TOKEN)
         self.assertEqual([], [c for c in calls if c[:2] == ["docker", "run"]])
         self.assertEqual([], [c for c in calls if c[:2] == ["docker", "rm"]])
 
@@ -93,7 +103,7 @@ class TestDockerGateway(unittest.TestCase):
             return _proc()
 
         with patch(_RUN_DOCKER, side_effect=fake):
-            self.sc.ensure_running()
+            self.sc.connect_to_orchestrator(_ORCH_URL, _TOKEN)
         self.assertEqual(1, len([c for c in calls if c[:2] == ["docker", "run"]]))
         self.assertTrue(any(c[:2] == ["docker", "rm"] for c in calls))
 
@@ -105,7 +115,7 @@ class TestDockerGateway(unittest.TestCase):
             return _proc(stdout="") if argv[:2] == ["docker", "ps"] else _proc()
 
         with patch(_RUN_DOCKER, side_effect=fake):
-            self.sc.ensure_running()
+            self.sc.connect_to_orchestrator(_ORCH_URL, _TOKEN)
 
         runs = [c for c in calls if c[:2] == ["docker", "run"]]
         self.assertEqual(1, len(runs))
@@ -124,15 +134,52 @@ class TestDockerGateway(unittest.TestCase):
         src = ca_mounts[0].rsplit(":", 1)[0]
         self.assertTrue(src.endswith("/" + GATEWAY_CA_DIRNAME), src)
         self.assertTrue(Path(src).is_absolute(), src)
-        # Shares the ONE host DB: the supervise daemon queues into the same
-        # file the orchestrator + operator (over HTTP) use.
-        self.assertTrue(any(
-            a.startswith("SUPERVISE_DB_PATH=") and a.endswith("/run/supervise/bot-bottle.db")
-            for a in runs[0]))
-        self.assertTrue(any(
-            a.endswith(":/run/supervise") for a in runs[0]))
+        # No DB handle on the data plane: the supervise queue is reached over
+        # the control-plane RPC, so the gateway container carries neither the
+        # DB bind-mount nor SUPERVISE_DB_PATH (PRD 0070 / issue #469).
+        self.assertFalse(any(a.startswith("SUPERVISE_DB_PATH=") for a in runs[0]))
+        self.assertFalse(any(a.endswith(":/run/supervise") for a in runs[0]))
         # Data plane resolves policy against the orchestrator control plane.
         self.assertIn(f"BOT_BOTTLE_ORCHESTRATOR_URL={_ORCH_URL}", runs[0])
+
+    def test_connect_injects_the_pre_minted_gateway_token(self) -> None:
+        # The gateway presents the token the orchestrator handed it — it never
+        # mints (holds no signing key). The value rides the env (bare `--env
+        # NAME` on argv keeps it off `docker inspect`), not argv itself.
+        from bot_bottle.paths import ORCHESTRATOR_AUTH_JWT_ENV
+
+        run_env: dict[str, str] = {}
+
+        def fake(argv: list[str], **kw: object) -> Mock:
+            if argv[:2] == ["docker", "run"]:
+                env = kw.get("env")
+                if isinstance(env, dict):
+                    run_env.update(env)
+            return _proc(stdout="") if argv[:2] == ["docker", "ps"] else _proc()
+
+        with patch(_RUN_DOCKER, side_effect=fake):
+            self.sc.connect_to_orchestrator(_ORCH_URL, _TOKEN)
+        self.assertEqual(_TOKEN, run_env[ORCHESTRATOR_AUTH_JWT_ENV])
+
+    def test_address_reads_container_ip_on_the_agent_network(self) -> None:
+        with patch(_RUN_DOCKER, return_value=_proc(stdout="172.18.0.2\n")) as m:
+            self.assertEqual("172.18.0.2", self.sc.address())
+        argv = m.call_args.args[0]
+        self.assertEqual(["docker", "inspect"], argv[:2])
+        self.assertIn(self.sc.name, argv)
+        self.assertTrue(any(self.sc.network in a for a in argv))
+
+    def test_address_raises_when_unassigned(self) -> None:
+        with patch(_RUN_DOCKER, return_value=_proc(stdout="")):
+            with self.assertRaises(GatewayError):
+                self.sc.address()
+
+    def test_provisioning_transport_targets_the_gateway_container(self) -> None:
+        from bot_bottle.backend.docker.gateway_transport import DockerGatewayTransport
+
+        transport = self.sc.provisioning_transport()
+        assert isinstance(transport, DockerGatewayTransport)
+        self.assertEqual(self.sc.name, transport.gateway)
 
     def test_ensure_running_creates_network_when_missing(self) -> None:
         calls: list[list[str]] = []
@@ -144,7 +191,7 @@ class TestDockerGateway(unittest.TestCase):
             return _proc(stdout="") if argv[:2] == ["docker", "ps"] else _proc()
 
         with patch(_RUN_DOCKER, side_effect=fake):
-            self.sc.ensure_running()
+            self.sc.connect_to_orchestrator(_ORCH_URL, _TOKEN)
         creates = [c for c in calls if c[:3] == ["docker", "network", "create"]]
         self.assertEqual([["docker", "network", "create", self.sc.network]], creates)
 
@@ -164,7 +211,7 @@ class TestDockerGateway(unittest.TestCase):
         # First read: CA not there yet; second read: present.
         seq = [_proc(returncode=1, stderr="No such file"), _proc(stdout=_CA_PEM)]
         with patch(_RUN_DOCKER, side_effect=seq), \
-                patch("bot_bottle.orchestrator.gateway.time.sleep"):
+                patch("bot_bottle.backend.docker.gateway.time.sleep"):
             self.assertEqual(_CA_PEM, self.sc.ca_cert_pem(timeout=5))
 
     def test_ensure_running_reuses_existing_network(self) -> None:
@@ -175,7 +222,7 @@ class TestDockerGateway(unittest.TestCase):
             return _proc(stdout="") if argv[:2] == ["docker", "ps"] else _proc()
 
         with patch(_RUN_DOCKER, side_effect=fake):
-            self.sc.ensure_running()  # network inspect returns 0 → exists
+            self.sc.connect_to_orchestrator(_ORCH_URL, _TOKEN)  # network inspect returns 0 → exists
         self.assertEqual([], [c for c in calls if c[:3] == ["docker", "network", "create"]])
 
     def test_ensure_running_raises_on_docker_failure(self) -> None:
@@ -188,7 +235,7 @@ class TestDockerGateway(unittest.TestCase):
 
         with patch(_RUN_DOCKER, side_effect=fake):
             with self.assertRaises(GatewayError):
-                self.sc.ensure_running()
+                self.sc.connect_to_orchestrator(_ORCH_URL, _TOKEN)
 
     def test_stop_is_idempotent_on_missing(self) -> None:
         absent = _proc(returncode=1, stderr="Error: No such container: x")

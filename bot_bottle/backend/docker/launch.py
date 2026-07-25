@@ -37,11 +37,8 @@ from pathlib import Path
 from typing import Callable, Generator
 
 from ...agent_provider import runtime_for
-from ...egress import egress_resolve_token_values
-from ...git_gate import (
-    provision_git_gate_dynamic_keys,
-    revoke_git_gate_provisioned_keys,
-)
+from ...egress import Egress
+from ...git_gate import GitGate
 from ...image_cache import check_stale
 from ...log import die, info, warn
 from .. import BottleImages
@@ -64,9 +61,10 @@ from .compose import (
     write_compose_file,
 )
 from .consolidated_compose import consolidated_agent_compose
-from ...orchestrator.config_store import resolve_teardown_timeout
-from .consolidated_launch import launch_consolidated, teardown_consolidated
-from ...orchestrator.gateway import DockerGateway
+from ...orchestrator.store.config_store import resolve_teardown_timeout
+from .consolidated_launch import launch_consolidated, deprovision_consolidated
+from .infra import INFRA_NAME
+from .gateway import DockerGateway
 
 
 # Where the repo root lives, for `docker build` context. Computed once.
@@ -125,7 +123,7 @@ def launch(
                 f"teardown failed for container {plan.container_name}"
                 f" (compose-down): {exc!r}"
             )
-        revoke_git_gate_provisioned_keys(
+        GitGate().revoke_provisioned_keys(
             _bottle_for_revoke, _git_gate_dir_for_revoke
         )
 
@@ -134,7 +132,7 @@ def launch(
         # provisioning the bottle's repos into the shared gateway.
         git_gate_plan = plan.git_gate_plan
         if git_gate_plan.upstreams:
-            git_gate_plan = provision_git_gate_dynamic_keys(
+            git_gate_plan = GitGate().provision_dynamic_keys(
                 plan.manifest.bottle, git_gate_plan, git_gate_state_dir(plan.slug),
             )
 
@@ -145,7 +143,7 @@ def launch(
         # handed to the orchestrator (in memory) for the gateway to inject —
         # the agent never sees them.
         effective_env = {**os.environ, **plan.agent_provision.provisioned_env}
-        token_values = egress_resolve_token_values(
+        token_values = Egress().resolve_token_values(
             plan.egress_plan.token_env_map, effective_env,
         )
         teardown_timeout = resolve_teardown_timeout()
@@ -153,17 +151,19 @@ def launch(
             plan.egress_plan, git_gate_plan, image_ref=plan.image, tokens=token_values,
         )
         stack.callback(
-            teardown_consolidated, ctx.bottle_id,
+            deprovision_consolidated, ctx.bottle_id,
             orchestrator_url=ctx.orchestrator_url,
             timeout=teardown_timeout,
         )
 
         # Step 4: install the SHARED gateway CA into the agent (replaces the
-        # per-bottle CA) — read it out of the running gateway.
+        # per-bottle CA) — read it out of the running gateway container
+        # (INFRA_NAME now aliases the gateway container name; the orchestrator,
+        # split into its own container, holds no CA).
         ca_dir = egress_state_dir(plan.slug) / "gateway-ca"
         ca_dir.mkdir(parents=True, exist_ok=True)
         ca_file = ca_dir / "gateway-ca.pem"
-        ca_file.write_text(DockerGateway(network=ctx.network).ca_cert_pem())
+        ca_file.write_text(DockerGateway(name=INFRA_NAME).ca_cert_pem())
         egress_plan = dataclasses.replace(
             plan.egress_plan,
             mitmproxy_ca_host_path=ca_file,
@@ -203,7 +203,7 @@ def launch(
         # spec, value only in the subprocess env so it is never written to disk.
         compose_env: dict[str, str] = {**os.environ, **plan.forwarded_env}
         if plan.env_var_secret:
-            from ...orchestrator.secret_store import ENV_VAR_SECRET_NAME
+            from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
             compose_env[ENV_VAR_SECRET_NAME] = plan.env_var_secret
         info(
             f"docker compose up -d  (project {project}, agent on shared "

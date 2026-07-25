@@ -12,14 +12,13 @@ import unittest
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
-from bot_bottle.cli import supervise as supervise_cli
-from bot_bottle.supervise import (
+from bot_bottle.cli.commands import supervise as supervise_cli
+from bot_bottle.orchestrator.supervisor import (
     Proposal,
     TOOL_EGRESS_ALLOW,
     TOOL_EGRESS_BLOCK,
     TOOL_GITLEAKS_ALLOW,
     TOOL_EGRESS_TOKEN_ALLOW,
-    sha256_hex,
 )
 
 
@@ -37,7 +36,7 @@ def _proposal(slug: str = "dev", tool: str = TOOL_EGRESS_ALLOW,
     payload = payloads.get(tool, "")
     return Proposal.new(
         bottle_slug=slug, tool=tool, proposed_file=payload,
-        justification=f"needed for {slug}", current_file_hash=sha256_hex(payload),
+        justification=f"needed for {slug}",
         now=now,
     )
 

@@ -2,7 +2,7 @@
 
 Composes the orchestrator primitives into the register/teardown sequence:
 
-  1. ensure the single infra container (control plane + gateway) is up;
+  1. ensure the per-host pair (orchestrator + gateway containers) is up;
   2. allocate the bottle a pinned source IP on the gateway network;
   3. register it and provision its git-gate repos/creds into the gateway.
 
@@ -16,17 +16,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ... import log
-from ...docker_cmd import run_docker
+from .util import run_docker
 from ...egress import EgressPlan
 from ...git_gate import GitGatePlan
 from ...orchestrator.client import OrchestratorClient
-from ...orchestrator.gateway import GATEWAY_NETWORK
-from ...orchestrator.lifecycle import INFRA_NAME, OrchestratorService
-from ...orchestrator.secret_store import ENV_VAR_SECRET_NAME
+from ...gateway import GATEWAY_NETWORK
+from .infra import INFRA_NAME, DockerInfraService
+from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
 from ...orchestrator.reprovision import reprovision_bottles
-from ..consolidated_util import provision_bottle
-from ..consolidated_util import teardown_consolidated as _teardown_util
-from .gateway_provision import DockerGatewayTransport
+from ..provision_bottle import deprovision_bottle, provision_bottle
+from .gateway_transport import DockerGatewayTransport
 from .gateway_net import next_free_ip
 
 
@@ -61,23 +60,9 @@ def _network_cidr(network: str) -> str:
     return cidr
 
 
-def _container_ip(name: str, network: str) -> str:
-    """A container's IPv4 address on `network`, or raise."""
-    proc = run_docker([
-        "docker", "inspect", "--format",
-        f'{{{{(index .NetworkSettings.Networks "{network}").IPAddress}}}}', name,
-    ])
-    ip = proc.stdout.strip()
-    if proc.returncode != 0 or not ip:
-        raise ConsolidatedLaunchError(
-            f"container {name} has no address on {network}: {proc.stderr.strip()}"
-        )
-    return ip
-
-
 def _network_container_ips(network: str) -> list[str]:
     """Every address currently assigned on the gateway network — the ground
-    truth for "in use": the infra container and every live agent. Read from
+    truth for "in use": the gateway container and every live agent. Read from
     the network so a new bottle can't collide with anything actually attached."""
     proc = run_docker([
         "docker", "network", "inspect", "--format",
@@ -95,7 +80,7 @@ def _reprovision_running_bottles(
     infra_name: str = INFRA_NAME,
 ) -> None:
     """Re-inject egress tokens for any registered bottles that lost their
-    in-memory tokens (e.g., after an infra container restart).
+    in-memory tokens (e.g., after an orchestrator restart).
 
     For each registered bottle whose source IP maps to a live container on the
     gateway network, reads ENV_VAR_SECRET via ``docker exec … printenv`` and
@@ -104,7 +89,7 @@ def _reprovision_running_bottles(
     container exec failure never blocks a new bottle launch."""
     client = OrchestratorClient(orchestrator_url)
     # Build {source_ip: container_name} from live containers on the gateway
-    # network, excluding the infra container itself.
+    # network, excluding the gateway container itself.
     try:
         proc = run_docker([
             "docker", "network", "inspect",
@@ -144,26 +129,30 @@ def launch_consolidated(
     *,
     image_ref: str = "",
     tokens: dict[str, str] | None = None,
-    service: OrchestratorService | None = None,
+    service: DockerInfraService | None = None,
     infra_name: str = INFRA_NAME,
     network: str = GATEWAY_NETWORK,
 ) -> LaunchContext:
-    """Ensure the infra container is up, allocate + register the bottle, and
+    """Ensure the orchestrator + gateway pair is up, allocate + register the bottle, and
     provision its git-gate state. Returns the agent's attach context.
 
     Also reprovisiones egress tokens for any already-running bottles that lost
-    their in-memory credentials (e.g. after an infra container restart), so
+    their in-memory credentials (e.g. after an orchestrator restart), so
     they regain egress access before the new bottle is registered."""
-    service = service or OrchestratorService()
+    service = service or DockerInfraService()
     url = service.ensure_running()
-    _reprovision_running_bottles(url, network=network, infra_name=infra_name)
+    # Agents attribute against the *gateway* container (data plane), not the
+    # orchestrator — the two planes are now separate containers. Read its
+    # agent-facing address + provisioning transport off the Gateway service.
+    gateway = service.gateway()
+    _reprovision_running_bottles(url, network=network, infra_name=gateway.name)
     client = OrchestratorClient(url)
 
     cidr = _network_cidr(network)
-    gateway_ip = _container_ip(infra_name, network)
+    gateway_ip = gateway.address()
     source_ip = next_free_ip(cidr, _network_container_ips(network))
 
-    transport = DockerGatewayTransport(infra_name)
+    transport = gateway.provisioning_transport()
     reg = provision_bottle(
         client, source_ip, egress_plan, git_gate_plan, transport,
         image_ref=image_ref, tokens=tokens,
@@ -179,18 +168,18 @@ def launch_consolidated(
     )
 
 
-def teardown_consolidated(
+def deprovision_consolidated(
     bottle_id: str, *, orchestrator_url: str, infra_name: str = INFRA_NAME,
     timeout: float | None = None,
 ) -> None:
     """Deregister the bottle and remove its git-gate state. Idempotent."""
-    _teardown_util(bottle_id, DockerGatewayTransport(infra_name),
+    deprovision_bottle(bottle_id, DockerGatewayTransport(infra_name),
                    orchestrator_url=orchestrator_url, timeout=timeout)
 
 
 __all__ = [
     "LaunchContext",
     "launch_consolidated",
-    "teardown_consolidated",
+    "deprovision_consolidated",
     "ConsolidatedLaunchError",
 ]

@@ -67,6 +67,7 @@ let
     BOT_BOTTLE_FC_IFACE_PREFIX = cfg.ifacePrefix;
     BOT_BOTTLE_FC_NFT_TABLE = cfg.tableName;
     BOT_BOTTLE_FC_ORCH_IFACE = cfg.orchIface;
+    BOT_BOTTLE_FC_GW_IFACE = cfg.gwIface;
   } // ownEnv;
 in
 {
@@ -135,11 +136,24 @@ in
       default = defaults.BOT_BOTTLE_FC_ORCH_IFACE;
       defaultText = lib.literalMD "the shared `netpool.defaults.env` value";
       description = ''
-        TAP name for the orchestrator/gateway VM's dedicated link. Unlike
-        the isolated bbfc* agent pool, this link is NAT'd to the internet
-        (the orchestrator is trusted infra that builds agent images in-VM
-        and forwards agent egress upstream). Must match
-        BOT_BOTTLE_FC_ORCH_IFACE / netpool.ORCH_IFACE.
+        TAP name for the orchestrator VM's dedicated link. Unlike the
+        isolated bbfc* agent pool, this link is NAT'd to the internet
+        (the orchestrator is trusted infra that builds agent images
+        in-VM). Must match BOT_BOTTLE_FC_ORCH_IFACE / netpool.ORCH_IFACE.
+      '';
+    };
+
+    gwIface = lib.mkOption {
+      type = lib.types.str;
+      default = defaults.BOT_BOTTLE_FC_GW_IFACE;
+      defaultText = lib.literalMD "the shared `netpool.defaults.env` value";
+      description = ''
+        TAP name for the gateway (data-plane) VM's dedicated link — the
+        second infra link, split from the orchestrator per PRD 0070. Like
+        the orchestrator link it is NAT'd to the internet (the gateway
+        forwards agent egress upstream); agents DNAT here, never to the
+        orchestrator, so a breached agent has no L3 route to the control
+        plane. Must match BOT_BOTTLE_FC_GW_IFACE / netpool.GW_IFACE.
       '';
     };
 
@@ -193,6 +207,7 @@ in
         BOT_BOTTLE_FC_IFACE_PREFIX=${cfg.ifacePrefix}
         BOT_BOTTLE_FC_NFT_TABLE=${cfg.tableName}
         BOT_BOTTLE_FC_ORCH_IFACE=${cfg.orchIface}
+        BOT_BOTTLE_FC_GW_IFACE=${cfg.gwIface}
       '';
     };
   };

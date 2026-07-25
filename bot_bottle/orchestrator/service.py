@@ -1,6 +1,6 @@
 """The per-host orchestrator core (PRD 0070).
 
-`Orchestrator` is the single backend-neutral object the control plane talks
+`OrchestratorCore` is the single backend-neutral object the control plane talks
 to: it owns the registry (runtime state) and brokers agent launches. It
 never branches on backend — the `LaunchBroker` abstracts the backend-native
 launch, so this same object drives docker / firecracker / apple once a real
@@ -26,23 +26,22 @@ from collections.abc import Iterable
 from datetime import datetime, timezone
 
 from .broker import LaunchBroker, LaunchRequest, sign_request
-from .registry import DEFAULT_REAP_GRACE_SECONDS, BottleRecord, RegistryStore
-from .gateway import Gateway
-from ..supervise import (
+from .store.registry_store import DEFAULT_REAP_GRACE_SECONDS, BottleRecord, RegistryStore
+from .supervisor import (
     AuditEntry,
     COMPONENT_FOR_TOOL,
+    POLL_STATUS_PENDING,
+    POLL_STATUS_UNKNOWN,
+    Proposal,
     Response,
     STATUS_APPROVED,
     STATUS_MODIFIED,
     STATUS_REJECTED,
     TOOL_EGRESS_ALLOW,
     TOOL_EGRESS_BLOCK,
-    list_all_pending_proposals,
-    read_proposal,
-    render_diff,
-    write_audit_entry,
-    write_response,
+    Supervisor,
 )
+from ..util import render_diff
 
 
 # Operator decision → Response.status. The apply half (egress tools) runs
@@ -55,7 +54,7 @@ _RESPOND_STATUS = {
 _APPLY_TOOLS = (TOOL_EGRESS_ALLOW, TOOL_EGRESS_BLOCK)
 
 
-class Orchestrator:
+class OrchestratorCore:
     """Owns the registry + brokers launches, and manages the single
     consolidated per-host gateway. Backend-neutral (broker and gateway
     abstract the backend-native pieces)."""
@@ -65,12 +64,14 @@ class Orchestrator:
         registry: RegistryStore,
         broker: LaunchBroker,
         sign_secret: bytes,
-        gateway: Gateway | None = None,
+        supervisor: Supervisor | None = None,
     ) -> None:
         self.registry = registry
         self._broker = broker
         self._secret = sign_secret
-        self._gateway = gateway
+        # The supervise service (queue + audit I/O). Injectable so tests can
+        # point it at a temp DB; defaults to the host DB.
+        self._supervisor = supervisor or Supervisor()
         # Per-bottle egress auth tokens (env_name -> value), keyed by bottle_id.
         # Held **in memory only** — never written to the registry DB — so the
         # gateway can inject each bottle's upstream credential without secrets
@@ -100,7 +101,7 @@ class Orchestrator:
         if tokens:
             self._tokens[rec.bottle_id] = dict(tokens)
             if env_var_secret:
-                from .secret_store import encrypt_value
+                from .store.secret_store import encrypt_value
                 encrypted = {k: encrypt_value(env_var_secret, v) for k, v in tokens.items()}
                 self.registry.store_agent_secrets(rec.bottle_id, encrypted)
         req = LaunchRequest(
@@ -129,6 +130,8 @@ class Orchestrator:
         self._broker.submit(sign_request(req, self._secret))
         self.registry.deregister(bottle_id)
         self._tokens.pop(bottle_id, None)
+        # Reap any supervise proposals the gone bottle never acknowledged.
+        self._supervisor.archive_all_proposals(bottle_id)
         return True
 
     def reconcile(
@@ -153,6 +156,8 @@ class Orchestrator:
             live_source_ips, grace_seconds=grace_seconds)
         for rec in reaped:
             self._tokens.pop(rec.bottle_id, None)
+            # Reap any supervise proposals the gone bottle never acknowledged.
+            self._supervisor.archive_all_proposals(rec.bottle_id)
         return [rec.bottle_id for rec in reaped]
 
     def tokens_for(self, bottle_id: str) -> dict[str, str]:
@@ -188,6 +193,62 @@ class Orchestrator:
     # The orchestrator owns the single DB *and* the live policy, so operator
     # decisions are applied here, server-side, and reached over HTTP by the
     # host TUI (no direct-DB access, one path for every backend).
+    #
+    # The *agent* half of the queue (queue a proposal, poll for its response)
+    # is served here too (PRD 0070): the data plane no longer opens the DB, so
+    # supervise_server / egress / git-gate reach the queue over the control
+    # plane. Both are keyed on the caller's orchestrator-resolved bottle id —
+    # never a caller-supplied slug — so a bottle can only queue or read its own
+    # proposals even if the data plane is compromised.
+
+    def supervise_queue_proposal(
+        self, bottle_id: str, *, tool: str, proposed_file: str, justification: str,
+    ) -> str:
+        """Queue an agent-side proposal under `bottle_id` and return its id.
+
+        `bottle_id` is the caller resolved from `(source_ip, identity_token)` by
+        the control plane, so the proposal is attributed to the calling bottle,
+        not to anything the (possibly hostile) data plane asserts. The
+        proposed-file self-hash is computed here so the agent never supplies it."""
+        proposal = Proposal.new(
+            bottle_slug=bottle_id,
+            tool=tool,
+            proposed_file=proposed_file,
+            justification=justification,
+        )
+        self._supervisor.write_proposal(proposal)
+        return proposal.id
+
+    def supervise_poll_response(self, bottle_id: str, proposal_id: str) -> dict[str, object]:
+        """Non-blocking, **idempotent** poll of one of `bottle_id`'s proposals.
+
+        Returns `{"status": ...}`: a terminal decision (`approved`/`modified`/
+        `rejected`, with `notes` + `final_file`) once the operator has responded,
+        `pending` while it's still queued undecided, or `unknown` when no such
+        queued proposal exists for this bottle (wrong id, or already archived).
+
+        Poll does **not** archive — a decided proposal keeps returning the same
+        decision so a client whose connection drops after the decision but before
+        it consumes the response still gets it on retry (issue #469 review). A
+        decided proposal is already excluded from the operator's pending list (a
+        response row exists), so it doesn't linger there; the row itself is reaped
+        when the bottle is torn down / reconciled.
+
+        Reads are scoped to `bottle_id` (the queue key), so a caller can never
+        read another bottle's proposal even with a guessed id."""
+        try:
+            response = self._supervisor.read_response(bottle_id, proposal_id)
+        except FileNotFoundError:
+            try:
+                self._supervisor.read_proposal(bottle_id, proposal_id)
+            except FileNotFoundError:
+                return {"status": POLL_STATUS_UNKNOWN}
+            return {"status": POLL_STATUS_PENDING}
+        return {
+            "status": response.status,
+            "notes": response.notes,
+            "final_file": response.final_file,
+        }
 
     def supervise_pending(self) -> list[dict[str, object]]:
         """All pending proposals across bottles, FIFO, as JSON dicts
@@ -198,7 +259,7 @@ class Orchestrator:
         orchestrator-assigned bottle_id, which is opaque to an operator). The
         CLI renders the label but still responds against `bottle_slug`."""
         out: list[dict[str, object]] = []
-        for p in list_all_pending_proposals():
+        for p in self._supervisor.list_all_pending_proposals():
             d = p.to_dict()
             d["bottle_label"] = self._label_for(p.bottle_slug)
             out.append(d)
@@ -261,7 +322,7 @@ class Orchestrator:
         if status is None:
             return False, f"unknown decision {decision!r}"
         try:
-            proposal = read_proposal(bottle_slug, proposal_id)
+            proposal = self._supervisor.read_proposal(bottle_slug, proposal_id)
         except FileNotFoundError:
             return False, "no such proposal"
 
@@ -277,19 +338,22 @@ class Orchestrator:
             diff_before, diff_after = rec.policy, new_policy
             self.set_policy(rec.bottle_id, new_policy)
 
-        write_response(bottle_slug, Response(
+        self._supervisor.write_response(bottle_slug, Response(
             proposal_id=proposal_id, status=status, notes=notes, final_file=final_file,
         ))
         component = COMPONENT_FOR_TOOL.get(proposal.tool)
         if component is not None:
-            write_audit_entry(AuditEntry(
+            self._supervisor.write_audit_entry(AuditEntry(
                 timestamp=datetime.now(timezone.utc).isoformat(),
                 bottle_slug=bottle_slug,
                 component=component,
                 operator_action=status,
                 operator_notes=notes,
                 justification=proposal.justification,
-                diff=render_diff(diff_before, diff_after, label=component),
+                diff=render_diff(
+                    diff_before, diff_after, label=component,
+                    before_title="current", after_label="proposed",
+                ),
             ))
         return True, ""
 
@@ -302,7 +366,7 @@ class Orchestrator:
         value with *env_var_secret*, and restores ``_tokens[bottle_id]``.
         Returns True on success, False when no stored secrets exist for this
         bottle or decryption fails (wrong key / corrupt data)."""
-        from .secret_store import decrypt_value
+        from .store.secret_store import decrypt_value
         encrypted = self.registry.get_agent_secrets(bottle_id)
         if not encrypted:
             return False
@@ -315,22 +379,15 @@ class Orchestrator:
 
     # --- consolidated gateway ----------------------------------------------
 
-    def ensure_gateway(self) -> None:
-        """Ensure the single per-host gateway is built and up (idempotent).
-        No-op when no gateway is configured."""
-        if self._gateway is not None:
-            self._gateway.ensure_built()
-            self._gateway.ensure_running()
-
     def gateway_status(self) -> dict[str, object]:
-        """Report the shared gateway for the control plane / console."""
-        if self._gateway is None:
-            return {"configured": False}
-        return {
-            "configured": True,
-            "name": self._gateway.name,
-            "running": self._gateway.is_running(),
-        }
+        """Report the shared gateway for the control plane / console.
+
+        The orchestrator no longer owns a standalone gateway lifecycle — the
+        consolidated flow runs the gateway data plane inside the per-host infra
+        container/VM (see `backend/*/gateway`), so this reports `configured:
+        false`. Retained for the documented `GET /gateway` control-plane
+        contract."""
+        return {"configured": False}
 
 
-__all__ = ["Orchestrator"]
+__all__ = ["OrchestratorCore"]

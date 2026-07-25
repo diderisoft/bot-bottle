@@ -11,15 +11,16 @@ Per bottle:
   6. provision (shared gateway CA, prompt, skills, workspace, git, supervise)
      over SSH.
 
-The per-bottle Docker sidecar bundle is gone. The shared gateway handles
-egress / git-gate / supervise for every VM; Docker's PREROUTING DNAT routes
-the VMs' traffic to it, and the nft table's `ct status dnat accept` rule
-in the forward chain lets it pass. The VM still sends to `host_tap_ip:PORT`
-— the address its world is, by nft design, limited to.
+The per-bottle Docker sidecar bundle is gone. The shared gateway (its own
+data-plane VM) handles egress / git-gate / supervise for every VM; the nft
+netpool's PREROUTING DNAT routes the VMs' gateway-port traffic to that gateway
+VM, and the nft table's `ct status dnat accept` rule in the forward chain lets
+it pass. The VM still sends to `host_tap_ip:PORT` — the address its world is,
+by nft design, limited to.
 
 Isolation is enforced by the operator-provisioned nft table (checked
-fail-closed in preflight): a VM reaches only the sidecar (DNAT'd from
-the host TAP IP) and nothing else.
+fail-closed in preflight): a VM reaches only the gateway (DNAT'd from the host
+TAP IP) and nothing else — not even the orchestrator control plane.
 """
 
 from __future__ import annotations
@@ -38,28 +39,22 @@ from ...bottle_state import (
     git_gate_state_dir,
     read_committed_image,
 )
-from ...egress import (
-    egress_agent_env_entries,
-    egress_resolve_token_values,
-)
-from ...git_gate import (
-    provision_git_gate_dynamic_keys,
-    revoke_git_gate_provisioned_keys,
-)
+from ...egress import Egress
+from ...git_gate import GitGate
 from ...image_cache import check_stale_path
 from ...log import die, info, warn
-from ...supervise import SUPERVISE_PORT
+from ...supervisor.types import SUPERVISE_PORT
 from ..docker.egress import EGRESS_PORT
 from ..util import AGENT_CA_BUNDLE, AGENT_CA_PATH
 from . import firecracker_vm, image_builder, isolation_probe, netpool, util
 from .bottle import FirecrackerBottle
 from .bottle_plan import FirecrackerBottlePlan
-from ...orchestrator.config_store import resolve_teardown_timeout
-from ...orchestrator.secret_store import ENV_VAR_SECRET_NAME
+from ...orchestrator.store.config_store import resolve_teardown_timeout
+from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
 from .consolidated_launch import (
     launch_consolidated,
     persist_env_var_secret,
-    teardown_consolidated,
+    deprovision_consolidated,
 )
 
 
@@ -86,7 +81,7 @@ def launch(
         except BaseException as exc:  # noqa: W0718 - teardown must continue
             teardown_exc = exc
             warn(f"firecracker teardown failed: {exc!r}")
-        revoke_git_gate_provisioned_keys(bottle_for_revoke, git_gate_dir_for_revoke)
+        GitGate().revoke_provisioned_keys(bottle_for_revoke, git_gate_dir_for_revoke)
         if teardown_exc is not None:
             raise teardown_exc
 
@@ -97,7 +92,7 @@ def launch(
         # Step 2: mint the git-gate dynamic (gitea) deploy keys, if any.
         git_gate_plan = plan.git_gate_plan
         if git_gate_plan.upstreams:
-            git_gate_plan = provision_git_gate_dynamic_keys(
+            git_gate_plan = GitGate().provision_dynamic_keys(
                 plan.manifest.bottle, git_gate_plan, git_gate_state_dir(plan.slug),
             )
 
@@ -113,7 +108,7 @@ def launch(
         # (in memory) for the gateway to inject — the agent never sees them.
         # Attribution is by the VM's guest IP (unspoofable via /31 TAP + nft).
         effective_env = {**os.environ, **plan.agent_provision.provisioned_env}
-        token_values = egress_resolve_token_values(
+        token_values = Egress().resolve_token_values(
             plan.egress_plan.token_env_map, effective_env,
         )
         teardown_timeout = resolve_teardown_timeout()
@@ -124,7 +119,7 @@ def launch(
             tokens=token_values,
         )
         stack.callback(
-            teardown_consolidated, ctx.bottle_id,
+            deprovision_consolidated, ctx.bottle_id,
             orchestrator_url=ctx.orchestrator_url,
             timeout=teardown_timeout,
         )
@@ -142,7 +137,7 @@ def launch(
         )
         # Point the agent's git-gate insteadOf rewrites and supervise MCP URL
         # at the shared gateway (reached at the slot's host TAP IP — the VM
-        # sends there and Docker DNAT routes to the gateway container).
+        # sends there and the nft netpool DNAT routes to the gateway VM).
         git_gate_url = (
             f"http://{slot.host_ip}:{_GIT_HTTP_PORT}" if git_gate_plan.upstreams else ""
         )
@@ -287,7 +282,7 @@ def _agent_guest_env(plan: FirecrackerBottlePlan, host_ip: str) -> dict[str, str
         env["MCP_SUPERVISE_URL"] = plan.agent_supervise_url
     if plan.env_var_secret:
         env[ENV_VAR_SECRET_NAME] = plan.env_var_secret
-    for entry in egress_agent_env_entries(plan.egress_plan):
+    for entry in Egress().agent_env_entries(plan.egress_plan):
         key, _, value = entry.partition("=")
         env[key] = value
     env.update(plan.agent_provision.guest_env)

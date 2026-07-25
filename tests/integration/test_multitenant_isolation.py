@@ -29,8 +29,8 @@ from bot_bottle.backend.docker.consolidated_launch import (
 from bot_bottle.backend.docker.egress import EGRESS_PORT
 from bot_bottle.backend.docker.gateway_net import next_free_ip
 from bot_bottle.orchestrator.client import OrchestratorClient
-from bot_bottle.orchestrator.gateway import GATEWAY_IMAGE, GATEWAY_NAME, GATEWAY_NETWORK
-from bot_bottle.orchestrator.lifecycle import OrchestratorService
+from bot_bottle.gateway import GATEWAY_IMAGE, GATEWAY_NAME, GATEWAY_NETWORK
+from bot_bottle.backend.docker.infra import DockerInfraService
 from tests._backend import skip_unless_backend
 
 # One upstream reachable under two names; reflects the Authorization header so
@@ -85,7 +85,7 @@ class TestMultitenantIsolation(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         # Throwaway root → a clean registry DB, independent of the host's.
-        self.svc = OrchestratorService(host_root=Path(self._tmp.name))
+        self.svc = DockerInfraService(host_root=Path(self._tmp.name))
         self.addCleanup(self._teardown_docker)
         # ensure_running builds the bundle image (slow on a cold cache) and
         # brings up the shared network + gateway + orchestrator.

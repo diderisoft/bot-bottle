@@ -8,14 +8,14 @@ from unittest.mock import MagicMock, Mock, patch
 
 from bot_bottle.backend.docker.consolidated_launch import (
     launch_consolidated,
-    teardown_consolidated,
+    deprovision_consolidated,
 )
 from bot_bottle.egress import EgressPlan, EgressRoute
 from bot_bottle.git_gate import GitGatePlan
 from bot_bottle.orchestrator.client import RegisteredBottle
 
 _MOD = "bot_bottle.backend.docker.consolidated_launch"
-_UTIL = "bot_bottle.backend.consolidated_util"
+_UTIL = "bot_bottle.backend.provision_bottle"
 
 
 def _egress_plan() -> EgressPlan:
@@ -46,8 +46,12 @@ class TestLaunchConsolidated(unittest.TestCase):
     ):
         service = MagicMock()
         service.ensure_running.return_value = "http://orch:8080"
+        # The launch flow reads the gateway's agent-facing address + provisioning
+        # transport off the Gateway service (service.gateway()).
+        gateway = service.gateway.return_value
+        gateway.name = "bot-bottle-gateway"
+        gateway.address.return_value = "172.18.0.2"
         with patch(f"{_MOD}._network_cidr", return_value="172.18.0.0/16"), \
-                patch(f"{_MOD}._container_ip", return_value="172.18.0.2"), \
                 patch(f"{_MOD}._network_container_ips", return_value=list(on_network)), \
                 patch(f"{_MOD}.OrchestratorClient", return_value=client), \
                 patch(f"{_UTIL}.provision_git_gate", provision or Mock()):
@@ -87,7 +91,7 @@ class TestTeardownConsolidated(unittest.TestCase):
         client = Mock()
         with patch(f"{_UTIL}.OrchestratorClient", return_value=client), \
                 patch(f"{_UTIL}.deprovision_git_gate") as deprov:
-            teardown_consolidated("b1", orchestrator_url="http://orch:8080")
+            deprovision_consolidated("b1", orchestrator_url="http://orch:8080")
         client.teardown_bottle.assert_called_once_with("b1")
         deprov.assert_called_once()
 

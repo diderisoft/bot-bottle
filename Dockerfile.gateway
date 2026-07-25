@@ -8,8 +8,8 @@
 # this image's mitmproxy / git / gitleaks payload.
 #
 # Collapses the prior per-daemon images (egress, git-gate,
-# supervise) into one. A small stdlib-Python init supervisor at
-# /app/gateway_init.py spawns all daemons, forwards SIGTERM, and
+# supervise) into one. A small stdlib-Python init supervisor
+# (`bot_bottle.gateway.bootstrap`) spawns all daemons, forwards SIGTERM, and
 # propagates per-daemon stdout/stderr to the container log with a
 # `[name]` prefix. See PRD 0024 for the rationale.
 #
@@ -26,8 +26,9 @@
 #   /git-gate-entrypoint.sh              docker-cp'd at start time
 #   /git-gate/creds/*                    docker-cp'd at start time
 #   /git/*                               bare repos, populated at runtime
-#   /run/supervise/bot-bottle.db         bind-mounted at run time
 #   /home/mitmproxy/.mitmproxy/          mitmproxy CA dir
+# (No bot-bottle.db mount: the data plane reaches the supervise queue over the
+#  control-plane RPC and never opens the DB — PRD 0070 / issue #469.)
 #
 # Exposed ports inside the container:
 #   9099  egress (mitmproxy, agent-facing HTTPS proxy)
@@ -36,12 +37,9 @@
 #   9100  supervise (MCP HTTP)
 
 # Based on `python:3.12-slim` (Debian trixie) rather than the
-# `mitmproxy/mitmproxy` image (Debian bookworm) so the whole stack —
-# gateway here, and the firecracker infra image that builds FROM this —
-# lands on trixie, whose buildah (1.39) can build agent Dockerfiles that
-# use heredocs. mitmproxy is pip-installed to the same effect as the
-# upstream image. (bookworm's buildah is 1.28, which can't parse
-# `RUN ... <<EOF`; see the infra image + PR discussion.)
+# `mitmproxy/mitmproxy` image (Debian bookworm), matching the trixie base the
+# orchestrator image needs for buildah (Dockerfile.orchestrator.fc). mitmproxy
+# is pip-installed to the same effect as the upstream image.
 FROM python:3.12-slim
 
 # Runtime system deps:
@@ -101,8 +99,8 @@ RUN pip install --no-cache-dir /src/
 # WORKDIR here also creates /app so the shim + COPYs below can write into it
 # (nothing created /app before this point).
 WORKDIR /app
-RUN printf 'from bot_bottle.egress_addon import addons\n' > /app/egress_addon.py
-COPY bot_bottle/egress_entrypoint.sh /app/egress-entrypoint.sh
+RUN printf 'from bot_bottle.gateway.egress.addon import addons\n' > /app/egress_addon.py
+COPY bot_bottle/gateway/egress/entrypoint.sh /app/egress-entrypoint.sh
 RUN chmod +x /app/egress-entrypoint.sh
 
 # Pre-create runtime directories the compose renderer + start
@@ -122,4 +120,4 @@ EXPOSE 8888 9099 9418 9420 9100
 
 # PID 1 is the supervisor. It owns signal handling and exit-code
 # propagation; no `exec` chain in the entrypoint itself.
-ENTRYPOINT ["python3", "-m", "bot_bottle.gateway_init"]
+ENTRYPOINT ["python3", "-m", "bot_bottle.gateway.bootstrap"]

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from bot_bottle.egress_addon_core import (
+from bot_bottle.gateway.egress.addon_core import (
     DENY_RESOLVER_ERROR,
     DENY_UNATTRIBUTED,
     DENY_UNPARSEABLE,
@@ -12,7 +12,7 @@ from bot_bottle.egress_addon_core import (
     resolve_client_config,
     resolve_client_context,
 )
-from bot_bottle.policy_resolver import PolicyResolveError
+from bot_bottle.gateway.policy_resolver import PolicyResolveError
 
 
 class _FakeResolver:

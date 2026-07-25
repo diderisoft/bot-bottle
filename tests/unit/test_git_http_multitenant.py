@@ -10,8 +10,8 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from bot_bottle.git_http_backend import resolve_sandbox_root
-from bot_bottle.policy_resolver import PolicyResolveError
+from bot_bottle.gateway.git_gate.http_backend import resolve_sandbox_root
+from bot_bottle.gateway.policy_resolver import PolicyResolveError
 
 _BASE = Path("/git")
 

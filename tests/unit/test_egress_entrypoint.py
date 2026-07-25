@@ -21,7 +21,7 @@ from pathlib import Path
 
 _SCRIPT = (
     Path(__file__).resolve().parent.parent.parent
-    / "bot_bottle" / "egress_entrypoint.sh"
+    / "bot_bottle" / "gateway" / "egress" / "entrypoint.sh"
 )
 
 

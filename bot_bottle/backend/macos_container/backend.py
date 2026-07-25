@@ -11,7 +11,7 @@ from ...agent_provider import AgentProvisionPlan
 from ...egress import EgressPlan
 from ...env import ResolvedEnv
 from ...git_gate import GitGatePlan
-from ...supervise import SupervisePlan
+from ...supervisor.plan import SupervisePlan
 from ...manifest import Manifest
 from .. import ActiveAgent, BottleBackend, BottleImages, BottleSpec
 from . import cleanup as _cleanup
@@ -101,12 +101,12 @@ class MacosContainerBottleBackend(
             yield bottle
 
     def ensure_orchestrator(self) -> str:
-        """Bring up the per-host infra container (control plane + gateway) and
+        """Bring up the per-host pair (orchestrator + gateway containers) and
         return its control-plane URL — the on-demand entry point operator tools
         (`supervise`) call when no control plane is running yet. Mirrors
-        firecracker's infra-VM bring-up."""
+        firecracker's infra bring-up."""
         from .infra import MacosInfraService
-        return MacosInfraService().ensure_running().control_plane_url
+        return MacosInfraService().ensure_running()
 
     def prepare_cleanup(self) -> MacosContainerBottleCleanupPlan:
         return _cleanup.prepare_cleanup()

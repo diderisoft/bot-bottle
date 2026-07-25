@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from bot_bottle.cli.commit import cmd_commit
+from bot_bottle.cli.commands.commit import cmd_commit
 from tests.unit import use_bottle_root
 from bot_bottle import bottle_state
 from bot_bottle.backend.freeze import CommitCancelled
@@ -42,7 +42,7 @@ class TestCmdCommitSlugArg(_FakeHomeMixin, unittest.TestCase):
         slug = "dev-abc12"
         self._write_meta(slug, "docker")
 
-        with patch("bot_bottle.cli.commit.get_freezer") as mock_gf:
+        with patch("bot_bottle.cli.commands.commit.get_freezer") as mock_gf:
             mock_freezer = MagicMock()
             mock_gf.return_value = mock_freezer
             rc = cmd_commit([slug])
@@ -56,7 +56,7 @@ class TestCmdCommitSlugArg(_FakeHomeMixin, unittest.TestCase):
         slug = "dev-abc12"
         self._write_meta(slug, "")
 
-        with patch("bot_bottle.cli.commit.get_freezer") as mock_gf:
+        with patch("bot_bottle.cli.commands.commit.get_freezer") as mock_gf:
             mock_freezer = MagicMock()
             mock_gf.return_value = mock_freezer
             rc = cmd_commit([slug])
@@ -68,7 +68,7 @@ class TestCmdCommitSlugArg(_FakeHomeMixin, unittest.TestCase):
         slug = "dev-abc12"
         self._write_meta(slug, "macos-container")
 
-        with patch("bot_bottle.cli.commit.get_freezer") as mock_gf:
+        with patch("bot_bottle.cli.commands.commit.get_freezer") as mock_gf:
             mock_freezer = MagicMock()
             mock_gf.return_value = mock_freezer
             rc = cmd_commit([slug])
@@ -81,7 +81,7 @@ class TestCmdCommitSlugArg(_FakeHomeMixin, unittest.TestCase):
         slug = "dev-abc12"
         self._write_meta(slug, "firecracker")
 
-        with patch("bot_bottle.cli.commit.get_freezer") as mock_gf:
+        with patch("bot_bottle.cli.commands.commit.get_freezer") as mock_gf:
             mock_freezer = MagicMock()
             mock_gf.return_value = mock_freezer
             rc = cmd_commit([slug])
@@ -93,7 +93,7 @@ class TestCmdCommitSlugArg(_FakeHomeMixin, unittest.TestCase):
         slug = "dev-abc12"
         self._write_meta(slug, "macos-container")
 
-        with patch("bot_bottle.cli.commit.get_freezer") as mock_gf:
+        with patch("bot_bottle.cli.commands.commit.get_freezer") as mock_gf:
             mock_freezer = MagicMock()
             mock_freezer.commit_slug.side_effect = CommitCancelled
             mock_gf.return_value = mock_freezer
@@ -111,9 +111,9 @@ class TestCmdCommitNoActiveBottles(_FakeHomeMixin, unittest.TestCase):
 
     def test_dies_when_no_active_bottles_and_no_slug(self):
         with patch(
-            "bot_bottle.cli.commit.enumerate_active_agents", return_value=[],
+            "bot_bottle.cli.commands.commit.enumerate_active_agents", return_value=[],
         ), patch(
-            "bot_bottle.cli.commit.die", side_effect=SystemExit("die"),
+            "bot_bottle.cli.commands.commit.die", side_effect=SystemExit("die"),
         ) as mock_die:
             with self.assertRaises(SystemExit):
                 cmd_commit([])
@@ -124,9 +124,9 @@ class TestCmdCommitNoActiveBottles(_FakeHomeMixin, unittest.TestCase):
         active = MagicMock()
         active.slug = "dev-abc12"
         with patch(
-            "bot_bottle.cli.commit.enumerate_active_agents", return_value=[active],
+            "bot_bottle.cli.commands.commit.enumerate_active_agents", return_value=[active],
         ), patch(
-            "bot_bottle.cli.commit.tui.filter_select", return_value=None,
+            "bot_bottle.cli.commands.commit.tui.filter_select", return_value=None,
         ):
             rc = cmd_commit([])
 

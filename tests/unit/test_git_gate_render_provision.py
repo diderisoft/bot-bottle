@@ -21,7 +21,7 @@ from bot_bottle.git_gate import (
     git_gate_render_gitconfig,
     revoke_git_gate_provisioned_keys,
 )
-from bot_bottle.manifest_git import ManifestGitEntry, ManifestKeyConfig
+from bot_bottle.manifest.git import ManifestGitEntry, ManifestKeyConfig
 
 
 def _entry(**kw: Any) -> ManifestGitEntry:

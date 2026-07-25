@@ -25,7 +25,7 @@ from bot_bottle.contrib.claude.agent_provider import ClaudeAgentProvider
 from bot_bottle.egress import EgressPlan
 from bot_bottle.git_gate import GitGatePlan
 from bot_bottle.manifest import ManifestIndex
-from bot_bottle.supervise import SupervisePlan
+from bot_bottle.supervisor.plan import SupervisePlan
 
 
 _URL = "http://supervise:9100/"
@@ -51,6 +51,7 @@ def _plan(
     skills: list[str] | None = None,
     agent_provision: AgentProvisionPlan | None = None,
     supervise: bool = False,
+    identity_token: str = "",
 ) -> DockerBottlePlan:
     bottle_json: dict = {"agent_provider": {"template": "claude"}}  # type: ignore
     if supervise:
@@ -97,6 +98,7 @@ def _plan(
         ),
         supervise_plan=supervise_plan,
         use_runsc=False,
+        identity_token=identity_token,
         agent_provision=agent_provision or AgentProvisionPlan(
             template="claude", command="claude", prompt_mode="append_file",
             image="bot-bottle-claude:latest", dockerfile="",
@@ -334,6 +336,15 @@ class TestClaudeSuperviseMcp(unittest.TestCase):
         self.assertIn("supervise", script)
         self.assertIn(_URL, script)
 
+    def test_includes_identity_header_in_normal_registration(self):
+        bottle = _make_bottle()
+        ClaudeAgentProvider().provision_supervise_mcp(
+            _plan(supervise=True, identity_token="tok-abc"), bottle, _URL,
+        )
+        script = bottle.exec.call_args.args[0]
+        self.assertIn("x-bot-bottle-identity", script)
+        self.assertIn("tok-abc", script)
+
     def test_logs_warning_on_failure_but_does_not_raise(self):
         bottle = _make_bottle(
             exec_result=ExecResult(returncode=1, stdout="", stderr="boom"),
@@ -341,6 +352,32 @@ class TestClaudeSuperviseMcp(unittest.TestCase):
         ClaudeAgentProvider().provision_supervise_mcp(
             _plan(supervise=True), bottle, _URL,
         )
+
+    def test_fallback_warning_includes_header_but_not_raw_token(self):
+        # The recovery hint must show the header is required, but must NOT
+        # render the per-bottle identity token into the host log (#476 review).
+        bottle = _make_bottle(
+            exec_result=ExecResult(returncode=1, stdout="", stderr="boom"),
+        )
+        with patch("bot_bottle.contrib.claude.agent_provider.warn") as warn_mock:
+            ClaudeAgentProvider().provision_supervise_mcp(
+                _plan(supervise=True, identity_token="tok-xyz"), bottle, _URL,
+            )
+        msg = warn_mock.call_args.args[0]
+        self.assertIn("x-bot-bottle-identity", msg)
+        self.assertNotIn("tok-xyz", msg)
+        self.assertIn("<bottle-identity-token>", msg)
+
+    def test_fallback_warning_omits_header_when_no_token(self):
+        bottle = _make_bottle(
+            exec_result=ExecResult(returncode=1, stdout="", stderr="boom"),
+        )
+        with patch("bot_bottle.contrib.claude.agent_provider.warn") as warn_mock:
+            ClaudeAgentProvider().provision_supervise_mcp(
+                _plan(supervise=True, identity_token=""), bottle, _URL,
+            )
+        msg = warn_mock.call_args.args[0]
+        self.assertNotIn("x-bot-bottle-identity", msg)
 
 
 class TestClaudeHeadlessPrompt(unittest.TestCase):

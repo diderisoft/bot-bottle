@@ -3,6 +3,8 @@
 The launch-host half — version hashing and download/verify/decompress — is
 what keeps a docker-free host from booting a stale or corrupted rootfs, so the
 checksum + fail-closed paths are locked here. Network is mocked; no Docker.
+There are two per-plane artifacts now; these exercise one role (orchestrator) —
+the pull/verify logic is role-agnostic, keyed only by the package name.
 """
 
 from __future__ import annotations
@@ -20,6 +22,8 @@ from unittest import mock
 
 from bot_bottle.backend.firecracker import infra_artifact as ia
 from bot_bottle.log import Die
+
+_ROLE = "orchestrator"
 
 
 def _gz(data: bytes) -> bytes:
@@ -66,29 +70,36 @@ class _CacheMixin(unittest.TestCase):
         if sha_text is None:
             sha_text = f"{hashlib.sha256(gz_bytes).hexdigest()}  rootfs.ext4.gz\n"
         net = _FakeNet({
-            ia.artifact_url(version, "rootfs.ext4.gz"): gz_bytes,
-            ia.artifact_url(version, "rootfs.ext4.gz.sha256"): sha_text.encode(),
+            ia.artifact_url(version, "rootfs.ext4.gz", role=_ROLE): gz_bytes,
+            ia.artifact_url(version, "rootfs.ext4.gz.sha256", role=_ROLE): sha_text.encode(),
         })
         return mock.patch.object(ia.urllib.request, "urlopen", net.urlopen), net
 
 
 class TestVersion(unittest.TestCase):
     def test_deterministic_16_hex(self) -> None:
-        v = ia.infra_artifact_version("#!/bin/sh\ntrue\n")
-        self.assertEqual(v, ia.infra_artifact_version("#!/bin/sh\ntrue\n"))
+        v = ia.infra_artifact_version("#!/bin/sh\ntrue\n", _ROLE)
+        self.assertEqual(v, ia.infra_artifact_version("#!/bin/sh\ntrue\n", _ROLE))
         self.assertEqual(16, len(v))
         int(v, 16)  # hex
 
     def test_init_change_bumps_version(self) -> None:
         self.assertNotEqual(
-            ia.infra_artifact_version("a"), ia.infra_artifact_version("b"))
+            ia.infra_artifact_version("a", _ROLE), ia.infra_artifact_version("b", _ROLE))
+
+    def test_role_changes_version(self) -> None:
+        # The same init under a different role hashes differently (role is folded
+        # in, and each role hashes its own Dockerfiles).
+        self.assertNotEqual(
+            ia.infra_artifact_version("init", "orchestrator"),
+            ia.infra_artifact_version("init", "gateway"))
 
 
 class TestVersionInputs(unittest.TestCase):
     """The hash must cover *every* file baked into the rootfs, not just `*.py`
-    (`COPY bot_bottle` is wholesale) — else a non-Python change (e.g. the egress
-    entrypoint shell script) leaves the version unchanged and a launch host
-    boots a rootfs whose code differs from its checkout."""
+    (the package is baked in wholesale) — else a non-Python change (e.g. the
+    egress entrypoint shell script) leaves the version unchanged and a launch
+    host boots a rootfs whose code differs from its checkout."""
 
     def _fake_repo(self, root: Path) -> None:
         pkg = root / "bot_bottle"
@@ -96,7 +107,8 @@ class TestVersionInputs(unittest.TestCase):
         (pkg / "app.py").write_text("print('hi')\n")
         (pkg / "egress_entrypoint.sh").write_text("#!/bin/sh\nexec mitmdump\n")
         (pkg / "netpool.defaults.env").write_text("FOO=1\n")
-        for name in ("Dockerfile.orchestrator", "Dockerfile.gateway", "Dockerfile.infra", "Dockerfile.infra.fc"):
+        for name in ("Dockerfile.orchestrator", "Dockerfile.orchestrator.fc",
+                     "Dockerfile.gateway"):
             (root / name).write_text(f"FROM scratch  # {name}\n")
         (root / "pyproject.toml").write_text("[project]\nname = 'bot-bottle'\n")
 
@@ -104,10 +116,10 @@ class TestVersionInputs(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             self._fake_repo(root)
-            before = ia.infra_artifact_version("init", repo_root=root)
+            before = ia.infra_artifact_version("init", _ROLE, repo_root=root)
             (root / "pyproject.toml").write_text(
                 "[project]\nname = 'bot-bottle'\ndependencies = ['httpx']\n")
-            after = ia.infra_artifact_version("init", repo_root=root)
+            after = ia.infra_artifact_version("init", _ROLE, repo_root=root)
         self.assertNotEqual(before, after)
 
     def test_dropbear_change_bumps_version(self) -> None:
@@ -119,85 +131,92 @@ class TestVersionInputs(unittest.TestCase):
             with mock.patch.dict(os.environ, {
                 "BOT_BOTTLE_FC_DROPBEAR": str(dropbear),
             }):
-                before = ia.infra_artifact_version("init", repo_root=root)
+                before = ia.infra_artifact_version("init", _ROLE, repo_root=root)
                 dropbear.write_bytes(b"dropbear-v2")
-                after = ia.infra_artifact_version("init", repo_root=root)
+                after = ia.infra_artifact_version("init", _ROLE, repo_root=root)
         self.assertNotEqual(before, after)
 
     def test_non_python_file_change_bumps_version(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             self._fake_repo(root)
-            before = ia.infra_artifact_version("init", repo_root=root)
+            before = ia.infra_artifact_version("init", _ROLE, repo_root=root)
             (root / "bot_bottle" / "egress_entrypoint.sh").write_text(
                 "#!/bin/sh\nexec mitmdump --different\n")
-            after = ia.infra_artifact_version("init", repo_root=root)
+            after = ia.infra_artifact_version("init", _ROLE, repo_root=root)
         self.assertNotEqual(before, after)
 
     def test_pyc_and_pycache_ignored(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             self._fake_repo(root)
-            before = ia.infra_artifact_version("init", repo_root=root)
+            before = ia.infra_artifact_version("init", _ROLE, repo_root=root)
             cache = root / "bot_bottle" / "__pycache__"
             cache.mkdir()
             (cache / "app.cpython-312.pyc").write_bytes(b"\x00bytecode")
             (root / "bot_bottle" / "app.pyc").write_bytes(b"\x00bytecode")
-            after = ia.infra_artifact_version("init", repo_root=root)
+            after = ia.infra_artifact_version("init", _ROLE, repo_root=root)
         self.assertEqual(before, after)
 
 
 class TestEnsureArtifact(_CacheMixin):
+    def _candidate(self, root: Path, version: str, gz: bytes, sha_text: str | None = None) -> Path:
+        """Stage a candidate bundle for `_ROLE` under root/<role>/."""
+        role_dir = root / _ROLE
+        role_dir.mkdir(parents=True, exist_ok=True)
+        (role_dir / "version.txt").write_text(version + "\n")
+        (role_dir / "rootfs.ext4.gz").write_bytes(gz)
+        if sha_text is None:
+            sha_text = f"{hashlib.sha256(gz).hexdigest()}  rootfs.ext4.gz\n"
+        (role_dir / "rootfs.ext4.gz.sha256").write_text(sha_text)
+        return role_dir
+
     def test_uses_verified_ci_candidate_without_network(self) -> None:
         version = "deadbeef00000000"
         gz = _gz(b"candidate ext4")
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
-            (root / "version.txt").write_text(version + "\n")
-            (root / "rootfs.ext4.gz").write_bytes(gz)
-            digest = hashlib.sha256(gz).hexdigest()
-            (root / "rootfs.ext4.gz.sha256").write_text(
-                f"{digest}  rootfs.ext4.gz\n")
+            role_dir = self._candidate(root, version, gz)
             with mock.patch.dict(os.environ, {
                 "BOT_BOTTLE_INFRA_ARTIFACT_DIR": str(root),
             }), mock.patch.object(ia.urllib.request, "urlopen") as net:
-                path = ia.ensure_artifact_gz(version)
-            self.assertEqual(root / "rootfs.ext4.gz", path)
+                path = ia.ensure_artifact_gz(version, role=_ROLE)
+            self.assertEqual(role_dir / "rootfs.ext4.gz", path)
             net.assert_not_called()
 
     def test_rejects_candidate_for_another_version(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
-            (root / "version.txt").write_text("wrong\n")
+            (root / _ROLE).mkdir()
+            (root / _ROLE / "version.txt").write_text("wrong\n")
             with mock.patch.dict(os.environ, {
                 "BOT_BOTTLE_INFRA_ARTIFACT_DIR": str(root),
             }):
                 with self.assertRaises(Die) as ctx:
-                    ia.ensure_artifact_gz("expected")
+                    ia.ensure_artifact_gz("expected", role=_ROLE)
             self.assertIn("version mismatch", str(ctx.exception.message))
 
     def test_rejects_incomplete_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
-            (root / "version.txt").write_text("v1\n")
+            (root / _ROLE).mkdir()
+            (root / _ROLE / "version.txt").write_text("v1\n")
             with mock.patch.dict(os.environ, {
                 "BOT_BOTTLE_INFRA_ARTIFACT_DIR": str(root),
             }):
                 with self.assertRaises(Die) as ctx:
-                    ia.ensure_artifact_gz("v1")
+                    ia.ensure_artifact_gz("v1", role=_ROLE)
             self.assertIn("incomplete", str(ctx.exception.message))
 
     def test_rejects_candidate_checksum_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
-            (root / "version.txt").write_text("v1\n")
-            (root / "rootfs.ext4.gz").write_bytes(b"bad")
-            (root / "rootfs.ext4.gz.sha256").write_text("0" * 64 + "  rootfs.ext4.gz\n")
+            self._candidate(root, "v1", b"bad", sha_text="0" * 64 + "  rootfs.ext4.gz\n")
             with mock.patch.dict(os.environ, {
                 "BOT_BOTTLE_INFRA_ARTIFACT_DIR": str(root),
             }):
                 with self.assertRaises(Die) as ctx:
-                    ia.ensure_artifact_gz("v1")
+                    ia.ensure_artifact_gz("v1", role=_ROLE)
             self.assertIn("checksum mismatch", str(ctx.exception.message))
 
     def test_downloads_verifies_and_caches(self) -> None:
@@ -205,12 +224,12 @@ class TestEnsureArtifact(_CacheMixin):
         gz = _gz(b"fake ext4 bytes")
         patcher, net = self._serve(version, gz)
         with patcher:
-            path = ia.ensure_artifact_gz(version)
+            path = ia.ensure_artifact_gz(version, role=_ROLE)
             self.assertTrue(path.is_file())
             self.assertEqual(gz, path.read_bytes())
             first_calls = len(net.calls)
             # Second call is a cache hit — no further network.
-            ia.ensure_artifact_gz(version)
+            ia.ensure_artifact_gz(version, role=_ROLE)
             self.assertEqual(first_calls, len(net.calls))
 
     def test_checksum_mismatch_fails_closed(self) -> None:
@@ -219,17 +238,17 @@ class TestEnsureArtifact(_CacheMixin):
         patcher, _ = self._serve(version, gz, sha_text="0" * 64 + "  rootfs.ext4.gz\n")
         with patcher:
             with self.assertRaises(Die) as ctx:
-                ia.ensure_artifact_gz(version)
+                ia.ensure_artifact_gz(version, role=_ROLE)
         self.assertIn("checksum mismatch", str(ctx.exception.message))
         # nothing left cached to accidentally boot
-        self.assertFalse((ia._cache_root(version) / "rootfs.ext4.gz").exists())
+        self.assertFalse((ia._cache_root(version, _ROLE) / "rootfs.ext4.gz").exists())
 
     def test_missing_artifact_points_at_publish(self) -> None:
         version = "0000000000000000"
         net = _FakeNet({})  # everything 404s
         with mock.patch.object(ia.urllib.request, "urlopen", net.urlopen):
             with self.assertRaises(Die) as ctx:
-                ia.ensure_artifact_gz(version)
+                ia.ensure_artifact_gz(version, role=_ROLE)
         self.assertIn("publish_infra", str(ctx.exception.message))
 
     def test_materialize_gunzips_to_dest(self) -> None:
@@ -238,7 +257,7 @@ class TestEnsureArtifact(_CacheMixin):
         patcher, _ = self._serve(version, _gz(raw))
         with patcher, tempfile.TemporaryDirectory() as d:
             dest = Path(d) / "rootfs.ext4"
-            ia.materialize_ext4(version, dest)
+            ia.materialize_ext4(version, dest, role=_ROLE)
             self.assertEqual(raw, dest.read_bytes())
 
 
@@ -248,10 +267,10 @@ class TestConfig(unittest.TestCase):
             "BOT_BOTTLE_INFRA_ARTIFACT_BASE": "https://mirror.example/",
             "BOT_BOTTLE_INFRA_ARTIFACT_OWNER": "acme",
         }):
-            url = ia.artifact_url("v1", "rootfs.ext4.gz")
+            url = ia.artifact_url("v1", "rootfs.ext4.gz", role="gateway")
         self.assertEqual(
             "https://mirror.example/api/packages/acme/generic/"
-            "bot-bottle-firecracker-infra/v1/rootfs.ext4.gz", url)
+            "bot-bottle-firecracker-gateway/v1/rootfs.ext4.gz", url)
 
     def test_local_build_flag(self) -> None:
         with mock.patch.dict(os.environ, {"BOT_BOTTLE_INFRA_BUILD": "local"}):

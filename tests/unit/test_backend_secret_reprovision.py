@@ -82,8 +82,10 @@ class TestMacosReprovision(unittest.TestCase):
 
 class TestDockerReprovision(unittest.TestCase):
     def test_maps_network_containers_to_keys(self) -> None:
+        # The gateway container (excluded — it's on the data network but isn't
+        # an agent) + one agent + a malformed line.
         inspect = _proc(stdout=(
-            "bot-bottle-infra 172.18.0.2/16\n"
+            "bot-bottle-orch-gateway 172.18.0.2/16\n"
             "bot-bottle-a 172.18.0.3/16\n"
             "malformed\n"
         ))

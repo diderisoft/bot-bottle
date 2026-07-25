@@ -1,0 +1,220 @@
+"""The docker orchestrator (control plane) as a single, fixed-name container
+(PRD 0070).
+
+`DockerOrchestrator` is the docker implementation of the backend-neutral
+`Orchestrator` service. The lean control-plane container joins the `--internal`
+control network only (agents are never on it, so they have no L3 route to it)
+plus a host-loopback publish for the CLI. It is the sole opener of
+`bot-bottle.db` and the sole holder of the signing key (#469).
+"""
+
+from __future__ import annotations
+
+import os
+import time
+from pathlib import Path
+
+from ... import log
+from .util import run_docker
+from ...paths import (
+    ORCHESTRATOR_TOKEN_ENV,
+    bot_bottle_root,
+    host_orchestrator_token,
+)
+from ...gateway import GatewayError
+from ...orchestrator.lifecycle import (
+    DEFAULT_PORT,
+    DEFAULT_STARTUP_TIMEOUT_SECONDS,
+    Orchestrator,
+    OrchestratorStartError,
+    source_hash,
+)
+
+# The control plane's own container + the dedicated `--internal` control network
+# the gateway reaches it over. The orchestrator + gateway join it, agents never
+# do, so agents have no route to the control plane (PRD 0070 "Separating the
+# planes"). Same name across docker + macOS.
+ORCHESTRATOR_NAME = "bot-bottle-orchestrator"
+ORCHESTRATOR_LABEL = "bot-bottle-orchestrator=1"
+ORCHESTRATOR_NETWORK = "bot-bottle-orchestrator"
+ORCHESTRATOR_IMAGE = os.environ.get(
+    "BOT_BOTTLE_ORCHESTRATOR_IMAGE", "bot-bottle-orchestrator:latest"
+)
+ORCHESTRATOR_DOCKERFILE = "Dockerfile.orchestrator"
+# Baked as a container label so `ensure_running` can detect whether the running
+# orchestrator is executing the current bind-mounted source.
+ORCHESTRATOR_SOURCE_HASH_LABEL = "bot-bottle-orchestrator-source-hash"
+
+# The bind-mount path for the live control-plane source inside the container.
+# PYTHONPATH points here so a code change takes effect on the next launch
+# without an image rebuild.
+_SRC_IN_CONTAINER = "/bot-bottle-src"
+# Bot-bottle host-root bind-mount (DB + state) inside the orchestrator. The
+# control plane opens bot-bottle.db under here (via BOT_BOTTLE_ROOT ->
+# host_db_path()); it is the ONLY container with a handle on it (issue #469).
+_ROOT_IN_CONTAINER = "/bot-bottle-root"
+
+_HEALTH_POLL_SECONDS = 0.25
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+class DockerOrchestrator(Orchestrator):
+    """The control plane as a single fixed-name container. `ensure_built` builds
+    it from `Dockerfile.orchestrator`; `ensure_running` starts it on the control
+    network + host loopback and blocks until `/health` answers."""
+
+    def __init__(
+        self,
+        image_ref: str = ORCHESTRATOR_IMAGE,
+        *,
+        name: str = ORCHESTRATOR_NAME,
+        label: str = ORCHESTRATOR_LABEL,
+        port: int = DEFAULT_PORT,
+        control_network: str = ORCHESTRATOR_NETWORK,
+        repo_root: Path = _REPO_ROOT,
+        host_root: Path | None = None,
+        dockerfile: str | None = ORCHESTRATOR_DOCKERFILE,
+    ) -> None:
+        self.image_ref = image_ref
+        self.name = name
+        self.label = label
+        self.port = port
+        self.control_network = control_network
+        self._repo_root = repo_root
+        self._host_root = host_root or bot_bottle_root()
+        self._dockerfile = dockerfile
+
+    def url(self) -> str:
+        """Host-side control-plane URL — the orchestrator's published loopback,
+        which the CLI reaches."""
+        return f"http://127.0.0.1:{self.port}"
+
+    def gateway_url(self) -> str:
+        """The URL the gateway's data plane resolves policy against — the
+        orchestrator container by name on the control network (docker DNS,
+        container↔container, no host firewall)."""
+        return f"http://{self.name}:{DEFAULT_PORT}"
+
+    def ensure_built(self) -> None:
+        """Build the control-plane image from its Dockerfile, cache-aware (a
+        no-op when nothing changed). No-op when no dockerfile is configured (a
+        pre-pulled image). BOT_BOTTLE_NO_CACHE forces a full rebuild."""
+        if self._dockerfile is None:
+            return
+        argv = ["docker", "build", "-t", self.image_ref,
+                "-f", str(self._repo_root / self._dockerfile),
+                str(self._repo_root)]
+        if os.environ.get("BOT_BOTTLE_NO_CACHE"):
+            argv.insert(2, "--no-cache")
+        proc = run_docker(argv)
+        if proc.returncode != 0:
+            raise GatewayError(
+                f"{self._dockerfile} build failed: {proc.stderr.strip()}")
+
+    def is_running(self) -> bool:
+        proc = run_docker([
+            "docker", "ps", "--filter", f"name=^/{self.name}$", "--format", "{{.Names}}",
+        ])
+        return self.name in proc.stdout.split()
+
+    def _source_current(self, current_hash: str) -> bool:
+        """True iff the running orchestrator was started from the current
+        bind-mounted source."""
+        if not self.is_running():
+            return False
+        proc = run_docker([
+            "docker", "inspect", "--format",
+            "{{ index .Config.Labels \"" + ORCHESTRATOR_SOURCE_HASH_LABEL + "\" }}",
+            self.name,
+        ])
+        if proc.returncode != 0:
+            return True  # can't compare → don't churn a working container
+        return proc.stdout.strip() == current_hash
+
+    def _ensure_control_network(self) -> None:
+        if run_docker(["docker", "network", "inspect", self.control_network]).returncode == 0:
+            return
+        proc = run_docker(["docker", "network", "create", "--internal", self.control_network])
+        if proc.returncode != 0 and "already exists" not in proc.stderr:
+            raise GatewayError(
+                f"control network {self.control_network} failed to create: "
+                f"{proc.stderr.strip()}"
+            )
+
+    def ensure_running(
+        self, *, startup_timeout: float = DEFAULT_STARTUP_TIMEOUT_SECONDS,
+    ) -> None:
+        """Ensure the control-plane container is up on current source; block
+        until healthy. Idempotent — a healthy orchestrator on current source is
+        left untouched (its in-memory egress tokens survive). Raises
+        `OrchestratorStartError` on startup timeout."""
+        current_hash = source_hash(self._repo_root)
+        if self.is_healthy() and self._source_current(current_hash):
+            return
+        log.info("starting orchestrator container", context={"name": self.name})
+        self._run_container(current_hash)
+        deadline = time.monotonic() + startup_timeout
+        while time.monotonic() < deadline:
+            if self.is_healthy():
+                log.info("orchestrator healthy", context={"url": self.url()})
+                return
+            time.sleep(_HEALTH_POLL_SECONDS)
+        raise OrchestratorStartError(
+            f"orchestrator at {self.url()} did not become healthy "
+            f"within {startup_timeout:g}s"
+        )
+
+    def _run_container(self, current_hash: str) -> None:
+        """Start the lean control-plane container on the control network only,
+        published to host loopback for the CLI. Idempotent (clears a stale
+        fixed-name container first)."""
+        self._ensure_control_network()
+        run_docker(["docker", "rm", "--force", self.name])
+        _signing_key = host_orchestrator_token()
+        proc = run_docker([
+            "docker", "run", "--detach",
+            "--name", self.name,
+            "--label", self.label,
+            "--label", f"{ORCHESTRATOR_SOURCE_HASH_LABEL}={current_hash}",
+            # Control network only — agents are never on it, so they have no
+            # route to the control plane (the L3 block, not just the JWT).
+            "--network", self.control_network,
+            # Host CLI reaches the control plane here (loopback only). The
+            # orchestrator listens on the fixed DEFAULT_PORT inside the
+            # container; self.port is the host-side published port.
+            "--publish", f"127.0.0.1:{self.port}:{DEFAULT_PORT}",
+            # Live control-plane source (code changes without an image rebuild).
+            "--volume", f"{self._repo_root}:{_SRC_IN_CONTAINER}:ro",
+            "--env", f"PYTHONPATH={_SRC_IN_CONTAINER}",
+            # Orchestrator registry DB on the host (sole writer: control plane).
+            "--volume", f"{self._host_root}:{_ROOT_IN_CONTAINER}",
+            "--env", f"BOT_BOTTLE_ROOT={_ROOT_IN_CONTAINER}",
+            # The signing key — held ONLY by the orchestrator (it verifies
+            # tokens); the gateway gets the pre-minted `gateway` JWT, never the
+            # key (issue #469). Bare `--env NAME` keeps the value off argv.
+            "--env", ORCHESTRATOR_TOKEN_ENV,
+            self.image_ref,
+            # Dockerfile.orchestrator ENTRYPOINT is `python3 -m bot_bottle.orchestrator`;
+            # these are its args.
+            "--host", "0.0.0.0", "--port", str(DEFAULT_PORT), "--broker", "stub",
+        ], env={**os.environ, ORCHESTRATOR_TOKEN_ENV: _signing_key})
+        if proc.returncode != 0:
+            raise OrchestratorStartError(
+                f"orchestrator container failed to start: {proc.stderr.strip()}"
+            )
+
+    def stop(self) -> None:
+        """Remove the control-plane container (idempotent)."""
+        run_docker(["docker", "rm", "--force", self.name])
+
+
+__all__ = [
+    "DockerOrchestrator",
+    "ORCHESTRATOR_NAME",
+    "ORCHESTRATOR_LABEL",
+    "ORCHESTRATOR_NETWORK",
+    "ORCHESTRATOR_IMAGE",
+    "ORCHESTRATOR_DOCKERFILE",
+    "ORCHESTRATOR_SOURCE_HASH_LABEL",
+]

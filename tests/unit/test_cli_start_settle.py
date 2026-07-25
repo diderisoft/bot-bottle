@@ -10,7 +10,7 @@ from pathlib import Path
 
 from tests.unit import use_bottle_root
 from bot_bottle import bottle_state
-from bot_bottle.cli import start as start_mod
+from bot_bottle.cli.commands import start as start_mod
 
 
 class _FakeHomeMixin:

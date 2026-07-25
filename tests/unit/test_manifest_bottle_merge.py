@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 
 from bot_bottle.manifest import ManifestBottle, ManifestError, ManifestIndex
-from bot_bottle.manifest_extends import merge_bottles_runtime
+from bot_bottle.manifest.extends import merge_bottles_runtime
 
 
 def _index(bottles: dict[str, object], agents: dict[str, object]) -> ManifestIndex:
@@ -44,7 +44,7 @@ class TestMergeBottlesRuntime(unittest.TestCase):
         self.assertEqual("y", result.env["ONLY_OVERRIDE"])
 
     def test_egress_routes_concatenated(self):
-        from bot_bottle.manifest_egress import ManifestEgressConfig, ManifestEgressRoute
+        from bot_bottle.manifest.egress import ManifestEgressConfig, ManifestEgressRoute
         r1 = ManifestEgressRoute(Host="api.a.com")
         r2 = ManifestEgressRoute(Host="api.b.com")
         base = ManifestBottle(egress=ManifestEgressConfig(routes=(r1,)))

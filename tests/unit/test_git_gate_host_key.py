@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from bot_bottle.git_gate_host_key import (
+from bot_bottle.git_gate.host_key import (
     add_host_key_to_frontmatter,
     find_and_update_bottle_file,
     find_repo_bottle_file,
@@ -358,7 +358,7 @@ git-gate:
         with tempfile.TemporaryDirectory() as d:
             path = self._write_bottle(d, "dev", content)
             with patch(
-                "bot_bottle.git_gate_host_key.find_repo_bottle_file",
+                "bot_bottle.git_gate.host_key.find_repo_bottle_file",
                 return_value=path,
             ), patch.object(Path, "read_text", side_effect=OSError("Permission denied")):
                 result = find_and_update_bottle_file(Path(d), "myrepo", "ssh-ed25519 AAAA")
@@ -382,7 +382,7 @@ git-gate:
         with tempfile.TemporaryDirectory() as d:
             path = self._write_bottle(d, "dev", content)
             with patch(
-                "bot_bottle.git_gate_host_key.add_host_key_to_frontmatter",
+                "bot_bottle.git_gate.host_key.add_host_key_to_frontmatter",
                 return_value=content,  # no change
             ):
                 result = find_and_update_bottle_file(Path(d), "myrepo", "ssh-ed25519 AAAA")
@@ -467,10 +467,10 @@ git-gate:
 
             mock_prompt = MagicMock(side_effect=["y", "n"])  # confirm key, skip save
             with patch(
-                "bot_bottle.git_gate_host_key.fetch_host_key",
+                "bot_bottle.git_gate.host_key.fetch_host_key",
                 return_value="ssh-ed25519 FETCHED",
             ), patch(
-                "bot_bottle.git_gate_host_key.prompt_tty", mock_prompt,
+                "bot_bottle.git_gate.host_key.prompt_tty", mock_prompt,
             ), patch("sys.stderr"):
                 preflight_host_keys(manifest, headless=False, home_md=Path(home))
 
@@ -520,10 +520,10 @@ class TestPreflightHostKeys(unittest.TestCase):
         manifest = _manifest_with_git()
 
         with patch(
-            "bot_bottle.git_gate_host_key.fetch_host_key",
+            "bot_bottle.git_gate.host_key.fetch_host_key",
             return_value="ssh-ed25519 FETCHED",
         ), patch(
-            "bot_bottle.git_gate_host_key.prompt_tty",
+            "bot_bottle.git_gate.host_key.prompt_tty",
             side_effect=["y", "n"],  # confirm key, don't persist
         ), patch("sys.stderr"):
             result = preflight_host_keys(manifest, headless=False, home_md=None)
@@ -534,10 +534,10 @@ class TestPreflightHostKeys(unittest.TestCase):
         manifest = _manifest_with_git()
 
         with patch(
-            "bot_bottle.git_gate_host_key.fetch_host_key",
+            "bot_bottle.git_gate.host_key.fetch_host_key",
             return_value="ssh-ed25519 FETCHED",
         ), patch(
-            "bot_bottle.git_gate_host_key.prompt_tty",
+            "bot_bottle.git_gate.host_key.prompt_tty",
             return_value="n",
         ), patch("sys.stderr"), self.assertRaises(SystemExit):
             preflight_host_keys(manifest, headless=False, home_md=None)
@@ -557,10 +557,10 @@ class TestPreflightHostKeys(unittest.TestCase):
             )
 
             with patch(
-                "bot_bottle.git_gate_host_key.fetch_host_key",
+                "bot_bottle.git_gate.host_key.fetch_host_key",
                 return_value="ssh-ed25519 FETCHED",
             ), patch(
-                "bot_bottle.git_gate_host_key.prompt_tty",
+                "bot_bottle.git_gate.host_key.prompt_tty",
                 side_effect=["y", "y"],  # confirm key, yes persist
             ), patch("sys.stderr"):
                 result = preflight_host_keys(
@@ -586,10 +586,10 @@ class TestPreflightHostKeys(unittest.TestCase):
             )
 
             with patch(
-                "bot_bottle.git_gate_host_key.fetch_host_key",
+                "bot_bottle.git_gate.host_key.fetch_host_key",
                 return_value="ssh-ed25519 FETCHED",
             ), patch(
-                "bot_bottle.git_gate_host_key.prompt_tty",
+                "bot_bottle.git_gate.host_key.prompt_tty",
                 side_effect=["y", "n"],  # confirm key, no persist
             ), patch("sys.stderr"):
                 result = preflight_host_keys(
@@ -604,7 +604,7 @@ class TestPreflightHostKeys(unittest.TestCase):
         manifest = _manifest_with_git()
 
         with patch(
-            "bot_bottle.git_gate_host_key.fetch_host_key",
+            "bot_bottle.git_gate.host_key.fetch_host_key",
             side_effect=RuntimeError("connection refused"),
         ), patch("sys.stderr"), self.assertRaises(SystemExit):
             preflight_host_keys(manifest, headless=False, home_md=None)
@@ -620,10 +620,10 @@ class TestPreflightHostKeys(unittest.TestCase):
             import io
             buf = io.StringIO()
             with patch(
-                "bot_bottle.git_gate_host_key.fetch_host_key",
+                "bot_bottle.git_gate.host_key.fetch_host_key",
                 return_value="ssh-ed25519 FETCHED",
             ), patch(
-                "bot_bottle.git_gate_host_key.prompt_tty",
+                "bot_bottle.git_gate.host_key.prompt_tty",
                 side_effect=["y"],  # confirm key only; no save prompt when no file found
             ), patch("sys.stderr", buf):
                 result = preflight_host_keys(
@@ -651,13 +651,13 @@ class TestPreflightHostKeys(unittest.TestCase):
             import io
             buf = io.StringIO()
             with patch(
-                "bot_bottle.git_gate_host_key.fetch_host_key",
+                "bot_bottle.git_gate.host_key.fetch_host_key",
                 return_value="ssh-ed25519 FETCHED",
             ), patch(
-                "bot_bottle.git_gate_host_key.prompt_tty",
+                "bot_bottle.git_gate.host_key.prompt_tty",
                 side_effect=["y", "y"],  # confirm key, yes persist
             ), patch(
-                "bot_bottle.git_gate_host_key.find_and_update_bottle_file",
+                "bot_bottle.git_gate.host_key.find_and_update_bottle_file",
                 return_value=False,
             ), patch("sys.stderr", buf):
                 result = preflight_host_keys(

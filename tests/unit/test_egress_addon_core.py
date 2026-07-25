@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from bot_bottle.egress_addon_core import (
+from bot_bottle.gateway.egress.addon_core import (
     LOG_BLOCKS,
     LOG_FULL,
     LOG_OFF,
@@ -1377,15 +1377,15 @@ class TestScanOutboundEnhanced(unittest.TestCase):
 
 class TestOutboundDetectorNames(unittest.TestCase):
     def test_entropy_in_outbound_detector_names(self):
-        from bot_bottle.egress_addon_core import OUTBOUND_DETECTOR_NAMES
+        from bot_bottle.gateway.egress.addon_core import OUTBOUND_DETECTOR_NAMES
         self.assertIn("entropy", OUTBOUND_DETECTOR_NAMES)
 
     def test_known_secrets_in_outbound_detector_names(self):
-        from bot_bottle.egress_addon_core import OUTBOUND_DETECTOR_NAMES
+        from bot_bottle.gateway.egress.addon_core import OUTBOUND_DETECTOR_NAMES
         self.assertIn("known_secrets", OUTBOUND_DETECTOR_NAMES)
 
     def test_token_patterns_in_outbound_detector_names(self):
-        from bot_bottle.egress_addon_core import OUTBOUND_DETECTOR_NAMES
+        from bot_bottle.gateway.egress.addon_core import OUTBOUND_DETECTOR_NAMES
         self.assertIn("token_patterns", OUTBOUND_DETECTOR_NAMES)
 
 

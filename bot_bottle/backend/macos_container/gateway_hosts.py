@@ -1,7 +1,7 @@
 """Stable gateway name for macOS agents, via each bottle's `/etc/hosts`.
 
 The shared gateway's address is assigned by vmnet's DHCP and changes whenever
-the infra container is recreated — a source-hash bump, an image upgrade, a
+the gateway container is recreated — a source-hash bump, an image upgrade, a
 crash. Every agent-facing URL (egress proxy, git-http, supervise) embeds that
 address, and the proxy URL reaches the agent as **process environment** at
 `container exec` time. A running process's `environ` cannot be rewritten from

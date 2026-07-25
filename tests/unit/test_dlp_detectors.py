@@ -7,7 +7,7 @@ import base64
 import gzip
 import unittest
 
-from bot_bottle.dlp_detectors import (
+from bot_bottle.gateway.egress.dlp_detectors import (
     ENTROPY_BLOCK_THRESHOLD,
     PARTIAL_MATCH_MIN_LEN,
     REDACT,
@@ -465,17 +465,17 @@ class TestMatchedAndSafeTokens(unittest.TestCase):
 
 class TestStripCrlf(unittest.TestCase):
     def test_removes_url_encoded_crlf(self):
-        from bot_bottle.dlp_detectors import strip_crlf
+        from bot_bottle.gateway.egress.dlp_detectors import strip_crlf
         out = strip_crlf("next=%0d%0aX-Injected: evil")
         self.assertNotRegex(out, r"%0[dD]%0[aA]")
 
     def test_removes_literal_header_injection(self):
-        from bot_bottle.dlp_detectors import strip_crlf
+        from bot_bottle.gateway.egress.dlp_detectors import strip_crlf
         out = strip_crlf("value\r\nX-Injected: evil")
         self.assertIsNone(scan_crlf_injection(out))
 
     def test_leaves_clean_text_unchanged(self):
-        from bot_bottle.dlp_detectors import strip_crlf
+        from bot_bottle.gateway.egress.dlp_detectors import strip_crlf
         self.assertEqual("/api/v1/data?q=hello", strip_crlf("/api/v1/data?q=hello"))
 
 class TestAlnumProjection(unittest.TestCase):

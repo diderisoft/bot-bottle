@@ -56,7 +56,7 @@ class TestLaunchBottleStaleHandling(unittest.TestCase):
         )
 
     def _run_launch(self, **patch_kwargs: Any) -> int:
-        import bot_bottle.cli.start as start_mod
+        import bot_bottle.cli.commands.start as start_mod
         spec = self._spec()
         with patch.object(start_mod, "prepare_with_preflight",
                           return_value=(_fake_plan(), "dev-abc")), \
@@ -71,7 +71,7 @@ class TestLaunchBottleStaleHandling(unittest.TestCase):
 
     def test_headless_stale_calls_die(self) -> None:
         """In headless mode (assume_yes=True), a StaleImageError from prelaunch_checks must call die()."""
-        import bot_bottle.cli.start as start_mod
+        import bot_bottle.cli.commands.start as start_mod
 
         backend_mock = MagicMock()
         backend_mock.prelaunch_checks.side_effect = StaleImageError("image is 5 day(s) old")
@@ -85,7 +85,7 @@ class TestLaunchBottleStaleHandling(unittest.TestCase):
 
     def test_interactive_user_declines_stops_before_launch(self) -> None:
         """Interactive user answering 'n' → launch is never called."""
-        import bot_bottle.cli.start as start_mod
+        import bot_bottle.cli.commands.start as start_mod
 
         backend_mock = MagicMock()
         backend_mock.prelaunch_checks.side_effect = StaleImageError("image is 5 day(s) old")
@@ -100,7 +100,7 @@ class TestLaunchBottleStaleHandling(unittest.TestCase):
 
     def test_interactive_user_confirms_launches_once(self) -> None:
         """Interactive user answering 'y' → prelaunch stale error is bypassed; launch called once."""
-        import bot_bottle.cli.start as start_mod
+        import bot_bottle.cli.commands.start as start_mod
 
         bottle_mock = MagicMock()
         bottle_mock.name = "dev-abc"
@@ -122,7 +122,7 @@ class TestLaunchBottleStaleHandling(unittest.TestCase):
 
     def test_interactive_yes_uppercase_also_accepted(self) -> None:
         """'Y' or 'YES' should also be accepted as confirmation."""
-        import bot_bottle.cli.start as start_mod
+        import bot_bottle.cli.commands.start as start_mod
 
         bottle_mock = MagicMock()
         bottle_mock.name = "dev-abc"

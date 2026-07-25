@@ -1,17 +1,17 @@
 """Docker-free agent-image builds for the Firecracker backend (PRD 0069 Stage 3).
 
-Agent Dockerfiles build **inside the persistent per-host infra VM**
+Agent Dockerfiles build **inside the persistent per-host orchestrator VM**
 (`infra_vm.py`), which carries buildah (rootless, daemonless): no host Docker
 daemon, no root-equivalent `docker` group. The build runs over SSH against the
-infra VM and its rootfs streams back to the host, where the existing
+orchestrator VM and its rootfs streams back to the host, where the existing
 `mke2fs -d` path (`util.build_rootfs_ext4`) turns it into a bootable ext4.
 
-Building in the infra VM — rather than a throwaway builder VM — means there is
-one buildah image (`bot-bottle-infra`) and no contention for the orchestrator
-TAP. Tradeoff: an untrusted Dockerfile's `RUN` steps share the VM with the
-control plane + gateway (buildah `--isolation chroot` isn't a hard boundary) —
-the accepted single-VM blast-radius tradeoff, re-splittable into a disposable
-builder (booted from this same image on its own TAP) later.
+Builds run on the control-plane (orchestrator) side — not the data-plane
+gateway — per PRD 0070 v1 ("builds stay in the orchestrator"): it owns
+launches and already carries buildah. Tradeoff: an untrusted Dockerfile's
+`RUN` steps share the VM with the control plane (buildah `--isolation chroot`
+isn't a hard boundary) — the accepted blast-radius tradeoff, re-splittable
+into a disposable builder (booted from this same image on its own TAP) later.
 """
 
 from __future__ import annotations
@@ -26,7 +26,8 @@ from pathlib import Path
 from typing import Generator
 
 from ...log import die, info
-from . import infra_vm, util
+from . import util
+from .infra import FirecrackerInfraService
 
 # vfs + chroot: buildah works as root in the microVM (no fuse-overlayfs /
 # overlay module / subuid maps). `--isolation` is a build/run-only flag;
@@ -121,11 +122,13 @@ def _build_lock() -> Generator[None, None, None]:
 def _build_in_infra(
     dockerfile: Path, base: Path, smoke_test: tuple[str, ...], digest: str,
 ) -> None:
-    """Ensure the infra VM is up, `buildah build` the Dockerfile in it, smoke
-    test the image, and stream its rootfs into `base`. The infra VM persists;
-    only the per-build container/image/context are cleaned up."""
-    infra = infra_vm.ensure_running()
-    key, ip = infra.private_key, infra.guest_ip
+    """Ensure the infra VMs are up, `buildah build` the Dockerfile in the
+    orchestrator VM (the build-capable control plane), smoke test the image,
+    and stream its rootfs into `base`. The infra VMs persist; only the
+    per-build container/image/context are cleaned up."""
+    service = FirecrackerInfraService()
+    service.ensure_running()
+    key, ip = service.orchestrator().ssh_target()
     tag = f"bot-bottle-agent-build-{digest}"
     ctx = f"/tmp/agent-build-{digest}"
     smoke_ctr, export_ctr = f"{tag}-smoke", f"{tag}-export"

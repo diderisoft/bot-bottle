@@ -1,38 +1,29 @@
 """Unit: supervise queue + audit log + diff helpers (PRD 0013)."""
 
 import tempfile
-import threading
-import time
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from bot_bottle import supervise
+from bot_bottle.orchestrator import supervisor as supervise
 from bot_bottle.paths import host_db_path
+from bot_bottle.util import render_diff, sha256_hex
 from tests.unit import use_bottle_root
-from bot_bottle.audit_store import AuditStore
-from bot_bottle.queue_store import QueueStore
-from bot_bottle.supervise import (
+from bot_bottle.store.audit_store import AuditStore
+from bot_bottle.orchestrator.store.queue_store import QueueStore
+from bot_bottle.orchestrator.supervisor import (
     AuditEntry,
     Proposal,
     Response,
     STATUS_APPROVED,
     STATUS_MODIFIED,
     STATUS_REJECTED,
+    Supervisor,
     TOOL_EGRESS_ALLOW,
     TOOL_GITLEAKS_ALLOW,
-    archive_proposal,
-    list_pending_proposals,
-    read_audit_entries,
-    read_proposal,
-    read_response,
-    render_diff,
-    sha256_hex,
-    wait_for_response,
-    write_audit_entry,
-    write_proposal,
-    write_response,
 )
+
+_SV = Supervisor()
 
 
 FIXED_TS = datetime(2026, 5, 25, 12, 0, 0, tzinfo=timezone.utc)
@@ -48,7 +39,6 @@ def _proposal(
         tool=tool,
         proposed_file=proposed,
         justification=justification,
-        current_file_hash=sha256_hex(proposed),
         now=FIXED_TS,
     )
 
@@ -127,93 +117,49 @@ class TestQueueIO(unittest.TestCase):
 
     def test_write_and_read_proposal(self):
         p = _proposal()
-        path = write_proposal(p)
+        path = _SV.write_proposal(p)
         self.assertTrue(path.exists())
         self.assertEqual(host_db_path(), path)
         self.assertEqual(0o600, path.stat().st_mode & 0o777)
-        loaded = read_proposal(self.slug, p.id)
+        loaded = _SV.read_proposal(self.slug, p.id)
         self.assertEqual(p, loaded)
 
     def test_list_pending_excludes_responded(self):
         a = _proposal(justification="first")
         b = _proposal(justification="second")
-        write_proposal(a)
-        write_proposal(b)
-        write_response(self.slug, Response(
+        _SV.write_proposal(a)
+        _SV.write_proposal(b)
+        _SV.write_response(self.slug, Response(
             proposal_id=a.id, status=STATUS_APPROVED, notes="",
         ))
-        pending = list_pending_proposals(self.slug)
+        pending = _SV.list_pending_proposals(self.slug)
         self.assertEqual([b.id], [p.id for p in pending])
 
     def test_list_pending_returns_empty_for_missing_slug(self):
-        self.assertEqual([], list_pending_proposals("nope"))
+        self.assertEqual([], _SV.list_pending_proposals("nope"))
 
     def test_list_pending_sorted_by_arrival(self):
         # Fabricate two with explicit timestamps.
         a = Proposal.new(
             bottle_slug="dev", tool=TOOL_EGRESS_ALLOW,
             proposed_file="routes:\n  - host: early.example.com\n", justification="early",
-            current_file_hash="x",
             now=datetime(2026, 5, 25, 10, 0, 0, tzinfo=timezone.utc),
         )
         b = Proposal.new(
             bottle_slug="dev", tool=TOOL_EGRESS_ALLOW,
             proposed_file="routes:\n  - host: late.example.com\n", justification="late",
-            current_file_hash="x",
             now=datetime(2026, 5, 25, 14, 0, 0, tzinfo=timezone.utc),
         )
         # Write in reverse order.
-        write_proposal(b)
-        write_proposal(a)
-        ordered = list_pending_proposals(self.slug)
+        _SV.write_proposal(b)
+        _SV.write_proposal(a)
+        ordered = _SV.list_pending_proposals(self.slug)
         self.assertEqual([a.id, b.id], [p.id for p in ordered])
 
     def test_write_and_read_response(self):
         r = Response(proposal_id="xyz", status=STATUS_REJECTED, notes="no")
-        write_response(self.slug, r)
-        self.assertEqual(r, read_response(self.slug, "xyz"))
-
-    def test_wait_for_response_returns_when_file_appears(self):
-        p = _proposal()
-        write_proposal(p)
-
-        def write_after_delay():
-            time.sleep(0.05)
-            write_response(self.slug, Response(
-                proposal_id=p.id, status=STATUS_APPROVED, notes="ok",
-            ))
-
-        t = threading.Thread(target=write_after_delay)
-        t.start()
-        try:
-            r = wait_for_response(self.slug, p.id, poll_interval=0.01)
-        finally:
-            t.join()
-        self.assertEqual(STATUS_APPROVED, r.status)
-        self.assertEqual("ok", r.notes)
-
-    def test_wait_for_response_times_out(self):
-        deadline = time.monotonic() + 0.05
-        with self.assertRaises(TimeoutError):
-            wait_for_response(
-                self.slug, "never",
-                poll_interval=0.01, deadline=deadline,
-            )
-
-    def test_archive_proposal_hides_rows(self):
-        p = _proposal()
-        write_proposal(p)
-        write_response(self.slug, Response(
-            proposal_id=p.id, status=STATUS_APPROVED, notes="",
-        ))
-        archive_proposal(self.slug, p.id)
-        self.assertEqual([], list_pending_proposals(self.slug))
-        with self.assertRaises(FileNotFoundError):
-            read_response(self.slug, p.id)
-
-    def test_archive_is_idempotent_on_missing_files(self):
-        # Should not raise.
-        archive_proposal(self.slug, "nope")
+        _SV.write_response(self.slug, r)
+        self.assertEqual(r, _SV.read_response(self.slug, "xyz"))
 
 
 class TestAuditLog(unittest.TestCase):
@@ -239,15 +185,15 @@ class TestAuditLog(unittest.TestCase):
             justification="agent needed gh-api token",
             diff="--- before\n+++ after\n",
         )
-        path = write_audit_entry(e)
+        path = _SV.write_audit_entry(e)
         self.assertEqual(host_db_path(), path)
         self.assertEqual(0o600, path.stat().st_mode & 0o777)
-        loaded = read_audit_entries("cred-proxy", "dev")
+        loaded = _SV.read_audit_entries("cred-proxy", "dev")
         self.assertEqual([e], loaded)
 
     def test_appends_one_line_per_entry(self):
         for i in range(3):
-            write_audit_entry(AuditEntry(
+            _SV.write_audit_entry(AuditEntry(
                 timestamp=f"2026-05-25T12:00:0{i}+00:00",
                 bottle_slug="dev",
                 component="egress",
@@ -256,7 +202,7 @@ class TestAuditLog(unittest.TestCase):
                 justification="",
                 diff="",
             ))
-        entries = read_audit_entries("egress", "dev")
+        entries = _SV.read_audit_entries("egress", "dev")
         self.assertEqual(3, len(entries))
         self.assertEqual(
             ["2026-05-25T12:00:00+00:00", "2026-05-25T12:00:01+00:00",
@@ -265,7 +211,7 @@ class TestAuditLog(unittest.TestCase):
         )
 
     def test_separate_logs_per_component_slug(self):
-        write_audit_entry(AuditEntry(
+        _SV.write_audit_entry(AuditEntry(
             timestamp="t",
             bottle_slug="dev",
             component="cred-proxy",
@@ -274,7 +220,7 @@ class TestAuditLog(unittest.TestCase):
             justification="",
             diff="",
         ))
-        write_audit_entry(AuditEntry(
+        _SV.write_audit_entry(AuditEntry(
             timestamp="t",
             bottle_slug="dev",
             component="egress",
@@ -283,7 +229,7 @@ class TestAuditLog(unittest.TestCase):
             justification="",
             diff="",
         ))
-        write_audit_entry(AuditEntry(
+        _SV.write_audit_entry(AuditEntry(
             timestamp="t",
             bottle_slug="other",
             component="cred-proxy",
@@ -292,20 +238,20 @@ class TestAuditLog(unittest.TestCase):
             justification="",
             diff="",
         ))
-        self.assertEqual(1, len(read_audit_entries("cred-proxy", "dev")))
-        self.assertEqual(1, len(read_audit_entries("egress", "dev")))
-        self.assertEqual(1, len(read_audit_entries("cred-proxy", "other")))
+        self.assertEqual(1, len(_SV.read_audit_entries("cred-proxy", "dev")))
+        self.assertEqual(1, len(_SV.read_audit_entries("egress", "dev")))
+        self.assertEqual(1, len(_SV.read_audit_entries("cred-proxy", "other")))
 
     def test_read_audit_entries_missing_log_returns_empty(self):
-        self.assertEqual([], read_audit_entries("cred-proxy", "no-such-bottle"))
+        self.assertEqual([], _SV.read_audit_entries("cred-proxy", "no-such-bottle"))
 
 
 class TestDiffAndHash(unittest.TestCase):
     def test_render_diff_returns_empty_when_unchanged(self):
-        self.assertEqual("", render_diff("a\nb\n", "a\nb\n"))
+        self.assertEqual("", render_diff("a\nb\n", "a\nb\n", before_title="current", after_label="proposed"))
 
     def test_render_diff_shows_changes(self):
-        diff = render_diff("a\nb\nc\n", "a\nB\nc\n", label="routes.yaml")
+        diff = render_diff("a\nb\nc\n", "a\nB\nc\n", label="routes.yaml", before_title="current", after_label="proposed")
         self.assertIn("routes.yaml (current)", diff)
         self.assertIn("routes.yaml (proposed)", diff)
         self.assertIn("-b", diff)
@@ -338,7 +284,6 @@ class TestToolConstants(unittest.TestCase):
             tool=supervise.TOOL_EGRESS_TOKEN_ALLOW,
             proposed_file="host: api.example.com\n",
             justification="false positive",
-            current_file_hash="h",
         )
         self.assertEqual(p, Proposal.from_dict(p.to_dict()))
 
@@ -352,7 +297,7 @@ class TestToolConstants(unittest.TestCase):
         )
 
 
-class _StubSupervise(supervise.Supervise):
+class _StubSupervise(supervise.Supervisor):
     """Concrete Supervise subclass for testing the prepare template."""
 
     def start(self, plan):  # type: ignore

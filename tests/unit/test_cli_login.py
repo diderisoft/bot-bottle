@@ -14,27 +14,27 @@ from unittest.mock import MagicMock, patch
 
 class TestFlagParsing(unittest.TestCase):
     def test_console_url_flag(self) -> None:
-        from bot_bottle.cli.login import _flag
+        from bot_bottle.cli.commands.login import _flag
         self.assertEqual(_flag(["--console-url", "http://x"], "--console-url"), "http://x")
 
     def test_console_url_equals_form(self) -> None:
-        from bot_bottle.cli.login import _flag
+        from bot_bottle.cli.commands.login import _flag
         self.assertEqual(
             _flag(["--console-url=http://x"], "--console-url"), "http://x"
         )
 
     def test_label_flag(self) -> None:
-        from bot_bottle.cli.login import _flag
+        from bot_bottle.cli.commands.login import _flag
         self.assertEqual(_flag(["--label", "my-mac"], "--label"), "my-mac")
 
     def test_missing_flag_returns_none(self) -> None:
-        from bot_bottle.cli.login import _flag
+        from bot_bottle.cli.commands.login import _flag
         self.assertIsNone(_flag([], "--console-url"))
 
 
 class TestHttpHelpers(unittest.TestCase):
     def test_post_sends_json_and_decodes_response(self) -> None:
-        from bot_bottle.cli.login import _post
+        from bot_bottle.cli.commands.login import _post
 
         response = MagicMock()
         response.__enter__.return_value.read.return_value = b'{"ok": true}'
@@ -48,7 +48,7 @@ class TestHttpHelpers(unittest.TestCase):
         self.assertEqual(request.get_header("Content-type"), "application/json")
 
     def test_get_decodes_success_response(self) -> None:
-        from bot_bottle.cli.login import _get
+        from bot_bottle.cli.commands.login import _get
 
         response = MagicMock()
         response.__enter__.return_value.status = 200
@@ -59,7 +59,7 @@ class TestHttpHelpers(unittest.TestCase):
             )
 
     def test_get_returns_http_error_status(self) -> None:
-        from bot_bottle.cli.login import _get
+        from bot_bottle.cli.commands.login import _get
 
         error = urllib.error.HTTPError(
             "http://console/status", 410, "gone", Message(), None
@@ -70,7 +70,7 @@ class TestHttpHelpers(unittest.TestCase):
 
 class TestSaveCredentials(unittest.TestCase):
     def test_writes_json_and_sets_perms(self) -> None:
-        from bot_bottle.cli.login import _save_credentials
+        from bot_bottle.cli.commands.login import _save_credentials
 
         with tempfile.TemporaryDirectory() as tmp:
             with patch.dict(os.environ, {"BOT_BOTTLE_ROOT": tmp}):
@@ -85,7 +85,7 @@ class TestSaveCredentials(unittest.TestCase):
 
     def test_temp_file_is_private_before_replace(self) -> None:
         """Temp file must be 0600 at the moment os.replace is called."""
-        from bot_bottle.cli.login import _save_credentials
+        from bot_bottle.cli.commands.login import _save_credentials
         from pathlib import Path as _Path
 
         tmp_perms_at_replace: list[int] = []
@@ -107,7 +107,7 @@ class TestSaveCredentials(unittest.TestCase):
 
     def test_cleanup_on_write_failure(self) -> None:
         """Temp file is removed and no credentials remain if replace fails."""
-        from bot_bottle.cli.login import _save_credentials
+        from bot_bottle.cli.commands.login import _save_credentials
 
         with tempfile.TemporaryDirectory() as tmp:
             with patch.dict(os.environ, {"BOT_BOTTLE_ROOT": tmp}):
@@ -120,12 +120,12 @@ class TestSaveCredentials(unittest.TestCase):
 
 class TestCmdLoginMissingUrl(unittest.TestCase):
     def test_help_returns_0(self) -> None:
-        from bot_bottle.cli.login import cmd_login
+        from bot_bottle.cli.commands.login import cmd_login
 
         self.assertEqual(cmd_login(["--help"]), 0)
 
     def test_returns_1_without_url(self) -> None:
-        from bot_bottle.cli.login import cmd_login
+        from bot_bottle.cli.commands.login import cmd_login
         with patch.dict(os.environ, {}, clear=True):
             os.environ.pop("BB_CONSOLE_URL", None)
             result = cmd_login([])
@@ -133,7 +133,7 @@ class TestCmdLoginMissingUrl(unittest.TestCase):
 
     def test_reads_env_var(self) -> None:
         """Exits 1 (network error) not because of missing URL when env var is set."""
-        from bot_bottle.cli.login import cmd_login
+        from bot_bottle.cli.commands.login import cmd_login
 
         def _fail_post(_url: str, _payload: dict[str, Any]) -> dict[str, Any]:
             raise OSError("connection refused")
@@ -146,7 +146,7 @@ class TestCmdLoginMissingUrl(unittest.TestCase):
                     "BOT_BOTTLE_ROOT": tmp,
                 },
             ):
-                with patch("bot_bottle.cli.login._post", side_effect=_fail_post):
+                with patch("bot_bottle.cli.commands.login._post", side_effect=_fail_post):
                     result = cmd_login([])
         self.assertEqual(result, 1)
 
@@ -155,7 +155,7 @@ class TestCmdLoginFlow(unittest.TestCase):
     def _run_with_mocks(
         self, poll_responses: list[dict[str, Any]], tmp: str
     ) -> int:
-        from bot_bottle.cli.login import cmd_login
+        from bot_bottle.cli.commands.login import cmd_login
 
         start_resp = {
             "device_code": "dc123",
@@ -175,8 +175,8 @@ class TestCmdLoginFlow(unittest.TestCase):
             return 200, next(poll_iter, {"status": "pending"})
 
         with patch.dict(os.environ, {"BOT_BOTTLE_ROOT": tmp}):
-            with patch("bot_bottle.cli.login._post", side_effect=_fake_post):
-                with patch("bot_bottle.cli.login._get", side_effect=_fake_get):
+            with patch("bot_bottle.cli.commands.login._post", side_effect=_fake_post):
+                with patch("bot_bottle.cli.commands.login._get", side_effect=_fake_get):
                     with patch("time.sleep"):
                         return cmd_login(["--console-url", "http://console"])
 
@@ -202,7 +202,7 @@ class TestCmdLoginFlow(unittest.TestCase):
         self.assertEqual(result, 1)
 
     def test_timeout_returns_1(self) -> None:
-        from bot_bottle.cli.login import cmd_login
+        from bot_bottle.cli.commands.login import cmd_login
 
         start_resp = {
             "device_code": "dc",
@@ -213,13 +213,13 @@ class TestCmdLoginFlow(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             with patch.dict(os.environ, {"BOT_BOTTLE_ROOT": tmp}):
-                with patch("bot_bottle.cli.login._post", return_value=start_resp):
+                with patch("bot_bottle.cli.commands.login._post", return_value=start_resp):
                     result = cmd_login(["--console-url", "http://console"])
         self.assertEqual(result, 1)
 
     def test_poll_interval_from_server_is_used(self) -> None:
         """time.sleep must be called with the server-provided poll_interval."""
-        from bot_bottle.cli.login import cmd_login
+        from bot_bottle.cli.commands.login import cmd_login
 
         server_interval = 7
         start_resp = {
@@ -241,9 +241,9 @@ class TestCmdLoginFlow(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             with patch.dict(os.environ, {"BOT_BOTTLE_ROOT": tmp}):
-                with patch("bot_bottle.cli.login._post", return_value=start_resp):
+                with patch("bot_bottle.cli.commands.login._post", return_value=start_resp):
                     with patch(
-                        "bot_bottle.cli.login._get", side_effect=_fake_get
+                        "bot_bottle.cli.commands.login._get", side_effect=_fake_get
                     ):
                         with patch("time.sleep") as mock_sleep:
                             result = cmd_login(["--console-url", "http://console"])

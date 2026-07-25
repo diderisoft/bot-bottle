@@ -16,8 +16,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from ...egress import egress_agent_env_entries
-from ...orchestrator.secret_store import ENV_VAR_SECRET_NAME
+from ...egress import Egress
+from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
 from ..util import AGENT_CA_BUNDLE, AGENT_CA_PATH
 from .bottle_plan import DockerBottlePlan
 from .egress import EGRESS_PORT
@@ -63,7 +63,7 @@ def consolidated_agent_compose(
     # env (set in launch.py) and is never written to the compose file on disk.
     if getattr(plan, "env_var_secret", ""):
         env.append(ENV_VAR_SECRET_NAME)
-    env.extend(egress_agent_env_entries(plan.egress_plan))
+    env.extend(Egress().agent_env_entries(plan.egress_plan))
 
     service: dict[str, Any] = {
         "image": plan.image,

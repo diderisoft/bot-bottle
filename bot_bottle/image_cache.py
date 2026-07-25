@@ -5,10 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-try:
-    from .config_store import ConfigStore
-except ImportError:
-    from config_store import ConfigStore  # type: ignore[import-not-found]  # pylint: disable=import-error,no-name-in-module
+from .store.config_store import ConfigStore
 
 
 class StaleImageError(Exception):

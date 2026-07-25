@@ -16,7 +16,7 @@ from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
 from bot_bottle.egress import EgressPlan, EgressRoute
 from bot_bottle.git_gate import GitGatePlan, GitGateUpstream
 from bot_bottle.manifest import ManifestIndex
-from bot_bottle.supervise import SupervisePlan
+from bot_bottle.supervisor.plan import SupervisePlan
 
 
 SLUG = "demo-abc12"

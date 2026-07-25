@@ -14,12 +14,12 @@ from unittest.mock import patch
 from bot_bottle.env import resolve_env
 from bot_bottle.errors import MissingEnvVarError
 from bot_bottle.manifest import Manifest, ManifestBottle, ManifestIndex
-from bot_bottle.manifest_agent import (
+from bot_bottle.manifest.agent import (
     ManifestAgent,
     ManifestAgentProvider,
     _parse_provider_settings,
 )
-from bot_bottle.manifest_util import ManifestError
+from bot_bottle.manifest.util import ManifestError
 
 
 def _idx(obj: dict[str, object]) -> ManifestIndex:

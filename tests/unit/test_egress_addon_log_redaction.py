@@ -36,7 +36,7 @@ def _ensure_shims() -> None:
 
 _ensure_shims()
 
-from bot_bottle.egress_addon import EgressAddon  # noqa: E402  (import after shims)
+from bot_bottle.gateway.egress.addon import EgressAddon  # noqa: E402  (import after shims)
 
 
 # ---------------------------------------------------------------------------

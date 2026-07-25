@@ -7,9 +7,15 @@ import unittest
 import urllib.error
 from unittest.mock import MagicMock, patch
 
-from bot_bottle.policy_resolver import PolicyResolveError, PolicyResolver
+from bot_bottle.gateway.policy_resolver import (
+    ORCHESTRATOR_AUTH_HEADER,
+    ORCHESTRATOR_AUTH_JWT_ENV,
+    PolicyResolveError,
+    PolicyResolver,
+    _orchestrator_auth_headers,
+)
 
-_URLOPEN = "bot_bottle.policy_resolver.urllib.request.urlopen"
+_URLOPEN = "bot_bottle.gateway.policy_resolver.urllib.request.urlopen"
 
 
 def _resp(payload: object) -> MagicMock:
@@ -21,6 +27,18 @@ def _resp(payload: object) -> MagicMock:
 
 def _http_error(code: int) -> urllib.error.HTTPError:
     return urllib.error.HTTPError("http://x/resolve", code, "err", {}, None)  # type: ignore[arg-type]
+
+
+class TestOrchestratorAuthHeaders(unittest.TestCase):
+    def test_sends_the_gateway_jwt_when_configured(self) -> None:
+        with patch.dict("os.environ", {ORCHESTRATOR_AUTH_JWT_ENV: "gateway.jwt.tok"}):
+            self.assertEqual({ORCHESTRATOR_AUTH_HEADER: "gateway.jwt.tok"}, _orchestrator_auth_headers())
+
+    def test_sends_nothing_when_unset(self) -> None:
+        import os
+        with patch.dict("os.environ", {}, clear=False):
+            os.environ.pop(ORCHESTRATOR_AUTH_JWT_ENV, None)
+            self.assertEqual({}, _orchestrator_auth_headers())
 
 
 class TestPolicyResolver(unittest.TestCase):
@@ -105,6 +123,59 @@ class TestPolicyResolver(unittest.TestCase):
         with patch(_URLOPEN, side_effect=urllib.error.URLError("refused")):
             with self.assertRaises(PolicyResolveError):
                 self.r.resolve_policy_and_bottle_id("10.243.0.1")
+
+    # --- supervise agent RPCs (issue #469) ---------------------------------
+
+    def test_propose_supervise_returns_id_and_posts_payload(self) -> None:
+        with patch(_URLOPEN, return_value=_resp({"proposal_id": "p-7"})) as m:
+            pid = self.r.propose_supervise(
+                "10.243.0.7", "the-token",
+                tool="egress-allow", proposed_file="routes:\n", justification="j",
+            )
+        self.assertEqual("p-7", pid)
+        req = m.call_args.args[0]
+        self.assertTrue(req.full_url.endswith("/supervise/propose"))
+        sent = json.loads(req.data)
+        self.assertEqual("10.243.0.7", sent["source_ip"])
+        self.assertEqual("the-token", sent["identity_token"])
+        self.assertEqual("egress-allow", sent["tool"])
+        self.assertEqual("routes:\n", sent["proposed_file"])
+
+    def test_propose_supervise_unattributed_is_none(self) -> None:
+        with patch(_URLOPEN, side_effect=_http_error(403)):
+            self.assertIsNone(self.r.propose_supervise(
+                "10.9.9.9", "t", tool="egress-allow", proposed_file="x", justification="j"))
+
+    def test_propose_supervise_missing_id_is_none(self) -> None:
+        with patch(_URLOPEN, return_value=_resp({})):
+            self.assertIsNone(self.r.propose_supervise(
+                "10.243.0.1", "t", tool="egress-allow", proposed_file="x", justification="j"))
+
+    def test_propose_supervise_unreachable_raises(self) -> None:
+        with patch(_URLOPEN, side_effect=urllib.error.URLError("refused")):
+            with self.assertRaises(PolicyResolveError):
+                self.r.propose_supervise(
+                    "10.243.0.1", "t", tool="egress-allow", proposed_file="x", justification="j")
+
+    def test_poll_supervise_returns_status(self) -> None:
+        with patch(_URLOPEN, return_value=_resp(
+            {"status": "approved", "notes": "ok", "final_file": None})
+        ) as m:
+            result = self.r.poll_supervise("10.243.0.7", "tok", "p-7")
+        assert result is not None
+        self.assertEqual("approved", result["status"])
+        req = m.call_args.args[0]
+        self.assertTrue(req.full_url.endswith("/supervise/poll"))
+        self.assertEqual("p-7", json.loads(req.data)["proposal_id"])
+
+    def test_poll_supervise_unattributed_is_none(self) -> None:
+        with patch(_URLOPEN, side_effect=_http_error(403)):
+            self.assertIsNone(self.r.poll_supervise("10.9.9.9", "t", "p-7"))
+
+    def test_poll_supervise_unreachable_raises(self) -> None:
+        with patch(_URLOPEN, side_effect=urllib.error.URLError("refused")):
+            with self.assertRaises(PolicyResolveError):
+                self.r.poll_supervise("10.243.0.1", "t", "p-7")
 
 
 if __name__ == "__main__":

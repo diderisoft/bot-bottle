@@ -10,7 +10,7 @@ import secrets
 import subprocess
 import unittest
 
-from bot_bottle.orchestrator.gateway import DockerGateway
+from bot_bottle.backend.docker.gateway import DockerGateway
 from tests._backend import skip_unless_backend
 
 IMAGE = "busybox"
@@ -20,12 +20,14 @@ IMAGE = "busybox"
 class TestDockerGatewayIntegration(unittest.TestCase):
     def setUp(self) -> None:
         self.name = "bot-bottle-orch-gateway-itest-" + secrets.token_hex(4)
-        # Resolver-only data plane (PRD 0070) requires an orchestrator URL to
-        # run; busybox never dials it, so a placeholder is enough here.
-        self.sc = DockerGateway(
-            IMAGE, name=self.name, orchestrator_url="http://orchestrator:9000",
-        )
+        self.sc = DockerGateway(IMAGE, name=self.name)
         self.addCleanup(self.sc.stop)
+
+    def _connect(self) -> None:
+        # Resolver-only data plane (PRD 0070) requires an orchestrator URL + a
+        # pre-minted `gateway` token to run; busybox never dials the orchestrator
+        # or presents the token, so placeholders are enough here.
+        self.sc.connect_to_orchestrator("http://orchestrator:9000", "placeholder-token")
 
     def _count(self) -> int:
         proc = subprocess.run(
@@ -36,10 +38,10 @@ class TestDockerGatewayIntegration(unittest.TestCase):
         return sum(1 for n in proc.stdout.split() if n == self.name)
 
     def test_ensure_is_idempotent_singleton(self) -> None:
-        self.sc.ensure_running()
+        self._connect()
         self.assertEqual(1, self._count())
-        # A second ensure must not spawn a second container — one per host.
-        self.sc.ensure_running()
+        # A second connect must not spawn a second container — one per host.
+        self._connect()
         self.assertEqual(1, self._count())
         self.sc.stop()
         self.assertEqual(0, self._count())

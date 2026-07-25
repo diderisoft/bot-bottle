@@ -60,12 +60,18 @@ class VmHandle:
             self.process.wait(timeout=5)
 
 
-def _boot_args(guest_ip: str, host_ip: str, pubkey: str) -> str:
+def _boot_args(
+    guest_ip: str, host_ip: str, pubkey: str, extra: str = "",
+) -> str:
     # ip=<client>::<gw>:<netmask>::<dev>:off — /31 point-to-point link,
     # so netmask is 255.255.255.254 and the gateway is the host TAP IP.
     ip_arg = f"ip={guest_ip}::{host_ip}:255.255.255.254::eth0:off"
     pub_b64 = base64.b64encode(pubkey.encode()).decode()
-    return f"{_BASE_BOOT_ARGS} {ip_arg} bb_pubkey={pub_b64}"
+    args = f"{_BASE_BOOT_ARGS} {ip_arg} bb_pubkey={pub_b64}"
+    # `extra` carries caller-supplied cmdline params the guest init reads
+    # (e.g. the gateway VM's `bb_orch=<orchestrator guest IP>`). Agent VMs pass
+    # nothing.
+    return f"{args} {extra}".rstrip() if extra else args
 
 
 def _config(
@@ -79,6 +85,7 @@ def _config(
     mem_mib: int,
     guest_mac: str,
     data_drive: Path | None = None,
+    extra_boot_args: str = "",
 ) -> dict[str, object]:
     drives: list[dict[str, object]] = [
         {
@@ -101,7 +108,7 @@ def _config(
     return {
         "boot-source": {
             "kernel_image_path": str(util.kernel_path()),
-            "boot_args": _boot_args(guest_ip, host_ip, pubkey),
+            "boot_args": _boot_args(guest_ip, host_ip, pubkey, extra_boot_args),
         },
         "drives": drives,
         "network-interfaces": [
@@ -132,6 +139,7 @@ def boot(
     guest_mac: str = "06:00:AC:10:00:02",
     detached: bool = False,
     data_drive: Path | None = None,
+    extra_boot_args: str = "",
 ) -> VmHandle:
     """Write the config and launch the VMM. Returns once the process is
     spawned; callers wait for SSH readiness separately.
@@ -147,7 +155,7 @@ def boot(
         _config(
             rootfs=rootfs, tap=tap, guest_ip=guest_ip, host_ip=host_ip,
             pubkey=pubkey, vcpus=vcpus, mem_mib=mem_mib, guest_mac=guest_mac,
-            data_drive=data_drive,
+            data_drive=data_drive, extra_boot_args=extra_boot_args,
         ),
         indent=2,
     ))

@@ -25,12 +25,12 @@ from contextlib import contextmanager, redirect_stderr
 from pathlib import Path
 from typing import Generator, Sequence
 
-from ...supervise import SUPERVISE_HOSTNAME, SUPERVISE_PORT
+from ...supervisor.types import SUPERVISE_HOSTNAME, SUPERVISE_PORT
 from ...agent_provider import AgentProvisionPlan
 from ...egress import EgressPlan
 from ...env import ResolvedEnv
 from ...git_gate import GitGatePlan
-from ...supervise import SupervisePlan
+from ...supervisor.plan import SupervisePlan
 from ...manifest import Manifest
 from .. import ActiveAgent, BottleBackend, BottleImages, BottleSpec
 from . import cleanup as _cleanup
@@ -116,8 +116,8 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
             yield bottle
 
     def ensure_orchestrator(self) -> str:
-        from ...orchestrator.lifecycle import OrchestratorService
-        return OrchestratorService().ensure_running()
+        from .infra import DockerInfraService
+        return DockerInfraService().ensure_running()
 
     def supervise_mcp_url(self, plan: DockerBottlePlan) -> str:
         """Docker bottles reach the supervise daemon via the

@@ -79,11 +79,18 @@ def _cfg(key: str) -> str:
 IFACE_PREFIX = _cfg("BOT_BOTTLE_FC_IFACE_PREFIX")
 NFT_TABLE = _cfg("BOT_BOTTLE_FC_NFT_TABLE")
 
-# The orchestrator/gateway VM's dedicated TAP — outside the bbfc* agent
-# pool and, unlike it, NAT'd to the internet (see `orch_slot`). The
+# The orchestrator VM's dedicated TAP — outside the bbfc* agent pool
+# and, unlike it, NAT'd to the internet (see `orch_slot`). The
 # orchestrator is trusted infra: it builds agent images in-VM (buildah
-# needs to FROM-pull + apt/npm) and forwards agent egress upstream.
+# needs to FROM-pull + apt/npm).
 ORCH_IFACE = _cfg("BOT_BOTTLE_FC_ORCH_IFACE")
+
+# The gateway (data-plane) VM's dedicated TAP — the second infra link
+# (see `gw_slot`), split from the orchestrator per PRD 0070. Like the
+# orchestrator link it is NAT'd to the internet (the gateway forwards
+# agent egress upstream); unlike it, agents DNAT here, never to the
+# orchestrator, so a breached agent has no L3 route to the control plane.
+GW_IFACE = _cfg("BOT_BOTTLE_FC_GW_IFACE")
 
 
 def pool_size() -> int:
@@ -130,12 +137,12 @@ def all_slots() -> list[Slot]:
 
 
 def orch_slot() -> Slot:
-    """The orchestrator/gateway VM's dedicated link — its own TAP
-    (`ORCH_IFACE`) on a /31 at the TOP of the IP_BASE /16 (host
-    x.y.255.0, guest x.y.255.1), well clear of the agent pool near the
-    bottom of the block. Unlike a pool `Slot`, this link is NAT'd out to
-    the internet by the setup (the orchestrator is trusted infra), so it
-    is deliberately *not* one of the isolated `bbfc*` slots.
+    """The orchestrator VM's dedicated link — its own TAP (`ORCH_IFACE`)
+    on a /31 at the TOP of the IP_BASE /16 (host x.y.255.0, guest
+    x.y.255.1), well clear of the agent pool near the bottom of the
+    block. Unlike a pool `Slot`, this link is NAT'd out to the internet
+    by the setup (the orchestrator is trusted infra), so it is
+    deliberately *not* one of the isolated `bbfc*` slots.
 
     `index` is -1 (sentinel: not a pool index)."""
     base16 = int(ipaddress.IPv4Address(ip_base())) & 0xFFFF0000
@@ -143,6 +150,25 @@ def orch_slot() -> Slot:
     return Slot(
         index=-1,
         iface=ORCH_IFACE,
+        host_ip=str(ipaddress.IPv4Address(host)),
+        guest_ip=str(ipaddress.IPv4Address(host + 1)),
+    )
+
+
+def gw_slot() -> Slot:
+    """The gateway (data-plane) VM's dedicated link — its own TAP
+    (`GW_IFACE`) on the /31 immediately above the orchestrator link (host
+    x.y.255.2, guest x.y.255.3), still clear of the agent pool at the
+    bottom of the block. Mirrors `orch_slot`: NAT'd to the internet (the
+    gateway forwards agent egress upstream), not one of the isolated
+    `bbfc*` slots. Agents DNAT their gateway-port traffic to this guest.
+
+    `index` is -2 (sentinel: not a pool index)."""
+    base16 = int(ipaddress.IPv4Address(ip_base())) & 0xFFFF0000
+    host = base16 + 0xFF02
+    return Slot(
+        index=-2,
+        iface=GW_IFACE,
         host_ip=str(ipaddress.IPv4Address(host)),
         guest_ip=str(ipaddress.IPv4Address(host + 1)),
     )

@@ -18,7 +18,7 @@ from ...egress import EgressPlan
 from ...env import ResolvedEnv
 from ...git_gate import GitGatePlan
 from ...manifest import Manifest
-from ...supervise import SupervisePlan
+from ...supervisor.plan import SupervisePlan
 from .. import ActiveAgent, BottleBackend, BottleImages, BottleSpec
 from . import cleanup as _cleanup
 from . import enumerate as _enumerate
@@ -123,5 +123,5 @@ class FirecrackerBottleBackend(
         return plan.agent_supervise_url
 
     def ensure_orchestrator(self) -> str:
-        from . import infra_vm
-        return infra_vm.ensure_running().control_plane_url
+        from .infra import FirecrackerInfraService
+        return FirecrackerInfraService().ensure_running()

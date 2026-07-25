@@ -15,7 +15,7 @@ import unittest
 from pathlib import Path
 from types import ModuleType
 
-from bot_bottle.orchestrator.config_store import (
+from bot_bottle.orchestrator.store.config_store import (
     DEFAULT_TEARDOWN_TIMEOUT_SECONDS,
     TEARDOWN_TIMEOUT_ENV,
     OrchestratorConfigStore,

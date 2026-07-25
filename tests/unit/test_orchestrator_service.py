@@ -1,4 +1,4 @@
-"""Unit tests for the Orchestrator launch lifecycle (PRD 0070)."""
+"""Unit tests for the OrchestratorCore launch lifecycle (PRD 0070)."""
 
 from __future__ import annotations
 
@@ -12,18 +12,15 @@ from pathlib import Path
 from unittest.mock import patch
 
 from bot_bottle.orchestrator.broker import LaunchBroker, LaunchRequest, StubBroker
-from bot_bottle.orchestrator.registry import RegistryStore
-from bot_bottle.orchestrator.service import Orchestrator
-from bot_bottle.orchestrator.gateway import Gateway
-from bot_bottle.orchestrator.secret_store import new_env_var_secret
-from bot_bottle.store_manager import StoreManager
-from bot_bottle.supervise import (
+from bot_bottle.orchestrator.store.registry_store import RegistryStore
+from bot_bottle.orchestrator.service import OrchestratorCore
+from bot_bottle.orchestrator.store.secret_store import new_env_var_secret
+from bot_bottle.orchestrator.store.store_manager import StoreManager
+from bot_bottle.orchestrator.supervisor import (
     Proposal,
     STATUS_APPROVED,
     TOOL_EGRESS_ALLOW,
-    read_response,
-    sha256_hex,
-    write_proposal,
+    Supervisor,
 )
 
 
@@ -38,29 +35,6 @@ class _FailingBroker(LaunchBroker):
         pass
 
 
-class _FakeGateway(Gateway):
-    """In-memory gateway for wiring tests."""
-
-    def __init__(self) -> None:
-        self.name = "fake-gateway"
-        self.ensured = 0
-        self.built = 0
-        self._running = False
-
-    def ensure_built(self) -> None:
-        self.built += 1
-
-    def ensure_running(self) -> None:
-        self.ensured += 1
-        self._running = True
-
-    def is_running(self) -> bool:
-        return self._running
-
-    def stop(self) -> None:
-        self._running = False
-
-
 class TestOrchestrator(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -68,7 +42,7 @@ class TestOrchestrator(unittest.TestCase):
         self.store = RegistryStore(Path(self._tmp.name) / "r.db")
         self.store.migrate()
         self.broker = StubBroker(self.secret)
-        self.orch = Orchestrator(self.store, self.broker, self.secret)
+        self.orch = OrchestratorCore(self.store, self.broker, self.secret)
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
@@ -163,29 +137,16 @@ class TestOrchestrator(unittest.TestCase):
         self.assertIsNone(self.orch.resolve("10.243.0.3", "wrong-token"))
 
     def test_launch_rolls_back_registry_on_broker_failure(self) -> None:
-        orch = Orchestrator(self.store, _FailingBroker(self.secret), self.secret)
+        orch = OrchestratorCore(self.store, _FailingBroker(self.secret), self.secret)
         with self.assertRaises(RuntimeError):
             orch.launch_bottle("10.243.0.9")
         self.assertEqual([], self.store.all())  # no orphan
 
-    def test_gateway_unconfigured_by_default(self) -> None:
+    def test_gateway_status_reports_unconfigured(self) -> None:
+        # The orchestrator no longer owns a standalone gateway lifecycle; the
+        # consolidated flow runs the gateway data plane in the per-host infra
+        # container/VM. `GET /gateway` therefore always reports unconfigured.
         self.assertEqual({"configured": False}, self.orch.gateway_status())
-        self.orch.ensure_gateway()  # no-op, must not raise
-
-    def test_gateway_wired_and_ensured(self) -> None:
-        sc = _FakeGateway()
-        orch = Orchestrator(self.store, self.broker, self.secret, gateway=sc)
-        self.assertEqual(
-            {"configured": True, "name": "fake-gateway", "running": False},
-            orch.gateway_status(),
-        )
-        orch.ensure_gateway()
-        self.assertEqual(1, sc.built)   # ensure_gateway builds first,
-        self.assertEqual(1, sc.ensured)  # then runs
-        self.assertEqual(
-            {"configured": True, "name": "fake-gateway", "running": True},
-            orch.gateway_status(),
-        )
 
 
 class TestOrchestratorSupervise(unittest.TestCase):
@@ -207,7 +168,7 @@ class TestOrchestratorSupervise(unittest.TestCase):
         self.store.migrate()
         StoreManager(db).migrate()
         secret = secrets.token_bytes(16)
-        self.orch = Orchestrator(self.store, StubBroker(secret), secret)
+        self.orch = OrchestratorCore(self.store, StubBroker(secret), secret)
 
     def tearDown(self) -> None:
         self._env.stop()
@@ -221,8 +182,8 @@ class TestOrchestratorSupervise(unittest.TestCase):
     def _queue(self, slug: str, proposed: str) -> str:
         p = Proposal.new(
             bottle_slug=slug, tool=TOOL_EGRESS_ALLOW, proposed_file=proposed,
-            justification="need it", current_file_hash=sha256_hex(proposed))
-        write_proposal(p)
+            justification="need it")
+        Supervisor().write_proposal(p)
         return p.id
 
     def test_pending_lists_queued_proposal(self) -> None:
@@ -245,7 +206,7 @@ class TestOrchestratorSupervise(unittest.TestCase):
         assert rec is not None
         self.assertEqual(new_routes, rec.policy)
         # response written -> agent unblocks, proposal no longer pending
-        self.assertEqual(STATUS_APPROVED, read_response("demo", pid).status)
+        self.assertEqual(STATUS_APPROVED, Supervisor().read_response("demo", pid).status)
         self.assertEqual([], self.orch.supervise_pending())
 
     def test_pending_carries_human_label(self) -> None:
@@ -298,7 +259,7 @@ class TestOrchestratorSupervise(unittest.TestCase):
         rec = self.store.get(bottle_id)
         assert rec is not None
         self.assertEqual("routes:\n  - host: existing.com\n", rec.policy)
-        self.assertEqual("rejected", read_response("demo", pid).status)
+        self.assertEqual("rejected", Supervisor().read_response("demo", pid).status)
 
     def test_unknown_proposal_is_error(self) -> None:
         ok, err = self.orch.supervise_respond(
@@ -323,6 +284,67 @@ class TestOrchestratorSupervise(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("no longer registered", err)
 
+    # --- agent half: queue + poll (issue #469) -----------------------------
+
+    def test_queue_proposal_then_poll_pending(self) -> None:
+        bottle_id = self._register("demo", "routes: []\n")
+        pid = self.orch.supervise_queue_proposal(
+            bottle_id, tool=TOOL_EGRESS_ALLOW,
+            proposed_file="routes:\n  - host: google.com\n", justification="need it")
+        # Visible to the operator, keyed by the bottle id.
+        pending = self.orch.supervise_pending()
+        self.assertEqual([pid], [p["id"] for p in pending])
+        self.assertEqual(
+            {"status": "pending"}, self.orch.supervise_poll_response(bottle_id, pid))
+
+    def test_poll_is_idempotent_and_leaves_no_pending(self) -> None:
+        bottle_id = self._register("demo", "routes: []\n")
+        pid = self.orch.supervise_queue_proposal(
+            bottle_id, tool=TOOL_EGRESS_ALLOW,
+            proposed_file="routes:\n  - host: google.com\n", justification="need it")
+        self.orch.supervise_respond(
+            pid, bottle_slug=bottle_id, decision="approve", notes="ok")
+        decided = self.orch.supervise_poll_response(bottle_id, pid)
+        self.assertEqual("approved", decided["status"])
+        self.assertEqual("ok", decided["notes"])
+        # Decided proposal drops off the operator's pending list (a response row
+        # exists), but poll does NOT archive — a re-poll returns the same
+        # decision so a dropped connection can't lose it (issue #469 review).
+        self.assertEqual([], self.orch.supervise_pending())
+        self.assertEqual(decided, self.orch.supervise_poll_response(bottle_id, pid))
+
+    def test_teardown_reaps_the_bottles_proposals(self) -> None:
+        rec = self.store.register("10.243.0.20", policy="routes: []\n")
+        pid = self.orch.supervise_queue_proposal(
+            rec.bottle_id, tool=TOOL_EGRESS_ALLOW,
+            proposed_file="routes:\n  - host: google.com\n", justification="j")
+        self.orch.supervise_respond(
+            pid, bottle_slug=rec.bottle_id, decision="approve", notes="ok")
+        self.assertTrue(self.orch.teardown_bottle(rec.bottle_id))
+        # The gone bottle's decided-but-unconsumed proposal is archived, so a
+        # late poll returns 'unknown' rather than lingering forever.
+        self.assertEqual(
+            {"status": "unknown"}, self.orch.supervise_poll_response(rec.bottle_id, pid))
+
+    def test_reconcile_reaps_the_bottles_proposals(self) -> None:
+        rec = self.store.register("10.243.0.21", policy="routes: []\n")
+        pid = self.orch.supervise_queue_proposal(
+            rec.bottle_id, tool=TOOL_EGRESS_ALLOW,
+            proposed_file="routes:\n  - host: google.com\n", justification="j")
+        # No live source IPs -> the bottle is reaped (grace 0 so it's immediate).
+        self.assertEqual([rec.bottle_id], self.orch.reconcile([], grace_seconds=0))
+        self.assertEqual(
+            {"status": "unknown"}, self.orch.supervise_poll_response(rec.bottle_id, pid))
+
+    def test_poll_unknown_for_other_bottle(self) -> None:
+        bottle_id = self._register("demo", "routes: []\n")
+        pid = self.orch.supervise_queue_proposal(
+            bottle_id, tool=TOOL_EGRESS_ALLOW,
+            proposed_file="routes:\n  - host: google.com\n", justification="j")
+        # A different bottle id can't read demo's proposal (scoped by queue key).
+        self.assertEqual(
+            {"status": "unknown"}, self.orch.supervise_poll_response("other-bottle", pid))
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -338,7 +360,7 @@ class TestOrchestratorReconcile(unittest.TestCase):
         self.store = RegistryStore(self.db)
         self.store.migrate()
         self.broker = StubBroker(self.secret)
-        self.orch = Orchestrator(self.store, self.broker, self.secret)
+        self.orch = OrchestratorCore(self.store, self.broker, self.secret)
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
