@@ -38,7 +38,6 @@ from .gateway import (
     GATEWAY_IMAGE,
     GATEWAY_NAME,
     GATEWAY_NETWORK,
-    GatewayError,
     MacosGateway,
     ensure_networks,
 )
@@ -53,8 +52,6 @@ from .orchestrator import (
 # `INFRA_NAME` is kept — now aliasing the gateway container — for callers that
 # still import it (probe / reprovision attribute against the gateway).
 INFRA_NAME = GATEWAY_NAME
-# Back-compat alias: the DB volume moved to the orchestrator module.
-INFRA_DB_VOLUME = ORCHESTRATOR_DB_VOLUME
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -88,10 +85,6 @@ class MacosInfraService(InfraService):
         self._orchestrator_name = orchestrator_name
         self._gateway_name = gateway_name
         self._db_volume = db_volume
-
-    @property
-    def gateway_name(self) -> str:
-        return self._gateway_name
 
     def orchestrator(self) -> MacosOrchestrator:
         """The control-plane service on the host-only control network. Cheap to
@@ -162,9 +155,7 @@ class MacosInfraService(InfraService):
 __all__ = [
     "MacosInfraService",
     "OrchestratorStartError",
-    "GatewayError",
     "ORCHESTRATOR_NAME",
     "INFRA_NAME",
-    "INFRA_DB_VOLUME",
     "probe_orchestrator_url",
 ]

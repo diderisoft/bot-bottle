@@ -74,11 +74,6 @@ _ROOTFS_IMAGE = {"orchestrator": _ORCHESTRATOR_FC_IMAGE, "gateway": _GATEWAY_IMA
 _ROOTFS_SLACK_MIB = {"orchestrator": 8192, "gateway": 1024}
 
 ORCHESTRATOR_PORT = 8099
-# Gateway data-plane ports (agent-facing): egress proxy, supervise MCP,
-# git-http. Reached by agent VMs via the PREROUTING DNAT to the gateway VM.
-EGRESS_PORT = 9099
-SUPERVISE_PORT = 9100
-GIT_HTTP_PORT = 9420
 
 # The infra VMs make direct upstream connections (gateway egress, and buildah
 # during builds), and the kernel `ip=` cmdline sets no resolver. Public for

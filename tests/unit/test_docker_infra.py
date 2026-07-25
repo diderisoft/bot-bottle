@@ -33,9 +33,6 @@ class TestDockerInfraService(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
 
-    def test_gateway_name(self) -> None:
-        self.assertEqual(GATEWAY_NAME, self.svc.gateway_name)
-
     def test_url_delegates_to_the_orchestrator(self) -> None:
         self.assertEqual("http://127.0.0.1:8099", self.svc.url())
 

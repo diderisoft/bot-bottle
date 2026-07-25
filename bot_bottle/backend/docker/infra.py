@@ -32,7 +32,6 @@ from .orchestrator import (
     ORCHESTRATOR_LABEL,
     ORCHESTRATOR_NAME,
     ORCHESTRATOR_NETWORK,
-    ORCHESTRATOR_SOURCE_HASH_LABEL,
 )
 from ...paths import bot_bottle_root
 from ...gateway import (
@@ -85,12 +84,6 @@ class DockerInfraService(InfraService):
         self._orchestrator_name = orchestrator_name
         self._orchestrator_label = orchestrator_label
         self._gateway_name = gateway_name
-
-    @property
-    def gateway_name(self) -> str:
-        """The gateway container — the address the launch flow attributes agents
-        against (gateway IP, git-gate provisioning transport, CA fetch)."""
-        return self._gateway_name
 
     def orchestrator(self) -> DockerOrchestrator:
         """The control-plane service. Cheap to reconstruct — `ensure_built`
@@ -155,8 +148,5 @@ class DockerInfraService(InfraService):
 __all__ = [
     "DockerInfraService",
     "ORCHESTRATOR_NAME",
-    "ORCHESTRATOR_NETWORK",
-    "ORCHESTRATOR_IMAGE",
-    "ORCHESTRATOR_SOURCE_HASH_LABEL",
     "INFRA_NAME",
 ]
