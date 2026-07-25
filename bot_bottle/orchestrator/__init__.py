@@ -14,7 +14,7 @@ backend-neutral "consolidation core" that needs no VM packaging:
                       lifecycle contract (idempotent singleton). One
                       gateway shared by all bottles instead of one per
                       bottle; backend impls live under `backend/*/gateway`.
-  * `service`       — the `Orchestrator`: owns the registry, brokers the
+  * `service`       — the `OrchestratorCore`: owns the registry, brokers the
                       launch lifecycle (launch/teardown), manages the
                       shared gateway, attributes.
   * `server` — the HTTP control-plane RPC (launch / teardown /
@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     )
     from .docker_broker import DockerBroker, DockerBrokerError
     from ..gateway import Gateway, GatewayError
-    from .service import Orchestrator
+    from .service import OrchestratorCore
     from .server import OrchestratorServer, dispatch, make_server
 
 
@@ -64,7 +64,7 @@ _LAZY: dict[str, str] = {
     "DockerBrokerError": ".docker_broker",
     "Gateway": "..gateway",
     "GatewayError": "..gateway",
-    "Orchestrator": ".service",
+    "OrchestratorCore": ".service",
     "OrchestratorServer": ".server",
     "dispatch": ".server",
     "make_server": ".server",
@@ -96,7 +96,7 @@ __all__ = [
     "DockerBrokerError",
     "Gateway",
     "GatewayError",
-    "Orchestrator",
+    "OrchestratorCore",
     "OrchestratorServer",
     "dispatch",
     "make_server",

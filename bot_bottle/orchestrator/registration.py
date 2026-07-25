@@ -2,7 +2,7 @@
 
 Bridges the existing per-bottle `prepare` output to the consolidated
 registry: turns a prepared bottle's egress plan into the backend-neutral
-inputs `Orchestrator.launch_bottle` takes — the egress **policy** blob and
+inputs `OrchestratorCore.launch_bottle` takes — the egress **policy** blob and
 launch **metadata**.
 
 The policy blob is the exact routes YAML the per-bottle egress daemon used
@@ -26,7 +26,7 @@ from ..egress import EgressPlan, egress_render_routes
 
 @dataclass(frozen=True)
 class RegistrationInputs:
-    """What `Orchestrator.launch_bottle` needs to register a bottle, derived
+    """What `OrchestratorCore.launch_bottle` needs to register a bottle, derived
     from its prepared plan. `policy` is served verbatim by the gateway's
     `/resolve`; `metadata` is opaque forward-compat state — it carries the
     human slug so the console / supervise can show a name, not just the

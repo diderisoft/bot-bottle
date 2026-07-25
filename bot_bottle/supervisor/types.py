@@ -43,7 +43,7 @@ STATUSES: tuple[str, ...] = (STATUS_APPROVED, STATUS_MODIFIED, STATUS_REJECTED)
 # proposal has no operator decision yet (`PENDING`) or no queued proposal with
 # that id exists for the calling bottle (`UNKNOWN`). They are never a
 # `Response.status` — only the poll wire contract (see
-# `Orchestrator.supervise_poll_response`) — so they are deliberately outside
+# `OrchestratorCore.supervise_poll_response`) — so they are deliberately outside
 # `STATUSES`.
 POLL_STATUS_PENDING = "pending"
 POLL_STATUS_UNKNOWN = "unknown"

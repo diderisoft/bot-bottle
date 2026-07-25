@@ -1,6 +1,6 @@
 """The orchestrator's supervise service.
 
-`Supervisor` is the service object the `Orchestrator` owns and calls: it wraps
+`Supervisor` is the service object the `OrchestratorCore` owns and calls: it wraps
 the supervise queue + audit stores (queue proposals, record operator responses,
 write audit entries, stage the DB at launch). Binding those operations to one
 object — optionally scoped to a `db_path` — makes the orchestrator's supervise

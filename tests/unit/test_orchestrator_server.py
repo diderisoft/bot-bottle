@@ -23,7 +23,7 @@ from bot_bottle.orchestrator_auth import ROLE_CLI, ROLE_GATEWAY, mint
 from bot_bottle.orchestrator.broker import StubBroker
 from bot_bottle.orchestrator.server import dispatch, make_server
 from bot_bottle.orchestrator.store.registry_store import BottleRecord, RegistryStore
-from bot_bottle.orchestrator.service import Orchestrator
+from bot_bottle.orchestrator.service import OrchestratorCore
 from bot_bottle.orchestrator.store.store_manager import StoreManager
 from bot_bottle.orchestrator.supervisor import (
     Proposal,
@@ -36,11 +36,11 @@ def _body(obj: object) -> bytes:
     return json.dumps(obj).encode()
 
 
-def _orchestrator(db_path: Path) -> Orchestrator:
+def _orchestrator(db_path: Path) -> OrchestratorCore:
     store = RegistryStore(db_path)
     store.migrate()
     secret = secrets.token_bytes(16)
-    return Orchestrator(store, StubBroker(secret), secret)
+    return OrchestratorCore(store, StubBroker(secret), secret)
 
 
 class TestDispatch(unittest.TestCase):
@@ -408,7 +408,7 @@ class TestDispatchSupervise(unittest.TestCase):
         self.store.migrate()
         StoreManager(db).migrate()
         secret = secrets.token_bytes(16)
-        self.orch = Orchestrator(self.store, StubBroker(secret), secret)
+        self.orch = OrchestratorCore(self.store, StubBroker(secret), secret)
 
     def tearDown(self) -> None:
         self._env.stop()
@@ -475,7 +475,7 @@ class TestDispatchSuperviseAgentRpc(unittest.TestCase):
         self.store.migrate()
         StoreManager(db).migrate()
         secret = secrets.token_bytes(16)
-        self.orch = Orchestrator(self.store, StubBroker(secret), secret)
+        self.orch = OrchestratorCore(self.store, StubBroker(secret), secret)
 
     def tearDown(self) -> None:
         self._env.stop()

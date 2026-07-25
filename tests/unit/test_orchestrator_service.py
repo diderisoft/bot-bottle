@@ -1,4 +1,4 @@
-"""Unit tests for the Orchestrator launch lifecycle (PRD 0070)."""
+"""Unit tests for the OrchestratorCore launch lifecycle (PRD 0070)."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 from bot_bottle.orchestrator.broker import LaunchBroker, LaunchRequest, StubBroker
 from bot_bottle.orchestrator.store.registry_store import RegistryStore
-from bot_bottle.orchestrator.service import Orchestrator
+from bot_bottle.orchestrator.service import OrchestratorCore
 from bot_bottle.orchestrator.store.secret_store import new_env_var_secret
 from bot_bottle.orchestrator.store.store_manager import StoreManager
 from bot_bottle.orchestrator.supervisor import (
@@ -42,7 +42,7 @@ class TestOrchestrator(unittest.TestCase):
         self.store = RegistryStore(Path(self._tmp.name) / "r.db")
         self.store.migrate()
         self.broker = StubBroker(self.secret)
-        self.orch = Orchestrator(self.store, self.broker, self.secret)
+        self.orch = OrchestratorCore(self.store, self.broker, self.secret)
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
@@ -137,7 +137,7 @@ class TestOrchestrator(unittest.TestCase):
         self.assertIsNone(self.orch.resolve("10.243.0.3", "wrong-token"))
 
     def test_launch_rolls_back_registry_on_broker_failure(self) -> None:
-        orch = Orchestrator(self.store, _FailingBroker(self.secret), self.secret)
+        orch = OrchestratorCore(self.store, _FailingBroker(self.secret), self.secret)
         with self.assertRaises(RuntimeError):
             orch.launch_bottle("10.243.0.9")
         self.assertEqual([], self.store.all())  # no orphan
@@ -168,7 +168,7 @@ class TestOrchestratorSupervise(unittest.TestCase):
         self.store.migrate()
         StoreManager(db).migrate()
         secret = secrets.token_bytes(16)
-        self.orch = Orchestrator(self.store, StubBroker(secret), secret)
+        self.orch = OrchestratorCore(self.store, StubBroker(secret), secret)
 
     def tearDown(self) -> None:
         self._env.stop()
@@ -360,7 +360,7 @@ class TestOrchestratorReconcile(unittest.TestCase):
         self.store = RegistryStore(self.db)
         self.store.migrate()
         self.broker = StubBroker(self.secret)
-        self.orch = Orchestrator(self.store, self.broker, self.secret)
+        self.orch = OrchestratorCore(self.store, self.broker, self.secret)
 
     def tearDown(self) -> None:
         self._tmp.cleanup()

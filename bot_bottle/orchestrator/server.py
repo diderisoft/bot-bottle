@@ -45,7 +45,7 @@ Both attribute the caller by `(source_ip, identity_token)` exactly like
 `POST /bottles` / `DELETE` drive the full launch lifecycle: they mint (or
 tear down) the bottle in the registry AND broker the backend-native launch
 via the orchestrator. Register/deregister without a launch are internal to
-`Orchestrator`, not exposed here.
+`OrchestratorCore`, not exposed here.
 
 Routing/handling is the pure function `dispatch()` so it is unit-testable
 without a socket; `Handler` / `OrchestratorServer` / `make_server` are a
@@ -66,7 +66,7 @@ from urllib.parse import urlsplit
 from ..orchestrator_auth import ROLE_CLI, ROLES, verify
 from ..paths import ORCHESTRATOR_TOKEN_ENV
 from ..supervisor.types import TOOLS
-from .service import Orchestrator
+from .service import OrchestratorCore
 
 # JSON body payload type (parsed request / rendered response).
 Json = dict[str, object]
@@ -109,7 +109,7 @@ def _parse_json_object(body: bytes) -> Json:
 
 
 def dispatch(  # pylint: disable=too-many-return-statements,too-many-branches
-    orch: Orchestrator, method: str, path: str, body: bytes, *, role: str | None = ROLE_CLI,
+    orch: OrchestratorCore, method: str, path: str, body: bytes, *, role: str | None = ROLE_CLI,
 ) -> tuple[int, Json]:
     """Route one control-plane request to a (status, payload) pair. Pure —
     no I/O beyond the orchestrator — so it is fully testable without a socket.
@@ -411,7 +411,7 @@ class OrchestratorServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, address: tuple[str, int], orchestrator: Orchestrator) -> None:
+    def __init__(self, address: tuple[str, int], orchestrator: OrchestratorCore) -> None:
         self.orchestrator = orchestrator
         self._signing_key = os.environ.get(ORCHESTRATOR_TOKEN_ENV, "").strip()
         if not self._signing_key:
@@ -437,7 +437,7 @@ class OrchestratorServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 
 def make_server(
-    orchestrator: Orchestrator, host: str = "127.0.0.1", port: int = 0
+    orchestrator: OrchestratorCore, host: str = "127.0.0.1", port: int = 0
 ) -> OrchestratorServer:
     """Build (but do not start) a control-plane server. `port=0` binds an
     ephemeral port — read `server.server_address` for the actual one."""

@@ -1,6 +1,6 @@
 """The per-host orchestrator core (PRD 0070).
 
-`Orchestrator` is the single backend-neutral object the control plane talks
+`OrchestratorCore` is the single backend-neutral object the control plane talks
 to: it owns the registry (runtime state) and brokers agent launches. It
 never branches on backend — the `LaunchBroker` abstracts the backend-native
 launch, so this same object drives docker / firecracker / apple once a real
@@ -54,7 +54,7 @@ _RESPOND_STATUS = {
 _APPLY_TOOLS = (TOOL_EGRESS_ALLOW, TOOL_EGRESS_BLOCK)
 
 
-class Orchestrator:
+class OrchestratorCore:
     """Owns the registry + brokers launches, and manages the single
     consolidated per-host gateway. Backend-neutral (broker and gateway
     abstract the backend-native pieces)."""
@@ -390,4 +390,4 @@ class Orchestrator:
         return {"configured": False}
 
 
-__all__ = ["Orchestrator"]
+__all__ = ["OrchestratorCore"]

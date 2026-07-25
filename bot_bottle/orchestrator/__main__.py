@@ -21,7 +21,7 @@ from .broker import LaunchBroker, StubBroker
 from .server import make_server
 from .docker_broker import DockerBroker
 from .store.registry_store import RegistryStore, default_db_path
-from .service import Orchestrator
+from .service import OrchestratorCore
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -52,7 +52,7 @@ def main(argv: list[str] | None = None) -> int:
     # anything; 'docker' runs real containers (firecracker drops in later).
     secret = secrets.token_bytes(32)
     broker: LaunchBroker = DockerBroker(secret) if args.broker == "docker" else StubBroker(secret)
-    orchestrator = Orchestrator(registry, broker, secret)
+    orchestrator = OrchestratorCore(registry, broker, secret)
 
     server = make_server(orchestrator, host=args.host, port=args.port)
     bound_host, bound_port = server.server_address[0], server.server_address[1]
