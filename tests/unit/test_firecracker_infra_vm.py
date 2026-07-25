@@ -413,9 +413,10 @@ class TestStop(unittest.TestCase):
                  patch.object(infra_vm, "_kill_pidfile") as kill, \
                  patch.object(infra_vm, "_kill_infra_firecrackers"):
                 infra_vm.stop()
-            # Both VMs' pidfiles are reaped, and the version marker is gone so a
-            # stopped pair is never adopted.
-            self.assertEqual(2, kill.call_count)
+            # Both VMs' pidfiles are reaped — plus the legacy pre-split combined
+            # VM's — and the version marker is gone so a stopped pair is never
+            # adopted.
+            self.assertEqual(3, kill.call_count)
             self.assertFalse((d / "booted-version").exists())
 
 
@@ -507,31 +508,35 @@ class TestKillInfraFirecrackers(unittest.TestCase):
         (p / "comm").write_text(comm + "\n")
         (p / "cmdline").write_bytes(b"\0".join(a.encode() for a in cmdline) + b"\0")
 
-    def test_kills_both_infra_firecrackers_only(self):
+    def test_kills_both_infra_and_legacy_firecrackers_only(self):
         import tempfile
         with tempfile.TemporaryDirectory() as td, \
              tempfile.TemporaryDirectory() as proc:
             infra_dir = Path(td)
             orch_cfg = str(infra_dir / "orchestrator" / "config.json")
             gw_cfg = str(infra_dir / "gateway" / "config.json")
+            legacy_cfg = str(infra_dir / "config.json")  # pre-split combined VM
             root = Path(proc)
-            # both infra VMs -> killed
+            # both new infra VMs + the legacy combined VM -> killed
             self._fake_proc(root, 111, "firecracker",
                             ["firecracker", "--no-api", "--config-file", orch_cfg])
             self._fake_proc(root, 112, "firecracker",
                             ["firecracker", "--no-api", "--config-file", gw_cfg])
+            self._fake_proc(root, 113, "firecracker",
+                            ["firecracker", "--no-api", "--config-file", legacy_cfg])
             # a firecracker for a different (interactive) VM -> spared
             self._fake_proc(root, 222, "firecracker",
                             ["firecracker", "--config-file", "/home/u/other.json"])
             # a non-firecracker process on an infra config path -> spared
             self._fake_proc(root, 333, "python3", ["python3", orch_cfg])
             (root / "not-a-pid").mkdir()
-            with patch.object(infra_vm, "_orch_dir", return_value=infra_dir / "orchestrator"), \
+            with patch.object(infra_vm, "_infra_dir", return_value=infra_dir), \
+                 patch.object(infra_vm, "_orch_dir", return_value=infra_dir / "orchestrator"), \
                  patch.object(infra_vm, "_gw_dir", return_value=infra_dir / "gateway"), \
                  patch.object(infra_vm.os, "kill") as kill:
                 infra_vm._kill_infra_firecrackers(proc_root=root)
             killed = {c.args[0] for c in kill.call_args_list}
-            self.assertEqual({111, 112}, killed)
+            self.assertEqual({111, 112, 113}, killed)
 
 
 if __name__ == "__main__":
