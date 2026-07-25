@@ -8,13 +8,13 @@ from unittest.mock import Mock, patch
 
 from bot_bottle.backend.docker.gateway_provision import (
     GatewayProvisionError,
-    DockerGatewayTransport,
     deprovision_git_gate,
     provision_git_gate,
 )
+from bot_bottle.backend.docker.gateway_transport import DockerGatewayTransport
 from bot_bottle.git_gate import GitGatePlan, GitGateUpstream
 
-_RUN = "bot_bottle.backend.docker.gateway_provision.run_docker"
+_RUN = "bot_bottle.backend.docker.gateway_transport.run_docker"
 
 
 def _proc(returncode: int = 0, stderr: str = "") -> Mock:

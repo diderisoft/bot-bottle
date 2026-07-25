@@ -20,22 +20,18 @@ Orchestrator service lands and `infra_vm` is dissolved.
 
 from __future__ import annotations
 
-import os
-import shlex
-import stat
 import subprocess
-from pathlib import Path
 from urllib.parse import urlparse
 
 from ...gateway import (
     DEFAULT_CA_TIMEOUT_SECONDS,
     Gateway,
     GatewayError,
-    GatewayProvisionError,
     GatewayTransport,
 )
 from .. import util as backend_util
 from . import infra_vm, netpool, util
+from .gateway_transport import FirecrackerGatewayTransport
 
 # The gateway microVM's name (the `bb_role=gateway` boot tag / run dir). Fixed
 # per host — one gateway VM, shared by every agent VM.
@@ -55,40 +51,6 @@ _GUEST_GATEWAY_JWT_PATH = infra_vm._GUEST_GATEWAY_JWT_PATH
 _GATEWAY_CA_PATH = "/home/mitmproxy/.mitmproxy/mitmproxy-ca-cert.pem"
 
 _CA_FETCH_TIMEOUT_SECONDS = 15.0
-
-
-class SshGatewayTransport:
-    """`GatewayTransport` for the gateway running in the gateway VM — the docker
-    exec/cp equivalents over SSH (dropbear + the stable infra key)."""
-
-    def __init__(self, private_key: Path, guest_ip: str) -> None:
-        self._key = private_key
-        self._ip = guest_ip
-
-    def exec(self, argv: list[str]) -> None:
-        proc = subprocess.run(
-            util.ssh_base_argv(self._key, self._ip) + [shlex.join(argv)],
-            capture_output=True, text=True, timeout=60, check=False,
-        )
-        if proc.returncode != 0:
-            raise GatewayProvisionError(
-                f"infra gateway exec {argv!r} failed: {proc.stderr.strip()}")
-
-    def cp_into(self, src: str, dest: str) -> None:
-        # Preserve the source mode (docker cp does): the access-hook is staged
-        # 0700 and git-http execs it directly — a plain `cat >` would land it
-        # 0644 and the exec fails with EACCES; keys stay 0600.
-        mode = stat.S_IMODE(os.stat(src).st_mode)
-        q = shlex.quote(dest)
-        proc = subprocess.run(
-            util.ssh_base_argv(self._key, self._ip)
-            + [f"cat > {q} && chmod {mode:o} {q}"],
-            input=Path(src).read_bytes(), capture_output=True, timeout=30, check=False,
-        )
-        if proc.returncode != 0:
-            raise GatewayProvisionError(
-                f"infra gateway cp {src} -> {dest} failed: "
-                f"{proc.stderr.decode(errors='replace').strip()}")
 
 
 class FirecrackerGateway(Gateway):
@@ -188,8 +150,8 @@ class FirecrackerGateway(Gateway):
         deploy keys through (over SSH to the gateway VM). Needs no live handle —
         built from the stable key + the gateway link's guest IP, so teardown can
         use it too."""
-        return SshGatewayTransport(
+        return FirecrackerGatewayTransport(
             infra_vm._infra_dir() / "id_ed25519", netpool.gw_slot().guest_ip)
 
 
-__all__ = ["FirecrackerGateway", "SshGatewayTransport", "GATEWAY_NAME"]
+__all__ = ["FirecrackerGateway", "FirecrackerGatewayTransport", "GATEWAY_NAME"]

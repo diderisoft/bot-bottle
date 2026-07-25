@@ -135,11 +135,11 @@ class TestMacosGatewayLifecycle(unittest.TestCase):
                 self.gw.ca_cert_pem(timeout=0)
 
     def test_provisioning_transport_targets_the_gateway_container(self) -> None:
-        from bot_bottle.backend.macos_container.gateway_provision import (
-            AppleGatewayTransport,
+        from bot_bottle.backend.macos_container.gateway_transport import (
+            MacosGatewayTransport,
         )
         transport = self.gw.provisioning_transport()
-        assert isinstance(transport, AppleGatewayTransport)
+        assert isinstance(transport, MacosGatewayTransport)
         self.assertEqual(self.gw.name, transport.gateway)
 
 

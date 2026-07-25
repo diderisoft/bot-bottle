@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 
 from .util import run_docker
-from .gateway_provision import DockerGatewayTransport
+from .gateway_transport import DockerGatewayTransport
 from ...paths import (
     ORCHESTRATOR_AUTH_JWT_ENV,
     host_gateway_ca_dir,

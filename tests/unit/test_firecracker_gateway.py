@@ -18,11 +18,14 @@ from bot_bottle.backend.firecracker import infra_vm
 from bot_bottle.backend.firecracker.gateway import (
     GATEWAY_NAME,
     FirecrackerGateway,
-    SshGatewayTransport,
+)
+from bot_bottle.backend.firecracker.gateway_transport import (
+    FirecrackerGatewayTransport,
 )
 from bot_bottle.gateway import GatewayError, GatewayProvisionError
 
 _GW = "bot_bottle.backend.firecracker.gateway"
+_GW_TRANSPORT = "bot_bottle.backend.firecracker.gateway_transport"
 
 _ORCH_URL = "http://10.243.255.1:8099"
 _TOKEN = "gw-jwt-token"
@@ -115,24 +118,24 @@ class TestFirecrackerGatewaySurface(unittest.TestCase):
     def test_provisioning_transport_targets_the_gateway_link(self) -> None:
         gw = FirecrackerGateway()
         transport = gw.provisioning_transport()
-        assert isinstance(transport, SshGatewayTransport)
+        assert isinstance(transport, FirecrackerGatewayTransport)
         self.assertEqual(infra_vm.netpool.gw_slot().guest_ip, transport._ip)
 
 
-class TestSshGatewayTransport(unittest.TestCase):
+class TestFirecrackerGatewayTransport(unittest.TestCase):
     def test_cp_into_preserves_source_mode(self) -> None:
         with tempfile.NamedTemporaryFile() as f:
             os.chmod(f.name, 0o700)  # like the staged access-hook
-            t = SshGatewayTransport(Path("/k"), "10.0.0.1")
-            with patch(f"{_GW}.subprocess.run",
+            t = FirecrackerGatewayTransport(Path("/k"), "10.0.0.1")
+            with patch(f"{_GW_TRANSPORT}.subprocess.run",
                        return_value=CompletedProcess([], 0)) as run:
                 t.cp_into(f.name, "/etc/git-gate/access-hook")
         remote_cmd = run.call_args.args[0][-1]
         self.assertIn("chmod 700", remote_cmd)  # exec bit preserved over SSH
 
     def test_exec_raises_on_failure(self) -> None:
-        t = SshGatewayTransport(Path("/k"), "10.0.0.1")
-        with patch(f"{_GW}.subprocess.run",
+        t = FirecrackerGatewayTransport(Path("/k"), "10.0.0.1")
+        with patch(f"{_GW_TRANSPORT}.subprocess.run",
                    return_value=CompletedProcess([], 1, stderr="nope")), \
                 self.assertRaises(GatewayProvisionError):
             t.exec(["mkdir", "-p", "/git-gate"])

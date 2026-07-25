@@ -47,7 +47,7 @@ from ..consolidated_util import (
 from . import util as container_mod
 from .enumerate import CONTAINER_NAME_PREFIX, EnumerationError, enumerate_active
 from .gateway import GATEWAY_NETWORK
-from .gateway_provision import AppleGatewayTransport
+from .gateway_transport import MacosGatewayTransport
 from .infra import MacosInfraService, OrchestratorStartError
 
 
@@ -172,7 +172,7 @@ def register_agent(
     except (OrchestratorClientError, EnumerationError) as e:
         info(f"registry reconciliation skipped: {e}")
     reg = provision_bottle(
-        client, source_ip, egress_plan, git_gate_plan, AppleGatewayTransport(),
+        client, source_ip, egress_plan, git_gate_plan, MacosGatewayTransport(),
         image_ref=image_ref, tokens=tokens,
         env_var_secret=env_var_secret,
     )
@@ -193,7 +193,7 @@ def teardown_consolidated(
     """Deregister the bottle and remove its git-gate state from the gateway.
     Both steps are idempotent so this is safe from a cleanup trap. Does NOT
     stop the gateway — it's a persistent per-host singleton."""
-    _teardown_util(bottle_id, AppleGatewayTransport(),
+    _teardown_util(bottle_id, MacosGatewayTransport(),
                    orchestrator_url=orchestrator_url, timeout=timeout)
 
 

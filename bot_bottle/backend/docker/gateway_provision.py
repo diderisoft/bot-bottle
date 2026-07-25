@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import re
 
-from .util import run_docker
 from ...git_gate import GitGatePlan, git_gate_render_provision
 from ...gateway import GatewayProvisionError, GatewayTransport
 
@@ -25,27 +24,6 @@ from ...gateway import GatewayProvisionError, GatewayTransport
 # id like "../etc" must never reach the gateway). Registry ids are token_hex —
 # this is defense in depth at the transport boundary.
 _SAFE_BOTTLE_ID = re.compile(r"[A-Za-z0-9_-]+")
-
-
-class DockerGatewayTransport:
-    """`GatewayTransport` for the docker gateway container (exec/cp)."""
-
-    def __init__(self, gateway: str) -> None:
-        self.gateway = gateway
-
-    def exec(self, argv: list[str]) -> None:
-        proc = run_docker(["docker", "exec", self.gateway, *argv])
-        if proc.returncode != 0:
-            raise GatewayProvisionError(
-                f"gateway exec {argv!r} failed: {proc.stderr.strip()}"
-            )
-
-    def cp_into(self, src: str, dest: str) -> None:
-        proc = run_docker(["docker", "cp", src, f"{self.gateway}:{dest}"])
-        if proc.returncode != 0:
-            raise GatewayProvisionError(
-                f"gateway cp {src} -> {dest} failed: {proc.stderr.strip()}"
-            )
 
 
 def _require_safe(bottle_id: str) -> None:
@@ -109,5 +87,5 @@ def deprovision_git_gate(transport: GatewayTransport, bottle_id: str) -> None:
 
 __all__ = [
     "provision_git_gate", "deprovision_git_gate",
-    "GatewayProvisionError", "GatewayTransport", "DockerGatewayTransport",
+    "GatewayProvisionError", "GatewayTransport",
 ]

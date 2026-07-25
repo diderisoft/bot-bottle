@@ -175,7 +175,7 @@ class TestDockerGateway(unittest.TestCase):
                 self.sc.address()
 
     def test_provisioning_transport_targets_the_gateway_container(self) -> None:
-        from bot_bottle.backend.docker.gateway_provision import DockerGatewayTransport
+        from bot_bottle.backend.docker.gateway_transport import DockerGatewayTransport
 
         transport = self.sc.provisioning_transport()
         assert isinstance(transport, DockerGatewayTransport)

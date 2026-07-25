@@ -184,10 +184,10 @@ class MacosGateway(Gateway):
     def provisioning_transport(self) -> GatewayTransport:
         """The exec/cp transport git-gate provisioning stages per-bottle repos +
         deploy keys through (over the `container` CLI)."""
-        # Local import: gateway_provision imports GATEWAY_NAME from this module,
-        # so importing AppleGatewayTransport at module scope would cycle.
-        from .gateway_provision import AppleGatewayTransport
-        return AppleGatewayTransport(self.name)
+        # Local import: gateway_transport imports GATEWAY_NAME from this module,
+        # so importing MacosGatewayTransport at module scope would cycle.
+        from .gateway_transport import MacosGatewayTransport
+        return MacosGatewayTransport(self.name)
 
 
 __all__ = [

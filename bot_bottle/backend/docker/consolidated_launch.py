@@ -26,7 +26,7 @@ from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
 from ...orchestrator.reprovision import reprovision_bottles
 from ..consolidated_util import provision_bottle
 from ..consolidated_util import teardown_consolidated as _teardown_util
-from .gateway_provision import DockerGatewayTransport
+from .gateway_transport import DockerGatewayTransport
 from .gateway_net import next_free_ip
 
 
