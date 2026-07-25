@@ -4,7 +4,7 @@
 How the launcher stages files + runs commands in the running gateway: the
 docker exec/cp equivalents over SSH (dropbear + the stable infra key). The
 backend-neutral provisioning logic that drives it lives in
-`backend.docker.gateway_provision`.
+`backend.gateway_provision`.
 """
 
 from __future__ import annotations

@@ -2,7 +2,7 @@
 
 How the launcher stages files + runs commands in the running gateway container:
 `docker exec` / `docker cp` over the docker socket. The backend-neutral
-provisioning logic that drives it lives in `gateway_provision`.
+provisioning logic that drives it lives in `backend.gateway_provision`.
 """
 
 from __future__ import annotations

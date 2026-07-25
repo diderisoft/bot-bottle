@@ -1,12 +1,14 @@
 """Provision one bottle's git-gate state into the running shared gateway
-(PRD 0070, docker slice).
+(PRD 0070). Backend-neutral: it drives any `GatewayTransport` (docker/apple
+exec+cp, firecracker SSH), and the guest-side paths it writes are identical
+inside every backend's gateway because they all run the same gateway image.
 
 The consolidated gateway serves every bottle's repos under `/git/<bottle_id>/`
 with per-repo credentials under `/git-gate/creds/<bottle_id>/`. When a bottle
 is registered the launcher must place *its* deploy keys + known_hosts into
 that per-bottle creds dir and init its bare repos there — so this copies the
-credential files into the live gateway container and runs the (namespaced,
-init-only) provisioning script produced by `git_gate_render_provision`.
+credential files into the live gateway and runs the (namespaced, init-only)
+provisioning script produced by `git_gate_render_provision`.
 
 Isolating each bottle's creds dir + repo root by id is what keeps one
 bottle's push credentials out of another's repos on the shared gateway.
@@ -16,8 +18,8 @@ from __future__ import annotations
 
 import re
 
-from ...git_gate import GitGatePlan, git_gate_render_provision
-from ...gateway import GatewayProvisionError, GatewayTransport
+from ..git_gate import GitGatePlan, git_gate_render_provision
+from ..gateway import GatewayProvisionError, GatewayTransport
 
 # bottle ids index the gateway's per-bottle repo + creds dirs; they land in
 # exec/cp path arguments, so validate before any path is built (a traversal

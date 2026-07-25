@@ -14,7 +14,7 @@ from ..git_gate import GitGatePlan
 from ..orchestrator.client import OrchestratorClient, RegisteredBottle
 from ..orchestrator.registration import registration_inputs
 from ..orchestrator.store.secret_store import new_env_var_secret
-from .docker.gateway_provision import GatewayTransport, deprovision_git_gate, provision_git_gate
+from .gateway_provision import GatewayTransport, deprovision_git_gate, provision_git_gate
 
 
 def provision_bottle(
