@@ -130,9 +130,8 @@ def launch_consolidated(
     client = OrchestratorClient(url)
     _reprovision_running_bottles(client)
 
-    # Read the gateway's provisioning transport + CA off the Gateway service
-    # (adapting the running gateway VM).
-    gateway = FirecrackerGateway(infra.gateway)
+    # Read the gateway's provisioning transport + CA off the Gateway service.
+    gateway = infra.gateway
     transport = gateway.provisioning_transport()
     reg = provision_bottle(
         client, guest_ip, egress_plan, git_gate_plan, transport,

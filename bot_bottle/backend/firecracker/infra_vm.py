@@ -32,9 +32,7 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import os
-import shlex
 import signal
-import stat
 import subprocess
 import time
 import urllib.error
@@ -42,15 +40,16 @@ import urllib.request
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Generator
+from typing import TYPE_CHECKING, Generator
 
 from ...log import die, info
 from ...orchestrator_auth import ROLE_GATEWAY, mint
 from ...paths import host_orchestrator_token
-from .. import util as backend_util
 from ..docker import util as docker_mod
-from ...gateway import GatewayProvisionError
 from . import firecracker_vm, infra_artifact, netpool, util
+
+if TYPE_CHECKING:
+    from .gateway import FirecrackerGateway
 
 # The orchestrator VM's signing-key path on its persistent /dev/vdb volume
 # (mounted at BOT_BOTTLE_ROOT=/var/lib/bot-bottle). The launcher seeds this
@@ -77,16 +76,11 @@ ORCHESTRATOR_PORT = 8099
 EGRESS_PORT = 9099
 SUPERVISE_PORT = 9100
 GIT_HTTP_PORT = 9420
-# mitmproxy writes its CA here a beat after start; agents install it to trust
-# the gateway's TLS interception.
-_GATEWAY_CA_PATH = "/home/mitmproxy/.mitmproxy/mitmproxy-ca-cert.pem"
-
-# Memory ceilings (fixed at boot, demand-paged — no balloon reclaim). The
+# Memory ceiling (fixed at boot, demand-paged — no balloon reclaim). The
 # orchestrator keeps the build headroom (buildah's 2-4 GB working set during
-# in-VM agent builds); the gateway is the slim unit (mitmproxy TLS bump + DLP
-# body buffering, ~1 GB) — PRD 0070 "Memory: fixed ceilings".
+# in-VM agent builds); the gateway's slimmer ceiling is set by the gateway
+# service — PRD 0070 "Memory: fixed ceilings".
 _ORCH_MEM_MIB = 4096
-_GW_MEM_MIB = 2048
 
 # The infra VMs make direct upstream connections (gateway egress, and buildah
 # during builds), and the kernel `ip=` cmdline sets no resolver. Public for
@@ -117,41 +111,23 @@ class InfraVm:
     def orchestrator_url(self) -> str:
         return f"http://{self.guest_ip}:{ORCHESTRATOR_PORT}"
 
-    def gateway_ca_pem(self, *, timeout: float = _CA_TIMEOUT_SECONDS) -> str:
-        """The gateway's mitmproxy CA (PEM) that agents install to trust its
-        TLS interception. Generated a moment after boot, so this polls over
-        SSH until it appears (mirrors DockerGateway.ca_cert_pem). Call on the
-        gateway VM handle."""
-        def _fetch() -> str | None:
-            proc = subprocess.run(
-                util.ssh_base_argv(self.private_key, self.guest_ip)
-                + [f"cat {_GATEWAY_CA_PATH}"],
-                capture_output=True, text=True, timeout=15, check=False,
-            )
-            ok = proc.returncode == 0 and "BEGIN CERTIFICATE" in proc.stdout
-            return proc.stdout if ok else None
-        try:
-            return backend_util.poll_ca_cert(_fetch, timeout=timeout)
-        except TimeoutError as exc:
-            die(str(exc))
-
 
 @dataclass
 class InfraEndpoint:
     """How to reach the running per-host pair. `orchestrator` is the control
-    plane (host CLI + registration + in-VM builds); `gateway` is the data
-    plane (agent egress / git-http / supervise, CA fetch, git-gate
+    plane (host CLI + registration + in-VM builds); `gateway` is the data-plane
+    `Gateway` service (agent egress / git-http / supervise, CA fetch, git-gate
     provisioning). Mirrors the docker/macOS `InfraEndpoint` shape."""
 
     orchestrator: InfraVm
-    gateway: InfraVm
+    gateway: "FirecrackerGateway"
 
     @property
     def orchestrator_url(self) -> str:
         return self.orchestrator.orchestrator_url
 
     def gateway_ca_pem(self, *, timeout: float = _CA_TIMEOUT_SECONDS) -> str:
-        return self.gateway.gateway_ca_pem(timeout=timeout)
+        return self.gateway.ca_cert_pem(timeout=timeout)
 
 
 def ensure_built() -> None:
@@ -229,22 +205,28 @@ def ensure_running() -> InfraEndpoint:
         orchestrator = boot_orchestrator()
         wait_for_health(orchestrator)
         # The orchestrator holds the signing key; mint the role-scoped `gateway`
-        # JWT on the host and hand it to the gateway VM, which never sees the key
-        # (#469).
+        # JWT on the host and hand it to the gateway service, which never sees
+        # the key (#469). The gateway owns its own boot — see FirecrackerGateway.
+        # Local import: the gateway service imports this module for the shared VM
+        # substrate, so importing it at module scope would cycle.
+        from .gateway import FirecrackerGateway
         gateway_token = mint(ROLE_GATEWAY, host_orchestrator_token())
-        gateway = boot_gateway(orchestrator.guest_ip, gateway_token)
+        gateway = FirecrackerGateway()
+        gateway.connect_to_orchestrator(orchestrator.orchestrator_url, gateway_token)
         _record_booted_version(want)
         return InfraEndpoint(orchestrator=orchestrator, gateway=gateway)
 
 
 def _adopt(key: Path) -> InfraEndpoint:
     """Build handles to the already-running pair from the stable key + the
-    fixed links (vm=None — teardown then goes through the PID files)."""
+    fixed links (no live VM handle — teardown / CA fetch go through the PID
+    files + stable key)."""
+    from .gateway import FirecrackerGateway
     return InfraEndpoint(
         orchestrator=InfraVm(
             guest_ip=netpool.orch_slot().guest_ip, private_key=key),
-        gateway=InfraVm(
-            guest_ip=netpool.gw_slot().guest_ip, private_key=key),
+        gateway=FirecrackerGateway(
+            InfraVm(guest_ip=netpool.gw_slot().guest_ip, private_key=key)),
     )
 
 
@@ -292,25 +274,6 @@ def boot_orchestrator() -> InfraVm:
     # source of truth, so a co-running Docker/macOS control plane keeps working.
     _push_signing_key(orch)
     return orch
-
-
-def boot_gateway(orchestrator_guest_ip: str, gateway_token: str) -> InfraVm:
-    """Boot the gateway (data-plane) VM (detached) on the gateway link, and
-    seed the pre-minted `gateway` JWT `gateway_token`. Its daemons resolve
-    policy against the orchestrator at `orchestrator_guest_ip:8099` (passed on
-    the cmdline, so the baked init stays IP-independent). Boot the orchestrator
-    first — the gateway daemons reach it at startup. The gateway never holds the
-    signing key, only this token (#469). Prefer `ensure_running`."""
-    slot = netpool.gw_slot()
-    gateway = _boot_vm(
-        name="bot-bottle-gateway", slot=slot, run_dir=_gw_dir(),
-        role="gateway", mem_mib=_GW_MEM_MIB,
-        extra_boot_args=f"bb_orch={orchestrator_guest_ip}",
-    )
-    # Push the pre-minted `gateway` JWT (never the signing key — issue #469).
-    # The init waits for it before starting the data plane.
-    _push_gateway_jwt(gateway, gateway_token)
-    return gateway
 
 
 def _boot_vm(
@@ -456,18 +419,6 @@ def _push_signing_key(infra: InfraVm) -> None:
     )
 
 
-def _push_gateway_jwt(infra: InfraVm, gateway_token: str) -> None:
-    """Push the pre-minted `gateway` JWT into the freshly booted gateway VM
-    over SSH (atomic write). Minted on the HOST from the canonical signing key
-    so the data plane never holds the key itself (issue #469); the gateway
-    daemons present it to the orchestrator. Retries until SSH is up; dies if it
-    never lands, since the VM then refuses to start the data plane."""
-    _push_secret(
-        infra, gateway_token, _GUEST_GATEWAY_JWT_PATH,
-        "the gateway JWT to the gateway VM (its data plane will not start)",
-    )
-
-
 def _push_secret(infra: InfraVm, secret: str, dest: str, what: str) -> None:
     """Pipe `secret` to an atomic write of `dest` in the guest over SSH,
     retrying while the guest's SSH comes up; die (naming `what`) if it never
@@ -572,77 +523,6 @@ def _health_ok(url: str) -> bool:
             return resp.status == 200
     except (urllib.error.URLError, TimeoutError, OSError):
         return False
-
-
-class SshGatewayTransport:
-    """`GatewayTransport` for the gateway running in the gateway VM — the
-    docker exec/cp equivalents over SSH (dropbear + the stable infra key)."""
-
-    def __init__(self, private_key: Path, guest_ip: str) -> None:
-        self._key = private_key
-        self._ip = guest_ip
-
-    def exec(self, argv: list[str]) -> None:
-        proc = subprocess.run(
-            util.ssh_base_argv(self._key, self._ip) + [shlex.join(argv)],
-            capture_output=True, text=True, timeout=60, check=False,
-        )
-        if proc.returncode != 0:
-            raise GatewayProvisionError(
-                f"infra gateway exec {argv!r} failed: {proc.stderr.strip()}")
-
-    def cp_into(self, src: str, dest: str) -> None:
-        # Preserve the source mode (docker cp does): the access-hook is staged
-        # 0700 and git-http execs it directly — a plain `cat >` would land it
-        # 0644 and the exec fails with EACCES; keys stay 0600.
-        mode = stat.S_IMODE(os.stat(src).st_mode)
-        q = shlex.quote(dest)
-        proc = subprocess.run(
-            util.ssh_base_argv(self._key, self._ip)
-            + [f"cat > {q} && chmod {mode:o} {q}"],
-            input=Path(src).read_bytes(), capture_output=True, timeout=30, check=False,
-        )
-        if proc.returncode != 0:
-            raise GatewayProvisionError(
-                f"infra gateway cp {src} -> {dest} failed: "
-                f"{proc.stderr.decode(errors='replace').strip()}")
-
-
-def gateway_transport() -> SshGatewayTransport:
-    """git-gate provisioning transport for the gateway VM, built from the
-    stable key + the gateway link's guest IP. Needs no live VM handle, so
-    teardown can use it too."""
-    return SshGatewayTransport(
-        _infra_dir() / "id_ed25519", netpool.gw_slot().guest_ip)
-
-
-def gateway_guest_ip() -> str:
-    """The gateway VM's fixed guest IP on its link — the agent-facing address
-    agent VMs' gateway-port traffic is DNAT'd to (PRD 0070)."""
-    return netpool.gw_slot().guest_ip
-
-
-def gateway_running() -> bool:
-    """True iff the gateway VM is still a live VMM."""
-    return _pidfile_alive(_gw_dir())
-
-
-def stop_gateway() -> None:
-    """Stop only the gateway VM (idempotent — absent is success). Drops the pair
-    version marker so a half-stopped pair is never adopted (`_adoptable`)."""
-    _kill_pidfile(_gw_dir())
-    _pid_file(_gw_dir()).unlink(missing_ok=True)
-    _version_file().unlink(missing_ok=True)
-
-
-def adopted_gateway_vm() -> InfraVm:
-    """A handle to the already-running gateway VM from the stable key + the
-    fixed gateway link (vm=None — CA fetch / provisioning work from any later
-    launcher, not only the process that booted it)."""
-    return InfraVm(
-        guest_ip=netpool.gw_slot().guest_ip,
-        private_key=_infra_dir() / "id_ed25519",
-    )
 
 
 def wait_for_health(
