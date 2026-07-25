@@ -2,7 +2,7 @@
 
 `DockerInfraService` brings up two containers — the lean orchestrator on the
 `--internal` control network + host loopback, and the dual-homed gateway. These
-tests isolate the orchestrator-container logic by mocking `_gateway` (the
+tests isolate the orchestrator-container logic by mocking `gateway` (the
 gateway runs via `DockerGateway`, exercised in its own test)."""
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ class TestDockerInfraService(unittest.TestCase):
         # Isolate the orchestrator-container logic: the gateway is brought up by
         # DockerGateway (its own module/run_docker), tested separately.
         self.gw = MagicMock()
-        patcher = patch.object(self.svc, "_gateway", return_value=self.gw)
+        patcher = patch.object(self.svc, "gateway", return_value=self.gw)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -86,7 +86,7 @@ class TestDockerInfraService(unittest.TestCase):
             self.assertEqual(self.svc.url, self.svc.ensure_running())
         runs = [c.args[0] for c in run.call_args_list if c.args[0][:2] == ["docker", "run"]]
         self.assertEqual([], runs)
-        self.gw.ensure_running.assert_called_once_with()
+        self.gw.connect_to_orchestrator.assert_called_once()
 
     def test_recreates_orchestrator_when_source_changed(self) -> None:
         def fake(argv: list[str], **_kw: object) -> Mock:
@@ -129,7 +129,7 @@ class TestDockerInfraService(unittest.TestCase):
         self.assertIn("--broker", argv)
         self.assertIn("stub", argv)
         # Gateway is brought up after the control plane is healthy.
-        self.gw.ensure_running.assert_called_once_with()
+        self.gw.connect_to_orchestrator.assert_called_once()
 
     def test_builds_gateway_and_orchestrator_images(self) -> None:
         def fake(argv: list[str], **_kw: object) -> Mock:
@@ -154,7 +154,7 @@ class TestDockerInfraService(unittest.TestCase):
             return _proc()
 
         svc = DockerInfraService(port=20001)
-        with patch.object(svc, "_gateway", return_value=MagicMock()), \
+        with patch.object(svc, "gateway", return_value=MagicMock()), \
                 patch(_URLOPEN, side_effect=[urllib.error.URLError("down"), _health(200)]), \
                 patch(_RUN, side_effect=fake) as run, patch(_SLEEP):
             svc.ensure_running()

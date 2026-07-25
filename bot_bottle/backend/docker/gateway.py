@@ -4,17 +4,16 @@ import os
 import time
 from pathlib import Path
 
-from ...orchestrator_auth import ROLE_GATEWAY, mint
 from .util import run_docker
+from .gateway_provision import DockerGatewayTransport
 from ...paths import (
     ORCHESTRATOR_AUTH_JWT_ENV,
-    host_orchestrator_token,
     host_gateway_ca_dir,
 )
 from ...gateway import (
-  Gateway, GATEWAY_IMAGE, GATEWAY_NAME, GATEWAY_NETWORK, GATEWAY_DOCKERFILE,
-  REPO_ROOT, GATEWAY_LABEL, MITMPROXY_HOME, DEFAULT_CA_TIMEOUT_SECONDS,
-  CA_POLL_SECONDS, GATEWAY_CA_CERT, GatewayError
+  Gateway, GatewayTransport, GATEWAY_IMAGE, GATEWAY_NAME, GATEWAY_NETWORK,
+  GATEWAY_DOCKERFILE, REPO_ROOT, GATEWAY_LABEL, MITMPROXY_HOME,
+  DEFAULT_CA_TIMEOUT_SECONDS, CA_POLL_SECONDS, GATEWAY_CA_CERT, GatewayError
 )
 
 class DockerGateway(Gateway):
@@ -32,7 +31,6 @@ class DockerGateway(Gateway):
         name: str = GATEWAY_NAME,
         network: str = GATEWAY_NETWORK,
         control_network: str = "",
-        orchestrator_url: str = "",
         build_context: Path | None = None,
         dockerfile: str | None = GATEWAY_DOCKERFILE,
         host_port_bindings: tuple[int, ...] = (),
@@ -45,13 +43,13 @@ class DockerGateway(Gateway):
         # `orchestrator_url` by container name over docker DNS. Agents are never
         # on it, so they get no route to the control plane (PRD 0070).
         self._control_network = control_network
-        # The control-plane URL the gateway's data plane resolves per bottle
-        # against — reached by container name over docker DNS on the shared
-        # network (container↔container, no host firewall). Mandatory to *run*
-        # the gateway (see `ensure_running`); empty is tolerated only for the
-        # construct-then-read-CA path (`ca_cert_pem` on an already-running
-        # container), which never launches a container.
-        self._orchestrator_url = orchestrator_url
+        # The orchestrator binding — set by `connect_to_orchestrator` (the
+        # control-plane URL the data plane resolves against, and the pre-minted
+        # `gateway` token it presents; the gateway never mints, so it never
+        # holds the signing key — #469). Empty until connected; `ca_cert_pem` /
+        # `address` / `stop` work on an already-running gateway without it.
+        self._orchestrator_url = ""
+        self._gateway_token = ""
         self._build_context = build_context or REPO_ROOT
         self._dockerfile = dockerfile
         # Ports published on the host (0.0.0.0). Used by the Firecracker
@@ -116,7 +114,13 @@ class DockerGateway(Gateway):
                 f"gateway network {self.network} failed to create: {proc.stderr.strip()}"
             )
 
-    def ensure_running(self) -> None:
+    def connect_to_orchestrator(self, orchestrator_url: str, gateway_token: str) -> None:
+        # Bind to this orchestrator (PRD 0070): stash the URL its daemons resolve
+        # policy against + the pre-minted `gateway` token they present, then bring
+        # the container up. The gateway never mints, so it holds no signing key —
+        # only this token (#469).
+        self._orchestrator_url = orchestrator_url
+        self._gateway_token = gateway_token
         # Fail closed on a missing policy source. The data-plane daemons are
         # resolver-only now (PRD 0070) — without an orchestrator URL egress
         # raises, git-http exits 1, and supervise exits 2 — so launching a
@@ -126,6 +130,11 @@ class DockerGateway(Gateway):
             raise GatewayError(
                 "gateway requires an orchestrator URL to run "
                 "(resolver-only data plane; no single-tenant fallback)"
+            )
+        if not self._gateway_token:
+            raise GatewayError(
+                "gateway requires a pre-minted `gateway` token to run "
+                "(the orchestrator mints it; the gateway never holds the key)"
             )
         # Recreate when the running container's image is stale (a rebuild),
         # so source changes to the gateway's flat daemons take effect — not
@@ -165,7 +174,7 @@ class DockerGateway(Gateway):
         # operator routes (issue #469 review). Bare `--env NAME` keeps the value
         # off argv / `docker inspect`; only the gateway (not the agent) is given it.
         argv += ["--env", ORCHESTRATOR_AUTH_JWT_ENV]
-        run_env[ORCHESTRATOR_AUTH_JWT_ENV] = mint(ROLE_GATEWAY, host_orchestrator_token())
+        run_env[ORCHESTRATOR_AUTH_JWT_ENV] = self._gateway_token
         argv.append(self.image_ref)
         proc = run_docker(argv, env=run_env)
         if proc.returncode != 0:
@@ -217,3 +226,27 @@ class DockerGateway(Gateway):
         proc = run_docker(["docker", "rm", "--force", self.name])
         if proc.returncode != 0 and "No such container" not in proc.stderr:
             raise GatewayError(f"gateway failed to stop: {proc.stderr.strip()}")
+
+    def address(self) -> str:
+        """The gateway's IPv4 on the agent-facing network (`self.network`) — the
+        proxy target agents dial for egress / git-http / supervise. This is
+        *not* the control network: agents share only this network with the
+        gateway, so its address here is also the source IP the gateway
+        attributes each request by."""
+        proc = run_docker([
+            "docker", "inspect", "--format",
+            f'{{{{(index .NetworkSettings.Networks "{self.network}").IPAddress}}}}',
+            self.name,
+        ])
+        ip = proc.stdout.strip()
+        if proc.returncode != 0 or not ip:
+            raise GatewayError(
+                f"gateway {self.name} has no address on {self.network}: "
+                f"{proc.stderr.strip()}"
+            )
+        return ip
+
+    def provisioning_transport(self) -> GatewayTransport:
+        """The exec/cp transport git-gate provisioning stages per-bottle repos +
+        deploy keys through (over the docker socket)."""
+        return DockerGatewayTransport(self.name)

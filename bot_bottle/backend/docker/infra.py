@@ -42,6 +42,7 @@ from ...gateway import (
     GATEWAY_NETWORK,
     GatewayError,
 )
+from ...orchestrator_auth import ROLE_GATEWAY, mint
 from ...orchestrator.lifecycle import (
     DEFAULT_PORT,
     DEFAULT_STARTUP_TIMEOUT_SECONDS,
@@ -223,15 +224,17 @@ class DockerInfraService:
                 f"orchestrator container failed to start: {proc.stderr.strip()}"
             )
 
-    def _gateway(self) -> DockerGateway:
+    def gateway(self) -> DockerGateway:
         """The data-plane gateway, dual-homed on the agent network + the control
-        network, resolving policy against the orchestrator by name."""
+        network, resolving policy against the orchestrator by name. Cheap to
+        reconstruct — the launch flow reads its `address()` / provisioning
+        transport off it, and `ensure_running` connects it to the control
+        plane."""
         return DockerGateway(
             self.gateway_image,
             name=self._gateway_name,
             network=self.network,
             control_network=self.control_network,
-            orchestrator_url=ORCHESTRATOR_URL_IN_NETWORK,
             build_context=self._repo_root,
             dockerfile=None,  # images are built by _build_images
         )
@@ -265,8 +268,14 @@ class DockerInfraService:
                 )
 
         # Bring up (or refresh) the gateway once the control plane it resolves
-        # against is healthy. `ensure_running` is itself idempotent.
-        self._gateway().ensure_running()
+        # against is healthy. The orchestrator (which holds the signing key)
+        # mints the role-scoped `gateway` JWT here and hands it to the gateway,
+        # which never sees the key (#469). `connect_to_orchestrator` is
+        # idempotent.
+        gateway_token = mint(ROLE_GATEWAY, host_orchestrator_token())
+        self.gateway().connect_to_orchestrator(
+            ORCHESTRATOR_URL_IN_NETWORK, gateway_token,
+        )
         return self.url
 
     def stop(self) -> None:

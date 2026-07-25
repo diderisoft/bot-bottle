@@ -61,20 +61,6 @@ def _network_cidr(network: str) -> str:
     return cidr
 
 
-def _container_ip(name: str, network: str) -> str:
-    """A container's IPv4 address on `network`, or raise."""
-    proc = run_docker([
-        "docker", "inspect", "--format",
-        f'{{{{(index .NetworkSettings.Networks "{network}").IPAddress}}}}', name,
-    ])
-    ip = proc.stdout.strip()
-    if proc.returncode != 0 or not ip:
-        raise ConsolidatedLaunchError(
-            f"container {name} has no address on {network}: {proc.stderr.strip()}"
-        )
-    return ip
-
-
 def _network_container_ips(network: str) -> list[str]:
     """Every address currently assigned on the gateway network — the ground
     truth for "in use": the infra container and every live agent. Read from
@@ -157,16 +143,17 @@ def launch_consolidated(
     service = service or DockerInfraService()
     url = service.ensure_running()
     # Agents attribute against the *gateway* container (data plane), not the
-    # orchestrator — the two planes are now separate containers.
-    gateway_name = service.gateway_name
-    _reprovision_running_bottles(url, network=network, infra_name=gateway_name)
+    # orchestrator — the two planes are now separate containers. Read its
+    # agent-facing address + provisioning transport off the Gateway service.
+    gateway = service.gateway()
+    _reprovision_running_bottles(url, network=network, infra_name=gateway.name)
     client = OrchestratorClient(url)
 
     cidr = _network_cidr(network)
-    gateway_ip = _container_ip(gateway_name, network)
+    gateway_ip = gateway.address()
     source_ip = next_free_ip(cidr, _network_container_ips(network))
 
-    transport = DockerGatewayTransport(gateway_name)
+    transport = gateway.provisioning_transport()
     reg = provision_bottle(
         client, source_ip, egress_plan, git_gate_plan, transport,
         image_ref=image_ref, tokens=tokens,

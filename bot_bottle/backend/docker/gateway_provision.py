@@ -15,35 +15,16 @@ bottle's push credentials out of another's repos on the shared gateway.
 from __future__ import annotations
 
 import re
-from typing import Protocol
 
 from .util import run_docker
 from ...git_gate import GitGatePlan, git_gate_render_provision
+from ...gateway import GatewayProvisionError, GatewayTransport
 
 # bottle ids index the gateway's per-bottle repo + creds dirs; they land in
 # exec/cp path arguments, so validate before any path is built (a traversal
 # id like "../etc" must never reach the gateway). Registry ids are token_hex —
 # this is defense in depth at the transport boundary.
 _SAFE_BOTTLE_ID = re.compile(r"[A-Za-z0-9_-]+")
-
-
-class GatewayProvisionError(RuntimeError):
-    """A git-gate provisioning step against the running gateway failed."""
-
-
-class GatewayTransport(Protocol):
-    """How the launcher stages files + runs commands in the running gateway.
-    Backend-neutral so the same provisioning logic serves the docker gateway
-    (exec/cp over the docker socket) and the firecracker gateway VM (over
-    SSH)."""
-
-    def exec(self, argv: list[str]) -> None:
-        """Run `argv` in the gateway, raising `GatewayProvisionError` on
-        failure."""
-
-    def cp_into(self, src: str, dest: str) -> None:
-        """Copy host file `src` to `dest` in the gateway, raising on
-        failure."""
 
 
 class DockerGatewayTransport:

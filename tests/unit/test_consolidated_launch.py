@@ -46,8 +46,12 @@ class TestLaunchConsolidated(unittest.TestCase):
     ):
         service = MagicMock()
         service.ensure_running.return_value = "http://orch:8080"
+        # The launch flow reads the gateway's agent-facing address + provisioning
+        # transport off the Gateway service (service.gateway()).
+        gateway = service.gateway.return_value
+        gateway.name = "bot-bottle-gateway"
+        gateway.address.return_value = "172.18.0.2"
         with patch(f"{_MOD}._network_cidr", return_value="172.18.0.0/16"), \
-                patch(f"{_MOD}._container_ip", return_value="172.18.0.2"), \
                 patch(f"{_MOD}._network_container_ips", return_value=list(on_network)), \
                 patch(f"{_MOD}.OrchestratorClient", return_value=client), \
                 patch(f"{_UTIL}.provision_git_gate", provision or Mock()):

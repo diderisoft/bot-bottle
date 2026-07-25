@@ -6,14 +6,15 @@ because the attribution invariant (source IP + identity token, see
 `registry`) lets the gateway attribute each request to the right bottle —
 so per-bottle policy lives in one long-lived process keyed on who's calling.
 
-`Gateway` is the backend-neutral lifecycle contract (mirrors `LaunchBroker`):
-ensure the single instance is up, report it, tear it down. The docker
-implementation (`DockerGateway`) lives in `backend/docker/gateway.py`; a
-firecracker gateway VM slots in later.
+`Gateway` is the backend-neutral service contract: bind the single instance to
+its orchestrator and bring it up (`connect_to_orchestrator`), report its
+agent-facing address + CA, vend the provisioning transport, tear it down. The
+docker implementation (`DockerGateway`) lives in `backend/docker/gateway.py`;
+the macOS + firecracker gateways slot in beside it.
 
-The defining behaviour is **idempotent singleton**: `ensure_running` starts
-the instance if absent and is a no-op if it's already up, so N bottle
-launches never spawn N gateways.
+The defining behaviour is **idempotent singleton**: `connect_to_orchestrator`
+starts the instance if absent and is a no-op if it's already up on the same
+binding, so N bottle launches never spawn N gateways.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from __future__ import annotations
 import abc
 import os
 from pathlib import Path
+from typing import Protocol
 
 from ..paths import host_gateway_ca_dir
 
@@ -87,21 +89,46 @@ class GatewayError(Exception):
     """The shared gateway failed to build/start/stop (non-zero `docker` exit)."""
 
 
+class GatewayProvisionError(RuntimeError):
+    """A git-gate provisioning step against the running gateway failed."""
+
+
+class GatewayTransport(Protocol):
+    """How the launcher stages files + runs commands in the running gateway.
+    Backend-neutral so the same git-gate provisioning logic serves the docker
+    gateway container (exec/cp over the docker socket), the Apple gateway
+    container, and the firecracker gateway VM (over SSH)."""
+
+    def exec(self, argv: list[str]) -> None:
+        """Run `argv` in the gateway, raising `GatewayProvisionError` on failure."""
+
+    def cp_into(self, src: str, dest: str) -> None:
+        """Copy host file `src` to `dest` in the gateway, raising on failure."""
+
+
 class Gateway(abc.ABC):
-    """Lifecycle of the single per-host gateway. Backend-neutral."""
+    """Provision + interact with the per-host gateway (data plane).
+
+    One concrete impl per backend (`backend/*/gateway.py`); the host composes it
+    with the Orchestrator service. The gateway **never holds the signing key** —
+    it receives a pre-minted `gateway` token from the orchestrator and only
+    presents it. Backend-neutral."""
 
     name: str
 
     def ensure_built(self) -> None:
         """Ensure the gateway's image / rootfs exists, building it if needed.
-        Default: nothing to build (e.g. a stub or a pre-pulled image)."""
+        Default: nothing to build (e.g. a stub or a pre-pulled image). Call
+        before `connect_to_orchestrator`."""
         return
 
     @abc.abstractmethod
-    def ensure_running(self) -> None:
-        """Start the gateway if it isn't already up. Idempotent: a no-op
-        when it's already running (that's the whole point — one per host).
-        Assumes the image exists — call `ensure_built()` first."""
+    def connect_to_orchestrator(self, orchestrator_url: str, gateway_token: str) -> None:
+        """Bind the gateway to this orchestrator and bring it up: store the URL +
+        the pre-minted `gateway` token as instance state, then (re)start the
+        gateway unit carrying the mitmproxy CA + that token, resolving policy
+        against `orchestrator_url`. Idempotent — a healthy, current gateway on
+        the same binding is left alone; a changed binding reconciles it."""
 
     @abc.abstractmethod
     def is_running(self) -> bool:
@@ -111,9 +138,25 @@ class Gateway(abc.ABC):
     def stop(self) -> None:
         """Remove the gateway. Idempotent — absent is success."""
 
+    @abc.abstractmethod
+    def address(self) -> str:
+        """The agent-facing address agents dial for egress / git-http / supervise
+        (today's `gateway_ip`)."""
+
+    @abc.abstractmethod
+    def ca_cert_pem(self, *, timeout: float = DEFAULT_CA_TIMEOUT_SECONDS) -> str:
+        """The mitmproxy CA (PEM) agents install to trust the gateway's TLS
+        interception. Polls — mitmproxy writes it a beat after start."""
+
+    @abc.abstractmethod
+    def provisioning_transport(self) -> "GatewayTransport":
+        """The cp/exec transport git-gate provisioning uses to place per-bottle
+        repos + deploy keys into the running gateway."""
+
 
 __all__ = [
-    "Gateway", "GatewayError", "rotate_gateway_ca",
+    "Gateway", "GatewayError", "GatewayProvisionError", "GatewayTransport",
+    "rotate_gateway_ca",
     "GATEWAY_NAME", "GATEWAY_LABEL", "GATEWAY_IMAGE", "GATEWAY_NETWORK",
     "GATEWAY_CA_CERT", "GATEWAY_CA_GLOB",
 ]
