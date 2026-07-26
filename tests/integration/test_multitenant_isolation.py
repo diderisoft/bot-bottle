@@ -119,7 +119,7 @@ class TestMultitenantIsolation(unittest.TestCase):
         taken = _network_container_ips(GATEWAY_NETWORK) + extra_taken
         return next_free_ip(_network_cidr(GATEWAY_NETWORK), taken)
 
-    def _probe(self, source_ip: str, host: str) -> str:
+    def _probe(self, source_ip: str, identity_token: str, host: str) -> str:
         deadline = time.monotonic() + 30
         last = subprocess.CompletedProcess([], 1, "", "probe not attempted")
         while time.monotonic() < deadline:
@@ -128,7 +128,8 @@ class TestMultitenantIsolation(unittest.TestCase):
                     "docker", "run", "--rm",
                     "--network", GATEWAY_NETWORK, "--ip", source_ip,
                     "--entrypoint", "python3", GATEWAY_IMAGE, "-c", _PROBE_SRC,
-                    f"http://{self.gw_ip}:{EGRESS_PORT}", host,
+                    f"http://bottle:{identity_token}@{self.gw_ip}:{EGRESS_PORT}",
+                    host,
                 ],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                 check=False, timeout=90,
@@ -145,17 +146,34 @@ class TestMultitenantIsolation(unittest.TestCase):
     def test_two_bottles_share_gateway_with_isolated_tokens_and_allowlists(self) -> None:
         ip_a = self._free_ip([])
         ip_b = self._free_ip([ip_a])
-        self.client.register_bottle(ip_a, policy=_POLICY_A, tokens={"EGRESS_TOKEN_0": _TOKEN_A})
-        self.client.register_bottle(ip_b, policy=_POLICY_B, tokens={"EGRESS_TOKEN_0": _TOKEN_B})
+        bottle_a = self.client.register_bottle(
+            ip_a, policy=_POLICY_A, tokens={"EGRESS_TOKEN_0": _TOKEN_A}
+        )
+        bottle_b = self.client.register_bottle(
+            ip_b, policy=_POLICY_B, tokens={"EGRESS_TOKEN_0": _TOKEN_B}
+        )
 
         # Each bottle gets its OWN token injected on the shared route — no bleed.
-        self.assertEqual(f"200 AUTH=Bearer {_TOKEN_A}", self._probe(ip_a, "echo-shared"))
-        self.assertEqual(f"200 AUTH=Bearer {_TOKEN_B}", self._probe(ip_b, "echo-shared"))
+        self.assertEqual(
+            f"200 AUTH=Bearer {_TOKEN_A}",
+            self._probe(ip_a, bottle_a.identity_token, "echo-shared"),
+        )
+        self.assertEqual(
+            f"200 AUTH=Bearer {_TOKEN_B}",
+            self._probe(ip_b, bottle_b.identity_token, "echo-shared"),
+        )
 
         # Allowlist is per-bottle: echo-bonly is only in B's policy.
-        self.assertTrue(self._probe(ip_a, "echo-bonly").startswith("403"),  # fail-closed for A
-                        "A reached a host outside its allowlist")
-        self.assertEqual("200 AUTH=NONE", self._probe(ip_b, "echo-bonly"))  # allowed, unauthed for B
+        self.assertTrue(
+            self._probe(
+                ip_a, bottle_a.identity_token, "echo-bonly"
+            ).startswith("403"),  # fail-closed for A
+            "A reached a host outside its allowlist",
+        )
+        self.assertEqual(
+            "200 AUTH=NONE",
+            self._probe(ip_b, bottle_b.identity_token, "echo-bonly"),
+        )  # allowed, unauthed for B
 
 
 if __name__ == "__main__":
