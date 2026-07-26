@@ -15,6 +15,9 @@ on:
       - 'bot_bottle/contrib/codex/Dockerfile'
       - '.gitea/workflows/refresh-image-locks.yml'
 
+permissions:
+  code: write
+
 jobs:
   refresh:
     runs-on: ubuntu-latest
@@ -52,6 +55,24 @@ jobs:
             cd bot_bottle/contrib/codex
             sha256sum install.sh > install.sh.sha256
           )
+
+      - name: Commit refreshed inputs on feature branches
+        run: |
+          if [ "${{ gitea.ref_name }}" = "main" ]; then
+            exit 0
+          fi
+          git config user.name "Gitea Actions"
+          git config user.email "actions@noreply.gitea.dideric.is"
+          git add \
+            requirements.gateway.lock \
+            bot_bottle/contrib/claude/package-lock.json \
+            bot_bottle/contrib/pi/package-lock.json \
+            bot_bottle/contrib/codex/install.sh.sha256
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "build: refresh image input locks"
+          git push origin "HEAD:${{ gitea.ref_name }}"
 
       - name: Upload refreshed inputs
         uses: actions/upload-artifact@v3
