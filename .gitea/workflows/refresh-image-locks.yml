@@ -37,7 +37,7 @@ jobs:
 
       - name: Compile gateway Python lock
         run: |
-          python3 -m pip install pip-tools==7.5.1
+          python3 -m pip install pip==25.2 pip-tools==7.5.1
           python3 -m piptools compile \
             --generate-hashes \
             --output-file requirements.gateway.lock \
