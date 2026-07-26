@@ -223,6 +223,24 @@ class TestPinnedLocalImageRef(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     docker_mod.pinned_local_image_ref("base:latest")
 
+    def test_rejects_content_tag_that_resolves_to_another_image(self):
+        image = "sha256:" + "e" * 64
+        with patch.object(
+            docker_mod,
+            "image_id",
+            side_effect=[image, "sha256:" + "f" * 64],
+        ), patch.object(
+            docker_mod,
+            "run_docker",
+            return_value=_ok(),
+        ), patch.object(
+            docker_mod,
+            "die",
+            side_effect=SystemExit("die"),
+        ):
+            with self.assertRaises(SystemExit):
+                docker_mod.pinned_local_image_ref("base:latest")
+
 
 if __name__ == "__main__":
     unittest.main()

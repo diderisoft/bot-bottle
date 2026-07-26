@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import json
+import io
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
-from scripts.complete_npm_lock_integrity import complete_lock
+from scripts import complete_npm_lock_integrity as integrity_tool
+
+complete_lock = integrity_tool.complete_lock
 
 
 class TestCompleteLock(unittest.TestCase):
@@ -60,6 +65,33 @@ class TestCompleteLock(unittest.TestCase):
             })
             with self.assertRaisesRegex(ValueError, "conflicting integrity"):
                 complete_lock(path)
+
+    def test_ignores_local_entries_and_leaves_complete_lock_unchanged(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._lock(directory, {
+                "": {"name": "root"},
+                "node_modules/local": {"resolved": "file:../local"},
+                "node_modules/complete": {
+                    "resolved": "https://registry.example/complete.tgz",
+                    "integrity": "sha512-complete",
+                },
+            })
+            before = path.read_text()
+            self.assertEqual(0, complete_lock(path))
+            self.assertEqual(before, path.read_text())
+
+    def test_main_processes_every_requested_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            first = self._lock(directory, {})
+            second = Path(directory) / "second-lock.json"
+            second.write_text(first.read_text())
+            stdout = io.StringIO()
+            with patch(
+                "sys.argv",
+                ["complete_npm_lock_integrity.py", str(first), str(second)],
+            ), redirect_stdout(stdout):
+                self.assertEqual(0, integrity_tool.main())
+        self.assertEqual(2, stdout.getvalue().count("completed 0"))
 
 
 if __name__ == "__main__":
