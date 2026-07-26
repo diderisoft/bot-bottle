@@ -20,10 +20,11 @@ tests/
     ...                             # many others; see unit/ directory
   integration/
     test_gateway_image.py
-    test_dry_run_plan.py
+    test_sandbox_escape.py
     test_orphan_cleanup.py
     ...
-  canaries/                         # opt-in; see below (currently empty)
+  canaries/
+    test_gitleaks_release.py        # opt-in upstream artifact check
 ```
 
 Classification falls out of the directory — no hand-maintained list to
@@ -43,24 +44,27 @@ Discovery is invoked with `-t .` (top-level dir = repo root) so the
 
 ## What the integration tests cover
 
-- `test_dry_run_plan.py` — `cli.py start --dry-run --format=json` emits
-  a structured plan that contains the resolved egress allowlist and
-  the bottle's runtime, and creates zero Docker resources.
 - `test_orphan_cleanup.py` — `network_remove` is idempotent against
   missing resources, so the EXIT trap can call it unconditionally.
 - `test_gateway_image.py` — builds Dockerfile.gateway and
   probes that gitleaks / mitmdump / supervise are all reachable
   inside the gateway image.
+- `test_orchestrator_docker_auth.py` — drives the real control-plane
+  container and verifies role-scoped authentication.
+- `test_multitenant_isolation.py` and `test_sandbox_escape.py` — exercise
+  token/allowlist separation and end-to-end escape attempts.
 
 ## Canaries
 
 `tests/canaries/` holds upstream-regression checks gated on
 `BOT_BOTTLE_RUN_CANARIES=1` and not part of the per-push suite.
-They're invoked by the scheduled `canaries` workflow. Currently
-no canaries are defined.
+They're invoked by the scheduled `canaries` workflow. The gitleaks canary
+downloads the exact release archive pinned by `Dockerfile.gateway`, verifies
+its architecture-specific checksum, and executes the binary.
 
 ```bash
-BOT_BOTTLE_RUN_CANARIES=1 python -m unittest discover -t . -s tests/canaries -v
+BOT_BOTTLE_RUN_CANARIES=1 python -m scripts.unittest_gate \
+  -t . -s tests/canaries -v --minimum-executed 1 --fail-on-skip
 ```
 
 ## What's NOT covered
