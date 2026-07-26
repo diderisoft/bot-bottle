@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 import urllib.error
+from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
 from bot_bottle.backend.docker.orchestrator import (
@@ -60,6 +61,13 @@ class TestDockerOrchestrator(unittest.TestCase):
                     if c.args[0][:2] == ["docker", "run"])
         self.assertEqual("0.0.0.0:8099:8099", argv[argv.index("--publish") + 1])
         self.assertIn("state-volume:/bot-bottle-root", argv)
+
+    def test_host_path_and_named_root_mount_are_mutually_exclusive(self) -> None:
+        with self.assertRaisesRegex(ValueError, "host_root or root_mount_source"):
+            DockerOrchestrator(
+                host_root=Path("/host/path"),
+                root_mount_source="state-volume",
+            )
 
     def test_gateway_url_is_the_container_dns_name(self) -> None:
         # The gateway reaches the orchestrator by name on the control network.

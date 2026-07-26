@@ -9,6 +9,7 @@ a freshly minted token."""
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from bot_bottle.backend.docker.infra import (
@@ -74,6 +75,13 @@ class TestDockerInfraService(unittest.TestCase):
         )
         self.assertEqual("registry-volume", svc.orchestrator()._root_mount_source)
         self.assertEqual("ca-volume", svc.gateway()._ca_mount_source)
+
+    def test_host_path_and_named_root_mount_are_mutually_exclusive(self) -> None:
+        with self.assertRaisesRegex(ValueError, "host_root or root_mount_source"):
+            DockerInfraService(
+                host_root=Path("/host/path"),
+                root_mount_source="registry-volume",
+            )
 
 
 if __name__ == "__main__":
