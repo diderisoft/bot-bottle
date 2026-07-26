@@ -13,10 +13,8 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from ..orchestrator_auth import ROLE_CLI, ROLES
 from ..supervisor.types import TOOLS
 from ..trust_domain import CONTROL_PLANE
+from .http_contract import MAX_BODY_BYTES, ORCHESTRATOR_AUTH_HEADER
 from .service import OrchestratorCore
-
-ORCHESTRATOR_AUTH_HEADER = "x-bot-bottle-orchestrator-auth"
-MAX_BODY_BYTES = 1 * 1024 * 1024
 
 _GATEWAY_ROUTES = frozenset({
     ("POST", "/resolve"),
