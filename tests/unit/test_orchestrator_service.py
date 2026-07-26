@@ -105,11 +105,19 @@ class TestOrchestrator(unittest.TestCase):
 
     def test_reprovision_rejects_missing_rows_and_wrong_key(self) -> None:
         self.assertFalse(self.orch.reprovision_from_secret("missing", new_env_var_secret()))
-        rec = self.orch.launch_bottle(
-            "10.243.0.13", tokens={"K": "value"},
-            env_var_secret=new_env_var_secret(),
-        )
-        self.assertFalse(self.orch.reprovision_from_secret(rec.bottle_id, new_env_var_secret()))
+        key = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE"
+        wrong_key = "FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQ"
+        # Pin the nonce so this is a deterministic wrong-key/decryption vector
+        # instead of a probabilistic assertion over random bytes.
+        with patch(
+            "bot_bottle.orchestrator.store.secret_store.secrets.token_bytes",
+            return_value=b"\0" * 16,
+        ):
+            rec = self.orch.launch_bottle(
+                "10.243.0.13", tokens={"K": "value"},
+                env_var_secret=key,
+            )
+        self.assertFalse(self.orch.reprovision_from_secret(rec.bottle_id, wrong_key))
 
     def test_set_policy_live_reload(self) -> None:
         rec = self.orch.launch_bottle("10.243.0.3")
