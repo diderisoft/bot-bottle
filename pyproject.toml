@@ -41,7 +41,7 @@ bot_bottle = [
     "contrib/claude/package.json",
     "contrib/claude/package-lock.json",
     "contrib/codex/Dockerfile",
-    "contrib/codex/install.sh.sha256",
+    "contrib/codex/codex-package_SHA256SUMS",
     "contrib/pi/Dockerfile",
     "contrib/pi/package.json",
     "contrib/pi/package-lock.json",

@@ -8,7 +8,7 @@ on:
       - "bot_bottle/contrib/*/Dockerfile"
       - "bot_bottle/contrib/*/package.json"
       - "bot_bottle/contrib/*/package-lock.json"
-      - "bot_bottle/contrib/codex/install.sh.sha256"
+      - "bot_bottle/contrib/codex/codex-package_SHA256SUMS"
       - "requirements.gateway.*"
       - "image-build-args.json"
       - ".pylintrc"

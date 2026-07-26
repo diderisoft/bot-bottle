@@ -22,7 +22,11 @@ NPM_MANIFESTS = (
     Path("bot_bottle/contrib/pi/package.json"),
 )
 IMAGE_BUILD_ARGS = Path("image-build-args.json")
-REQUIRED_BASE_ARGS = frozenset({"NODE_BASE_IMAGE", "PYTHON_BASE_IMAGE"})
+REQUIRED_BASE_ARGS = frozenset({
+    "DOCKER_CLI_BASE_IMAGE",
+    "NODE_BASE_IMAGE",
+    "PYTHON_BASE_IMAGE",
+})
 
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _EXACT_NPM_VERSION = re.compile(
@@ -127,9 +131,9 @@ def check_dockerfile(
             problems.append(f"{path}: gateway Python lock is not consumed")
     if path == Path("bot_bottle/contrib/codex/Dockerfile"):
         required = (
-            "install.sh.sha256",
+            "codex-package_SHA256SUMS",
             "sha256sum -c",
-            '--release "${CODEX_VERSION}"',
+            "codex-package-${codex_target}.tar.gz",
         )
         for marker in required:
             if marker not in instructions:
@@ -256,6 +260,26 @@ def check_repo(root: Path = REPO_ROOT) -> list[str]:
         problems.extend(check_dockerfile(path, text, image_build_args))
     for manifest in NPM_MANIFESTS:
         problems.extend(check_npm_manifest(root, manifest))
+    nested_path = Path(
+        "bot_bottle/backend/macos_container/nested_containers.py",
+    )
+    try:
+        nested_source = (root / nested_path).read_text(encoding="utf-8")
+    except OSError as exc:
+        problems.append(f"{nested_path}: cannot read generated image source: {exc}")
+    else:
+        if "FROM docker:" in nested_source:
+            problems.append(
+                "nested-containers image uses a mutable Docker CLI base",
+            )
+        if '"ARG DOCKER_CLI_BASE_IMAGE\\n"' not in nested_source:
+            problems.append(
+                "nested-containers image does not consume DOCKER_CLI_BASE_IMAGE",
+            )
+        if "pin_local_base(base_image)" not in nested_source:
+            problems.append(
+                "nested-containers image does not pin its local agent base",
+            )
     problems.extend(check_python_lock(root))
     return problems
 

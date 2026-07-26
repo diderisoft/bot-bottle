@@ -107,12 +107,16 @@ class TestNestedContainersImage(unittest.TestCase):
         def build(image: str, context: str, *, dockerfile: str) -> None:
             calls.append((image, context, dockerfile))
             text = Path(dockerfile).read_text(encoding="utf-8")
-            self.assertIn("FROM agent:base", text)
+            self.assertIn("ARG DOCKER_CLI_BASE_IMAGE", text)
+            self.assertIn("FROM ${DOCKER_CLI_BASE_IMAGE} AS docker_cli", text)
+            self.assertIn("FROM agent:sha256-deadbeef", text)
             self.assertIn("aardvark-dns fuse-overlayfs netavark nftables passt podman", text)
             self.assertIn("USER node", text)
             self.assertTrue((Path(context) / "nested-containers-init.sh").is_file())
 
-        image = nested_containers.build_image("agent:base", build)
+        image = nested_containers.build_image(
+            "agent:base", build, lambda _ref: "agent:sha256-deadbeef",
+        )
         self.assertEqual("agent:base-nested-containers", image)
         self.assertEqual("agent:base-nested-containers", calls[0][0])
 
@@ -127,7 +131,9 @@ class TestNestedContainersImage(unittest.TestCase):
         def build(_image: str, _context: str, *, dockerfile: str) -> None:
             seen.append(Path(dockerfile).read_text(encoding="utf-8"))
 
-        nested_containers.build_image("agent:base", build)
+        nested_containers.build_image(
+            "agent:base", build, lambda _ref: "agent:sha256-deadbeef",
+        )
         for package in ("podman", "passt", "nftables", "aardvark-dns"):
             self.assertIn(package, seen[0])
 
@@ -143,7 +149,9 @@ class TestNestedContainersImage(unittest.TestCase):
         def build(_image: str, _context: str, *, dockerfile: str) -> None:
             seen.append(Path(dockerfile).read_text(encoding="utf-8"))
 
-        nested_containers.build_image("agent:base", build)
+        nested_containers.build_image(
+            "agent:base", build, lambda _ref: "agent:sha256-deadbeef",
+        )
         text = seen[0]
         self.assertIn("sed -i '/^node:/d' /etc/subuid /etc/subgid", text)
         self.assertNotIn("subuid", text.replace(
@@ -286,7 +294,9 @@ class TestBuildOrLoadImages(unittest.TestCase):
             "agent:base", str(launch_mod.resources.build_root()),
             dockerfile="/repo/Dockerfile",
         )
-        derived.assert_called_once_with("agent:base", build)
+        derived.assert_called_once_with(
+            "agent:base", build, launch_mod.container_mod.pinned_local_image_ref,
+        )
         self.assertEqual("agent:base-nested-containers", images.agent)
 
     def test_derived_image_layers_onto_a_committed_image(self) -> None:
@@ -307,7 +317,11 @@ class TestBuildOrLoadImages(unittest.TestCase):
             images = launch_mod.build_or_load_images(plan)
 
         build.assert_not_called()
-        derived.assert_called_once_with("agent:committed", build)
+        derived.assert_called_once_with(
+            "agent:committed",
+            build,
+            launch_mod.container_mod.pinned_local_image_ref,
+        )
         self.assertEqual("agent:committed-nested-containers", images.agent)
 
     def test_cached_policy_refuses_to_build_the_derived_image(self) -> None:

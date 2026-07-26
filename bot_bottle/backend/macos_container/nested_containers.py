@@ -57,6 +57,7 @@ _GUEST_DEVICES = ("/dev/fuse", "/dev/net/tun")
 def build_image(
     base_image: str,
     build: Callable[..., None],
+    pin_local_base: Callable[[str], str],
 ) -> str:
     """Layer the nested-container tooling onto an already-built agent image.
 
@@ -67,13 +68,15 @@ def build_image(
     # abstraction once that infrastructure exists.
     """
     image = f"{base_image}{IMAGE_SUFFIX}"
+    pinned_base = pin_local_base(base_image)
     init_script = Path(__file__).with_name("nested-containers-init.sh")
     with tempfile.TemporaryDirectory(prefix="bot-bottle-nested-containers.") as tmp:
         context = Path(tmp)
         shutil.copy2(init_script, context / "nested-containers-init.sh")
         (context / "Dockerfile").write_text(
-            "FROM docker:28-cli AS docker_cli\n"
-            f"FROM {base_image}\n"
+            "ARG DOCKER_CLI_BASE_IMAGE\n"
+            "FROM ${DOCKER_CLI_BASE_IMAGE} AS docker_cli\n"
+            f"FROM {pinned_base}\n"
             "USER root\n"
             "COPY --from=docker_cli /usr/local/bin/docker /usr/local/bin/docker\n"
             "COPY --from=docker_cli /usr/local/libexec/docker/cli-plugins/"

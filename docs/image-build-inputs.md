@@ -4,7 +4,8 @@ Bot-bottle's supported images are intended to rebuild from the same declared
 inputs on Linux amd64 and arm64. The repository enforces four layers of
 immutability:
 
-- Python and Node base images are required, defaultless Docker build arguments.
+- Python, Node, and nested-container Docker CLI base images are required,
+  defaultless Docker build arguments.
   Their version-qualified tags and multi-platform OCI index digests live
   together in `image-build-args.json`; every supported builder reads that
   file and passes only the arguments its Dockerfile declares.
@@ -16,9 +17,9 @@ immutability:
 - Gateway Python dependencies install from `requirements.gateway.lock` with
   `pip --require-hashes`; provider npm packages install with `npm ci` from
   committed lockfiles.
-- The Codex standalone installer is fetched from the selected Codex release
-  tag, checked against `install.sh.sha256`, invoked with an exact `--release`,
-  and then verifies the selected release archive against upstream metadata.
+- The Codex standalone archive is fetched from the exact `CODEX_VERSION`
+  release and checked against the committed upstream
+  `codex-package_SHA256SUMS` before extraction.
   The standalone layout is retained because Codex remote control requires it.
 
 `Dockerfile.orchestrator.fc` is the one intentionally dynamic `FROM`. It has no

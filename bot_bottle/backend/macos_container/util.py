@@ -682,6 +682,40 @@ def image_id(ref: str) -> str:
     raise AssertionError("unreachable")
 
 
+def pinned_local_image_ref(ref: str) -> str:
+    """Tag a local image with its complete content ID for a stable ``FROM``.
+
+    Agent images are immediately used as bases for the optional
+    nested-containers layer. A content-derived tag prevents another concurrent
+    build from moving the provider's ordinary ``:latest`` tag between those
+    two builds.
+    """
+    image = image_id(ref)
+    digest = image.removeprefix("sha256:")
+    if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+        die(f"could not derive a local base tag from invalid image ID {image!r}")
+    repository = ref.split("@", 1)[0]
+    last_slash = repository.rfind("/")
+    last_colon = repository.rfind(":")
+    if last_colon > last_slash:
+        repository = repository[:last_colon]
+    pinned_ref = f"{repository}:sha256-{digest}"
+    result = subprocess.run(
+        [_CONTAINER, "image", "tag", image, pinned_ref],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        die(
+            f"could not tag exact local image {image}: "
+            f"{(result.stderr or result.stdout or '').strip() or '<no detail>'}"
+        )
+    if image_id(pinned_ref) != image:
+        die(f"content-derived local tag {pinned_ref!r} did not resolve to {image}")
+    return pinned_ref
+
+
 def image_created_at(ref: str) -> datetime | None:
     """Return the image creation timestamp as an aware UTC datetime, or None
     when the field is absent or unparseable (e.g. FROM-scratch images, images

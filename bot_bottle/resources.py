@@ -52,7 +52,11 @@ BUNDLED_RESOURCES: tuple[str, ...] = (
 # tell for which layout we're in.
 _CHECKOUT_MARKER = "Dockerfile.gateway"
 _IMAGE_BUILD_ARGS_FILE = "image-build-args.json"
-_CENTRAL_BUILD_ARG_NAMES = frozenset({"NODE_BASE_IMAGE", "PYTHON_BASE_IMAGE"})
+_CENTRAL_BUILD_ARG_NAMES = frozenset({
+    "DOCKER_CLI_BASE_IMAGE",
+    "NODE_BASE_IMAGE",
+    "PYTHON_BASE_IMAGE",
+})
 
 
 class ResourceError(RuntimeError):
@@ -112,7 +116,17 @@ def image_build_args(
     wanted = declared & _CENTRAL_BUILD_ARG_NAMES
     if not wanted:
         return {}
-    root = Path(context) if context is not None else build_root()
+    # Generated Dockerfiles (notably the macOS nested-container layer) live in
+    # temporary build contexts. Resolve their declaration there, but take the
+    # centralized values from that context only when it carries its own input
+    # file; otherwise use bot-bottle's staged build root.
+    context_root = Path(context) if context is not None else None
+    root = (
+        context_root
+        if context_root is not None
+        and (context_root / _IMAGE_BUILD_ARGS_FILE).is_file()
+        else build_root()
+    )
     inputs_path = root / _IMAGE_BUILD_ARGS_FILE
     try:
         inputs = json.loads(inputs_path.read_text(encoding="utf-8"))

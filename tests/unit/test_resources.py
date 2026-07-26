@@ -50,6 +50,21 @@ class TestCheckoutMode(unittest.TestCase):
             r"^python:\d+\.\d+\.\d+-.+@sha256:[0-9a-f]{64}$",
         )
 
+    def test_generated_dockerfile_uses_central_input_from_build_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dockerfile = Path(tmp) / "Dockerfile"
+            dockerfile.write_text(
+                "ARG DOCKER_CLI_BASE_IMAGE\n"
+                "FROM ${DOCKER_CLI_BASE_IMAGE}\n",
+                encoding="utf-8",
+            )
+            args = resources.image_build_args(dockerfile, context=tmp)
+        self.assertEqual({"DOCKER_CLI_BASE_IMAGE"}, set(args))
+        self.assertRegex(
+            args["DOCKER_CLI_BASE_IMAGE"],
+            r"^docker:\d+-cli@sha256:[0-9a-f]{64}$",
+        )
+
     def test_bundled_resources_all_exist_at_root(self):
         # Drift guard: every path setup.py bundles must exist in the checkout.
         root = resources.build_root()

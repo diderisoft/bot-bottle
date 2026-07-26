@@ -76,19 +76,15 @@ jobs:
             bot_bottle/contrib/claude/package-lock.json \
             bot_bottle/contrib/pi/package-lock.json
 
-      - name: Refresh pinned Codex installer checksum
+      - name: Refresh pinned Codex archive checksums
         run: |
           CODEX_VERSION=$(
             sed -n 's/^ARG CODEX_VERSION=//p' bot_bottle/contrib/codex/Dockerfile
           )
           test -n "$CODEX_VERSION"
           curl -fsSL \
-            "https://raw.githubusercontent.com/openai/codex/rust-v${CODEX_VERSION}/scripts/install/install.sh" \
-            -o bot_bottle/contrib/codex/install.sh
-          (
-            cd bot_bottle/contrib/codex
-            sha256sum install.sh > install.sh.sha256
-          )
+            "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/codex-package_SHA256SUMS" \
+            -o bot_bottle/contrib/codex/codex-package_SHA256SUMS
 
       - name: Upload refreshed inputs
         uses: actions/upload-artifact@v3
@@ -98,4 +94,4 @@ jobs:
             requirements.gateway.lock
             bot_bottle/contrib/claude/package-lock.json
             bot_bottle/contrib/pi/package-lock.json
-            bot_bottle/contrib/codex/install.sh.sha256
+            bot_bottle/contrib/codex/codex-package_SHA256SUMS

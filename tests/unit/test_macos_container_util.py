@@ -146,6 +146,29 @@ resolver #2
             ],
         )
 
+    def test_pinned_local_image_ref_tags_and_verifies_exact_id(self):
+        image = "sha256:" + "a" * 64
+        completed = util.subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr="",
+        )
+        with patch.object(util, "image_id", return_value=image) as inspect, \
+             patch.object(util.subprocess, "run", return_value=completed) as run:
+            pinned = util.pinned_local_image_ref("registry:5000/agent:latest")
+        self.assertEqual(
+            f"registry:5000/agent:sha256-{'a' * 64}",
+            pinned,
+        )
+        run.assert_called_once_with(
+            ["container", "image", "tag", image, pinned],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(
+            [("registry:5000/agent:latest",), (pinned,)],
+            [call.args for call in inspect.call_args_list],
+        )
+
     def test_commit_container_execs_tar_and_builds_image(self):
         # stderr is bytes because subprocess.run uses stderr=PIPE without text=True
         completed = util.subprocess.CompletedProcess(

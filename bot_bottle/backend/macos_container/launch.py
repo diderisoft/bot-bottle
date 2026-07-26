@@ -116,7 +116,11 @@ def _layer_nested_containers(
             )
         info(f"using cached nested-container image {derived!r}")
         return derived
-    return nested_containers_mod.build_image(agent_image, container_mod.build_image)
+    return nested_containers_mod.build_image(
+        agent_image,
+        container_mod.build_image,
+        container_mod.pinned_local_image_ref,
+    )
 
 
 @contextmanager
