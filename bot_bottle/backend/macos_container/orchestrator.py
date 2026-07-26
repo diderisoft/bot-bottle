@@ -18,6 +18,7 @@ import urllib.request
 from pathlib import Path
 
 from ... import log
+from ... import resources
 from ...paths import ORCHESTRATOR_TOKEN_ENV
 from ...orchestrator.lifecycle import (
     DEFAULT_HEALTH_TIMEOUT_SECONDS,
@@ -45,7 +46,6 @@ _DB_ROOT_IN_CONTAINER = "/var/lib/bot-bottle"
 _SRC_IN_CONTAINER = "/bot-bottle-src"
 
 _HEALTH_POLL_SECONDS = 0.25
-_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 class MacosOrchestrator(Orchestrator):
@@ -61,7 +61,7 @@ class MacosOrchestrator(Orchestrator):
         label: str = ORCHESTRATOR_LABEL,
         port: int = DEFAULT_PORT,
         control_network: str = CONTROL_NETWORK,
-        repo_root: Path = _REPO_ROOT,
+        repo_root: Path | None = None,
         db_volume: str = ORCHESTRATOR_DB_VOLUME,
     ) -> None:
         self.image_ref = image_ref
@@ -69,7 +69,9 @@ class MacosOrchestrator(Orchestrator):
         self.label = label
         self.port = port
         self.control_network = control_network
-        self._repo_root = repo_root
+        # Build context / bind-mount source: the repo root in a checkout, a
+        # staged copy from the installed wheel otherwise (bot_bottle.resources).
+        self._repo_root = repo_root if repo_root is not None else resources.build_root()
         self._db_volume = db_volume
 
     def url(self) -> str:

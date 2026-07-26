@@ -34,6 +34,7 @@ from .orchestrator import (
     ORCHESTRATOR_NETWORK,
 )
 from ...paths import bot_bottle_root
+from ... import resources
 from ...gateway import (
     GATEWAY_IMAGE,
     GATEWAY_NAME,
@@ -49,8 +50,6 @@ from ...orchestrator.lifecycle import (
 # container, but the fixed-name constants some callers/tests import still map to
 # the pair's public identity.
 INFRA_NAME = GATEWAY_NAME  # the container agents attribute against is the gateway
-
-_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 class DockerInfraService(InfraService):
@@ -68,7 +67,7 @@ class DockerInfraService(InfraService):
         control_network: str = ORCHESTRATOR_NETWORK,
         orchestrator_image: str = ORCHESTRATOR_IMAGE,
         gateway_image: str = GATEWAY_IMAGE,
-        repo_root: Path = _REPO_ROOT,
+        repo_root: Path | None = None,
         host_root: Path | None = None,
         orchestrator_name: str = ORCHESTRATOR_NAME,
         orchestrator_label: str = ORCHESTRATOR_LABEL,
@@ -79,7 +78,9 @@ class DockerInfraService(InfraService):
         self.control_network = control_network
         self.orchestrator_image = orchestrator_image
         self.gateway_image = gateway_image
-        self._repo_root = repo_root
+        # Build context / bind-mount source: the repo root in a checkout, a
+        # staged copy from the installed wheel otherwise (bot_bottle.resources).
+        self._repo_root = repo_root if repo_root is not None else resources.build_root()
         self._host_root = host_root or bot_bottle_root()
         self._orchestrator_name = orchestrator_name
         self._orchestrator_label = orchestrator_label

@@ -37,14 +37,13 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from ... import resources
 from ...log import die, info
 from . import util
 
 # Bump if the on-disk artifact *format* changes (compression, layout) so a new
 # scheme can't collide with a cached/published artifact of the old one.
 _ARTIFACT_FORMAT = "1"
-
-_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 # The two per-plane infra VM roles. Each publishes/pulls its own rootfs artifact
 # from its own generic package; the Dockerfiles baked into each differ (only the
@@ -74,7 +73,7 @@ def local_build_requested() -> bool:
 
 
 def infra_artifact_version(
-    init_script: str, role: str, *, repo_root: Path = _REPO_ROOT,
+    init_script: str, role: str, *, repo_root: Path | None = None,
 ) -> str:
     """Content hash (16 hex) of everything baked into `role`'s infra rootfs: the
     whole shipped `bot_bottle` package, that role's Dockerfiles, and its guest
@@ -89,6 +88,8 @@ def infra_artifact_version(
     version or a launch host could boot a stale rootfs whose code differs from
     its checkout. `__pycache__`/`.pyc` are the only exclusions — build artifacts,
     never copied."""
+    if repo_root is None:
+        repo_root = resources.build_root()
     h = hashlib.sha256()
     h.update(f"format={_ARTIFACT_FORMAT}\nrole={role}\n".encode())
     pkg = repo_root / "bot_bottle"

@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 
 from ... import log
+from ... import resources
 from .util import run_docker
 from ...paths import (
     ORCHESTRATOR_TOKEN_ENV,
@@ -55,8 +56,6 @@ _ROOT_IN_CONTAINER = "/bot-bottle-root"
 
 _HEALTH_POLL_SECONDS = 0.25
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-
 
 class DockerOrchestrator(Orchestrator):
     """The control plane as a single fixed-name container. `ensure_built` builds
@@ -71,7 +70,7 @@ class DockerOrchestrator(Orchestrator):
         label: str = ORCHESTRATOR_LABEL,
         port: int = DEFAULT_PORT,
         control_network: str = ORCHESTRATOR_NETWORK,
-        repo_root: Path = _REPO_ROOT,
+        repo_root: Path | None = None,
         host_root: Path | None = None,
         dockerfile: str | None = ORCHESTRATOR_DOCKERFILE,
     ) -> None:
@@ -80,7 +79,9 @@ class DockerOrchestrator(Orchestrator):
         self.label = label
         self.port = port
         self.control_network = control_network
-        self._repo_root = repo_root
+        # Build context / bind-mount source: the repo root in a checkout, a
+        # staged copy from the installed wheel otherwise (bot_bottle.resources).
+        self._repo_root = repo_root if repo_root is not None else resources.build_root()
         self._host_root = host_root or bot_bottle_root()
         self._dockerfile = dockerfile
 

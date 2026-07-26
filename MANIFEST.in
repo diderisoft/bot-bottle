@@ -1,0 +1,8 @@
+# Root-level build resources copied into bot_bottle/_resources/ at build time
+# (see setup.py). Included in the sdist so `pip install` from an sdist can
+# still bundle them into the wheel.
+include Dockerfile.gateway
+include Dockerfile.orchestrator
+include Dockerfile.orchestrator.fc
+include nix/firecracker-netpool.nix
+include scripts/firecracker-netpool.sh

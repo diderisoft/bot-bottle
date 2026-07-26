@@ -42,6 +42,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Generator
 
+from ... import resources
 from ...log import die, info
 from ..docker import util as docker_mod
 from . import firecracker_vm, infra_artifact, netpool, util
@@ -65,7 +66,6 @@ _GUEST_GATEWAY_JWT_PATH = "/var/lib/bot-bottle/gateway-jwt"
 _GATEWAY_IMAGE = "bot-bottle-gateway:latest"
 _ORCHESTRATOR_IMAGE = "bot-bottle-orchestrator:latest"
 _ORCHESTRATOR_FC_IMAGE = "bot-bottle-orchestrator-fc:latest"
-_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 # Per-role rootfs source image + the extra free space `mke2fs` leaves for the
 # guest to grow into. The orchestrator keeps buildah's large build slack; the
@@ -130,12 +130,13 @@ def build_infra_images_with_docker() -> None:
     orchestrator + buildah). The gateway VM boots the gateway image directly.
     The launch host uses this only in `BOT_BOTTLE_INFRA_BUILD=local` mode;
     `publish_infra` uses it off-host to produce the published artifacts."""
+    root = str(resources.build_root())
     docker_mod.build_image(
-        _ORCHESTRATOR_IMAGE, str(_REPO_ROOT), dockerfile="Dockerfile.orchestrator")
+        _ORCHESTRATOR_IMAGE, root, dockerfile="Dockerfile.orchestrator")
     docker_mod.build_image(
-        _GATEWAY_IMAGE, str(_REPO_ROOT), dockerfile="Dockerfile.gateway")
+        _GATEWAY_IMAGE, root, dockerfile="Dockerfile.gateway")
     docker_mod.build_image(
-        _ORCHESTRATOR_FC_IMAGE, str(_REPO_ROOT), dockerfile="Dockerfile.orchestrator.fc")
+        _ORCHESTRATOR_FC_IMAGE, root, dockerfile="Dockerfile.orchestrator.fc")
 
 
 def build_rootfs_dir(role: str) -> Path:

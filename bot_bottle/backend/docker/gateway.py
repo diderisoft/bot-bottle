@@ -10,9 +10,10 @@ from ...paths import (
     ORCHESTRATOR_AUTH_JWT_ENV,
     host_gateway_ca_dir,
 )
+from ... import resources
 from ...gateway import (
   Gateway, GatewayTransport, GATEWAY_IMAGE, GATEWAY_NAME, GATEWAY_NETWORK,
-  GATEWAY_DOCKERFILE, REPO_ROOT, GATEWAY_LABEL, MITMPROXY_HOME,
+  GATEWAY_DOCKERFILE, GATEWAY_LABEL, MITMPROXY_HOME,
   DEFAULT_CA_TIMEOUT_SECONDS, CA_POLL_SECONDS, GATEWAY_CA_CERT, GatewayError
 )
 
@@ -50,7 +51,9 @@ class DockerGateway(Gateway):
         # `address` / `stop` work on an already-running gateway without it.
         self._orchestrator_url = ""
         self._gateway_token = ""
-        self._build_context = build_context or REPO_ROOT
+        # Resolved lazily in ensure_built() so merely constructing a gateway to
+        # read its CA never stages a build root from an installed wheel.
+        self._build_context = build_context
         self._dockerfile = dockerfile
         # Ports published on the host (0.0.0.0). Used by the Firecracker
         # backend's dev-harness gateway so VMs can reach it via their TAP link;
@@ -72,9 +75,10 @@ class DockerGateway(Gateway):
         forces a full rebuild (parity with `start --no-cache`)."""
         if self._dockerfile is None:
             return
+        context = self._build_context or resources.build_root()
         argv = ["docker", "build", "-t", self.image_ref,
-                "-f", str(self._build_context / self._dockerfile),
-                str(self._build_context)]
+                "-f", str(context / self._dockerfile),
+                str(context)]
         if os.environ.get("BOT_BOTTLE_NO_CACHE"):
             argv.insert(2, "--no-cache")
         proc = run_docker(argv)

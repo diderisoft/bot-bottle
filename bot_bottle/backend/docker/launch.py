@@ -33,7 +33,6 @@ from __future__ import annotations
 import dataclasses
 import os
 from contextlib import ExitStack, contextmanager
-from pathlib import Path
 from typing import Callable, Generator
 
 from ...agent_provider import runtime_for
@@ -65,10 +64,7 @@ from ...orchestrator.store.config_store import resolve_teardown_timeout
 from .consolidated_launch import launch_consolidated, deprovision_consolidated
 from .infra import INFRA_NAME
 from .gateway import DockerGateway
-
-
-# Where the repo root lives, for `docker build` context. Computed once.
-_REPO_DIR = str(Path(__file__).resolve().parent.parent.parent.parent)
+from ... import resources
 
 
 def build_or_load_images(plan: DockerBottlePlan) -> BottleImages:
@@ -88,7 +84,7 @@ def build_or_load_images(plan: DockerBottlePlan) -> BottleImages:
             )
         info(f"using cached agent image {plan.image!r}")
         return BottleImages(agent=plan.image)
-    docker_mod.build_image(plan.image, _REPO_DIR, dockerfile=plan.dockerfile_path)
+    docker_mod.build_image(plan.image, str(resources.build_root()), dockerfile=plan.dockerfile_path)
     docker_mod.verify_agent_image(
         plan.image, runtime_for(plan.agent_provider_template).smoke_test,
     )

@@ -20,6 +20,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from ... import resources
 from . import netpool
 from . import util
 
@@ -42,13 +43,13 @@ def _has_systemd() -> bool:
 
 
 def _module_path() -> str:
-    """Absolute path to the importable NixOS module in this checkout."""
-    return str(Path(__file__).resolve().parents[3] / "nix" / "firecracker-netpool.nix")
+    """Absolute path to the importable NixOS module (checkout or wheel)."""
+    return str(resources.nix_netpool_module())
 
 
 def _script_path() -> str:
-    """Absolute path to the bundled bring-up script in this checkout."""
-    return str(Path(__file__).resolve().parents[3] / "scripts" / "firecracker-netpool.sh")
+    """Absolute path to the bundled bring-up script (checkout or wheel)."""
+    return str(resources.netpool_script())
 
 
 def _print_prereqs() -> None:

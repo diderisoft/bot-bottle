@@ -20,3 +20,9 @@ omit =
     bot_bottle/cli/tui.py
     bot_bottle/cli/init.py
     tests/*
+    # Build-time only: setuptools invokes it out-of-process to build the
+    # wheel/sdist (it's never imported by the running app), so in-process
+    # coverage can't reach it. Its one job — bundling the root resources into
+    # bot_bottle/_resources/ — is exercised end-to-end by test_wheel_install,
+    # which builds and installs a real wheel and checks the result.
+    setup.py

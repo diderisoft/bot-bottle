@@ -36,7 +36,6 @@ import dataclasses
 import os
 import subprocess
 from contextlib import ExitStack, contextmanager
-from pathlib import Path
 from typing import Callable, Generator
 
 from ...bottle_state import (
@@ -49,6 +48,7 @@ from ...git_gate import GitGate
 from ...gateway.git_gate.http_backend import DEFAULT_PORT as _GIT_HTTP_PORT
 from ...image_cache import check_stale
 from ...log import die, info, warn
+from ... import resources
 from .. import BottleImages
 from ...supervisor.types import SUPERVISE_PORT
 from ..docker.egress import EGRESS_PORT
@@ -71,7 +71,6 @@ from .consolidated_launch import (
     deprovision_consolidated,
 )
 
-_REPO_DIR = str(Path(__file__).resolve().parent.parent.parent.parent)
 _AGENT_SLEEP_SECONDS = "2147483647"
 
 
@@ -94,7 +93,7 @@ def _agent_image(plan: MacosContainerBottlePlan) -> str:
             )
         info(f"using cached agent image {plan.image!r}")
         return plan.image
-    container_mod.build_image(plan.image, _REPO_DIR, dockerfile=plan.dockerfile_path)
+    container_mod.build_image(plan.image, str(resources.build_root()), dockerfile=plan.dockerfile_path)
     return plan.image
 
 

@@ -17,6 +17,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.egg-info/
+# setuptools/build_meta output (wheels, sdists, build tree)
+/build/
+/dist/
 .venv/
 venv/
 .pytest_cache/

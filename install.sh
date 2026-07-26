@@ -40,6 +40,41 @@ want = (int(sys.argv[1]), int(sys.argv[2]))
 raise SystemExit(0 if sys.version_info[:2] >= want else 1)
 PY
 
+# Installing a `git+` spec (the default) shells out to git under the hood,
+# whether via pipx or pip. Fail early with a clear message rather than deep
+# inside the installer's output.
+case "${PACKAGE_SPEC}" in
+    git+*|*.git)
+        command -v git >/dev/null 2>&1 || die \
+            "git is required to install from '${PACKAGE_SPEC}'. Install git, or set "\
+"BOT_BOTTLE_INSTALL_SPEC to a non-git spec (e.g. a wheel path or a package index name)."
+        ;;
+esac
+
+# The pip fallback needs a usable pip. Externally-managed interpreters
+# (PEP 668, common on Debian/Ubuntu/Homebrew) reject `pip install --user`;
+# pipx sidesteps that, so recommend it when pip can't be used.
+if ! command -v pipx >/dev/null 2>&1; then
+    python3 -m pip --version >/dev/null 2>&1 || die \
+        "neither pipx nor a usable 'python3 -m pip' was found. Install pipx "\
+"(recommended): 'python3 -m pip install --user pipx' or your OS package manager."
+    if python3 - <<'PY'
+import os
+import sys
+import sysconfig
+
+# PEP 668: an EXTERNALLY-MANAGED marker in the stdlib dir means pip refuses
+# to install into this interpreter without --break-system-packages.
+marker = os.path.join(sysconfig.get_path("stdlib"), "EXTERNALLY-MANAGED")
+raise SystemExit(0 if os.path.exists(marker) else 1)
+PY
+    then
+        die "this Python is externally managed (PEP 668), so 'pip install --user' is "\
+"blocked. Install pipx and re-run: 'python3 -m pip install --user --break-system-packages pipx', "\
+"then 'pipx ensurepath'."
+    fi
+fi
+
 # --- config directories ------------------------------------------------------
 
 mkdir -p \

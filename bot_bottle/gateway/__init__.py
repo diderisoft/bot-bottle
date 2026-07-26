@@ -62,7 +62,6 @@ GATEWAY_CA_GLOB = "mitmproxy-ca*"
 # that lands. Env override matches the backend's BOT_BOTTLE_GATEWAY_IMAGE.
 GATEWAY_IMAGE = os.environ.get("BOT_BOTTLE_GATEWAY_IMAGE", "bot-bottle-gateway:latest")
 GATEWAY_DOCKERFILE = "Dockerfile.gateway"
-REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def rotate_gateway_ca(ca_dir: Path | None = None) -> list[Path]:

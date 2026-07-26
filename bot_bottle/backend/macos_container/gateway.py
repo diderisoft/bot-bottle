@@ -28,6 +28,7 @@ from ...paths import (
     ORCHESTRATOR_AUTH_JWT_ENV,
     host_gateway_ca_dir,
 )
+from ... import resources
 from .. import util as backend_util
 from . import util as container_mod
 
@@ -51,8 +52,6 @@ GATEWAY_LABEL = "bot-bottle-mac-infra=1"
 GATEWAY_DAEMONS = "egress,git-http,supervise"
 
 GATEWAY_IMAGE = os.environ.get("BOT_BOTTLE_GATEWAY_IMAGE", "bot-bottle-gateway:latest")
-
-_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def ensure_networks(
@@ -84,14 +83,16 @@ class MacosGateway(Gateway):
         network: str = GATEWAY_NETWORK,
         egress_network: str = GATEWAY_EGRESS_NETWORK,
         control_network: str = CONTROL_NETWORK,
-        repo_root: Path = _REPO_ROOT,
+        repo_root: Path | None = None,
     ) -> None:
         self.image_ref = image_ref
         self.name = name
         self.network = network
         self.egress_network = egress_network
         self.control_network = control_network
-        self._repo_root = repo_root
+        # Build context: the repo root in a checkout, a staged copy from the
+        # installed wheel otherwise (bot_bottle.resources).
+        self._repo_root = repo_root if repo_root is not None else resources.build_root()
         # Set by `connect_to_orchestrator`: the URL the daemons resolve policy
         # against + the pre-minted `gateway` token they present. The gateway
         # never mints, so it never holds the signing key (#469).

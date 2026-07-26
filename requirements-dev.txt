@@ -5,3 +5,6 @@
 pylint>=3.0.0
 pyright>=1.1.411
 coverage>=7.0.0
+# PEP 517 build front-end used by tests/unit/test_wheel_install.py to build and
+# install a real wheel (proves the installed distribution is self-contained).
+build>=1.0.0

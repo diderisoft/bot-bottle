@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ... import resources
 from ...orchestrator.lifecycle import (
     DEFAULT_PORT,
     DEFAULT_STARTUP_TIMEOUT_SECONDS,
@@ -53,8 +54,6 @@ from .orchestrator import (
 # still import it (probe / reprovision attribute against the gateway).
 INFRA_NAME = GATEWAY_NAME
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-
 
 class MacosInfraService(InfraService):
     """Composes the per-host orchestrator + gateway containers. Callers use
@@ -70,7 +69,7 @@ class MacosInfraService(InfraService):
         control_network: str = CONTROL_NETWORK,
         gateway_image: str = GATEWAY_IMAGE,
         orchestrator_image: str = ORCHESTRATOR_IMAGE,
-        repo_root: Path = _REPO_ROOT,
+        repo_root: Path | None = None,
         orchestrator_name: str = ORCHESTRATOR_NAME,
         gateway_name: str = INFRA_NAME,
         db_volume: str = ORCHESTRATOR_DB_VOLUME,
@@ -81,7 +80,9 @@ class MacosInfraService(InfraService):
         self.control_network = control_network
         self.gateway_image = gateway_image
         self.orchestrator_image = orchestrator_image
-        self._repo_root = repo_root
+        # Build context / bind-mount source: the repo root in a checkout, a
+        # staged copy from the installed wheel otherwise (bot_bottle.resources).
+        self._repo_root = repo_root if repo_root is not None else resources.build_root()
         self._orchestrator_name = orchestrator_name
         self._gateway_name = gateway_name
         self._db_volume = db_volume

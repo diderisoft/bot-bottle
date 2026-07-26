@@ -53,6 +53,21 @@ class TestInstallScript(unittest.TestCase):
         # Tests / local installs point BOT_BOTTLE_INSTALL_SPEC at a checkout.
         self.assertIn("BOT_BOTTLE_INSTALL_SPEC", self.text)
 
+    def test_requires_git_for_git_specs(self):
+        # A git+ / .git spec (the default) shells out to git; the script must
+        # gate on it rather than failing opaquely inside pipx/pip.
+        self.assertIn("command -v git", self.text)
+        self.assertIn("git+*|*.git", self.text)
+
+    def test_checks_pip_usable_before_fallback(self):
+        self.assertIn("python3 -m pip --version", self.text)
+
+    def test_detects_externally_managed_python(self):
+        # PEP 668: 'pip install --user' is blocked on externally-managed
+        # interpreters; the script must detect this and point at pipx.
+        self.assertIn("EXTERNALLY-MANAGED", self.text)
+        self.assertIn("pipx", self.text)
+
 
 if __name__ == "__main__":
     unittest.main()

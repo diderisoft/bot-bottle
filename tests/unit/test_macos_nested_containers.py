@@ -283,7 +283,7 @@ class TestBuildOrLoadImages(unittest.TestCase):
             images = launch_mod.build_or_load_images(plan)
 
         build.assert_called_once_with(
-            "agent:base", launch_mod._REPO_DIR,  # pylint: disable=protected-access
+            "agent:base", str(launch_mod.resources.build_root()),
             dockerfile="/repo/Dockerfile",
         )
         derived.assert_called_once_with("agent:base", build)
