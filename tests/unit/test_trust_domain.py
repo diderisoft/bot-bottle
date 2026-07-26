@@ -78,8 +78,7 @@ class TestControlPlaneProvisioning(unittest.TestCase):
             self.assertEqual("key", prov.orchestrator_key())
 
     def test_orchestrator_key_fail_closes_when_empty(self) -> None:
-        # Invariant 4: the orchestrator must never start without a key — it would
-        # run OPEN and grant every caller that reaches it full `cli`. There is no
+        # Invariant 4: the orchestrator must never start without a key. There is no
         # topology opt-out: a separate host does not stop the gateway (or any
         # other caller) from reaching the control-plane listener.
         prov = ControlPlaneProvisioning()

@@ -40,7 +40,7 @@ from .paths import (
 
 class ProvisioningError(RuntimeError):
     """A control-plane auth invariant would be violated (e.g. starting the
-    orchestrator without its signing key — which would run OPEN)."""
+    orchestrator without its signing key)."""
 
 
 @dataclass(frozen=True)
@@ -67,9 +67,8 @@ class TrustDomain:
 
     def key_from_env(self, environ: Mapping[str, str] | None = None) -> str:
         """The signing key as the owning process sees it — read from `key_env`
-        (default `os.environ`). "" when unset; the caller decides whether that is
-        fatal (`ControlPlaneProvisioning`) or the open-mode fallback
-        (`OrchestratorServer`)."""
+        (default `os.environ`). ``""`` when unset; owning services reject that
+        value rather than start without authentication."""
         env = os.environ if environ is None else environ
         return env.get(self.key_env, "").strip()
 

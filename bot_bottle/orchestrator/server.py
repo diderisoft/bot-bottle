@@ -116,9 +116,8 @@ def dispatch(  # pylint: disable=too-many-return-statements,too-many-branches
     no I/O beyond the orchestrator — so it is fully testable without a socket.
 
     `role` is the caller's verified control-plane role (`gateway` or `cli`), or
-    None for an unauthenticated request; an open-mode server (no signing key
-    configured — see `OrchestratorServer`) passes `cli`. Every route except
-    `GET /health` requires a role: a missing role is 401, and a role that
+    None for an unauthenticated request. Every route except `GET /health`
+    requires a role: a missing role is 401, and a role that
     doesn't cover the route is 403 — so a `gateway` data-plane token can reach
     `/resolve` + `/supervise/{propose,poll}` but not the operator routes
     (rewrite policy, read injected tokens, approve its own supervise proposals).
@@ -414,48 +413,50 @@ class OrchestratorServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     Holds the per-host control-plane *signing key* (from
     `$BOT_BOTTLE_ORCHESTRATOR_TOKEN`, injected by the launcher into the
     orchestrator process only) and verifies each request's role-scoped token
-    against it. When a key is set, every route but `/health` requires a valid
-    token whose role covers the route; when it is unset the server runs **open**
-    (full `cli` access) and says so loudly at startup — a fail-visible fallback
-    for tests and any backend that hasn't wired the key yet (e.g. Firecracker,
-    whose nft boundary already blocks agents from the control-plane port)."""
+    against it. Every route but `/health` requires a valid token whose role
+    covers the route. Construction fails when the key is absent so a new or
+    misconfigured launcher cannot accidentally expose an open control plane."""
 
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, address: tuple[str, int], orchestrator: OrchestratorCore) -> None:
+    def __init__(
+        self,
+        address: tuple[str, int],
+        orchestrator: OrchestratorCore,
+        *,
+        signing_key: str,
+    ) -> None:
         self.orchestrator = orchestrator
-        # The control-plane trust domain's signing key, as injected into THIS
-        # (the owning) process by the launcher (#476). Unset → open mode below.
-        self._signing_key = CONTROL_PLANE.key_from_env()
+        self._signing_key = signing_key.strip()
         if not self._signing_key:
-            sys.stderr.write(
-                "orchestrator: WARNING — no control-plane signing key "
-                f"(${CONTROL_PLANE.key_env}); running WITHOUT caller "
-                "authentication. Any client that can reach this port can drive "
-                "it. Backends that put the control plane on an agent-reachable "
-                "network MUST set this.\n"
+            raise ValueError(
+                "orchestrator control-plane signing key is required; "
+                "refusing to start without caller authentication"
             )
-            sys.stderr.flush()
         super().__init__(address, Handler)
 
     def role_for(self, presented: str) -> str | None:
-        """The role the request is authorized as, or None if unauthenticated.
-        Open mode (no signing key) grants full `cli` access — the fail-visible
-        fallback. Otherwise verify the presented signed token; a missing/invalid
-        token yields None (→ 401), a valid one yields its `gateway`/`cli`
-        role (→ per-route 401/403 in `dispatch`)."""
-        if not self._signing_key:
-            return ROLE_CLI
+        """The verified caller role, or None for a missing/invalid token."""
         return CONTROL_PLANE.verify(presented, self._signing_key)
 
 
 def make_server(
-    orchestrator: OrchestratorCore, host: str = "127.0.0.1", port: int = 0
+    orchestrator: OrchestratorCore,
+    host: str = "127.0.0.1",
+    port: int = 0,
+    *,
+    signing_key: str | None = None,
 ) -> OrchestratorServer:
-    """Build (but do not start) a control-plane server. `port=0` binds an
-    ephemeral port — read `server.server_address` for the actual one."""
-    return OrchestratorServer((host, port), orchestrator)
+    """Build an authenticated control-plane server.
+
+    ``signing_key=None`` reads the owning process's injected environment.
+    Empty or missing keys are rejected by :class:`OrchestratorServer`.
+    """
+    key = CONTROL_PLANE.key_from_env() if signing_key is None else signing_key
+    return OrchestratorServer(
+        (host, port), orchestrator, signing_key=key,
+    )
 
 
 __all__ = [

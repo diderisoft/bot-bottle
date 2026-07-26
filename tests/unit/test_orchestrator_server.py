@@ -255,7 +255,11 @@ class TestServerRoundTrip(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         orch = _orchestrator(Path(tmp.name) / "r.db")
-        server = make_server(orch, "127.0.0.1", 0)
+        signing_key = "round-trip-key"
+        auth = mint(ROLE_CLI, signing_key)
+        server = make_server(
+            orch, "127.0.0.1", 0, signing_key=signing_key,
+        )
         self.addCleanup(server.server_close)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -267,7 +271,10 @@ class TestServerRoundTrip(unittest.TestCase):
         reg = json.load(urllib.request.urlopen(
             urllib.request.Request(
                 f"{base}/bottles", data=_body({"source_ip": "10.243.0.7"}),
-                method="POST", headers={"Content-Type": "application/json"},
+                method="POST", headers={
+                    "Content-Type": "application/json",
+                    "x-bot-bottle-orchestrator-auth": auth,
+                },
             ), timeout=5,
         ))
         self.assertTrue(reg["bottle_id"])
@@ -279,7 +286,10 @@ class TestServerRoundTrip(unittest.TestCase):
             urllib.request.Request(
                 f"{base}/attribute",
                 data=_body({"source_ip": "10.243.0.7", "identity_token": reg["identity_token"]}),
-                method="POST", headers={"Content-Type": "application/json"},
+                method="POST", headers={
+                    "Content-Type": "application/json",
+                    "x-bot-bottle-orchestrator-auth": auth,
+                },
             ), timeout=5,
         ))
         self.assertEqual(reg["bottle_id"], attr["bottle_id"])
@@ -287,15 +297,25 @@ class TestServerRoundTrip(unittest.TestCase):
     def test_internal_failure_is_contextual_but_redacted(self) -> None:
         orch = MagicMock()
         orch.registry.all.side_effect = RuntimeError("SENSITIVE request value")
+        signing_key = "failure-path-key"
+        auth = mint(ROLE_CLI, signing_key)
         with patch("sys.stderr", io.StringIO()) as stderr:
-            server = make_server(orch, "127.0.0.1", 0)
+            server = make_server(
+                orch, "127.0.0.1", 0, signing_key=signing_key,
+            )
             self.addCleanup(server.server_close)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             self.addCleanup(server.shutdown)
             host, port = server.server_address[0], server.server_address[1]
             with self.assertRaises(urllib.error.HTTPError) as raised:
-                urllib.request.urlopen(f"http://{host}:{port}/bottles", timeout=5)
+                urllib.request.urlopen(
+                    urllib.request.Request(
+                        f"http://{host}:{port}/bottles",
+                        headers={"x-bot-bottle-orchestrator-auth": auth},
+                    ),
+                    timeout=5,
+                )
             payload = json.loads(raised.exception.read())
             output = stderr.getvalue()
         self.assertEqual({"error": "internal error"}, payload)
@@ -369,8 +389,9 @@ class TestOrchestratorAuth(unittest.TestCase):
         self.assertIsNotNone(self.orch.registry.get(rec.bottle_id))
 
     def _server_with_key(self, signing_key: str):
-        with patch.dict("os.environ", {"BOT_BOTTLE_ORCHESTRATOR_TOKEN": signing_key}):
-            server = make_server(self.orch, "127.0.0.1", 0)
+        server = make_server(
+            self.orch, "127.0.0.1", 0, signing_key=signing_key,
+        )
         self.addCleanup(server.server_close)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.addCleanup(server.shutdown)
@@ -399,16 +420,10 @@ class TestOrchestratorAuth(unittest.TestCase):
         self.assertEqual(403, self._status(f"{base}/bottles", header=gateway_tok))
         self.assertEqual(200, self._status(f"{base}/bottles", header=cli_tok))
 
-    def test_unconfigured_server_runs_open(self) -> None:
-        """No signing key set (tests / nft-protected Firecracker): open mode
-        grants full cli access, so existing round-trip behavior is unchanged."""
-        with patch.dict("os.environ", {}, clear=False):
-            import os
-            os.environ.pop("BOT_BOTTLE_ORCHESTRATOR_TOKEN", None)
-            server = make_server(self.orch, "127.0.0.1", 0)
-        self.addCleanup(server.server_close)
-        self.assertEqual(ROLE_CLI, server.role_for(""))
-        self.assertEqual(ROLE_CLI, server.role_for("anything"))
+    def test_unconfigured_server_refuses_to_start(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            with self.assertRaisesRegex(ValueError, "signing key is required"):
+                make_server(self.orch, "127.0.0.1", 0)
 
 
 class TestDispatchSupervise(unittest.TestCase):

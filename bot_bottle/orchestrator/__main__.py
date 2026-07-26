@@ -1,6 +1,7 @@
 """Run the orchestrator control plane as a plain process (PRD 0070 dev-harness).
 
-    python -m bot_bottle.orchestrator [--host H] [--port P] [--db PATH]
+    BOT_BOTTLE_ORCHESTRATOR_TOKEN=<signing-key> \
+        python -m bot_bottle.orchestrator [--host H] [--port P] [--db PATH]
 
 The PRD sequences the orchestrator as a plain-process dev-harness first, so
 the consolidation core (registry + attribution + HTTP control plane + live
@@ -16,12 +17,13 @@ import secrets
 from pathlib import Path
 
 from .. import log
-from .store.store_manager import StoreManager
+from ..trust_domain import CONTROL_PLANE
 from .broker import LaunchBroker, StubBroker
-from .server import make_server
 from .docker_broker import DockerBroker
-from .store.registry_store import RegistryStore, default_db_path
+from .server import make_server
 from .service import OrchestratorCore
+from .store.store_manager import StoreManager
+from .store.registry_store import RegistryStore, default_db_path
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -38,6 +40,11 @@ def main(argv: list[str] | None = None) -> int:
         help="launch broker: 'stub' records requests; 'docker' runs containers",
     )
     args = parser.parse_args(argv)
+    if not CONTROL_PLANE.key_from_env():
+        log.die(
+            f"{CONTROL_PLANE.key_env} is required; refusing to start the "
+            "orchestrator without caller authentication"
+        )
 
     registry = RegistryStore(args.db)
     registry.migrate()
