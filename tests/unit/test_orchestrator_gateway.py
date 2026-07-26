@@ -7,7 +7,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from bot_bottle.backend.docker.gateway import DockerGateway
+from bot_bottle.backend.docker.gateway import (
+    DEFAULT_GATEWAY_SUBNET,
+    DockerGateway,
+)
 from bot_bottle.gateway import (
     GATEWAY_CA_CERT,
     GATEWAY_NAME,
@@ -209,7 +212,38 @@ class TestDockerGateway(unittest.TestCase):
         with patch(_RUN_DOCKER, side_effect=fake):
             self.sc.connect_to_orchestrator(_ORCH_URL, _TOKEN)
         creates = [c for c in calls if c[:3] == ["docker", "network", "create"]]
-        self.assertEqual([["docker", "network", "create", self.sc.network]], creates)
+        self.assertEqual(
+            [[
+                "docker", "network", "create",
+                "--subnet", DEFAULT_GATEWAY_SUBNET,
+                "--label",
+                f"bot-bottle.gateway-subnet={DEFAULT_GATEWAY_SUBNET}",
+                self.sc.network,
+            ]],
+            creates,
+        )
+
+    def test_ensure_running_replaces_stale_auto_ipam_network(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake(argv: list[str], **_kw: object) -> Mock:
+            calls.append(argv)
+            if argv[:2] == ["docker", "ps"]:
+                return _proc(stdout="")
+            if argv[:3] == ["docker", "network", "inspect"]:
+                return _proc(stdout="<no value>\n")
+            return _proc()
+
+        with patch(_RUN_DOCKER, side_effect=fake):
+            self.sc.connect_to_orchestrator(_ORCH_URL, _TOKEN)
+        self.assertIn(
+            ["docker", "rm", "--force", self.sc.name],
+            calls,
+        )
+        self.assertIn(
+            ["docker", "network", "rm", self.sc.network],
+            calls,
+        )
 
     def test_ca_cert_pem_reads_from_container(self) -> None:
         with patch(_RUN_DOCKER, return_value=_proc(stdout=_CA_PEM)) as m:

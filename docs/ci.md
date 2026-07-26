@@ -12,6 +12,10 @@ reaches control-plane siblings through the job's Docker network and uses named
 Docker volumes for orchestrator/CA state the host daemon must mount. The
 orchestrator runs the package baked into the image built from the checkout; it
 does not bind the job container's invisible workspace into a sibling container.
+Docker integration jobs share fixed singleton names, so required and manual
+runs use one non-cancelling concurrency group. The shared agent/gateway network
+has an explicit subnet, which Docker requires for the pinned source IPs used as
+the isolation/attribution key.
 
 `scripts.unittest_gate` enforces the Docker job's contract: all 22 integration
 tests must execute and none may skip. This includes the real gateway-image,

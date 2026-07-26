@@ -17,6 +17,10 @@ from ...gateway import (
   DEFAULT_CA_TIMEOUT_SECONDS, CA_POLL_SECONDS, GATEWAY_CA_CERT, GatewayError
 )
 
+DEFAULT_GATEWAY_SUBNET = "10.242.255.0/24"
+_GATEWAY_SUBNET_LABEL = "bot-bottle.gateway-subnet"
+
+
 class DockerGateway(Gateway):
     """The consolidated gateway as a single, fixed-name Docker container.
 
@@ -36,6 +40,7 @@ class DockerGateway(Gateway):
         dockerfile: str | None = GATEWAY_DOCKERFILE,
         host_port_bindings: tuple[int, ...] = (),
         ca_mount_source: str | Path | None = None,
+        subnet: str | None = None,
     ) -> None:
         self.image_ref = image_ref
         self.name = name
@@ -60,6 +65,11 @@ class DockerGateway(Gateway):
         # backend's dev-harness gateway so VMs can reach it via their TAP link;
         # Docker's DNAT + the nft `ct status dnat accept` rule handle the rest.
         self._host_port_bindings = host_port_bindings
+        self._subnet = (
+            subnet
+            or os.environ.get("BOT_BOTTLE_DOCKER_GATEWAY_SUBNET", "").strip()
+            or DEFAULT_GATEWAY_SUBNET
+        )
         configured_ca = os.environ.get("BOT_BOTTLE_DOCKER_CA_MOUNT", "").strip()
         self._ca_mount_source = str(
             ca_mount_source or configured_ca or host_gateway_ca_dir()
@@ -114,10 +124,34 @@ class DockerGateway(Gateway):
     def _ensure_network(self) -> None:
         """Create the shared gateway network if it doesn't exist. Idempotent —
         a concurrent create loses harmlessly (the loser sees 'already exists').
-        Docker picks the subnet; the launcher reads it back to allocate IPs."""
-        if run_docker(["docker", "network", "inspect", self.network]).returncode == 0:
-            return
-        proc = run_docker(["docker", "network", "create", self.network])
+        The explicit subnet is required because bottle attribution pins source
+        IPs; Docker rejects static endpoint addresses on an auto-IPAM network."""
+        inspected = run_docker([
+            "docker", "network", "inspect",
+            "--format", f'{{{{index .Labels "{_GATEWAY_SUBNET_LABEL}"}}}}',
+            self.network,
+        ])
+        if inspected.returncode == 0:
+            marker = inspected.stdout.strip()
+            if marker in {"", self._subnet}:
+                return
+        if inspected.returncode == 0:
+            # Migrate the stale auto-IPAM network created by older releases.
+            # Removing the fixed gateway is safe here: this launch recreates it.
+            run_docker(["docker", "rm", "--force", self.name])
+            removed = run_docker(["docker", "network", "rm", self.network])
+            if removed.returncode != 0:
+                raise GatewayError(
+                    f"gateway network {self.network} needs explicit subnet "
+                    f"{self._subnet} but could not be replaced: "
+                    f"{removed.stderr.strip()}"
+                )
+        proc = run_docker([
+            "docker", "network", "create",
+            "--subnet", self._subnet,
+            "--label", f"{_GATEWAY_SUBNET_LABEL}={self._subnet}",
+            self.network,
+        ])
         if proc.returncode != 0 and "already exists" not in proc.stderr:
             raise GatewayError(
                 f"gateway network {self.network} failed to create: {proc.stderr.strip()}"
@@ -148,9 +182,9 @@ class DockerGateway(Gateway):
         # Recreate when the running container's image is stale (a rebuild),
         # so source changes to the gateway's flat daemons take effect — not
         # just when the container is absent.
+        self._ensure_network()
         if self.is_running() and self._running_image_is_current():
             return
-        self._ensure_network()
         # Clear any stale (stopped OR outdated-image) container holding the
         # fixed name, then start fresh. `rm --force` on an absent name is a
         # tolerated no-op.

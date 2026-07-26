@@ -81,6 +81,9 @@ jobs:
 
   integration-docker:
     runs-on: ubuntu-latest
+    concurrency:
+      group: integration-docker-infra
+      cancel-in-progress: false
     steps:
       - name: Checkout
         uses: actions/checkout@v4
