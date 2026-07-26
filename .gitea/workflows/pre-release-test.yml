@@ -153,6 +153,18 @@ jobs:
           name: coverage-firecracker
           path: coverage-firecracker.dat
 
+      - name: Upload tested rootfs
+        uses: actions/upload-artifact@v3
+        with:
+          name: infra-candidate
+          path: infra-candidate/
+
+      - name: Upload dropbear for publish verification
+        uses: actions/upload-artifact@v3
+        with:
+          name: firecracker-inputs
+          path: /var/cache/bot-bottle-fc/dropbear
+
   # Integration tests against the macOS Apple Container backend. Runs on a
   # self-hosted macOS runner (label `macos`) registered in HOST mode — Apple
   # Container needs the host `container` CLI + virtualization framework and
@@ -290,3 +302,36 @@ jobs:
         run: |
           git fetch --no-tags origin main:refs/remotes/origin/main
           python3 scripts/diff_coverage.py --base origin/main --min 90
+
+  publish-infra:
+    needs:
+      - unit
+      - integration-docker
+      - integration-firecracker
+      - integration-macos
+      - coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the tested revision
+        uses: actions/checkout@v4
+
+      - name: Download the tested rootfs
+        uses: actions/download-artifact@v3
+        with:
+          name: infra-candidate
+          path: infra-candidate
+
+      # publish_infra re-derives the version from the checkout to confirm the
+      # bundle matches before uploading, and the version hashes the dropbear
+      # bytes. Download the same dropbear integration-firecracker used.
+      - name: Download the staged dropbear
+        uses: actions/download-artifact@v3
+        with:
+          name: firecracker-inputs
+          path: firecracker-inputs
+
+      - name: Publish the tested candidate
+        env:
+          BOT_BOTTLE_INFRA_ARTIFACT_TOKEN: ${{ secrets.BOT_BOTTLE_INFRA_ARTIFACT_TOKEN }}
+          BOT_BOTTLE_FC_DROPBEAR: ${{ github.workspace }}/firecracker-inputs/dropbear
+        run: python3 -m bot_bottle.backend.firecracker.publish_infra --publish-dir infra-candidate
