@@ -30,6 +30,7 @@ from ..log import die
 from ..manifest import Manifest, ManifestBottle
 from ..supervisor.plan import SupervisePlan
 from ..orchestrator.supervisor import Supervisor
+from ..util import slugify
 from . import BottleSpec
 
 
@@ -44,8 +45,7 @@ def mint_slug(spec: BottleSpec) -> str:
     if spec.identity:
         return spec.identity
     if spec.label:
-        from .docker import util as docker_mod
-        return docker_mod.slugify(spec.label)
+        return slugify(spec.label)
     return bottle_identity(spec.agent_name)
 
 

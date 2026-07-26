@@ -9,7 +9,10 @@ import difflib
 import hashlib
 import ipaddress
 import os
+import re
 import sys
+
+from .log import die
 
 
 def sha256_hex(content: str) -> str:
@@ -67,3 +70,20 @@ def expand_tilde(path: str) -> str:
         home = os.environ.get("HOME", "")
         return home + path[1:]
     return path
+
+
+_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+def slugify(name: str) -> str:
+    """Return a portable bottle identifier from a human-readable name.
+
+    This is deliberately a root utility: names are part of the generic CLI
+    and state model, not a Docker container concern.
+    """
+    if not name:
+        die("slugify: missing name")
+    slug = _SLUG_RE.sub("-", name.lower()).strip("-")
+    if not slug:
+        die(f"name '{name}' produced an empty slug; use alphanumeric characters")
+    return slug

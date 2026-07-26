@@ -6,12 +6,12 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
-import re
 import shutil
 import subprocess
 from typing import Iterator
 
 from ...log import die, info
+from ...util import slugify
 
 
 def run_docker(
@@ -112,19 +112,6 @@ def docker_cp(src: str, dest: str) -> None:
     if result.returncode != 0:
         die(f"docker cp {src} -> {dest} failed: "
             f"{(result.stderr or '').strip() or '<no stderr>'}")
-
-
-_SLUG_RE = re.compile(r"[^a-z0-9]+")
-
-
-def slugify(name: str) -> str:
-    """Lowercase, non-alnum runs → '-', trimmed. Dies on empty result."""
-    if not name:
-        die("slugify: missing name")
-    slug = _SLUG_RE.sub("-", name.lower()).strip("-")
-    if not slug:
-        die(f"name '{name}' produced an empty slug; use alphanumeric characters")
-    return slug
 
 
 def build_image(ref: str, context: str, *, dockerfile: str = "") -> None:

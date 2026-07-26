@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import http.server
 import json
+import math
 import os
 import socketserver
 import sys
@@ -217,13 +218,18 @@ def dispatch(  # pylint: disable=too-many-return-statements,too-many-branches
         raw_ips = data.get("live_source_ips")
         if not isinstance(raw_ips, list):
             return 400, {"error": "live_source_ips (list of strings) is required"}
-        live = [ip for ip in raw_ips if isinstance(ip, str) and ip]
+        if any(not isinstance(ip, str) or not ip for ip in raw_ips):
+            return 400, {"error": "live_source_ips must contain non-empty strings"}
+        live = raw_ips
         grace = data.get("grace_seconds")
-        kwargs = (
-            {"grace_seconds": float(grace)}
-            if isinstance(grace, (int, float)) and not isinstance(grace, bool)
-            else {}
-        )
+        kwargs: dict[str, float] = {}
+        if grace is not None:
+            if isinstance(grace, bool) or not isinstance(grace, (int, float)):
+                return 400, {"error": "grace_seconds must be a non-negative finite number"}
+            parsed_grace = float(grace)
+            if not math.isfinite(parsed_grace) or parsed_grace < 0:
+                return 400, {"error": "grace_seconds must be a non-negative finite number"}
+            kwargs["grace_seconds"] = parsed_grace
         return 200, {"reaped": orch.reconcile(live, **kwargs)}
 
     if method == "POST" and route == "/attribute":

@@ -25,12 +25,11 @@ from typing import Callable
 from ...agent_provider import get_provider, runtime_for
 from ...backend import (
     Bottle,
+    BottlePlan,
     BottleSpec,
     enumerate_active_agents,
     get_bottle_backend,
 )
-from ...backend.docker import util as docker_mod
-from ...backend.docker.bottle_plan import DockerBottlePlan
 from ...bottle_state import (
     cleanup_state,
     is_preserved,
@@ -40,7 +39,7 @@ from ...image_cache import StaleImageError
 from ...log import info, die
 from ...manifest import Manifest, ManifestIndex
 from ..constants import PROG
-from ...util import read_tty_line
+from ...util import read_tty_line, slugify
 from .. import tui
 
 
@@ -257,10 +256,10 @@ def _uniquify_label_headless(label: str) -> str:
     logging the chosen label. Orchestrators fire-and-forget many bottles,
     so silently picking a free name beats erroring on every collision."""
     active_slugs = {a.slug for a in enumerate_active_agents()}
-    if docker_mod.slugify(label) not in active_slugs:
+    if slugify(label) not in active_slugs:
         return label
     n = 2
-    while docker_mod.slugify(f"{label}-{n}") in active_slugs:
+    while slugify(f"{label}-{n}") in active_slugs:
         n += 1
     chosen = f"{label}-{n}"
     info(f"label '{label}' already in use; using '{chosen}'")
@@ -274,11 +273,11 @@ def prepare_with_preflight(
     spec: BottleSpec,
     *,
     stage_dir: Path,
-    render_preflight: Callable[[DockerBottlePlan, str], None],
+    render_preflight: Callable[[BottlePlan, str], None],
     prompt_yes: Callable[[], bool],
     dry_run: bool = False,
     backend_name: str | None = None,
-) -> tuple[DockerBottlePlan | None, str]:
+) -> tuple[BottlePlan | None, str]:
     """Run `backend.prepare`, render the preflight summary via the
     injected callable, prompt y/N via the injected callable.
 
@@ -405,7 +404,7 @@ def _resolve_unique_label(label: str, color: str) -> tuple[str, str]:
     in use among running bottles.  Passes through unchanged when no
     collision is found on the first check."""
     while True:
-        slug_candidate = docker_mod.slugify(label)
+        slug_candidate = slugify(label)
         active_slugs = {a.slug for a in enumerate_active_agents()}
         if slug_candidate not in active_slugs:
             return label, color
@@ -432,7 +431,7 @@ def _select_image_policy() -> str | None:
 
 
 def _text_render_preflight():
-    def _render(plan: DockerBottlePlan, backend_name: str) -> None:
+    def _render(plan: BottlePlan, backend_name: str) -> None:
         print(file=sys.stderr)
         print(f"backend: {backend_name}", file=sys.stderr)
         print(_manifest_to_yaml(plan.manifest), file=sys.stderr)

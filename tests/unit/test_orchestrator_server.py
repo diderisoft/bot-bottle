@@ -647,10 +647,24 @@ class TestReconcileRoute(unittest.TestCase):
         self.assertEqual(200, status)
         self.assertEqual([], payload["reaped"])
 
-    def test_non_string_entries_are_ignored(self) -> None:
-        dead = self._old("10.0.0.4")
+    def test_non_string_entries_are_rejected(self) -> None:
         status, payload = dispatch(
             self.orch, "POST", "/reconcile",
             _body({"live_source_ips": [None, 7, "10.0.0.9"]}))
-        self.assertEqual(200, status)
-        self.assertEqual([dead], payload["reaped"])
+        self.assertEqual(400, status)
+        self.assertIn("live_source_ips", payload["error"])
+
+    def test_empty_live_source_ip_is_rejected(self) -> None:
+        status, payload = dispatch(
+            self.orch, "POST", "/reconcile", _body({"live_source_ips": [""]}))
+        self.assertEqual(400, status)
+        self.assertIn("live_source_ips", payload["error"])
+
+    def test_invalid_grace_seconds_is_rejected(self) -> None:
+        for value in (True, "30", -1, float("inf"), float("nan")):
+            with self.subTest(value=value):
+                status, payload = dispatch(
+                    self.orch, "POST", "/reconcile",
+                    _body({"live_source_ips": [], "grace_seconds": value}))
+                self.assertEqual(400, status)
+                self.assertIn("grace_seconds", payload["error"])
