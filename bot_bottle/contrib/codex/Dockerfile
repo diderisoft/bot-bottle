@@ -5,6 +5,11 @@
 
 FROM node:22-trixie-slim
 
+# The standalone installer is used below because remote-control requires its
+# managed package layout. Keep this exact release in sync with the verified
+# installer source and checksum.
+ARG CODEX_VERSION=0.145.0
+
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
   git \

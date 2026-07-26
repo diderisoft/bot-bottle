@@ -1,0 +1,5 @@
+# Runtime-only third-party dependency for Dockerfile.gateway.
+#
+# Regenerate requirements.gateway.lock with the image-input refresh workflow;
+# Dockerfile.gateway installs the lock with --require-hashes.
+mitmproxy==11.1.3

@@ -1,0 +1,12 @@
+{
+  "name": "bot-bottle-pi-image",
+  "private": true,
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.81.1",
+    "@harms-haus/pi-cwd": "1.0.0",
+    "context-mode": "1.0.169",
+    "pi-mcp-adapter": "2.11.0",
+    "pi-subagents": "0.35.1",
+    "pi-web-access": "0.13.0"
+  }
+}

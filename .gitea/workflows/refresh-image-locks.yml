@@ -1,0 +1,57 @@
+# Manually refresh the committed package locks and the pinned Codex installer
+# checksum after deliberately changing a direct version in the source files.
+#
+# The job uploads the generated files for review; it never commits or pushes.
+
+name: refresh-image-locks
+
+on:
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compile gateway Python lock
+        run: |
+          python3 -m pip install --break-system-packages pip-tools==7.5.1
+          python3 -m piptools compile \
+            --generate-hashes \
+            --output-file requirements.gateway.lock \
+            requirements.gateway.in
+
+      - name: Resolve provider npm locks
+        run: |
+          for provider in claude pi; do
+            (
+              cd "bot_bottle/contrib/$provider"
+              npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+            )
+          done
+
+      - name: Refresh pinned Codex installer checksum
+        run: |
+          CODEX_VERSION=$(
+            sed -n 's/^ARG CODEX_VERSION=//p' bot_bottle/contrib/codex/Dockerfile
+          )
+          test -n "$CODEX_VERSION"
+          curl -fsSL \
+            "https://raw.githubusercontent.com/openai/codex/rust-v${CODEX_VERSION}/scripts/install/install.sh" \
+            -o bot_bottle/contrib/codex/install.sh
+          (
+            cd bot_bottle/contrib/codex
+            sha256sum install.sh > install.sh.sha256
+          )
+
+      - name: Upload refreshed inputs
+        uses: actions/upload-artifact@v3
+        with:
+          name: image-input-locks
+          path: |
+            requirements.gateway.lock
+            bot_bottle/contrib/claude/package-lock.json
+            bot_bottle/contrib/pi/package-lock.json
+            bot_bottle/contrib/codex/install.sh.sha256
