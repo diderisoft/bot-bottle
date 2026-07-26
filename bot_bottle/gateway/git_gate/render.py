@@ -252,6 +252,27 @@ cat > "$refs_file"
 
 zero=0000000000000000000000000000000000000000
 
+# Phase 0: reject Gitea AGit review refs before scanning or forwarding.
+# A push to refs/for/*, refs/draft/*, or refs/for-review/* asks Gitea to
+# open a pull request backed by a server-managed refs/pull/<n>/head rather
+# than an ordinary refs/heads/* branch. That breaks the git-gate workflow:
+# follow-up commits can't be pushed back through the branch, and Gitea
+# rejects later direct updates to the generated review ref. Fail the whole
+# push here (before any gitleaks scan or upstream forward) so the caller
+# pushes a real branch and opens the PR against it instead. Deletions
+# (new == zero) stay allowed so stale AGit refs can still be cleaned up.
+while IFS=' ' read -r old new ref; do
+  [ -z "$ref" ] && continue
+  [ "$new" = "$zero" ] && continue
+  case "$ref" in
+    refs/for/*|refs/draft/*|refs/for-review/*)
+      echo "git-gate: refusing AGit review ref $ref" >&2
+      echo "git-gate: push to refs/heads/<branch> and open a branch-backed pull request instead" >&2
+      exit 1
+      ;;
+  esac
+done < "$refs_file"
+
 supervise_gitleaks_allow() {
   log_opts=$1
   ref=$2

@@ -206,6 +206,75 @@ class TestHookRender(unittest.TestCase):
         self.assertIn('set -- "$@" --push-option="$opt"', hook)
         self.assertIn('git push "$@" origin "$refspec"', hook)
 
+    def test_agit_review_refs_rejected_before_scan(self):
+        # Creating/updating refs/for/*, refs/draft/*, or refs/for-review/*
+        # opens a Gitea AGit pull request backed by a server-managed review
+        # ref instead of a normal branch, which the git-gate branch workflow
+        # can't push follow-ups to. The guard rejects those refs, and it runs
+        # in Phase 0 — before the gitleaks scan and the upstream forward.
+        hook = git_gate_render_hook()
+        self.assertIn(
+            "refs/for/*|refs/draft/*|refs/for-review/*", hook,
+        )
+        self.assertIn("refusing AGit review ref", hook)
+        self.assertIn("branch-backed pull request", hook)
+        guard = hook.index("refusing AGit review ref")
+        self.assertLess(
+            guard, hook.index("gitleaks scanning"),
+            "AGit guard must run before the gitleaks scan",
+        )
+        self.assertLess(
+            guard, hook.index("forwarding $ref to origin"),
+            "AGit guard must run before the upstream forward",
+        )
+
+    def test_agit_review_ref_deletion_still_allowed(self):
+        # Cleanup of a legacy AGit ref (new == zero) must not be blocked, so
+        # the reject is guarded by the same delete short-circuit the scan and
+        # forward phases use.
+        hook = git_gate_render_hook()
+        guard_block = hook[
+            hook.index("Phase 0"):hook.index("supervise_gitleaks_allow()")
+        ]
+        self.assertIn('[ "$new" = "$zero" ] && continue', guard_block)
+        self.assertIn("refs/for/*", guard_block)
+
+    def _run_hook_stdin(self, stdin: str):
+        # Execute the rendered hook far enough to exercise Phase 0. The guard
+        # touches only mktemp + read, so it rejects (or falls through) without
+        # a bare repo, gitleaks, or ssh — anything past Phase 0 fails for
+        # unrelated reasons, which is fine for the reject cases asserted here.
+        import subprocess
+        fd, path = tempfile.mkstemp(suffix=".sh")
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(git_gate_render_hook())
+            return subprocess.run(
+                ["sh", path], input=stdin, capture_output=True, text=True,
+            )
+        finally:
+            os.unlink(path)
+
+    def test_agit_review_ref_create_is_rejected(self):
+        one = "1" * 40
+        for ref in ("refs/for/main", "refs/draft/main", "refs/for-review/main"):
+            with self.subTest(ref=ref):
+                result = self._run_hook_stdin(f"{'0' * 40} {one} {ref}\n")
+                self.assertEqual(1, result.returncode)
+                self.assertIn("refusing AGit review ref", result.stderr)
+                self.assertIn("branch-backed pull request", result.stderr)
+                # Rejected in Phase 0, before the gitleaks scan runs.
+                self.assertNotIn("gitleaks scanning", result.stderr)
+
+    def test_ordinary_branch_passes_agit_guard(self):
+        # A normal refs/heads push must fall through Phase 0 and reach the
+        # gitleaks scan (which then fails for lack of a real repo — proving
+        # only that the guard did not short-circuit it).
+        one = "1" * 40
+        result = self._run_hook_stdin(f"{'0' * 40} {one} refs/heads/main\n")
+        self.assertNotIn("refusing AGit review ref", result.stderr)
+        self.assertIn("gitleaks scanning", result.stderr)
+
     def test_inline_gitleaks_allow_routes_to_supervisor(self):
         hook = git_gate_render_hook()
         # First gitleaks runs normally; only if that passes does the
