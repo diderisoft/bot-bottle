@@ -7,6 +7,7 @@ picking the right document for what you're capturing.
 
 | Artifact | For |
 |---|---|
+| **Design workflow** (`docs/design-workflow.md`) | How discussion becomes canonical design, how dependencies are recorded, and when implementation may begin. |
 | **Glossary** (`docs/glossary.md`) | Canonical term definitions — what words mean in this project. |
 | **PRD** (`docs/prds/`) | A feature: what to build, scope, success criteria. |
 | **Research note** (`docs/research/`) | A landscape/tradeoff investigation. |
