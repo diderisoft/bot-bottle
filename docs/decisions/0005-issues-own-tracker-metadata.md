@@ -29,7 +29,8 @@ item exists. Every issue has at least one label. An issue opened or left
 without labels receives `Status/Needs Triage` automatically until it is
 classified.
 
-Every new pull request is tracked in one of two ways:
+Every new pull request is tracked in exactly one of two mutually exclusive
+ways:
 
 1. It deliberately references at least one existing issue in its title or
    description. Tracker metadata stays on that issue and the PR remains
@@ -43,9 +44,9 @@ Issue references use one of these forms:
 - `Part of #123`, `Related to #123`, `Refs #123`, or `References #123` when it
   contributes without completing it.
 
-Gitea Actions enforces the either/or PR rule, validates any issue references,
-and repairs the empty issue-label state. Branch protection makes the PR policy
-check required.
+Gitea Actions enforces the exclusive either/or PR rule, validates any issue
+references, and repairs the empty issue-label state. Branch protection makes
+the PR policy check required.
 
 The policy applies from 2026-07-18 onward. Existing issues may be labelled as
 they are encountered, but closed PRs are grandfathered: no retrospective
@@ -70,5 +71,6 @@ issues or PR labels are created solely to make history conform.
 ## Links
 
 - Issue #405.
-- `.gitea/workflows/tracker-policy.yml`.
+- `.gitea/workflows/tracker-policy-pr.yml`.
+- `.gitea/workflows/tracker-policy-issues.yml`.
 - `scripts/tracker_policy.py`.

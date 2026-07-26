@@ -55,6 +55,12 @@ def check_pull_request(event: dict[str, Any], api: GiteaApi) -> list[str]:
     errors: list[str] = []
     labels = pull.get("labels") or []
     numbers = deliberate_issue_numbers(pull.get("title", ""), pull.get("body", ""))
+    if labels and numbers:
+        errors.append(
+            "PR must use exactly one tracking mode: remove PR labels when "
+            "linking an issue, or remove the issue reference when labels "
+            "belong on the PR."
+        )
     if not numbers:
         if not labels:
             errors.append(
