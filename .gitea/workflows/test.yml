@@ -105,6 +105,8 @@ jobs:
           DOCKER_HOST_ADDRESS=$(python3 scripts/docker_host_address.py)
           test -n "$DOCKER_HOST_ADDRESS"
           RUN_KEY="${GITHUB_RUN_ID:-${GITHUB_RUN_NUMBER:-0}}"
+          export NO_PROXY="${NO_PROXY:+$NO_PROXY,}$DOCKER_HOST_ADDRESS"
+          export no_proxy="${no_proxy:+$no_proxy,}$DOCKER_HOST_ADDRESS"
           export BOT_BOTTLE_DOCKER_HOST_ADDRESS="$DOCKER_HOST_ADDRESS"
           export BOT_BOTTLE_DOCKER_ROOT_MOUNT="bot-bottle-ci-root-$RUN_KEY"
           export BOT_BOTTLE_DOCKER_CA_MOUNT="bot-bottle-ci-ca-$RUN_KEY"
