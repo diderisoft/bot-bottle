@@ -27,7 +27,27 @@ class TestCheckPullRequest(unittest.TestCase):
         event = {"pull_request": {"title": "Change", "body": "Part of #12", "labels": []}}
         self.assertEqual(check_pull_request(event, api), [])
 
-    def test_rejects_labels_and_pr_reference(self):
+    def test_accepts_labelled_pr_without_issue(self):
+        api = Mock()
+        event = {
+            "pull_request": {
+                "title": "Change",
+                "body": "",
+                "labels": [{"name": "Kind/Documentation"}],
+            }
+        }
+        self.assertEqual(check_pull_request(event, api), [])
+        api.request.assert_not_called()
+
+    def test_rejects_unlabelled_pr_without_issue(self):
+        api = Mock()
+        event = {"pull_request": {"title": "Change", "body": "", "labels": []}}
+        errors = check_pull_request(event, api)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("either have a label or reference an issue", errors[0])
+        api.request.assert_not_called()
+
+    def test_validates_issue_reference_even_when_pr_is_labelled(self):
         api = Mock()
         api.request.return_value = {"number": 12, "pull_request": {}}
         event = {
@@ -38,9 +58,8 @@ class TestCheckPullRequest(unittest.TestCase):
             }
         }
         errors = check_pull_request(event, api)
-        self.assertEqual(len(errors), 2)
-        self.assertIn("unlabeled", errors[0])
-        self.assertIn("not an issue", errors[1])
+        self.assertEqual(len(errors), 1)
+        self.assertIn("not an issue", errors[0])
 
 
 class TestEnsureIssueLabel(unittest.TestCase):

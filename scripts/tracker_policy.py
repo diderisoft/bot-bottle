@@ -54,18 +54,14 @@ def check_pull_request(event: dict[str, Any], api: GiteaApi) -> list[str]:
     pull = event["pull_request"]
     errors: list[str] = []
     labels = pull.get("labels") or []
-    if labels:
-        errors.append(
-            "PRs must be unlabeled; put tracker metadata on the linked issue "
-            f"(found: {', '.join(label['name'] for label in labels)})."
-        )
-
     numbers = deliberate_issue_numbers(pull.get("title", ""), pull.get("body", ""))
     if not numbers:
-        errors.append(
-            "PR must reference an issue with Closes/Fixes/Resolves #N, "
-            "Part of #N, Related to #N, Refs #N, or References #N."
-        )
+        if not labels:
+            errors.append(
+                "PR must either have a label or reference an issue with "
+                "Closes/Fixes/Resolves #N, Part of #N, Related to #N, "
+                "Refs #N, or References #N."
+            )
         return errors
 
     real_issues = 0

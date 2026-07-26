@@ -4,6 +4,10 @@
 - **Date:** 2026-07-18
 - **Deciders:** didericis
 
+> **Amended 2026-07-26.** A pull request may carry labels directly instead of
+> linking a tracking issue. When a PR does link an issue, the issue remains the
+> canonical owner of planning metadata and the reference is validated.
+
 ## Context
 
 Gitea exposes labels on both issues and pull requests. Applying the same labels
@@ -20,19 +24,28 @@ would make the issue history less truthful.
 
 ## Decision
 
-Issues are the canonical tracker records and own labels. Every issue has at
-least one label. An issue opened or left without labels receives
-`Status/Needs Triage` automatically until it is classified.
+Issues are the canonical tracker records and own labels when a separate work
+item exists. Every issue has at least one label. An issue opened or left
+without labels receives `Status/Needs Triage` automatically until it is
+classified.
 
-Pull requests carry no labels. Every new PR deliberately references at least
-one existing issue in its title or description with one of these forms:
+Every new pull request is tracked in one of two ways:
+
+1. It deliberately references at least one existing issue in its title or
+   description. Tracker metadata stays on that issue and the PR remains
+   unlabelled.
+2. It carries at least one label directly when a separate issue would add no
+   useful planning context.
+
+Issue references use one of these forms:
 
 - `Closes #123`, `Fixes #123`, or `Resolves #123` when merging completes it.
 - `Part of #123`, `Related to #123`, `Refs #123`, or `References #123` when it
   contributes without completing it.
 
-Gitea Actions enforces both PR rules as a status check and repairs the empty
-issue-label state. Branch protection makes the PR policy check required.
+Gitea Actions enforces the either/or PR rule, validates any issue references,
+and repairs the empty issue-label state. Branch protection makes the PR policy
+check required.
 
 The policy applies from 2026-07-18 onward. Existing issues may be labelled as
 they are encountered, but closed PRs are grandfathered: no retrospective
@@ -40,9 +53,13 @@ issues or PR labels are created solely to make history conform.
 
 ## Consequences
 
-- Classification, priority, and workflow metadata have one source of truth.
-- A PR's issue link is the navigation path to its planning metadata.
+- Classification, priority, and workflow metadata have one source of truth for
+  each change: the linked issue when one exists, otherwise the PR.
+- For issue-backed changes, the PR's issue link is the navigation path to its
+  planning metadata.
 - Multi-PR issues do not require copied or synchronized labels.
+- Small standalone changes do not require a tracking issue created solely to
+  satisfy automation.
 - `Status/Needs Triage` is an intentional fallback, not a final
   classification.
 - Direct issue creation remains convenient; automation repairs a missing label
