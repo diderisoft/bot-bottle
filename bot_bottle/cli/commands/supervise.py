@@ -508,7 +508,10 @@ def _detail_view(
             return "reject aborted (empty reason)"
 
 
-def _modify(stdscr: "curses._CursesWindow", qp: QueuedProposal) -> str | None:  # type: ignore  # pragma: no cover
+def _modify(
+    stdscr: "curses._CursesWindow",  # type: ignore
+    qp: QueuedProposal,
+) -> str | None:  # pragma: no cover
     """Suspend curses, open $EDITOR on the proposed file, return edited content."""
     suffix = _suffix_for_tool(qp.proposal.tool)
     curses.endwin()

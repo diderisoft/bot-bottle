@@ -16,7 +16,11 @@ def _path_matches(pm: PathMatch, request_path: str) -> bool:
         if not pm.value.endswith("/"):
             return request_path.startswith(pm.value + "/")
         return request_path.startswith(pm.value)
-    return pm.type == "regex" and pm.compiled is not None and pm.compiled.search(request_path) is not None
+    return (
+        pm.type == "regex"
+        and pm.compiled is not None
+        and pm.compiled.search(request_path) is not None
+    )
 
 
 def _entry_matches(

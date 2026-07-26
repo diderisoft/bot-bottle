@@ -347,5 +347,3 @@ def load_config(text: str) -> "Config":
     except YamlSubsetError as e:
         raise ValueError(f"routes payload: invalid YAML: {e}") from e
     return parse_config(payload)
-
-

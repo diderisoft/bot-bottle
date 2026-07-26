@@ -672,13 +672,13 @@ class TestReconcileRoute(unittest.TestCase):
             self.orch, "POST", "/reconcile",
             _body({"live_source_ips": [None, 7, "10.0.0.9"]}))
         self.assertEqual(400, status)
-        self.assertIn("live_source_ips", payload["error"])
+        self.assertIn("live_source_ips", str(payload["error"]))
 
     def test_empty_live_source_ip_is_rejected(self) -> None:
         status, payload = dispatch(
             self.orch, "POST", "/reconcile", _body({"live_source_ips": [""]}))
         self.assertEqual(400, status)
-        self.assertIn("live_source_ips", payload["error"])
+        self.assertIn("live_source_ips", str(payload["error"]))
 
     def test_invalid_grace_seconds_is_rejected(self) -> None:
         for value in (True, "30", -1, float("inf"), float("nan")):
@@ -687,4 +687,4 @@ class TestReconcileRoute(unittest.TestCase):
                     self.orch, "POST", "/reconcile",
                     _body({"live_source_ips": [], "grace_seconds": value}))
                 self.assertEqual(400, status)
-                self.assertIn("grace_seconds", payload["error"])
+                self.assertIn("grace_seconds", str(payload["error"]))

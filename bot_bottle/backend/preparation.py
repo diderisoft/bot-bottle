@@ -67,11 +67,14 @@ class BottlePreparationPlanner:
 
     def prepare(self, spec: BottleSpec) -> PreparedBottle:
         backend = self._backend
-        manifest = backend._validate(spec)
+        # These are deliberately protected backend hooks: only this shared
+        # planner orchestrates them, while concrete backends provide the
+        # implementation.
+        manifest = backend._validate(spec)  # pylint: disable=protected-access
         if not backend.supports_nested_containers:
             reject_nested_containers(backend.name, manifest)
 
-        backend._preflight()
+        backend._preflight()  # pylint: disable=protected-access
         manifest = GitGate().preflight_host_keys(
             manifest,
             headless=spec.headless,
@@ -98,7 +101,9 @@ class BottlePreparationPlanner:
             state_dir=agent_dir,
             instance_name=f"bot-bottle-{slug}",
             prompt_file=prompt_file,
-            guest_env=backend._build_guest_env(resolved_env),
+            guest_env=backend._build_guest_env(  # pylint: disable=protected-access
+                resolved_env
+            ),
             forward_host_credentials=provider_config.forward_host_credentials,
             auth_token=provider_config.auth_token,
             host_env=dict(os.environ),

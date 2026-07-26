@@ -21,9 +21,12 @@ class TestCliBackendBoundaries(unittest.TestCase):
         for path in (ROOT / "bot_bottle" / "cli").rglob("*.py"):
             tree = ast.parse(path.read_text(), filename=str(path))
             for node in ast.walk(tree):
-                module = node.module if isinstance(node, ast.ImportFrom) else None
-                if module and module.startswith(forbidden):
-                    violations.append(f"{path.relative_to(ROOT)}:{node.lineno}: {module}")
+                if isinstance(node, ast.ImportFrom):
+                    module = node.module
+                    if module and module.startswith(forbidden):
+                        violations.append(
+                            f"{path.relative_to(ROOT)}:{node.lineno}: {module}"
+                        )
                 if isinstance(node, ast.Import):
                     violations.extend(
                         f"{path.relative_to(ROOT)}:{node.lineno}: {alias.name}"

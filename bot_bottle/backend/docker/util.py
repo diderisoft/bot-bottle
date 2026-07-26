@@ -11,7 +11,12 @@ import subprocess
 from typing import Iterator
 
 from ...log import die, info
-from ...util import slugify
+from ...util import slugify as _slugify
+
+
+def slugify(name: str) -> str:
+    """Compatibility wrapper; new generic callers import ``bot_bottle.util``."""
+    return _slugify(name)
 
 
 def run_docker(
