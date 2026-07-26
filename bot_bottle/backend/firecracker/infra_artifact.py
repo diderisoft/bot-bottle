@@ -54,6 +54,7 @@ _BUILD_INPUTS = {
         "image-build-args.json",
         "Dockerfile.orchestrator",
         "Dockerfile.orchestrator.fc",
+        "requirements.orchestrator.lock",
     ),
     "gateway": (
         "image-build-args.json",

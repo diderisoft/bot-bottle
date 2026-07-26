@@ -62,7 +62,10 @@ class TestWheelInstall(unittest.TestCase):
 
         # Installing the freshly-built wheel must succeed — fail if it doesn't.
         install = subprocess.run(
-            [str(cls.venv_py), "-m", "pip", "install", "--quiet", str(wheels[0])],
+            [
+                str(cls.venv_py), "-m", "pip", "install", "--quiet",
+                "--force-reinstall", "--no-deps", str(wheels[0]),
+            ],
             capture_output=True, text=True, check=False,
         )
         if install.returncode != 0:

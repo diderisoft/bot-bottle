@@ -114,6 +114,7 @@ class TestVersionInputs(unittest.TestCase):
             '{"PYTHON_BASE_IMAGE": "python:pinned"}\n',
         )
         (root / "requirements.gateway.lock").write_text("mitmproxy==11.1.3\n")
+        (root / "requirements.orchestrator.lock").write_text("fastapi==0.140.0\n")
         (root / "pyproject.toml").write_text("[project]\nname = 'bot-bottle'\n")
 
     def test_pyproject_toml_change_bumps_version(self) -> None:
@@ -162,6 +163,21 @@ class TestVersionInputs(unittest.TestCase):
             )
             after = ia.infra_artifact_version(
                 "init", "gateway", repo_root=root,
+            )
+        self.assertNotEqual(before, after)
+
+    def test_orchestrator_lock_change_bumps_orchestrator_version(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._fake_repo(root)
+            before = ia.infra_artifact_version(
+                "init", "orchestrator", repo_root=root,
+            )
+            (root / "requirements.orchestrator.lock").write_text(
+                "fastapi==0.140.0 --hash=sha256:changed\n",
+            )
+            after = ia.infra_artifact_version(
+                "init", "orchestrator", repo_root=root,
             )
         self.assertNotEqual(before, after)
 

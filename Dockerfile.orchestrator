@@ -9,12 +9,9 @@
 #     Keeping the content in one place means future orchestrator deps (e.g.
 #     iroh) are added here once, not duplicated per backend.
 #
-# It stays deliberately lean: the control plane is **stdlib-only** today, so
-# no third-party payload — none of the gateway's mitmproxy/git/gitleaks
-# (that's Dockerfile.gateway) and no buildah (that's the firecracker
-# builder, and lives only in Dockerfile.orchestrator.fc). Keeping the
-# secret-dense control plane on a minimal dependency surface is the point
-# (PRD 0070's "secret concentration").
+# It stays deliberately lean: only the pinned FastAPI/Uvicorn control-plane
+# stack is installed here — none of the gateway's mitmproxy/git/gitleaks
+# (that's Dockerfile.gateway) and no buildah (that's firecracker-only).
 #
 # Shares an exact multi-architecture Python/trixie manifest with the gateway
 # image. The version-qualified tag keeps the human-readable upstream version;
@@ -24,6 +21,11 @@ ARG PYTHON_BASE_IMAGE
 FROM ${PYTHON_BASE_IMAGE}
 
 WORKDIR /app
+
+COPY requirements.orchestrator.lock /tmp/requirements.orchestrator.lock
+RUN pip install --no-cache-dir --require-hashes \
+        -r /tmp/requirements.orchestrator.lock \
+    && rm /tmp/requirements.orchestrator.lock
 
 # The orchestrator content. Baked so the image is self-contained (runs from
 # a built image, no runtime bind-mount); the docker backend may still

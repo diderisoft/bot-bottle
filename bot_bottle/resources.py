@@ -44,6 +44,7 @@ BUNDLED_RESOURCES: tuple[str, ...] = (
     "Dockerfile.orchestrator",
     "Dockerfile.orchestrator.fc",
     "requirements.gateway.lock",
+    "requirements.orchestrator.lock",
     "nix/firecracker-netpool.nix",
     "scripts/firecracker-netpool.sh",
 )
