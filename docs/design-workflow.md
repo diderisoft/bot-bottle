@@ -13,16 +13,16 @@ Design artifacts have different jobs:
 
 | Artifact | Authority |
 |---|---|
-| Architecture and decision records | Stable system-wide boundaries, policies, and invariants |
+| Decision records | Stable system-wide boundaries, policies, and invariants |
 | PRDs | The current design for a feature |
 | Research notes | Evidence and tradeoff analysis; informative, not normative |
 | Issues | Work tracking, open questions, and discussion |
 | Pull-request comments | Review history; never the final home of a design decision |
 
-When a discussion changes the design, update the relevant PRD, decision record,
-or architecture document before treating the discussion as resolved. A comment
-may explain why a decision changed, but future implementers must not need to
-reconstruct the decision from a thread.
+When a discussion changes the design, update the relevant PRD or decision
+record before treating the discussion as resolved. A comment may explain why a
+decision changed, but future implementers must not need to reconstruct the
+decision from a thread.
 
 Avoid duplicating the same rule in several canonical documents. Prefer one
 canonical statement and links from dependent documents.
@@ -36,10 +36,6 @@ Use a decision record when the choice is broader than one feature or will
 constrain several future features. Examples include state ownership, credential
 boundaries, compatibility policy, and what the project does or does not claim
 as a security guarantee.
-
-Use an architecture document or concise architecture section when readers need
-a current cross-feature map: component ownership, control-plane and data-plane
-boundaries, durable state, credential flow, and network choke points.
 
 Use a research note when the conclusion depends on comparing external systems,
 protocols, or approaches. Promote any resulting project decision into a PRD or
@@ -70,14 +66,11 @@ An active design should make these relationships visible near its top:
 ```markdown
 Status: Draft | Active | Superseded | Retargeted
 Depends on: #...
-Blocks: #...
 Supersedes: ...
-Last validated against main: <commit or date>
 ```
 
-`Last validated against main` is a staleness signal, not a promise that no code
-has changed. Update it after a meaningful design review against the current
-architecture.
+Record dependencies only on the dependent document. Do not maintain reverse
+`Blocks` lists that can drift as dependent work changes.
 
 For security-sensitive work, state:
 
@@ -174,6 +167,12 @@ Reason: <one paragraph>
 If part of a PRD remains valid, mark it Retargeted and identify which scope moved
 elsewhere.
 
+Add a short supersession note near the top explaining what changed, why the old
+design is no longer current, and where the current design lives. For a research
+note whose original analysis remains useful, preserve that analysis and append
+a dated addendum with the newer finding instead of rewriting the note as though
+it had always reached the new conclusion.
+
 ### Architecture sweeps
 
 After a foundational change, do a targeted architecture sweep before building
@@ -200,7 +199,6 @@ Use the relevant items in design and implementation pull requests:
 - [ ] Security guarantees and non-guarantees are precise.
 - [ ] Open questions do not change the promised guarantee or ownership model.
 - [ ] Implementation deviations updated the canonical design.
-- [ ] The design was validated against a current `main`.
 
 ## Lightweight maintenance
 
