@@ -1,21 +1,6 @@
-# Run the project's test suite when package or runtime inputs change on a PR
-# or on push to main.
-#
-# The suite uses stdlib `unittest` discovery — no external Python
-# dependencies are required to execute it. Tests are split by directory:
-#
-#   tests/unit/         — pure unit tests; always run
-#   tests/integration/  — need a reachable backend; skip cleanly when
-#                         the backend isn't available on the runner
-#   tests/canaries/     — upstream regression canaries; run on a separate
-#                         schedule (see canaries.yml), not here
-#
-# Each test job runs once under coverage and uploads a small .coverage.*
-# artifact. The `coverage` job combines them — no test reruns, no KVM
-# dependency on that job. For main-branch pushes only, the tested rootfs
-# and matching dropbear are uploaded so `publish-infra` can publish the
-# byte-identical artifact that was tested. PRs avoid the ~194 MB rootfs
-# transfer entirely.
+# Run the automated test gate when package or runtime inputs change on a PR
+# or on push to main. Privileged self-hosted backends live in the manually
+# dispatched pre-release-test workflow.
 
 name: test
 
@@ -37,6 +22,7 @@ on:
       - 'requirements-dev.txt'
       - '.coveragerc'
       - '.dockerignore'
+      - '.gitea/workflows/test.yml'
   pull_request:
     paths:
       - 'bot_bottle/**'
@@ -52,7 +38,7 @@ on:
       - 'requirements-dev.txt'
       - '.coveragerc'
       - '.dockerignore'
-  workflow_dispatch:
+      - '.gitea/workflows/test.yml'
 
 jobs:
   unit:
@@ -61,11 +47,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # No actions/setup-python: the runner image already ships Python 3.12,
-      # and older act_runner engines mishandle setup-python's PATH (coverage
-      # lands in one interpreter, `python3` resolves to another). Install
-      # straight into the ephemeral job container's system Python —
-      # --break-system-packages is safe because the container is disposable.
       - name: Install dev requirements
         run: python3 -m pip install --break-system-packages -r requirements-dev.txt
 
@@ -79,10 +60,6 @@ jobs:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage.unit
         run: python3 -m coverage report -m
 
-      # upload-artifact@v3's glob skips dotfiles, so a bare `.coverage.unit`
-      # silently uploads nothing ("No files were found"). Stage it under a
-      # non-dot name; the coverage job renames it back before `coverage
-      # combine`. `cp` also fails loudly if coverage never wrote the file.
       - name: Stage unit coverage for upload
         run: cp .coverage.unit coverage-unit.dat
 
@@ -98,17 +75,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # No actions/setup-python (see the note in the `unit` job); the
-      # container's system Python 3.12 runs the stdlib test suite directly.
       - name: Install coverage
         run: python3 -m pip install --break-system-packages coverage
 
-      # Fail loudly if the backend this job promises isn't actually usable,
-      # rather than letting every test silently `unittest.skip` and the job
-      # go green on zero coverage. `backend status` prints a clear per-check
-      # summary (docker on PATH, daemon reachable) and exits non-zero when a
-      # prerequisite is missing — the same readiness check the skip guards
-      # gate on via `has_backend`.
       - name: Preflight — Docker backend is ready
         run: |
           python3 --version
@@ -120,7 +89,6 @@ jobs:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage.docker
         run: python3 -m coverage run -m unittest discover -t . -s tests/integration -v
 
-      # Non-dot name so upload-artifact's dotfile-skipping glob picks it up.
       - name: Stage docker coverage for upload
         run: cp .coverage.docker coverage-docker.dat
 
@@ -130,190 +98,10 @@ jobs:
           name: coverage-docker
           path: coverage-docker.dat
 
-  # Integration tests against the Firecracker backend. Runs on a self-hosted
-  # KVM runner (label `kvm`) where /dev/kvm and the TAP/nft pool are available.
-  #
-  # Restricted to same-repo PRs, push to main, and workflow_dispatch — fork
-  # PRs don't execute untrusted code on the privileged runner.
-  #
-  # Runner prerequisites (provision once; see README "Firecracker on Linux"):
-  # `firecracker` on PATH, `/dev/kvm` accessible, cached kernel +
-  # static dropbear at /var/cache/bot-bottle-fc/dropbear, and the pool as a
-  # persistent systemd unit.
-  #
-  # The infra candidate is built here directly (no artifact download) to
-  # eliminate the ~70 s ubuntu-latest upload + ~83 s combined download that
-  # the old build-infra → integration-firecracker + coverage chain incurred.
-  # For main-branch pushes the tested rootfs and matching dropbear are
-  # uploaded so publish-infra can publish the byte-identical artifact; PRs
-  # skip those uploads entirely.
-  integration-firecracker:
-    runs-on: [self-hosted, kvm]
-    if: >-
-      github.event_name == 'push' ||
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' &&
-       github.event.pull_request.head.repo.full_name == github.repository)
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Preflight — Firecracker host is ready
-        run: |
-          command -v firecracker >/dev/null || {
-            echo "firecracker not on PATH — provision the runner (README: Firecracker on Linux)"; exit 1; }
-          test -e /dev/kvm || { echo "/dev/kvm missing — KVM not available on this runner"; exit 1; }
-          # `backend status` exits non-zero unless the TAP pool is up + no
-          # range overlap; it prints the exact `backend setup` fix.
-          python3 cli.py backend status --backend=firecracker
-
-      - name: Build infra candidate from this checkout
-        env:
-          BOT_BOTTLE_FC_DROPBEAR: /var/cache/bot-bottle-fc/dropbear
-        run: python3 -m bot_bottle.backend.firecracker.publish_infra --output infra-candidate --reuse-published
-
-      - name: Replace the persistent infra VM with the candidate
-        run: python3 -c 'from bot_bottle.backend.firecracker import infra_vm; infra_vm.stop()'
-
-      # No dev-requirements install: `coverage` is already provided by the
-      # self-hosted runner's Nix python env, and that env has no `pip`
-      # module to install into anyway.
-      - name: Run integration tests (firecracker) with coverage
-        env:
-          BOT_BOTTLE_BACKEND: firecracker
-          BOT_BOTTLE_INFRA_ARTIFACT_DIR: ${{ github.workspace }}/infra-candidate
-          COVERAGE_FILE: ${{ github.workspace }}/.coverage.firecracker
-        run: python3 -m coverage run -m unittest discover -t . -s tests/integration -v
-
-      # Non-dot name so upload-artifact's dotfile-skipping glob picks it up.
-      - name: Stage firecracker coverage for upload
-        run: cp .coverage.firecracker coverage-firecracker.dat
-
-      - name: Upload firecracker coverage artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: coverage-firecracker
-          path: coverage-firecracker.dat
-
-      # Only upload the large rootfs artifact on main-branch pushes;
-      # PRs avoid the ~194 MB transfer. publish-infra only runs on main
-      # and downloads these to publish the byte-identical tested rootfs.
-      - name: Upload tested rootfs (main branch only)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v3
-        with:
-          name: infra-candidate
-          path: infra-candidate/
-
-      - name: Upload dropbear for publish verification (main branch only)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v3
-        with:
-          name: firecracker-inputs
-          path: /var/cache/bot-bottle-fc/dropbear
-
-  # Integration tests against the macOS Apple Container backend. Runs on a
-  # self-hosted macOS runner (label `macos`) registered in HOST mode — Apple
-  # Container needs the host `container` CLI + virtualization framework and
-  # cannot run inside a Linux container, so this cannot reuse the KVM runner.
-  #
-  # Advisory only: workflow_dispatch (manual) exclusively — never push or
-  # pull_request. A single non-redundant laptop that sleeps/roams must not run
-  # unattended on every push to main, let alone block a PR merge, so this job is
-  # deliberately NOT in the `coverage` job's `needs` and its coverage never
-  # feeds the diff-coverage gate. Dispatch-only also means no fork PR (or any
-  # push) ever executes on the host-mode runner.
-  #
-  # The infra container is a singleton (`bot-bottle-mac-infra`); the
-  # `concurrency` group serializes runs so two never collide on it (#425), and
-  # the always-run teardown removes it so a crashed run can't wedge the next.
-  #
-  # Runner prerequisites (provision once; see README "macOS Apple Container"):
-  # the `container` CLI on PATH with `container system status` running, and a
-  # Python >=3.11 with `coverage` importable on the launchd service PATH.
-  integration-macos:
-    runs-on: [self-hosted, macos]
-    if: github.event_name == 'workflow_dispatch'
-    concurrency:
-      group: integration-macos-infra
-      cancel-in-progress: false
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      # Fail loudly if the backend this job promises isn't actually usable,
-      # rather than letting every test silently `unittest.skip` and the job go
-      # green on zero coverage. `backend status` exits non-zero (and prints the
-      # per-check summary) when the `container` CLI or its system service is
-      # missing — the same readiness check the skip guards gate on.
-      - name: Preflight — Apple Container backend is ready
-        run: |
-          command -v container >/dev/null || {
-            echo "container CLI not on PATH — provision the runner (README: macOS Apple Container)"; exit 1; }
-          container system status || {
-            echo "container system service not running — run 'container system start'"; exit 1; }
-          python3 cli.py backend status --backend=macos-container
-
-      # `coverage` comes from the runner's provisioned Python (no pip install
-      # into the host interpreter). Advisory job: report coverage in-line for
-      # visibility but don't upload — it never feeds the combined gate.
-      - name: Run integration tests (macos-container) with coverage
-        env:
-          BOT_BOTTLE_BACKEND: macos-container
-          COVERAGE_FILE: ${{ github.workspace }}/.coverage.macos
-        run: python3 -m coverage run -m unittest discover -t . -s tests/integration -v
-
-      - name: Report macos coverage
-        env:
-          COVERAGE_FILE: ${{ github.workspace }}/.coverage.macos
-        run: python3 -m coverage report -m
-
-      # On failure, capture the infra containers' state and logs BEFORE the
-      # teardown below removes them — otherwise a control-plane crash is
-      # undiagnosable from CI, since `stop()` deletes the orchestrator (and its
-      # logs) on every run. Best-effort: never let the diagnostics themselves
-      # fail the job, and keep going if a container is already gone.
-      - name: Dump infra diagnostics (on failure)
-        if: failure()
-        run: |
-          set +e
-          echo "=== containers ==="
-          container ls -a | grep bot-bottle-mac || echo "(no bot-bottle-mac containers)"
-          echo "=== networks ==="
-          container network ls | grep bot-bottle-mac || echo "(no bot-bottle-mac networks)"
-          for c in bot-bottle-mac-orchestrator bot-bottle-mac-infra; do
-            echo "=== inspect $c ==="
-            container inspect "$c" || echo "($c not found)"
-            echo "=== logs $c ==="
-            container logs "$c" || echo "($c logs unavailable)"
-          done
-          exit 0
-
-      # Remove the singleton infra container so a crashed or cancelled run
-      # cannot leave `bot-bottle-mac-infra` wedged for the next job.
-      - name: Teardown infra singleton
-        if: always()
-        run: python3 -c 'from bot_bottle.backend.macos_container.infra import MacosInfraService; MacosInfraService().stop()'
-
-  # Combined coverage gate: aggregates .coverage.* artifacts uploaded by each
-  # test job, then runs the diff-coverage gate (new/changed lines >= 90%).
-  #
-  # Runs on ubuntu-latest — no KVM needed, no test reruns. Coverage files use
-  # relative_files = True (.coveragerc) so they combine cleanly across runners.
-  # Each test job sets COVERAGE_FILE to an absolute path so coverage.py writes
-  # to a known location that upload-artifact can find regardless of runner env.
-  #
-  # Restricted to the same events as integration-firecracker: it depends on
-  # that job's coverage artifact and skips for fork PRs alongside it.
   coverage:
-    needs: [unit, integration-docker, integration-firecracker]
+    needs: [unit, integration-docker]
     timeout-minutes: 15
     runs-on: ubuntu-latest
-    if: >-
-      github.event_name == 'push' ||
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' &&
-       github.event.pull_request.head.repo.full_name == github.repository)
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -335,55 +123,15 @@ jobs:
           name: coverage-docker
           path: ${{ github.workspace }}
 
-      - name: Download firecracker coverage artifact
-        uses: actions/download-artifact@v3
-        with:
-          name: coverage-firecracker
-          path: ${{ github.workspace }}
-
-      # Rename the non-dot upload names back to the .coverage.* files that
-      # `coverage combine` discovers (see the staging steps in each test job).
       - name: Reassemble coverage data files
         run: |
           mv coverage-unit.dat .coverage.unit
           mv coverage-docker.dat .coverage.docker
-          mv coverage-firecracker.dat .coverage.firecracker
 
-      - name: Combined coverage (unit + integration, incl. firecracker)
+      - name: Combined coverage (unit + docker integration)
         run: PYTHON=python3 bash scripts/coverage.sh aggregate critical
 
       - name: Diff-coverage gate (changed lines >= 90%)
         run: |
           git fetch --no-tags origin main:refs/remotes/origin/main
           python3 scripts/diff_coverage.py --base origin/main --min 90
-
-  publish-infra:
-    needs: [unit, integration-docker, integration-firecracker, coverage]
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    steps:
-      - name: Checkout the tested revision
-        uses: actions/checkout@v4
-
-      - name: Download the tested rootfs
-        uses: actions/download-artifact@v3
-        with:
-          name: infra-candidate
-          path: infra-candidate
-
-      # publish_infra re-derives the version from the checkout to confirm the
-      # bundle matches before uploading, and the version hashes the dropbear
-      # bytes. Download the SAME dropbear integration-firecracker used, or
-      # the recheck computes a "<missing>"-dropbear version and rejects the
-      # candidate.
-      - name: Download the staged dropbear (matches build's version)
-        uses: actions/download-artifact@v3
-        with:
-          name: firecracker-inputs
-          path: firecracker-inputs
-
-      - name: Publish the tested candidate
-        env:
-          BOT_BOTTLE_INFRA_ARTIFACT_TOKEN: ${{ secrets.BOT_BOTTLE_INFRA_ARTIFACT_TOKEN }}
-          BOT_BOTTLE_FC_DROPBEAR: ${{ github.workspace }}/firecracker-inputs/dropbear
-        run: python3 -m bot_bottle.backend.firecracker.publish_infra --publish-dir infra-candidate
