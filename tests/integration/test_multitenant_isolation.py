@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import secrets
 import subprocess
+import time
 import unittest
 
 from bot_bottle.backend.docker.consolidated_launch import (
@@ -119,14 +120,27 @@ class TestMultitenantIsolation(unittest.TestCase):
         return next_free_ip(_network_cidr(GATEWAY_NETWORK), taken)
 
     def _probe(self, source_ip: str, host: str) -> str:
-        proc = subprocess.run(
-            ["docker", "run", "--rm", "--network", GATEWAY_NETWORK, "--ip", source_ip,
-             "--entrypoint", "python3", GATEWAY_IMAGE, "-c", _PROBE_SRC,
-             f"http://{self.gw_ip}:{EGRESS_PORT}", host],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            check=False, timeout=90,
+        deadline = time.monotonic() + 30
+        last = subprocess.CompletedProcess([], 1, "", "probe not attempted")
+        while time.monotonic() < deadline:
+            last = subprocess.run(
+                [
+                    "docker", "run", "--rm",
+                    "--network", GATEWAY_NETWORK, "--ip", source_ip,
+                    "--entrypoint", "python3", GATEWAY_IMAGE, "-c", _PROBE_SRC,
+                    f"http://{self.gw_ip}:{EGRESS_PORT}", host,
+                ],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                check=False, timeout=90,
+            )
+            output = last.stdout.strip()
+            if last.returncode == 0 and output:
+                return output
+            time.sleep(0.25)
+        self.fail(
+            f"gateway probe did not become ready: "
+            f"exit={last.returncode}, stderr={last.stderr.strip()!r}"
         )
-        return proc.stdout.strip()
 
     def test_two_bottles_share_gateway_with_isolated_tokens_and_allowlists(self) -> None:
         ip_a = self._free_ip([])
