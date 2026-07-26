@@ -22,7 +22,8 @@ class TestBuiltinAgentImages(unittest.TestCase):
                     r"(node:22\.\d+\.\d+-trixie-slim@sha256:[0-9a-f]{64})\s*$",
                     dockerfile.read_text(),
                 )
-                self.assertIsNotNone(match)
+                if match is None:
+                    self.fail(f"{dockerfile} does not use a digest-pinned Node base")
                 bases.append(match.group(1))
         self.assertEqual(1, len(set(bases)))
 
