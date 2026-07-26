@@ -18,8 +18,8 @@ import urllib.request
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from ..orchestrator_auth import ROLE_CLI, mint
-from ..paths import host_orchestrator_token
+from ..orchestrator_auth import ROLE_CLI
+from ..trust_domain import CONTROL_PLANE
 from .server import ORCHESTRATOR_AUTH_HEADER
 
 DEFAULT_TIMEOUT_SECONDS = 5.0
@@ -32,7 +32,7 @@ def _host_auth_token() -> str:
     "" means 'send no auth header' — correct against an open (unconfigured)
     control plane, and harmlessly rejected by a secured one."""
     try:
-        return mint(ROLE_CLI, host_orchestrator_token())
+        return CONTROL_PLANE.mint(ROLE_CLI)
     except (OSError, ValueError):
         return ""
 

@@ -21,8 +21,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from ..orchestrator_auth import ROLE_GATEWAY, mint
-from ..paths import host_orchestrator_token
+from ..trust_domain import ControlPlaneProvisioning
 
 DEFAULT_PORT = 8099
 DEFAULT_STARTUP_TIMEOUT_SECONDS = 45.0
@@ -57,6 +56,13 @@ class Orchestrator(abc.ABC):
     holder of the signing key and the **sole** opener of `bot-bottle.db` (#469),
     so it — not the gateway — mints the gateway's role-scoped token.
     Backend-neutral."""
+
+    # The shared control-plane auth provisioning contract (#476). Every backend
+    # gets its signing key + gateway token through this one seam rather than
+    # re-deriving the wiring; the default topology is co-located + fail-closed,
+    # so a backend need not redeclare it (a truly isolated control plane would
+    # override this with a different `Topology`).
+    provisioning: ControlPlaneProvisioning = ControlPlaneProvisioning()
 
     def ensure_built(self) -> None:
         """Ensure the orchestrator's image / rootfs exists, building it if
@@ -105,9 +111,17 @@ class Orchestrator(abc.ABC):
     def mint_gateway_token(self) -> str:
         """Mint a role-scoped `gateway` JWT from the host signing key for the
         gateway to present. The orchestrator holds the key; the gateway never
-        does (#469). Backend-neutral — the same host token file is the single
-        source of truth across backends."""
-        return mint(ROLE_GATEWAY, host_orchestrator_token())
+        does (#469). Routed through the shared provisioning contract (#476), so
+        the same host token file is the single source of truth across backends."""
+        return self.provisioning.gateway_token()
+
+    def control_plane_key(self) -> str:
+        """The raw signing key the control-plane *process* must receive — the ONE
+        place a backend obtains it (docker/macOS inject it as `key_env`;
+        firecracker pushes it to the guest). Fail-closed via the provisioning
+        contract: it raises rather than yield an empty key that would run the
+        server OPEN (#476)."""
+        return self.provisioning.orchestrator_key()
 
 
 __all__ = [
@@ -117,4 +131,5 @@ __all__ = [
     "OrchestratorStartError",
     "source_hash",
     "Orchestrator",
+    "ControlPlaneProvisioning",
 ]

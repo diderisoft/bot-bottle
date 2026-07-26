@@ -18,10 +18,7 @@ import urllib.request
 from pathlib import Path
 
 from ... import log
-from ...paths import (
-    ORCHESTRATOR_TOKEN_ENV,
-    host_orchestrator_token,
-)
+from ...paths import ORCHESTRATOR_TOKEN_ENV
 from ...orchestrator.lifecycle import (
     DEFAULT_HEALTH_TIMEOUT_SECONDS,
     DEFAULT_PORT,
@@ -134,7 +131,9 @@ class MacosOrchestrator(Orchestrator):
 
     def _run_container(self, current_hash: str) -> None:
         container_mod.force_remove_container(self.name)
-        _signing_key = host_orchestrator_token()
+        # The signing key comes through the shared provisioning contract (#476),
+        # which fail-closes rather than yield an empty key that would run OPEN.
+        _signing_key = self.control_plane_key()
         argv = [
             "container", "run", "--detach",
             "--name", self.name,

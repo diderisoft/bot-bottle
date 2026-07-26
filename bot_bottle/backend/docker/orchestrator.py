@@ -19,7 +19,6 @@ from .util import run_docker
 from ...paths import (
     ORCHESTRATOR_TOKEN_ENV,
     bot_bottle_root,
-    host_orchestrator_token,
 )
 from ...gateway import GatewayError
 from ...orchestrator.lifecycle import (
@@ -171,7 +170,9 @@ class DockerOrchestrator(Orchestrator):
         fixed-name container first)."""
         self._ensure_control_network()
         run_docker(["docker", "rm", "--force", self.name])
-        _signing_key = host_orchestrator_token()
+        # The signing key comes through the shared provisioning contract (#476),
+        # which fail-closes rather than yield an empty key that would run OPEN.
+        _signing_key = self.control_plane_key()
         proc = run_docker([
             "docker", "run", "--detach",
             "--name", self.name,

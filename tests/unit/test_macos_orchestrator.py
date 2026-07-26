@@ -33,7 +33,7 @@ class TestMacosOrchestratorRun(unittest.TestCase):
     def _run(self) -> list[str]:
         run = Mock(return_value=_ok())
         with patch(f"{_ORCH}.container_mod") as mod, \
-                patch(f"{_ORCH}.host_orchestrator_token", return_value="k"):
+                patch("bot_bottle.trust_domain.host_signing_key", return_value="k"):
             mod.dns_server.return_value = "1.1.1.1"
             mod.bind_mount_spec.side_effect = _spec
             mod.run_container_argv = run
@@ -65,7 +65,7 @@ class TestMacosOrchestratorRun(unittest.TestCase):
 
     def test_start_failure_raises(self) -> None:
         with patch(f"{_ORCH}.container_mod") as mod, \
-                patch(f"{_ORCH}.host_orchestrator_token", return_value="k"):
+                patch("bot_bottle.trust_domain.host_signing_key", return_value="k"):
             mod.dns_server.return_value = "1.1.1.1"
             mod.run_container_argv = Mock(return_value=_fail())
             with self.assertRaises(OrchestratorStartError):

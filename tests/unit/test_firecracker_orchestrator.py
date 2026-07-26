@@ -44,7 +44,7 @@ class TestEnsureRunning(unittest.TestCase):
         vm = infra_vm.InfraVm(guest_ip="10.243.255.1", private_key=Path("/k"), vm=MagicMock())
         with patch.object(infra_vm, "boot_vm", return_value=vm) as boot, \
                 patch.object(infra_vm, "push_secret") as push, \
-                patch(f"{_ORCH}.host_orchestrator_token", return_value="host-key"), \
+                patch("bot_bottle.trust_domain.host_signing_key", return_value="host-key"), \
                 patch.object(orch, "is_running", return_value=False), \
                 patch.object(orch, "_ensure_registry_volume", return_value=Path("/reg")), \
                 patch.object(orch, "_wait_for_health"):

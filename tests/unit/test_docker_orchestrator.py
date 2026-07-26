@@ -19,7 +19,9 @@ _ORCH = "bot_bottle.backend.docker.orchestrator"
 _RUN = f"{_ORCH}.run_docker"
 _SLEEP = f"{_ORCH}.time.sleep"
 _MONOTONIC = f"{_ORCH}.time.monotonic"
-_TOKEN = f"{_ORCH}.host_orchestrator_token"
+# The signing key is read through the shared provisioning contract (#476); patch
+# its host-canonical key file read to keep it off the real host file.
+_TOKEN = "bot_bottle.trust_domain.host_signing_key"
 # The ABC's is_healthy probes /health via urllib in the lifecycle module.
 _URLOPEN = "bot_bottle.orchestrator.lifecycle.urllib.request.urlopen"
 

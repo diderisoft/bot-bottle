@@ -59,12 +59,19 @@ _HEADER_SEGMENT = _b64url_encode(
 )
 
 
-def mint(role: str, secret: str) -> str:
+def mint(role: str, secret: str, *, roles: frozenset[str] = ROLES) -> str:
     """A compact HS256 token asserting `role`, signed with `secret`.
 
-    Raises ValueError for an unknown role (mint only what the control plane will
+    `roles` is the role set the caller's *trust domain* recognises (default: the
+    orchestrator control plane's `{gateway, cli}`). A domain names its own set so
+    each credential boundary mints only its own roles — a separate boundary
+    (e.g. a host controller) instantiates a distinct domain with a distinct key
+    and role set rather than adding a role here, so its key cannot forge the
+    other domain's tokens (see `trust_domain.py`, issues #476/#468).
+
+    Raises ValueError for a role outside `roles` (mint only what that domain will
     accept) or an empty signing key (an unsigned credential is never valid)."""
-    if role not in ROLES:
+    if role not in roles:
         raise ValueError(f"unknown control-plane role {role!r}")
     if not secret:
         raise ValueError("cannot mint a control-plane token without a signing key")
@@ -73,10 +80,11 @@ def mint(role: str, secret: str) -> str:
     return f"{signing_input}.{_sign(secret, signing_input)}"
 
 
-def verify(token: str, secret: str) -> str | None:
+def verify(token: str, secret: str, *, roles: frozenset[str] = ROLES) -> str | None:
     """The role a valid `token` carries, or None if it is malformed, wrongly
-    signed, or names an unknown role. Constant-time signature check; rejects any
-    header whose alg isn't HS256 (no alg-confusion / `none`)."""
+    signed, or names a role outside `roles` (the verifying trust domain's set —
+    default `{gateway, cli}`). Constant-time signature check; rejects any header
+    whose alg isn't HS256 (no alg-confusion / `none`)."""
     if not token or not secret:
         return None
     parts = token.split(".")
@@ -94,7 +102,7 @@ def verify(token: str, secret: str) -> str | None:
     if not isinstance(header, dict) or header.get("alg") != _ALG:
         return None
     role = payload.get("role") if isinstance(payload, dict) else None
-    return role if isinstance(role, str) and role in ROLES else None
+    return role if isinstance(role, str) and role in roles else None
 
 
 __all__ = ["ROLE_GATEWAY", "ROLE_CLI", "ROLES", "mint", "verify"]

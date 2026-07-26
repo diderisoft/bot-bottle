@@ -82,5 +82,26 @@ class TestMintVerify(unittest.TestCase):
             mint(ROLE_GATEWAY, "")
 
 
+class TestCustomRoleSet(unittest.TestCase):
+    """The `roles=` seam a trust domain other than the control plane uses (#476):
+    mint/verify are scoped to the passed role set, not the module default."""
+
+    _ROLES = frozenset({"host"})
+
+    def test_round_trips_a_role_in_the_custom_set(self) -> None:
+        tok = mint("host", _KEY, roles=self._ROLES)
+        self.assertEqual("host", verify(tok, _KEY, roles=self._ROLES))
+
+    def test_mint_rejects_a_role_outside_the_custom_set(self) -> None:
+        with self.assertRaises(ValueError):
+            mint(ROLE_CLI, _KEY, roles=self._ROLES)
+
+    def test_verify_rejects_a_role_outside_the_verifiers_set(self) -> None:
+        # A validly signed token whose role isn't in the verifier's set fails —
+        # this is what keeps one domain's key from asserting another's role.
+        tok = mint(ROLE_CLI, _KEY)  # a control-plane `cli` token
+        self.assertIsNone(verify(tok, _KEY, roles=self._ROLES))
+
+
 if __name__ == "__main__":
     unittest.main()

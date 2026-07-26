@@ -20,13 +20,15 @@ _URLOPEN = "bot_bottle.orchestrator.client.urllib.request.urlopen"
 
 class TestHostAuthToken(unittest.TestCase):
     def test_mints_a_cli_token_from_the_host_key(self) -> None:
-        with patch("bot_bottle.orchestrator.client.host_orchestrator_token",
+        # The CLI mints its `cli` token from the control-plane trust domain's
+        # host-canonical key (#476) — patch the key file read underneath it.
+        with patch("bot_bottle.trust_domain.host_signing_key",
                    return_value="signing-key"):
             tok = _host_auth_token()
         self.assertEqual(ROLE_CLI, verify(tok, "signing-key"))
 
     def test_returns_empty_when_key_unreadable(self) -> None:
-        with patch("bot_bottle.orchestrator.client.host_orchestrator_token",
+        with patch("bot_bottle.trust_domain.host_signing_key",
                    side_effect=OSError("no host root")):
             self.assertEqual("", _host_auth_token())
 

@@ -21,7 +21,6 @@ import time
 from pathlib import Path
 
 from ...log import die, info
-from ...paths import host_orchestrator_token
 from ...orchestrator.lifecycle import (
     DEFAULT_STARTUP_TIMEOUT_SECONDS,
     Orchestrator,
@@ -108,11 +107,13 @@ class FirecrackerOrchestrator(Orchestrator):
             data_drive=self._ensure_registry_volume(),
         )
         # Push the host-canonical signing key (the init waits for it before
-        # starting the control plane). The host token file stays the single
-        # source of truth, so a co-running docker/macOS control plane keeps
-        # working; the guest verifies tokens with the same key the CLI signs from.
+        # starting the control plane). It comes through the shared provisioning
+        # contract (#476) — the same host token file every backend uses, so a
+        # co-running docker/macOS control plane keeps working and the guest
+        # verifies tokens with the same key the CLI signs from; fail-closed, so
+        # the guest is never handed an empty key that would run it OPEN.
         infra_vm.push_secret(
-            vm, host_orchestrator_token(), infra_vm._GUEST_SIGNING_KEY_PATH,
+            vm, self.control_plane_key(), infra_vm._GUEST_SIGNING_KEY_PATH,
             "the control-plane signing key to the orchestrator VM "
             "(its control plane will not start)",
         )

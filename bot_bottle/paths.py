@@ -97,16 +97,19 @@ def host_gateway_ca_dir() -> Path:
     return ca_dir
 
 
-def host_orchestrator_token() -> str:
-    """The per-host control-plane secret, minted (256-bit, url-safe) and
-    persisted 0600 on first use, then reused.
+def host_signing_key(filename: str) -> str:
+    """A per-host signing key at `<root>/<filename>`, minted (256-bit, url-safe)
+    and persisted 0600 on first use, then reused.
 
-    This is the shared secret the launchers inject into the control-plane and
-    gateway containers and that the host CLI presents on every call. It is a
-    *host* artifact — the file lives under the root the agent never mounts, and
-    the env var is set only on the trusted containers — so reading it here is
-    safe on the host launch path but the value never reaches a bottle."""
-    path = bot_bottle_root() / ORCHESTRATOR_TOKEN_FILENAME
+    The generic form of `host_orchestrator_token()`: a *trust domain*
+    (`trust_domain.py`) names its own key file so each credential boundary gets a
+    distinct host-canonical key — the orchestrator control plane names one file,
+    a separate boundary (e.g. a host controller) names another, and neither can
+    read the other's key (issues #476/#468). It is a *host* artifact: the file
+    lives under the root the agent never mounts, and its value is injected only
+    into the trusted control-plane process, so reading it here is safe on the
+    host launch path but the value never reaches a bottle."""
+    path = bot_bottle_root() / filename
     try:
         existing = path.read_text().strip()
         if existing:
@@ -128,6 +131,14 @@ def host_orchestrator_token() -> str:
     return token
 
 
+def host_orchestrator_token() -> str:
+    """The per-host control-plane signing key — the host-canonical key the
+    launchers inject into the control-plane process and the host CLI mints its
+    own `cli` token from. The `control-plane` trust domain's specialization of
+    `host_signing_key()`."""
+    return host_signing_key(ORCHESTRATOR_TOKEN_FILENAME)
+
+
 __all__ = [
     "HOST_DB_FILENAME",
     "ORCHESTRATOR_TOKEN_FILENAME",
@@ -138,5 +149,6 @@ __all__ = [
     "host_db_path",
     "host_db_dir",
     "host_gateway_ca_dir",
+    "host_signing_key",
     "host_orchestrator_token",
 ]

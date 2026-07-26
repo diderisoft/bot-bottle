@@ -63,8 +63,8 @@ import sys
 import typing
 from urllib.parse import urlsplit
 
-from ..orchestrator_auth import ROLE_CLI, ROLES, verify
-from ..paths import ORCHESTRATOR_TOKEN_ENV
+from ..orchestrator_auth import ROLE_CLI, ROLES
+from ..trust_domain import CONTROL_PLANE
 from ..supervisor.types import TOOLS
 from .service import OrchestratorCore
 
@@ -413,11 +413,13 @@ class OrchestratorServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
     def __init__(self, address: tuple[str, int], orchestrator: OrchestratorCore) -> None:
         self.orchestrator = orchestrator
-        self._signing_key = os.environ.get(ORCHESTRATOR_TOKEN_ENV, "").strip()
+        # The control-plane trust domain's signing key, as injected into THIS
+        # (the owning) process by the launcher (#476). Unset → open mode below.
+        self._signing_key = CONTROL_PLANE.key_from_env()
         if not self._signing_key:
             sys.stderr.write(
                 "orchestrator: WARNING — no control-plane signing key "
-                f"(${ORCHESTRATOR_TOKEN_ENV}); running WITHOUT caller "
+                f"(${CONTROL_PLANE.key_env}); running WITHOUT caller "
                 "authentication. Any client that can reach this port can drive "
                 "it. Backends that put the control plane on an agent-reachable "
                 "network MUST set this.\n"
@@ -433,7 +435,7 @@ class OrchestratorServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         role (→ per-route 401/403 in `dispatch`)."""
         if not self._signing_key:
             return ROLE_CLI
-        return verify(presented, self._signing_key)
+        return CONTROL_PLANE.verify(presented, self._signing_key)
 
 
 def make_server(
