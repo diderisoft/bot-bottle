@@ -7,6 +7,13 @@ name: refresh-image-locks
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - 'requirements.gateway.in'
+      - 'bot_bottle/contrib/claude/package.json'
+      - 'bot_bottle/contrib/pi/package.json'
+      - 'bot_bottle/contrib/codex/Dockerfile'
+      - '.gitea/workflows/refresh-image-locks.yml'
 
 jobs:
   refresh:
