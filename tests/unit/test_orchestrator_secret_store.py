@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import unittest
 
 from bot_bottle.orchestrator.store.secret_store import (
@@ -68,15 +71,28 @@ class TestDecryptErrors(unittest.TestCase):
     def test_wrong_key_raises_value_error(self) -> None:
         ct = encrypt_value(self.secret, "secret-token")
         other_key = new_env_var_secret()
-        # Wrong key produces garbage bytes; decrypt_value raises ValueError
-        # when the result is non-UTF-8 (which is very likely for 12-char data).
-        # We allow it to succeed only if garbage happens to be valid UTF-8, but
-        # the plaintext must not match.
-        try:
-            result = decrypt_value(other_key, ct)
-            self.assertNotEqual("secret-token", result)
-        except ValueError:
-            pass
+        with self.assertRaisesRegex(ValueError, "authentication failed"):
+            decrypt_value(other_key, ct)
+
+    def test_tampered_ciphertext_raises_value_error(self) -> None:
+        raw = bytearray(base64.urlsafe_b64decode(
+            encrypt_value(self.secret, "secret-token") + "=="
+        ))
+        raw[22] ^= 1
+        tampered = base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+        with self.assertRaisesRegex(ValueError, "authentication failed"):
+            decrypt_value(self.secret, tampered)
+
+    def test_reads_legacy_ciphertext_for_migration(self) -> None:
+        key = base64.urlsafe_b64decode(self.secret + "==")
+        nonce = b"0123456789abcdef"
+        plaintext = b"legacy-token"
+        stream = hmac.new(
+            key, nonce + (0).to_bytes(4, "big"), hashlib.sha256,
+        ).digest()
+        ciphertext = bytes(p ^ k for p, k in zip(plaintext, stream))
+        legacy = base64.urlsafe_b64encode(nonce + ciphertext).rstrip(b"=").decode()
+        self.assertEqual("legacy-token", decrypt_value(self.secret, legacy))
 
     def test_truncated_blob_raises_value_error(self) -> None:
         with self.assertRaises(ValueError):

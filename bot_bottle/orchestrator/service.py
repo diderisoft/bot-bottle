@@ -366,15 +366,23 @@ class OrchestratorCore:
         value with *env_var_secret*, and restores ``_tokens[bottle_id]``.
         Returns True on success, False when no stored secrets exist for this
         bottle or decryption fails (wrong key / corrupt data)."""
-        from .store.secret_store import decrypt_value
+        from .store.secret_store import decrypt_value, encrypt_value, is_legacy_blob
         encrypted = self.registry.get_agent_secrets(bottle_id)
         if not encrypted:
             return False
         try:
-            self._tokens[bottle_id] = {k: decrypt_value(env_var_secret, v)
-                                       for k, v in encrypted.items()}
+            decrypted = {
+                k: decrypt_value(env_var_secret, v) for k, v in encrypted.items()
+            }
         except ValueError:
             return False
+        self._tokens[bottle_id] = decrypted
+        if any(is_legacy_blob(value) for value in encrypted.values()):
+            migrated = {
+                key: encrypt_value(env_var_secret, value)
+                for key, value in decrypted.items()
+            }
+            self.registry.store_agent_secrets(bottle_id, migrated)
         return True
 
     # --- consolidated gateway ----------------------------------------------
