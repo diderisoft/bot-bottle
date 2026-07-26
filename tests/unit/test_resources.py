@@ -109,6 +109,15 @@ class TestWheelMode(unittest.TestCase):
                 (root2 / "bot_bottle" / "cli" / "__init__.py").read_text(),
             )
 
+    def test_failed_stage_cleans_up_temp_dir(self):
+        # A failure mid-stage must not leave a half-written temp dir behind.
+        with self._wheel():
+            base = resources.bot_bottle_root() / "build-root"
+            with patch.object(resources.shutil, "copytree", side_effect=OSError("boom")):
+                with self.assertRaises(OSError):
+                    resources.build_root()
+            self.assertEqual([], list(base.glob(".staging-*")))
+
     def test_rebuilds_when_stage_incomplete(self):
         # A crash mid-stage can leave a dir without its `.complete` marker; the
         # next call must rebuild it rather than trust the partial tree.

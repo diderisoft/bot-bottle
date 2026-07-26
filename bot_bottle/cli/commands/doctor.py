@@ -2,7 +2,8 @@
 bot-bottle and report what's ready.
 
 Fails (non-zero exit) only on the two hard requirements: a new-enough
-Python and at least one usable backend. The config directory is a soft
+Python and at least one backend that is *ready* (passes its full status
+checks, so `start` can actually work). The config directory is a soft
 check — `install.sh` creates it, but a missing one only warrants a note,
 not a failure, since `start` provisions what it needs on first run.
 """
@@ -13,7 +14,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from ...backend import is_backend_available, known_backend_names
+from ...backend import is_backend_ready, known_backend_names
 from ..constants import PROG
 
 MIN_PYTHON = (3, 11)
@@ -43,19 +44,25 @@ def _check_python() -> bool:
 
 
 def _check_backends() -> bool:
-    """At least one backend must be available on this host. Report each
-    known backend so the operator sees why a missing one is missing."""
-    available = []
+    """At least one backend must be *ready* to run a bottle — i.e. pass its
+    full status() checks (daemon reachable, network pool present, KVM usable),
+    not merely have a binary on PATH. A binary-only check would report `ok`
+    on a host with a stopped Docker daemon or a half-configured Firecracker,
+    where `start` still can't work. Each not-ready backend prints its own
+    diagnostics (quiet=False) so the operator sees exactly what's missing."""
+    ready = []
     for name in known_backend_names():
-        if is_backend_available(name):
-            available.append(name)
-    if available:
-        _ok("backend", f"available: {', '.join(available)}")
+        if is_backend_ready(name, quiet=False):
+            _ok("backend", f"{name}: ready")
+            ready.append(name)
+        else:
+            _warn("backend", f"{name}: not ready (see diagnostics above)")
+    if ready:
         return True
     _fail(
         "backend",
-        "no backend available; install Apple Container (macOS), "
-        "Firecracker (Linux), or Docker",
+        "no backend is ready to run a bottle; start Docker, or finish "
+        "Apple Container (macOS) / Firecracker (Linux) setup",
     )
     return False
 

@@ -94,13 +94,22 @@ fi
 
 # --- locate the entry point --------------------------------------------------
 
+# The pip --user scripts directory is platform-specific: ~/.local/bin on Linux,
+# but ~/Library/Python/<X.Y>/bin on a python.org macOS interpreter. Ask the
+# interpreter for its own user-scheme scripts dir instead of hardcoding.
+USER_SCRIPTS="$(python3 - <<'PY'
+import sysconfig
+print(sysconfig.get_path("scripts", sysconfig.get_preferred_scheme("user")))
+PY
+)"
+
 if command -v bot-bottle >/dev/null 2>&1; then
     BOT_BOTTLE_BIN="bot-bottle"
-elif [ -x "${HOME}/.local/bin/bot-bottle" ]; then
-    BOT_BOTTLE_BIN="${HOME}/.local/bin/bot-bottle"
-    say "note: add ${HOME}/.local/bin to your PATH to run 'bot-bottle' directly"
+elif [ -n "${USER_SCRIPTS}" ] && [ -x "${USER_SCRIPTS}/bot-bottle" ]; then
+    BOT_BOTTLE_BIN="${USER_SCRIPTS}/bot-bottle"
+    say "note: add ${USER_SCRIPTS} to your PATH to run 'bot-bottle' directly"
 else
-    die "bot-bottle was installed but is not on PATH; add ~/.local/bin to PATH and re-run"
+    die "bot-bottle was installed but is not on PATH; add ${USER_SCRIPTS:-your user scripts dir} to PATH and re-run"
 fi
 
 # --- verify ------------------------------------------------------------------
