@@ -19,9 +19,11 @@ of issue #77 — the dashboard now delegates to this layer.
 
 from __future__ import annotations
 
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from tests.unit import use_bottle_root
 from bot_bottle import bottle_state
@@ -70,6 +72,18 @@ class TestParseServicesByProject(unittest.TestCase):
             "missing-service\t\n"
         )
         self.assertEqual({"bot-bottle-dev-abc": {"egress"}}, out)
+
+
+class TestQueryServicesByProject(unittest.TestCase):
+    def test_docker_ps_failure_is_not_an_empty_result(self):
+        with patch(
+            "bot_bottle.backend.docker.enumerate.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                args=["docker"], returncode=1, stdout="", stderr="daemon down",
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "daemon down"):
+                _enumerate._query_services_by_project()
 
 
 class _FakeHomeMixin:

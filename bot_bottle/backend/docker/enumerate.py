@@ -1,9 +1,8 @@
 """Active-agent enumeration for the docker backend.
 
 Returns `ActiveAgent` records the CLI `active` command and the
-dashboard agents pane consume. Empty when docker isn't reachable
-— gated by `has_backend('docker')` at the cross-backend caller
-so this module trusts that docker is available when called.
+dashboard agents pane consume. Docker query failures raise rather
+than masquerading as an authoritative empty result.
 
 The parser (`_parse_services_by_project`) is exposed for direct
 unit testing; the docker `docker ps` invocation is in
@@ -19,11 +18,12 @@ from .compose import compose_project_name, list_active_slugs
 
 
 def enumerate_active() -> list[ActiveAgent]:
-    """All currently-running docker-backed agents. Caller is
-    responsible for gating on `has_backend('docker')` if it
-    matters; if docker is missing the `docker ps` call below
-    returns an empty list silently."""
-    slugs = list_active_slugs(include_stopped=False, warn_on_error=False)
+    """All currently-running docker-backed agents."""
+    slugs = list_active_slugs(
+        include_stopped=False,
+        warn_on_error=False,
+        raise_on_error=True,
+    )
     if not slugs:
         return []
     services_by_project = _query_services_by_project()
@@ -74,8 +74,8 @@ def _query_services_by_project() -> dict[str, set[str]]:
             ],
             capture_output=True, text=True, check=False,
         )
-    except FileNotFoundError:
-        return {}
+    except FileNotFoundError as exc:
+        raise RuntimeError("docker ps failed: docker not found") from exc
     if r.returncode != 0:
-        return {}
+        raise RuntimeError(f"docker ps failed: {r.stderr.strip()}")
     return _parse_services_by_project(r.stdout or "")

@@ -69,6 +69,19 @@ class TestComposeProjectListing(unittest.TestCase):
             self.assertEqual([], list_active_slugs(warn_on_error=False))
         warn.assert_not_called()
 
+    def test_compose_ls_error_can_be_raised_for_enumeration(self):
+        with mock.patch(
+            "bot_bottle.backend.docker.compose.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                args=["docker"], returncode=1, stdout="", stderr="no daemon",
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "no daemon"):
+                list_active_slugs(
+                    warn_on_error=False,
+                    raise_on_error=True,
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
