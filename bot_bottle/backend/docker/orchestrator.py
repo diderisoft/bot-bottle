@@ -42,13 +42,9 @@ ORCHESTRATOR_IMAGE = os.environ.get(
 )
 ORCHESTRATOR_DOCKERFILE = "Dockerfile.orchestrator"
 # Baked as a container label so `ensure_running` can detect whether the running
-# orchestrator is executing the current bind-mounted source.
+# orchestrator image was built from the current source.
 ORCHESTRATOR_SOURCE_HASH_LABEL = "bot-bottle-orchestrator-source-hash"
 
-# The bind-mount path for the live control-plane source inside the container.
-# PYTHONPATH points here so a code change takes effect on the next launch
-# without an image rebuild.
-_SRC_IN_CONTAINER = "/bot-bottle-src"
 # Bot-bottle host-root bind-mount (DB + state) inside the orchestrator. The
 # control plane opens bot-bottle.db under here (via BOT_BOTTLE_ROOT ->
 # host_db_path()); it is the ONLY container with a handle on it (issue #469).
@@ -72,23 +68,40 @@ class DockerOrchestrator(Orchestrator):
         control_network: str = ORCHESTRATOR_NETWORK,
         repo_root: Path | None = None,
         host_root: Path | None = None,
+        root_mount_source: str | Path | None = None,
+        client_host: str | None = None,
+        bind_host: str | None = None,
         dockerfile: str | None = ORCHESTRATOR_DOCKERFILE,
     ) -> None:
+        if host_root is not None and root_mount_source is not None:
+            raise ValueError("pass host_root or root_mount_source, not both")
         self.image_ref = image_ref
         self.name = name
         self.label = label
         self.port = port
         self.control_network = control_network
-        # Build context / bind-mount source: the repo root in a checkout, a
-        # staged copy from the installed wheel otherwise (bot_bottle.resources).
+        # Build context: the repo root in a checkout, a staged copy from the
+        # installed wheel otherwise (bot_bottle.resources).
         self._repo_root = repo_root if repo_root is not None else resources.build_root()
-        self._host_root = host_root or bot_bottle_root()
+        configured_root = os.environ.get("BOT_BOTTLE_DOCKER_ROOT_MOUNT", "").strip()
+        self._root_mount_source = str(
+            root_mount_source or configured_root or host_root or bot_bottle_root()
+        )
+        configured_host = os.environ.get(
+            "BOT_BOTTLE_DOCKER_HOST_ADDRESS", ""
+        ).strip()
+        self._client_host = client_host or configured_host or "127.0.0.1"
+        # A socket-shared CI runner reaches published ports through its Docker
+        # bridge gateway rather than its own loopback. Production stays bound
+        # to host loopback unless a caller explicitly selects another client.
+        self._bind_host = bind_host or (
+            "0.0.0.0" if self._client_host != "127.0.0.1" else "127.0.0.1"
+        )
         self._dockerfile = dockerfile
 
     def url(self) -> str:
-        """Host-side control-plane URL — the orchestrator's published loopback,
-        which the CLI reaches."""
-        return f"http://127.0.0.1:{self.port}"
+        """Control-plane URL reachable by this Docker client."""
+        return f"http://{self._client_host}:{self.port}"
 
     def gateway_url(self) -> str:
         """The URL the gateway's data plane resolves policy against — the
@@ -119,8 +132,7 @@ class DockerOrchestrator(Orchestrator):
         return self.name in proc.stdout.split()
 
     def _source_current(self, current_hash: str) -> bool:
-        """True iff the running orchestrator was started from the current
-        bind-mounted source."""
+        """True iff the running orchestrator image matches current source."""
         if not self.is_running():
             return False
         proc = run_docker([
@@ -182,15 +194,19 @@ class DockerOrchestrator(Orchestrator):
             # Control network only — agents are never on it, so they have no
             # route to the control plane (the L3 block, not just the JWT).
             "--network", self.control_network,
-            # Host CLI reaches the control plane here (loopback only). The
+            # Host CLI reaches the control plane here (loopback by default).
+            # Socket-shared CI binds all host interfaces so its job container
+            # can use the Docker bridge gateway selected by `client_host`. The
             # orchestrator listens on the fixed DEFAULT_PORT inside the
             # container; self.port is the host-side published port.
-            "--publish", f"127.0.0.1:{self.port}:{DEFAULT_PORT}",
-            # Live control-plane source (code changes without an image rebuild).
-            "--volume", f"{self._repo_root}:{_SRC_IN_CONTAINER}:ro",
-            "--env", f"PYTHONPATH={_SRC_IN_CONTAINER}",
+            "--publish", f"{self._bind_host}:{self.port}:{DEFAULT_PORT}",
+            # The image was rebuilt from `_repo_root` immediately before this
+            # launch. Running its baked package avoids a host-path bind mount,
+            # which is both more production-like and works with socket-shared
+            # CI where the daemon cannot see the job container's workspace.
             # Orchestrator registry DB on the host (sole writer: control plane).
-            "--volume", f"{self._host_root}:{_ROOT_IN_CONTAINER}",
+            # `root_mount_source` may be a host path or a named Docker volume.
+            "--volume", f"{self._root_mount_source}:{_ROOT_IN_CONTAINER}",
             "--env", f"BOT_BOTTLE_ROOT={_ROOT_IN_CONTAINER}",
             # The signing key — held ONLY by the orchestrator (it verifies
             # tokens); the gateway gets the pre-minted `gateway` JWT, never the

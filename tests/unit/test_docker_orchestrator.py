@@ -47,6 +47,20 @@ class TestDockerOrchestrator(unittest.TestCase):
     def test_url_is_host_loopback(self) -> None:
         self.assertEqual("http://127.0.0.1:8099", self.orch.url())
 
+    def test_socket_shared_client_uses_explicit_host_and_open_bind(self) -> None:
+        orch = DockerOrchestrator(
+            port=8099, client_host="172.17.0.1", root_mount_source="state-volume"
+        )
+        with patch(_TOKEN, return_value="k"), \
+                patch(_URLOPEN, side_effect=[urllib.error.URLError("down"), _health(200)]), \
+                patch(_RUN, return_value=_proc()) as run, patch(_SLEEP):
+            orch.ensure_running()
+        self.assertEqual("http://172.17.0.1:8099", orch.url())
+        argv = next(c.args[0] for c in run.call_args_list
+                    if c.args[0][:2] == ["docker", "run"])
+        self.assertEqual("0.0.0.0:8099:8099", argv[argv.index("--publish") + 1])
+        self.assertIn("state-volume:/bot-bottle-root", argv)
+
     def test_gateway_url_is_the_container_dns_name(self) -> None:
         # The gateway reaches the orchestrator by name on the control network.
         self.assertEqual(f"http://{ORCHESTRATOR_NAME}:8099", self.orch.gateway_url())
@@ -110,6 +124,8 @@ class TestDockerOrchestrator(unittest.TestCase):
         # The lean control plane: no mitmproxy CA mount, no gateway daemons.
         self.assertFalse([a for a in argv if a.endswith(":/home/mitmproxy/.mitmproxy")])
         self.assertNotIn("BOT_BOTTLE_GATEWAY_DAEMONS", " ".join(argv))
+        self.assertNotIn("/bot-bottle-src", " ".join(argv))
+        self.assertNotIn("PYTHONPATH", " ".join(argv))
         # Orchestrator entrypoint args (image ENTRYPOINT is `-m bot_bottle.orchestrator`).
         self.assertIn("--broker", argv)
         self.assertIn("stub", argv)

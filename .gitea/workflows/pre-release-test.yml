@@ -84,7 +84,25 @@ jobs:
         env:
           BOT_BOTTLE_BACKEND: docker
           COVERAGE_FILE: ${{ github.workspace }}/.coverage.docker
-        run: python3 -m coverage run -m unittest discover -t . -s tests/integration -v
+        run: |
+          set -euo pipefail
+          DOCKER_HOST_ADDRESS=$(python3 scripts/docker_host_address.py)
+          test -n "$DOCKER_HOST_ADDRESS"
+          RUN_KEY="${GITHUB_RUN_ID:-${GITHUB_RUN_NUMBER:-0}}"
+          export BOT_BOTTLE_DOCKER_HOST_ADDRESS="$DOCKER_HOST_ADDRESS"
+          export BOT_BOTTLE_DOCKER_ROOT_MOUNT="bot-bottle-ci-root-$RUN_KEY"
+          export BOT_BOTTLE_DOCKER_CA_MOUNT="bot-bottle-ci-ca-$RUN_KEY"
+          python3 -m coverage run -m scripts.unittest_gate \
+            -t . -s tests/integration -v \
+            --minimum-executed 22 --fail-on-skip
+
+      - name: Clean Docker integration volumes
+        if: always()
+        run: |
+          RUN_KEY="${GITHUB_RUN_ID:-${GITHUB_RUN_NUMBER:-0}}"
+          docker volume rm --force \
+            "bot-bottle-ci-root-$RUN_KEY" \
+            "bot-bottle-ci-ca-$RUN_KEY" 2>/dev/null || true
 
       # Non-dot name so upload-artifact's dotfile-skipping glob picks it up.
       - name: Stage docker coverage for upload

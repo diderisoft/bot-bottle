@@ -142,6 +142,22 @@ class TestDockerGateway(unittest.TestCase):
         # Data plane resolves policy against the orchestrator control plane.
         self.assertIn(f"BOT_BOTTLE_ORCHESTRATOR_URL={_ORCH_URL}", runs[0])
 
+    def test_named_ca_volume_supports_socket_shared_runner(self) -> None:
+        sc = DockerGateway(
+            "bot-bottle-gateway:latest", ca_mount_source="ci-ca-volume"
+        )
+
+        def fake(argv: list[str], **_kw: object) -> Mock:
+            return _proc(stdout="") if argv[:2] == ["docker", "ps"] else _proc()
+
+        with patch(_RUN_DOCKER, side_effect=fake) as run:
+            sc.connect_to_orchestrator(_ORCH_URL, _TOKEN)
+        argv = next(c.args[0] for c in run.call_args_list
+                    if c.args[0][:2] == ["docker", "run"])
+        self.assertIn(
+            "ci-ca-volume:/home/mitmproxy/.mitmproxy", argv
+        )
+
     def test_connect_injects_the_pre_minted_gateway_token(self) -> None:
         # The gateway presents the token the orchestrator handed it — it never
         # mints (holds no signing key). The value rides the env (bare `--env

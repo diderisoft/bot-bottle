@@ -23,7 +23,6 @@ import secrets
 import subprocess
 import tempfile
 import unittest
-from pathlib import Path
 
 from bot_bottle.orchestrator_auth import ROLE_CLI, ROLE_GATEWAY, mint
 from bot_bottle.orchestrator.client import OrchestratorClient
@@ -38,13 +37,6 @@ _TEST_GATEWAY_IMAGE = "bot-bottle-gateway:itest"
 
 
 @skip_unless_backend("docker")
-@unittest.skipIf(
-    os.environ.get("GITEA_ACTIONS") == "true",
-    "skipped under act_runner: the orchestrator container bind-mounts the repo "
-    "path into a container on the socket-shared host daemon, which can't see the "
-    "runner's /workspace — same host-bind-mount constraint as the other "
-    "bottle-bringup integration tests",
-)
 class TestDockerOrchestratorAuthIntegration(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -74,10 +66,10 @@ class TestDockerOrchestratorAuthIntegration(unittest.TestCase):
         gateway_name = f"bot-bottle-gateway-itest-{suffix}"
         network = f"bot-bottle-net-itest-{suffix}"
         control_network = f"bot-bottle-ctrl-itest-{suffix}"
-        host_root = Path(cls._tmp.name)
+        root_volume = f"bot-bottle-root-itest-{suffix}"
         cls.addClassCleanup(
             cls._teardown_docker,
-            orchestrator_name, gateway_name, network, control_network, host_root,
+            orchestrator_name, gateway_name, network, control_network, root_volume,
         )
 
         cls.svc = DockerInfraService(
@@ -88,7 +80,7 @@ class TestDockerOrchestratorAuthIntegration(unittest.TestCase):
             orchestrator_image=_TEST_ORCHESTRATOR_IMAGE,
             gateway_image=_TEST_GATEWAY_IMAGE,
             port=20000 + secrets.randbelow(10000),
-            host_root=host_root,
+            root_mount_source=root_volume,
         )
         cls.svc.ensure_running()
         # The control plane now verifies role-scoped signed tokens, not the raw
@@ -100,7 +92,7 @@ class TestDockerOrchestratorAuthIntegration(unittest.TestCase):
     @staticmethod
     def _teardown_docker(
         orchestrator_name: str, gateway_name: str,
-        network: str, control_network: str, host_root: Path,
+        network: str, control_network: str, root_volume: str,
     ) -> None:
         for name in (gateway_name, orchestrator_name):
             subprocess.run(
@@ -112,14 +104,8 @@ class TestDockerOrchestratorAuthIntegration(unittest.TestCase):
                 ["docker", "network", "rm", net],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
             )
-        # The orchestrator container (no USER directive) wrote the registry
-        # DB as root into the throwaway host_root; chown it back so the
-        # (non-root) tempdir cleanup can remove it. Same workaround
-        # test_multitenant_isolation.py uses for the identical bind mount.
         subprocess.run(
-            ["docker", "run", "--rm", "-v", f"{host_root}:/r",
-             "--entrypoint", "chown", _TEST_ORCHESTRATOR_IMAGE, "-R",
-             f"{os.getuid()}:{os.getgid()}", "/r"],
+            ["docker", "volume", "rm", "--force", root_volume],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
         )
 

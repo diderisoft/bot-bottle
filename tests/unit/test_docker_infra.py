@@ -67,6 +67,14 @@ class TestDockerInfraService(unittest.TestCase):
         self.assertTrue(any(GATEWAY_NAME in a for a in rms))
         self.assertTrue(any(ORCHESTRATOR_NAME in a for a in rms))
 
+    def test_named_mounts_propagate_to_both_planes(self) -> None:
+        svc = DockerInfraService(
+            root_mount_source="registry-volume",
+            gateway_ca_mount_source="ca-volume",
+        )
+        self.assertEqual("registry-volume", svc.orchestrator()._root_mount_source)
+        self.assertEqual("ca-volume", svc.gateway()._ca_mount_source)
+
 
 if __name__ == "__main__":
     unittest.main()

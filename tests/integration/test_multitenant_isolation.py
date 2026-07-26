@@ -16,11 +16,9 @@ throwaway BOT_BOTTLE_ROOT for a clean registry and tears everything down.
 
 from __future__ import annotations
 
-import os
+import secrets
 import subprocess
-import tempfile
 import unittest
-from pathlib import Path
 
 from bot_bottle.backend.docker.consolidated_launch import (
     _network_cidr,
@@ -73,19 +71,12 @@ _PROBE_SRC = (
 
 
 @skip_unless_backend("docker")
-@unittest.skipIf(
-    os.environ.get("GITEA_ACTIONS") == "true",
-    "skipped under act_runner: the orchestrator container bind-mounts the repo "
-    "path into a container on the socket-shared host daemon, which can't see the "
-    "runner's /workspace — same host-bind-mount constraint as the other "
-    "bottle-bringup integration tests",
-)
 class TestMultitenantIsolation(unittest.TestCase):
     def setUp(self) -> None:
-        self._tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._tmp.cleanup)
-        # Throwaway root → a clean registry DB, independent of the host's.
-        self.svc = DockerInfraService(host_root=Path(self._tmp.name))
+        # Named volume → a clean registry DB that is also visible to a
+        # socket-shared host daemon when the test process runs in act_runner.
+        self._root_volume = "bot-bottle-mtitest-root-" + secrets.token_hex(4)
+        self.svc = DockerInfraService(root_mount_source=self._root_volume)
         self.addCleanup(self._teardown_docker)
         # ensure_running builds the bundle image (slow on a cold cache) and
         # brings up the shared network + gateway + orchestrator.
@@ -100,13 +91,8 @@ class TestMultitenantIsolation(unittest.TestCase):
         self.svc.stop()
         subprocess.run(["docker", "network", "rm", GATEWAY_NETWORK],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-        # The orchestrator container wrote the registry DB as root into the
-        # throwaway root; chown it back so the (non-root) tempdir cleanup can
-        # remove it.
         subprocess.run(
-            ["docker", "run", "--rm", "-v", f"{self._tmp.name}:/r",
-             "--entrypoint", "chown", GATEWAY_IMAGE, "-R",
-             f"{os.getuid()}:{os.getgid()}", "/r"],
+            ["docker", "volume", "rm", "--force", self._root_volume],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
     @staticmethod
@@ -137,7 +123,8 @@ class TestMultitenantIsolation(unittest.TestCase):
             ["docker", "run", "--rm", "--network", GATEWAY_NETWORK, "--ip", source_ip,
              "--entrypoint", "python3", GATEWAY_IMAGE, "-c", _PROBE_SRC,
              f"http://{self.gw_ip}:{EGRESS_PORT}", host],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False, timeout=90,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            check=False, timeout=90,
         )
         return proc.stdout.strip()
 

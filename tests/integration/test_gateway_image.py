@@ -14,9 +14,7 @@ the chunk-1 contract:
     expected "no daemons selected" line when the supervisor is
     pointed at an empty daemon set.
 
-Skips cleanly when docker is unavailable, or under act_runner
-where the host bind-mount topology breaks multi-stage builds
-that pull large bases.
+Skips cleanly only when the selected Docker backend is unavailable.
 """
 
 from __future__ import annotations
@@ -33,12 +31,6 @@ _DOCKERFILE = "Dockerfile.gateway"
 
 
 @skip_unless_backend("docker")
-@unittest.skipIf(
-    os.environ.get("GITEA_ACTIONS") == "true",
-    "skipped under act_runner: multi-stage build pulls a 200+MB "
-    "mitmproxy base + two upstream gateway images; runner storage "
-    "+ time budget make this an interactive-only test",
-)
 class TestGatewayImage(unittest.TestCase):
     """Builds the image once for the class, then runs a few
     `docker run` probes against it."""
@@ -51,10 +43,11 @@ class TestGatewayImage(unittest.TestCase):
              "-f", _DOCKERFILE, "."],
             cwd=repo_root,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            check=False,
         )
         if proc.returncode != 0:
-            raise unittest.SkipTest(
-                f"docker build failed; skipping image probes.\n"
+            raise AssertionError(
+                f"docker build failed; image probes cannot run.\n"
                 f"{proc.stdout.decode('utf-8', errors='replace')[-2000:]}"
             )
 
@@ -63,14 +56,16 @@ class TestGatewayImage(unittest.TestCase):
         subprocess.run(
             ["docker", "image", "rm", "-f", _IMAGE],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            check=False,
         )
 
     def _run_in_image(self, *cmd: str, timeout: float = 30.0) -> tuple[int, str]:
         proc = subprocess.run(
             ["docker", "run", "--rm", "--entrypoint", cmd[0], _IMAGE,
-             *cmd[1:]],
+            *cmd[1:]],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             timeout=timeout,
+            check=False,
         )
         return proc.returncode, proc.stdout.decode("utf-8", errors="replace")
 
@@ -91,7 +86,9 @@ class TestGatewayImage(unittest.TestCase):
         # Probe that the package imports resolve inside the image.
         rc, out = self._run_in_image(
             "python3", "-c",
-            "from bot_bottle.supervisor import types; from bot_bottle.gateway.supervisor import server as supervise_server; print('ok')",
+            "from bot_bottle.supervisor import types; "
+            "from bot_bottle.gateway.supervisor import server as supervise_server; "
+            "print('ok')",
         )
         self.assertEqual(0, rc, msg=out)
         self.assertIn("ok", out)
@@ -106,6 +103,7 @@ class TestGatewayImage(unittest.TestCase):
              _IMAGE],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             timeout=10.0,
+            check=False,
         )
         out = proc.stdout.decode("utf-8", errors="replace")
         self.assertEqual(0, proc.returncode, msg=out)

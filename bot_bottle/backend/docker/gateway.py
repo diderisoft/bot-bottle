@@ -35,6 +35,7 @@ class DockerGateway(Gateway):
         build_context: Path | None = None,
         dockerfile: str | None = GATEWAY_DOCKERFILE,
         host_port_bindings: tuple[int, ...] = (),
+        ca_mount_source: str | Path | None = None,
     ) -> None:
         self.image_ref = image_ref
         self.name = name
@@ -59,6 +60,10 @@ class DockerGateway(Gateway):
         # backend's dev-harness gateway so VMs can reach it via their TAP link;
         # Docker's DNAT + the nft `ct status dnat accept` rule handle the rest.
         self._host_port_bindings = host_port_bindings
+        configured_ca = os.environ.get("BOT_BOTTLE_DOCKER_CA_MOUNT", "").strip()
+        self._ca_mount_source = str(
+            ca_mount_source or configured_ca or host_gateway_ca_dir()
+        )
 
     def image_exists(self) -> bool:
         return run_docker(["docker", "image", "inspect", self.image_ref]).returncode == 0
@@ -158,7 +163,7 @@ class DockerGateway(Gateway):
             # Persist the self-generated CA on the host so it survives both
             # container recreation AND docker volume pruning (agents trust it)
             # — see host_gateway_ca_dir / issue #450.
-            "--volume", f"{host_gateway_ca_dir()}:{MITMPROXY_HOME}",
+            "--volume", f"{self._ca_mount_source}:{MITMPROXY_HOME}",
             # No DB mount: the data plane (egress / supervise / git-gate) reaches
             # the supervise queue over the control-plane RPC and never opens
             # bot-bottle.db, so the gateway container gets no file handle on it

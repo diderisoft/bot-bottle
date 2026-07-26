@@ -67,26 +67,7 @@ _DUMMY_HOST_KEY = (
 )
 
 
-# Backends whose CI runner is HOST-mode (self-hosted), so the test process
-# and the backend share a host. The containerized act_runner (docker on
-# ubuntu-latest) is the one that can't see the host bind mount egress_tls_init
-# uses and hides sibling-gateway network topology; host-mode runners
-# (firecracker/KVM, macos-container) don't have those constraints, so the test
-# runs there. Keep this in sync with the `runs-on` labels in
-# .gitea/workflows/test.yml.
-_HOST_MODE_CI_BACKENDS = frozenset({"firecracker", "macos-container"})
-
-
 @skip_unless_selected_backend_available()
-@unittest.skipIf(
-    os.environ.get("GITEA_ACTIONS") == "true"
-    and os.environ.get("BOT_BOTTLE_BACKEND") not in _HOST_MODE_CI_BACKENDS,
-    "skipped under the containerized act_runner (docker on ubuntu-latest): "
-    "egress_tls_init uses a host bind mount the runner container can't "
-    "see, and the network topology hides sibling-gateway visibility — "
-    "these constraints don't apply on the self-hosted host-mode runners "
-    "(firecracker/KVM, macos-container)",
-)
 class TestSandboxEscape(unittest.TestCase):
     """End-to-end attacks against a real bottle. The bottle stays
     up for the whole class — bringup is ~10-30s, so per-test
@@ -189,7 +170,7 @@ class TestSandboxEscape(unittest.TestCase):
                 missing.append(tool)
         if missing:
             cls._teardown_resources()
-            raise unittest.SkipTest(
+            raise AssertionError(
                 f"agent missing required tools: {', '.join(missing)} — "
                 f"add them to the backend's base image"
             )

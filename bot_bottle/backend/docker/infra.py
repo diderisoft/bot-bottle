@@ -33,7 +33,6 @@ from .orchestrator import (
     ORCHESTRATOR_NAME,
     ORCHESTRATOR_NETWORK,
 )
-from ...paths import bot_bottle_root
 from ... import resources
 from ...gateway import (
     GATEWAY_IMAGE,
@@ -69,6 +68,8 @@ class DockerInfraService(InfraService):
         gateway_image: str = GATEWAY_IMAGE,
         repo_root: Path | None = None,
         host_root: Path | None = None,
+        root_mount_source: str | Path | None = None,
+        gateway_ca_mount_source: str | Path | None = None,
         orchestrator_name: str = ORCHESTRATOR_NAME,
         orchestrator_label: str = ORCHESTRATOR_LABEL,
         gateway_name: str = GATEWAY_NAME,
@@ -78,10 +79,14 @@ class DockerInfraService(InfraService):
         self.control_network = control_network
         self.orchestrator_image = orchestrator_image
         self.gateway_image = gateway_image
-        # Build context / bind-mount source: the repo root in a checkout, a
-        # staged copy from the installed wheel otherwise (bot_bottle.resources).
+        # Build context: the repo root in a checkout, a staged copy from the
+        # installed wheel otherwise (bot_bottle.resources).
         self._repo_root = repo_root if repo_root is not None else resources.build_root()
-        self._host_root = host_root or bot_bottle_root()
+        if host_root is not None and root_mount_source is not None:
+            raise ValueError("pass host_root or root_mount_source, not both")
+        self._host_root = host_root
+        self._root_mount_source = root_mount_source
+        self._gateway_ca_mount_source = gateway_ca_mount_source
         self._orchestrator_name = orchestrator_name
         self._orchestrator_label = orchestrator_label
         self._gateway_name = gateway_name
@@ -98,6 +103,7 @@ class DockerInfraService(InfraService):
             control_network=self.control_network,
             repo_root=self._repo_root,
             host_root=self._host_root,
+            root_mount_source=self._root_mount_source,
         )
 
     def gateway(self) -> DockerGateway:
@@ -112,6 +118,7 @@ class DockerInfraService(InfraService):
             network=self.network,
             control_network=self.control_network,
             build_context=self._repo_root,
+            ca_mount_source=self._gateway_ca_mount_source,
         )
 
     def ensure_running(

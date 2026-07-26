@@ -12,10 +12,14 @@ on:
       - 'bot_bottle/**'
       - 'tests/**/*.py'
       - 'cli.py'
+      - 'install.sh'
+      - 'setup.py'
+      - 'MANIFEST.in'
+      - 'flake.nix'
+      - 'nix/firecracker-netpool.nix'
       - 'scripts/coverage.sh'
       - 'scripts/critical-modules.txt'
-      - 'scripts/diff_coverage.py'
-      - 'scripts/tracker_policy.py'
+      - 'scripts/**/*.py'
       - 'scripts/firecracker-netpool.sh'
       - 'Dockerfile*'
       - 'pyproject.toml'
@@ -23,15 +27,20 @@ on:
       - '.coveragerc'
       - '.dockerignore'
       - '.gitea/workflows/test.yml'
+      - '.gitea/workflows/pre-release-test.yml'
   pull_request:
     paths:
       - 'bot_bottle/**'
       - 'tests/**/*.py'
       - 'cli.py'
+      - 'install.sh'
+      - 'setup.py'
+      - 'MANIFEST.in'
+      - 'flake.nix'
+      - 'nix/firecracker-netpool.nix'
       - 'scripts/coverage.sh'
       - 'scripts/critical-modules.txt'
-      - 'scripts/diff_coverage.py'
-      - 'scripts/tracker_policy.py'
+      - 'scripts/**/*.py'
       - 'scripts/firecracker-netpool.sh'
       - 'Dockerfile*'
       - 'pyproject.toml'
@@ -39,6 +48,7 @@ on:
       - '.coveragerc'
       - '.dockerignore'
       - '.gitea/workflows/test.yml'
+      - '.gitea/workflows/pre-release-test.yml'
 
 jobs:
   unit:
@@ -87,7 +97,28 @@ jobs:
         env:
           BOT_BOTTLE_BACKEND: docker
           COVERAGE_FILE: ${{ github.workspace }}/.coverage.docker
-        run: python3 -m coverage run -m unittest discover -t . -s tests/integration -v
+        run: |
+          set -euo pipefail
+          # act_runner executes this job in a container while sharing the host
+          # Docker socket. Reach host-published ports through the bridge gateway
+          # and use named volumes for state the host daemon must mount.
+          DOCKER_HOST_ADDRESS=$(python3 scripts/docker_host_address.py)
+          test -n "$DOCKER_HOST_ADDRESS"
+          RUN_KEY="${GITHUB_RUN_ID:-${GITHUB_RUN_NUMBER:-0}}"
+          export BOT_BOTTLE_DOCKER_HOST_ADDRESS="$DOCKER_HOST_ADDRESS"
+          export BOT_BOTTLE_DOCKER_ROOT_MOUNT="bot-bottle-ci-root-$RUN_KEY"
+          export BOT_BOTTLE_DOCKER_CA_MOUNT="bot-bottle-ci-ca-$RUN_KEY"
+          python3 -m coverage run -m scripts.unittest_gate \
+            -t . -s tests/integration -v \
+            --minimum-executed 22 --fail-on-skip
+
+      - name: Clean Docker integration volumes
+        if: always()
+        run: |
+          RUN_KEY="${GITHUB_RUN_ID:-${GITHUB_RUN_NUMBER:-0}}"
+          docker volume rm --force \
+            "bot-bottle-ci-root-$RUN_KEY" \
+            "bot-bottle-ci-ca-$RUN_KEY" 2>/dev/null || true
 
       - name: Stage docker coverage for upload
         run: cp .coverage.docker coverage-docker.dat
