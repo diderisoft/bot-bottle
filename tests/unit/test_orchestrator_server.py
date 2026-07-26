@@ -264,7 +264,7 @@ class TestServerRoundTrip(unittest.TestCase):
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.addCleanup(server.shutdown)
         conn = http.client.HTTPConnection(
-            server.server_address[0], server.server_address[1], timeout=5,
+            str(server.server_address[0]), server.server_address[1], timeout=5,
         )
         self.addCleanup(conn.close)
         conn.putrequest("POST", "/bottles")

@@ -401,6 +401,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._write_json(408, {"error": "request body read timed out"})
             return
         try:
+            status: int
+            payload: Json
             status, payload = dispatch(
                 server.orchestrator, method, self.path, body, role=role)
         except Exception as e:  # noqa: BLE001 — the control plane must stay up
@@ -472,7 +474,7 @@ class OrchestratorServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         return request, client_address
 
     def process_request(
-        self, request: socket.socket, client_address: typing.Any,
+        self, request: typing.Any, client_address: typing.Any,
     ) -> None:
         # Bound concurrency before ThreadingMixIn creates a worker. Backpressure
         # stays in the accept loop instead of allocating an unbounded thread per
@@ -485,7 +487,7 @@ class OrchestratorServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
             raise
 
     def process_request_thread(
-        self, request: socket.socket, client_address: typing.Any,
+        self, request: typing.Any, client_address: typing.Any,
     ) -> None:
         try:
             super().process_request_thread(request, client_address)
