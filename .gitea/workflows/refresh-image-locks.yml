@@ -41,6 +41,9 @@ jobs:
               npm install --package-lock-only --ignore-scripts --no-audit --no-fund
             )
           done
+          python3 scripts/complete_npm_lock_integrity.py \
+            bot_bottle/contrib/claude/package-lock.json \
+            bot_bottle/contrib/pi/package-lock.json
 
       - name: Refresh pinned Codex installer checksum
         run: |

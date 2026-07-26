@@ -11,6 +11,14 @@
 # Version-qualified Node LTS, pinned to its multi-architecture manifest.
 FROM node:22.23.1-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba
 
+ARG DEBIAN_SNAPSHOT=20260724T000000Z
+RUN sed -i \
+      -e "s|http://deb.debian.org/debian-security|https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
+      -e "s|https://deb.debian.org/debian-security|https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
+      -e "s|http://deb.debian.org/debian|https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g" \
+      -e "s|https://deb.debian.org/debian|https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g" \
+      /etc/apt/sources.list.d/debian.sources
+
 # Install runtime system deps. claude-code shells out to git for several
 # features (status checks, commits, PR creation) — without git in the
 # image, those features fail in surprising ways once the user does any
@@ -19,7 +27,7 @@ FROM node:22.23.1-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e8
 # HTTPS_PROXY-aware tool (curl itself, plus anything that shells out
 # to it) works against egress's bumped TLS without the agent needing
 # local DNS.
-RUN apt-get update \
+RUN apt-get -o Acquire::Check-Valid-Until=false update \
   && apt-get install -y --no-install-recommends \
   git \
   ca-certificates \
@@ -34,7 +42,7 @@ RUN apt-get update \
 # (claude-code is a Node CLI), but is convenient for the agent to
 # shell out to for ad-hoc scripts. Kept on its own layer so it can
 # be moved to a downstream image if the base ever needs to shrink.
-RUN apt-get update \
+RUN apt-get -o Acquire::Check-Valid-Until=false update \
   && apt-get install -y --no-install-recommends python3 python3-pip python3-venv \
   && rm -rf /var/lib/apt/lists/*
 

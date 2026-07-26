@@ -43,13 +43,23 @@
 # is pip-installed to the same effect as the upstream image.
 FROM python:3.12.13-slim-trixie@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
 
+# Freeze apt's package universe as well as the base filesystem. Without a
+# snapshot, the same Dockerfile resolves different package versions over time.
+ARG DEBIAN_SNAPSHOT=20260724T000000Z
+RUN sed -i \
+      -e "s|http://deb.debian.org/debian-security|https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
+      -e "s|https://deb.debian.org/debian-security|https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
+      -e "s|http://deb.debian.org/debian|https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g" \
+      -e "s|https://deb.debian.org/debian|https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g" \
+      /etc/apt/sources.list.d/debian.sources
+
 # Runtime system deps:
 #   git supplies the `git daemon` subcommand (no separate package)
 #     plus the core `git` binary the pre-receive hook invokes.
 #   openssh-client supplies the upstream SSH transport the
 #     pre-receive hook uses to forward accepted refs.
 #   ca-certificates is needed for mitmdump upstream TLS.
-RUN apt-get update \
+RUN apt-get -o Acquire::Check-Valid-Until=false update \
  && apt-get install -y --no-install-recommends \
       git openssh-client ca-certificates \
  && rm -rf /var/lib/apt/lists/*

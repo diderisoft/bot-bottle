@@ -10,7 +10,15 @@ FROM node:22.23.1-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e8
 # installer source and checksum.
 ARG CODEX_VERSION=0.145.0
 
-RUN apt-get update \
+ARG DEBIAN_SNAPSHOT=20260724T000000Z
+RUN sed -i \
+      -e "s|http://deb.debian.org/debian-security|https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
+      -e "s|https://deb.debian.org/debian-security|https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
+      -e "s|http://deb.debian.org/debian|https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g" \
+      -e "s|https://deb.debian.org/debian|https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g" \
+      /etc/apt/sources.list.d/debian.sources
+
+RUN apt-get -o Acquire::Check-Valid-Until=false update \
   && apt-get install -y --no-install-recommends \
   git \
   ca-certificates \
@@ -24,7 +32,7 @@ RUN apt-get update \
 # (codex is a Node CLI), but is convenient for the agent to shell
 # out to for ad-hoc scripts. Kept on its own layer so it can be
 # moved to a downstream image if the base ever needs to shrink.
-RUN apt-get update \
+RUN apt-get -o Acquire::Check-Valid-Until=false update \
   && apt-get install -y --no-install-recommends python3 python3-pip python3-venv \
   && rm -rf /var/lib/apt/lists/*
 
