@@ -268,6 +268,27 @@ jobs:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage.macos
         run: python3 -m coverage report -m
 
+      # On failure, capture the infra containers' state and logs BEFORE the
+      # teardown below removes them — otherwise a control-plane crash is
+      # undiagnosable from CI, since `stop()` deletes the orchestrator (and its
+      # logs) on every run. Best-effort: never let the diagnostics themselves
+      # fail the job, and keep going if a container is already gone.
+      - name: Dump infra diagnostics (on failure)
+        if: failure()
+        run: |
+          set +e
+          echo "=== containers ==="
+          container ls -a | grep bot-bottle-mac || echo "(no bot-bottle-mac containers)"
+          echo "=== networks ==="
+          container network ls | grep bot-bottle-mac || echo "(no bot-bottle-mac networks)"
+          for c in bot-bottle-mac-orchestrator bot-bottle-mac-infra; do
+            echo "=== inspect $c ==="
+            container inspect "$c" || echo "($c not found)"
+            echo "=== logs $c ==="
+            container logs "$c" || echo "($c logs unavailable)"
+          done
+          exit 0
+
       # Remove the singleton infra container so a crashed or cancelled run
       # cannot leave `bot-bottle-mac-infra` wedged for the next job.
       - name: Teardown infra singleton
