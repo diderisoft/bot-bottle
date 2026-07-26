@@ -26,19 +26,23 @@ from bot_bottle.gateway.egress.addon_core import (
     Config,
     Route,
     ScanResult,
+    route_to_yaml_dict,
+)
+from bot_bottle.gateway.egress.context import resolve_client_context
+from bot_bottle.gateway.egress.dlp import (
     build_inbound_scan_text,
     build_outbound_scan_text,
     build_token_allow_payload,
+    outbound_scan_headers,
+    scan_inbound,
+    scan_outbound,
+)
+from bot_bottle.gateway.egress.matching import (
     decide,
     decide_git_fetch,
     is_git_fetch_request,
     is_git_push_request,
     match_route,
-    resolve_client_context,
-    outbound_scan_headers,
-    route_to_yaml_dict,
-    scan_inbound,
-    scan_outbound,
 )
 from bot_bottle.gateway.policy_resolver import PolicyResolveError, PolicyResolver
 from bot_bottle.supervisor.types import (

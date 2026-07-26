@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import re
 import typing
-from dataclasses import dataclass
 
 from ...yaml_subset import YamlSubsetError, parse_yaml_subset
 
@@ -30,96 +29,21 @@ from .dlp_config import (
     OUTBOUND_ON_MATCH_VALUES,
     parse_inspect_block,
 )
-
-
-# ---------------------------------------------------------------------------
-# Match types (Gateway API HTTPRoute vocabulary, PRD 0053)
-# ---------------------------------------------------------------------------
-
-PATH_MATCH_TYPES = ("exact", "prefix", "regex")
-HEADER_MATCH_TYPES = ("exact", "regex")
-
-VALID_METHODS = frozenset({
-    "GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "TRACE",
-    "CONNECT",
-})
-
-
-@dataclass(frozen=True)
-class PathMatch:
-    type: str   # "exact" | "prefix" | "regex"
-    value: str
-    compiled: re.Pattern[str] | None = None
-
-
-@dataclass(frozen=True)
-class HeaderMatch:
-    name: str
-    value: str
-    type: str = "exact"   # "exact" | "regex"
-    compiled: re.Pattern[str] | None = None
-
-
-@dataclass(frozen=True)
-class MatchEntry:
-    paths: tuple[PathMatch, ...] = ()
-    methods: tuple[str, ...] = ()
-    headers: tuple[HeaderMatch, ...] = ()
-
-
-@dataclass(frozen=True)
-class Route:
-    host: str
-    matches: tuple[MatchEntry, ...] = ()
-    auth_scheme: str = ""
-    token_env: str = ""
-    git_fetch: bool = False
-    outbound_detectors: tuple[str, ...] | None = None
-    inbound_detectors: tuple[str, ...] | None = None
-    # "" means unset → DEFAULT_OUTBOUND_ON_MATCH. See OUTBOUND_ON_MATCH_VALUES.
-    outbound_on_match: str = ""
-    preserve_auth: bool = False
-    # False tunnels HTTPS without TLS interception or HTTP-level controls.
-    inspect: bool = True
-
-
-LOG_OFF = 0    # no logging
-LOG_BLOCKS = 1  # log block/warn events with request context
-LOG_FULL = 2    # log block/warn events + full request and response bodies
-
-
-@dataclass(frozen=True)
-class Config:
-    routes: tuple[Route, ...]
-    log: int = LOG_OFF
-    # Why this Config is a deny-all, when it is one for a reason *other* than
-    # the bottle's own policy genuinely not listing the host. A deny-all is
-    # indistinguishable from "policy loaded, host not allowed" at the decision
-    # point — both are simply "no matching route" — so without this the
-    # operator sees `host X is not in the allowlist` and goes hunting for a
-    # missing route that was never the problem. Empty for a normally-parsed
-    # policy; `decide` prefers it over the allowlist wording when set.
-    deny_reason: str = ""
-
-
-@dataclass(frozen=True)
-class Decision:
-    action: str  # "forward" or "block"
-    reason: str = ""
-    inject_authorization: str | None = None
-
-
-@dataclass(frozen=True)
-class ScanResult:
-    severity: str   # "block" or "warn"
-    reason: str
-    location: str = ""  # where the match was found, e.g. "body", "authorization header"
-    context: str = ""   # surrounding text with the match replaced by REDACT
-    # Raw substring the detector matched. Used inside the gateway to key the
-    # supervisor-approved "safe tokens" set (PRD 0062); never logged or written
-    # to a proposal file. Empty for structural detectors (CRLF) that carry no
-    # safelist-able value.
-    matched: str = ""
+from .types import (
+    HEADER_MATCH_TYPES,
+    LOG_BLOCKS,
+    LOG_FULL,
+    LOG_OFF,
+    PATH_MATCH_TYPES,
+    VALID_METHODS,
+    Config,
+    Decision,
+    HeaderMatch,
+    MatchEntry,
+    PathMatch,
+    Route,
+    ScanResult,
+)
 
 
 # ---------------------------------------------------------------------------
