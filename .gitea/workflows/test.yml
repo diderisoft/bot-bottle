@@ -24,9 +24,11 @@ on:
       - 'Dockerfile*'
       - 'pyproject.toml'
       - 'requirements-dev.txt'
+      - 'requirements.gateway.*'
       - '.coveragerc'
       - '.dockerignore'
       - '.gitea/workflows/test.yml'
+      - '.gitea/workflows/refresh-image-locks.yml'
       - '.gitea/workflows/pre-release-test.yml'
   pull_request:
     paths:
@@ -45,9 +47,11 @@ on:
       - 'Dockerfile*'
       - 'pyproject.toml'
       - 'requirements-dev.txt'
+      - 'requirements.gateway.*'
       - '.coveragerc'
       - '.dockerignore'
       - '.gitea/workflows/test.yml'
+      - '.gitea/workflows/refresh-image-locks.yml'
       - '.gitea/workflows/pre-release-test.yml'
 
 jobs:
@@ -136,6 +140,63 @@ jobs:
         with:
           name: coverage-docker
           path: coverage-docker.dat
+
+  image-input-builds:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify shared bases cover supported architectures
+        run: |
+          python_ref='python:3.12.13-slim-trixie@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de'
+          node_ref='node:22.23.1-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba'
+          for ref in "$python_ref" "$node_ref"; do
+            docker buildx imagetools inspect --raw "$ref" |
+              python3 -c '
+          import json
+          import sys
+          manifest = json.load(sys.stdin)
+          platforms = {
+              (item["platform"]["os"], item["platform"]["architecture"])
+              for item in manifest["manifests"]
+              if item.get("platform", {}).get("os") != "unknown"
+          }
+          required = {("linux", "amd64"), ("linux", "arm64")}
+          missing = required - platforms
+          if missing:
+              raise SystemExit(f"base manifest lacks supported platforms: {missing}")
+          '
+          done
+
+      - name: Build and smoke-test all supported images
+        run: |
+          set -euo pipefail
+          suffix="${GITHUB_RUN_ID:-${GITHUB_RUN_NUMBER:-image-inputs}}"
+          orchestrator="bot-bottle-orchestrator-inputs:${suffix}"
+          gateway="bot-bottle-gateway-inputs:${suffix}"
+          orchestrator_fc="bot-bottle-orchestrator-fc-inputs:${suffix}"
+          claude="bot-bottle-claude-inputs:${suffix}"
+          codex="bot-bottle-codex-inputs:${suffix}"
+          pi="bot-bottle-pi-inputs:${suffix}"
+
+          docker build -t "$orchestrator" -f Dockerfile.orchestrator .
+          orchestrator_id=$(docker image inspect --format '{{.Id}}' "$orchestrator")
+          case "$orchestrator_id" in sha256:*) ;; *) exit 1 ;; esac
+          docker build -t "$gateway" -f Dockerfile.gateway .
+          docker build \
+            --build-arg "ORCHESTRATOR_BASE_IMAGE=$orchestrator_id" \
+            -t "$orchestrator_fc" -f Dockerfile.orchestrator.fc .
+          docker build -t "$claude" -f bot_bottle/contrib/claude/Dockerfile .
+          docker build -t "$codex" -f bot_bottle/contrib/codex/Dockerfile .
+          docker build -t "$pi" -f bot_bottle/contrib/pi/Dockerfile .
+
+          docker run --rm --entrypoint python3 "$orchestrator" -c \
+            'import bot_bottle.orchestrator'
+          docker run --rm --entrypoint mitmdump "$gateway" --version
+          docker run --rm "$claude" claude --version
+          docker run --rm "$codex" codex --version
+          docker run --rm "$pi" pi --version
 
   coverage:
     needs: [unit, integration-docker]

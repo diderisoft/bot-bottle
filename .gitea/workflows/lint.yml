@@ -4,6 +4,12 @@ on:
   push:
     paths:
       - "**.py"
+      - "Dockerfile*"
+      - "bot_bottle/contrib/*/Dockerfile"
+      - "bot_bottle/contrib/*/package.json"
+      - "bot_bottle/contrib/*/package-lock.json"
+      - "bot_bottle/contrib/codex/install.sh.sha256"
+      - "requirements.gateway.*"
       - ".pylintrc"
       - ".gitea/workflows/lint.yml"
 
@@ -12,6 +18,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+
+      - name: Enforce immutable image inputs
+        run: python3 scripts/check_image_inputs.py
 
       # No actions/setup-python: the runner image already ships Python 3.12,
       # and older act_runner engines mishandle setup-python's PATH. Install
