@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -21,6 +22,7 @@ from bot_bottle.manifest import ManifestIndex
 
 _URL = "http://supervise:9100/"
 _PI_DOCKERFILE = Path(__file__).resolve().parents[2] / "bot_bottle/contrib/pi/Dockerfile"
+_PI_PACKAGE_JSON = _PI_DOCKERFILE.with_name("package.json")
 
 
 def _make_bottle(exec_result: ExecResult | None = None) -> MagicMock:
@@ -209,9 +211,13 @@ class TestPiSuperviseMcp(unittest.TestCase):
 
 
 class TestPiDockerfile(unittest.TestCase):
-    def test_installs_pi_cwd_at_build_time(self):
+    def test_installs_exact_pi_cwd_from_the_committed_lock(self):
         dockerfile = _PI_DOCKERFILE.read_text()
-        self.assertIn("pi install npm:@harms-haus/pi-cwd", dockerfile)
+        package = json.loads(_PI_PACKAGE_JSON.read_text())
+        version = package["dependencies"]["@harms-haus/pi-cwd"]
+        self.assertRegex(version, r"^\d+\.\d+\.\d+$")
+        self.assertIn("npm ci --omit=dev", dockerfile)
+        self.assertNotIn("pi install", dockerfile)
 
     def test_prepares_pi_extension_state_dirs_and_tmp_for_node(self):
         dockerfile = _PI_DOCKERFILE.read_text()

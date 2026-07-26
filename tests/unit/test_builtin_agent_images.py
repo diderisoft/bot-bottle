@@ -12,14 +12,19 @@ _AGENT_DOCKERFILES = tuple(sorted(_CONTRIB_DIR.glob("*/Dockerfile")))
 
 
 class TestBuiltinAgentImages(unittest.TestCase):
-    def test_all_use_debian_trixie_stable(self):
+    def test_all_share_one_digest_pinned_node_trixie_base(self):
         self.assertTrue(_AGENT_DOCKERFILES)
+        bases = []
         for dockerfile in _AGENT_DOCKERFILES:
             with self.subTest(provider=dockerfile.parent.name):
-                self.assertRegex(
+                match = re.search(
+                    r"(?m)^FROM "
+                    r"(node:22\.\d+\.\d+-trixie-slim@sha256:[0-9a-f]{64})\s*$",
                     dockerfile.read_text(),
-                    r"(?m)^FROM node:22-trixie-slim\s*$",
                 )
+                self.assertIsNotNone(match)
+                bases.append(match.group(1))
+        self.assertEqual(1, len(set(bases)))
 
     def test_none_install_podman(self):
         # podman lives in the nested-containers derived layer (nested_containers.py),
