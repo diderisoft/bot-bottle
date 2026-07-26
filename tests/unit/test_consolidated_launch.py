@@ -7,6 +7,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
 from bot_bottle.backend.docker.consolidated_launch import (
+    ConsolidatedLaunchError,
+    _network_container_ips,
     launch_consolidated,
     deprovision_consolidated,
 )
@@ -84,6 +86,16 @@ class TestLaunchConsolidated(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self._run(client, provision)
         client.teardown_bottle.assert_called_once_with("b1")  # no orphan left
+
+
+class TestNetworkContainerIps(unittest.TestCase):
+    def test_fails_closed_when_network_inspection_fails(self) -> None:
+        result = Mock(returncode=1, stdout="", stderr="daemon unavailable")
+        with (
+            patch(f"{_MOD}.run_docker", return_value=result),
+            self.assertRaisesRegex(ConsolidatedLaunchError, "daemon unavailable"),
+        ):
+            _network_container_ips("bot-bottle-gateway")
 
 
 class TestTeardownConsolidated(unittest.TestCase):

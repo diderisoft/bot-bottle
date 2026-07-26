@@ -68,6 +68,11 @@ def _network_container_ips(network: str) -> list[str]:
         "docker", "network", "inspect", "--format",
         "{{range .Containers}}{{.IPv4Address}} {{end}}", network,
     ])
+    if proc.returncode != 0:
+        detail = proc.stderr.strip() or f"exit {proc.returncode}"
+        raise ConsolidatedLaunchError(
+            f"could not inspect addresses on gateway network {network}: {detail}"
+        )
     ips: list[str] = []
     for entry in proc.stdout.split():
         ips.append(entry.split("/", 1)[0])
