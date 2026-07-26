@@ -1,4 +1,4 @@
-# ADR 0005: Keep tracker metadata on issues
+# ADR 0005: Keep tracker metadata on one tracker object
 
 - **Status:** Accepted
 - **Date:** 2026-07-18
