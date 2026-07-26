@@ -17,7 +17,7 @@ instead would defeat that — the orchestrator holds that key, so it could forge
 `ControlPlaneProvisioning` is the one seam every backend launcher uses to get the
 orchestrator its key and the gateway its token, instead of re-deriving that
 wiring per backend (the bug class behind PR #471 — see
-`docs/prds/prd-new-control-plane-auth-provisioning.md`).
+`docs/prds/0079-control-plane-auth-provisioning.md`).
 
 Stdlib-only: the HMAC lives in `orchestrator_auth`, the key file in `paths`.
 """

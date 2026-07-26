@@ -728,7 +728,7 @@ class TestResolvedRoutesPayload(unittest.TestCase):
 
 
 class TestNonBlockingSupervise(unittest.TestCase):
-    """PRD prd-new / issue #412: pending responses carry the proposal id, and
+    """PRD 0072 / issue #412: pending responses carry the proposal id, and
     `check-proposal` polls a queued proposal without blocking or re-proposing."""
 
     _ROUTES = "routes:\n  - host: example.com\n"

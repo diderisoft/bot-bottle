@@ -17,7 +17,7 @@ Each queued proposal tool call:
   4. On a decision within the window, returns the operator's
      `{status, notes}`. On timeout, returns `status: pending` **with the
      proposal id** and leaves the proposal queued — the flow is
-     non-blocking past the grace window (PRD prd-new / issue #412).
+     non-blocking past the grace window (PRD 0072 / issue #412).
 
 `check-proposal` is the non-blocking companion: given a `proposal_id`
 returned by a `pending` response, it reports the current decision
