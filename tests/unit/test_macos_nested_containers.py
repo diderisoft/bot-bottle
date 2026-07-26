@@ -115,10 +115,10 @@ class TestNestedContainersImage(unittest.TestCase):
             self.assertTrue((Path(context) / "nested-containers-init.sh").is_file())
 
         image = nested_containers.build_image(
-            "agent:base", build, lambda _ref: "agent:sha256-deadbeef",
+            "agent:sha256-deadbeef", build,
         )
-        self.assertEqual("agent:base-nested-containers", image)
-        self.assertEqual("agent:base-nested-containers", calls[0][0])
+        self.assertEqual("agent:sha256-deadbeef-nested-containers", image)
+        self.assertEqual("agent:sha256-deadbeef-nested-containers", calls[0][0])
 
     def test_installs_the_whole_podman_5_networking_stack(self) -> None:
         """Each missing piece fails at a different, misleading layer: no pasta
@@ -132,7 +132,7 @@ class TestNestedContainersImage(unittest.TestCase):
             seen.append(Path(dockerfile).read_text(encoding="utf-8"))
 
         nested_containers.build_image(
-            "agent:base", build, lambda _ref: "agent:sha256-deadbeef",
+            "agent:sha256-deadbeef", build,
         )
         for package in ("podman", "passt", "nftables", "aardvark-dns"):
             self.assertIn(package, seen[0])
@@ -150,7 +150,7 @@ class TestNestedContainersImage(unittest.TestCase):
             seen.append(Path(dockerfile).read_text(encoding="utf-8"))
 
         nested_containers.build_image(
-            "agent:base", build, lambda _ref: "agent:sha256-deadbeef",
+            "agent:sha256-deadbeef", build,
         )
         text = seen[0]
         self.assertIn("sed -i '/^node:/d' /etc/subuid /etc/subgid", text)
@@ -284,9 +284,14 @@ class TestBuildOrLoadImages(unittest.TestCase):
         with patch.object(launch_mod, "read_committed_image", return_value=None), \
              patch.object(launch_mod.container_mod, "build_image") as build, \
              patch.object(
+                 launch_mod.container_mod,
+                 "pinned_local_image_ref",
+                 return_value="agent:sha256-deadbeef",
+             ) as pin, \
+             patch.object(
                  launch_mod.nested_containers_mod,
                  "build_image",
-                 return_value="agent:base-nested-containers",
+                 return_value="agent:sha256-deadbeef-nested-containers",
              ) as derived:
             images = launch_mod.build_or_load_images(plan)
 
@@ -294,10 +299,9 @@ class TestBuildOrLoadImages(unittest.TestCase):
             "agent:base", str(launch_mod.resources.build_root()),
             dockerfile="/repo/Dockerfile",
         )
-        derived.assert_called_once_with(
-            "agent:base", build, launch_mod.container_mod.pinned_local_image_ref,
-        )
-        self.assertEqual("agent:base-nested-containers", images.agent)
+        pin.assert_called_once_with("agent:base")
+        derived.assert_called_once_with("agent:sha256-deadbeef", build)
+        self.assertEqual("agent:sha256-deadbeef-nested-containers", images.agent)
 
     def test_derived_image_layers_onto_a_committed_image(self) -> None:
         plan = _plan(
@@ -310,19 +314,21 @@ class TestBuildOrLoadImages(unittest.TestCase):
              patch.object(launch_mod.container_mod, "image_exists", return_value=True), \
              patch.object(launch_mod.container_mod, "build_image") as build, \
              patch.object(
+                 launch_mod.container_mod,
+                 "pinned_local_image_ref",
+                 return_value="agent:sha256-cafebabe",
+             ) as pin, \
+             patch.object(
                  launch_mod.nested_containers_mod,
                  "build_image",
-                 return_value="agent:committed-nested-containers",
+                 return_value="agent:sha256-cafebabe-nested-containers",
              ) as derived:
             images = launch_mod.build_or_load_images(plan)
 
         build.assert_not_called()
-        derived.assert_called_once_with(
-            "agent:committed",
-            build,
-            launch_mod.container_mod.pinned_local_image_ref,
-        )
-        self.assertEqual("agent:committed-nested-containers", images.agent)
+        pin.assert_called_once_with("agent:committed")
+        derived.assert_called_once_with("agent:sha256-cafebabe", build)
+        self.assertEqual("agent:sha256-cafebabe-nested-containers", images.agent)
 
     def test_cached_policy_refuses_to_build_the_derived_image(self) -> None:
         plan = _plan(
@@ -332,6 +338,11 @@ class TestBuildOrLoadImages(unittest.TestCase):
         )
         with patch.object(launch_mod, "read_committed_image", return_value=None), \
              patch.object(
+                 launch_mod.container_mod,
+                 "pinned_local_image_ref",
+                 return_value="agent:sha256-deadbeef",
+             ), \
+             patch.object(
                  launch_mod.container_mod, "image_exists",
                  side_effect=_base_image_only,
              ), \
@@ -340,7 +351,10 @@ class TestBuildOrLoadImages(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 launch_mod.build_or_load_images(plan)
         derived.assert_not_called()
-        self.assertIn("agent:base-nested-containers", die.call_args.args[0])
+        self.assertIn(
+            "agent:sha256-deadbeef-nested-containers",
+            die.call_args.args[0],
+        )
 
 
 if __name__ == "__main__":

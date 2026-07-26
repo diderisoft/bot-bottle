@@ -55,9 +55,8 @@ _GUEST_DEVICES = ("/dev/fuse", "/dev/net/tun")
 
 
 def build_image(
-    base_image: str,
+    pinned_base: str,
     build: Callable[..., None],
-    pin_local_base: Callable[[str], str],
 ) -> str:
     """Layer the nested-container tooling onto an already-built agent image.
 
@@ -67,8 +66,7 @@ def build_image(
     # TODO(#394): replace this hand-rolled Dockerfile with a docker-layer
     # abstraction once that infrastructure exists.
     """
-    image = f"{base_image}{IMAGE_SUFFIX}"
-    pinned_base = pin_local_base(base_image)
+    image = f"{pinned_base}{IMAGE_SUFFIX}"
     init_script = Path(__file__).with_name("nested-containers-init.sh")
     with tempfile.TemporaryDirectory(prefix="bot-bottle-nested-containers.") as tmp:
         context = Path(tmp)

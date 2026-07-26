@@ -156,9 +156,12 @@ jobs:
             'import json; print(json.load(open("image-build-args.json"))["PYTHON_BASE_IMAGE"])')
           node_ref=$(python3 -c \
             'import json; print(json.load(open("image-build-args.json"))["NODE_BASE_IMAGE"])')
+          docker_cli_ref=$(python3 -c \
+            'import json; print(json.load(open("image-build-args.json"))["DOCKER_CLI_BASE_IMAGE"])')
           test -n "$python_ref"
           test -n "$node_ref"
-          for ref in "$python_ref" "$node_ref"; do
+          test -n "$docker_cli_ref"
+          for ref in "$python_ref" "$node_ref" "$docker_cli_ref"; do
             docker buildx imagetools inspect --raw "$ref" |
               python3 -c '
           import json
@@ -174,6 +177,35 @@ jobs:
           if missing:
               raise SystemExit(f"base manifest lacks supported platforms: {missing}")
           '
+          done
+
+      - name: Verify Codex archives for all supported architectures
+        run: |
+          set -euo pipefail
+          codex_version=$(
+            sed -n 's/^ARG CODEX_VERSION=//p' bot_bottle/contrib/codex/Dockerfile
+          )
+          test -n "$codex_version"
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+          for target in \
+            aarch64-unknown-linux-musl \
+            x86_64-unknown-linux-musl
+          do
+            asset="codex-package-${target}.tar.gz"
+            expected=$(
+              awk -v asset="$asset" '$2 == asset { print $1 }' \
+                bot_bottle/contrib/codex/codex-package_SHA256SUMS
+            )
+            test -n "$expected"
+            curl -fsSL \
+              "https://github.com/openai/codex/releases/download/rust-v${codex_version}/${asset}" \
+              -o "$tmp/$asset"
+            echo "$expected  $tmp/$asset" | sha256sum -c -
+            tar -tzf "$tmp/$asset" > "$tmp/$asset.contents"
+            grep -Fx 'bin/codex' "$tmp/$asset.contents"
+            grep -Fx 'bin/codex-code-mode-host' "$tmp/$asset.contents"
+            grep -Fx 'codex-package.json' "$tmp/$asset.contents"
           done
 
       - name: Build and smoke-test all supported images

@@ -22,6 +22,11 @@ NPM_MANIFESTS = (
     Path("bot_bottle/contrib/pi/package.json"),
 )
 IMAGE_BUILD_ARGS = Path("image-build-args.json")
+CODEX_CHECKSUMS = Path("bot_bottle/contrib/codex/codex-package_SHA256SUMS")
+REQUIRED_CODEX_ASSETS = frozenset({
+    "codex-package-aarch64-unknown-linux-musl.tar.gz",
+    "codex-package-x86_64-unknown-linux-musl.tar.gz",
+})
 REQUIRED_BASE_ARGS = frozenset({
     "DOCKER_CLI_BASE_IMAGE",
     "NODE_BASE_IMAGE",
@@ -248,6 +253,32 @@ def check_python_lock(root: Path) -> list[str]:
     return problems
 
 
+def check_codex_checksums(root: Path) -> list[str]:
+    """Require one valid digest for every supported standalone archive."""
+    try:
+        lines = (root / CODEX_CHECKSUMS).read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        return [f"{CODEX_CHECKSUMS}: cannot read checksum manifest: {exc}"]
+    assets: dict[str, str] = {}
+    problems: list[str] = []
+    for line in lines:
+        match = re.fullmatch(r"([0-9a-f]{64})  (\S+)", line)
+        if match is None:
+            problems.append(f"{CODEX_CHECKSUMS}: malformed checksum line: {line!r}")
+            continue
+        digest, asset = match.groups()
+        if asset in assets:
+            problems.append(f"{CODEX_CHECKSUMS}: duplicate checksum for {asset}")
+        assets[asset] = digest
+    missing = REQUIRED_CODEX_ASSETS - assets.keys()
+    if missing:
+        problems.append(
+            f"{CODEX_CHECKSUMS}: missing supported archives: "
+            f"{', '.join(sorted(missing))}",
+        )
+    return problems
+
+
 def check_repo(root: Path = REPO_ROOT) -> list[str]:
     """Return every repository image-input policy violation."""
     image_build_args, problems = load_image_build_args(root)
@@ -260,6 +291,7 @@ def check_repo(root: Path = REPO_ROOT) -> list[str]:
         problems.extend(check_dockerfile(path, text, image_build_args))
     for manifest in NPM_MANIFESTS:
         problems.extend(check_npm_manifest(root, manifest))
+    problems.extend(check_codex_checksums(root))
     nested_path = Path(
         "bot_bottle/backend/macos_container/nested_containers.py",
     )
@@ -276,9 +308,9 @@ def check_repo(root: Path = REPO_ROOT) -> list[str]:
             problems.append(
                 "nested-containers image does not consume DOCKER_CLI_BASE_IMAGE",
             )
-        if "pin_local_base(base_image)" not in nested_source:
+        if 'image = f"{pinned_base}{IMAGE_SUFFIX}"' not in nested_source:
             problems.append(
-                "nested-containers image does not pin its local agent base",
+                "nested-containers output is not keyed by its pinned agent base",
             )
     problems.extend(check_python_lock(root))
     return problems

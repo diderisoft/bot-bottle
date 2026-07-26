@@ -107,7 +107,8 @@ def _layer_nested_containers(
     """
     if not plan.nested_containers:
         return agent_image
-    derived = f"{agent_image}{nested_containers_mod.IMAGE_SUFFIX}"
+    pinned_base = container_mod.pinned_local_image_ref(agent_image)
+    derived = f"{pinned_base}{nested_containers_mod.IMAGE_SUFFIX}"
     if plan.spec.image_policy == "cached":
         if not container_mod.image_exists(derived):
             die(
@@ -117,9 +118,8 @@ def _layer_nested_containers(
         info(f"using cached nested-container image {derived!r}")
         return derived
     return nested_containers_mod.build_image(
-        agent_image,
+        pinned_base,
         container_mod.build_image,
-        container_mod.pinned_local_image_ref,
     )
 
 
