@@ -86,12 +86,15 @@ jobs:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage.docker
         run: |
           set -euo pipefail
-          DOCKER_HOST_ADDRESS=$(python3 scripts/docker_host_address.py)
-          test -n "$DOCKER_HOST_ADDRESS"
+          DOCKER_CLIENT_NETWORK=$(
+            docker inspect "$(hostname)" |
+              python3 -c 'import json,sys; n=json.load(sys.stdin)[0]["NetworkSettings"]["Networks"]; print(next(iter(n)))'
+          )
+          test -n "$DOCKER_CLIENT_NETWORK"
           RUN_KEY="${GITHUB_RUN_ID:-${GITHUB_RUN_NUMBER:-0}}"
-          export NO_PROXY="${NO_PROXY:+$NO_PROXY,}$DOCKER_HOST_ADDRESS"
-          export no_proxy="${no_proxy:+$no_proxy,}$DOCKER_HOST_ADDRESS"
-          export BOT_BOTTLE_DOCKER_HOST_ADDRESS="$DOCKER_HOST_ADDRESS"
+          export NO_PROXY="*"
+          export no_proxy="*"
+          export BOT_BOTTLE_DOCKER_CLIENT_NETWORK="$DOCKER_CLIENT_NETWORK"
           export BOT_BOTTLE_DOCKER_ROOT_MOUNT="bot-bottle-ci-root-$RUN_KEY"
           export BOT_BOTTLE_DOCKER_CA_MOUNT="bot-bottle-ci-ca-$RUN_KEY"
           python3 -m coverage run -m scripts.unittest_gate \

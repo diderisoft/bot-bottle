@@ -69,6 +69,34 @@ class TestDockerOrchestrator(unittest.TestCase):
                 root_mount_source="state-volume",
             )
 
+    def test_socket_shared_job_network_uses_container_dns(self) -> None:
+        orch = DockerOrchestrator(
+            name="orchestrator-itest",
+            port=22001,
+            client_network="runner-job-network",
+            root_mount_source="state-volume",
+        )
+        with patch(_TOKEN, return_value="k"), \
+                patch(
+                    _URLOPEN,
+                    side_effect=[urllib.error.URLError("down"), _health(200)],
+                ), patch(_RUN, return_value=_proc()) as run, patch(_SLEEP):
+            orch.ensure_running()
+        self.assertEqual("http://orchestrator-itest:8099", orch.url())
+        calls = [call.args[0] for call in run.call_args_list]
+        self.assertIn(
+            [
+                "docker", "network", "connect",
+                "runner-job-network", "orchestrator-itest",
+            ],
+            calls,
+        )
+        argv = next(call for call in calls if call[:2] == ["docker", "run"])
+        self.assertEqual(
+            "127.0.0.1:22001:8099",
+            argv[argv.index("--publish") + 1],
+        )
+
     def test_gateway_url_is_the_container_dns_name(self) -> None:
         # The gateway reaches the orchestrator by name on the control network.
         self.assertEqual(f"http://{ORCHESTRATOR_NAME}:8099", self.orch.gateway_url())

@@ -8,10 +8,10 @@ gate when tested package/build inputs change on a pull request or on `main`.
 
 The Docker job preflights the backend before discovery. Gitea's `act_runner`
 runs the job in a container with the host Docker socket, so the test process
-reaches host-published ports through its bridge gateway and uses named Docker
-volumes for orchestrator/CA state the host daemon must mount. The orchestrator
-runs the package baked into the image built from the checkout; it does not bind
-the job container's invisible workspace into a sibling container.
+reaches control-plane siblings through the job's Docker network and uses named
+Docker volumes for orchestrator/CA state the host daemon must mount. The
+orchestrator runs the package baked into the image built from the checkout; it
+does not bind the job container's invisible workspace into a sibling container.
 
 `scripts.unittest_gate` enforces the Docker job's contract: all 22 integration
 tests must execute and none may skip. This includes the real gateway-image,

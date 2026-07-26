@@ -70,6 +70,7 @@ class DockerOrchestrator(Orchestrator):
         host_root: Path | None = None,
         root_mount_source: str | Path | None = None,
         client_host: str | None = None,
+        client_network: str | None = None,
         bind_host: str | None = None,
         dockerfile: str | None = ORCHESTRATOR_DOCKERFILE,
     ) -> None:
@@ -87,21 +88,31 @@ class DockerOrchestrator(Orchestrator):
         self._root_mount_source = str(
             root_mount_source or configured_root or host_root or bot_bottle_root()
         )
+        configured_network = os.environ.get(
+            "BOT_BOTTLE_DOCKER_CLIENT_NETWORK", ""
+        ).strip()
+        self._client_network = client_network or configured_network or None
         configured_host = os.environ.get(
             "BOT_BOTTLE_DOCKER_HOST_ADDRESS", ""
         ).strip()
-        self._client_host = client_host or configured_host or "127.0.0.1"
+        self._client_host = (
+            client_host or configured_host
+            or (self.name if self._client_network else "127.0.0.1")
+        )
         # A socket-shared CI runner reaches published ports through its Docker
-        # bridge gateway rather than its own loopback. Production stays bound
-        # to host loopback unless a caller explicitly selects another client.
+        # network rather than its own loopback. Production stays bound to host
+        # loopback unless a caller explicitly selects another client.
         self._bind_host = bind_host or (
-            "0.0.0.0" if self._client_host != "127.0.0.1" else "127.0.0.1"
+            "0.0.0.0"
+            if not self._client_network and self._client_host != "127.0.0.1"
+            else "127.0.0.1"
         )
         self._dockerfile = dockerfile
 
     def url(self) -> str:
         """Control-plane URL reachable by this Docker client."""
-        return f"http://{self._client_host}:{self.port}"
+        port = DEFAULT_PORT if self._client_network else self.port
+        return f"http://{self._client_host}:{port}"
 
     def gateway_url(self) -> str:
         """The URL the gateway's data plane resolves policy against — the
@@ -195,8 +206,8 @@ class DockerOrchestrator(Orchestrator):
             # route to the control plane (the L3 block, not just the JWT).
             "--network", self.control_network,
             # Host CLI reaches the control plane here (loopback by default).
-            # Socket-shared CI binds all host interfaces so its job container
-            # can use the Docker bridge gateway selected by `client_host`. The
+            # Socket-shared CI joins the container directly to the job network;
+            # the host-side mapping remains loopback-only in that topology. The
             # orchestrator listens on the fixed DEFAULT_PORT inside the
             # container; self.port is the host-side published port.
             "--publish", f"{self._bind_host}:{self.port}:{DEFAULT_PORT}",
@@ -221,6 +232,15 @@ class DockerOrchestrator(Orchestrator):
             raise OrchestratorStartError(
                 f"orchestrator container failed to start: {proc.stderr.strip()}"
             )
+        if self._client_network:
+            proc = run_docker([
+                "docker", "network", "connect", self._client_network, self.name,
+            ])
+            if proc.returncode != 0:
+                raise OrchestratorStartError(
+                    f"orchestrator container failed to join client network "
+                    f"{self._client_network}: {proc.stderr.strip()}"
+                )
 
     def stop(self) -> None:
         """Remove the control-plane container (idempotent)."""
