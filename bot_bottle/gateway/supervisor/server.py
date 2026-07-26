@@ -58,9 +58,9 @@ import typing
 from dataclasses import dataclass
 
 from bot_bottle.constants import IDENTITY_HEADER
-from bot_bottle.gateway.egress.addon_core import (
-    LOG_OFF, load_config, resolve_client_context, route_to_yaml_dict,
-)
+from bot_bottle.gateway.egress.context import resolve_client_context
+from bot_bottle.gateway.egress.schema import load_config, route_to_yaml_dict
+from bot_bottle.gateway.egress.types import LOG_OFF
 from bot_bottle.gateway.policy_resolver import PolicyResolveError, PolicyResolver
 from bot_bottle.supervisor import types as _sv
 

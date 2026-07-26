@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..gateway.egress.addon_core import Route
+from ..gateway.egress.types import Route
 
 
 @dataclass(frozen=True)
@@ -19,7 +19,7 @@ class EgressRoute(Route):
     """Host-side extension of the addon's `Route`.
 
     Inherits `host`, `matches`, `auth_scheme`, and `token_env`
-    from `egress_addon_core.Route` — those are the fields that cross the
+    from the gateway's wire `Route` — those are the fields that cross the
     YAML wire into the gateway. The fields below are host-only and
     are never serialised to the addon.
 

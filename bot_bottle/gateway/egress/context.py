@@ -38,7 +38,7 @@ class ContextResolverLike(typing.Protocol):
 
 def _config_from_policy(policy: str | None) -> Config:
     # Local import keeps schema parsing independent of resolver protocols.
-    from .addon_core import load_config
+    from .schema import load_config
     if not policy:
         return Config(routes=(), deny_reason=DENY_UNATTRIBUTED)
     try:

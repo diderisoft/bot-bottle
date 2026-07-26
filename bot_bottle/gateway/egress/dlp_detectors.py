@@ -19,7 +19,7 @@ from math import log2
 from collections import Counter
 from urllib.parse import quote as url_quote
 
-from .addon_core import ScanResult
+from .types import ScanResult
 
 
 # ---------------------------------------------------------------------------

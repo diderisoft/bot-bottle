@@ -14,8 +14,8 @@ import secrets
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ..gateway.egress.addon_core import (
-    ON_MATCH_REDACT,
+from ..gateway.egress.dlp_config import ON_MATCH_REDACT
+from ..gateway.egress.types import (
     HeaderMatch as CoreHeaderMatch,
     MatchEntry as CoreMatchEntry,
     PathMatch as CorePathMatch,

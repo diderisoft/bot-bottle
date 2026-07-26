@@ -8,16 +8,18 @@ from __future__ import annotations
 
 import unittest
 
-from bot_bottle.gateway.egress.addon_core import (
-    HeaderMatch,
-    MatchEntry,
-    PathMatch,
-    Route,
-    evaluate_matches,
+from bot_bottle.gateway.egress.matching import evaluate_matches
+from bot_bottle.gateway.egress.schema import (
     load_config,
     parse_config,
     parse_routes,
     route_to_yaml_dict,
+)
+from bot_bottle.gateway.egress.types import (
+    HeaderMatch,
+    MatchEntry,
+    PathMatch,
+    Route,
 )
 
 

@@ -17,16 +17,10 @@ from mitmproxy import http  # type: ignore[import-not-found]  # pylint: disable=
 
 from bot_bottle.constants import IDENTITY_HEADER
 from bot_bottle.gateway.egress.dlp_detectors import redact_tokens, strip_crlf
-from bot_bottle.gateway.egress.addon_core import (
-    LOG_BLOCKS,
-    LOG_FULL,
+from bot_bottle.gateway.egress.dlp_config import (
     DEFAULT_OUTBOUND_ON_MATCH,
     ON_MATCH_BLOCK,
     ON_MATCH_REDACT,
-    Config,
-    Route,
-    ScanResult,
-    route_to_yaml_dict,
 )
 from bot_bottle.gateway.egress.context import resolve_client_context
 from bot_bottle.gateway.egress.dlp import (
@@ -43,6 +37,14 @@ from bot_bottle.gateway.egress.matching import (
     is_git_fetch_request,
     is_git_push_request,
     match_route,
+)
+from bot_bottle.gateway.egress.schema import route_to_yaml_dict
+from bot_bottle.gateway.egress.types import (
+    LOG_BLOCKS,
+    LOG_FULL,
+    Config,
+    Route,
+    ScanResult,
 )
 from bot_bottle.gateway.policy_resolver import PolicyResolveError, PolicyResolver
 from bot_bottle.supervisor.types import (

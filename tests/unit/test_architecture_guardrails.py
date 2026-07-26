@@ -36,7 +36,8 @@ class TestCliBackendBoundaries(unittest.TestCase):
 class TestRuntimeModuleSizes(unittest.TestCase):
     def test_egress_modules_stay_focused(self) -> None:
         caps = {
-            "addon_core.py": 900,  # compatibility + policy-schema parsing only
+            "addon_core.py": 100,
+            "schema.py": 400,
             "types.py": 180,
             "matching.py": 180,
             "dlp.py": 180,
@@ -48,3 +49,18 @@ class TestRuntimeModuleSizes(unittest.TestCase):
                      if len((directory / name).read_text().splitlines()) > cap]
         self.assertEqual([], oversized, "split a module rather than raising its cap: " +
                          ", ".join(oversized))
+
+    def test_runtime_code_uses_focused_egress_modules(self) -> None:
+        """addon_core is compatibility-only, never an internal dependency."""
+        violations: list[str] = []
+        package = ROOT / "bot_bottle"
+        facade = package / "gateway" / "egress" / "addon_core.py"
+        package_init = package / "gateway" / "egress" / "__init__.py"
+        for path in package.rglob("*.py"):
+            if path in (facade, package_init):
+                continue
+            text = path.read_text()
+            if "gateway.egress.addon_core import" in text or \
+                    ".addon_core import" in text:
+                violations.append(str(path.relative_to(ROOT)))
+        self.assertEqual([], violations)
