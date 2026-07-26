@@ -17,7 +17,7 @@ jobs:
   canaries:
     runs-on: ubuntu-latest
     env:
-      CLAUDE_BOTTLE_RUN_CANARIES: "1"
+      BOT_BOTTLE_RUN_CANARIES: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
