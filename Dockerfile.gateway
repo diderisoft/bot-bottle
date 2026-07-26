@@ -36,11 +36,12 @@
 #   9420  git-gate smart HTTP (VM-backend agent-facing transport)
 #   9100  supervise (MCP HTTP)
 
-# Based on `python:3.12-slim` (Debian trixie) rather than the
+# Based on an exact `python:3.12.13-slim-trixie` multi-architecture manifest
+# rather than the
 # `mitmproxy/mitmproxy` image (Debian bookworm), matching the trixie base the
 # orchestrator image needs for buildah (Dockerfile.orchestrator.fc). mitmproxy
 # is pip-installed to the same effect as the upstream image.
-FROM python:3.12-slim
+FROM python:3.12.13-slim-trixie@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
 
 # Runtime system deps:
 #   git supplies the `git daemon` subcommand (no separate package)
@@ -54,10 +55,13 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 # mitmdump (the egress data plane). The upstream mitmproxy image baked
-# this in; on the plain python base we pip-install the same pinned
-# version. Its CA dir is set explicitly via `--set confdir=` in
+# this in; on the plain python base we install a fully resolved lock whose
+# distributions are all hash-verified. Its CA dir is set explicitly via
+# `--set confdir=` in
 # egress-entrypoint.sh, so it doesn't depend on a `mitmproxy` home user.
-RUN pip install --no-cache-dir mitmproxy==11.1.3
+COPY requirements.gateway.lock /tmp/requirements.gateway.lock
+RUN pip install --no-cache-dir --require-hashes \
+      -r /tmp/requirements.gateway.lock
 
 # gitleaks (the pre-receive hook's secret scanner). Installed from its
 # official release, pinned by version + SHA256 and verified — rather than

@@ -49,9 +49,9 @@ _ARTIFACT_FORMAT = "1"
 # from its own generic package; the Dockerfiles baked into each differ (only the
 # orchestrator rootfs carries buildah), so the versions are hashed separately.
 ROLES = ("orchestrator", "gateway")
-_DOCKERFILES = {
+_BUILD_INPUTS = {
     "orchestrator": ("Dockerfile.orchestrator", "Dockerfile.orchestrator.fc"),
-    "gateway": ("Dockerfile.gateway",),
+    "gateway": ("Dockerfile.gateway", "requirements.gateway.lock"),
 }
 
 _DEFAULT_BASE = "https://gitea.dideric.is"
@@ -101,7 +101,7 @@ def infra_artifact_version(
         h.update(str(path.relative_to(repo_root)).encode())
         h.update(b"\0")
         h.update(path.read_bytes())
-    for name in _DOCKERFILES[role]:
+    for name in _BUILD_INPUTS[role]:
         h.update(name.encode())
         h.update(b"\0")
         h.update((repo_root / name).read_bytes())

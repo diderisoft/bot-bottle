@@ -4,5 +4,7 @@
 include Dockerfile.gateway
 include Dockerfile.orchestrator
 include Dockerfile.orchestrator.fc
+include requirements.gateway.in
+include requirements.gateway.lock
 include nix/firecracker-netpool.nix
 include scripts/firecracker-netpool.sh

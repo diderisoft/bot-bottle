@@ -38,8 +38,13 @@ include = ["bot_bottle*"]
 bot_bottle = [
     "gateway/egress/entrypoint.sh",
     "contrib/claude/Dockerfile",
+    "contrib/claude/package.json",
+    "contrib/claude/package-lock.json",
     "contrib/codex/Dockerfile",
+    "contrib/codex/install.sh.sha256",
     "contrib/pi/Dockerfile",
+    "contrib/pi/package.json",
+    "contrib/pi/package-lock.json",
     "backend/firecracker/netpool.defaults.env",
     "backend/macos_container/nested-containers-init.sh",
 ]

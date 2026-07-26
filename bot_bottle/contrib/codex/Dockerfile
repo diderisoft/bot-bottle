@@ -3,7 +3,7 @@
 # Mirrors the default Claude image shape: Node LTS, git/network tooling,
 # non-root node user, and the provider CLI installed for that user.
 
-FROM node:22-trixie-slim
+FROM node:22.23.1-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba
 
 # The standalone installer is used below because remote-control requires its
 # managed package layout. Keep this exact release in sync with the verified
@@ -35,10 +35,18 @@ WORKDIR /home/node
 
 ENV PATH="/home/node/.local/bin:${PATH}"
 
-# Remote-control support requires the standalone Codex install layout
-# under ~/.codex/packages/standalone/current. The npm package can run
-# the TUI, but remote-control commands expect this installer-owned path.
-RUN mkdir -p /home/node/.codex \
-  && curl -fsSL https://chatgpt.com/codex/install.sh | sh
+# Remote-control support requires the standalone Codex install layout under
+# ~/.codex/packages/standalone/current. Fetch the installer from the same
+# immutable release tag as the requested CLI, verify the committed checksum
+# before executing it, and let the official installer verify the selected
+# release archive against upstream release metadata.
+COPY --chown=node:node bot_bottle/contrib/codex/install.sh.sha256 /tmp/install.sh.sha256
+RUN curl -fsSL \
+      "https://raw.githubusercontent.com/openai/codex/rust-v${CODEX_VERSION}/scripts/install/install.sh" \
+      -o /tmp/install.sh \
+  && cd /tmp \
+  && sha256sum -c install.sh.sha256 \
+  && CODEX_NON_INTERACTIVE=1 sh /tmp/install.sh --release "${CODEX_VERSION}" \
+  && test "$(codex --version)" = "codex-cli ${CODEX_VERSION}"
 
 CMD ["codex"]

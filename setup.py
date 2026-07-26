@@ -24,6 +24,7 @@ _BUNDLED_RESOURCES = (
     "Dockerfile.gateway",
     "Dockerfile.orchestrator",
     "Dockerfile.orchestrator.fc",
+    "requirements.gateway.lock",
     "nix/firecracker-netpool.nix",
     "scripts/firecracker-netpool.sh",
 )

@@ -133,10 +133,15 @@ def build_infra_images_with_docker() -> None:
     root = str(resources.build_root())
     docker_mod.build_image(
         _ORCHESTRATOR_IMAGE, root, dockerfile="Dockerfile.orchestrator")
+    orchestrator_id = docker_mod.image_id(_ORCHESTRATOR_IMAGE)
     docker_mod.build_image(
         _GATEWAY_IMAGE, root, dockerfile="Dockerfile.gateway")
     docker_mod.build_image(
-        _ORCHESTRATOR_FC_IMAGE, root, dockerfile="Dockerfile.orchestrator.fc")
+        _ORCHESTRATOR_FC_IMAGE,
+        root,
+        dockerfile="Dockerfile.orchestrator.fc",
+        build_args={"ORCHESTRATOR_BASE_IMAGE": orchestrator_id},
+    )
 
 
 def build_rootfs_dir(role: str) -> Path:

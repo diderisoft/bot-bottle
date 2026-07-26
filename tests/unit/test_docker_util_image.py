@@ -121,5 +121,54 @@ class TestCommitContainer(unittest.TestCase):
         self.assertIn("my-tag:v1", die.call_args.args[0])
 
 
+class TestBuildImage(unittest.TestCase):
+    def test_passes_build_args_without_mutating_the_value(self):
+        with patch.object(
+            docker_mod.subprocess, "run", return_value=_ok(),
+        ) as run, patch.object(docker_mod, "info"):
+            docker_mod.build_image(
+                "derived:test",
+                "/context",
+                dockerfile="Dockerfile.derived",
+                build_args={"BASE_IMAGE": "sha256:" + "a" * 64},
+            )
+        self.assertEqual(
+            [
+                "docker", "build", "-t", "derived:test",
+                "-f", "Dockerfile.derived",
+                "--build-arg", "BASE_IMAGE=sha256:" + "a" * 64,
+                "/context",
+            ],
+            run.call_args.args[0],
+        )
+
+
+class TestImageId(unittest.TestCase):
+    def test_returns_content_addressed_local_id(self):
+        expected = "sha256:" + "b" * 64
+        with patch.object(
+            docker_mod, "run_docker", return_value=_ok(stdout=expected + "\n"),
+        ) as run:
+            self.assertEqual(expected, docker_mod.image_id("base:mutable"))
+        self.assertEqual(
+            [
+                "docker", "image", "inspect", "--format", "{{.Id}}",
+                "base:mutable",
+            ],
+            run.call_args.args[0],
+        )
+
+    def test_rejects_failed_or_non_content_addressed_inspect(self):
+        for result in (_fail("missing"), _ok(stdout="base:latest\n")):
+            with self.subTest(result=result), patch.object(
+                docker_mod, "run_docker", return_value=result,
+            ), patch.object(
+                docker_mod, "die", side_effect=SystemExit("die"),
+            ) as die:
+                with self.assertRaises(SystemExit):
+                    docker_mod.image_id("base:latest")
+                die.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

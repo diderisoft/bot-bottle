@@ -110,6 +110,7 @@ class TestVersionInputs(unittest.TestCase):
         for name in ("Dockerfile.orchestrator", "Dockerfile.orchestrator.fc",
                      "Dockerfile.gateway"):
             (root / name).write_text(f"FROM scratch  # {name}\n")
+        (root / "requirements.gateway.lock").write_text("mitmproxy==11.1.3\n")
         (root / "pyproject.toml").write_text("[project]\nname = 'bot-bottle'\n")
 
     def test_pyproject_toml_change_bumps_version(self) -> None:
@@ -144,6 +145,21 @@ class TestVersionInputs(unittest.TestCase):
             (root / "bot_bottle" / "egress_entrypoint.sh").write_text(
                 "#!/bin/sh\nexec mitmdump --different\n")
             after = ia.infra_artifact_version("init", _ROLE, repo_root=root)
+        self.assertNotEqual(before, after)
+
+    def test_gateway_lock_change_bumps_gateway_version(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._fake_repo(root)
+            before = ia.infra_artifact_version(
+                "init", "gateway", repo_root=root,
+            )
+            (root / "requirements.gateway.lock").write_text(
+                "mitmproxy==11.1.3 --hash=sha256:changed\n",
+            )
+            after = ia.infra_artifact_version(
+                "init", "gateway", repo_root=root,
+            )
         self.assertNotEqual(before, after)
 
     def test_pyc_and_pycache_ignored(self) -> None:

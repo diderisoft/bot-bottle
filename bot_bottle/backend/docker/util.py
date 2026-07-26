@@ -119,7 +119,13 @@ def docker_cp(src: str, dest: str) -> None:
             f"{(result.stderr or '').strip() or '<no stderr>'}")
 
 
-def build_image(ref: str, context: str, *, dockerfile: str = "") -> None:
+def build_image(
+    ref: str,
+    context: str,
+    *,
+    dockerfile: str = "",
+    build_args: dict[str, str] | None = None,
+) -> None:
     """Invokes `docker build` every call. Layer cache makes no-change
     rebuilds cheap; running every time means Dockerfile edits land
     without manual `docker rmi`.
@@ -139,8 +145,24 @@ def build_image(ref: str, context: str, *, dockerfile: str = "") -> None:
         args.append("--no-cache")
     if dockerfile:
         args.extend(["-f", dockerfile])
+    for name, value in (build_args or {}).items():
+        args.extend(["--build-arg", f"{name}={value}"])
     args.append(context)
     subprocess.run(args, check=True)
+
+
+def image_id(ref: str) -> str:
+    """Return the exact content-addressed ID for a local image.
+
+    This is used when one locally built image is another Dockerfile's base:
+    passing the ID prevents a mutable tag from being resolved between builds.
+    """
+    result = run_docker(["docker", "image", "inspect", "--format", "{{.Id}}", ref])
+    image = result.stdout.strip()
+    if result.returncode != 0 or not image.startswith("sha256:"):
+        detail = (result.stderr or result.stdout or "").strip()
+        die(f"could not resolve exact image ID for {ref!r}: {detail or '<no detail>'}")
+    return image
 
 
 def verify_agent_image(image: str, argv: tuple[str, ...]) -> None:

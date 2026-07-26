@@ -2,7 +2,7 @@
 #
 # Node LTS, git/network tooling, and the Pi coding-agent CLI installed globally.
 
-FROM node:22-trixie-slim
+FROM node:22.23.1-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
@@ -19,9 +19,6 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 python3-pip python3-venv \
   && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g --ignore-scripts --no-fund --no-audit @earendil-works/pi-coding-agent \
-  && npm cache clean --force
-
 RUN install -d -o node -g node -m 755 /home/node/.config /home/node/.config/git \
   && mkdir -p /home/node/.pi/agent \
   /home/node/.pi/context-mode/sessions \
@@ -34,10 +31,15 @@ RUN install -d -o node -g node -m 755 /home/node/.config /home/node/.config/git 
 USER node
 WORKDIR /home/node
 
-RUN pi install npm:@harms-haus/pi-cwd \
-  && pi install npm:pi-web-access \
-  && pi install npm:context-mode \
-  && pi install npm:pi-subagents \
-  && pi install npm:pi-mcp-adapter
+# Pi discovers npm packages from its agent directory. Installing the CLI and
+# extensions together from the committed lock makes all direct and transitive
+# package versions deterministic, with npm integrity verification.
+COPY --chown=node:node bot_bottle/contrib/pi/package.json \
+     bot_bottle/contrib/pi/package-lock.json /home/node/.pi/agent/
+RUN cd /home/node/.pi/agent \
+  && npm ci --omit=dev --no-fund --no-audit \
+  && npm cache clean --force
+
+ENV PATH="/home/node/.pi/agent/node_modules/.bin:${PATH}"
 
 CMD ["pi"]

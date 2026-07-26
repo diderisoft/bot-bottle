@@ -8,9 +8,8 @@
 # Layer ordering is deliberate: the npm install lives in its own layer so
 # changes to the rest of the repo (or to the CMD) don't bust it.
 
-# Current Node LTS; slim variant keeps the image small while still
-# providing apt-get for any future additions.
-FROM node:22-trixie-slim
+# Version-qualified Node LTS, pinned to its multi-architecture manifest.
+FROM node:22.23.1-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba
 
 # Install runtime system deps. claude-code shells out to git for several
 # features (status checks, commits, PR creation) — without git in the
@@ -39,11 +38,13 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 python3-pip python3-venv \
   && rm -rf /var/lib/apt/lists/*
 
-# Install claude-code globally. Pinned to the version verified in the v1
-# build (`claude --version` returns 2.1.126). Bump deliberately when
-# rolling forward; an unpinned install would mean rebuilds silently pick
-# up new behavior.
-RUN npm install -g --no-fund --no-audit @anthropic-ai/claude-code@2.1.172 \
+# Install from the committed npm lock. `npm ci` verifies every registry
+# artifact against its lockfile integrity and refuses dependency drift.
+COPY bot_bottle/contrib/claude/package.json \
+     bot_bottle/contrib/claude/package-lock.json /opt/claude/
+RUN cd /opt/claude \
+  && npm ci --omit=dev --no-fund --no-audit \
+  && ln -s /opt/claude/node_modules/.bin/claude /usr/local/bin/claude \
   && npm cache clean --force
 
 # Git reads both ~/.gitconfig and ~/.config/git/config. Keep its XDG config
