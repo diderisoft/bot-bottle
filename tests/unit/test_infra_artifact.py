@@ -110,6 +110,9 @@ class TestVersionInputs(unittest.TestCase):
         for name in ("Dockerfile.orchestrator", "Dockerfile.orchestrator.fc",
                      "Dockerfile.gateway"):
             (root / name).write_text(f"FROM scratch  # {name}\n")
+        (root / "image-build-args.json").write_text(
+            '{"PYTHON_BASE_IMAGE": "python:pinned"}\n',
+        )
         (root / "requirements.gateway.lock").write_text("mitmproxy==11.1.3\n")
         (root / "pyproject.toml").write_text("[project]\nname = 'bot-bottle'\n")
 
@@ -161,6 +164,23 @@ class TestVersionInputs(unittest.TestCase):
                 "init", "gateway", repo_root=root,
             )
         self.assertNotEqual(before, after)
+
+    def test_base_image_argument_change_bumps_both_role_versions(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._fake_repo(root)
+            before = {
+                role: ia.infra_artifact_version("init", role, repo_root=root)
+                for role in ia.ROLES
+            }
+            (root / "image-build-args.json").write_text(
+                '{"PYTHON_BASE_IMAGE": "python:different"}\n',
+            )
+            after = {
+                role: ia.infra_artifact_version("init", role, repo_root=root)
+                for role in ia.ROLES
+            }
+        self.assertTrue(all(before[role] != after[role] for role in ia.ROLES))
 
     def test_pyc_and_pycache_ignored(self) -> None:
         with tempfile.TemporaryDirectory() as d:

@@ -19,12 +19,14 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import os
+import shlex
 import shutil
 import subprocess
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator
 
+from ... import resources
 from ...log import die, info
 from . import util
 from .infra import FirecrackerInfraService
@@ -55,6 +57,11 @@ def _rootfs_digest(dockerfile: Path) -> str:
     h = hashlib.sha256()
     h.update(_dockerfile_hash(dockerfile).encode())
     h.update(b"\0")
+    for name, value in resources.image_build_args(dockerfile).items():
+        h.update(name.encode())
+        h.update(b"=")
+        h.update(value.encode())
+        h.update(b"\0")
     h.update(util._GUEST_INIT.encode())
     return h.hexdigest()[:16]
 
@@ -147,7 +154,13 @@ def _build_in_infra(
         if prep.returncode != 0:
             die(f"preparing build dir in the infra VM failed: {prep.stderr.strip()}")
         _send_dockerfile(key, ip, dockerfile, ctx)
-        _buildah_build(key, ip, ctx, tag)
+        _buildah_build(
+            key,
+            ip,
+            ctx,
+            tag,
+            resources.image_build_args(dockerfile),
+        )
         _smoke_test(key, ip, tag, smoke_ctr, smoke_test)
         _stream_rootfs(key, ip, tag, export_ctr, base)
     finally:
@@ -184,15 +197,26 @@ def _send_dockerfile(private_key: Path, guest_ip: str, dockerfile: Path, ctx: st
             f"{proc.stderr.decode(errors='replace').strip()}")
 
 
-def _buildah_build(private_key: Path, guest_ip: str, ctx: str, tag: str) -> None:
+def _buildah_build(
+    private_key: Path,
+    guest_ip: str,
+    ctx: str,
+    tag: str,
+    build_args: dict[str, str],
+) -> None:
     # Stream buildah's step-by-step output straight to our stderr (like the
     # docker backend's `docker build`), so a long first build (base pull +
     # apt/npm installs) shows live progress instead of a silent wait. The
     # remote stderr is where buildah writes its `STEP i/n` lines.
     info(f"buildah build {tag} in the infra VM (streaming output)")
+    arg_flags = " ".join(
+        f"--build-arg {shlex.quote(f'{name}={value}')}"
+        for name, value in build_args.items()
+    )
     rc = _ssh_streamed(
         private_key, guest_ip,
-        f"buildah build {_BUILD_FLAGS} -t {tag} -f {ctx}/Dockerfile {ctx}/ctx",
+        f"buildah build {_BUILD_FLAGS} {arg_flags} "
+        f"-t {tag} -f {ctx}/Dockerfile {ctx}/ctx",
         timeout=_BUILD_TIMEOUT_SECONDS,
     )
     if rc != 0:

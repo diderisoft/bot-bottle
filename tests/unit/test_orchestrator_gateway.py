@@ -323,6 +323,10 @@ class TestDockerGatewayBuild(unittest.TestCase):
         self.assertEqual(1, len(builds))
         self.assertIn(self.sc.image_ref, builds[0])
         self.assertTrue(any(a.endswith("Dockerfile.gateway") for a in builds[0]))
+        arg_index = builds[0].index("--build-arg")
+        self.assertTrue(
+            builds[0][arg_index + 1].startswith("PYTHON_BASE_IMAGE=python:"),
+        )
         self.assertNotIn("--no-cache", builds[0])
 
     def test_ensure_built_no_cache_env_forces_full_rebuild(self) -> None:

@@ -2,30 +2,43 @@
 
 from __future__ import annotations
 
+import json
 import re
 import unittest
 from pathlib import Path
 
 
-_CONTRIB_DIR = Path(__file__).resolve().parents[2] / "bot_bottle/contrib"
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_CONTRIB_DIR = _REPO_ROOT / "bot_bottle/contrib"
 _AGENT_DOCKERFILES = tuple(sorted(_CONTRIB_DIR.glob("*/Dockerfile")))
 
 
 class TestBuiltinAgentImages(unittest.TestCase):
     def test_all_share_one_digest_pinned_node_trixie_base(self):
         self.assertTrue(_AGENT_DOCKERFILES)
-        bases = []
+        inputs = json.loads((_REPO_ROOT / "image-build-args.json").read_text())
+        self.assertRegex(
+            inputs["NODE_BASE_IMAGE"],
+            r"^node:22\.\d+\.\d+-trixie-slim@sha256:[0-9a-f]{64}$",
+        )
         for dockerfile in _AGENT_DOCKERFILES:
             with self.subTest(provider=dockerfile.parent.name):
-                match = re.search(
-                    r"(?m)^FROM "
-                    r"(node:22\.\d+\.\d+-trixie-slim@sha256:[0-9a-f]{64})\s*$",
-                    dockerfile.read_text(),
-                )
-                if match is None:
-                    self.fail(f"{dockerfile} does not use a digest-pinned Node base")
-                bases.append(match.group(1))
-        self.assertEqual(1, len(set(bases)))
+                text = dockerfile.read_text()
+                self.assertRegex(text, r"(?m)^ARG NODE_BASE_IMAGE$")
+                self.assertIn("FROM ${NODE_BASE_IMAGE}", text)
+
+    def test_orchestrator_and_gateway_share_configurable_python_base(self):
+        inputs = json.loads((_REPO_ROOT / "image-build-args.json").read_text())
+        self.assertRegex(
+            inputs["PYTHON_BASE_IMAGE"],
+            r"^python:3\.12\.\d+-slim-trixie@sha256:[0-9a-f]{64}$",
+        )
+        for name in ("Dockerfile.orchestrator", "Dockerfile.gateway"):
+            dockerfile = _REPO_ROOT / name
+            text = dockerfile.read_text()
+            with self.subTest(dockerfile=name):
+                self.assertRegex(text, r"(?m)^ARG PYTHON_BASE_IMAGE$")
+                self.assertIn("FROM ${PYTHON_BASE_IMAGE}", text)
 
     def test_none_install_podman(self):
         # podman lives in the nested-containers derived layer (nested_containers.py),

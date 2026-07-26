@@ -122,6 +122,27 @@ class TestCommitContainer(unittest.TestCase):
 
 
 class TestBuildImage(unittest.TestCase):
+    def test_passes_centralized_image_build_args(self):
+        with patch.object(
+            docker_mod.resources,
+            "image_build_args",
+            return_value={"NODE_BASE_IMAGE": "node:pinned"},
+        ), patch.object(
+            docker_mod.subprocess, "run", return_value=_ok(),
+        ) as run, patch.object(docker_mod, "info"):
+            docker_mod.build_image(
+                "agent:test",
+                "/context",
+                dockerfile="Dockerfile.agent",
+            )
+        self.assertIn(
+            ["--build-arg", "NODE_BASE_IMAGE=node:pinned"],
+            [
+                run.call_args.args[0][index:index + 2]
+                for index in range(len(run.call_args.args[0]) - 1)
+            ],
+        )
+
     def test_passes_build_args_without_mutating_the_value(self):
         with patch.object(
             docker_mod.subprocess, "run", return_value=_ok(),

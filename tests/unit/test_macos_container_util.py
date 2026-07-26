@@ -115,6 +115,37 @@ resolver #2
             run.call_args_list[-1].args[0],
         )
 
+    def test_build_image_passes_centralized_image_build_args(self):
+        status = util.subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=(
+                '[{"status":{"state":"running"},'
+                '"configuration":{"dns":{"nameservers":["9.9.9.9"]}}}]'
+            ),
+            stderr="",
+        )
+        with patch.object(util.subprocess, "run", return_value=status) as run, \
+             patch.object(
+                 util.resources,
+                 "image_build_args",
+                 return_value={"NODE_BASE_IMAGE": "node:pinned"},
+             ), patch.object(util.os, "environ", {
+                 "BOT_BOTTLE_MACOS_CONTAINER_DNS": "9.9.9.9",
+             }):
+            util.build_image(
+                "bot-bottle-agent:latest",
+                "/repo",
+                dockerfile="Dockerfile.agent",
+            )
+        self.assertIn(
+            ["--build-arg", "NODE_BASE_IMAGE=node:pinned"],
+            [
+                run.call_args_list[-1].args[0][index:index + 2]
+                for index in range(len(run.call_args_list[-1].args[0]) - 1)
+            ],
+        )
+
     def test_commit_container_execs_tar_and_builds_image(self):
         # stderr is bytes because subprocess.run uses stderr=PIPE without text=True
         completed = util.subprocess.CompletedProcess(

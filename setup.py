@@ -21,6 +21,7 @@ _ROOT = Path(__file__).resolve().parent
 # Must match bot_bottle.resources.BUNDLED_RESOURCES (paths relative to root).
 _BUNDLED_RESOURCES = (
     "pyproject.toml",
+    "image-build-args.json",
     "Dockerfile.gateway",
     "Dockerfile.orchestrator",
     "Dockerfile.orchestrator.fc",

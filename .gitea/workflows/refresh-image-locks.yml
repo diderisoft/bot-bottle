@@ -13,6 +13,7 @@ on:
       - 'bot_bottle/contrib/claude/package.json'
       - 'bot_bottle/contrib/pi/package.json'
       - 'bot_bottle/contrib/codex/Dockerfile'
+      - 'image-build-args.json'
       - '.gitea/workflows/refresh-image-locks.yml'
 
 permissions:
@@ -25,15 +26,32 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Resolve image runtime versions
+        id: runtimes
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import re
+          inputs = json.load(open("image-build-args.json"))
+          for output, name in (
+              ("python-version", "PYTHON_BASE_IMAGE"),
+              ("node-version", "NODE_BASE_IMAGE"),
+          ):
+              match = re.search(r":(\d+\.\d+\.\d+)-", inputs[name])
+              if match is None:
+                  raise SystemExit(f"cannot resolve runtime version from {name}")
+              print(f"{output}={match.group(1)}")
+          PY
+
       - name: Use the image Python version
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12.13'
+          python-version: '${{ steps.runtimes.outputs.python-version }}'
 
       - name: Use the image Node version
         uses: actions/setup-node@v4
         with:
-          node-version: '22.23.1'
+          node-version: '${{ steps.runtimes.outputs.node-version }}'
 
       - name: Compile gateway Python lock
         run: |

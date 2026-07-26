@@ -75,8 +75,39 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
         other.write_text("FROM python:3.12-slim\n")
         self.assertNotEqual(base, image_builder._rootfs_digest(other))
 
+    def test_rootfs_digest_tracks_centralized_build_args(self):
+        with patch.object(
+            image_builder.resources,
+            "image_build_args",
+            return_value={"NODE_BASE_IMAGE": "node:first"},
+        ):
+            first = image_builder._rootfs_digest(self.dockerfile)
+        with patch.object(
+            image_builder.resources,
+            "image_build_args",
+            return_value={"NODE_BASE_IMAGE": "node:second"},
+        ):
+            second = image_builder._rootfs_digest(self.dockerfile)
+        self.assertNotEqual(first, second)
+
 
 class TestSmokeTest(unittest.TestCase):
+    def test_buildah_receives_centralized_image_build_args(self):
+        with patch.object(
+            image_builder,
+            "_ssh_streamed",
+            return_value=0,
+        ) as ssh, patch.object(image_builder, "info"):
+            image_builder._buildah_build(
+                Path("/k"),
+                "10.0.0.1",
+                "/tmp/context",
+                "agent:test",
+                {"NODE_BASE_IMAGE": "node:pinned"},
+            )
+        script = ssh.call_args.args[2]
+        self.assertIn("--build-arg NODE_BASE_IMAGE=node:pinned", script)
+
     def test_empty_argv_is_noop(self):
         with patch.object(image_builder, "_ssh") as ssh:
             image_builder._smoke_test(Path("/k"), "10.0.0.1", "tag", "ctr", ())

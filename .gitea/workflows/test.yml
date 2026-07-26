@@ -22,6 +22,7 @@ on:
       - 'scripts/**/*.py'
       - 'scripts/firecracker-netpool.sh'
       - 'Dockerfile*'
+      - 'image-build-args.json'
       - 'pyproject.toml'
       - 'requirements-dev.txt'
       - 'requirements.gateway.*'
@@ -45,6 +46,7 @@ on:
       - 'scripts/**/*.py'
       - 'scripts/firecracker-netpool.sh'
       - 'Dockerfile*'
+      - 'image-build-args.json'
       - 'pyproject.toml'
       - 'requirements-dev.txt'
       - 'requirements.gateway.*'
@@ -149,8 +151,13 @@ jobs:
 
       - name: Verify shared bases cover supported architectures
         run: |
-          python_ref='python:3.12.13-slim-trixie@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de'
-          node_ref='node:22.23.1-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba'
+          set -euo pipefail
+          python_ref=$(python3 -c \
+            'import json; print(json.load(open("image-build-args.json"))["PYTHON_BASE_IMAGE"])')
+          node_ref=$(python3 -c \
+            'import json; print(json.load(open("image-build-args.json"))["NODE_BASE_IMAGE"])')
+          test -n "$python_ref"
+          test -n "$node_ref"
           for ref in "$python_ref" "$node_ref"; do
             docker buildx imagetools inspect --raw "$ref" |
               python3 -c '
@@ -179,8 +186,13 @@ jobs:
           claude="bot-bottle-claude-inputs:${suffix}"
           codex="bot-bottle-codex-inputs:${suffix}"
           pi="bot-bottle-pi-inputs:${suffix}"
+          python_base=$(python3 -c \
+            'import json; print(json.load(open("image-build-args.json"))["PYTHON_BASE_IMAGE"])')
+          node_base=$(python3 -c \
+            'import json; print(json.load(open("image-build-args.json"))["NODE_BASE_IMAGE"])')
 
-          docker build -t "$orchestrator" -f Dockerfile.orchestrator .
+          docker build --build-arg "PYTHON_BASE_IMAGE=$python_base" \
+            -t "$orchestrator" -f Dockerfile.orchestrator .
           orchestrator_id=$(docker image inspect --format '{{.Id}}' "$orchestrator")
           case "$orchestrator_id" in sha256:*) ;; *) exit 1 ;; esac
           orchestrator_base="bot-bottle-orchestrator-inputs:sha256-${orchestrator_id#sha256:}"
@@ -188,13 +200,17 @@ jobs:
           test "$(
             docker image inspect --format '{{.Id}}' "$orchestrator_base"
           )" = "$orchestrator_id"
-          docker build -t "$gateway" -f Dockerfile.gateway .
+          docker build --build-arg "PYTHON_BASE_IMAGE=$python_base" \
+            -t "$gateway" -f Dockerfile.gateway .
           docker build \
             --build-arg "ORCHESTRATOR_BASE_IMAGE=$orchestrator_base" \
             -t "$orchestrator_fc" -f Dockerfile.orchestrator.fc .
-          docker build -t "$claude" -f bot_bottle/contrib/claude/Dockerfile .
-          docker build -t "$codex" -f bot_bottle/contrib/codex/Dockerfile .
-          docker build -t "$pi" -f bot_bottle/contrib/pi/Dockerfile .
+          docker build --build-arg "NODE_BASE_IMAGE=$node_base" \
+            -t "$claude" -f bot_bottle/contrib/claude/Dockerfile .
+          docker build --build-arg "NODE_BASE_IMAGE=$node_base" \
+            -t "$codex" -f bot_bottle/contrib/codex/Dockerfile .
+          docker build --build-arg "NODE_BASE_IMAGE=$node_base" \
+            -t "$pi" -f bot_bottle/contrib/pi/Dockerfile .
 
           docker run --rm --entrypoint python3 "$orchestrator" -c \
             'import bot_bottle.orchestrator'

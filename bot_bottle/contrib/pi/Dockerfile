@@ -2,7 +2,8 @@
 #
 # Node LTS, git/network tooling, and the Pi coding-agent CLI installed globally.
 
-FROM node:22.23.1-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba
+ARG NODE_BASE_IMAGE
+FROM ${NODE_BASE_IMAGE}
 
 ARG DEBIAN_SNAPSHOT=20260724T000000Z
 RUN sed -i \

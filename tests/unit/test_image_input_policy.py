@@ -14,9 +14,25 @@ from scripts import check_image_inputs as policy
 
 
 class TestDockerfilePolicy(unittest.TestCase):
+    _NODE_BASE = {
+        "NODE_BASE_IMAGE":
+            "node:22.23.1-trixie-slim@sha256:" + "a" * 64,
+    }
+
     def test_accepts_versioned_digest_base(self):
         text = "FROM node:22.23.1-trixie-slim@sha256:" + "a" * 64 + "\n"
         self.assertEqual([], policy.check_dockerfile(Path("Dockerfile"), text))
+
+    def test_accepts_defaultless_base_argument_with_centralized_value(self):
+        text = "ARG NODE_BASE_IMAGE\nFROM ${NODE_BASE_IMAGE}\n"
+        self.assertEqual(
+            [],
+            policy.check_dockerfile(
+                Path("Dockerfile"),
+                text,
+                self._NODE_BASE,
+            ),
+        )
 
     def test_rejects_mutable_and_latest_bases(self):
         for value in (
@@ -61,7 +77,15 @@ class TestDockerfilePolicy(unittest.TestCase):
     def test_rejects_missing_dynamic_and_malformed_bases(self):
         cases = (
             ("RUN true\n", "missing FROM"),
-            ("FROM ${BASE_IMAGE}\n", "dynamic base"),
+            ("FROM ${BASE_IMAGE}\n", "not declared before FROM"),
+            (
+                "ARG BASE_IMAGE=node:latest\nFROM ${BASE_IMAGE}\n",
+                "must not define a default",
+            ),
+            (
+                "ARG BASE_IMAGE\nFROM ${BASE_IMAGE}\n",
+                "lacks a centralized value",
+            ),
             (
                 "ARG ORCHESTRATOR_BASE_IMAGE=base:latest\n"
                 "FROM ${ORCHESTRATOR_BASE_IMAGE}\n",
@@ -73,6 +97,15 @@ class TestDockerfilePolicy(unittest.TestCase):
             with self.subTest(expected=expected):
                 problems = policy.check_dockerfile(Path("Dockerfile"), text)
                 self.assertTrue(any(expected in item for item in problems))
+
+    def test_rejects_mutable_centralized_base_value(self):
+        text = "ARG NODE_BASE_IMAGE\nFROM ${NODE_BASE_IMAGE}\n"
+        problems = policy.check_dockerfile(
+            Path("Dockerfile"),
+            text,
+            {"NODE_BASE_IMAGE": "node:latest"},
+        )
+        self.assertTrue(any("lacks a sha256 digest" in item for item in problems))
 
     def test_requires_gateway_lock_and_verified_codex_markers(self):
         base = "FROM node:22.23.1@sha256:" + "a" * 64 + "\n"

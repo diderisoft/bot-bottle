@@ -13,6 +13,7 @@ import time
 from datetime import datetime, timezone
 from typing import Iterable
 
+from ... import resources
 from ...log import die, info
 
 
@@ -60,7 +61,13 @@ def dns_server() -> str:
     return _host_ipv4_dns() or _DEFAULT_DNS
 
 
-def build_image(ref: str, context: str, *, dockerfile: str = "") -> None:
+def build_image(
+    ref: str,
+    context: str,
+    *,
+    dockerfile: str = "",
+    build_args: dict[str, str] | None = None,
+) -> None:
     """Build an OCI image with Apple's BuildKit-backed `container build`.
 
     Set `BOT_BOTTLE_NO_CACHE=1` (the `start --no-cache` flag) to force
@@ -83,6 +90,13 @@ def build_image(ref: str, context: str, *, dockerfile: str = "") -> None:
         if not os.path.isabs(dockerfile):
             dockerfile = os.path.join(context, dockerfile)
         args.extend(["-f", dockerfile])
+    effective_build_args = resources.image_build_args(
+        dockerfile,
+        context=context,
+    ) if dockerfile else {}
+    effective_build_args.update(build_args or {})
+    for name, value in effective_build_args.items():
+        args.extend(["--build-arg", f"{name}={value}"])
     args.append(context)
     subprocess.run(args, check=True)
 

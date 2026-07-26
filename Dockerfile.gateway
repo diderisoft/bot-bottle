@@ -41,7 +41,8 @@
 # `mitmproxy/mitmproxy` image (Debian bookworm), matching the trixie base the
 # orchestrator image needs for buildah (Dockerfile.orchestrator.fc). mitmproxy
 # is pip-installed to the same effect as the upstream image.
-FROM python:3.12.13-slim-trixie@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+ARG PYTHON_BASE_IMAGE
+FROM ${PYTHON_BASE_IMAGE}
 
 # Freeze apt's package universe as well as the base filesystem. Without a
 # snapshot, the same Dockerfile resolves different package versions over time.

@@ -1,0 +1,4 @@
+{
+  "NODE_BASE_IMAGE": "node:22.23.1-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba",
+  "PYTHON_BASE_IMAGE": "python:3.12.13-slim-trixie@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de"
+}

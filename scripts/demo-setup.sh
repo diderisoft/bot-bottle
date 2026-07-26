@@ -35,5 +35,12 @@ chmod 600 "$fake_key_dir/fake-key"
 
 # Build the image graph quietly so the recorded run shows only the
 # bottle launch and the four `!` probes, not BuildKit progress.
-docker build -q -f bot_bottle/contrib/claude/Dockerfile -t bot-bottle-claude:latest . >/dev/null 2>&1 || true
+node_base_image=$(
+  python3 -c \
+    'import json; print(json.load(open("image-build-args.json"))["NODE_BASE_IMAGE"])'
+)
+docker build -q \
+  --build-arg "NODE_BASE_IMAGE=$node_base_image" \
+  -f bot_bottle/contrib/claude/Dockerfile \
+  -t bot-bottle-claude:latest . >/dev/null 2>&1 || true
 docker build -q -f Dockerfile.git-gate -t bot-bottle-git-gate:latest . >/dev/null 2>&1 || true

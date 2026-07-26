@@ -221,6 +221,10 @@ class TestDockerOrchestrator(unittest.TestCase):
         builds = [c.args[0] for c in run.call_args_list if c.args[0][:2] == ["docker", "build"]]
         self.assertEqual(1, len(builds))
         self.assertTrue(any(a.endswith("Dockerfile.orchestrator") for a in builds[0]))
+        arg_index = builds[0].index("--build-arg")
+        self.assertTrue(
+            builds[0][arg_index + 1].startswith("PYTHON_BASE_IMAGE=python:"),
+        )
 
     def test_ensure_built_raises_on_build_failure(self) -> None:
         with patch(_RUN, return_value=_proc(returncode=1, stderr="no space left")):

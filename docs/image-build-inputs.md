@@ -4,8 +4,10 @@ Bot-bottle's supported images are intended to rebuild from the same declared
 inputs on Linux amd64 and arm64. The repository enforces four layers of
 immutability:
 
-- Python and Node base images use version-qualified tags plus multi-platform
-  OCI index digests.
+- Python and Node base images are required, defaultless Docker build arguments.
+  Their version-qualified tags and multi-platform OCI index digests live
+  together in `image-build-args.json`; every supported builder reads that
+  file and passes only the arguments its Dockerfile declares.
 - Debian packages resolve from the same dated `snapshot.debian.org` archive in
   every image that runs `apt-get install`. The snapshot endpoint uses HTTP so a
   fresh image does not need a host-specific TLS interception CA; APT still
@@ -31,9 +33,9 @@ BuildKit, which treats a bare image ID in `FROM` as a registry repository.
 Make refreshes on a feature branch and review them like an application
 dependency update:
 
-1. For a Python or Node base update, select a version-qualified tag and record
-   its multi-platform index digest in every Dockerfile that shares the base.
-   Confirm the index still contains `linux/amd64` and `linux/arm64`.
+1. For a Python or Node base update, select a version-qualified tag and update
+   its one digest-pinned value in `image-build-args.json`. Confirm the index
+   still contains `linux/amd64` and `linux/arm64`.
 2. For Debian packages, advance `DEBIAN_SNAPSHOT` to one fixed UTC timestamp in
    every Dockerfile that uses apt. Do not use the moving Debian mirrors.
 3. Change direct Python versions in `requirements.gateway.in`, direct npm

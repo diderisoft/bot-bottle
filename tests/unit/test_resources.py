@@ -38,6 +38,18 @@ class TestCheckoutMode(unittest.TestCase):
         self.assertTrue(resources.nix_netpool_module().is_file())
         self.assertTrue(resources.netpool_script().is_file())
 
+    def test_image_build_args_come_from_the_central_input_file(self):
+        root = resources.build_root()
+        args = resources.image_build_args(
+            "Dockerfile.gateway",
+            context=root,
+        )
+        self.assertEqual({"PYTHON_BASE_IMAGE"}, set(args))
+        self.assertRegex(
+            args["PYTHON_BASE_IMAGE"],
+            r"^python:\d+\.\d+\.\d+-.+@sha256:[0-9a-f]{64}$",
+        )
+
     def test_bundled_resources_all_exist_at_root(self):
         # Drift guard: every path setup.py bundles must exist in the checkout.
         root = resources.build_root()

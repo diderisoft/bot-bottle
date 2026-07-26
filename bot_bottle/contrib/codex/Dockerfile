@@ -3,7 +3,8 @@
 # Mirrors the default Claude image shape: Node LTS, git/network tooling,
 # non-root node user, and the provider CLI installed for that user.
 
-FROM node:22.23.1-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba
+ARG NODE_BASE_IMAGE
+FROM ${NODE_BASE_IMAGE}
 
 # The standalone installer is used below because remote-control requires its
 # managed package layout. Keep this exact release in sync with the verified

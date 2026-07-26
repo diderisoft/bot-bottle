@@ -10,6 +10,7 @@ import shutil
 import subprocess
 from typing import Iterator
 
+from ... import resources
 from ...log import die, info
 from ...util import slugify as _slugify
 
@@ -145,7 +146,12 @@ def build_image(
         args.append("--no-cache")
     if dockerfile:
         args.extend(["-f", dockerfile])
-    for name, value in (build_args or {}).items():
+    effective_build_args = resources.image_build_args(
+        dockerfile,
+        context=context,
+    ) if dockerfile else {}
+    effective_build_args.update(build_args or {})
+    for name, value in effective_build_args.items():
         args.extend(["--build-arg", f"{name}={value}"])
     args.append(context)
     subprocess.run(args, check=True)

@@ -20,7 +20,8 @@
 # image. The version-qualified tag keeps the human-readable upstream version;
 # the digest makes the bytes immutable.
 
-FROM python:3.12.13-slim-trixie@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+ARG PYTHON_BASE_IMAGE
+FROM ${PYTHON_BASE_IMAGE}
 
 WORKDIR /app
 

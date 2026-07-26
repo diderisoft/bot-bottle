@@ -131,6 +131,11 @@ class DockerOrchestrator(Orchestrator):
                 str(self._repo_root)]
         if os.environ.get("BOT_BOTTLE_NO_CACHE"):
             argv.insert(2, "--no-cache")
+        for name, value in resources.image_build_args(
+            self._dockerfile,
+            context=self._repo_root,
+        ).items():
+            argv[-1:-1] = ["--build-arg", f"{name}={value}"]
         proc = run_docker(argv)
         if proc.returncode != 0:
             raise GatewayError(

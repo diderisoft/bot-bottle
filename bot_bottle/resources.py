@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+import json
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -37,6 +39,7 @@ _BUNDLED = _PKG / "_resources"                   # wheel-shipped copies
 # the two lists in sync (``test_resources`` guards that every entry exists).
 BUNDLED_RESOURCES: tuple[str, ...] = (
     "pyproject.toml",
+    "image-build-args.json",
     "Dockerfile.gateway",
     "Dockerfile.orchestrator",
     "Dockerfile.orchestrator.fc",
@@ -48,6 +51,8 @@ BUNDLED_RESOURCES: tuple[str, ...] = (
 # Present at a checkout root, never in a bare installed package — the cheap
 # tell for which layout we're in.
 _CHECKOUT_MARKER = "Dockerfile.gateway"
+_IMAGE_BUILD_ARGS_FILE = "image-build-args.json"
+_CENTRAL_BUILD_ARG_NAMES = frozenset({"NODE_BASE_IMAGE", "PYTHON_BASE_IMAGE"})
 
 
 class ResourceError(RuntimeError):
@@ -77,6 +82,59 @@ def build_root() -> Path:
 def dockerfile(name: str) -> Path:
     """Absolute path to a root-level Dockerfile, e.g. ``Dockerfile.gateway``."""
     return build_root() / name
+
+
+def image_build_args(
+    dockerfile_path: str | Path,
+    *,
+    context: str | Path | None = None,
+) -> dict[str, str]:
+    """Return centralized arguments declared by ``dockerfile_path``.
+
+    Base-image arguments deliberately have no Dockerfile defaults. Their
+    digest-pinned values live in one repository input file and every supported
+    build path calls this helper before invoking its OCI builder. Explicit
+    caller-supplied arguments may still override this returned mapping.
+    """
+    path = Path(dockerfile_path)
+    if not path.is_absolute() and context is not None:
+        path = Path(context) / path
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        # Generic callers and tests may build an ephemeral Dockerfile outside
+        # bot-bottle. The builder will report a genuinely missing file.
+        return {}
+    declared = set(re.findall(
+        r"(?m)^\s*ARG\s+([A-Za-z_][A-Za-z0-9_]*)\s*$",
+        text,
+    ))
+    wanted = declared & _CENTRAL_BUILD_ARG_NAMES
+    if not wanted:
+        return {}
+    root = Path(context) if context is not None else build_root()
+    inputs_path = root / _IMAGE_BUILD_ARGS_FILE
+    try:
+        inputs = json.loads(inputs_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ResourceError(
+            f"cannot read centralized image build arguments from {inputs_path}: {exc}"
+        ) from exc
+    if not isinstance(inputs, dict):
+        raise ResourceError(f"{inputs_path} must contain a JSON object")
+    missing = wanted - inputs.keys()
+    if missing:
+        raise ResourceError(
+            f"{inputs_path} lacks required image build arguments: "
+            f"{', '.join(sorted(missing))}"
+        )
+    invalid = [name for name in wanted if not isinstance(inputs[name], str)]
+    if invalid:
+        raise ResourceError(
+            f"{inputs_path} has non-string image build arguments: "
+            f"{', '.join(sorted(invalid))}"
+        )
+    return {name: inputs[name] for name in sorted(wanted)}
 
 
 def nix_netpool_module() -> Path:

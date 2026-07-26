@@ -23,6 +23,7 @@ import os
 import subprocess
 import unittest
 
+from bot_bottle import resources
 from tests._backend import skip_unless_backend
 
 
@@ -38,9 +39,18 @@ class TestGatewayImage(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         repo_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        build_args = resources.image_build_args(
+            _DOCKERFILE,
+            context=repo_root,
+        )
+        arg_flags = [
+            item
+            for name, value in build_args.items()
+            for item in ("--build-arg", f"{name}={value}")
+        ]
         proc = subprocess.run(
             ["docker", "build", "-t", _IMAGE,
-             "-f", _DOCKERFILE, "."],
+             "-f", _DOCKERFILE, *arg_flags, "."],
             cwd=repo_root,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             check=False,

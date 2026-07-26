@@ -50,8 +50,16 @@ _ARTIFACT_FORMAT = "1"
 # orchestrator rootfs carries buildah), so the versions are hashed separately.
 ROLES = ("orchestrator", "gateway")
 _BUILD_INPUTS = {
-    "orchestrator": ("Dockerfile.orchestrator", "Dockerfile.orchestrator.fc"),
-    "gateway": ("Dockerfile.gateway", "requirements.gateway.lock"),
+    "orchestrator": (
+        "image-build-args.json",
+        "Dockerfile.orchestrator",
+        "Dockerfile.orchestrator.fc",
+    ),
+    "gateway": (
+        "image-build-args.json",
+        "Dockerfile.gateway",
+        "requirements.gateway.lock",
+    ),
 }
 
 _DEFAULT_BASE = "https://gitea.dideric.is"

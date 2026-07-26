@@ -21,6 +21,8 @@ NPM_MANIFESTS = (
     Path("bot_bottle/contrib/claude/package.json"),
     Path("bot_bottle/contrib/pi/package.json"),
 )
+IMAGE_BUILD_ARGS = Path("image-build-args.json")
+REQUIRED_BASE_ARGS = frozenset({"NODE_BASE_IMAGE", "PYTHON_BASE_IMAGE"})
 
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _EXACT_NPM_VERSION = re.compile(
@@ -38,7 +40,11 @@ def _logical_lines(text: str) -> str:
     return re.sub(r"\\\r?\n", " ", text)
 
 
-def check_dockerfile(path: Path, text: str) -> list[str]:
+def check_dockerfile(
+    path: Path,
+    text: str,
+    image_build_args: dict[str, str] | None = None,
+) -> list[str]:
     """Return policy violations for one Dockerfile."""
     problems: list[str] = []
     logical = _logical_lines(text)
@@ -46,19 +52,47 @@ def check_dockerfile(path: Path, text: str) -> list[str]:
         line for line in logical.splitlines()
         if not line.lstrip().startswith("#")
     )
-    from_values = re.findall(r"(?im)^\s*FROM\s+(\S+)", logical)
+    from_matches = list(re.finditer(r"(?im)^\s*FROM\s+(\S+)", logical))
+    from_values = [match.group(1) for match in from_matches]
+    preamble = logical[:from_matches[0].start()] if from_matches else logical
+    base_args = {
+        match.group(1): match.group(2)
+        for match in re.finditer(
+            r"(?im)^\s*ARG\s+([A-Za-z_][A-Za-z0-9_]*)(?:=(\S+))?\s*$",
+            preamble,
+        )
+    }
     if not from_values:
         problems.append(f"{path}: missing FROM")
     for value in from_values:
-        if value == "${ORCHESTRATOR_BASE_IMAGE}":
-            if not re.search(
-                r"(?m)^\s*ARG\s+ORCHESTRATOR_BASE_IMAGE\s*$",
-                text,
+        variable = re.fullmatch(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", value)
+        if variable and variable.group(1) == "ORCHESTRATOR_BASE_IMAGE":
+            if (
+                "ORCHESTRATOR_BASE_IMAGE" not in base_args
+                or base_args["ORCHESTRATOR_BASE_IMAGE"] is not None
             ):
                 problems.append(
                     f"{path}: local base argument must have no mutable default",
                 )
             continue
+        if variable:
+            name = variable.group(1)
+            if name not in base_args:
+                problems.append(
+                    f"{path}: dynamic base argument {name} is not declared before FROM",
+                )
+                continue
+            if base_args[name] is not None:
+                problems.append(
+                    f"{path}: base argument {name} must not define a default",
+                )
+                continue
+            if image_build_args is None or name not in image_build_args:
+                problems.append(
+                    f"{path}: base argument {name} lacks a centralized value",
+                )
+                continue
+            value = image_build_args[name]
         if "$" in value:
             problems.append(f"{path}: dynamic base image is not content-pinned: {value}")
             continue
@@ -101,6 +135,37 @@ def check_dockerfile(path: Path, text: str) -> list[str]:
             if marker not in instructions:
                 problems.append(f"{path}: verified pinned Codex install lacks {marker!r}")
     return problems
+
+
+def load_image_build_args(root: Path) -> tuple[dict[str, str], list[str]]:
+    """Load and validate the one repository location for base-image args."""
+    path = root / IMAGE_BUILD_ARGS
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {}, [f"{IMAGE_BUILD_ARGS}: cannot read image build arguments: {exc}"]
+    if not isinstance(data, dict):
+        return {}, [f"{IMAGE_BUILD_ARGS}: must contain a JSON object"]
+    problems: list[str] = []
+    names = set(data)
+    missing = REQUIRED_BASE_ARGS - names
+    unexpected = names - REQUIRED_BASE_ARGS
+    if missing:
+        problems.append(
+            f"{IMAGE_BUILD_ARGS}: missing arguments: {', '.join(sorted(missing))}",
+        )
+    if unexpected:
+        problems.append(
+            f"{IMAGE_BUILD_ARGS}: unexpected arguments: "
+            f"{', '.join(sorted(unexpected))}",
+        )
+    for name, value in data.items():
+        if not isinstance(value, str):
+            problems.append(f"{IMAGE_BUILD_ARGS}: {name} must be a string")
+    return {
+        name: value for name, value in data.items()
+        if isinstance(name, str) and isinstance(value, str)
+    }, problems
 
 
 def check_npm_manifest(root: Path, manifest_path: Path) -> list[str]:
@@ -181,14 +246,14 @@ def check_python_lock(root: Path) -> list[str]:
 
 def check_repo(root: Path = REPO_ROOT) -> list[str]:
     """Return every repository image-input policy violation."""
-    problems: list[str] = []
+    image_build_args, problems = load_image_build_args(root)
     for path in DOCKERFILES:
         try:
             text = (root / path).read_text(encoding="utf-8")
         except OSError as exc:
             problems.append(f"{path}: cannot read Dockerfile: {exc}")
             continue
-        problems.extend(check_dockerfile(path, text))
+        problems.extend(check_dockerfile(path, text, image_build_args))
     for manifest in NPM_MANIFESTS:
         problems.extend(check_npm_manifest(root, manifest))
     problems.extend(check_python_lock(root))

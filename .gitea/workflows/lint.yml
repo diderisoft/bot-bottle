@@ -10,6 +10,7 @@ on:
       - "bot_bottle/contrib/*/package-lock.json"
       - "bot_bottle/contrib/codex/install.sh.sha256"
       - "requirements.gateway.*"
+      - "image-build-args.json"
       - ".pylintrc"
       - ".gitea/workflows/lint.yml"
 
