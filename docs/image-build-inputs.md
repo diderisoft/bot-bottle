@@ -35,11 +35,12 @@ dependency update:
    versions in the provider's `package.json`, or `CODEX_VERSION` in the Codex
    Dockerfile. Direct versions must be exact—no ranges, dist-tags, or
    unversioned package names.
-4. Push the feature branch. The `refresh-image-locks` workflow regenerates the
-   pip/npm locks and Codex installer checksum, then adds a
-   `build: refresh image input locks` commit to that branch. It can also be run
-   manually; on `main` it uploads the candidates without committing them.
-5. Review the lock diff and let both normal CI and `image-input-builds` pass.
+4. Push the feature branch or manually run the `refresh-image-locks` workflow.
+   It regenerates the four derived files with the image's exact Python and Node
+   versions and uploads them as the `image-input-locks` artifact. It never
+   writes to the branch, so a refresh cannot race with developer pushes.
+5. Download the artifact, replace the four committed files, review the lock
+   diff, and let both normal CI and `image-input-builds` pass.
    The latter checks both base architectures, builds every supported image,
    exercises the exact local Firecracker base-ID handoff, and runs each
    provider CLI's version smoke test.
