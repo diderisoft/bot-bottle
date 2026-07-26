@@ -23,14 +23,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Generator, Generic, Sequence, TypeVar
 
-from ..agent_provider import AgentProvisionPlan, get_provider, build_agent_provision_plan
+from ..agent_provider import AgentProvisionPlan, get_provider
 from ..egress import EgressPlan
 from ..git_gate import GitGatePlan
 from ..log import die, info
 from ..util import expand_tilde
 from ..manifest import Manifest, ManifestIndex
 from ..supervisor.plan import SupervisePlan
-from ..env import resolve_env, ResolvedEnv
+from ..env import ResolvedEnv
 from ..workspace import WorkspacePlan, workspace_plan
 from .print_util import print_multi, visible_agent_env_names
 from .util import host_skill_dir
@@ -296,82 +296,18 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         backend-specific resolution (names, scratch files, etc.). The
         validation step is enforced here so a future backend cannot
         accidentally skip it. No remote/runtime resources are created."""
-        from .resolve_common import (
-            merge_provision_env_vars,
-            mint_slug,
-            prepare_agent_state_dir,
-            prepare_egress,
-            prepare_git_gate,
-            prepare_supervise,
-            reject_nested_containers,
-            resolve_manifest_dockerfile,
-            write_launch_metadata,
-        )
-
-        manifest = self._validate(spec)
-
-        if not self.supports_nested_containers:
-            reject_nested_containers(self.name, manifest)
-
-        self._preflight()
-
-        from ..git_gate import GitGate
-        manifest = GitGate().preflight_host_keys(
-            manifest,
-            headless=spec.headless,
-            home_md=spec.manifest.home_md,
-        )
-
-        manifest_bottle = manifest.bottle
-        manifest_agent_provider = manifest_bottle.agent_provider
-        agent_provider = get_provider(manifest_agent_provider.template)
-        resolved_env = resolve_env(manifest)
-        workspace = workspace_plan(spec, guest_home=agent_provider.guest_home)
-
-        slug = mint_slug(spec)
-        write_launch_metadata(slug, spec, compose_project="", backend=self.name)
-
-        # Manifest may override the Dockerfile per-bottle; otherwise fall
-        # back to the provider plugin's bundled Dockerfile (next to its
-        # agent_provider.py module).
-        if manifest_agent_provider.dockerfile:
-            agent_dockerfile_path = resolve_manifest_dockerfile(
-                manifest_agent_provider.dockerfile, spec,
-            )
-        else:
-            agent_dockerfile_path = str(agent_provider.dockerfile)
-
-        agent_dir, prompt_file = prepare_agent_state_dir(slug, manifest)
-
-        agent_provision_plan = build_agent_provision_plan(
-            template=manifest_agent_provider.template,
-            dockerfile=agent_dockerfile_path,
-            state_dir=agent_dir,
-            instance_name=f"bot-bottle-{slug}",
-            prompt_file=prompt_file,
-            guest_env=self._build_guest_env(resolved_env),
-            forward_host_credentials=manifest_agent_provider.forward_host_credentials,
-            auth_token=manifest_agent_provider.auth_token,
-            host_env=dict(os.environ),
-            trusted_project_path=workspace.workdir,
-            label=spec.label,
-            color=spec.color,
-            provider_settings=manifest_agent_provider.settings,
-        )
-        agent_provision_plan = merge_provision_env_vars(agent_provision_plan)
-        egress_plan = prepare_egress(manifest_bottle, slug, agent_provision_plan)
-        supervise_plan = prepare_supervise(manifest_bottle, slug)
-        git_gate_plan = prepare_git_gate(manifest_bottle, slug)
+        from .preparation import BottlePreparationPlanner
+        prepared = BottlePreparationPlanner(self).prepare(spec)
 
         return self._resolve_plan(
             spec,
-            manifest=manifest,
-            slug=slug,
-            resolved_env=resolved_env,
-            agent_provision_plan=agent_provision_plan,
-            egress_plan=egress_plan,
-            supervise_plan=supervise_plan,
-            git_gate_plan=git_gate_plan,
+            manifest=prepared.manifest,
+            slug=prepared.slug,
+            resolved_env=prepared.resolved_env,
+            agent_provision_plan=prepared.agent_provision_plan,
+            egress_plan=prepared.egress_plan,
+            supervise_plan=prepared.supervise_plan,
+            git_gate_plan=prepared.git_gate_plan,
             stage_dir=stage_dir,
         )
 

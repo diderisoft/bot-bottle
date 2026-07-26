@@ -64,3 +64,16 @@ class TestRuntimeModuleSizes(unittest.TestCase):
                     ".addon_core import" in text:
                 violations.append(str(path.relative_to(ROOT)))
         self.assertEqual([], violations)
+
+    def test_backend_contract_does_not_absorb_preparation_logic(self) -> None:
+        caps = {
+            ROOT / "bot_bottle" / "backend" / "base.py": 580,
+            ROOT / "bot_bottle" / "backend" / "preparation.py": 160,
+        }
+        oversized = [
+            f"{path.relative_to(ROOT)} "
+            f"({len(path.read_text().splitlines())}>{cap})"
+            for path, cap in caps.items()
+            if len(path.read_text().splitlines()) > cap
+        ]
+        self.assertEqual([], oversized)
