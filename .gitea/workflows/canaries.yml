@@ -2,7 +2,7 @@
 # digest, etc.) without coupling every dev push to upstream registry
 # availability.
 #
-# Opt-in via CLAUDE_BOTTLE_RUN_CANARIES=1 so the same files can be run
+# Opt-in via BOT_BOTTLE_RUN_CANARIES=1 so the same files can be run
 # locally with the same gating.
 
 name: canaries
@@ -25,4 +25,7 @@ jobs:
       # No actions/setup-python: canaries are stdlib unittest on the image's
       # system Python 3.12 (older act_runner mishandles setup-python's PATH).
       - name: Run canaries
-        run: python3 -m unittest discover -t . -s tests/canaries -v
+        run: |
+          python3 -m scripts.unittest_gate \
+            -t . -s tests/canaries -v \
+            --minimum-executed 1 --fail-on-skip
