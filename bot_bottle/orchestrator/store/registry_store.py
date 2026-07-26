@@ -113,7 +113,7 @@ _MIGRATIONS = TableMigrations(
         # egress allowlist / routes / git config selected by source IP. The
         # multi-tenant gateway resolves it per request via `attribute`.
         "ALTER TABLE orchestrator_bottles ADD COLUMN policy TEXT NOT NULL DEFAULT ''",
-        # v4 — per-bottle encrypted egress secrets (PRD prd-new-secret-provider).
+        # v4 — per-bottle encrypted egress secrets (PRD 0080).
         # One row per env-var: key (env-var name) is plaintext for auditing;
         # value is the encrypted token string. The encryption key (ENV_VAR_SECRET)
         # lives only in the agent's environment — a row alone cannot recover the

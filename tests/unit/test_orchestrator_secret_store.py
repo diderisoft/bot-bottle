@@ -1,4 +1,4 @@
-"""Unit tests for per-bottle egress secret encryption (PRD prd-new-secret-provider)."""
+"""Unit tests for per-bottle egress secret encryption (PRD 0080)."""
 
 from __future__ import annotations
 

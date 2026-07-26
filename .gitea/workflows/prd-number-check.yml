@@ -1,0 +1,26 @@
+name: prd-number-check
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+jobs:
+  require-numbered-prds:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Reject unnumbered PRDs
+        run: |
+          unnumbered=$(find docs/prds -maxdepth 1 -type f \
+            -name 'prd-new-*.md' -print | sort)
+
+          if [ -n "$unnumbered" ]; then
+            echo "::error::Assign every new PRD its final sequential number before merge."
+            echo "Unnumbered PRDs:"
+            echo "$unnumbered"
+            exit 1
+          fi
+
+          echo "All PRDs have final numbers."
