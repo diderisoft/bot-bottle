@@ -59,9 +59,8 @@ class Orchestrator(abc.ABC):
 
     # The shared control-plane auth provisioning contract (#476). Every backend
     # gets its signing key + gateway token through this one seam rather than
-    # re-deriving the wiring; the default topology is co-located + fail-closed,
-    # so a backend need not redeclare it (a truly isolated control plane would
-    # override this with a different `Topology`).
+    # re-deriving the wiring; it is fail-closed for every backend — the
+    # orchestrator never starts without its signing key.
     provisioning: ControlPlaneProvisioning = ControlPlaneProvisioning()
 
     def ensure_built(self) -> None:

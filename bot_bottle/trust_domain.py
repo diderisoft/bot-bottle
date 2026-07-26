@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from . import orchestrator_auth
 from .orchestrator_auth import ROLE_GATEWAY
@@ -39,8 +39,8 @@ from .paths import (
 
 
 class ProvisioningError(RuntimeError):
-    """A control-plane auth invariant would be violated (e.g. starting a
-    co-located control plane without its signing key — which would run OPEN)."""
+    """A control-plane auth invariant would be violated (e.g. starting the
+    orchestrator without its signing key — which would run OPEN)."""
 
 
 @dataclass(frozen=True)
@@ -100,53 +100,28 @@ CONTROL_PLANE = TrustDomain(
 
 
 @dataclass(frozen=True)
-class Topology:
-    """Where a backend runs the two planes, so the provisioning seam can decide
-    whether an open control plane is dangerous — the backend declares this
-    instead of hardcoding the decision in its launcher.
-
-    `data_plane_shares_control_host` — the gateway runs on the same host/VM as
-    the orchestrator, so an open orchestrator would hand the co-located gateway
-    full `cli`. The default, and what makes the signing key mandatory. Every
-    current backend is co-located (docker/macOS: two containers on one host;
-    firecracker: two VMs on one host, agents L3-isolated); an isolated control
-    plane on a separate trusted host may declare False.
-
-    `combined_guest` — both planes in one guest (the retired combined infra VM).
-    Informational; kept so a future combined backend declares it."""
-
-    data_plane_shares_control_host: bool = True
-    combined_guest: bool = False
-
-
-# The default posture: data plane co-located with the control plane. Fail-closed
-# — the signing key is mandatory. A backend opts out only by declaring otherwise.
-COLOCATED = Topology(data_plane_shares_control_host=True)
-
-
-@dataclass(frozen=True)
 class ControlPlaneProvisioning:
     """The one seam every backend launcher uses to provision control-plane auth,
     instead of re-deriving the four invariants that each cost a PR #471 review
     round: the orchestrator gets the raw key (`orchestrator_key`), the gateway
     gets a minted `gateway` token (`gateway_token`), the host CLI mints its own
     `cli` token from the same host-canonical key, and the orchestrator never
-    starts open where its gateway is co-located."""
+    starts open."""
 
     domain: TrustDomain = CONTROL_PLANE
-    topology: Topology = field(default=COLOCATED)
 
     def orchestrator_key(self) -> str:
         """The raw signing key the orchestrator process must receive (carry it in
-        `domain.key_env`). Fail-closed: raises rather than return "" for a
-        co-located topology, since an empty key runs the server open and hands
-        the co-located gateway full `cli`."""
+        `domain.key_env`). Fail-closed: raises rather than return "", since an
+        empty key runs the server open — and being on a separate host does not
+        stop the gateway from reaching the control plane (it must, for
+        `/resolve`), so an open orchestrator would treat that gateway as `cli`."""
         key = self.domain.signing_key()
-        if not key and self.topology.data_plane_shares_control_host:
+        if not key:
             raise ProvisioningError(
                 f"refusing to start the {self.domain.name} orchestrator without "
-                "a signing key: its gateway shares this host/VM, so an open "
-                "orchestrator would grant that gateway full `cli` (#476)"
+                "a signing key: an open orchestrator authenticates no one and "
+                "grants every caller that reaches it full `cli` (#476)"
             )
         return key
 
@@ -161,7 +136,5 @@ __all__ = [
     "ProvisioningError",
     "TrustDomain",
     "CONTROL_PLANE",
-    "Topology",
-    "COLOCATED",
     "ControlPlaneProvisioning",
 ]

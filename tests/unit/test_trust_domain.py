@@ -11,7 +11,6 @@ from bot_bottle.trust_domain import (
     CONTROL_PLANE,
     ControlPlaneProvisioning,
     ProvisioningError,
-    Topology,
     TrustDomain,
 )
 
@@ -78,22 +77,15 @@ class TestControlPlaneProvisioning(unittest.TestCase):
         with patch("bot_bottle.trust_domain.host_signing_key", return_value="key"):
             self.assertEqual("key", prov.orchestrator_key())
 
-    def test_orchestrator_key_fail_closes_when_colocated_and_empty(self) -> None:
-        # Invariant 4: a co-located backend must never start the control plane
-        # without a key (it would run OPEN and hand the co-located data plane
-        # full `cli`).
-        prov = ControlPlaneProvisioning()  # default topology: co-located
+    def test_orchestrator_key_fail_closes_when_empty(self) -> None:
+        # Invariant 4: the orchestrator must never start without a key — it would
+        # run OPEN and grant every caller that reaches it full `cli`. There is no
+        # topology opt-out: a separate host does not stop the gateway (or any
+        # other caller) from reaching the control-plane listener.
+        prov = ControlPlaneProvisioning()
         with patch("bot_bottle.trust_domain.host_signing_key", return_value=""):
             with self.assertRaises(ProvisioningError):
                 prov.orchestrator_key()
-
-    def test_orchestrator_key_allows_empty_when_isolated(self) -> None:
-        # A genuinely isolated control plane (no co-located data plane) may run
-        # without a key — the only topology where open mode is permissible.
-        prov = ControlPlaneProvisioning(
-            topology=Topology(data_plane_shares_control_host=False))
-        with patch("bot_bottle.trust_domain.host_signing_key", return_value=""):
-            self.assertEqual("", prov.orchestrator_key())
 
     def test_gateway_token_is_a_verifiable_gateway_role_token(self) -> None:
         prov = ControlPlaneProvisioning()
