@@ -389,18 +389,8 @@ class EgressAddon:
         self._passthrough_conns.discard(conn_id)
 
     async def request(self, flow: http.HTTPFlow) -> None:
+        config, slug, env = self._request_context(flow)
         request_path, _, query = flow.request.path.partition("?")
-
-        # Reuse the context stashed by http_connect for HTTPS flows (one
-        # orchestrator round-trip per connection). Plain-HTTP flows have no
-        # prior CONNECT stash, so resolve now and stash for response/websocket.
-        meta = getattr(flow, "metadata", None)
-        if isinstance(meta, dict) and _FLOW_CTX_KEY in meta:
-            config, slug, env = meta[_FLOW_CTX_KEY]
-            self._request_token(flow)  # strip identity headers; token already resolved
-        else:
-            config, slug, env = self._resolve_flow(flow)
-            self._stash_flow_ctx(flow, config, slug, env)
 
         # Introspection ("_egress.local/allowlist") reports the calling bottle's
         # own resolved routes — served after resolution so it reflects this
@@ -422,6 +412,29 @@ class EgressAddon:
             # the path/query the git checks below rely on.
             request_path, _, query = flow.request.path.partition("?")
 
+        if not self._allow_git_request(flow, config, request_path, query):
+            return
+
+        self._apply_route_policy(flow, config, route, request_path, env)
+
+    def _request_context(
+        self, flow: http.HTTPFlow,
+    ) -> tuple[Config, str, "typing.Mapping[str, str]"]:
+        """Resolve one bottle context, reusing the HTTPS CONNECT snapshot."""
+        meta = getattr(flow, "metadata", None)
+        if isinstance(meta, dict) and _FLOW_CTX_KEY in meta:
+            config, slug, env = meta[_FLOW_CTX_KEY]
+            self._request_token(flow)
+            return config, slug, env
+        config, slug, env = self._resolve_flow(flow)
+        self._stash_flow_ctx(flow, config, slug, env)
+        return config, slug, env
+
+    def _allow_git_request(
+        self, flow: http.HTTPFlow, config: Config,
+        request_path: str, query: str,
+    ) -> bool:
+        """Apply the HTTPS Git push/fetch boundary before general routing."""
         if is_git_push_request(request_path, query):
             self._block(
                 flow,
@@ -430,20 +443,20 @@ class EgressAddon:
                 "git-gate's pre-receive hook).",
                 ctx=self._req_ctx(flow),
             )
-            return
+            return False
+        if not is_git_fetch_request(request_path, query):
+            return True
+        git_decision = decide_git_fetch(config.routes, flow.request.pretty_host)
+        if git_decision.action != "block":
+            return True
+        self._block(flow, git_decision.reason, ctx=self._req_ctx(flow))
+        return False
 
-        if is_git_fetch_request(request_path, query):
-            git_decision = decide_git_fetch(
-                config.routes, flow.request.pretty_host,
-            )
-            if git_decision.action == "block":
-                self._block(
-                    flow,
-                    git_decision.reason,
-                    ctx=self._req_ctx(flow),
-                )
-                return
-
+    def _apply_route_policy(
+        self, flow: http.HTTPFlow, config: Config, route: Route | None,
+        request_path: str, env: "typing.Mapping[str, str]",
+    ) -> None:
+        """Strip agent auth, evaluate the route, then inject gateway auth."""
         # Strip agent-set Authorization after DLP scan so smuggled tokens
         # are caught above; the route may inject gateway-owned auth below.
         # Routes with preserve_auth=True pass the header through as-is so the
