@@ -62,15 +62,13 @@ _HEADER_SEGMENT = _b64url_encode(
 def mint(role: str, secret: str, *, roles: frozenset[str] = ROLES) -> str:
     """A compact HS256 token asserting `role`, signed with `secret`.
 
-    `roles` is the role set the caller's *trust domain* recognises (default: the
-    orchestrator control plane's `{gateway, cli}`). A domain names its own set so
-    each credential boundary mints only its own roles — a separate boundary
-    (e.g. a host controller) instantiates a distinct domain with a distinct key
-    and role set rather than adding a role here, so its key cannot forge the
-    other domain's tokens (see `trust_domain.py`, issues #476/#468).
+    `roles` is the set the signing key is allowed to sign (default: the
+    orchestrator's `{gateway, cli}`). A separate service (e.g. the host
+    controller) passes its own key + role set so its tokens can't be forged with
+    the orchestrator's key — see `trust_domain.py`, issues #476/#468.
 
-    Raises ValueError for a role outside `roles` (mint only what that domain will
-    accept) or an empty signing key (an unsigned credential is never valid)."""
+    Raises ValueError for a role outside `roles`, or an empty signing key (an
+    unsigned credential is never valid)."""
     if role not in roles:
         raise ValueError(f"unknown control-plane role {role!r}")
     if not secret:

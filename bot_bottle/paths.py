@@ -101,14 +101,12 @@ def host_signing_key(filename: str) -> str:
     """A per-host signing key at `<root>/<filename>`, minted (256-bit, url-safe)
     and persisted 0600 on first use, then reused.
 
-    The generic form of `host_orchestrator_token()`: a *trust domain*
-    (`trust_domain.py`) names its own key file so each credential boundary gets a
-    distinct host-canonical key — the orchestrator control plane names one file,
-    a separate boundary (e.g. a host controller) names another, and neither can
-    read the other's key (issues #476/#468). It is a *host* artifact: the file
-    lives under the root the agent never mounts, and its value is injected only
-    into the trusted control-plane process, so reading it here is safe on the
-    host launch path but the value never reaches a bottle."""
+    The generic form of `host_orchestrator_token()`: each service names its own
+    key file (`trust_domain.py`), so the orchestrator and a separate service like
+    the host controller (#468) get distinct keys neither can read. It is a *host*
+    artifact — the file lives under the root the agent never mounts, and its value
+    is injected only into the trusted control-plane process — so reading it here
+    is safe on the launch path but the value never reaches a bottle."""
     path = bot_bottle_root() / filename
     try:
         existing = path.read_text().strip()
