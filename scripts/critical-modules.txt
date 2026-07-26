@@ -7,19 +7,48 @@
 # number that silently stops measuring a module is worse than no badge.
 #
 # One module path per line, relative to the repo root. Blank lines and
-# `#` comments are ignored.
+# `#` comments are ignored. scripts/critical_modules.py rejects missing,
+# duplicate, non-Python, and out-of-repository entries before coverage runs.
+
+# Host-side egress planning and secret preparation.
+bot_bottle/egress/plan.py
+bot_bottle/egress/service.py
+
+# Gateway egress policy, matching, and DLP enforcement.
 bot_bottle/gateway/egress/addon.py
 bot_bottle/gateway/egress/addon_core.py
+bot_bottle/gateway/egress/context.py
+bot_bottle/gateway/egress/dlp.py
+bot_bottle/gateway/egress/dlp_config.py
 bot_bottle/gateway/egress/dlp_detectors.py
-bot_bottle/egress.py
-bot_bottle/manifest.py
-bot_bottle/manifest_egress.py
-bot_bottle/manifest_agent.py
-bot_bottle/manifest_schema.py
-bot_bottle/git_gate.py
+bot_bottle/gateway/egress/matching.py
+bot_bottle/gateway/egress/schema.py
+bot_bottle/gateway/egress/types.py
+
+# Manifest trust boundary and schema.
+bot_bottle/manifest/agent.py
+bot_bottle/manifest/bottle.py
+bot_bottle/manifest/egress.py
+bot_bottle/manifest/extends.py
+bot_bottle/manifest/git.py
+bot_bottle/manifest/index.py
+bot_bottle/manifest/loader.py
+bot_bottle/manifest/schema.py
+bot_bottle/manifest/util.py
+
+# Host-side and gateway-side git policy enforcement.
+bot_bottle/git_gate/host_key.py
+bot_bottle/git_gate/plan.py
+bot_bottle/git_gate/provision.py
+bot_bottle/git_gate/service.py
 bot_bottle/gateway/git_gate/render.py
-bot_bottle/git_gate_provision.py
 bot_bottle/gateway/git_gate/http_backend.py
-bot_bottle/supervise.py
+
+# Supervise proposal protocol and data plane.
+bot_bottle/supervisor/plan.py
+bot_bottle/supervisor/types.py
+bot_bottle/gateway/supervisor/server.py
+
+# Shared parsers and state validation.
 bot_bottle/yaml_subset.py
 bot_bottle/bottle_state.py

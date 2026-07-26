@@ -20,10 +20,10 @@ cd "$(dirname "$0")/.."
 
 PY="${PYTHON:-python3}"
 
-# Critical security/logic core held to the high bar by ADR 0004. The list
-# lives in one place (scripts/critical-modules.txt) so this report and the
-# README "core coverage" badge can't drift; comma-join it for --include.
-CRITICAL=$(grep -vE '^[[:space:]]*(#|$)' scripts/critical-modules.txt | paste -sd, -)
+# Critical security/logic core held to the high bar by ADR 0004. The helper
+# fails before coverage when a curated path was renamed or removed; Coverage.py
+# itself would silently ignore that stale include and inflate the score.
+CRITICAL=$("$PY" scripts/critical_modules.py)
 
 if [ "${1:-}" = "aggregate" ]; then
     # Aggregate mode: combine .coverage.* artifacts already in the workspace.
@@ -34,8 +34,8 @@ if [ "${1:-}" = "aggregate" ]; then
     "$PY" -m coverage report -m
 
     if [ "${2:-}" = "critical" ]; then
-        echo "== critical modules (ADR 0004 target: 90%) ==" >&2
-        "$PY" -m coverage report --include="$CRITICAL"
+        echo "== critical modules (ADR 0004 minimum: 90%) ==" >&2
+        "$PY" -m coverage report --include="$CRITICAL" --fail-under=90
     fi
     exit 0
 fi
@@ -55,6 +55,6 @@ echo "== combined report ==" >&2
 "$PY" -m coverage report -m
 
 if [ "${1:-}" = "critical" ]; then
-    echo "== critical modules (ADR 0004 target: 90%) ==" >&2
-    "$PY" -m coverage report --include="$CRITICAL"
+    echo "== critical modules (ADR 0004 minimum: 90%) ==" >&2
+    "$PY" -m coverage report --include="$CRITICAL" --fail-under=90
 fi

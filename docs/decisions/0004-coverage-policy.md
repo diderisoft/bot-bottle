@@ -34,12 +34,13 @@ a regression (Goodhart's law).
 Coverage is **risk-weighted**, measured over the **combined unit +
 integration** suites, with three rules:
 
-1. **Critical modules target ≥ 90%.** The security/logic core —
-   `egress_addon{,_core}.py`, `dlp_detectors.py`, `egress.py`,
-   `manifest*.py`, `git_gate.py`, `git_http_backend.py`, `supervise.py`,
-   `yaml_subset.py`, `bottle_state.py` — is Docker-independent and
-   unit-testable, so it carries the high bar. We ratchet toward 90% as
-   these modules are touched; new gaps in them are not acceptable.
+1. **Critical modules must remain ≥ 90%.** The curated security/logic core
+   covers the host and gateway egress policy, manifest trust boundary,
+   git-gate enforcement, supervise protocol/server, YAML parser, and bottle
+   state. The concrete module list lives in `scripts/critical-modules.txt`;
+   `scripts/critical_modules.py` rejects stale or ambiguous entries before
+   Coverage.py can silently ignore them. These modules are unit-testable, so
+   CI enforces the aggregate minimum independently of diff coverage.
 
 2. **Subprocess/backend orchestration is covered by the integration
    suite, not omitted.** `scripts/coverage.sh` runs unit + integration
@@ -82,6 +83,9 @@ omit list.
   (critical-module standard + diff coverage) are Docker-independent.
 - "We're at N%" is now a curated figure; outsiders should read the
   policy, not just the badge.
+- A rename or removal in the curated list fails CI. Updating the list is an
+  explicit review of where the security-critical behavior moved, not a way to
+  improve the percentage by omission.
 
 ## Links
 

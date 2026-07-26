@@ -33,19 +33,28 @@ jobs:
       - name: Run coverage and extract percentage
         id: coverage
         run: |
-          python3 -m coverage run -m unittest discover -t . -s tests/unit > /dev/null 2>&1 || true
-          PERCENT=$(python3 -m coverage report 2>/dev/null | grep '^TOTAL' | grep -oP '\d+(?=%)' | tail -1)
+          set -euo pipefail
+          # Never publish a badge from a failed or partial test run.
+          python3 -m coverage run -m unittest discover -t . -s tests/unit
+          REPORT=$(python3 -m coverage report)
+          printf '%s\n' "$REPORT"
+          PERCENT=$(printf '%s\n' "$REPORT" | awk '$1 == "TOTAL" {gsub("%", "", $NF); print $NF}')
+          test -n "$PERCENT"
           echo "percent=$PERCENT" >> $GITHUB_OUTPUT
           echo "Coverage: $PERCENT%"
 
       - name: Extract core (critical-module) coverage percentage
         id: core_coverage
         run: |
+          set -euo pipefail
           # Reuses the .coverage data from the previous step. The core list is
-          # the single source of truth in scripts/critical-modules.txt; every
-          # core module is unit-tested, so the unit-only run is accurate for it.
-          INCLUDE=$(grep -vE '^[[:space:]]*(#|$)' scripts/critical-modules.txt | paste -sd, -)
-          PERCENT=$(python3 -m coverage report --include="$INCLUDE" 2>/dev/null | grep '^TOTAL' | grep -oP '\d+(?=%)' | tail -1)
+          # validated single source of truth. Fail if a listed path disappeared
+          # or if the measured core falls below ADR 0004's 90% minimum.
+          INCLUDE=$(python3 scripts/critical_modules.py)
+          REPORT=$(python3 -m coverage report --include="$INCLUDE" --fail-under=90)
+          printf '%s\n' "$REPORT"
+          PERCENT=$(printf '%s\n' "$REPORT" | awk '$1 == "TOTAL" {gsub("%", "", $NF); print $NF}')
+          test -n "$PERCENT"
           echo "percent=$PERCENT" >> $GITHUB_OUTPUT
           echo "Core coverage: $PERCENT%"
 
