@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ..log import debug
 from .client import OrchestratorClient, OrchestratorClientError
 
 
@@ -27,7 +28,14 @@ def reprovision_bottles(
         try:
             if client.reprovision_gateway(bottle_id, secret):
                 restored += 1
-        except OrchestratorClientError:
+        except OrchestratorClientError as exc:
+            debug(
+                "gateway secret reprovision failed; continuing with other bottles",
+                context={
+                    "bottle_id": bottle_id,
+                    "error_type": type(exc).__name__,
+                },
+            )
             continue
     return restored
 

@@ -48,12 +48,13 @@ class TestSharedReprovision(unittest.TestCase):
         client.reprovision_gateway.side_effect = [
             OrchestratorClientError("bad key"), True,
         ]
-        self.assertEqual(
-            1,
-            reprovision_bottles(
+        with patch("bot_bottle.orchestrator.reprovision.debug") as debug:
+            count = reprovision_bottles(
                 client, {"10.0.0.1": "key-1", "10.0.0.2": "key-2"},
-            ),
-        )
+            )
+        self.assertEqual(1, count)
+        self.assertEqual("b1", debug.call_args.kwargs["context"]["bottle_id"])
+        self.assertNotIn("bad key", repr(debug.call_args))
 
 
 class TestMacosReprovision(unittest.TestCase):

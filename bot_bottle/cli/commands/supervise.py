@@ -368,7 +368,7 @@ def _main_loop(stdscr: "curses._CursesWindow") -> None:  # type: ignore  # pragm
         elif key in (curses.KEY_UP, ord("k")):
             selected = max(selected - 1, 0)
         elif key in (curses.KEY_ENTER, 10, 13):
-            _detail_view(stdscr, qp, green_attr=green_attr)
+            status_line = _detail_view(stdscr, qp, green_attr=green_attr)
         elif key == ord("a"):
             try:
                 status_line = _approve_from_tui(stdscr, qp)
@@ -456,7 +456,7 @@ def _detail_view(
     qp: QueuedProposal,
     *,
     green_attr: int = 0,
-) -> None:  # pragma: no cover
+) -> str:  # pragma: no cover
     """Render the full proposal. Scrollable. Press q to return."""
     lines = _detail_lines(qp, green_attr=green_attr)
     offset = 0
@@ -473,7 +473,7 @@ def _detail_view(
         stdscr.refresh()
         key = stdscr.getch()
         if key in (ord("q"), 27):
-            return
+            return ""
         if key in (curses.KEY_DOWN, ord("j")):
             offset = min(offset + 1, max(0, len(lines) - 1))
         elif key in (curses.KEY_UP, ord("k")):
@@ -484,28 +484,28 @@ def _detail_view(
             offset = max(0, len(lines) - 1)
         elif key == ord("a"):
             try:
-                _approve_from_tui(stdscr, qp)
-            except ApplyError:
-                pass
-            return
+                return _approve_from_tui(stdscr, qp)
+            except ApplyError as exc:
+                return f"apply failed: {exc}"
         elif key == ord("m"):
             if qp.proposal.tool in _REPORT_ONLY_TOOLS:
-                return
+                return f"modify unavailable for {qp.proposal.tool}"
             edited = _modify(stdscr, qp)
-            if edited is not None:
-                try:
-                    _approve_from_tui(
-                        stdscr, qp, final_file=edited,
-                        notes="operator modified before approving",
-                    )
-                except ApplyError:
-                    pass
-            return
+            if edited is None:
+                return "modify aborted (no change)"
+            try:
+                return _approve_from_tui(
+                    stdscr, qp, final_file=edited,
+                    notes="operator modified before approving",
+                )
+            except ApplyError as exc:
+                return f"apply failed: {exc}"
         elif key == ord("r"):
             reason = _prompt(stdscr, "reject reason: ")
             if reason:
                 reject(qp, reason=reason)
-            return
+                return f"rejected {qp.proposal.tool} for [{qp.label}]"
+            return "reject aborted (empty reason)"
 
 
 def _modify(stdscr: "curses._CursesWindow", qp: QueuedProposal) -> str | None:  # type: ignore  # pragma: no cover

@@ -18,6 +18,7 @@ import urllib.request
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+from ..log import debug
 from ..orchestrator_auth import ROLE_CLI
 from ..trust_domain import CONTROL_PLANE
 from .server import ORCHESTRATOR_AUTH_HEADER
@@ -51,6 +52,23 @@ class RegisteredBottle:
     bottle_id: str
     identity_token: str
     env_var_secret: str = ""
+
+
+@dataclass(frozen=True)
+class BackendProbeFailure:
+    """Safe diagnostic for an optional backend discovery probe."""
+
+    backend: str
+    error_type: str
+
+
+def _probe_failure(backend: str, exc: BaseException) -> BackendProbeFailure:
+    failure = BackendProbeFailure(backend, type(exc).__name__)
+    debug(
+        "orchestrator discovery probe unavailable",
+        context={"backend": failure.backend, "error_type": failure.error_type},
+    )
+    return failure
 
 
 class OrchestratorClient:
@@ -245,32 +263,41 @@ def discover_orchestrator_url(*, timeout: float = 2.0) -> str:
     orchestrator TAP. Returns the first that answers `/health`; raises if none
     do (no orchestrator up — launch a bottle first)."""
     candidates: list[str] = []
+    failures: list[BackendProbeFailure] = []
     try:  # docker: loopback-published control plane
         from .lifecycle import DEFAULT_PORT as _DOCKER_PORT
         candidates.append(f"http://127.0.0.1:{_DOCKER_PORT}")
-    except Exception:  # noqa: BLE001 — backend optional
+    except Exception as exc:  # noqa: BLE001 — backend optional
+        failures.append(_probe_failure("docker", exc))
         candidates.append("http://127.0.0.1:8099")
     try:  # firecracker: infra VM control plane on the orchestrator TAP
         from ..backend.firecracker import netpool
         from ..backend.firecracker.infra_vm import ORCHESTRATOR_PORT
         candidates.append(
             f"http://{netpool.orch_slot().guest_ip}:{ORCHESTRATOR_PORT}")
-    except Exception:  # noqa: BLE001 — backend optional / not firecracker
-        pass
+    except Exception as exc:  # noqa: BLE001 — backend optional / not firecracker
+        failures.append(_probe_failure("firecracker", exc))
     try:  # macOS: orchestrator container on its host-only address
         from ..backend.macos_container.infra import probe_orchestrator_url
         url = probe_orchestrator_url()
         if url:
             candidates.append(url)
-    except Exception:  # noqa: BLE001 — backend optional / not macOS
-        pass
+    except Exception as exc:  # noqa: BLE001 — backend optional / not macOS
+        failures.append(_probe_failure("macos-container", exc))
     for url in candidates:
         if OrchestratorClient(url, timeout=timeout).health():
             return url
+    detail = ""
+    if failures:
+        detail = "; optional probes unavailable: " + ", ".join(
+            f"{failure.backend} ({failure.error_type})" for failure in failures
+        )
     raise OrchestratorClientError(
         "no running orchestrator control plane found (tried "
         + ", ".join(candidates)
-        + "); launch a bottle first"
+        + ")"
+        + detail
+        + "; launch a bottle first"
     )
 
 

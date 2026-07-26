@@ -12,7 +12,9 @@ from bot_bottle.orchestrator.client import (
     OrchestratorClient,
     OrchestratorClientError,
     RegisteredBottle,
+    BackendProbeFailure,
     _host_auth_token,
+    _probe_failure,
 )
 
 _URLOPEN = "bot_bottle.orchestrator.client.urllib.request.urlopen"
@@ -31,6 +33,15 @@ class TestHostAuthToken(unittest.TestCase):
         with patch("bot_bottle.trust_domain.host_signing_key",
                    side_effect=OSError("no host root")):
             self.assertEqual("", _host_auth_token())
+
+
+class TestBackendProbeFailure(unittest.TestCase):
+    def test_records_safe_typed_diagnostic(self) -> None:
+        with patch("bot_bottle.orchestrator.client.debug") as debug:
+            result = _probe_failure("firecracker", RuntimeError("secret detail"))
+        self.assertEqual(BackendProbeFailure("firecracker", "RuntimeError"), result)
+        rendered = repr(debug.call_args)
+        self.assertNotIn("secret detail", rendered)
 
 
 def _resp(status: int, payload: object) -> MagicMock:

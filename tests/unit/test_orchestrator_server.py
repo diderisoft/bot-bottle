@@ -7,6 +7,7 @@ server tests), plus one real-socket round-trip to prove the handler wiring.
 from __future__ import annotations
 
 import base64
+import io
 import json
 import secrets
 import sqlite3
@@ -17,7 +18,7 @@ import urllib.error
 import urllib.request
 from contextlib import closing
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from bot_bottle.orchestrator_auth import ROLE_CLI, ROLE_GATEWAY, mint
 from bot_bottle.orchestrator.broker import StubBroker
@@ -282,6 +283,25 @@ class TestServerRoundTrip(unittest.TestCase):
             ), timeout=5,
         ))
         self.assertEqual(reg["bottle_id"], attr["bottle_id"])
+
+    def test_internal_failure_is_contextual_but_redacted(self) -> None:
+        orch = MagicMock()
+        orch.registry.all.side_effect = RuntimeError("SENSITIVE request value")
+        with patch("sys.stderr", io.StringIO()) as stderr:
+            server = make_server(orch, "127.0.0.1", 0)
+            self.addCleanup(server.server_close)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            self.addCleanup(server.shutdown)
+            host, port = server.server_address[0], server.server_address[1]
+            with self.assertRaises(urllib.error.HTTPError) as raised:
+                urllib.request.urlopen(f"http://{host}:{port}/bottles", timeout=5)
+            payload = json.loads(raised.exception.read())
+            output = stderr.getvalue()
+        self.assertEqual({"error": "internal error"}, payload)
+        self.assertIn("GET /bottles", output)
+        self.assertIn("RuntimeError", output)
+        self.assertNotIn("SENSITIVE", output)
 
 
 class TestOrchestratorAuth(unittest.TestCase):

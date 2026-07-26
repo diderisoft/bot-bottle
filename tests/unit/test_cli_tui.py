@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import unittest
 from typing import Any, Optional
+from unittest.mock import patch
 
 from bot_bottle.cli.tui import _filter_items, _multiselect_loop, filter_multiselect, filter_select
 
@@ -49,8 +50,10 @@ class TestFilterSelectEmptyItems(unittest.TestCase):
 
     def test_returns_none_when_tty_unavailable(self):
         # /nonexistent is guaranteed to not open.
-        result = filter_select(["a", "b"], tty_path="/nonexistent/tty")
+        with patch("bot_bottle.cli.tui.debug") as debug:
+            result = filter_select(["a", "b"], tty_path="/nonexistent/tty")
         self.assertIsNone(result)
+        self.assertEqual("FileNotFoundError", debug.call_args.kwargs["context"]["error_type"])
 
 
 class TestFilterMultiselectEmptyItems(unittest.TestCase):
@@ -60,8 +63,10 @@ class TestFilterMultiselectEmptyItems(unittest.TestCase):
         self.assertEqual([], result)
 
     def test_returns_none_when_tty_unavailable(self):
-        result = filter_multiselect(["a", "b"], tty_path="/nonexistent/tty")
+        with patch("bot_bottle.cli.tui.debug") as debug:
+            result = filter_multiselect(["a", "b"], tty_path="/nonexistent/tty")
         self.assertIsNone(result)
+        self.assertEqual("FileNotFoundError", debug.call_args.kwargs["context"]["error_type"])
 
 
 class TestMultiselectLoopReordering(unittest.TestCase):

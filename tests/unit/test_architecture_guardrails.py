@@ -34,6 +34,20 @@ class TestCliBackendBoundaries(unittest.TestCase):
 
 
 class TestRuntimeModuleSizes(unittest.TestCase):
+    def test_no_runtime_module_grows_beyond_global_ceiling(self) -> None:
+        """A coarse ceiling catches new monoliths; focused caps stay tighter."""
+        ceiling = 850
+        oversized = [
+            f"{path.relative_to(ROOT)} ({len(path.read_text().splitlines())})"
+            for path in (ROOT / "bot_bottle").rglob("*.py")
+            if len(path.read_text().splitlines()) > ceiling
+        ]
+        self.assertEqual(
+            [], oversized,
+            f"runtime modules must stay at or below {ceiling} lines: "
+            + ", ".join(oversized),
+        )
+
     def test_egress_modules_stay_focused(self) -> None:
         caps = {
             "addon_core.py": 100,

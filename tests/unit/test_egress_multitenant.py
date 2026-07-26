@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
-from bot_bottle.gateway.egress.addon_core import (
+from bot_bottle.gateway.egress.context import (
     DENY_RESOLVER_ERROR,
     DENY_UNATTRIBUTED,
     DENY_UNPARSEABLE,
-    decide,
     resolve_client_config,
     resolve_client_context,
 )
+from bot_bottle.gateway.egress.matching import decide
 from bot_bottle.gateway.policy_resolver import PolicyResolveError
 
 
@@ -44,7 +45,13 @@ class TestResolveClientConfig(unittest.TestCase):
 
     def test_resolver_error_denies_all(self) -> None:
         # Orchestrator unreachable/errored must never widen egress.
-        self.assertEqual((), resolve_client_config(_FakeResolver(raises=True), "10.243.0.1").routes)
+        with patch("bot_bottle.gateway.egress.context.debug") as debug:
+            config = resolve_client_config(_FakeResolver(raises=True), "10.243.0.1")
+        self.assertEqual((), config.routes)
+        self.assertEqual(
+            "PolicyResolveError", debug.call_args.kwargs["context"]["error_type"],
+        )
+        self.assertNotIn("orchestrator down", repr(debug.call_args))
 
     def test_unparseable_policy_denies_all(self) -> None:
         cfg = resolve_client_config(_FakeResolver(result="routes: notalist\n"), "10.243.0.1")

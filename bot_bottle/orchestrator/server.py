@@ -379,9 +379,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
             status, payload = dispatch(
                 server.orchestrator, method, self.path, body, role=role)
         except Exception as e:  # noqa: BLE001 — the control plane must stay up
-            sys.stderr.write(f"orchestrator: {method} {self.path} failed: {e!r}\n")
+            # Do not echo exception messages to the caller or logs: broker and
+            # persistence exceptions can contain request data. The operation,
+            # route, and exception type are enough to correlate a traceback.
+            sys.stderr.write(
+                f"orchestrator: {method} {self.path} failed "
+                f"[error_type={type(e).__name__}]\n"
+            )
             sys.stderr.flush()
-            status, payload = 500, {"error": f"internal error: {e}"}
+            status, payload = 500, {"error": "internal error"}
         data = json.dumps(payload).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")

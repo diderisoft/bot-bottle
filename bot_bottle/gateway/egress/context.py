@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import typing
 
+from ...log import debug
 from .types import Config
 
 
@@ -52,7 +53,11 @@ def resolve_client_config(
 ) -> Config:
     try:
         policy = resolver.resolve(client_ip, identity_token)
-    except Exception:  # noqa: BLE001 - a policy lookup failure must deny
+    except Exception as exc:  # noqa: BLE001 - a policy lookup failure must deny
+        debug(
+            "egress policy resolution failed; applying deny-all",
+            context={"error_type": type(exc).__name__},
+        )
         return Config(routes=(), deny_reason=DENY_RESOLVER_ERROR)
     return _config_from_policy(policy)
 
@@ -63,6 +68,10 @@ def resolve_client_context(
     try:
         policy, bottle_id, tokens = resolver.resolve_policy_and_bottle_id(
             client_ip, identity_token)
-    except Exception:  # noqa: BLE001 - a policy lookup failure must deny
+    except Exception as exc:  # noqa: BLE001 - a policy lookup failure must deny
+        debug(
+            "egress context resolution failed; applying deny-all",
+            context={"error_type": type(exc).__name__},
+        )
         return Config(routes=(), deny_reason=DENY_RESOLVER_ERROR), "", {}
     return _config_from_policy(policy), (bottle_id or ""), tokens

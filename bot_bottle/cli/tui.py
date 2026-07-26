@@ -16,6 +16,8 @@ import os
 import sys
 from typing import Any, Optional
 
+from ..log import debug
+
 
 def filter_multiselect(
     items: list[str],
@@ -42,7 +44,11 @@ def filter_multiselect(
 
     try:
         tty_fd = open(tty_path, "r+b", buffering=0)
-    except OSError:
+    except OSError as exc:
+        debug(
+            "multi-select unavailable; treating it as cancellation",
+            context={"error_type": type(exc).__name__, "tty": tty_path},
+        )
         return None
 
     try:
@@ -73,7 +79,11 @@ def filter_select(
 
     try:
         tty_fd = open(tty_path, "r+b", buffering=0)
-    except OSError:
+    except OSError as exc:
+        debug(
+            "filter-select unavailable; treating it as cancellation",
+            context={"error_type": type(exc).__name__, "tty": tty_path},
+        )
         return None
 
     try:
@@ -129,7 +139,11 @@ def _run_picker(items: list[str], *, title: str, tty_fd: int) -> Optional[str]:
             curses.nocbreak()
             curses.echo()
             curses.endwin()
-    except Exception:  # noqa: W0718 — curses can raise many error types
+    except Exception as exc:  # noqa: W0718 — curses can raise many error types
+        debug(
+            "filter-select display failed; treating it as cancellation",
+            context={"error_type": type(exc).__name__},
+        )
         return None
     finally:
         sys.__stdin__ = orig_stdin    # type: ignore[assignment]
@@ -292,7 +306,11 @@ def _run_multiselect(
             curses.nocbreak()
             curses.echo()
             curses.endwin()
-    except Exception:  # noqa: W0718
+    except Exception as exc:  # noqa: W0718
+        debug(
+            "multi-select display failed; treating it as cancellation",
+            context={"error_type": type(exc).__name__},
+        )
         return None
     finally:
         sys.__stdin__ = orig_stdin    # type: ignore[assignment]
@@ -558,13 +576,21 @@ def name_color_modal(
     """
     try:
         tty_fd = open(tty_path, "r+b", buffering=0)  # pylint: disable=consider-using-with
-    except OSError:
+    except OSError as exc:
+        debug(
+            "name/color picker unavailable; using defaults",
+            context={"error_type": type(exc).__name__, "tty": tty_path},
+        )
         return default_label, ""
 
     try:
         fd_dup = os.dup(tty_fd.fileno())
         return _run_name_color(default_label, tty_fd=fd_dup, disclaimer=disclaimer)
-    except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+    except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        debug(
+            "name/color picker failed; using defaults",
+            context={"error_type": type(exc).__name__},
+        )
         return default_label, ""
     finally:
         tty_fd.close()
