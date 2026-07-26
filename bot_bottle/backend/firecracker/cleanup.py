@@ -29,6 +29,7 @@ import subprocess
 from pathlib import Path
 
 from ...log import info
+from .. import EnumerationError
 from . import util
 from .bottle_cleanup_plan import FirecrackerBottleCleanupPlan
 
@@ -62,12 +63,23 @@ def _scan_processes(run_root: Path) -> tuple[set[str], list[int]]:
       * ``orphan_pids`` — firecracker pids whose run dir no longer exists
         (a lingering VMM to kill).
     """
-    result = subprocess.run(
-        ["pgrep", "-a", "firecracker"],
-        capture_output=True, text=True, check=False,
-    )
-    if result.returncode != 0:
+    try:
+        result = subprocess.run(
+            ["pgrep", "-a", "firecracker"],
+            capture_output=True, text=True, check=False,
+        )
+    except OSError as exc:
+        raise EnumerationError(
+            f"could not enumerate Firecracker processes: {exc}"
+        ) from exc
+    if result.returncode == 1:
+        # pgrep's documented "no processes matched" result.
         return set(), []
+    if result.returncode != 0:
+        detail = (result.stderr or "").strip() or f"exit {result.returncode}"
+        raise EnumerationError(
+            f"could not enumerate Firecracker processes: {detail}"
+        )
     live: set[str] = set()
     orphan_pids: list[int] = []
     for line in result.stdout.splitlines():

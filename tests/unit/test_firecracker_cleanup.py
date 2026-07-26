@@ -15,6 +15,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from bot_bottle.backend import EnumerationError
 from bot_bottle.backend.firecracker import cleanup as fc_cleanup
 from bot_bottle.backend.firecracker.bottle_cleanup_plan import (
     FirecrackerBottleCleanupPlan,
@@ -58,9 +59,36 @@ class TestProcessScan(unittest.TestCase):
         self.assertEqual({str(run_root / "live-a")}, live)
         self.assertEqual([222], orphan_pids)
 
-    def test_scan_empty_when_pgrep_fails(self):
+    def test_scan_empty_when_pgrep_finds_no_processes(self):
         with patch.object(fc_cleanup.subprocess, "run", return_value=_proc(returncode=1)):
             self.assertEqual((set(), []), fc_cleanup._scan_processes(Path("/x")))
+
+    def test_scan_raises_when_pgrep_errors(self):
+        proc = subprocess.CompletedProcess(
+            [], 2, stdout="", stderr="invalid process expression",
+        )
+        with (
+            patch.object(fc_cleanup.subprocess, "run", return_value=proc),
+            self.assertRaisesRegex(EnumerationError, "invalid process expression"),
+        ):
+            fc_cleanup._scan_processes(Path("/x"))
+
+    def test_prepare_cleanup_does_not_plan_deletions_when_scan_errors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run_root = Path(tmp)
+            live = run_root / "live-a"
+            live.mkdir()
+            with (
+                patch.object(fc_cleanup, "_run_root", return_value=run_root),
+                patch.object(
+                    fc_cleanup.subprocess,
+                    "run",
+                    return_value=_proc(returncode=2),
+                ),
+                self.assertRaises(EnumerationError),
+            ):
+                fc_cleanup.prepare_cleanup()
+            self.assertTrue(live.is_dir())
 
     def test_live_run_dirs_returns_paths_in_stable_order(self):
         with patch.object(fc_cleanup, "_run_root", return_value=Path("/run")), \
