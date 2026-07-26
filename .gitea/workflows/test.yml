@@ -217,11 +217,12 @@ jobs:
   # Container needs the host `container` CLI + virtualization framework and
   # cannot run inside a Linux container, so this cannot reuse the KVM runner.
   #
-  # Advisory only: push-to-main and workflow_dispatch, never pull_request. A
-  # single non-redundant laptop that sleeps/roams must not be able to block a
-  # PR merge, so this job is deliberately NOT in the `coverage` job's `needs`
-  # and its coverage never feeds the diff-coverage gate. Not gating on PRs also
-  # means no fork PR ever executes on the host-mode runner.
+  # Advisory only: workflow_dispatch (manual) exclusively — never push or
+  # pull_request. A single non-redundant laptop that sleeps/roams must not run
+  # unattended on every push to main, let alone block a PR merge, so this job is
+  # deliberately NOT in the `coverage` job's `needs` and its coverage never
+  # feeds the diff-coverage gate. Dispatch-only also means no fork PR (or any
+  # push) ever executes on the host-mode runner.
   #
   # The infra container is a singleton (`bot-bottle-mac-infra`); the
   # `concurrency` group serializes runs so two never collide on it (#425), and
@@ -232,9 +233,7 @@ jobs:
   # Python >=3.11 with `coverage` importable on the launchd service PATH.
   integration-macos:
     runs-on: [self-hosted, macos]
-    if: >-
-      github.event_name == 'push' ||
-      github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch'
     concurrency:
       group: integration-macos-infra
       cancel-in-progress: false

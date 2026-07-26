@@ -8,7 +8,7 @@ It runs the unit suite plus one integration job per backend
 - every push to `main`.
 
 `integration-macos` is the exception: it is **advisory**, running only on
-push-to-`main` and `workflow_dispatch`, never on pull requests. It targets the
+`workflow_dispatch` (manual dispatch), never on push or pull requests. It targets the
 Apple Container backend on a self-hosted macOS runner (label `macos`,
 registered in host mode — Apple Container can't run in a Linux container, so it
 can't reuse the `kvm` runner). A single non-redundant laptop must not be able
