@@ -59,8 +59,10 @@ import http.server
 import json
 import math
 import os
+import socket
 import socketserver
 import sys
+import threading
 import typing
 from urllib.parse import urlsplit
 
@@ -80,6 +82,9 @@ Json = dict[str, object]
 # token at all, and a compromised gateway holds only `gateway` — neither can
 # drive the operator routes (approve proposals, rewrite policy, read tokens).
 ORCHESTRATOR_AUTH_HEADER = "x-bot-bottle-orchestrator-auth"
+MAX_BODY_BYTES = 1 * 1024 * 1024
+REQUEST_TIMEOUT_SECONDS = 10.0
+MAX_REQUEST_THREADS = 32
 
 # The routes the data plane (role `gateway`) is allowed to reach — exactly the
 # per-request lookups PolicyResolver makes. Every other authenticated route is
@@ -371,9 +376,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
         plane down for the caller."""
         server = self.server
         assert isinstance(server, OrchestratorServer)
-        length = int(self.headers.get("Content-Length") or 0)
-        body = self.rfile.read(length) if length > 0 else b""
         role = server.role_for(self.headers.get(ORCHESTRATOR_AUTH_HEADER, ""))
+        route = urlsplit(self.path).path.rstrip("/") or "/"
+        if not (method == "GET" and route == "/health") and role is None:
+            self._write_json(
+                401, {"error": "control-plane authentication required"},
+            )
+            return
+        length_header = self.headers.get("Content-Length")
+        try:
+            length = int(length_header) if length_header is not None else 0
+        except ValueError:
+            self._write_json(400, {"error": "invalid Content-Length"})
+            return
+        if length < 0:
+            self._write_json(400, {"error": "invalid Content-Length"})
+            return
+        if length > MAX_BODY_BYTES:
+            self._write_json(413, {"error": "request body too large"})
+            return
+        try:
+            body = self.rfile.read(length) if length else b""
+        except (TimeoutError, socket.timeout):
+            self._write_json(408, {"error": "request body read timed out"})
+            return
         try:
             status, payload = dispatch(
                 server.orchestrator, method, self.path, body, role=role)
@@ -387,6 +413,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             )
             sys.stderr.flush()
             status, payload = 500, {"error": "internal error"}
+        self._write_json(status, payload)
+
+    def _write_json(self, status: int, payload: Json) -> None:
         data = json.dumps(payload).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -434,7 +463,34 @@ class OrchestratorServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
                 "orchestrator control-plane signing key is required; "
                 "refusing to start without caller authentication"
             )
+        self._request_slots = threading.BoundedSemaphore(MAX_REQUEST_THREADS)
         super().__init__(address, Handler)
+
+    def get_request(self) -> tuple[socket.socket, typing.Any]:
+        request, client_address = super().get_request()
+        request.settimeout(REQUEST_TIMEOUT_SECONDS)
+        return request, client_address
+
+    def process_request(
+        self, request: socket.socket, client_address: typing.Any,
+    ) -> None:
+        # Bound concurrency before ThreadingMixIn creates a worker. Backpressure
+        # stays in the accept loop instead of allocating an unbounded thread per
+        # slow or malicious connection.
+        self._request_slots.acquire()
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._request_slots.release()
+            raise
+
+    def process_request_thread(
+        self, request: socket.socket, client_address: typing.Any,
+    ) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._request_slots.release()
 
     def role_for(self, presented: str) -> str | None:
         """The verified caller role, or None for a missing/invalid token."""
@@ -461,5 +517,5 @@ def make_server(
 
 __all__ = [
     "dispatch", "Handler", "OrchestratorServer", "make_server", "Json",
-    "ORCHESTRATOR_AUTH_HEADER",
+    "ORCHESTRATOR_AUTH_HEADER", "MAX_BODY_BYTES",
 ]

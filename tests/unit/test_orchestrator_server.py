@@ -7,6 +7,7 @@ server tests), plus one real-socket round-trip to prove the handler wiring.
 from __future__ import annotations
 
 import base64
+import http.client
 import io
 import json
 import secrets
@@ -22,7 +23,7 @@ from unittest.mock import MagicMock, patch
 
 from bot_bottle.orchestrator_auth import ROLE_CLI, ROLE_GATEWAY, mint
 from bot_bottle.orchestrator.broker import StubBroker
-from bot_bottle.orchestrator.server import dispatch, make_server
+from bot_bottle.orchestrator.server import MAX_BODY_BYTES, dispatch, make_server
 from bot_bottle.orchestrator.store.registry_store import BottleRecord, RegistryStore
 from bot_bottle.orchestrator.service import OrchestratorCore
 from bot_bottle.orchestrator.store.store_manager import StoreManager
@@ -251,6 +252,42 @@ class TestDispatch(unittest.TestCase):
 
 
 class TestServerRoundTrip(unittest.TestCase):
+    def _raw_status(self, content_length: str, *, authenticated: bool = True) -> int:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        key = "request-limits-key"
+        server = make_server(
+            _orchestrator(Path(tmp.name) / "r.db"),
+            "127.0.0.1", 0, signing_key=key,
+        )
+        self.addCleanup(server.server_close)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        conn = http.client.HTTPConnection(
+            server.server_address[0], server.server_address[1], timeout=5,
+        )
+        self.addCleanup(conn.close)
+        conn.putrequest("POST", "/bottles")
+        conn.putheader("Content-Length", content_length)
+        if authenticated:
+            conn.putheader(
+                "x-bot-bottle-orchestrator-auth", mint(ROLE_CLI, key),
+            )
+        conn.endheaders()
+        return conn.getresponse().status
+
+    def test_rejects_malformed_content_length(self) -> None:
+        self.assertEqual(400, self._raw_status("not-a-number"))
+
+    def test_rejects_oversized_body_without_reading_it(self) -> None:
+        self.assertEqual(413, self._raw_status(str(MAX_BODY_BYTES + 1)))
+
+    def test_rejects_unauthenticated_request_before_reading_body(self) -> None:
+        self.assertEqual(
+            401,
+            self._raw_status(str(MAX_BODY_BYTES), authenticated=False),
+        )
+
     def test_http_register_health_attribute(self) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
