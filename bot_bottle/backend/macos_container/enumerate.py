@@ -5,7 +5,7 @@ from __future__ import annotations
 import subprocess
 
 from ...bottle_state import read_metadata
-from .. import ActiveAgent
+from .. import ActiveAgent, EnumerationError
 from .infra import INFRA_NAME, ORCHESTRATOR_NAME
 
 # The name every agent container carries: `bot-bottle-<slug>`. Exported
@@ -20,17 +20,18 @@ CONTAINER_NAME_PREFIX = "bot-bottle-"
 _INFRA_NAMES = frozenset({INFRA_NAME, ORCHESTRATOR_NAME})
 
 
-class EnumerationError(RuntimeError):
-    """container list failed; the resulting live set is not authoritative."""
-
-
 def enumerate_active() -> list[ActiveAgent]:
-    result = subprocess.run(
-        ["container", "list", "--quiet"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["container", "list", "--quiet"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise EnumerationError(
+            "container list failed: container CLI not found"
+        ) from exc
     if result.returncode != 0:
         raise EnumerationError(
             f"container list failed: "

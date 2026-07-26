@@ -42,6 +42,10 @@ class BackendStatus(enum.IntEnum):
     READY = 0
 
 
+class EnumerationError(RuntimeError):
+    """A backend could not produce an authoritative live-resource snapshot."""
+
+
 @dataclass(frozen=True)
 class BottleSpec:
     """CLI-supplied intent. Backend-agnostic — each backend's prepare

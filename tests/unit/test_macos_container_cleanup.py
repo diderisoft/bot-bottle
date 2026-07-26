@@ -5,6 +5,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
+from bot_bottle.backend import EnumerationError
 from bot_bottle.backend.macos_container import cleanup, enumerate as enum_mod
 from bot_bottle.backend.macos_container.bottle_cleanup_plan import (
     MacosContainerBottleCleanupPlan,
@@ -69,9 +70,17 @@ class TestMacosContainerEnumerate(unittest.TestCase):
         self.assertEqual(["dev-abc"], [a.slug for a in agents])
 
     def test_raises_when_the_cli_fails(self):
-        from bot_bottle.backend.macos_container.enumerate import EnumerationError
         with self.assertRaises(EnumerationError):
             self._enumerate("", returncode=1)
+
+    def test_raises_typed_error_when_cli_is_missing(self):
+        with (
+            patch.object(
+                enum_mod.subprocess, "run", side_effect=FileNotFoundError,
+            ),
+            self.assertRaisesRegex(EnumerationError, "CLI not found"),
+        ):
+            enum_mod.enumerate_active()
 
 
 if __name__ == "__main__":

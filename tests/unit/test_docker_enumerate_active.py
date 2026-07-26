@@ -28,6 +28,7 @@ from unittest.mock import patch
 from tests.unit import use_bottle_root
 from bot_bottle import bottle_state
 from bot_bottle.backend.docker import enumerate as _enumerate
+from bot_bottle.backend import EnumerationError
 
 
 class TestParseServicesByProject(unittest.TestCase):
@@ -82,7 +83,7 @@ class TestQueryServicesByProject(unittest.TestCase):
                 args=["docker"], returncode=1, stdout="", stderr="daemon down",
             ),
         ):
-            with self.assertRaisesRegex(RuntimeError, "daemon down"):
+            with self.assertRaisesRegex(EnumerationError, "daemon down"):
                 _enumerate._query_services_by_project()
 
 

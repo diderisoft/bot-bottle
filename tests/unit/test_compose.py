@@ -18,6 +18,7 @@ from bot_bottle.backend.docker.compose import (
     list_compose_projects,
     slug_from_compose_project,
 )
+from bot_bottle.backend import EnumerationError
 
 
 class TestProjectNaming(unittest.TestCase):
@@ -76,7 +77,7 @@ class TestComposeProjectListing(unittest.TestCase):
                 args=["docker"], returncode=1, stdout="", stderr="no daemon",
             ),
         ):
-            with self.assertRaisesRegex(RuntimeError, "no daemon"):
+            with self.assertRaisesRegex(EnumerationError, "no daemon"):
                 list_active_slugs(
                     warn_on_error=False,
                     raise_on_error=True,

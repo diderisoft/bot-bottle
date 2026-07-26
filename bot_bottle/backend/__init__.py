@@ -30,6 +30,7 @@ if TYPE_CHECKING:
         BottleImages,
         BottlePlan,
         BottleSpec,
+        EnumerationError,
         ExecResult,
     )
     from .selection import (
@@ -59,6 +60,7 @@ _LAZY_MODULES: dict[str, str] = {
     "BottleImages": "base",
     "BottleBackend": "base",
     "BackendStatus": "base",
+    "EnumerationError": "base",
     "get_bottle_backend": "selection",
     "known_backend_names": "selection",
     "has_backend": "selection",
@@ -100,6 +102,7 @@ __all__ = [
     "BottlePlan",
     "BottleSpec",
     "ExecResult",
+    "EnumerationError",
     "CommitCancelled",
     "Freezer",
     "get_freezer",

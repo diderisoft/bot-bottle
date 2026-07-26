@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from ...log import die, warn
+from ..base import EnumerationError
 
 
 # --- Lifecycle helpers (PRD 0018 chunk 3) ----------------------------------
@@ -75,12 +76,14 @@ def list_compose_projects(
         )
     except FileNotFoundError as exc:
         if raise_on_error:
-            raise RuntimeError("docker compose ls failed: docker not found") from exc
+            raise EnumerationError(
+                "docker compose ls failed: docker not found"
+            ) from exc
         return []
     if result.returncode != 0:
         message = f"docker compose ls failed: {result.stderr.strip()}"
         if raise_on_error:
-            raise RuntimeError(message)
+            raise EnumerationError(message)
         if warn_on_error:
             warn(message)
         return []
@@ -89,7 +92,7 @@ def list_compose_projects(
     except json.JSONDecodeError as e:
         message = f"docker compose ls returned malformed JSON: {e}"
         if raise_on_error:
-            raise RuntimeError(message) from e
+            raise EnumerationError(message) from e
         if warn_on_error:
             warn(message)
         return []

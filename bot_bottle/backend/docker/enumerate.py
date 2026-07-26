@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import subprocess
 
-from .. import ActiveAgent
+from .. import ActiveAgent, EnumerationError
 from ...bottle_state import read_metadata
 from .compose import compose_project_name, list_active_slugs
 
@@ -75,7 +75,7 @@ def _query_services_by_project() -> dict[str, set[str]]:
             capture_output=True, text=True, check=False,
         )
     except FileNotFoundError as exc:
-        raise RuntimeError("docker ps failed: docker not found") from exc
+        raise EnumerationError("docker ps failed: docker not found") from exc
     if r.returncode != 0:
-        raise RuntimeError(f"docker ps failed: {r.stderr.strip()}")
+        raise EnumerationError(f"docker ps failed: {r.stderr.strip()}")
     return _parse_services_by_project(r.stdout or "")
