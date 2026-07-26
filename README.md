@@ -30,7 +30,7 @@
 
 ## Architecture
 
-On the default macOS Apple Container backend, a bottle is an agent container on a host-only internal network plus a gateway attached to both that internal network and a NAT egress network. The agent gets HTTP(S)_PROXY and CA bundle env vars pointing at the gateway's internal-network IP, so HTTP/HTTPS traffic flows through the gateway instead of direct egress. `bottle.git` / git-gate is intentionally deferred on this backend until a safe Apple Container key-delivery path exists.
+On the default macOS Apple Container backend, a bottle is an agent container on a host-only internal network plus a gateway attached to both that internal network and a NAT egress network. The agent gets HTTP(S)_PROXY and CA bundle env vars pointing at the gateway's internal-network IP, so HTTP/HTTPS traffic flows through the gateway instead of direct egress. git-gate runs over the gateway's consolidated `git-http` daemon (the legacy per-bottle `git://` daemon is not used on this backend); keys are provisioned dynamically at launch and revoked on teardown.
 
 On the Firecracker backend, a bottle is an agent microVM plus a Docker gateway for egress, git-gate, and supervise. The VM reaches the gateway over a per-bottle point-to-point TAP link; a dedicated fail-closed `nftables` table (`inet bot_bottle_fc`) confines the guest to that link, so nothing leaves the box except through the gateway. The TAP pool and nft table are provisioned once (root); per-launch needs no privilege.
 
@@ -74,6 +74,8 @@ When the agent exits, `cli.py` tears down every gateway and both networks; nothi
 On compatible macOS hosts, the default backend requires Apple's `container` CLI and does not require Docker. The Firecracker backend (Linux) requires Docker on the host for the gateway plus the `firecracker` binary and KVM. The legacy Docker backend requires Docker. Claude bottles also need a long-lived Claude Code OAuth token (`claude setup-token`) exported as `BOT_BOTTLE_CLAUDE_OAUTH_TOKEN`.
 
 Use `BOT_BOTTLE_BACKEND=docker ./cli.py start <agent>` on hosts where neither Apple Container nor KVM is available and Docker is the desired backend.
+
+> **CI (macOS Apple Container):** the `integration-macos` job (`.gitea/workflows/test.yml`) runs the integration suite against `BOT_BOTTLE_BACKEND=macos-container` on a self-hosted macOS runner labelled `macos`, because Apple Container needs the host virtualization framework and cannot run in a Linux container (so it can't reuse the `kvm` runner). Provision an Apple Silicon host with the `container` CLI on `PATH` and `container system status` running, then register the runner in **host mode** (not docker mode) with the `macos` label — `brew install gitea-runner` (the `act_runner` rename). Give it a Python ≥ 3.11 with `coverage` importable on the launchd service's `PATH` (a launchd service doesn't inherit your shell profile, so pin `node` and the Python env explicitly). The job is **advisory** — `workflow_dispatch` (manual) only, never triggered by push or PR — since a single laptop that sleeps/roams must not block merges or churn on every push to main; its coverage doesn't feed the gate. The infra container is a singleton (`bot-bottle-mac-infra`), so keep runner concurrency at 1.
 
 ### Containers inside a bottle
 

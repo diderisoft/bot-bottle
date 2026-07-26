@@ -2,10 +2,21 @@
 
 The test workflow lives at [`.gitea/workflows/test.yml`](../.gitea/workflows/test.yml).
 It runs the unit suite plus one integration job per backend
-(`integration-docker`, `integration-firecracker`) on:
+(`integration-docker`, `integration-firecracker`, `integration-macos`) on:
 
 - every push to a branch with an open pull request, and
 - every push to `main`.
+
+`integration-macos` is the exception: it is **advisory**, running only on
+`workflow_dispatch` (manual dispatch), never on push or pull requests. It targets the
+Apple Container backend on a self-hosted macOS runner (label `macos`,
+registered in host mode — Apple Container can't run in a Linux container, so it
+can't reuse the `kvm` runner). A single non-redundant laptop must not be able
+to block a PR merge, so the job stays out of the `coverage` job's `needs` and
+its coverage never feeds the diff-coverage gate. Because the infra container is
+a singleton (`bot-bottle-mac-infra`), the job declares a `concurrency` group
+and tears the container down on exit; keep runner concurrency at 1. See the
+README "macOS Apple Container" CI note for runner provisioning.
 
 Each integration job selects its backend via `BOT_BOTTLE_BACKEND` and
 runs a **preflight** (`./cli.py backend status --backend=<name>`) that
