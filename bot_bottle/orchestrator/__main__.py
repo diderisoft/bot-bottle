@@ -62,17 +62,14 @@ def main(argv: list[str] | None = None) -> int:
     orchestrator = OrchestratorCore(registry, broker, secret)
 
     server = make_server(orchestrator, host=args.host, port=args.port)
-    bound_host, bound_port = server.server_address[0], server.server_address[1]
     log.info(
         "orchestrator control plane listening",
-        context={"host": bound_host, "port": bound_port, "db": str(registry.db_path)},
+        context={"host": args.host, "port": args.port, "db": str(registry.db_path)},
     )
     try:
-        server.serve_forever()
+        server.run()
     except KeyboardInterrupt:
         log.info("orchestrator shutting down")
-    finally:
-        server.server_close()
     return 0
 
 
