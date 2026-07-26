@@ -7,7 +7,10 @@ immutability:
 - Python and Node base images use version-qualified tags plus multi-platform
   OCI index digests.
 - Debian packages resolve from the same dated `snapshot.debian.org` archive in
-  every image that runs `apt-get install`.
+  every image that runs `apt-get install`. The snapshot endpoint uses HTTP so a
+  fresh image does not need a host-specific TLS interception CA; APT still
+  authenticates the repository metadata and package hashes with Debian's
+  signed Release files.
 - Gateway Python dependencies install from `requirements.gateway.lock` with
   `pip --require-hashes`; provider npm packages install with `npm ci` from
   committed lockfiles.
@@ -17,9 +20,11 @@ immutability:
   The standalone layout is retained because Codex remote control requires it.
 
 `Dockerfile.orchestrator.fc` is the one intentionally dynamic `FROM`. It has no
-default value: the Firecracker build coordinator builds the orchestrator first,
-resolves its local `sha256:` image ID, and supplies that exact ID as
-`ORCHESTRATOR_BASE_IMAGE`.
+default value: the Firecracker build coordinator resolves the freshly built
+orchestrator's local `sha256:` image ID, creates a local tag containing the
+complete ID, verifies that tag resolves to the same ID, and supplies the
+content-derived reference as `ORCHESTRATOR_BASE_IMAGE`. This accommodates
+BuildKit, which treats a bare image ID in `FROM` as a registry repository.
 
 ## Refreshing inputs
 

@@ -110,9 +110,9 @@ class TestEnsureBuilt(unittest.TestCase):
                 patch.object(infra_vm.docker_mod, "build_image") as build, \
                 patch.object(
                     infra_vm.docker_mod,
-                    "image_id",
-                    return_value="sha256:" + "a" * 64,
-                ) as image_id:
+                    "pinned_local_image_ref",
+                    return_value="bot-bottle-orchestrator:sha256-" + "a" * 64,
+                ) as pinned_ref:
             infra_vm.ensure_built()
         tags = [c.args[0] for c in build.call_args_list]
         # orchestrator-fc is FROM orchestrator, so the base is built first.
@@ -121,9 +121,12 @@ class TestEnsureBuilt(unittest.TestCase):
         self.assertEqual(infra_vm._ORCHESTRATOR_FC_IMAGE, tags[-1])
         self.assertLess(tags.index(infra_vm._ORCHESTRATOR_IMAGE),
                         tags.index(infra_vm._ORCHESTRATOR_FC_IMAGE))
-        image_id.assert_called_once_with(infra_vm._ORCHESTRATOR_IMAGE)
+        pinned_ref.assert_called_once_with(infra_vm._ORCHESTRATOR_IMAGE)
         self.assertEqual(
-            {"ORCHESTRATOR_BASE_IMAGE": "sha256:" + "a" * 64},
+            {
+                "ORCHESTRATOR_BASE_IMAGE":
+                    "bot-bottle-orchestrator:sha256-" + "a" * 64,
+            },
             build.call_args_list[-1].kwargs["build_args"],
         )
 

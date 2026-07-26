@@ -10,7 +10,7 @@ from __future__ import annotations
 import subprocess
 import unittest
 from datetime import timezone
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 from bot_bottle.backend.docker import util as docker_mod
 
@@ -168,6 +168,60 @@ class TestImageId(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     docker_mod.image_id("base:latest")
                 die.assert_called_once()
+
+
+class TestPinnedLocalImageRef(unittest.TestCase):
+    def test_tags_and_verifies_content_derived_reference(self):
+        image = "sha256:" + "c" * 64
+        expected = "registry.example:5000/team/base:sha256-" + "c" * 64
+        with patch.object(
+            docker_mod,
+            "image_id",
+            side_effect=[image, image],
+        ) as image_id, patch.object(
+            docker_mod,
+            "run_docker",
+            return_value=_ok(),
+        ) as run:
+            self.assertEqual(
+                expected,
+                docker_mod.pinned_local_image_ref(
+                    "registry.example:5000/team/base:mutable"
+                ),
+            )
+        self.assertEqual(
+            ["docker", "image", "tag", image, expected],
+            run.call_args.args[0],
+        )
+        self.assertEqual(
+            [
+                call("registry.example:5000/team/base:mutable"),
+                call(expected),
+            ],
+            image_id.call_args_list,
+        )
+
+    def test_rejects_invalid_id_or_failed_tag(self):
+        cases = [
+            ("sha256:short", _ok()),
+            ("sha256:" + "d" * 64, _fail("tag failed")),
+        ]
+        for image, result in cases:
+            with self.subTest(image=image), patch.object(
+                docker_mod,
+                "image_id",
+                return_value=image,
+            ), patch.object(
+                docker_mod,
+                "run_docker",
+                return_value=result,
+            ), patch.object(
+                docker_mod,
+                "die",
+                side_effect=SystemExit("die"),
+            ):
+                with self.assertRaises(SystemExit):
+                    docker_mod.pinned_local_image_ref("base:latest")
 
 
 if __name__ == "__main__":

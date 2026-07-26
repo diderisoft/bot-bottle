@@ -165,6 +165,36 @@ def image_id(ref: str) -> str:
     return image
 
 
+def pinned_local_image_ref(ref: str) -> str:
+    """Give a local image a content-derived tag and verify the tag resolves
+    back to the same image ID.
+
+    BuildKit treats a bare ``sha256:...`` ID in ``FROM`` as a registry
+    repository name. A tag whose complete suffix is the local image ID remains
+    resolvable by BuildKit, while the post-tag inspection keeps the handoff
+    fail-closed.
+    """
+    image = image_id(ref)
+    digest = image.removeprefix("sha256:")
+    if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+        die(f"could not derive a local base tag from invalid image ID {image!r}")
+
+    repository = ref.split("@", 1)[0]
+    last_slash = repository.rfind("/")
+    last_colon = repository.rfind(":")
+    if last_colon > last_slash:
+        repository = repository[:last_colon]
+    pinned_ref = f"{repository}:sha256-{digest}"
+
+    result = run_docker(["docker", "image", "tag", image, pinned_ref])
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        die(f"could not tag exact local image {image}: {detail or '<no detail>'}")
+    if image_id(pinned_ref) != image:
+        die(f"content-derived local tag {pinned_ref!r} did not resolve to {image}")
+    return pinned_ref
+
+
 def verify_agent_image(image: str, argv: tuple[str, ...]) -> None:
     """Run `argv` inside a throwaway container of a freshly built agent
     image and die loudly if it fails, instead of shipping an image
