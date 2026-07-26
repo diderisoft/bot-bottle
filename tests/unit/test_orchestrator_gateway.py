@@ -215,6 +215,9 @@ class TestDockerGateway(unittest.TestCase):
         self.assertEqual(
             [[
                 "docker", "network", "create",
+                # IPv6 is disabled so a default-IPv6 daemon can't attach a
+                # malformed fdd0::/64 subnet that breaks `network inspect`.
+                "--ipv6=false",
                 "--subnet", DEFAULT_GATEWAY_SUBNET,
                 "--label",
                 f"bot-bottle.gateway-subnet={DEFAULT_GATEWAY_SUBNET}",

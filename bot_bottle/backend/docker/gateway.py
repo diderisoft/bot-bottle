@@ -153,6 +153,13 @@ class DockerGateway(Gateway):
                 )
         proc = run_docker([
             "docker", "network", "create",
+            # bot-bottle attribution pins IPv4 source IPs; it has no IPv6
+            # support. Disable IPv6 explicitly so a daemon that default-enables
+            # it (default-address-pools) can't attach an fdd0::/64 subnet — a
+            # malformed `::1/64` gateway address then trips docker's own
+            # ParseAddr in `network inspect`/`ls`, which poisons every launch
+            # that reads this network's subnet.
+            "--ipv6=false",
             "--subnet", self._subnet,
             "--label", f"{_GATEWAY_SUBNET_LABEL}={self._subnet}",
             self.network,
