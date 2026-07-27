@@ -179,8 +179,15 @@ if command -v bot-bottle >/dev/null 2>&1; then
     BOT_BOTTLE_BIN="bot-bottle"
 elif [ -x "${BIN_DIR}/bot-bottle" ]; then
     BOT_BOTTLE_BIN="${BIN_DIR}/bot-bottle"
+    # Name the file the user's own login shell actually reads. ~/.profile is
+    # the safe default for non-zsh: bash falls back to it, and suggesting
+    # ~/.bash_profile could shadow an existing ~/.profile.
+    case "${SHELL:-}" in
+        */zsh) profile="~/.zprofile" ;;
+        *) profile="~/.profile" ;;
+    esac
     say "note: add ${BIN_DIR} to your PATH to run 'bot-bottle' directly:"
-    say "    echo 'export PATH=\"${BIN_DIR}:\$PATH\"' >> ~/.zprofile"
+    say "    echo 'export PATH=\"${BIN_DIR}:\$PATH\"' >> ${profile}"
 else
     die "bot-bottle was installed but no entry point turned up in ${BIN_DIR}"
 fi
