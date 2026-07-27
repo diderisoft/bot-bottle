@@ -17,6 +17,7 @@ from bot_bottle.cli.commands import cleanup as cmd
 def _make_backend(empty: bool = True):
     backend = MagicMock()
     plan = MagicMock(empty=empty)
+    plan.intersect.return_value = plan
     backend.prepare_cleanup.return_value = plan
     backend.cleanup = MagicMock()
     return backend, plan
@@ -135,10 +136,12 @@ class TestCmdCleanup(unittest.TestCase):
         docker.cleanup.assert_called_once_with(docker_plan)
         fc.cleanup.assert_not_called()
 
-    def test_executes_refreshed_plan_after_confirmation(self):
+    def test_executes_only_displayed_resources_still_current(self):
         backend = MagicMock()
         preview = MagicMock(empty=False)
         refreshed = MagicMock(empty=False)
+        approved = MagicMock(empty=False)
+        preview.intersect.return_value = approved
         backend.prepare_cleanup.side_effect = [preview, refreshed]
 
         with patch.object(
@@ -152,7 +155,8 @@ class TestCmdCleanup(unittest.TestCase):
         ):
             self.assertEqual(0, cmd.cmd_cleanup([]))
 
-        backend.cleanup.assert_called_once_with(refreshed)
+        preview.intersect.assert_called_once_with(refreshed)
+        backend.cleanup.assert_called_once_with(approved)
 
 
 if __name__ == "__main__":

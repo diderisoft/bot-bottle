@@ -23,12 +23,12 @@ Active-agent enumeration lives in `backend/docker/enumerate.py`.
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 
 from ...paths import bot_bottle_root
-from ...log import info, warn
+from ...log import info
 from .. import EnumerationError
+from ..cleanup_control import CleanupFailures
 from . import util as docker_mod
 from .bottle_cleanup_plan import DockerBottleCleanupPlan
 from ...bottle_state import bottle_state_dir, is_preserved
@@ -150,40 +150,30 @@ def cleanup(plan: DockerBottleCleanupPlan) -> None:
     """Remove everything in the plan. Projects first (whose `compose
     down` reaps their containers + networks atomically), then stray
     legacy resources, then orphan state dirs."""
+    failures = CleanupFailures()
     for project in plan.projects:
         info(f"docker compose down  ({project})")
-        result = subprocess.run(
+        failures.run(
             ["docker", "compose", "-p", project, "down", "--volumes"],
-            capture_output=True, text=True, check=False,
+            f"docker compose down failed for {project}",
         )
-        if result.returncode != 0:
-            warn(
-                f"compose down failed for {project}: "
-                f"{result.stderr.strip()}"
-            )
 
     for name in plan.stray_containers:
         info(f"removing stray container {name}")
-        subprocess.run(
+        failures.run(
             ["docker", "rm", "-f", name],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
+            f"removing stray container {name}",
         )
 
     for name in plan.stray_networks:
         info(f"removing stray network {name}")
-        subprocess.run(
+        failures.run(
             ["docker", "network", "rm", name],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
+            f"removing stray network {name}",
         )
 
     for identity in plan.orphan_state_dirs:
         path = bottle_state_dir(identity)
         info(f"removing orphan state dir {path}")
-        try:
-            shutil.rmtree(path, ignore_errors=True)
-        except OSError as e:
-            warn(f"failed to remove {path}: {e}")
+        failures.remove_tree(path, f"removing orphan state dir {path}")
+    failures.raise_if_any()

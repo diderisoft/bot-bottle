@@ -224,6 +224,17 @@ class TestAgentSecrets(unittest.TestCase):
         reopened = RegistryStore(self.db)
         self.assertEqual({"K": "v"}, reopened.get_agent_secrets("bottle-1"))
 
+    def test_v6_migration_clears_legacy_secret_rows(self) -> None:
+        self.store.store_agent_secrets("bottle-1", {"K": "legacy"})
+        with closing(sqlite3.connect(self.db)) as conn:
+            conn.execute(
+                "UPDATE schema_versions SET version = 5 "
+                "WHERE module = 'orchestrator_registry'"
+            )
+            conn.commit()
+        self.store.migrate()
+        self.assertEqual({}, self.store.get_agent_secrets("bottle-1"))
+
 
 class TestReapAbsent(unittest.TestCase):
     """`reap_absent` — the self-heal for rows whose bottle is gone.

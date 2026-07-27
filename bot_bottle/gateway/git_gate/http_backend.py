@@ -203,14 +203,19 @@ class GitHttpHandler(BaseHTTPRequestHandler):
         except BodyReadError as exc:
             self.send_error(exc.status, exc.message)
             return
-        proc = subprocess.run(
-            ["git", "http-backend"],
-            input=body,
-            env=env,
-            capture_output=True,
-            check=False,
-            timeout=GIT_GATE_TIMEOUT_SECS,
-        )
+        try:
+            proc = subprocess.run(
+                ["git", "http-backend"],
+                input=body,
+                env=env,
+                capture_output=True,
+                check=False,
+                timeout=GIT_GATE_TIMEOUT_SECS,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            self.log_message("git http-backend unavailable: %s", exc)
+            self.send_error(503, "git backend unavailable")
+            return
         self._write_cgi_response(proc.stdout)
 
     def _repo_dir(self, sandbox_root: Path, path: str) -> Path | None:

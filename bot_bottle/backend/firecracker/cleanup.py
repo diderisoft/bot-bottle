@@ -23,13 +23,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import os
-import shutil
 import signal
 import subprocess
 from pathlib import Path
 
 from ...log import info
 from .. import EnumerationError
+from ..cleanup_control import CleanupFailures
 from . import lifecycle_lock, util
 from .bottle_cleanup_plan import FirecrackerBottleCleanupPlan
 
@@ -151,11 +151,13 @@ def cleanup(plan: FirecrackerBottleCleanupPlan) -> None:
         fresh = prepare_cleanup()
         approved_pids = set(plan.vm_pids).intersection(fresh.vm_pids)
         approved_dirs = set(plan.run_dirs).intersection(fresh.run_dirs)
+        failures = CleanupFailures()
         for pid in sorted(approved_pids):
             _terminate_orphan(pid, _run_root())
         for path in sorted(approved_dirs):
             info(f"rm -rf {path}")
-            shutil.rmtree(path, ignore_errors=True)
+            failures.remove_tree(Path(path), f"removing Firecracker run dir {path}")
+        failures.raise_if_any()
 
 
 def _terminate_orphan(pid: int, run_root: Path) -> None:

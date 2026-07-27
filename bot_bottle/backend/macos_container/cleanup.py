@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 
 from .. import EnumerationError
+from ..cleanup_control import CleanupFailures
 from ...log import info
 from . import util as container_mod
 from .bottle_cleanup_plan import MacosContainerBottleCleanupPlan
@@ -53,19 +54,17 @@ def prepare_cleanup() -> MacosContainerBottleCleanupPlan:
 
 
 def cleanup(plan: MacosContainerBottleCleanupPlan) -> None:
+    failures = CleanupFailures()
     for name in plan.containers:
         info(f"container delete --force {name}")
-        subprocess.run(
+        failures.run(
             ["container", "delete", "--force", name],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
+            f"deleting container {name}",
         )
     for name in plan.networks:
         info(f"container network delete {name}")
-        subprocess.run(
+        failures.run(
             ["container", "network", "delete", name],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
+            f"deleting network {name}",
         )
+    failures.raise_if_any()

@@ -46,6 +46,22 @@ class DockerBottleCleanupPlan(BottleCleanupPlan):
             and not self.orphan_state_dirs
         )
 
+    def intersect(self, current: BottleCleanupPlan) -> "DockerBottleCleanupPlan":
+        if not isinstance(current, DockerBottleCleanupPlan):
+            raise TypeError("cleanup plans must have the same backend type")
+        return DockerBottleCleanupPlan(
+            projects=tuple(x for x in self.projects if x in current.projects),
+            stray_containers=tuple(
+                x for x in self.stray_containers if x in current.stray_containers
+            ),
+            stray_networks=tuple(
+                x for x in self.stray_networks if x in current.stray_networks
+            ),
+            orphan_state_dirs=tuple(
+                x for x in self.orphan_state_dirs if x in current.orphan_state_dirs
+            ),
+        )
+
     def print(self) -> None:
         print(file=sys.stderr)
         for name in self.projects:

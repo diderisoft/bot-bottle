@@ -167,11 +167,11 @@ class TestCleanupRemoval(unittest.TestCase):
         with patch.object(fc_cleanup, "prepare_cleanup", return_value=plan), \
              patch.object(fc_cleanup, "_run_root", return_value=Path("/run")), \
              patch.object(fc_cleanup, "_terminate_orphan") as terminate, \
-             patch.object(fc_cleanup.shutil, "rmtree") as rmtree, \
+             patch("bot_bottle.backend.cleanup_control.shutil.rmtree") as rmtree, \
              patch.object(fc_cleanup, "info"):
             fc_cleanup.cleanup(plan)
         terminate.assert_called_once_with(101, Path("/run"))
-        rmtree.assert_called_once_with("/run/dev-x", ignore_errors=True)
+        rmtree.assert_called_once_with(Path("/run/dev-x"))
 
     def test_cleanup_skips_resources_no_longer_in_refreshed_plan(self):
         preview = FirecrackerBottleCleanupPlan(
@@ -181,7 +181,7 @@ class TestCleanupRemoval(unittest.TestCase):
             fc_cleanup, "prepare_cleanup",
             return_value=FirecrackerBottleCleanupPlan(),
         ), patch.object(fc_cleanup, "_terminate_orphan") as terminate, \
-             patch.object(fc_cleanup.shutil, "rmtree") as rmtree:
+             patch("bot_bottle.backend.cleanup_control.shutil.rmtree") as rmtree:
             fc_cleanup.cleanup(preview)
         terminate.assert_not_called()
         rmtree.assert_not_called()

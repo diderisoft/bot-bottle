@@ -22,6 +22,7 @@ from __future__ import annotations
 import sys
 
 from ...backend import get_bottle_backend, has_backend, known_backend_names
+from ...backend.cleanup_control import CleanupError
 from ...log import info
 from ...util import read_tty_line
 
@@ -54,12 +55,18 @@ def cmd_cleanup(_argv: list[str]) -> int:
 
     # Confirmation authorizes a fresh authoritative snapshot, not blind use of
     # identities that may have changed while the operator reviewed the preview.
-    refreshed = [(name, backend, backend.prepare_cleanup())
-                 for name, backend, _plan in prepared]
-    for name, backend, plan in refreshed:
-        if plan.empty:
+    failures: list[str] = []
+    for name, backend, displayed in prepared:
+        current = backend.prepare_cleanup()
+        approved = displayed.intersect(current)
+        if approved.empty:
             continue
-        backend.cleanup(plan)
+        try:
+            backend.cleanup(approved)
+        except CleanupError as exc:
+            failures.append(f"{name}: {exc}")
+    if failures:
+        raise CleanupError("cleanup incomplete: " + "; ".join(failures))
     info("cleanup: done")
     return 0
 

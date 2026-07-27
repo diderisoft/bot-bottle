@@ -129,6 +129,10 @@ _MIGRATIONS = TableMigrations(
         # v5 — index for fast per-bottle lookups and bulk DELETE on teardown.
         "CREATE INDEX IF NOT EXISTS idx_bottled_agent_secrets_id "
         "ON bottled_agent_secrets (bottled_agent_id, type)",
+        # v6 — unauthenticated legacy ciphertext must never be selected by
+        # attacker-controlled blob contents. Existing local agents are
+        # intentionally reprovisioned instead of retaining downgrade support.
+        "DELETE FROM bottled_agent_secrets",
     ],
 )
 

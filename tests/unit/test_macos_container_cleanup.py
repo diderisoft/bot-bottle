@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from bot_bottle.backend import EnumerationError
+from bot_bottle.backend.cleanup_control import CleanupError
 from bot_bottle.backend.macos_container import cleanup, enumerate as enum_mod
 from bot_bottle.backend.macos_container.bottle_cleanup_plan import (
     MacosContainerBottleCleanupPlan,
@@ -31,7 +32,10 @@ class TestMacosContainerCleanup(unittest.TestCase):
             containers=("bot-bottle-a",),
             networks=("bot-bottle-net-a",),
         )
-        with patch.object(cleanup.subprocess, "run") as run:
+        completed = cleanup.subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr="",
+        )
+        with patch.object(cleanup.subprocess, "run", return_value=completed) as run:
             cleanup.cleanup(plan)
         self.assertEqual(
             ["container", "delete", "--force", "bot-bottle-a"],
@@ -41,6 +45,18 @@ class TestMacosContainerCleanup(unittest.TestCase):
             ["container", "network", "delete", "bot-bottle-net-a"],
             run.call_args_list[1].args[0],
         )
+
+    def test_cleanup_attempts_all_resources_then_raises(self):
+        plan = MacosContainerBottleCleanupPlan(
+            containers=("bot-bottle-a",), networks=("bot-bottle-net-a",),
+        )
+        failed = cleanup.subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="unavailable",
+        )
+        with patch.object(cleanup.subprocess, "run", return_value=failed) as run, \
+             self.assertRaisesRegex(CleanupError, "unavailable"):
+            cleanup.cleanup(plan)
+        self.assertEqual(2, run.call_count)
 
     def test_container_enumeration_failure_aborts(self):
         completed = cleanup.subprocess.CompletedProcess(

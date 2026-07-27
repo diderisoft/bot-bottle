@@ -486,6 +486,19 @@ class TestMalformedStatusHeader(unittest.TestCase):
         )
         self.assertEqual(500, status)
 
+    def test_backend_timeout_returns_503(self):
+        with mock.patch(
+            "bot_bottle.gateway.git_gate.http_backend.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(["git", "http-backend"], 1),
+        ):
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{self._port}/repo.git/info/refs",
+                method="GET",
+            )
+            with self.assertRaises(urllib.error.HTTPError) as raised:
+                urllib.request.urlopen(req, timeout=3)
+        self.assertEqual(503, raised.exception.code)
+
 
 class TestContentLengthBounds(unittest.TestCase):
     """PRD 0041: malformed or oversized Content-Length is rejected before

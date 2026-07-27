@@ -18,9 +18,9 @@ value is encrypted independently. New output blobs are:
 
 ``version || nonce (16 bytes) || ciphertext || tag (32 bytes)``
 
-encoded as URL-safe base64 (no padding). The version marker lets the reader
-accept legacy ``nonce || ciphertext`` rows long enough to rewrite them in the
-authenticated format after a successful reprovision.
+encoded as URL-safe base64 (no padding). Unversioned legacy ciphertext is
+rejected; the registry migration clears those rows rather than allowing blob
+contents to select an unauthenticated decoder.
 
     keystream_block_i = HMAC-SHA256(key, nonce || i.to_bytes(4, "big"))
     ciphertext_i      = plaintext_i XOR keystream_block_i[:len(plaintext_i)]
@@ -84,44 +84,18 @@ def encrypt_value(secret_b64: str, plaintext: str) -> str:
     return base64.urlsafe_b64encode(authenticated + tag).rstrip(b"=").decode()
 
 
-def is_legacy_blob(blob_b64: str) -> bool:
-    """Whether *blob_b64* uses the pre-authentication storage format."""
-    try:
-        return not _b64dec(blob_b64).startswith(_VERSION)
-    except (ValueError, TypeError):
-        return False
-
-
-def _decrypt_legacy(key: bytes, blob: bytes) -> str:
-    """Read the original ``nonce || ciphertext`` format for migration only."""
-    if len(blob) < _NONCE_BYTES:
-        raise ValueError("ciphertext blob too short")
-    nonce, ciphertext = blob[:_NONCE_BYTES], blob[_NONCE_BYTES:]
-    pt = bytearray()
-    # The legacy format used the byte offset as the PRF counter.
-    for i in range(0, len(ciphertext), _BLOCK):
-        chunk = ciphertext[i : i + _BLOCK]
-        ks = _keystream(key, nonce, i)[: len(chunk)]
-        pt.extend(c ^ k for c, k in zip(chunk, ks))
-    try:
-        return bytes(pt).decode()
-    except UnicodeDecodeError as exc:
-        raise ValueError(f"decryption produced non-UTF-8 output: {exc}") from exc
-
-
 def decrypt_value(secret_b64: str, blob_b64: str) -> str:
     """Decrypt a blob produced by :func:`encrypt_value`.
 
     Returns the original plaintext string. Raises ``ValueError`` for malformed
-    input, authentication failure, or a key mismatch. Legacy unauthenticated
-    rows remain readable so callers can migrate them immediately."""
+    input, authentication failure, or a key mismatch."""
     key = _b64dec(secret_b64)
     try:
         blob = _b64dec(blob_b64)
     except (ValueError, TypeError) as exc:
         raise ValueError(f"invalid ciphertext blob: {exc}") from exc
     if not blob.startswith(_VERSION):
-        return _decrypt_legacy(key, blob)
+        raise ValueError("unsupported ciphertext format")
     minimum = len(_VERSION) + _NONCE_BYTES + _TAG_BYTES
     if len(blob) < minimum:
         raise ValueError("ciphertext blob too short")
@@ -152,5 +126,4 @@ __all__ = [
     "new_env_var_secret",
     "encrypt_value",
     "decrypt_value",
-    "is_legacy_blob",
 ]

@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import base64
-import hashlib
-import hmac
 import unittest
 
 from bot_bottle.orchestrator.store.secret_store import (
@@ -83,16 +81,21 @@ class TestDecryptErrors(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "authentication failed"):
             decrypt_value(self.secret, tampered)
 
-    def test_reads_legacy_ciphertext_for_migration(self) -> None:
-        key = base64.urlsafe_b64decode(self.secret + "==")
-        nonce = b"0123456789abcdef"
-        plaintext = b"legacy-token"
-        stream = hmac.new(
-            key, nonce + (0).to_bytes(4, "big"), hashlib.sha256,
-        ).digest()
-        ciphertext = bytes(p ^ k for p, k in zip(plaintext, stream))
-        legacy = base64.urlsafe_b64encode(nonce + ciphertext).rstrip(b"=").decode()
-        self.assertEqual("legacy-token", decrypt_value(self.secret, legacy))
+    def test_rejects_legacy_ciphertext(self) -> None:
+        legacy = base64.urlsafe_b64encode(
+            b"0123456789abcdeflegacy-token",
+        ).rstrip(b"=").decode()
+        with self.assertRaisesRegex(ValueError, "unsupported ciphertext format"):
+            decrypt_value(self.secret, legacy)
+
+    def test_rejects_authenticated_blob_with_changed_version(self) -> None:
+        raw = bytearray(base64.urlsafe_b64decode(
+            encrypt_value(self.secret, "secret-token") + "=="
+        ))
+        raw[0] ^= 1
+        downgraded = base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+        with self.assertRaisesRegex(ValueError, "unsupported ciphertext format"):
+            decrypt_value(self.secret, downgraded)
 
     def test_truncated_blob_raises_value_error(self) -> None:
         with self.assertRaises(ValueError):

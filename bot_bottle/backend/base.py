@@ -172,6 +172,10 @@ class BottleCleanupPlan(ABC):
         """True iff there is nothing to clean up; the CLI uses this to
         short-circuit before showing the y/N."""
 
+    @abstractmethod
+    def intersect(self, current: "BottleCleanupPlan") -> "BottleCleanupPlan":
+        """Resources both displayed to the operator and currently removable."""
+
 
 @dataclass(frozen=True)
 class ExecResult:
