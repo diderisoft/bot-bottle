@@ -20,6 +20,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from ... import invocation
 from ... import resources
 from . import netpool
 from . import util
@@ -179,9 +180,11 @@ def _setup_systemd() -> None:
         f"sudo systemctl daemon-reload\n"
         f"sudo systemctl enable --now {netpool.SYSTEMD_UNIT}\n"
     )
+    # Absolute path, not `sudo bot-bottle`: sudo's secure_path drops
+    # ~/.local/bin, where both pipx and install.sh put the entry point.
     sys.stderr.write(
-        f"\n(Or re-run this as root to install it directly: "
-        f"sudo bot-bottle backend setup --backend=firecracker)\n"
+        f"\n(Or re-run this as root to install it directly:\n"
+        f"    {invocation.sudo_command('backend', 'setup', '--backend=firecracker')})\n"
     )
 
 
