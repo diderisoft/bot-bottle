@@ -63,12 +63,23 @@ def provision_git_gate(
     transport.exec(["chmod", "+x", "/etc/git-gate/access-hook"])
     creds = _creds_dir(bottle_id)
     transport.exec(["mkdir", "-p", creds])
+    transport.exec(["chmod", "700", creds])
+    credential_paths: list[str] = []
     for u in plan.upstreams:
         if u.identity_file:
-            transport.cp_into(u.identity_file, f"{creds}/{u.name}-key")
+            key_path = f"{creds}/{u.name}-key"
+            transport.cp_into(u.identity_file, key_path)
+            credential_paths.append(key_path)
         known_hosts = str(u.known_hosts_file)
         if known_hosts and known_hosts != ".":
-            transport.cp_into(known_hosts, f"{creds}/{u.name}-known_hosts")
+            known_hosts_path = f"{creds}/{u.name}-known_hosts"
+            transport.cp_into(known_hosts, known_hosts_path)
+            credential_paths.append(known_hosts_path)
+    # Copy-mode behavior differs across Docker, Apple Container, and SSH.
+    # Apply the security contract inside the gateway so every backend produces
+    # the same private credential namespace.
+    if credential_paths:
+        transport.exec(["chmod", "600", *credential_paths])
     # Init the bare repos + per-repo credential config for this namespace.
     script = git_gate_render_provision(bottle_id, plan.upstreams)
     transport.exec(["sh", "-c", script])

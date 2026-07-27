@@ -136,12 +136,13 @@ class TestStoreGuardBranches(unittest.TestCase):
             db.unlink()
             self.assertEqual([], store.list_all_pending_proposals())
 
-    def test_queue_store_chmod_oserror_is_swallowed(self):
+    def test_queue_store_chmod_oserror_fails_closed(self):
         with tempfile.TemporaryDirectory() as d:
             db = Path(d) / "q.db"
             store = QueueStore("key", db_path=db)
             with patch("pathlib.Path.chmod", side_effect=OSError("ro")):
-                store.migrate()  # must not raise
+                with self.assertRaisesRegex(OSError, "ro"):
+                    store.migrate()
 
     def test_audit_store_missing_db_read_returns_empty(self):
         with tempfile.TemporaryDirectory() as d:
@@ -151,12 +152,13 @@ class TestStoreGuardBranches(unittest.TestCase):
             db.unlink()
             self.assertEqual([], store.read_audit_entries("egress", "slug"))
 
-    def test_audit_store_chmod_oserror_is_swallowed(self):
+    def test_audit_store_chmod_oserror_fails_closed(self):
         with tempfile.TemporaryDirectory() as d:
             db = Path(d) / "a.db"
             store = AuditStore(db_path=db)
             with patch("pathlib.Path.chmod", side_effect=OSError("ro")):
-                store.migrate()  # must not raise
+                with self.assertRaisesRegex(OSError, "ro"):
+                    store.migrate()
 
 
 if __name__ == "__main__":

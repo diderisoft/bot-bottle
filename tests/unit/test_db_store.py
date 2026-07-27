@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import sqlite3
+import stat
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from bot_bottle.store.db_store import DbStore
 from bot_bottle.store.migrations import TableMigrations
@@ -21,6 +23,34 @@ class TestDbStoreIsMigrated(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             store = _store(Path(d))
             self.assertFalse(store.is_migrated())
+
+    def test_creates_private_directory_and_database_before_first_open(self):
+        with tempfile.TemporaryDirectory() as d:
+            parent = Path(d) / "store"
+            store = _store(parent)
+            self.assertEqual(0o700, stat.S_IMODE(parent.stat().st_mode))
+            self.assertFalse(store.db_path.exists())
+            store.migrate()
+            self.assertEqual(0o600, stat.S_IMODE(store.db_path.stat().st_mode))
+
+    def test_repairs_existing_permissions(self):
+        with tempfile.TemporaryDirectory() as d:
+            parent = Path(d) / "store"
+            parent.mkdir(mode=0o755)
+            db_path = parent / "test.db"
+            db_path.touch(mode=0o644)
+            store = _store(parent)
+            self.assertEqual(db_path, store.db_path)
+            self.assertEqual(0o700, stat.S_IMODE(parent.stat().st_mode))
+            self.assertEqual(0o600, stat.S_IMODE(db_path.stat().st_mode))
+
+    def test_permission_repair_failure_is_not_suppressed(self):
+        with tempfile.TemporaryDirectory() as d:
+            parent = Path(d) / "store"
+            parent.mkdir()
+            with patch.object(Path, "chmod", side_effect=OSError("denied")):
+                with self.assertRaisesRegex(OSError, "denied"):
+                    _store(parent)
 
     def test_returns_false_when_schema_versions_missing(self):
         # DB file exists but has no schema_versions table → OperationalError → False.

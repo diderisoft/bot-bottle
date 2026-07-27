@@ -55,7 +55,11 @@ class TestProvisionGitGate(unittest.TestCase):
     def test_copies_creds_and_runs_namespaced_init(self) -> None:
         calls: list[list[str]] = []
         with patch(_RUN, side_effect=_recorder(calls)):
-            provision_git_gate(DockerGatewayTransport("gw"), "bottle1", _plan(_up("foo", known_hosts="/host/kh")))
+            provision_git_gate(
+                DockerGatewayTransport("gw"),
+                "bottle1",
+                _plan(_up("foo", known_hosts="/host/kh")),
+            )
 
         cps = [c for c in calls if c[:2] == ["docker", "cp"]]
         self.assertIn(["docker", "cp", "/host/keys/id", "gw:/git-gate/creds/bottle1/foo-key"], cps)
@@ -81,11 +85,39 @@ class TestProvisionGitGate(unittest.TestCase):
             ["docker", "exec", "gw", "chmod", "+x", "/etc/git-gate/access-hook"], calls,
         )
 
+    def test_applies_private_modes_inside_gateway(self) -> None:
+        calls: list[list[str]] = []
+        with patch(_RUN, side_effect=_recorder(calls)):
+            provision_git_gate(
+                DockerGatewayTransport("gw"),
+                "bottle1",
+                _plan(_up("foo", known_hosts="/host/kh")),
+            )
+        self.assertIn(
+            [
+                "docker", "exec", "gw", "chmod", "700",
+                "/git-gate/creds/bottle1",
+            ],
+            calls,
+        )
+        self.assertIn(
+            [
+                "docker", "exec", "gw", "chmod", "600",
+                "/git-gate/creds/bottle1/foo-key",
+                "/git-gate/creds/bottle1/foo-known_hosts",
+            ],
+            calls,
+        )
+
     def test_omits_known_hosts_copy_when_absent(self) -> None:
         calls: list[list[str]] = []
         with patch(_RUN, side_effect=_recorder(calls)):
-            provision_git_gate(DockerGatewayTransport("gw"), "b1", _plan(_up("foo")))  # no known_hosts
-        creds_cps = [c for c in calls if c[:2] == ["docker", "cp"] and "/git-gate/creds/" in c[3]]
+            # No known-hosts file: only the identity key is copied.
+            provision_git_gate(DockerGatewayTransport("gw"), "b1", _plan(_up("foo")))
+        creds_cps = [
+            c for c in calls
+            if c[:2] == ["docker", "cp"] and "/git-gate/creds/" in c[3]
+        ]
         self.assertEqual(1, len(creds_cps))  # only the key, not known_hosts
         self.assertTrue(creds_cps[0][3].endswith("/foo-key"))
 
