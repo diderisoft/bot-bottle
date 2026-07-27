@@ -19,6 +19,19 @@ name: pre-release-test
 
 on:
   workflow_dispatch:
+    inputs:
+      ref:
+        description: Revision to qualify
+        required: false
+        default: main
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+    secrets:
+      BOT_BOTTLE_INFRA_ARTIFACT_TOKEN:
+        required: true
 
 jobs:
   unit:
@@ -26,6 +39,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
 
       # No actions/setup-python: the runner image already ships Python 3.12,
       # and older act_runner engines mishandle setup-python's PATH (coverage
@@ -66,6 +81,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
 
       # No actions/setup-python (see the note in the `unit` job); the
       # container's system Python 3.12 runs the stdlib test suite directly.
@@ -138,10 +155,11 @@ jobs:
   # the old build-infra → integration-firecracker + coverage chain incurred.
   integration-firecracker:
     runs-on: [self-hosted, kvm]
-    if: github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
 
       - name: Preflight — Firecracker host is ready
         run: |
@@ -212,13 +230,14 @@ jobs:
   # Python >=3.11 with `coverage` importable on the launchd service PATH.
   integration-macos:
     runs-on: [self-hosted, macos]
-    if: github.event_name == 'workflow_dispatch'
     concurrency:
       group: integration-macos-infra
       cancel-in-progress: false
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
 
       # Fail loudly if the backend this job promises isn't actually usable,
       # rather than letting every test silently `unittest.skip` and the job go
@@ -290,6 +309,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.ref }}
           fetch-depth: 0
 
       - name: Install coverage
@@ -340,6 +360,8 @@ jobs:
     steps:
       - name: Checkout the tested revision
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
 
       - name: Download the tested rootfs
         uses: actions/download-artifact@v3

@@ -1,0 +1,189 @@
+name: publish-artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag, or commit to publish
+        required: true
+        default: main
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+    outputs:
+      source_commit:
+        description: Published immutable source commit
+        value: ${{ jobs.resolve.outputs.sha }}
+    secrets:
+      BOT_BOTTLE_RELEASE_TOKEN:
+        required: true
+      BOT_BOTTLE_INFRA_ARTIFACT_TOKEN:
+        required: true
+
+concurrency:
+  group: publish-artifacts-${{ inputs.ref }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.revision.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - id: revision
+        name: Resolve the immutable source revision
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  oci:
+    needs: resolve
+    runs-on: ubuntu-latest
+    outputs:
+      orchestrator: ${{ steps.images.outputs.orchestrator }}
+      gateway: ${{ steps.images.outputs.gateway }}
+      agent_claude: ${{ steps.images.outputs.agent_claude }}
+      agent_codex: ${{ steps.images.outputs.agent_codex }}
+      agent_pi: ${{ steps.images.outputs.agent_pi }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+      - name: Log in to the package registry
+        uses: docker/login-action@v3
+        with:
+          registry: gitea.dideric.is
+          username: ${{ gitea.actor }}
+          password: ${{ secrets.BOT_BOTTLE_RELEASE_TOKEN }}
+      - name: Set up multi-architecture builds
+        uses: docker/setup-buildx-action@v3
+      - id: images
+        name: Build, smoke-test, and publish OCI images
+        run: |
+          set -euo pipefail
+          python_base=$(python3 -c \
+            'import json; print(json.load(open("image-build-args.json"))["PYTHON_BASE_IMAGE"])')
+          node_base=$(python3 -c \
+            'import json; print(json.load(open("image-build-args.json"))["NODE_BASE_IMAGE"])')
+          sha='${{ needs.resolve.outputs.sha }}'
+          registry=gitea.dideric.is/didericis
+
+          build_image() {
+            key=$1
+            name=$2
+            dockerfile=$3
+            build_arg=$4
+            smoke=$5
+            local_ref="bot-bottle-${name}:candidate"
+            remote_ref="${registry}/bot-bottle-${name}:commit-${sha}"
+            docker build --build-arg "$build_arg" -t "$local_ref" \
+              -f "$dockerfile" .
+            smoke_command=$(printf "$smoke" "$local_ref")
+            sh -c "docker run --rm $smoke_command"
+            docker buildx build --platform linux/amd64,linux/arm64 \
+              --build-arg "$build_arg" --push --iidfile "${key}.iid" \
+              -t "$remote_ref" -f "$dockerfile" .
+            digest=$(cat "${key}.iid")
+            case "$digest" in sha256:*) ;; *) exit 1 ;; esac
+            echo "${key}=${registry}/bot-bottle-${name}@${digest}" \
+              >> "$GITHUB_OUTPUT"
+          }
+
+          build_image orchestrator orchestrator Dockerfile.orchestrator \
+            "PYTHON_BASE_IMAGE=$python_base" \
+            "--entrypoint python3 %s -c 'import bot_bottle.orchestrator'"
+          build_image gateway gateway Dockerfile.gateway \
+            "PYTHON_BASE_IMAGE=$python_base" \
+            "--entrypoint mitmdump %s --version"
+          build_image agent_claude claude bot_bottle/contrib/claude/Dockerfile \
+            "NODE_BASE_IMAGE=$node_base" "%s claude --version"
+          build_image agent_codex codex bot_bottle/contrib/codex/Dockerfile \
+            "NODE_BASE_IMAGE=$node_base" "%s codex --version"
+          build_image agent_pi pi bot_bottle/contrib/pi/Dockerfile \
+            "NODE_BASE_IMAGE=$node_base" "%s pi --version"
+
+  firecracker:
+    needs: resolve
+    runs-on: [self-hosted, kvm]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+      - name: Build and smoke-test Firecracker artifacts
+        env:
+          BOT_BOTTLE_FC_DROPBEAR: /var/cache/bot-bottle-fc/dropbear
+        run: |
+          python3 cli.py backend status --backend=firecracker
+          python3 -m bot_bottle.backend.firecracker.publish_infra \
+            --output infra-candidate --reuse-published
+          BOT_BOTTLE_INFRA_ARTIFACT_DIR="$PWD/infra-candidate" \
+            python3 -m unittest discover -t . -s tests/integration -v
+      - name: Publish tested Firecracker artifacts
+        env:
+          BOT_BOTTLE_INFRA_ARTIFACT_TOKEN: ${{ secrets.BOT_BOTTLE_INFRA_ARTIFACT_TOKEN }}
+          BOT_BOTTLE_FC_DROPBEAR: /var/cache/bot-bottle-fc/dropbear
+        run: |
+          python3 -m bot_bottle.backend.firecracker.publish_infra \
+            --publish-dir infra-candidate
+      - name: Record Firecracker artifact identities
+        run: |
+          cp infra-candidate/orchestrator/version.txt fc-orchestrator-version
+          cp infra-candidate/orchestrator/rootfs.ext4.gz.sha256 fc-orchestrator-sha
+          cp infra-candidate/gateway/version.txt fc-gateway-version
+          cp infra-candidate/gateway/rootfs.ext4.gz.sha256 fc-gateway-sha
+      - uses: actions/upload-artifact@v3
+        with:
+          name: firecracker-identities
+          path: |
+            fc-orchestrator-version
+            fc-orchestrator-sha
+            fc-gateway-version
+            fc-gateway-sha
+
+  package:
+    needs: [resolve, oci, firecracker]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+      - uses: actions/download-artifact@v3
+        with:
+          name: firecracker-identities
+      - name: Build the wheel with the published identities
+        run: |
+          python3 -m pip install --break-system-packages build
+          python3 scripts/generate_release_manifest.py \
+            --source-commit '${{ needs.resolve.outputs.sha }}' \
+            --orchestrator-image '${{ needs.oci.outputs.orchestrator }}' \
+            --gateway-image '${{ needs.oci.outputs.gateway }}' \
+            --agent-claude-image '${{ needs.oci.outputs.agent_claude }}' \
+            --agent-codex-image '${{ needs.oci.outputs.agent_codex }}' \
+            --agent-pi-image '${{ needs.oci.outputs.agent_pi }}' \
+            --firecracker-orchestrator-version "$(cat fc-orchestrator-version)" \
+            --firecracker-orchestrator-sha256 "$(awk '{print $1}' fc-orchestrator-sha)" \
+            --firecracker-gateway-version "$(cat fc-gateway-version)" \
+            --firecracker-gateway-sha256 "$(awk '{print $1}' fc-gateway-sha)" \
+            --output release-manifest.json
+          BOT_BOTTLE_RELEASE_MANIFEST="$PWD/release-manifest.json" \
+            python3 -m build --wheel
+      - name: Verify and publish the immutable commit bundle
+        env:
+          BOT_BOTTLE_RELEASE_TOKEN: ${{ secrets.BOT_BOTTLE_RELEASE_TOKEN }}
+        run: |
+          wheel=$(find dist -maxdepth 1 -name '*.whl' -type f)
+          python3 -m venv verify-venv
+          verify-venv/bin/pip install --no-deps "$wheel"
+          verify-venv/bin/python -c \
+            'from bot_bottle.release_manifest import load_manifest; load_manifest()'
+          python3 scripts/generate_release_bundle.py \
+            --manifest release-manifest.json \
+            --wheel "$wheel" \
+            --workflow-run \
+              "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --published-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --output bundle-index.json --publish
