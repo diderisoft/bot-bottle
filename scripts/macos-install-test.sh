@@ -106,6 +106,36 @@ require_root() {
 
 user_exists() { dscl . -read "/Users/$USER_NAME" >/dev/null 2>&1; }
 
+user_uid() {
+    dscl . -read "/Users/$USER_NAME" UniqueID 2>/dev/null | awk '{print $2}'
+}
+
+# Whether we can enter the target user's launchd domain.
+#
+# This matters more than it sounds. `container system start` registers
+# com.apple.container.apiserver as a per-USER launchd agent and then talks to
+# it over XPC. Under plain `sudo -u` the caller is still in root's bootstrap
+# namespace, so the lookup crosses domains and the apiserver answers
+#     invalidState: "unauthorized request"
+# even though it launched fine. `launchctl asuser <uid>` puts the whole
+# invocation in that user's domain, which is also what a real user gets from
+# Terminal — so it is the more faithful way to run *everything* here, not just
+# the service start. Falls back to plain sudo when unavailable, since a
+# never-logged-in account may have no bootstrappable domain at all.
+_SESSION_OK=""
+user_session_available() {
+    if [ -z "$_SESSION_OK" ]; then
+        local uid
+        uid="$(user_uid)"
+        if [ -n "$uid" ] && launchctl asuser "$uid" true >/dev/null 2>&1; then
+            _SESSION_OK=1
+        else
+            _SESSION_OK=0
+        fi
+    fi
+    [ "$_SESSION_OK" = "1" ]
+}
+
 # Run a shell snippet as the throwaway user in a fresh login shell.
 #
 # The snippet goes in on stdin, never as an argument. `sudo -i` joins its argv
@@ -113,7 +143,13 @@ user_exists() { dscl . -read "/Users/$USER_NAME" >/dev/null 2>&1; }
 # argument is not preserved and a newline ends the command outright ("sh: -c:
 # line 1: syntax error: unexpected end of file"). Feeding `sh -s` from stdin
 # sidesteps the joining entirely and lets snippets be multi-line.
-run_as_user() { printf '%s\n' "$1" | sudo -u "$USER_NAME" -i sh -s; }
+run_as_user() {
+    if user_session_available; then
+        printf '%s\n' "$1" | launchctl asuser "$(user_uid)" sudo -u "$USER_NAME" -i sh -s
+    else
+        printf '%s\n' "$1" | sudo -u "$USER_NAME" -i sh -s
+    fi
+}
 
 # `bot-bottle doctor` as the throwaway user. Non-zero when no entry point was
 # installed at all, or when doctor itself is unhappy.
@@ -333,8 +369,16 @@ cmd_prereqs() {
         return 1
     }
     echo "starting the per-user Apple 'container' service for $USER_NAME"
+    user_session_available || {
+        echo "warning: no launchd session for $USER_NAME; the service start is" >&2
+        echo "  likely to fail with 'unauthorized request'. See user_session_available." >&2
+    }
     run_as_user 'container system start' || {
         echo "error: 'container system start' failed for $USER_NAME" >&2
+        echo "  If this said invalidState/\"unauthorized request\", the CLI could not" >&2
+        echo "  reach its per-user apiserver over XPC. A never-GUI-logged-in account" >&2
+        echo "  may not have a usable launchd domain; logging into $USER_NAME once" >&2
+        echo "  (fast user switching) gives it one." >&2
         return 1
     }
     run_as_user 'container system status' || {
