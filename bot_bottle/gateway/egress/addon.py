@@ -16,7 +16,7 @@ import typing
 from mitmproxy import http  # type: ignore[import-not-found]  # pylint: disable=import-error
 
 from bot_bottle.constants import IDENTITY_HEADER
-from bot_bottle.gateway.egress.dlp_detectors import redact_tokens, strip_crlf
+from bot_bottle.gateway.egress.dlp_detectors import redact_tokens
 from bot_bottle.gateway.egress.dlp_config import (
     DEFAULT_OUTBOUND_ON_MATCH,
     ON_MATCH_BLOCK,
@@ -25,12 +25,11 @@ from bot_bottle.gateway.egress.dlp_config import (
 from bot_bottle.gateway.egress.context import resolve_client_context
 from bot_bottle.gateway.egress.dlp import (
     build_inbound_scan_text,
-    build_outbound_scan_text,
     build_token_allow_payload,
-    outbound_scan_headers,
     scan_inbound,
     scan_outbound,
 )
+from bot_bottle.gateway.egress.outbound_pipeline import redact_request, scan_request
 from bot_bottle.gateway.egress.matching import (
     decide,
     match_route,
@@ -496,20 +495,12 @@ class EgressAddon:
         Loops so the supervise policy can re-scan after each approval — a
         second, un-approved token in the same request is still caught."""
         while True:
-            request_path, _, query = flow.request.path.partition("?")
-            body = flow.request.get_text(strict=False) or ""
-            headers = outbound_scan_headers(route, dict(flow.request.headers))
-            scan_text = build_outbound_scan_text(
-                flow.request.pretty_host, request_path, query, headers, body,
-            )
-            # CRLF is scanned only over the request line + headers, never the
-            # body (see scan_outbound) — a body is not an injection vector.
-            crlf_text = build_outbound_scan_text(
-                flow.request.pretty_host, request_path, query, headers, "",
-            )
-            result = scan_outbound(
-                route, scan_text, env,
-                safe_tokens=self._safe_tokens_for(slug), crlf_text=crlf_text,
+            request_path, _, _ = flow.request.path.partition("?")
+            result = scan_request(
+                flow.request,
+                route,
+                env,
+                safe_tokens=self._safe_tokens_for(slug),
             )
             if result is None or result.severity != "block":
                 return True
@@ -519,7 +510,7 @@ class EgressAddon:
             # redact scrubs every detection (tokens and structural CRLF) and
             # forwards; it fails closed only if a match survives the scrub.
             if policy == ON_MATCH_REDACT:
-                if self._redact_outbound(flow, route, env):
+                if redact_request(flow.request, route, env):
                     if self._flow_log(flow) >= LOG_BLOCKS:
                         sys.stderr.write(json.dumps({
                             "event": "egress_redacted",
@@ -551,41 +542,6 @@ class EgressAddon:
             if not approved:
                 return False  # _supervise_token_block wrote the 403 response
             # loop: the approved value is now in safe_tokens; re-scan.
-
-    def _redact_outbound(
-        self, flow: http.HTTPFlow, route: Route, env: "typing.Mapping[str, str]",
-    ) -> bool:
-        """Scrub detected tokens (and CRLF injection sequences) from the mutable
-        request surfaces (body, headers, path/query) and re-scan. `env` is the
-        per-bottle env overlay. Returns True if the request is now clean; False
-        if a block-severity match remains on a surface redaction cannot rewrite
-        (the hostname) so the caller fails closed."""
-        body = flow.request.get_text(strict=False)
-        if body:
-            redacted_body = redact_tokens(body, env=env)
-            if redacted_body != body:
-                flow.request.text = redacted_body
-        for name, value in list(flow.request.headers.items()):
-            if name.lower() == "host":
-                continue  # routing-critical; never a legitimate token
-            redacted = strip_crlf(redact_tokens(value, env=env))
-            if redacted != value:
-                flow.request.headers[name] = redacted
-        redacted_path = strip_crlf(redact_tokens(flow.request.path, env=env))
-        if redacted_path != flow.request.path:
-            flow.request.path = redacted_path
-
-        request_path, _, query = flow.request.path.partition("?")
-        new_body = flow.request.get_text(strict=False) or ""
-        headers = outbound_scan_headers(route, dict(flow.request.headers))
-        scan_text = build_outbound_scan_text(
-            flow.request.pretty_host, request_path, query, headers, new_body,
-        )
-        crlf_text = build_outbound_scan_text(
-            flow.request.pretty_host, request_path, query, headers, "",
-        )
-        result = scan_outbound(route, scan_text, env, crlf_text=crlf_text)
-        return result is None or result.severity != "block"
 
     async def _supervise_token_block(
         self,
