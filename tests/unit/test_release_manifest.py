@@ -48,6 +48,34 @@ class TestParseManifest(unittest.TestCase):
         with self.assertRaisesRegex(ReleaseManifestError, "64 lowercase hex"):
             parse_manifest(data)
 
+    def test_rejects_missing_manifest_sections(self) -> None:
+        cases = (
+            (None, "schema 1"),
+            ({"schema": 1}, "source_commit"),
+            (
+                {"schema": 1, "source_commit": "1" * 40},
+                "oci must be an object",
+            ),
+        )
+        for data, message in cases:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(ReleaseManifestError, message):
+                    parse_manifest(data)
+
+    def test_rejects_malformed_firecracker_artifact(self) -> None:
+        data = manifest()
+        assert isinstance(data["firecracker"], dict)
+        data["firecracker"]["orchestrator"] = None
+        with self.assertRaisesRegex(ReleaseManifestError, "must be an object"):
+            parse_manifest(data)
+
+        data["firecracker"]["orchestrator"] = {
+            "version": " ",
+            "sha256": "c" * 64,
+        }
+        with self.assertRaisesRegex(ReleaseManifestError, "version must be non-empty"):
+            parse_manifest(data)
+
 
 class TestImageSelection(unittest.TestCase):
     def test_development_marker_selects_local_builds(self) -> None:
