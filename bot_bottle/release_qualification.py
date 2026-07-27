@@ -8,6 +8,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from .release_bundle import parse_bundle_index
 from .release_manifest import ReleaseManifestError
 from .release_publish import (
     HTTP_TIMEOUT_SECONDS,
@@ -37,11 +38,20 @@ def release_version(tag: str) -> tuple[int, int, int, int]:
     """Return a monotonically comparable version tuple."""
     stable = _STABLE_TAG_RE.fullmatch(tag)
     if stable:
-        return *(int(value) for value in stable.groups()), 1 << 30
+        return (
+            int(stable.group(1)),
+            int(stable.group(2)),
+            int(stable.group(3)),
+            1 << 30,
+        )
     staging = _STAGING_TAG_RE.fullmatch(tag)
     if staging:
-        return *(int(value) for value in staging.groups()[:3]), int(
-            staging.group(4))
+        return (
+            int(staging.group(1)),
+            int(staging.group(2)),
+            int(staging.group(3)),
+            int(staging.group(4)),
+        )
     raise ReleaseManifestError(
         "release tag must be vX.Y.Z or vX.Y.Z-rc.N")
 
@@ -138,9 +148,17 @@ def publish_qualification(
     channel_url = pointer_url(
         "bot-bottle-channels", channel, "channel.json")
 
-    if remote_bytes(str(pointer["bundle_index_url"])) is None:
+    bundle = remote_bytes(str(pointer["bundle_index_url"]))
+    if bundle is None:
         raise ReleaseManifestError(
             f"commit bundle does not exist for {pointer['source_commit']}")
+    try:
+        bundle_data = parse_bundle_index(json.loads(bundle))
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise ReleaseManifestError("commit bundle index is malformed") from exc
+    if bundle_data["source_commit"] != pointer["source_commit"]:
+        raise ReleaseManifestError(
+            "commit bundle index does not match the qualified source commit")
     existing_release = remote_bytes(release_url)
     if existing_release is not None and existing_release != wanted:
         raise ReleaseManifestError(

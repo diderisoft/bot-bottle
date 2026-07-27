@@ -16,6 +16,37 @@ from bot_bottle.release_qualification import (
 COMMIT = "a" * 40
 
 
+def bundle() -> bytes:
+    return json.dumps({
+        "schema": 1,
+        "source_commit": COMMIT,
+        "wheel": {
+            "filename": "bot_bottle.whl",
+            "url": (
+                "https://gitea.dideric.is/api/packages/didericis/generic/"
+                f"bot-bottle-builds/{COMMIT}/bot_bottle.whl"
+            ),
+            "sha256": "b" * 64,
+        },
+        "oci": {
+            role: f"registry.example/{role}@sha256:{'c' * 64}"
+            for role in (
+                "orchestrator",
+                "gateway",
+                "agent_claude",
+                "agent_codex",
+                "agent_pi",
+            )
+        },
+        "firecracker": {
+            role: {"version": "v1", "sha256": "d" * 64}
+            for role in ("orchestrator", "gateway")
+        },
+        "provenance": {"workflow_run": "run", "published_at": "now"},
+        "qualifications": [],
+    }).encode()
+
+
 class ReleaseQualificationTest(unittest.TestCase):
     def test_tag_selects_channel(self) -> None:
         self.assertEqual(release_channel("v1.2.3"), "production")
@@ -38,7 +69,7 @@ class ReleaseQualificationTest(unittest.TestCase):
     def test_publishes_bundle_release_and_channel(
         self, remote: mock.Mock, upload: mock.Mock,
     ) -> None:
-        remote.side_effect = [b"bundle", None, None]
+        remote.side_effect = [bundle(), None, None]
         pointer = build_release_pointer(
             tag="v1.2.3",
             source_commit=COMMIT,
@@ -59,7 +90,7 @@ class ReleaseQualificationTest(unittest.TestCase):
             workflow_run="old-run",
             qualified_at="old-time",
         )
-        remote.side_effect = [b"bundle", None, json.dumps(old).encode()]
+        remote.side_effect = [bundle(), None, json.dumps(old).encode()]
         pointer = build_release_pointer(
             tag="v1.2.3",
             source_commit=COMMIT,

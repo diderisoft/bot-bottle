@@ -71,7 +71,7 @@ jobs:
           BOT_BOTTLE_REF: ${{ needs.validate.outputs.sha }}
         run: |
           sh install.sh
-          bot-bottle --help
+          "$HOME/.local/bin/bot-bottle" --help
       - name: Publish release qualification and advance channel
         env:
           BOT_BOTTLE_RELEASE_TOKEN: ${{ secrets.BOT_BOTTLE_RELEASE_TOKEN }}
