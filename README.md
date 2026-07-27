@@ -194,12 +194,15 @@ BOT_BOTTLE_BACKEND=firecracker bot-bottle start <agent>
 bot-bottle start <agent>   # prepares the selected agent image, then attaches
 ```
 
-Packaged releases carry immutable orchestrator and gateway identities. Docker
-and Apple Container pull the package-selected OCI digests; Firecracker pulls
-the matching checksum-verified rootfs artifacts. A source checkout uses local
-infrastructure builds for development. Set `BOT_BOTTLE_INFRA_BUILD=local` to
-make that development override explicit when diagnosing a packaged release;
-production never falls back to a build after an artifact pull fails.
+Packaged releases carry immutable orchestrator, gateway, and first-party agent
+image identities. Docker and Apple Container pull the package-selected OCI
+digests; Firecracker pulls the matching checksum-verified rootfs artifacts.
+Each verified wheel and its identities are published as an immutable generic
+package keyed by the full source commit; `bundle-index.json` is uploaded last
+and is the completeness marker. A source checkout uses local builds for
+development. Set `BOT_BOTTLE_INFRA_BUILD=local` to make that development
+override explicit when diagnosing a packaged release; production never falls
+back to a build after an artifact pull fails.
 
 ## Manifest
 

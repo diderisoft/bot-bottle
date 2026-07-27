@@ -73,8 +73,23 @@ jobs:
           verify-venv/bin/python -c \
             'from bot_bottle.release_manifest import load_manifest; print(load_manifest())'
 
-      - name: Upload verified release wheel
+      - name: Publish immutable commit bundle
+        env:
+          BOT_BOTTLE_RELEASE_TOKEN: ${{ secrets.BOT_BOTTLE_RELEASE_TOKEN }}
+        run: |
+          wheel="$(find dist -maxdepth 1 -name '*.whl' -type f)"
+          python3 scripts/generate_release_bundle.py \
+            --manifest release-manifest.json \
+            --wheel "$wheel" \
+            --workflow-run "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --published-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --output bundle-index.json \
+            --publish
+
+      - name: Upload verified release bundle receipt
         uses: actions/upload-artifact@v3
         with:
           name: bot-bottle-release
-          path: dist/*.whl
+          path: |
+            dist/*.whl
+            bundle-index.json
