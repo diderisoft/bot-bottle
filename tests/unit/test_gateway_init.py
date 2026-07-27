@@ -23,6 +23,7 @@ from bot_bottle.gateway.bootstrap import (
     _DaemonManager,
     _argv_for_daemon,
     _env_for_daemon,
+    _pump,
     _selected_daemons,
 )
 from tests._bin import SLEEP
@@ -563,6 +564,27 @@ class TestMainEndToEnd(unittest.TestCase):
                             overall_timeout=2.0)
         self.assertEqual(0, rc)
         self.assertIn("no daemons selected", out)
+
+
+class _FailingStream:
+    def __init__(self, *, closed: bool) -> None:
+        self.closed = closed
+
+    def readline(self) -> bytes:
+        raise ValueError("I/O operation on closed file")
+
+
+class TestOutputPump(unittest.TestCase):
+    def test_closed_stream_race_is_normal_completion(self) -> None:
+        with patch("bot_bottle.gateway.bootstrap._log") as log:
+            _pump("egress", _FailingStream(closed=True))  # type: ignore[arg-type]
+        log.assert_not_called()
+
+    def test_unexpected_io_failure_is_logged(self) -> None:
+        with patch("bot_bottle.gateway.bootstrap._log") as log:
+            _pump("egress", _FailingStream(closed=False))  # type: ignore[arg-type]
+        log.assert_called_once()
+        self.assertIn("output pump stopped", log.call_args.args[0])
 
 
 if __name__ == "__main__":

@@ -136,10 +136,18 @@ def _pump(name: str, stream: IO[bytes]) -> None:
     """Read lines from `stream`, prefix with `[name]`, write to
     stdout. Runs in its own thread per child; daemon=True so a
     blocked read doesn't keep the process alive after main exits."""
-    for raw in iter(stream.readline, b""):
-        line = raw.decode("utf-8", errors="replace").rstrip("\n")
-        sys.stdout.write(f"[{name}] {line}\n")
-        sys.stdout.flush()
+    try:
+        for raw in iter(stream.readline, b""):
+            line = raw.decode("utf-8", errors="replace").rstrip("\n")
+            sys.stdout.write(f"[{name}] {line}\n")
+            sys.stdout.flush()
+    except (OSError, ValueError) as exc:
+        # The manager closes a dead child's pipe after wait() and before a
+        # restart. A pump can be between readline calls at that exact moment;
+        # closed-stream errors are normal completion, not uncaught thread
+        # failures. Preserve genuinely unexpected I/O diagnostics.
+        if not stream.closed:
+            _log(f"{name} output pump stopped: {type(exc).__name__}: {exc}")
 
 
 def _spawn(spec: _DaemonSpec) -> subprocess.Popen[bytes]:
