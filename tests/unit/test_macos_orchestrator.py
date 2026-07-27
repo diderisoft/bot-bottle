@@ -30,14 +30,16 @@ def _spec(src: str, tgt: str, readonly: bool = False) -> str:
 
 
 class TestMacosOrchestratorRun(unittest.TestCase):
-    def _run(self) -> list[str]:
+    def _run(self, *, local_build: bool = True) -> list[str]:
         run = Mock(return_value=_ok())
         with patch(f"{_ORCH}.container_mod") as mod, \
                 patch("bot_bottle.trust_domain.host_signing_key", return_value="k"):
             mod.dns_server.return_value = "1.1.1.1"
             mod.bind_mount_spec.side_effect = _spec
             mod.run_container_argv = run
-            MacosOrchestrator(repo_root=Path("/r"))._run_container("h1")
+            MacosOrchestrator(
+                repo_root=Path("/r"), local_build=local_build,
+            )._run_container("h1")
         return run.call_args.args[0]
 
     def test_runs_on_the_control_network_only(self) -> None:
@@ -62,6 +64,11 @@ class TestMacosOrchestratorRun(unittest.TestCase):
 
     def test_source_hash_is_labelled_for_recreate(self) -> None:
         self.assertIn("BOT_BOTTLE_SOURCE_HASH=h1", self._run())
+
+    def test_packaged_image_does_not_overlay_host_source(self) -> None:
+        argv = self._run(local_build=False)
+        self.assertNotIn("--mount", argv)
+        self.assertFalse(any(arg.startswith("PYTHONPATH=") for arg in argv))
 
     def test_start_failure_raises(self) -> None:
         with patch(f"{_ORCH}.container_mod") as mod, \
@@ -144,6 +151,14 @@ class TestMacosOrchestratorBuildStop(unittest.TestCase):
             orch.ensure_built()
         _args, kwargs = mod.build_image.call_args
         self.assertEqual("Dockerfile.orchestrator", kwargs["dockerfile"])
+
+    def test_ensure_built_pulls_packaged_image(self) -> None:
+        image = "registry/orchestrator@sha256:" + "a" * 64
+        orch = MacosOrchestrator(image, local_build=False)
+        with patch(f"{_ORCH}.container_mod") as mod:
+            orch.ensure_built()
+        mod.pull_image.assert_called_once_with(image)
+        mod.build_image.assert_not_called()
 
     def test_stop_removes_the_container(self) -> None:
         orch = MacosOrchestrator()

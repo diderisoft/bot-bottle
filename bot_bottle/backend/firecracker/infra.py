@@ -61,7 +61,7 @@ class FirecrackerInfraService(InfraService):
                 return url
             # Clear stale/hung/OUTDATED VMs holding either link before booting fresh.
             infra_vm.stop()
-            infra_vm.ensure_built()
+            infra_vm.ensure_available()
             # Orchestrator first — the gateway daemons reach the control plane at
             # startup. Each service owns its own boot; the orchestrator (which
             # holds the signing key) mints the role-scoped `gateway` JWT for the

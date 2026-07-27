@@ -427,11 +427,11 @@ class TestDockerGatewayBuild(unittest.TestCase):
         builds = [c for c in calls if c[:2] == ["docker", "build"]]
         self.assertIn("--no-cache", builds[0])
 
-    def test_ensure_built_noop_when_no_dockerfile(self) -> None:
-        sc = DockerGateway("busybox", dockerfile=None)
-        with patch(_RUN_DOCKER) as m:
+    def test_ensure_built_pulls_when_no_dockerfile(self) -> None:
+        sc = DockerGateway("registry/gateway@sha256:" + "a" * 64, dockerfile=None)
+        with patch(_RUN_DOCKER, return_value=_proc()) as m:
             sc.ensure_built()
-        m.assert_not_called()
+        m.assert_called_once_with(["docker", "pull", sc.image_ref])
 
     def test_ensure_built_raises_on_build_failure(self) -> None:
         with patch(_RUN_DOCKER, return_value=_proc(returncode=1, stderr="build boom")):

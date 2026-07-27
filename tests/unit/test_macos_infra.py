@@ -33,8 +33,8 @@ class TestInfraEnsureRunning(unittest.TestCase):
         with patch(f"{_INFRA}.ensure_networks") as nets:
             url = self.svc.ensure_running()
         nets.assert_called_once()
-        self.orch.ensure_built.assert_called_once()
-        self.gw.ensure_built.assert_called_once()
+        self.orch.ensure_available.assert_called_once()
+        self.gw.ensure_available.assert_called_once()
         self.orch.ensure_running.assert_called_once()
         # Returns the host control-plane URL (the InfraService contract).
         self.assertEqual("http://192.168.128.2:8099", url)
@@ -50,6 +50,18 @@ class TestInfraEnsureRunning(unittest.TestCase):
         self.orch.is_healthy.return_value = True
         self.assertTrue(self.svc.is_healthy())
         self.orch.is_healthy.assert_called_once()
+
+    def test_packaged_images_disable_local_infra_builds(self) -> None:
+        refs = [
+            ("registry/orchestrator@sha256:" + "a" * 64, False),
+            ("registry/gateway@sha256:" + "b" * 64, False),
+        ]
+        with patch(
+            f"{_INFRA}.release_manifest.oci_image", side_effect=refs,
+        ):
+            svc = MacosInfraService(repo_root=Path("/r"))
+        self.assertFalse(svc.orchestrator()._local_build)
+        self.assertFalse(svc.gateway()._local_build)
 
 
 class TestCaCertPem(unittest.TestCase):

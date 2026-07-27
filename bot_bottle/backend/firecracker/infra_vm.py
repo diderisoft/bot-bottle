@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Generator
 
 from ... import resources
+from ... import release_manifest
 from ...log import die, info
 from ..docker import util as docker_mod
 from . import firecracker_vm, infra_artifact, netpool, util
@@ -108,6 +109,18 @@ def _role_version(role: str) -> str:
     return infra_artifact.infra_artifact_version(role_init(role), role)
 
 
+def _role_release(role: str) -> tuple[str, str | None]:
+    manifest = release_manifest.packaged_manifest()
+    if manifest is None or release_manifest.local_build_requested():
+        return _role_version(role), None
+    artifact = (
+        manifest.firecracker_orchestrator
+        if role == "orchestrator"
+        else manifest.firecracker_gateway
+    )
+    return artifact.version, artifact.sha256
+
+
 def ensure_built() -> None:
     """Ensure both infra rootfs artifacts are available before boot.
 
@@ -117,11 +130,16 @@ def ensure_built() -> None:
     `BOT_BOTTLE_INFRA_BUILD=local` instead builds the images from source with
     host Docker (the orchestrator-fc image is `FROM` the orchestrator image, so
     it must exist first) — for iterating on the Dockerfiles."""
-    if infra_artifact.local_build_requested():
+    if release_manifest.local_build_requested():
         build_infra_images_with_docker()
         return
     for role in infra_artifact.ROLES:
-        infra_artifact.ensure_artifact_gz(_role_version(role), role=role)
+        version, expected = _role_release(role)
+        infra_artifact.ensure_artifact_gz(
+            version, role=role, expected_sha256=expected)
+
+
+ensure_available = ensure_built
 
 
 def build_infra_images_with_docker() -> None:
@@ -214,7 +232,9 @@ def boot_vm(
     else:
         # Prebuilt artifact already carries the role's build slack; expand it to
         # a fresh writable rootfs for this boot.
-        infra_artifact.materialize_ext4(_role_version(role), rootfs, role=role)
+        version, expected = _role_release(role)
+        infra_artifact.materialize_ext4(
+            version, rootfs, role=role, expected_sha256=expected)
     private_key, pubkey = _stable_keypair()
 
     info(f"booting {role} VM on {slot.iface} (guest {slot.guest_ip})")
@@ -264,7 +284,8 @@ def _version_file() -> Path:
 def expected_version() -> str:
     """The combined marker for the running pair: both per-plane artifact
     versions, so a change to either rootfs dislodges the adopted pair."""
-    return " ".join(f"{role}={_role_version(role)}" for role in infra_artifact.ROLES)
+    return " ".join(
+        f"{role}={_role_release(role)[0]}" for role in infra_artifact.ROLES)
 
 
 def adoptable(key: Path, url: str, want: str) -> bool:

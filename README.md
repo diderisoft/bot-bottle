@@ -191,8 +191,15 @@ BOT_BOTTLE_BACKEND=firecracker bot-bottle start <agent>
 > **CI:** Firecracker integration runs in the manually dispatched `.gitea/workflows/pre-release-test.yml` on a self-hosted runner labelled `kvm`; privileged KVM hosts never execute unreviewed PR code automatically. Provision it like a normal Firecracker host: `firecracker` on `PATH`, `/dev/kvm`, the cached guest kernel and static dropbear, and the persistent TAP/nft pool. The required pull-request workflow runs unit plus the complete Docker integration suite on `ubuntu-latest`; see `docs/ci.md`.
 
 ```sh
-bot-bottle start <agent>   # builds the image on first run, drops you into claude
+bot-bottle start <agent>   # prepares the selected agent image, then attaches
 ```
+
+Packaged releases carry immutable orchestrator and gateway identities. Docker
+and Apple Container pull the package-selected OCI digests; Firecracker pulls
+the matching checksum-verified rootfs artifacts. A source checkout uses local
+infrastructure builds for development. Set `BOT_BOTTLE_INFRA_BUILD=local` to
+make that development override explicit when diagnosing a packaged release;
+production never falls back to a build after an artifact pull fails.
 
 ## Manifest
 

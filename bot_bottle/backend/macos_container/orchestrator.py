@@ -63,6 +63,7 @@ class MacosOrchestrator(Orchestrator):
         control_network: str = CONTROL_NETWORK,
         repo_root: Path | None = None,
         db_volume: str = ORCHESTRATOR_DB_VOLUME,
+        local_build: bool = True,
     ) -> None:
         self.image_ref = image_ref
         self.name = name
@@ -73,6 +74,7 @@ class MacosOrchestrator(Orchestrator):
         # staged copy from the installed wheel otherwise (bot_bottle.resources).
         self._repo_root = repo_root if repo_root is not None else resources.build_root()
         self._db_volume = db_volume
+        self._local_build = local_build
 
     def url(self) -> str:
         """The orchestrator's control-network address (host CLI + registration),
@@ -114,8 +116,12 @@ class MacosOrchestrator(Orchestrator):
         """Build the control-plane image. The source is bind-mounted so a code
         change takes effect without a rebuild; the image still carries the
         package for its entrypoint."""
-        container_mod.build_image(
-            self.image_ref, str(self._repo_root), dockerfile="Dockerfile.orchestrator")
+        if self._local_build:
+            container_mod.build_image(
+                self.image_ref, str(self._repo_root),
+                dockerfile="Dockerfile.orchestrator")
+        else:
+            container_mod.pull_image(self.image_ref)
 
     def ensure_running(
         self, *, startup_timeout: float = DEFAULT_STARTUP_TIMEOUT_SECONDS,
@@ -146,11 +152,6 @@ class MacosOrchestrator(Orchestrator):
             "--dns", container_mod.dns_server(),
             # Container-only DB volume: exactly one kernel writes bot-bottle.db.
             "--volume", f"{self._db_volume}:{_DB_ROOT_IN_CONTAINER}",
-            # Live control-plane source (a code change takes effect on relaunch).
-            "--mount",
-            container_mod.bind_mount_spec(
-                str(self._repo_root), _SRC_IN_CONTAINER, readonly=True),
-            "--env", f"PYTHONPATH={_SRC_IN_CONTAINER}",
             "--env", f"BOT_BOTTLE_ROOT={_DB_ROOT_IN_CONTAINER}",
             # Detect a real control-plane code change and recreate.
             "--env", f"BOT_BOTTLE_SOURCE_HASH={current_hash}",
@@ -161,6 +162,14 @@ class MacosOrchestrator(Orchestrator):
             # Dockerfile.orchestrator ENTRYPOINT is `-m bot_bottle.orchestrator`.
             "--host", "0.0.0.0", "--port", str(self.port), "--broker", "stub",
         ]
+        if self._local_build:
+            image_index = argv.index(self.image_ref)
+            argv[image_index:image_index] = [
+                "--mount",
+                container_mod.bind_mount_spec(
+                    str(self._repo_root), _SRC_IN_CONTAINER, readonly=True),
+                "--env", f"PYTHONPATH={_SRC_IN_CONTAINER}",
+            ]
         result = container_mod.run_container_argv(
             argv, env={**os.environ, ORCHESTRATOR_TOKEN_ENV: _signing_key})
         if result.returncode != 0:

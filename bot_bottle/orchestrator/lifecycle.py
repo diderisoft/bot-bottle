@@ -63,10 +63,12 @@ class Orchestrator(abc.ABC):
     # orchestrator never starts without its signing key.
     provisioning: ControlPlaneProvisioning = ControlPlaneProvisioning()
 
+    def ensure_available(self) -> None:
+        """Acquire the exact image/rootfs selected for this application."""
+        self.ensure_built()
+
     def ensure_built(self) -> None:
-        """Ensure the orchestrator's image / rootfs exists, building it if
-        needed. Default: nothing to build (e.g. a pre-pulled image). Call before
-        `ensure_running`."""
+        """Local-build implementation hook retained for backend compatibility."""
         return
 
     @abc.abstractmethod

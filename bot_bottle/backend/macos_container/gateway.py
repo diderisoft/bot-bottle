@@ -84,6 +84,7 @@ class MacosGateway(Gateway):
         egress_network: str = GATEWAY_EGRESS_NETWORK,
         control_network: str = CONTROL_NETWORK,
         repo_root: Path | None = None,
+        local_build: bool = True,
     ) -> None:
         self.image_ref = image_ref
         self.name = name
@@ -93,6 +94,7 @@ class MacosGateway(Gateway):
         # Build context: the repo root in a checkout, a staged copy from the
         # installed wheel otherwise (bot_bottle.resources).
         self._repo_root = repo_root if repo_root is not None else resources.build_root()
+        self._local_build = local_build
         # Set by `connect_to_orchestrator`: the URL the daemons resolve policy
         # against + the pre-minted `gateway` token they present. The gateway
         # never mints, so it never holds the signing key (#469).
@@ -101,8 +103,11 @@ class MacosGateway(Gateway):
 
     def ensure_built(self) -> None:
         """Build the data-plane image from `Dockerfile.gateway`."""
-        container_mod.build_image(
-            self.image_ref, str(self._repo_root), dockerfile="Dockerfile.gateway")
+        if self._local_build:
+            container_mod.build_image(
+                self.image_ref, str(self._repo_root), dockerfile="Dockerfile.gateway")
+        else:
+            container_mod.pull_image(self.image_ref)
 
     def connect_to_orchestrator(self, orchestrator_url: str, gateway_token: str) -> None:
         """Bind the gateway to this orchestrator and (re)start it, dual-homed on

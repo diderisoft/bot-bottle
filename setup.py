@@ -10,6 +10,8 @@ Kept in sync with ``bot_bottle.resources.BUNDLED_RESOURCES`` — the
 
 from __future__ import annotations
 
+import json
+import os
 import shutil
 from pathlib import Path
 
@@ -44,6 +46,18 @@ class _BundleResources(build_py):
             dst = pkg_resources / rel
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
+        manifest_dest = Path(self.build_lib) / "bot_bottle" / "release-manifest.json"
+        manifest_input = os.environ.get("BOT_BOTTLE_RELEASE_MANIFEST", "").strip()
+        if manifest_input:
+            shutil.copy2(manifest_input, manifest_dest)
+        else:
+            # Wheels built ad hoc retain the contributor/install.sh local-build
+            # behavior. The release workflow always replaces this marker with
+            # validated immutable artifact identities.
+            manifest_dest.write_text(
+                json.dumps({"schema": 1, "development": True}) + "\n",
+                encoding="utf-8",
+            )
 
 
 setup(cmdclass={"build_py": _BundleResources})

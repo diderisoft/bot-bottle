@@ -53,7 +53,7 @@ class TestEnsureRunning(unittest.TestCase):
                     patch.object(infra_vm, "_health_ok", return_value=True), \
                     patch.object(infra_vm, "_pidfile_alive", return_value=True), \
                     patch.object(infra_vm, "stop") as stop, \
-                    patch.object(infra_vm, "ensure_built") as built:
+                    patch.object(infra_vm, "ensure_available") as built:
                 url = FirecrackerInfraService().ensure_running()
             stop.assert_not_called()
             built.assert_not_called()
@@ -72,7 +72,7 @@ class TestEnsureRunning(unittest.TestCase):
                     patch.object(infra_vm, "_health_ok", return_value=True), \
                     patch.object(infra_vm, "_pidfile_alive", return_value=True), \
                     patch.object(infra_vm, "stop") as stop, \
-                    patch.object(infra_vm, "ensure_built"), \
+                    patch.object(infra_vm, "ensure_available"), \
                     patch(_ORCH_CLS) as orch_cls, patch(_GW_CLS) as gw_cls:
                 orch_cls.return_value.gateway_url.return_value = "http://10.243.255.1:8099"
                 orch_cls.return_value.mint_gateway_token.return_value = "gw.jwt"
@@ -98,7 +98,7 @@ class TestEnsureRunning(unittest.TestCase):
                     patch.object(infra_vm, "_health_ok", return_value=True), \
                     patch.object(infra_vm, "_pidfile_alive", return_value=False), \
                     patch.object(infra_vm, "stop") as stop, \
-                    patch.object(infra_vm, "ensure_built"), \
+                    patch.object(infra_vm, "ensure_available"), \
                     patch(_ORCH_CLS) as orch_cls, patch(_GW_CLS) as gw_cls:
                 FirecrackerInfraService().ensure_running()
             stop.assert_called_once()
@@ -111,7 +111,7 @@ class TestEnsureRunning(unittest.TestCase):
                     patch.object(infra_vm, "expected_version", return_value="v-current"), \
                     patch.object(infra_vm, "_health_ok", return_value=False), \
                     patch.object(infra_vm, "stop") as stop, \
-                    patch.object(infra_vm, "ensure_built") as built, \
+                    patch.object(infra_vm, "ensure_available") as built, \
                     patch(_ORCH_CLS) as orch_cls, patch(_GW_CLS) as gw_cls:
                 FirecrackerInfraService().ensure_running()
         stop.assert_called_once()      # clear stale VMs first

@@ -231,11 +231,12 @@ class TestDockerOrchestrator(unittest.TestCase):
             with self.assertRaises(GatewayError):
                 self.orch.ensure_built()
 
-    def test_ensure_built_noop_without_dockerfile(self) -> None:
-        orch = DockerOrchestrator(dockerfile=None)
-        with patch(_RUN) as run:
+    def test_ensure_built_pulls_without_dockerfile(self) -> None:
+        orch = DockerOrchestrator("registry/orchestrator@sha256:" + "a" * 64,
+                                  dockerfile=None)
+        with patch(_RUN, return_value=_proc()) as run:
             orch.ensure_built()
-        run.assert_not_called()
+        run.assert_called_once_with(["docker", "pull", orch.image_ref])
 
     def test_is_running_reads_docker_ps(self) -> None:
         with patch(_RUN, return_value=_proc(stdout=ORCHESTRATOR_NAME)):

@@ -101,6 +101,19 @@ def build_image(
     subprocess.run(args, check=True)
 
 
+def pull_image(ref: str) -> None:
+    """Acquire an immutable OCI reference through Apple Container."""
+    result = subprocess.run(
+        [_CONTAINER, "image", "pull", ref],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise RuntimeError(f"container image pull failed for {ref}: {detail}")
+
+
 def verify_agent_image(image: str, argv: tuple[str, ...]) -> None:
     """Run `argv` inside a throwaway container of a freshly built agent
     image and die loudly if it fails, instead of shipping an image
