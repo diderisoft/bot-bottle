@@ -31,10 +31,14 @@
 # `test` is the one-shot clean cycle and the command you normally want: it
 # refuses to start if the account already exists (a reused home is not a clean
 # install), and it tears the account down on the way out however it exits, so
-# a failed run never leaves an orphan behind. It exits non-zero if the install
-# fails, if `bot-bottle` is missing from the new user's PATH, or if `doctor`
-# reports unmet prerequisites — note install.sh itself exits 0 in that last
-# case, so `test` is a stricter gate than running the installer by hand.
+# a failed run never leaves an orphan behind.
+#
+# It exits non-zero if the install fails, if no entry point was installed, if
+# `doctor` crashes, or if doctor can't report a usable python and config dir.
+# install.sh itself exits 0 when doctor reports unmet prerequisites, so `test`
+# is the stricter gate. It does NOT fail on backend readiness, which is host
+# and per-user state the installer neither creates nor can regress — see
+# doctor_as_user. BB_TEST_REQUIRE_BACKEND=1 makes that fatal too.
 #
 # Config via env:
 #   BB_TEST_USER         account short name             (default: bbtest)
@@ -42,6 +46,8 @@
 #   BB_TEST_ADMIN        1=admin (reach container svc), 0=standard  (default: 1)
 #   BB_TEST_INSTALL_URL  curl this install.sh instead of piping the local checkout
 #   BB_TEST_KEEP         1=`test` skips its teardown, to poke at a failure
+#   BB_TEST_REQUIRE_BACKEND  1=`test` also fails when no backend is ready
+#   BB_TEST_REPO_URL     https repo the throwaway user clones (default: this one)
 #   BOT_BOTTLE_INSTALL_SPEC   passed through to install.sh (pip / git spec)
 #
 # Notes:
@@ -104,7 +110,19 @@ run_as_user() { printf '%s\n' "$1" | sudo -u "$USER_NAME" -i sh -s; }
 # PATH line rather than editing a shell profile, so on a fresh account the
 # entry point is installed and working but not on PATH. Demanding PATH here
 # would fail every run for a reason the installer intends.
+#
+# Doctor's own exit code conflates two unrelated things: whether the install
+# works, and whether this user has a backend ready to run a bottle. Those need
+# different verdicts here. install.sh explicitly does not install a backend,
+# and the Apple `container` service is per-USER — its state lives in
+# ~/Library/Application Support/com.apple.container — so a brand-new account
+# never has one running, no matter how correct the install is. Failing on that
+# would leave `test` permanently red for something the installer cannot fix
+# and cannot regress. So: assert the install, report the backend.
+# BB_TEST_REQUIRE_BACKEND=1 makes backend readiness fatal too.
 doctor_as_user() {
+    local out rc=0 bad=0
+    out="$(mktemp "${TMPDIR:-/tmp}/bb-doctor.XXXXXX")"
     # shellcheck disable=SC2016  # $HOME/$bb must expand in the *target* user's
     # shell, not in this one — that's the whole point of the single quotes.
     run_as_user '
@@ -119,7 +137,41 @@ doctor_as_user() {
         done
         echo "  no bot-bottle entry point found for this user" >&2
         exit 1
-    '
+    ' >"$out" 2>&1 || rc=$?
+    cat "$out"
+
+    # An unhandled exception is always an install/product defect, never an
+    # environment fact — this is exactly how the PermissionError on `ip` showed
+    # up, and doctor's non-zero exit alone would not have distinguished it.
+    if grep -q 'Traceback (most recent call last)' "$out"; then
+        echo "  doctor crashed (traceback above) — a defect, not a missing prerequisite" >&2
+        bad=1
+    fi
+    grep -qE '^ok: +python:' "$out" \
+        || { echo "  doctor never reported a usable python" >&2; bad=1; }
+    grep -qE '^ok: +config:' "$out" \
+        || { echo "  doctor never reported a usable config dir" >&2; bad=1; }
+    if [ "$rc" -ne 0 ] && ! grep -qE '^(fail|warn): +backend' "$out"; then
+        echo "  doctor failed for something other than backend readiness" >&2
+        bad=1
+    fi
+
+    local backend_ready=1
+    grep -qE '^fail: +backend' "$out" && backend_ready=0
+    rm -f "$out"
+
+    [ "$bad" -eq 0 ] || return 1
+    if [ "$backend_ready" -eq 0 ]; then
+        if [ "${BB_TEST_REQUIRE_BACKEND:-0}" = "1" ]; then
+            echo "  no backend is ready and BB_TEST_REQUIRE_BACKEND=1" >&2
+            return 1
+        fi
+        echo "  note: install is sound; no backend ready for this user."
+        echo "        Expected on a fresh account — the Apple 'container' service is"
+        echo "        per-user and needs one 'container system start'. Set"
+        echo "        BB_TEST_REQUIRE_BACKEND=1 to treat this as a failure."
+    fi
+    return 0
 }
 
 # --- commands --------------------------------------------------------
