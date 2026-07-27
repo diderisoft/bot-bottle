@@ -51,17 +51,18 @@ jobs:
       - name: Build package with assigned infrastructure pins
         env:
           BOT_BOTTLE_RELEASE_MANIFEST: ${{ github.workspace }}/release-manifest.json
-        run: python3 -m build
+        run: python3 -m build --wheel
 
       - name: Verify packaged manifest
         run: |
+          test "$(find dist -maxdepth 1 -name '*.whl' -type f | wc -l)" -eq 1
           python3 -m venv verify-venv
           verify-venv/bin/pip install --no-deps dist/*.whl
           verify-venv/bin/python -c \
             'from bot_bottle.release_manifest import load_manifest; print(load_manifest())'
 
-      - name: Upload release package
+      - name: Upload verified release wheel
         uses: actions/upload-artifact@v3
         with:
           name: bot-bottle-release
-          path: dist/
+          path: dist/*.whl
