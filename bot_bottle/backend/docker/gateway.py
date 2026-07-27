@@ -144,19 +144,33 @@ class DockerGateway(Gateway):
             # by older releases. Replace it below.
             stale = True
         else:
-            # inspect failed: either the network is absent (create it below) or
-            # it exists but docker can't parse it. A daemon that default-enables
-            # IPv6 attaches an fdd0::/64 subnet whose `::1/64` gateway trips
-            # docker's own netip.ParseAddr in `network inspect`/`ls`, so the
-            # command exits non-zero. A fixed release never *creates* such a
-            # network, but one can survive on a shared host from an older or
-            # concurrent launch — and `--ipv6=false` alone can't heal it, since
-            # the create below only no-ops on "already exists". Force-replace it
-            # so later reads (e.g. `_network_cidr` pinning a source IP) stop
-            # failing. An absent network's inspect error is "No such network";
-            # anything else means it exists but is poisoned.
+            # inspect failed. Classify by stderr — do NOT assume "not absent"
+            # implies "poisoned": a transient daemon/API error, permission
+            # failure, timeout, or bad context also fails here, and destroying
+            # the shared gateway on that guess would tear the network out from
+            # under every live bottle.
             err = inspected.stderr.lower()
-            stale = "no such network" not in err and "not found" not in err
+            if "no such network" in err or "not found" in err:
+                # Absent: nothing to replace — create it below.
+                stale = False
+            elif "parseaddr" in err:
+                # Present but poisoned. A daemon that default-enables IPv6
+                # attaches an fdd0::/64 subnet whose `::1/64` gateway trips
+                # docker's own netip.ParseAddr in `network inspect`/`ls`, so the
+                # command exits non-zero with that signature. A fixed release
+                # never *creates* such a network, but one can survive on a
+                # shared host from an older or concurrent launch — and
+                # `--ipv6=false` alone can't heal it, since the create below only
+                # no-ops on "already exists". Force-replace it so later reads
+                # (e.g. `_network_cidr` pinning a source IP) stop failing.
+                stale = True
+            else:
+                # Unrecognized failure: no evidence the network is malformed.
+                # Surface it rather than mutate shared state on a guess.
+                raise GatewayError(
+                    f"gateway network {self.network} could not be inspected: "
+                    f"{inspected.stderr.strip()}"
+                )
         if stale:
             # Migrate the stale/poisoned network. Removing the fixed gateway is
             # safe here: this launch recreates it.

@@ -303,6 +303,33 @@ class TestDockerGateway(unittest.TestCase):
         creates = [c for c in calls if c[:3] == ["docker", "network", "create"]]
         self.assertEqual(1, len(creates))
 
+    def test_ensure_running_does_not_destroy_on_generic_inspect_error(self) -> None:
+        # A generic inspect failure (daemon hiccup, permission, timeout) is NOT
+        # evidence of a poisoned network. Only the ParseAddr poison signature may
+        # take the destructive heal path; anything else must surface as an error
+        # without tearing down a possibly-healthy shared gateway.
+        calls: list[list[str]] = []
+
+        def fake(argv: list[str], **_kw: object) -> Mock:
+            calls.append(argv)
+            if argv[:2] == ["docker", "ps"]:
+                return _proc(stdout="")
+            if argv[:3] == ["docker", "network", "inspect"]:
+                return _proc(
+                    returncode=1,
+                    stderr="Cannot connect to the Docker daemon at unix:///var/run/docker.sock",
+                )
+            return _proc()
+
+        with patch(_RUN_DOCKER, side_effect=fake):
+            with self.assertRaises(GatewayError):
+                self.sc.connect_to_orchestrator(_ORCH_URL, _TOKEN)
+        # No mutation of the shared gateway: neither the container nor the
+        # network is removed, and nothing is recreated.
+        self.assertNotIn(["docker", "network", "rm", self.sc.network], calls)
+        self.assertFalse(any(c[:3] == ["docker", "rm", "--force"] for c in calls))
+        self.assertEqual([], [c for c in calls if c[:3] == ["docker", "network", "create"]])
+
     def test_ca_cert_pem_reads_from_container(self) -> None:
         with patch(_RUN_DOCKER, return_value=_proc(stdout=_CA_PEM)) as m:
             self.assertEqual(_CA_PEM, self.sc.ca_cert_pem())
