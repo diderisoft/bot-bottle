@@ -6,6 +6,7 @@ server tests), plus one real-socket round-trip to prove the handler wiring.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import http.client
 import io
@@ -17,13 +18,17 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
+import httpx
 from contextlib import closing
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from bot_bottle.orchestrator_auth import ROLE_CLI, ROLE_GATEWAY, mint
+from bot_bottle.orchestrator import api as orchestrator_api
 from bot_bottle.orchestrator.broker import StubBroker
-from bot_bottle.orchestrator.server import MAX_BODY_BYTES, dispatch, make_server
+from bot_bottle.orchestrator.http_contract import ORCHESTRATOR_AUTH_HEADER
+from bot_bottle.orchestrator.server import MAX_BODY_BYTES, create_app, make_server
 from bot_bottle.orchestrator.store.registry_store import BottleRecord, RegistryStore
 from bot_bottle.orchestrator.service import OrchestratorCore
 from bot_bottle.orchestrator.store.store_manager import StoreManager
@@ -36,6 +41,47 @@ from bot_bottle.orchestrator.supervisor import (
 
 def _body(obj: object) -> bytes:
     return json.dumps(obj).encode()
+
+
+def dispatch(
+    orchestrator: OrchestratorCore,
+    method: str,
+    path: str,
+    body: bytes,
+    *,
+    role: str | None = ROLE_CLI,
+) -> tuple[int, dict[str, object]]:
+    """Exercise the real ASGI application without a network socket."""
+    key = "in-process-dispatch-key"
+    headers = {"content-type": "application/json"}
+    if role is not None:
+        headers[ORCHESTRATOR_AUTH_HEADER] = mint(role, key)
+
+    async def request() -> httpx.Response:
+        transport = httpx.ASGITransport(app=create_app(orchestrator, signing_key=key))
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://orchestrator",
+            follow_redirects=True,
+        ) as client:
+            return await client.request(
+                method, path, content=body, headers=headers,
+            )
+
+    response = asyncio.run(request())
+    payload = response.json()
+    if response.status_code == 422:
+        detail = payload.get("detail", []) if isinstance(payload, dict) else []
+        field = ""
+        if isinstance(detail, list) and detail and isinstance(detail[0], dict):
+            location = detail[0].get("loc", ())
+            if isinstance(location, (list, tuple)) and len(location) > 1:
+                field = str(location[1])
+        suffix = f": {field}" if field else ""
+        return 400, {"error": f"invalid request body{suffix}"}
+    if isinstance(payload, dict) and "detail" in payload and "error" not in payload:
+        payload = {"error": payload["detail"]}
+    return response.status_code, payload
 
 
 def _orchestrator(db_path: Path) -> OrchestratorCore:
@@ -359,6 +405,76 @@ class TestServerRoundTrip(unittest.TestCase):
         self.assertIn("GET /bottles", output)
         self.assertIn("RuntimeError", output)
         self.assertNotIn("SENSITIVE", output)
+
+
+class TestControlPlaneBoundary(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def _scope(key: str) -> dict[str, object]:
+        return {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/bottles",
+            "raw_path": b"/bottles",
+            "query_string": b"",
+            "headers": [(
+                ORCHESTRATOR_AUTH_HEADER.encode(),
+                mint(ROLE_CLI, key).encode(),
+            )],
+            "client": ("127.0.0.1", 1),
+            "server": ("127.0.0.1", 80),
+            "state": {},
+        }
+
+    async def test_chunked_oversized_body_returns_413(self) -> None:
+        key = "stream-limit-key"
+        called = False
+        first: dict[str, object] = {
+            "type": "http.request",
+            "body": b"x" * MAX_BODY_BYTES,
+            "more_body": True,
+        }
+        last: dict[str, object] = {
+            "type": "http.request", "body": b"x", "more_body": False,
+        }
+        chunks: Iterator[dict[str, object]] = iter([first, last])
+        sent: list[dict[str, object]] = []
+
+        async def receive() -> dict[str, object]:
+            return next(chunks)
+
+        async def send(message: dict[str, object]) -> None:
+            sent.append(message)
+
+        async def inner(*_args: object) -> None:
+            nonlocal called
+            called = True
+
+        boundary = orchestrator_api.ControlPlaneBoundary(inner, key)
+        await boundary(self._scope(key), receive, send)  # type: ignore[arg-type]
+        self.assertFalse(called)
+        self.assertEqual(413, sent[0]["status"])
+
+    async def test_slow_stream_returns_408(self) -> None:
+        key = "stream-timeout-key"
+        sent: list[dict[str, object]] = []
+
+        async def receive() -> dict[str, object]:
+            await asyncio.sleep(1)
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message: dict[str, object]) -> None:
+            sent.append(message)
+
+        async def inner(*_args: object) -> None:
+            self.fail("timed-out body reached the application")
+
+        boundary = orchestrator_api.ControlPlaneBoundary(inner, key)
+        with patch.object(orchestrator_api, "REQUEST_BODY_TIMEOUT_SECONDS", 0.01):
+            await boundary(self._scope(key), receive, send)  # type: ignore[arg-type]
+        self.assertEqual(408, sent[0]["status"])
 
 
 class TestOrchestratorAuth(unittest.TestCase):

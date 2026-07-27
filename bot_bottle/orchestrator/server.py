@@ -8,7 +8,6 @@ import threading
 
 import uvicorn
 
-from ..orchestrator_auth import ROLE_CLI, mint
 from ..trust_domain import CONTROL_PLANE
 from .api import create_app
 from .http_contract import MAX_BODY_BYTES, ORCHESTRATOR_AUTH_HEADER
@@ -16,42 +15,6 @@ from .service import OrchestratorCore
 
 MAX_REQUESTS = 32
 KEEP_ALIVE_TIMEOUT_SECONDS = 10
-
-
-def dispatch(
-    orchestrator: OrchestratorCore,
-    method: str,
-    path: str,
-    body: bytes,
-    *,
-    role: str | None = ROLE_CLI,
-) -> tuple[int, dict[str, object]]:
-    """Socket-free compatibility adapter for route unit tests.
-
-    Production requests always enter through the FastAPI ASGI application.
-    """
-    from fastapi.testclient import TestClient
-
-    key = "in-process-dispatch-key"
-    headers: dict[str, str] = {"content-type": "application/json"}
-    if role is not None:
-        headers[ORCHESTRATOR_AUTH_HEADER] = mint(role, key)
-    response = TestClient(create_app(orchestrator, signing_key=key)).request(
-        method, path, content=body, headers=headers,
-    )
-    payload = response.json()
-    if response.status_code == 422:
-        detail = payload.get("detail", []) if isinstance(payload, dict) else []
-        field = ""
-        if isinstance(detail, list) and detail and isinstance(detail[0], dict):
-            location = detail[0].get("loc", ())
-            if isinstance(location, (list, tuple)) and len(location) > 1:
-                field = str(location[1])
-        suffix = f": {field}" if field else ""
-        return 400, {"error": f"invalid request body{suffix}"}
-    if isinstance(payload, dict) and "detail" in payload and "error" not in payload:
-        payload = {"error": payload["detail"]}
-    return response.status_code, payload
 
 
 class OrchestratorServer:
@@ -113,6 +76,5 @@ __all__ = [
     "ORCHESTRATOR_AUTH_HEADER",
     "OrchestratorServer",
     "create_app",
-    "dispatch",
     "make_server",
 ]

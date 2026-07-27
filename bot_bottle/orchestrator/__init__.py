@@ -44,7 +44,7 @@ if TYPE_CHECKING:
     from ..gateway import Gateway, GatewayError
     from .lifecycle import Orchestrator
     from .service import OrchestratorCore
-    from .server import OrchestratorServer, create_app, dispatch, make_server
+    from .server import OrchestratorServer, create_app, make_server
 
 
 # Facade name -> submodule that defines it. Lazy so importing a leaf (or the
@@ -68,7 +68,6 @@ _LAZY: dict[str, str] = {
     "Orchestrator": ".lifecycle",
     "OrchestratorCore": ".service",
     "create_app": ".server",
-    "dispatch": ".server",
     "OrchestratorServer": ".server",
     "make_server": ".server",
 }
@@ -102,7 +101,6 @@ __all__ = [
     "Orchestrator",
     "OrchestratorCore",
     "create_app",
-    "dispatch",
     "OrchestratorServer",
     "make_server",
 ]

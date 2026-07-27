@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import unittest
 import urllib.error
 from unittest.mock import MagicMock, patch
@@ -18,6 +20,30 @@ from bot_bottle.orchestrator.client import (
 )
 
 _URLOPEN = "bot_bottle.orchestrator.client.urllib.request.urlopen"
+
+
+class TestImportBoundary(unittest.TestCase):
+    def test_host_client_does_not_import_server_dependencies(self) -> None:
+        script = """
+import importlib.abc
+import sys
+
+class BlockServerDependencies(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split(".", 1)[0] in {"fastapi", "uvicorn"}:
+            raise ImportError(f"host import reached {fullname}")
+        return None
+
+sys.meta_path.insert(0, BlockServerDependencies())
+import bot_bottle.orchestrator.client
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
 
 
 class TestHostAuthToken(unittest.TestCase):

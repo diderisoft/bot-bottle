@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
 import sys
 from fastapi import FastAPI, HTTPException
@@ -13,7 +14,11 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from ..orchestrator_auth import ROLE_CLI, ROLES
 from ..supervisor.types import TOOLS
 from ..trust_domain import CONTROL_PLANE
-from .http_contract import MAX_BODY_BYTES, ORCHESTRATOR_AUTH_HEADER
+from .http_contract import (
+    MAX_BODY_BYTES,
+    ORCHESTRATOR_AUTH_HEADER,
+    REQUEST_BODY_TIMEOUT_SECONDS,
+)
 from .service import OrchestratorCore
 
 _GATEWAY_ROUTES = frozenset({
@@ -105,7 +110,7 @@ class ControlPlaneBoundary:
             if role not in allowed:
                 await self._reject(scope, send, 403, "insufficient role for this route")
                 return
-            scope["state"]["role"] = role
+            scope.setdefault("state", {})["role"] = role
         raw_length = dict(scope["headers"]).get(b"content-length")
         if raw_length is not None:
             try:
@@ -120,7 +125,15 @@ class ControlPlaneBoundary:
                 await self._reject(scope, send, 413, "request body too large")
                 return
         try:
-            await self.app(scope, self._bounded_receive(receive), send)
+            body = await self._read_body(receive)
+        except _BodyTooLarge:
+            await self._reject(scope, send, 413, "request body too large")
+            return
+        except TimeoutError:
+            await self._reject(scope, send, 408, "request body read timed out")
+            return
+        try:
+            await self.app(scope, self._replay_body(body), send)
         except Exception as exc:  # noqa: BLE001 - redact control-plane failures
             sys.stderr.write(
                 f"orchestrator: {method} {route} failed "
@@ -141,19 +154,36 @@ class ControlPlaneBoundary:
         return {"type": "http.disconnect"}
 
     @staticmethod
-    def _bounded_receive(receive: Receive) -> Receive:
-        consumed = 0
+    async def _read_body(receive: Receive) -> bytes:
+        body = bytearray()
+        async with asyncio.timeout(REQUEST_BODY_TIMEOUT_SECONDS):
+            while True:
+                message = await receive()
+                if message["type"] != "http.request":
+                    break
+                body.extend(message.get("body", b""))
+                if len(body) > MAX_BODY_BYTES:
+                    raise _BodyTooLarge
+                if not message.get("more_body", False):
+                    break
+        return bytes(body)
 
-        async def bounded() -> Message:
-            nonlocal consumed
-            message = await receive()
-            if message["type"] == "http.request":
-                consumed += len(message.get("body", b""))
-                if consumed > MAX_BODY_BYTES:
-                    raise HTTPException(413, "request body too large")
-            return message
+    @staticmethod
+    def _replay_body(body: bytes) -> Receive:
+        sent = False
 
-        return bounded
+        async def replay() -> Message:
+            nonlocal sent
+            if sent:
+                return {"type": "http.disconnect"}
+            sent = True
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        return replay
+
+
+class _BodyTooLarge(Exception):
+    """The streamed request exceeded the control-plane body limit."""
 
 
 def _required(value: str, name: str) -> str:
