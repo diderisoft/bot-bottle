@@ -22,23 +22,35 @@
 #
 # Usage:
 #   sudo ./scripts/macos-install-test.sh test        # up -> run -> status -> down
+#   sudo ./scripts/macos-install-test.sh test-ready  # ... with prereqs satisfied
 #   sudo ./scripts/macos-install-test.sh up          # create the throwaway user
 #   sudo ./scripts/macos-install-test.sh run         # run install.sh (+doctor) as it
+#   sudo ./scripts/macos-install-test.sh prereqs     # start the per-user backend svc
 #        ./scripts/macos-install-test.sh status      # user present? backend ready?
 #   sudo ./scripts/macos-install-test.sh down        # delete user + home (the reset)
 #   sudo ./scripts/macos-install-test.sh deep-reset  # ALSO uninstall host `container`
 #
-# `test` is the one-shot clean cycle and the command you normally want: it
-# refuses to start if the account already exists (a reused home is not a clean
-# install), and it tears the account down on the way out however it exits, so
-# a failed run never leaves an orphan behind.
+# TWO TEST VARIANTS, because "does the installer work" and "can a new user
+# actually run a bottle" are different questions with different answers:
 #
-# It exits non-zero if the install fails, if no entry point was installed, if
-# `doctor` crashes, or if doctor can't report a usable python and config dir.
-# install.sh itself exits 0 when doctor reports unmet prerequisites, so `test`
-# is the stricter gate. It does NOT fail on backend readiness, which is host
-# and per-user state the installer neither creates nor can regress — see
-# doctor_as_user. BB_TEST_REQUIRE_BACKEND=1 makes that fatal too.
+#   test        A macOS system WITHOUT the prerequisites set up for this user —
+#               the default state of any brand-new account, since the Apple
+#               `container` service is per-user. Asserts the INSTALL is sound
+#               (entry point present, doctor runs without crashing, python and
+#               config check out). Backend readiness is reported, not required:
+#               install.sh does not provide a backend and cannot regress one,
+#               so failing on it would make this permanently red.
+#
+#   test-ready  A macOS system WITH the prerequisites satisfied — it runs
+#               `container system start` for the throwaway user first, then
+#               demands doctor go fully green, backend included. This is the
+#               end-to-end claim: a new user can actually run a bottle.
+#
+# Both refuse to start if the account already exists (a reused home is not a
+# clean install), and both tear the account down on the way out however they
+# exit, so a failed run never leaves an orphan behind. install.sh itself exits
+# 0 when doctor reports unmet prerequisites, so either variant is a stricter
+# gate than running the installer by hand.
 #
 # Config via env:
 #   BB_TEST_USER         account short name             (default: bbtest)
@@ -303,23 +315,51 @@ cmd_down() {
     echo "removed $USER_NAME and its home — install surface is clean."
 }
 
-# Teardown half of `test`, installed as an EXIT trap the moment the account
-# exists so that a failure — or a Ctrl-C — still leaves the machine clean.
+# Satisfy the throwaway user's backend prerequisites.
+#
+# `bot-bottle backend setup --backend=macos-container` deliberately does NOT do
+# this: it only checks, then tells you to run `container system start` yourself
+# (see backend/macos_container/setup.py — "no privileged host setup required").
+# So the harness runs the command the product asks for, as the user who needs
+# it, which is the whole prerequisite for the macOS backend given the CLI is
+# already installed host-wide.
+cmd_prereqs() {
+    require_macos
+    require_root prereqs
+    user_exists || { echo "error: $USER_NAME does not exist" >&2; return 1; }
+    command -v container >/dev/null 2>&1 || {
+        echo "error: the Apple 'container' CLI is not on PATH. It is a HOST" >&2
+        echo "  prerequisite this harness does not install; see the header." >&2
+        return 1
+    }
+    echo "starting the per-user Apple 'container' service for $USER_NAME"
+    run_as_user 'container system start' || {
+        echo "error: 'container system start' failed for $USER_NAME" >&2
+        return 1
+    }
+    run_as_user 'container system status' || {
+        echo "error: the service is still not running for $USER_NAME" >&2
+        return 1
+    }
+}
+
+# Teardown half of the test cycles, installed as an EXIT trap the moment the
+# account exists so a failure — or a Ctrl-C — still leaves the machine clean.
 _test_teardown() {
     local rc=$?
     trap - EXIT INT TERM
     if [ "${BB_TEST_KEEP:-0}" = "1" ]; then
         echo
-        echo "== [4/4] down: SKIPPED (BB_TEST_KEEP=1) =="
+        echo "== [$_STEPS/$_STEPS] down: SKIPPED (BB_TEST_KEEP=1) =="
         echo "   $USER_NAME is still around; remove it with: sudo $0 down"
         exit "$rc"
     fi
     echo
-    echo "== [4/4] down =="
+    echo "== [$_STEPS/$_STEPS] down =="
     cmd_down || rc=1
     if [ "$rc" -eq 0 ]; then
         echo
-        echo "PASS: a brand-new user can install bot-bottle and pass doctor."
+        echo "PASS: $_PASS_CLAIM"
     else
         echo
         echo "FAIL: see above (the throwaway account was torn down regardless)." >&2
@@ -327,7 +367,18 @@ _test_teardown() {
     exit "$rc"
 }
 
-cmd_test() {
+# The two variants differ only in whether the backend prerequisites get
+# satisfied before doctor runs, which is exactly the question each one asks:
+#
+#   test        a brand-new user on a machine where nothing has been set up for
+#               them. Asserts the INSTALL is sound; backend readiness is
+#               reported, not required, because install.sh does not provide a
+#               backend and cannot regress one.
+#   test-ready  the same user with the documented prerequisites satisfied.
+#               Asserts doctor goes fully green, backend included — the
+#               end-to-end "a new user can actually run a bottle" claim.
+_test_cycle() {
+    local with_prereqs="$1"
     require_macos
     require_root test
     # A pre-existing account means a pre-existing home, which is the one thing
@@ -339,16 +390,25 @@ cmd_test() {
     fi
     IN_TEST=1
 
-    echo "== [1/4] up =="
+    echo "== [1/$_STEPS] up =="
     cmd_up
     trap _test_teardown EXIT INT TERM
 
     echo
-    echo "== [2/4] run =="
+    echo "== [2/$_STEPS] run =="
     cmd_run
 
+    if [ "$with_prereqs" = 1 ]; then
+        echo
+        echo "== [3/$_STEPS] prereqs =="
+        cmd_prereqs || {
+            echo "error: could not satisfy the backend prerequisites (see above)." >&2
+            return 1
+        }
+    fi
+
     echo
-    echo "== [3/4] status =="
+    echo "== [$((_STEPS - 1))/$_STEPS] status =="
     # install.sh exits 0 even when doctor reports unmet prerequisites, so the
     # install succeeding is not the verdict — this is.
     cmd_status || {
@@ -356,6 +416,21 @@ cmd_test() {
         echo "  re-run with BB_TEST_KEEP=1 to keep $USER_NAME around and dig in." >&2
         return 1
     }
+}
+
+cmd_test() {
+    _STEPS=4
+    _PASS_CLAIM="a brand-new user can install bot-bottle; the install is sound."
+    _test_cycle 0
+}
+
+cmd_test_ready() {
+    _STEPS=5
+    _PASS_CLAIM="a brand-new user with the prerequisites met passes doctor outright."
+    # With the prerequisites satisfied there is no excuse for an unready
+    # backend, so this variant demands the thing `test` only reports.
+    BB_TEST_REQUIRE_BACKEND=1
+    _test_cycle 1
 }
 
 cmd_deep_reset() {
@@ -382,10 +457,12 @@ cmd_deep_reset() {
 
 case "${1:-}" in
     test) cmd_test ;;
+    test-ready) cmd_test_ready ;;
     up) cmd_up ;;
     run) cmd_run ;;
+    prereqs) cmd_prereqs ;;
     status) cmd_status ;;
     down) cmd_down ;;
     deep-reset) cmd_deep_reset ;;
-    *) echo "usage: $0 {test|up|run|status|down|deep-reset}" >&2 ; exit 2 ;;
+    *) echo "usage: $0 {test|test-ready|up|run|prereqs|status|down|deep-reset}" >&2 ; exit 2 ;;
 esac
