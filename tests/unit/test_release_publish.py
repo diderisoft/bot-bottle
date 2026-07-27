@@ -2,12 +2,20 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from bot_bottle.release_bundle import build_bundle_index, canonical_bytes
 from bot_bottle.release_manifest import ReleaseManifestError
-from bot_bottle.release_publish import bundle_url, publish_bundle
+from bot_bottle.release_publish import (
+    bundle_url,
+    remote_bytes,
+    remote_sha256,
+    request,
+    upload as publish_artifact,
+    publish_bundle,
+)
 from tests.unit.test_release_manifest import manifest
 
 
@@ -96,3 +104,60 @@ class TestReleasePublish(unittest.TestCase):
                     ReleaseManifestError, "already differs",
                 ):
                     publish_bundle(index, wheel)
+
+    def test_request_applies_auth_and_length(self) -> None:
+        result = request(
+            "https://packages.example/file",
+            method="PUT",
+            data=b"body",
+            length=4,
+        )
+        self.assertEqual(result.get_method(), "PUT")
+        self.assertEqual(result.get_header("Authorization"), "token token")
+        self.assertEqual(result.get_header("Content-length"), "4")
+
+    @patch("bot_bottle.release_publish.urllib.request.urlopen")
+    def test_remote_helpers_read_response(self, urlopen: MagicMock) -> None:
+        response = urlopen.return_value.__enter__.return_value
+        response.read.side_effect = [b"body"]
+        self.assertEqual(
+            remote_bytes("https://packages.example/file"), b"body")
+        response.read.side_effect = [b"body", b""]
+        self.assertEqual(
+            remote_sha256("https://packages.example/file"),
+            "230d8358dc8e8890b4c58deeb62912ee2"
+            "f20357ae92a5cc861b98e68fe31acb5",
+        )
+
+    @patch("bot_bottle.release_publish.urllib.request.urlopen")
+    def test_remote_helpers_handle_not_found(self, urlopen: MagicMock) -> None:
+        urlopen.side_effect = urllib.error.HTTPError(
+            "url", 404, "missing", MagicMock(), None)
+        self.assertIsNone(remote_bytes("https://packages.example/file"))
+        self.assertIsNone(remote_sha256("https://packages.example/file"))
+
+    @patch("bot_bottle.release_publish.urllib.request.urlopen")
+    def test_remote_helpers_report_registry_errors(
+        self, urlopen: MagicMock,
+    ) -> None:
+        urlopen.side_effect = urllib.error.URLError("offline")
+        with self.assertRaisesRegex(ReleaseManifestError, "offline"):
+            remote_bytes("https://packages.example/file")
+        with self.assertRaisesRegex(ReleaseManifestError, "offline"):
+            remote_sha256("https://packages.example/file")
+
+    @patch("bot_bottle.release_publish.urllib.request.urlopen")
+    def test_upload_supports_bytes_and_files(self, urlopen: MagicMock) -> None:
+        urlopen.return_value.__enter__.return_value = MagicMock()
+        publish_artifact("https://packages.example/bytes", b"body")
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "artifact"
+            source.write_bytes(b"artifact")
+            publish_artifact("https://packages.example/file", source)
+        self.assertEqual(urlopen.call_count, 2)
+
+    @patch("bot_bottle.release_publish.urllib.request.urlopen")
+    def test_upload_reports_failure(self, urlopen: MagicMock) -> None:
+        urlopen.side_effect = urllib.error.URLError("offline")
+        with self.assertRaisesRegex(ReleaseManifestError, "publishing"):
+            publish_artifact("https://packages.example/file", b"body")
