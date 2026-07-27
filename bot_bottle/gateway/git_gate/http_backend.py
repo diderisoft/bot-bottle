@@ -22,11 +22,16 @@ import os
 import subprocess
 import sys
 import typing
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from bot_bottle.constants import GIT_GATE_TIMEOUT_SECS, IDENTITY_HEADER
+from bot_bottle.gateway.bounded_http import (
+    BodyReadError,
+    BoundedThreadingHTTPServer,
+    read_declared_body,
+)
 from bot_bottle.gateway.policy_resolver import PolicyResolveError, PolicyResolver
 
 
@@ -77,6 +82,8 @@ def resolve_sandbox_root(
 
 # Bound memory use while still allowing ordinary git push packfiles.
 MAX_BODY_BYTES = 100 * 1024 * 1024
+REQUEST_BODY_TIMEOUT_SECONDS = 30.0
+MAX_REQUEST_WORKERS = 16
 
 
 class GitHttpHandler(BaseHTTPRequestHandler):
@@ -184,19 +191,18 @@ class GitHttpHandler(BaseHTTPRequestHandler):
             value = self.headers.get(header)
             if value:
                 env[variable] = value
-        raw_length = self.headers.get("content-length", "0") or "0"
         try:
-            length = int(raw_length)
-        except ValueError:
-            self.send_error(400, "Bad Content-Length")
+            body = read_declared_body(
+                self.rfile,
+                self.connection,
+                self.headers.get("content-length"),
+                maximum=MAX_BODY_BYTES,
+                timeout_seconds=REQUEST_BODY_TIMEOUT_SECONDS,
+                require_length=False,
+            )
+        except BodyReadError as exc:
+            self.send_error(exc.status, exc.message)
             return
-        if length < 0:
-            self.send_error(400, "Negative Content-Length")
-            return
-        if length > MAX_BODY_BYTES:
-            self.send_error(413, "Request body too large")
-            return
-        body = self.rfile.read(length) if length else b""
         proc = subprocess.run(
             ["git", "http-backend"],
             input=body,
@@ -273,7 +279,9 @@ def main() -> int:
             "(no single-tenant flat-root fallback)\n"
         )
         return 1
-    server = ThreadingHTTPServer(("0.0.0.0", port), GitHttpHandler)
+    server = BoundedThreadingHTTPServer(
+        ("0.0.0.0", port), GitHttpHandler, max_workers=MAX_REQUEST_WORKERS,
+    )
     # Resolve each request's sandbox namespace by source IP against the
     # orchestrator control plane.
     server.policy_resolver = PolicyResolver(orch_url)  # type: ignore[attr-defined]

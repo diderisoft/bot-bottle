@@ -6,9 +6,8 @@ import json
 from dataclasses import dataclass
 from typing import Callable, Protocol
 
-from bot_bottle.gateway.egress.context import resolve_client_context
-from bot_bottle.gateway.egress.schema import route_to_yaml_dict
-from bot_bottle.gateway.policy_resolver import PolicyResolver
+from bot_bottle.gateway.egress.schema import load_config, route_to_yaml_dict
+from bot_bottle.gateway.policy_resolver import PolicyResolveError, PolicyResolver
 from bot_bottle.supervisor import types as _sv
 
 
@@ -22,6 +21,10 @@ class Request(Protocol):
 
 class MethodNotFoundError(Exception):
     """Raised when a JSON-RPC method has no MCP handler."""
+
+
+class RouteResolutionError(Exception):
+    """The caller's live route table could not be resolved authoritatively."""
 
 
 Handler = Callable[[dict[str, object]], object]
@@ -60,10 +63,19 @@ def resolved_routes_payload(
     source_ip: str,
     identity_token: str,
 ) -> dict[str, object]:
-    """Render the calling bottle's routes, failing closed to an empty list."""
-    config, _slug, _tokens = resolve_client_context(
-        resolver, source_ip, identity_token,
-    )
+    """Render an authoritatively resolved route table for the calling bottle."""
+    try:
+        policy, bottle_id, _tokens = resolver.resolve_policy_and_bottle_id(
+            source_ip, identity_token,
+        )
+    except PolicyResolveError as exc:
+        raise RouteResolutionError("orchestrator unavailable") from exc
+    if not bottle_id:
+        raise RouteResolutionError("request source is not attributed to a bottle")
+    try:
+        config = load_config(policy or "")
+    except ValueError as exc:
+        raise RouteResolutionError("resolved policy is invalid") from exc
     body = json.dumps(
         {"routes": [route_to_yaml_dict(route) for route in config.routes]},
         indent=2,
@@ -74,6 +86,7 @@ def resolved_routes_payload(
 __all__ = [
     "Handlers",
     "MethodNotFoundError",
+    "RouteResolutionError",
     "dispatch",
     "resolved_routes_payload",
 ]

@@ -717,18 +717,26 @@ class TestResolvedRoutesPayload(unittest.TestCase):
         hosts = {r["host"] for r in data["routes"]}
         self.assertEqual({"api.anthropic.com", "www.google.com"}, hosts)
 
-    def test_orchestrator_error_fails_closed_to_empty(self) -> None:
-        # resolve_client_context swallows resolver errors → deny-all (empty),
-        # never another bottle's routes.
+    def test_orchestrator_error_is_not_reported_as_empty_policy(self) -> None:
+        with self.assertRaises(supervise_server.RouteResolutionError):
+            resolved_routes_payload(
+                typing.cast(
+                    supervise_server.PolicyResolver,
+                    _FakeSuperviseResolver(raises=True),
+                ),
+                _SRC,
+                _TOK,
+            )
+
+    def test_authoritative_empty_policy_remains_successful(self) -> None:
         payload = resolved_routes_payload(
             typing.cast(
                 supervise_server.PolicyResolver,
-                _FakeSuperviseResolver(raises=True),
+                _FakeSuperviseResolver(bottle_id="b1", policy="routes: []\n"),
             ),
             _SRC,
             _TOK,
         )
-        assert payload is not None
         data = json.loads(payload["content"][0]["text"])  # type: ignore[index]
         self.assertEqual([], data["routes"])
 

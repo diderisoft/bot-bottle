@@ -51,19 +51,24 @@ from __future__ import annotations
 import http.server
 import json
 import os
-import socketserver
 import sys
 import time
 import typing
 from dataclasses import dataclass
 
 from bot_bottle.constants import IDENTITY_HEADER
+from bot_bottle.gateway.bounded_http import (
+    BodyReadError,
+    BoundedThreadingHTTPServer,
+    read_declared_body,
+)
 from bot_bottle.gateway.egress.schema import load_config
 from bot_bottle.gateway.egress.types import LOG_OFF
 from bot_bottle.gateway.policy_resolver import PolicyResolveError, PolicyResolver
 from bot_bottle.gateway.supervisor.mcp_dispatch import (
     Handlers as DispatchHandlers,
     MethodNotFoundError,
+    RouteResolutionError,
     dispatch,
     resolved_routes_payload,
 )
@@ -570,6 +575,8 @@ def format_unknown_proposal_text(proposal_id: str) -> str:
 # Max request body the server accepts. 1 MB is well above any realistic
 # routes.yaml proposal.
 MAX_BODY_BYTES = 1 * 1024 * 1024
+REQUEST_BODY_TIMEOUT_SECONDS = 10.0
+MAX_REQUEST_WORKERS = 32
 
 
 class MCPHandler(http.server.BaseHTTPRequestHandler):
@@ -592,19 +599,18 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
         self._write_text(405, "use POST for MCP requests\n")
 
     def do_POST(self) -> None:
-        length_header = self.headers.get("Content-Length")
-        if length_header is None:
-            self._write_text(411, "Content-Length required\n")
-            return
         try:
-            length = int(length_header)
-        except ValueError:
-            self._write_text(400, "invalid Content-Length\n")
+            body = read_declared_body(
+                self.rfile,
+                self.connection,
+                self.headers.get("Content-Length"),
+                maximum=MAX_BODY_BYTES,
+                timeout_seconds=REQUEST_BODY_TIMEOUT_SECONDS,
+                require_length=True,
+            )
+        except BodyReadError as exc:
+            self._write_text(exc.status, exc.message + "\n")
             return
-        if length < 0 or length > MAX_BODY_BYTES:
-            self._write_text(413, "request body too large\n")
-            return
-        body = self.rfile.read(length)
 
         try:
             req = parse_jsonrpc(body)
@@ -660,20 +666,25 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
                 identity_token=self._identity_token(),
             )
 
-        return dispatch(
-            req,
-            DispatchHandlers(
-                initialize=handle_initialize,
-                tools_list=handle_tools_list,
-                list_routes=lambda _params: resolved_routes_payload(
+        def list_routes(_params: dict[str, object]) -> object:
+            try:
+                return resolved_routes_payload(
                     self._resolver_or_fail(),
                     self.client_address[0],
                     self._identity_token(),
-                ),
-                check_proposal=check,
-                propose=propose,
-            ),
-        )
+                )
+            except RouteResolutionError as exc:
+                raise _RpcInternalError(
+                    f"could not resolve live egress routes: {exc}"
+                ) from exc
+
+        return dispatch(req, DispatchHandlers(
+            initialize=handle_initialize,
+            tools_list=handle_tools_list,
+            list_routes=list_routes,
+            check_proposal=check,
+            propose=propose,
+        ))
 
     def _identity_token(self) -> str:
         """The agent's per-bottle identity token from the request header (the
@@ -711,7 +722,7 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(encoded)
 
 
-class MCPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+class MCPServer(BoundedThreadingHTTPServer):
     allow_reuse_address = True
     daemon_threads = True
     config: ServerConfig = ServerConfig()
@@ -719,6 +730,9 @@ class MCPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     # resolved bottle by the control plane. A server without a resolver fails
     # closed per request (see `_resolver_or_fail`).
     policy_resolver: "PolicyResolver | None" = None
+
+    def __init__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        super().__init__(*args, max_workers=MAX_REQUEST_WORKERS, **kwargs)
 
 
 # --- Entry point -----------------------------------------------------------
