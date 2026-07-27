@@ -48,9 +48,23 @@ class TestDbStoreIsMigrated(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             parent = Path(d) / "store"
             parent.mkdir()
-            with patch.object(Path, "chmod", side_effect=OSError("denied")):
+            (parent / "test.db").touch()
+            with patch("os.fchmod", side_effect=OSError("denied")):
                 with self.assertRaisesRegex(OSError, "denied"):
                     _store(parent)
+
+    def test_rejects_database_symlink_without_changing_target(self):
+        with tempfile.TemporaryDirectory() as d:
+            parent = Path(d) / "store"
+            parent.mkdir()
+            target = Path(d) / "target"
+            target.touch(mode=0o644)
+            (parent / "test.db").symlink_to(target)
+
+            with self.assertRaises(OSError):
+                _store(parent)
+
+            self.assertEqual(0o644, stat.S_IMODE(target.stat().st_mode))
 
     def test_returns_false_when_schema_versions_missing(self):
         # DB file exists but has no schema_versions table → OperationalError → False.

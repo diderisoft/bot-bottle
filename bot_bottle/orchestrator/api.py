@@ -7,6 +7,7 @@ import asyncio
 import math
 import sys
 from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, StrictStr
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -207,6 +208,19 @@ def create_app(orch: OrchestratorCore, *, signing_key: str) -> FastAPI:
         openapi_url=None,
     )
     app.add_middleware(ControlPlaneBoundary, signing_key=key)
+
+    @app.exception_handler(RequestValidationError)
+    async def invalid_request(
+        _request: object, exc: RequestValidationError,
+    ) -> JSONResponse:
+        errors = exc.errors()
+        location = errors[0].get("loc", ()) if errors else ()
+        field = str(location[1]) if len(location) > 1 else ""
+        suffix = f": {field}" if field else ""
+        return JSONResponse(
+            {"error": f"invalid request body{suffix}"},
+            status_code=400,
+        )
 
     @app.get("/health")
     def health() -> dict[str, str]:

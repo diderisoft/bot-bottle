@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 import threading
 import unittest
+import urllib.error
 import urllib.request
 from pathlib import Path
 from unittest import mock

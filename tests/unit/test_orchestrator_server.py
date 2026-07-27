@@ -70,15 +70,6 @@ def dispatch(
 
     response = asyncio.run(request())
     payload = response.json()
-    if response.status_code == 422:
-        detail = payload.get("detail", []) if isinstance(payload, dict) else []
-        field = ""
-        if isinstance(detail, list) and detail and isinstance(detail[0], dict):
-            location = detail[0].get("loc", ())
-            if isinstance(location, (list, tuple)) and len(location) > 1:
-                field = str(location[1])
-        suffix = f": {field}" if field else ""
-        return 400, {"error": f"invalid request body{suffix}"}
     if isinstance(payload, dict) and "detail" in payload and "error" not in payload:
         payload = {"error": payload["detail"]}
     return response.status_code, payload

@@ -140,7 +140,7 @@ class TestStoreGuardBranches(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             db = Path(d) / "q.db"
             store = QueueStore("key", db_path=db)
-            with patch("pathlib.Path.chmod", side_effect=OSError("ro")):
+            with patch("os.fchmod", side_effect=OSError("ro")):
                 with self.assertRaisesRegex(OSError, "ro"):
                     store.migrate()
 
@@ -156,7 +156,7 @@ class TestStoreGuardBranches(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             db = Path(d) / "a.db"
             store = AuditStore(db_path=db)
-            with patch("pathlib.Path.chmod", side_effect=OSError("ro")):
+            with patch("os.fchmod", side_effect=OSError("ro")):
                 with self.assertRaisesRegex(OSError, "ro"):
                     store.migrate()
 
