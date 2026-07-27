@@ -19,6 +19,7 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -41,19 +42,69 @@ _BUILD_TIMEOUT_SECONDS = 900.0
 
 
 def _dockerfile_hash(dockerfile: Path) -> str:
-    """The Dockerfile's content hash. The shipped agent Dockerfiles COPY
-    nothing from the build context (see .dockerignore), so their content fully
-    determines the built image; a Dockerfile that adds COPY will want the
-    context folded in here too."""
+    """The Dockerfile's content hash. Agent Dockerfiles mostly COPY nothing
+    from the build context, so their text nearly determines the built image;
+    any files they *do* COPY are folded into `_rootfs_digest` (so a changed
+    input busts the cache) and shipped to the VM-side context by
+    `_send_build_context`."""
     return hashlib.sha256(dockerfile.read_bytes()).hexdigest()[:16]
 
 
+def _context_copy_sources(dockerfile: Path) -> list[str]:
+    """The build-context-relative paths a Dockerfile ``COPY``s in.
+
+    Agent Dockerfiles are meant to COPY nothing from the context (the VM-side
+    build ships only the Dockerfile), but one may pin an input by COPYing a
+    committed file — a checksum list, an npm lockfile. Return those source
+    paths so the builder can both ship them to the VM context and fold them
+    into the cache key. ``COPY --from=<stage>`` reads a build stage, not the
+    context, so it is excluded; the JSON/exec COPY form is unused by the
+    shipped images and is skipped rather than mis-parsed."""
+    joined = re.sub(r"\\\n", " ", dockerfile.read_text(encoding="utf-8"))
+    sources: list[str] = []
+    for line in joined.splitlines():
+        stripped = line.strip()
+        if not re.match(r"(?i)^COPY\s", stripped):
+            continue
+        tokens = stripped.split()[1:]
+        if any(t.startswith("--from=") for t in tokens):
+            continue
+        args = [t for t in tokens if not t.startswith("--")]
+        if len(args) < 2 or args[0].startswith("["):
+            continue
+        sources.extend(args[:-1])
+    return sources
+
+
+def _context_files(dockerfile: Path) -> list[tuple[str, Path]]:
+    """``(context-relative path, host path)`` for every existing file a
+    Dockerfile COPYs from the build root — globs expanded, sorted, de-duped.
+    Absolute or traversing (`..`) sources are dropped: the shipped context
+    only ever mirrors files under the build root."""
+    root = resources.build_root()
+    resolved: dict[str, Path] = {}
+    for src in _context_copy_sources(dockerfile):
+        if src.startswith("/") or ".." in Path(src).parts:
+            continue
+        if any(ch in src for ch in "*?["):
+            matches = [p for p in root.glob(src) if p.is_file()]
+        else:
+            candidate = root / src
+            matches = [candidate] if candidate.is_file() else []
+        for path in matches:
+            resolved[str(path.relative_to(root))] = path
+    return sorted(resolved.items())
+
+
 def _rootfs_digest(dockerfile: Path) -> str:
-    """Cache key for the built AND boot-injected agent rootfs. Two inputs
-    determine the on-disk rootfs: the Dockerfile (the image) and the guest init
-    injected into it (`util._GUEST_INIT`). Folding the init in means a fix to
+    """Cache key for the built AND boot-injected agent rootfs. Its inputs are
+    the Dockerfile (the image), the centralized build args, the guest init
+    injected into it (`util._GUEST_INIT`), and the content of any files the
+    Dockerfile COPYs from the build context. Folding the init in means a fix to
     it — e.g. making /tmp world-writable — busts the cache instead of silently
-    reusing a stale rootfs built with the old init."""
+    reusing a stale rootfs built with the old init; folding the COPYed context
+    files in means a repinned input (e.g. a changed checksum list) rebuilds
+    rather than reusing a rootfs baked from the old bytes."""
     h = hashlib.sha256()
     h.update(_dockerfile_hash(dockerfile).encode())
     h.update(b"\0")
@@ -63,6 +114,11 @@ def _rootfs_digest(dockerfile: Path) -> str:
         h.update(value.encode())
         h.update(b"\0")
     h.update(util._GUEST_INIT.encode())
+    for rel, path in _context_files(dockerfile):
+        h.update(b"\0")
+        h.update(rel.encode())
+        h.update(b"\0")
+        h.update(path.read_bytes())
     return h.hexdigest()[:16]
 
 
@@ -154,6 +210,7 @@ def _build_in_infra(
         if prep.returncode != 0:
             die(f"preparing build dir in the infra VM failed: {prep.stderr.strip()}")
         _send_dockerfile(key, ip, dockerfile, ctx)
+        _send_build_context(key, ip, dockerfile, ctx)
         _buildah_build(
             key,
             ip,
@@ -195,6 +252,39 @@ def _send_dockerfile(private_key: Path, guest_ip: str, dockerfile: Path, ctx: st
     if proc.returncode != 0:
         die(f"sending Dockerfile to the infra VM failed: "
             f"{proc.stderr.decode(errors='replace').strip()}")
+
+
+def _send_build_context(private_key: Path, guest_ip: str, dockerfile: Path, ctx: str) -> None:
+    """Ship the files ``dockerfile`` COPYs from the build root into the infra
+    VM's ``{ctx}/ctx``, preserving their build-root-relative paths.
+
+    Usually a no-op — agent Dockerfiles COPY nothing — so `{ctx}/ctx` stays the
+    empty context the build otherwise runs against. It exists so a Dockerfile
+    that pins an input by COPYing a committed file (a checksum list, an npm
+    lockfile) still finds that file in the VM-side context. Streamed as a tar
+    so directories and multiple files land in one round trip."""
+    files = _context_files(dockerfile)
+    if not files:
+        return
+    root = resources.build_root()
+    rels = [rel for rel, _ in files]
+    tar = subprocess.Popen(
+        ["tar", "-C", str(root), "-cf", "-", *rels], stdout=subprocess.PIPE,
+    )
+    try:
+        proc = subprocess.run(
+            util.ssh_base_argv(private_key, guest_ip) + [f"tar -C {ctx}/ctx -xf -"],
+            stdin=tar.stdout, capture_output=True, timeout=120, check=False,
+        )
+    finally:
+        if tar.stdout is not None:
+            tar.stdout.close()
+        tar.wait()
+    if tar.returncode != 0:
+        die(f"packing the agent build context failed (tar exit {tar.returncode})")
+    if proc.returncode != 0:
+        die("sending the agent build context to the infra VM failed: "
+            f"{proc.stderr.decode(errors='replace').strip() or '<no stderr>'}")
 
 
 def _buildah_build(
