@@ -41,10 +41,13 @@
 #               install.sh does not provide a backend and cannot regress one,
 #               so failing on it would make this permanently red.
 #
-#   test-ready  A macOS system WITH the prerequisites satisfied — it runs
-#               `container system start` for the throwaway user first, then
-#               demands doctor go fully green, backend included. This is the
-#               end-to-end claim: a new user can actually run a bottle.
+#   test-ready  A macOS system WITH the prerequisites satisfied — it starts the
+#               per-user `container` service (and installs its guest kernel)
+#               for the throwaway user first, then demands doctor go fully
+#               green, backend included. This is the end-to-end claim: a new
+#               user can actually run a bottle. Note it downloads a guest
+#               kernel per run, because the previous run's went with the
+#               deleted home; BB_TEST_KERNEL_INSTALL=0 skips that.
 #
 # Both refuse to start if the account already exists (a reused home is not a
 # clean install), and both tear the account down on the way out however they
@@ -59,6 +62,7 @@
 #   BB_TEST_INSTALL_URL  curl this install.sh instead of piping the local checkout
 #   BB_TEST_KEEP         1=`test` skips its teardown, to poke at a failure
 #   BB_TEST_REQUIRE_BACKEND  1=`test` also fails when no backend is ready
+#   BB_TEST_KERNEL_INSTALL   0=`test-ready` skips the guest-kernel download
 #   BB_TEST_REPO_URL     https repo the throwaway user clones (default: this one)
 #   BOT_BOTTLE_INSTALL_SPEC   passed through to install.sh (pip / git spec)
 #
@@ -373,12 +377,27 @@ cmd_prereqs() {
         echo "warning: no launchd session for $USER_NAME; the service start is" >&2
         echo "  likely to fail with 'unauthorized request'. See user_session_available." >&2
     }
-    run_as_user 'container system start' || {
+    # The kernel flag is not optional for a headless run. `container system
+    # start` PROMPTS for the default Linux kernel when neither flag is given
+    # ("default: prompt user"), and a throwaway account has no kernel because
+    # it lives in the per-user app root — so the prompt always fires here and
+    # dies on "failed to read user input" with no TTY.
+    #
+    # Enabling it is also the honest choice for what this variant claims: the
+    # backend cannot actually run a bottle without a guest kernel. The cost is
+    # that every test-ready run downloads one afresh, since the previous run's
+    # copy went with the deleted home. BB_TEST_KERNEL_INSTALL=0 skips the
+    # download when you only care that the service comes up.
+    local kernel_flag=--enable-kernel-install
+    [ "${BB_TEST_KERNEL_INSTALL:-1}" = "0" ] && kernel_flag=--disable-kernel-install
+    echo "  ($kernel_flag)"
+    run_as_user "container system start $kernel_flag" || {
         echo "error: 'container system start' failed for $USER_NAME" >&2
-        echo "  If this said invalidState/\"unauthorized request\", the CLI could not" >&2
-        echo "  reach its per-user apiserver over XPC. A never-GUI-logged-in account" >&2
-        echo "  may not have a usable launchd domain; logging into $USER_NAME once" >&2
-        echo "  (fast user switching) gives it one." >&2
+        echo "  invalidState/\"unauthorized request\" means the CLI could not reach" >&2
+        echo "    its per-user apiserver over XPC — a never-GUI-logged-in account may" >&2
+        echo "    have no usable launchd domain; log into $USER_NAME once to get one." >&2
+        echo "  A download failure means the guest kernel could not be fetched; retry" >&2
+        echo "    with network, or BB_TEST_KERNEL_INSTALL=0 to skip it." >&2
         return 1
     }
     run_as_user 'container system status' || {
