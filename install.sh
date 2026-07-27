@@ -9,7 +9,7 @@
 #   uv tool install bot-bottle
 #
 # This script is a thin bootstrapper: it finds a Python 3.11+ interpreter,
-# installs the package with pipx (falling back to pip --user), creates the
+# installs the package with pipx (falling back to a private venv), creates the
 # config dir, and runs `bot-bottle doctor`. It is idempotent (safe to re-run)
 # and never uses sudo. It does NOT install Docker or a VM backend for you —
 # `doctor` reports what's missing after install.
@@ -17,9 +17,11 @@
 # Env:
 #   BOT_BOTTLE_PYTHON        interpreter to install with (skips the search)
 #   BOT_BOTTLE_INSTALL_SPEC  pip/git spec to install instead of the default
+#   BOT_BOTTLE_VENV          where the non-pipx install lives (~/.bot-bottle/venv)
 set -eu
 
 PACKAGE_SPEC="${BOT_BOTTLE_INSTALL_SPEC:-git+https://gitea.dideric.is/didericis/bot-bottle.git}"
+VENV="${BOT_BOTTLE_VENV:-${HOME}/.bot-bottle/venv}"
 MIN_PYTHON_MAJOR=3
 MIN_PYTHON_MINOR=11
 
@@ -135,30 +137,6 @@ case "${PACKAGE_SPEC}" in
         ;;
 esac
 
-# The pip fallback needs a usable pip. Externally-managed interpreters
-# (PEP 668, common on Debian/Ubuntu/Homebrew) reject `pip install --user`;
-# pipx sidesteps that, so recommend it when pip can't be used.
-if ! command -v pipx >/dev/null 2>&1; then
-    "${PYTHON}" -m pip --version >/dev/null 2>&1 || die \
-        "neither pipx nor a usable '${PYTHON} -m pip' was found. Install pipx "\
-"(recommended): '${PYTHON} -m pip install --user pipx' or your OS package manager."
-    if "${PYTHON}" - <<'PY'
-import os
-import sys
-import sysconfig
-
-# PEP 668: an EXTERNALLY-MANAGED marker in the stdlib dir means pip refuses
-# to install into this interpreter without --break-system-packages.
-marker = os.path.join(sysconfig.get_path("stdlib"), "EXTERNALLY-MANAGED")
-raise SystemExit(0 if os.path.exists(marker) else 1)
-PY
-    then
-        die "${PYTHON} is externally managed (PEP 668), so 'pip install --user' is "\
-"blocked. Install pipx and re-run: '${PYTHON} -m pip install --user --break-system-packages pipx', "\
-"then 'pipx ensurepath'."
-    fi
-fi
-
 # --- config directories ------------------------------------------------------
 
 mkdir -p \
@@ -168,35 +146,43 @@ mkdir -p \
 
 # --- install -----------------------------------------------------------------
 
+BIN_DIR="${HOME}/.local/bin"
+
 if command -v pipx >/dev/null 2>&1; then
     # --python pins the venv to the interpreter we vetted. Without it pipx uses
     # whichever Python it was itself installed with, which is not necessarily
     # the one that passed the version check above.
     say "installing with pipx (python: ${PYTHON})"
     pipx install --python "${PYTHON}" --force "${PACKAGE_SPEC}"
+    # Ask pipx where it puts entry points rather than assuming ~/.local/bin.
+    pipx_bin="$(pipx environment --value PIPX_BIN_DIR 2>/dev/null || true)"
+    [ -n "${pipx_bin}" ] && BIN_DIR="${pipx_bin}"
 else
-    say "pipx not found; installing with '${PYTHON} -m pip install --user'"
-    "${PYTHON}" -m pip install --user --upgrade "${PACKAGE_SPEC}"
+    # No `pip install --user` fallback: PEP 668 makes it unusable on nearly
+    # every interpreter a Mac offers (Homebrew and python.org are both
+    # externally managed), and on Debian/Ubuntu too. A private venv sidesteps
+    # that entirely — PEP 668 does not apply inside a venv — and `venv` is
+    # stdlib, so unlike pipx there is nothing to bootstrap first.
+    say "pipx not found; installing into a managed venv at ${VENV}"
+    "${PYTHON}" -m venv --clear "${VENV}" || die \
+        "could not create a virtualenv at ${VENV} using ${PYTHON}. On Debian/Ubuntu "\
+"the venv module ships separately: 'sudo apt install python3-venv'."
+    "${VENV}/bin/python" -m pip install --upgrade "${PACKAGE_SPEC}"
+    # Expose the entry point outside the venv, the way pipx would.
+    mkdir -p "${BIN_DIR}"
+    ln -sf "${VENV}/bin/bot-bottle" "${BIN_DIR}/bot-bottle"
 fi
 
 # --- locate the entry point --------------------------------------------------
 
-# The pip --user scripts directory is platform-specific: ~/.local/bin on Linux,
-# but ~/Library/Python/<X.Y>/bin on a python.org macOS interpreter. Ask the
-# interpreter for its own user-scheme scripts dir instead of hardcoding.
-USER_SCRIPTS="$("${PYTHON}" - <<'PY'
-import sysconfig
-print(sysconfig.get_path("scripts", sysconfig.get_preferred_scheme("user")))
-PY
-)"
-
 if command -v bot-bottle >/dev/null 2>&1; then
     BOT_BOTTLE_BIN="bot-bottle"
-elif [ -n "${USER_SCRIPTS}" ] && [ -x "${USER_SCRIPTS}/bot-bottle" ]; then
-    BOT_BOTTLE_BIN="${USER_SCRIPTS}/bot-bottle"
-    say "note: add ${USER_SCRIPTS} to your PATH to run 'bot-bottle' directly"
+elif [ -x "${BIN_DIR}/bot-bottle" ]; then
+    BOT_BOTTLE_BIN="${BIN_DIR}/bot-bottle"
+    say "note: add ${BIN_DIR} to your PATH to run 'bot-bottle' directly:"
+    say "    echo 'export PATH=\"${BIN_DIR}:\$PATH\"' >> ~/.zprofile"
 else
-    die "bot-bottle was installed but is not on PATH; add ${USER_SCRIPTS:-your user scripts dir} to PATH and re-run"
+    die "bot-bottle was installed but no entry point turned up in ${BIN_DIR}"
 fi
 
 # --- verify ------------------------------------------------------------------

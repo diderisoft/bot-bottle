@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import os
 import re
-import sysconfig
 import unittest
 from pathlib import Path
 
@@ -57,9 +56,37 @@ class TestInstallScript(unittest.TestCase):
         self.assertIn(".bot-bottle/agents", self.text)
         self.assertIn(".bot-bottle/bottles", self.text)
 
-    def test_installs_via_pipx_with_pip_fallback(self):
+    def test_installs_via_pipx_with_venv_fallback(self):
         self.assertIn("pipx install", self.text)
-        self.assertIn("pip install --user", self.text)
+        self.assertIn("-m venv", self.text)
+
+    def test_no_pip_user_fallback(self):
+        # `pip install --user` is not a fallback, it's a dead end: PEP 668
+        # blocks it on Homebrew, python.org and Debian/Ubuntu interpreters,
+        # which is every Python a Mac realistically offers. A private venv is
+        # exempt from PEP 668 and needs no bootstrap, since venv is stdlib.
+        # code_only, because the comment explaining the absence says the words.
+        code = code_only(self.text)
+        self.assertNotIn("pip install --user", code)
+        self.assertNotIn("--break-system-packages", code)
+
+    def test_venv_lives_under_the_config_dir(self):
+        # Keeps the whole install footprint inside ~/.bot-bottle (plus the
+        # entry-point symlink), which is what makes deleting a throwaway
+        # account a complete reset in scripts/macos-install-test.sh.
+        self.assertIn(".bot-bottle/venv", self.text)
+        self.assertIn("BOT_BOTTLE_VENV", self.text)
+
+    def test_venv_failure_is_actionable(self):
+        # Debian/Ubuntu ship venv separately; failing there must say so rather
+        # than dumping ensurepip's error.
+        self.assertIn("python3-venv", self.text)
+
+    def test_entry_point_is_exposed_outside_the_venv(self):
+        # A venv's bin dir is never on PATH, so the console script has to be
+        # linked somewhere conventional or `bot-bottle` is unreachable.
+        self.assertIn(".local/bin", self.text)
+        self.assertIn("ln -sf", self.text)
 
     def test_runs_doctor_after_install(self):
         self.assertIn("doctor", self.text)
@@ -74,29 +101,20 @@ class TestInstallScript(unittest.TestCase):
         self.assertIn("command -v git", self.text)
         self.assertIn("git+*|*.git", self.text)
 
-    def test_checks_pip_usable_before_fallback(self):
-        # Against the discovered interpreter, which is not necessarily the
-        # `python3` on PATH — hence no literal command name here.
-        self.assertIn("-m pip --version", self.text)
+    def test_installs_into_the_venv_with_its_own_pip(self):
+        # The venv's pip, not the base interpreter's — the base one may not
+        # exist, and using it would install outside the venv.
+        self.assertIn("${VENV}/bin/python\" -m pip install", self.text)
 
-    def test_detects_externally_managed_python(self):
-        # PEP 668: 'pip install --user' is blocked on externally-managed
-        # interpreters; the script must detect this and point at pipx.
-        self.assertIn("EXTERNALLY-MANAGED", self.text)
-        self.assertIn("pipx", self.text)
+    def test_pipx_is_preferred_when_present(self):
+        # The venv is a fallback, not a takeover: someone who already manages
+        # their Python apps with pipx keeps doing so.
+        self.assertIn("command -v pipx", self.text)
 
-    def test_resolves_user_scripts_dir_not_hardcoded(self):
-        # The pip --user scripts dir differs by platform; the script must ask
-        # the interpreter (sysconfig + the preferred *user* scheme) rather than
-        # hardcoding Linux's ~/.local/bin (which is wrong on macOS python.org).
-        self.assertIn("get_preferred_scheme", self.text)
-        self.assertIn("sysconfig", self.text)
-        # ~/.local/bin appears legitimately elsewhere — it's one of the places
-        # the interpreter search looks. What must never happen is USER_SCRIPTS
-        # itself being hardcoded to it.
-        for line in code_only(self.text).splitlines():
-            if "USER_SCRIPTS" in line:
-                self.assertNotIn(".local/bin", line)
+    def test_asks_pipx_where_its_bin_dir_is(self):
+        # PIPX_BIN_DIR is configurable, so the post-install "is it on PATH?"
+        # check must ask rather than assume ~/.local/bin.
+        self.assertIn("PIPX_BIN_DIR", self.text)
 
     def test_searches_beyond_path_for_an_interpreter(self):
         # `python3` on PATH is the *oldest* interpreter on a stock Mac: a fresh
@@ -120,21 +138,6 @@ class TestInstallScript(unittest.TestCase):
         # it, not just state the requirement.
         self.assertIn("brew install python@", self.text)
         self.assertIn("BOT_BOTTLE_PYTHON=/path/to/python3", self.text)
-
-    def test_macos_user_scheme_is_not_dot_local_bin(self):
-        # The case the fix exists for: a python.org macOS interpreter uses the
-        # osx_framework_user scheme, whose scripts land under
-        # ~/Library/Python/<X.Y>/bin — NOT ~/.local/bin. Drive the same
-        # sysconfig lookup install.sh uses, with a mac-like userbase, to prove
-        # it resolves a non-~/.local/bin directory.
-        self.assertIn("osx_framework_user", sysconfig.get_scheme_names())
-        scripts = sysconfig.get_path(
-            "scripts", "osx_framework_user",
-            vars={"userbase": "/Users/dev/Library/Python/3.11"},
-        )
-        self.assertEqual("/Users/dev/Library/Python/3.11/bin", scripts)
-        self.assertNotIn("/.local/bin", scripts)
-
 
 if __name__ == "__main__":
     unittest.main()
