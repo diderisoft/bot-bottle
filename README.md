@@ -71,7 +71,21 @@ When the agent exits, `cli.py` tears down every gateway and both networks; nothi
 
 ## Quickstart
 
-On compatible macOS hosts, the default backend requires Apple's `container` CLI and does not require Docker. The Firecracker backend (Linux) requires Docker on the host for the gateway plus the `firecracker` binary and KVM. The legacy Docker backend requires Docker. Claude bottles also need a long-lived Claude Code OAuth token (`claude setup-token`) exported as `BOT_BOTTLE_CLAUDE_OAUTH_TOKEN`.
+```sh
+curl -fsSL https://gitea.dideric.is/didericis/bot-bottle/raw/branch/main/install.sh | sh
+```
+
+The installer is a bootstrapper: it finds a suitable Python, installs bot-bottle with `pipx` (falling back to `pip --user`), creates `~/.bot-bottle`, and runs `bot-bottle doctor`. It is idempotent and never uses `sudo`. Python-native users can skip it entirely with `pipx install bot-bottle` or `uv tool install bot-bottle`.
+
+### Requirements
+
+**Python ≥ 3.11**, and this is the one that trips people up on macOS: the `python3` Apple ships at `/usr/bin/python3` is **3.9.6**, which is too old. A Homebrew or python.org Python is only on your `PATH` because of a line in your shell profile, so anything running without that profile — a fresh user account, a launchd job, a CI runner — sees the 3.9 stub instead. The installer therefore looks past `PATH` before giving up: it tries `python3`, then `python3.11`–`python3.14`, then `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, and python.org framework builds, and tells you which one it picked when it isn't the obvious one. Point it somewhere specific with `BOT_BOTTLE_PYTHON=/path/to/python3`.
+
+**`pipx`** is strongly preferred over the `pip --user` fallback. Homebrew and Debian/Ubuntu interpreters are externally managed (PEP 668), which blocks `pip install --user` outright; the installer detects this and tells you to install `pipx` rather than failing deep inside pip.
+
+**`git`**, because the default install spec is a `git+` URL. Set `BOT_BOTTLE_INSTALL_SPEC` to a wheel path or index name to avoid it.
+
+**A backend**, which the installer deliberately does *not* install for you — `doctor` reports what's missing afterwards. On compatible macOS hosts, the default backend requires Apple's `container` CLI and does not require Docker. The Firecracker backend (Linux) requires Docker on the host for the gateway plus the `firecracker` binary and KVM. The legacy Docker backend requires Docker. Claude bottles also need a long-lived Claude Code OAuth token (`claude setup-token`) exported as `BOT_BOTTLE_CLAUDE_OAUTH_TOKEN`.
 
 Use `BOT_BOTTLE_BACKEND=docker ./cli.py start <agent>` on hosts where neither Apple Container nor KVM is available and Docker is the desired backend.
 
