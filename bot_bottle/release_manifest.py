@@ -32,6 +32,7 @@ class ReleaseManifest:
     source_commit: str
     orchestrator_image: str
     gateway_image: str
+    agent_images: dict[str, str]
     firecracker_orchestrator: FirecrackerArtifact
     firecracker_gateway: FirecrackerArtifact
 
@@ -66,7 +67,7 @@ def parse_manifest(data: Any) -> ReleaseManifest:
     if not isinstance(oci, dict):
         raise ReleaseManifestError("release manifest oci must be an object")
     images: dict[str, str] = {}
-    for role in ("orchestrator", "gateway"):
+    for role in ("orchestrator", "gateway", "agent_claude", "agent_codex", "agent_pi"):
         ref = oci.get(role)
         if not isinstance(ref, str) or _OCI_RE.fullmatch(ref) is None:
             raise ReleaseManifestError(
@@ -79,6 +80,9 @@ def parse_manifest(data: Any) -> ReleaseManifest:
         source_commit=commit,
         orchestrator_image=images["orchestrator"],
         gateway_image=images["gateway"],
+        agent_images={
+            role: images[f"agent_{role}"] for role in ("claude", "codex", "pi")
+        },
         firecracker_orchestrator=_artifact(
             firecracker.get("orchestrator"), "orchestrator"),
         firecracker_gateway=_artifact(firecracker.get("gateway"), "gateway"),
@@ -132,7 +136,8 @@ def oci_image(role: str, local_default: str) -> tuple[str, bool]:
     assert manifest is not None
     return (
         manifest.orchestrator_image if role == "orchestrator"
-        else manifest.gateway_image,
+        else manifest.gateway_image if role == "gateway"
+        else manifest.agent_images[role.removeprefix("agent_")],
         False,
     )
 

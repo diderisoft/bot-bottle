@@ -18,6 +18,9 @@ def manifest() -> dict[str, object]:
         "oci": {
             "orchestrator": "registry/orchestrator@sha256:" + "a" * 64,
             "gateway": "registry/gateway@sha256:" + "b" * 64,
+            "agent_claude": "registry/agent-claude@sha256:" + "e" * 64,
+            "agent_codex": "registry/agent-codex@sha256:" + "f" * 64,
+            "agent_pi": "registry/agent-pi@sha256:" + "0" * 64,
         },
         "firecracker": {
             "orchestrator": {"version": "orch-v1", "sha256": "c" * 64},
@@ -31,6 +34,7 @@ class TestParseManifest(unittest.TestCase):
         parsed = parse_manifest(manifest())
         self.assertTrue(parsed.orchestrator_image.endswith("a" * 64))
         self.assertEqual("orch-v1", parsed.firecracker_orchestrator.version)
+        self.assertTrue(parsed.agent_images["codex"].endswith("f" * 64))
 
     def test_rejects_mutable_oci_reference(self) -> None:
         data = manifest()
@@ -98,6 +102,17 @@ class TestImageSelection(unittest.TestCase):
         ), patch.dict("os.environ", {}, clear=True):
             ref, local = oci_image("orchestrator", "local:latest")
         self.assertEqual(parsed.orchestrator_image, ref)
+        self.assertFalse(local)
+
+    def test_packaged_install_selects_agent_reference(self) -> None:
+        parsed = parse_manifest(manifest())
+        with patch(
+            "bot_bottle.release_manifest.packaged_manifest", return_value=parsed,
+        ), patch(
+            "bot_bottle.release_manifest.local_build_requested", return_value=False,
+        ), patch.dict("os.environ", {}, clear=True):
+            ref, local = oci_image("agent_codex", "local:latest")
+        self.assertEqual(parsed.agent_images["codex"], ref)
         self.assertFalse(local)
 
     def test_mutable_override_fails_outside_local_mode(self) -> None:

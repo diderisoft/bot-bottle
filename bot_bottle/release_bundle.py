@@ -51,6 +51,10 @@ def build_bundle_index(
         "oci": {
             "orchestrator": manifest.orchestrator_image,
             "gateway": manifest.gateway_image,
+            **{
+                f"agent_{role}": reference
+                for role, reference in manifest.agent_images.items()
+            },
         },
         "firecracker": {
             "orchestrator": {

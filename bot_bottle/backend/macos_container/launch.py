@@ -38,6 +38,7 @@ import subprocess
 from contextlib import ExitStack, contextmanager
 from typing import Callable, Generator
 
+from ...agent_provider import runtime_for
 from ...bottle_state import (
     egress_state_dir,
     git_gate_state_dir,
@@ -93,7 +94,14 @@ def _agent_image(plan: MacosContainerBottlePlan) -> str:
             )
         info(f"using cached agent image {plan.image!r}")
         return plan.image
-    container_mod.build_image(plan.image, str(resources.build_root()), dockerfile=plan.dockerfile_path)
+    if "@sha256:" in plan.image:
+        container_mod.pull_image(plan.image)
+        container_mod.verify_agent_image(
+            plan.image, runtime_for(plan.agent_provider_template).smoke_test,
+        )
+        return plan.image
+    container_mod.build_image(
+        plan.image, str(resources.build_root()), dockerfile=plan.dockerfile_path)
     return plan.image
 
 

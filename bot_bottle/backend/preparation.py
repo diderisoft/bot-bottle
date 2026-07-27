@@ -9,7 +9,7 @@ backend-specific final resolution.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Protocol
 
 from ..agent_provider import AgentProvisionPlan, build_agent_provision_plan, get_provider
@@ -17,6 +17,7 @@ from ..egress import EgressPlan
 from ..env import ResolvedEnv, resolve_env
 from ..git_gate import GitGate, GitGatePlan
 from ..manifest import Manifest
+from ..release_manifest import oci_image
 from ..supervisor.plan import SupervisePlan
 from ..workspace import workspace_plan
 from .resolve_common import (
@@ -112,6 +113,11 @@ class BottlePreparationPlanner:
             color=spec.color,
             provider_settings=provider_config.settings,
         )
+        if not provider_config.dockerfile:
+            image, local = oci_image(
+                f"agent_{provider_config.template}", provision.image)
+            if not local:
+                provision = replace(provision, image=image)
         provision = merge_provision_env_vars(provision)
         return PreparedBottle(
             manifest=manifest,

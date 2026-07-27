@@ -14,6 +14,8 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--source-commit", required=True)
     result.add_argument("--orchestrator-image", required=True)
     result.add_argument("--gateway-image", required=True)
+    for provider in ("claude", "codex", "pi"):
+        result.add_argument(f"--agent-{provider}-image", required=True)
     for role in ("orchestrator", "gateway"):
         result.add_argument(f"--firecracker-{role}-version", required=True)
         result.add_argument(f"--firecracker-{role}-sha256", required=True)
@@ -29,6 +31,10 @@ def main(argv: list[str] | None = None) -> int:
         "oci": {
             "orchestrator": args.orchestrator_image,
             "gateway": args.gateway_image,
+            **{
+                f"agent_{provider}": getattr(args, f"agent_{provider}_image")
+                for provider in ("claude", "codex", "pi")
+            },
         },
         "firecracker": {
             role: {

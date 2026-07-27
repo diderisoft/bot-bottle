@@ -13,6 +13,15 @@ on:
       gateway_image:
         description: Digest-pinned gateway OCI reference
         required: true
+      agent_claude_image:
+        description: Digest-pinned Claude agent OCI reference
+        required: true
+      agent_codex_image:
+        description: Digest-pinned Codex agent OCI reference
+        required: true
+      agent_pi_image:
+        description: Digest-pinned Pi agent OCI reference
+        required: true
       firecracker_orchestrator_version:
         description: Published orchestrator rootfs package version
         required: true
@@ -42,6 +51,9 @@ jobs:
             --source-commit "$GITHUB_SHA" \
             --orchestrator-image '${{ inputs.orchestrator_image }}' \
             --gateway-image '${{ inputs.gateway_image }}' \
+            --agent-claude-image '${{ inputs.agent_claude_image }}' \
+            --agent-codex-image '${{ inputs.agent_codex_image }}' \
+            --agent-pi-image '${{ inputs.agent_pi_image }}' \
             --firecracker-orchestrator-version '${{ inputs.firecracker_orchestrator_version }}' \
             --firecracker-orchestrator-sha256 '${{ inputs.firecracker_orchestrator_sha256 }}' \
             --firecracker-gateway-version '${{ inputs.firecracker_gateway_version }}' \
