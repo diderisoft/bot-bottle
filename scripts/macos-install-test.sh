@@ -63,6 +63,8 @@ set -euo pipefail
 USER_NAME="${BB_TEST_USER:-bbtest}"
 FULL_NAME="${BB_TEST_FULLNAME:-bot-bottle install test}"
 ADMIN="${BB_TEST_ADMIN:-1}"
+# https, not the ssh `origin`: the throwaway user has no key of ours.
+BB_TEST_REPO_URL="${BB_TEST_REPO_URL:-https://gitea.dideric.is/didericis/bot-bottle.git}"
 
 _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _REPO_ROOT="$(cd "$_SCRIPT_DIR/.." && pwd)"
@@ -87,7 +89,13 @@ require_root() {
 user_exists() { dscl . -read "/Users/$USER_NAME" >/dev/null 2>&1; }
 
 # Run a shell snippet as the throwaway user in a fresh login shell.
-run_as_user() { sudo -u "$USER_NAME" -i sh -c "$1"; }
+#
+# The snippet goes in on stdin, never as an argument. `sudo -i` joins its argv
+# into a single string and hands that to the login shell's -c, so quoting in an
+# argument is not preserved and a newline ends the command outright ("sh: -c:
+# line 1: syntax error: unexpected end of file"). Feeding `sh -s` from stdin
+# sidesteps the joining entirely and lets snippets be multi-line.
+run_as_user() { printf '%s\n' "$1" | sudo -u "$USER_NAME" -i sh -s; }
 
 # `bot-bottle doctor` as the throwaway user. Non-zero when no entry point was
 # installed at all, or when doctor itself is unhappy.
@@ -100,14 +108,15 @@ doctor_as_user() {
     # shellcheck disable=SC2016  # $HOME/$bb must expand in the *target* user's
     # shell, not in this one — that's the whole point of the single quotes.
     run_as_user '
-        for bb in "$HOME/.local/bin/bot-bottle" "$HOME/.bot-bottle/venv/bin/bot-bottle"; do
-            if [ -x "$bb" ]; then
-                command -v bot-bottle >/dev/null 2>&1 \
-                    || echo "  (not on PATH — running $bb directly, as install.sh advises)"
+        for bb in bot-bottle "$HOME/.local/bin/bot-bottle" "$HOME/.bot-bottle/venv/bin/bot-bottle"; do
+            if command -v "$bb" >/dev/null 2>&1; then
+                case "$bb" in
+                    bot-bottle) : ;;
+                    *) echo "  (not on PATH — running $bb directly, as install.sh advises)" ;;
+                esac
                 exec "$bb" doctor
             fi
         done
-        command -v bot-bottle >/dev/null 2>&1 && exec bot-bottle doctor
         echo "  no bot-bottle entry point found for this user" >&2
         exit 1
     '
@@ -136,18 +145,48 @@ cmd_up() {
     fi
 }
 
+# The package spec to install. install.sh's own default is the repo's DEFAULT
+# BRANCH, which would mean piping this checkout's installer into the throwaway
+# user and then installing main's code — verifying the PR's install.sh against
+# a package that doesn't contain the PR. Pin to the branch under test instead.
+#
+# The branch has to be pushed: the throwaway user clones over https and cannot
+# read this checkout (mode-700 home, and no SSH key for the ssh remote), so
+# what it gets is whatever the remote has. Say so when that differs from here.
+resolve_install_spec() {
+    if [ -n "${BOT_BOTTLE_INSTALL_SPEC:-}" ]; then
+        echo "$BOT_BOTTLE_INSTALL_SPEC"
+        return 0
+    fi
+    local branch
+    branch="$(git -C "$_REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null)" || branch=""
+    if [ -z "$branch" ] || [ "$branch" = "HEAD" ]; then
+        echo "note: not on a named branch; installing the repo default" >&2
+        echo "git+${BB_TEST_REPO_URL}"
+        return 0
+    fi
+    if [ -n "$(git -C "$_REPO_ROOT" status --porcelain 2>/dev/null)" ]; then
+        echo "warning: working tree is dirty — the throwaway user installs" >&2
+        echo "         $branch as pushed, not what is on disk here." >&2
+    elif ! git -C "$_REPO_ROOT" diff --quiet "@{upstream}" 2>/dev/null; then
+        echo "warning: $branch differs from its upstream — push first, or the" >&2
+        echo "         throwaway user installs stale code." >&2
+    fi
+    echo "git+${BB_TEST_REPO_URL}@${branch}"
+}
+
 cmd_run() {
     require_macos
     require_root run
     user_exists || { echo "error: $USER_NAME does not exist; run 'sudo $0 up' first" >&2; return 1; }
 
-    local spec_env=""
-    [ -n "${BOT_BOTTLE_INSTALL_SPEC:-}" ] \
-        && spec_env="BOT_BOTTLE_INSTALL_SPEC='$BOT_BOTTLE_INSTALL_SPEC' "
+    local spec
+    spec="$(resolve_install_spec)"
 
     echo "== installing bot-bottle as $USER_NAME =="
+    echo "== spec: $spec =="
     if [ -n "${BB_TEST_INSTALL_URL:-}" ]; then
-        run_as_user "curl -fsSL '$BB_TEST_INSTALL_URL' | ${spec_env}sh"
+        run_as_user "BOT_BOTTLE_INSTALL_SPEC='$spec' curl -fsSL '$BB_TEST_INSTALL_URL' | sh"
     else
         # Test THIS checkout's install.sh, not the published one, so a PR is
         # verifiable before it lands. Feed it in on stdin rather than staging a
@@ -155,7 +194,13 @@ cmd_run() {
         # root before sudo drops privileges, so the tester's mode-700 home is a
         # non-issue, there's no temp file to leak if the run is interrupted, and
         # `sh -s` is the same shape as the documented `curl … | sh` install.
-        run_as_user "${spec_env}sh -s" < "$_REPO_ROOT/install.sh"
+        #
+        # The spec is prepended to the stream as an export rather than passed
+        # as an argument, for the same argv-joining reason as run_as_user.
+        {
+            printf "export BOT_BOTTLE_INSTALL_SPEC='%s'\n" "$spec"
+            cat "$_REPO_ROOT/install.sh"
+        } | sudo -u "$USER_NAME" -i sh -s
     fi
     [ "$IN_TEST" = 1 ] \
         || echo "== install.sh runs 'doctor' itself; re-check anytime with: $0 status =="
