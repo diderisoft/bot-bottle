@@ -5,7 +5,7 @@ Like Docker, this backend needs no privileged network-pool provisioning
 running. `setup()` points at the install/`container system start` steps;
 `status()` reports readiness. Reached via
 `MacosContainerBottleBackend.setup` / `.status`, dispatched from the
-generic `./cli.py backend {setup,status}`.
+generic `bot-bottle backend {setup,status}`.
 """
 
 from __future__ import annotations
@@ -75,5 +75,5 @@ def status() -> int:
         if not _service_running():
             ok = False
     if not ok:
-        sys.stderr.write("\nRun: ./cli.py backend setup --backend=macos-container\n")
+        sys.stderr.write("\nRun: bot-bottle backend setup --backend=macos-container\n")
     return 0 if ok else 1

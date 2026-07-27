@@ -1,4 +1,4 @@
-# VHS tape — drives `./cli.py start demo` interactively and asks
+# VHS tape — drives `bot-bottle start demo` interactively and asks
 # claude (the AI) to run four probes via natural-language prompts.
 # Setup (manifest + dummy SSH key + image pre-warm) and teardown
 # happen outside the tape; record via `bash scripts/demo-record.sh`,
@@ -29,7 +29,7 @@ Show
 # defaults), one git upstream (unreachable on purpose so gitleaks runs
 # before the gate would forward), and a FAKE_TOKEN env var shaped like
 # a GitHub PAT.
-Type "./cli.py start demo"
+Type "bot-bottle start demo"
 Enter
 Sleep 8s
 

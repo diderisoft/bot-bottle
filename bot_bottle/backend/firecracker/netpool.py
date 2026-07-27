@@ -3,7 +3,7 @@ config renderers (shell command + NixOS module) shown to operators.
 
 The Firecracker backend needs a privileged one-time network setup:
 a pool of point-to-point TAP devices (owned by the invoking user, so
-`./cli.py start` never needs root) and a dedicated nftables table that
+`bot-bottle start` never needs root) and a dedicated nftables table that
 isolates every VM. The pool parameters live in exactly one place —
 `netpool.defaults.env`, a plain KEY=VALUE file next to this module —
 and every consumer reads *that*: this module (below), the shell script
@@ -315,11 +315,11 @@ def allocate(slug: str) -> tuple[Slot, IO[str]]:
         return s, handle
     die(f"Firecracker TAP pool exhausted ({pool_size()} slots, all in "
         f"use). Stop a running bottle or raise BOT_BOTTLE_FC_POOL_SIZE "
-        f"and re-run `./cli.py backend setup --backend=firecracker`.")
+        f"and re-run `bot-bottle backend setup --backend=firecracker`.")
     raise AssertionError("unreachable")
 
 
-# --- config renderers (shown by `./cli.py backend setup`) -----------
+# --- config renderers (shown by `bot-bottle backend setup`) -----------
 
 # The persistent unit is the portable install: the same systemd oneshot
 # on every systemd distro (Debian/Ubuntu/Fedora/RHEL/Arch/…).

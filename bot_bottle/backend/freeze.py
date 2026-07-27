@@ -43,7 +43,7 @@ class Freezer(ABC):
 
         Calls _freeze for the backend-specific snapshot, then writes the
         committed image reference to per-bottle state and marks the bottle
-        preserved so the next `./cli.py resume` boots from the snapshot.
+        preserved so the next `bot-bottle resume` boots from the snapshot.
 
         Raises CommitCancelled if the user declines an interactive
         confirmation prompt (e.g. the macos-container stop prompt).
@@ -51,7 +51,7 @@ class Freezer(ABC):
         image_ref = self._freeze(agent)
         write_committed_image(agent.slug, image_ref)
         mark_preserved(agent.slug)
-        info(f"to resume from this snapshot: ./cli.py resume {agent.slug}")
+        info(f"to resume from this snapshot: bot-bottle resume {agent.slug}")
         self._export_hint(agent.slug, image_ref)
 
     @abstractmethod

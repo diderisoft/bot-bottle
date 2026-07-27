@@ -9,7 +9,7 @@ generation.
 
 The privileged network setup (TAP pool + nft table) is a one-time
 operator step — see `netpool.py`, `scripts/firecracker-netpool.sh`,
-and `./cli.py backend setup --backend=firecracker`.
+and `bot-bottle backend setup --backend=firecracker`.
 """
 
 from __future__ import annotations
@@ -132,18 +132,18 @@ def _require_network_pool() -> None:
              f"{netpool.pool_size()} slots) overlaps existing routes: "
              f"{detail}. This can shadow or be shadowed by that route; "
              f"set BOT_BOTTLE_FC_IP_BASE to a free range and re-run "
-             f"./cli.py backend setup --backend=firecracker.")
+             f"bot-bottle backend setup --backend=firecracker.")
     missing = netpool.missing_taps()
     if missing:
         die(f"network pool incomplete — missing TAP devices: "
-            f"{', '.join(missing)}.\n    ./cli.py backend setup --backend=firecracker")
+            f"{', '.join(missing)}.\n    bot-bottle backend setup --backend=firecracker")
     if shutil.which("nft") is not None and not netpool.nft_table_present():
         # nft is queryable and says the table is absent — that's a
         # definite, catchable misconfiguration; fail early.
         warn(f"isolation table `inet {netpool.NFT_TABLE}` not found via nft. "
              "If this is a permissions issue it will be re-checked "
              "empirically after boot; otherwise run: "
-             "./cli.py backend setup --backend=firecracker")
+             "bot-bottle backend setup --backend=firecracker")
 
 
 # --- rootfs pipeline (rootless) -------------------------------------

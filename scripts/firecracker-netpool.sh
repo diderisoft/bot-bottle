@@ -9,7 +9,7 @@
 #
 # Why a pool + one-time setup: creating a TAP and assigning it an IP
 # needs CAP_NET_ADMIN. Pre-creating user-owned, pre-addressed TAPs
-# means `./cli.py start` never needs root. The nft table is static
+# means `bot-bottle start` never needs root. The nft table is static
 # (keyed on the `bbfc*` interface wildcard), so it covers every slot
 # without per-launch changes.
 #

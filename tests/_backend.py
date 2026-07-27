@@ -2,7 +2,7 @@
 
 Each integration test targets the backend named by ``BOT_BOTTLE_BACKEND``
 (default ``docker``) and gates on that backend's full readiness check —
-``is_backend_ready()`` (equivalent to ``./cli.py backend status``), not just
+``is_backend_ready()`` (equivalent to ``bot-bottle backend status``), not just
 a binary-on-PATH probe. When the backend is not ready, diagnostic output is
 printed during test discovery so the operator sees a concrete reason for each
 skip.

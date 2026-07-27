@@ -1,6 +1,6 @@
 """Unit: the generic `backend` CLI command.
 
-`./cli.py backend {setup,status} [--backend=NAME]` resolves a backend
+`bot-bottle backend {setup,status} [--backend=NAME]` resolves a backend
 and dispatches to its `setup()` / `status()` classmethods — no
 backend-specific commands. Also covers the docker backend's own
 setup/status logic (the firecracker path is exercised by

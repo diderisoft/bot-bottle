@@ -203,19 +203,19 @@ def _start_headless(
     if not os.isatty(stdin_fd):
         die(
             "--headless requires a PTY on stdin; run via:\n"
-            "  script -q /dev/null ./cli.py start ..."
+            "  script -q /dev/null bot-bottle start ..."
         )
 
     agent_name = args.name
     if not agent_name:
-        die("--headless requires an agent name: ./cli.py start <agent> --headless")
+        die("--headless requires an agent name: bot-bottle start <agent> --headless")
     manifest.require_agent(agent_name)  # raises ManifestError if unknown
 
     prompt = args.prompt
     if not prompt:
         die(
             "--headless requires --prompt: "
-            "./cli.py start <agent> --headless --prompt 'Do the thing'"
+            "bot-bottle start <agent> --headless --prompt 'Do the thing'"
         )
 
     if args.bottle:
@@ -319,9 +319,9 @@ def attach_agent(
 
     `resume=True` adds `--continue` so claude picks up its most
     recent session non-interactively (no session-picker prompt).
-    First-attach paths (`./cli.py start`) leave it False.
+    First-attach paths (`bot-bottle start`) leave it False.
 
-    Used as the inner step of `./cli.py start`."""
+    Used as the inner step of `bot-bottle start`."""
     runtime = runtime_for(agent_provider_template)
     info(
         f"attaching interactive {agent_provider_template} session "
@@ -354,7 +354,7 @@ def settle_state(identity: str) -> None:
     if not identity:
         return
     if is_preserved(identity):
-        info(f"to resume this bottle: ./cli.py resume {identity}")
+        info(f"to resume this bottle: bot-bottle resume {identity}")
         return
     cleanup_state(identity)
 

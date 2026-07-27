@@ -8,7 +8,7 @@ bundled setup script. `status()` reports what's present, including
 whether the pool range collides with an existing route.
 
 Called through `FirecrackerBottleBackend.setup` / `.status`, which the
-generic `./cli.py backend {setup,status}` command dispatches to.
+generic `bot-bottle backend {setup,status}` command dispatches to.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ _UNIT_PATH = Path("/etc/systemd/system") / netpool.SYSTEMD_UNIT
 
 def _owner() -> str:
     # Under `sudo`, USER is root but SUDO_USER is the real invoker — the
-    # TAPs must be owned by them so `./cli.py start` stays rootless.
+    # TAPs must be owned by them so `bot-bottle start` stays rootless.
     return os.environ.get("SUDO_USER") or os.environ.get("USER") or "youruser"
 
 
@@ -161,7 +161,7 @@ def _setup_systemd() -> None:
         if rc == 0:
             sys.stderr.write(
                 f"Installed and started {netpool.SYSTEMD_UNIT}. Verify with "
-                f"`./cli.py backend status --backend=firecracker`.\n"
+                f"`bot-bottle backend status --backend=firecracker`.\n"
             )
         else:
             sys.stderr.write(
@@ -181,7 +181,7 @@ def _setup_systemd() -> None:
     )
     sys.stderr.write(
         f"\n(Or re-run this as root to install it directly: "
-        f"sudo ./cli.py backend setup --backend=firecracker)\n"
+        f"sudo bot-bottle backend setup --backend=firecracker)\n"
     )
 
 
@@ -334,7 +334,7 @@ def status() -> int:
         sys.stderr.write(f"range overlap: none (base {netpool.ip_base()})\n")
     _report_persistence()
     if not ok:
-        sys.stderr.write("\nRun: ./cli.py backend setup --backend=firecracker\n")
+        sys.stderr.write("\nRun: bot-bottle backend setup --backend=firecracker\n")
     return 0 if ok else 1
 
 

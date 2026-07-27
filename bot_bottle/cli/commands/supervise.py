@@ -110,7 +110,7 @@ def discover_pending() -> list[QueuedProposal]:
 def _approval_status(qp: QueuedProposal, verb: str) -> str:
     """Status-line text after a successful approval."""
     base = f"{verb} {qp.proposal.tool} for [{qp.label}]"
-    return f"{base}; resume: ./cli.py resume {qp.label}"
+    return f"{base}; resume: bot-bottle resume {qp.label}"
 
 
 def _detail_lines(

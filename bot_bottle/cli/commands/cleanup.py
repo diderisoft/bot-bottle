@@ -1,7 +1,7 @@
 """cleanup: stop and remove all orphaned bot-bottle resources.
 
 Walks every registered backend (docker, firecracker, macos-container)
-so a single `./cli.py cleanup` reaps every backend's leftovers — a
+so a single `bot-bottle cleanup` reaps every backend's leftovers — a
 firecracker bottle's VM processes and run dirs won't survive a
 docker-only cleanup pass (issue addressed alongside #77).
 

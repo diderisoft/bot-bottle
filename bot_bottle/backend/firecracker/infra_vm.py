@@ -204,7 +204,7 @@ def boot_vm(
     Records the PID."""
     if not netpool.tap_present(slot.iface):
         die(f"infra link {slot.iface} not present.\n"
-            f"    ./cli.py backend setup --backend=firecracker")
+            f"    bot-bottle backend setup --backend=firecracker")
 
     run_dir.mkdir(parents=True, exist_ok=True)
     rootfs = run_dir / "rootfs.ext4"

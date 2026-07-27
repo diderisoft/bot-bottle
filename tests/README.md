@@ -95,7 +95,7 @@ BOT_BOTTLE_RUN_CANARIES=1 python -m scripts.unittest_gate \
    ```
 4. Skip guards live in `tests._backend` and gate on the backend's own
    readiness check, `bot_bottle.backend.has_backend` — the same probe
-   behind `./cli.py backend status`:
+   behind `bot-bottle backend status`:
    - Backend-agnostic tests (go through `get_bottle_backend()`) decorate
      the class with `@skip_unless_selected_backend_available()` — the test
      runs against whichever backend `BOT_BOTTLE_BACKEND` selects and skips
@@ -105,7 +105,7 @@ BOT_BOTTLE_RUN_CANARIES=1 python -m scripts.unittest_gate \
      `backend.docker.*`, …) decorate with `@skip_unless_backend("docker")`
      so they no-op under a run targeting a different backend.
 
-   Each CI integration job runs `./cli.py backend status --backend=<name>`
+   Each CI integration job runs `bot-bottle backend status --backend=<name>`
    as a preflight, which prints a clear per-check summary and exits non-zero
    when the backend is missing — so absent infrastructure fails the job
    instead of hiding among per-test `unittest.skip` lines.

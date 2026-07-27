@@ -385,7 +385,7 @@ PY
       ;;
   esac
   echo "git-gate: queued # gitleaks:allow supervisor approval $proposal_id" >&2
-  echo "git-gate: approve with './cli.py supervise' to continue this push" >&2
+  echo "git-gate: approve with 'bot-bottle supervise' to continue this push" >&2
   waited=0
   while [ "$waited" -lt "$timeout" ]; do
     status=$(PYTHONPATH="/app${PYTHONPATH:+:$PYTHONPATH}" python3 - "$proposal_id" <<'PY'

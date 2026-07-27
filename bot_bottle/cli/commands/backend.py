@@ -1,9 +1,9 @@
 """`backend` CLI command — generic host setup/status across backends.
 
-`./cli.py backend setup    [--backend=NAME]` provisions (or points at how
+`bot-bottle backend setup    [--backend=NAME]` provisions (or points at how
 to provision) the chosen backend's one-time host prerequisites.
-`./cli.py backend status   [--backend=NAME]` reports readiness.
-`./cli.py backend teardown [--backend=NAME]` undoes setup (uninstall).
+`bot-bottle backend status   [--backend=NAME]` reports readiness.
+`bot-bottle backend teardown [--backend=NAME]` undoes setup (uninstall).
 
 All dispatch to the backend's `setup()` / `status()` / `teardown()`
 classmethods, so there are no backend-specific commands — swapping

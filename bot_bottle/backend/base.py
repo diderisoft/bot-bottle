@@ -531,7 +531,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         host-appropriate config or commands. Prints to stdout/stderr and
         returns a shell exit code (0 = nothing to report / success). A
         backend that needs no host setup prints a short note and returns
-        0. Invoked generically by `./cli.py backend setup [--backend=…]`
+        0. Invoked generically by `bot-bottle backend setup [--backend=…]`
         so operators can provision any backend without a
         backend-specific command. Classmethod (like `is_available`) —
         it's a host query, not per-bottle state."""
@@ -548,14 +548,14 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         stderr. When quiet=True returns the status code silently —
         useful for cheap programmatic checks.
 
-        Invoked by `./cli.py backend status [--backend=…]` (quiet=False)
+        Invoked by `bot-bottle backend status [--backend=…]` (quiet=False)
         and by is_backend_ready() (caller-controlled)."""
 
     @classmethod
     @abstractmethod
     def teardown(cls) -> int:
         """Undo `setup()` — the inverse operation, surfaced as
-        `./cli.py backend teardown [--backend=…]` (uninstall). Symmetric
+        `bot-bottle backend teardown [--backend=…]` (uninstall). Symmetric
         with setup: where setup is advisory (prints the privileged
         commands / declarative config to apply), teardown prints the
         commands / config change to remove the host prerequisites. A

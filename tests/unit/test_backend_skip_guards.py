@@ -1,7 +1,7 @@
 """Tests for the backend-aware skip guards in ``tests/_backend.py``.
 
 The guards delegate their readiness check to
-``bot_bottle.backend.is_backend_ready`` (the probe behind ``./cli.py backend
+``bot_bottle.backend.is_backend_ready`` (the probe behind ``bot-bottle backend
 status``); here that probe is mocked so the unit job asserts the
 selection/skip logic without either backend present on the runner.
 """

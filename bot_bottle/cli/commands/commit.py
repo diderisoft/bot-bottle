@@ -4,7 +4,7 @@ Docker bottles are committed to a local Docker image. Macos-container
 bottles are exported and rebuilt as a local Apple Container image.
 Firecracker bottles stream the guest rootfs out over SSH and rebuild a
 local Docker image. The resulting reference is stored in per-bottle
-state so the next `./cli.py resume <slug>` boots from the snapshot
+state so the next `bot-bottle resume <slug>` boots from the snapshot
 instead of rebuilding from the Dockerfile.
 """
 
@@ -37,7 +37,7 @@ def cmd_commit(argv: list[str]) -> int:
     if slug is None:
         active = enumerate_active_agents()
         if not active:
-            die("no active bottles; start one with `./cli.py start`")
+            die("no active bottles; start one with `bot-bottle start`")
         choices = [a.slug for a in active]
         slug = tui.filter_select(choices, title="Select bottle to commit")
         if slug is None:

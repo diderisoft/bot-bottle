@@ -8,7 +8,7 @@ pointer, and `status()` reports whether docker is usable.
 This is intentionally minimal; a richer version (daemon config checks,
 gVisor/runsc install guidance, rootless-docker hints) is tracked
 separately. Reached via `DockerBottleBackend.setup` / `.status`, which
-the generic `./cli.py backend {setup,status}` dispatches to.
+the generic `bot-bottle backend {setup,status}` dispatches to.
 """
 
 from __future__ import annotations
@@ -69,7 +69,7 @@ def teardown() -> int:
     sys.stderr.write(
         "Docker backend: nothing to undo — it provisions no privileged host "
         "state (networks and the gateway are per-launch and are "
-        "removed by `./cli.py cleanup`). Docker itself is left installed.\n"
+        "removed by `bot-bottle cleanup`). Docker itself is left installed.\n"
     )
     return 0
 
@@ -89,5 +89,5 @@ def status() -> int:
     runsc = _docker_on_path() and _util.runsc_available()
     sys.stderr.write(f"gVisor runsc runtime: {'registered' if runsc else 'not registered (optional)'}\n")
     if not ok:
-        sys.stderr.write("\nRun: ./cli.py backend setup --backend=docker\n")
+        sys.stderr.write("\nRun: bot-bottle backend setup --backend=docker\n")
     return 0 if ok else 1

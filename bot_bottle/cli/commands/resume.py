@@ -8,7 +8,7 @@ override and transcript snapshot under the same state dir.
 
 Use case: an interrupted or preserved bottle needs to be relaunched;
 the operator runs
-    ./cli.py resume <identity>
+    bot-bottle resume <identity>
 to bring up the replacement from the recorded state.
 """
 
