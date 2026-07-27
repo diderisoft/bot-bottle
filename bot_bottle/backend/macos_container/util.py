@@ -689,6 +689,13 @@ def pinned_local_image_ref(ref: str) -> str:
     nested-containers layer. A content-derived tag prevents another concurrent
     build from moving the provider's ordinary ``:latest`` tag between those
     two builds.
+
+    Unlike Docker, `container image tag` only accepts ``image-name[:tag]`` as
+    its source and rejects a bare image ID ("cannot specify 64 byte hex string
+    as reference"), so the mutable ``ref`` is what gets tagged here. The
+    post-tag inspection below is what keeps that fail-closed: if ``ref`` moved
+    between the two commands, the new tag will not resolve to the ID this call
+    derived its name from.
     """
     image = image_id(ref)
     digest = image.removeprefix("sha256:")
@@ -701,14 +708,14 @@ def pinned_local_image_ref(ref: str) -> str:
         repository = repository[:last_colon]
     pinned_ref = f"{repository}:sha256-{digest}"
     result = subprocess.run(
-        [_CONTAINER, "image", "tag", image, pinned_ref],
+        [_CONTAINER, "image", "tag", ref, pinned_ref],
         capture_output=True,
         text=True,
         check=False,
     )
     if result.returncode != 0:
         die(
-            f"could not tag exact local image {image}: "
+            f"could not tag exact local image {image} via {ref!r}: "
             f"{(result.stderr or result.stdout or '').strip() or '<no detail>'}"
         )
     if image_id(pinned_ref) != image:

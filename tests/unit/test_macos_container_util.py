@@ -158,8 +158,11 @@ resolver #2
             f"registry:5000/agent:sha256-{'a' * 64}",
             pinned,
         )
+        # The tag source is the name:tag ref, not the image ID: Apple
+        # Container's `image tag` rejects a bare 64-byte hex string as a
+        # reference. The second image_id call is what keeps this fail-closed.
         run.assert_called_once_with(
-            ["container", "image", "tag", image, pinned],
+            ["container", "image", "tag", "registry:5000/agent:latest", pinned],
             capture_output=True,
             text=True,
             check=False,
@@ -168,6 +171,31 @@ resolver #2
             [("registry:5000/agent:latest",), (pinned,)],
             [call.args for call in inspect.call_args_list],
         )
+
+    def test_pinned_local_image_ref_accepts_bare_hex_image_id(self):
+        # `container image inspect` reports "id" without the sha256: prefix.
+        image = "b" * 64
+        completed = util.subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr="",
+        )
+        with patch.object(util, "image_id", return_value=image), \
+             patch.object(util.subprocess, "run", return_value=completed) as run:
+            pinned = util.pinned_local_image_ref("agent:latest")
+        self.assertEqual(f"agent:sha256-{'b' * 64}", pinned)
+        self.assertEqual(
+            ["container", "image", "tag", "agent:latest", pinned],
+            run.call_args.args[0],
+        )
+
+    def test_pinned_local_image_ref_dies_when_tag_moved_mid_flight(self):
+        completed = util.subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr="",
+        )
+        with patch.object(
+            util, "image_id", side_effect=["c" * 64, "d" * 64],
+        ), patch.object(util.subprocess, "run", return_value=completed), \
+             self.assertRaises(SystemExit):
+            util.pinned_local_image_ref("agent:latest")
 
     def test_commit_container_execs_tar_and_builds_image(self):
         # stderr is bytes because subprocess.run uses stderr=PIPE without text=True
