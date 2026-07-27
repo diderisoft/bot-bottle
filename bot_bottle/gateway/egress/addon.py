@@ -33,10 +33,11 @@ from bot_bottle.gateway.egress.dlp import (
 )
 from bot_bottle.gateway.egress.matching import (
     decide,
-    decide_git_fetch,
-    is_git_fetch_request,
-    is_git_push_request,
     match_route,
+)
+from bot_bottle.gateway.egress.request_pipeline import (
+    evaluate_route_policy,
+    git_block_reason,
 )
 from bot_bottle.gateway.egress.schema import route_to_yaml_dict
 from bot_bottle.gateway.egress.types import (
@@ -435,21 +436,12 @@ class EgressAddon:
         request_path: str, query: str,
     ) -> bool:
         """Apply the HTTPS Git push/fetch boundary before general routing."""
-        if is_git_push_request(request_path, query):
-            self._block(
-                flow,
-                "egress: git push over HTTPS is not supported; "
-                "use the bottle.git SSH path (gitleaks-scanned by "
-                "git-gate's pre-receive hook).",
-                ctx=self._req_ctx(flow),
-            )
-            return False
-        if not is_git_fetch_request(request_path, query):
+        reason = git_block_reason(
+            config.routes, flow.request.pretty_host, request_path, query,
+        )
+        if not reason:
             return True
-        git_decision = decide_git_fetch(config.routes, flow.request.pretty_host)
-        if git_decision.action != "block":
-            return True
-        self._block(flow, git_decision.reason, ctx=self._req_ctx(flow))
+        self._block(flow, reason, ctx=self._req_ctx(flow))
         return False
 
     def _apply_route_policy(
@@ -461,30 +453,26 @@ class EgressAddon:
         # are caught above; the route may inject gateway-owned auth below.
         # Routes with preserve_auth=True pass the header through as-is so the
         # agent's own credentials (e.g. registry bearer tokens) reach the upstream.
-        if route is None or not route.preserve_auth:
+        result = evaluate_route_policy(
+            config,
+            route,
+            host=flow.request.pretty_host,
+            request_path=request_path,
+            method=flow.request.method,
+            headers=dict(flow.request.headers),
+            env=env,
+        )
+        if result.strip_authorization:
             flow.request.headers.pop("authorization", None)
 
-        # Build headers mapping for match evaluation
-        req_headers = {k.lower(): v for k, v in flow.request.headers.items()}
-
-        decision = decide(
-            config.routes,
-            flow.request.pretty_host,
-            request_path,
-            env,
-            request_method=flow.request.method,
-            request_headers=req_headers,
-            deny_reason=config.deny_reason,
-        )
-
-        if decision.action == "block":
-            self._block(flow, decision.reason, ctx=self._req_ctx(flow))
+        if result.block_reason:
+            self._block(flow, result.block_reason, ctx=self._req_ctx(flow))
             return
 
-        if decision.inject_authorization is not None:
-            flow.request.headers["authorization"] = decision.inject_authorization
+        if result.inject_authorization is not None:
+            flow.request.headers["authorization"] = result.inject_authorization
 
-        if config.log >= LOG_FULL:
+        if result.log_request:
             self._log_request(flow, env)
 
     def _block_dlp(self, flow: http.HTTPFlow, result: ScanResult) -> None:
