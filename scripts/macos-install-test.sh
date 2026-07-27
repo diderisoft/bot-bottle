@@ -4,8 +4,8 @@
 # Exercises install.sh the way a brand-new user would, inside a throwaway
 # macOS account you create and delete from the CLI. install.sh's entire
 # footprint is user-home-local — the pipx venv under ~/.local (or the pip
-# --user tree under ~/Library/Python), the ~/.bot-bottle config dir, and a
-# PATH line in the login shell. It never installs the backend itself (see
+# --user tree under ~/Library/Python) and the ~/.bot-bottle config dir. It
+# writes no shell-profile PATH line, and never installs the backend (see
 # the header of install.sh), so deleting the user is a complete,
 # deterministic reset of everything the installer touched. The Apple
 # `container` runtime is a HOST prerequisite installed once and kept;
