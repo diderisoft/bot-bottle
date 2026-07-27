@@ -44,6 +44,17 @@ class TestProjectNaming(unittest.TestCase):
 
 
 class TestComposeProjectListing(unittest.TestCase):
+    def test_compose_ls_empty_when_docker_unusable(self):
+        # Missing is the obvious case; present-but-not-executable raises
+        # PermissionError instead, which must not escape as a crash.
+        for exc in (FileNotFoundError, PermissionError(13, "Permission denied", "docker")):
+            with self.subTest(exc=type(exc).__name__):
+                with mock.patch(
+                    "bot_bottle.backend.docker.compose.subprocess.run",
+                    side_effect=exc,
+                ):
+                    self.assertEqual([], list_compose_projects())
+
     def test_compose_ls_error_warns_by_default(self):
         with (
             mock.patch(

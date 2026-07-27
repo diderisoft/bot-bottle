@@ -177,14 +177,20 @@ def gw_slot() -> Slot:
 # --- fail-closed verification ---------------------------------------
 
 def _run_ok(argv: list[str]) -> bool:
-    """Run a probe command, treating a missing binary as failure
+    """Run a probe command, treating an unavailable binary as failure
     (rather than crashing) so callers can stay fail-closed."""
     try:
         return subprocess.run(
             argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             check=False,
         ).returncode == 0
-    except FileNotFoundError:
+    except OSError:
+        # Not only "missing". A name on PATH that isn't executable by this
+        # user raises PermissionError, and CPython reports that EACCES in
+        # preference to the ENOENT from the other PATH entries — which is
+        # how `doctor` came to die with a traceback on a fresh macOS
+        # account. Any OSError means the probe couldn't run, which for a
+        # fail-closed check is indistinguishable from "not present".
         return False
 
 
@@ -244,7 +250,9 @@ def overlapping_routes() -> list[RouteConflict]:
             ["ip", "-json", "route", "show", "table", "all"],
             capture_output=True, text=True, check=False,
         )
-    except FileNotFoundError:
+    except OSError:
+        # Missing, or present-but-not-executable for this user; either way
+        # there are no routes we can enumerate. See _run_ok.
         return []
     if proc.returncode != 0 or not proc.stdout.strip():
         return []

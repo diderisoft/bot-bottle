@@ -74,8 +74,9 @@ def _query_services_by_project() -> dict[str, set[str]]:
             ],
             capture_output=True, text=True, check=False,
         )
-    except FileNotFoundError as exc:
-        raise EnumerationError("docker ps failed: docker not found") from exc
+    except OSError as exc:
+        # Missing, or on PATH but not executable by this user (PermissionError).
+        raise EnumerationError(f"docker ps failed: docker unavailable ({exc})") from exc
     if r.returncode != 0:
         raise EnumerationError(f"docker ps failed: {r.stderr.strip()}")
     return _parse_services_by_project(r.stdout or "")

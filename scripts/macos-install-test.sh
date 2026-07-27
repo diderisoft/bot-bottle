@@ -89,14 +89,28 @@ user_exists() { dscl . -read "/Users/$USER_NAME" >/dev/null 2>&1; }
 # Run a shell snippet as the throwaway user in a fresh login shell.
 run_as_user() { sudo -u "$USER_NAME" -i sh -c "$1"; }
 
-# `bot-bottle doctor` as the throwaway user. Non-zero when the entry point
-# never made it onto that user's PATH, or when doctor itself is unhappy.
+# `bot-bottle doctor` as the throwaway user. Non-zero when no entry point was
+# installed at all, or when doctor itself is unhappy.
+#
+# Deliberately does NOT require `bot-bottle` on PATH: install.sh prints the
+# PATH line rather than editing a shell profile, so on a fresh account the
+# entry point is installed and working but not on PATH. Demanding PATH here
+# would fail every run for a reason the installer intends.
 doctor_as_user() {
-    if ! run_as_user 'command -v bot-bottle >/dev/null 2>&1'; then
-        echo "  bot-bottle is not on PATH for $USER_NAME"
-        return 1
-    fi
-    run_as_user 'bot-bottle doctor'
+    # shellcheck disable=SC2016  # $HOME/$bb must expand in the *target* user's
+    # shell, not in this one — that's the whole point of the single quotes.
+    run_as_user '
+        for bb in "$HOME/.local/bin/bot-bottle" "$HOME/.bot-bottle/venv/bin/bot-bottle"; do
+            if [ -x "$bb" ]; then
+                command -v bot-bottle >/dev/null 2>&1 \
+                    || echo "  (not on PATH — running $bb directly, as install.sh advises)"
+                exec "$bb" doctor
+            fi
+        done
+        command -v bot-bottle >/dev/null 2>&1 && exec bot-bottle doctor
+        echo "  no bot-bottle entry point found for this user" >&2
+        exit 1
+    '
 }
 
 # --- commands --------------------------------------------------------

@@ -56,6 +56,21 @@ class TestNetpoolProbes(unittest.TestCase):
         with patch.object(netpool.subprocess, "run", side_effect=FileNotFoundError):
             self.assertFalse(netpool._run_ok(["nft"]))
 
+    def test_run_ok_false_on_unexecutable_binary(self):
+        # A name on PATH that this user can't execute raises PermissionError,
+        # not FileNotFoundError — CPython reports that EACCES in preference to
+        # the ENOENT from the other PATH entries. Catching only the latter made
+        # `doctor` die with a traceback on a fresh macOS account.
+        with patch.object(netpool.subprocess, "run",
+                          side_effect=PermissionError(13, "Permission denied", "ip")):
+            self.assertFalse(netpool._run_ok(["ip", "link", "show", "bbfc0"]))
+
+    def test_overlapping_routes_empty_when_ip_unusable(self):
+        for exc in (FileNotFoundError, PermissionError(13, "Permission denied", "ip")):
+            with self.subTest(exc=type(exc).__name__), \
+                 patch.object(netpool.subprocess, "run", side_effect=exc):
+                self.assertEqual([], netpool.overlapping_routes())
+
     def test_tap_and_nft_probes(self):
         with patch.object(netpool, "_run_ok", return_value=True) as ok:
             self.assertTrue(netpool.tap_present("bbfc0"))

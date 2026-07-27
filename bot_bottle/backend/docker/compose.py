@@ -74,10 +74,13 @@ def list_compose_projects(
         result = subprocess.run(
             argv, capture_output=True, text=True, check=False,
         )
-    except FileNotFoundError as exc:
+    except OSError as exc:
+        # Not only "not found": docker on PATH but not executable by this
+        # user raises PermissionError. Either way the query never ran, so an
+        # enumeration caller must not read the empty result as authoritative.
         if raise_on_error:
             raise EnumerationError(
-                "docker compose ls failed: docker not found"
+                f"docker compose ls failed: docker unavailable ({exc})"
             ) from exc
         return []
     if result.returncode != 0:
