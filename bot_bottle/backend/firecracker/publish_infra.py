@@ -34,6 +34,7 @@ from pathlib import Path
 from . import infra_artifact, infra_vm, util
 
 _CHUNK = 1 << 20
+_REGISTRY_HTTP_TIMEOUT_SECONDS = 30.0
 
 _GZ_NAME = "rootfs.ext4.gz"
 _SHA_NAME = "rootfs.ext4.gz.sha256"
@@ -91,7 +92,9 @@ def _put(url: str, body: "bytes | Path", token: str) -> None:
         req.add_header("Authorization", f"token {token}")
     req.add_header("Content-Type", "application/octet-stream")
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(
+            req, timeout=_REGISTRY_HTTP_TIMEOUT_SECONDS,
+        ) as resp:
             print(f"  uploaded {url} (HTTP {resp.status})")
     except urllib.error.HTTPError as e:
         if e.code == 409:
@@ -112,7 +115,9 @@ def _delete(url: str, token: str) -> None:
     if token:
         req.add_header("Authorization", f"token {token}")
     try:
-        with urllib.request.urlopen(req):
+        with urllib.request.urlopen(
+            req, timeout=_REGISTRY_HTTP_TIMEOUT_SECONDS,
+        ):
             pass
     except urllib.error.HTTPError as e:
         if e.code != 404:
@@ -151,7 +156,10 @@ def _try_download_published(role: str, role_dir: Path) -> str | None:
     version = _role_version(role)
     sha_url = infra_artifact.artifact_url(version, _SHA_NAME, role=role)
     try:
-        with urllib.request.urlopen(infra_artifact._open(sha_url)):
+        with urllib.request.urlopen(
+            infra_artifact._open(sha_url),
+            timeout=_REGISTRY_HTTP_TIMEOUT_SECONDS,
+        ):
             pass
     except urllib.error.HTTPError as e:
         if e.code == 404:
@@ -195,7 +203,10 @@ def _publish_bundle(role: str, role_dir: Path, token: str) -> str:
     # present, a re-publish is a no-op. Otherwise clear any partial upload left
     # by an interrupted prior attempt and upload the complete set.
     try:
-        with urllib.request.urlopen(infra_artifact._open(sha_url)) as resp:
+        with urllib.request.urlopen(
+            infra_artifact._open(sha_url),
+            timeout=_REGISTRY_HTTP_TIMEOUT_SECONDS,
+        ) as resp:
             remote_sha = resp.read().decode("utf-8").split()[0].strip().lower()
     except urllib.error.HTTPError as e:
         if e.code != 404:

@@ -28,6 +28,7 @@ import subprocess
 
 from ...paths import bot_bottle_root
 from ...log import info, warn
+from .. import EnumerationError
 from . import util as docker_mod
 from .bottle_cleanup_plan import DockerBottleCleanupPlan
 from ...bottle_state import bottle_state_dir, is_preserved
@@ -36,15 +37,17 @@ from .compose import COMPOSE_PROJECT_PREFIX, list_compose_projects
 
 def _list_prefixed_containers() -> list[str]:
     """All bot-bottle-prefixed containers, running or stopped."""
-    result = subprocess.run(
-        ["docker", "ps", "-a",
-         "--filter", f"name=^{COMPOSE_PROJECT_PREFIX}",
-         "--format", "{{.Names}}\t{{.Label \"com.docker.compose.project\"}}"],
-        capture_output=True, text=True, check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["docker", "ps", "-a",
+             "--filter", f"name=^{COMPOSE_PROJECT_PREFIX}",
+             "--format", "{{.Names}}\t{{.Label \"com.docker.compose.project\"}}"],
+            capture_output=True, text=True, check=False,
+        )
+    except OSError as exc:
+        raise EnumerationError(f"docker ps failed: {exc}") from exc
     if result.returncode != 0:
-        warn(f"docker ps failed: {result.stderr.strip()}")
-        return []
+        raise EnumerationError(f"docker ps failed: {result.stderr.strip()}")
     out: list[str] = []
     for line in (result.stdout or "").splitlines():
         if not line:
@@ -63,15 +66,19 @@ def _list_prefixed_networks() -> list[str]:
     to a compose project. Compose-managed networks have a
     `com.docker.compose.project` label; bare ones (from pre-compose
     code paths) don't."""
-    result = subprocess.run(
-        ["docker", "network", "ls",
-         "--filter", f"name={COMPOSE_PROJECT_PREFIX}",
-         "--format", "{{.Name}}\t{{.Label \"com.docker.compose.project\"}}"],
-        capture_output=True, text=True, check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["docker", "network", "ls",
+             "--filter", f"name={COMPOSE_PROJECT_PREFIX}",
+             "--format", "{{.Name}}\t{{.Label \"com.docker.compose.project\"}}"],
+            capture_output=True, text=True, check=False,
+        )
+    except OSError as exc:
+        raise EnumerationError(f"docker network ls failed: {exc}") from exc
     if result.returncode != 0:
-        warn(f"docker network ls failed: {result.stderr.strip()}")
-        return []
+        raise EnumerationError(
+            f"docker network ls failed: {result.stderr.strip()}"
+        )
     out: list[str] = []
     for line in (result.stdout or "").splitlines():
         if not line:
@@ -120,7 +127,10 @@ def prepare_cleanup() -> DockerBottleCleanupPlan:
     `enumerate_active_agents()` so the orphan-state-dir bucket
     doesn't include slugs whose non-docker bottle is still up."""
     docker_mod.require_docker()
-    projects = list_compose_projects()
+    projects = list_compose_projects(
+        warn_on_error=False,
+        raise_on_error=True,
+    )
     project_set = set(projects)
     # Late import to avoid a circular at module-load time —
     # the backend package's __init__ imports this module.

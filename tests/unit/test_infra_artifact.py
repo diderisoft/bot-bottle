@@ -284,6 +284,18 @@ class TestEnsureArtifact(_CacheMixin):
             ia.ensure_artifact_gz(version, role=_ROLE)
             self.assertEqual(first_calls, len(net.calls))
 
+    def test_download_uses_network_deadline(self) -> None:
+        response = mock.MagicMock()
+        response.__enter__.return_value = io.BytesIO(b"payload")
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(
+            ia.urllib.request, "urlopen", return_value=response,
+        ) as urlopen:
+            ia._download("https://registry/artifact", Path(d) / "artifact")
+        self.assertEqual(
+            ia.ARTIFACT_HTTP_TIMEOUT_SECONDS,
+            urlopen.call_args.kwargs["timeout"],
+        )
+
     def test_checksum_mismatch_fails_closed(self) -> None:
         version = "beefbeefbeefbeef"
         gz = _gz(b"payload")

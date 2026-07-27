@@ -32,15 +32,19 @@ class TestProcessScan(unittest.TestCase):
         self.assertEqual(
             Path("/cache/run/dev-a"),
             fc_cleanup._run_dir_of(
-                f"firecracker --config-file {run_root}/dev-a/config.json", run_root
+                ("firecracker", "--config-file",
+                 f"{run_root}/dev-a/config.json"), run_root
             ),
         )
         # infra/builder VMs elsewhere, or nested paths, are not ours.
         self.assertIsNone(
-            fc_cleanup._run_dir_of("firecracker --config-file /elsewhere/config.json", run_root)
+            fc_cleanup._run_dir_of(
+                ("firecracker", "--config-file", "/elsewhere/config.json"),
+                run_root,
+            )
         )
         self.assertIsNone(
-            fc_cleanup._run_dir_of("firecracker --no-config", run_root)
+            fc_cleanup._run_dir_of(("firecracker", "--no-config"), run_root)
         )
 
     def test_scan_splits_live_dirs_from_orphan_pids(self):
@@ -48,16 +52,39 @@ class TestProcessScan(unittest.TestCase):
             run_root = Path(tmp)
             (run_root / "live-a").mkdir()  # dir present -> live VM, protected
             # "gone-b" dir intentionally absent -> lingering VMM, orphan pid
-            out = (
-                f"111 firecracker --config-file {run_root}/live-a/config.json\n"
-                f"222 firecracker --config-file {run_root}/gone-b/config.json\n"
-                "333 firecracker --config-file /elsewhere/config.json\n"
-                "notanint firecracker --config-file x\n"
-            )
-            with patch.object(fc_cleanup.subprocess, "run", return_value=_proc(out)):
+            args = {
+                111: ("firecracker", "--config-file",
+                      f"{run_root}/live-a/config.json"),
+                222: ("firecracker", "--config-file",
+                      f"{run_root}/gone-b/config.json"),
+                333: ("firecracker", "--config-file", "/elsewhere/config.json"),
+            }
+            with patch.object(
+                fc_cleanup.subprocess, "run",
+                return_value=_proc("111\n222\n333\nnotanint\n"),
+            ), patch.object(
+                fc_cleanup, "_process_args", side_effect=args.get,
+            ):
                 live, orphan_pids = fc_cleanup._scan_processes(run_root)
         self.assertEqual({str(run_root / "live-a")}, live)
         self.assertEqual([222], orphan_pids)
+
+    def test_scan_preserves_spaces_in_config_path(self):
+        with tempfile.TemporaryDirectory(prefix="fc cache ") as tmp:
+            run_root = Path(tmp)
+            live = run_root / "live bottle"
+            live.mkdir()
+            with patch.object(
+                fc_cleanup.subprocess, "run", return_value=_proc("111\n"),
+            ), patch.object(
+                fc_cleanup, "_process_args",
+                return_value=("firecracker", "--config-file",
+                              str(live / "config.json")),
+            ):
+                self.assertEqual(
+                    ({str(live)}, []),
+                    fc_cleanup._scan_processes(run_root),
+                )
 
     def test_scan_empty_when_pgrep_finds_no_processes(self):
         with patch.object(fc_cleanup.subprocess, "run", return_value=_proc(returncode=1)):
@@ -117,9 +144,14 @@ class TestProcessScan(unittest.TestCase):
             run_root = Path(tmp)
             (run_root / "live-a").mkdir()
             (run_root / "dead-b").mkdir()
-            out = f"111 firecracker --config-file {run_root}/live-a/config.json\n"
             with patch.object(fc_cleanup, "_run_root", return_value=run_root), \
-                 patch.object(fc_cleanup.subprocess, "run", return_value=_proc(out)):
+                 patch.object(fc_cleanup.subprocess, "run",
+                              return_value=_proc("111\n")), \
+                 patch.object(
+                     fc_cleanup, "_process_args",
+                     return_value=("firecracker", "--config-file",
+                                   str(run_root / "live-a/config.json")),
+                 ):
                 plan = fc_cleanup.prepare_cleanup()
         self.assertEqual((), plan.vm_pids)
         self.assertEqual((str(run_root / "dead-b"),), plan.run_dirs)

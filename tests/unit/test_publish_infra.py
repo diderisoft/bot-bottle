@@ -49,6 +49,16 @@ class TestPut(unittest.TestCase):
         self.assertNotIsInstance(req.data, (bytes, bytearray))
         self.assertEqual(str(len(payload)), req.get_header("Content-length"))
 
+    def test_put_uses_network_deadline(self) -> None:
+        with mock.patch.object(
+            pub.urllib.request, "urlopen", return_value=_Resp(),
+        ) as urlopen:
+            pub._put("https://reg/pkg", b"payload", token="")
+        self.assertEqual(
+            pub._REGISTRY_HTTP_TIMEOUT_SECONDS,
+            urlopen.call_args.kwargs["timeout"],
+        )
+
     def test_small_bytes_body_still_works(self) -> None:
         captured: list[urllib.request.Request] = []
 

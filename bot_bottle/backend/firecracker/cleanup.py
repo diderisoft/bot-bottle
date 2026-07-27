@@ -11,10 +11,9 @@ Reaps *orphans* only — resources with no live VM behind them:
     — a VMM left lingering after its dir was removed.
 
 A run dir with a *live* firecracker process is a running bottle and is
-left strictly alone: it is neither killed nor removed. (The backend's
-`enumerate_active` registry is still a stub — #354 — so a live process
-is the only reliable "this bottle is in use" signal we have. Once the
-registry lands, registry-orphaned-but-running VMs can be reaped too.)
+left strictly alone: it is neither killed nor removed. Active-agent
+enumeration uses this same process snapshot, so cleanup and generic
+backend consumers agree about which bottles are running.
 
 TAP slots free themselves (the flock drops when the launcher exits), so
 there is nothing to reclaim there.
@@ -22,6 +21,7 @@ there is nothing to reclaim there.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import os
 import shutil
 import signal
@@ -38,7 +38,7 @@ def _run_root() -> Path:
     return util.cache_dir() / "run"
 
 
-def _run_dir_of(cmd: str, run_root: Path) -> Path | None:
+def _run_dir_of(args: Sequence[str], run_root: Path) -> Path | None:
     """The bottle run dir a firecracker cmdline belongs to, or None.
 
     A bottle VM is launched with `--config-file <run_root>/<slug>/config.json`,
@@ -46,13 +46,33 @@ def _run_dir_of(cmd: str, run_root: Path) -> Path | None:
     the run root. Anything else (a builder VM, the infra VM elsewhere) is
     not ours to reap here.
     """
-    toks = cmd.split()
-    for i, tok in enumerate(toks):
-        if tok == "--config-file" and i + 1 < len(toks):
-            parent = Path(toks[i + 1]).parent
+    for i, arg in enumerate(args):
+        if arg == "--config-file" and i + 1 < len(args):
+            parent = Path(args[i + 1]).parent
             if parent.parent == run_root:
                 return parent
     return None
+
+
+def _decode_cmdline(raw: bytes) -> tuple[str, ...]:
+    """Decode Linux's NUL-delimited argv without losing embedded spaces."""
+    return tuple(
+        value.decode(errors="surrogateescape")
+        for value in raw.split(b"\0") if value
+    )
+
+
+def _process_args(pid: int) -> tuple[str, ...] | None:
+    """Read one process's lossless argv, or None when it exited meanwhile."""
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise EnumerationError(
+            f"could not inspect Firecracker pid {pid}: {exc}"
+        ) from exc
+    return _decode_cmdline(raw)
 
 
 def _scan_processes(run_root: Path) -> tuple[set[str], list[int]]:
@@ -65,7 +85,7 @@ def _scan_processes(run_root: Path) -> tuple[set[str], list[int]]:
     """
     try:
         result = subprocess.run(
-            ["pgrep", "-a", "firecracker"],
+            ["pgrep", "firecracker"],
             capture_output=True, text=True, check=False,
         )
     except OSError as exc:
@@ -83,14 +103,14 @@ def _scan_processes(run_root: Path) -> tuple[set[str], list[int]]:
     live: set[str] = set()
     orphan_pids: list[int] = []
     for line in result.stdout.splitlines():
-        parts = line.split(None, 1)
-        if len(parts) != 2:
-            continue
         try:
-            pid = int(parts[0])
+            pid = int(line.strip())
         except ValueError:
             continue
-        run_dir = _run_dir_of(parts[1], run_root)
+        args = _process_args(pid)
+        if args is None:
+            continue
+        run_dir = _run_dir_of(args, run_root)
         if run_dir is None:
             continue
         if run_dir.is_dir():
@@ -157,8 +177,8 @@ def _terminate_orphan(pid: int, run_root: Path) -> None:
             raise EnumerationError(
                 f"could not revalidate Firecracker pid {pid}: {exc}"
             ) from exc
-        command = raw.replace(b"\0", b" ").decode(errors="replace")
-        run_dir = _run_dir_of(command, run_root)
+        args = _decode_cmdline(raw)
+        run_dir = _run_dir_of(args, run_root)
         if run_dir is None or run_dir.is_dir():
             return
         info(f"kill firecracker VM pid {pid}")

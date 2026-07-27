@@ -14,9 +14,12 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from tests.unit import use_bottle_root
 from bot_bottle import bottle_state
+from bot_bottle.backend import EnumerationError
+from bot_bottle.backend.docker import cleanup
 from bot_bottle.backend.docker.cleanup import _list_orphan_state_dirs
 
 
@@ -114,6 +117,38 @@ class TestOrphanStateDirs(_FakeHomeMixin, unittest.TestCase):
                 {"fc-iii"},                         # but fc-iii is live
             ),
         )
+
+
+class TestAuthoritativeDiscovery(unittest.TestCase):
+    def test_prepare_requires_authoritative_compose_projects(self):
+        with patch.object(cleanup.docker_mod, "require_docker"), \
+             patch.object(
+                 cleanup, "list_compose_projects",
+                 side_effect=EnumerationError("compose unavailable"),
+             ) as projects, self.assertRaisesRegex(
+                 EnumerationError, "compose unavailable",
+             ):
+            cleanup.prepare_cleanup()
+        projects.assert_called_once_with(
+            warn_on_error=False,
+            raise_on_error=True,
+        )
+
+    def test_container_query_failure_raises(self):
+        failed = cleanup.subprocess.CompletedProcess(
+            [], 1, stdout="", stderr="daemon unavailable",
+        )
+        with patch.object(cleanup.subprocess, "run", return_value=failed), \
+             self.assertRaisesRegex(EnumerationError, "daemon unavailable"):
+            cleanup._list_prefixed_containers()
+
+    def test_network_query_failure_raises(self):
+        failed = cleanup.subprocess.CompletedProcess(
+            [], 1, stdout="", stderr="daemon unavailable",
+        )
+        with patch.object(cleanup.subprocess, "run", return_value=failed), \
+             self.assertRaisesRegex(EnumerationError, "daemon unavailable"):
+            cleanup._list_prefixed_networks()
 
 
 if __name__ == "__main__":

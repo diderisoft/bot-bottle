@@ -41,6 +41,8 @@ from ... import resources
 from ...log import die, info
 from . import util
 
+ARTIFACT_HTTP_TIMEOUT_SECONDS = 30.0
+
 # Bump if the on-disk artifact *format* changes (compression, layout) so a new
 # scheme can't collide with a cached/published artifact of the old one.
 _ARTIFACT_FORMAT = "1"
@@ -164,7 +166,9 @@ def _download(url: str, dest: Path) -> None:
     """Stream `url` to `dest` (atomic via a `.part` sibling)."""
     tmp = dest.with_suffix(dest.suffix + ".part")
     try:
-        with urllib.request.urlopen(_open(url)) as resp, open(tmp, "wb") as out:
+        with urllib.request.urlopen(
+            _open(url), timeout=ARTIFACT_HTTP_TIMEOUT_SECONDS,
+        ) as resp, open(tmp, "wb") as out:
             shutil.copyfileobj(resp, out, _CHUNK)
     except urllib.error.HTTPError as e:
         tmp.unlink(missing_ok=True)
