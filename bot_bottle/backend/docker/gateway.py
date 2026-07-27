@@ -140,12 +140,29 @@ class DockerGateway(Gateway):
             marker = inspected.stdout.strip()
             if marker in {"", self._subnet}:
                 return
-        if inspected.returncode == 0:
-            # Migrate the stale auto-IPAM network created by older releases.
-            # Removing the fixed gateway is safe here: this launch recreates it.
+            # Inspectable but mislabelled: the stale auto-IPAM network created
+            # by older releases. Replace it below.
+            stale = True
+        else:
+            # inspect failed: either the network is absent (create it below) or
+            # it exists but docker can't parse it. A daemon that default-enables
+            # IPv6 attaches an fdd0::/64 subnet whose `::1/64` gateway trips
+            # docker's own netip.ParseAddr in `network inspect`/`ls`, so the
+            # command exits non-zero. A fixed release never *creates* such a
+            # network, but one can survive on a shared host from an older or
+            # concurrent launch — and `--ipv6=false` alone can't heal it, since
+            # the create below only no-ops on "already exists". Force-replace it
+            # so later reads (e.g. `_network_cidr` pinning a source IP) stop
+            # failing. An absent network's inspect error is "No such network";
+            # anything else means it exists but is poisoned.
+            err = inspected.stderr.lower()
+            stale = "no such network" not in err and "not found" not in err
+        if stale:
+            # Migrate the stale/poisoned network. Removing the fixed gateway is
+            # safe here: this launch recreates it.
             run_docker(["docker", "rm", "--force", self.name])
             removed = run_docker(["docker", "network", "rm", self.network])
-            if removed.returncode != 0:
+            if removed.returncode != 0 and "no such network" not in removed.stderr.lower():
                 raise GatewayError(
                     f"gateway network {self.network} needs explicit subnet "
                     f"{self._subnet} but could not be replaced: "

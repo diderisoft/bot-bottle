@@ -248,6 +248,61 @@ class TestDockerGateway(unittest.TestCase):
             calls,
         )
 
+    def test_ensure_running_replaces_poisoned_ipv6_network(self) -> None:
+        # A daemon that default-enables IPv6 leaves the gateway network with a
+        # malformed fdd0::/64 gateway, so `docker network inspect` exits
+        # non-zero with a ParseAddr error (not "No such network"). `--ipv6=false`
+        # can't heal an already-poisoned network — the create just no-ops on
+        # "already exists" — so _ensure_network must force-remove and recreate
+        # it, else every later subnet read keeps failing.
+        calls: list[list[str]] = []
+
+        def fake(argv: list[str], **_kw: object) -> Mock:
+            calls.append(argv)
+            if argv[:2] == ["docker", "ps"]:
+                return _proc(stdout="")
+            if argv[:3] == ["docker", "network", "inspect"]:
+                return _proc(
+                    returncode=1,
+                    stderr='ParseAddr("fdd0:0:0:4::1/64"): unexpected character, '
+                    'want colon (at "/64")',
+                )
+            return _proc()
+
+        with patch(_RUN_DOCKER, side_effect=fake):
+            self.sc.connect_to_orchestrator(_ORCH_URL, _TOKEN)
+        self.assertIn(["docker", "rm", "--force", self.sc.name], calls)
+        self.assertIn(["docker", "network", "rm", self.sc.network], calls)
+        creates = [c for c in calls if c[:3] == ["docker", "network", "create"]]
+        self.assertEqual(
+            [[
+                "docker", "network", "create",
+                "--ipv6=false",
+                "--subnet", DEFAULT_GATEWAY_SUBNET,
+                "--label",
+                f"bot-bottle.gateway-subnet={DEFAULT_GATEWAY_SUBNET}",
+                self.sc.network,
+            ]],
+            creates,
+        )
+
+    def test_ensure_running_creates_network_when_inspect_reports_absent(self) -> None:
+        # The absent case (inspect fails with "No such network") must NOT try to
+        # remove anything — it just creates. Guards the poisoned-vs-absent split.
+        calls: list[list[str]] = []
+
+        def fake(argv: list[str], **_kw: object) -> Mock:
+            calls.append(argv)
+            if argv[:3] == ["docker", "network", "inspect"]:
+                return _proc(returncode=1, stderr="Error: No such network: x")
+            return _proc(stdout="") if argv[:2] == ["docker", "ps"] else _proc()
+
+        with patch(_RUN_DOCKER, side_effect=fake):
+            self.sc.connect_to_orchestrator(_ORCH_URL, _TOKEN)
+        self.assertNotIn(["docker", "network", "rm", self.sc.network], calls)
+        creates = [c for c in calls if c[:3] == ["docker", "network", "create"]]
+        self.assertEqual(1, len(creates))
+
     def test_ca_cert_pem_reads_from_container(self) -> None:
         with patch(_RUN_DOCKER, return_value=_proc(stdout=_CA_PEM)) as m:
             self.assertEqual(_CA_PEM, self.sc.ca_cert_pem())

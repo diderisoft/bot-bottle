@@ -102,6 +102,20 @@ jobs:
           python3 --version
           python3 cli.py backend status --backend=docker
 
+      - name: Preflight — clear any leftover poisoned gateway network
+        run: |
+          # The gateway network has a fixed name and persists across jobs on
+          # this shared runner. A pre-fix or concurrent launch can leave it with
+          # a malformed IPv6 subnet that trips docker's own ParseAddr in
+          # `network inspect` (see PR #515); the code now self-heals it, but the
+          # heal can't run if `network inspect` is what's broken on some daemon
+          # versions. Drop the network here so this run recreates it IPv4-only.
+          # Remove the attached gateway container first (else `network rm` fails
+          # on active endpoints); both are recreated by ensure_running. Harmless
+          # when absent.
+          docker rm --force bot-bottle-orch-gateway 2>/dev/null || true
+          docker network rm bot-bottle-gateway 2>/dev/null || true
+
       - name: Run integration tests (docker) with coverage
         env:
           BOT_BOTTLE_BACKEND: docker
