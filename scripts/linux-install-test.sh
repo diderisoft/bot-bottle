@@ -122,8 +122,8 @@ SUM_URL[ubuntu]="https://cloud-images.ubuntu.com/noble/current/SHA256SUMS"
 SSH_USER[ubuntu]="ubuntu"
 PREREQ[ubuntu]="sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3 git pipx"
 
-IMAGE_URL[fedora]="https://download.fedoraproject.org/pub/fedora/linux/releases/41/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-41-1.4.x86_64.qcow2"
-SUM_URL[fedora]="https://download.fedoraproject.org/pub/fedora/linux/releases/41/Cloud/x86_64/images/Fedora-Cloud-41-1.4-x86_64-CHECKSUM"
+IMAGE_URL[fedora]="https://download.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2"
+SUM_URL[fedora]="https://download.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/x86_64/images/Fedora-Cloud-44-1.7-x86_64-CHECKSUM"
 SSH_USER[fedora]="fedora"
 PREREQ[fedora]="sudo dnf install -y python3 git pipx"
 
@@ -132,8 +132,8 @@ SUM_URL[arch]="https://geo.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-c
 SSH_USER[arch]="arch"
 PREREQ[arch]="sudo pacman -Sy --noconfirm python git python-pipx"
 
-IMAGE_URL[alpine]="https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/cloud/generic_alpine-3.21.2-x86_64-bios-cloudinit-r0.qcow2"
-SUM_URL[alpine]="https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/cloud/generic_alpine-3.21.2-x86_64-bios-cloudinit-r0.qcow2.sha256"
+IMAGE_URL[alpine]="https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/cloud/generic_alpine-3.21.7-x86_64-bios-cloudinit-r0.qcow2"
+SUM_URL[alpine]=""   # Alpine cloud images ship .sha512 only; this verifier is sha256. Set BB_TEST_SKIP_VERIFY handling applies.
 SSH_USER[alpine]="alpine"
 PREREQ[alpine]="sudo apk add --no-cache python3 git pipx"
 
@@ -404,7 +404,10 @@ entry_point_runnable() {
     guest '
         for bb in "$HOME/.local/bin/bot-bottle" "$HOME/.bot-bottle/venv/bin/bot-bottle" "$(command -v bot-bottle 2>/dev/null)"; do
             [ -n "$bb" ] && [ -x "$bb" ] || continue
-            "$bb" --version >/dev/null 2>&1 && exit 0
+            # --help exits 0 before any DB/migration/network work; it is the
+            # cheapest proof the package imports and the shim runs. (bot-bottle
+            # has no --version: an unknown arg would die non-zero.)
+            "$bb" --help >/dev/null 2>&1 && exit 0
         done
         exit 1
     ' >/dev/null 2>&1
@@ -543,7 +546,7 @@ cmd_down() {
     # Deleting the overlay + seed is the reset; the read-only base stays cached.
     rm -f "$(_overlay)" "$(_seed)" "$(_ssh_key)" "$(_ssh_key).pub" \
           "$RUN_DIR/user-data" "$RUN_DIR/meta-data" \
-          "$RUN_DIR/install.rc" "$RUN_DIR/install.log"
+          "$RUN_DIR/install.rc" "$RUN_DIR/install.log" "$(_serial)"
     # Only remove a scratch dir we created (leave a user-provided one alone).
     [ -n "${BB_TEST_RUN_DIR:-}" ] || rmdir "$RUN_DIR" 2>/dev/null || true
     rm -f "$(_marker)"
@@ -595,9 +598,12 @@ _test_cycle() {
     IN_TEST=1
     RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/bb-install-test.$DISTRO.XXXXXX")"
 
+    # Arm teardown BEFORE cmd_up: its wait_for_ssh can fail after QEMU is
+    # already running (e.g. a guest that never opens SSH), and without the trap
+    # in place that would leak the VM.
+    trap _test_teardown EXIT INT TERM
     echo "== [1/$_STEPS] up ($DISTRO) =="
     cmd_up
-    trap _test_teardown EXIT INT TERM
 
     local step=2
     if [ "$with_prereqs" = 1 ]; then
