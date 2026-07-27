@@ -21,6 +21,8 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import tempfile
+import threading
 import typing
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
@@ -30,7 +32,7 @@ from bot_bottle.constants import GIT_GATE_TIMEOUT_SECS, IDENTITY_HEADER
 from bot_bottle.gateway.bounded_http import (
     BodyReadError,
     BoundedThreadingHTTPServer,
-    read_declared_body,
+    copy_declared_body,
 )
 from bot_bottle.gateway.policy_resolver import PolicyResolveError, PolicyResolver
 
@@ -84,6 +86,8 @@ def resolve_sandbox_root(
 MAX_BODY_BYTES = 100 * 1024 * 1024
 REQUEST_BODY_TIMEOUT_SECONDS = 30.0
 MAX_REQUEST_WORKERS = 16
+MAX_BODY_WORKERS = 2
+_BODY_WORK_SLOTS = threading.BoundedSemaphore(MAX_BODY_WORKERS)
 
 
 class GitHttpHandler(BaseHTTPRequestHandler):
@@ -191,31 +195,40 @@ class GitHttpHandler(BaseHTTPRequestHandler):
             value = self.headers.get(header)
             if value:
                 env[variable] = value
-        try:
-            body = read_declared_body(
-                self.rfile,
-                self.connection,
-                self.headers.get("content-length"),
-                maximum=MAX_BODY_BYTES,
-                timeout_seconds=REQUEST_BODY_TIMEOUT_SECONDS,
-                require_length=False,
-            )
-        except BodyReadError as exc:
-            self.send_error(exc.status, exc.message)
+        if not _BODY_WORK_SLOTS.acquire(blocking=False):
+            self.send_error(503, "git request capacity exhausted")
             return
         try:
-            proc = subprocess.run(
-                ["git", "http-backend"],
-                input=body,
-                env=env,
-                capture_output=True,
-                check=False,
-                timeout=GIT_GATE_TIMEOUT_SECS,
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            self.log_message("git http-backend unavailable: %s", exc)
-            self.send_error(503, "git backend unavailable")
-            return
+            with tempfile.TemporaryFile() as body:
+                try:
+                    copy_declared_body(
+                        self.rfile,
+                        body,
+                        self.connection,
+                        self.headers.get("content-length"),
+                        maximum=MAX_BODY_BYTES,
+                        timeout_seconds=REQUEST_BODY_TIMEOUT_SECONDS,
+                        require_length=False,
+                    )
+                except BodyReadError as exc:
+                    self.send_error(exc.status, exc.message)
+                    return
+                body.seek(0)
+                try:
+                    proc = subprocess.run(
+                        ["git", "http-backend"],
+                        stdin=body,
+                        env=env,
+                        capture_output=True,
+                        check=False,
+                        timeout=GIT_GATE_TIMEOUT_SECS,
+                    )
+                except (OSError, subprocess.SubprocessError) as exc:
+                    self.log_message("git http-backend unavailable: %s", exc)
+                    self.send_error(503, "git backend unavailable")
+                    return
+        finally:
+            _BODY_WORK_SLOTS.release()
         self._write_cgi_response(proc.stdout)
 
     def _repo_dir(self, sandbox_root: Path, path: str) -> Path | None:

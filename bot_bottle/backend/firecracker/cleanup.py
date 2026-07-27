@@ -29,7 +29,7 @@ from pathlib import Path
 
 from ...log import info
 from .. import EnumerationError
-from ..cleanup_control import CleanupFailures
+from ..cleanup_control import CleanupError, CleanupFailures
 from . import lifecycle_lock, util
 from .bottle_cleanup_plan import FirecrackerBottleCleanupPlan
 
@@ -153,7 +153,10 @@ def cleanup(plan: FirecrackerBottleCleanupPlan) -> None:
         approved_dirs = set(plan.run_dirs).intersection(fresh.run_dirs)
         failures = CleanupFailures()
         for pid in sorted(approved_pids):
-            _terminate_orphan(pid, _run_root())
+            try:
+                _terminate_orphan(pid, _run_root())
+            except CleanupError as exc:
+                failures.record(str(exc))
         for path in sorted(approved_dirs):
             info(f"rm -rf {path}")
             failures.remove_tree(Path(path), f"removing Firecracker run dir {path}")
@@ -184,6 +187,13 @@ def _terminate_orphan(pid: int, run_root: Path) -> None:
         if run_dir is None or run_dir.is_dir():
             return
         info(f"kill firecracker VM pid {pid}")
-        signal.pidfd_send_signal(pidfd, signal.SIGTERM)
+        try:
+            signal.pidfd_send_signal(pidfd, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        except OSError as exc:
+            raise CleanupError(
+                f"could not signal Firecracker pid {pid}: {exc}"
+            ) from exc
     finally:
         os.close(pidfd)

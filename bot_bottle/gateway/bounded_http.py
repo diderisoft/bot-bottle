@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import http.server
+import io
 import socket
 import threading
 import time
@@ -12,6 +13,10 @@ from typing import Any, Protocol
 
 class Readable(Protocol):
     def read(self, size: int = -1, /) -> bytes: ...
+
+
+class Writable(Protocol):
+    def write(self, data: bytes, /) -> object: ...
 
 
 @dataclass(frozen=True)
@@ -30,6 +35,25 @@ def read_declared_body(
     require_length: bool,
 ) -> bytes:
     """Validate and read exactly one declared body under a read deadline."""
+    output = io.BytesIO()
+    copy_declared_body(
+        stream, output, connection, raw_length, maximum=maximum,
+        timeout_seconds=timeout_seconds, require_length=require_length,
+    )
+    return output.getvalue()
+
+
+def copy_declared_body(
+    stream: Readable,
+    output: Writable,
+    connection: socket.socket,
+    raw_length: str | None,
+    *,
+    maximum: int,
+    timeout_seconds: float,
+    require_length: bool,
+) -> int:
+    """Copy one declared body to a sink without retaining it in memory."""
     if raw_length is None:
         if require_length:
             raise BodyReadError(411, "Content-Length required")
@@ -44,7 +68,6 @@ def read_declared_body(
         raise BodyReadError(413, "request body too large")
     previous_timeout = connection.gettimeout()
     deadline = time.monotonic() + timeout_seconds
-    chunks: list[bytes] = []
     remaining = length
     try:
         while remaining:
@@ -55,13 +78,13 @@ def read_declared_body(
             chunk = stream.read(min(remaining, 64 * 1024))
             if not chunk:
                 raise BodyReadError(400, "incomplete request body")
-            chunks.append(chunk)
+            output.write(chunk)
             remaining -= len(chunk)
     except TimeoutError as exc:
         raise BodyReadError(408, "request body read timed out") from exc
     finally:
         connection.settimeout(previous_timeout)
-    return b"".join(chunks)
+    return length
 
 
 class BoundedThreadingHTTPServer(http.server.ThreadingHTTPServer):
@@ -106,4 +129,9 @@ class BoundedThreadingHTTPServer(http.server.ThreadingHTTPServer):
             self._request_slots.release()
 
 
-__all__ = ["BodyReadError", "BoundedThreadingHTTPServer", "read_declared_body"]
+__all__ = [
+    "BodyReadError",
+    "BoundedThreadingHTTPServer",
+    "copy_declared_body",
+    "read_declared_body",
+]
