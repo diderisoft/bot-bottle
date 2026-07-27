@@ -6,8 +6,8 @@
 # deleted afterward. install.sh's entire footprint is user-home-local (the
 # pipx venv under ~/.local, the ~/.bot-bottle config dir, and a printed PATH
 # hint), so a fresh VM's fresh $HOME is the clean surface we want — and unlike
-# a throwaway user account, tearing the VM down also wipes the OS-level
-# prerequisites we install into it, so the reset is total. Full rationale in
+# a throwaway user account, tearing the VM down also wipes any OS-level
+# prerequisites installed into it, so the reset is total. Full rationale in
 # docs/research/testing-clean-install-on-linux.md.
 #
 # Why a VM and not a container or a throwaway user: a container shares the
@@ -19,50 +19,57 @@
 # per run (`qemu-img create -b base`), deleted on teardown — the Linux
 # equivalent of `docker run --rm`, but for a whole machine.
 #
-# Two variants, chosen with BB_TEST_PREREQS:
-#
-#   with    (default) — install THIS distro's prerequisites (python3, git,
-#                       pipx — see the DISTRO table) FIRST, then run install.sh.
-#                       This is the happy path: a ready host. PASS requires
-#                       install.sh to exit 0 and leave a runnable entry point.
-#   without           — run install.sh on the BARE cloud image, prerequisites
-#                       and all left as the vendor ships them. This exercises
-#                       install.sh's own prerequisite-guard logic. PASS means
-#                       install.sh EITHER fully succeeds (the image already had
-#                       enough) OR declines with one of its own recognized,
-#                       actionable prerequisite errors (missing python3/git,
-#                       no pipx, PEP 668 externally-managed). A crash or an
-#                       unrecognized failure is a FAIL.
-#
-# What each run does: boot a fresh VM, (optionally) install prerequisites, pipe
-# *this checkout's* install.sh into it exactly as `curl … | sh` would, then
-# apply the variant's pass criterion and run `bot-bottle doctor` for visibility
-# when an entry point exists. doctor reports every backend as not-ready inside
-# the VM (there is no nested KVM/Docker), which is expected: this harness gates
-# INSTALLER correctness, not runtime, so a green doctor is never the criterion.
-#
 # Usage:
-#   ./scripts/linux-install-test.sh test            # up -> (prereqs) -> run -> verdict -> down (one distro)
-#   ./scripts/linux-install-test.sh test-all        # `test` across every distro AND both variants, with a summary
-#   ./scripts/linux-install-test.sh up              # fetch base image, boot a fresh VM
-#   ./scripts/linux-install-test.sh run             # (prereqs) + install.sh + doctor in the VM
-#   ./scripts/linux-install-test.sh status          # VM reachable? entry point installed? doctor
-#   ./scripts/linux-install-test.sh down            # kill the VM, delete overlay + seed (the reset)
-#   ./scripts/linux-install-test.sh ssh             # open an interactive shell in the running VM
+#   ./scripts/linux-install-test.sh test        # up -> run -> verdict -> down (bare host)
+#   ./scripts/linux-install-test.sh test-ready  # ... with prerequisites installed first
+#   ./scripts/linux-install-test.sh test-all    # every distro × both variants, with a summary
+#   ./scripts/linux-install-test.sh up          # fetch base image, boot a fresh VM
+#   ./scripts/linux-install-test.sh prereqs     # install python3 + git + pipx in the VM
+#   ./scripts/linux-install-test.sh run         # pipe install.sh into the VM
+#   ./scripts/linux-install-test.sh status      # VM reachable? is the install sound?
+#   ./scripts/linux-install-test.sh down        # kill the VM, delete overlay + seed (the reset)
+#   ./scripts/linux-install-test.sh ssh         # open an interactive shell in the running VM
+#
+# TWO TEST VARIANTS, because "does install.sh handle an unprepared host" and
+# "does a prepared host get a clean install" are different questions (mirrors
+# the macOS harness's test / test-ready split):
+#
+#   test        A Linux system WITHOUT the prerequisites set up — the default
+#               state of a stock cloud image (python3 is usually present for
+#               cloud-init, but git and pipx are not). This exercises
+#               install.sh's own prerequisite-guard logic. It is SOUND — a
+#               PASS — when install.sh EITHER installs cleanly (the image
+#               already had enough) OR declines with one of its own recognized,
+#               actionable errors (missing python3/git, no usable pip, PEP 668
+#               externally-managed). A crash or an unrecognized failure fails.
+#
+#   test-ready  A Linux system WITH the prerequisites satisfied — the harness
+#               installs python3 + git + pipx first (see the DISTRO table),
+#               then runs install.sh. A graceful decline is no longer good
+#               enough here: the install MUST land, the entry point must run,
+#               and doctor must report a usable python and config without
+#               crashing.
+#
+# Neither variant requires a green backend. install.sh does not install a
+# backend and cannot regress one, and inside a plain VM there is no nested KVM
+# for Firecracker; the harness does not provision the Docker backend either. So
+# backend readiness is reported, not required (this is where Linux necessarily
+# diverges from the macOS test-ready, which reaches the host backend).
+# BB_TEST_REQUIRE_BACKEND=1 makes it fatal anyway, for a nested-virt host.
 #
 # Config via env:
-#   BB_TEST_DISTRO       ubuntu | fedora | arch | alpine | nixos   (default: ubuntu)
-#   BB_TEST_PREREQS      with = install python3/git/pipx first | without = bare image (default: with)
-#   BB_TEST_SSH_PORT     host port forwarded to the guest's :22    (default: 2222)
-#   BB_TEST_CACHE_DIR    where base images are cached              (default: ~/.cache/bot-bottle-install-test)
-#   BB_TEST_RUN_DIR      per-run scratch (overlay, seed, key, pid) (default: a mktemp dir)
-#   BB_TEST_MEM_MB       guest RAM                                 (default: 2048)
-#   BB_TEST_CPUS         guest vCPUs                               (default: 2)
-#   BB_TEST_DISK         overlay virtual size                     (default: 12G)
-#   BB_TEST_BOOT_TIMEOUT seconds to wait for SSH after boot       (default: 300)
-#   BB_TEST_KEEP         1 = `test`/`test-all` skip teardown, to poke at a failure
-#   BB_TEST_INSTALL_URL  curl this install.sh in the guest instead of piping the local checkout
-#   BB_TEST_SKIP_VERIFY  1 = skip base-image checksum verification (not recommended)
+#   BB_TEST_DISTRO         ubuntu | fedora | arch | alpine | nixos (default: ubuntu)
+#   BB_TEST_SSH_PORT       host port forwarded to the guest's :22  (default: 2222)
+#   BB_TEST_CACHE_DIR      where base images are cached            (default: ~/.cache/bot-bottle-install-test)
+#   BB_TEST_RUN_DIR        per-run scratch (overlay, seed, key, …) (default: a mktemp dir)
+#   BB_TEST_MEM_MB         guest RAM                               (default: 2048)
+#   BB_TEST_CPUS           guest vCPUs                             (default: 2)
+#   BB_TEST_DISK           overlay virtual size                   (default: 12G)
+#   BB_TEST_BOOT_TIMEOUT   seconds to wait for SSH after boot      (default: 300)
+#   BB_TEST_KEEP           1 = the test cycles skip teardown, to poke at a failure
+#   BB_TEST_REQUIRE_BACKEND 1 = make a not-ready backend fatal (needs nested virt)
+#   BB_TEST_INSTALL_URL    curl this install.sh in the guest instead of piping the local checkout
+#   BB_TEST_SKIP_VERIFY    1 = skip base-image checksum verification (not recommended)
 #   BOT_BOTTLE_INSTALL_SPEC   passed through to install.sh (pip / git spec)
 #
 # Notes:
@@ -77,7 +84,6 @@
 set -euo pipefail
 
 DISTRO="${BB_TEST_DISTRO:-ubuntu}"
-PREREQS="${BB_TEST_PREREQS:-with}"   # with | without (see the header)
 SSH_PORT="${BB_TEST_SSH_PORT:-2222}"
 CACHE_DIR="${BB_TEST_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/bot-bottle-install-test}"
 MEM_MB="${BB_TEST_MEM_MB:-2048}"
@@ -88,23 +94,27 @@ BOOT_TIMEOUT="${BB_TEST_BOOT_TIMEOUT:-300}"
 _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _REPO_ROOT="$(cd "$_SCRIPT_DIR/.." && pwd)"
 
-# Per-run scratch. Persisted across sub-commands (up/run/status/down) via a
-# marker file so `up` in one invocation and `down` in the next find the same
-# VM; `test` creates its own and cleans it up itself.
+# Per-run scratch. Persisted across sub-commands (up/prereqs/run/status/down)
+# via a marker file so `up` in one invocation and `down` in the next find the
+# same VM; the test cycles set RUN_DIR themselves and never write the marker.
 RUN_DIR="${BB_TEST_RUN_DIR:-}"
 
-# Set by `test`, which chains the steps and suppresses the per-step "next
-# command" hints.
+# Set by the test cycles, which chain the steps and suppress the per-step "next
+# command" hints. _STEPS / _PASS_CLAIM / _REQUIRE_INSTALL are the per-variant
+# knobs the shared cycle and teardown read.
 IN_TEST=0
+_STEPS=4
+_PASS_CLAIM=""
+_REQUIRE_INSTALL=0
 
 # --- distro table ----------------------------------------------------
 # For each distro:  cloud-image URL | checksum-file URL | default SSH user |
 # prerequisite-install command (run in the guest; uses sudo when user != root).
 #
-# The prereq step is deliberate: the user asked that a clean install SUCCEED on
-# every distro, so we install python3 + git + pipx first (install.sh installs
-# none of them). That drives install.sh down its recommended pipx path on all
-# five. Bump the URLs here when a distro publishes a newer build.
+# The prerequisite command installs python3 + git + pipx — install.sh installs
+# none of them — so `test-ready` (and the `prereqs` sub-command) drive
+# install.sh down its recommended pipx path. Bump the URLs here when a distro
+# publishes a newer build.
 declare -A IMAGE_URL SUM_URL SSH_USER PREREQ
 
 IMAGE_URL[ubuntu]="https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
@@ -167,16 +177,9 @@ known_distro() {
         || { echo "error: unknown distro '$DISTRO' (known: ${ALL_DISTROS[*]})" >&2; exit 1; }
 }
 
-known_variant() {
-    case "$PREREQS" in
-        with|without) ;;
-        *) echo "error: BB_TEST_PREREQS must be 'with' or 'without' (got '$PREREQS')" >&2; exit 1 ;;
-    esac
-}
-
 # --- run-dir bookkeeping ---------------------------------------------
-# The marker lets `run`/`status`/`down` in separate invocations find the VM
-# that `up` started. `test` sets RUN_DIR itself and never writes the marker.
+# The marker lets prereqs/run/status/down in separate invocations find the VM
+# that `up` started. The test cycles set RUN_DIR themselves and never write it.
 _marker() { echo "${TMPDIR:-/tmp}/bot-bottle-install-test.$DISTRO.run"; }
 
 _ensure_run_dir() {
@@ -344,27 +347,30 @@ cmd_up() {
         -netdev "user,id=n0,hostfwd=tcp:127.0.0.1:$SSH_PORT-:22" \
         -device virtio-net-pci,netdev=n0
 
-    # Only publish the marker (so a later `run`/`down` finds this VM) when we
-    # aren't inside `test`, which manages its own RUN_DIR + teardown.
+    # Only publish the marker (so a later prereqs/run/down finds this VM) when
+    # we aren't inside a test cycle, which manages its own RUN_DIR + teardown.
     [ "$IN_TEST" = 1 ] || echo "$RUN_DIR" > "$(_marker)"
 
     wait_for_ssh
     if [ "$IN_TEST" != 1 ]; then
-        echo "== VM is up. Install into it with: BB_TEST_DISTRO=$DISTRO $0 run =="
+        echo "== VM is up. Prepare it with: BB_TEST_DISTRO=$DISTRO $0 prereqs (or go straight to 'run') =="
     fi
 }
 
-cmd_run() {
-    require_linux; known_variant
+# Install install.sh's toolchain prerequisites (python3 + git + pipx) into the
+# running VM. This is what separates `test-ready` from `test`, and it is a
+# distinct sub-command so a manual up/prereqs/run/down cycle is possible.
+cmd_prereqs() {
+    require_linux
     _load_run_dir || { echo "error: no running VM for $DISTRO; run '$0 up' first" >&2; return 1; }
+    echo "== installing prerequisites (python3 + git + pipx) on $DISTRO =="
+    # Runs via the guest login shell; PREREQ is a client-side table value.
+    guest "${PREREQ[$DISTRO]}"
+}
 
-    if [ "$PREREQS" = with ]; then
-        echo "== [prereqs] installing python3 + git + pipx on $DISTRO =="
-        # Runs via the guest's login shell; PREREQ is a client-side table value.
-        guest "${PREREQ[$DISTRO]}"
-    else
-        echo "== [prereqs] SKIPPED (BB_TEST_PREREQS=without) — install.sh runs on the bare $DISTRO image =="
-    fi
+cmd_run() {
+    require_linux
+    _load_run_dir || { echo "error: no running VM for $DISTRO; run '$0 up' first" >&2; return 1; }
 
     local spec_env=""
     [ -n "${BOT_BOTTLE_INSTALL_SPEC:-}" ] \
@@ -372,8 +378,8 @@ cmd_run() {
 
     echo "== installing bot-bottle as ${SSH_USER[$DISTRO]} =="
     # Capture install.sh's exit code and full output rather than aborting on
-    # non-zero: in the `without` variant a clean prerequisite *decline* is a
-    # PASS, so the verdict step — not set -e — decides the outcome.
+    # non-zero: on a bare host a clean prerequisite *decline* is sound, so the
+    # verdict step — not set -e — decides the outcome.
     local rc
     set +e
     if [ -n "${BB_TEST_INSTALL_URL:-}" ]; then
@@ -386,28 +392,9 @@ cmd_run() {
     rc="${PIPESTATUS[0]}"
     set -e
     printf '%s\n' "$rc" > "$RUN_DIR/install.rc"
-    echo "== install.sh exited $rc (BB_TEST_PREREQS=$PREREQS) =="
+    echo "== install.sh exited $rc =="
     [ "$IN_TEST" = 1 ] \
-        || echo "== verdict anytime with: BB_TEST_DISTRO=$DISTRO BB_TEST_PREREQS=$PREREQS $0 status =="
-}
-
-# `bot-bottle doctor` in the guest, for visibility. install.sh prints a PATH
-# hint rather than editing a profile, so on a fresh login the entry point may
-# be installed but not yet on PATH — try the known pipx/pip locations too.
-doctor_in_guest() {
-    # shellcheck disable=SC2016  # $HOME must expand in the GUEST shell.
-    guest '
-        for bb in "$HOME/.local/bin/bot-bottle" "$HOME/.bot-bottle/venv/bin/bot-bottle"; do
-            if [ -x "$bb" ]; then
-                command -v bot-bottle >/dev/null 2>&1 \
-                    || echo "  (not on PATH — running $bb directly, as install.sh advises)"
-                exec "$bb" doctor
-            fi
-        done
-        command -v bot-bottle >/dev/null 2>&1 && exec bot-bottle doctor
-        echo "  no bot-bottle entry point found for this user" >&2
-        exit 1
-    '
+        || echo "== verdict anytime with: BB_TEST_DISTRO=$DISTRO $0 status =="
 }
 
 # Quietly report whether a runnable bot-bottle entry point exists for the
@@ -423,49 +410,104 @@ entry_point_runnable() {
     ' >/dev/null 2>&1
 }
 
-# The prerequisite-decline messages install.sh prints via die(). In the
-# `without` variant, ANY of these means install.sh correctly refused to run on
-# an under-provisioned host — an actionable decline, which is a PASS.
+# `bot-bottle doctor` in the guest, classified. doctor's own exit code
+# conflates "is the install sound" with "is a backend ready to run a bottle" —
+# and inside a plain VM no backend can be ready (no nested KVM/Docker), so the
+# raw exit code is non-zero by design. This separates the two: an unhandled
+# traceback, or a missing python/config line, is an install defect and fails;
+# a not-ready backend is reported, not fatal (unless BB_TEST_REQUIRE_BACKEND=1,
+# for a nested-virt host that can actually satisfy it).
+doctor_in_guest() {
+    local out rc=0 bad=0
+    out="$(mktemp "${TMPDIR:-/tmp}/bb-doctor.XXXXXX")"
+    # shellcheck disable=SC2016  # $HOME/$bb must expand in the GUEST shell.
+    guest '
+        for bb in bot-bottle "$HOME/.local/bin/bot-bottle" "$HOME/.bot-bottle/venv/bin/bot-bottle"; do
+            if command -v "$bb" >/dev/null 2>&1; then
+                case "$bb" in
+                    bot-bottle) : ;;
+                    *) echo "  (not on PATH — running $bb directly, as install.sh advises)" ;;
+                esac
+                exec "$bb" doctor
+            fi
+        done
+        echo "  no bot-bottle entry point found for this user" >&2
+        exit 1
+    ' >"$out" 2>&1 || rc=$?
+    cat "$out"
+
+    # An unhandled exception is always an install/product defect, never an
+    # environment fact — doctor's non-zero exit alone would not distinguish it.
+    if grep -q 'Traceback (most recent call last)' "$out"; then
+        echo "  doctor crashed (traceback above) — a defect, not a missing prerequisite" >&2
+        bad=1
+    fi
+    grep -qE '^ok: +python:' "$out" \
+        || { echo "  doctor never reported a usable python" >&2; bad=1; }
+    grep -qE '^ok: +config:' "$out" \
+        || { echo "  doctor never reported a usable config dir" >&2; bad=1; }
+    if [ "$rc" -ne 0 ] && ! grep -qE '^(fail|warn): +backend' "$out"; then
+        echo "  doctor failed for something other than backend readiness" >&2
+        bad=1
+    fi
+
+    local backend_ready=1
+    grep -qE '^fail: +backend' "$out" && backend_ready=0
+    rm -f "$out"
+
+    [ "$bad" -eq 0 ] || return 1
+    if [ "${BB_TEST_REQUIRE_BACKEND:-0}" = "1" ] && [ "$backend_ready" -eq 0 ]; then
+        echo "  backend is not ready and BB_TEST_REQUIRE_BACKEND=1 — failing" >&2
+        return 1
+    fi
+    if [ "$backend_ready" -eq 1 ]; then
+        echo "  doctor: install sound; a backend is ready"
+    else
+        echo "  doctor: install sound; no backend ready (expected in a plain VM — install gate only)"
+    fi
+    return 0
+}
+
+# The prerequisite-decline messages install.sh prints via die(). On a bare host
+# ANY of these means install.sh correctly refused rather than half-installing —
+# a sound outcome for `test`.
 PREREQ_ERR_RE='is required but was not found|or newer is required|git is required to install from|neither pipx nor a usable|externally managed \(PEP 668\)|is not on PATH'
 
-# The teeth of the harness. Applies the variant's pass criterion to the
-# install.sh exit code (from cmd_run) and the guest's resulting state. It never
-# requires a green doctor: no backend can be ready inside the VM (no nested
-# KVM/Docker), so doctor exits non-zero there by design.
-classify_outcome() {
-    local rc="" verdict="FAIL" detail
+# The verdict: is the install sound? Reads install.sh's captured exit code and
+# output (from cmd_run) plus the guest's resulting state.
+#   - installed & runnable  -> the verdict is doctor's soundness classification.
+#   - no entry point, but a recognized prerequisite decline, and declines are
+#     allowed (bare `test`, _REQUIRE_INSTALL=0) -> sound.
+#   - anything else -> not sound.
+install_verdict() {
+    local rc=""
     [ -f "$RUN_DIR/install.rc" ] && rc="$(cat "$RUN_DIR/install.rc")"
 
-    if [ "$PREREQS" = with ]; then
-        # Prerequisites were provisioned, so a clean install is mandatory.
-        if [ "${rc:-1}" = 0 ] && entry_point_runnable; then
-            verdict="PASS"; detail="install.sh succeeded and the entry point runs"
-        else
-            detail="expected a clean install on a provisioned host (install.sh rc=${rc:-?})"
-        fi
-    else
-        # Bare image: success OR a recognized, actionable prerequisite decline.
-        if [ "${rc:-1}" = 0 ] && entry_point_runnable; then
-            verdict="PASS"; detail="bare image already had prerequisites; install.sh succeeded"
-        elif [ -n "$rc" ] && [ "$rc" != 0 ] \
-                && [ -f "$RUN_DIR/install.log" ] \
-                && grep -Eiq "$PREREQ_ERR_RE" "$RUN_DIR/install.log"; then
-            verdict="PASS"; detail="install.sh declined with an actionable prerequisite error (rc=$rc)"
-        else
-            detail="install.sh neither succeeded nor gave a recognized prerequisite error (rc=${rc:-?})"
-        fi
+    if [ "${rc:-1}" = 0 ] && entry_point_runnable; then
+        echo "doctor (in guest):"
+        doctor_in_guest
+        return $?
     fi
 
-    if [ "$verdict" = PASS ]; then
-        echo "PASS[$DISTRO/$PREREQS]: $detail"
+    if [ "${_REQUIRE_INSTALL:-0}" != "1" ] \
+            && [ -n "$rc" ] && [ "$rc" != 0 ] \
+            && [ -f "$RUN_DIR/install.log" ] \
+            && grep -Eiq "$PREREQ_ERR_RE" "$RUN_DIR/install.log"; then
+        echo "  install.sh declined with an actionable prerequisite error (rc=$rc)"
+        echo "  — sound on a bare host; run 'test-ready' (or 'prereqs') to install."
         return 0
     fi
-    echo "FAIL[$DISTRO/$PREREQS]: $detail" >&2
+
+    if [ "${_REQUIRE_INSTALL:-0}" = "1" ]; then
+        echo "  prerequisites were provisioned, but install.sh left no runnable entry point (rc=${rc:-?})" >&2
+    else
+        echo "  install.sh neither installed nor gave a recognized prerequisite error (rc=${rc:-?})" >&2
+    fi
     return 1
 }
 
 cmd_status() {
-    require_linux; known_variant
+    require_linux
     if ! _load_run_dir; then
         echo "vm:      no running VM for $DISTRO"
         return 0
@@ -476,15 +518,12 @@ cmd_status() {
         echo "vm:      $DISTRO run-dir present but QEMU not alive"
         return 1
     fi
-    # doctor is advisory and only meaningful once something installed; skip it
-    # cleanly when install.sh declined (the `without` variant's PASS path).
-    if entry_point_runnable; then
-        echo "doctor (in guest):"
-        doctor_in_guest || true   # backend not-ready inside the VM is expected
-    else
-        echo "doctor:  (no entry point installed — skipped)"
+    if install_verdict; then
+        echo "OK[$DISTRO]: the install is sound"
+        return 0
     fi
-    classify_outcome
+    echo "FAIL[$DISTRO]: the install is not sound (see above)" >&2
+    return 1
 }
 
 cmd_down() {
@@ -519,72 +558,107 @@ cmd_ssh() {
     exec ssh -t "${opts[@]}" "${SSH_USER[$DISTRO]}@127.0.0.1"
 }
 
-# Teardown half of `test`, armed the moment the VM exists so a failure or a
-# Ctrl-C still leaves nothing running.
+# Teardown half of the test cycles, armed the moment the VM exists so a failure
+# or a Ctrl-C still leaves nothing running.
 _test_teardown() {
     local rc=$?
     trap - EXIT INT TERM
     if [ "${BB_TEST_KEEP:-0}" = "1" ]; then
         echo
-        echo "== down: SKIPPED (BB_TEST_KEEP=1); VM still up, remove with: BB_TEST_DISTRO=$DISTRO $0 down =="
-        echo "   (ssh in with: BB_TEST_RUN_DIR=$RUN_DIR BB_TEST_DISTRO=$DISTRO $0 ssh)"
+        echo "== [$_STEPS/$_STEPS] down: SKIPPED (BB_TEST_KEEP=1) =="
+        echo "   VM still up; remove with: BB_TEST_DISTRO=$DISTRO $0 down"
+        echo "   ssh in with: BB_TEST_RUN_DIR=$RUN_DIR BB_TEST_DISTRO=$DISTRO $0 ssh"
         exit "$rc"
     fi
     echo
-    echo "== down =="
+    echo "== [$_STEPS/$_STEPS] down =="
     cmd_down || rc=1
+    if [ "$rc" -eq 0 ]; then
+        echo
+        echo "PASS[$DISTRO]: $_PASS_CLAIM"
+    else
+        echo
+        echo "FAIL[$DISTRO]: see above (the VM was torn down regardless)." >&2
+    fi
     exit "$rc"
 }
 
-cmd_test() {
-    require_linux; require_kvm; require_tools; known_distro; known_variant
+# The two variants differ only in whether the prerequisites get installed
+# before install.sh runs, which is exactly the question each one asks:
+#
+#   test        a bare host — assert install.sh is SOUND (installs cleanly, or
+#               declines with an actionable prerequisite error).
+#   test-ready  prerequisites satisfied — assert install.sh actually LANDS.
+_test_cycle() {
+    local with_prereqs="$1"
+    require_linux; require_kvm; require_tools; known_distro
     IN_TEST=1
     RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/bb-install-test.$DISTRO.XXXXXX")"
 
-    echo "== [1/4] up ($DISTRO, prereqs=$PREREQS) =="
+    echo "== [1/$_STEPS] up ($DISTRO) =="
     cmd_up
     trap _test_teardown EXIT INT TERM
 
-    echo
-    echo "== [2/4] run =="
-    cmd_run
+    local step=2
+    if [ "$with_prereqs" = 1 ]; then
+        echo
+        echo "== [$step/$_STEPS] prereqs =="
+        cmd_prereqs || { echo "error: could not install prerequisites (see above)." >&2; return 1; }
+        step=$(( step + 1 ))
+    fi
 
     echo
-    echo "== [3/4] verdict =="
-    local rc=0
-    if entry_point_runnable; then
-        echo "doctor (in guest):"
-        doctor_in_guest || true   # advisory only
-    fi
-    classify_outcome || rc=1
-    # _test_teardown runs on exit and owns the final exit code.
-    return "$rc"
+    echo "== [$step/$_STEPS] run =="
+    cmd_run
+    step=$(( step + 1 ))
+
+    echo
+    echo "== [$step/$_STEPS] verdict =="
+    # install.sh exits 0 even when doctor reports unmet prerequisites, so the
+    # install succeeding is not the verdict — this is.
+    cmd_status || {
+        echo "error: the install is not sound for $DISTRO (see above)." >&2
+        echo "  re-run with BB_TEST_KEEP=1 to keep the VM and dig in." >&2
+        return 1
+    }
+}
+
+cmd_test() {
+    _STEPS=4
+    _PASS_CLAIM="on a bare $DISTRO host, install.sh behaves soundly."
+    _test_cycle 0
+}
+
+cmd_test_ready() {
+    _STEPS=5
+    _PASS_CLAIM="a $DISTRO host with prerequisites satisfied installs bot-bottle cleanly."
+    # Prerequisites are provisioned, so a graceful decline is no longer an
+    # acceptable outcome — the install must actually land.
+    _REQUIRE_INSTALL=1
+    _test_cycle 1
 }
 
 cmd_test_all() {
     require_linux; require_kvm; require_tools
-    # Cover both variants by default; honor BB_TEST_PREREQS if the caller pinned
-    # one (so `BB_TEST_PREREQS=without … test-all` runs just the bare matrix).
-    local -a variants
-    if [ -n "${BB_TEST_PREREQS:-}" ]; then variants=("$BB_TEST_PREREQS"); else variants=(with without); fi
-
     local -a passed=() failed=()
     local port="$SSH_PORT"
-    for v in "${variants[@]}"; do
+    local script
+    script="$_SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
+    # Every distro × both variants. Each cell gets its own forwarded port so a
+    # leftover from a prior cell can't collide, and its own subshell so one
+    # cell's failure (or teardown trap) doesn't abort the matrix.
+    for sub in test test-ready; do
         for d in "${ALL_DISTROS[@]}"; do
             echo
             echo "########################################################"
-            echo "# $d  (prereqs=$v)"
+            echo "# $d  ($sub)"
             echo "########################################################"
-            # Each cell gets its own forwarded port so a leftover from a prior
-            # run can't collide, and its own subshell so a `test` failure (or a
-            # teardown trap) doesn't abort the whole matrix.
-            if ( DISTRO="$d" SSH_PORT="$port" PREREQS="$v" \
-                    BB_TEST_DISTRO="$d" BB_TEST_SSH_PORT="$port" BB_TEST_PREREQS="$v" \
-                    bash "$_SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")" test ); then
-                passed+=("$d/$v")
+            if ( DISTRO="$d" SSH_PORT="$port" \
+                    BB_TEST_DISTRO="$d" BB_TEST_SSH_PORT="$port" \
+                    bash "$script" "$sub" ); then
+                passed+=("$d/$sub")
             else
-                failed+=("$d/$v")
+                failed+=("$d/$sub")
             fi
             port=$(( port + 1 ))
         done
@@ -597,12 +671,14 @@ cmd_test_all() {
 }
 
 case "${1:-}" in
-    test)     cmd_test ;;
-    test-all) cmd_test_all ;;
-    up)       cmd_up ;;
-    run)      cmd_run ;;
-    status)   cmd_status ;;
-    down)     cmd_down ;;
-    ssh)      cmd_ssh ;;
-    *) echo "usage: $0 {test|test-all|up|run|status|down|ssh}  (distro via BB_TEST_DISTRO)" >&2; exit 2 ;;
+    test)       cmd_test ;;
+    test-ready) cmd_test_ready ;;
+    test-all)   cmd_test_all ;;
+    up)         cmd_up ;;
+    prereqs)    cmd_prereqs ;;
+    run)        cmd_run ;;
+    status)     cmd_status ;;
+    down)       cmd_down ;;
+    ssh)        cmd_ssh ;;
+    *) echo "usage: $0 {test|test-ready|test-all|up|prereqs|run|status|down|ssh}  (distro via BB_TEST_DISTRO)" >&2; exit 2 ;;
 esac
