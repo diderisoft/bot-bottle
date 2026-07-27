@@ -95,6 +95,21 @@ class TestInstallScript(unittest.TestCase):
         # Tests / local installs point BOT_BOTTLE_INSTALL_SPEC at a checkout.
         self.assertIn("BOT_BOTTLE_INSTALL_SPEC", self.text)
 
+    def test_published_install_selectors_are_mutually_exclusive(self):
+        self.assertIn("BOT_BOTTLE_CHANNEL", self.text)
+        self.assertIn("BOT_BOTTLE_VERSION", self.text)
+        self.assertIn("BOT_BOTTLE_REF", self.text)
+        self.assertIn("are mutually exclusive", self.text)
+
+    def test_commit_snapshot_warns_and_wheel_is_checksum_verified(self):
+        self.assertIn("may not have passed release qualification", self.text)
+        self.assertIn("downloaded wheel checksum mismatch", self.text)
+        self.assertIn("hashlib.sha256()", self.text)
+
+    def test_default_install_uses_production_channel(self):
+        self.assertIn('${BOT_BOTTLE_CHANNEL:-production}', self.text)
+        self.assertIn("bot-bottle-channels", self.text)
+
     def test_requires_git_for_git_specs(self):
         # A git+ / .git spec (the default) shells out to git; the script must
         # gate on it rather than failing opaquely inside pipx/pip.

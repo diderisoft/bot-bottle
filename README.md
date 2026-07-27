@@ -75,7 +75,15 @@ When the agent exits, `cli.py` tears down every gateway and both networks; nothi
 curl -fsSL https://gitea.dideric.is/didericis/bot-bottle/raw/branch/main/install.sh | sh
 ```
 
-The installer is a bootstrapper: it finds a suitable Python, installs bot-bottle with `pipx` (falling back to `pip --user`), creates `~/.bot-bottle`, and runs `bot-bottle doctor`. It is idempotent and never uses `sudo`. Python-native users can skip it entirely with `pipx install bot-bottle` or `uv tool install bot-bottle`.
+The installer is a bootstrapper: it finds a suitable Python, resolves the
+latest qualified production bundle, verifies its wheel checksum, installs with
+`pipx` (falling back to a private venv), creates `~/.bot-bottle`, and runs
+`bot-bottle doctor`. It is idempotent and never uses `sudo`.
+
+Select staging with `BOT_BOTTLE_CHANNEL=staging`, an exact qualified release
+with `BOT_BOTTLE_VERSION=vX.Y.Z[-rc.N]`, or an exact published commit with
+`BOT_BOTTLE_REF=<40-character-sha>`. Commit installs print an explicit warning
+because snapshots may not have passed release qualification.
 
 ### Requirements
 
@@ -83,7 +91,8 @@ The installer is a bootstrapper: it finds a suitable Python, installs bot-bottle
 
 **No `pipx` required.** If `pipx` is present the installer uses it and stays out of the way. If it isn't, bot-bottle installs into a private venv at `~/.bot-bottle/venv` (override with `BOT_BOTTLE_VENV`) and symlinks the entry point into `~/.local/bin`. There is deliberately no `pip install --user` path: Homebrew, python.org and Debian/Ubuntu interpreters are all externally managed (PEP 668), which blocks `--user` outright — so on a Mac it is never the fallback it appears to be. A venv is exempt from PEP 668, and `venv` is stdlib, so unlike `pipx` there is nothing to bootstrap first.
 
-**`git`**, because the default install spec is a `git+` URL. Set `BOT_BOTTLE_INSTALL_SPEC` to a wheel path or index name to avoid it.
+**`git`** is needed only when `BOT_BOTTLE_INSTALL_SPEC` explicitly selects a
+`git+` URL. The normal published-wheel path does not require it.
 
 **A backend**, which the installer deliberately does *not* install for you — `doctor` reports what's missing afterwards. On compatible macOS hosts, the default backend requires Apple's `container` CLI and does not require Docker. The Firecracker backend (Linux) requires Docker on the host for the gateway plus the `firecracker` binary and KVM. The legacy Docker backend requires Docker. Claude bottles also need a long-lived Claude Code OAuth token (`claude setup-token`) exported as `BOT_BOTTLE_CLAUDE_OAUTH_TOKEN`.
 
