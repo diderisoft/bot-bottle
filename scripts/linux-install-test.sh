@@ -74,7 +74,8 @@
 #
 # Notes:
 #   * Needs /dev/kvm, qemu-system-x86_64, and cloud-localds (cloud-image-utils
-#     / cloud-utils). On the NixOS host:  nix shell nixpkgs#qemu nixpkgs#cloud-utils
+#     / cloud-utils); the nixos distro additionally needs nixos-generate. On the
+#     NixOS host:  nix shell nixpkgs#qemu nixpkgs#cloud-utils nixpkgs#nixos-generators
 #   * Networking is user-mode (`-netdev user,hostfwd`) so the harness needs no
 #     root, no bridge, and touches no host network state. Only SSH is forwarded.
 #   * The cloud-image URLs in the DISTRO table are the one place to bump when a
@@ -132,18 +133,26 @@ SUM_URL[arch]="https://geo.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-c
 SSH_USER[arch]="arch"
 PREREQ[arch]="sudo pacman -Sy --noconfirm python git python-pipx"
 
-IMAGE_URL[alpine]="https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/cloud/generic_alpine-3.21.7-x86_64-bios-cloudinit-r0.qcow2"
-SUM_URL[alpine]=""   # Alpine cloud images ship .sha512 only; this verifier is sha256. Set BB_TEST_SKIP_VERIFY handling applies.
+# Use the *nocloud_* Alpine variant, not generic_: the generic image probes
+# network datasources and ignores the local NoCloud seed, so cloud-init never
+# runs and the SSH key is never injected. (Only published at .0 patch levels.)
+IMAGE_URL[alpine]="https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/cloud/nocloud_alpine-3.21.0-x86_64-bios-cloudinit-r0.qcow2"
+SUM_URL[alpine]=""   # Alpine cloud images ship .sha512 only; this verifier is sha256.
 SSH_USER[alpine]="alpine"
 PREREQ[alpine]="sudo apk add --no-cache python3 git pipx"
 
-# NixOS is externally-managed in its own way (no FHS ~/.local on PATH by
-# default, python/pipx not preinstalled). nix-env installs into the user
-# profile — no sudo — and pipx then lays down a self-contained venv.
-IMAGE_URL[nixos]="https://channels.nixos.org/nixos-24.11/latest-nixos-openstack-x86_64-linux.qcow2"
-SUM_URL[nixos]=""   # channel image ships no stable sums file; set BB_TEST_SKIP_VERIFY=1
+# NixOS publishes no downloadable cloud qcow2 (its cloud images are Hydra-built
+# AMIs), so the harness BUILDS one with nixos-generators — see build_nixos_image
+# and linux-install-test-nixos.nix. It's externally-managed in its own way (no
+# FHS ~/.local on PATH by default); `nix profile install` provisions the
+# prerequisites into root's profile (the image enables flakes for this).
+IMAGE_URL[nixos]="nix:build"   # sentinel: ensure_base_image builds instead of downloading
+SUM_URL[nixos]=""
 SSH_USER[nixos]="root"
-PREREQ[nixos]="nix-env -iA nixos.python3 nixos.git nixos.pipx"
+# Pin to a stable release: the guest's default `nixpkgs` registry is unstable,
+# where pipx isn't in the binary cache and builds from source (its test suite
+# currently fails to build). nixos-24.11 has these cached as substitutes.
+PREREQ[nixos]="nix profile install nixpkgs/nixos-24.11#python3 nixpkgs/nixos-24.11#git nixpkgs/nixos-24.11#pipx"
 
 ALL_DISTROS=(ubuntu fedora arch alpine nixos)
 
@@ -242,10 +251,34 @@ wait_for_ssh() {
 
 # --- image cache -----------------------------------------------------
 _base_image() {
-    # One cached file per distro, keyed by the image's basename so a URL bump
-    # to a newer build lands as a new cache entry rather than a stale hit.
+    # One cached file per distro. NixOS is built (not downloaded), so it has a
+    # fixed cache name; the rest are keyed by the image's basename so a URL bump
+    # lands as a new cache entry rather than a stale hit.
+    if [ "$DISTRO" = nixos ]; then
+        echo "$CACHE_DIR/nixos-built.qcow2"
+        return
+    fi
     local url="${IMAGE_URL[$DISTRO]}"
     echo "$CACHE_DIR/$DISTRO-$(basename "$url")"
+}
+
+# NixOS has no upstream cloud qcow2; build one with nixos-generators and copy it
+# out of the (immutable, GC-able) store into the cache.
+build_nixos_image() {
+    local out; out="$(_base_image)"
+    [ -f "$out" ] && { echo "== nixos base image cached: $out =="; return 0; }
+    command -v nixos-generate >/dev/null 2>&1 || {
+        echo "error: 'nixos-generate' is required to build the NixOS image" >&2
+        echo "  run inside:  nix shell nixpkgs#nixos-generators nixpkgs#qemu nixpkgs#cloud-utils" >&2
+        return 1
+    }
+    echo "== building NixOS cloud image with nixos-generators (first run is slow) =="
+    local link="$CACHE_DIR/nixos-result"
+    nixos-generate -f qcow --system x86_64-linux \
+        -c "$_SCRIPT_DIR/linux-install-test-nixos.nix" -o "$link"
+    cp -L "$link"/*.qcow2 "$out"
+    rm -f "$link"
+    echo "   built + cached: $out"
 }
 
 verify_checksum() {
@@ -277,6 +310,10 @@ verify_checksum() {
 
 ensure_base_image() {
     mkdir -p "$CACHE_DIR"
+    if [ "$DISTRO" = nixos ]; then
+        build_nixos_image
+        return
+    fi
     local base; base="$(_base_image)"
     if [ -f "$base" ]; then
         echo "== base image cached: $base =="
@@ -307,6 +344,30 @@ make_seed() {
 ssh_authorized_keys:
   - $pub
 EOF
+    elif [ "$DISTRO" = alpine ]; then
+        # Alpine needs three things the systemd distros don't: cloud-init locks
+        # the account (lock_passwd), but Alpine's non-PAM sshd then refuses
+        # pubkey auth for a locked account — so give it a throwaway password;
+        # and OpenRC does not auto-start sshd after the key is injected, so
+        # start it via runcmd.
+        cat > "$user_data" <<EOF
+#cloud-config
+users:
+  - name: $user
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/sh
+    lock_passwd: false
+    ssh_authorized_keys:
+      - $pub
+chpasswd:
+  expire: false
+  list: |
+    $user:bbtest
+packages:
+  - sudo
+runcmd:
+  - [ sh, -c, "rc-service sshd start 2>/dev/null || true" ]
+EOF
     else
         cat > "$user_data" <<EOF
 #cloud-config
@@ -319,8 +380,10 @@ users:
       - $pub
 EOF
     fi
-    # meta-data can be empty but must exist for NoCloud.
-    : > "$RUN_DIR/meta-data"
+    # NoCloud wants a meta-data with an instance-id, or cloud-init may not treat
+    # the seed as a new instance (the Alpine nocloud image is strict about this).
+    printf 'instance-id: bbtest-%s\nlocal-hostname: bbtest-%s\n' "$DISTRO" "$DISTRO" \
+        > "$RUN_DIR/meta-data"
     cloud-localds "$(_seed)" "$user_data" "$RUN_DIR/meta-data"
 }
 
