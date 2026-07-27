@@ -131,6 +131,46 @@ def cached_agent_rootfs_dir(dockerfile: Path) -> Path | None:
     return base if (base / ".bb-ready").is_file() else None
 
 
+def _image_rootfs_digest(image: str) -> str:
+    h = hashlib.sha256()
+    h.update(image.encode())
+    h.update(b"\0")
+    h.update(util._GUEST_INIT.encode())
+    return h.hexdigest()[:16]
+
+
+def cached_agent_image_rootfs_dir(image: str) -> Path | None:
+    """Return a ready rootfs exported from an immutable OCI image."""
+    base = util.cache_dir() / "rootfs" / f"agent-image-{_image_rootfs_digest(image)}"
+    return base if (base / ".bb-ready").is_file() else None
+
+
+def acquire_agent_image_rootfs_dir(
+    image: str, *, smoke_test: tuple[str, ...] = (),
+) -> Path:
+    """Pull a digest-pinned image in the infra VM and export its rootfs."""
+    if "@sha256:" not in image:
+        die(f"prebuilt Firecracker agent image is not digest-pinned: {image}")
+    digest = _image_rootfs_digest(image)
+    base = util.cache_dir() / "rootfs" / f"agent-image-{digest}"
+    cached = cached_agent_image_rootfs_dir(image)
+    if cached is not None:
+        info(f"using cached agent rootfs {cached.name}")
+        return cached
+    with _build_lock():
+        if (base / ".bb-ready").is_file():
+            return base
+        staging = util.cache_dir() / "rootfs" / f".pulling-{digest}"
+        shutil.rmtree(staging, ignore_errors=True)
+        staging.mkdir(parents=True)
+        _pull_in_infra(image, staging, smoke_test, digest)
+        util.inject_guest_boot(staging)
+        (staging / ".bb-ready").write_text("ok\n")
+        shutil.rmtree(base, ignore_errors=True)
+        os.rename(staging, base)
+    return base
+
+
 def build_agent_rootfs_dir(
     dockerfile: Path, *, image_tag: str, smoke_test: tuple[str, ...] = (),
 ) -> Path:
@@ -225,6 +265,43 @@ def _build_in_infra(
         _stream_rootfs(key, ip, tag, export_ctr, base)
     finally:
         _cleanup()
+
+
+def _pull_in_infra(
+    image: str, base: Path, smoke_test: tuple[str, ...], digest: str,
+) -> None:
+    """Pull and export a published agent image inside the orchestrator VM."""
+    service = FirecrackerInfraService()
+    service.ensure_running()
+    key, ip = service.orchestrator().ssh_target()
+    tag = f"bot-bottle-agent-pull-{digest}"
+    smoke_ctr, export_ctr = f"{tag}-smoke", f"{tag}-export"
+    quoted_image = shlex.quote(image)
+
+    def cleanup() -> None:
+        _ssh(
+            key,
+            ip,
+            f"buildah rm {smoke_ctr} {export_ctr} >/dev/null 2>&1; "
+            f"buildah rmi {_STORE_FLAG} {tag} >/dev/null 2>&1",
+            timeout=60,
+        )
+
+    cleanup()
+    try:
+        result = _ssh(
+            key,
+            ip,
+            f"buildah pull {_STORE_FLAG} {quoted_image} && "
+            f"buildah tag {_STORE_FLAG} {quoted_image} {tag}",
+            timeout=_BUILD_TIMEOUT_SECONDS,
+        )
+        if result.returncode != 0:
+            die(f"pulling pinned agent image failed: {result.stderr.strip()}")
+        _smoke_test(key, ip, tag, smoke_ctr, smoke_test)
+        _stream_rootfs(key, ip, tag, export_ctr, base)
+    finally:
+        cleanup()
 
 
 def _ssh(private_key: Path, guest_ip: str, script: str,

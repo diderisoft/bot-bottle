@@ -91,6 +91,20 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
             second = image_builder._rootfs_digest(self.dockerfile)
         self.assertNotEqual(first, second)
 
+    def test_pinned_image_is_pulled_and_cached(self):
+        image = f"registry.example/agent@sha256:{'a' * 64}"
+        with patch.object(image_builder.util, "cache_dir", return_value=self.cache), \
+             patch.object(image_builder, "_pull_in_infra") as pull, \
+             patch.object(image_builder.util, "inject_guest_boot"):
+            first = image_builder.acquire_agent_image_rootfs_dir(image)
+            second = image_builder.acquire_agent_image_rootfs_dir(image)
+        pull.assert_called_once()
+        self.assertEqual(first, second)
+
+    def test_mutable_image_cannot_use_prebuilt_path(self):
+        with self.assertRaises(SystemExit):
+            image_builder.acquire_agent_image_rootfs_dir("agent:latest")
+
 
 class TestBuildContext(unittest.TestCase):
     """The COPY-source parsing + context shipping that lets a Dockerfile pin an
