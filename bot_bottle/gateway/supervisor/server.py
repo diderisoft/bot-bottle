@@ -58,10 +58,15 @@ import typing
 from dataclasses import dataclass
 
 from bot_bottle.constants import IDENTITY_HEADER
-from bot_bottle.gateway.egress.context import resolve_client_context
-from bot_bottle.gateway.egress.schema import load_config, route_to_yaml_dict
+from bot_bottle.gateway.egress.schema import load_config
 from bot_bottle.gateway.egress.types import LOG_OFF
 from bot_bottle.gateway.policy_resolver import PolicyResolveError, PolicyResolver
+from bot_bottle.gateway.supervisor.mcp_dispatch import (
+    Handlers as DispatchHandlers,
+    MethodNotFoundError,
+    dispatch,
+    resolved_routes_payload,
+)
 from bot_bottle.supervisor import types as _sv
 
 
@@ -611,6 +616,11 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
 
         try:
             result = self._dispatch(req, config)
+        except MethodNotFoundError as e:
+            self._write_jsonrpc(
+                jsonrpc_error(req.id, ERR_METHOD_NOT_FOUND, f"method not found: {e}"),
+            )
+            return
         except _RpcClientError as e:
             self._write_jsonrpc(jsonrpc_error(req.id, e.code, e.message))
             return
@@ -633,41 +643,37 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
         self._write_jsonrpc(jsonrpc_result(req.id, result))
 
     def _dispatch(self, req: JsonRpcRequest, config: ServerConfig) -> object:
-        method = req.method
-        if method == "initialize":
-            return handle_initialize(req.params)
-        if method == "notifications/initialized":
-            return None  # ack-only
-        if method == "tools/list":
-            return handle_tools_list(req.params)
-        if method == "tools/call":
-            # `list-egress-routes` is read-only introspection. The shared gateway
-            # has no static route table (routes are resolved per request by
-            # source IP), so answer it from the calling bottle's resolved policy.
-            # Otherwise the agent sees an empty allowlist and composes an egress
-            # proposal that *replaces* the live routes instead of extending them
-            # — silently dropping base routes like api.anthropic.com on approval.
-            if req.params.get("name") == _sv.TOOL_LIST_EGRESS_ROUTES:
-                return self._resolved_routes_payload()
-            resolver = self._resolver_or_fail()
-            source_ip = self.client_address[0]
-            token = self._identity_token()
-            # `check-proposal` is a non-blocking read of the calling bottle's
-            # own queue — attributed by (source_ip, identity_token) like a
-            # proposal, but it never queues or blocks.
-            if req.params.get("name") == _sv.TOOL_CHECK_PROPOSAL:
-                return handle_check_proposal(
-                    req.params, resolver=resolver,
-                    source_ip=source_ip, identity_token=token,
-                )
-            # The control plane attributes the proposal to the source-IP + token
-            # resolved bottle, so the one shared queue holds each bottle's
-            # proposal under its own id — no slug is asserted by this daemon.
-            return handle_tools_call(
-                req.params, config, resolver=resolver,
-                source_ip=source_ip, identity_token=token,
+        def check(params: dict[str, object]) -> object:
+            return handle_check_proposal(
+                params,
+                resolver=self._resolver_or_fail(),
+                source_ip=self.client_address[0],
+                identity_token=self._identity_token(),
             )
-        raise _RpcClientError(ERR_METHOD_NOT_FOUND, f"method not found: {method}")
+
+        def propose(params: dict[str, object]) -> object:
+            return handle_tools_call(
+                params,
+                config,
+                resolver=self._resolver_or_fail(),
+                source_ip=self.client_address[0],
+                identity_token=self._identity_token(),
+            )
+
+        return dispatch(
+            req,
+            DispatchHandlers(
+                initialize=handle_initialize,
+                tools_list=handle_tools_list,
+                list_routes=lambda _params: resolved_routes_payload(
+                    self._resolver_or_fail(),
+                    self.client_address[0],
+                    self._identity_token(),
+                ),
+                check_proposal=check,
+                propose=propose,
+            ),
+        )
 
     def _identity_token(self) -> str:
         """The agent's per-bottle identity token from the request header (the
@@ -685,20 +691,6 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
         if resolver is None:
             raise _RpcInternalError("supervise server has no policy resolver")
         return resolver
-
-    def _resolved_routes_payload(self) -> dict[str, object]:
-        """The calling bottle's live egress routes as the `list-egress-routes`
-        JSON payload, resolved by (source_ip, identity token). Fail-closed: an
-        unattributed source or an unreachable orchestrator yields an empty route
-        list (never another bottle's), courtesy of `resolve_client_context`."""
-        resolver = self._resolver_or_fail()
-        conf, _slug, _tokens = resolve_client_context(
-            resolver, self.client_address[0], self._identity_token(),
-        )
-        body = json.dumps(
-            {"routes": [route_to_yaml_dict(r) for r in conf.routes]}, indent=2,
-        )
-        return {"content": [{"type": "text", "text": body}], "isError": False}
 
     def _write_jsonrpc(self, body: bytes) -> None:
         self.send_response(200)

@@ -13,6 +13,7 @@ import tempfile
 import threading
 import time
 import types
+import typing
 import unittest
 from pathlib import Path
 
@@ -47,6 +48,7 @@ from bot_bottle.gateway.supervisor.server import (
     jsonrpc_error,
     jsonrpc_result,
     parse_jsonrpc,
+    resolved_routes_payload,
     validate_proposed_file,
 )
 
@@ -701,9 +703,14 @@ class TestResolvedRoutesPayload(unittest.TestCase):
             "  - host: api.anthropic.com\n"
             "  - host: www.google.com\n"
         )
-        payload = _handler(
-            _FakeSuperviseResolver(bottle_id="b1", policy=policy)
-        )._resolved_routes_payload()
+        payload = resolved_routes_payload(
+            typing.cast(
+                supervise_server.PolicyResolver,
+                _FakeSuperviseResolver(bottle_id="b1", policy=policy),
+            ),
+            _SRC,
+            _TOK,
+        )
         assert payload is not None
         self.assertFalse(payload["isError"])  # type: ignore[index]
         data = json.loads(payload["content"][0]["text"])  # type: ignore[index]
@@ -713,9 +720,14 @@ class TestResolvedRoutesPayload(unittest.TestCase):
     def test_orchestrator_error_fails_closed_to_empty(self) -> None:
         # resolve_client_context swallows resolver errors → deny-all (empty),
         # never another bottle's routes.
-        payload = _handler(
-            _FakeSuperviseResolver(raises=True)
-        )._resolved_routes_payload()
+        payload = resolved_routes_payload(
+            typing.cast(
+                supervise_server.PolicyResolver,
+                _FakeSuperviseResolver(raises=True),
+            ),
+            _SRC,
+            _TOK,
+        )
         assert payload is not None
         data = json.loads(payload["content"][0]["text"])  # type: ignore[index]
         self.assertEqual([], data["routes"])
@@ -724,7 +736,13 @@ class TestResolvedRoutesPayload(unittest.TestCase):
         # A server without a resolver is a misconfig, not a mode: raise rather
         # than list anything.
         with self.assertRaises(_RpcInternalError):
-            _handler(None)._resolved_routes_payload()
+            _handler(None)._dispatch(
+                parse_jsonrpc(
+                    b'{"jsonrpc":"2.0","id":1,"method":"tools/call",'
+                    b'"params":{"name":"list-egress-routes"}}',
+                ),
+                ServerConfig(),
+            )
 
 
 class TestNonBlockingSupervise(unittest.TestCase):
