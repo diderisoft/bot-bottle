@@ -298,7 +298,7 @@ jobs:
       - name: Combined coverage (unit + docker integration)
         run: PYTHON=python3 bash scripts/coverage.sh aggregate critical
 
-      - name: Diff-coverage gate (changed lines >= 90%)
+      - name: Diff-coverage gate (changed lines >= 80%)
         run: |
           git fetch --no-tags origin main:refs/remotes/origin/main
-          python3 scripts/diff_coverage.py --base origin/main --min 90
+          python3 scripts/diff_coverage.py --base origin/main --min 80

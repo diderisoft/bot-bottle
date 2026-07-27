@@ -13,7 +13,7 @@
 #     are re-executed; no KVM or Docker dependency.
 #
 # Pass "critical" as the last argument in either mode to also report just the
-# critical modules (ADR 0004 target: 90%).
+# critical modules (ADR 0004 target: 85%).
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -34,8 +34,8 @@ if [ "${1:-}" = "aggregate" ]; then
     "$PY" -m coverage report -m
 
     if [ "${2:-}" = "critical" ]; then
-        echo "== critical modules (ADR 0004 minimum: 90%) ==" >&2
-        "$PY" -m coverage report --include="$CRITICAL" --fail-under=90
+        echo "== critical modules (ADR 0004 minimum: 85%) ==" >&2
+        "$PY" -m coverage report --include="$CRITICAL" --fail-under=85
     fi
     exit 0
 fi
@@ -55,6 +55,6 @@ echo "== combined report ==" >&2
 "$PY" -m coverage report -m
 
 if [ "${1:-}" = "critical" ]; then
-    echo "== critical modules (ADR 0004 minimum: 90%) ==" >&2
-    "$PY" -m coverage report --include="$CRITICAL" --fail-under=90
+    echo "== critical modules (ADR 0004 minimum: 85%) ==" >&2
+    "$PY" -m coverage report --include="$CRITICAL" --fail-under=85
 fi

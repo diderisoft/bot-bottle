@@ -3,6 +3,10 @@
 - **Status:** Accepted
 - **Date:** 2026-06-25
 - **Deciders:** didericis
+- **Revised:** 2026-07-27 — thresholds relaxed (critical minimum 90→85%,
+  diff-coverage gate 90→80%) to cut low-value test churn on changed lines.
+  The risk-weighting structure and the "global is informational" rule are
+  unchanged.
 
 ## Context
 
@@ -34,7 +38,7 @@ a regression (Goodhart's law).
 Coverage is **risk-weighted**, measured over the **combined unit +
 integration** suites, with three rules:
 
-1. **Critical modules must remain ≥ 90%.** The curated security/logic core
+1. **Critical modules must remain ≥ 85%.** The curated security/logic core
    covers the host and gateway egress policy, manifest trust boundary,
    git-gate enforcement, supervise protocol/server, YAML parser, and bottle
    state. The concrete module list lives in `scripts/critical-modules.txt`;
@@ -55,7 +59,7 @@ integration** suites, with three rules:
 
 The forward-looking guard is a **diff-coverage gate**
 (`scripts/diff_coverage.py`): new/changed executable lines on a branch
-must be ≥ 90% covered. This catches regressions where they are
+must be ≥ 80% covered. This catches regressions where they are
 introduced without forcing a back-fill crusade through legacy glue. The
 gate skips lines in omitted files (there is no coverage data for them),
 so the omit list cannot launder *new* logic into the dark: anything that

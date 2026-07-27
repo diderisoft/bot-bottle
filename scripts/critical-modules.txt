@@ -1,4 +1,4 @@
-# Critical security/logic core held to the >=90% coverage bar by
+# Critical security/logic core held to the >=85% coverage bar by
 # docs/decisions/0004-coverage-policy.md.
 #
 # SINGLE SOURCE OF TRUTH: scripts/coverage.sh (the `critical` report) and

@@ -13,8 +13,8 @@ policy.
 
 Usage:
     scripts/coverage.sh                 # produce .coverage first
-    python3 scripts/diff_coverage.py    # gate against origin/main, min 90%
-    python3 scripts/diff_coverage.py --base main --min 85
+    python3 scripts/diff_coverage.py    # gate against origin/main, min 80%
+    python3 scripts/diff_coverage.py --base main --min 75
 """
 
 from __future__ import annotations
@@ -74,7 +74,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="origin/main",
                     help="git ref to diff against (default: origin/main)")
-    ap.add_argument("--min", type=float, default=90.0,
+    ap.add_argument("--min", type=float, default=80.0,
                     help="minimum %% of changed executable lines covered")
     args = ap.parse_args()
 
