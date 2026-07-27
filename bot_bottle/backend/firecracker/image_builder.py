@@ -90,7 +90,10 @@ def _context_files(dockerfile: Path) -> list[tuple[str, Path]]:
             matches = [p for p in root.glob(src) if p.is_file()]
         else:
             candidate = root / src
-            matches = [candidate] if candidate.is_file() else []
+            if candidate.is_dir():
+                matches = [path for path in candidate.rglob("*") if path.is_file()]
+            else:
+                matches = [candidate] if candidate.is_file() else []
         for path in matches:
             resolved[str(path.relative_to(root))] = path
     return sorted(resolved.items())
@@ -269,7 +272,8 @@ def _send_build_context(private_key: Path, guest_ip: str, dockerfile: Path, ctx:
     root = resources.build_root()
     rels = [rel for rel, _ in files]
     tar = subprocess.Popen(
-        ["tar", "-C", str(root), "-cf", "-", *rels], stdout=subprocess.PIPE,
+        ["tar", "-C", str(root), "-cf", "-", "--", *rels],
+        stdout=subprocess.PIPE,
     )
     try:
         proc = subprocess.run(

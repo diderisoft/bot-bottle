@@ -137,6 +137,20 @@ class TestBuildContext(unittest.TestCase):
             ["bot_bottle/contrib/codex/codex-package_SHA256SUMS"],
         )
 
+    def test_context_files_recurses_into_directory_sources(self):
+        nested = self.root / "assets" / "nested"
+        nested.mkdir(parents=True)
+        (self.root / "assets" / "one").write_text("one")
+        (nested / "two").write_text("two")
+        df = self.root / "Directory"
+        df.write_text("FROM x\nCOPY assets /opt/assets\n")
+        with self._patch_root():
+            files = image_builder._context_files(df)
+        self.assertEqual(
+            [rel for rel, _ in files],
+            ["assets/nested/two", "assets/one"],
+        )
+
     def test_context_files_drops_missing_and_traversal(self):
         df = self.root / "Bad"
         df.write_text("FROM x\nCOPY ../escape /d\nCOPY does/not/exist /d\n")
@@ -172,6 +186,7 @@ class TestBuildContext(unittest.TestCase):
                 Path("/k"), "10.0.0.1", self.dockerfile, "/tmp/c")
         tar_argv = popen.call_args.args[0]
         self.assertEqual(tar_argv[:3], ["tar", "-C", str(self.root)])
+        self.assertIn("--", tar_argv)
         self.assertIn(
             "bot_bottle/contrib/codex/codex-package_SHA256SUMS", tar_argv)
         self.assertIn("tar -C /tmp/c/ctx -xf -", run.call_args.args[0][-1])
@@ -200,7 +215,6 @@ class TestSmokeTest(unittest.TestCase):
         ssh.assert_not_called()
 
     def test_failed_smoke_dies(self):
-        import subprocess
         result = subprocess.CompletedProcess([], 1, stdout="broken", stderr="")
         with patch.object(image_builder, "_ssh", return_value=result), \
              self.assertRaises(SystemExit):
