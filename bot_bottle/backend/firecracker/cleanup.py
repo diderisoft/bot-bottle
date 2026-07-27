@@ -30,7 +30,7 @@ from pathlib import Path
 
 from ...log import info
 from .. import EnumerationError
-from . import util
+from . import lifecycle_lock, util
 from .bottle_cleanup_plan import FirecrackerBottleCleanupPlan
 
 
@@ -126,12 +126,42 @@ def prepare_cleanup() -> FirecrackerBottleCleanupPlan:
 
 
 def cleanup(plan: FirecrackerBottleCleanupPlan) -> None:
-    for pid in plan.vm_pids:
-        info(f"kill firecracker VM pid {pid}")
+    """Revalidate the preview under the launch lock, then remove its survivors."""
+    with lifecycle_lock.hold():
+        fresh = prepare_cleanup()
+        approved_pids = set(plan.vm_pids).intersection(fresh.vm_pids)
+        approved_dirs = set(plan.run_dirs).intersection(fresh.run_dirs)
+        for pid in sorted(approved_pids):
+            _terminate_orphan(pid, _run_root())
+        for path in sorted(approved_dirs):
+            info(f"rm -rf {path}")
+            shutil.rmtree(path, ignore_errors=True)
+
+
+def _terminate_orphan(pid: int, run_root: Path) -> None:
+    """Signal exactly the process identity that still owns an orphan config."""
+    try:
+        pidfd = os.pidfd_open(pid)
+    except ProcessLookupError:
+        return
+    except OSError as exc:
+        raise EnumerationError(
+            f"could not pin Firecracker pid {pid} for cleanup: {exc}"
+        ) from exc
+    try:
         try:
-            os.kill(pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-    for path in plan.run_dirs:
-        info(f"rm -rf {path}")
-        shutil.rmtree(path, ignore_errors=True)
+            raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            raise EnumerationError(
+                f"could not revalidate Firecracker pid {pid}: {exc}"
+            ) from exc
+        command = raw.replace(b"\0", b" ").decode(errors="replace")
+        run_dir = _run_dir_of(command, run_root)
+        if run_dir is None or run_dir.is_dir():
+            return
+        info(f"kill firecracker VM pid {pid}")
+        signal.pidfd_send_signal(pidfd, signal.SIGTERM)
+    finally:
+        os.close(pidfd)

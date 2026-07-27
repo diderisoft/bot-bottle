@@ -52,7 +52,11 @@ def cmd_cleanup(_argv: list[str]) -> int:
         info("cleanup: skipped")
         return 0
 
-    for name, backend, plan in prepared:
+    # Confirmation authorizes a fresh authoritative snapshot, not blind use of
+    # identities that may have changed while the operator reviewed the preview.
+    refreshed = [(name, backend, backend.prepare_cleanup())
+                 for name, backend, _plan in prepared]
+    for name, backend, plan in refreshed:
         if plan.empty:
             continue
         backend.cleanup(plan)

@@ -41,8 +41,8 @@ class TestCmdCleanup(unittest.TestCase):
         ):
             self.assertEqual(0, cmd.cmd_cleanup([]))
 
-        docker.prepare_cleanup.assert_called_once()
-        fc.prepare_cleanup.assert_called_once()
+        self.assertEqual(2, docker.prepare_cleanup.call_count)
+        self.assertEqual(2, fc.prepare_cleanup.call_count)
         docker.cleanup.assert_called_once_with(docker_plan)
         fc.cleanup.assert_called_once_with(fc_plan)
 
@@ -68,7 +68,7 @@ class TestCmdCleanup(unittest.TestCase):
         ):
             self.assertEqual(0, cmd.cmd_cleanup([]))
 
-        docker.prepare_cleanup.assert_called_once()
+        self.assertEqual(2, docker.prepare_cleanup.call_count)
         docker.cleanup.assert_called_once_with(docker_plan)
         macos.prepare_cleanup.assert_not_called()
 
@@ -134,6 +134,25 @@ class TestCmdCleanup(unittest.TestCase):
             cmd.cmd_cleanup([])
         docker.cleanup.assert_called_once_with(docker_plan)
         fc.cleanup.assert_not_called()
+
+    def test_executes_refreshed_plan_after_confirmation(self):
+        backend = MagicMock()
+        preview = MagicMock(empty=False)
+        refreshed = MagicMock(empty=False)
+        backend.prepare_cleanup.side_effect = [preview, refreshed]
+
+        with patch.object(
+            cmd, "known_backend_names", return_value=("firecracker",),
+        ), patch.object(
+            cmd, "get_bottle_backend", return_value=backend,
+        ), patch.object(
+            cmd, "has_backend", return_value=True,
+        ), patch.object(
+            cmd, "_prompt_yes", return_value=True,
+        ):
+            self.assertEqual(0, cmd.cmd_cleanup([]))
+
+        backend.cleanup.assert_called_once_with(refreshed)
 
 
 if __name__ == "__main__":

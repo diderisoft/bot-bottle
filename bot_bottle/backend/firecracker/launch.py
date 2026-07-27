@@ -46,7 +46,7 @@ from ...log import die, info, warn
 from ...supervisor.types import SUPERVISE_PORT
 from ..docker.egress import EGRESS_PORT
 from ..util import AGENT_CA_BUNDLE, AGENT_CA_PATH
-from . import firecracker_vm, image_builder, isolation_probe, netpool, util
+from . import firecracker_vm, image_builder, isolation_probe, lifecycle_lock, netpool, util
 from .bottle import FirecrackerBottle
 from .bottle_plan import FirecrackerBottlePlan
 from ...orchestrator.store.config_store import resolve_teardown_timeout
@@ -164,25 +164,29 @@ def launch(
         )
 
         # Step 6: build the per-bottle rootfs + SSH key, then boot.
-        run_dir = util.cache_dir() / "run" / plan.slug
-        run_dir.mkdir(parents=True, exist_ok=True)
-        # Remove the run dir on teardown so the per-bottle rootfs.ext4 (~1G)
-        # doesn't leak. Registered before vm.terminate below so it runs *after*
-        # it (ExitStack is LIFO): the VM is gone before we rm its rootfs.
-        stack.callback(lambda: shutil.rmtree(run_dir, ignore_errors=True))
-        rootfs = run_dir / "rootfs.ext4"
-        util.build_rootfs_ext4(agent_base, rootfs)
-        private_key, pubkey = util.generate_keypair(run_dir)
+        # Cleanup takes the same lock while refreshing its process snapshot.
+        # Hold it until the VMM exists so a newly-created run dir can never be
+        # mistaken for an orphan in the build-before-boot window.
+        with lifecycle_lock.hold():
+            run_dir = util.cache_dir() / "run" / plan.slug
+            run_dir.mkdir(parents=True, exist_ok=True)
+            # Remove the run dir on teardown so the per-bottle rootfs.ext4 (~1G)
+            # doesn't leak. Registered before vm.terminate below so it runs
+            # *after* it (ExitStack is LIFO).
+            stack.callback(lambda: shutil.rmtree(run_dir, ignore_errors=True))
+            rootfs = run_dir / "rootfs.ext4"
+            util.build_rootfs_ext4(agent_base, rootfs)
+            private_key, pubkey = util.generate_keypair(run_dir)
 
-        vm = firecracker_vm.boot(
-            name=plan.container_name,
-            rootfs=rootfs,
-            tap=slot.iface,
-            guest_ip=slot.guest_ip,
-            host_ip=slot.host_ip,
-            pubkey=pubkey,
-            run_dir=run_dir,
-        )
+            vm = firecracker_vm.boot(
+                name=plan.container_name,
+                rootfs=rootfs,
+                tap=slot.iface,
+                guest_ip=slot.guest_ip,
+                host_ip=slot.host_ip,
+                pubkey=pubkey,
+                run_dir=run_dir,
+            )
         stack.callback(vm.terminate)
         firecracker_vm.wait_for_ssh(vm, private_key)
         persist_env_var_secret(private_key, slot.guest_ip, ctx.env_var_secret)

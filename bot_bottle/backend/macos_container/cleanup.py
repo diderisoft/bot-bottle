@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import subprocess
 
-from ...log import info, warn
+from .. import EnumerationError
+from ...log import info
 from . import util as container_mod
 from .bottle_cleanup_plan import MacosContainerBottleCleanupPlan
 
@@ -19,8 +20,8 @@ def _list_prefixed_containers() -> list[str]:
         check=False,
     )
     if result.returncode != 0:
-        warn(f"container list failed: {result.stderr.strip()}")
-        return []
+        detail = result.stderr.strip() or f"exit {result.returncode}"
+        raise EnumerationError(f"container list failed: {detail}")
     return sorted(
         name for name in (line.strip() for line in result.stdout.splitlines())
         if name.startswith(_PREFIX)
@@ -35,7 +36,8 @@ def _list_prefixed_networks() -> list[str]:
         check=False,
     )
     if result.returncode != 0:
-        return []
+        detail = result.stderr.strip() or f"exit {result.returncode}"
+        raise EnumerationError(f"container network list failed: {detail}")
     return sorted(
         name for name in (line.strip() for line in result.stdout.splitlines())
         if name.startswith(_PREFIX)

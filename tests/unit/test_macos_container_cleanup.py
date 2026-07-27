@@ -42,6 +42,22 @@ class TestMacosContainerCleanup(unittest.TestCase):
             run.call_args_list[1].args[0],
         )
 
+    def test_container_enumeration_failure_aborts(self):
+        completed = cleanup.subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="service unavailable",
+        )
+        with patch.object(cleanup.subprocess, "run", return_value=completed), \
+                self.assertRaisesRegex(EnumerationError, "service unavailable"):
+            cleanup._list_prefixed_containers()
+
+    def test_network_enumeration_failure_aborts(self):
+        completed = cleanup.subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="service unavailable",
+        )
+        with patch.object(cleanup.subprocess, "run", return_value=completed), \
+                self.assertRaisesRegex(EnumerationError, "service unavailable"):
+            cleanup._list_prefixed_networks()
+
 
 class TestMacosContainerEnumerate(unittest.TestCase):
     """The backend launches bottles again (PRD 0070), so enumeration is real
