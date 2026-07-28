@@ -24,6 +24,16 @@ if ! docker info >/dev/null 2>&1; then
   exit 1
 fi
 
+# The tape types `bot-bottle start demo` verbatim, so the console
+# script has to resolve in the recording shell. Without this guard a
+# recording silently captures `command not found` instead of a bottle.
+if ! command -v bot-bottle >/dev/null 2>&1; then
+  echo "demo-setup: bot-bottle is not on PATH. The demo runs the real" >&2
+  echo "  console script, not ./cli.py — install it first (bash install.sh," >&2
+  echo "  or 'pip install -e .' into an active venv), then re-run." >&2
+  exit 1
+fi
+
 config_root="${BOT_BOTTLE_ROOT:-$HOME/.bot-bottle}"
 mkdir -p "$config_root/bottles" "$config_root/agents"
 
@@ -34,6 +44,13 @@ mkdir -p "$config_root/bottles" "$config_root/agents"
 install_demo_file() {
   src=$1
   dest=$2
+  # Already installed (setup run twice without an intervening
+  # teardown). Backing up our own copy here would make teardown
+  # "restore" it and leave the demo file in the user's config forever,
+  # so treat this as a no-op.
+  if [ -e "$dest" ] && cmp -s "$src" "$dest"; then
+    return 0
+  fi
   if [ -e "$dest.demo-backup" ]; then
     echo "demo-setup: $dest.demo-backup already exists — a previous run" >&2
     echo "  did not tear down cleanly. Inspect it, then remove or restore" >&2
