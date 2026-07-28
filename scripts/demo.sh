@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Human-runnable demo wrapper. Stages the demo manifest and dummy
-# identity (see scripts/demo-setup.sh), launches `./cli.py start demo`
+# Human-runnable demo wrapper. Stages the demo bottle/agent and dummy
+# identity (see scripts/demo-setup.sh), launches `bot-bottle start demo`
 # interactively, then restores prior state. The recorded GIF
 # (docs/demo.gif) goes through the same flow via docs/demo.tape.
 #
@@ -26,4 +26,8 @@ fi
 bash scripts/demo-setup.sh
 trap 'bash scripts/demo-teardown.sh' EXIT
 
-./cli.py start demo
+# Pinned to the Docker backend: demo-setup.sh pre-warms the image graph
+# with `docker build`, and the demo is meant to run the same way on
+# every host rather than following the host default (Firecracker on KVM
+# Linux, Apple Container on macOS).
+BOT_BOTTLE_BACKEND=docker bot-bottle start demo
