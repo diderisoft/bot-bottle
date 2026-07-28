@@ -50,6 +50,12 @@ class ReprovisionBody(_StrictModel):
     env_var_secret: StrictStr
 
 
+class SecretBody(_StrictModel):
+    name: StrictStr
+    value: StrictStr
+    env_var_secret: StrictStr
+
+
 class ReconcileBody(_StrictModel):
     live_source_ips: list[StrictStr]
     grace_seconds: float | None = None
@@ -258,6 +264,21 @@ def create_app(orch: OrchestratorCore, *, signing_key: str) -> FastAPI:
         if orch.reprovision_from_secret(bottle_id, secret):
             return {"reprovisioned": True}
         raise HTTPException(404, "no stored secrets for this bottle")
+
+    @app.post("/bottles/{bottle_id}/secret")
+    def update_secret(bottle_id: str, body: SecretBody) -> dict[str, object]:
+        # Update ONE egress token for a running bottle in place — the
+        # single-secret form of reprovision, for refreshing a short-lived host
+        # credential (e.g. the Codex access token) without a relaunch. cli-only
+        # (not in _GATEWAY_ROUTES): a bottle must never set its own tokens.
+        if orch.update_agent_secret(
+            bottle_id,
+            _required(body.name, "name"),
+            _required(body.value, "value"),
+            _required(body.env_var_secret, "env_var_secret"),
+        ):
+            return {"updated": True}
+        raise HTTPException(404, "no such bottle")
 
     @app.delete("/bottles/{bottle_id}")
     def teardown(bottle_id: str) -> dict[str, object]:

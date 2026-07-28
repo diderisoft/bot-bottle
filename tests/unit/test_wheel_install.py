@@ -117,15 +117,6 @@ class TestWheelInstall(unittest.TestCase):
         proc = self._run(["-c", script])
         self.assertIn("SELF_CONTAINED_OK", proc.stdout, msg=proc.stderr)
 
-    def test_ad_hoc_wheel_is_marked_for_local_infrastructure_builds(self):
-        script = (
-            "from bot_bottle.release_manifest import packaged_manifest\n"
-            "assert packaged_manifest() is None\n"
-            "print('DEVELOPMENT_MANIFEST_OK')\n"
-        )
-        proc = self._run(["-c", script])
-        self.assertIn("DEVELOPMENT_MANIFEST_OK", proc.stdout, msg=proc.stderr)
-
 
 if __name__ == "__main__":
     unittest.main()

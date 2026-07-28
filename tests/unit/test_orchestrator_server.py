@@ -125,6 +125,47 @@ class TestDispatch(unittest.TestCase):
             {"EGRESS_TOKEN_0": "upstream-secret"}, self.orch.tokens_for(bottle_id),
         )
 
+    def test_update_agent_secret_in_place(self) -> None:
+        key = base64.urlsafe_b64encode(b"unit-test-key").rstrip(b"=").decode()
+        status, payload = dispatch(
+            self.orch, "POST", "/bottles", _body({
+                "source_ip": "10.243.0.21",
+                "tokens": {"A": "old", "B": "keep"},
+                "env_var_secret": key,
+            }),
+        )
+        self.assertEqual(201, status)
+        bottle_id = payload["bottle_id"]
+        assert isinstance(bottle_id, str)
+        status, response = dispatch(
+            self.orch, "POST", f"/bottles/{bottle_id}/secret",
+            _body({"name": "A", "value": "fresh", "env_var_secret": key}),
+        )
+        self.assertEqual((200, {"updated": True}), (status, response))
+        self.assertEqual({"A": "fresh", "B": "keep"}, self.orch.tokens_for(bottle_id))
+
+    def test_update_agent_secret_validates_and_unknown_bottle(self) -> None:
+        status, _ = dispatch(self.orch, "POST", "/bottles/b1/secret", b"not-json")
+        self.assertEqual(400, status)
+        status, _ = dispatch(
+            self.orch, "POST", "/bottles/b1/secret", _body({"name": "A"}),
+        )
+        self.assertEqual(400, status)  # value + env_var_secret missing
+        status, _ = dispatch(
+            self.orch, "POST", "/bottles/ghost/secret",
+            _body({"name": "A", "value": "v", "env_var_secret": "k"}),
+        )
+        self.assertEqual(404, status)
+
+    def test_update_agent_secret_is_cli_only(self) -> None:
+        # A data-plane (`gateway`) caller must not set a bottle's tokens.
+        status, _ = dispatch(
+            self.orch, "POST", "/bottles/b1/secret",
+            _body({"name": "A", "value": "v", "env_var_secret": "k"}),
+            role=ROLE_GATEWAY,
+        )
+        self.assertEqual(403, status)
+
     def test_reprovision_validates_request_and_missing_rows(self) -> None:
         status, _ = dispatch(
             self.orch, "POST", "/bottles/b1/reprovision_gateway", b"not-json",

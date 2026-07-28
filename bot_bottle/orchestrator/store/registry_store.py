@@ -370,6 +370,30 @@ class RegistryStore(DbStore):
             )
         self._chmod()
 
+    def store_agent_secret(
+        self,
+        bottle_id: str,
+        key: str,
+        encrypted_value: str,
+        secret_type: str = "injected_env_var",
+    ) -> None:
+        """Upsert ONE encrypted secret row (env-var name → ciphertext) for
+        *bottle_id*, leaving the bottle's other secrets untouched — the per-key
+        counterpart of ``store_agent_secrets``' replace-all. Delete-then-insert
+        because the table carries no unique constraint to `ON CONFLICT` against."""
+        with self._connection() as conn:
+            conn.execute(
+                "DELETE FROM bottled_agent_secrets "
+                "WHERE bottled_agent_id = ? AND key = ? AND type = ?",
+                (bottle_id, key, secret_type),
+            )
+            conn.execute(
+                "INSERT INTO bottled_agent_secrets "
+                "(bottled_agent_id, key, value, type) VALUES (?, ?, ?, ?)",
+                (bottle_id, key, encrypted_value, secret_type),
+            )
+        self._chmod()
+
     def get_agent_secrets(
         self,
         bottle_id: str,

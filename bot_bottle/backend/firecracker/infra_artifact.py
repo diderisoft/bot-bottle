@@ -195,9 +195,7 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def ensure_artifact_gz(
-    version: str, *, role: str, expected_sha256: str | None = None,
-) -> Path:
+def ensure_artifact_gz(version: str, *, role: str) -> Path:
     """The verified, cached `rootfs.ext4.gz` for `role` at `version` —
     downloading it (and its `.sha256`) once, then reusing it. Fail-closed on a
     checksum mismatch: the partial is removed and we die rather than boot an
@@ -224,11 +222,6 @@ def ensure_artifact_gz(
         if not gz.is_file() or not sha.is_file():
             die(f"infra candidate bundle is incomplete: {root}")
         expected = sha.read_text().split()[0].strip().lower()
-        if expected_sha256 is not None and expected != expected_sha256:
-            die(
-                f"infra candidate packaged checksum mismatch ({role}) for {version}:\n"
-                f"    packaged {expected_sha256}\n    candidate {expected}"
-            )
         actual = _sha256_file(gz)
         if actual != expected:
             die(
@@ -242,13 +235,7 @@ def ensure_artifact_gz(
     gz = root / _GZ_NAME
     ok = root / ".verified"
     if gz.is_file() and ok.is_file():
-        actual = _sha256_file(gz)
-        recorded = ok.read_text(encoding="utf-8").strip()
-        wanted = expected_sha256 or recorded
-        if actual == recorded == wanted:
-            return gz
-        gz.unlink(missing_ok=True)
-        ok.unlink(missing_ok=True)
+        return gz
 
     info(f"pulling infra rootfs artifact {_package(role)}/{version}")
     _download(artifact_url(version, _GZ_NAME, role=role), gz)
@@ -256,14 +243,6 @@ def ensure_artifact_gz(
     _download(artifact_url(version, _SHA_NAME, role=role), sha)
 
     expected = sha.read_text().split()[0].strip().lower()
-    if expected_sha256 is not None and expected != expected_sha256:
-        gz.unlink(missing_ok=True)
-        sha.unlink(missing_ok=True)
-        die(
-            f"infra artifact published checksum mismatch ({role}) for {version}:\n"
-            f"    packaged  {expected_sha256}\n"
-            f"    published {expected}"
-        )
     actual = _sha256_file(gz)
     if actual != expected:
         gz.unlink(missing_ok=True)
@@ -274,22 +253,15 @@ def ensure_artifact_gz(
             f"    actual   {actual}\n"
             f"    refusing to boot an unverified rootfs."
         )
-    ok.write_text(actual + "\n")
+    ok.write_text("ok\n")
     return gz
 
 
-def materialize_ext4(
-    version: str,
-    dest: Path,
-    *,
-    role: str,
-    expected_sha256: str | None = None,
-) -> None:
+def materialize_ext4(version: str, dest: Path, *, role: str) -> None:
     """Ensure the verified `role` artifact is cached, then gunzip it to `dest` —
     a fresh, writable per-boot rootfs (the VM mutates it; the cached `.gz` stays
     pristine). Atomic via a `.part` sibling."""
-    gz = ensure_artifact_gz(
-        version, role=role, expected_sha256=expected_sha256)
+    gz = ensure_artifact_gz(version, role=role)
     tmp = dest.with_suffix(dest.suffix + ".part")
     info(f"expanding {role} infra rootfs -> {dest}")
     with gzip.open(gz, "rb") as src, open(tmp, "wb") as out:

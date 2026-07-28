@@ -7,7 +7,6 @@ the smoke-test no-op — the logic that must hold without a VM.
 
 from __future__ import annotations
 
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -91,120 +90,6 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
             second = image_builder._rootfs_digest(self.dockerfile)
         self.assertNotEqual(first, second)
 
-    def test_pinned_image_is_pulled_and_cached(self):
-        image = f"registry.example/agent@sha256:{'a' * 64}"
-        with patch.object(image_builder.util, "cache_dir", return_value=self.cache), \
-             patch.object(image_builder, "_pull_in_infra") as pull, \
-             patch.object(image_builder.util, "inject_guest_boot"):
-            first = image_builder.acquire_agent_image_rootfs_dir(image)
-            second = image_builder.acquire_agent_image_rootfs_dir(image)
-        pull.assert_called_once()
-        self.assertEqual(first, second)
-
-    def test_mutable_image_cannot_use_prebuilt_path(self):
-        with self.assertRaises(SystemExit):
-            image_builder.acquire_agent_image_rootfs_dir("agent:latest")
-
-
-class TestBuildContext(unittest.TestCase):
-    """The COPY-source parsing + context shipping that lets a Dockerfile pin an
-    input by COPYing a committed file (codex checksum list, claude/pi npm
-    lockfiles) through the otherwise-empty VM-side build context."""
-
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self._tmp.name)
-        self.addCleanup(self._tmp.cleanup)
-        codex = self.root / "bot_bottle" / "contrib" / "codex"
-        codex.mkdir(parents=True)
-        self.sums = codex / "codex-package_SHA256SUMS"
-        self.sums.write_text("aaaa  codex-package-x86_64-unknown-linux-musl.tar.gz\n")
-        self.dockerfile = self.root / "Dockerfile"
-        self.dockerfile.write_text(
-            "FROM node:22-slim\n"
-            "COPY --chown=node:node "
-            "bot_bottle/contrib/codex/codex-package_SHA256SUMS /tmp/x\n"
-        )
-
-    def _patch_root(self):
-        return patch.object(
-            image_builder.resources, "build_root", return_value=self.root)
-
-    def test_copy_sources_parses_flags_and_continuations(self):
-        df = self.root / "Multi"
-        df.write_text(
-            "FROM x\n"
-            "COPY a/one.json \\\n     a/two.json /dest/\n"
-            "COPY --from=builder /built /built\n"          # excluded: build stage
-            "COPY --chown=n:n b/three /dest\n"
-        )
-        self.assertEqual(
-            image_builder._context_copy_sources(df),
-            ["a/one.json", "a/two.json", "b/three"],
-        )
-
-    def test_context_files_resolves_existing_under_root(self):
-        with self._patch_root():
-            files = image_builder._context_files(self.dockerfile)
-        self.assertEqual(
-            [rel for rel, _ in files],
-            ["bot_bottle/contrib/codex/codex-package_SHA256SUMS"],
-        )
-
-    def test_context_files_recurses_into_directory_sources(self):
-        nested = self.root / "assets" / "nested"
-        nested.mkdir(parents=True)
-        (self.root / "assets" / "one").write_text("one")
-        (nested / "two").write_text("two")
-        df = self.root / "Directory"
-        df.write_text("FROM x\nCOPY assets /opt/assets\n")
-        with self._patch_root():
-            files = image_builder._context_files(df)
-        self.assertEqual(
-            [rel for rel, _ in files],
-            ["assets/nested/two", "assets/one"],
-        )
-
-    def test_context_files_drops_missing_and_traversal(self):
-        df = self.root / "Bad"
-        df.write_text("FROM x\nCOPY ../escape /d\nCOPY does/not/exist /d\n")
-        with self._patch_root():
-            self.assertEqual(image_builder._context_files(df), [])
-
-    def test_rootfs_digest_tracks_context_file_content(self):
-        with self._patch_root(), \
-             patch.object(image_builder.util, "cache_dir", return_value=self.root):
-            first = image_builder._rootfs_digest(self.dockerfile)
-            self.sums.write_text("bbbb  codex-package-x86_64-unknown-linux-musl.tar.gz\n")
-            second = image_builder._rootfs_digest(self.dockerfile)
-        self.assertNotEqual(first, second)
-
-    def test_send_build_context_noop_without_copy(self):
-        df = self.root / "None"
-        df.write_text("FROM x\n")
-        with self._patch_root(), \
-             patch.object(image_builder.subprocess, "Popen") as popen:
-            image_builder._send_build_context(Path("/k"), "10.0.0.1", df, "/tmp/c")
-        popen.assert_not_called()
-
-    def test_send_build_context_streams_copied_files_to_vm(self):
-        completed = subprocess.CompletedProcess([], 0, stdout=b"", stderr=b"")
-        with self._patch_root(), \
-             patch.object(image_builder.subprocess, "Popen") as popen, \
-             patch.object(image_builder.subprocess, "run",
-                          return_value=completed) as run:
-            popen.return_value.stdout = None
-            popen.return_value.returncode = 0
-            popen.return_value.wait.return_value = 0
-            image_builder._send_build_context(
-                Path("/k"), "10.0.0.1", self.dockerfile, "/tmp/c")
-        tar_argv = popen.call_args.args[0]
-        self.assertEqual(tar_argv[:3], ["tar", "-C", str(self.root)])
-        self.assertIn("--", tar_argv)
-        self.assertIn(
-            "bot_bottle/contrib/codex/codex-package_SHA256SUMS", tar_argv)
-        self.assertIn("tar -C /tmp/c/ctx -xf -", run.call_args.args[0][-1])
-
 
 class TestSmokeTest(unittest.TestCase):
     def test_buildah_receives_centralized_image_build_args(self):
@@ -229,6 +114,7 @@ class TestSmokeTest(unittest.TestCase):
         ssh.assert_not_called()
 
     def test_failed_smoke_dies(self):
+        import subprocess
         result = subprocess.CompletedProcess([], 1, stdout="broken", stderr="")
         with patch.object(image_builder, "_ssh", return_value=result), \
              self.assertRaises(SystemExit):

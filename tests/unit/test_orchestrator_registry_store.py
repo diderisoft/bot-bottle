@@ -199,6 +199,20 @@ class TestAgentSecrets(unittest.TestCase):
         got = self.store.get_agent_secrets("bottle-1")
         self.assertEqual({"K": "new", "K2": "v2"}, got)
 
+    def test_store_agent_secret_upserts_one_key_leaving_others(self) -> None:
+        self.store.store_agent_secrets("bottle-1", {"K": "v1", "K2": "v2"})
+        self.store.store_agent_secret("bottle-1", "K", "v1-new")  # update existing
+        self.store.store_agent_secret("bottle-1", "K3", "v3")     # insert new
+        self.assertEqual(
+            {"K": "v1-new", "K2": "v2", "K3": "v3"},
+            self.store.get_agent_secrets("bottle-1"),
+        )
+
+    def test_store_agent_secret_does_not_duplicate_rows(self) -> None:
+        self.store.store_agent_secret("bottle-1", "K", "v1")
+        self.store.store_agent_secret("bottle-1", "K", "v2")
+        self.assertEqual({"K": "v2"}, self.store.get_agent_secrets("bottle-1"))
+
     def test_delete_removes_secrets(self) -> None:
         self.store.store_agent_secrets("bottle-1", {"K": "v"})
         self.store.delete_agent_secrets("bottle-1")

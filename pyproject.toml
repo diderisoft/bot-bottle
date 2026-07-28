@@ -36,7 +36,6 @@ include = ["bot_bottle*"]
 # files shipped under bot_bottle/; test_pyproject.py asserts they exist.
 [tool.setuptools.package-data]
 bot_bottle = [
-    "release-manifest.json",
     "gateway/egress/entrypoint.sh",
     "contrib/claude/Dockerfile",
     "contrib/claude/package.json",

@@ -17,13 +17,10 @@
 # Env:
 #   BOT_BOTTLE_PYTHON        interpreter to install with (skips the search)
 #   BOT_BOTTLE_INSTALL_SPEC  pip/git spec to install instead of the default
-#   BOT_BOTTLE_CHANNEL       production (default) or staging
-#   BOT_BOTTLE_VERSION       exact qualified vX.Y.Z[-rc.N] release
-#   BOT_BOTTLE_REF           exact 40-character commit snapshot (warns untested)
 #   BOT_BOTTLE_VENV          where the non-pipx install lives (~/.bot-bottle/venv)
 set -eu
 
-PACKAGE_SPEC="${BOT_BOTTLE_INSTALL_SPEC:-}"
+PACKAGE_SPEC="${BOT_BOTTLE_INSTALL_SPEC:-git+https://gitea.dideric.is/didericis/bot-bottle.git}"
 VENV="${BOT_BOTTLE_VENV:-${HOME}/.bot-bottle/venv}"
 MIN_PYTHON_MAJOR=3
 MIN_PYTHON_MINOR=11
@@ -129,113 +126,9 @@ if [ "${PYTHON}" != "${path_python}" ]; then
     fi
 fi
 
-# --- resolve an immutable published wheel -----------------------------------
-
-if [ -z "${PACKAGE_SPEC}" ]; then
-    selectors=0
-    [ -n "${BOT_BOTTLE_REF:-}" ] && selectors=$((selectors + 1))
-    [ -n "${BOT_BOTTLE_VERSION:-}" ] && selectors=$((selectors + 1))
-    [ -n "${BOT_BOTTLE_CHANNEL:-}" ] && selectors=$((selectors + 1))
-    [ "${selectors}" -le 1 ] || die \
-        "BOT_BOTTLE_REF, BOT_BOTTLE_VERSION, and BOT_BOTTLE_CHANNEL are mutually exclusive."
-
-    downloads="${HOME}/.bot-bottle/downloads"
-    mkdir -p "${downloads}"
-    PACKAGE_SPEC="$("${PYTHON}" - \
-        "${BOT_BOTTLE_REF:-}" \
-        "${BOT_BOTTLE_VERSION:-}" \
-        "${BOT_BOTTLE_CHANNEL:-production}" \
-        "${downloads}" <<'PY'
-import hashlib
-import json
-import re
-import sys
-import urllib.request
-from pathlib import Path
-
-ref, version, channel, download_root = sys.argv[1:]
-base = "https://gitea.dideric.is/api/packages/didericis/generic"
-
-def fetch_json(url):
-    with urllib.request.urlopen(url, timeout=30) as response:
-        return json.load(response)
-
-if ref:
-    if re.fullmatch(r"[0-9a-f]{40}", ref) is None:
-        raise SystemExit("bot-bottle install: error: BOT_BOTTLE_REF must be 40 lowercase hex")
-    index_url = f"{base}/bot-bottle-builds/{ref}/bundle-index.json"
-    print(
-        "bot-bottle install: WARNING: installing an exact commit snapshot; "
-        "it may not have passed release qualification.",
-        file=sys.stderr,
-    )
-    selector = f"commit {ref}"
-else:
-    if version:
-        if re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?", version) is None:
-            raise SystemExit("bot-bottle install: error: invalid BOT_BOTTLE_VERSION")
-        pointer_url = f"{base}/bot-bottle-releases/{version}/release.json"
-        selector = f"release {version}"
-    else:
-        if channel not in ("production", "staging"):
-            raise SystemExit(
-                "bot-bottle install: error: BOT_BOTTLE_CHANNEL must be production or staging")
-        pointer_url = f"{base}/bot-bottle-channels/{channel}/channel.json"
-        selector = f"{channel} channel"
-    pointer = fetch_json(pointer_url)
-    if pointer.get("schema") != 1 or pointer.get("qualified") is not True:
-        raise SystemExit("bot-bottle install: error: release pointer is not qualified")
-    index_url = pointer.get("bundle_index_url", "")
-    if not isinstance(index_url, str) or not index_url.startswith("https://"):
-        raise SystemExit("bot-bottle install: error: release pointer has no immutable bundle")
-
-index = fetch_json(index_url)
-source_commit = index.get("source_commit", "")
-if re.fullmatch(r"[0-9a-f]{40}", source_commit) is None:
-    raise SystemExit("bot-bottle install: error: bundle has an invalid source commit")
-if ref and source_commit != ref:
-    raise SystemExit("bot-bottle install: error: bundle does not match BOT_BOTTLE_REF")
-wheel = index.get("wheel")
-if not isinstance(wheel, dict):
-    raise SystemExit("bot-bottle install: error: bundle has no wheel")
-filename, url, expected = (
-    wheel.get("filename"), wheel.get("url"), wheel.get("sha256"))
-if (
-    not isinstance(filename, str)
-    or re.fullmatch(r"[A-Za-z0-9_.-]+\.whl", filename) is None
-    or not isinstance(url, str)
-    or not url.startswith("https://")
-    or not url.endswith("/" + filename)
-    or not isinstance(expected, str)
-    or re.fullmatch(r"[0-9a-f]{64}", expected) is None
-):
-    raise SystemExit("bot-bottle install: error: bundle wheel metadata is invalid")
-
-destination = Path(download_root) / source_commit / filename
-destination.parent.mkdir(parents=True, exist_ok=True)
-temporary = destination.with_suffix(destination.suffix + ".part")
-digest = hashlib.sha256()
-with urllib.request.urlopen(url, timeout=60) as response, temporary.open("wb") as output:
-    while chunk := response.read(1 << 20):
-        digest.update(chunk)
-        output.write(chunk)
-if digest.hexdigest() != expected:
-    temporary.unlink(missing_ok=True)
-    raise SystemExit("bot-bottle install: error: downloaded wheel checksum mismatch")
-temporary.replace(destination)
-print(
-    f"bot-bottle install: selected {selector} "
-    f"(source {source_commit}, sha256 {expected[:16]}…)",
-    file=sys.stderr,
-)
-print(destination)
-PY
-    )"
-fi
-
-# An explicit `git+` override shells out to git under the hood, whether via
-# pipx or pip. Fail early with a clear message rather than deep inside the
-# installer's output.
+# Installing a `git+` spec (the default) shells out to git under the hood,
+# whether via pipx or pip. Fail early with a clear message rather than deep
+# inside the installer's output.
 case "${PACKAGE_SPEC}" in
     git+*|*.git)
         command -v git >/dev/null 2>&1 || die \

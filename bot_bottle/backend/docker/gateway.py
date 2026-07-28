@@ -89,10 +89,6 @@ class DockerGateway(Gateway):
         when no dockerfile is configured (a pre-pulled image). BOT_BOTTLE_NO_CACHE
         forces a full rebuild (parity with `start --no-cache`)."""
         if self._dockerfile is None:
-            proc = run_docker(["docker", "pull", self.image_ref])
-            if proc.returncode != 0:
-                raise GatewayError(
-                    f"gateway image pull failed: {proc.stderr.strip()}")
             return
         context = self._build_context or resources.build_root()
         argv = ["docker", "build", "-t", self.image_ref,

@@ -84,15 +84,6 @@ def build_or_load_images(plan: DockerBottlePlan) -> BottleImages:
             )
         info(f"using cached agent image {plan.image!r}")
         return BottleImages(agent=plan.image)
-    if "@sha256:" in plan.image:
-        pulled = docker_mod.run_docker(["docker", "pull", plan.image])
-        if pulled.returncode != 0:
-            die(f"pulling packaged agent image {plan.image!r} failed: "
-                f"{pulled.stderr.strip()}")
-        docker_mod.verify_agent_image(
-            plan.image, runtime_for(plan.agent_provider_template).smoke_test,
-        )
-        return BottleImages(agent=plan.image)
     docker_mod.build_image(plan.image, str(resources.build_root()), dockerfile=plan.dockerfile_path)
     docker_mod.verify_agent_image(
         plan.image, runtime_for(plan.agent_provider_template).smoke_test,

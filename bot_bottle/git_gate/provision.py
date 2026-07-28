@@ -8,6 +8,7 @@ imported (`deploy_key_provisioner`) to keep its cost off the host path.
 
 from __future__ import annotations
 
+import json
 import os
 import dataclasses
 from pathlib import Path
@@ -138,7 +139,32 @@ def provision_git_gate_dynamic_keys(
             if upstream.name not in updated_names:
                 updated.append(upstream)
 
-    return dataclasses.replace(plan, upstreams=tuple(updated))
+    final_plan = dataclasses.replace(plan, upstreams=tuple(updated))
+    _write_upstreams_snapshot(stage_dir, final_plan.upstreams)
+    return final_plan
+
+
+def _write_upstreams_snapshot(
+    stage_dir: Path, upstreams: tuple[GitGateUpstream, ...]
+) -> None:
+    """Persist the fully-resolved upstream table to `upstreams.json` in
+    `stage_dir` so the bring-up reconcile can re-provision git-gate without
+    the manifest. Written after dynamic keys are provisioned so every
+    identity_file is set."""
+    data = [
+        {
+            "name": u.name,
+            "upstream_url": u.upstream_url,
+            "upstream_host": u.upstream_host,
+            "upstream_port": u.upstream_port,
+            "identity_file": u.identity_file,
+            "known_host_key": u.known_host_key,
+        }
+        for u in upstreams
+    ]
+    snapshot = stage_dir / "upstreams.json"
+    snapshot.write_text(json.dumps(data, indent=2))
+    snapshot.chmod(0o600)
 
 
 __all__ = [

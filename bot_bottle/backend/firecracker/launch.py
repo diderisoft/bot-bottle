@@ -228,13 +228,8 @@ def build_or_load_agent_base(plan: FirecrackerBottlePlan) -> Path:
         info(f"resuming from committed rootfs {committed_tar}")
         return util.build_committed_rootfs_dir(committed_tar)
     dockerfile = Path(plan.dockerfile_path)
-    prebuilt = "@sha256:" in plan.image
     if plan.spec.image_policy == "cached":
-        cached = (
-            image_builder.cached_agent_image_rootfs_dir(plan.image)
-            if prebuilt
-            else image_builder.cached_agent_rootfs_dir(dockerfile)
-        )
+        cached = image_builder.cached_agent_rootfs_dir(dockerfile)
         if cached is None:
             die(
                 f"cached agent rootfs for {plan.image!r} not found; "
@@ -242,11 +237,6 @@ def build_or_load_agent_base(plan: FirecrackerBottlePlan) -> Path:
             )
         info(f"using cached agent rootfs {cached.name}")
         return cached
-    if prebuilt:
-        return image_builder.acquire_agent_image_rootfs_dir(
-            plan.image,
-            smoke_test=runtime_for(plan.agent_provider_template).smoke_test,
-        )
     return image_builder.build_agent_rootfs_dir(
         dockerfile,
         image_tag=plan.image,
@@ -263,11 +253,7 @@ def stale_checks(plan: FirecrackerBottlePlan) -> None:
     if committed and committed_tar.is_file():
         check_stale_path(f"agent rootfs {committed_tar}", committed_tar)
         return
-    cached = (
-        image_builder.cached_agent_image_rootfs_dir(plan.image)
-        if "@sha256:" in plan.image
-        else image_builder.cached_agent_rootfs_dir(Path(plan.dockerfile_path))
-    )
+    cached = image_builder.cached_agent_rootfs_dir(Path(plan.dockerfile_path))
     if cached is not None:
         check_stale_path(f"agent rootfs {cached}", cached / ".bb-ready")
 

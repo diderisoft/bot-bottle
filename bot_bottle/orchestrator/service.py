@@ -379,6 +379,30 @@ class OrchestratorCore:
         self._tokens[bottle_id] = decrypted
         return True
 
+    def update_agent_secret(
+        self, bottle_id: str, name: str, value: str, env_var_secret: str,
+    ) -> bool:
+        """Update ONE egress token for a known bottle in place — the
+        single-secret form of ``reprovision_from_secret``.
+
+        Sets the in-memory token AND upserts the single re-encrypted row under
+        *env_var_secret* (the same key the rest of the rows are encrypted with, so
+        the whole set stays decryptable by a later ``reprovision_from_secret``),
+        leaving every other token untouched. Returns False if the bottle is
+        unknown.
+
+        Unlike ``reprovision_from_secret`` (which restores the values captured at
+        launch), this pushes a *caller-supplied* value — used to refresh a
+        short-lived host credential (e.g. the Codex access token) into a
+        still-running bottle without a relaunch."""
+        from .store.secret_store import encrypt_value
+        if self.registry.get(bottle_id) is None:
+            return False
+        self._tokens.setdefault(bottle_id, {})[name] = value
+        self.registry.store_agent_secret(
+            bottle_id, name, encrypt_value(env_var_secret, value))
+        return True
+
     # --- consolidated gateway ----------------------------------------------
 
     def gateway_status(self) -> dict[str, object]:

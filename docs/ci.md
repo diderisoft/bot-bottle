@@ -45,23 +45,6 @@ report; macOS reports advisory coverage in its own job. The macOS infra
 container is a singleton, so its job uses a concurrency group and always tears
 the service down.
 
-## Artifact publication and promotion
-
-[`publish-artifacts.yml`](../.gitea/workflows/publish-artifacts.yml) is the
-manual deployment-test boundary. Dispatch it with any branch, tag, or commit;
-it resolves that input once, publishes the orchestrator, gateway, Claude,
-Codex, Pi, and Firecracker artifacts, then publishes only the wheel verified
-against those identities. Install the reported commit with
-`BOT_BOTTLE_REF=<sha> sh install.sh`; the installer warns that snapshots may
-not have completed release qualification.
-
-[`release.yml`](../.gitea/workflows/release.yml) handles promotion tags.
-`vX.Y.Z-rc.N` must be reachable from `staging`; `vX.Y.Z` must be reachable
-from `production`. It runs the complete pre-release workflow, ensures that the
-same commit bundle is published, verifies a clean install, creates the
-qualified release pointer, and advances the matching channel. Promotion
-reuses immutable bundle bytes and never rebuilds them.
-
 ## Scheduled canary
 
 [`.gitea/workflows/canaries.yml`](../.gitea/workflows/canaries.yml) runs weekly

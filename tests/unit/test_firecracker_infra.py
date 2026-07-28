@@ -21,6 +21,7 @@ from bot_bottle.backend.firecracker.orchestrator import FirecrackerOrchestrator
 # there (not at their home modules).
 _ORCH_CLS = "bot_bottle.backend.firecracker.infra.FirecrackerOrchestrator"
 _GW_CLS = "bot_bottle.backend.firecracker.infra.FirecrackerGateway"
+_RECONCILE = "bot_bottle.backend.firecracker.infra.attach_bottled_agents_to_gateway"
 
 
 class TestAccessors(unittest.TestCase):
@@ -53,10 +54,13 @@ class TestEnsureRunning(unittest.TestCase):
                     patch.object(infra_vm, "_health_ok", return_value=True), \
                     patch.object(infra_vm, "_pidfile_alive", return_value=True), \
                     patch.object(infra_vm, "stop") as stop, \
-                    patch.object(infra_vm, "ensure_available") as built:
+                    patch.object(infra_vm, "ensure_built") as built, \
+                    patch(_RECONCILE) as reconcile:
                 url = FirecrackerInfraService().ensure_running()
             stop.assert_not_called()
             built.assert_not_called()
+            # Adopt path: no reconcile — gateway state is intact.
+            reconcile.assert_not_called()
             ip = infra_vm.netpool.orch_slot().guest_ip
             self.assertEqual(f"http://{ip}:{infra_vm.ORCHESTRATOR_PORT}", url)
 
@@ -72,8 +76,9 @@ class TestEnsureRunning(unittest.TestCase):
                     patch.object(infra_vm, "_health_ok", return_value=True), \
                     patch.object(infra_vm, "_pidfile_alive", return_value=True), \
                     patch.object(infra_vm, "stop") as stop, \
-                    patch.object(infra_vm, "ensure_available"), \
-                    patch(_ORCH_CLS) as orch_cls, patch(_GW_CLS) as gw_cls:
+                    patch.object(infra_vm, "ensure_built"), \
+                    patch(_ORCH_CLS) as orch_cls, patch(_GW_CLS) as gw_cls, \
+                    patch(_RECONCILE) as reconcile:
                 orch_cls.return_value.gateway_url.return_value = "http://10.243.255.1:8099"
                 orch_cls.return_value.mint_gateway_token.return_value = "gw.jwt"
                 FirecrackerInfraService().ensure_running()
@@ -85,6 +90,8 @@ class TestEnsureRunning(unittest.TestCase):
                 "http://10.243.255.1:8099", "gw.jwt")
             # The fresh boot records the current version for the next launcher.
             self.assertEqual("v-current\n", (d / "booted-version").read_text())
+            # Cold boot: reconcile fires after gateway is up.
+            reconcile.assert_called_once()
 
     def test_reboots_when_gateway_dead(self):
         # Orchestrator healthy + marker current, but the gateway VM is gone ->
@@ -98,12 +105,14 @@ class TestEnsureRunning(unittest.TestCase):
                     patch.object(infra_vm, "_health_ok", return_value=True), \
                     patch.object(infra_vm, "_pidfile_alive", return_value=False), \
                     patch.object(infra_vm, "stop") as stop, \
-                    patch.object(infra_vm, "ensure_available"), \
-                    patch(_ORCH_CLS) as orch_cls, patch(_GW_CLS) as gw_cls:
+                    patch.object(infra_vm, "ensure_built"), \
+                    patch(_ORCH_CLS) as orch_cls, patch(_GW_CLS) as gw_cls, \
+                    patch(_RECONCILE) as reconcile:
                 FirecrackerInfraService().ensure_running()
             stop.assert_called_once()
             orch_cls.return_value.ensure_running.assert_called_once()
             gw_cls.return_value.connect_to_orchestrator.assert_called_once()
+            reconcile.assert_called_once()
 
     def test_boots_both_when_no_running_pair(self):
         with tempfile.TemporaryDirectory() as td:
@@ -111,8 +120,9 @@ class TestEnsureRunning(unittest.TestCase):
                     patch.object(infra_vm, "expected_version", return_value="v-current"), \
                     patch.object(infra_vm, "_health_ok", return_value=False), \
                     patch.object(infra_vm, "stop") as stop, \
-                    patch.object(infra_vm, "ensure_available") as built, \
-                    patch(_ORCH_CLS) as orch_cls, patch(_GW_CLS) as gw_cls:
+                    patch.object(infra_vm, "ensure_built") as built, \
+                    patch(_ORCH_CLS) as orch_cls, patch(_GW_CLS) as gw_cls, \
+                    patch(_RECONCILE) as reconcile:
                 FirecrackerInfraService().ensure_running()
         stop.assert_called_once()      # clear stale VMs first
         built.assert_called_once()
@@ -120,6 +130,27 @@ class TestEnsureRunning(unittest.TestCase):
         # reach the control plane at startup).
         orch_cls.return_value.ensure_running.assert_called_once()
         gw_cls.return_value.connect_to_orchestrator.assert_called_once()
+        # Cold boot: reconcile fires to restore CA, git-gate, and egress tokens.
+        reconcile.assert_called_once()
+
+    def test_reconcile_receives_url_and_fresh_gateway(self):
+        # reconcile gets the orchestrator URL and the gateway service (not the
+        # class). Verify the args to ensure it can reach the right endpoints.
+        with tempfile.TemporaryDirectory() as td:
+            with patch.object(infra_vm, "_infra_dir", return_value=Path(td)), \
+                    patch.object(infra_vm, "expected_version", return_value="v-current"), \
+                    patch.object(infra_vm, "_health_ok", return_value=False), \
+                    patch.object(infra_vm, "stop"), \
+                    patch.object(infra_vm, "ensure_built"), \
+                    patch(_ORCH_CLS) as orch_cls, patch(_GW_CLS) as gw_cls, \
+                    patch(_RECONCILE) as reconcile:
+                orch_cls.return_value.url.return_value = "http://10.243.255.1:8099"
+                FirecrackerInfraService().ensure_running()
+        call_args = reconcile.call_args
+        # First arg: the orchestrator's host URL.
+        self.assertEqual("http://10.243.255.1:8099", call_args.args[0])
+        # Second arg: the gateway service instance (not the class).
+        self.assertIs(gw_cls.return_value, call_args.args[1])
 
 
 if __name__ == "__main__":

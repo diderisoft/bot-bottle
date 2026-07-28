@@ -46,8 +46,8 @@ class TestDockerInfraService(unittest.TestCase):
         url = self.svc.ensure_running()
         self.assertEqual("http://127.0.0.1:8099", url)
         # Both images built; the control plane comes up before the gateway.
-        self.orch.ensure_available.assert_called_once()
-        self.gw.ensure_available.assert_called_once()
+        self.orch.ensure_built.assert_called_once()
+        self.gw.ensure_built.assert_called_once()
         self.orch.ensure_running.assert_called_once()
 
     def test_ensure_running_connects_gateway_with_minted_token(self) -> None:
@@ -75,19 +75,6 @@ class TestDockerInfraService(unittest.TestCase):
         )
         self.assertEqual("registry-volume", svc.orchestrator()._root_mount_source)
         self.assertEqual("ca-volume", svc.gateway()._ca_mount_source)
-
-    def test_packaged_images_disable_local_infra_dockerfiles(self) -> None:
-        refs = [
-            ("registry/orchestrator@sha256:" + "a" * 64, False),
-            ("registry/gateway@sha256:" + "b" * 64, False),
-        ]
-        with patch(
-            "bot_bottle.backend.docker.infra.release_manifest.oci_image",
-            side_effect=refs,
-        ):
-            svc = DockerInfraService()
-        self.assertIsNone(svc.orchestrator()._dockerfile)
-        self.assertIsNone(svc.gateway()._dockerfile)
 
     def test_host_path_and_named_root_mount_are_mutually_exclusive(self) -> None:
         with self.assertRaisesRegex(ValueError, "host_root or root_mount_source"):

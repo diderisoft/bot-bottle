@@ -184,6 +184,27 @@ class OrchestratorClient:
             )
         return True
 
+    def update_agent_secret(
+        self, bottle_id: str, name: str, value: str, env_var_secret: str,
+    ) -> bool:
+        """Update ONE egress token for a running bottle in place
+        (`POST /bottles/<id>/secret`) — the single-secret form of
+        `reprovision_gateway`, for pushing a freshly-refreshed host credential
+        into a bottle without a relaunch. Returns True on success, False when the
+        orchestrator doesn't know the bottle (404)."""
+        status, _ = self._request(
+            "POST",
+            f"/bottles/{bottle_id}/secret",
+            {"name": name, "value": value, "env_var_secret": env_var_secret},
+        )
+        if status == 404:
+            return False
+        if not 200 <= status < 300:
+            raise OrchestratorClientError(
+                f"update_agent_secret {bottle_id}: HTTP {status}"
+            )
+        return True
+
     def teardown_bottle(self, bottle_id: str) -> bool:
         """Tear a bottle down (`DELETE /bottles/<id>`). False if the
         orchestrator didn't know it (404) — idempotent for cleanup paths."""

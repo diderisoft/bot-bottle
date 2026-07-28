@@ -34,7 +34,6 @@ from .orchestrator import (
     ORCHESTRATOR_NETWORK,
 )
 from ... import resources
-from ... import release_manifest
 from ...gateway import (
     GATEWAY_IMAGE,
     GATEWAY_NAME,
@@ -91,14 +90,6 @@ class DockerInfraService(InfraService):
         self._orchestrator_name = orchestrator_name
         self._orchestrator_label = orchestrator_label
         self._gateway_name = gateway_name
-        resolved_orchestrator, orchestrator_local = release_manifest.oci_image(
-            "orchestrator", orchestrator_image)
-        resolved_gateway, gateway_local = release_manifest.oci_image(
-            "gateway", gateway_image)
-        self.orchestrator_image = resolved_orchestrator
-        self.gateway_image = resolved_gateway
-        self._orchestrator_local = orchestrator_local
-        self._gateway_local = gateway_local
 
     def orchestrator(self) -> DockerOrchestrator:
         """The control-plane service. Cheap to reconstruct — `ensure_built`
@@ -113,8 +104,6 @@ class DockerInfraService(InfraService):
             repo_root=self._repo_root,
             host_root=self._host_root,
             root_mount_source=self._root_mount_source,
-            dockerfile=(
-                "Dockerfile.orchestrator" if self._orchestrator_local else None),
         )
 
     def gateway(self) -> DockerGateway:
@@ -130,7 +119,6 @@ class DockerInfraService(InfraService):
             control_network=self.control_network,
             build_context=self._repo_root,
             ca_mount_source=self._gateway_ca_mount_source,
-            dockerfile="Dockerfile.gateway" if self._gateway_local else None,
         )
 
     def ensure_running(
@@ -144,8 +132,8 @@ class DockerInfraService(InfraService):
         gateway = self.gateway()
         # Build both images (cache-aware; a no-op when nothing changed) before
         # bringing either plane up.
-        orchestrator.ensure_available()
-        gateway.ensure_available()
+        orchestrator.ensure_built()
+        gateway.ensure_built()
 
         orchestrator.ensure_running(startup_timeout=startup_timeout)
 

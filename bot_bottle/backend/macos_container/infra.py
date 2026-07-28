@@ -25,7 +25,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from ... import resources
-from ... import release_manifest
 from ...orchestrator.lifecycle import (
     DEFAULT_PORT,
     DEFAULT_STARTUP_TIMEOUT_SECONDS,
@@ -87,14 +86,6 @@ class MacosInfraService(InfraService):
         self._orchestrator_name = orchestrator_name
         self._gateway_name = gateway_name
         self._db_volume = db_volume
-        resolved_orchestrator, orchestrator_local = release_manifest.oci_image(
-            "orchestrator", orchestrator_image)
-        resolved_gateway, gateway_local = release_manifest.oci_image(
-            "gateway", gateway_image)
-        self.orchestrator_image = resolved_orchestrator
-        self.gateway_image = resolved_gateway
-        self._orchestrator_local = orchestrator_local
-        self._gateway_local = gateway_local
 
     def orchestrator(self) -> MacosOrchestrator:
         """The control-plane service on the host-only control network. Cheap to
@@ -107,7 +98,6 @@ class MacosInfraService(InfraService):
             control_network=self.control_network,
             repo_root=self._repo_root,
             db_volume=self._db_volume,
-            local_build=self._orchestrator_local,
         )
 
     def gateway(self) -> MacosGateway:
@@ -122,7 +112,6 @@ class MacosInfraService(InfraService):
             egress_network=self.egress_network,
             control_network=self.control_network,
             repo_root=self._repo_root,
-            local_build=self._gateway_local,
         )
 
     def ensure_running(
@@ -138,8 +127,8 @@ class MacosInfraService(InfraService):
 
         orchestrator = self.orchestrator()
         gateway = self.gateway()
-        orchestrator.ensure_available()
-        gateway.ensure_available()
+        orchestrator.ensure_built()
+        gateway.ensure_built()
 
         orchestrator.ensure_running(startup_timeout=startup_timeout)
 

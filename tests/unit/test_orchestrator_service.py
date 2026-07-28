@@ -103,6 +103,25 @@ class TestOrchestrator(unittest.TestCase):
         self.assertTrue(self.orch.reprovision_from_secret(rec.bottle_id, key))
         self.assertEqual({"EGRESS_TOKEN_0": "secret"}, self.orch.tokens_for(rec.bottle_id))
 
+    def test_update_agent_secret_refreshes_one_token_in_place(self) -> None:
+        key = new_env_var_secret()
+        rec = self.orch.launch_bottle(
+            "10.243.0.20", tokens={"A": "old-a", "B": "keep-b"}, env_var_secret=key,
+        )
+        self.assertTrue(self.orch.update_agent_secret(rec.bottle_id, "A", "new-a", key))
+        # In memory: A refreshed, B left untouched.
+        self.assertEqual({"A": "new-a", "B": "keep-b"}, self.orch.tokens_for(rec.bottle_id))
+        # At rest: the whole set stays decryptable with the SAME env_var_secret,
+        # so a later reprovision restores the refreshed value (not the launch one).
+        self.orch._tokens.clear()
+        self.assertTrue(self.orch.reprovision_from_secret(rec.bottle_id, key))
+        self.assertEqual({"A": "new-a", "B": "keep-b"}, self.orch.tokens_for(rec.bottle_id))
+
+    def test_update_agent_secret_unknown_bottle_is_false(self) -> None:
+        self.assertFalse(
+            self.orch.update_agent_secret("ghost", "A", "v", new_env_var_secret())
+        )
+
     def test_reprovision_rejects_missing_rows_and_wrong_key(self) -> None:
         self.assertFalse(self.orch.reprovision_from_secret("missing", new_env_var_secret()))
         key = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE"

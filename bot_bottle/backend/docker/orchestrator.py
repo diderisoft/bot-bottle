@@ -125,10 +125,6 @@ class DockerOrchestrator(Orchestrator):
         no-op when nothing changed). No-op when no dockerfile is configured (a
         pre-pulled image). BOT_BOTTLE_NO_CACHE forces a full rebuild."""
         if self._dockerfile is None:
-            proc = run_docker(["docker", "pull", self.image_ref])
-            if proc.returncode != 0:
-                raise GatewayError(
-                    f"orchestrator image pull failed: {proc.stderr.strip()}")
             return
         argv = ["docker", "build", "-t", self.image_ref,
                 "-f", str(self._repo_root / self._dockerfile),

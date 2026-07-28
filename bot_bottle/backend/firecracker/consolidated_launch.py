@@ -26,22 +26,19 @@ The TAP slot allocation, rootfs build, and VM boot are the caller's job.
 
 from __future__ import annotations
 
-import json
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 from ...egress import EgressPlan
 from ...git_gate import GitGatePlan
-from ...log import info
-from ...orchestrator.client import OrchestratorClient, OrchestratorClientError
+from ...orchestrator.client import OrchestratorClient
 from ...orchestrator.lifecycle import (
     OrchestratorStartError,  # re-exported so callers can catch it
 )
-from ...orchestrator.reprovision import reprovision_bottles
 from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
 from ..provision_bottle import deprovision_bottle, provision_bottle
-from . import cleanup, util
+from . import util
 from .gateway import FirecrackerGateway
 from .infra import FirecrackerInfraService
 
@@ -64,17 +61,6 @@ class LaunchContext:
     env_var_secret: str = ""  # encryption key injected into the agent's env
 
 
-def _guest_ip_from_config(config_path: Path) -> str:
-    """Read the kernel's configured guest IP from a Firecracker config."""
-    try:
-        config = json.loads(config_path.read_text())
-        args = config["boot-source"]["boot_args"]
-        ip_arg = next(part for part in args.split() if part.startswith("ip="))
-        return ip_arg.removeprefix("ip=").split(":", 1)[0]
-    except (OSError, ValueError, KeyError, TypeError, StopIteration):
-        return ""
-
-
 def persist_env_var_secret(private_key: Path, guest_ip: str, secret: str) -> None:
     """Mirror the exec-time key into guest tmpfs for restart recovery."""
     proc = subprocess.run(
@@ -87,29 +73,6 @@ def persist_env_var_secret(private_key: Path, guest_ip: str, secret: str) -> Non
             f"failed to persist {ENV_VAR_SECRET_NAME} in agent VM: "
             f"{proc.stderr.strip() or '<no stderr>'}"
         )
-
-
-def _reprovision_running_bottles(client: OrchestratorClient) -> None:
-    """Read keys from live agent VMs and restore the restarted gateway."""
-    try:
-        secrets_by_ip: dict[str, str] = {}
-        for run_dir in cleanup.live_run_dirs():
-            guest_ip = _guest_ip_from_config(run_dir / "config.json")
-            private_key = run_dir / "bottle_id_ed25519"
-            if not guest_ip or not private_key.is_file():
-                continue
-            proc = subprocess.run(
-                util.ssh_base_argv(private_key, guest_ip)
-                + [f"cat {_ENV_VAR_SECRET_PATH}"],
-                capture_output=True, text=True, check=False,
-            )
-            if proc.returncode == 0 and proc.stdout.strip():
-                secrets_by_ip[guest_ip] = proc.stdout.strip()
-        count = reprovision_bottles(client, secrets_by_ip)
-        if count:
-            info(f"reprovisioned egress tokens for {count} Firecracker bottle(s)")
-    except (OSError, OrchestratorClientError) as exc:
-        info(f"egress token reprovision skipped: {exc}")
 
 
 def launch_consolidated(
@@ -126,7 +89,6 @@ def launch_consolidated(
     service = FirecrackerInfraService()
     url = service.ensure_running()
     client = OrchestratorClient(url)
-    _reprovision_running_bottles(client)
 
     # Read the gateway's provisioning transport + CA off the Gateway service.
     gateway = service.gateway()

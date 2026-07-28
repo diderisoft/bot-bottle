@@ -17,6 +17,7 @@ from ...orchestrator.lifecycle import DEFAULT_STARTUP_TIMEOUT_SECONDS
 from . import infra_vm
 from .gateway import FirecrackerGateway
 from .orchestrator import FirecrackerOrchestrator
+from .reconcile import attach_bottled_agents_to_gateway
 
 
 class FirecrackerInfraService(InfraService):
@@ -61,15 +62,17 @@ class FirecrackerInfraService(InfraService):
                 return url
             # Clear stale/hung/OUTDATED VMs holding either link before booting fresh.
             infra_vm.stop()
-            infra_vm.ensure_available()
+            infra_vm.ensure_built()
             # Orchestrator first — the gateway daemons reach the control plane at
             # startup. Each service owns its own boot; the orchestrator (which
             # holds the signing key) mints the role-scoped `gateway` JWT for the
             # gateway, which never sees the key (#469).
             orchestrator.ensure_running(startup_timeout=startup_timeout)
-            self.gateway().connect_to_orchestrator(
+            gateway = self.gateway()
+            gateway.connect_to_orchestrator(
                 orchestrator.gateway_url(), orchestrator.mint_gateway_token())
             infra_vm.record_booted_version(want)
+            attach_bottled_agents_to_gateway(url, gateway)
             return url
 
     def stop(self) -> None:

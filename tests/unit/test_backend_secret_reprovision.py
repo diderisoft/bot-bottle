@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import json
 import subprocess
-import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -107,21 +105,6 @@ class TestDockerReprovision(unittest.TestCase):
 
 
 class TestFirecrackerReprovision(unittest.TestCase):
-    def _run_dir(self, root: Path, ip: str = "10.243.0.3") -> Path:
-        run_dir = root / "demo"
-        run_dir.mkdir()
-        (run_dir / "bottle_id_ed25519").write_text("key")
-        (run_dir / "config.json").write_text(json.dumps({
-            "boot-source": {"boot_args": f"root=/dev/vda ip={ip}::gw:mask::eth0:off"}
-        }))
-        return run_dir
-
-    def test_extracts_guest_ip_from_config(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            run_dir = self._run_dir(Path(tmp))
-            self.assertEqual("10.243.0.3", fc._guest_ip_from_config(run_dir / "config.json"))
-            self.assertEqual("", fc._guest_ip_from_config(run_dir / "missing.json"))
-
     def test_persists_key_over_stdin_not_argv(self) -> None:
         with patch.object(fc.util, "ssh_base_argv", return_value=["ssh", "guest"]), \
              patch.object(fc.subprocess, "run", return_value=_proc()) as run:
@@ -134,29 +117,6 @@ class TestFirecrackerReprovision(unittest.TestCase):
              patch.object(fc.subprocess, "run", return_value=_proc(1, stderr="denied")):
             with self.assertRaisesRegex(fc.ConsolidatedLaunchError, "denied"):
                 fc.persist_env_var_secret(Path("/key"), "10.0.0.1", "secret")
-
-    def test_reads_live_vm_key_and_reprovisions(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            run_dir = self._run_dir(Path(tmp))
-            client = Mock()
-            with patch.object(fc.cleanup, "live_run_dirs", return_value=(run_dir,)), \
-                 patch.object(fc.util, "ssh_base_argv", return_value=["ssh", "guest"]), \
-                 patch.object(fc.subprocess, "run", return_value=_proc(stdout="secret\n")), \
-                 patch.object(fc, "reprovision_bottles", return_value=1) as restore, \
-                 patch.object(fc, "info"):
-                fc._reprovision_running_bottles(client)
-        restore.assert_called_once_with(client, {"10.243.0.3": "secret"})
-
-    def test_unreadable_vm_is_skipped(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            run_dir = self._run_dir(Path(tmp))
-            client = Mock()
-            with patch.object(fc.cleanup, "live_run_dirs", return_value=(run_dir,)), \
-                 patch.object(fc.util, "ssh_base_argv", return_value=["ssh", "guest"]), \
-                 patch.object(fc.subprocess, "run", return_value=_proc(1)), \
-                 patch.object(fc, "reprovision_bottles", return_value=0) as restore:
-                fc._reprovision_running_bottles(client)
-        restore.assert_called_once_with(client, {})
 
 
 if __name__ == "__main__":

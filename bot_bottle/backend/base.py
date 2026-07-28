@@ -496,6 +496,20 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         (macos-container) die with a pointer — the default here."""
         die(f"backend {self.name!r} has no orchestrator control plane")
 
+    def attach_bottled_agents_to_gateway(self) -> None:
+        """Reconcile all running bottles against the current gateway.
+
+        Called when the gateway is (re)brought up (cold-boot path) to restore
+        the three gateway-dependent services for every live bottle: CA trust,
+        git-gate repos/creds, and egress tokens. Per-bottle failures must be
+        logged and skipped — one unreachable agent must not block the rest.
+
+        Default: no-op. Backends that run a gateway (Firecracker, docker,
+        macOS) override this with a backend-native implementation that reaches
+        running agents via their transport (SSH for Firecracker, exec/cp for
+        docker and macOS). PRD 0081."""
+        return
+
     @abstractmethod
     def prepare_cleanup(self) -> CleanupT:
         """Enumerate orphaned resources from previous bottles. No side

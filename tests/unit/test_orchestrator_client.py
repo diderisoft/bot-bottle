@@ -151,6 +151,31 @@ class TestReprovisionGateway(unittest.TestCase):
                 self.c.reprovision_gateway("b1", "key")
 
 
+class TestUpdateAgentSecret(unittest.TestCase):
+    def setUp(self) -> None:
+        self.c = OrchestratorClient("http://orch:8080")
+
+    def test_success_posts_single_secret(self) -> None:
+        with patch(_URLOPEN, return_value=_resp(200, {"updated": True})) as opened:
+            self.assertTrue(self.c.update_agent_secret("b1", "A", "fresh", "key"))
+        request = opened.call_args.args[0]
+        self.assertEqual("POST", request.get_method())
+        self.assertTrue(request.full_url.endswith("/bottles/b1/secret"))
+        self.assertEqual(
+            {"name": "A", "value": "fresh", "env_var_secret": "key"},
+            json.loads(request.data),
+        )
+
+    def test_unknown_bottle_is_false(self) -> None:
+        with patch(_URLOPEN, side_effect=_http_error(404)):
+            self.assertFalse(self.c.update_agent_secret("b1", "A", "v", "key"))
+
+    def test_other_status_raises(self) -> None:
+        with patch(_URLOPEN, side_effect=_http_error(400)):
+            with self.assertRaises(OrchestratorClientError):
+                self.c.update_agent_secret("b1", "A", "v", "key")
+
+
 class TestHealthAndPolicy(unittest.TestCase):
     def setUp(self) -> None:
         self.c = OrchestratorClient("http://orch:8080")

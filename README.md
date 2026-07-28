@@ -75,15 +75,7 @@ When the agent exits, `cli.py` tears down every gateway and both networks; nothi
 curl -fsSL https://gitea.dideric.is/didericis/bot-bottle/raw/branch/main/install.sh | sh
 ```
 
-The installer is a bootstrapper: it finds a suitable Python, resolves the
-latest qualified production bundle, verifies its wheel checksum, installs with
-`pipx` (falling back to a private venv), creates `~/.bot-bottle`, and runs
-`bot-bottle doctor`. It is idempotent and never uses `sudo`.
-
-Select staging with `BOT_BOTTLE_CHANNEL=staging`, an exact qualified release
-with `BOT_BOTTLE_VERSION=vX.Y.Z[-rc.N]`, or an exact published commit with
-`BOT_BOTTLE_REF=<40-character-sha>`. Commit installs print an explicit warning
-because snapshots may not have passed release qualification.
+The installer is a bootstrapper: it finds a suitable Python, installs bot-bottle with `pipx` (falling back to `pip --user`), creates `~/.bot-bottle`, and runs `bot-bottle doctor`. It is idempotent and never uses `sudo`. Python-native users can skip it entirely with `pipx install bot-bottle` or `uv tool install bot-bottle`.
 
 ### Requirements
 
@@ -91,8 +83,7 @@ because snapshots may not have passed release qualification.
 
 **No `pipx` required.** If `pipx` is present the installer uses it and stays out of the way. If it isn't, bot-bottle installs into a private venv at `~/.bot-bottle/venv` (override with `BOT_BOTTLE_VENV`) and symlinks the entry point into `~/.local/bin`. There is deliberately no `pip install --user` path: Homebrew, python.org and Debian/Ubuntu interpreters are all externally managed (PEP 668), which blocks `--user` outright — so on a Mac it is never the fallback it appears to be. A venv is exempt from PEP 668, and `venv` is stdlib, so unlike `pipx` there is nothing to bootstrap first.
 
-**`git`** is needed only when `BOT_BOTTLE_INSTALL_SPEC` explicitly selects a
-`git+` URL. The normal published-wheel path does not require it.
+**`git`**, because the default install spec is a `git+` URL. Set `BOT_BOTTLE_INSTALL_SPEC` to a wheel path or index name to avoid it.
 
 **A backend**, which the installer deliberately does *not* install for you — `doctor` reports what's missing afterwards. On compatible macOS hosts, the default backend requires Apple's `container` CLI and does not require Docker. The Firecracker backend (Linux) requires Docker on the host for the gateway plus the `firecracker` binary and KVM. The legacy Docker backend requires Docker. Claude bottles also need a long-lived Claude Code OAuth token (`claude setup-token`) exported as `BOT_BOTTLE_CLAUDE_OAUTH_TOKEN`.
 
@@ -200,18 +191,8 @@ BOT_BOTTLE_BACKEND=firecracker bot-bottle start <agent>
 > **CI:** Firecracker integration runs in the manually dispatched `.gitea/workflows/pre-release-test.yml` on a self-hosted runner labelled `kvm`; privileged KVM hosts never execute unreviewed PR code automatically. Provision it like a normal Firecracker host: `firecracker` on `PATH`, `/dev/kvm`, the cached guest kernel and static dropbear, and the persistent TAP/nft pool. The required pull-request workflow runs unit plus the complete Docker integration suite on `ubuntu-latest`; see `docs/ci.md`.
 
 ```sh
-bot-bottle start <agent>   # prepares the selected agent image, then attaches
+bot-bottle start <agent>   # builds the image on first run, drops you into claude
 ```
-
-Packaged releases carry immutable orchestrator, gateway, and first-party agent
-image identities. Docker and Apple Container pull the package-selected OCI
-digests; Firecracker pulls the matching checksum-verified rootfs artifacts.
-Each verified wheel and its identities are published as an immutable generic
-package keyed by the full source commit; `bundle-index.json` is uploaded last
-and is the completeness marker. A source checkout uses local builds for
-development. Set `BOT_BOTTLE_INFRA_BUILD=local` to make that development
-override explicit when diagnosing a packaged release; production never falls
-back to a build after an artifact pull fails.
 
 ## Manifest
 
