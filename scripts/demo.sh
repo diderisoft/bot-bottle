@@ -26,8 +26,8 @@ fi
 bash scripts/demo-setup.sh
 trap 'bash scripts/demo-teardown.sh' EXIT
 
-# Pinned to the Docker backend: demo-setup.sh pre-warms the image graph
-# with `docker build`, and the demo is meant to run the same way on
-# every host rather than following the host default (Firecracker on KVM
-# Linux, Apple Container on macOS).
-BOT_BOTTLE_BACKEND=docker bot-bottle start demo
+# Pinned to the Apple Container backend: the Docker backend cannot
+# reach its own orchestrator (published port lands on an internal-only
+# network), and the demo should run the same way on every host rather
+# than following the host default (Firecracker on KVM Linux).
+BOT_BOTTLE_BACKEND=macos-container bot-bottle start demo

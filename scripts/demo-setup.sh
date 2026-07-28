@@ -19,8 +19,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-if ! docker info >/dev/null 2>&1; then
-  echo "demo-setup: docker daemon not reachable" >&2
+if ! container system status >/dev/null 2>&1; then
+  echo "demo-setup: Apple Container services are not running." >&2
+  echo "  Start them with: container system start" >&2
   exit 1
 fi
 
@@ -75,21 +76,21 @@ chmod 700 "$fake_key_dir"
 printf 'not-a-real-key\n' > "$fake_key_dir/fake-key"
 chmod 600 "$fake_key_dir/fake-key"
 
-# Build the image graph quietly so the recorded run shows only the
-# bottle launch and the four probes, not BuildKit progress.
-node_base_image=$(
-  python3 -c \
-    'import json; print(json.load(open("image-build-args.json"))["NODE_BASE_IMAGE"])'
-)
-python_base_image=$(
-  python3 -c \
-    'import json; print(json.load(open("image-build-args.json"))["PYTHON_BASE_IMAGE"])'
-)
-docker build -q \
-  --build-arg "NODE_BASE_IMAGE=$node_base_image" \
-  -f bot_bottle/contrib/claude/Dockerfile \
-  -t bot-bottle-claude:latest . >/dev/null 2>&1 || true
-docker build -q \
-  --build-arg "PYTHON_BASE_IMAGE=$python_base_image" \
-  -f Dockerfile.gateway \
-  -t bot-bottle-gateway:latest . >/dev/null 2>&1 || true
+# Report which base images are already in the Apple image store. A cold
+# store isn't fatal — the launcher builds what it needs — but the first
+# recorded launch then spends its opening seconds in BuildKit output
+# instead of showing the bottle, so it's worth knowing before recording.
+#
+# Deliberately NOT pre-building here. `container build` needs the same
+# --dns treatment the backend applies in
+# backend/macos_container/util.py:build_image(); reproducing that in
+# shell would be a second, silently-drifting copy of it. The layer
+# cache already keeps a warm rebuild fast, and the old `docker build
+# ... || true` pre-warm is exactly how this script kept "succeeding"
+# while building a Dockerfile that had been deleted.
+for image in bot-bottle-claude bot-bottle-gateway bot-bottle-orchestrator; do
+  if ! container image ls 2>/dev/null | grep -q "^${image} "; then
+    echo "demo-setup: note: $image not in the image store yet;" >&2
+    echo "  the recording's first seconds will show it building." >&2
+  fi
+done
