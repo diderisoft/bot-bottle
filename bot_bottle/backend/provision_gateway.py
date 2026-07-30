@@ -55,6 +55,7 @@ def provision_git_gate(
     transport.exec(["mkdir", "-p", "/etc/git-gate"])
     transport.cp_into(str(plan.hook_script), "/etc/git-gate/pre-receive")
     transport.cp_into(str(plan.access_hook_script), "/etc/git-gate/access-hook")
+    transport.cp_into(str(plan.gitleaks_config), "/etc/git-gate/gitleaks.toml")
     # The access-hook is exec'd directly (not via `sh`), so it needs the x bit.
     # Set it here rather than trusting the copy to carry the staged 0o700:
     # `docker cp` preserves source mode, but the Apple `container cp` does not,

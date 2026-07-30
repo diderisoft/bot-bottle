@@ -16,6 +16,7 @@ from pathlib import Path
 
 from ...constants import GIT_GATE_TIMEOUT_SECS, IDENTITY_HEADER
 from ...manifest import ManifestBottle, ManifestGitEntry
+from ..egress.dlp_detectors import TOKEN_PATTERNS
 
 # Short network alias for git-gate inside the gateway. The
 # agent's `.gitconfig` insteadOf rewrites resolve through this name.
@@ -278,6 +279,7 @@ supervise_gitleaks_allow() {
   ref=$2
   report_file=$(mktemp)
   if ! gitleaks git \
+      --config /etc/git-gate/gitleaks.toml \
       --log-opts="$log_opts" \
       --no-banner \
       --redact \
@@ -466,7 +468,7 @@ while IFS=' ' read -r old new ref; do
   # See PRD 0028 (open question) / issues #106, #346.
   log_opts="$new --not --all"
   echo "git-gate: gitleaks scanning $ref ($log_opts)" >&2
-  if ! gitleaks git --log-opts="$log_opts" --no-banner --redact 1>&2; then
+  if ! gitleaks git --config /etc/git-gate/gitleaks.toml --log-opts="$log_opts" --no-banner --redact 1>&2; then
     echo "git-gate: gitleaks rejected push to $ref" >&2
     exit 1
   fi
@@ -519,6 +521,71 @@ done < "$refs_file"
 
 exit 0
 """
+
+
+def _gitleaks_literal_prefix(pattern_str: str) -> str:
+    """Return the longest leading literal substring of a regex pattern,
+    lowercased, for use as a gitleaks keyword pre-filter.
+
+    Stops at the first non-literal construct: a character class `[`, a
+    quantifier `{`, a group `(`, or any other regex metacharacter. A
+    backslash-escaped character (e.g. `\\.`) contributes its literal value;
+    a backslash-escape sequence (e.g. `\\s`) ends the prefix."""
+    result: list[str] = []
+    i = 0
+    while i < len(pattern_str):
+        ch = pattern_str[i]
+        if ch == "\\" and i + 1 < len(pattern_str):
+            next_ch = pattern_str[i + 1]
+            if next_ch in ("s", "S", "d", "D", "w", "W"):
+                break
+            result.append(next_ch)
+            i += 2
+        elif ch in ("[", "{", "(", "?", "*", "+", "|", "^", "$", "."):
+            break
+        else:
+            result.append(ch)
+            i += 1
+    return "".join(result).lower()
+
+
+def _gitleaks_rule_id(name: str) -> str:
+    """Derive a `dlp-`-prefixed gitleaks rule id from a DLP detector name."""
+    return "dlp-" + re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
+def git_gate_render_gitleaks_config() -> str:
+    """Render a gitleaks TOML config that extends the default ruleset with
+    context-free mirrors of the egress DLP TOKEN_PATTERNS.
+
+    Uses `[extend] useDefault = true` to keep all built-in gitleaks rules and
+    adds each DLP pattern under a `dlp-`-prefixed id. This gives the git-gate
+    hook the same token-shape coverage as the egress DLP without requiring a
+    surrounding context keyword (which the default aws-access-token rule and
+    others need).
+
+    Written to the stage dir at prepare time and copied into the gateway at
+    `/etc/git-gate/gitleaks.toml`. The hook passes `--config` to both its
+    gitleaks invocations so this file is always active."""
+    lines = [
+        "# Auto-generated from TOKEN_PATTERNS in dlp_detectors.py — edit there.",
+        "[extend]",
+        "useDefault = true",
+        "",
+    ]
+    for name, pattern in TOKEN_PATTERNS:
+        rule_id = _gitleaks_rule_id(name)
+        keyword = _gitleaks_literal_prefix(pattern.pattern)
+        lines += [
+            "[[rules]]",
+            f'id = "{rule_id}"',
+            f'description = "{name} (DLP mirror)"',
+            f"regex = '''{pattern.pattern}'''",
+        ]
+        if keyword:
+            lines.append(f'keywords = ["{keyword}"]')
+        lines.append("")
+    return "\n".join(lines)
 
 
 def git_gate_render_access_hook() -> str:

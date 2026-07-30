@@ -21,6 +21,7 @@ from ..gateway.git_gate.render import (
     git_gate_known_hosts_line,
     git_gate_render_access_hook,
     git_gate_render_entrypoint,
+    git_gate_render_gitleaks_config,
     git_gate_render_hook,
     git_gate_upstreams_for_bottle,
 )
@@ -62,6 +63,9 @@ class GitGate:
         # cp` does not), so provisioning re-applies +x on the gateway side — see
         # backend/provision_gateway.py.
         access_hook.chmod(0o700)
+        gitleaks_config = stage_dir / "git_gate_gitleaks.toml"
+        gitleaks_config.write_text(git_gate_render_gitleaks_config())
+        gitleaks_config.chmod(0o600)
         upstreams_with_files: list[GitGateUpstream] = []
         for u in upstreams:
             known_hosts_file = Path()
@@ -89,6 +93,7 @@ class GitGate:
             entrypoint_script=entrypoint,
             hook_script=hook,
             access_hook_script=access_hook,
+            gitleaks_config=gitleaks_config,
             upstreams=tuple(upstreams_with_files),
         )
 

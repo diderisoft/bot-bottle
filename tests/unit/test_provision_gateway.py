@@ -35,6 +35,7 @@ def _plan(*upstreams: GitGateUpstream) -> GitGatePlan:
         entrypoint_script=Path("/stage/entrypoint.sh"),
         hook_script=Path("/stage/pre-receive"),
         access_hook_script=Path("/stage/access-hook"),
+        gitleaks_config=Path("/stage/gitleaks.toml"),
         upstreams=tuple(upstreams),
     )
 
@@ -66,8 +67,11 @@ class TestProvisionGitGate(unittest.TestCase):
         self.assertIn(
             ["docker", "cp", "/host/kh", "gw:/git-gate/creds/bottle1/foo-known_hosts"], cps,
         )
-        # The shared (bottle-agnostic) hooks are installed into the gateway.
+        # The shared (bottle-agnostic) hooks and gitleaks config are installed.
         self.assertIn(["docker", "cp", "/stage/pre-receive", "gw:/etc/git-gate/pre-receive"], cps)
+        self.assertIn(
+            ["docker", "cp", "/stage/gitleaks.toml", "gw:/etc/git-gate/gitleaks.toml"], cps,
+        )
         # The init script runs in the gateway, namespaced under the bottle id.
         exec_scripts = [c for c in calls if c[:3] == ["docker", "exec", "gw"] and c[3] == "sh"]
         self.assertEqual(1, len(exec_scripts))

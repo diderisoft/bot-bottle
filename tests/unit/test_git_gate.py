@@ -13,6 +13,7 @@ from bot_bottle.git_gate import (
     git_gate_known_hosts_line,
     git_gate_render_access_hook,
     git_gate_render_entrypoint,
+    git_gate_render_gitleaks_config,
     git_gate_render_hook,
     provision_git_gate_dynamic_keys,
     revoke_git_gate_provisioned_keys,
@@ -167,6 +168,8 @@ class TestHookRender(unittest.TestCase):
         self.assertIn("refusing to push", hook)
         # Stdin is buffered to a tempfile so both phases can re-read.
         self.assertIn("refs_file=$(mktemp)", hook)
+        # Custom config overrides the built-in context-dependent rules.
+        self.assertIn("--config /etc/git-gate/gitleaks.toml", hook)
 
     def test_scan_scoped_to_incoming_commits(self):
         # Every non-delete push scans only commits new to the gate, not
@@ -314,6 +317,46 @@ class TestHookRender(unittest.TestCase):
         )
 
 
+class TestGitleaksConfigRender(unittest.TestCase):
+    def test_extends_default_ruleset(self):
+        config = git_gate_render_gitleaks_config()
+        self.assertIn("useDefault = true", config)
+
+    def test_all_dlp_patterns_present(self):
+        from bot_bottle.gateway.egress.dlp_detectors import TOKEN_PATTERNS
+        config = git_gate_render_gitleaks_config()
+        for name, pattern in TOKEN_PATTERNS:
+            self.assertIn(pattern.pattern, config, f"pattern for {name!r} missing from config")
+
+    def test_rule_ids_have_dlp_prefix(self):
+        config = git_gate_render_gitleaks_config()
+        import re
+        ids = re.findall(r'^id = "([^"]+)"', config, re.MULTILINE)
+        self.assertTrue(ids, "no rule ids found in config")
+        for rule_id in ids:
+            self.assertTrue(rule_id.startswith("dlp-"), f"rule id {rule_id!r} lacks dlp- prefix")
+
+    def test_renders_valid_toml(self):
+        import tomllib
+        config = git_gate_render_gitleaks_config()
+        try:
+            tomllib.loads(config)
+        except tomllib.TOMLDecodeError as exc:
+            self.fail(f"rendered gitleaks config is not valid TOML: {exc}")
+
+    def test_each_rule_has_a_keyword(self):
+        # Every DLP pattern starts with a literal prefix that can serve as a
+        # keyword pre-filter. A missing keyword means the rule would scan every
+        # line, which negates gitleaks' fast-path optimisation.
+        import re
+        config = git_gate_render_gitleaks_config()
+        self.assertNotIn('keywords = [""]', config)
+        # All [[rules]] blocks should have a keywords line.
+        rule_blocks = re.split(r'\[\[rules\]\]', config)[1:]
+        for block in rule_blocks:
+            self.assertIn("keywords", block, f"rule block missing keywords:\n{block[:200]}")
+
+
 class TestAccessHookRender(unittest.TestCase):
     def test_access_hook_refreshes_origin_on_upload_pack(self):
         hook = git_gate_render_access_hook()
@@ -349,7 +392,7 @@ class TestPrepare(unittest.TestCase):
 
         shutil.rmtree(self.stage, ignore_errors=True)
 
-    def test_prepare_writes_all_three_scripts(self):
+    def test_prepare_writes_all_four_scripts(self):
         plan = _StubGate().prepare(
             fixture_with_git().bottles["dev"], "demo", self.stage
         )
@@ -362,6 +405,9 @@ class TestPrepare(unittest.TestCase):
         self.assertEqual(
             self.stage / "git_gate_access_hook.sh", plan.access_hook_script
         )
+        self.assertEqual(
+            self.stage / "git_gate_gitleaks.toml", plan.gitleaks_config
+        )
         # Entrypoint + pre-receive are mode 600 (loaded into the
         # gate by docker cp and then `install -m 755`'d into each
         # bare repo's hooks/ — source bit doesn't matter). The
@@ -370,6 +416,7 @@ class TestPrepare(unittest.TestCase):
         self.assertEqual(0o600, os.stat(plan.entrypoint_script).st_mode & 0o777)
         self.assertEqual(0o600, os.stat(plan.hook_script).st_mode & 0o777)
         self.assertEqual(0o700, os.stat(plan.access_hook_script).st_mode & 0o777)
+        self.assertEqual(0o600, os.stat(plan.gitleaks_config).st_mode & 0o777)
 
     def test_prepare_plan_carries_upstreams_and_slug(self):
         plan = _StubGate().prepare(

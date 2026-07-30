@@ -25,12 +25,15 @@ class GitGatePlan:
 
     `hook_script` is the shared `pre-receive` for push-time gating;
     `access_hook_script` is `git daemon`'s `--access-hook` for the fetch-time
-    upstream refresh."""
+    upstream refresh. `gitleaks_config` is the rendered TOML that the hook
+    passes to `gitleaks --config`; `Path()` is the sentinel "not yet rendered"
+    value for callers that construct the plan directly in tests."""
 
     slug: str
     entrypoint_script: Path
     hook_script: Path
     access_hook_script: Path
     upstreams: tuple[GitGateUpstream, ...]
+    gitleaks_config: Path = Path()
     internal_network: str = ""
     egress_network: str = ""
