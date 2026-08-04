@@ -378,10 +378,17 @@ def build_image(
     inputs = image_inputs.inputs_hash(image, repo_root=repo_root)
     print(f"building {image} {version} ({plat}) inputs={inputs}")
 
-    dockerfile = image_inputs.DOCKERFILES[image]
+    dockerfile = repo_root / image_inputs.DOCKERFILES[image]
+    # The digest-pinned base images have no Dockerfile defaults on purpose —
+    # they live in image-build-args.json and every supported build path resolves
+    # them through this helper. Omitting them does not build an unpinned image,
+    # it fails outright, which is the intended shape.
+    build_args: list[str] = []
+    for name, value in sorted(resources.image_build_args(dockerfile).items()):
+        build_args += ["--build-arg", f"{name}={value}"]
     _run(
-        [runtime, "build", "-f", str(repo_root / dockerfile),
-         "--platform", plat, "-t", f"{image}:latest", str(repo_root)],
+        [runtime, "build", "-f", str(dockerfile),
+         "--platform", plat, *build_args, "-t", f"{image}:latest", str(repo_root)],
         what=f"building {image} for {plat}",
     )
 
