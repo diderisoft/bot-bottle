@@ -1,29 +1,12 @@
-# Build and publish the fixed images to the Gitea OCI registry.
+# Build and publish the fixed images to the Gitea OCI registry, on release.
+# Development builds locally (BOT_BOTTLE_INFRA_BUILD=local).
 #
-# One machine builds everything. Cross-building is cheap enough here that
-# splitting the job across two runners was not worth the coordination —
-# measured cold (--no-cache) on delos, native arm64 vs emulated amd64:
+# One machine builds both architectures; emulation measured at 1.1-1.8x on
+# delos. delphi runs it because rootfs packaging needs e2fsprogs `mke2fs`.
 #
-#     bot-bottle-gateway   49s -> 55s   (1.12x)
-#     bot-bottle-claude    67s -> 122s  (1.80x)
-#
-# The images spend their time downloading and unpacking (apt, pip, npm ci)
-# rather than computing, which is what keeps emulation cheap.
-#
-# delphi is the machine because rootfs packaging needs e2fsprogs `mke2fs`,
-# which macOS does not ship (delos has only the Android SDK's). It builds amd64
-# natively and arm64 under emulation.
-#
-# CAVEAT, worth confirming on the first real run: the numbers above are from
-# delos, where Docker Desktop emulates x86_64 with **Rosetta 2**. delphi
-# emulates arm64 with **QEMU**, which is typically far slower. If arm64 builds
-# there turn out painful, move just the arm64 OCI build to `[self-hosted, macos]`
-# and keep packaging here — exporting a rootfs never starts the container
-# (`docker create` + `docker export`), so packaging another architecture is
-# sound on any host.
-#
-# Release-triggered only. Development builds locally (BOT_BOTTLE_INFRA_BUILD=local),
-# which stays the supported path for a current or custom agent harness.
+# Unverified: delphi emulates arm64 with QEMU, not Rosetta, so it may be much
+# slower. If so, move the arm64 OCI build to `[self-hosted, macos]` and merge
+# the manifest parts (`--merge`); packaging stays here either way.
 
 name: publish-images
 
@@ -47,9 +30,8 @@ jobs:
       - name: Enable cross-architecture emulation
         run: docker run --rm --privileged tonistiigi/binfmt:latest --install arm64
 
-      # One invocation: build both architectures, push OCI, package both
-      # rootfs, upload them, and write the manifest. Splitting build from
-      # upload would rebuild, since --publish-dir also builds.
+      # One invocation — `--publish-dir` builds as well as uploads, so
+      # splitting the steps would rebuild.
       - name: Build, push, and publish every image
         env:
           BOT_BOTTLE_INFRA_ARTIFACT_TOKEN: ${{ secrets.BOT_BOTTLE_INFRA_ARTIFACT_TOKEN }}
