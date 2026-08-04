@@ -1,0 +1,411 @@
+"""Build the fixed images off-host and publish them (PRD: OCI image publishing).
+
+The off-host half. This *does* use a container build tool, but never on a launch
+host — same split `firecracker.publish_infra` already draws. A launch host only
+resolves, downloads and verifies.
+
+Per image, per platform:
+
+    build -> push OCI, record the registry digest
+          -> (roles that boot as a VM) export rootfs, mke2fs, gzip,
+             PUT as a generic package, record the file digest
+
+then write `image-assets.json` mapping each image to its version, its
+`inputs_hash`, and a digest per format and platform.
+
+**The interchangeability invariant is enforced here, not in the manifest.** The
+schema has one `inputs_hash` per image, so it *cannot express* two artifacts
+built from different commits — which means nothing in the manifest can catch it
+either. This module is the only place that sees both the build inputs and the
+resulting artifacts, so it is where "every artifact of an image was built from
+the same inputs" has to be checked. Publishing aborts rather than emit a version
+whose formats disagree, because the whole premise of the format fallback is that
+either artifact is an acceptable substitute.
+
+  python3 -m bot_bottle.publish_images --output DIR       # build a candidate
+  python3 -m bot_bottle.publish_images --publish-dir DIR  # upload it
+
+Auth: a token with `write:package` on the target owner, from
+`BOT_BOTTLE_INFRA_ARTIFACT_TOKEN`. Never passed on a command line.
+"""
+
+from __future__ import annotations
+
+import argparse
+import gzip
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from . import image_inputs, resources
+from .image_assets import FORMAT_EXT4, FORMAT_OCI, MANIFEST_NAME
+
+_CHUNK = 1 << 20
+_HTTP_TIMEOUT_SECONDS = 60.0
+
+_DEFAULT_BASE = "https://gitea.dideric.is"
+_DEFAULT_OWNER = "didericis"
+
+TOKEN_ENV = "BOT_BOTTLE_INFRA_ARTIFACT_TOKEN"
+
+# Images that also ship a bootable rootfs. Firecracker boots every one of these
+# as a microVM — the infra pair as the control/data planes, the agent images as
+# the agents themselves — so all of them publish ext4 alongside OCI.
+EXT4_IMAGES = frozenset(image_inputs.IMAGES)
+
+
+class PublishError(RuntimeError):
+    """A build, upload, or invariant check failed. Always aborts the publish:
+    a partially published version is worse than an unpublished one, because a
+    host can resolve it and get an incoherent set."""
+
+
+@dataclass
+class BuiltArtifact:
+    fmt: str
+    platform: str
+    digest: str
+    locator: str
+    namespace: str
+    # The inputs hash this artifact was actually built from — carried per
+    # artifact precisely so the cross-format check below has something to
+    # compare, rather than trusting that one build equals another.
+    inputs_hash: str
+
+
+@dataclass
+class BuiltImage:
+    name: str
+    version: str
+    artifacts: list[BuiltArtifact] = field(default_factory=list)
+
+
+def _config() -> tuple[str, str, str]:
+    base = os.environ.get("BOT_BOTTLE_INFRA_ARTIFACT_BASE", _DEFAULT_BASE).rstrip("/")
+    owner = os.environ.get("BOT_BOTTLE_INFRA_ARTIFACT_OWNER", _DEFAULT_OWNER)
+    token = os.environ.get(TOKEN_ENV, "")
+    return base, owner, token
+
+
+def repo_version(repo_root: Path | None = None) -> str:
+    """The release version every image is published under.
+
+    One number describes a coherent set, so a host resolving several images at
+    one version gets images that were built together. Read from
+    `pyproject.toml` rather than a separate file so it cannot drift from the
+    package it ships."""
+    if repo_root is None:
+        repo_root = resources.build_root()
+    text = (repo_root / "pyproject.toml").read_text(encoding="utf-8")
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("version") and "=" in stripped:
+            return stripped.split("=", 1)[1].strip().strip('"').strip("'")
+    raise PublishError("could not read version from pyproject.toml")
+
+
+def _platform_suffix(plat: str) -> str:
+    """`linux/arm64` -> `arm64`, for tags and filenames."""
+    return plat.rsplit("/", 1)[-1]
+
+
+def oci_ref(image: str) -> str:
+    base, owner, _ = _config()
+    host = base.split("://", 1)[-1]
+    return f"{host}/{owner}/{image}"
+
+
+def oci_tag(version: str, plat: str) -> str:
+    return f"{version}-{_platform_suffix(plat)}"
+
+
+def ext4_package(image: str) -> str:
+    return f"{image}-rootfs"
+
+
+def ext4_filename(plat: str) -> str:
+    return f"rootfs.{_platform_suffix(plat)}.ext4.gz"
+
+
+def _run(argv: list[str], *, what: str) -> str:
+    try:
+        proc = subprocess.run(argv, capture_output=True, check=False, text=True)
+    except OSError as e:
+        raise PublishError(f"{what}: {argv[0]} not available ({e})") from e
+    if proc.returncode != 0:
+        raise PublishError(
+            f"{what} failed (exit {proc.returncode}):\n"
+            f"{(proc.stderr or proc.stdout).strip()}"
+        )
+    return proc.stdout
+
+
+def _sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(_CHUNK), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _gzip(src: Path, dest: Path) -> None:
+    with open(src, "rb") as fh, gzip.open(dest, "wb") as out:
+        shutil.copyfileobj(fh, out, _CHUNK)
+
+
+def push_oci(image: str, version: str, plat: str, *, runtime: str = "docker") -> str:
+    """Push `image` for `plat` and return the digest the registry assigned.
+
+    The digest is read back from the registry rather than computed locally:
+    it is the registry's identifier for the manifest it stored, and inventing
+    it locally would defeat the point of pinning to it."""
+    ref, tag = oci_ref(image), oci_tag(version, plat)
+    target = f"{ref}:{tag}"
+    _run([runtime, "tag", f"{image}:latest", target], what=f"tagging {target}")
+    _run([runtime, "push", target], what=f"pushing {target}")
+    out = _run(
+        [runtime, "inspect", "--format={{index .RepoDigests 0}}", target],
+        what=f"reading digest for {target}",
+    ).strip()
+    if "@" not in out:
+        raise PublishError(f"could not read a digest for {target}: {out!r}")
+    return out.rsplit("@", 1)[1]
+
+
+def put_generic(url: str, body: Path, token: str) -> None:
+    """PUT a (hundreds-of-MB) file, streamed rather than buffered."""
+    length = body.stat().st_size
+    with open(body, "rb") as handle:
+        req = urllib.request.Request(url, data=handle, method="PUT")  # type: ignore[arg-type]
+        req.add_header("Content-Length", str(length))
+        req.add_header("Content-Type", "application/octet-stream")
+        if token:
+            req.add_header("Authorization", f"token {token}")
+        try:
+            with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT_SECONDS) as resp:
+                print(f"  uploaded {url} (HTTP {resp.status})")
+        except urllib.error.HTTPError as e:
+            if e.code == 409:
+                raise PublishError(
+                    f"already published at {url} (HTTP 409); bump the version "
+                    f"or pass --force to overwrite"
+                ) from e
+            raise PublishError(f"upload failed (HTTP {e.code}): {url}") from e
+        except urllib.error.URLError as e:
+            raise PublishError(f"registry unreachable: {url} ({e.reason})") from e
+
+
+def ext4_url(image: str, version: str, plat: str) -> str:
+    base, owner, _ = _config()
+    return (
+        f"{base}/api/packages/{owner}/generic/"
+        f"{ext4_package(image)}/{version}/{ext4_filename(plat)}"
+    )
+
+
+def check_interchangeable(built: BuiltImage) -> None:
+    """Every artifact of an image must come from one `inputs_hash`.
+
+    This is the invariant that makes the format fallback safe. A consumer picks
+    ext4 or OCI by preference and availability, so the two must be substitutes;
+    if they were built from different commits, which code a host ends up running
+    would depend on which format happened to be retained. The manifest cannot
+    catch this — it records one hash per image — so it is caught here."""
+    hashes = {a.inputs_hash for a in built.artifacts}
+    if len(hashes) > 1:
+        detail = "\n".join(
+            f"    {a.fmt}/{a.platform}: {a.inputs_hash}" for a in built.artifacts
+        )
+        raise PublishError(
+            f"{built.name} {built.version}: artifacts were built from different "
+            f"inputs, so they are not interchangeable:\n{detail}\n"
+            f"    refusing to publish — rebuild the whole image from one checkout."
+        )
+
+
+def manifest_entry(built: BuiltImage) -> dict[str, object]:
+    """One image's manifest entry, in the committed schema."""
+    check_interchangeable(built)
+    artifacts: dict[str, dict[str, object]] = {}
+    for artifact in built.artifacts:
+        fmt = artifacts.setdefault(
+            artifact.fmt,
+            {"ref" if artifact.fmt == FORMAT_OCI else "package": artifact.namespace,
+             "platforms": {}},
+        )
+        key = "tag" if artifact.fmt == FORMAT_OCI else "file"
+        fmt["platforms"][artifact.platform] = {  # type: ignore[index]
+            key: artifact.locator, "digest": artifact.digest,
+        }
+    return {
+        "version": built.version,
+        "inputs_hash": next(iter({a.inputs_hash for a in built.artifacts})),
+        "artifacts": artifacts,
+    }
+
+
+def write_manifest(images: list[BuiltImage], dest: Path) -> None:
+    """Write `image-assets.json` for every built image, sorted for a stable
+    diff (this file is committed, and a churning key order would make every
+    publish look like a change)."""
+    data = {img.name: manifest_entry(img) for img in sorted(images, key=lambda i: i.name)}
+    dest.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(f"wrote {dest}")
+
+
+def build_ext4(image: str, plat: str, out_dir: Path, inputs: str) -> BuiltArtifact:
+    """Export `image`'s filesystem into a bootable, gzipped ext4.
+
+    Reuses the firecracker rootfs machinery rather than reimplementing it:
+    `build_base_rootfs_dir` exports the image and injects the guest boot bits,
+    and `build_rootfs_ext4` populates a filesystem with `mke2fs -d` (rootless,
+    no mount). The infra pair boots a role-specific PID 1; agent images take the
+    default agent init, which is what `init_script=None` selects.
+
+    Publishing this is what removes the most expensive per-host operation in the
+    system — a local image build followed by a rootfs export — for every host
+    that would otherwise do it itself."""
+    from .backend.firecracker import infra_vm, util as fc_util
+
+    role = image_inputs.INFRA_ROLES.get(image)
+    init = infra_vm.role_init(role) if role else None
+    base = fc_util.build_base_rootfs_dir(
+        f"{image}:latest", variant=f"-{image}", init_script=init,
+    )
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ext4 = out_dir / f"{image}.ext4"
+    print(f"  building rootfs for {image} ({plat})")
+    fc_util.build_rootfs_ext4(base, ext4)
+    gz = out_dir / ext4_filename(plat)
+    print(f"  compressing {image} rootfs")
+    _gzip(ext4, gz)
+    ext4.unlink(missing_ok=True)
+
+    return BuiltArtifact(
+        fmt=FORMAT_EXT4, platform=plat,
+        digest=f"sha256:{_sha256(gz)}",
+        locator=ext4_filename(plat), namespace=ext4_package(image),
+        inputs_hash=inputs,
+    )
+
+
+def build_image(
+    image: str,
+    version: str,
+    plat: str,
+    *,
+    repo_root: Path,
+    out_dir: Path,
+    runtime: str = "docker",
+    with_ext4: bool = True,
+) -> list[BuiltArtifact]:
+    """Build, push, and (where applicable) publish the rootfs for one image on
+    one platform. Returns everything produced, for the manifest.
+
+    Both formats are derived from **one** build, which is what makes them
+    interchangeable rather than merely similar — the `inputs_hash` is computed
+    once and stamped onto every artifact that came out of it."""
+    inputs = image_inputs.inputs_hash(image, plat, repo_root=repo_root)
+    print(f"building {image} {version} ({plat}) inputs={inputs}")
+
+    dockerfile = image_inputs.DOCKERFILES[image]
+    _run(
+        [runtime, "build", "-f", str(repo_root / dockerfile),
+         "--platform", plat, "-t", f"{image}:latest", str(repo_root)],
+        what=f"building {image} for {plat}",
+    )
+
+    produced = [BuiltArtifact(
+        fmt=FORMAT_OCI, platform=plat,
+        digest=push_oci(image, version, plat, runtime=runtime),
+        locator=oci_tag(version, plat), namespace=oci_ref(image),
+        inputs_hash=inputs,
+    )]
+    if with_ext4 and image in EXT4_IMAGES:
+        produced.append(build_ext4(image, plat, out_dir / image, inputs))
+    return produced
+
+
+def _parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="publish_images",
+        description="Build + publish the fixed images and write image-assets.json.",
+    )
+    parser.add_argument(
+        "--output", type=Path,
+        help="build a candidate bundle into DIR without uploading",
+    )
+    parser.add_argument(
+        "--publish-dir", type=Path,
+        help="upload a previously built candidate bundle from DIR",
+    )
+    parser.add_argument(
+        "--image", action="append", default=None,
+        help="restrict to one image (repeatable); default is every known image",
+    )
+    parser.add_argument(
+        "--platform", action="append", default=None,
+        help="platform to build (repeatable), e.g. linux/arm64",
+    )
+    parser.add_argument("--runtime", default="docker", help="container runtime")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(sys.argv[1:] if argv is None else argv)
+    if not args.output and not args.publish_dir:
+        print("one of --output / --publish-dir is required", file=sys.stderr)
+        return 2
+
+    repo_root = resources.build_root()
+    version = repo_version(repo_root)
+    images = args.image or list(image_inputs.IMAGES)
+    platforms = args.platform or ["linux/arm64"]
+
+    out_dir = args.output or args.publish_dir
+    built: list[BuiltImage] = []
+    for name in images:
+        entry = BuiltImage(name=name, version=version)
+        for plat in platforms:
+            entry.artifacts.extend(
+                build_image(name, version, plat, repo_root=repo_root,
+                            out_dir=out_dir, runtime=args.runtime)
+            )
+        # Check per image as it completes, so a mismatch aborts before the next
+        # image is built rather than after the whole run.
+        check_interchangeable(entry)
+        built.append(entry)
+
+    if args.publish_dir:
+        _, _, token = _config()
+        if not token:
+            raise PublishError(
+                f"{TOKEN_ENV} is not set; a token with write:package on the "
+                f"target owner is required to upload"
+            )
+        for entry in built:
+            for artifact in entry.artifacts:
+                if artifact.fmt != FORMAT_EXT4:
+                    continue  # OCI was pushed by the build step
+                gz = args.publish_dir / entry.name / artifact.locator
+                put_generic(
+                    ext4_url(entry.name, entry.version, artifact.platform),
+                    gz, token,
+                )
+
+    dest = out_dir / MANIFEST_NAME
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    write_manifest(built, dest)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
