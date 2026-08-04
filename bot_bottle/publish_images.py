@@ -1,32 +1,21 @@
 """Build the fixed images off-host and publish them (PRD: OCI image publishing).
 
-The off-host half. This *does* use a container build tool, but never on a launch
-host — same split `firecracker.publish_infra` already draws. A launch host only
-resolves, downloads and verifies.
+Runs off-host — it needs a container build tool, which launch hosts do not have.
+Same split `firecracker.publish_infra` already draws.
 
-Per image, per platform:
+Per image, per platform: build, push OCI and record the registry digest, then
+export the rootfs to a gzipped ext4 and PUT it as a generic package. Finally
+write `published-artifacts.json`.
 
-    build -> push OCI, record the registry digest
-          -> (roles that boot as a VM) export rootfs, mke2fs, gzip,
-             PUT as a generic package, record the file digest
-
-then write `published-artifacts.json` mapping each image to its version, its
-`inputs_hash`, and a digest per format and platform.
-
-**The interchangeability invariant is enforced here, not in the manifest.** The
-schema has one `inputs_hash` per image, so it *cannot express* two artifacts
-built from different commits — which means nothing in the manifest can catch it
-either. This module is the only place that sees both the build inputs and the
-resulting artifacts, so it is where "every artifact of an image was built from
-the same inputs" has to be checked. Publishing aborts rather than emit a version
-whose formats disagree, because the whole premise of the format fallback is that
-either artifact is an acceptable substitute.
+Interchangeability is enforced here rather than in the manifest, which records
+one `inputs_hash` per image and so cannot express disagreement. This is the only
+place that sees both the inputs and the artifacts they produced.
 
   python3 -m bot_bottle.publish_images --output DIR       # build a candidate
-  python3 -m bot_bottle.publish_images --publish-dir DIR  # upload it
+  python3 -m bot_bottle.publish_images --publish-dir DIR  # build and upload
 
-Auth: a token with `write:package` on the target owner, from
-`BOT_BOTTLE_INFRA_ARTIFACT_TOKEN`. Never passed on a command line.
+Auth: a `write:package` token from `BOT_BOTTLE_INFRA_ARTIFACT_TOKEN`, never on a
+command line.
 """
 
 from __future__ import annotations
@@ -96,12 +85,10 @@ def _config() -> tuple[str, str, str]:
 
 
 def repo_version(repo_root: Path | None = None) -> str:
-    """The release version every image is published under.
+    """The release version every image is published under, from
+    `pyproject.toml`.
 
-    One number describes a coherent set, so a host resolving several images at
-    one version gets images that were built together. Read from
-    `pyproject.toml` rather than a separate file so it cannot drift from the
-    package it ships."""
+    One number per release, so images resolved together were built together."""
     if repo_root is None:
         repo_root = resources.build_root()
     text = (repo_root / "pyproject.toml").read_text(encoding="utf-8")
@@ -222,13 +209,11 @@ def ext4_url(image: str, version: str, plat: str) -> str:
 
 
 def check_interchangeable(built: BuiltImage) -> None:
-    """Every artifact of an image must come from one `inputs_hash`.
+    """Every artifact of an image must come from one `inputs_hash`, or the
+    publish aborts.
 
-    This is the invariant that makes the format fallback safe. A consumer picks
-    ext4 or OCI by preference and availability, so the two must be substitutes;
-    if they were built from different commits, which code a host ends up running
-    would depend on which format happened to be retained. The manifest cannot
-    catch this — it records one hash per image — so it is caught here."""
+    Consumers pick a format by preference, so the formats must be substitutes;
+    built from different commits they would not be."""
     hashes = {a.inputs_hash for a in built.artifacts}
     if len(hashes) > 1:
         detail = "\n".join(
@@ -263,17 +248,13 @@ def artifacts_manifest_entry(built: BuiltImage) -> dict[str, object]:
 
 
 def merge_artifacts_manifests(parts: list[Path], dest: Path) -> None:
-    """Union per-platform manifests from several build hosts into one.
+    """Union per-platform manifest parts into one, merging per image, format
+    and platform.
 
-    Each architecture is built on a host that can build it natively, so each
-    emits a manifest covering only its own platform. They must be combined
-    without either clobbering the other: entries merge per image, per format,
-    per platform.
-
-    A conflict — two parts publishing the same image/format/platform with
-    different digests — aborts. It means two hosts built the same thing and
-    disagreed, so picking either would be arbitrary, and the manifest is
-    supposed to be the one place a host can trust."""
+    For the split-runner arrangement, where each host emits a manifest covering
+    only the architecture it built. Two parts claiming the same
+    image/format/platform with different digests abort rather than one
+    arbitrarily winning."""
     merged: dict[str, dict[str, Any]] = {}
     for part in parts:
         data = json.loads(part.read_text(encoding="utf-8"))
@@ -325,15 +306,10 @@ def write_artifacts_manifest(images: list[BuiltImage], dest: Path) -> None:
 def build_ext4(image: str, plat: str, out_dir: Path, inputs: str) -> BuiltArtifact:
     """Export `image`'s filesystem into a bootable, gzipped ext4.
 
-    Reuses the firecracker rootfs machinery rather than reimplementing it:
-    `build_base_rootfs_dir` exports the image and injects the guest boot bits,
-    and `build_rootfs_ext4` populates a filesystem with `mke2fs -d` (rootless,
-    no mount). The infra pair boots a role-specific PID 1; agent images take the
-    default agent init, which is what `init_script=None` selects.
-
-    Publishing this is what removes the most expensive per-host operation in the
-    system — a local image build followed by a rootfs export — for every host
-    that would otherwise do it itself."""
+    Delegates to the firecracker rootfs machinery: `build_base_rootfs_dir`
+    exports and injects the guest boot bits, `build_rootfs_ext4` populates the
+    filesystem with `mke2fs -d`. The infra pair boots a role-specific PID 1;
+    agent images take the default init (`init_script=None`)."""
     from .backend.firecracker import infra_vm, util as fc_util
 
     role = image_inputs.INFRA_ROLES.get(image)
@@ -369,12 +345,11 @@ def build_image(
     runtime: str = "docker",
     with_ext4: bool = True,
 ) -> list[BuiltArtifact]:
-    """Build, push, and (where applicable) publish the rootfs for one image on
-    one platform. Returns everything produced, for the manifest.
+    """Build, push, and package one image on one platform, returning everything
+    produced.
 
-    Both formats are derived from **one** build, which is what makes them
-    interchangeable rather than merely similar — the `inputs_hash` is computed
-    once and stamped onto every artifact that came out of it."""
+    Both formats come from one build, with a single `inputs_hash` stamped onto
+    each — which is what makes them interchangeable."""
     inputs = image_inputs.inputs_hash(image, repo_root=repo_root)
     print(f"building {image} {version} ({plat}) inputs={inputs}")
 
@@ -452,11 +427,9 @@ def package_from_manifest(
 ) -> list[BuiltImage]:
     """Package rootfs artifacts for images already published to the registry.
 
-    Pulls each by its **pinned digest** — not its tag — so what gets packaged is
-    exactly what was published, and tags the result locally so the shared rootfs
-    path can export it. This is how one host packages another architecture's
-    rootfs: `docker create` + `docker export` never start the container, so no
-    foreign-arch binary runs."""
+    Pulls each by pinned digest, not tag, so it packages exactly what was
+    published. Sound for another architecture: export never starts the
+    container, so no foreign-arch binary runs."""
     data = json.loads(manifest.read_text(encoding="utf-8"))
     built: list[BuiltImage] = []
     for image, entry in sorted(data.items()):

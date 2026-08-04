@@ -1,18 +1,13 @@
 #!/usr/bin/env python3
-"""Fail when the published-image manifest is malformed or inconsistent.
+"""Fail when the published-artifacts manifest is malformed or inconsistent.
 
-The counterpart to `check_image_inputs.py`: that one enforces that everything
-going *in* to an image is pinned; this one enforces that what comes *out* is
-described correctly. Both run in the lint job.
+The counterpart to `check_image_inputs.py`: that enforces what goes *in* to an
+image is pinned, this enforces that what came *out* is described correctly.
 
 The manifest is committed, so a bad edit — a truncated digest, a stray `latest`,
-a digest copy-pasted between platforms — would otherwise only surface on a
-launch host, at the moment it is trying to verify an image it is about to run.
-Catching it here keeps that failure in CI.
-
-Absence is not a failure: the manifest only exists once images have been
-published, and a checkout that has never published one is legitimately without
-it.
+a digest copied between platforms — would otherwise surface on a launch host
+mid-verification. Absence is not a failure; it only exists once something has
+been published.
 """
 
 from __future__ import annotations

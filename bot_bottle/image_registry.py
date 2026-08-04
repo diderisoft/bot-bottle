@@ -1,20 +1,14 @@
 """Resolve and verify published images against the registry.
 
-The manifest (`published_artifacts`) says what a checkout expects; this fetches it and
-proves the registry agrees.
+`published_artifacts` says what a checkout expects; this fetches it and proves
+the registry agrees.
 
-Pinning by digest already guarantees the *bytes* — a pull of
-``name:tag@sha256:…`` resolves by digest and a runtime that returns anything
-else is broken. What pinning does **not** tell you is that the tag still points
-where it did, because the tag is not consulted during that pull at all. A
-re-pointed tag is either an accidental overwrite or a tamper signal, and either
-way it should surface rather than pass silently.
+Resolution is two steps. Ask the registry what the tag resolves to now and
+compare against the pinned digest — a digest pull ignores the tag, so this is
+the only way a re-pointed tag surfaces. Then pull by digest. Detection, then
+integrity.
 
-So resolution here is deliberately two steps: ask the registry what the tag
-resolves to *now*, compare that against the pinned digest, and only then pull by
-digest. The first step buys detection; the second buys integrity. Both fail
-closed — never falling back to a local build, because silently building what you
-failed to verify is how an unverified image gets run.
+Both fail closed and never fall back to a local build.
 """
 
 from __future__ import annotations
@@ -129,12 +123,11 @@ def resolve_tag_digest(ref: str, tag: str, *, scheme: str = "https") -> str:
 
 
 def verify_tag(artifact: Artifact, *, scheme: str = "https") -> None:
-    """Confirm the artifact's tag still resolves to its pinned digest.
+    """Confirm the artifact's tag still resolves to its pinned digest, raising
+    `DigestMismatch` if it does not.
 
-    Raises `DigestMismatch` when it does not. This is the check that pinning
-    alone cannot perform, and the reason it is worth a round trip: a tag that
-    has moved means someone overwrote a published version, and continuing would
-    hide that."""
+    A moved tag means a published version was overwritten; pinning alone would
+    hide it."""
     if artifact.format != FORMAT_OCI:
         raise RegistryError(
             f"verify_tag is for {FORMAT_OCI} artifacts, got {artifact.format!r}"
@@ -158,11 +151,10 @@ def pinned_reference(artifact: Artifact) -> str:
 def resolve(
     artifact: Artifact, *, verify: bool = True, scheme: str = "https",
 ) -> ResolvedImage:
-    """Verify (unless explicitly skipped) and return the reference to pull.
+    """Verify (unless skipped) and return the reference to pull.
 
-    `verify=False` exists for offline and air-gapped use, where the tag cannot
-    be resolved at all. It gives up *detection* while keeping *integrity* — the
-    pull is still digest-pinned — so it degrades honestly rather than silently."""
+    `verify=False` is for offline use, where the tag cannot be resolved: it
+    gives up detection but the pull stays digest-pinned."""
     if verify:
         verify_tag(artifact, scheme=scheme)
     return ResolvedImage(artifact=artifact, pinned_ref=pinned_reference(artifact))
@@ -190,11 +182,8 @@ def pull(resolved: ResolvedImage, *, runtime: str = "docker") -> None:
 def local_build_requested() -> bool:
     """True when the operator opted into building instead of pulling.
 
-    Building stays a first-class, supported path — it is the answer for a
-    current or custom agent harness, since published agent images are
-    convenience artifacts that may lag upstream — not merely a dev escape
-    hatch. Same environment variable the firecracker artifact path already
-    honours, so one opt-in covers both."""
+    A supported path, not a dev-only hatch: it is the answer for a current or
+    custom agent harness. Same env var the firecracker artifact path honours."""
     return os.environ.get("BOT_BOTTLE_INFRA_BUILD", "").strip().lower() == "local"
 
 

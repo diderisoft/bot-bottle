@@ -1,30 +1,12 @@
-"""`inputs_hash` — what a checkout expects, computable before anything is built.
+"""`inputs_hash` — a content hash of everything baked into a published image.
 
-The version tag on a published image is legible but not load-bearing; the digest
-is load-bearing but only exists *after* a build. Neither answers the question a
-launch host actually has: **does the published artifact match the code I am
-running?** That needs a hash computable from the checkout alone, and it is what
-ties an image's formats together — two artifacts are interchangeable exactly
-when they were built from the same inputs.
+Computable from a checkout before anything is built, so a host can ask whether a
+published artifact came from its source, and so an image's formats can be shown
+interchangeable (same inputs in, either artifact out).
 
-Generalises `firecracker.infra_artifact.infra_artifact_version`, which computes
-the same idea for the two firecracker infra roles, extending it to every
-published image — agent images are published too, and firecracker boots them as
-a rootfs just like the infra VMs.
-
-**Deliberately architecture-independent.** Every base image in
-`image-build-args.json` is pinned to a multi-arch *index* digest, so one set of
-inputs — the same Dockerfile, the same pinned bases, the same locks — describes
-both architectures; `--platform` selects the per-arch manifest at build time.
-The hash therefore answers "does the published artifact come from my source?",
-which has one answer per checkout rather than one per machine.
-
-Architecture is disambiguated **structurally** instead, by the manifest's
-platform keys and by the per-arch tags and filenames they carry. That is what
-closes the hole in the older firecracker version hash, where architecture
-appeared *nowhere* — not in the hash and not in the artifact path — so two
-arches on one checkout resolved the same URL while needing different bytes, and
-a host could pass checksum verification on a rootfs it could not boot.
+Architecture-independent: the pinned bases are multi-arch index digests, so one
+set of inputs describes both arches and `--platform` selects at build time.
+Architecture is carried by the manifest's platform keys instead.
 """
 
 from __future__ import annotations
@@ -105,11 +87,9 @@ class UnknownImageError(KeyError):
 def _hash_package(h: "hashlib._Hash", repo_root: Path) -> None:
     """Fold every regular file under `bot_bottle/` into `h`.
 
-    Hash *all* files, not just `*.py`: the package is baked in wholesale, and
-    non-Python inputs (entrypoint shell scripts, `.env` defaults) are baked in
-    too — a change to one must bump the hash or a host could run an image whose
-    code differs from its checkout. `__pycache__`/`.pyc` are the only
-    exclusions, being build artifacts that are never copied."""
+    All files, not just `*.py` — the package is baked in wholesale, shell
+    scripts and data included. `__pycache__`/`.pyc` are excluded as build
+    artifacts that are never copied."""
     pkg = repo_root / "bot_bottle"
     for path in sorted(pkg.rglob("*")):
         if not path.is_file():
@@ -124,10 +104,8 @@ def _hash_package(h: "hashlib._Hash", repo_root: Path) -> None:
 def inputs_hash(image: str, *, repo_root: Path | None = None) -> str:
     """The 16-hex content hash of everything baked into `image`.
 
-    Deterministic across the publish host and the launch host when both run the
-    same checkout, so the hash a host computes is exactly the hash publish
-    recorded — and identical on every architecture, since the inputs describe
-    one build that `--platform` specialises."""
+    Deterministic across publish and launch hosts on the same checkout, and
+    identical on every architecture."""
     try:
         inputs = BUILD_INPUTS[image]
     except KeyError:
