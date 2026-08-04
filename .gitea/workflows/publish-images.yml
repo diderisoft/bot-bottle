@@ -29,8 +29,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Enable cross-architecture emulation
-        run: docker run --rm --privileged tonistiigi/binfmt:latest --install arm64
+      # The installer reports success even when the registration does not take
+      # effect — it registers inside its own mount namespace, so with
+      # binfmt_misc unmounted on the host nothing propagates and every arm64
+      # build later dies with "exec format error". Prove emulation works before
+      # spending a build on it.
+      - name: Enable and verify cross-architecture emulation
+        run: |
+          docker run --rm --privileged tonistiigi/binfmt:latest --install arm64
+          docker run --rm --platform linux/arm64 alpine:3 uname -m | grep -q aarch64 || {
+            echo "arm64 emulation is not active on this runner."
+            echo "binfmt_misc is likely unmounted; register it declaratively:"
+            echo "  boot.binfmt.emulatedSystems = [ \"aarch64-linux\" ];"
+            exit 1
+          }
 
       # Two separate credentials for one registry: the publisher sends the token
       # as an Authorization header on the generic-package PUTs, while
