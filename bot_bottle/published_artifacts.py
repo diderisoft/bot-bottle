@@ -129,12 +129,6 @@ def artifacts_manifest_path(repo_root: Path | None = None) -> Path:
     return repo_root / ARTIFACTS_MANIFEST_NAME
 
 
-def _require(cond: bool, message: str, problems: list[str]) -> bool:
-    if not cond:
-        problems.append(message)
-    return cond
-
-
 def parse_artifacts_manifest(
     data: object, *, problems: list[str] | None = None,
 ) -> dict[str, ImageEntry]:

@@ -43,6 +43,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from . import image_inputs, resources
 from .published_artifacts import FORMAT_EXT4, FORMAT_OCI, ARTIFACTS_MANIFEST_NAME
@@ -273,7 +274,7 @@ def merge_artifacts_manifests(parts: list[Path], dest: Path) -> None:
     different digests — aborts. It means two hosts built the same thing and
     disagreed, so picking either would be arbitrary, and the manifest is
     supposed to be the one place a host can trust."""
-    merged: dict[str, dict] = {}
+    merged: dict[str, dict[str, Any]] = {}
     for part in parts:
         data = json.loads(part.read_text(encoding="utf-8"))
         for image, entry in data.items():

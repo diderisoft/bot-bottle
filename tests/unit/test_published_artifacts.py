@@ -18,6 +18,7 @@ import tempfile
 import unittest
 import urllib.error
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 from bot_bottle import published_artifacts as ia
@@ -30,7 +31,7 @@ _B = "sha256:" + "b" * 64
 _C = "sha256:" + "c" * 64
 
 
-def _entry(**over: object) -> dict:
+def _entry(**over: object) -> dict[str, Any]:
     data = {
         "version": "0.14.2",
         "inputs_hash": "9f2c1e4b7a83d10c",
@@ -260,7 +261,7 @@ class MergeManifests(unittest.TestCase):
     emits a manifest covering only its own platform. Combining them must not let
     either clobber the other."""
 
-    def _part(self, plat: str, sfx: str, oci: str, ext4: str) -> dict:
+    def _part(self, plat: str, sfx: str, oci: str, ext4: str) -> dict[str, Any]:
         return {"bot-bottle-gateway": {
             "version": "0.14.2", "inputs_hash": "9f2c1e4b7a83d10c",
             "artifacts": {
@@ -271,7 +272,7 @@ class MergeManifests(unittest.TestCase):
                                               "digest": ext4}}},
             }}}
 
-    def _merge(self, *parts: dict) -> dict:
+    def _merge(self, *parts: dict[str, Any]) -> dict[str, Any]:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             paths = []
