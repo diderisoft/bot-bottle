@@ -19,7 +19,7 @@ from . import resources
 # Bumped when the *meaning* of the hash changes (inputs added or removed, or the
 # framing bytes reordered), forcing a republish rather than letting an old
 # artifact answer to a new hash.
-_SCHEMA = "image-inputs-v2"
+_SCHEMA = "image-inputs-v1"
 
 # Per-image build inputs, relative to the build root. The `bot_bottle` package
 # is added separately for images that bake it (see `_BAKES_PACKAGE`).
