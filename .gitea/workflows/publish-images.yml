@@ -49,7 +49,7 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: manifest-arm64
-          path: candidate-arm64/image-assets.json
+          path: candidate-arm64/published-artifacts.json
 
   build-amd64:
     # delphi / teikhos — x86_64, and the host with KVM and e2fsprogs. Builds
@@ -84,7 +84,7 @@ jobs:
           python3 -m bot_bottle.publish_images \
             --output candidate-arm64 \
             --platform linux/arm64 \
-            --ext4-from-manifest part-arm64/image-assets.json
+            --ext4-from-manifest part-arm64/published-artifacts.json
 
       - name: Upload the candidate bundles
         uses: actions/upload-artifact@v3
@@ -120,15 +120,15 @@ jobs:
           python3 -m bot_bottle.publish_images \
             --publish-dir candidate/candidate-arm64
           python3 -m bot_bottle.publish_images \
-            --merge candidate/candidate-amd64/image-assets.json \
-            --merge candidate/candidate-arm64/image-assets.json \
-            --merge-into image-assets.json
+            --merge candidate/candidate-amd64/published-artifacts.json \
+            --merge candidate/candidate-arm64/published-artifacts.json \
+            --merge-into published-artifacts.json
 
       - name: Verify the merged manifest
-        run: python3 scripts/check_image_assets.py
+        run: python3 scripts/check_published_artifacts.py
 
       - name: Upload the merged manifest
         uses: actions/upload-artifact@v3
         with:
-          name: image-assets
-          path: image-assets.json
+          name: published-artifacts
+          path: published-artifacts.json

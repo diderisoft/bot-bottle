@@ -20,7 +20,7 @@ import urllib.error
 from pathlib import Path
 from unittest import mock
 
-from bot_bottle import image_assets as ia
+from bot_bottle import published_artifacts as ia
 from bot_bottle import image_inputs as ii
 from bot_bottle import image_registry as ir
 from bot_bottle import publish_images as pi
@@ -52,7 +52,7 @@ def _entry(**over: object) -> dict:
 
 class ParseManifest(unittest.TestCase):
     def test_parses_both_formats(self) -> None:
-        entries = ia.parse_manifest(_entry())
+        entries = ia.parse_artifacts_manifest(_entry())
         entry = entries["bot-bottle-gateway"]
         self.assertEqual(entry.version, "0.14.2")
         self.assertEqual({a.format for a in entry.artifacts}, {"oci", "ext4"})
@@ -61,35 +61,35 @@ class ParseManifest(unittest.TestCase):
         bad = _entry()
         plats = bad["bot-bottle-gateway"]["artifacts"]["oci"]["platforms"]
         plats["linux/arm64"]["digest"] = "sha256:abc"
-        with self.assertRaises(ia.ManifestError):
-            ia.parse_manifest(bad)
+        with self.assertRaises(ia.ArtifactsManifestError):
+            ia.parse_artifacts_manifest(bad)
 
     def test_rejects_latest_version(self) -> None:
-        with self.assertRaises(ia.ManifestError):
-            ia.parse_manifest(_entry(version="latest"))
+        with self.assertRaises(ia.ArtifactsManifestError):
+            ia.parse_artifacts_manifest(_entry(version="latest"))
 
     def test_rejects_bad_inputs_hash(self) -> None:
-        with self.assertRaises(ia.ManifestError):
-            ia.parse_manifest(_entry(inputs_hash="nope"))
+        with self.assertRaises(ia.ArtifactsManifestError):
+            ia.parse_artifacts_manifest(_entry(inputs_hash="nope"))
 
     def test_rejects_unsupported_platform(self) -> None:
         bad = _entry()
         plats = bad["bot-bottle-gateway"]["artifacts"]["oci"]["platforms"]
         plats["linux/riscv64"] = plats.pop("linux/arm64")
-        with self.assertRaises(ia.ManifestError):
-            ia.parse_manifest(bad)
+        with self.assertRaises(ia.ArtifactsManifestError):
+            ia.parse_artifacts_manifest(bad)
 
     def test_collects_every_problem_when_asked(self) -> None:
         """The CI checker wants the full list, not just the first fault."""
         bad = _entry(version="latest", inputs_hash="nope")
         problems: list[str] = []
-        ia.parse_manifest(bad, problems=problems)
+        ia.parse_artifacts_manifest(bad, problems=problems)
         self.assertGreaterEqual(len(problems), 2)
 
 
 class Resolution(unittest.TestCase):
     def setUp(self) -> None:
-        self.entries = ia.parse_manifest(_entry())
+        self.entries = ia.parse_artifacts_manifest(_entry())
 
     def test_preference_order_is_honoured(self) -> None:
         got = ia.resolve(self.entries, "bot-bottle-gateway",
@@ -101,18 +101,18 @@ class Resolution(unittest.TestCase):
         broken — this fallback is what makes narrow ext4 retention safe."""
         only_oci = _entry()
         del only_oci["bot-bottle-gateway"]["artifacts"]["ext4"]
-        entries = ia.parse_manifest(only_oci)
+        entries = ia.parse_artifacts_manifest(only_oci)
         got = ia.resolve(entries, "bot-bottle-gateway",
                          prefer=("ext4", "oci"), plat="linux/arm64")
         self.assertEqual(got.format, "oci")
 
     def test_missing_platform_is_an_error(self) -> None:
-        with self.assertRaises(ia.ManifestError):
+        with self.assertRaises(ia.ArtifactsManifestError):
             ia.resolve(self.entries, "bot-bottle-gateway",
                        prefer=("oci",), plat="linux/amd64")
 
     def test_unknown_image_names_what_is_available(self) -> None:
-        with self.assertRaises(ia.ManifestError) as ctx:
+        with self.assertRaises(ia.ArtifactsManifestError) as ctx:
             ia.resolve(self.entries, "nope", prefer=("oci",), plat="linux/arm64")
         self.assertIn("bot-bottle-gateway", str(ctx.exception))
 
@@ -124,11 +124,11 @@ class Consistency(unittest.TestCase):
         artifact."""
         dupe = _entry()
         dupe["bot-bottle-gateway"]["artifacts"]["ext4"]["platforms"]["linux/arm64"]["digest"] = _A
-        entries = ia.parse_manifest(dupe)
+        entries = ia.parse_artifacts_manifest(dupe)
         self.assertTrue(ia.check_consistency(entries))
 
     def test_clean_manifest_has_no_problems(self) -> None:
-        self.assertEqual(ia.check_consistency(ia.parse_manifest(_entry())), [])
+        self.assertEqual(ia.check_consistency(ia.parse_artifacts_manifest(_entry())), [])
 
 
 class InputsHash(unittest.TestCase):
@@ -141,7 +141,7 @@ class InputsHash(unittest.TestCase):
         manifest's platform keys and the per-arch tags and filenames they carry
         — which is what closes the hole in the older firecracker version hash,
         where architecture appeared in neither the hash nor the artifact path."""
-        entries = ia.parse_manifest(_entry())
+        entries = ia.parse_artifacts_manifest(_entry())
         artifact = ia.resolve(entries, "bot-bottle-gateway",
                               prefer=("oci",), plat="linux/arm64")
         self.assertIn("arm64", artifact.locator)
@@ -181,7 +181,7 @@ class _Resp:
 class TagVerification(unittest.TestCase):
     def setUp(self) -> None:
         self.artifact = ia.resolve(
-            ia.parse_manifest(_entry()), "bot-bottle-gateway",
+            ia.parse_artifacts_manifest(_entry()), "bot-bottle-gateway",
             prefer=("oci",), plat="linux/arm64",
         )
 
@@ -251,7 +251,7 @@ class Interchangeability(unittest.TestCase):
     def test_manifest_entry_round_trips_through_the_parser(self) -> None:
         """What the publisher writes must be what the consumer can read."""
         built = self._built("9f2c1e4b7a83d10c", "9f2c1e4b7a83d10c")
-        entries = ia.parse_manifest({built.name: pi.manifest_entry(built)})
+        entries = ia.parse_artifacts_manifest({built.name: pi.artifacts_manifest_entry(built)})
         self.assertEqual(len(entries[built.name].artifacts), 2)
 
 
@@ -280,7 +280,7 @@ class MergeManifests(unittest.TestCase):
                 p.write_text(json.dumps(part))
                 paths.append(p)
             out = root / "merged.json"
-            pi.merge_manifests(paths, out)
+            pi.merge_artifacts_manifests(paths, out)
             return json.loads(out.read_text())
 
     def test_unions_platforms_across_parts(self) -> None:
@@ -299,7 +299,7 @@ class MergeManifests(unittest.TestCase):
             self._part("linux/arm64", "arm64", _A, _B),
             self._part("linux/amd64", "amd64", _C, "sha256:" + "d" * 64),
         )
-        entries = ia.parse_manifest(merged)
+        entries = ia.parse_artifacts_manifest(merged)
         self.assertEqual(ia.check_consistency(entries), [])
         self.assertEqual(len(entries["bot-bottle-gateway"].artifacts), 4)
 
@@ -323,15 +323,15 @@ class MergeManifests(unittest.TestCase):
 class ManifestFile(unittest.TestCase):
     def test_missing_manifest_is_a_clean_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaises(ia.ManifestError) as ctx:
-                ia.load_manifest(Path(tmp))
+            with self.assertRaises(ia.ArtifactsManifestError) as ctx:
+                ia.load_artifacts_manifest(Path(tmp))
             self.assertIn("publish images first", str(ctx.exception))
 
     def test_round_trip_from_disk(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / ia.MANIFEST_NAME).write_text(json.dumps(_entry()))
-            entries = ia.load_manifest(root)
+            (root / ia.ARTIFACTS_MANIFEST_NAME).write_text(json.dumps(_entry()))
+            entries = ia.load_artifacts_manifest(root)
             self.assertIn("bot-bottle-gateway", entries)
 
 

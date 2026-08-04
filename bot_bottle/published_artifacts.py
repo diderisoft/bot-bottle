@@ -1,9 +1,17 @@
-"""The published-image asset manifest (`image-assets.json`).
+"""The published-artifacts manifest (`published-artifacts.json`).
 
 `image-build-args.json` pins what goes *in* to an image (base images, by tag and
 digest). This pins what comes *out*: for every image we publish, a legible
 version, a content hash of its build inputs, and a digest per distribution
 format and platform.
+
+**"Manifest" is three different things in this codebase; this is the third.**
+A *bottle* manifest (`bot_bottle.manifest`) is the user-authored declaration of
+what a bottle contains. An *OCI* manifest is the registry document a digest
+addresses — the thing `image_registry` resolves a tag to. This module's
+artifacts manifest is neither: it is our own committed record of what we
+published. Everything here is spelled `ARTIFACTS_MANIFEST_*` /
+`*_artifacts_manifest` so a reader never has to infer which sense is meant.
 
 Three fields do three separate jobs, and conflating any two is the failure this
 schema exists to prevent:
@@ -38,7 +46,7 @@ from pathlib import Path
 
 from . import resources
 
-MANIFEST_NAME = "image-assets.json"
+ARTIFACTS_MANIFEST_NAME = "published-artifacts.json"
 
 # Distribution formats, in no particular order — consumers declare their own
 # preference (see `resolve`).
@@ -59,8 +67,8 @@ _MACHINE_ALIASES = {
 }
 
 
-class ManifestError(RuntimeError):
-    """`image-assets.json` is missing, malformed, or internally inconsistent.
+class ArtifactsManifestError(RuntimeError):
+    """`published-artifacts.json` is missing, malformed, or internally inconsistent.
 
     Raised rather than `die`d so callers can decide: a launch path fails
     closed, while the CI checker collects every problem before reporting."""
@@ -108,17 +116,17 @@ def current_platform() -> str:
     machine = _platform.machine().lower()
     plat = _MACHINE_ALIASES.get(machine)
     if plat is None:
-        raise ManifestError(
+        raise ArtifactsManifestError(
             f"unsupported machine {machine!r}: no published images for it "
             f"(known: {', '.join(sorted(set(_MACHINE_ALIASES.values())))})"
         )
     return plat
 
 
-def manifest_path(repo_root: Path | None = None) -> Path:
+def artifacts_manifest_path(repo_root: Path | None = None) -> Path:
     if repo_root is None:
         repo_root = resources.build_root()
-    return repo_root / MANIFEST_NAME
+    return repo_root / ARTIFACTS_MANIFEST_NAME
 
 
 def _require(cond: bool, message: str, problems: list[str]) -> bool:
@@ -127,7 +135,9 @@ def _require(cond: bool, message: str, problems: list[str]) -> bool:
     return cond
 
 
-def parse_manifest(data: object, *, problems: list[str] | None = None) -> dict[str, ImageEntry]:
+def parse_artifacts_manifest(
+    data: object, *, problems: list[str] | None = None,
+) -> dict[str, ImageEntry]:
     """Validate `data` and lift it into `ImageEntry`s keyed by image name.
 
     When `problems` is given, every fault is appended to it and parsing
@@ -140,10 +150,10 @@ def parse_manifest(data: object, *, problems: list[str] | None = None) -> dict[s
         if collect:
             found.append(message)
         else:
-            raise ManifestError(message)
+            raise ArtifactsManifestError(message)
 
     if not isinstance(data, dict):
-        fail(f"{MANIFEST_NAME}: top level must be an object")
+        fail(f"{ARTIFACTS_MANIFEST_NAME}: top level must be an object")
         return {}
 
     entries: dict[str, ImageEntry] = {}
@@ -219,22 +229,22 @@ def parse_manifest(data: object, *, problems: list[str] | None = None) -> dict[s
     return entries
 
 
-def load_manifest(repo_root: Path | None = None) -> dict[str, ImageEntry]:
-    """Read + validate the committed manifest. Raises `ManifestError` if it is
+def load_artifacts_manifest(repo_root: Path | None = None) -> dict[str, ImageEntry]:
+    """Read + validate the committed manifest. Raises `ArtifactsManifestError` if it is
     absent or malformed — a launch path must not silently proceed without it."""
-    path = manifest_path(repo_root)
+    path = artifacts_manifest_path(repo_root)
     try:
         raw = path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        raise ManifestError(
+        raise ArtifactsManifestError(
             f"{path} not found; publish images first "
             f"(python3 -m bot_bottle.publish_images)"
         ) from None
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as e:
-        raise ManifestError(f"{path}: invalid JSON ({e})") from e
-    return parse_manifest(data)
+        raise ArtifactsManifestError(f"{path}: invalid JSON ({e})") from e
+    return parse_artifacts_manifest(data)
 
 
 def resolve(
@@ -257,8 +267,8 @@ def resolve(
         plat = current_platform()
     entry = entries.get(name)
     if entry is None:
-        raise ManifestError(
-            f"no published image {name!r} in {MANIFEST_NAME} "
+        raise ArtifactsManifestError(
+            f"no published image {name!r} in {ARTIFACTS_MANIFEST_NAME} "
             f"(have: {', '.join(sorted(entries)) or '<none>'})"
         )
     for fmt in prefer:
@@ -266,14 +276,14 @@ def resolve(
         if artifact is not None:
             return artifact
     available = sorted({f"{a.format} {a.platform}" for a in entry.artifacts})
-    raise ManifestError(
+    raise ArtifactsManifestError(
         f"{name} {entry.version} has no artifact for {plat} in any of "
         f"{', '.join(prefer)}; published: {', '.join(available)}"
     )
 
 
 def check_consistency(entries: dict[str, ImageEntry]) -> list[str]:
-    """Cross-artifact invariants `parse_manifest` cannot see field by field.
+    """Cross-artifact invariants `parse_artifacts_manifest` cannot see field by field.
     Returns a list of problems, empty when clean.
 
     Note the interchangeability invariant — every artifact of an image built
@@ -308,12 +318,12 @@ __all__ = [
     "FORMAT_EXT4",
     "FORMAT_OCI",
     "ImageEntry",
-    "MANIFEST_NAME",
-    "ManifestError",
+    "ARTIFACTS_MANIFEST_NAME",
+    "ArtifactsManifestError",
     "check_consistency",
     "current_platform",
-    "load_manifest",
-    "manifest_path",
-    "parse_manifest",
+    "load_artifacts_manifest",
+    "artifacts_manifest_path",
+    "parse_artifacts_manifest",
     "resolve",
 ]

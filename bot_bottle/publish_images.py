@@ -10,7 +10,7 @@ Per image, per platform:
           -> (roles that boot as a VM) export rootfs, mke2fs, gzip,
              PUT as a generic package, record the file digest
 
-then write `image-assets.json` mapping each image to its version, its
+then write `published-artifacts.json` mapping each image to its version, its
 `inputs_hash`, and a digest per format and platform.
 
 **The interchangeability invariant is enforced here, not in the manifest.** The
@@ -45,7 +45,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import image_inputs, resources
-from .image_assets import FORMAT_EXT4, FORMAT_OCI, MANIFEST_NAME
+from .published_artifacts import FORMAT_EXT4, FORMAT_OCI, ARTIFACTS_MANIFEST_NAME
 
 _CHUNK = 1 << 20
 _HTTP_TIMEOUT_SECONDS = 60.0
@@ -122,7 +122,7 @@ def current_build_platform() -> str:
     Defaulting to the host rather than a fixed value keeps a bare invocation
     honest: whichever runner picks the job builds what it can build fastest,
     and cross-building is something you ask for explicitly."""
-    from .image_assets import current_platform
+    from .published_artifacts import current_platform
     return current_platform()
 
 
@@ -240,7 +240,7 @@ def check_interchangeable(built: BuiltImage) -> None:
         )
 
 
-def manifest_entry(built: BuiltImage) -> dict[str, object]:
+def artifacts_manifest_entry(built: BuiltImage) -> dict[str, object]:
     """One image's manifest entry, in the committed schema."""
     check_interchangeable(built)
     artifacts: dict[str, dict[str, object]] = {}
@@ -261,7 +261,7 @@ def manifest_entry(built: BuiltImage) -> dict[str, object]:
     }
 
 
-def merge_manifests(parts: list[Path], dest: Path) -> None:
+def merge_artifacts_manifests(parts: list[Path], dest: Path) -> None:
     """Union per-platform manifests from several build hosts into one.
 
     Each architecture is built on a host that can build it natively, so each
@@ -312,11 +312,11 @@ def merge_manifests(parts: list[Path], dest: Path) -> None:
     print(f"merged {len(parts)} manifest part(s) -> {dest}")
 
 
-def write_manifest(images: list[BuiltImage], dest: Path) -> None:
-    """Write `image-assets.json` for every built image, sorted for a stable
+def write_artifacts_manifest(images: list[BuiltImage], dest: Path) -> None:
+    """Write `published-artifacts.json` for every built image, sorted for a stable
     diff (this file is committed, and a churning key order would make every
     publish look like a change)."""
-    data = {img.name: manifest_entry(img) for img in sorted(images, key=lambda i: i.name)}
+    data = {img.name: artifacts_manifest_entry(img) for img in sorted(images, key=lambda i: i.name)}
     dest.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(f"wrote {dest}")
 
@@ -398,7 +398,7 @@ def build_image(
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="publish_images",
-        description="Build + publish the fixed images and write image-assets.json.",
+        description="Build + publish the fixed images and write published-artifacts.json.",
     )
     parser.add_argument(
         "--output", type=Path,
@@ -482,7 +482,7 @@ def main(argv: list[str] | None = None) -> int:
         if not args.merge_into:
             print("--merge requires --merge-into", file=sys.stderr)
             return 2
-        merge_manifests(args.merge, args.merge_into)
+        merge_artifacts_manifests(args.merge, args.merge_into)
         return 0
 
     if not args.output and not args.publish_dir:
@@ -536,9 +536,9 @@ def main(argv: list[str] | None = None) -> int:
                     gz, token,
                 )
 
-    dest = out_dir / MANIFEST_NAME
+    dest = out_dir / ARTIFACTS_MANIFEST_NAME
     dest.parent.mkdir(parents=True, exist_ok=True)
-    write_manifest(built, dest)
+    write_artifacts_manifest(built, dest)
     return 0
 
 

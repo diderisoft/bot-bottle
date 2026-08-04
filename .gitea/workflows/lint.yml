@@ -11,7 +11,7 @@ on:
       - "bot_bottle/contrib/codex/codex-package_SHA256SUMS"
       - "requirements.gateway.*"
       - "image-build-args.json"
-      - "image-assets.json"
+      - "published-artifacts.json"
       - ".pylintrc"
       - ".gitea/workflows/lint.yml"
 
@@ -24,8 +24,8 @@ jobs:
       - name: Enforce immutable image inputs
         run: python3 scripts/check_image_inputs.py
 
-      - name: Enforce published image manifest
-        run: python3 scripts/check_image_assets.py
+      - name: Enforce the published-artifacts manifest
+        run: python3 scripts/check_published_artifacts.py
 
       # No actions/setup-python: the runner image already ships Python 3.12,
       # and older act_runner engines mishandle setup-python's PATH. Install

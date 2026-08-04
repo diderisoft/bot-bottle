@@ -1,6 +1,6 @@
 """Resolve and verify published images against the registry.
 
-The manifest (`image_assets`) says what a checkout expects; this fetches it and
+The manifest (`published_artifacts`) says what a checkout expects; this fetches it and
 proves the registry agrees.
 
 Pinning by digest already guarantees the *bytes* — a pull of
@@ -25,7 +25,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
-from .image_assets import Artifact, FORMAT_OCI
+from .published_artifacts import Artifact, FORMAT_OCI
 
 REGISTRY_HTTP_TIMEOUT_SECONDS = 30.0
 

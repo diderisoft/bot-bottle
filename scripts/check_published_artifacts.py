@@ -28,25 +28,25 @@ sys.path.insert(0, str(REPO_ROOT))
 # pylint: disable=wrong-import-position
 # Deliberately after the sys.path insert: this runs as a standalone CI script
 # from a checkout, where bot_bottle is not installed.
-from bot_bottle import image_assets, image_inputs  # noqa: E402
+from bot_bottle import published_artifacts, image_inputs  # noqa: E402
 
 
 def check_manifest(root: Path | None = None) -> list[str]:
     """Every problem with the committed manifest, empty when clean."""
     if root is None:
         root = REPO_ROOT
-    path = root / image_assets.MANIFEST_NAME
+    path = root / published_artifacts.ARTIFACTS_MANIFEST_NAME
     if not path.is_file():
         return []
 
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        return [f"{image_assets.MANIFEST_NAME}: invalid JSON ({exc})"]
+        return [f"{published_artifacts.ARTIFACTS_MANIFEST_NAME}: invalid JSON ({exc})"]
 
     problems: list[str] = []
-    entries = image_assets.parse_manifest(data, problems=problems)
-    problems.extend(image_assets.check_consistency(entries))
+    entries = published_artifacts.parse_artifacts_manifest(data, problems=problems)
+    problems.extend(published_artifacts.check_consistency(entries))
 
     # An entry naming an image we do not know how to build is either a typo or
     # a leftover: nothing can republish it, so its digests can never be
@@ -65,9 +65,9 @@ def main() -> int:
     problems = check_manifest()
     if problems:
         for problem in problems:
-            print(f"image-asset policy: {problem}", file=sys.stderr)
+            print(f"published-artifacts policy: {problem}", file=sys.stderr)
         return 1
-    print("image-asset policy: published image manifest is well-formed")
+    print("published-artifacts policy: artifacts manifest is well-formed")
     return 0
 
 
