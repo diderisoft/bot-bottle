@@ -33,7 +33,6 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from . import image_inputs, resources
 from .published_artifacts import FORMAT_EXT4, FORMAT_OCI, ARTIFACTS_MANIFEST_NAME
