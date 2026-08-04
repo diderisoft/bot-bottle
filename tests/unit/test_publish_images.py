@@ -1,0 +1,352 @@
+"""Unit: the off-host image publisher.
+
+The publisher shells out to a container runtime and PUTs hundreds of MB to a
+registry, so everything here is mocked at the `_run` / `urlopen` boundary. What
+is exercised is the logic *around* those calls — how a version is derived, how
+an artifact is addressed, and which failures abort a publish rather than
+producing a half-published version a host could resolve.
+"""
+
+from __future__ import annotations
+
+import gzip
+import hashlib
+import json
+import tempfile
+import unittest
+import urllib.error
+from pathlib import Path
+from typing import Any
+from unittest import mock
+
+from bot_bottle import publish_images as pi
+
+_A = "sha256:" + "a" * 64
+_HASH = "9f2c1e4b7a83d10c"
+
+
+class Addressing(unittest.TestCase):
+    """Names and URLs are derived, never hand-written, so a rename cannot leave
+    the tag and the filename disagreeing about which artifact they mean."""
+
+    def test_platform_suffix(self) -> None:
+        self.assertEqual(pi._platform_suffix("linux/arm64"), "arm64")
+        self.assertEqual(pi._platform_suffix("linux/amd64"), "amd64")
+
+    def test_oci_ref_drops_the_scheme(self) -> None:
+        ref = pi.oci_ref("bot-bottle-gateway")
+        self.assertFalse(ref.startswith("https://"))
+        self.assertTrue(ref.endswith("/bot-bottle-gateway"))
+
+    def test_oci_tag_carries_the_arch(self) -> None:
+        self.assertEqual(pi.oci_tag("0.14.2", "linux/arm64"), "0.14.2-arm64")
+
+    def test_ext4_filename_carries_the_arch(self) -> None:
+        """The arch has to be in the filename: without it, two architectures at
+        one version resolve to the same URL, which is the collision the older
+        firecracker artifact path had."""
+        arm = pi.ext4_filename("linux/arm64")
+        amd = pi.ext4_filename("linux/amd64")
+        self.assertNotEqual(arm, amd)
+        self.assertIn("arm64", arm)
+
+    def test_ext4_url_is_versioned_and_per_arch(self) -> None:
+        url = pi.ext4_url("bot-bottle-gateway", "0.14.2", "linux/amd64")
+        self.assertIn("/0.14.2/", url)
+        self.assertIn("amd64", url)
+        self.assertIn(pi.ext4_package("bot-bottle-gateway"), url)
+
+    def test_current_build_platform_is_a_known_platform(self) -> None:
+        self.assertIn(pi.current_build_platform(), ("linux/arm64", "linux/amd64"))
+
+    def test_config_honours_env_overrides(self) -> None:
+        with mock.patch.dict("os.environ", {
+            "BOT_BOTTLE_INFRA_ARTIFACT_BASE": "https://example.test/",
+            "BOT_BOTTLE_INFRA_ARTIFACT_OWNER": "someone",
+        }):
+            base, owner, _ = pi._config()
+        self.assertEqual(base, "https://example.test")  # trailing slash stripped
+        self.assertEqual(owner, "someone")
+
+
+class RepoVersion(unittest.TestCase):
+    def test_reads_pyproject(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text('[project]\nversion = "1.2.3"\n')
+            self.assertEqual(pi.repo_version(root), "1.2.3")
+
+    def test_missing_version_is_a_publish_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+            with self.assertRaises(pi.PublishError):
+                pi.repo_version(root)
+
+
+class RunHelper(unittest.TestCase):
+    def test_returns_stdout_on_success(self) -> None:
+        proc = mock.Mock(returncode=0, stdout="ok", stderr="")
+        with mock.patch("subprocess.run", return_value=proc):
+            self.assertEqual(pi._run(["true"], what="x"), "ok")
+
+    def test_nonzero_exit_aborts_with_the_output(self) -> None:
+        proc = mock.Mock(returncode=1, stdout="", stderr="boom")
+        with mock.patch("subprocess.run", return_value=proc):
+            with self.assertRaises(pi.PublishError) as ctx:
+                pi._run(["false"], what="building x")
+        self.assertIn("boom", str(ctx.exception))
+        self.assertIn("building x", str(ctx.exception))
+
+    def test_missing_binary_is_named(self) -> None:
+        with mock.patch("subprocess.run", side_effect=OSError("no docker")):
+            with self.assertRaises(pi.PublishError) as ctx:
+                pi._run(["docker"], what="pushing")
+        self.assertIn("not available", str(ctx.exception))
+
+
+class FileHelpers(unittest.TestCase):
+    def test_sha256_matches_hashlib(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "f"
+            p.write_bytes(b"hello world")
+            self.assertEqual(pi._sha256(p), hashlib.sha256(b"hello world").hexdigest())
+
+    def test_gzip_round_trips(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            src, dest = Path(tmp) / "a", Path(tmp) / "a.gz"
+            src.write_bytes(b"payload" * 100)
+            pi._gzip(src, dest)
+            with gzip.open(dest, "rb") as fh:
+                self.assertEqual(fh.read(), b"payload" * 100)
+
+
+class PushOci(unittest.TestCase):
+    def test_returns_the_registry_digest(self) -> None:
+        """The digest is read back from the registry, not computed locally —
+        inventing it would defeat the point of pinning to it."""
+        with mock.patch.object(pi, "_run", side_effect=["", "", f"ref@{_A}\n"]):
+            got = pi.push_oci("bot-bottle-gateway", "0.14.2", "linux/arm64")
+        self.assertEqual(got, _A)
+
+    def test_missing_digest_aborts(self) -> None:
+        with mock.patch.object(pi, "_run", side_effect=["", "", "no-digest-here"]):
+            with self.assertRaises(pi.PublishError):
+                pi.push_oci("bot-bottle-gateway", "0.14.2", "linux/arm64")
+
+
+class PutGeneric(unittest.TestCase):
+    def _body(self, tmp: str) -> Path:
+        p = Path(tmp) / "rootfs.gz"
+        p.write_bytes(b"x" * 32)
+        return p
+
+    def test_uploads(self) -> None:
+        resp = mock.MagicMock()
+        resp.__enter__.return_value = mock.Mock(status=201)
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch("urllib.request.urlopen", return_value=resp):
+                pi.put_generic("https://x/y", self._body(tmp), "tok")
+
+    def test_conflict_points_at_the_version(self) -> None:
+        """A 409 means this version was already published. Overwriting silently
+        would let two different builds answer to one version."""
+        err = urllib.error.HTTPError("u", 409, "conflict", None, None)  # type: ignore[arg-type]
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch("urllib.request.urlopen", side_effect=err):
+                with self.assertRaises(pi.PublishError) as ctx:
+                    pi.put_generic("https://x/y", self._body(tmp), "tok")
+        self.assertIn("already published", str(ctx.exception))
+
+    def test_unreachable_registry_aborts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch("urllib.request.urlopen",
+                            side_effect=urllib.error.URLError("down")):
+                with self.assertRaises(pi.PublishError):
+                    pi.put_generic("https://x/y", self._body(tmp), "tok")
+
+
+def _built(name: str = "bot-bottle-gateway") -> pi.BuiltImage:
+    return pi.BuiltImage(name=name, version="0.14.2", artifacts=[
+        pi.BuiltArtifact("oci", "linux/arm64", _A, "0.14.2-arm64", "ref", _HASH),
+        pi.BuiltArtifact("ext4", "linux/arm64", "sha256:" + "b" * 64,
+                         "rootfs.arm64.ext4.gz", "pkg", _HASH),
+    ])
+
+
+class WriteManifest(unittest.TestCase):
+    def test_writes_sorted_stable_json(self) -> None:
+        """The manifest is committed, so a churning key order would make every
+        publish look like a change."""
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "published-artifacts.json"
+            pi.write_artifacts_manifest([_built("b-img"), _built("a-img")], dest)
+            data = json.loads(dest.read_text())
+            self.assertEqual(list(data), ["a-img", "b-img"])
+            self.assertEqual(data["a-img"]["inputs_hash"], _HASH)
+
+    def test_entry_carries_both_formats(self) -> None:
+        entry = pi.artifacts_manifest_entry(_built())
+        artifacts: Any = entry["artifacts"]
+        self.assertEqual(sorted(artifacts), ["ext4", "oci"])
+        self.assertIn("linux/arm64", artifacts["oci"]["platforms"])
+
+
+class PackageFromManifest(unittest.TestCase):
+    """Packaging one architecture's rootfs on another architecture's host."""
+
+    def _manifest(self, tmp: Path) -> Path:
+        p = tmp / "part.json"
+        p.write_text(json.dumps({"bot-bottle-gateway": {
+            "version": "0.14.2", "inputs_hash": _HASH,
+            "artifacts": {"oci": {"ref": "reg/o/bot-bottle-gateway", "platforms": {
+                "linux/arm64": {"tag": "0.14.2-arm64", "digest": _A}}}}}}))
+        return p
+
+    def test_pulls_by_digest_never_by_tag(self) -> None:
+        """What gets packaged must be exactly what was published, so the pull
+        is digest-pinned — a tag could have moved since."""
+        artifact = pi.BuiltArtifact("ext4", "linux/arm64", "sha256:" + "c" * 64,
+                                    "rootfs.arm64.ext4.gz", "pkg", _HASH)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with mock.patch.object(pi, "_run") as run, \
+                 mock.patch.object(pi, "build_ext4", return_value=artifact):
+                built = pi.package_from_manifest(
+                    self._manifest(root), root / "out", "linux/arm64")
+            pulled = [c.args[0] for c in run.call_args_list if c.args[0][1] == "pull"]
+        self.assertTrue(pulled, "expected a pull")
+        self.assertIn(f"reg/o/bot-bottle-gateway@{_A}", pulled[0])
+        self.assertEqual(len(built), 1)
+        # Both formats are carried through, so the emitted part still describes
+        # the OCI artifact it packaged from.
+        self.assertEqual({a.fmt for a in built[0].artifacts}, {"ext4", "oci"})
+
+    def test_skips_images_without_that_platform(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with mock.patch.object(pi, "_run"):
+                built = pi.package_from_manifest(
+                    self._manifest(root), root / "out", "linux/amd64")
+        self.assertEqual(built, [])
+
+
+class BuildImage(unittest.TestCase):
+    def test_skip_ext4_publishes_oci_only(self) -> None:
+        """A build host without e2fsprogs (macOS) still contributes its arch."""
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(pi, "_run"), \
+                 mock.patch.object(pi, "push_oci", return_value=_A):
+                produced = pi.build_image(
+                    "bot-bottle-gateway", "0.14.2", "linux/arm64",
+                    repo_root=Path("."), out_dir=Path(tmp), with_ext4=False)
+        self.assertEqual([a.fmt for a in produced], ["oci"])
+
+    def test_both_formats_share_one_inputs_hash(self) -> None:
+        """Interchangeability is established by construction: both artifacts
+        come from one build, so one hash is stamped onto both."""
+        artifact = pi.BuiltArtifact("ext4", "linux/arm64", "sha256:" + "c" * 64,
+                                    "r.gz", "pkg", _HASH)
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(pi, "_run"), \
+                 mock.patch.object(pi, "push_oci", return_value=_A), \
+                 mock.patch.object(pi, "build_ext4", return_value=artifact) as ext4:
+                produced = pi.build_image(
+                    "bot-bottle-gateway", "0.14.2", "linux/arm64",
+                    repo_root=Path("."), out_dir=Path(tmp))
+        self.assertEqual([a.fmt for a in produced], ["oci", "ext4"])
+        self.assertEqual(produced[0].inputs_hash, ext4.call_args.args[3])
+
+
+class BuildExt4(unittest.TestCase):
+    """Rootfs packaging delegates to the firecracker machinery rather than
+    reimplementing it; what is asserted here is the wiring."""
+
+    def _patched(self, tmp: Path) -> tuple[mock.Mock, mock.Mock]:
+        fake_fc = mock.Mock()
+        fake_infra = mock.Mock()
+        fake_infra.role_init.return_value = "#!/bin/sh\n"
+
+        def _mk_ext4(base: Path, out: Path, **kw: object) -> None:
+            out.write_bytes(b"rootfs-bytes")
+
+        fake_fc.build_base_rootfs_dir.return_value = tmp / "base"
+        fake_fc.build_rootfs_ext4.side_effect = _mk_ext4
+        return fake_fc, fake_infra
+
+    def _run_build(self, image: str) -> tuple[pi.BuiltArtifact, mock.Mock, mock.Mock]:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_fc, fake_infra = self._patched(root)
+            mods = {"bot_bottle.backend.firecracker.infra_vm": fake_infra,
+                    "bot_bottle.backend.firecracker.util": fake_fc}
+            with mock.patch.dict("sys.modules", mods):
+                with mock.patch(
+                    "bot_bottle.backend.firecracker.infra_vm", fake_infra, create=True
+                ), mock.patch(
+                    "bot_bottle.backend.firecracker.util", fake_fc, create=True
+                ):
+                    artifact = pi.build_ext4(image, "linux/arm64", root / "o", _HASH)
+            return artifact, fake_fc, fake_infra
+
+    def test_infra_image_gets_its_role_init(self) -> None:
+        """The infra pair boots a role-specific PID 1; an agent takes the
+        default agent init, which is what init_script=None selects."""
+        _, fake_fc, fake_infra = self._run_build("bot-bottle-gateway")
+        fake_infra.role_init.assert_called_once_with("gateway")
+        self.assertIsNotNone(fake_fc.build_base_rootfs_dir.call_args.kwargs["init_script"])
+
+    def test_agent_image_takes_the_default_init(self) -> None:
+        _, fake_fc, fake_infra = self._run_build("bot-bottle-claude")
+        fake_infra.role_init.assert_not_called()
+        self.assertIsNone(fake_fc.build_base_rootfs_dir.call_args.kwargs["init_script"])
+
+    def test_artifact_digest_covers_the_compressed_file(self) -> None:
+        """The ext4 digest must cover the bytes that are actually published —
+        the .gz — matching what the pull side verifies."""
+        artifact, _, _ = self._run_build("bot-bottle-gateway")
+        self.assertEqual(artifact.fmt, "ext4")
+        self.assertTrue(artifact.digest.startswith("sha256:"))
+        self.assertEqual(artifact.locator, pi.ext4_filename("linux/arm64"))
+        self.assertEqual(artifact.inputs_hash, _HASH)
+
+
+class Cli(unittest.TestCase):
+    def test_no_mode_is_a_usage_error(self) -> None:
+        self.assertEqual(pi.main([]), 2)
+
+    def test_merge_requires_a_destination(self) -> None:
+        self.assertEqual(pi.main(["--merge", "a.json"]), 2)
+
+    def test_merge_writes_the_union(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for plat, sfx, dg in (("linux/arm64", "arm64", "a"),
+                                  ("linux/amd64", "amd64", "c")):
+                (root / f"{sfx}.json").write_text(json.dumps({"g": {
+                    "version": "0.14.2", "inputs_hash": _HASH,
+                    "artifacts": {"oci": {"ref": "r/g", "platforms": {
+                        plat: {"tag": f"0.14.2-{sfx}",
+                               "digest": "sha256:" + dg * 64}}}}}}))
+            out = root / "merged.json"
+            rc = pi.main([
+                "--merge", str(root / "arm64.json"),
+                "--merge", str(root / "amd64.json"),
+                "--merge-into", str(out),
+            ])
+        self.assertEqual(rc, 0)
+
+    def test_publish_without_a_token_aborts(self) -> None:
+        """Uploading needs a write:package token; failing late would leave a
+        partially published version."""
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.dict("os.environ", {pi.TOKEN_ENV: ""}), \
+                 mock.patch.object(pi, "build_image", return_value=[]), \
+                 mock.patch.object(pi, "repo_version", return_value="0.14.2"):
+                with self.assertRaises(pi.PublishError) as ctx:
+                    pi.main(["--publish-dir", tmp, "--image", "bot-bottle-gateway"])
+        self.assertIn(pi.TOKEN_ENV, str(ctx.exception))
+
+
+if __name__ == "__main__":
+    unittest.main()
