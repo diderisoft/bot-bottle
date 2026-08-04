@@ -350,6 +350,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="platform to build (repeatable), e.g. linux/arm64",
     )
     parser.add_argument(
+        "--version", default=None,
+        help="publish under this version instead of the one in pyproject.toml. "
+             "For rehearsals — use a throwaway like 0.0.0-dev so a trial run "
+             "cannot be mistaken for a release.",
+    )
+    parser.add_argument(
         "--jobs", type=int, default=None,
         help="builds to run concurrently (default: a quarter of the cores, "
              "capped at 8)",
@@ -440,7 +446,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     repo_root = resources.build_root()
-    version = repo_version(repo_root)
+    version = args.version or repo_version(repo_root)
     images = args.image or list(image_inputs.IMAGES)
     platforms = args.platform or [current_build_platform()]
     work_dir = args.work_dir
