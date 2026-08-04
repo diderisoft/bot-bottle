@@ -31,6 +31,7 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -123,6 +124,15 @@ def ext4_filename(plat: str) -> str:
     return f"rootfs.{_platform_suffix(plat)}.ext4.gz"
 
 
+def local_tag(image: str, plat: str) -> str:
+    """The build-local tag for one image on one platform.
+
+    Deliberately not `:latest`. Builds run concurrently, so a name shared
+    between an image's two platforms would race: whichever finished last would
+    decide what got pushed and what got packaged."""
+    return f"{image}:build-{_platform_suffix(plat)}"
+
+
 def _run(argv: list[str], *, what: str) -> str:
     try:
         proc = subprocess.run(argv, capture_output=True, check=False, text=True)
@@ -157,7 +167,7 @@ def push_oci(image: str, version: str, plat: str, *, runtime: str = "docker") ->
     it locally would defeat the point of pinning to it."""
     ref, tag = oci_ref(image), oci_tag(version, plat)
     target = f"{ref}:{tag}"
-    _run([runtime, "tag", f"{image}:latest", target], what=f"tagging {target}")
+    _run([runtime, "tag", local_tag(image, plat), target], what=f"tagging {target}")
     _run([runtime, "push", target], what=f"pushing {target}")
     out = _run(
         [runtime, "inspect", "--format={{index .RepoDigests 0}}", target],
@@ -259,7 +269,8 @@ def build_ext4(image: str, plat: str, out_dir: Path, inputs: str) -> BuiltArtifa
     role = image_inputs.INFRA_ROLES.get(image)
     init = infra_vm.role_init(role) if role else None
     base = fc_util.build_base_rootfs_dir(
-        f"{image}:latest", variant=f"-{image}", init_script=init,
+        local_tag(image, plat), variant=f"-{image}-{_platform_suffix(plat)}",
+        init_script=init,
     )
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -306,7 +317,8 @@ def build_image(
         build_args += ["--build-arg", f"{name}={value}"]
     _run(
         [runtime, "build", "-f", str(dockerfile),
-         "--platform", plat, *build_args, "-t", f"{image}:latest", str(repo_root)],
+         "--platform", plat, *build_args, "-t", local_tag(image, plat),
+         str(repo_root)],
         what=f"building {image} for {plat}",
     )
 
@@ -337,8 +349,79 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--platform", action="append", default=None,
         help="platform to build (repeatable), e.g. linux/arm64",
     )
+    parser.add_argument(
+        "--jobs", type=int, default=None,
+        help="builds to run concurrently (default: a quarter of the cores, "
+             "capped at 8)",
+    )
     parser.add_argument("--runtime", default="docker", help="container runtime")
     return parser.parse_args(argv)
+
+
+def default_jobs() -> int:
+    """How many builds to run at once by default.
+
+    Each build occupies roughly one core: emulated builds are dominated by a
+    single-threaded qemu, and native ones by serial `apt`/`npm` steps. So the
+    machine sits mostly idle building one image at a time — a 24-core host
+    measured a load average under 3. Quarter of the cores leaves room for
+    buildkit's own parallelism and for anything else on a shared runner."""
+    return max(1, min(8, (os.cpu_count() or 4) // 4))
+
+
+def build_all(
+    images: list[str],
+    platforms: list[str],
+    version: str,
+    *,
+    repo_root: Path,
+    work_dir: Path,
+    runtime: str = "docker",
+    jobs: int | None = None,
+) -> list[BuiltImage]:
+    """Build every (image, platform) pair, up to `jobs` at a time.
+
+    The pairs are independent — separate build contexts, separate local tags,
+    separate output dirs — so wall time falls to roughly the slowest single
+    build rather than the sum of all of them.
+
+    Every failure is collected and raised together: a publish that is going to
+    fail should name every image that broke, not stop at the first."""
+    if jobs is None:
+        jobs = default_jobs()
+    tasks = [(name, plat) for name in images for plat in platforms]
+    print(f"building {len(tasks)} image/platform pair(s), {jobs} at a time")
+
+    produced: dict[str, list[BuiltArtifact]] = {name: [] for name in images}
+    failures: list[str] = []
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        futures = {
+            pool.submit(build_image, name, version, plat, repo_root=repo_root,
+                        out_dir=work_dir, runtime=runtime): (name, plat)
+            for name, plat in tasks
+        }
+        for future in as_completed(futures):
+            name, plat = futures[future]
+            try:
+                produced[name].extend(future.result())
+            # pylint: disable=broad-exception-caught
+            # Deliberately broad: one build blowing up in an unforeseen way
+            # must not swallow the results of the others, and every failure is
+            # re-raised together below.
+            except Exception as exc:  # noqa: BLE001
+                failures.append(f"{name} ({plat}): {exc}")
+
+    if failures:
+        raise PublishError(
+            f"{len(failures)} build(s) failed:\n  " + "\n  ".join(failures)
+        )
+
+    built: list[BuiltImage] = []
+    for name in images:
+        entry = BuiltImage(name=name, version=version, artifacts=produced[name])
+        check_interchangeable(entry)
+        built.append(entry)
+    return built
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -362,18 +445,8 @@ def main(argv: list[str] | None = None) -> int:
     platforms = args.platform or [current_build_platform()]
     work_dir = args.work_dir
 
-    built: list[BuiltImage] = []
-    for name in images:
-        entry = BuiltImage(name=name, version=version)
-        for plat in platforms:
-            entry.artifacts.extend(
-                build_image(name, version, plat, repo_root=repo_root,
-                            out_dir=work_dir, runtime=args.runtime)
-            )
-        # Check per image as it completes, so a mismatch aborts before the next
-        # image is built rather than after the whole run.
-        check_interchangeable(entry)
-        built.append(entry)
+    built = build_all(images, platforms, version, repo_root=repo_root,
+                      work_dir=work_dir, runtime=args.runtime, jobs=args.jobs)
 
     for entry in built:
         for artifact in entry.artifacts:

@@ -7,6 +7,11 @@ an artifact is addressed, and which failures abort a publish rather than
 producing a half-published version a host could resolve.
 """
 
+# pylint: disable=protected-access
+# The private helpers here (_run, _config, _sha256, …) carry the failure
+# handling worth pinning, so they are exercised directly rather than only
+# through the callers that happen to reach them.
+
 from __future__ import annotations
 
 import gzip
@@ -260,6 +265,48 @@ class BuildExt4(unittest.TestCase):
         self.assertTrue(artifact.digest.startswith("sha256:"))
         self.assertEqual(artifact.locator, pi.ext4_filename("linux/arm64"))
         self.assertEqual(artifact.inputs_hash, _HASH)
+
+
+class BuildAll(unittest.TestCase):
+    """Concurrency across (image, platform) pairs."""
+
+    def test_builds_every_pair(self) -> None:
+        with mock.patch.object(pi, "build_image", side_effect=self._artifacts_for) as b:
+            built = pi.build_all(["a", "b"], ["linux/amd64", "linux/arm64"],
+                                 "0.14.2", repo_root=Path("."),
+                                 work_dir=Path("/tmp"), jobs=4)
+        self.assertEqual(b.call_count, 4)
+        self.assertEqual({e.name for e in built}, {"a", "b"})
+        self.assertTrue(all(len(e.artifacts) == 2 for e in built))
+
+    @staticmethod
+    def _artifacts_for(image: str, version: str, plat: str, **_kw: object):
+        del version
+        return [pi.BuiltArtifact("oci", plat, "sha256:" + "a" * 64, "t", "ref", _HASH)]
+
+    def test_every_failure_is_reported_not_just_the_first(self) -> None:
+        """A publish that is going to fail should name every image that broke."""
+        def boom(image: str, _version: str, _plat: str, **_kw: object):
+            raise pi.PublishError(f"{image} exploded")
+
+        with mock.patch.object(pi, "build_image", side_effect=boom):
+            with self.assertRaises(pi.PublishError) as ctx:
+                pi.build_all(["a", "b"], ["linux/amd64"], "0.14.2",
+                             repo_root=Path("."), work_dir=Path("/tmp"), jobs=2)
+        msg = str(ctx.exception)
+        self.assertIn("a exploded", msg)
+        self.assertIn("b exploded", msg)
+
+    def test_local_tag_is_per_platform(self) -> None:
+        """A shared `:latest` would race — whichever platform finished last
+        would decide what got pushed and packaged."""
+        self.assertNotEqual(pi.local_tag("img", "linux/amd64"),
+                            pi.local_tag("img", "linux/arm64"))
+        self.assertNotIn("latest", pi.local_tag("img", "linux/amd64"))
+
+    def test_default_jobs_is_bounded(self) -> None:
+        self.assertGreaterEqual(pi.default_jobs(), 1)
+        self.assertLessEqual(pi.default_jobs(), 8)
 
 
 class Cli(unittest.TestCase):
