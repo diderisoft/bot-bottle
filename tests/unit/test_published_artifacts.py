@@ -1,12 +1,8 @@
-"""Unit: the published-image asset manifest, hashing, and registry verification.
+"""Unit: the published-artifacts manifest, hashing, and registry verification.
 
-These lock the properties the whole publish/pull scheme rests on:
-
-* a digest is verified, a tag is only *checked* — and a moved tag is caught;
-* two formats of one image are interchangeable, enforced at publish time;
-* `inputs_hash` distinguishes architectures, which the older firecracker
-  version hash did not (two arches on one checkout would collide, and a host
-  could pass verification on a rootfs it cannot boot).
+Locks what the publish/pull scheme rests on: a digest is verified while a tag is
+only checked, and a moved tag is caught; malformed manifests are reported rather
+than half-loaded; verification fails closed.
 
 No network and no container runtime: HTTP is mocked at `urlopen`.
 """
@@ -394,71 +390,6 @@ class Interchangeability(unittest.TestCase):
         built = self._built("9f2c1e4b7a83d10c", "9f2c1e4b7a83d10c")
         entries = pa.parse_artifacts_manifest({built.name: pi.artifacts_manifest_entry(built)})
         self.assertEqual(len(entries[built.name].artifacts), 2)
-
-
-class MergeManifests(unittest.TestCase):
-    """Each architecture is built on the host that builds it natively, so each
-    emits a manifest covering only its own platform. Combining them must not let
-    either clobber the other."""
-
-    def _part(self, plat: str, sfx: str, oci: str, ext4: str) -> dict[str, Any]:
-        return {"bot-bottle-gateway": {
-            "version": "0.14.2", "inputs_hash": "9f2c1e4b7a83d10c",
-            "artifacts": {
-                "oci": {"ref": "r/bot-bottle-gateway",
-                        "platforms": {plat: {"tag": f"0.14.2-{sfx}", "digest": oci}}},
-                "ext4": {"package": "bot-bottle-gateway-rootfs",
-                         "platforms": {plat: {"file": f"rootfs.{sfx}.ext4.gz",
-                                              "digest": ext4}}},
-            }}}
-
-    def _merge(self, *parts: dict[str, Any]) -> dict[str, Any]:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            paths = []
-            for i, part in enumerate(parts):
-                p = root / f"part{i}.json"
-                p.write_text(json.dumps(part))
-                paths.append(p)
-            out = root / "merged.json"
-            pi.merge_artifacts_manifests(paths, out)
-            return json.loads(out.read_text())
-
-    def test_unions_platforms_across_parts(self) -> None:
-        merged = self._merge(
-            self._part("linux/arm64", "arm64", _A, _B),
-            self._part("linux/amd64", "amd64", _C, "sha256:" + "d" * 64),
-        )
-        arts = merged["bot-bottle-gateway"]["artifacts"]
-        self.assertEqual(sorted(arts["oci"]["platforms"]),
-                         ["linux/amd64", "linux/arm64"])
-        self.assertEqual(sorted(arts["ext4"]["platforms"]),
-                         ["linux/amd64", "linux/arm64"])
-
-    def test_merged_output_still_validates(self) -> None:
-        merged = self._merge(
-            self._part("linux/arm64", "arm64", _A, _B),
-            self._part("linux/amd64", "amd64", _C, "sha256:" + "d" * 64),
-        )
-        entries = pa.parse_artifacts_manifest(merged)
-        self.assertEqual(pa.check_consistency(entries), [])
-        self.assertEqual(len(entries["bot-bottle-gateway"].artifacts), 4)
-
-    def test_conflicting_parts_abort(self) -> None:
-        """Two hosts built the same image/format/platform and disagreed.
-        Picking either would be arbitrary, and the manifest is meant to be the
-        one thing a launch host can trust."""
-        with self.assertRaises(pi.PublishError):
-            self._merge(
-                self._part("linux/arm64", "arm64", _A, _B),
-                self._part("linux/arm64", "arm64", _C, _B),
-            )
-
-    def test_version_disagreement_aborts(self) -> None:
-        other = self._part("linux/amd64", "amd64", _C, "sha256:" + "d" * 64)
-        other["bot-bottle-gateway"]["version"] = "0.14.3"
-        with self.assertRaises(pi.PublishError):
-            self._merge(self._part("linux/arm64", "arm64", _A, _B), other)
 
 
 class ManifestFile(unittest.TestCase):

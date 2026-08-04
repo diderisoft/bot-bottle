@@ -11,11 +11,12 @@ Interchangeability is enforced here rather than in the manifest, which records
 one `inputs_hash` per image and so cannot express disagreement. This is the only
 place that sees both the inputs and the artifacts they produced.
 
-  python3 -m bot_bottle.publish_images --output DIR       # build a candidate
-  python3 -m bot_bottle.publish_images --publish-dir DIR  # build and upload
+One mode, one machine: build and publish everything.
+
+  python3 -m bot_bottle.publish_images [--platform linux/amd64 ...]
 
 Auth: a `write:package` token from `BOT_BOTTLE_INFRA_ARTIFACT_TOKEN`, never on a
-command line.
+command line. The container runtime needs its own registry login for the push.
 """
 
 from __future__ import annotations
@@ -44,11 +45,6 @@ _DEFAULT_BASE = "https://gitea.dideric.is"
 _DEFAULT_OWNER = "didericis"
 
 TOKEN_ENV = "BOT_BOTTLE_INFRA_ARTIFACT_TOKEN"
-
-# Images that also ship a bootable rootfs. Firecracker boots every one of these
-# as a microVM — the infra pair as the control/data planes, the agent images as
-# the agents themselves — so all of them publish ext4 alongside OCI.
-EXT4_IMAGES = frozenset(image_inputs.IMAGES)
 
 
 class PublishError(RuntimeError):
@@ -105,11 +101,7 @@ def _platform_suffix(plat: str) -> str:
 
 
 def current_build_platform() -> str:
-    """The platform this host builds natively, the default when none is given.
-
-    Defaulting to the host rather than a fixed value keeps a bare invocation
-    honest: whichever runner picks the job builds what it can build fastest,
-    and cross-building is something you ask for explicitly."""
+    """The platform this host builds natively — the default when none is given."""
     from .published_artifacts import current_platform
     return current_platform()
 
@@ -192,8 +184,8 @@ def put_generic(url: str, body: Path, token: str) -> None:
         except urllib.error.HTTPError as e:
             if e.code == 409:
                 raise PublishError(
-                    f"already published at {url} (HTTP 409); bump the version "
-                    f"or pass --force to overwrite"
+                    f"already published at {url} (HTTP 409); "
+                    f"bump the version to republish"
                 ) from e
             raise PublishError(f"upload failed (HTTP {e.code}): {url}") from e
         except urllib.error.URLError as e:
@@ -247,53 +239,6 @@ def artifacts_manifest_entry(built: BuiltImage) -> dict[str, object]:
     }
 
 
-def merge_artifacts_manifests(parts: list[Path], dest: Path) -> None:
-    """Union per-platform manifest parts into one, merging per image, format
-    and platform.
-
-    For the split-runner arrangement, where each host emits a manifest covering
-    only the architecture it built. Two parts claiming the same
-    image/format/platform with different digests abort rather than one
-    arbitrarily winning."""
-    merged: dict[str, dict[str, Any]] = {}
-    for part in parts:
-        data = json.loads(part.read_text(encoding="utf-8"))
-        for image, entry in data.items():
-            into = merged.setdefault(image, {
-                "version": entry["version"],
-                "inputs_hash": entry["inputs_hash"],
-                "artifacts": {},
-            })
-            if into["version"] != entry["version"]:
-                raise PublishError(
-                    f"{image}: {part} declares version {entry['version']}, "
-                    f"another part declares {into['version']}"
-                )
-            # The inputs_hash legitimately differs per platform (architecture
-            # is one of its inputs), so it is recorded per platform below and
-            # the image-level value is informational — keep the first seen.
-            for fmt, raw_fmt in entry["artifacts"].items():
-                target = into["artifacts"].setdefault(
-                    fmt, {k: v for k, v in raw_fmt.items() if k != "platforms"}
-                    | {"platforms": {}},
-                )
-                for plat, raw_plat in raw_fmt["platforms"].items():
-                    prior = target["platforms"].get(plat)
-                    if prior is not None and prior != raw_plat:
-                        raise PublishError(
-                            f"{image}.{fmt}.{plat}: conflicting artifacts across "
-                            f"build hosts ({prior} vs {raw_plat}); two hosts built "
-                            f"the same thing and disagreed"
-                        )
-                    target["platforms"][plat] = raw_plat
-
-    dest.write_text(
-        json.dumps(dict(sorted(merged.items())), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    print(f"merged {len(parts)} manifest part(s) -> {dest}")
-
-
 def write_artifacts_manifest(images: list[BuiltImage], dest: Path) -> None:
     """Write `published-artifacts.json` for every built image, sorted for a stable
     diff (this file is committed, and a churning key order would make every
@@ -343,7 +288,6 @@ def build_image(
     repo_root: Path,
     out_dir: Path,
     runtime: str = "docker",
-    with_ext4: bool = True,
 ) -> list[BuiltArtifact]:
     """Build, push, and package one image on one platform, returning everything
     produced.
@@ -373,8 +317,7 @@ def build_image(
         locator=oci_tag(version, plat), namespace=oci_ref(image),
         inputs_hash=inputs,
     )]
-    if with_ext4 and image in EXT4_IMAGES:
-        produced.append(build_ext4(image, plat, out_dir / image, inputs))
+    produced.append(build_ext4(image, plat, out_dir / image, inputs))
     return produced
 
 
@@ -384,12 +327,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         description="Build + publish the fixed images and write published-artifacts.json.",
     )
     parser.add_argument(
-        "--output", type=Path,
-        help="build a candidate bundle into DIR without uploading",
-    )
-    parser.add_argument(
-        "--publish-dir", type=Path,
-        help="upload a previously built candidate bundle from DIR",
+        "--work-dir", type=Path, default=Path("published-images"),
+        help="scratch directory for rootfs artifacts and the manifest",
     )
     parser.add_argument(
         "--image", action="append", default=None,
@@ -399,76 +338,21 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--platform", action="append", default=None,
         help="platform to build (repeatable), e.g. linux/arm64",
     )
-    parser.add_argument(
-        "--skip-ext4", action="store_true",
-        help="build and push OCI only; skip rootfs packaging (for a build host "
-             "without e2fsprogs, e.g. macOS)",
-    )
-    parser.add_argument(
-        "--ext4-from-manifest", type=Path, default=None,
-        help="package rootfs from images already published in MANIFEST, pulling "
-             "each by its pinned digest instead of building. Sound cross-arch: "
-             "export never starts the container.",
-    )
-    parser.add_argument(
-        "--merge", action="append", type=Path, default=None,
-        metavar="MANIFEST", help="manifest part to merge (repeatable)",
-    )
-    parser.add_argument(
-        "--merge-into", type=Path, default=None,
-        help="where to write the merged manifest",
-    )
     parser.add_argument("--runtime", default="docker", help="container runtime")
     return parser.parse_args(argv)
-
-
-def package_from_manifest(
-    manifest: Path, out_dir: Path, plat: str, *, runtime: str = "docker",
-) -> list[BuiltImage]:
-    """Package rootfs artifacts for images already published to the registry.
-
-    Pulls each by pinned digest, not tag, so it packages exactly what was
-    published. Sound for another architecture: export never starts the
-    container, so no foreign-arch binary runs."""
-    data = json.loads(manifest.read_text(encoding="utf-8"))
-    built: list[BuiltImage] = []
-    for image, entry in sorted(data.items()):
-        oci = entry["artifacts"].get(FORMAT_OCI, {}).get("platforms", {}).get(plat)
-        if oci is None:
-            print(f"  {image}: no {plat} oci artifact in {manifest}, skipping")
-            continue
-        ref = f"{entry['artifacts'][FORMAT_OCI]['ref']}@{oci['digest']}"
-        print(f"pulling {image} {plat} by digest for rootfs packaging")
-        _run([runtime, "pull", "--platform", plat, ref], what=f"pulling {ref}")
-        _run([runtime, "tag", ref, f"{image}:latest"], what=f"tagging {image}")
-        produced = BuiltImage(name=image, version=entry["version"])
-        produced.artifacts.append(
-            build_ext4(image, plat, out_dir / image, entry["inputs_hash"])
-        )
-        # Carry the OCI artifact through unchanged so the emitted part still
-        # describes both formats for this platform.
-        produced.artifacts.append(BuiltArtifact(
-            fmt=FORMAT_OCI, platform=plat, digest=oci["digest"],
-            locator=oci["tag"], namespace=entry["artifacts"][FORMAT_OCI]["ref"],
-            inputs_hash=entry["inputs_hash"],
-        ))
-        built.append(produced)
-    return built
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
 
-    if args.merge:
-        if not args.merge_into:
-            print("--merge requires --merge-into", file=sys.stderr)
-            return 2
-        merge_artifacts_manifests(args.merge, args.merge_into)
-        return 0
-
-    if not args.output and not args.publish_dir:
+    # Before building anything: an OCI push is not undoable, so discovering a
+    # missing token afterwards would leave the registry holding images with no
+    # matching rootfs or manifest.
+    _, _, token = _config()
+    if not token:
         print(
-            "one of --output / --publish-dir / --merge is required",
+            f"{TOKEN_ENV} is not set; a token with write:package on the target "
+            f"owner is required to publish",
             file=sys.stderr,
         )
         return 2
@@ -477,47 +361,31 @@ def main(argv: list[str] | None = None) -> int:
     version = repo_version(repo_root)
     images = args.image or list(image_inputs.IMAGES)
     platforms = args.platform or [current_build_platform()]
+    work_dir = args.work_dir
 
-    out_dir = args.output or args.publish_dir
     built: list[BuiltImage] = []
-
-    if args.ext4_from_manifest:
+    for name in images:
+        entry = BuiltImage(name=name, version=version)
         for plat in platforms:
-            built.extend(package_from_manifest(
-                args.ext4_from_manifest, out_dir, plat, runtime=args.runtime,
-            ))
-    else:
-        for name in images:
-            entry = BuiltImage(name=name, version=version)
-            for plat in platforms:
-                entry.artifacts.extend(
-                    build_image(name, version, plat, repo_root=repo_root,
-                                out_dir=out_dir, runtime=args.runtime,
-                                with_ext4=not args.skip_ext4)
-                )
-            # Check per image as it completes, so a mismatch aborts before the
-            # next image is built rather than after the whole run.
-            check_interchangeable(entry)
-            built.append(entry)
-
-    if args.publish_dir:
-        _, _, token = _config()
-        if not token:
-            raise PublishError(
-                f"{TOKEN_ENV} is not set; a token with write:package on the "
-                f"target owner is required to upload"
+            entry.artifacts.extend(
+                build_image(name, version, plat, repo_root=repo_root,
+                            out_dir=work_dir, runtime=args.runtime)
             )
-        for entry in built:
-            for artifact in entry.artifacts:
-                if artifact.fmt != FORMAT_EXT4:
-                    continue  # OCI was pushed by the build step
-                gz = args.publish_dir / entry.name / artifact.locator
-                put_generic(
-                    ext4_url(entry.name, entry.version, artifact.platform),
-                    gz, token,
-                )
+        # Check per image as it completes, so a mismatch aborts before the next
+        # image is built rather than after the whole run.
+        check_interchangeable(entry)
+        built.append(entry)
 
-    dest = out_dir / ARTIFACTS_MANIFEST_NAME
+    for entry in built:
+        for artifact in entry.artifacts:
+            if artifact.fmt != FORMAT_EXT4:
+                continue  # OCI was pushed by the build step
+            put_generic(
+                ext4_url(entry.name, entry.version, artifact.platform),
+                work_dir / entry.name / artifact.locator, token,
+            )
+
+    dest = work_dir / ARTIFACTS_MANIFEST_NAME
     dest.parent.mkdir(parents=True, exist_ok=True)
     write_artifacts_manifest(built, dest)
     return 0

@@ -1,12 +1,8 @@
 # Build and publish the fixed images to the Gitea OCI registry, on release.
 # Development builds locally (BOT_BOTTLE_INFRA_BUILD=local).
 #
-# One machine builds both architectures; emulation measured at 1.1-1.8x on
-# delos. delphi runs it because rootfs packaging needs e2fsprogs `mke2fs`.
-#
-# Unverified: delphi emulates arm64 with QEMU, not Rosetta, so it may be much
-# slower. If so, move the arm64 OCI build to `[self-hosted, macos]` and merge
-# the manifest parts (`--merge`); packaging stays here either way.
+# One machine builds both architectures; emulation measured at 1.1-1.8x. delphi
+# runs it because rootfs packaging needs e2fsprogs `mke2fs`.
 
 name: publish-images
 
@@ -15,10 +11,6 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
-    inputs:
-      images:
-        description: "Space-separated image names (default: all)"
-        required: false
 
 jobs:
   publish:
@@ -30,14 +22,21 @@ jobs:
       - name: Enable cross-architecture emulation
         run: docker run --rm --privileged tonistiigi/binfmt:latest --install arm64
 
-      # One invocation — `--publish-dir` builds as well as uploads, so
-      # splitting the steps would rebuild.
+      # The publisher's own token authenticates the generic-package uploads;
+      # `docker push` uses the runtime's credential store, which is separate.
+      - name: Log the container runtime in to the registry
+        env:
+          REGISTRY_TOKEN: ${{ secrets.BOT_BOTTLE_INFRA_ARTIFACT_TOKEN }}
+        run: |
+          printf '%s' "$REGISTRY_TOKEN" \
+            | docker login gitea.dideric.is -u didericis --password-stdin
+
       - name: Build, push, and publish every image
         env:
           BOT_BOTTLE_INFRA_ARTIFACT_TOKEN: ${{ secrets.BOT_BOTTLE_INFRA_ARTIFACT_TOKEN }}
         run: |
           python3 -m bot_bottle.publish_images \
-            --publish-dir candidate \
+            --work-dir candidate \
             --platform linux/amd64 \
             --platform linux/arm64
 
@@ -51,3 +50,7 @@ jobs:
         with:
           name: published-artifacts
           path: candidate/published-artifacts.json
+
+      - name: Log out
+        if: always()
+        run: docker logout gitea.dideric.is || true

@@ -192,56 +192,7 @@ class WriteManifest(unittest.TestCase):
         self.assertIn("linux/arm64", artifacts["oci"]["platforms"])
 
 
-class PackageFromManifest(unittest.TestCase):
-    """Packaging one architecture's rootfs on another architecture's host."""
-
-    def _manifest(self, tmp: Path) -> Path:
-        p = tmp / "part.json"
-        p.write_text(json.dumps({"bot-bottle-gateway": {
-            "version": "0.14.2", "inputs_hash": _HASH,
-            "artifacts": {"oci": {"ref": "reg/o/bot-bottle-gateway", "platforms": {
-                "linux/arm64": {"tag": "0.14.2-arm64", "digest": _A}}}}}}))
-        return p
-
-    def test_pulls_by_digest_never_by_tag(self) -> None:
-        """What gets packaged must be exactly what was published, so the pull
-        is digest-pinned — a tag could have moved since."""
-        artifact = pi.BuiltArtifact("ext4", "linux/arm64", "sha256:" + "c" * 64,
-                                    "rootfs.arm64.ext4.gz", "pkg", _HASH)
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            with mock.patch.object(pi, "_run") as run, \
-                 mock.patch.object(pi, "build_ext4", return_value=artifact):
-                built = pi.package_from_manifest(
-                    self._manifest(root), root / "out", "linux/arm64")
-            pulled = [c.args[0] for c in run.call_args_list if c.args[0][1] == "pull"]
-        self.assertTrue(pulled, "expected a pull")
-        self.assertIn(f"reg/o/bot-bottle-gateway@{_A}", pulled[0])
-        self.assertEqual(len(built), 1)
-        # Both formats are carried through, so the emitted part still describes
-        # the OCI artifact it packaged from.
-        self.assertEqual({a.fmt for a in built[0].artifacts}, {"ext4", "oci"})
-
-    def test_skips_images_without_that_platform(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            with mock.patch.object(pi, "_run"):
-                built = pi.package_from_manifest(
-                    self._manifest(root), root / "out", "linux/amd64")
-        self.assertEqual(built, [])
-
-
 class BuildImage(unittest.TestCase):
-    def test_skip_ext4_publishes_oci_only(self) -> None:
-        """A build host without e2fsprogs (macOS) still contributes its arch."""
-        with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch.object(pi, "_run"), \
-                 mock.patch.object(pi, "push_oci", return_value=_A):
-                produced = pi.build_image(
-                    "bot-bottle-gateway", "0.14.2", "linux/arm64",
-                    repo_root=Path("."), out_dir=Path(tmp), with_ext4=False)
-        self.assertEqual([a.fmt for a in produced], ["oci"])
-
     def test_both_formats_share_one_inputs_hash(self) -> None:
         """Interchangeability is established by construction: both artifacts
         come from one build, so one hash is stamped onto both."""
@@ -267,7 +218,7 @@ class BuildExt4(unittest.TestCase):
         fake_infra = mock.Mock()
         fake_infra.role_init.return_value = "#!/bin/sh\n"
 
-        def _mk_ext4(base: Path, out: Path, **kw: object) -> None:
+        def _mk_ext4(_base: Path, out: Path, **_kw: object) -> None:
             out.write_bytes(b"rootfs-bytes")
 
         fake_fc.build_base_rootfs_dir.return_value = tmp / "base"
@@ -312,40 +263,14 @@ class BuildExt4(unittest.TestCase):
 
 
 class Cli(unittest.TestCase):
-    def test_no_mode_is_a_usage_error(self) -> None:
-        self.assertEqual(pi.main([]), 2)
-
-    def test_merge_requires_a_destination(self) -> None:
-        self.assertEqual(pi.main(["--merge", "a.json"]), 2)
-
-    def test_merge_writes_the_union(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            for plat, sfx, dg in (("linux/arm64", "arm64", "a"),
-                                  ("linux/amd64", "amd64", "c")):
-                (root / f"{sfx}.json").write_text(json.dumps({"g": {
-                    "version": "0.14.2", "inputs_hash": _HASH,
-                    "artifacts": {"oci": {"ref": "r/g", "platforms": {
-                        plat: {"tag": f"0.14.2-{sfx}",
-                               "digest": "sha256:" + dg * 64}}}}}}))
-            out = root / "merged.json"
-            rc = pi.main([
-                "--merge", str(root / "arm64.json"),
-                "--merge", str(root / "amd64.json"),
-                "--merge-into", str(out),
-            ])
-        self.assertEqual(rc, 0)
-
-    def test_publish_without_a_token_aborts(self) -> None:
-        """Uploading needs a write:package token; failing late would leave a
-        partially published version."""
-        with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch.dict("os.environ", {pi.TOKEN_ENV: ""}), \
-                 mock.patch.object(pi, "build_image", return_value=[]), \
-                 mock.patch.object(pi, "repo_version", return_value="0.14.2"):
-                with self.assertRaises(pi.PublishError) as ctx:
-                    pi.main(["--publish-dir", tmp, "--image", "bot-bottle-gateway"])
-        self.assertIn(pi.TOKEN_ENV, str(ctx.exception))
+    def test_publish_without_a_token_aborts_before_building(self) -> None:
+        """An OCI push cannot be undone, so a missing token has to stop the run
+        before anything is built rather than after."""
+        with mock.patch.dict("os.environ", {pi.TOKEN_ENV: ""}), \
+             mock.patch.object(pi, "build_image") as build:
+            rc = pi.main([])
+        self.assertEqual(rc, 2)
+        build.assert_not_called()
 
 
 if __name__ == "__main__":
