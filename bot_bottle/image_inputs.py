@@ -8,16 +8,23 @@ ties an image's formats together — two artifacts are interchangeable exactly
 when they were built from the same inputs.
 
 Generalises `firecracker.infra_artifact.infra_artifact_version`, which computes
-the same idea for the two firecracker infra roles. Two differences:
+the same idea for the two firecracker infra roles, extending it to every
+published image — agent images are published too, and firecracker boots them as
+a rootfs just like the infra VMs.
 
-* **Every published image**, not only the infra pair — agent images are
-  published too, and firecracker boots them as rootfs just like the infra VMs.
-* **Architecture is an input.** The firecracker version deliberately hashes
-  format, role, package and build inputs, but *not* the machine — so two hosts
-  of different architectures on one checkout compute the same version while
-  needing different bytes. That was harmless while publish and consume both
-  happened on one arch; with two publishing arches it is a silent collision, and
-  a host could pass checksum verification on a rootfs it cannot boot.
+**Deliberately architecture-independent.** Every base image in
+`image-build-args.json` is pinned to a multi-arch *index* digest, so one set of
+inputs — the same Dockerfile, the same pinned bases, the same locks — describes
+both architectures; `--platform` selects the per-arch manifest at build time.
+The hash therefore answers "does the published artifact come from my source?",
+which has one answer per checkout rather than one per machine.
+
+Architecture is disambiguated **structurally** instead, by the manifest's
+platform keys and by the per-arch tags and filenames they carry. That is what
+closes the hole in the older firecracker version hash, where architecture
+appeared *nowhere* — not in the hash and not in the artifact path — so two
+arches on one checkout resolved the same URL while needing different bytes, and
+a host could pass checksum verification on a rootfs it could not boot.
 """
 
 from __future__ import annotations
@@ -30,7 +37,7 @@ from . import resources
 # Bumped when the *meaning* of the hash changes (inputs added or removed, or the
 # framing bytes reordered), forcing a republish rather than letting an old
 # artifact answer to a new hash.
-_SCHEMA = "image-inputs-v1"
+_SCHEMA = "image-inputs-v2"
 
 # Per-image build inputs, relative to the build root. The `bot_bottle` package
 # is added separately for images that bake it (see `_BAKES_PACKAGE`).
@@ -114,14 +121,13 @@ def _hash_package(h: "hashlib._Hash", repo_root: Path) -> None:
         h.update(path.read_bytes())
 
 
-def inputs_hash(
-    image: str, platform: str, *, repo_root: Path | None = None,
-) -> str:
-    """The 16-hex content hash of everything baked into `image` for `platform`.
+def inputs_hash(image: str, *, repo_root: Path | None = None) -> str:
+    """The 16-hex content hash of everything baked into `image`.
 
     Deterministic across the publish host and the launch host when both run the
     same checkout, so the hash a host computes is exactly the hash publish
-    recorded."""
+    recorded — and identical on every architecture, since the inputs describe
+    one build that `--platform` specialises."""
     try:
         inputs = BUILD_INPUTS[image]
     except KeyError:
@@ -134,7 +140,7 @@ def inputs_hash(
 
     h = hashlib.sha256()
     # Frame every field so a value can never be confused for a boundary.
-    h.update(f"schema={_SCHEMA}\nimage={image}\nplatform={platform}\n".encode())
+    h.update(f"schema={_SCHEMA}\nimage={image}\n".encode())
     if image in _BAKES_PACKAGE:
         _hash_package(h, repo_root)
     for name in inputs:

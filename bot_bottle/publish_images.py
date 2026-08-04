@@ -116,6 +116,16 @@ def _platform_suffix(plat: str) -> str:
     return plat.rsplit("/", 1)[-1]
 
 
+def current_build_platform() -> str:
+    """The platform this host builds natively, the default when none is given.
+
+    Defaulting to the host rather than a fixed value keeps a bare invocation
+    honest: whichever runner picks the job builds what it can build fastest,
+    and cross-building is something you ask for explicitly."""
+    from .image_assets import current_platform
+    return current_platform()
+
+
 def oci_ref(image: str) -> str:
     base, owner, _ = _config()
     host = base.split("://", 1)[-1]
@@ -251,6 +261,57 @@ def manifest_entry(built: BuiltImage) -> dict[str, object]:
     }
 
 
+def merge_manifests(parts: list[Path], dest: Path) -> None:
+    """Union per-platform manifests from several build hosts into one.
+
+    Each architecture is built on a host that can build it natively, so each
+    emits a manifest covering only its own platform. They must be combined
+    without either clobbering the other: entries merge per image, per format,
+    per platform.
+
+    A conflict — two parts publishing the same image/format/platform with
+    different digests — aborts. It means two hosts built the same thing and
+    disagreed, so picking either would be arbitrary, and the manifest is
+    supposed to be the one place a host can trust."""
+    merged: dict[str, dict] = {}
+    for part in parts:
+        data = json.loads(part.read_text(encoding="utf-8"))
+        for image, entry in data.items():
+            into = merged.setdefault(image, {
+                "version": entry["version"],
+                "inputs_hash": entry["inputs_hash"],
+                "artifacts": {},
+            })
+            if into["version"] != entry["version"]:
+                raise PublishError(
+                    f"{image}: {part} declares version {entry['version']}, "
+                    f"another part declares {into['version']}"
+                )
+            # The inputs_hash legitimately differs per platform (architecture
+            # is one of its inputs), so it is recorded per platform below and
+            # the image-level value is informational — keep the first seen.
+            for fmt, raw_fmt in entry["artifacts"].items():
+                target = into["artifacts"].setdefault(
+                    fmt, {k: v for k, v in raw_fmt.items() if k != "platforms"}
+                    | {"platforms": {}},
+                )
+                for plat, raw_plat in raw_fmt["platforms"].items():
+                    prior = target["platforms"].get(plat)
+                    if prior is not None and prior != raw_plat:
+                        raise PublishError(
+                            f"{image}.{fmt}.{plat}: conflicting artifacts across "
+                            f"build hosts ({prior} vs {raw_plat}); two hosts built "
+                            f"the same thing and disagreed"
+                        )
+                    target["platforms"][plat] = raw_plat
+
+    dest.write_text(
+        json.dumps(dict(sorted(merged.items())), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    print(f"merged {len(parts)} manifest part(s) -> {dest}")
+
+
 def write_manifest(images: list[BuiltImage], dest: Path) -> None:
     """Write `image-assets.json` for every built image, sorted for a stable
     diff (this file is committed, and a churning key order would make every
@@ -313,7 +374,7 @@ def build_image(
     Both formats are derived from **one** build, which is what makes them
     interchangeable rather than merely similar — the `inputs_hash` is computed
     once and stamped onto every artifact that came out of it."""
-    inputs = image_inputs.inputs_hash(image, plat, repo_root=repo_root)
+    inputs = image_inputs.inputs_hash(image, repo_root=repo_root)
     print(f"building {image} {version} ({plat}) inputs={inputs}")
 
     dockerfile = image_inputs.DOCKERFILES[image]
@@ -355,34 +416,108 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--platform", action="append", default=None,
         help="platform to build (repeatable), e.g. linux/arm64",
     )
+    parser.add_argument(
+        "--skip-ext4", action="store_true",
+        help="build and push OCI only; skip rootfs packaging (for a build host "
+             "without e2fsprogs, e.g. macOS)",
+    )
+    parser.add_argument(
+        "--ext4-from-manifest", type=Path, default=None,
+        help="package rootfs from images already published in MANIFEST, pulling "
+             "each by its pinned digest instead of building. Sound cross-arch: "
+             "export never starts the container.",
+    )
+    parser.add_argument(
+        "--merge", action="append", type=Path, default=None,
+        metavar="MANIFEST", help="manifest part to merge (repeatable)",
+    )
+    parser.add_argument(
+        "--merge-into", type=Path, default=None,
+        help="where to write the merged manifest",
+    )
     parser.add_argument("--runtime", default="docker", help="container runtime")
     return parser.parse_args(argv)
 
 
+def package_from_manifest(
+    manifest: Path, out_dir: Path, plat: str, *, runtime: str = "docker",
+) -> list[BuiltImage]:
+    """Package rootfs artifacts for images already published to the registry.
+
+    Pulls each by its **pinned digest** — not its tag — so what gets packaged is
+    exactly what was published, and tags the result locally so the shared rootfs
+    path can export it. This is how one host packages another architecture's
+    rootfs: `docker create` + `docker export` never start the container, so no
+    foreign-arch binary runs."""
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    built: list[BuiltImage] = []
+    for image, entry in sorted(data.items()):
+        oci = entry["artifacts"].get(FORMAT_OCI, {}).get("platforms", {}).get(plat)
+        if oci is None:
+            print(f"  {image}: no {plat} oci artifact in {manifest}, skipping")
+            continue
+        ref = f"{entry['artifacts'][FORMAT_OCI]['ref']}@{oci['digest']}"
+        print(f"pulling {image} {plat} by digest for rootfs packaging")
+        _run([runtime, "pull", "--platform", plat, ref], what=f"pulling {ref}")
+        _run([runtime, "tag", ref, f"{image}:latest"], what=f"tagging {image}")
+        produced = BuiltImage(name=image, version=entry["version"])
+        produced.artifacts.append(
+            build_ext4(image, plat, out_dir / image, entry["inputs_hash"])
+        )
+        # Carry the OCI artifact through unchanged so the emitted part still
+        # describes both formats for this platform.
+        produced.artifacts.append(BuiltArtifact(
+            fmt=FORMAT_OCI, platform=plat, digest=oci["digest"],
+            locator=oci["tag"], namespace=entry["artifacts"][FORMAT_OCI]["ref"],
+            inputs_hash=entry["inputs_hash"],
+        ))
+        built.append(produced)
+    return built
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
+
+    if args.merge:
+        if not args.merge_into:
+            print("--merge requires --merge-into", file=sys.stderr)
+            return 2
+        merge_manifests(args.merge, args.merge_into)
+        return 0
+
     if not args.output and not args.publish_dir:
-        print("one of --output / --publish-dir is required", file=sys.stderr)
+        print(
+            "one of --output / --publish-dir / --merge is required",
+            file=sys.stderr,
+        )
         return 2
 
     repo_root = resources.build_root()
     version = repo_version(repo_root)
     images = args.image or list(image_inputs.IMAGES)
-    platforms = args.platform or ["linux/arm64"]
+    platforms = args.platform or [current_build_platform()]
 
     out_dir = args.output or args.publish_dir
     built: list[BuiltImage] = []
-    for name in images:
-        entry = BuiltImage(name=name, version=version)
+
+    if args.ext4_from_manifest:
         for plat in platforms:
-            entry.artifacts.extend(
-                build_image(name, version, plat, repo_root=repo_root,
-                            out_dir=out_dir, runtime=args.runtime)
-            )
-        # Check per image as it completes, so a mismatch aborts before the next
-        # image is built rather than after the whole run.
-        check_interchangeable(entry)
-        built.append(entry)
+            built.extend(package_from_manifest(
+                args.ext4_from_manifest, out_dir, plat, runtime=args.runtime,
+            ))
+    else:
+        for name in images:
+            entry = BuiltImage(name=name, version=version)
+            for plat in platforms:
+                entry.artifacts.extend(
+                    build_image(name, version, plat, repo_root=repo_root,
+                                out_dir=out_dir, runtime=args.runtime,
+                                with_ext4=not args.skip_ext4)
+                )
+            # Check per image as it completes, so a mismatch aborts before the
+            # next image is built rather than after the whole run.
+            check_interchangeable(entry)
+            built.append(entry)
 
     if args.publish_dir:
         _, _, token = _config()

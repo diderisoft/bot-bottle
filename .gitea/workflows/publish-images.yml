@@ -1,0 +1,134 @@
+# Build and publish the fixed images to the Gitea OCI registry.
+#
+# Split by architecture because each is built on a host that can build it
+# natively. Emulation would work — the pinned bases are multi-arch indexes, so
+# one set of inputs describes both arches and buildx could produce either
+# anywhere — but our images do their real work in RUN steps (apt, npm ci), and
+# that is exactly what QEMU user-mode emulation punishes.
+#
+# The rootfs half is *not* split, and does not need to be: exporting an image's
+# filesystem is `docker create` + `docker export`, and the container is never
+# started, so no foreign-arch binary ever executes. delphi packages both arches'
+# ext4 from the images delos and delphi published. That also sidesteps macOS
+# having no e2fsprogs `mke2fs`.
+#
+# Release-triggered only. Development builds locally (BOT_BOTTLE_INFRA_BUILD=local),
+# which stays the supported path for a current or custom agent harness.
+
+name: publish-images
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      images:
+        description: "Space-separated image names (default: all)"
+        required: false
+
+jobs:
+  build-arm64:
+    # delos / hypomnemata — Apple M1 Pro. Builds Linux images through the
+    # container runtime's Linux VM; pushes OCI only.
+    runs-on: [self-hosted, macos]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build and push arm64 images
+        env:
+          BOT_BOTTLE_INFRA_ARTIFACT_TOKEN: ${{ secrets.BOT_BOTTLE_INFRA_ARTIFACT_TOKEN }}
+        run: |
+          python3 -m bot_bottle.publish_images \
+            --output candidate-arm64 \
+            --platform linux/arm64 \
+            --skip-ext4
+
+      - name: Upload the arm64 manifest part
+        uses: actions/upload-artifact@v3
+        with:
+          name: manifest-arm64
+          path: candidate-arm64/image-assets.json
+
+  build-amd64:
+    # delphi / teikhos — x86_64, and the host with KVM and e2fsprogs. Builds
+    # amd64 natively, then packages *both* arches' rootfs.
+    runs-on: [self-hosted, kvm]
+    needs: build-arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build and push amd64 images, and package amd64 rootfs
+        env:
+          BOT_BOTTLE_INFRA_ARTIFACT_TOKEN: ${{ secrets.BOT_BOTTLE_INFRA_ARTIFACT_TOKEN }}
+        run: |
+          python3 -m bot_bottle.publish_images \
+            --output candidate-amd64 \
+            --platform linux/amd64
+
+      - name: Download the arm64 manifest part
+        uses: actions/download-artifact@v3
+        with:
+          name: manifest-arm64
+          path: part-arm64
+
+      # The arm64 images are already in the registry; pull each by its pinned
+      # digest and package its rootfs here. Nothing is executed, so building an
+      # arm64 filesystem on an amd64 host is sound.
+      - name: Package the arm64 rootfs from the published images
+        env:
+          BOT_BOTTLE_INFRA_ARTIFACT_TOKEN: ${{ secrets.BOT_BOTTLE_INFRA_ARTIFACT_TOKEN }}
+        run: |
+          python3 -m bot_bottle.publish_images \
+            --output candidate-arm64 \
+            --platform linux/arm64 \
+            --ext4-from-manifest part-arm64/image-assets.json
+
+      - name: Upload the candidate bundles
+        uses: actions/upload-artifact@v3
+        with:
+          name: image-candidate
+          path: |
+            candidate-amd64
+            candidate-arm64
+
+  publish:
+    runs-on: [self-hosted, kvm]
+    needs: build-amd64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download the candidate bundles
+        uses: actions/download-artifact@v3
+        with:
+          name: image-candidate
+          path: candidate
+
+      # Uploads every rootfs, then unions the per-arch manifests. A conflict
+      # between parts aborts rather than picking one: the manifest is the one
+      # place a launch host can trust, so an arbitrary winner is worse than a
+      # failed release.
+      - name: Publish rootfs artifacts and write the merged manifest
+        env:
+          BOT_BOTTLE_INFRA_ARTIFACT_TOKEN: ${{ secrets.BOT_BOTTLE_INFRA_ARTIFACT_TOKEN }}
+        run: |
+          python3 -m bot_bottle.publish_images \
+            --publish-dir candidate/candidate-amd64
+          python3 -m bot_bottle.publish_images \
+            --publish-dir candidate/candidate-arm64
+          python3 -m bot_bottle.publish_images \
+            --merge candidate/candidate-amd64/image-assets.json \
+            --merge candidate/candidate-arm64/image-assets.json \
+            --merge-into image-assets.json
+
+      - name: Verify the merged manifest
+        run: python3 scripts/check_image_assets.py
+
+      - name: Upload the merged manifest
+        uses: actions/upload-artifact@v3
+        with:
+          name: image-assets
+          path: image-assets.json

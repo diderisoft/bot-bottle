@@ -132,29 +132,36 @@ class Consistency(unittest.TestCase):
 
 
 class InputsHash(unittest.TestCase):
-    def test_distinguishes_architecture(self) -> None:
-        """The regression this scheme exists to prevent: the older firecracker
-        version hash omitted the machine, so two arches on one checkout
-        computed one version while needing different bytes."""
-        arm = ii.inputs_hash("bot-bottle-gateway", "linux/arm64")
-        amd = ii.inputs_hash("bot-bottle-gateway", "linux/amd64")
-        self.assertNotEqual(arm, amd)
+    def test_is_architecture_independent_by_design(self) -> None:
+        """One hash per checkout, not per machine.
+
+        Every base image is pinned to a multi-arch *index* digest, so one set of
+        inputs describes both architectures and `--platform` specialises the
+        build. Architecture is disambiguated structurally instead — by the
+        manifest's platform keys and the per-arch tags and filenames they carry
+        — which is what closes the hole in the older firecracker version hash,
+        where architecture appeared in neither the hash nor the artifact path."""
+        entries = ia.parse_manifest(_entry())
+        artifact = ia.resolve(entries, "bot-bottle-gateway",
+                              prefer=("oci",), plat="linux/arm64")
+        self.assertIn("arm64", artifact.locator)
+        self.assertEqual(artifact.platform, "linux/arm64")
 
     def test_distinguishes_image(self) -> None:
         self.assertNotEqual(
-            ii.inputs_hash("bot-bottle-gateway", "linux/arm64"),
-            ii.inputs_hash("bot-bottle-claude", "linux/arm64"),
+            ii.inputs_hash("bot-bottle-gateway"),
+            ii.inputs_hash("bot-bottle-claude"),
         )
 
     def test_is_deterministic(self) -> None:
         self.assertEqual(
-            ii.inputs_hash("bot-bottle-codex", "linux/arm64"),
-            ii.inputs_hash("bot-bottle-codex", "linux/arm64"),
+            ii.inputs_hash("bot-bottle-codex"),
+            ii.inputs_hash("bot-bottle-codex"),
         )
 
     def test_unknown_image_is_rejected(self) -> None:
         with self.assertRaises(ii.UnknownImageError):
-            ii.inputs_hash("bot-bottle-nope", "linux/arm64")
+            ii.inputs_hash("bot-bottle-nope")
 
     def test_every_known_image_has_a_dockerfile(self) -> None:
         self.assertEqual(set(ii.BUILD_INPUTS), set(ii.DOCKERFILES))
@@ -246,6 +253,71 @@ class Interchangeability(unittest.TestCase):
         built = self._built("9f2c1e4b7a83d10c", "9f2c1e4b7a83d10c")
         entries = ia.parse_manifest({built.name: pi.manifest_entry(built)})
         self.assertEqual(len(entries[built.name].artifacts), 2)
+
+
+class MergeManifests(unittest.TestCase):
+    """Each architecture is built on the host that builds it natively, so each
+    emits a manifest covering only its own platform. Combining them must not let
+    either clobber the other."""
+
+    def _part(self, plat: str, sfx: str, oci: str, ext4: str) -> dict:
+        return {"bot-bottle-gateway": {
+            "version": "0.14.2", "inputs_hash": "9f2c1e4b7a83d10c",
+            "artifacts": {
+                "oci": {"ref": "r/bot-bottle-gateway",
+                        "platforms": {plat: {"tag": f"0.14.2-{sfx}", "digest": oci}}},
+                "ext4": {"package": "bot-bottle-gateway-rootfs",
+                         "platforms": {plat: {"file": f"rootfs.{sfx}.ext4.gz",
+                                              "digest": ext4}}},
+            }}}
+
+    def _merge(self, *parts: dict) -> dict:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = []
+            for i, part in enumerate(parts):
+                p = root / f"part{i}.json"
+                p.write_text(json.dumps(part))
+                paths.append(p)
+            out = root / "merged.json"
+            pi.merge_manifests(paths, out)
+            return json.loads(out.read_text())
+
+    def test_unions_platforms_across_parts(self) -> None:
+        merged = self._merge(
+            self._part("linux/arm64", "arm64", _A, _B),
+            self._part("linux/amd64", "amd64", _C, "sha256:" + "d" * 64),
+        )
+        arts = merged["bot-bottle-gateway"]["artifacts"]
+        self.assertEqual(sorted(arts["oci"]["platforms"]),
+                         ["linux/amd64", "linux/arm64"])
+        self.assertEqual(sorted(arts["ext4"]["platforms"]),
+                         ["linux/amd64", "linux/arm64"])
+
+    def test_merged_output_still_validates(self) -> None:
+        merged = self._merge(
+            self._part("linux/arm64", "arm64", _A, _B),
+            self._part("linux/amd64", "amd64", _C, "sha256:" + "d" * 64),
+        )
+        entries = ia.parse_manifest(merged)
+        self.assertEqual(ia.check_consistency(entries), [])
+        self.assertEqual(len(entries["bot-bottle-gateway"].artifacts), 4)
+
+    def test_conflicting_parts_abort(self) -> None:
+        """Two hosts built the same image/format/platform and disagreed.
+        Picking either would be arbitrary, and the manifest is meant to be the
+        one thing a launch host can trust."""
+        with self.assertRaises(pi.PublishError):
+            self._merge(
+                self._part("linux/arm64", "arm64", _A, _B),
+                self._part("linux/arm64", "arm64", _C, _B),
+            )
+
+    def test_version_disagreement_aborts(self) -> None:
+        other = self._part("linux/amd64", "amd64", _C, "sha256:" + "d" * 64)
+        other["bot-bottle-gateway"]["version"] = "0.14.3"
+        with self.assertRaises(pi.PublishError):
+            self._merge(self._part("linux/arm64", "arm64", _A, _B), other)
 
 
 class ManifestFile(unittest.TestCase):
