@@ -342,7 +342,11 @@ def build_ext4(image: str, plat: str, out_dir: Path, inputs: str) -> BuiltArtifa
     )
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    ext4 = out_dir / f"{image}.ext4"
+    # Per-platform, like the .gz beside it. An image's two platforms are built
+    # concurrently, and `mke2fs -d` populating one path from two processes
+    # corrupts the filesystem it is writing ("Directory block checksum does not
+    # match") — nondeterministically, only when the two windows overlap.
+    ext4 = out_dir / f"{image}.{_platform_suffix(plat)}.ext4"
     print(f"  building rootfs for {image} ({plat})")
     fc_util.build_rootfs_ext4(base, ext4)
     gz = out_dir / ext4_filename(plat)

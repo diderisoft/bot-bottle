@@ -257,6 +257,28 @@ class BuildExt4(unittest.TestCase):
         fake_infra.role_init.assert_not_called()
         self.assertIsNone(fake_fc.build_base_rootfs_dir.call_args.kwargs["init_script"])
 
+    def test_intermediate_ext4_path_is_per_platform(self) -> None:
+        """Both platforms of an image build concurrently. A shared intermediate
+        path means two `mke2fs -d` runs populating one file, which corrupts it
+        ("Directory block checksum does not match") only when their windows
+        happen to overlap — so it passes until it doesn't."""
+        paths: list[Path] = []
+        for plat in ("linux/amd64", "linux/arm64"):
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                fake_fc, fake_infra = self._patched(root)
+                fake_fc.build_rootfs_ext4.side_effect = (
+                    lambda _b, out, **_k: (paths.append(out), out.write_bytes(b"x"))[1]
+                )
+                with mock.patch(
+                    "bot_bottle.backend.firecracker.infra_vm", fake_infra, create=True
+                ), mock.patch(
+                    "bot_bottle.backend.firecracker.util", fake_fc, create=True
+                ):
+                    pi.build_ext4("bot-bottle-gateway", plat, root / "o", _HASH)
+        self.assertEqual(len(paths), 2)
+        self.assertNotEqual(paths[0].name, paths[1].name)
+
     def test_artifact_digest_covers_the_compressed_file(self) -> None:
         """The ext4 digest must cover the bytes that are actually published —
         the .gz — matching what the pull side verifies."""
