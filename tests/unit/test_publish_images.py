@@ -386,20 +386,28 @@ class RepoLinking(unittest.TestCase):
     so they need an explicit call or they stay owner-scoped and invisible on
     the repo."""
 
-    def test_links_each_package_once(self) -> None:
+    def test_links_both_containers_and_generic_packages(self) -> None:
+        """The OCI source label alone is not enough — Gitea reads it when it
+        creates a package, so a republish of an existing one stays unlinked."""
         resp = mock.MagicMock()
         with mock.patch("urllib.request.urlopen", return_value=resp) as opened:
             pi.link_to_repo(["a", "b"], "tok")
         urls = [c.args[0].full_url for c in opened.call_args_list]
-        self.assertEqual(len(urls), 2)
+        self.assertEqual(len(urls), 4)  # 2 images x {container, generic}
+        self.assertEqual(sum("/container/" in u for u in urls), 2)
+        self.assertEqual(sum("/generic/" in u for u in urls), 2)
         # Per package *name*, not per version — one call covers every version.
         self.assertTrue(all(u.endswith("/-/link/bot-bottle") for u in urls))
-        self.assertIn("a-rootfs", urls[0])
 
     def test_already_linked_is_not_a_warning(self) -> None:
-        err = urllib.error.HTTPError("u", 409, "conflict", None, None)  # type: ignore[arg-type]
-        with mock.patch("urllib.request.urlopen", side_effect=err):
-            pi.link_to_repo(["a"], "tok")  # must not raise
+        """Gitea answers 400 for an existing link, which is the steady state on
+        every republish."""
+        for code in (400, 409):
+            err = urllib.error.HTTPError("u", code, "x", None, None)  # type: ignore[arg-type]
+            with mock.patch("urllib.request.urlopen", side_effect=err):
+                with mock.patch("sys.stderr") as err_out:
+                    pi.link_to_repo(["a"], "tok")
+                self.assertFalse(err_out.write.called, f"warned on {code}")
 
     def test_failure_does_not_abort_the_publish(self) -> None:
         """Artifacts are already uploaded by this point — unlinked is harder to
