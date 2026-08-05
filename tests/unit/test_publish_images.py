@@ -309,6 +309,56 @@ class BuildAll(unittest.TestCase):
         self.assertLessEqual(pi.default_jobs(), 8)
 
 
+class Preflight(unittest.TestCase):
+    """Collisions are found before building, not at upload time.
+
+    Uploads only start once every image is built, so a late collision throws
+    away the whole matrix — ten minutes of work to learn what one round trip
+    could have said up front."""
+
+    def test_reports_existing_artifacts(self) -> None:
+        with mock.patch.object(pi, "_head", return_value=200):
+            found = pi.already_published(["img"], ["linux/amd64"], "0.14.2", "tok")
+        # Both halves are checked: the ext4 URL and the OCI manifest.
+        self.assertEqual(len(found), 2)
+
+    def test_clean_version_reports_nothing(self) -> None:
+        with mock.patch.object(pi, "_head", return_value=404):
+            self.assertEqual(
+                pi.already_published(["img"], ["linux/amd64"], "0.14.2", "tok"), [])
+
+    def test_oci_is_checked_not_just_ext4(self) -> None:
+        """`docker push` overwrites an existing tag silently, so the OCI half
+        is the one nothing downstream would ever report."""
+        def head(url: str, _tok: str) -> int:
+            return 200 if "/v2/" in url else 404
+
+        with mock.patch.object(pi, "_head", side_effect=head):
+            found = pi.already_published(["img"], ["linux/amd64"], "0.14.2", "tok")
+        self.assertEqual(len(found), 1)
+        self.assertIn("img", found[0])
+
+    def test_main_aborts_before_building(self) -> None:
+        with mock.patch.dict("os.environ", {pi.TOKEN_ENV: "tok"}), \
+             mock.patch.object(pi, "already_published", return_value=["x"]), \
+             mock.patch.object(pi, "repo_version", return_value="0.14.2"), \
+             mock.patch.object(pi, "build_all") as build:
+            rc = pi.main(["--image", "img"])
+        self.assertEqual(rc, 2)
+        build.assert_not_called()
+
+    def test_force_deletes_then_builds(self) -> None:
+        with mock.patch.dict("os.environ", {pi.TOKEN_ENV: "tok"}), \
+             mock.patch.object(pi, "already_published", return_value=["x"]), \
+             mock.patch.object(pi, "repo_version", return_value="0.14.2"), \
+             mock.patch.object(pi, "delete_published") as delete, \
+             mock.patch.object(pi, "build_all", return_value=[]), \
+             mock.patch.object(pi, "write_artifacts_manifest"):
+            rc = pi.main(["--image", "img", "--force"])
+        self.assertEqual(rc, 0)
+        delete.assert_called_once()
+
+
 class Cli(unittest.TestCase):
     def test_publish_without_a_token_aborts_before_building(self) -> None:
         """An OCI push cannot be undone, so a missing token has to stop the run

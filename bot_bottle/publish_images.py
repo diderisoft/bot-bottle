@@ -209,6 +209,74 @@ def ext4_url(image: str, version: str, plat: str) -> str:
     )
 
 
+def _head(url: str, token: str) -> int:
+    """HTTP status of a HEAD, without downloading the body. 0 if unreachable."""
+    req = urllib.request.Request(url, method="HEAD")
+    if token:
+        req.add_header("Authorization", f"token {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT_SECONDS) as resp:
+            return resp.status
+    except urllib.error.HTTPError as e:
+        return e.code
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return 0
+
+
+def already_published(
+    images: list[str], platforms: list[str], version: str, token: str,
+) -> list[str]:
+    """Artifacts that already exist at `version`, as URLs. Empty when clear.
+
+    Checked before building rather than at upload time. Uploads only start once
+    every image is built, so without this a collision on the second image
+    surfaces after the whole matrix has been built — ten minutes of work thrown
+    away to learn something one HTTP round trip could have said up front."""
+    base, owner, _ = _config()
+    found: list[str] = []
+    for image in images:
+        for plat in platforms:
+            ext4 = ext4_url(image, version, plat)
+            if _head(ext4, token) == 200:
+                found.append(ext4)
+            # The OCI half needs checking too, and more urgently: `docker push`
+            # silently overwrites an existing tag, so nothing downstream would
+            # ever report it.
+            manifest = (
+                f"{base}/v2/{owner}/{image}/manifests/{oci_tag(version, plat)}"
+            )
+            if _head(manifest, token) == 200:
+                found.append(f"{oci_ref(image)}:{oci_tag(version, plat)}")
+    return found
+
+
+def delete_published(
+    images: list[str], platforms: list[str], version: str, token: str,
+) -> None:
+    """Remove everything published at `version` so it can be republished.
+
+    Only reachable via `--force`. Generic packages reject a PUT over an
+    existing file, so republishing means deleting first."""
+    base, owner, _ = _config()
+    for image in images:
+        url = f"{base}/api/packages/{owner}/generic/{ext4_package(image)}/{version}"
+        for plat in platforms:
+            target = f"{url}/{ext4_filename(plat)}"
+            req = urllib.request.Request(target, method="DELETE")
+            if token:
+                req.add_header("Authorization", f"token {token}")
+            try:
+                with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT_SECONDS):
+                    print(f"  deleted {target}")
+            except urllib.error.HTTPError as e:
+                if e.code != 404:
+                    raise PublishError(
+                        f"could not delete {target} (HTTP {e.code})"
+                    ) from e
+            except urllib.error.URLError as e:
+                raise PublishError(f"registry unreachable: {target}") from e
+
+
 def check_interchangeable(built: BuiltImage) -> None:
     """Every artifact of an image must come from one `inputs_hash`, or the
     publish aborts.
@@ -356,6 +424,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
              "cannot be mistaken for a release.",
     )
     parser.add_argument(
+        "--force", action="store_true",
+        help="delete anything already published at this version and republish. "
+             "Without it, an existing version aborts before any build starts.",
+    )
+    parser.add_argument(
         "--jobs", type=int, default=None,
         help="builds to run concurrently (default: a quarter of the cores, "
              "capped at 8)",
@@ -432,6 +505,10 @@ def build_all(
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
+    # Builds take minutes and print as they go; block-buffered output would
+    # withhold all of it until the end, and interleave wrongly with the
+    # unbuffered stderr — so a traceback lands above the work that caused it.
+    sys.stdout.reconfigure(line_buffering=True)
 
     # Before building anything: an OCI push is not undoable, so discovering a
     # missing token afterwards would leave the registry holding images with no
@@ -450,6 +527,19 @@ def main(argv: list[str] | None = None) -> int:
     images = args.image or list(image_inputs.IMAGES)
     platforms = args.platform or [current_build_platform()]
     work_dir = args.work_dir
+
+    existing = already_published(images, platforms, version, token)
+    if existing and not args.force:
+        print(
+            f"{len(existing)} artifact(s) already published at {version}:\n  "
+            + "\n  ".join(existing)
+            + "\n  bump the version, or pass --force to replace them.",
+            file=sys.stderr,
+        )
+        return 2
+    if existing:
+        print(f"--force: removing {len(existing)} artifact(s) at {version}")
+        delete_published(images, platforms, version, token)
 
     built = build_all(images, platforms, version, repo_root=repo_root,
                       work_dir=work_dir, runtime=args.runtime, jobs=args.jobs)
