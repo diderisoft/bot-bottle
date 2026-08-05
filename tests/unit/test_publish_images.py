@@ -381,6 +381,34 @@ class Preflight(unittest.TestCase):
         delete.assert_called_once()
 
 
+class RepoLinking(unittest.TestCase):
+    """Generic packages have no `org.opencontainers.image.source` equivalent,
+    so they need an explicit call or they stay owner-scoped and invisible on
+    the repo."""
+
+    def test_links_each_package_once(self) -> None:
+        resp = mock.MagicMock()
+        with mock.patch("urllib.request.urlopen", return_value=resp) as opened:
+            pi.link_to_repo(["a", "b"], "tok")
+        urls = [c.args[0].full_url for c in opened.call_args_list]
+        self.assertEqual(len(urls), 2)
+        # Per package *name*, not per version — one call covers every version.
+        self.assertTrue(all(u.endswith("/-/link/bot-bottle") for u in urls))
+        self.assertIn("a-rootfs", urls[0])
+
+    def test_already_linked_is_not_a_warning(self) -> None:
+        err = urllib.error.HTTPError("u", 409, "conflict", None, None)  # type: ignore[arg-type]
+        with mock.patch("urllib.request.urlopen", side_effect=err):
+            pi.link_to_repo(["a"], "tok")  # must not raise
+
+    def test_failure_does_not_abort_the_publish(self) -> None:
+        """Artifacts are already uploaded by this point — unlinked is harder to
+        find, not broken, and not worth failing a release over."""
+        err = urllib.error.HTTPError("u", 500, "boom", None, None)  # type: ignore[arg-type]
+        with mock.patch("urllib.request.urlopen", side_effect=err):
+            pi.link_to_repo(["a"], "tok")  # must not raise
+
+
 class Cli(unittest.TestCase):
     def test_publish_without_a_token_aborts_before_building(self) -> None:
         """An OCI push cannot be undone, so a missing token has to stop the run

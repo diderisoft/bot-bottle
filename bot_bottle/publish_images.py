@@ -290,6 +290,38 @@ def delete_published(
                 raise PublishError(f"registry unreachable: {target}") from e
 
 
+def link_to_repo(images: list[str], token: str) -> None:
+    """Attach each generic rootfs package to the repository.
+
+    Containers get this from `org.opencontainers.image.source` at build time,
+    but generic packages have no equivalent label — without this call they stay
+    owner-scoped and never appear on the repo's Packages tab.
+
+    The endpoint is per package *name*, not per version, so one call covers
+    every version. Best effort: a failure to link leaves the artifacts
+    published and usable, only harder to find, which is not worth failing a
+    release over."""
+    base, owner, _ = _config()
+    repo = source_url().rstrip("/").rsplit("/", 1)[-1]
+    for image in images:
+        package = ext4_package(image)
+        url = f"{base}/api/v1/packages/{owner}/generic/{package}/-/link/{repo}"
+        req = urllib.request.Request(url, data=b"", method="POST")
+        if token:
+            req.add_header("Authorization", f"token {token}")
+        try:
+            with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT_SECONDS):
+                print(f"  linked {package} -> {owner}/{repo}")
+        except urllib.error.HTTPError as e:
+            # 409 is "already linked", which is success for our purposes.
+            if e.code != 409:
+                print(f"  warning: could not link {package} (HTTP {e.code})",
+                      file=sys.stderr)
+        except urllib.error.URLError as e:
+            print(f"  warning: could not link {package} ({e.reason})",
+                  file=sys.stderr)
+
+
 def check_interchangeable(built: BuiltImage) -> None:
     """Every artifact of an image must come from one `inputs_hash`, or the
     publish aborts.
@@ -571,6 +603,8 @@ def main(argv: list[str] | None = None) -> int:
                 ext4_url(entry.name, entry.version, artifact.platform),
                 work_dir / entry.name / artifact.locator, token,
             )
+
+    link_to_repo(images, token)
 
     dest = work_dir / ARTIFACTS_MANIFEST_NAME
     dest.parent.mkdir(parents=True, exist_ok=True)
