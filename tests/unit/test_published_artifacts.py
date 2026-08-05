@@ -14,6 +14,8 @@ No network and no container runtime: HTTP is mocked at `urlopen`.
 
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import tempfile
 import unittest
@@ -365,6 +367,78 @@ class RegistryPlumbing(unittest.TestCase):
             with self.assertRaises(ir.RegistryError) as ctx:
                 ir.verify_tag(self.artifact)
         self.assertNotIn("not published", str(ctx.exception))
+
+
+class Ext4Fetch(unittest.TestCase):
+    """The consume side for ext4. `pull` delegates verification to the container
+    runtime; a generic package has no runtime to delegate to, so the download,
+    the digest check and the cache all live here."""
+
+    def _artifact(self, payload: bytes) -> "tuple[pa.Artifact, str]":
+        digest = "sha256:" + hashlib.sha256(payload).hexdigest()
+        return pa.Artifact(
+            image="bot-bottle-gateway", format="ext4", platform="linux/arm64",
+            digest=digest, locator="rootfs.arm64.ext4.gz",
+            namespace="bot-bottle-gateway-rootfs", version="0.14.2",
+        ), digest
+
+    def _serve(self, payload: bytes):
+        resp = mock.MagicMock()
+        resp.__enter__.return_value = io.BytesIO(payload)
+        return mock.patch("urllib.request.urlopen", return_value=resp)
+
+    def test_downloads_and_verifies(self) -> None:
+        payload = b"rootfs-bytes" * 100
+        artifact, _ = self._artifact(payload)
+        with tempfile.TemporaryDirectory() as tmp:
+            with self._serve(payload):
+                got = ir.ensure_ext4(artifact, cache_root=Path(tmp))
+            self.assertTrue(got.is_file())
+            self.assertEqual(got.read_bytes(), payload)
+
+    def test_second_call_uses_the_cache(self) -> None:
+        payload = b"cached" * 50
+        artifact, _ = self._artifact(payload)
+        with tempfile.TemporaryDirectory() as tmp:
+            with self._serve(payload) as opened:
+                ir.ensure_ext4(artifact, cache_root=Path(tmp))
+                first = opened.call_count
+                ir.ensure_ext4(artifact, cache_root=Path(tmp))
+                self.assertEqual(opened.call_count, first, "re-downloaded")
+
+    def test_digest_mismatch_fails_closed_and_removes_the_file(self) -> None:
+        """A rootfs that failed verification must not be left where the next
+        run would take it for cached-and-checked."""
+        artifact, _ = self._artifact(b"expected")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self._serve(b"something else entirely"):
+                with self.assertRaises(ir.RegistryError) as ctx:
+                    ir.ensure_ext4(artifact, cache_root=root)
+            self.assertIn("verification", str(ctx.exception))
+            self.assertEqual(list(root.rglob("*.gz")), [])
+
+    def test_unpublished_version_says_how_to_fix_it(self) -> None:
+        artifact, _ = self._artifact(b"x")
+        err = urllib.error.HTTPError("u", 404, "nf", None, None)  # type: ignore[arg-type]
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch("urllib.request.urlopen", side_effect=err):
+                with self.assertRaises(ir.RegistryError) as ctx:
+                    ir.ensure_ext4(artifact, cache_root=Path(tmp))
+        self.assertIn("publish_images", str(ctx.exception))
+
+    def test_rejects_a_non_ext4_artifact(self) -> None:
+        oci = pa.resolve(pa.parse_artifacts_manifest(_entry()),
+                         "bot-bottle-gateway", prefer=("oci",), plat="linux/arm64")
+        with self.assertRaises(ir.RegistryError):
+            ir.ensure_ext4(oci)
+
+    def test_url_is_versioned_and_per_platform(self) -> None:
+        artifact, _ = self._artifact(b"x")
+        url = ir.ext4_url(artifact)
+        self.assertIn("/0.14.2/", url)
+        self.assertIn("rootfs.arm64.ext4.gz", url)
+        self.assertIn("bot-bottle-gateway-rootfs", url)
 
 
 class Interchangeability(unittest.TestCase):

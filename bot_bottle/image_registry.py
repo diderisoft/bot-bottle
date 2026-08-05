@@ -13,15 +13,25 @@ Both fail closed and never fall back to a local build.
 
 from __future__ import annotations
 
+import hashlib
 import os
+import shutil
 import subprocess
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 
-from .published_artifacts import Artifact, FORMAT_OCI
+from .paths import host_artifact_cache_dir
+from .published_artifacts import Artifact, FORMAT_EXT4, FORMAT_OCI
 
 REGISTRY_HTTP_TIMEOUT_SECONDS = 30.0
+# Generous by comparison: these are hundreds of MB, not a manifest HEAD.
+ARTIFACT_HTTP_TIMEOUT_SECONDS = 300.0
+_CHUNK = 1 << 20
+
+_DEFAULT_BASE = "https://gitea.dideric.is"
+_DEFAULT_OWNER = "didericis"
 
 # The OCI distribution media types a manifest request must accept. Without these
 # a registry may answer with a legacy schema, or refuse an image index outright.
@@ -179,6 +189,107 @@ def pull(resolved: ResolvedImage, *, runtime: str = "docker") -> None:
         )
 
 
+def ext4_url(artifact: Artifact) -> str:
+    """The generic-package URL for an ext4 artifact."""
+    if artifact.format != FORMAT_EXT4:
+        raise RegistryError(
+            f"ext4_url is for {FORMAT_EXT4} artifacts, got {artifact.format!r}"
+        )
+    base = os.environ.get("BOT_BOTTLE_INFRA_ARTIFACT_BASE", _DEFAULT_BASE).rstrip("/")
+    owner = os.environ.get("BOT_BOTTLE_INFRA_ARTIFACT_OWNER", _DEFAULT_OWNER)
+    return (
+        f"{base}/api/packages/{owner}/generic/"
+        f"{artifact.namespace}/{artifact.version}/{artifact.locator}"
+    )
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(_CHUNK), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def ensure_ext4(artifact: Artifact, *, cache_root: Path | None = None) -> Path:
+    """The verified, cached `.gz` for an ext4 artifact, downloading it once.
+
+    The counterpart to the OCI half: `pull` hands a digest to the container
+    runtime and lets it fetch and verify, but a generic package has no runtime
+    to delegate to, so the download, the digest check and the cache all live
+    here.
+
+    Cached because these are hundreds of MB and a host boots the same version
+    repeatedly. A `.verified` marker beside the file is what makes the cache
+    trustworthy — a `.gz` alone could be a partial download from a previous
+    interrupted run.
+
+    Fails closed on a mismatch, deleting the file: a rootfs that failed
+    verification must not be left where the next run would take it for
+    cached-and-checked."""
+    if artifact.format != FORMAT_EXT4:
+        raise RegistryError(
+            f"ensure_ext4 is for {FORMAT_EXT4} artifacts, got {artifact.format!r}"
+        )
+    if cache_root is None:
+        cache_root = host_artifact_cache_dir()
+
+    root = cache_root / artifact.image / artifact.version / _platform_dir(artifact)
+    root.mkdir(parents=True, exist_ok=True)
+    gz = root / artifact.locator
+    verified = root / ".verified"
+    if gz.is_file() and verified.is_file():
+        return gz
+
+    url = ext4_url(artifact)
+    _download(url, gz)
+
+    expected = artifact.digest.split(":", 1)[1]
+    actual = _sha256_file(gz)
+    if actual != expected:
+        gz.unlink(missing_ok=True)
+        raise RegistryError(
+            f"{artifact.image} {artifact.version} ({artifact.platform}) failed "
+            f"verification:\n    expected sha256:{expected}\n"
+            f"    actual   sha256:{actual}\n"
+            f"    refusing to use an unverified rootfs."
+        )
+    verified.write_text("ok\n")
+    return gz
+
+
+def _platform_dir(artifact: Artifact) -> str:
+    return artifact.platform.replace("/", "-")
+
+
+def _download(url: str, dest: Path) -> None:
+    """Stream `url` to `dest`, atomically via a `.part` sibling so an
+    interrupted download can never be mistaken for a complete one."""
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    req = urllib.request.Request(url)
+    token = os.environ.get(TOKEN_ENV, "").strip()
+    if token:
+        req.add_header("Authorization", f"token {token}")
+    try:
+        with urllib.request.urlopen(
+            req, timeout=ARTIFACT_HTTP_TIMEOUT_SECONDS,
+        ) as resp, open(tmp, "wb") as out:
+            shutil.copyfileobj(resp, out, _CHUNK)
+    except urllib.error.HTTPError as e:
+        tmp.unlink(missing_ok=True)
+        if e.code == 404:
+            raise RegistryError(
+                f"not published for this version:\n    missing: {url}\n"
+                f"    publish it (python3 -m bot_bottle.publish_images), or "
+                f"build locally with BOT_BOTTLE_INFRA_BUILD=local"
+            ) from e
+        raise RegistryError(f"downloading {url} failed (HTTP {e.code})") from e
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        tmp.unlink(missing_ok=True)
+        raise RegistryError(f"registry unreachable: {url} ({e})") from e
+    tmp.replace(dest)
+
+
 def local_build_requested() -> bool:
     """True when the operator opted into building instead of pulling.
 
@@ -189,6 +300,8 @@ def local_build_requested() -> bool:
 
 __all__ = [
     "DigestMismatch",
+    "ensure_ext4",
+    "ext4_url",
     "RegistryError",
     "ResolvedImage",
     "local_build_requested",

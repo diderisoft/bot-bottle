@@ -137,8 +137,21 @@ def host_orchestrator_token() -> str:
     return host_signing_key(ORCHESTRATOR_TOKEN_FILENAME)
 
 
+def host_artifact_cache_dir() -> Path:
+    """Where verified downloads of published artifacts are kept.
+
+    Under `~/.cache`, not the app-data root: everything here is re-downloadable
+    from the registry and verified against the manifest on arrival, so losing it
+    costs bandwidth rather than state."""
+    override = os.environ.get("BOT_BOTTLE_ARTIFACT_CACHE")
+    if override:
+        return Path(override)
+    return Path.home() / ".cache" / "bot-bottle" / "artifacts"
+
+
 __all__ = [
     "HOST_DB_FILENAME",
+    "host_artifact_cache_dir",
     "ORCHESTRATOR_TOKEN_FILENAME",
     "ORCHESTRATOR_TOKEN_ENV",
     "ORCHESTRATOR_AUTH_JWT_ENV",

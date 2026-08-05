@@ -69,6 +69,10 @@ class Artifact:
     # Format-scoped addressing shared by every platform: the OCI repository
     # reference, or the generic-package name for ext4.
     namespace: str
+    # Carried so an Artifact is enough to fetch on its own — the ext4 URL needs
+    # it, and threading the entry alongside every artifact invites the two
+    # drifting apart.
+    version: str = ""
 
 
 @dataclass(frozen=True)
@@ -191,6 +195,7 @@ def parse_artifacts_manifest(
                 artifacts.append(Artifact(
                     image=name, format=fmt, platform=plat,
                     digest=digest, locator=locator, namespace=namespace,
+                    version=version,
                 ))
 
         if artifacts:
