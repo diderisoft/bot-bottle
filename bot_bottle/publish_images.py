@@ -106,6 +106,19 @@ def current_build_platform() -> str:
     return current_platform()
 
 
+def source_url() -> str:
+    """The repository these images are built from.
+
+    Applied as `org.opencontainers.image.source`, which is what makes Gitea
+    attach a pushed container to the repo — packages are otherwise owner-scoped
+    and never appear on a repo's Packages tab. Deliberately independent of the
+    artifact owner, which a rehearsal may override: the source is where the code
+    lives, not where the bytes were pushed."""
+    return os.environ.get(
+        "BOT_BOTTLE_IMAGE_SOURCE_URL", f"{_DEFAULT_BASE}/didericis/bot-bottle",
+    )
+
+
 def oci_ref(image: str) -> str:
     base, owner, _ = _config()
     host = base.split("://", 1)[-1]
@@ -389,8 +402,10 @@ def build_image(
         build_args += ["--build-arg", f"{name}={value}"]
     _run(
         [runtime, "build", "-f", str(dockerfile),
-         "--platform", plat, *build_args, "-t", local_tag(image, plat),
-         str(repo_root)],
+         "--platform", plat, *build_args,
+         "--label", f"org.opencontainers.image.source={source_url()}",
+         "--label", f"org.opencontainers.image.version={version}",
+         "-t", local_tag(image, plat), str(repo_root)],
         what=f"building {image} for {plat}",
     )
 
