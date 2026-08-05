@@ -20,7 +20,7 @@ Two persistent microVMs, split now that #469 got the DB off the data plane
 Each VM boots its **own** per-plane rootfs — the orchestrator rootfs carries the
 control plane + buildah (in-VM agent builds), the gateway rootfs is the slim
 data plane with no build tooling on the exposed VM. Two artifacts, built/pulled
-per role (`infra_artifact`); each rootfs bakes only its own role init as PID 1.
+per role (`infra_rootfs`); each rootfs bakes only its own role init as PID 1.
 The gateway VM also runs a slimmer memory ceiling.
 
 SSH is left enabled for debugging + provisioning; the control plane is the
@@ -42,10 +42,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Generator
 
-from ... import resources
+from ... import image_registry, resources
 from ...log import die, info
 from ..docker import util as docker_mod
-from . import firecracker_vm, infra_artifact, netpool, util
+from . import firecracker_vm, infra_rootfs, netpool, util
 
 # The orchestrator VM's signing-key path on its persistent /dev/vdb volume
 # (mounted at BOT_BOTTLE_ROOT=/var/lib/bot-bottle). The launcher seeds this
@@ -62,7 +62,7 @@ _GUEST_GATEWAY_JWT_PATH = "/var/lib/bot-bottle/gateway-jwt"
 # plane + buildah rootfs (Dockerfile.orchestrator.fc, FROM orchestrator); the
 # gateway VM boots the slim data-plane image directly (no build tooling on the
 # exposed VM). Built from source by default; the launch host pulls prebuilt
-# artifacts instead (`infra_artifact`).
+# artifacts instead (`infra_rootfs`).
 _GATEWAY_IMAGE = "bot-bottle-gateway:latest"
 _ORCHESTRATOR_IMAGE = "bot-bottle-orchestrator:latest"
 _ORCHESTRATOR_FC_IMAGE = "bot-bottle-orchestrator-fc:latest"
@@ -105,7 +105,7 @@ def role_init(role: str) -> str:
 
 
 def _role_version(role: str) -> str:
-    return infra_artifact.infra_artifact_version(role_init(role), role)
+    return infra_rootfs.role_version(role)
 
 
 def ensure_built() -> None:
@@ -113,15 +113,14 @@ def ensure_built() -> None:
 
     Default (docker-free, PRD 0069 Stage 2): download + verify the prebuilt
     orchestrator + gateway rootfs artifacts matching this code version (see
-    `infra_artifact`); the launch host needs no Docker.
+    `infra_rootfs`); the launch host needs no Docker.
     `BOT_BOTTLE_INFRA_BUILD=local` instead builds the images from source with
     host Docker (the orchestrator-fc image is `FROM` the orchestrator image, so
     it must exist first) — for iterating on the Dockerfiles."""
-    if infra_artifact.local_build_requested():
+    if image_registry.local_build_requested():
         build_infra_images_with_docker()
         return
-    for role in infra_artifact.ROLES:
-        infra_artifact.ensure_artifact_gz(_role_version(role), role=role)
+    infra_rootfs.ensure_available()
 
 
 def build_infra_images_with_docker() -> None:
@@ -208,13 +207,13 @@ def boot_vm(
 
     run_dir.mkdir(parents=True, exist_ok=True)
     rootfs = run_dir / "rootfs.ext4"
-    if infra_artifact.local_build_requested():
+    if image_registry.local_build_requested():
         util.build_rootfs_ext4(
             build_rootfs_dir(role), rootfs, slack_mib=_ROOTFS_SLACK_MIB[role])
     else:
         # Prebuilt artifact already carries the role's build slack; expand it to
         # a fresh writable rootfs for this boot.
-        infra_artifact.materialize_ext4(_role_version(role), rootfs, role=role)
+        infra_rootfs.materialize_ext4(role, rootfs)
     private_key, pubkey = _stable_keypair()
 
     info(f"booting {role} VM on {slot.iface} (guest {slot.guest_ip})")
@@ -264,7 +263,7 @@ def _version_file() -> Path:
 def expected_version() -> str:
     """The combined marker for the running pair: both per-plane artifact
     versions, so a change to either rootfs dislodges the adopted pair."""
-    return " ".join(f"{role}={_role_version(role)}" for role in infra_artifact.ROLES)
+    return " ".join(f"{role}={_role_version(role)}" for role in infra_rootfs.ROLES)
 
 
 def adoptable(key: Path, url: str, want: str) -> bool:

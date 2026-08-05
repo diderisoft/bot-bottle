@@ -36,7 +36,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import image_inputs, resources
-from .published_artifacts import FORMAT_EXT4, FORMAT_OCI, ARTIFACTS_MANIFEST_NAME
+from .published_artifacts import (
+    ARTIFACTS_MANIFEST_NAME,
+    Artifact,
+    FORMAT_EXT4,
+    FORMAT_OCI,
+)
 
 _CHUNK = 1 << 20
 _HTTP_TIMEOUT_SECONDS = 60.0
@@ -497,6 +502,84 @@ def build_image(
     return produced
 
 
+def promote(
+    manifest: Path, to_version: str, token: str, *, runtime: str = "docker",
+) -> list[BuiltImage]:
+    """Copy every artifact in a tested manifest to `to_version`.
+
+    Copy, never rebuild. A rebuild at the release version produces bytes nobody
+    tested, which is the whole reason the dev version exists — the artifact that
+    passed is the artifact that ships.
+
+    The formats are not symmetric and this does not pretend otherwise: an OCI
+    image is re-tagged from its digest, so the registry moves nothing and the
+    digest must come back unchanged; a generic package has no copy API, so its
+    bytes are downloaded (verified against the manifest on the way in) and
+    re-uploaded.
+
+    Verified on both sides. A promotion that silently shipped something other
+    than what passed would defeat the point of testing a dev version at all."""
+    from .published_artifacts import parse_artifacts_manifest
+
+    entries = parse_artifacts_manifest(json.loads(manifest.read_text()))
+    promoted: list[BuiltImage] = []
+    for name, entry in sorted(entries.items()):
+        out = BuiltImage(name=name, version=to_version)
+        for artifact in entry.artifacts:
+            if artifact.format == FORMAT_OCI:
+                digest = _promote_oci(artifact, to_version, runtime=runtime)
+            else:
+                digest = _promote_ext4(artifact, to_version, token)
+            if digest != artifact.digest:
+                raise PublishError(
+                    f"{name} {artifact.format}/{artifact.platform}: promoted "
+                    f"digest {digest} does not match the tested "
+                    f"{artifact.digest} — refusing to ship untested bytes"
+                )
+            out.artifacts.append(BuiltArtifact(
+                fmt=artifact.format, platform=artifact.platform, digest=digest,
+                locator=(oci_tag(to_version, artifact.platform)
+                         if artifact.format == FORMAT_OCI else artifact.locator),
+                namespace=artifact.namespace, inputs_hash=entry.inputs_hash,
+            ))
+        promoted.append(out)
+    return promoted
+
+
+def _promote_oci(
+    artifact: "Artifact", to_version: str, *, runtime: str = "docker",
+) -> str:
+    """Re-tag a published image at the new version and return its digest.
+
+    Pulled by digest, so what gets re-tagged is exactly what was tested."""
+    source = f"{artifact.namespace}@{artifact.digest}"
+    target = f"{artifact.namespace}:{oci_tag(to_version, artifact.platform)}"
+    print(f"  promoting {artifact.image} {artifact.platform} -> {target}")
+    _run([runtime, "pull", "--platform", artifact.platform, source],
+         what=f"pulling {source}")
+    _run([runtime, "tag", source, target], what=f"tagging {target}")
+    _run([runtime, "push", target], what=f"pushing {target}")
+    out = _run([runtime, "inspect", "--format={{index .RepoDigests 0}}", target],
+               what=f"reading digest for {target}").strip()
+    if "@" not in out:
+        raise PublishError(f"could not read a digest for {target}: {out!r}")
+    return out.rsplit("@", 1)[1]
+
+
+def _promote_ext4(artifact: "Artifact", to_version: str, token: str) -> str:
+    """Re-upload a published rootfs at the new version and return its digest.
+
+    Downloaded through the same verified path a launch host uses, so the bytes
+    re-uploaded are provably the tested ones."""
+    from . import image_registry
+
+    gz = image_registry.ensure_ext4(artifact)
+    url = ext4_url(artifact.image, to_version, artifact.platform)
+    print(f"  promoting {artifact.image} {artifact.platform} rootfs -> {to_version}")
+    put_generic(url, gz, token)
+    return f"sha256:{_sha256(gz)}"
+
+
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="publish_images",
@@ -519,6 +602,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="publish under this version instead of the one in pyproject.toml. "
              "For rehearsals — use a throwaway like 0.0.0-dev so a trial run "
              "cannot be mistaken for a release.",
+    )
+    parser.add_argument(
+        "--promote", type=Path, default=None, metavar="MANIFEST",
+        help="promote the artifacts in MANIFEST to --version by copying them; "
+             "never rebuilds, so what ships is what was tested",
     )
     parser.add_argument(
         "--force", action="store_true",
@@ -605,7 +693,7 @@ def main(argv: list[str] | None = None) -> int:
     # Builds take minutes and print as they go; block-buffered output would
     # withhold all of it until the end, and interleave wrongly with the
     # unbuffered stderr — so a traceback lands above the work that caused it.
-    sys.stdout.reconfigure(line_buffering=True)
+    sys.stdout.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
 
     # Before building anything: an OCI push is not undoable, so discovering a
     # missing token afterwards would leave the registry holding images with no
@@ -621,6 +709,14 @@ def main(argv: list[str] | None = None) -> int:
 
     repo_root = resources.build_root()
     version = args.version or repo_version(repo_root)
+
+    if args.promote:
+        promoted = promote(args.promote, version, token, runtime=args.runtime)
+        dest = args.work_dir / ARTIFACTS_MANIFEST_NAME
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        write_artifacts_manifest(promoted, dest)
+        link_to_repo([e.name for e in promoted], token)
+        return 0
     images = args.image or list(image_inputs.IMAGES)
     platforms = args.platform or [current_build_platform()]
     work_dir = args.work_dir

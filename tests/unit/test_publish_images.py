@@ -268,9 +268,11 @@ class BuildExt4(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 fake_fc, fake_infra = self._patched(root)
-                fake_fc.build_rootfs_ext4.side_effect = (
-                    lambda _b, out, **_k: (paths.append(out), out.write_bytes(b"x"))[1]
-                )
+                def _capture(_base: Path, out: Path, **_kw: object) -> None:
+                    paths.append(out)
+                    out.write_bytes(b"x")
+
+                fake_fc.build_rootfs_ext4.side_effect = _capture
                 with mock.patch(
                     "bot_bottle.backend.firecracker.infra_vm", fake_infra, create=True
                 ), mock.patch(
@@ -472,6 +474,70 @@ class RepoLinking(unittest.TestCase):
         err = urllib.error.HTTPError("u", 500, "boom", None, None)  # type: ignore[arg-type]
         with mock.patch("urllib.request.urlopen", side_effect=err):
             pi.link_to_repo(["a"], "tok")  # must not raise
+
+
+class Promotion(unittest.TestCase):
+    """Promotion copies; it never rebuilds. A rebuild at the release version
+    ships bytes nobody tested, which is what the dev version exists to prevent."""
+
+    def _manifest(self, tmp: Path) -> Path:
+        p = tmp / "tested.json"
+        p.write_text(json.dumps({"bot-bottle-gateway": {
+            "version": "0.0.0-dev", "inputs_hash": _HASH,
+            "artifacts": {
+                "oci": {"ref": "reg/o/bot-bottle-gateway", "platforms": {
+                    "linux/arm64": {"tag": "0.0.0-dev-arm64", "digest": _A}}},
+                "ext4": {"package": "bot-bottle-gateway-rootfs", "platforms": {
+                    "linux/arm64": {"file": "rootfs.arm64.ext4.gz",
+                                    "digest": "sha256:" + "b" * 64}}},
+            }}}))
+        return p
+
+    def test_copies_both_formats_and_never_builds(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            gz = root / "r.gz"
+            gz.write_bytes(b"tested-bytes")
+            digest = "sha256:" + hashlib.sha256(b"tested-bytes").hexdigest()
+            manifest = self._manifest(root)
+            # Make the ext4 digest match what the bytes actually hash to.
+            manifest.write_text(manifest.read_text().replace("sha256:" + "b" * 64, digest))
+
+            with mock.patch.object(pi, "_run", side_effect=["", "", "", f"r@{_A}\n"]), \
+                 mock.patch.object(pi, "build_image") as build, \
+                 mock.patch("bot_bottle.image_registry.ensure_ext4", return_value=gz), \
+                 mock.patch.object(pi, "put_generic"):
+                promoted = pi.promote(manifest, "1.0.0", "tok")
+        build.assert_not_called()
+        self.assertEqual(len(promoted), 1)
+        self.assertEqual({a.fmt for a in promoted[0].artifacts}, {"oci", "ext4"})
+        self.assertEqual(promoted[0].version, "1.0.0")
+
+    def test_oci_is_pulled_by_digest_not_tag(self) -> None:
+        """What gets re-tagged has to be exactly what was tested."""
+        with tempfile.TemporaryDirectory():
+            with mock.patch.object(pi, "_run", side_effect=["", "", "", f"r@{_A}\n"]) as run:
+                pi._promote_oci(
+                    mock.Mock(namespace="reg/o/img", digest=_A,
+                              platform="linux/arm64", image="img"),
+                    "1.0.0")
+            pulled = [c.args[0] for c in run.call_args_list if c.args[0][1] == "pull"]
+        self.assertTrue(pulled)
+        self.assertIn(f"reg/o/img@{_A}", pulled[0])
+
+    def test_a_changed_digest_aborts(self) -> None:
+        """If the promoted artifact does not hash to what passed, promotion has
+        shipped something else — which defeats testing a dev version at all."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            gz = root / "r.gz"
+            gz.write_bytes(b"different")
+            with mock.patch.object(pi, "_run", side_effect=["", "", "", f"r@{_A}\n"]), \
+                 mock.patch("bot_bottle.image_registry.ensure_ext4", return_value=gz), \
+                 mock.patch.object(pi, "put_generic"):
+                with self.assertRaises(pi.PublishError) as ctx:
+                    pi.promote(self._manifest(root), "1.0.0", "tok")
+        self.assertIn("untested bytes", str(ctx.exception))
 
 
 class Cli(unittest.TestCase):

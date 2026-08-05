@@ -152,12 +152,23 @@ jobs:
           # range overlap; it prints the exact `backend setup` fix.
           python3 cli.py backend status --backend=firecracker
 
-      - name: Build infra candidate from this checkout
+      # Publish a dev version and test *that*, rather than staging a candidate
+      # a host is pointed at instead of the registry. A candidate is exercised
+      # through a code path that exists only for candidates, so what passes is
+      # not what production runs; here the integration suite resolves, downloads
+      # and verifies exactly as a release would. What passes gets promoted.
+      - name: Publish the dev version under test
         env:
+          BOT_BOTTLE_INFRA_ARTIFACT_TOKEN: ${{ secrets.BOT_BOTTLE_INFRA_ARTIFACT_TOKEN }}
           BOT_BOTTLE_FC_DROPBEAR: /var/cache/bot-bottle-fc/dropbear
-        run: python3 -m bot_bottle.backend.firecracker.publish_infra --output infra-candidate --reuse-published
+        run: |
+          printf '%s' "$BOT_BOTTLE_INFRA_ARTIFACT_TOKEN" \
+            | docker login gitea.dideric.is -u didericis --password-stdin
+          python3 -m bot_bottle.publish_images \
+            --version "0.0.0-dev-${{ github.run_number }}" --force \
+            --work-dir "${{ github.workspace }}/candidate"
 
-      - name: Replace the persistent infra VM with the candidate
+      - name: Replace the persistent infra VM so it re-pulls
         run: python3 -c 'from bot_bottle.backend.firecracker import infra_vm; infra_vm.stop()'
 
       # No dev-requirements install: `coverage` is already provided by the
@@ -166,7 +177,7 @@ jobs:
       - name: Run integration tests (firecracker) with coverage
         env:
           BOT_BOTTLE_BACKEND: firecracker
-          BOT_BOTTLE_INFRA_ARTIFACT_DIR: ${{ github.workspace }}/infra-candidate
+          BOT_BOTTLE_INFRA_ARTIFACT_TOKEN: ${{ secrets.BOT_BOTTLE_INFRA_ARTIFACT_TOKEN }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage.firecracker
         run: python3 -m coverage run -m unittest discover -t . -s tests/integration -v
 
@@ -179,11 +190,11 @@ jobs:
           name: coverage-firecracker
           path: coverage-firecracker.dat
 
-      - name: Upload tested rootfs
+      - name: Upload the tested manifest
         uses: actions/upload-artifact@v3
         with:
-          name: infra-candidate
-          path: infra-candidate/
+          name: tested-manifest
+          path: candidate/published-artifacts.json
 
       - name: Upload dropbear for publish verification
         uses: actions/upload-artifact@v3
@@ -329,35 +340,44 @@ jobs:
           git fetch --no-tags origin main:refs/remotes/origin/main
           python3 scripts/diff_coverage.py --base origin/main --min 90
 
-  publish-infra:
+  promote:
     needs:
       - unit
       - integration-docker
       - integration-firecracker
       - integration-macos
       - coverage
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, kvm]
     steps:
       - name: Checkout the tested revision
         uses: actions/checkout@v4
 
-      - name: Download the tested rootfs
+      - name: Download the tested manifest
         uses: actions/download-artifact@v3
         with:
-          name: infra-candidate
-          path: infra-candidate
+          name: tested-manifest
+          path: tested
 
-      # publish_infra re-derives the version from the checkout to confirm the
-      # bundle matches before uploading, and the version hashes the dropbear
-      # bytes. Download the same dropbear integration-firecracker used.
-      - name: Download the staged dropbear
-        uses: actions/download-artifact@v3
-        with:
-          name: firecracker-inputs
-          path: firecracker-inputs
-
-      - name: Publish the tested candidate
+      # Promotion copies; it never rebuilds. The artifacts the integration
+      # suite resolved, downloaded and verified are the ones that ship, and
+      # every promoted digest is checked against the tested one.
+      - name: Promote the tested dev version to the release version
         env:
           BOT_BOTTLE_INFRA_ARTIFACT_TOKEN: ${{ secrets.BOT_BOTTLE_INFRA_ARTIFACT_TOKEN }}
-          BOT_BOTTLE_FC_DROPBEAR: ${{ github.workspace }}/firecracker-inputs/dropbear
-        run: python3 -m bot_bottle.backend.firecracker.publish_infra --publish-dir infra-candidate
+        run: |
+          printf '%s' "$BOT_BOTTLE_INFRA_ARTIFACT_TOKEN" \
+            | docker login gitea.dideric.is -u didericis --password-stdin
+          python3 -m bot_bottle.publish_images \
+            --promote tested/published-artifacts.json \
+            --work-dir "${{ github.workspace }}/released"
+
+      - name: Verify the released manifest
+        run: |
+          cp released/published-artifacts.json published-artifacts.json
+          python3 scripts/check_published_artifacts.py
+
+      - name: Upload the released manifest
+        uses: actions/upload-artifact@v3
+        with:
+          name: published-artifacts
+          path: released/published-artifacts.json

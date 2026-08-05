@@ -98,12 +98,12 @@ class TestEnsureBuilt(unittest.TestCase):
         # this default-path test down the local Docker-build branch.
         with patch.dict(os.environ, {"BOT_BOTTLE_INFRA_BUILD": ""}), \
                 patch.object(infra_vm.docker_mod, "build_image") as build, \
-                patch.object(infra_vm.infra_artifact, "ensure_artifact_gz") as pull:
+                patch.object(infra_vm.infra_rootfs, "ensure_available") as pull:
             infra_vm.ensure_built()
         build.assert_not_called()
-        # One pull per plane.
-        roles = {c.kwargs["role"] for c in pull.call_args_list}
-        self.assertEqual({"orchestrator", "gateway"}, roles)
+        # Fetched up front, both planes together: booting one and then failing
+        # to fetch the other leaves half a control plane running.
+        pull.assert_called_once_with()
 
     def test_local_mode_builds_orchestrator_before_its_fc_image(self):
         with patch.dict(os.environ, {"BOT_BOTTLE_INFRA_BUILD": "local"}), \
