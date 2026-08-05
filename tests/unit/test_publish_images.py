@@ -242,7 +242,8 @@ class BuildExt4(unittest.TestCase):
                 ), mock.patch(
                     "bot_bottle.backend.firecracker.util", fake_fc, create=True
                 ):
-                    artifact = pi.build_ext4(image, "linux/arm64", root / "o", _HASH)
+                    artifact = pi.build_ext4(image, "linux/arm64", root / "o", _HASH,
+                                         repo_root=Path("."))
             return artifact, fake_fc, fake_infra
 
     def test_infra_image_gets_its_role_init(self) -> None:
@@ -275,9 +276,65 @@ class BuildExt4(unittest.TestCase):
                 ), mock.patch(
                     "bot_bottle.backend.firecracker.util", fake_fc, create=True
                 ):
-                    pi.build_ext4("bot-bottle-gateway", plat, root / "o", _HASH)
+                    pi.build_ext4("bot-bottle-gateway", plat, root / "o", _HASH,
+                                  repo_root=Path("."))
         self.assertEqual(len(paths), 2)
         self.assertNotEqual(paths[0].name, paths[1].name)
+
+    def test_orchestrator_rootfs_gets_its_slack(self) -> None:
+        """8192 MiB, not the 1024 default. The orchestrator builds agent images
+        inside itself; at the default it boots and then runs out of space during
+        an in-VM buildah build — invisible until a firecracker host tries it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_fc, fake_infra = self._patched(root)
+            with mock.patch.object(pi, "_run"), mock.patch(
+                "bot_bottle.backend.firecracker.infra_vm", fake_infra, create=True
+            ), mock.patch(
+                "bot_bottle.backend.firecracker.util", fake_fc, create=True
+            ):
+                pi.build_ext4("bot-bottle-orchestrator", "linux/arm64",
+                              root / "o", _HASH, repo_root=Path("."))
+        self.assertEqual(
+            fake_fc.build_rootfs_ext4.call_args.kwargs["slack_mib"], 8192)
+
+    def test_orchestrator_rootfs_comes_from_the_fc_dockerfile(self) -> None:
+        """Its rootfs is Dockerfile.orchestrator.fc — FROM the OCI image, plus
+        buildah. Exporting the plain OCI image yields a rootfs with no build
+        tooling at all."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_fc, fake_infra = self._patched(root)
+            with mock.patch.object(pi, "_run") as run, mock.patch(
+                "bot_bottle.backend.firecracker.infra_vm", fake_infra, create=True
+            ), mock.patch(
+                "bot_bottle.backend.firecracker.util", fake_fc, create=True
+            ):
+                pi.build_ext4("bot-bottle-orchestrator", "linux/arm64",
+                              root / "o", _HASH, repo_root=Path("."))
+        built = [" ".join(c.args[0]) for c in run.call_args_list]
+        self.assertTrue(any("Dockerfile.orchestrator.fc" in b for b in built),
+                        f"expected the .fc build, got {built}")
+        # And the rootfs is exported from that derived image, not the OCI one.
+        self.assertIn("-rootfs:build-arm64",
+                      fake_fc.build_base_rootfs_dir.call_args.args[0])
+
+    def test_gateway_reuses_its_oci_image_for_the_rootfs(self) -> None:
+        """Only the orchestrator differs; everything else must not pay a second
+        build."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_fc, fake_infra = self._patched(root)
+            with mock.patch.object(pi, "_run") as run, mock.patch(
+                "bot_bottle.backend.firecracker.infra_vm", fake_infra, create=True
+            ), mock.patch(
+                "bot_bottle.backend.firecracker.util", fake_fc, create=True
+            ):
+                pi.build_ext4("bot-bottle-gateway", "linux/arm64",
+                              root / "o", _HASH, repo_root=Path("."))
+        self.assertEqual(run.call_count, 0, "gateway should not rebuild")
+        self.assertEqual(
+            fake_fc.build_rootfs_ext4.call_args.kwargs["slack_mib"], 1024)
 
     def test_artifact_digest_covers_the_compressed_file(self) -> None:
         """The ext4 digest must cover the bytes that are actually published —

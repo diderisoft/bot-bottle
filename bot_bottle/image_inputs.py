@@ -77,6 +77,35 @@ INFRA_ROLES: dict[str, str] = {
     "bot-bottle-orchestrator": "orchestrator",
 }
 
+# Build inputs are a property of (image, format), not of an image. The
+# orchestrator's OCI image is the lean control plane; its bootable rootfs is the
+# `.fc` variant, `FROM` that image plus buildah for in-VM agent builds. Only
+# images that differ appear here.
+ROOTFS_DOCKERFILES: dict[str, str] = {
+    "bot-bottle-orchestrator": "Dockerfile.orchestrator.fc",
+}
+
+# Free space to leave in a rootfs beyond its contents. The orchestrator builds
+# agent images inside itself, so it needs far more than anything else; the
+# default is what every other image gets.
+DEFAULT_ROOTFS_SLACK_MIB = 1024
+ROOTFS_SLACK_MIB: dict[str, int] = {
+    "bot-bottle-orchestrator": 8192,
+}
+
+
+def rootfs_dockerfile(image: str) -> str:
+    """The Dockerfile whose image becomes `image`'s bootable rootfs.
+
+    Usually the same one the OCI image is built from. When it differs, it is
+    `FROM` the OCI image, so that one must be built first."""
+    return ROOTFS_DOCKERFILES.get(image, DOCKERFILES[image])
+
+
+def rootfs_slack_mib(image: str) -> int:
+    """Free space to leave in `image`'s rootfs."""
+    return ROOTFS_SLACK_MIB.get(image, DEFAULT_ROOTFS_SLACK_MIB)
+
 IMAGES: tuple[str, ...] = tuple(BUILD_INPUTS)
 
 

@@ -379,7 +379,42 @@ def write_artifacts_manifest(images: list[BuiltImage], dest: Path) -> None:
     print(f"wrote {dest}")
 
 
-def build_ext4(image: str, plat: str, out_dir: Path, inputs: str) -> BuiltArtifact:
+def rootfs_source_tag(
+    image: str, plat: str, *, repo_root: Path, runtime: str = "docker",
+) -> str:
+    """The local image `image`'s rootfs is exported from.
+
+    Usually the one already built for the OCI push. The orchestrator is the
+    exception: its rootfs comes from `Dockerfile.orchestrator.fc`, which is
+    `FROM` the OCI image and adds buildah, so it is built here on top of it."""
+    dockerfile = image_inputs.rootfs_dockerfile(image)
+    if dockerfile == image_inputs.DOCKERFILES[image]:
+        return local_tag(image, plat)
+
+    tag = f"{image}-rootfs:build-{_platform_suffix(plat)}"
+    build_args: list[str] = []
+    for name, value in sorted(
+        resources.image_build_args(repo_root / dockerfile).items()
+    ):
+        build_args += ["--build-arg", f"{name}={value}"]
+    print(f"  building {dockerfile} for {image} ({plat})")
+    _run(
+        [runtime, "build", "-f", str(repo_root / dockerfile),
+         "--platform", plat, *build_args, "-t", tag, str(repo_root)],
+        what=f"building {dockerfile} for {plat}",
+    )
+    return tag
+
+
+def build_ext4(
+    image: str,
+    plat: str,
+    out_dir: Path,
+    inputs: str,
+    *,
+    repo_root: Path,
+    runtime: str = "docker",
+) -> BuiltArtifact:
     """Export `image`'s filesystem into a bootable, gzipped ext4.
 
     Delegates to the firecracker rootfs machinery: `build_base_rootfs_dir`
@@ -390,9 +425,9 @@ def build_ext4(image: str, plat: str, out_dir: Path, inputs: str) -> BuiltArtifa
 
     role = image_inputs.INFRA_ROLES.get(image)
     init = infra_vm.role_init(role) if role else None
+    source = rootfs_source_tag(image, plat, repo_root=repo_root, runtime=runtime)
     base = fc_util.build_base_rootfs_dir(
-        local_tag(image, plat), variant=f"-{image}-{_platform_suffix(plat)}",
-        init_script=init,
+        source, variant=f"-{image}-{_platform_suffix(plat)}", init_script=init,
     )
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -402,7 +437,8 @@ def build_ext4(image: str, plat: str, out_dir: Path, inputs: str) -> BuiltArtifa
     # match") — nondeterministically, only when the two windows overlap.
     ext4 = out_dir / f"{image}.{_platform_suffix(plat)}.ext4"
     print(f"  building rootfs for {image} ({plat})")
-    fc_util.build_rootfs_ext4(base, ext4)
+    fc_util.build_rootfs_ext4(
+        base, ext4, slack_mib=image_inputs.rootfs_slack_mib(image))
     gz = out_dir / ext4_filename(plat)
     print(f"  compressing {image} rootfs")
     _gzip(ext4, gz)
@@ -456,7 +492,8 @@ def build_image(
         locator=oci_tag(version, plat), namespace=oci_ref(image),
         inputs_hash=inputs,
     )]
-    produced.append(build_ext4(image, plat, out_dir / image, inputs))
+    produced.append(build_ext4(image, plat, out_dir / image, inputs,
+                               repo_root=repo_root, runtime=runtime))
     return produced
 
 
