@@ -483,3 +483,28 @@ class ManifestFile(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Ext4CacheKey(unittest.TestCase):
+    """The cache is content-addressed. A hit returns before anything is
+    compared to the manifest, so a path that ignored the digest would serve a
+    previous download forever once a version was republished."""
+
+    def _artifact(self, payload: bytes) -> pa.Artifact:
+        return pa.Artifact(
+            image="img", format="ext4", platform="linux/arm64",
+            digest="sha256:" + hashlib.sha256(payload).hexdigest(),
+            locator="rootfs.arm64.ext4.gz", namespace="img-rootfs",
+            version="0.0.0-dev",
+        )
+
+    def test_republished_version_is_not_served_from_the_old_cache(self) -> None:
+        old, new = b"first-publish", b"second-publish"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for payload in (old, new):
+                resp = mock.MagicMock()
+                resp.__enter__.return_value = io.BytesIO(payload)
+                with mock.patch("urllib.request.urlopen", return_value=resp):
+                    got = ir.ensure_ext4(self._artifact(payload), cache_root=root)
+                self.assertEqual(got.read_bytes(), payload)

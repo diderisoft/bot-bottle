@@ -234,7 +234,12 @@ def ensure_ext4(artifact: Artifact, *, cache_root: Path | None = None) -> Path:
     if cache_root is None:
         cache_root = host_artifact_cache_dir()
 
-    root = cache_root / artifact.image / artifact.version / _platform_dir(artifact)
+    # Content-addressed, by digest rather than by (image, version, platform).
+    # A version can be republished with different bytes — `--force` exists — and
+    # a path that does not include the digest would then serve the previous
+    # download forever, because a cache hit returns before anything is compared
+    # to the manifest. Keying on the digest makes a hit provably the right bytes.
+    root = cache_root / artifact.image / artifact.digest.replace(":", "-")
     root.mkdir(parents=True, exist_ok=True)
     gz = root / artifact.locator
     verified = root / ".verified"
@@ -256,10 +261,6 @@ def ensure_ext4(artifact: Artifact, *, cache_root: Path | None = None) -> Path:
         )
     verified.write_text("ok\n")
     return gz
-
-
-def _platform_dir(artifact: Artifact) -> str:
-    return artifact.platform.replace("/", "-")
 
 
 def _download(url: str, dest: Path) -> None:
