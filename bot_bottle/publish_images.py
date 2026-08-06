@@ -402,6 +402,16 @@ def rootfs_source_tag(
         resources.image_build_args(repo_root / dockerfile).items()
     ):
         build_args += ["--build-arg", f"{name}={value}"]
+
+    # The base image the derived Dockerfile builds `FROM`. Passed as a
+    # digest-pinned local ref, not a tag: the ARG has no default precisely so
+    # the FROM cannot silently resolve a stale `:latest` instead of the image
+    # this run just built.
+    base_arg = image_inputs.ROOTFS_BASE_ARG.get(image)
+    if base_arg:
+        from .backend.docker import util as docker_util
+        pinned = docker_util.pinned_local_image_ref(local_tag(image, plat))
+        build_args += ["--build-arg", f"{base_arg}={pinned}"]
     print(f"  building {dockerfile} for {image} ({plat})")
     _run(
         [runtime, "build", "-f", str(repo_root / dockerfile),

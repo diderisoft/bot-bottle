@@ -85,6 +85,14 @@ ROOTFS_DOCKERFILES: dict[str, str] = {
     "bot-bottle-orchestrator": "Dockerfile.orchestrator.fc",
 }
 
+# The build arg a rootfs Dockerfile takes its base image through. These
+# deliberately have no default — the `FROM` would otherwise silently resolve a
+# stale `:latest` instead of the image just built — so the value has to be
+# supplied, and as a digest-pinned local ref rather than a tag.
+ROOTFS_BASE_ARG: dict[str, str] = {
+    "bot-bottle-orchestrator": "ORCHESTRATOR_BASE_IMAGE",
+}
+
 # Free space to leave in a rootfs beyond its contents. The orchestrator builds
 # agent images inside itself, so it needs far more than anything else; the
 # default is what every other image gets.

@@ -291,6 +291,9 @@ class BuildExt4(unittest.TestCase):
             root = Path(tmp)
             fake_fc, fake_infra = self._patched(root)
             with mock.patch.object(pi, "_run"), mock.patch(
+                "bot_bottle.backend.docker.util.pinned_local_image_ref",
+                return_value="pinned",
+            ), mock.patch(
                 "bot_bottle.backend.firecracker.infra_vm", fake_infra, create=True
             ), mock.patch(
                 "bot_bottle.backend.firecracker.util", fake_fc, create=True
@@ -300,6 +303,27 @@ class BuildExt4(unittest.TestCase):
         self.assertEqual(
             fake_fc.build_rootfs_ext4.call_args.kwargs["slack_mib"], 8192)
 
+    def test_derived_rootfs_gets_its_base_as_a_pinned_ref(self) -> None:
+        """Dockerfile.orchestrator.fc declares ORCHESTRATOR_BASE_IMAGE with no
+        default, so the FROM cannot silently resolve a stale `:latest`. The
+        value has to be supplied, digest-pinned, or the build fails outright."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_fc, fake_infra = self._patched(root)
+            with mock.patch.object(pi, "_run") as run, mock.patch(
+                "bot_bottle.backend.docker.util.pinned_local_image_ref",
+                return_value="bot-bottle-orchestrator:sha256-" + "a" * 64,
+            ), mock.patch(
+                "bot_bottle.backend.firecracker.infra_vm", fake_infra, create=True
+            ), mock.patch(
+                "bot_bottle.backend.firecracker.util", fake_fc, create=True
+            ):
+                pi.build_ext4("bot-bottle-orchestrator", "linux/arm64",
+                              root / "o", _HASH, repo_root=Path("."))
+        argv = " ".join(run.call_args_list[0].args[0])
+        self.assertIn("ORCHESTRATOR_BASE_IMAGE=", argv)
+        self.assertIn("sha256-" + "a" * 64, argv)
+
     def test_orchestrator_rootfs_comes_from_the_fc_dockerfile(self) -> None:
         """Its rootfs is Dockerfile.orchestrator.fc — FROM the OCI image, plus
         buildah. Exporting the plain OCI image yields a rootfs with no build
@@ -308,6 +332,9 @@ class BuildExt4(unittest.TestCase):
             root = Path(tmp)
             fake_fc, fake_infra = self._patched(root)
             with mock.patch.object(pi, "_run") as run, mock.patch(
+                "bot_bottle.backend.docker.util.pinned_local_image_ref",
+                return_value="pinned",
+            ), mock.patch(
                 "bot_bottle.backend.firecracker.infra_vm", fake_infra, create=True
             ), mock.patch(
                 "bot_bottle.backend.firecracker.util", fake_fc, create=True
