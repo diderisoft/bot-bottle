@@ -41,6 +41,7 @@ from .published_artifacts import (
     Artifact,
     FORMAT_EXT4,
     FORMAT_OCI,
+    platform_to_manifest,
 )
 
 _CHUNK = 1 << 20
@@ -355,18 +356,19 @@ def check_interchangeable(built: BuiltImage) -> None:
 
 
 def artifacts_manifest_entry(built: BuiltImage) -> dict[str, object]:
-    """One image's manifest entry, in the committed schema."""
+    """One image's manifest entry, in the committed schema: one flat
+    `{type, platform, url, digest}` asset per (type, platform), keyed by
+    `<type>_<platform>` (the loader asserts the key matches the fields)."""
     check_interchangeable(built)
     artifacts: dict[str, dict[str, object]] = {}
-    for artifact in built.artifacts:
-        fmt = artifacts.setdefault(
-            artifact.fmt,
-            {"ref" if artifact.fmt == FORMAT_OCI else "package": artifact.namespace,
-             "platforms": {}},
-        )
-        key = "tag" if artifact.fmt == FORMAT_OCI else "file"
-        fmt["platforms"][artifact.platform] = {  # type: ignore[index]
-            key: artifact.locator, "digest": artifact.digest,
+    for a in built.artifacts:
+        plat = platform_to_manifest(a.platform)
+        if a.fmt == FORMAT_OCI:
+            url = f"{a.namespace}:{a.locator}"
+        else:
+            url = ext4_url(built.name, built.version, a.platform)
+        artifacts[f"{a.fmt}_{plat}"] = {
+            "type": a.fmt, "platform": plat, "url": url, "digest": a.digest,
         }
     return {
         "version": built.version,
@@ -546,11 +548,17 @@ def promote(
                     f"digest {digest} does not match the tested "
                     f"{artifact.digest} — refusing to ship untested bytes"
                 )
+            is_oci = artifact.format == FORMAT_OCI
             out.artifacts.append(BuiltArtifact(
                 fmt=artifact.format, platform=artifact.platform, digest=digest,
-                locator=(oci_tag(to_version, artifact.platform)
-                         if artifact.format == FORMAT_OCI else artifact.locator),
-                namespace=artifact.namespace, inputs_hash=entry.inputs_hash,
+                locator=(oci_tag(to_version, artifact.platform) if is_oci
+                         else ext4_filename(artifact.platform)),
+                # OCI ref from the tested manifest (url minus tag); ext4's
+                # namespace is unused by the writer (it recomputes the url from
+                # name/version/platform), so a config-derived package is fine.
+                namespace=(artifact.url.rsplit(":", 1)[0] if is_oci
+                           else ext4_package(artifact.image)),
+                inputs_hash=entry.inputs_hash,
             ))
         promoted.append(out)
     return promoted
@@ -562,8 +570,11 @@ def _promote_oci(
     """Re-tag a published image at the new version and return its digest.
 
     Pulled by digest, so what gets re-tagged is exactly what was tested."""
-    source = f"{artifact.namespace}@{artifact.digest}"
-    target = f"{artifact.namespace}:{oci_tag(to_version, artifact.platform)}"
+    # The repo ref comes from the tested manifest (url minus its tag), not from
+    # config — promote copies exactly what passed, wherever it was published.
+    ref = artifact.url.rsplit(":", 1)[0]
+    source = f"{ref}@{artifact.digest}"
+    target = f"{ref}:{oci_tag(to_version, artifact.platform)}"
     print(f"  promoting {artifact.image} {artifact.platform} -> {target}")
     _run([runtime, "pull", "--platform", artifact.platform, source],
          what=f"pulling {source}")

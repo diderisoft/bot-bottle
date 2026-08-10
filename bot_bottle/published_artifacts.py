@@ -2,12 +2,17 @@
 
 `image-build-args.json` pins what goes *in* to an image; this records what came
 *out*. Per image: a legible `version`, an `inputs_hash` (see `image_inputs`), and
-a `digest` per distribution format and platform. Only the digest is verified —
-the version is human-facing and never resolved on alone.
+one asset per (type, platform). Only the digest is verified — the version is
+human-facing and never resolved on alone.
 
-Artifacts nest by format then platform, so each locator sits beside the digest
-covering it, an image may ship only some formats, and consumers walk a
-preference order.
+Each asset is a flat, self-describing `{type, platform, url, digest}` keyed by
+`<type>_<platform>`. `type` says how to fetch and what `url`/`digest` mean: `oci`
+→ `url` is a registry pull ref (`host/owner/name:tag`) and `digest` is the OCI
+manifest digest; `ext4` → `url` is an HTTPS download and `digest` is the file's
+sha256. Platform is dash-spelled on disk (`linux-arm64`) and slash-spelled in
+code (`linux/arm64`); the translation happens only at this parse/serialize
+boundary. The loader asserts `key == f"{type}_{platform}"`, so the key/field
+redundancy is an integrity check rather than two things to keep in sync.
 
 Read-only: loading, validating, resolving. `publish_images` produces the
 manifest; `image_registry` fetches and verifies what it points at.
@@ -36,7 +41,18 @@ FORMATS = (FORMAT_OCI, FORMAT_EXT4)
 
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 _INPUTS_HASH = re.compile(r"^[0-9a-f]{16}$")
-_PLATFORM = re.compile(r"^linux/(amd64|arm64)$")
+_MANIFEST_PLATFORM = re.compile(r"^linux-(amd64|arm64)$")   # on-disk (dash)
+
+
+def _platform_from_manifest(dashed: str) -> str:
+    """`linux-arm64` (on disk) -> `linux/arm64` (in code)."""
+    return dashed.replace("-", "/", 1)
+
+
+def platform_to_manifest(slashed: str) -> str:
+    """`linux/arm64` (in code) -> `linux-arm64` (on disk). Public so the
+    publisher writes the same spelling the loader validates."""
+    return slashed.replace("/", "-", 1)
 
 # `platform.machine()` spellings we accept for each canonical platform string.
 _MACHINE_ALIASES = {
@@ -56,22 +72,19 @@ class ArtifactsManifestError(RuntimeError):
 
 @dataclass(frozen=True)
 class Artifact:
-    """One image, in one format, for one platform.
+    """One image asset: one `format` (the manifest's `type`), one platform.
 
-    `locator` is the format-specific addressing detail — for `oci` the tag, for
-    `ext4` the published filename. `digest` is always what gets verified."""
+    `url` is the whole locator — for `oci` a registry reference
+    `host/owner/name:tag`, for `ext4` the generic-package download URL. `digest`
+    is always what gets verified (an OCI manifest digest, or the ext4 file's
+    sha256). `platform` is the in-code slash form (`linux/arm64`)."""
 
     image: str
     format: str
     platform: str
+    url: str
     digest: str
-    locator: str
-    # Format-scoped addressing shared by every platform: the OCI repository
-    # reference, or the generic-package name for ext4.
-    namespace: str
-    # Carried so an Artifact is enough to fetch on its own — the ext4 URL needs
-    # it, and threading the entry alongside every artifact invites the two
-    # drifting apart.
+    # Carried so an Artifact is enough to fetch/verify on its own.
     version: str = ""
 
 
@@ -157,46 +170,43 @@ def parse_artifacts_manifest(
             fail(f"{name}: artifacts must be a non-empty object")
             raw_artifacts = {}
 
-        for fmt, raw_fmt in raw_artifacts.items():
+        for asset_key, raw_asset in raw_artifacts.items():
+            if not isinstance(raw_asset, dict):
+                fail(f"{name}.{asset_key}: must be an object")
+                continue
+            fmt = raw_asset.get("type")
             if fmt not in FORMATS:
-                fail(f"{name}: unknown format {fmt!r} (known: {', '.join(FORMATS)})")
+                fail(f"{name}.{asset_key}: unknown type {fmt!r} (known: {', '.join(FORMATS)})")
                 continue
-            if not isinstance(raw_fmt, dict):
-                fail(f"{name}.{fmt}: must be an object")
+            plat = raw_asset.get("platform")
+            if not isinstance(plat, str) or not _MANIFEST_PLATFORM.fullmatch(plat):
+                fail(
+                    f"{name}.{asset_key}: platform must be linux-amd64 or "
+                    f"linux-arm64, got {plat!r}"
+                )
                 continue
-            namespace = raw_fmt.get("ref" if fmt == FORMAT_OCI else "package")
-            if not isinstance(namespace, str) or not namespace:
-                key = "ref" if fmt == FORMAT_OCI else "package"
-                fail(f"{name}.{fmt}: missing {key}")
-                namespace = ""
-            platforms = raw_fmt.get("platforms")
-            if not isinstance(platforms, dict) or not platforms:
-                fail(f"{name}.{fmt}: platforms must be a non-empty object")
+            expected_key = f"{fmt}_{plat}"
+            if asset_key != expected_key:
+                fail(
+                    f"{name}.{asset_key}: key must equal <type>_<platform> "
+                    f"({expected_key!r})"
+                )
                 continue
-            for plat, raw_plat in platforms.items():
-                if not _PLATFORM.fullmatch(plat):
-                    fail(f"{name}.{fmt}: unsupported platform {plat!r}")
-                    continue
-                if not isinstance(raw_plat, dict):
-                    fail(f"{name}.{fmt}.{plat}: must be an object")
-                    continue
-                digest = raw_plat.get("digest")
-                if not isinstance(digest, str) or not _DIGEST.fullmatch(digest):
-                    fail(
-                        f"{name}.{fmt}.{plat}: digest must be "
-                        f"sha256:<64 lowercase hex>, got {digest!r}"
-                    )
-                    continue
-                locator = raw_plat.get("tag" if fmt == FORMAT_OCI else "file")
-                if not isinstance(locator, str) or not locator:
-                    key = "tag" if fmt == FORMAT_OCI else "file"
-                    fail(f"{name}.{fmt}.{plat}: missing {key}")
-                    continue
-                artifacts.append(Artifact(
-                    image=name, format=fmt, platform=plat,
-                    digest=digest, locator=locator, namespace=namespace,
-                    version=version,
-                ))
+            url = raw_asset.get("url")
+            if not isinstance(url, str) or not url:
+                fail(f"{name}.{asset_key}: missing url")
+                continue
+            digest = raw_asset.get("digest")
+            if not isinstance(digest, str) or not _DIGEST.fullmatch(digest):
+                fail(
+                    f"{name}.{asset_key}: digest must be "
+                    f"sha256:<64 lowercase hex>, got {digest!r}"
+                )
+                continue
+            artifacts.append(Artifact(
+                image=name, format=fmt, platform=_platform_from_manifest(plat),
+                url=url, digest=digest, version=version,
+            ))
 
         if artifacts:
             entries[name] = ImageEntry(

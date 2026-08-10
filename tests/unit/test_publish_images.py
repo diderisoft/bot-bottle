@@ -193,8 +193,11 @@ class WriteManifest(unittest.TestCase):
     def test_entry_carries_both_formats(self) -> None:
         entry = pi.artifacts_manifest_entry(_built())
         artifacts: Any = entry["artifacts"]
-        self.assertEqual(sorted(artifacts), ["ext4", "oci"])
-        self.assertIn("linux/arm64", artifacts["oci"]["platforms"])
+        self.assertEqual(sorted(artifacts), ["ext4_linux-arm64", "oci_linux-arm64"])
+        oci = artifacts["oci_linux-arm64"]
+        self.assertEqual(oci["type"], "oci")
+        self.assertEqual(oci["platform"], "linux-arm64")
+        self.assertEqual(oci["url"], "ref:0.14.2-arm64")
 
 
 class BuildImage(unittest.TestCase):
@@ -512,11 +515,14 @@ class Promotion(unittest.TestCase):
         p.write_text(json.dumps({"bot-bottle-gateway": {
             "version": "0.0.0-dev", "inputs_hash": _HASH,
             "artifacts": {
-                "oci": {"ref": "reg/o/bot-bottle-gateway", "platforms": {
-                    "linux/arm64": {"tag": "0.0.0-dev-arm64", "digest": _A}}},
-                "ext4": {"package": "bot-bottle-gateway-rootfs", "platforms": {
-                    "linux/arm64": {"file": "rootfs.arm64.ext4.gz",
-                                    "digest": "sha256:" + "b" * 64}}},
+                "oci_linux-arm64": {
+                    "type": "oci", "platform": "linux-arm64",
+                    "url": "reg/o/bot-bottle-gateway:0.0.0-dev-arm64", "digest": _A},
+                "ext4_linux-arm64": {
+                    "type": "ext4", "platform": "linux-arm64",
+                    "url": ("https://gitea.dideric.is/api/packages/didericis/generic/"
+                            "bot-bottle-gateway-rootfs/0.0.0-dev/rootfs.arm64.ext4.gz"),
+                    "digest": "sha256:" + "b" * 64},
             }}}))
         return p
 
@@ -545,7 +551,7 @@ class Promotion(unittest.TestCase):
         with tempfile.TemporaryDirectory():
             with mock.patch.object(pi, "_run", side_effect=["", "", "", f"r@{_A}\n"]) as run:
                 pi._promote_oci(
-                    mock.Mock(namespace="reg/o/img", digest=_A,
+                    mock.Mock(url="reg/o/img:0.0.0-dev-arm64", digest=_A,
                               platform="linux/arm64", image="img"),
                     "1.0.0")
             pulled = [c.args[0] for c in run.call_args_list if c.args[0][1] == "pull"]

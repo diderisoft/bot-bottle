@@ -2,15 +2,15 @@
 
 Locks what the publish/pull scheme rests on: a digest is verified while a tag is
 only checked, and a moved tag is caught; malformed manifests are reported rather
-than half-loaded; verification fails closed.
+than crashed on; and the flat `{type, platform, url, digest}` asset shape round
+-trips between publisher and consumer.
 
 No network and no container runtime: HTTP is mocked at `urlopen`.
 """
 
-# pylint: disable=protected-access
 # Reference-parsing helpers are private but carry real failure modes (a ref with
 # no registry host has nothing to ask about a tag), so they are exercised
-# directly rather than only through the paths that happen to call them.
+# directly rather than only through the public surface.
 
 from __future__ import annotations
 
@@ -33,20 +33,25 @@ _A = "sha256:" + "a" * 64
 _B = "sha256:" + "b" * 64
 _C = "sha256:" + "c" * 64
 
+_OCI_URL = "gitea.dideric.is/didericis/bot-bottle-gateway:0.14.2-arm64"
+_EXT4_URL = (
+    "https://gitea.dideric.is/api/packages/didericis/generic/"
+    "bot-bottle-gateway-rootfs/0.14.2/rootfs.arm64.ext4.gz"
+)
+
 
 def _entry(**over: object) -> dict[str, Any]:
     data = {
         "version": "0.14.2",
         "inputs_hash": "9f2c1e4b7a83d10c",
         "artifacts": {
-            "oci": {
-                "ref": "gitea.dideric.is/didericis/bot-bottle-gateway",
-                "platforms": {"linux/arm64": {"tag": "0.14.2-arm64", "digest": _A}},
+            "oci_linux-arm64": {
+                "type": "oci", "platform": "linux-arm64",
+                "url": _OCI_URL, "digest": _A,
             },
-            "ext4": {
-                "package": "bot-bottle-gateway-rootfs",
-                "platforms": {"linux/arm64": {"file": "rootfs.arm64.ext4.gz",
-                                              "digest": _B}},
+            "ext4_linux-arm64": {
+                "type": "ext4", "platform": "linux-arm64",
+                "url": _EXT4_URL, "digest": _B,
             },
         },
     }
@@ -61,10 +66,26 @@ class ParseManifest(unittest.TestCase):
         self.assertEqual(entry.version, "0.14.2")
         self.assertEqual({a.format for a in entry.artifacts}, {"oci", "ext4"})
 
+    def test_platform_is_slash_spelled_in_code(self) -> None:
+        """On-disk `linux-arm64` becomes in-code `linux/arm64` at the boundary."""
+        entries = pa.parse_artifacts_manifest(_entry())
+        self.assertEqual(
+            {a.platform for a in entries["bot-bottle-gateway"].artifacts},
+            {"linux/arm64"},
+        )
+
+    def test_key_must_equal_type_platform(self) -> None:
+        """The key/field redundancy is a load-time integrity check."""
+        bad = _entry()
+        asset = bad["bot-bottle-gateway"]["artifacts"].pop("oci_linux-arm64")
+        bad["bot-bottle-gateway"]["artifacts"]["oci_linux-amd64"] = asset  # key lies
+        problems: list[str] = []
+        pa.parse_artifacts_manifest(bad, problems=problems)
+        self.assertTrue(any("key must equal" in p for p in problems))
+
     def test_rejects_short_digest(self) -> None:
         bad = _entry()
-        plats = bad["bot-bottle-gateway"]["artifacts"]["oci"]["platforms"]
-        plats["linux/arm64"]["digest"] = "sha256:abc"
+        bad["bot-bottle-gateway"]["artifacts"]["oci_linux-arm64"]["digest"] = "sha256:abc"
         with self.assertRaises(pa.ArtifactsManifestError):
             pa.parse_artifacts_manifest(bad)
 
@@ -78,8 +99,14 @@ class ParseManifest(unittest.TestCase):
 
     def test_rejects_unsupported_platform(self) -> None:
         bad = _entry()
-        plats = bad["bot-bottle-gateway"]["artifacts"]["oci"]["platforms"]
-        plats["linux/riscv64"] = plats.pop("linux/arm64")
+        bad["bot-bottle-gateway"]["artifacts"]["oci_linux-arm64"]["platform"] = "linux-riscv64"
+        with self.assertRaises(pa.ArtifactsManifestError):
+            pa.parse_artifacts_manifest(bad)
+
+    def test_rejects_slash_spelled_platform_on_disk(self) -> None:
+        """On disk the spelling is dash; a slash is a malformed manifest."""
+        bad = _entry()
+        bad["bot-bottle-gateway"]["artifacts"]["oci_linux-arm64"]["platform"] = "linux/arm64"
         with self.assertRaises(pa.ArtifactsManifestError):
             pa.parse_artifacts_manifest(bad)
 
@@ -117,50 +144,36 @@ class ValidationBranches(unittest.TestCase):
         bad["bot-bottle-gateway"]["artifacts"] = {}
         self.assertTrue(any("artifacts" in p for p in self._problems(bad)))
 
-    def test_unknown_format_is_reported(self) -> None:
+    def test_unknown_type_is_reported(self) -> None:
         bad = _entry()
-        bad["bot-bottle-gateway"]["artifacts"]["squashfs"] = {"ref": "r", "platforms": {}}
+        bad["bot-bottle-gateway"]["artifacts"]["squashfs_linux-arm64"] = {
+            "type": "squashfs", "platform": "linux-arm64", "url": "u", "digest": _A,
+        }
         self.assertTrue(any("squashfs" in p for p in self._problems(bad)))
 
-    def test_format_must_be_an_object(self) -> None:
+    def test_asset_must_be_an_object(self) -> None:
         bad = _entry()
-        bad["bot-bottle-gateway"]["artifacts"]["oci"] = "nope"
+        bad["bot-bottle-gateway"]["artifacts"]["oci_linux-arm64"] = "nope"
         self.assertTrue(self._problems(bad))
 
-    def test_oci_needs_a_ref_and_ext4_needs_a_package(self) -> None:
+    def test_missing_url_is_reported(self) -> None:
         bad = _entry()
-        del bad["bot-bottle-gateway"]["artifacts"]["oci"]["ref"]
-        del bad["bot-bottle-gateway"]["artifacts"]["ext4"]["package"]
-        problems = self._problems(bad)
-        self.assertTrue(any("ref" in p for p in problems))
-        self.assertTrue(any("package" in p for p in problems))
-
-    def test_platforms_must_be_a_non_empty_object(self) -> None:
-        bad = _entry()
-        bad["bot-bottle-gateway"]["artifacts"]["oci"]["platforms"] = {}
-        self.assertTrue(any("platforms" in p for p in self._problems(bad)))
-
-    def test_platform_entry_must_be_an_object(self) -> None:
-        bad = _entry()
-        bad["bot-bottle-gateway"]["artifacts"]["oci"]["platforms"]["linux/arm64"] = 7
-        self.assertTrue(self._problems(bad))
-
-    def test_missing_locator_is_reported(self) -> None:
-        bad = _entry()
-        del bad["bot-bottle-gateway"]["artifacts"]["oci"]["platforms"]["linux/arm64"]["tag"]
-        self.assertTrue(any("tag" in p for p in self._problems(bad)))
+        del bad["bot-bottle-gateway"]["artifacts"]["oci_linux-arm64"]["url"]
+        self.assertTrue(any("url" in p for p in self._problems(bad)))
 
     def test_missing_digest_is_reported(self) -> None:
         bad = _entry()
-        del bad["bot-bottle-gateway"]["artifacts"]["ext4"]["platforms"]["linux/arm64"]["digest"]
+        del bad["bot-bottle-gateway"]["artifacts"]["ext4_linux-arm64"]["digest"]
         self.assertTrue(any("digest" in p for p in self._problems(bad)))
 
     def test_entry_with_no_valid_artifact_is_dropped(self) -> None:
         """An entry whose artifacts were all rejected is not half-loaded — a
         launch host must never resolve a partially-parsed entry."""
         bad = _entry()
-        bad["bot-bottle-gateway"]["artifacts"] = {"oci": {"ref": "r", "platforms": {
-            "linux/arm64": {"tag": "t", "digest": "sha256:short"}}}}
+        bad["bot-bottle-gateway"]["artifacts"] = {"oci_linux-arm64": {
+            "type": "oci", "platform": "linux-arm64", "url": "u",
+            "digest": "sha256:short",
+        }}
         found: list[str] = []
         entries = pa.parse_artifacts_manifest(bad, problems=found)
         self.assertEqual(entries, {})
@@ -180,7 +193,7 @@ class Resolution(unittest.TestCase):
         """A collected ext4 must degrade to slow (convert from OCI), not
         broken — this fallback is what makes narrow ext4 retention safe."""
         only_oci = _entry()
-        del only_oci["bot-bottle-gateway"]["artifacts"]["ext4"]
+        del only_oci["bot-bottle-gateway"]["artifacts"]["ext4_linux-arm64"]
         entries = pa.parse_artifacts_manifest(only_oci)
         got = pa.resolve(entries, "bot-bottle-gateway",
                          prefer=("ext4", "oci"), plat="linux/arm64")
@@ -203,7 +216,7 @@ class Consistency(unittest.TestCase):
         publish bug copied one across, which would hand a host the wrong
         artifact."""
         dupe = _entry()
-        dupe["bot-bottle-gateway"]["artifacts"]["ext4"]["platforms"]["linux/arm64"]["digest"] = _A
+        dupe["bot-bottle-gateway"]["artifacts"]["ext4_linux-arm64"]["digest"] = _A
         entries = pa.parse_artifacts_manifest(dupe)
         self.assertTrue(pa.check_consistency(entries))
 
@@ -218,13 +231,13 @@ class InputsHash(unittest.TestCase):
         Every base image is pinned to a multi-arch *index* digest, so one set of
         inputs describes both architectures and `--platform` specialises the
         build. Architecture is disambiguated structurally instead — by the
-        manifest's platform keys and the per-arch tags and filenames they carry
-        — which is what closes the hole in the older firecracker version hash,
+        per-asset platform and the per-arch tags and filenames the url carries —
+        which is what closes the hole in the older firecracker version hash,
         where architecture appeared in neither the hash nor the artifact path."""
         entries = pa.parse_artifacts_manifest(_entry())
         artifact = pa.resolve(entries, "bot-bottle-gateway",
                               prefer=("oci",), plat="linux/arm64")
-        self.assertIn("arm64", artifact.locator)
+        self.assertIn("arm64", artifact.url)
         self.assertEqual(artifact.platform, "linux/arm64")
 
     def test_distinguishes_image(self) -> None:
@@ -304,6 +317,15 @@ class TagVerification(unittest.TestCase):
         self.assertTrue(ref.endswith(f"@{_A}"))
         self.assertNotIn("0.14.2-arm64", ref)
 
+    def test_url_with_no_tag_is_rejected(self) -> None:
+        """An oci url must carry a tag to verify against; a bare repo cannot."""
+        bare = pa.Artifact(
+            image="x", format="oci", platform="linux/arm64",
+            url="gitea.dideric.is/didericis/x", digest=_A, version="1",
+        )
+        with self.assertRaises(ir.RegistryError):
+            ir.pinned_reference(bare)
+
     def test_resolve_can_skip_verification_but_stays_pinned(self) -> None:
         """Offline use gives up detection, never integrity."""
         got = ir.resolve(self.artifact, verify=False)
@@ -378,8 +400,7 @@ class Ext4Fetch(unittest.TestCase):
         digest = "sha256:" + hashlib.sha256(payload).hexdigest()
         return pa.Artifact(
             image="bot-bottle-gateway", format="ext4", platform="linux/arm64",
-            digest=digest, locator="rootfs.arm64.ext4.gz",
-            namespace="bot-bottle-gateway-rootfs", version="0.14.2",
+            url=_EXT4_URL, digest=digest, version="0.14.2",
         ), digest
 
     def _serve(self, payload: bytes):
@@ -433,9 +454,10 @@ class Ext4Fetch(unittest.TestCase):
         with self.assertRaises(ir.RegistryError):
             ir.ensure_ext4(oci)
 
-    def test_url_is_versioned_and_per_platform(self) -> None:
+    def test_url_is_the_baked_in_manifest_url(self) -> None:
         artifact, _ = self._artifact(b"x")
         url = ir.ext4_url(artifact)
+        self.assertEqual(url, _EXT4_URL)
         self.assertIn("/0.14.2/", url)
         self.assertIn("rootfs.arm64.ext4.gz", url)
         self.assertIn("bot-bottle-gateway-rootfs", url)
@@ -444,8 +466,10 @@ class Ext4Fetch(unittest.TestCase):
 class Interchangeability(unittest.TestCase):
     def _built(self, oci_hash: str, ext4_hash: str) -> pi.BuiltImage:
         return pi.BuiltImage(name="bot-bottle-gateway", version="0.14.2", artifacts=[
-            pi.BuiltArtifact("oci", "linux/arm64", _A, "0.14.2-arm64", "ref", oci_hash),
-            pi.BuiltArtifact("ext4", "linux/arm64", _B, "r.gz", "pkg", ext4_hash),
+            pi.BuiltArtifact("oci", "linux/arm64", _A, "0.14.2-arm64",
+                             "gitea.dideric.is/didericis/bot-bottle-gateway", oci_hash),
+            pi.BuiltArtifact("ext4", "linux/arm64", _B, "rootfs.arm64.ext4.gz",
+                             "bot-bottle-gateway-rootfs", ext4_hash),
         ])
 
     def test_matching_inputs_publish(self) -> None:
@@ -460,7 +484,8 @@ class Interchangeability(unittest.TestCase):
         self.assertIn("not interchangeable", str(ctx.exception))
 
     def test_manifest_entry_round_trips_through_the_parser(self) -> None:
-        """What the publisher writes must be what the consumer can read."""
+        """What the publisher writes must be what the consumer can read — and
+        the flat keys must match their type/platform fields."""
         built = self._built("9f2c1e4b7a83d10c", "9f2c1e4b7a83d10c")
         entries = pa.parse_artifacts_manifest({built.name: pi.artifacts_manifest_entry(built)})
         self.assertEqual(len(entries[built.name].artifacts), 2)
@@ -481,10 +506,6 @@ class ManifestFile(unittest.TestCase):
             self.assertIn("bot-bottle-gateway", entries)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class Ext4CacheKey(unittest.TestCase):
     """The cache is content-addressed. A hit returns before anything is
     compared to the manifest, so a path that ignored the digest would serve a
@@ -494,7 +515,8 @@ class Ext4CacheKey(unittest.TestCase):
         return pa.Artifact(
             image="img", format="ext4", platform="linux/arm64",
             digest="sha256:" + hashlib.sha256(payload).hexdigest(),
-            locator="rootfs.arm64.ext4.gz", namespace="img-rootfs",
+            url=("https://gitea.dideric.is/api/packages/didericis/generic/"
+                 "img-rootfs/0.0.0-dev/rootfs.arm64.ext4.gz"),
             version="0.0.0-dev",
         )
 
@@ -508,3 +530,7 @@ class Ext4CacheKey(unittest.TestCase):
                 with mock.patch("urllib.request.urlopen", return_value=resp):
                     got = ir.ensure_ext4(self._artifact(payload), cache_root=root)
                 self.assertEqual(got.read_bytes(), payload)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -30,9 +30,6 @@ REGISTRY_HTTP_TIMEOUT_SECONDS = 30.0
 ARTIFACT_HTTP_TIMEOUT_SECONDS = 300.0
 _CHUNK = 1 << 20
 
-_DEFAULT_BASE = "https://gitea.dideric.is"
-_DEFAULT_OWNER = "didericis"
-
 # The OCI distribution media types a manifest request must accept. Without these
 # a registry may answer with a legacy schema, or refuse an image index outright.
 _ACCEPT = ", ".join((
@@ -132,6 +129,26 @@ def resolve_tag_digest(ref: str, tag: str, *, scheme: str = "https") -> str:
     return digest
 
 
+def _split_oci_url(url: str) -> tuple[str, str]:
+    """`host/owner/name:tag` -> (`host/owner/name`, `tag`).
+
+    The tag is whatever follows the last colon, which is unambiguous even when
+    the host carries a `:port`: that colon precedes the first `/`, so it never
+    wins the split. A url with no tag (or a `:` that is really a port) is a
+    manifest bug, caught here rather than at pull time."""
+    ref, sep, tag = url.rpartition(":")
+    if not sep or not tag or "/" in tag:
+        raise RegistryError(
+            f"oci url {url!r} has no tag; expected host/owner/name:tag"
+        )
+    return ref, tag
+
+
+def _url_filename(url: str) -> str:
+    """The trailing path segment of a download url — the file to cache it as."""
+    return url.rsplit("/", 1)[-1]
+
+
 def verify_tag(artifact: Artifact, *, scheme: str = "https") -> None:
     """Confirm the artifact's tag still resolves to its pinned digest, raising
     `DigestMismatch` if it does not.
@@ -142,10 +159,11 @@ def verify_tag(artifact: Artifact, *, scheme: str = "https") -> None:
         raise RegistryError(
             f"verify_tag is for {FORMAT_OCI} artifacts, got {artifact.format!r}"
         )
-    actual = resolve_tag_digest(artifact.namespace, artifact.locator, scheme=scheme)
+    ref, tag = _split_oci_url(artifact.url)
+    actual = resolve_tag_digest(ref, tag, scheme=scheme)
     if actual != artifact.digest:
         raise DigestMismatch(
-            f"{artifact.namespace}:{artifact.locator} has been re-pointed.\n"
+            f"{ref}:{tag} has been re-pointed.\n"
             f"    pinned in {artifact.image}: {artifact.digest}\n"
             f"    registry now returns:      {actual}\n"
             f"    refusing to continue — the published version was overwritten, "
@@ -155,7 +173,8 @@ def verify_tag(artifact: Artifact, *, scheme: str = "https") -> None:
 
 def pinned_reference(artifact: Artifact) -> str:
     """The digest-pinned reference to pull. The tag is not part of it."""
-    return f"{artifact.namespace}@{artifact.digest}"
+    ref, _ = _split_oci_url(artifact.url)
+    return f"{ref}@{artifact.digest}"
 
 
 def resolve(
@@ -190,17 +209,13 @@ def pull(resolved: ResolvedImage, *, runtime: str = "docker") -> None:
 
 
 def ext4_url(artifact: Artifact) -> str:
-    """The generic-package URL for an ext4 artifact."""
+    """The generic-package URL for an ext4 artifact — baked into the manifest at
+    publish time, so consuming it is just reading `url`."""
     if artifact.format != FORMAT_EXT4:
         raise RegistryError(
             f"ext4_url is for {FORMAT_EXT4} artifacts, got {artifact.format!r}"
         )
-    base = os.environ.get("BOT_BOTTLE_INFRA_ARTIFACT_BASE", _DEFAULT_BASE).rstrip("/")
-    owner = os.environ.get("BOT_BOTTLE_INFRA_ARTIFACT_OWNER", _DEFAULT_OWNER)
-    return (
-        f"{base}/api/packages/{owner}/generic/"
-        f"{artifact.namespace}/{artifact.version}/{artifact.locator}"
-    )
+    return artifact.url
 
 
 def _sha256_file(path: Path) -> str:
@@ -241,7 +256,7 @@ def ensure_ext4(artifact: Artifact, *, cache_root: Path | None = None) -> Path:
     # to the manifest. Keying on the digest makes a hit provably the right bytes.
     root = cache_root / artifact.image / artifact.digest.replace(":", "-")
     root.mkdir(parents=True, exist_ok=True)
-    gz = root / artifact.locator
+    gz = root / _url_filename(artifact.url)
     verified = root / ".verified"
     if gz.is_file() and verified.is_file():
         return gz
