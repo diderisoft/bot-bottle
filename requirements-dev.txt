@@ -11,3 +11,7 @@ coverage>=7.0.0
 build>=1.0.0
 # FastAPI's in-process TestClient transport.
 httpx>=0.28.0
+# Local convenience test runner (see [tool.pytest.ini_options] in pyproject.toml).
+# CI runs the suite via unittest; pytest is for interactive runs where its
+# per-test output capture keeps a green run to just dots.
+pytest>=8.0.0

@@ -48,3 +48,11 @@ bot_bottle = [
     "backend/firecracker/netpool.defaults.env",
     "backend/macos_container/nested-containers-init.sh",
 ]
+
+# Local convenience runner. CI runs the same tests via `unittest` (see
+# .gitea/workflows/test.yml); pytest is only for interactive runs, where its
+# per-test output capture keeps a green run to just dots — the code under test
+# logs to both stdout and stderr, which unittest cannot cleanly suppress.
+[tool.pytest.ini_options]
+testpaths = ["tests/unit"]
+addopts = "-q"
