@@ -141,6 +141,18 @@ class TestLaunchCommittedImage(unittest.TestCase):
     def test_falls_back_to_build_when_no_committed_image(self) -> None:
         self.assertEqual([_DEFAULT_IMAGE], self._run_launch(_plan(self._tmp), committed_tag=None))
 
+    def test_pulls_when_a_pin_exists(self) -> None:
+        pinned = "reg/o/bot-bottle-claude@sha256:" + "a" * 64
+        plan = _plan(self._tmp)
+        with mock.patch.object(launch_mod, "read_committed_image", return_value=None), \
+                mock.patch.object(launch_mod.agent_image, "ensure_agent_oci", return_value=pinned), \
+                mock.patch.object(launch_mod.docker_mod, "tag_image") as tag, \
+                mock.patch.object(launch_mod.docker_mod, "build_image") as build:
+            images = launch_mod.build_or_load_images(plan)
+        self.assertEqual(plan.image, images.agent)
+        tag.assert_called_once_with(pinned, plan.image)
+        build.assert_not_called()
+
     def test_cached_images_skip_build_when_present(self) -> None:
         base = _plan(self._tmp)
         plan = dataclasses.replace(

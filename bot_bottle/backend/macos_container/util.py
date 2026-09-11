@@ -304,6 +304,20 @@ def image_exists(ref: str) -> bool:
     return _silent_run([_CONTAINER, "image", "inspect", ref]) == 0
 
 
+def tag_image(src: str, dst: str) -> None:
+    """Give local image `src` the additional tag `dst`, so a pulled pinned image
+    substitutes for a locally-built one everywhere downstream refers to `dst`."""
+    result = subprocess.run(
+        [_CONTAINER, "image", "tag", src, dst],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        die(f"could not tag {src} as {dst}: {detail or '<no detail>'}")
+
+
 def container_exists(name: str) -> bool:
     result = subprocess.run(
         [_CONTAINER, "list", "--all", "--quiet"],

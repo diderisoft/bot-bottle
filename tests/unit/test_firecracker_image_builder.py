@@ -57,6 +57,35 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
         inject.assert_called_once()
         self.assertTrue((out / ".bb-ready").is_file())
 
+    def test_pulled_image_cache_hit_skips_pull(self):
+        image = "reg/o/bot-bottle-claude@sha256:" + "a" * 64
+        digest = image_builder._image_rootfs_digest(image)
+        base = self.cache / "rootfs" / f"agent-image-{digest}"
+        base.mkdir(parents=True)
+        (base / ".bb-ready").write_text("ok\n")
+        with patch.object(image_builder.util, "cache_dir", return_value=self.cache), \
+             patch.object(image_builder, "_pull_in_infra") as pull:
+            out = image_builder.acquire_agent_image_rootfs_dir(image)
+        pull.assert_not_called()
+        self.assertEqual(base, out)
+
+    def test_pulled_image_cache_miss_pulls_injects_and_marks_ready(self):
+        image = "reg/o/bot-bottle-claude@sha256:" + "b" * 64
+        with patch.object(image_builder.util, "cache_dir", return_value=self.cache), \
+             patch.object(image_builder, "_pull_in_infra") as pull, \
+             patch.object(image_builder.util, "inject_guest_boot") as inject:
+            out = image_builder.acquire_agent_image_rootfs_dir(
+                image, smoke_test=("claude", "--version"))
+        pull.assert_called_once()
+        self.assertEqual(("claude", "--version"), pull.call_args.args[2])
+        inject.assert_called_once()
+        self.assertTrue((out / ".bb-ready").is_file())
+
+    def test_acquire_requires_a_digest_pinned_image(self):
+        with patch.object(image_builder.util, "cache_dir", return_value=self.cache):
+            with self.assertRaises(SystemExit):
+                image_builder.acquire_agent_image_rootfs_dir("reg/o/bot-bottle-claude:0.1.0")
+
     def test_content_addressed_cache_key(self):
         other = self.cache / "Dockerfile2"
         other.write_text("FROM python:3.12-slim\n")

@@ -71,6 +71,15 @@ def image_exists(ref: str) -> bool:
     return run_docker(["docker", "image", "inspect", ref]).returncode == 0
 
 
+def tag_image(src: str, dst: str) -> None:
+    """Give local image `src` the additional tag `dst`, so a pulled pinned image
+    substitutes for a locally-built one everywhere downstream refers to `dst`."""
+    result = run_docker(["docker", "image", "tag", src, dst])
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        die(f"could not tag {src} as {dst}: {detail or '<no detail>'}")
+
+
 def container_exists(name: str) -> bool:
     """Returns True if a container (running or stopped) with the given
     name exists. Uses `docker ps -a -q -f name=^<name>$` so substring

@@ -136,6 +136,54 @@ def cached_agent_rootfs_dir(dockerfile: Path) -> Path | None:
     return base if (base / ".bb-ready").is_file() else None
 
 
+def _image_rootfs_digest(image: str) -> str:
+    """Cache key for a rootfs exported from an immutable, digest-pinned image:
+    the pinned ref plus the injected guest init (a boot-bits change must
+    re-export even for the same image)."""
+    h = hashlib.sha256()
+    h.update(image.encode())
+    h.update(b"\0")
+    h.update(util._GUEST_INIT.encode())
+    return h.hexdigest()[:16]
+
+
+def cached_agent_image_rootfs_dir(image: str) -> Path | None:
+    """A ready rootfs previously exported from digest-pinned `image`, or None."""
+    base = util.cache_dir() / "rootfs" / f"agent-image-{_image_rootfs_digest(image)}"
+    return base if (base / ".bb-ready").is_file() else None
+
+
+def acquire_agent_image_rootfs_dir(
+    image: str, *, smoke_test: tuple[str, ...] = (),
+) -> Path:
+    """Pull a digest-pinned published agent image inside the infra VM (buildah,
+    no host docker), smoke-test it, and export its rootfs to a cached base dir —
+    the pull-side analogue of `build_agent_rootfs_dir`. Cached by pinned ref +
+    injected guest init, so a repeat launch skips the pull."""
+    if "@sha256:" not in image:
+        die(f"prebuilt firecracker agent image is not digest-pinned: {image}")
+    digest = _image_rootfs_digest(image)
+    base = util.cache_dir() / "rootfs" / f"agent-image-{digest}"
+    cached = cached_agent_image_rootfs_dir(image)
+    if cached is not None:
+        info(f"using cached agent rootfs {cached.name}")
+        return cached
+    with _build_lock():
+        if (base / ".bb-ready").is_file():  # another launch pulled while we waited
+            info(f"using cached agent rootfs {base.name}")
+            return base
+        staging = util.cache_dir() / "rootfs" / f".pulling-{digest}"
+        shutil.rmtree(staging, ignore_errors=True)
+        staging.mkdir(parents=True)
+        info(f"pulling published agent image {image!r} in the infra VM")
+        _pull_in_infra(image, staging, smoke_test, digest)
+        util.inject_guest_boot(staging)
+        (staging / ".bb-ready").write_text("ok\n")
+        shutil.rmtree(base, ignore_errors=True)
+        os.rename(staging, base)
+    return base
+
+
 def build_agent_rootfs_dir(
     dockerfile: Path, *, image_tag: str, smoke_test: tuple[str, ...] = (),
 ) -> Path:
@@ -226,6 +274,42 @@ def _build_in_infra(
             tag,
             resources.image_build_args(dockerfile),
         )
+        _smoke_test(key, ip, tag, smoke_ctr, smoke_test)
+        _stream_rootfs(key, ip, tag, export_ctr, base)
+    finally:
+        _cleanup()
+
+
+def _pull_in_infra(
+    image: str, base: Path, smoke_test: tuple[str, ...], digest: str,
+) -> None:
+    """Ensure the infra VMs are up, `buildah pull` the digest-pinned `image` in
+    the orchestrator VM, smoke test it, and stream its rootfs into `base`.
+    Mirrors `_build_in_infra`, but the image comes from the registry, not a
+    local build. Only this pull's working containers/image are cleaned up."""
+    service = FirecrackerInfraService()
+    service.ensure_running()
+    key, ip = service.orchestrator().ssh_target()
+    tag = f"bot-bottle-agent-pull-{digest}"
+    smoke_ctr, export_ctr = f"{tag}-smoke", f"{tag}-export"
+    quoted = shlex.quote(image)
+
+    def _cleanup() -> None:
+        _ssh(key, ip,
+             f"buildah rm {smoke_ctr} {export_ctr} >/dev/null 2>&1; "
+             f"buildah rmi {_STORE_FLAG} {tag} >/dev/null 2>&1",
+             timeout=60)
+
+    _cleanup()  # clear leftovers from a crashed prior pull of this digest
+    try:
+        result = _ssh(
+            key, ip,
+            f"buildah pull {_STORE_FLAG} {quoted} && "
+            f"buildah tag {_STORE_FLAG} {quoted} {tag}",
+            timeout=_BUILD_TIMEOUT_SECONDS,
+        )
+        if result.returncode != 0:
+            die(f"pulling pinned agent image failed: {result.stderr.strip()}")
         _smoke_test(key, ip, tag, smoke_ctr, smoke_test)
         _stream_rootfs(key, ip, tag, export_ctr, base)
     finally:

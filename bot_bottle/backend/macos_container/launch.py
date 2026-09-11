@@ -48,6 +48,7 @@ from ...git_gate import GitGate
 from ...gateway.git_gate.http_backend import DEFAULT_PORT as _GIT_HTTP_PORT
 from ...image_cache import check_stale
 from ...log import die, info, warn
+from ... import agent_image
 from ... import resources
 from .. import BottleImages
 from ...supervisor.types import SUPERVISE_PORT
@@ -92,6 +93,13 @@ def _agent_image(plan: MacosContainerBottlePlan) -> str:
                 "run without --cached-images to build it"
             )
         info(f"using cached agent image {plan.image!r}")
+        return plan.image
+    # Prefer the release-pinned published image over a local build (PRD 0085);
+    # the nested-containers layer is added on top by the caller either way.
+    pinned = agent_image.ensure_agent_oci(plan.agent_provider_template, runtime="container")
+    if pinned is not None:
+        container_mod.tag_image(pinned, plan.image)
+        info(f"using published agent image {plan.image!r} (pulled {pinned})")
         return plan.image
     container_mod.build_image(plan.image, str(resources.build_root()), dockerfile=plan.dockerfile_path)
     return plan.image

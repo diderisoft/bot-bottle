@@ -35,6 +35,7 @@ import os
 from contextlib import ExitStack, contextmanager
 from typing import Callable, Generator
 
+from ... import agent_image
 from ...agent_provider import runtime_for
 from ...egress import Egress
 from ...git_gate import GitGate
@@ -83,6 +84,13 @@ def build_or_load_images(plan: DockerBottlePlan) -> BottleImages:
                 "run without --cached-images to build it"
             )
         info(f"using cached agent image {plan.image!r}")
+        return BottleImages(agent=plan.image)
+    # Prefer the release-pinned published image over a local build (PRD 0085).
+    # Absent a pin (custom template, or no manifest yet) fall back to building.
+    pinned = agent_image.ensure_agent_oci(plan.agent_provider_template, runtime="docker")
+    if pinned is not None:
+        docker_mod.tag_image(pinned, plan.image)
+        info(f"using published agent image {plan.image!r} (pulled {pinned})")
         return BottleImages(agent=plan.image)
     docker_mod.build_image(plan.image, str(resources.build_root()), dockerfile=plan.dockerfile_path)
     docker_mod.verify_agent_image(

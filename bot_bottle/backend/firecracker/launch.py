@@ -32,7 +32,9 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Callable, Generator
 
+from ... import agent_image, image_registry
 from ...agent_provider import runtime_for
+from ...published_artifacts import FORMAT_OCI
 from ...bottle_state import (
     committed_rootfs_path,
     egress_state_dir,
@@ -228,8 +230,17 @@ def build_or_load_agent_base(plan: FirecrackerBottlePlan) -> Path:
         info(f"resuming from committed rootfs {committed_tar}")
         return util.build_committed_rootfs_dir(committed_tar)
     dockerfile = Path(plan.dockerfile_path)
+    # PRD 0085: prefer the release-pinned published agent image. Firecracker
+    # consumes a rootfs *dir*, so it pulls the OCI image inside the infra VM
+    # (buildah) and exports its rootfs — the same shape a local build produces.
+    pin = agent_image.resolve_agent_pin(plan.agent_provider_template, prefer=(FORMAT_OCI,))
+    pinned_ref = image_registry.pinned_reference(pin) if pin is not None else None
     if plan.spec.image_policy == "cached":
-        cached = image_builder.cached_agent_rootfs_dir(dockerfile)
+        cached = (
+            image_builder.cached_agent_image_rootfs_dir(pinned_ref)
+            if pinned_ref is not None
+            else image_builder.cached_agent_rootfs_dir(dockerfile)
+        )
         if cached is None:
             die(
                 f"cached agent rootfs for {plan.image!r} not found; "
@@ -237,6 +248,11 @@ def build_or_load_agent_base(plan: FirecrackerBottlePlan) -> Path:
             )
         info(f"using cached agent rootfs {cached.name}")
         return cached
+    if pinned_ref is not None:
+        return image_builder.acquire_agent_image_rootfs_dir(
+            pinned_ref,
+            smoke_test=runtime_for(plan.agent_provider_template).smoke_test,
+        )
     return image_builder.build_agent_rootfs_dir(
         dockerfile,
         image_tag=plan.image,

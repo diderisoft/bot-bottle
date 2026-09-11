@@ -46,6 +46,9 @@ class _Plan:
     nested_containers: bool
     agent_provision: _AgentProvision
     spec: _Spec = _Spec()
+    # A custom (non-published) template, so the PRD 0085 pull path resolves no
+    # pin and these tests keep exercising the local build path.
+    agent_provider_template: str = "test-agent"
 
 
 def _base_image_only(ref: str) -> bool:
