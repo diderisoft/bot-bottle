@@ -168,6 +168,13 @@ jobs:
             --version "0.0.0-dev-${{ github.run_number }}" --force \
             --work-dir "${{ github.workspace }}/candidate"
 
+      # Point the resolver at the dev manifest just published, not the committed
+      # one. load_artifacts_manifest() reads the repo-root file, so without this
+      # the integration suite would resolve, download, and verify the PREVIOUS
+      # release while promote ships the untested candidate.
+      - name: Point the resolver at the dev manifest under test
+        run: cp "${{ github.workspace }}/candidate/published-artifacts.json" published-artifacts.json
+
       - name: Replace the persistent infra VM so it re-pulls
         run: python3 -c 'from bot_bottle.backend.firecracker import infra_vm; infra_vm.stop()'
 

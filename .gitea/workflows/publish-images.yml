@@ -61,12 +61,14 @@ jobs:
         env:
           BOT_BOTTLE_INFRA_ARTIFACT_TOKEN: ${{ secrets.BOT_BOTTLE_INFRA_ARTIFACT_TOKEN }}
           BOT_BOTTLE_INFRA_ARTIFACT_OWNER: ${{ github.event.inputs.owner || 'didericis' }}
+          # Via env, never interpolated into the script text: a `${{ }}` expansion
+          # spliced into the command would let a dispatcher's `images` value run as
+          # shell. Word-splitting $IMAGES into the arg list is the intended parse.
+          IMAGES: ${{ github.event.inputs.images }}
         run: |
-          python3 -m bot_bottle.publish_images \
-            --work-dir candidate \
-            --platform linux/amd64 \
-            --platform linux/arm64 \
-            $(for i in ${{ github.event.inputs.images }}; do printf -- '--image %s ' "$i"; done)
+          set -- --work-dir candidate --platform linux/amd64 --platform linux/arm64
+          for i in $IMAGES; do set -- "$@" --image "$i"; done
+          python3 -m bot_bottle.publish_images "$@"
 
       - name: Verify the manifest
         run: |

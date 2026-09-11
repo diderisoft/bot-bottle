@@ -21,6 +21,7 @@ from ... import image_inputs, image_registry
 from ...log import info
 from ...published_artifacts import (
     FORMAT_EXT4,
+    ArtifactsManifestError,
     current_platform,
     load_artifacts_manifest,
     resolve,
@@ -55,13 +56,28 @@ def role_artifact(role: str):
 def role_version(role: str) -> str:
     """What identifies the artifact `role` should be running.
 
-    The manifest's `inputs_hash`, not its `version`. The version is a release
-    number shared by every image in a release, so it does not move when code
-    does — and this value is what decides whether a running VM may be adopted
-    or must be replaced. A marker that cannot change per commit would adopt a
-    VM booted from superseded code."""
+    The `inputs_hash`, not the release `version`. The version is a release number
+    shared by every image in a release, so it does not move when code does — and
+    this value is what decides whether a running VM may be adopted or must be
+    replaced. A marker that cannot change per commit would adopt a VM booted from
+    superseded code.
+
+    In the default pull path this is the manifest's stored hash, which names the
+    artifact actually fetched. Under `BOT_BOTTLE_INFRA_BUILD=local` the booted
+    rootfs is built from the live checkout, not from the committed manifest, so
+    the marker is computed from the checkout instead — otherwise editing code and
+    rebuilding locally would leave the committed hash unchanged and adopt the
+    stale VM (the very staleness this marker exists to prevent)."""
+    image = role_image(role)
+    if image_registry.local_build_requested():
+        return image_inputs.inputs_hash(image)
     entries = load_artifacts_manifest()
-    return entries[role_image(role)].inputs_hash
+    try:
+        return entries[image].inputs_hash
+    except KeyError:
+        raise ArtifactsManifestError(
+            f"no published artifact for {image!r} in the manifest"
+        ) from None
 
 
 def materialize_ext4(role: str, dest: Path) -> None:
