@@ -235,6 +235,20 @@ def load_artifacts_manifest(repo_root: Path | None = None) -> dict[str, ImageEnt
     return parse_artifacts_manifest(data)
 
 
+def load_artifacts_manifest_optional(
+    repo_root: Path | None = None,
+) -> dict[str, ImageEntry] | None:
+    """Like `load_artifacts_manifest`, but returns None when the manifest is
+    absent instead of raising.
+
+    For the consumer *pull* path, which falls back to a local build when nothing
+    is pinned yet — there is no manifest before the first release. A
+    present-but-malformed manifest still raises: that is corruption, not absence."""
+    if not artifacts_manifest_path(repo_root).is_file():
+        return None
+    return load_artifacts_manifest(repo_root)
+
+
 def resolve(
     entries: dict[str, ImageEntry],
     name: str,
@@ -301,6 +315,7 @@ __all__ = [
     "check_consistency",
     "current_platform",
     "load_artifacts_manifest",
+    "load_artifacts_manifest_optional",
     "artifacts_manifest_path",
     "parse_artifacts_manifest",
     "resolve",

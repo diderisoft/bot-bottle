@@ -31,6 +31,12 @@ _BUNDLED_RESOURCES = (
     "scripts/firecracker-netpool.sh",
 )
 
+# Must match bot_bottle.resources.OPTIONAL_BUNDLED_RESOURCES. Copied only when
+# present — the published-artifacts manifest exists only after a release.
+_OPTIONAL_BUNDLED_RESOURCES = (
+    "published-artifacts.json",
+)
+
 
 class _BundleResources(build_py):
     """Copy the root-level build resources into the built package tree so they
@@ -44,6 +50,12 @@ class _BundleResources(build_py):
             dst = pkg_resources / rel
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
+        for rel in _OPTIONAL_BUNDLED_RESOURCES:
+            src = _ROOT / rel
+            if src.is_file():
+                dst = pkg_resources / rel
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
 
 
 setup(cmdclass={"build_py": _BundleResources})

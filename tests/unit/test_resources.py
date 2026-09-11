@@ -121,6 +121,21 @@ class TestWheelMode(unittest.TestCase):
             # Idempotent: second call returns the same completed dir.
             self.assertEqual(root, resources.build_root())
 
+    def test_optional_resource_is_staged_when_present(self):
+        # The published-artifacts manifest ships only in a released wheel; when
+        # _resources/ has it, staging restores it to the root like a checkout.
+        with self._wheel() as pkg:
+            (pkg / "_resources" / "published-artifacts.json").write_text("{}\n")
+            root = resources.build_root()
+            self.assertTrue((root / "published-artifacts.json").is_file())
+
+    def test_optional_resource_absent_does_not_break_staging(self):
+        # A pre-release wheel has no manifest; staging must still succeed and
+        # simply not produce one at the root.
+        with self._wheel():
+            root = resources.build_root()
+            self.assertFalse((root / "published-artifacts.json").exists())
+
     def test_refreshes_when_content_changes_at_same_version(self):
         # Regression for the stale-cache bug: `pipx install --force` of a newer
         # commit keeps version 0.1.0, so keying on version would reuse the old

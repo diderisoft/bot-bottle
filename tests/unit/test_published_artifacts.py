@@ -505,6 +505,28 @@ class ManifestFile(unittest.TestCase):
             entries = pa.load_artifacts_manifest(root)
             self.assertIn("bot-bottle-gateway", entries)
 
+    def test_optional_returns_none_when_absent(self) -> None:
+        # The consumer pull path falls back to a local build when nothing is
+        # pinned yet, so absence is None, not an error.
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(pa.load_artifacts_manifest_optional(Path(tmp)))
+
+    def test_optional_loads_when_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / pa.ARTIFACTS_MANIFEST_NAME).write_text(json.dumps(_entry()))
+            entries = pa.load_artifacts_manifest_optional(root)
+            self.assertIsNotNone(entries)
+            self.assertIn("bot-bottle-gateway", entries)
+
+    def test_optional_still_raises_on_malformed(self) -> None:
+        # Present but corrupt is not absence — it must fail, not fall back.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / pa.ARTIFACTS_MANIFEST_NAME).write_text("{not json")
+            with self.assertRaises(pa.ArtifactsManifestError):
+                pa.load_artifacts_manifest_optional(root)
+
 
 class Ext4CacheKey(unittest.TestCase):
     """The cache is content-addressed. A hit returns before anything is

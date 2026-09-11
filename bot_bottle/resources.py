@@ -49,6 +49,16 @@ BUNDLED_RESOURCES: tuple[str, ...] = (
     "scripts/firecracker-netpool.sh",
 )
 
+# Root-level files bundled into the wheel *only when present at build time*.
+# The published-artifacts manifest exists only after a release (publish-images.yml
+# commits it), so a pre-release wheel ships without it and the consumer falls back
+# to a local build. Kept out of BUNDLED_RESOURCES so its absence is not a build
+# error and its guard test does not require it to exist. Keep in sync with
+# ``setup.py``'s ``_OPTIONAL_BUNDLED_RESOURCES`` (``test_resources`` guards drift).
+OPTIONAL_BUNDLED_RESOURCES: tuple[str, ...] = (
+    "published-artifacts.json",
+)
+
 # Present at a checkout root, never in a bare installed package — the cheap
 # tell for which layout we're in.
 _CHECKOUT_MARKER = "Dockerfile.gateway"
@@ -220,6 +230,14 @@ def _stage_build_root() -> Path:
                 dst = staging / rel
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(_BUNDLED / rel, dst)
+            # Optional root files, restored only when the wheel actually shipped
+            # them (the manifest is absent before the first release).
+            for rel in OPTIONAL_BUNDLED_RESOURCES:
+                src = _BUNDLED / rel
+                if src.is_file():
+                    dst = staging / rel
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src, dst)
             (staging / ".complete").write_text("")
             # Replace any partial leftover for this digest (safe: we hold the
             # lock), then publish atomically.
