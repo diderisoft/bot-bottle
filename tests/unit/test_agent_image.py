@@ -75,6 +75,43 @@ class ResolvePin(unittest.TestCase):
             self.assertIsNone(ai.resolve_agent_pin("claude", prefer=(pa.FORMAT_EXT4,)))
 
 
+def _manifest_pair(*, agent_version: str, infra_version: str, plat: str = "linux/arm64"):
+    on_disk = plat.replace("/", "-")
+
+    def _entry(name: str, version: str):
+        return {
+            "version": version, "inputs_hash": "9f2c1e4b7a83d10c",
+            "artifacts": {
+                f"oci_{on_disk}": {
+                    "type": "oci", "platform": on_disk,
+                    "url": f"gitea.dideric.is/didericis/{name}:{version}-{on_disk}",
+                    "digest": _DIGEST_OCI,
+                },
+            },
+        }
+
+    return pa.parse_artifacts_manifest({
+        "bot-bottle-claude": _entry("bot-bottle-claude", agent_version),
+        "bot-bottle-gateway": _entry("bot-bottle-gateway", infra_version),
+    })
+
+
+class ReleaseCompat(unittest.TestCase):
+    def test_matching_agent_and_infra_release_resolves(self) -> None:
+        entries = _manifest_pair(agent_version="0.14.2", infra_version="0.14.2")
+        with mock.patch.object(ai, "load_artifacts_manifest_optional", return_value=entries), \
+                mock.patch.object(ai, "current_platform", return_value="linux/arm64"):
+            art = ai.resolve_agent_pin("claude", prefer=(pa.FORMAT_OCI,))
+        self.assertIsNotNone(art)
+
+    def test_mismatched_release_refuses(self) -> None:
+        entries = _manifest_pair(agent_version="0.14.2", infra_version="0.14.3")
+        with mock.patch.object(ai, "load_artifacts_manifest_optional", return_value=entries), \
+                mock.patch.object(ai, "current_platform", return_value="linux/arm64"):
+            with self.assertRaises(pa.ArtifactsManifestError):
+                ai.resolve_agent_pin("claude", prefer=(pa.FORMAT_OCI,))
+
+
 class Materialize(unittest.TestCase):
     def test_ensure_oci_pulls_and_returns_pinned_ref(self) -> None:
         with mock.patch.object(ai, "load_artifacts_manifest_optional", return_value=_manifest()), \

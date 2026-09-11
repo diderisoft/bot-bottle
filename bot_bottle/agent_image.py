@@ -19,8 +19,10 @@ from pathlib import Path
 from . import image_inputs, image_registry
 from .published_artifacts import (
     Artifact,
+    ArtifactsManifestError,
     FORMAT_EXT4,
     FORMAT_OCI,
+    ImageEntry,
     current_platform,
     load_artifacts_manifest_optional,
 )
@@ -36,12 +38,36 @@ def agent_image_name(template: str) -> str | None:
     return name if name in image_inputs.BUILD_INPUTS else None
 
 
+def _assert_release_matches_infra(
+    entries: dict[str, ImageEntry], agent: ImageEntry,
+) -> None:
+    """Refuse an agent image whose release differs from the infra images in the
+    same manifest.
+
+    The agent boots against that infra's guest-init and orchestrator protocol,
+    so a version mismatch is an incompatibility, not a warning — and it can only
+    happen through a hand-edited or half-updated manifest, since a real release
+    publishes every image together at one version. Fail closed rather than boot
+    an agent its infra cannot drive."""
+    for role_image in image_inputs.INFRA_ROLES:
+        infra = entries.get(role_image)
+        if infra is not None and infra.version != agent.version:
+            raise ArtifactsManifestError(
+                f"agent image {agent.name} is release {agent.version!r} but infra "
+                f"image {infra.name} is release {infra.version!r} in the same "
+                f"manifest; refusing to run a mismatched agent/infra pair"
+            )
+
+
 def resolve_agent_pin(
     template: str, *, prefer: tuple[str, ...], plat: str | None = None,
 ) -> Artifact | None:
     """The pinned artifact for `template` on `plat`, or None when the consumer
     should build locally instead: no manifest yet, a custom template, the image
-    is absent from the manifest, or it has no artifact in `prefer` for `plat`."""
+    is absent from the manifest, or it has no artifact in `prefer` for `plat`.
+
+    A pin that *does* exist but whose release does not match the infra images in
+    the same manifest raises (fail closed) — see `_assert_release_matches_infra`."""
     name = agent_image_name(template)
     if name is None:
         return None
@@ -51,6 +77,7 @@ def resolve_agent_pin(
     entry = entries.get(name)
     if entry is None:
         return None
+    _assert_release_matches_infra(entries, entry)
     plat = plat or current_platform()
     for fmt in prefer:
         artifact = entry.for_format(fmt, plat)
