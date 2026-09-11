@@ -13,6 +13,7 @@ Both fail closed and never fall back to a local build.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import os
 import shutil
@@ -95,7 +96,12 @@ def _request(url: str) -> urllib.request.Request:
     req.add_header("Accept", _ACCEPT)
     token = os.environ.get(TOKEN_ENV, "").strip()
     if token:
-        req.add_header("Authorization", f"token {token}")
+        # The OCI /v2/ distribution API (the only thing _request talks to)
+        # rejects Gitea's REST `token <PAT>` scheme with 401; it wants HTTP
+        # Basic, and Gitea accepts any username with the token as the password.
+        # The generic-package download in _download keeps the `token` scheme.
+        creds = base64.b64encode(f"bot-bottle:{token}".encode()).decode()
+        req.add_header("Authorization", f"Basic {creds}")
     return req
 
 

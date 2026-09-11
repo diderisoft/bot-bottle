@@ -232,7 +232,10 @@ class ProtectedSet(unittest.TestCase):
                 mock.patch.object(pr, "_git_show", show):
             self.assertEqual(pr.protected_identities(object()), set())  # type: ignore[arg-type]
 
-    def test_malformed_manifest_is_skipped_not_fatal(self) -> None:
+    def test_malformed_manifest_is_fatal(self) -> None:
+        """A committed manifest that is present but unparseable is corruption,
+        not absence. Skipping it would drop that ref's protection and risk
+        deleting a still-referenced artifact, so the prune aborts instead."""
         def refs(_root: object) -> list[str]:
             return ["main"]
 
@@ -241,7 +244,8 @@ class ProtectedSet(unittest.TestCase):
 
         with mock.patch.object(pr, "_release_refs", refs), \
                 mock.patch.object(pr, "_git_show", show):
-            self.assertEqual(pr.protected_identities(object()), set())  # type: ignore[arg-type]
+            with self.assertRaises(pr.PruneError):
+                pr.protected_identities(object())  # type: ignore[arg-type]
 
 
 class Listing(unittest.TestCase):

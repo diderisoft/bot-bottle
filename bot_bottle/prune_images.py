@@ -246,9 +246,16 @@ def list_package_versions(
         if not isinstance(batch, list):
             raise PruneError(f"unexpected packages response at {url}: not a list")
         for item in batch:
+            try:
+                created = _parse_created_at(item.get("created_at", ""))
+            except (ValueError, TypeError):
+                # A version we cannot date cannot be safely aged out. Drop it so
+                # it is never a delete candidate (it stays published) rather than
+                # letting one malformed timestamp abort the whole prune.
+                continue
             parsed = parse_version(
                 item.get("type", ""), item.get("name", ""),
-                item.get("version", ""), _parse_created_at(item.get("created_at", "")),
+                item.get("version", ""), created,
             )
             if parsed is not None:
                 versions.append(parsed)
@@ -316,11 +323,17 @@ def protected_identities(repo_root: Path) -> set[tuple[str, str, str]]:
             continue
         try:
             entries = parse_artifacts_manifest(json.loads(raw))
-        except (json.JSONDecodeError, ArtifactsManifestError):
-            # A manifest that does not parse protects nothing extra; the CI
-            # linter is what fails on a malformed committed manifest. Here the
-            # conservative move is to skip it, not to abort the whole prune.
-            continue
+        except (json.JSONDecodeError, ArtifactsManifestError) as e:
+            # A manifest that is present but does not parse is corruption, not an
+            # absent one (absence is handled above via `if not raw`). Skipping it
+            # would silently drop that ref's protection and let the prune delete
+            # artifacts a supported release still resolves — the one unrecoverable
+            # mistake. Abort instead; the CI linter keeps a malformed manifest off
+            # a release ref, so this only fires on genuine corruption.
+            raise PruneError(
+                f"manifest on {ref!r} is present but unparseable ({e}); "
+                f"refusing to prune with a ref's protection missing"
+            ) from e
         for entry in entries.values():
             for artifact in entry.artifacts:
                 if artifact.format == "oci":

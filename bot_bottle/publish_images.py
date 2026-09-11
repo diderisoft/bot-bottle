@@ -22,6 +22,7 @@ command line. The container runtime needs its own registry login for the push.
 from __future__ import annotations
 
 import argparse
+import base64
 import gzip
 import hashlib
 import json
@@ -228,11 +229,20 @@ def ext4_url(image: str, version: str, plat: str) -> str:
     )
 
 
-def _head(url: str, token: str) -> int:
-    """HTTP status of a HEAD, without downloading the body. 0 if unreachable."""
+def _head(url: str, token: str, *, basic: bool = False) -> int:
+    """HTTP status of a HEAD, without downloading the body. 0 if unreachable.
+
+    `basic` picks HTTP Basic over Gitea's REST `token` scheme: the OCI `/v2/`
+    distribution API rejects `token <PAT>` with 401 and wants Basic (Gitea
+    accepts any username with the token as the password). The generic-package
+    API served under `/api/packages` keeps the `token` scheme."""
     req = urllib.request.Request(url, method="HEAD")
     if token:
-        req.add_header("Authorization", f"token {token}")
+        if basic:
+            creds = base64.b64encode(f"bot-bottle:{token}".encode()).decode()
+            req.add_header("Authorization", f"Basic {creds}")
+        else:
+            req.add_header("Authorization", f"token {token}")
     try:
         with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT_SECONDS) as resp:
             return resp.status
@@ -264,7 +274,7 @@ def already_published(
             manifest = (
                 f"{base}/v2/{owner}/{image}/manifests/{oci_tag(version, plat)}"
             )
-            if _head(manifest, token) == 200:
+            if _head(manifest, token, basic=True) == 200:
                 found.append(f"{oci_ref(image)}:{oci_tag(version, plat)}")
     return found
 

@@ -441,13 +441,20 @@ class Preflight(unittest.TestCase):
     def test_oci_is_checked_not_just_ext4(self) -> None:
         """`docker push` overwrites an existing tag silently, so the OCI half
         is the one nothing downstream would ever report."""
-        def head(url: str, _tok: str) -> int:
+        calls: list[tuple[str, bool]] = []
+
+        def head(url: str, _tok: str, *, basic: bool = False) -> int:
+            calls.append((url, basic))
             return 200 if "/v2/" in url else 404
 
         with mock.patch.object(pi, "_head", side_effect=head):
             found = pi.already_published(["img"], ["linux/amd64"], "0.14.2", "tok")
         self.assertEqual(len(found), 1)
         self.assertIn("img", found[0])
+        # The /v2/ check must use HTTP Basic: the Gitea REST `token` scheme is
+        # rejected there with 401, which would misread an existing tag as absent.
+        v2 = [c for c in calls if "/v2/" in c[0]]
+        self.assertTrue(v2 and all(basic for _, basic in v2))
 
     def test_main_aborts_before_building(self) -> None:
         with mock.patch.dict("os.environ", {pi.TOKEN_ENV: "tok"}), \
