@@ -83,8 +83,11 @@ class TestPrdNamesInRef(unittest.TestCase):
         self.assertIn("README.md", names)
         self.assertTrue(any(name.startswith("0001-") for name in names))
 
-    def test_returns_nothing_for_an_unknown_ref(self):
-        self.assertEqual(_prd_names_in_ref(REPO_ROOT, "refs/heads/no-such-branch"), [])
+    def test_raises_for_an_unknown_ref(self):
+        # Fail closed: the base comparison is the whole point of the check, so an
+        # unreadable base ref must fail it rather than silently pass.
+        with self.assertRaises(RuntimeError):
+            _prd_names_in_ref(REPO_ROOT, "refs/heads/no-such-branch")
 
 
 Payload = dict[str, Any]
@@ -112,7 +115,9 @@ class TestRerunOpenPrs(unittest.TestCase):
                 return pulls if "page=1&" in path else []
             if path.startswith("/actions/runs?"):
                 sha = path.split("head_sha=", 1)[1].split("&", 1)[0]
-                return {"workflow_runs": runs_by_sha.get(sha, [])}
+                # Real Gitea stamps each run's head_sha; the caller filters on it.
+                runs = [{**r, "head_sha": sha} for r in runs_by_sha.get(sha, [])]
+                return {"workflow_runs": runs}
             return None
 
         api.request.side_effect = request
@@ -150,6 +155,22 @@ class TestRerunOpenPrs(unittest.TestCase):
         api.request.side_effect = request
         report = rerun_open_prs(api)
         self.assertEqual(report, ["#1: rerun of 10 failed (403 Forbidden)", "#2: re-ran 20"])
+
+    def test_ignores_a_run_whose_head_sha_does_not_match(self):
+        # If the server ignores the head_sha query and hands back another PR's
+        # run, the client-side head_sha filter must exclude it, not re-run it.
+        api = Mock()
+
+        def request(method: str, path: str, payload: object = None) -> Any:
+            if path.startswith("/pulls"):
+                return [_pull(1, "aaa")] if "page=1&" in path else []
+            if path.startswith("/actions/runs?"):
+                return {"workflow_runs": [{**_run(10), "head_sha": "zzz"}]}
+            return None
+
+        api.request.side_effect = request
+        self.assertEqual(
+            rerun_open_prs(api), ["#1: no prd-number-check.yml run for aaa, skipped"])
 
     def test_reports_nothing_when_no_pull_requests_are_open(self):
         self.assertEqual(rerun_open_prs(self._api([], {})), [])

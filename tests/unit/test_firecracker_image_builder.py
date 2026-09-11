@@ -129,6 +129,19 @@ class TestBuildContext(unittest.TestCase):
             ["a/one.json", "a/two.json", "b/three"],
         )
 
+    def test_add_sources_are_parsed_like_copy_but_skip_remote(self):
+        df = self.root / "WithAdd"
+        df.write_text(
+            "FROM x\n"
+            "ADD --chown=n:n c/local.txt /dest/\n"           # local: included
+            "ADD https://example.com/x.tar /dest/\n"         # remote URL: excluded
+            "ADD git://example.com/repo /dest/\n"            # git ref: excluded
+        )
+        self.assertEqual(
+            image_builder._context_copy_sources(df),
+            ["c/local.txt"],
+        )
+
     def test_context_files_resolves_existing_under_root(self):
         with self._patch_root():
             files = image_builder._context_files(self.dockerfile)

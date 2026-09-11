@@ -11,7 +11,9 @@ paths, and a `booted-version` marker, so two pairs can't coexist on one host.
 
 from __future__ import annotations
 
-from ...log import info
+from ...log import die, info
+from ...image_registry import RegistryError
+from ...published_artifacts import ArtifactsManifestError
 from ..infra_service import InfraService
 from ...orchestrator.lifecycle import DEFAULT_STARTUP_TIMEOUT_SECONDS
 from . import infra_vm
@@ -49,7 +51,13 @@ class FirecrackerInfraService(InfraService):
         key = infra_vm._infra_dir() / "id_ed25519"
         orchestrator = self.orchestrator()
         url = orchestrator.url()
-        want = infra_vm.expected_version()
+        # Resolving the expected version reads the published manifest; a missing
+        # or malformed one, or an unresolvable image, should surface as a clean
+        # one-line error with remediation, not a traceback out of a launch.
+        try:
+            want = infra_vm.expected_version()
+        except (RegistryError, ArtifactsManifestError) as e:
+            die(str(e))
         if infra_vm.adoptable(key, url, want):
             info(f"adopting running infra VMs (orchestrator at {url})")
             return url
@@ -62,7 +70,13 @@ class FirecrackerInfraService(InfraService):
                 return url
             # Clear stale/hung/OUTDATED VMs holding either link before booting fresh.
             infra_vm.stop()
-            infra_vm.ensure_built()
+            # Fetch + verify the rootfs artifacts; a 404, digest mismatch, or
+            # unreachable registry is a clean fail-closed message, not a stack
+            # trace (matches the behavior of the retired infra_artifact.py).
+            try:
+                infra_vm.ensure_built()
+            except (RegistryError, ArtifactsManifestError) as e:
+                die(str(e))
             # Orchestrator first — the gateway daemons reach the control plane at
             # startup. Each service owns its own boot; the orchestrator (which
             # holds the signing key) mints the role-scoped `gateway` JWT for the

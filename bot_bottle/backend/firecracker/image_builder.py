@@ -51,20 +51,22 @@ def _dockerfile_hash(dockerfile: Path) -> str:
 
 
 def _context_copy_sources(dockerfile: Path) -> list[str]:
-    """The build-context-relative paths a Dockerfile ``COPY``s in.
+    """The build-context-relative paths a Dockerfile ``COPY``s or ``ADD``s in.
 
-    Agent Dockerfiles are meant to COPY nothing from the context (the VM-side
-    build ships only the Dockerfile), but one may pin an input by COPYing a
-    committed file — a checksum list, an npm lockfile. Return those source
-    paths so the builder can both ship them to the VM context and fold them
-    into the cache key. ``COPY --from=<stage>`` reads a build stage, not the
-    context, so it is excluded; the JSON/exec COPY form is unused by the
-    shipped images and is skipped rather than mis-parsed."""
+    Agent Dockerfiles are meant to pull nothing from the context (the VM-side
+    build ships only the Dockerfile), but one may pin an input by COPYing or
+    ADDing a committed file — a checksum list, an npm lockfile. Return those
+    source paths so the builder can both ship them to the VM context and fold
+    them into the cache key. ``COPY --from=<stage>`` reads a build stage, not
+    the context, so it is excluded; an ``ADD`` of a remote URL or git ref is
+    fetched by the builder, not shipped from the context, so it is excluded too;
+    the JSON/exec form is unused by the shipped images and is skipped rather
+    than mis-parsed."""
     joined = re.sub(r"\\\n", " ", dockerfile.read_text(encoding="utf-8"))
     sources: list[str] = []
     for line in joined.splitlines():
         stripped = line.strip()
-        if not re.match(r"(?i)^COPY\s", stripped):
+        if not re.match(r"(?i)^(COPY|ADD)\s", stripped):
             continue
         tokens = stripped.split()[1:]
         if any(t.startswith("--from=") for t in tokens):
@@ -72,7 +74,10 @@ def _context_copy_sources(dockerfile: Path) -> list[str]:
         args = [t for t in tokens if not t.startswith("--")]
         if len(args) < 2 or args[0].startswith("["):
             continue
-        sources.extend(args[:-1])
+        # ADD sources may be remote (URL / git ref); those are not context files.
+        sources.extend(
+            a for a in args[:-1] if not re.match(r"(?i)^(https?|git)://", a)
+        )
     return sources
 
 

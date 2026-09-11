@@ -59,7 +59,14 @@ def _prd_names_in_tree(root: Path) -> list[str]:
 
 
 def _prd_names_in_ref(root: Path, ref: str) -> list[str]:
-    """PRD filenames committed on `ref`, or [] when the ref is unavailable."""
+    """PRD filenames committed on `ref`.
+
+    Raises when `ref` cannot be read. The cross-PR duplicate check exists to
+    compare against the base, so a base that will not resolve must fail the
+    check, not silently pass — otherwise two PRs claiming the same number both
+    go green. The workflow fetches the base ref before calling this
+    (prd-number-check.yml), so a failure here is a real problem, not a shallow
+    clone missing an unrelated ref."""
     result = subprocess.run(
         ["git", "-C", str(root), "ls-tree", "-r", "--name-only", "-z", ref, "--", f"{PRD_DIR}/"],
         capture_output=True,
@@ -67,7 +74,10 @@ def _prd_names_in_ref(root: Path, ref: str) -> list[str]:
         check=False,
     )
     if result.returncode != 0:
-        return []
+        raise RuntimeError(
+            f"cannot read PRDs on base ref {ref!r} for duplicate detection: "
+            f"{result.stderr.strip() or 'git ls-tree failed'}"
+        )
     return sorted(
         PurePosixPath(path).name for path in result.stdout.split("\0") if path.endswith(".md")
     )
@@ -94,7 +104,13 @@ def check_prd_numbers(root: Path, base_ref: str | None = None) -> list[str]:
         claimants[match.group(1)].add(name)
 
     if base_ref is not None:
-        for name in _prd_names_in_ref(root, base_ref):
+        try:
+            base_names = _prd_names_in_ref(root, base_ref)
+        except RuntimeError as exc:
+            # Fail closed: without the base comparison the whole point of the
+            # check is gone, so report it as a problem rather than passing.
+            return problems + [str(exc)]
+        for name in base_names:
             # Unnumbered names already on the base ref are that branch's
             # problem; only committed *numbers* constrain this one.
             match = NUMBERED_PRD.match(name)
@@ -136,7 +152,14 @@ def _latest_check_run(api: GiteaApi, head_sha: str) -> dict[str, Any] | None:
     )
     runs = (response or {}).get("workflow_runs") or []
     # `path` is `<workflow file>@<ref>`; the ref varies per PR, the file does not.
-    mine = [run for run in runs if run.get("path", "").split("@", 1)[0].endswith(WORKFLOW_FILE)]
+    # Filter on head_sha client-side too: if the server ignores the query param,
+    # `runs` comes back with every PR's runs and `max` would pick the globally
+    # newest — re-running the wrong PR. The run object carries head_sha.
+    mine = [
+        run for run in runs
+        if run.get("path", "").split("@", 1)[0].endswith(WORKFLOW_FILE)
+        and run.get("head_sha") == head_sha
+    ]
     return max(mine, key=_run_id) if mine else None
 
 

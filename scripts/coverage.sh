@@ -48,7 +48,6 @@ echo "== unit ==" >&2
 
 echo "== integration (firecracker; skips docker tests) ==" >&2
 BOT_BOTTLE_BACKEND=firecracker SKIP_DOCKER_TESTS=1 \
-    BOT_BOTTLE_INFRA_ARTIFACT_DIR="${BOT_BOTTLE_CI_INFRA_ARTIFACT_DIR:-}" \
     "$PY" -m coverage run --append -m unittest discover -t . -s tests/integration
 
 echo "== combined report ==" >&2

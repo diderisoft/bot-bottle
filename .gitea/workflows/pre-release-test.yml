@@ -157,6 +157,20 @@ jobs:
       # through a code path that exists only for candidates, so what passes is
       # not what production runs; here the integration suite resolves, downloads
       # and verifies exactly as a release would. What passes gets promoted.
+      # Build both arches, exactly as the release (publish-images.yml) does —
+      # otherwise this path builds only the runner's arch, promote ships an
+      # arm64-less release, and an arm64 host resolving it gets "no artifact for
+      # linux-arm64". Prove emulation works before spending a build on it.
+      - name: Enable and verify cross-architecture emulation
+        run: |
+          docker run --rm --privileged tonistiigi/binfmt:latest --install arm64
+          docker run --rm --platform linux/arm64 alpine:3 uname -m | grep -q aarch64 || {
+            echo "arm64 emulation is not active on this runner."
+            echo "binfmt_misc is likely unmounted; register it declaratively:"
+            echo "  boot.binfmt.emulatedSystems = [ \"aarch64-linux\" ];"
+            exit 1
+          }
+
       - name: Publish the dev version under test
         env:
           BOT_BOTTLE_INFRA_ARTIFACT_TOKEN: ${{ secrets.BOT_BOTTLE_INFRA_ARTIFACT_TOKEN }}
@@ -166,6 +180,8 @@ jobs:
             | docker login gitea.dideric.is -u didericis --password-stdin
           python3 -m bot_bottle.publish_images \
             --version "0.0.0-dev-${{ github.run_number }}" --force \
+            --platform linux/amd64 \
+            --platform linux/arm64 \
             --work-dir "${{ github.workspace }}/candidate"
 
       # Point the resolver at the dev manifest just published, not the committed
