@@ -1,0 +1,60 @@
+# Prune published images the retention policy no longer keeps (PRD 0084).
+#
+# Publishing only ever adds, and ext4 rootfs artifacts do not dedupe, so the
+# registry grows without bound on a release cadence. This reclaims the versions
+# no manifest on main or a release tag still resolves.
+#
+# Scheduled runs delete (--apply); a manual run defaults to a dry-run so the plan
+# can be eyeballed first. The tool refuses to run if it finds no protecting
+# manifest at all, so a checkout missing its tags cannot collect everything.
+
+name: prune-images
+
+on:
+  schedule:
+    # 04:00 UTC every Sunday — off-peak, and clear of the Monday canary slot.
+    - cron: "0 4 * * 0"
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Delete (true) or dry-run (false, default)."
+        required: false
+        default: "false"
+      owner:
+        description: "Registry owner to prune (default: didericis)."
+        required: false
+        default: didericis
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      # Full history + tags: the protected set is read from published-artifacts.json
+      # at main and every v* release tag, so those refs must be present locally.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      # actions/checkout leaves a detached HEAD, so make origin/main and the
+      # release tags resolvable to git show / rev-parse.
+      - name: Fetch main and the release tags
+        run: |
+          git fetch --no-tags origin main:refs/remotes/origin/main || true
+          git fetch --tags origin || true
+
+      # A scheduled run always deletes; a manual run deletes only when explicitly
+      # asked, and dry-runs otherwise.
+      - name: Prune
+        env:
+          BOT_BOTTLE_INFRA_ARTIFACT_TOKEN: ${{ secrets.BOT_BOTTLE_INFRA_ARTIFACT_TOKEN }}
+          BOT_BOTTLE_INFRA_ARTIFACT_OWNER: ${{ github.event.inputs.owner || 'didericis' }}
+        run: |
+          apply=""
+          if [ "${{ github.event_name }}" = "schedule" ] || \
+             [ "${{ github.event.inputs.apply }}" = "true" ]; then
+            apply="--apply"
+          fi
+          echo "running prune (${apply:-dry-run})"
+          python3 -m bot_bottle.prune_images $apply
