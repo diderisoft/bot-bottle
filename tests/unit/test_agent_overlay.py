@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from bot_bottle import agent_overlay as ao
 from bot_bottle.manifest import ManifestImageOverlay
@@ -30,6 +32,29 @@ class RenderOverlay(unittest.TestCase):
     def test_harness_version_not_yet_supported(self) -> None:
         with self.assertRaises(ao.OverlayError):
             ao.render_overlay_dockerfile(_BASE, ManifestImageOverlay(harness_version="2.1"))
+
+
+class StageContext(unittest.TestCase):
+    def test_writes_dockerfile_and_copies_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "src"
+            (root / "extra").mkdir(parents=True)
+            (root / "extra" / "s.json").write_text("{}")
+            dest = Path(tmp) / "ctx"
+            overlay = ManifestImageOverlay(apt=("jq",), files=("extra/s.json",))
+            df = ao.stage_overlay_context(_BASE, overlay, source_root=root, dest=dest)
+            self.assertTrue(df.is_file())
+            self.assertIn(f"FROM {_BASE}", df.read_text())
+            self.assertTrue((dest / "extra" / "s.json").is_file())
+
+    def test_missing_file_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "src"
+            root.mkdir()
+            dest = Path(tmp) / "ctx"
+            overlay = ManifestImageOverlay(files=("nope.txt",))
+            with self.assertRaises(ao.OverlayError):
+                ao.stage_overlay_context(_BASE, overlay, source_root=root, dest=dest)
 
 
 class CacheTag(unittest.TestCase):

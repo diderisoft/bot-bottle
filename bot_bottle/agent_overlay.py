@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import hashlib
 import shlex
+import shutil
+from pathlib import Path
 
 from .manifest import ManifestImageOverlay
 
@@ -54,6 +56,33 @@ def render_overlay_dockerfile(base_ref: str, overlay: ManifestImageOverlay) -> s
     return "\n".join(lines) + "\n"
 
 
+def stage_overlay_context(
+    base_ref: str,
+    overlay: ManifestImageOverlay,
+    *,
+    source_root: Path,
+    dest: Path,
+) -> Path:
+    """Write the overlay Dockerfile and copy its files into `dest`, returning the
+    Dockerfile path. `source_root` is where the overlay's `files` resolve from —
+    the launch cwd, matching how a custom `agent_provider.dockerfile` resolves.
+    Missing files fail loudly rather than producing an image that silently omits
+    them."""
+    dest.mkdir(parents=True, exist_ok=True)
+    dockerfile = dest / "Dockerfile.overlay"
+    dockerfile.write_text(render_overlay_dockerfile(base_ref, overlay))
+    for rel in overlay.files:
+        src = source_root / rel
+        if not src.is_file():
+            raise OverlayError(
+                f"overlay file not found: {rel!r} (looked in {source_root})"
+            )
+        out = dest / rel
+        out.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, out)
+    return dockerfile
+
+
 def overlay_cache_tag(base_digest: str, overlay: ManifestImageOverlay) -> str:
     """A content-addressed tag suffix for an overlaid image: the base digest
     plus the overlay spec, so a change to either rebuilds the layer and neither
@@ -73,5 +102,6 @@ __all__ = [
     "OVERLAY_DEST",
     "OverlayError",
     "render_overlay_dockerfile",
+    "stage_overlay_context",
     "overlay_cache_tag",
 ]
