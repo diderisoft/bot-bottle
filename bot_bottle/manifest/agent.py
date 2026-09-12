@@ -12,6 +12,56 @@ from .schema import AGENT_MODEL_KEYS, is_valid_entity_name
 
 
 @dataclass(frozen=True)
+class ManifestImageOverlay:
+    """A small tweak layered on the pinned default agent image (PRD 0085).
+
+    Rendered as a thin `FROM <pinned-default>` layer built on the host — a pinned
+    harness version, extra apt packages, and extra files COPYed in — so the base
+    stays the verified release image and compatibility is inherited. This is the
+    middle path between "pull the default as-is" and "bring your own image": a
+    one-layer build, expressible without a `contrib` folder."""
+
+    harness_version: str = ""
+    apt: tuple[str, ...] = ()
+    files: tuple[str, ...] = ()
+
+    def is_empty(self) -> bool:
+        return not (self.harness_version or self.apt or self.files)
+
+    @classmethod
+    def from_dict(cls, bottle_name: str, raw: object) -> "ManifestImageOverlay":
+        where = f"bottle '{bottle_name}' agent_provider.image.overlay"
+        d = as_json_object(raw, where)
+        for k in d:
+            if k not in {"harness_version", "apt", "files"}:
+                raise ManifestError(
+                    f"{where} has unknown key {k!r}; allowed: "
+                    "harness_version, apt, files"
+                )
+        harness = d.get("harness_version", "")
+        if not isinstance(harness, str):
+            raise ManifestError(
+                f"{where}.harness_version must be a string "
+                f"(was {type(harness).__name__})"
+            )
+        apt = _overlay_str_list(where, "apt", d.get("apt", []))
+        files = _overlay_str_list(where, "files", d.get("files", []))
+        for f in files:
+            if f.startswith("/") or ".." in f.split("/"):
+                raise ManifestError(
+                    f"{where}.files entry {f!r} must be a relative path that does "
+                    "not escape the manifest directory (no leading '/' or '..')"
+                )
+        return cls(harness_version=harness, apt=apt, files=files)
+
+
+def _overlay_str_list(where: str, key: str, raw: object) -> tuple[str, ...]:
+    if not isinstance(raw, list) or not all(isinstance(x, str) and x for x in raw):
+        raise ManifestError(f"{where}.{key} must be a list of non-empty strings")
+    return tuple(cast("list[str]", raw))
+
+
+@dataclass(frozen=True)
 class ManifestAgentProvider:
     """Provider/template for the agent process inside a bottle.
 
@@ -35,6 +85,7 @@ class ManifestAgentProvider:
     auth_token: str = ""
     forward_host_credentials: bool = False
     settings: dict[str, object] = field(default_factory=dict)
+    overlay: ManifestImageOverlay = field(default_factory=ManifestImageOverlay)
 
     @classmethod
     def from_dict(cls, bottle_name: str, raw: object) -> "ManifestAgentProvider":
@@ -46,11 +97,12 @@ class ManifestAgentProvider:
                 "auth_token",
                 "forward_host_credentials",
                 "settings",
+                "image",
             }:
                 raise ManifestError(
                     f"bottle '{bottle_name}' agent_provider has unknown key {k!r}; "
                     "allowed: template, dockerfile, auth_token, "
-                    "forward_host_credentials, settings"
+                    "forward_host_credentials, settings, image"
                 )
         template = d.get("template", "claude")
         if not isinstance(template, str) or not template:
@@ -104,12 +156,33 @@ class ManifestAgentProvider:
                 "and auth_token both set; use one or the other"
             )
         settings = _parse_provider_settings(bottle_name, template, d.get("settings"))
+        overlay = ManifestImageOverlay()
+        if "image" in d:
+            image_cfg = as_json_object(
+                d["image"], f"bottle '{bottle_name}' agent_provider.image")
+            for k in image_cfg:
+                if k != "overlay":
+                    raise ManifestError(
+                        f"bottle '{bottle_name}' agent_provider.image has unknown "
+                        f"key {k!r}; allowed: overlay"
+                    )
+            if "overlay" in image_cfg:
+                overlay = ManifestImageOverlay.from_dict(
+                    bottle_name, image_cfg["overlay"])
+        if not overlay.is_empty() and template not in PROVIDER_TEMPLATES:
+            raise ManifestError(
+                f"bottle '{bottle_name}' agent_provider.image.overlay is only "
+                f"supported for built-in templates "
+                f"({', '.join(sorted(PROVIDER_TEMPLATES))}); a custom template "
+                "builds its own image and has nothing to overlay"
+            )
         return cls(
             template=template,
             dockerfile=dockerfile,
             auth_token=auth_token,
             forward_host_credentials=forward_host_credentials,
             settings=settings,
+            overlay=overlay,
         )
 
 

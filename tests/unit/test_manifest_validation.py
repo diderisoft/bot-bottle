@@ -115,6 +115,49 @@ class TestAgentProviderValidation(unittest.TestCase):
                 "b", {"forward_host_credentials": True, "auth_token": "T", "template": "claude"}
             )
 
+    def test_image_overlay_parses(self) -> None:
+        p = ManifestAgentProvider.from_dict("b", {
+            "template": "claude",
+            "image": {"overlay": {
+                "harness_version": "2.1.180",
+                "apt": ["jq", "postgresql-client"],
+                "files": ["extra/settings.json"],
+            }},
+        })
+        self.assertEqual(p.overlay.harness_version, "2.1.180")
+        self.assertEqual(p.overlay.apt, ("jq", "postgresql-client"))
+        self.assertEqual(p.overlay.files, ("extra/settings.json",))
+        self.assertFalse(p.overlay.is_empty())
+
+    def test_no_overlay_is_empty(self) -> None:
+        p = ManifestAgentProvider.from_dict("b", {"template": "claude"})
+        self.assertTrue(p.overlay.is_empty())
+
+    def test_image_unknown_key_rejected(self) -> None:
+        with self.assertRaises(ManifestError):
+            ManifestAgentProvider.from_dict("b", {"image": {"bogus": 1}})
+
+    def test_overlay_unknown_key_rejected(self) -> None:
+        with self.assertRaises(ManifestError):
+            ManifestAgentProvider.from_dict(
+                "b", {"image": {"overlay": {"bogus": 1}}})
+
+    def test_overlay_apt_must_be_string_list(self) -> None:
+        with self.assertRaises(ManifestError):
+            ManifestAgentProvider.from_dict(
+                "b", {"image": {"overlay": {"apt": [1, 2]}}})
+
+    def test_overlay_file_escaping_rejected(self) -> None:
+        for bad in ("/etc/passwd", "../secret"):
+            with self.assertRaises(ManifestError):
+                ManifestAgentProvider.from_dict(
+                    "b", {"image": {"overlay": {"files": [bad]}}})
+
+    def test_overlay_rejected_for_custom_template(self) -> None:
+        with self.assertRaises(ManifestError):
+            ManifestAgentProvider.from_dict(
+                "b", {"template": "my-agent", "image": {"overlay": {"apt": ["jq"]}}})
+
     def test_valid_claude_auth_token(self) -> None:
         p = ManifestAgentProvider.from_dict("b", {"template": "claude", "auth_token": "T"})
         self.assertEqual("T", p.auth_token)
