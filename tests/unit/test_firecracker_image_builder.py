@@ -86,6 +86,30 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 image_builder.acquire_agent_image_rootfs_dir("reg/o/bot-bottle-claude:0.1.0")
 
+    def test_pull_in_infra_pulls_smoke_tests_and_streams(self):
+        # The VM SSH/buildah I/O is mocked; the orchestration logic (pull the
+        # pinned image, smoke test, export rootfs, clean up) is exercised.
+        from unittest.mock import MagicMock
+        image = "reg/o/bot-bottle-claude@sha256:" + "c" * 64
+        base = self.cache / "out"
+        base.mkdir()
+        svc = MagicMock()
+        svc.orchestrator.return_value.ssh_target.return_value = (Path("/k"), "10.0.0.2")
+        ok = subprocess.CompletedProcess([], 0, "", "")
+        with patch.object(image_builder, "FirecrackerInfraService", return_value=svc), \
+             patch.object(image_builder, "_ssh", return_value=ok) as ssh, \
+             patch.object(image_builder, "_smoke_test") as smoke, \
+             patch.object(image_builder, "_stream_rootfs") as stream:
+            image_builder._pull_in_infra(image, base, ("claude", "--version"), "deadbeef")
+        svc.ensure_running.assert_called_once()
+        self.assertTrue(
+            any("buildah pull" in c.args[2] and "@sha256:" in c.args[2]
+                for c in ssh.call_args_list),
+            "expected a buildah pull of the digest-pinned image",
+        )
+        smoke.assert_called_once()
+        stream.assert_called_once()
+
     def test_content_addressed_cache_key(self):
         other = self.cache / "Dockerfile2"
         other.write_text("FROM python:3.12-slim\n")

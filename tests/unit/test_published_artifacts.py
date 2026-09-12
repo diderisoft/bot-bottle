@@ -516,7 +516,7 @@ class ManifestFile(unittest.TestCase):
             root = Path(tmp)
             (root / pa.ARTIFACTS_MANIFEST_NAME).write_text(json.dumps(_entry()))
             entries = pa.load_artifacts_manifest_optional(root)
-            self.assertIsNotNone(entries)
+            assert entries is not None
             self.assertIn("bot-bottle-gateway", entries)
 
     def test_optional_still_raises_on_malformed(self) -> None:

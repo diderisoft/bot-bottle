@@ -64,7 +64,7 @@ class ResolvePin(unittest.TestCase):
         with mock.patch.object(ai, "load_artifacts_manifest_optional", return_value=_manifest()), \
                 mock.patch.object(ai, "current_platform", return_value="linux/arm64"):
             art = ai.resolve_agent_pin("claude", prefer=(pa.FORMAT_OCI,))
-        self.assertIsNotNone(art)
+        assert art is not None
         self.assertEqual(art.format, "oci")
         self.assertEqual(art.digest, _DIGEST_OCI)
 
