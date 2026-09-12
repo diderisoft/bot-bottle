@@ -211,12 +211,14 @@ class TestMacosContainerStaleChecks(unittest.TestCase):
 
 class TestFirecrackerCachedRootfs(unittest.TestCase):
     def _plan(self, policy: str = "cached") -> Any:
+        from bot_bottle.manifest import ManifestImageOverlay
         return cast(Any, SimpleNamespace(
             spec=SimpleNamespace(image_policy=policy),
             slug="dev-abc",
             image="bot-bottle-agent:latest",
             dockerfile_path="/repo/Dockerfile",
             agent_provider_template="claude",
+            image_overlay=ManifestImageOverlay(),
         ))
 
     def test_cached_policy_reuses_ready_rootfs_without_building(self) -> None:

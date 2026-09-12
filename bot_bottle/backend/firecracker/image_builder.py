@@ -23,13 +23,15 @@ import re
 import shlex
 import shutil
 import subprocess
+import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator
 
-from ... import resources
+from ... import agent_overlay, resources
 from ...image_registry import TOKEN_ENV as _ARTIFACT_TOKEN_ENV
 from ...log import die, info
+from ...manifest import ManifestImageOverlay
 from . import util
 from .infra import FirecrackerInfraService
 
@@ -185,6 +187,53 @@ def acquire_agent_image_rootfs_dir(
     return base
 
 
+def _overlay_rootfs_digest(base_ref: str, overlay: ManifestImageOverlay) -> str:
+    """Cache key for an overlaid rootfs: the base ref + guest init (via
+    `_image_rootfs_digest`) folded with the overlay spec, so a base bump, an
+    init change, or an overlay edit each re-build."""
+    return agent_overlay.overlay_cache_tag(_image_rootfs_digest(base_ref), overlay)
+
+
+def cached_agent_overlay_rootfs_dir(
+    base_ref: str, overlay: ManifestImageOverlay,
+) -> Path | None:
+    """A ready rootfs previously built for `overlay` on `base_ref`, or None."""
+    base = util.cache_dir() / "rootfs" / f"agent-overlay-{_overlay_rootfs_digest(base_ref, overlay)}"
+    return base if (base / ".bb-ready").is_file() else None
+
+
+def acquire_agent_overlay_rootfs_dir(
+    base_ref: str,
+    overlay: ManifestImageOverlay,
+    *,
+    source_root: Path,
+    smoke_test: tuple[str, ...] = (),
+) -> Path:
+    """Build the declared overlay as a thin `FROM <base_ref>` layer inside the
+    infra VM and export its rootfs — the pull-side analogue for tier-2 overlays,
+    cached by base ref + guest init + overlay spec. `source_root` is where the
+    overlay's files resolve from (the launch cwd)."""
+    digest = _overlay_rootfs_digest(base_ref, overlay)
+    base = util.cache_dir() / "rootfs" / f"agent-overlay-{digest}"
+    if (base / ".bb-ready").is_file():
+        info(f"using cached agent rootfs {base.name}")
+        return base
+    with _build_lock():
+        if (base / ".bb-ready").is_file():  # another launch built it while we waited
+            info(f"using cached agent rootfs {base.name}")
+            return base
+        staging = util.cache_dir() / "rootfs" / f".overlaying-{digest}"
+        shutil.rmtree(staging, ignore_errors=True)
+        staging.mkdir(parents=True)
+        info(f"building overlay agent image on {base_ref!r} in the infra VM")
+        _build_overlay_in_infra(base_ref, overlay, staging, source_root, smoke_test, digest)
+        util.inject_guest_boot(staging)
+        (staging / ".bb-ready").write_text("ok\n")
+        shutil.rmtree(base, ignore_errors=True)
+        os.rename(staging, base)
+    return base
+
+
 def build_agent_rootfs_dir(
     dockerfile: Path, *, image_tag: str, smoke_test: tuple[str, ...] = (),
 ) -> Path:
@@ -281,6 +330,22 @@ def _build_in_infra(
         _cleanup()
 
 
+def _buildah_login_prefix(registry_host: str, token: str) -> str:
+    """A shell prefix that logs buildah into `registry_host` with `token` via
+    --password-stdin, chained with `&&` so the following buildah pull/build only
+    runs once auth succeeds. Empty when no token. The token is piped through a
+    shell variable, never an argument, so it never lands in a process's argv
+    inside the VM. Gitea accepts any username with a valid token as the password.
+    `registry_host` must already be shell-quoted."""
+    if not token:
+        return ""
+    return (
+        f"BB_REG_TOK={shlex.quote(token)}; "
+        f'printf %s "$BB_REG_TOK" | buildah login --username bot-bottle '
+        f"--password-stdin {registry_host} && unset BB_REG_TOK && "
+    )
+
+
 def _pull_in_infra(
     image: str, base: Path, smoke_test: tuple[str, ...], digest: str,
 ) -> None:
@@ -307,17 +372,8 @@ def _pull_in_infra(
     _cleanup()  # clear leftovers from a crashed prior pull of this digest
     try:
         # The published images live in a private Gitea registry, so buildah in
-        # the VM must authenticate. The token is piped to --password-stdin via a
-        # shell variable, never passed as an argument, so it does not appear in a
-        # process's argv inside the VM. Gitea's registry accepts any username
-        # with a valid token as the password.
-        login = ""
-        if token:
-            login = (
-                f"BB_REG_TOK={shlex.quote(token)}; "
-                f'printf %s "$BB_REG_TOK" | buildah login --username bot-bottle '
-                f"--password-stdin {registry_host} && unset BB_REG_TOK && "
-            )
+        # the VM must authenticate before the pull.
+        login = _buildah_login_prefix(registry_host, token)
         result = _ssh(
             key, ip,
             f"{login}buildah pull {_STORE_FLAG} {quoted} && "
@@ -330,6 +386,88 @@ def _pull_in_infra(
         _stream_rootfs(key, ip, tag, export_ctr, base)
     finally:
         _cleanup()
+
+
+def _build_overlay_in_infra(
+    base_ref: str,
+    overlay: ManifestImageOverlay,
+    base_out: Path,
+    source_root: Path,
+    smoke_test: tuple[str, ...],
+    digest: str,
+) -> None:
+    """Build the overlay Dockerfile (`FROM base_ref` + apt/COPY) in the
+    orchestrator VM and stream its rootfs into `base_out`. Authenticates for the
+    private base pull, ships the synthesized Dockerfile and the overlay files,
+    and cleans up only this build's working state."""
+    service = FirecrackerInfraService()
+    service.ensure_running()
+    key, ip = service.orchestrator().ssh_target()
+    tag = f"bot-bottle-agent-overlay-{digest}"
+    ctx = f"/tmp/agent-overlay-{digest}"
+    smoke_ctr, export_ctr = f"{tag}-smoke", f"{tag}-export"
+    registry_host = shlex.quote(base_ref.split("/", 1)[0])
+    token = os.environ.get(_ARTIFACT_TOKEN_ENV, "").strip()
+
+    def _cleanup() -> None:
+        _ssh(key, ip,
+             f"buildah rm {smoke_ctr} {export_ctr} >/dev/null 2>&1; "
+             f"buildah rmi {_STORE_FLAG} {tag} >/dev/null 2>&1; "
+             f"buildah logout {registry_host} >/dev/null 2>&1; rm -rf {ctx}",
+             timeout=60)
+
+    _cleanup()  # clear leftovers from a crashed prior build of this digest
+    with tempfile.TemporaryDirectory(prefix="bb-overlay-") as tmp:
+        staged = Path(tmp)
+        dockerfile = agent_overlay.stage_overlay_context(
+            base_ref, overlay, source_root=source_root, dest=staged)
+        try:
+            prep = _ssh(key, ip, f"mkdir -p {ctx}/ctx")
+            if prep.returncode != 0:
+                die(f"preparing overlay build dir in the infra VM failed: "
+                    f"{prep.stderr.strip()}")
+            # Log in first (persists an authfile for the later build session) so
+            # the FROM can pull the private base image.
+            login = _buildah_login_prefix(registry_host, token)
+            if login:
+                auth = _ssh(key, ip, f"{login}true", timeout=120)
+                if auth.returncode != 0:
+                    die(f"registry login in the infra VM failed: {auth.stderr.strip()}")
+            _send_dockerfile(key, ip, dockerfile, ctx)
+            _send_overlay_files(key, ip, staged, overlay.files, ctx)
+            _buildah_build(key, ip, ctx, tag, {})
+            _smoke_test(key, ip, tag, smoke_ctr, smoke_test)
+            _stream_rootfs(key, ip, tag, export_ctr, base_out)
+        finally:
+            _cleanup()
+
+
+def _send_overlay_files(
+    private_key: Path, guest_ip: str, staged: Path,
+    files: tuple[str, ...], ctx: str,
+) -> None:
+    """Ship the overlay's staged files into the VM's ``{ctx}/ctx`` (tar stream,
+    preserving relative paths), so the synthesized Dockerfile's COPYs resolve."""
+    if not files:
+        return
+    tar = subprocess.Popen(
+        ["tar", "-C", str(staged), "-cf", "-", "--", *files],
+        stdout=subprocess.PIPE,
+    )
+    try:
+        proc = subprocess.run(
+            util.ssh_base_argv(private_key, guest_ip) + [f"tar -C {ctx}/ctx -xf -"],
+            stdin=tar.stdout, capture_output=True, timeout=120, check=False,
+        )
+    finally:
+        if tar.stdout is not None:
+            tar.stdout.close()
+        tar.wait()
+    if tar.returncode != 0:
+        die(f"packing the overlay build context failed (tar exit {tar.returncode})")
+    if proc.returncode != 0:
+        die("sending the overlay build context to the infra VM failed: "
+            f"{proc.stderr.decode(errors='replace').strip() or '<no stderr>'}")
 
 
 def _ssh(private_key: Path, guest_ip: str, script: str,

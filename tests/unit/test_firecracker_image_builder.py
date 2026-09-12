@@ -110,6 +110,49 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
         smoke.assert_called_once()
         stream.assert_called_once()
 
+    def test_overlay_cache_hit_skips_build(self):
+        from bot_bottle.manifest import ManifestImageOverlay
+        base_ref = "reg/o/bot-bottle-claude@sha256:" + "d" * 64
+        overlay = ManifestImageOverlay(apt=("jq",))
+        with patch.object(image_builder.util, "cache_dir", return_value=self.cache):
+            digest = image_builder._overlay_rootfs_digest(base_ref, overlay)
+            base = self.cache / "rootfs" / f"agent-overlay-{digest}"
+            base.mkdir(parents=True)
+            (base / ".bb-ready").write_text("ok\n")
+            with patch.object(image_builder, "_build_overlay_in_infra") as build:
+                out = image_builder.acquire_agent_overlay_rootfs_dir(
+                    base_ref, overlay, source_root=self.cache)
+        build.assert_not_called()
+        self.assertEqual(base, out)
+
+    def test_build_overlay_in_infra_logs_in_builds_and_streams(self):
+        from unittest.mock import MagicMock
+        from bot_bottle.manifest import ManifestImageOverlay
+        base_ref = "reg/o/bot-bottle-claude@sha256:" + "c" * 64
+        out = self.cache / "overlay-out"
+        out.mkdir()
+        svc = MagicMock()
+        svc.orchestrator.return_value.ssh_target.return_value = (Path("/k"), "10.0.0.2")
+        ok = subprocess.CompletedProcess([], 0, "", "")
+        with patch.object(image_builder, "FirecrackerInfraService", return_value=svc), \
+             patch.object(image_builder, "_ssh", return_value=ok) as ssh, \
+             patch.object(image_builder, "_send_dockerfile") as send_df, \
+             patch.object(image_builder, "_send_overlay_files"), \
+             patch.object(image_builder, "_buildah_build") as build, \
+             patch.object(image_builder, "_smoke_test"), \
+             patch.object(image_builder, "_stream_rootfs") as stream, \
+             patch.dict("os.environ", {image_builder._ARTIFACT_TOKEN_ENV: "TOK"}):
+            image_builder._build_overlay_in_infra(
+                base_ref, ManifestImageOverlay(apt=("jq",)), out,
+                self.cache, ("claude", "--version"), "deadbeef")
+        send_df.assert_called_once()
+        build.assert_called_once()
+        stream.assert_called_once()
+        self.assertTrue(
+            any("buildah login" in c.args[2] for c in ssh.call_args_list),
+            "expected a buildah login for the private base pull",
+        )
+
     def test_content_addressed_cache_key(self):
         other = self.cache / "Dockerfile2"
         other.write_text("FROM python:3.12-slim\n")

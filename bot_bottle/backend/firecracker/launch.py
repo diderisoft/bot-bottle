@@ -235,12 +235,15 @@ def build_or_load_agent_base(plan: FirecrackerBottlePlan) -> Path:
     # (buildah) and exports its rootfs — the same shape a local build produces.
     pin = agent_image.resolve_agent_pin(plan.agent_provider_template, prefer=(FORMAT_OCI,))
     pinned_ref = image_registry.pinned_reference(pin) if pin is not None else None
+    overlay = plan.image_overlay
+    smoke = runtime_for(plan.agent_provider_template).smoke_test
     if plan.spec.image_policy == "cached":
-        cached = (
-            image_builder.cached_agent_image_rootfs_dir(pinned_ref)
-            if pinned_ref is not None
-            else image_builder.cached_agent_rootfs_dir(dockerfile)
-        )
+        if pinned_ref is not None and not overlay.is_empty():
+            cached = image_builder.cached_agent_overlay_rootfs_dir(pinned_ref, overlay)
+        elif pinned_ref is not None:
+            cached = image_builder.cached_agent_image_rootfs_dir(pinned_ref)
+        else:
+            cached = image_builder.cached_agent_rootfs_dir(dockerfile)
         if cached is None:
             die(
                 f"cached agent rootfs for {plan.image!r} not found; "
@@ -253,10 +256,13 @@ def build_or_load_agent_base(plan: FirecrackerBottlePlan) -> Path:
         # (which verify via ensure_agent_oci). The pull is by digest, so bytes
         # are pinned regardless; this surfaces an overwritten published version.
         image_registry.verify_tag(pin)
-        return image_builder.acquire_agent_image_rootfs_dir(
-            pinned_ref,
-            smoke_test=runtime_for(plan.agent_provider_template).smoke_test,
-        )
+        if not overlay.is_empty():
+            # Tier 2: build a thin FROM<pinned> layer in the VM, export its rootfs.
+            return image_builder.acquire_agent_overlay_rootfs_dir(
+                pinned_ref, overlay,
+                source_root=Path(plan.spec.user_cwd), smoke_test=smoke,
+            )
+        return image_builder.acquire_agent_image_rootfs_dir(pinned_ref, smoke_test=smoke)
     return image_builder.build_agent_rootfs_dir(
         dockerfile,
         image_tag=plan.image,
