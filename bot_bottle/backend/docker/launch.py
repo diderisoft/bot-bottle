@@ -90,6 +90,11 @@ def build_or_load_images(plan: DockerBottlePlan) -> BottleImages:
     pinned = agent_image.ensure_agent_oci(plan.agent_provider_template, runtime="docker")
     if pinned is not None:
         docker_mod.tag_image(pinned, plan.image)
+        # Smoke-test the pulled image too, not just built ones — a published
+        # image that can't launch the harness should fail here, not at start.
+        docker_mod.verify_agent_image(
+            plan.image, runtime_for(plan.agent_provider_template).smoke_test,
+        )
         info(f"using published agent image {plan.image!r} (pulled {pinned})")
         return BottleImages(agent=plan.image)
     docker_mod.build_image(plan.image, str(resources.build_root()), dockerfile=plan.dockerfile_path)

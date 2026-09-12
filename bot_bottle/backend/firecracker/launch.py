@@ -248,7 +248,11 @@ def build_or_load_agent_base(plan: FirecrackerBottlePlan) -> Path:
             )
         info(f"using cached agent rootfs {cached.name}")
         return cached
-    if pinned_ref is not None:
+    if pin is not None and pinned_ref is not None:
+        # Detect a re-pointed tag before the in-VM pull, matching docker/macos
+        # (which verify via ensure_agent_oci). The pull is by digest, so bytes
+        # are pinned regardless; this surfaces an overwritten published version.
+        image_registry.verify_tag(pin)
         return image_builder.acquire_agent_image_rootfs_dir(
             pinned_ref,
             smoke_test=runtime_for(plan.agent_provider_template).smoke_test,

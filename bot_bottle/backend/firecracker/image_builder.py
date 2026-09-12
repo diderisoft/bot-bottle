@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Generator
 
 from ... import resources
+from ...image_registry import TOKEN_ENV as _ARTIFACT_TOKEN_ENV
 from ...log import die, info
 from . import util
 from .infra import FirecrackerInfraService
@@ -293,18 +294,33 @@ def _pull_in_infra(
     tag = f"bot-bottle-agent-pull-{digest}"
     smoke_ctr, export_ctr = f"{tag}-smoke", f"{tag}-export"
     quoted = shlex.quote(image)
+    registry_host = shlex.quote(image.split("/", 1)[0])
+    token = os.environ.get(_ARTIFACT_TOKEN_ENV, "").strip()
 
     def _cleanup() -> None:
         _ssh(key, ip,
              f"buildah rm {smoke_ctr} {export_ctr} >/dev/null 2>&1; "
-             f"buildah rmi {_STORE_FLAG} {tag} >/dev/null 2>&1",
+             f"buildah rmi {_STORE_FLAG} {tag} >/dev/null 2>&1; "
+             f"buildah logout {registry_host} >/dev/null 2>&1",
              timeout=60)
 
     _cleanup()  # clear leftovers from a crashed prior pull of this digest
     try:
+        # The published images live in a private Gitea registry, so buildah in
+        # the VM must authenticate. The token is piped to --password-stdin via a
+        # shell variable, never passed as an argument, so it does not appear in a
+        # process's argv inside the VM. Gitea's registry accepts any username
+        # with a valid token as the password.
+        login = ""
+        if token:
+            login = (
+                f"BB_REG_TOK={shlex.quote(token)}; "
+                f'printf %s "$BB_REG_TOK" | buildah login --username bot-bottle '
+                f"--password-stdin {registry_host} && unset BB_REG_TOK && "
+            )
         result = _ssh(
             key, ip,
-            f"buildah pull {_STORE_FLAG} {quoted} && "
+            f"{login}buildah pull {_STORE_FLAG} {quoted} && "
             f"buildah tag {_STORE_FLAG} {quoted} {tag}",
             timeout=_BUILD_TIMEOUT_SECONDS,
         )

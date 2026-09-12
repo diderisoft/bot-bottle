@@ -147,6 +147,7 @@ class TestLaunchCommittedImage(unittest.TestCase):
         with mock.patch.object(launch_mod, "read_committed_image", return_value=None), \
                 mock.patch.object(launch_mod.agent_image, "ensure_agent_oci", return_value=pinned), \
                 mock.patch.object(launch_mod.docker_mod, "tag_image") as tag, \
+                mock.patch.object(launch_mod.docker_mod, "verify_agent_image"), \
                 mock.patch.object(launch_mod.docker_mod, "build_image") as build:
             images = launch_mod.build_or_load_images(plan)
         self.assertEqual(plan.image, images.agent)
