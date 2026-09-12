@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ...agent_provider import PromptMode
+from ...manifest import ManifestImageOverlay
 from .. import BottlePlan
 
 
@@ -86,3 +87,7 @@ class DockerBottlePlan(BottlePlan):
     @property
     def agent_provider_template(self) -> str:
         return self.agent_provision.template
+
+    @property
+    def image_overlay(self) -> ManifestImageOverlay:
+        return self.manifest.bottle.agent_provider.overlay

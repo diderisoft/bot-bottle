@@ -63,7 +63,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .index import Manifest, ManifestIndex
     from .util import ManifestError
-    from .agent import ManifestAgent, ManifestAgentProvider
+    from .agent import ManifestAgent, ManifestAgentProvider, ManifestImageOverlay
     from .bottle import ManifestBottle
     from .egress import EGRESS_AUTH_SCHEMES, ManifestEgressConfig, ManifestEgressRoute
     from .git import ManifestGitEntry, ManifestGitUser, ManifestKeyConfig
@@ -77,6 +77,7 @@ _LAZY_MODULES: dict[str, str] = {
     "ManifestError": "util",
     "ManifestAgent": "agent",
     "ManifestAgentProvider": "agent",
+    "ManifestImageOverlay": "agent",
     "ManifestBottle": "bottle",
     "EGRESS_AUTH_SCHEMES": "egress",
     "ManifestEgressRoute": "egress",
@@ -110,6 +111,7 @@ __all__ = [
     "ManifestGitUser",
     "ManifestKeyConfig",
     "ManifestAgentProvider",
+    "ManifestImageOverlay",
     "ManifestAgent",
     "ManifestBottle",
     "EGRESS_AUTH_SCHEMES",
