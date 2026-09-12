@@ -35,7 +35,9 @@ from __future__ import annotations
 import dataclasses
 import os
 import subprocess
+import tempfile
 from contextlib import ExitStack, contextmanager
+from pathlib import Path
 from typing import Callable, Generator
 
 from ...bottle_state import (
@@ -48,7 +50,8 @@ from ...git_gate import GitGate
 from ...gateway.git_gate.http_backend import DEFAULT_PORT as _GIT_HTTP_PORT
 from ...image_cache import check_stale
 from ...log import die, info, warn
-from ... import agent_image
+from ...manifest import ManifestImageOverlay
+from ... import agent_image, agent_overlay
 from ... import resources
 from .. import BottleImages
 from ...supervisor.types import SUPERVISE_PORT
@@ -98,11 +101,29 @@ def _agent_image(plan: MacosContainerBottlePlan) -> str:
     # the nested-containers layer is added on top by the caller either way.
     pinned = agent_image.ensure_agent_oci(plan.agent_provider_template, runtime="container")
     if pinned is not None:
-        container_mod.tag_image(pinned, plan.image)
-        info(f"using published agent image {plan.image!r} (pulled {pinned})")
+        overlay = plan.image_overlay
+        if overlay.is_empty():
+            container_mod.tag_image(pinned, plan.image)
+            info(f"using published agent image {plan.image!r} (pulled {pinned})")
+        else:
+            _build_overlay_image(plan, pinned, overlay)
+            info(f"built overlay agent image {plan.image!r} on {pinned}")
         return plan.image
     container_mod.build_image(plan.image, str(resources.build_root()), dockerfile=plan.dockerfile_path)
     return plan.image
+
+
+def _build_overlay_image(
+    plan: MacosContainerBottlePlan, base_ref: str, overlay: ManifestImageOverlay,
+) -> None:
+    """Build the declared overlay as a thin layer FROM the pinned base image,
+    tagged as plan.image (PRD 0085 tier 2)."""
+    with tempfile.TemporaryDirectory(prefix="bb-overlay-") as tmp:
+        ctx = Path(tmp)
+        dockerfile = agent_overlay.stage_overlay_context(
+            base_ref, overlay, source_root=Path(plan.spec.user_cwd), dest=ctx,
+        )
+        container_mod.build_image(plan.image, str(ctx), dockerfile=str(dockerfile))
 
 
 def _layer_nested_containers(

@@ -154,6 +154,23 @@ class TestLaunchCommittedImage(unittest.TestCase):
         tag.assert_called_once_with(pinned, plan.image)
         build.assert_not_called()
 
+    def test_overlay_builds_a_thin_layer_on_the_pin(self) -> None:
+        from unittest.mock import PropertyMock
+        from bot_bottle.manifest import ManifestImageOverlay
+        pinned = "reg/o/bot-bottle-claude@sha256:" + "a" * 64
+        plan = _plan(self._tmp)
+        with mock.patch.object(launch_mod, "read_committed_image", return_value=None), \
+                mock.patch.object(launch_mod.agent_image, "ensure_agent_oci", return_value=pinned), \
+                mock.patch.object(type(plan), "image_overlay", new_callable=PropertyMock,
+                                  return_value=ManifestImageOverlay(apt=("jq",))), \
+                mock.patch.object(launch_mod, "_build_overlay_image") as build_overlay, \
+                mock.patch.object(launch_mod.docker_mod, "verify_agent_image"), \
+                mock.patch.object(launch_mod.docker_mod, "tag_image") as tag:
+            images = launch_mod.build_or_load_images(plan)
+        build_overlay.assert_called_once()
+        tag.assert_not_called()
+        self.assertEqual(plan.image, images.agent)
+
     def test_cached_images_skip_build_when_present(self) -> None:
         base = _plan(self._tmp)
         plan = dataclasses.replace(

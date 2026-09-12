@@ -32,15 +32,18 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import tempfile
 from contextlib import ExitStack, contextmanager
+from pathlib import Path
 from typing import Callable, Generator
 
-from ... import agent_image
+from ... import agent_image, agent_overlay
 from ...agent_provider import runtime_for
 from ...egress import Egress
 from ...git_gate import GitGate
 from ...image_cache import check_stale
 from ...log import die, info, warn
+from ...manifest import ManifestImageOverlay
 from .. import BottleImages
 from . import util as docker_mod
 from .bottle import DockerBottle
@@ -89,19 +92,39 @@ def build_or_load_images(plan: DockerBottlePlan) -> BottleImages:
     # Absent a pin (custom template, or no manifest yet) fall back to building.
     pinned = agent_image.ensure_agent_oci(plan.agent_provider_template, runtime="docker")
     if pinned is not None:
-        docker_mod.tag_image(pinned, plan.image)
-        # Smoke-test the pulled image too, not just built ones — a published
-        # image that can't launch the harness should fail here, not at start.
+        overlay = plan.image_overlay
+        if overlay.is_empty():
+            docker_mod.tag_image(pinned, plan.image)
+            info(f"using published agent image {plan.image!r} (pulled {pinned})")
+        else:
+            _build_overlay_image(plan, pinned, overlay)
+            info(f"built overlay agent image {plan.image!r} on {pinned}")
+        # Smoke-test the result too, not just built-from-source images — a
+        # published (or overlaid) image that can't launch the harness should
+        # fail here, not at start.
         docker_mod.verify_agent_image(
             plan.image, runtime_for(plan.agent_provider_template).smoke_test,
         )
-        info(f"using published agent image {plan.image!r} (pulled {pinned})")
         return BottleImages(agent=plan.image)
     docker_mod.build_image(plan.image, str(resources.build_root()), dockerfile=plan.dockerfile_path)
     docker_mod.verify_agent_image(
         plan.image, runtime_for(plan.agent_provider_template).smoke_test,
     )
     return BottleImages(agent=plan.image)
+
+
+def _build_overlay_image(
+    plan: DockerBottlePlan, base_ref: str, overlay: ManifestImageOverlay,
+) -> None:
+    """Build the declared overlay as a thin layer FROM the pinned base image,
+    tagged as plan.image (PRD 0085 tier 2). Overlay files resolve from the launch
+    cwd, like a custom agent_provider.dockerfile."""
+    with tempfile.TemporaryDirectory(prefix="bb-overlay-") as tmp:
+        ctx = Path(tmp)
+        dockerfile = agent_overlay.stage_overlay_context(
+            base_ref, overlay, source_root=Path(plan.spec.user_cwd), dest=ctx,
+        )
+        docker_mod.build_image(plan.image, str(ctx), dockerfile=str(dockerfile))
 
 
 @contextmanager

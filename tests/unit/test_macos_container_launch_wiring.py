@@ -24,7 +24,7 @@ from bot_bottle.backend.macos_container.launch import (
     build_or_load_images,
 )
 from bot_bottle.log import Die
-from bot_bottle.manifest import ManifestIndex
+from bot_bottle.manifest import ManifestImageOverlay, ManifestIndex
 
 _BOTTLE = "bot_bottle.backend.macos_container.bottle"
 
@@ -75,6 +75,7 @@ def _plan(
         dockerfile_path="/repo/Dockerfile",
         # Custom (non-published) template: no pin, so the build path runs.
         agent_provider_template="test-agent",
+        image_overlay=ManifestImageOverlay(),
         forwarded_env={"OAUTH_TOKEN": "host-value"},
         egress_plan=egress_plan,
         git_gate_plan=SimpleNamespace(upstreams=()),
