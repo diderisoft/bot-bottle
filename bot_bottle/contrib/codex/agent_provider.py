@@ -108,6 +108,34 @@ class CodexAgentProvider(AgentProvider):
     def runtime(self) -> AgentProviderRuntime:
         return _RUNTIME
 
+    def harness_overlay_lines(self, version: str) -> tuple[str, ...] | None:
+        # Mirrors the Dockerfile's standalone install. The base checks a
+        # committed SHA256SUMS; for an arbitrary version the checksum list is
+        # fetched from the same upstream release, which catches a corrupt or
+        # swapped asset but not a compromised release.
+        release = f"https://github.com/openai/codex/releases/download/rust-v{version}"
+        return (
+            "USER node",
+            'RUN case "$(dpkg --print-architecture)" in '
+            "amd64) codex_target=x86_64-unknown-linux-musl ;; "
+            "arm64) codex_target=aarch64-unknown-linux-musl ;; "
+            '*) echo "unsupported Codex architecture: $(dpkg --print-architecture)" >&2; exit 1 ;; '
+            "esac "
+            '&& codex_asset="codex-package-${codex_target}.tar.gz" '
+            f"&& curl -fsSL {release}/codex-package_SHA256SUMS -o /tmp/codex-package_SHA256SUMS "
+            '&& codex_sha256="$(awk -v asset="${codex_asset}" \'$2 == asset { print $1 }\' /tmp/codex-package_SHA256SUMS)" '
+            '&& test -n "${codex_sha256}" '
+            f'&& curl -fsSL "{release}/${{codex_asset}}" -o "/tmp/${{codex_asset}}" '
+            '&& echo "${codex_sha256}  /tmp/${codex_asset}" | sha256sum -c - '
+            f'&& codex_release="/home/node/.codex/packages/standalone/releases/{version}-${{codex_target}}" '
+            '&& mkdir -p "${codex_release}" '
+            '&& tar -xzf "/tmp/${codex_asset}" -C "${codex_release}" '
+            '&& ln -sfn bin/codex "${codex_release}/codex" '
+            '&& ln -sfn "${codex_release}" /home/node/.codex/packages/standalone/current '
+            '&& rm "/tmp/${codex_asset}" /tmp/codex-package_SHA256SUMS '
+            f'&& test "$(codex --version)" = "codex-cli {version}"',
+        )
+
     def provision_plan(
         self,
         *,

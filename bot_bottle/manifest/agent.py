@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import cast
 
@@ -11,13 +12,20 @@ from .git import ManifestGitUser
 from .schema import AGENT_MODEL_KEYS, is_valid_entity_name
 
 
+# A harness version is interpolated into overlay RUN lines, so it is held to a
+# strict semver shape (optional prerelease) rather than shell-quoted ad hoc.
+HARNESS_VERSION_RE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.]*)?")
+
+
 @dataclass(frozen=True)
 class ManifestImageOverlay:
     """A small tweak layered on the pinned default agent image (PRD 0085).
 
     Rendered as a thin `FROM <pinned-default>` layer built on the host — a pinned
     harness version, extra apt packages, and extra files COPYed in — so the base
-    stays the verified release image and compatibility is inherited. This is the
+    stays the verified release image. A harness bump is the exception: it
+    replaces the harness the release was tested with, so compatibility is the
+    author's to own. This is the
     middle path between "pull the default as-is" and "bring your own image": a
     one-layer build, expressible without a `contrib` folder."""
 
@@ -43,6 +51,11 @@ class ManifestImageOverlay:
             raise ManifestError(
                 f"{where}.harness_version must be a string "
                 f"(was {type(harness).__name__})"
+            )
+        if harness and not HARNESS_VERSION_RE.fullmatch(harness):
+            raise ManifestError(
+                f"{where}.harness_version {harness!r} must be an exact "
+                "version like 2.1.180 (or 0.146.0-alpha.1)"
             )
         apt = _overlay_str_list(where, "apt", d.get("apt", []))
         files = _overlay_str_list(where, "files", d.get("files", []))

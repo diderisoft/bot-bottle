@@ -6,11 +6,10 @@ frontmatter, so the base stays the verified release image and compatibility is
 inherited. This module renders the overlay Dockerfile and its content-addressed
 cache tag; the per-backend build machinery does the actual build.
 
-Scope note (PRD open questions): `apt` packages and extra `files` are supported.
-`harness_version` is not yet — bumping a provider's pinned harness needs a
-per-provider "harness package" interface the PRD leaves unsettled, so it raises
-rather than silently ignoring the request. Overlay `files` land under
-``OVERLAY_DEST`` in the image, preserving their relative path.
+Supported directives: `apt` packages, a `harness_version` bump (rendered by the
+provider's `AgentProvider.harness_overlay_lines`, since each harness installs
+differently), and extra `files`, which land under ``OVERLAY_DEST`` in the image
+preserving their relative path.
 """
 
 from __future__ import annotations
@@ -22,6 +21,7 @@ from pathlib import Path
 
 from .agent_provider import get_provider
 from .manifest import ManifestImageOverlay
+from .manifest.agent import HARNESS_VERSION_RE
 
 # Where overlay `files` are placed in the image. A fixed, documented location
 # rather than an arbitrary path: predictable for the agent to read and safe from
@@ -43,11 +43,6 @@ def render_overlay_dockerfile(
     agent provider whose image this is: the default images end as a non-root
     user, so RUN steps switch to root and the provider's `image_user` is restored
     afterwards."""
-    if overlay.harness_version:
-        raise OverlayError(
-            "agent_provider.image.overlay.harness_version is not yet supported; "
-            "use apt/files, or pin the harness in a custom agent image"
-        )
     lines = [f"FROM {base_ref}"]
     runs: list[str] = []
     if overlay.apt:
@@ -59,6 +54,8 @@ def render_overlay_dockerfile(
             f"&& apt-get install -y --no-install-recommends {pkgs} "
             "&& rm -rf /var/lib/apt/lists/*"
         )
+    if overlay.harness_version:
+        runs.extend(_harness_lines(template, overlay.harness_version))
     if runs:
         lines.append("USER root")
         lines.extend(runs)
@@ -68,6 +65,20 @@ def render_overlay_dockerfile(
     if runs:
         lines.append(f"USER {get_provider(template).image_user}")
     return "\n".join(lines) + "\n"
+
+
+def _harness_lines(template: str, version: str) -> tuple[str, ...]:
+    # Re-checked here, not only at manifest parse: the version lands in RUN.
+    if not HARNESS_VERSION_RE.fullmatch(version):
+        raise OverlayError(f"invalid harness_version {version!r}")
+    lines = get_provider(template).harness_overlay_lines(version)
+    if lines is None:
+        raise OverlayError(
+            f"agent provider {template!r} does not support "
+            "agent_provider.image.overlay.harness_version; "
+            "pin the harness in a custom agent image instead"
+        )
+    return lines
 
 
 def stage_overlay_context(

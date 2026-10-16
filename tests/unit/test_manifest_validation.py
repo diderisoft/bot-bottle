@@ -129,6 +129,21 @@ class TestAgentProviderValidation(unittest.TestCase):
         self.assertEqual(p.overlay.files, ("extra/settings.json",))
         self.assertFalse(p.overlay.is_empty())
 
+    def test_image_overlay_harness_version_accepts_prerelease(self) -> None:
+        p = ManifestAgentProvider.from_dict("b", {
+            "template": "codex",
+            "image": {"overlay": {"harness_version": "0.146.0-alpha.1"}},
+        })
+        self.assertEqual(p.overlay.harness_version, "0.146.0-alpha.1")
+
+    def test_image_overlay_harness_version_must_be_exact(self) -> None:
+        for bad in ("latest", "2.1", "^2.1.180", "2.1.180; rm -rf /", "v2.1.180"):
+            with self.subTest(bad=bad), self.assertRaises(ManifestError):
+                ManifestAgentProvider.from_dict("b", {
+                    "template": "claude",
+                    "image": {"overlay": {"harness_version": bad}},
+                })
+
     def test_no_overlay_is_empty(self) -> None:
         p = ManifestAgentProvider.from_dict("b", {"template": "claude"})
         self.assertTrue(p.overlay.is_empty())

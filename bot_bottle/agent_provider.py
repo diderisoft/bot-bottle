@@ -163,6 +163,15 @@ class AgentProvider(ABC):
         Defaults to `node` to match the Debian-based bot-bottle-* images."""
         return "node"
 
+    def harness_overlay_lines(self, version: str) -> tuple[str, ...] | None:
+        """Dockerfile lines that replace this provider's pinned harness with
+        `version` in an overlay layer (PRD 0085), or None when the provider
+        does not support a harness bump. The lines start as root and may
+        switch user; the overlay restores `image_user` afterwards. They must
+        fail the build unless the installed harness reports exactly
+        `version`. `version` is already validated as semver-shaped."""
+        return None
+
     @property
     def dockerfile(self) -> Path:
         """Path to the provider's Dockerfile.

@@ -108,6 +108,18 @@ class ClaudeAgentProvider(AgentProvider):
     def runtime(self) -> AgentProviderRuntime:
         return _RUNTIME
 
+    def harness_overlay_lines(self, version: str) -> tuple[str, ...] | None:
+        # The base installs from a committed lock in /opt/claude; a bump can't
+        # have one, so npm verifies the tarball against the registry's
+        # published integrity instead.
+        return (
+            "RUN cd /opt/claude "
+            "&& npm install --omit=dev --no-save --no-fund --no-audit "
+            f"@anthropic-ai/claude-code@{version} "
+            "&& npm cache clean --force "
+            f"&& test \"$(claude --version | cut -d' ' -f1)\" = {version}",
+        )
+
     def provision_plan(
         self,
         *,

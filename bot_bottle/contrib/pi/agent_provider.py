@@ -169,10 +169,32 @@ _RUNTIME = AgentProviderRuntime(
 )
 
 
+# The pi harness packages released in lockstep (see contrib/pi/package.json).
+_PI_CORE_PACKAGES = (
+    "@earendil-works/pi-coding-agent",
+    "@earendil-works/pi-agent-core",
+    "@earendil-works/pi-ai",
+    "@earendil-works/pi-tui",
+)
+
+
 class PiAgentProvider(AgentProvider):
     @property
     def runtime(self) -> AgentProviderRuntime:
         return _RUNTIME
+
+    def harness_overlay_lines(self, version: str) -> tuple[str, ...] | None:
+        # The pi core packages depend on each other at ^<same version>, so
+        # they move together. Extensions stay at the base image's lock; a peer
+        # conflict fails the npm install rather than resolving silently.
+        pkgs = " ".join(f"{p}@{version}" for p in _PI_CORE_PACKAGES)
+        return (
+            "USER node",
+            "RUN cd /home/node/.pi/agent "
+            f"&& npm install --omit=dev --no-save --no-fund --no-audit {pkgs} "
+            "&& npm cache clean --force "
+            f"&& test \"$(pi --version)\" = {version}",
+        )
 
     def provision_plan(
         self,
