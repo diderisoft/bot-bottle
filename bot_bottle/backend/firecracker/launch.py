@@ -259,7 +259,7 @@ def build_or_load_agent_base(plan: FirecrackerBottlePlan) -> Path:
         if not overlay.is_empty():
             # Tier 2: build a thin FROM<pinned> layer in the VM, export its rootfs.
             return image_builder.acquire_agent_overlay_rootfs_dir(
-                pinned_ref, overlay,
+                pinned_ref, overlay, template=plan.agent_provider_template,
                 source_root=Path(plan.spec.user_cwd), smoke_test=smoke,
             )
         return image_builder.acquire_agent_image_rootfs_dir(pinned_ref, smoke_test=smoke)

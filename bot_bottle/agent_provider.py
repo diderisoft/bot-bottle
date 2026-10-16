@@ -157,6 +157,13 @@ class AgentProvider(ABC):
         return "/home/node"
 
     @property
+    def image_user(self) -> str:
+        """The user the default image ends as (its final `USER`). An overlay
+        layer switches to root for its RUN steps and restores this afterwards.
+        Defaults to `node` to match the Debian-based bot-bottle-* images."""
+        return "node"
+
+    @property
     def dockerfile(self) -> Path:
         """Path to the provider's Dockerfile.
 

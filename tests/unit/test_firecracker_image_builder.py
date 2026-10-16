@@ -121,7 +121,7 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
             (base / ".bb-ready").write_text("ok\n")
             with patch.object(image_builder, "_build_overlay_in_infra") as build:
                 out = image_builder.acquire_agent_overlay_rootfs_dir(
-                    base_ref, overlay, source_root=self.cache)
+                    base_ref, overlay, template="claude", source_root=self.cache)
         build.assert_not_called()
         self.assertEqual(base, out)
 
@@ -144,7 +144,8 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
              patch.dict("os.environ", {image_builder._ARTIFACT_TOKEN_ENV: "TOK"}):
             image_builder._build_overlay_in_infra(
                 base_ref, ManifestImageOverlay(apt=("jq",)), out,
-                self.cache, ("claude", "--version"), "deadbeef")
+                self.cache, ("claude", "--version"), "deadbeef",
+                template="claude")
         send_df.assert_called_once()
         build.assert_called_once()
         stream.assert_called_once()

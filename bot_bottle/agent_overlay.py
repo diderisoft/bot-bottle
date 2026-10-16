@@ -20,6 +20,7 @@ import shlex
 import shutil
 from pathlib import Path
 
+from .agent_provider import get_provider
 from .manifest import ManifestImageOverlay
 
 # Where overlay `files` are placed in the image. A fixed, documented location
@@ -32,27 +33,40 @@ class OverlayError(RuntimeError):
     """An overlay cannot be rendered (unsupported directive)."""
 
 
-def render_overlay_dockerfile(base_ref: str, overlay: ManifestImageOverlay) -> str:
+def render_overlay_dockerfile(
+    base_ref: str, overlay: ManifestImageOverlay, *, template: str,
+) -> str:
     """The thin Dockerfile that layers `overlay` on `base_ref`.
 
     `base_ref` must be the digest-pinned reference to the verified default image,
-    so the overlay inherits exactly those bytes as its base."""
+    so the overlay inherits exactly those bytes as its base. `template` names the
+    agent provider whose image this is: the default images end as a non-root
+    user, so RUN steps switch to root and the provider's `image_user` is restored
+    afterwards."""
     if overlay.harness_version:
         raise OverlayError(
             "agent_provider.image.overlay.harness_version is not yet supported; "
             "use apt/files, or pin the harness in a custom agent image"
         )
     lines = [f"FROM {base_ref}"]
+    runs: list[str] = []
     if overlay.apt:
         pkgs = " ".join(shlex.quote(p) for p in overlay.apt)
-        lines.append(
-            "RUN apt-get update "
+        # The default images point apt at snapshot.debian.org, whose Release
+        # files are past their Valid-Until; match the base images' flag.
+        runs.append(
+            "RUN apt-get -o Acquire::Check-Valid-Until=false update "
             f"&& apt-get install -y --no-install-recommends {pkgs} "
             "&& rm -rf /var/lib/apt/lists/*"
         )
+    if runs:
+        lines.append("USER root")
+        lines.extend(runs)
     for rel in overlay.files:
         dest = f"{OVERLAY_DEST}/{rel}"
         lines.append(f"COPY {shlex.quote(rel)} {shlex.quote(dest)}")
+    if runs:
+        lines.append(f"USER {get_provider(template).image_user}")
     return "\n".join(lines) + "\n"
 
 
@@ -60,6 +74,7 @@ def stage_overlay_context(
     base_ref: str,
     overlay: ManifestImageOverlay,
     *,
+    template: str,
     source_root: Path,
     dest: Path,
 ) -> Path:
@@ -70,7 +85,7 @@ def stage_overlay_context(
     them."""
     dest.mkdir(parents=True, exist_ok=True)
     dockerfile = dest / "Dockerfile.overlay"
-    dockerfile.write_text(render_overlay_dockerfile(base_ref, overlay))
+    dockerfile.write_text(render_overlay_dockerfile(base_ref, overlay, template=template))
     for rel in overlay.files:
         src = source_root / rel
         if not src.is_file():

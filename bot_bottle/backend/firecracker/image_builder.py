@@ -206,6 +206,7 @@ def acquire_agent_overlay_rootfs_dir(
     base_ref: str,
     overlay: ManifestImageOverlay,
     *,
+    template: str,
     source_root: Path,
     smoke_test: tuple[str, ...] = (),
 ) -> Path:
@@ -226,7 +227,9 @@ def acquire_agent_overlay_rootfs_dir(
         shutil.rmtree(staging, ignore_errors=True)
         staging.mkdir(parents=True)
         info(f"building overlay agent image on {base_ref!r} in the infra VM")
-        _build_overlay_in_infra(base_ref, overlay, staging, source_root, smoke_test, digest)
+        _build_overlay_in_infra(
+            base_ref, overlay, staging, source_root, smoke_test, digest,
+            template=template)
         util.inject_guest_boot(staging)
         (staging / ".bb-ready").write_text("ok\n")
         shutil.rmtree(base, ignore_errors=True)
@@ -395,6 +398,8 @@ def _build_overlay_in_infra(
     source_root: Path,
     smoke_test: tuple[str, ...],
     digest: str,
+    *,
+    template: str,
 ) -> None:
     """Build the overlay Dockerfile (`FROM base_ref` + apt/COPY) in the
     orchestrator VM and stream its rootfs into `base_out`. Authenticates for the
@@ -420,7 +425,8 @@ def _build_overlay_in_infra(
     with tempfile.TemporaryDirectory(prefix="bb-overlay-") as tmp:
         staged = Path(tmp)
         dockerfile = agent_overlay.stage_overlay_context(
-            base_ref, overlay, source_root=source_root, dest=staged)
+            base_ref, overlay, template=template, source_root=source_root,
+            dest=staged)
         try:
             prep = _ssh(key, ip, f"mkdir -p {ctx}/ctx")
             if prep.returncode != 0:

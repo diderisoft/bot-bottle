@@ -121,7 +121,8 @@ def _build_overlay_image(
     with tempfile.TemporaryDirectory(prefix="bb-overlay-") as tmp:
         ctx = Path(tmp)
         dockerfile = agent_overlay.stage_overlay_context(
-            base_ref, overlay, source_root=Path(plan.spec.user_cwd), dest=ctx,
+            base_ref, overlay, template=plan.agent_provider_template,
+            source_root=Path(plan.spec.user_cwd), dest=ctx,
         )
         container_mod.build_image(plan.image, str(ctx), dockerfile=str(dockerfile))
 
