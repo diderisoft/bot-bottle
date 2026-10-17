@@ -144,6 +144,37 @@ class TestAgentProviderValidation(unittest.TestCase):
                     "image": {"overlay": {"harness_version": bad}},
                 })
 
+    def test_image_overlay_dockerfile_parses(self) -> None:
+        p = ManifestAgentProvider.from_dict("b", {
+            "template": "claude",
+            "image": {"overlay": {"dockerfile": "overlay/Dockerfile"}},
+        })
+        self.assertEqual(p.overlay.dockerfile, "overlay/Dockerfile")
+        self.assertFalse(p.overlay.is_empty())
+
+    def test_image_overlay_dockerfile_is_exclusive(self) -> None:
+        for extra in ({"apt": ["jq"]}, {"files": ["f"]}, {"harness_version": "2.1.180"}):
+            with self.subTest(extra=extra), self.assertRaises(ManifestError):
+                ManifestAgentProvider.from_dict("b", {
+                    "template": "claude",
+                    "image": {"overlay": {"dockerfile": "Dockerfile", **extra}},
+                })
+
+    def test_image_overlay_dockerfile_must_stay_relative(self) -> None:
+        for bad in ("/etc/Dockerfile", "../Dockerfile", "a/../../Dockerfile"):
+            with self.subTest(bad=bad), self.assertRaises(ManifestError):
+                ManifestAgentProvider.from_dict("b", {
+                    "template": "claude",
+                    "image": {"overlay": {"dockerfile": bad}},
+                })
+
+    def test_image_overlay_dockerfile_must_be_string(self) -> None:
+        with self.assertRaises(ManifestError):
+            ManifestAgentProvider.from_dict("b", {
+                "template": "claude",
+                "image": {"overlay": {"dockerfile": ["Dockerfile"]}},
+            })
+
     def test_no_overlay_is_empty(self) -> None:
         p = ManifestAgentProvider.from_dict("b", {"template": "claude"})
         self.assertTrue(p.overlay.is_empty())

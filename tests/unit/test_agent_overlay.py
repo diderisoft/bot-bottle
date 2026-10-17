@@ -135,6 +135,116 @@ class StageContext(unittest.TestCase):
                 _BASE, overlay, template="claude", source_root=root, dest=dest)
 
 
+class RenderDockerfileOverlay(unittest.TestCase):
+    def _render(self, text: str) -> str:
+        return ao.render_overlay_dockerfile_text(_BASE, text, template="claude")
+
+    def test_pins_base_and_restores_user(self) -> None:
+        out = self._render("ARG BASE\nFROM ${BASE}\nUSER root\nRUN apt-get install -y rg\n")
+        lines = out.splitlines()
+        self.assertIn(f"ARG BASE={_BASE}", lines)
+        self.assertLess(lines.index(f"ARG BASE={_BASE}"), lines.index("FROM ${BASE}"))
+        self.assertNotIn("ARG BASE", lines)  # the user's bare declaration is replaced
+        self.assertEqual("USER node", lines[-1])
+
+    def test_dollar_base_and_stage_name_accepted(self) -> None:
+        for frm in ("FROM $BASE", "FROM ${BASE} AS layer", "from ${base}"):
+            with self.subTest(frm=frm):
+                self.assertIn(frm, self._render(frm + "\nRUN true\n"))
+
+    def test_parser_directive_stays_first(self) -> None:
+        out = self._render("# syntax=docker/dockerfile:1\nFROM ${BASE}\n")
+        self.assertEqual("# syntax=docker/dockerfile:1", out.splitlines()[0])
+
+    def test_continuation_lines_are_one_instruction(self) -> None:
+        out = self._render("FROM ${BASE}\nRUN apt-get update && \\\n    apt-get install -y jq\n")
+        self.assertIn("    apt-get install -y jq", out)
+
+    def test_rejects(self) -> None:
+        cases = {
+            "another base": "FROM debian:bookworm\n",
+            "multi-stage": "FROM ${BASE}\nFROM ${BASE}\n",
+            "no FROM": "RUN true\n",
+            "BASE given a value": "ARG BASE=evil/image\nFROM ${BASE}\n",
+            "instruction before FROM": "RUN true\nFROM ${BASE}\n",
+            "FROM flags": "FROM --platform=linux/amd64 ${BASE}\n",
+        }
+        for name, text in cases.items():
+            with self.subTest(name), self.assertRaises(ao.OverlayError):
+                self._render(text)
+
+    def test_overlay_error_reports_as_a_manifest_error(self) -> None:
+        # The CLI prints ManifestErrors as config problems rather than crashing.
+        from bot_bottle.manifest import ManifestError
+        with self.assertRaises(ManifestError):
+            self._render("FROM debian\n")
+
+
+class StageDockerfileOverlay(unittest.TestCase):
+    def test_context_is_the_dockerfile_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "src"
+            ctx_dir = root / "overlay"
+            (ctx_dir / "conf").mkdir(parents=True)
+            (ctx_dir / "Dockerfile").write_text("FROM ${BASE}\nCOPY conf/a.json /opt/a.json\n")
+            (ctx_dir / "conf" / "a.json").write_text("{}")
+            (root / "outside.txt").write_text("not context")
+            dest = Path(tmp) / "ctx"
+            df = ao.stage_overlay_context(
+                _BASE, ManifestImageOverlay(dockerfile="overlay/Dockerfile"),
+                template="claude", source_root=root, dest=dest)
+            self.assertEqual(ao.STAGED_DOCKERFILE, df.name)
+            self.assertIn(f"ARG BASE={_BASE}", df.read_text())
+            self.assertTrue((dest / "conf" / "a.json").is_file())
+            self.assertFalse((dest / "outside.txt").exists())
+
+    def test_missing_dockerfile_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ao.OverlayError):
+                ao.stage_overlay_context(
+                    _BASE, ManifestImageOverlay(dockerfile="nope/Dockerfile"),
+                    template="claude", source_root=Path(tmp), dest=Path(tmp) / "ctx")
+
+
+class ContextDigest(unittest.TestCase):
+    def test_files_content_edit_changes_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "f.txt").write_text("one")
+            o = ManifestImageOverlay(files=("f.txt",))
+            before = ao.overlay_context_digest(o, root)
+            (root / "f.txt").write_text("two")
+            self.assertNotEqual(before, ao.overlay_context_digest(o, root))
+
+    def test_dockerfile_context_edit_changes_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ov").mkdir()
+            (root / "ov" / "Dockerfile").write_text("FROM ${BASE}\n")
+            (root / "ov" / "data.txt").write_text("a")
+            o = ManifestImageOverlay(dockerfile="ov/Dockerfile")
+            before = ao.overlay_context_digest(o, root)
+            (root / "ov" / "data.txt").write_text("b")
+            after_data = ao.overlay_context_digest(o, root)
+            (root / "ov" / "Dockerfile").write_text("FROM ${BASE}\nRUN true\n")
+            self.assertNotEqual(before, after_data)
+            self.assertNotEqual(after_data, ao.overlay_context_digest(o, root))
+
+    def test_missing_input_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            for o in (ManifestImageOverlay(files=("x",)),
+                      ManifestImageOverlay(dockerfile="x/Dockerfile")):
+                with self.subTest(o=o), self.assertRaises(ao.OverlayError):
+                    ao.overlay_context_digest(o, Path(tmp))
+
+
+class NoPublishedBase(unittest.TestCase):
+    def test_message_names_the_template(self) -> None:
+        err = ao.no_published_base_error("claude")
+        self.assertIsInstance(err, ao.OverlayError)
+        self.assertIn("'claude'", str(err))
+
+
 class CacheTag(unittest.TestCase):
     def test_stable_for_same_input(self) -> None:
         o = ManifestImageOverlay(apt=("jq",))
@@ -150,9 +260,18 @@ class CacheTag(unittest.TestCase):
         c = ao.overlay_cache_tag("sha256:x", ManifestImageOverlay(files=("f",)))
         d = ao.overlay_cache_tag("sha256:x", ManifestImageOverlay(
             apt=("jq",), harness_version="2.1.180"))
+        e = ao.overlay_cache_tag("sha256:x", ManifestImageOverlay(dockerfile="Dockerfile"))
         self.assertNotEqual(a, b)
         self.assertNotEqual(a, c)
         self.assertNotEqual(a, d)
+        self.assertNotEqual(a, e)
+
+    def test_changes_with_context_digest(self) -> None:
+        o = ManifestImageOverlay(files=("f",))
+        self.assertNotEqual(
+            ao.overlay_cache_tag("sha256:x", o, context_digest="aa"),
+            ao.overlay_cache_tag("sha256:x", o, context_digest="bb"),
+        )
 
 
 if __name__ == "__main__":

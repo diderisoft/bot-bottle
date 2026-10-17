@@ -109,6 +109,9 @@ def _agent_image(plan: MacosContainerBottlePlan) -> str:
             _build_overlay_image(plan, pinned, overlay)
             info(f"built overlay agent image {plan.image!r} on {pinned}")
         return plan.image
+    if not plan.image_overlay.is_empty():
+        # No pinned base: building the default instead would drop the overlay.
+        raise agent_overlay.no_published_base_error(plan.agent_provider_template)
     container_mod.build_image(plan.image, str(resources.build_root()), dockerfile=plan.dockerfile_path)
     return plan.image
 

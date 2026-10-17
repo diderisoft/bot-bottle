@@ -27,24 +27,29 @@ class ManifestImageOverlay:
     replaces the harness the release was tested with, so compatibility is the
     author's to own. This is the
     middle path between "pull the default as-is" and "bring your own image": a
-    one-layer build, expressible without a `contrib` folder."""
+    one-layer build, expressible without a `contrib` folder.
+
+    `dockerfile` is the free-form alternative to the structured fields: a
+    Dockerfile whose single stage is `FROM ${BASE}`, built with its own
+    directory as the context. Mutually exclusive with the other fields."""
 
     harness_version: str = ""
     apt: tuple[str, ...] = ()
     files: tuple[str, ...] = ()
+    dockerfile: str = ""
 
     def is_empty(self) -> bool:
-        return not (self.harness_version or self.apt or self.files)
+        return not (self.harness_version or self.apt or self.files or self.dockerfile)
 
     @classmethod
     def from_dict(cls, bottle_name: str, raw: object) -> "ManifestImageOverlay":
         where = f"bottle '{bottle_name}' agent_provider.image.overlay"
         d = as_json_object(raw, where)
         for k in d:
-            if k not in {"harness_version", "apt", "files"}:
+            if k not in {"harness_version", "apt", "files", "dockerfile"}:
                 raise ManifestError(
                     f"{where} has unknown key {k!r}; allowed: "
-                    "harness_version, apt, files"
+                    "harness_version, apt, files, dockerfile"
                 )
         harness = d.get("harness_version", "")
         if not isinstance(harness, str):
@@ -65,7 +70,23 @@ class ManifestImageOverlay:
                     f"{where}.files entry {f!r} must be a relative path that does "
                     "not escape the manifest directory (no leading '/' or '..')"
                 )
-        return cls(harness_version=harness, apt=apt, files=files)
+        dockerfile = d.get("dockerfile", "")
+        if not isinstance(dockerfile, str):
+            raise ManifestError(
+                f"{where}.dockerfile must be a string (was {type(dockerfile).__name__})"
+            )
+        if dockerfile:
+            if harness or apt or files:
+                raise ManifestError(
+                    f"{where}.dockerfile cannot be combined with harness_version, "
+                    "apt, or files; put those steps in the Dockerfile instead"
+                )
+            if dockerfile.startswith("/") or ".." in dockerfile.split("/"):
+                raise ManifestError(
+                    f"{where}.dockerfile {dockerfile!r} must be a relative path that "
+                    "does not escape the manifest directory (no leading '/' or '..')"
+                )
+        return cls(harness_version=harness, apt=apt, files=files, dockerfile=dockerfile)
 
 
 def _overlay_str_list(where: str, key: str, raw: object) -> tuple[str, ...]:

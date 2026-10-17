@@ -98,6 +98,27 @@ class TestBuildOrLoadImages(unittest.TestCase):
     def tearDown(self) -> None:
         self._tmp.cleanup()
 
+    def test_overlay_without_a_pin_fails_instead_of_dropping_it(self) -> None:
+        from bot_bottle.agent_overlay import OverlayError
+        plan = cast(SimpleNamespace, self.plan)
+        plan.image_overlay = ManifestImageOverlay(apt=("jq",))
+        with (
+            patch(
+                "bot_bottle.backend.macos_container.launch.read_committed_image",
+                return_value=None,
+            ),
+            patch(
+                "bot_bottle.backend.macos_container.launch.agent_image.ensure_agent_oci",
+                return_value=None,
+            ),
+            patch(
+                "bot_bottle.backend.macos_container.launch.container_mod.build_image",
+            ) as build,
+            self.assertRaises(OverlayError),
+        ):
+            build_or_load_images(self.plan)
+        build.assert_not_called()
+
     def test_reuses_present_committed_image(self) -> None:
         with (
             patch(

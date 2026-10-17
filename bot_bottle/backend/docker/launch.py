@@ -106,6 +106,9 @@ def build_or_load_images(plan: DockerBottlePlan) -> BottleImages:
             plan.image, runtime_for(plan.agent_provider_template).smoke_test,
         )
         return BottleImages(agent=plan.image)
+    if not plan.image_overlay.is_empty():
+        # No pinned base: building the default instead would drop the overlay.
+        raise agent_overlay.no_published_base_error(plan.agent_provider_template)
     docker_mod.build_image(plan.image, str(resources.build_root()), dockerfile=plan.dockerfile_path)
     docker_mod.verify_agent_image(
         plan.image, runtime_for(plan.agent_provider_template).smoke_test,

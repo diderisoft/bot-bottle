@@ -115,7 +115,7 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
         base_ref = "reg/o/bot-bottle-claude@sha256:" + "d" * 64
         overlay = ManifestImageOverlay(apt=("jq",))
         with patch.object(image_builder.util, "cache_dir", return_value=self.cache):
-            digest = image_builder._overlay_rootfs_digest(base_ref, overlay)
+            digest = image_builder._overlay_rootfs_digest(base_ref, overlay, self.cache)
             base = self.cache / "rootfs" / f"agent-overlay-{digest}"
             base.mkdir(parents=True)
             (base / ".bb-ready").write_text("ok\n")

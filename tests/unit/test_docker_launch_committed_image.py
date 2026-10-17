@@ -171,6 +171,20 @@ class TestLaunchCommittedImage(unittest.TestCase):
         tag.assert_not_called()
         self.assertEqual(plan.image, images.agent)
 
+    def test_overlay_without_a_pin_fails_instead_of_dropping_it(self) -> None:
+        from unittest.mock import PropertyMock
+        from bot_bottle.agent_overlay import OverlayError
+        from bot_bottle.manifest import ManifestImageOverlay
+        plan = _plan(self._tmp)
+        with mock.patch.object(launch_mod, "read_committed_image", return_value=None), \
+                mock.patch.object(launch_mod.agent_image, "ensure_agent_oci", return_value=None), \
+                mock.patch.object(type(plan), "image_overlay", new_callable=PropertyMock,
+                                  return_value=ManifestImageOverlay(apt=("jq",))), \
+                mock.patch.object(launch_mod.docker_mod, "build_image") as build:
+            with self.assertRaises(OverlayError):
+                launch_mod.build_or_load_images(plan)
+        build.assert_not_called()
+
     def test_cached_images_skip_build_when_present(self) -> None:
         base = _plan(self._tmp)
         plan = dataclasses.replace(

@@ -243,6 +243,23 @@ class TestFirecrackerCachedRootfs(unittest.TestCase):
             mod.build_or_load_agent_base(self._plan())
         build.assert_not_called()
 
+    def test_overlay_without_a_pin_fails_instead_of_dropping_it(self) -> None:
+        from bot_bottle.agent_overlay import OverlayError
+        from bot_bottle.backend.firecracker import launch as mod
+        from bot_bottle.manifest import ManifestImageOverlay
+        for policy in ("cached", "build"):
+            plan = self._plan(policy)
+            plan.image_overlay = ManifestImageOverlay(apt=("jq",))
+            with self.subTest(policy=policy), \
+                 patch.object(mod, "read_committed_image", return_value=""), \
+                 patch.object(mod.agent_image, "resolve_agent_pin", return_value=None), \
+                 patch.object(mod.image_builder, "cached_agent_rootfs_dir") as cached, \
+                 patch.object(mod.image_builder, "build_agent_rootfs_dir") as build, \
+                 self.assertRaises(OverlayError):
+                mod.build_or_load_agent_base(plan)
+            cached.assert_not_called()
+            build.assert_not_called()
+
     def test_stale_checks_use_ready_marker_timestamp(self) -> None:
         from bot_bottle.backend.firecracker import launch as mod
         cached = Path("/cache/rootfs/agent-deadbeef")

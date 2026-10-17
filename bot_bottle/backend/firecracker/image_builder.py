@@ -187,18 +187,25 @@ def acquire_agent_image_rootfs_dir(
     return base
 
 
-def _overlay_rootfs_digest(base_ref: str, overlay: ManifestImageOverlay) -> str:
+def _overlay_rootfs_digest(
+    base_ref: str, overlay: ManifestImageOverlay, source_root: Path,
+) -> str:
     """Cache key for an overlaid rootfs: the base ref + guest init (via
-    `_image_rootfs_digest`) folded with the overlay spec, so a base bump, an
-    init change, or an overlay edit each re-build."""
-    return agent_overlay.overlay_cache_tag(_image_rootfs_digest(base_ref), overlay)
+    `_image_rootfs_digest`) folded with the overlay spec and the contents of
+    the host files it reads, so a base bump, an init change, an overlay edit,
+    or an edit to an overlay file each re-build."""
+    return agent_overlay.overlay_cache_tag(
+        _image_rootfs_digest(base_ref), overlay,
+        context_digest=agent_overlay.overlay_context_digest(overlay, source_root),
+    )
 
 
 def cached_agent_overlay_rootfs_dir(
-    base_ref: str, overlay: ManifestImageOverlay,
+    base_ref: str, overlay: ManifestImageOverlay, *, source_root: Path,
 ) -> Path | None:
     """A ready rootfs previously built for `overlay` on `base_ref`, or None."""
-    base = util.cache_dir() / "rootfs" / f"agent-overlay-{_overlay_rootfs_digest(base_ref, overlay)}"
+    digest = _overlay_rootfs_digest(base_ref, overlay, source_root)
+    base = util.cache_dir() / "rootfs" / f"agent-overlay-{digest}"
     return base if (base / ".bb-ready").is_file() else None
 
 
@@ -214,7 +221,7 @@ def acquire_agent_overlay_rootfs_dir(
     infra VM and export its rootfs — the pull-side analogue for tier-2 overlays,
     cached by base ref + guest init + overlay spec. `source_root` is where the
     overlay's files resolve from (the launch cwd)."""
-    digest = _overlay_rootfs_digest(base_ref, overlay)
+    digest = _overlay_rootfs_digest(base_ref, overlay, source_root)
     base = util.cache_dir() / "rootfs" / f"agent-overlay-{digest}"
     if (base / ".bb-ready").is_file():
         info(f"using cached agent rootfs {base.name}")
@@ -401,7 +408,8 @@ def _build_overlay_in_infra(
     *,
     template: str,
 ) -> None:
-    """Build the overlay Dockerfile (`FROM base_ref` + apt/COPY) in the
+    """Build the overlay Dockerfile (`FROM base_ref` + apt/COPY, or a staged
+    user `dockerfile` overlay) in the
     orchestrator VM and stream its rootfs into `base_out`. Authenticates for the
     private base pull, ships the synthesized Dockerfile and the overlay files,
     and cleans up only this build's working state."""
@@ -440,7 +448,11 @@ def _build_overlay_in_infra(
                 if auth.returncode != 0:
                     die(f"registry login in the infra VM failed: {auth.stderr.strip()}")
             _send_dockerfile(key, ip, dockerfile, ctx)
-            _send_overlay_files(key, ip, staged, overlay.files, ctx)
+            # Everything staged besides the Dockerfile is build context: the
+            # `files` entries, or a `dockerfile` overlay's whole directory.
+            entries = tuple(sorted(
+                p.name for p in staged.iterdir() if p.name != dockerfile.name))
+            _send_overlay_files(key, ip, staged, entries, ctx)
             _buildah_build(key, ip, ctx, tag, {})
             _smoke_test(key, ip, tag, smoke_ctr, smoke_test)
             _stream_rootfs(key, ip, tag, export_ctr, base_out)

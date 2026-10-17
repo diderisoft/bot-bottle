@@ -12,6 +12,7 @@ from unittest.mock import patch
 from bot_bottle.backend.macos_container import nested_containers
 from bot_bottle.backend.macos_container import launch as launch_mod
 from bot_bottle.backend.macos_container.bottle_plan import MacosContainerBottlePlan
+from bot_bottle.manifest import ManifestImageOverlay
 
 
 class _Bottle:
@@ -49,6 +50,8 @@ class _Plan:
     # A custom (non-published) template, so the PRD 0085 pull path resolves no
     # pin and these tests keep exercising the local build path.
     agent_provider_template: str = "test-agent"
+    # No overlay declared, so the missing pin builds locally instead of failing.
+    image_overlay: ManifestImageOverlay = ManifestImageOverlay()
 
 
 def _base_image_only(ref: str) -> bool:

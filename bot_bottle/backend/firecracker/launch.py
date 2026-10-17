@@ -32,7 +32,7 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Callable, Generator
 
-from ... import agent_image, image_registry
+from ... import agent_image, agent_overlay, image_registry
 from ...agent_provider import runtime_for
 from ...published_artifacts import FORMAT_OCI
 from ...bottle_state import (
@@ -237,9 +237,13 @@ def build_or_load_agent_base(plan: FirecrackerBottlePlan) -> Path:
     pinned_ref = image_registry.pinned_reference(pin) if pin is not None else None
     overlay = plan.image_overlay
     smoke = runtime_for(plan.agent_provider_template).smoke_test
+    if not overlay.is_empty() and pinned_ref is None:
+        # No pinned base: building the default instead would drop the overlay.
+        raise agent_overlay.no_published_base_error(plan.agent_provider_template)
     if plan.spec.image_policy == "cached":
         if pinned_ref is not None and not overlay.is_empty():
-            cached = image_builder.cached_agent_overlay_rootfs_dir(pinned_ref, overlay)
+            cached = image_builder.cached_agent_overlay_rootfs_dir(
+                pinned_ref, overlay, source_root=Path(plan.spec.user_cwd))
         elif pinned_ref is not None:
             cached = image_builder.cached_agent_image_rootfs_dir(pinned_ref)
         else:
