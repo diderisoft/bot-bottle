@@ -53,7 +53,7 @@ def no_published_base_error(template: str) -> OverlayError:
     published manifest has no entry for this template. Fail closed: building
     the default image instead would silently drop the declared overlay."""
     return OverlayError(
-        f"agent_provider.image.overlay needs a published, digest-pinned "
+        f"agent_provider.overlay needs a published, digest-pinned "
         f"{template!r} agent image to build on, but none is pinned for this "
         "install (no published-artifacts.json, or no entry for this template). "
         "Remove the overlay, or use a release that publishes agent images."
@@ -194,7 +194,7 @@ def _harness_lines(template: str, version: str) -> tuple[str, ...]:
     if lines is None:
         raise OverlayError(
             f"agent provider {template!r} does not support "
-            "agent_provider.image.overlay.harness_version; "
+            "agent_provider.overlay.harness_version; "
             "pin the harness in a custom agent image instead"
         )
     return lines

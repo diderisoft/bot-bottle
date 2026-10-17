@@ -118,11 +118,11 @@ class TestAgentProviderValidation(unittest.TestCase):
     def test_image_overlay_parses(self) -> None:
         p = ManifestAgentProvider.from_dict("b", {
             "template": "claude",
-            "image": {"overlay": {
+            "overlay": {
                 "harness_version": "2.1.180",
                 "apt": ["jq", "postgresql-client"],
                 "files": ["extra/settings.json"],
-            }},
+            },
         })
         self.assertEqual(p.overlay.harness_version, "2.1.180")
         self.assertEqual(p.overlay.apt, ("jq", "postgresql-client"))
@@ -132,7 +132,7 @@ class TestAgentProviderValidation(unittest.TestCase):
     def test_image_overlay_harness_version_accepts_prerelease(self) -> None:
         p = ManifestAgentProvider.from_dict("b", {
             "template": "codex",
-            "image": {"overlay": {"harness_version": "0.146.0-alpha.1"}},
+            "overlay": {"harness_version": "0.146.0-alpha.1"},
         })
         self.assertEqual(p.overlay.harness_version, "0.146.0-alpha.1")
 
@@ -141,13 +141,13 @@ class TestAgentProviderValidation(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(ManifestError):
                 ManifestAgentProvider.from_dict("b", {
                     "template": "claude",
-                    "image": {"overlay": {"harness_version": bad}},
+                    "overlay": {"harness_version": bad},
                 })
 
     def test_image_overlay_dockerfile_parses(self) -> None:
         p = ManifestAgentProvider.from_dict("b", {
             "template": "claude",
-            "image": {"overlay": {"dockerfile": "overlay/Dockerfile"}},
+            "overlay": {"dockerfile": "overlay/Dockerfile"},
         })
         self.assertEqual(p.overlay.dockerfile, "overlay/Dockerfile")
         self.assertFalse(p.overlay.is_empty())
@@ -157,7 +157,7 @@ class TestAgentProviderValidation(unittest.TestCase):
             with self.subTest(extra=extra), self.assertRaises(ManifestError):
                 ManifestAgentProvider.from_dict("b", {
                     "template": "claude",
-                    "image": {"overlay": {"dockerfile": "Dockerfile", **extra}},
+                    "overlay": {"dockerfile": "Dockerfile", **extra},
                 })
 
     def test_image_overlay_dockerfile_must_stay_relative(self) -> None:
@@ -165,44 +165,40 @@ class TestAgentProviderValidation(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(ManifestError):
                 ManifestAgentProvider.from_dict("b", {
                     "template": "claude",
-                    "image": {"overlay": {"dockerfile": bad}},
+                    "overlay": {"dockerfile": bad},
                 })
 
     def test_image_overlay_dockerfile_must_be_string(self) -> None:
         with self.assertRaises(ManifestError):
             ManifestAgentProvider.from_dict("b", {
                 "template": "claude",
-                "image": {"overlay": {"dockerfile": ["Dockerfile"]}},
+                "overlay": {"dockerfile": ["Dockerfile"]},
             })
 
     def test_no_overlay_is_empty(self) -> None:
         p = ManifestAgentProvider.from_dict("b", {"template": "claude"})
         self.assertTrue(p.overlay.is_empty())
 
-    def test_image_unknown_key_rejected(self) -> None:
-        with self.assertRaises(ManifestError):
-            ManifestAgentProvider.from_dict("b", {"image": {"bogus": 1}})
-
     def test_overlay_unknown_key_rejected(self) -> None:
         with self.assertRaises(ManifestError):
             ManifestAgentProvider.from_dict(
-                "b", {"image": {"overlay": {"bogus": 1}}})
+                "b", {"overlay": {"bogus": 1}})
 
     def test_overlay_apt_must_be_string_list(self) -> None:
         with self.assertRaises(ManifestError):
             ManifestAgentProvider.from_dict(
-                "b", {"image": {"overlay": {"apt": [1, 2]}}})
+                "b", {"overlay": {"apt": [1, 2]}})
 
     def test_overlay_file_escaping_rejected(self) -> None:
         for bad in ("/etc/passwd", "../secret"):
             with self.assertRaises(ManifestError):
                 ManifestAgentProvider.from_dict(
-                    "b", {"image": {"overlay": {"files": [bad]}}})
+                    "b", {"overlay": {"files": [bad]}})
 
     def test_overlay_rejected_for_custom_template(self) -> None:
         with self.assertRaises(ManifestError):
             ManifestAgentProvider.from_dict(
-                "b", {"template": "my-agent", "image": {"overlay": {"apt": ["jq"]}}})
+                "b", {"template": "my-agent", "overlay": {"apt": ["jq"]}})
 
     def test_valid_claude_auth_token(self) -> None:
         p = ManifestAgentProvider.from_dict("b", {"template": "claude", "auth_token": "T"})

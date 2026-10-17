@@ -43,7 +43,7 @@ class ManifestImageOverlay:
 
     @classmethod
     def from_dict(cls, bottle_name: str, raw: object) -> "ManifestImageOverlay":
-        where = f"bottle '{bottle_name}' agent_provider.image.overlay"
+        where = f"bottle '{bottle_name}' agent_provider.overlay"
         d = as_json_object(raw, where)
         for k in d:
             if k not in {"harness_version", "apt", "files", "dockerfile"}:
@@ -131,12 +131,12 @@ class ManifestAgentProvider:
                 "auth_token",
                 "forward_host_credentials",
                 "settings",
-                "image",
+                "overlay",
             }:
                 raise ManifestError(
                     f"bottle '{bottle_name}' agent_provider has unknown key {k!r}; "
                     "allowed: template, dockerfile, auth_token, "
-                    "forward_host_credentials, settings, image"
+                    "forward_host_credentials, settings, overlay"
                 )
         template = d.get("template", "claude")
         if not isinstance(template, str) or not template:
@@ -191,21 +191,11 @@ class ManifestAgentProvider:
             )
         settings = _parse_provider_settings(bottle_name, template, d.get("settings"))
         overlay = ManifestImageOverlay()
-        if "image" in d:
-            image_cfg = as_json_object(
-                d["image"], f"bottle '{bottle_name}' agent_provider.image")
-            for k in image_cfg:
-                if k != "overlay":
-                    raise ManifestError(
-                        f"bottle '{bottle_name}' agent_provider.image has unknown "
-                        f"key {k!r}; allowed: overlay"
-                    )
-            if "overlay" in image_cfg:
-                overlay = ManifestImageOverlay.from_dict(
-                    bottle_name, image_cfg["overlay"])
+        if "overlay" in d:
+            overlay = ManifestImageOverlay.from_dict(bottle_name, d["overlay"])
         if not overlay.is_empty() and template not in PROVIDER_TEMPLATES:
             raise ManifestError(
-                f"bottle '{bottle_name}' agent_provider.image.overlay is only "
+                f"bottle '{bottle_name}' agent_provider.overlay is only "
                 f"supported for built-in templates "
                 f"({', '.join(sorted(PROVIDER_TEMPLATES))}); a custom template "
                 "builds its own image and has nothing to overlay"
