@@ -42,24 +42,31 @@ class TestOrphanCleanup(unittest.TestCase):
         # Returning True == idempotent success.
         self.assertTrue(network_remove(f"bot-bottle-net-{self.slug}-does-not-exist"))
 
+    def _network_names(self) -> list[str]:
+        # Fail with docker's own message: this call has flaked on the shared CI
+        # runner ("exit status 1") with the reason swallowed by check=True.
+        result = subprocess.run(
+            ["docker", "network", "ls", "--format", "{{.Name}}"],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(
+            0, result.returncode,
+            f"docker network ls failed: {result.stderr.strip() or '<no stderr>'}",
+        )
+        return result.stdout.splitlines()
+
     def test_create_and_remove(self):
         self.internal_name = network_create_internal(self.slug)
         self.egress_name = network_create_egress(self.slug)
 
-        nets = subprocess.run(
-            ["docker", "network", "ls", "--format", "{{.Name}}"],
-            capture_output=True, text=True, check=True,
-        ).stdout.splitlines()
+        nets = self._network_names()
         self.assertIn(self.internal_name, nets)
         self.assertIn(self.egress_name, nets)
 
         self.assertTrue(network_remove(self.internal_name))
         self.assertTrue(network_remove(self.egress_name))
 
-        nets_after = subprocess.run(
-            ["docker", "network", "ls", "--format", "{{.Name}}"],
-            capture_output=True, text=True, check=True,
-        ).stdout.splitlines()
+        nets_after = self._network_names()
         self.assertNotIn(self.internal_name, nets_after)
         self.assertNotIn(self.egress_name, nets_after)
 
