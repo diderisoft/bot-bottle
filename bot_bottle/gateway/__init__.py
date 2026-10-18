@@ -122,12 +122,17 @@ class Gateway(abc.ABC):
         return
 
     @abc.abstractmethod
-    def connect_to_orchestrator(self, orchestrator_url: str, gateway_token: str) -> None:
+    def connect_to_orchestrator(self, orchestrator_url: str, gateway_token: str) -> bool:
         """Bind the gateway to this orchestrator and bring it up: store the URL +
         the pre-minted `gateway` token as instance state, then (re)start the
         gateway unit carrying the mitmproxy CA + that token, resolving policy
         against `orchestrator_url`. Idempotent — a healthy, current gateway on
-        the same binding is left alone; a changed binding reconciles it."""
+        the same binding is left alone; a changed binding reconciles it.
+
+        Returns True when the gateway was (re)started, so it lost its
+        per-bottle state (and, without a persisted CA, minted a new one);
+        False when a running, current gateway was adopted untouched. The
+        infra service reattaches running bottles on True (PRD 0081)."""
 
     @abc.abstractmethod
     def is_running(self) -> bool:

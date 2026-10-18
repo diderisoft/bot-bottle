@@ -21,7 +21,6 @@ from bot_bottle.backend.firecracker.orchestrator import FirecrackerOrchestrator
 # there (not at their home modules).
 _ORCH_CLS = "bot_bottle.backend.firecracker.infra.FirecrackerOrchestrator"
 _GW_CLS = "bot_bottle.backend.firecracker.infra.FirecrackerGateway"
-_RECONCILE = "bot_bottle.backend.firecracker.infra.attach_bottled_agents_to_gateway"
 
 
 class TestAccessors(unittest.TestCase):
@@ -55,7 +54,7 @@ class TestEnsureRunning(unittest.TestCase):
                     patch.object(infra_vm, "_pidfile_alive", return_value=True), \
                     patch.object(infra_vm, "stop") as stop, \
                     patch.object(infra_vm, "ensure_built") as built, \
-                    patch(_RECONCILE) as reconcile:
+                    patch.object(FirecrackerInfraService, "reattach_running_bottles") as reconcile:
                 url = FirecrackerInfraService().ensure_running()
             stop.assert_not_called()
             built.assert_not_called()
@@ -78,7 +77,7 @@ class TestEnsureRunning(unittest.TestCase):
                     patch.object(infra_vm, "stop") as stop, \
                     patch.object(infra_vm, "ensure_built"), \
                     patch(_ORCH_CLS) as orch_cls, patch(_GW_CLS) as gw_cls, \
-                    patch(_RECONCILE) as reconcile:
+                    patch.object(FirecrackerInfraService, "reattach_running_bottles") as reconcile:
                 orch_cls.return_value.gateway_url.return_value = "http://10.243.255.1:8099"
                 orch_cls.return_value.mint_gateway_token.return_value = "gw.jwt"
                 FirecrackerInfraService().ensure_running()
@@ -107,7 +106,7 @@ class TestEnsureRunning(unittest.TestCase):
                     patch.object(infra_vm, "stop") as stop, \
                     patch.object(infra_vm, "ensure_built"), \
                     patch(_ORCH_CLS) as orch_cls, patch(_GW_CLS) as gw_cls, \
-                    patch(_RECONCILE) as reconcile:
+                    patch.object(FirecrackerInfraService, "reattach_running_bottles") as reconcile:
                 FirecrackerInfraService().ensure_running()
             stop.assert_called_once()
             orch_cls.return_value.ensure_running.assert_called_once()
@@ -122,7 +121,7 @@ class TestEnsureRunning(unittest.TestCase):
                     patch.object(infra_vm, "stop") as stop, \
                     patch.object(infra_vm, "ensure_built") as built, \
                     patch(_ORCH_CLS) as orch_cls, patch(_GW_CLS) as gw_cls, \
-                    patch(_RECONCILE) as reconcile:
+                    patch.object(FirecrackerInfraService, "reattach_running_bottles") as reconcile:
                 FirecrackerInfraService().ensure_running()
         stop.assert_called_once()      # clear stale VMs first
         built.assert_called_once()
@@ -133,25 +132,20 @@ class TestEnsureRunning(unittest.TestCase):
         # Cold boot: reconcile fires to restore CA, git-gate, and egress tokens.
         reconcile.assert_called_once()
 
-    def test_reconcile_receives_url_and_fresh_gateway(self):
-        # reconcile gets the orchestrator URL and the gateway service (not the
-        # class). Verify the args to ensure it can reach the right endpoints.
+    def test_cold_boot_reattaches_running_bottles(self):
         with tempfile.TemporaryDirectory() as td:
             with patch.object(infra_vm, "_infra_dir", return_value=Path(td)), \
                     patch.object(infra_vm, "expected_version", return_value="v-current"), \
                     patch.object(infra_vm, "_health_ok", return_value=False), \
                     patch.object(infra_vm, "stop"), \
                     patch.object(infra_vm, "ensure_built"), \
-                    patch(_ORCH_CLS) as orch_cls, patch(_GW_CLS) as gw_cls, \
-                    patch(_RECONCILE) as reconcile:
+                    patch(_ORCH_CLS) as orch_cls, patch(_GW_CLS), \
+                    patch.object(FirecrackerInfraService, "reattach_running_bottles") as reconcile:
                 orch_cls.return_value.url.return_value = "http://10.243.255.1:8099"
                 FirecrackerInfraService().ensure_running()
-        call_args = reconcile.call_args
-        # First arg: the orchestrator's host URL.
-        self.assertEqual("http://10.243.255.1:8099", call_args.args[0])
-        # Second arg: the gateway service instance (not the class).
-        self.assertIs(gw_cls.return_value, call_args.args[1])
-
+        # Both VMs booted cold, so every running bottle is reattached against
+        # the orchestrator's host URL.
+        reconcile.assert_called_once_with("http://10.243.255.1:8099")
 
 if __name__ == "__main__":
     unittest.main()

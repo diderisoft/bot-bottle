@@ -86,7 +86,8 @@ class TestDockerGateway(unittest.TestCase):
             return _proc()
 
         with patch(_RUN_DOCKER, side_effect=fake):
-            self.sc.connect_to_orchestrator(_ORCH_URL, _TOKEN)
+            restarted = self.sc.connect_to_orchestrator(_ORCH_URL, _TOKEN)
+        self.assertFalse(restarted)  # adopted: no running bottle needs reattaching
         self.assertEqual([], [c for c in calls if c[:2] == ["docker", "run"]])
         self.assertEqual([], [c for c in calls if c[:2] == ["docker", "rm"]])
 
@@ -106,7 +107,8 @@ class TestDockerGateway(unittest.TestCase):
             return _proc()
 
         with patch(_RUN_DOCKER, side_effect=fake):
-            self.sc.connect_to_orchestrator(_ORCH_URL, _TOKEN)
+            restarted = self.sc.connect_to_orchestrator(_ORCH_URL, _TOKEN)
+        self.assertTrue(restarted)
         self.assertEqual(1, len([c for c in calls if c[:2] == ["docker", "run"]]))
         self.assertTrue(any(c[:2] == ["docker", "rm"] for c in calls))
 

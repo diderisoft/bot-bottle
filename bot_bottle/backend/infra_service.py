@@ -16,7 +16,9 @@ from __future__ import annotations
 import abc
 
 from ..gateway import Gateway
+from ..log import die
 from ..orchestrator.lifecycle import DEFAULT_STARTUP_TIMEOUT_SECONDS, Orchestrator
+from .gateway_attach import GatewayAttachError, GatewayAttacher, reattach_running_bottles
 
 
 class InfraService(abc.ABC):
@@ -45,6 +47,23 @@ class InfraService(abc.ABC):
     @abc.abstractmethod
     def stop(self) -> None:
         """Remove both the orchestrator and the gateway. Idempotent."""
+
+    @abc.abstractmethod
+    def gateway_attacher(self) -> GatewayAttacher:
+        """How this backend lists its running bottles and reattaches one to
+        the gateway (PRD 0081)."""
+
+    def reattach_running_bottles(self, url: str) -> None:
+        """Restore every running bottle's CA, git-gate state and egress tokens
+        after the gateway or orchestrator came up cold (PRD 0081). Called by
+        `ensure_running` on that path only, never when it adopted a running
+        pair. Any bottle that can't be reattached ends the bring-up, naming
+        each one."""
+        try:
+            reattach_running_bottles(
+                self.gateway_attacher(), orchestrator_url=url, gateway=self.gateway())
+        except GatewayAttachError as e:
+            die(str(e))
 
     def url(self) -> str:
         """The host-facing control-plane URL the CLI reaches (the orchestrator's)."""

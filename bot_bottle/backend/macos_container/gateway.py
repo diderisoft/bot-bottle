@@ -104,11 +104,16 @@ class MacosGateway(Gateway):
         container_mod.build_image(
             self.image_ref, str(self._repo_root), dockerfile="Dockerfile.gateway")
 
-    def connect_to_orchestrator(self, orchestrator_url: str, gateway_token: str) -> None:
-        """Bind the gateway to this orchestrator and (re)start it, dual-homed on
+    def connect_to_orchestrator(self, orchestrator_url: str, gateway_token: str) -> bool:
+        """Bind the gateway to this orchestrator and bring it up, dual-homed on
         the agent + control networks, resolving policy against `orchestrator_url`
         (the orchestrator's control-network address — Apple has no container
-        DNS) and presenting `gateway_token`."""
+        DNS) and presenting `gateway_token`.
+
+        A running gateway on the current image, already bound to this
+        orchestrator, is adopted untouched (returns False). Recreating it on
+        every launch, as this used to, wiped every running bottle's git-gate
+        state (#512). Otherwise it is (re)started (returns True)."""
         self._orchestrator_url = orchestrator_url
         self._gateway_token = gateway_token
         # Fail closed on a missing policy source or token: the resolver-only data
@@ -124,6 +129,8 @@ class MacosGateway(Gateway):
                 "gateway requires a pre-minted `gateway` token to run "
                 "(the orchestrator mints it; the gateway never holds the key)"
             )
+        if self.is_running() and self._is_current(orchestrator_url):
+            return False
         container_mod.force_remove_container(self.name)
         argv = [
             "container", "run", "--detach",
@@ -156,6 +163,19 @@ class MacosGateway(Gateway):
                 f"gateway container failed to start: "
                 f"{(result.stderr or '').strip() or '<no stderr>'}"
             )
+        return True
+
+    def _is_current(self, orchestrator_url: str) -> bool:
+        """True iff the running gateway was created from the current image and
+        resolves policy against `orchestrator_url`. An unreadable image digest
+        counts as current, so a working gateway isn't churned on a failed
+        inspect."""
+        running = container_mod.container_image_digest(self.name)
+        wanted = container_mod.image_digest(self.image_ref)
+        if running and wanted and running != wanted:
+            return False
+        env = container_mod.container_env(self.name)
+        return env.get("BOT_BOTTLE_ORCHESTRATOR_URL", orchestrator_url) == orchestrator_url
 
     def is_running(self) -> bool:
         return container_mod.container_is_running(self.name)

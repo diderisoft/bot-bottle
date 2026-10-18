@@ -33,6 +33,26 @@ class TestDockerInfraService(unittest.TestCase):
             p = patch.object(self.svc, name, return_value=mock)
             p.start()
             self.addCleanup(p.stop)
+        reattach = patch.object(self.svc, "reattach_running_bottles")
+        self.reattach = reattach.start()
+        self.addCleanup(reattach.stop)
+
+    def test_adopted_pair_does_not_reattach(self) -> None:
+        self.orch.is_healthy.return_value = True
+        self.gw.connect_to_orchestrator.return_value = False
+        self.svc.ensure_running()
+        self.reattach.assert_not_called()
+
+    def test_restarted_gateway_or_orchestrator_reattaches(self) -> None:
+        # The gateway lost its per-bottle state, or the orchestrator its
+        # in-memory egress tokens: either way running bottles are reattached.
+        for was_up, restarted in ((True, True), (False, False)):
+            with self.subTest(was_up=was_up, restarted=restarted):
+                self.reattach.reset_mock()
+                self.orch.is_healthy.return_value = was_up
+                self.gw.connect_to_orchestrator.return_value = restarted
+                self.svc.ensure_running()
+                self.reattach.assert_called_once_with("http://127.0.0.1:8099")
 
     def test_url_delegates_to_the_orchestrator(self) -> None:
         self.assertEqual("http://127.0.0.1:8099", self.svc.url())

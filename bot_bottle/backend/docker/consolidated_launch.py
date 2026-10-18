@@ -15,15 +15,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ... import log
 from .util import run_docker
 from ...egress import EgressPlan
 from ...git_gate import GitGatePlan
 from ...orchestrator.client import OrchestratorClient
 from ...gateway import GATEWAY_NETWORK
 from .infra import INFRA_NAME, DockerInfraService
-from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
-from ...orchestrator.reprovision import reprovision_bottles
 from ..provision_bottle import deprovision_bottle, provision_bottle
 from .gateway_transport import DockerGatewayTransport
 from .gateway_net import next_free_ip
@@ -79,55 +76,6 @@ def _network_container_ips(network: str) -> list[str]:
     return ips
 
 
-def _reprovision_running_bottles(
-    orchestrator_url: str,
-    network: str = GATEWAY_NETWORK,
-    infra_name: str = INFRA_NAME,
-) -> None:
-    """Re-inject egress tokens for any registered bottles that lost their
-    in-memory tokens (e.g., after an orchestrator restart).
-
-    For each registered bottle whose source IP maps to a live container on the
-    gateway network, reads ENV_VAR_SECRET via ``docker exec … printenv`` and
-    calls ``POST /bottles/<id>/reprovision_gateway``. Idempotent — a no-op
-    when the orchestrator already has all tokens loaded. Best-effort: a single
-    container exec failure never blocks a new bottle launch."""
-    client = OrchestratorClient(orchestrator_url)
-    # Build {source_ip: container_name} from live containers on the gateway
-    # network, excluding the gateway container itself.
-    try:
-        proc = run_docker([
-            "docker", "network", "inspect",
-            "--format", "{{range .Containers}}{{.Name}} {{.IPv4Address}}\n{{end}}",
-            network,
-        ])
-    except OSError as exc:
-        log.info(f"egress token reprovision skipped: {exc}")
-        return
-    ip_to_container: dict[str, str] = {}
-    for line in proc.stdout.splitlines():
-        parts = line.strip().split()
-        if len(parts) >= 2 and parts[0] != infra_name:
-            ip = parts[1].split("/", 1)[0]
-            if ip:
-                ip_to_container[ip] = parts[0]
-
-    secrets_by_ip: dict[str, str] = {}
-    for source_ip, container_name in ip_to_container.items():
-        proc = run_docker(
-            ["docker", "exec", container_name, "printenv", ENV_VAR_SECRET_NAME]
-        )
-        if proc.returncode == 0 and proc.stdout.strip():
-            secrets_by_ip[source_ip] = proc.stdout.strip()
-
-    reprovisioned = reprovision_bottles(client, secrets_by_ip)
-    if reprovisioned:
-        log.info(
-            "reprovisioned egress tokens",
-            context={"count": reprovisioned},
-        )
-
-
 def launch_consolidated(
     egress_plan: EgressPlan,
     git_gate_plan: GitGatePlan,
@@ -139,18 +87,15 @@ def launch_consolidated(
     network: str = GATEWAY_NETWORK,
 ) -> LaunchContext:
     """Ensure the orchestrator + gateway pair is up, allocate + register the bottle, and
-    provision its git-gate state. Returns the agent's attach context.
-
-    Also reprovisiones egress tokens for any already-running bottles that lost
-    their in-memory credentials (e.g. after an orchestrator restart), so
-    they regain egress access before the new bottle is registered."""
+    provision its git-gate state. Returns the agent's attach context. (Bringing
+    the pair up cold also reattaches already-running bottles; see
+    `InfraService.reattach_running_bottles`.)"""
     service = service or DockerInfraService()
     url = service.ensure_running()
     # Agents attribute against the *gateway* container (data plane), not the
     # orchestrator — the two planes are now separate containers. Read its
     # agent-facing address + provisioning transport off the Gateway service.
     gateway = service.gateway()
-    _reprovision_running_bottles(url, network=network, infra_name=gateway.name)
     client = OrchestratorClient(url)
 
     cidr = _network_cidr(network)

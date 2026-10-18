@@ -69,13 +69,14 @@ class FirecrackerGateway(Gateway):
         self._orchestrator_url = ""
         self._gateway_token = ""
 
-    def connect_to_orchestrator(self, orchestrator_url: str, gateway_token: str) -> None:
+    def connect_to_orchestrator(self, orchestrator_url: str, gateway_token: str) -> bool:
         """Boot the gateway VM on its link resolving policy against
         `orchestrator_url`, then seed `gateway_token` over SSH. The orchestrator's
         guest IP is parsed from the URL and passed on the cmdline (`bb_orch=`), so
         the baked init stays IP-independent. Boot the orchestrator first — the
         gateway daemons reach it at startup. The gateway never mints, so it holds
-        no signing key, only this token (#469)."""
+        no signing key, only this token (#469). Always a fresh boot (adoption
+        happens a level up, in `FirecrackerInfraService`), so returns True."""
         self._orchestrator_url = orchestrator_url
         self._gateway_token = gateway_token
         if not self._orchestrator_url:
@@ -105,6 +106,7 @@ class FirecrackerGateway(Gateway):
             "the gateway JWT to the gateway VM (its data plane will not start)",
         )
         self._vm = vm
+        return True
 
     def is_running(self) -> bool:
         return infra_vm._pidfile_alive(infra_vm._gw_dir())

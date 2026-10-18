@@ -26,6 +26,7 @@ from pathlib import Path
 
 from .util import run_docker
 from .gateway import DockerGateway
+from .gateway_attach import DockerGatewayAttacher
 from .orchestrator import (
     DockerOrchestrator,
     ORCHESTRATOR_IMAGE,
@@ -135,17 +136,26 @@ class DockerInfraService(InfraService):
         orchestrator.ensure_built()
         gateway.ensure_built()
 
+        # An orchestrator that wasn't already up starts with no egress tokens
+        # in memory, so running bottles need them restored (PRD 0081).
+        orchestrator_was_up = orchestrator.is_healthy()
         orchestrator.ensure_running(startup_timeout=startup_timeout)
 
         # Bring up (or refresh) the gateway once the control plane it resolves
         # against is healthy. The orchestrator (which holds the signing key)
         # mints the role-scoped `gateway` JWT here and hands it to the gateway,
         # which never sees the key (#469). `connect_to_orchestrator` is
-        # idempotent.
-        gateway.connect_to_orchestrator(
+        # idempotent and reports whether it (re)started the gateway.
+        gateway_restarted = gateway.connect_to_orchestrator(
             orchestrator.gateway_url(), orchestrator.mint_gateway_token(),
         )
-        return orchestrator.url()
+        url = orchestrator.url()
+        if gateway_restarted or not orchestrator_was_up:
+            self.reattach_running_bottles(url)
+        return url
+
+    def gateway_attacher(self) -> DockerGatewayAttacher:
+        return DockerGatewayAttacher(self.network)
 
     def stop(self) -> None:
         """Remove both containers (idempotent)."""

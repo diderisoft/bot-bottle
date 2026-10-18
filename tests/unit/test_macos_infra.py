@@ -28,6 +28,9 @@ class TestInfraEnsureRunning(unittest.TestCase):
             p = patch.object(self.svc, name, return_value=mock)
             p.start()
             self.addCleanup(p.stop)
+        reattach = patch.object(self.svc, "reattach_running_bottles")
+        self.reattach = reattach.start()
+        self.addCleanup(reattach.stop)
 
     def test_composes_networks_builds_and_brings_up_orchestrator_first(self) -> None:
         with patch(f"{_INFRA}.ensure_networks") as nets:
@@ -45,6 +48,24 @@ class TestInfraEnsureRunning(unittest.TestCase):
         self.gw.connect_to_orchestrator.assert_called_once_with(
             "http://192.168.128.2:8099", "gw.jwt")
         self.orch.mint_gateway_token.assert_called_once()
+
+    def test_adopted_pair_does_not_reattach(self) -> None:
+        self.orch.is_healthy.return_value = True
+        self.gw.connect_to_orchestrator.return_value = False
+        with patch(f"{_INFRA}.ensure_networks"):
+            self.svc.ensure_running()
+        self.reattach.assert_not_called()
+
+    def test_restarted_gateway_or_orchestrator_reattaches(self) -> None:
+        # (orchestrator healthy before?, gateway restarted?)
+        for was_up, restarted in ((True, True), (False, False)):
+            with self.subTest(was_up=was_up, restarted=restarted):
+                self.reattach.reset_mock()
+                self.orch.is_healthy.return_value = was_up
+                self.gw.connect_to_orchestrator.return_value = restarted
+                with patch(f"{_INFRA}.ensure_networks"):
+                    self.svc.ensure_running()
+                self.reattach.assert_called_once_with("http://192.168.128.2:8099")
 
     def test_is_healthy_delegates_to_the_orchestrator(self) -> None:
         self.orch.is_healthy.return_value = True

@@ -40,9 +40,8 @@ from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
 from ..provision_bottle import deprovision_bottle, provision_bottle
 from . import util
 from .gateway import FirecrackerGateway
+from .gateway_attach import ENV_VAR_SECRET_PATH as _ENV_VAR_SECRET_PATH
 from .infra import FirecrackerInfraService
-
-_ENV_VAR_SECRET_PATH = "/run/bot-bottle/env-var-secret"
 
 
 class ConsolidatedLaunchError(RuntimeError):

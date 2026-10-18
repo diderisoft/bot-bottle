@@ -200,7 +200,7 @@ class DockerGateway(Gateway):
                 f"gateway network {self.network} failed to create: {proc.stderr.strip()}"
             )
 
-    def connect_to_orchestrator(self, orchestrator_url: str, gateway_token: str) -> None:
+    def connect_to_orchestrator(self, orchestrator_url: str, gateway_token: str) -> bool:
         # Bind to this orchestrator (PRD 0070): stash the URL its daemons resolve
         # policy against + the pre-minted `gateway` token they present, then bring
         # the container up. The gateway never mints, so it holds no signing key —
@@ -227,7 +227,7 @@ class DockerGateway(Gateway):
         # just when the container is absent.
         self._ensure_network()
         if self.is_running() and self._running_image_is_current():
-            return
+            return False
         # Clear any stale (stopped OR outdated-image) container holding the
         # fixed name, then start fresh. `rm --force` on an absent name is a
         # tolerated no-op.
@@ -271,6 +271,7 @@ class DockerGateway(Gateway):
         # pre-connect window (they retry /resolve per request).
         if self._control_network:
             self._connect_control_network()
+        return True
 
     def _connect_control_network(self) -> None:
         """Ensure the `--internal` control network exists and attach the gateway

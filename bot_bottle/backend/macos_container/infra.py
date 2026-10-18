@@ -23,6 +23,7 @@ so they have no route to the control plane (the L3 block, not just the JWT).
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ... import resources
 from ...orchestrator.lifecycle import (
@@ -49,6 +50,9 @@ from .orchestrator import (
     MacosOrchestrator,
     probe_orchestrator_url,
 )
+
+if TYPE_CHECKING:
+    from .gateway_attach import MacosGatewayAttacher
 
 # `INFRA_NAME` is kept — now aliasing the gateway container — for callers that
 # still import it (probe / reprovision attribute against the gateway).
@@ -130,6 +134,9 @@ class MacosInfraService(InfraService):
         orchestrator.ensure_built()
         gateway.ensure_built()
 
+        # An orchestrator that wasn't already up starts with no egress tokens
+        # in memory, so running bottles need them restored (PRD 0081).
+        orchestrator_was_up = orchestrator.is_healthy()
         orchestrator.ensure_running(startup_timeout=startup_timeout)
 
         # (Re)ensure the gateway once the control plane it resolves against is
@@ -138,8 +145,17 @@ class MacosInfraService(InfraService):
         # `gateway` JWT and hands it to the gateway, which never sees the key
         # (#469).
         url = orchestrator.url()
-        gateway.connect_to_orchestrator(url, orchestrator.mint_gateway_token())
+        gateway_restarted = gateway.connect_to_orchestrator(
+            url, orchestrator.mint_gateway_token())
+        if gateway_restarted or not orchestrator_was_up:
+            self.reattach_running_bottles(url)
         return url
+
+    def gateway_attacher(self) -> "MacosGatewayAttacher":
+        # Local import: the attacher enumerates via `enumerate`, which imports
+        # this module.
+        from .gateway_attach import MacosGatewayAttacher
+        return MacosGatewayAttacher(self.network)
 
     def ca_cert_pem(self, *, timeout: float = DEFAULT_CA_TIMEOUT_SECONDS) -> str:
         """The gateway's mitmproxy CA (PEM) agents install to trust its TLS

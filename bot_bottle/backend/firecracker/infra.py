@@ -19,7 +19,7 @@ from ...orchestrator.lifecycle import DEFAULT_STARTUP_TIMEOUT_SECONDS
 from . import infra_vm
 from .gateway import FirecrackerGateway
 from .orchestrator import FirecrackerOrchestrator
-from .reconcile import attach_bottled_agents_to_gateway
+from .gateway_attach import FirecrackerGatewayAttacher
 
 
 class FirecrackerInfraService(InfraService):
@@ -86,12 +86,17 @@ class FirecrackerInfraService(InfraService):
             gateway.connect_to_orchestrator(
                 orchestrator.gateway_url(), orchestrator.mint_gateway_token())
             infra_vm.record_booted_version(want)
-            attach_bottled_agents_to_gateway(url, gateway)
+            # Both VMs just booted: the gateway minted a new CA and has no
+            # per-bottle state, and the orchestrator holds no egress tokens.
+            self.reattach_running_bottles(url)
             return url
 
     def stop(self) -> None:
         """Stop both infra VMs (idempotent) and drop the version marker."""
         infra_vm.stop()
+
+    def gateway_attacher(self) -> FirecrackerGatewayAttacher:
+        return FirecrackerGatewayAttacher()
 
 
 __all__ = ["FirecrackerInfraService"]

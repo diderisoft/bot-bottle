@@ -38,8 +38,37 @@ class TestMacosGatewayConnect(unittest.TestCase):
             mod.dns_server.return_value = "1.1.1.1"
             mod.bind_mount_spec.side_effect = _spec
             mod.run_container_argv = run
-            self.gw.connect_to_orchestrator(url, token)
+            mod.container_is_running.return_value = False
+            self.assertTrue(self.gw.connect_to_orchestrator(url, token))
         return run
+
+    def _connect_running(self, *, running_digest: str, env_url: str) -> tuple[bool, Mock]:
+        with patch(f"{_GW}.container_mod") as mod, \
+                patch(f"{_GW}.host_gateway_ca_dir", return_value=Path("/ca")):
+            mod.dns_server.return_value = "1.1.1.1"
+            mod.bind_mount_spec.side_effect = _spec
+            mod.run_container_argv = Mock(return_value=_proc())
+            mod.container_is_running.return_value = True
+            mod.container_image_digest.return_value = running_digest
+            mod.image_digest.return_value = "sha256:current"
+            mod.container_env.return_value = {"BOT_BOTTLE_ORCHESTRATOR_URL": env_url}
+            restarted = self.gw.connect_to_orchestrator(_ORCH_URL, _TOKEN)
+            return restarted, mod
+
+    def test_adopts_a_running_current_gateway(self) -> None:
+        # Recreating it on every launch wiped running bottles' git-gate state.
+        restarted, mod = self._connect_running(
+            running_digest="sha256:current", env_url=_ORCH_URL)
+        self.assertFalse(restarted)
+        mod.force_remove_container.assert_not_called()
+        mod.run_container_argv.assert_not_called()
+
+    def test_recreates_on_a_new_image_or_a_moved_orchestrator(self) -> None:
+        for digest, url in (("sha256:old", _ORCH_URL), ("sha256:current", "http://old:8099")):
+            with self.subTest(digest=digest, url=url):
+                restarted, mod = self._connect_running(running_digest=digest, env_url=url)
+                self.assertTrue(restarted)
+                mod.force_remove_container.assert_called_once()
 
     def test_default_name(self) -> None:
         self.assertEqual(GATEWAY_NAME, self.gw.name)
