@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 from contextlib import contextmanager, redirect_stderr
 from pathlib import Path
-from typing import Generator, Sequence
+from typing import TYPE_CHECKING, Generator, Sequence
 
 from ...agent_provider import AgentProvisionPlan
 from ...egress import EgressPlan
@@ -22,6 +22,9 @@ from . import util as _container
 from .bottle import MacosContainerBottle
 from .bottle_cleanup_plan import MacosContainerBottleCleanupPlan
 from .bottle_plan import MacosContainerBottlePlan
+
+if TYPE_CHECKING:
+    from .infra import MacosInfraService
 
 
 class MacosContainerBottleBackend(
@@ -100,13 +103,9 @@ class MacosContainerBottleBackend(
         with _launch.launch(plan, images, provision=self.provision) as bottle:
             yield bottle
 
-    def ensure_orchestrator(self) -> str:
-        """Bring up the per-host pair (orchestrator + gateway containers) and
-        return its control-plane URL — the on-demand entry point operator tools
-        (`supervise`) call when no control plane is running yet. Mirrors
-        firecracker's infra bring-up."""
+    def infra_service(self) -> "MacosInfraService":
         from .infra import MacosInfraService
-        return MacosInfraService().ensure_running()
+        return MacosInfraService()
 
     def prepare_cleanup(self) -> MacosContainerBottleCleanupPlan:
         return _cleanup.prepare_cleanup()

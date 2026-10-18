@@ -75,7 +75,7 @@ def rotate_gateway_ca(ca_dir: Path | None = None) -> list[Path]:
     This only clears the on-disk CA. It does NOT stop the running gateway (whose
     mitmproxy still holds the old CA in memory) or re-provision agents — the
     caller recreates the gateway to mint the new CA and re-attaches bottles.
-    `rotate-ca` on the orchestrator CLI wires those steps together."""
+    `rotate-ca` wires those steps together for every backend."""
     ca_dir = ca_dir if ca_dir is not None else host_gateway_ca_dir()
     removed: list[Path] = []
     for path in sorted(ca_dir.glob(GATEWAY_CA_GLOB)):
@@ -152,6 +152,13 @@ class Gateway(abc.ABC):
     def ca_cert_pem(self, *, timeout: float = DEFAULT_CA_TIMEOUT_SECONDS) -> str:
         """The mitmproxy CA (PEM) agents install to trust the gateway's TLS
         interception. Polls — mitmproxy writes it a beat after start."""
+
+    @abc.abstractmethod
+    def persisted_ca_dir(self) -> Path | None:
+        """The host dir the gateway's CA persists in across restarts, or None
+        when it isn't a host dir this process can clear (a named volume).
+        Rotating the CA is deleting its contents and restarting the gateway
+        (`rotate_gateway_ca`)."""
 
     @abc.abstractmethod
     def provisioning_transport(self) -> "GatewayTransport":

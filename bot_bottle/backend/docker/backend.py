@@ -23,7 +23,7 @@ import shutil
 import io
 from contextlib import contextmanager, redirect_stderr
 from pathlib import Path
-from typing import Generator, Sequence
+from typing import TYPE_CHECKING, Generator, Sequence
 
 from ...supervisor.types import SUPERVISE_HOSTNAME, SUPERVISE_PORT
 from ...agent_provider import AgentProvisionPlan
@@ -40,6 +40,9 @@ from . import resolve_plan as _resolve_plan
 from .bottle import DockerBottle
 from .bottle_cleanup_plan import DockerBottleCleanupPlan
 from .bottle_plan import DockerBottlePlan
+
+if TYPE_CHECKING:
+    from .infra import DockerInfraService
 class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanupPlan"]):
     """Docker backend implementation. Selected by BOT_BOTTLE_BACKEND
     when set to `docker`; retained as a legacy/example backend."""
@@ -115,9 +118,9 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
         with _launch.launch(plan, images, provision=self.provision) as bottle:
             yield bottle
 
-    def ensure_orchestrator(self) -> str:
+    def infra_service(self) -> "DockerInfraService":
         from .infra import DockerInfraService
-        return DockerInfraService().ensure_running()
+        return DockerInfraService()
 
     def supervise_mcp_url(self, plan: DockerBottlePlan) -> str:
         """Docker bottles reach the supervise daemon via the

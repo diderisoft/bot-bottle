@@ -309,6 +309,11 @@ class DockerGateway(Gateway):
                 )
             time.sleep(CA_POLL_SECONDS)
 
+    def persisted_ca_dir(self) -> Path | None:
+        # A host bind mount; a named volume (CI) isn't a host path to clear.
+        source = Path(self._ca_mount_source)
+        return source if source.is_absolute() else None
+
     def stop(self) -> None:
         proc = run_docker(["docker", "rm", "--force", self.name])
         if proc.returncode != 0 and "No such container" not in proc.stderr:

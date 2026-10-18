@@ -11,7 +11,7 @@ from __future__ import annotations
 import io
 from contextlib import contextmanager, redirect_stderr
 from pathlib import Path
-from typing import Generator, Sequence
+from typing import TYPE_CHECKING, Generator, Sequence
 
 from ...agent_provider import AgentProvisionPlan
 from ...egress import EgressPlan
@@ -28,6 +28,9 @@ from . import util as _util
 from .bottle import FirecrackerBottle
 from .bottle_cleanup_plan import FirecrackerBottleCleanupPlan
 from .bottle_plan import FirecrackerBottlePlan
+
+if TYPE_CHECKING:
+    from .infra import FirecrackerInfraService
 
 
 class FirecrackerBottleBackend(
@@ -122,6 +125,6 @@ class FirecrackerBottleBackend(
     def supervise_mcp_url(self, plan: FirecrackerBottlePlan) -> str:
         return plan.agent_supervise_url
 
-    def ensure_orchestrator(self) -> str:
+    def infra_service(self) -> "FirecrackerInfraService":
         from .infra import FirecrackerInfraService
-        return FirecrackerInfraService().ensure_running()
+        return FirecrackerInfraService()

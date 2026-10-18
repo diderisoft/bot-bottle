@@ -182,6 +182,9 @@ class MacosGateway(Gateway):
     def is_running(self) -> bool:
         return container_mod.container_is_running(self.name)
 
+    def persisted_ca_dir(self) -> Path | None:
+        return host_gateway_ca_dir()
+
     def stop(self) -> None:
         """Remove the gateway container (idempotent)."""
         container_mod.force_remove_container(self.name)

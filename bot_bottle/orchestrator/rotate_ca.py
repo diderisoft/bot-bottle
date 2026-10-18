@@ -1,60 +1,66 @@
-"""Rotate the shared gateway's mitmproxy CA (issue #450).
+"""Rotate every backend's gateway mitmproxy CA (issue #450).
 
     python -m bot_bottle.orchestrator.rotate_ca
 
 A deliberate CA rollover has two halves: drop the *persisted* CA so a fresh one
 is minted, and drop the *running* gateway so its mitmproxy (which holds the old
-CA in memory) is replaced. This one-shot command does both:
+CA in memory) is replaced. For each backend available on this host, this
+one-shot command does both:
 
-  1. Delete the persisted CA under the host gateway-CA dir — the next gateway
-     start generates a new one (mitmproxy reuses an existing CA, generates only
-     when absent).
-  2. Force-remove the infra / standalone-gateway containers so the stale
-     in-memory CA is gone; the next bottle launch's idempotent `ensure_running`
-     brings the gateway back up and mints the fresh CA.
+  1. Delete the gateway's persisted CA (`Gateway.persisted_ca_dir`): the next
+     gateway start generates a new one (mitmproxy reuses an existing CA and
+     generates one only when absent).
+  2. Stop the gateway so the stale in-memory CA is gone. The next bring-up
+     starts it again, minting the fresh CA, and reattaches every running bottle
+     (PRD 0081), which installs the new CA in each.
 
-It does NOT re-provision the new CA into already-running bottles — those must be
-re-attached so they install the new trust anchor. Rotation is thus an explicit,
-operator-driven action with a brief egress interruption, not an automatic one.
+Running bottles lose egress between the two: rotation is an explicit,
+operator-driven action, not an automatic one.
 """
 
 from __future__ import annotations
 
 import sys
-from pathlib import Path
+from collections.abc import Callable
 
-from ..backend.docker.util import run_docker
-from ..paths import host_gateway_ca_dir
-from ..gateway import GATEWAY_NAME, rotate_gateway_ca
-
-# The container whose mitmproxy would still be serving the old CA from memory:
-# the per-host gateway (the data plane holds the CA; the split-out orchestrator
-# never does).
-_GATEWAY_CONTAINERS = (GATEWAY_NAME,)
+from ..gateway import Gateway, rotate_gateway_ca
 
 
 def _out(msg: str) -> None:
     sys.stdout.write(f"rotate-ca: {msg}\n")
 
 
+def _gateways() -> list[tuple[str, Callable[[], Gateway]]]:
+    """(backend name, gateway factory) for every registered backend available
+    on this host. Driven by the backend registry and each backend's
+    `infra_service()`, so a new backend is covered without changes here."""
+    from ..backend import get_bottle_backend, has_backend, known_backend_names
+    return [
+        (name, lambda name=name: get_bottle_backend(name).infra_service().gateway())
+        for name in known_backend_names()
+        if has_backend(name)
+    ]
+
+
 def main(argv: list[str] | None = None) -> int:
     del argv  # no flags — a single deliberate action
-    ca_dir: Path = host_gateway_ca_dir()
-    removed = rotate_gateway_ca(ca_dir)
-    if removed:
-        _out(f"removed {len(removed)} CA file(s) from {ca_dir}")
-    else:
-        _out(f"no persisted CA under {ca_dir}; a fresh one is minted on next start")
-
-    # Drop any running gateway so its in-memory (now-stale) CA is replaced on
-    # the next launch. `rm --force` on an absent name is a tolerated no-op.
-    for name in _GATEWAY_CONTAINERS:
-        proc = run_docker(["docker", "rm", "--force", name])
-        if proc.returncode == 0 and proc.stdout.strip():
-            _out(f"removed running container {name}")
-
-    _out("done — the next bottle launch remints the CA; re-attach bottles to "
-         "install the new trust anchor")
+    gateways = _gateways()
+    if not gateways:
+        _out("no backend available on this host; nothing to rotate")
+        return 0
+    for name, factory in gateways:
+        gateway = factory()
+        ca_dir = gateway.persisted_ca_dir()
+        if ca_dir is None:
+            _out(f"{name}: CA isn't in a host dir (named volume); remove it to rotate")
+        else:
+            removed = rotate_gateway_ca(ca_dir)
+            _out(f"{name}: removed {len(removed)} CA file(s) from {ca_dir}" if removed
+                 else f"{name}: no persisted CA under {ca_dir}")
+        gateway.stop()
+        _out(f"{name}: stopped the gateway")
+    _out("done — the next bottle launch mints the new CA and reattaches running "
+         "bottles to it")
     return 0
 
 

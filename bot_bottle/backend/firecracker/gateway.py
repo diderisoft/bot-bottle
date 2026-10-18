@@ -163,6 +163,9 @@ class FirecrackerGateway(Gateway):
                 target.write_bytes(source.read())
                 target.chmod(0o600)
 
+    def persisted_ca_dir(self) -> Path | None:
+        return infra_vm.gateway_ca_dir()
+
     def is_running(self) -> bool:
         return infra_vm._pidfile_alive(infra_vm._gw_dir())
 

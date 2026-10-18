@@ -21,7 +21,7 @@ from abc import ABC, abstractmethod
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Generator, Generic, Sequence, TypeVar
+from typing import TYPE_CHECKING, Generator, Generic, Sequence, TypeVar
 
 from ..agent_provider import AgentProvisionPlan, get_provider
 from ..egress import EgressPlan
@@ -34,6 +34,9 @@ from ..env import ResolvedEnv
 from ..workspace import WorkspacePlan, workspace_plan
 from .print_util import print_multi, visible_agent_env_names
 from .util import host_skill_dir
+
+if TYPE_CHECKING:
+    from .infra_service import InfraService
 
 
 class BackendStatus(enum.IntEnum):
@@ -484,31 +487,17 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         del plan
         return ""
 
+    @abstractmethod
+    def infra_service(self) -> "InfraService":
+        """This backend's per-host orchestrator + gateway pair (PRD 0070). The
+        one hook a backend implements to get bring-up, reattaching running
+        bottles after a restart (PRD 0081), and CA rotation."""
+
     def ensure_orchestrator(self) -> str:
         """Bring up this backend's per-host orchestrator + shared gateway
-        (idempotent) and return the host-reachable control-plane URL.
-
-        This is the backend-agnostic bring-up entry point: `launch` calls
-        it as part of starting a bottle, and operator tools (`supervise`)
-        call it to start the control plane on demand when none is running
-        yet. Docker starts the orchestrator + gateway containers;
-        firecracker boots the infra VM. Backends with no orchestrator
-        (macos-container) die with a pointer — the default here."""
-        die(f"backend {self.name!r} has no orchestrator control plane")
-
-    def attach_bottled_agents_to_gateway(self) -> None:
-        """Reconcile all running bottles against the current gateway.
-
-        Called when the gateway is (re)brought up (cold-boot path) to restore
-        the three gateway-dependent services for every live bottle: CA trust,
-        git-gate repos/creds, and egress tokens. Per-bottle failures must be
-        logged and skipped — one unreachable agent must not block the rest.
-
-        Default: no-op. Backends that run a gateway (Firecracker, docker,
-        macOS) override this with a backend-native implementation that reaches
-        running agents via their transport (SSH for Firecracker, exec/cp for
-        docker and macOS). PRD 0081."""
-        return
+        (idempotent) and return the host-reachable control-plane URL. `launch`
+        and operator tools (`supervise`) both start the control plane here."""
+        return self.infra_service().ensure_running()
 
     @abstractmethod
     def prepare_cleanup(self) -> CleanupT:
