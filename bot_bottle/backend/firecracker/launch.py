@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import shlex
 import shutil
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
@@ -212,11 +213,31 @@ def launch(
             terminal_color=plan.spec.color,
             agent_workdir=plan.workspace_plan.workdir,
         )
+        _smoke_test_published_base(
+            bottle, agent_base, runtime_for(plan.agent_provider_template).smoke_test)
         bottle.prompt_path = provision(plan, bottle)
 
         yield bottle
     finally:
         teardown()
+
+
+def _smoke_test_published_base(
+    bottle: FirecrackerBottle, agent_base: Path, smoke_test: tuple[str, ...],
+) -> None:
+    """Run the provider's smoke test once in the first bottle booted from a
+    prepared published ext4, as docker does after a pull. Images built here
+    are smoke-tested before export; a published ext4 can only be run by
+    booting it, so the first launch does it and a `.smoked` marker skips it
+    after that."""
+    marker = agent_base.with_suffix(".smoked")
+    if not smoke_test or not agent_base.is_file() or marker.is_file():
+        return
+    result = bottle.exec(shlex.join(smoke_test))
+    if result.returncode != 0:
+        die(f"published agent image {agent_base.name} failed its smoke test "
+            f"({' '.join(smoke_test)}): {(result.stderr or result.stdout).strip()}")
+    marker.write_text("ok\n")
 
 
 def build_or_load_agent_base(plan: FirecrackerBottlePlan) -> Path:
