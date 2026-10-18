@@ -159,12 +159,17 @@ class TestLifecycle(unittest.TestCase):
     def test_stop_syncs_the_guest_before_killing(self) -> None:
         orch = FirecrackerOrchestrator()
         calls: list[str] = []
+
+        def fake_run(argv: list[str], **_: object) -> None:
+            calls.append(argv[-1])
+
+        def fake_kill(_d: Path) -> None:
+            calls.append("kill")
+
         with patch.object(orch, "is_running", return_value=True), \
                 patch.object(orch, "ssh_target", return_value=(Path("/k"), "10.0.0.1")), \
-                patch(f"{_ORCH}.subprocess.run",
-                      side_effect=lambda argv, **_: calls.append(argv[-1])), \
-                patch.object(infra_vm, "_kill_pidfile",
-                             side_effect=lambda _d: calls.append("kill")), \
+                patch(f"{_ORCH}.subprocess.run", side_effect=fake_run), \
+                patch.object(infra_vm, "_kill_pidfile", side_effect=fake_kill), \
                 patch.object(infra_vm, "_orch_dir", return_value=Path("/nonexistent")):
             orch.stop()
         self.assertEqual(["sync", "kill"], calls)
