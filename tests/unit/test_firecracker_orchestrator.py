@@ -77,7 +77,7 @@ class TestWaitForHealth(unittest.TestCase):
 
     def test_returns_when_healthy(self) -> None:
         orch = FirecrackerOrchestrator()
-        with patch.object(orch, "is_healthy", return_value=True):
+        with patch.object(orch, "health_problem", return_value=None):
             orch._wait_for_health(self._vm(), timeout=5)  # must not raise
 
     def test_dies_when_vm_exits(self) -> None:

@@ -17,6 +17,7 @@ from typing import Any
 
 from ...log import die, warn
 from ..base import EnumerationError
+from .util import daemon_unreachable
 
 
 # --- Lifecycle helpers (PRD 0018 chunk 3) ----------------------------------
@@ -65,7 +66,8 @@ def list_compose_projects(
 
     Best-effort callers get ``[]`` on Docker errors or malformed output.
     Enumeration callers pass ``raise_on_error=True`` so a failed query is not
-    reported as an authoritative empty result.
+    reported as an authoritative empty result. A daemon that isn't running is
+    authoritative: nothing runs on it, so that is ``[]`` for every caller.
     """
     argv = ["docker", "compose", "ls", "--format", "json"]
     if include_stopped:
@@ -84,6 +86,8 @@ def list_compose_projects(
             ) from exc
         return []
     if result.returncode != 0:
+        if daemon_unreachable(result.stderr):
+            return []
         message = f"docker compose ls failed: {result.stderr.strip()}"
         if raise_on_error:
             raise EnumerationError(message)

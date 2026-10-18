@@ -68,7 +68,6 @@ class TestLaunchConsolidated(unittest.TestCase):
         self.assertEqual("172.18.0.2", ctx.gateway_ip)
         self.assertEqual("b1", ctx.bottle_id)
         self.assertEqual("tok", ctx.identity_token)
-        self.assertEqual("http://orch:8080", ctx.orchestrator_url)
         # Registered with the source IP + the egress policy blob.
         kwargs = client.register_bottle.call_args
         self.assertEqual("172.18.0.3", kwargs.args[0])
@@ -101,11 +100,23 @@ class TestNetworkContainerIps(unittest.TestCase):
 class TestTeardownConsolidated(unittest.TestCase):
     def test_deregisters_and_deprovisions(self) -> None:
         client = Mock()
-        with patch(f"{_UTIL}.OrchestratorClient", return_value=client), \
+        service = MagicMock()
+        service.orchestrator.return_value.url.return_value = "http://orch:8080"
+        with patch(f"{_UTIL}.OrchestratorClient", return_value=client) as make, \
                 patch(f"{_UTIL}.deprovision_git_gate") as deprov:
-            deprovision_consolidated("b1", orchestrator_url="http://orch:8080")
+            deprovision_consolidated("b1", service=service)
+        # Resolved at teardown: the orchestrator may have moved since launch.
+        self.assertEqual("http://orch:8080", make.call_args.args[0])
         client.teardown_bottle.assert_called_once_with("b1")
         deprov.assert_called_once()
+
+    def test_a_stopped_orchestrator_is_a_clear_error(self) -> None:
+        from bot_bottle.orchestrator.client import OrchestratorClientError
+        service = MagicMock()
+        service.orchestrator.return_value.url.return_value = ""
+        with patch(f"{_UTIL}.deprovision_git_gate"), \
+                self.assertRaisesRegex(OrchestratorClientError, "isn't running"):
+            deprovision_consolidated("b1", service=service)
 
 
 if __name__ == "__main__":

@@ -103,11 +103,21 @@ class Orchestrator(abc.ABC):
     def is_healthy(self, *, timeout: float = DEFAULT_HEALTH_TIMEOUT_SECONDS) -> bool:
         """True iff the control plane answers 200 on `/health` at `url()`.
         Backends may override (e.g. to also check the VM process is alive)."""
+        return self.health_problem(timeout=timeout) is None
+
+    def health_problem(self, *, timeout: float = DEFAULT_HEALTH_TIMEOUT_SECONDS) -> str | None:
+        """None when the control plane answers 200 on `/health` at `url()`,
+        otherwise why it didn't, for a startup timeout to report."""
+        url = self.url()
+        if not url:
+            return "it has no address yet"
         try:
-            with urllib.request.urlopen(f"{self.url()}/health", timeout=timeout) as resp:
-                return resp.status == 200
-        except (urllib.error.URLError, TimeoutError, OSError):
-            return False
+            with urllib.request.urlopen(f"{url}/health", timeout=timeout) as resp:
+                return None if resp.status == 200 else f"{url}/health answered {resp.status}"
+        except urllib.error.URLError as e:
+            return f"{url}/health: {e.reason}"
+        except (TimeoutError, OSError) as e:
+            return f"{url}/health: {e}"
 
     def mint_gateway_token(self) -> str:
         """Mint a role-scoped `gateway` JWT from the host signing key for the

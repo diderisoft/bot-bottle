@@ -14,6 +14,9 @@ source of truth for how to reach each plane; the convenience `url()` /
 from __future__ import annotations
 
 import abc
+import fcntl
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 
 from ..gateway import Gateway
@@ -26,6 +29,31 @@ from .gateway_attach import (
     GatewayAttacher,
     reattach_running_bottles,
 )
+
+# How many times this process holds each lock path.
+_HELD: dict[Path, int] = {}
+
+
+@contextmanager
+def _reentrant_flock(path: Path) -> Generator[None]:
+    """An exclusive flock on `path` that the holding process may re-enter
+    (a second flock on a new handle would deadlock against the first)."""
+    if _HELD.get(path):
+        _HELD[path] += 1
+        try:
+            yield
+        finally:
+            _HELD[path] -= 1
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        _HELD[path] = 1
+        try:
+            yield
+        finally:
+            del _HELD[path]
+            fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 class InfraService(abc.ABC):
@@ -61,25 +89,36 @@ class InfraService(abc.ABC):
         the host control-plane URL. Raises `OrchestratorStartError` on
         control-plane startup timeout.
 
-        A reattach that didn't finish (it failed, or the launcher was
-        interrupted) leaves a marker, so the next bring-up retries it even
-        when it adopts the pair; otherwise the bottles it missed would stay
-        broken until the next restart. Under the default STRICT policy a
-        failure ends the bring-up naming each bottle."""
-        url, restarted = self._bring_up(startup_timeout=startup_timeout)
-        marker = self._reattach_pending_marker()
-        if restarted or marker.exists():
+        The marker is written before anything can restart and removed only
+        once the bring-up (and any reattach) finishes, so one that failed or
+        was interrupted anywhere is retried by the next bring-up even when it
+        adopts the pair. The whole sequence holds this backend's bring-up lock.
+        Under the default STRICT policy a failure ends the bring-up naming each
+        bottle."""
+        with self.bring_up_lock():
+            marker = self._reattach_pending_marker()
+            pending = marker.exists()
             marker.parent.mkdir(parents=True, exist_ok=True)
             marker.touch()
-            try:
-                reattach_running_bottles(
-                    self.gateway_attacher(), orchestrator_url=url,
-                    gateway=self.gateway(), policy=attach_policy,
-                )
-            except GatewayAttachError as e:
-                die(str(e))
+            url, restarted = self._bring_up(startup_timeout=startup_timeout)
+            if restarted or pending:
+                try:
+                    reattach_running_bottles(
+                        self.gateway_attacher(), orchestrator_url=url,
+                        gateway=self.gateway(), policy=attach_policy,
+                    )
+                except GatewayAttachError as e:
+                    die(str(e))
             marker.unlink(missing_ok=True)
-        return url
+            return url
+
+    @contextmanager
+    def bring_up_lock(self) -> Generator[None]:
+        """Exclusive, host-wide, per-backend lock over infra bring-up and
+        anything that must not race it (`rotate-ca`). Re-entrant within a
+        process; released if the process dies."""
+        with _reentrant_flock(bot_bottle_root() / "infra" / f"{self.name}.lock"):
+            yield
 
     @abc.abstractmethod
     def _bring_up(self, *, startup_timeout: float) -> tuple[str, bool]:

@@ -12,16 +12,14 @@ loopback-vs-name split.
 from __future__ import annotations
 
 import os
+import sys
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 from ... import log
 from ... import resources
 from ...paths import ORCHESTRATOR_TOKEN_ENV
 from ...orchestrator.lifecycle import (
-    DEFAULT_HEALTH_TIMEOUT_SECONDS,
     DEFAULT_PORT,
     DEFAULT_STARTUP_TIMEOUT_SECONDS,
     Orchestrator,
@@ -86,16 +84,6 @@ class MacosOrchestrator(Orchestrator):
         control-network IP (Apple has no container DNS)."""
         return self.url()
 
-    def is_healthy(self, *, timeout: float = DEFAULT_HEALTH_TIMEOUT_SECONDS) -> bool:
-        url = self.url()
-        if not url:
-            return False
-        try:
-            with urllib.request.urlopen(f"{url}/health", timeout=timeout) as resp:
-                return resp.status == 200
-        except (urllib.error.URLError, TimeoutError, OSError):
-            return False
-
     def is_running(self) -> bool:
         return container_mod.container_is_running(self.name)
 
@@ -157,7 +145,8 @@ class MacosOrchestrator(Orchestrator):
             # Detect a real control-plane code change and recreate.
             "--env", f"BOT_BOTTLE_SOURCE_HASH={current_hash}",
             # The signing key — held ONLY by the orchestrator (issue #469). Bare
-            # `--env NAME` keeps the value off argv / `container inspect`.
+            # `--env NAME` keeps the value off argv; it is still in the config
+            # `container inspect` shows, readable only by the host user.
             "--env", ORCHESTRATOR_TOKEN_ENV,
             self.image_ref,
             # Dockerfile.orchestrator ENTRYPOINT is `-m bot_bottle.orchestrator`.
@@ -174,13 +163,14 @@ class MacosOrchestrator(Orchestrator):
     def _wait_healthy(self, startup_timeout: float) -> None:
         deadline = time.monotonic() + startup_timeout
         while True:
-            if self.is_healthy():
+            problem = self.health_problem()
+            if problem is None:
                 log.info("orchestrator healthy", context={"url": self.url()})
                 return
             if time.monotonic() >= deadline:
                 raise OrchestratorStartError(
                     f"orchestrator did not become healthy within "
-                    f"{startup_timeout:g}s"
+                    f"{startup_timeout:g}s ({problem}){_local_network_hint(problem)}"
                 )
             time.sleep(_HEALTH_POLL_SECONDS)
 
@@ -188,6 +178,16 @@ class MacosOrchestrator(Orchestrator):
         """Remove the control-plane container (idempotent). The DB volume
         persists."""
         container_mod.force_remove_container(self.name)
+
+
+def _local_network_hint(problem: str) -> str:
+    """macOS Local Network privacy blocks an app it hasn't allowed from
+    reaching vmnet addresses, which surfaces as "No route to host"."""
+    if "No route to host" not in problem:
+        return ""
+    return (f"; if `curl` reaches it, macOS Local Network privacy may be "
+            f"blocking {sys.executable} — allow it under System Settings › "
+            "Privacy & Security › Local Network")
 
 
 def probe_orchestrator_url(port: int = DEFAULT_PORT) -> str:

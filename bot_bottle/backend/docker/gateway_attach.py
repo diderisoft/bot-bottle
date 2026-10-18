@@ -2,7 +2,9 @@
 (PRD 0081); the flow itself is `backend.gateway_attach`.
 
 Each bottle is a compose project whose `agent` service holds a pinned address
-on the shared gateway network, which is how the orchestrator knows it. The CA
+on the shared gateway network, which is how the orchestrator knows it. The
+gateway is pinned too, so its address in the agent's proxy env stays valid
+across gateway restarts; reattach only confirms it. The CA
 install runs as root inside the agent through an absolute `/bin/sh` with a
 pinned system PATH, so nothing the agent planted on its own PATH runs as root;
 the secret is read from the container's config on the host side, without
@@ -13,6 +15,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from urllib.parse import urlsplit
 
 from ...gateway import GATEWAY_NETWORK
 from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
@@ -43,6 +46,16 @@ class DockerGatewayAttacher(GatewayAttacher):
             bottles.append(RunningBottle(ref=container, slug=slug, source_ip=source_ip))
         return bottles
 
+    def point_at_gateway(self, bottle: RunningBottle, address: str) -> None:
+        # The proxy URL is baked into the agent's environ, which can't be
+        # rewritten; the pinned gateway address keeps it valid, so confirm it.
+        proxy = self._env_value(bottle, "HTTPS_PROXY")
+        target = urlsplit(proxy).hostname if proxy else None
+        if target != address:
+            raise GatewayAttachError(
+                f"it proxies through {target or 'nothing'} but the gateway is at "
+                f"{address}; relaunch it")
+
     def install_ca(self, bottle: RunningBottle, ca_pem: str) -> None:
         self._docker(
             ["exec", "-u", "0", "-i", bottle.ref, "/bin/sh", "-c", install_agent_ca_script("-")],
@@ -50,11 +63,14 @@ class DockerGatewayAttacher(GatewayAttacher):
         )
 
     def read_env_var_secret(self, bottle: RunningBottle) -> str:
+        return self._env_value(bottle, ENV_VAR_SECRET_NAME)
+
+    def _env_value(self, bottle: RunningBottle, name: str) -> str:
         env = json.loads(self._docker(
             ["inspect", "--format", "{{json .Config.Env}}", bottle.ref],
             what="reading the agent container's environment",
         ) or "null") or []
-        prefix = f"{ENV_VAR_SECRET_NAME}="
+        prefix = f"{name}="
         return next((e[len(prefix):] for e in env if e.startswith(prefix)), "")
 
     def _agent_container(self, slug: str) -> str:

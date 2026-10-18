@@ -126,9 +126,13 @@ class TestTeardown(unittest.TestCase):
     def test_deregisters_and_deprovisions(self) -> None:
         client = Mock()
         deprovision = Mock()
-        with patch(f"{_UTIL}.OrchestratorClient", return_value=client), \
+        service = MagicMock()
+        service.orchestrator.return_value.url.return_value = "http://o:8099"
+        with patch(f"{_UTIL}.OrchestratorClient", return_value=client) as make, \
                 patch(f"{_UTIL}.deprovision_git_gate", deprovision):
-            deprovision_consolidated("b1", orchestrator_url="http://o:8099")
+            deprovision_consolidated("b1", service=service)
+        # The orchestrator's DHCP address moves on restart: resolved now.
+        self.assertEqual("http://o:8099", make.call_args.args[0])
         client.teardown_bottle.assert_called_once_with("b1")
         self.assertEqual("b1", deprovision.call_args.args[1])
 

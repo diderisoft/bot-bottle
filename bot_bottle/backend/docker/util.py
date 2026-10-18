@@ -38,6 +38,22 @@ def run_docker(
     )
 
 
+# Older and newer docker CLIs word it differently.
+_DAEMON_DOWN_MARKERS = (
+    "Cannot connect to the Docker daemon",
+    "failed to connect to the docker API",
+    "Is the docker daemon running",
+)
+
+
+def daemon_unreachable(stderr: str) -> bool:
+    """True iff a failed docker command's `stderr` says the daemon isn't
+    running. bot-bottle's docker containers bind-mount host paths, so they only
+    ever run on a local daemon: an unreachable one has no bottle or gateway
+    running."""
+    return any(marker in stderr for marker in _DAEMON_DOWN_MARKERS)
+
+
 # Cap on the suffix the container-name conflict logic will try before
 # giving up: base, base-2, ..., base-MAX_CONTAINER_SUFFIX.
 MAX_CONTAINER_SUFFIX = 100

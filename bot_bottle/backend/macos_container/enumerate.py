@@ -6,6 +6,7 @@ import subprocess
 
 from ...bottle_state import read_metadata
 from .. import ActiveAgent, EnumerationError
+from . import util as container_mod
 from .infra import INFRA_NAME, ORCHESTRATOR_NAME
 
 # The name every agent container carries: `bot-bottle-<slug>`. Exported
@@ -33,6 +34,8 @@ def enumerate_active() -> list[ActiveAgent]:
             "container list failed: container CLI not found"
         ) from exc
     if result.returncode != 0:
+        if not container_mod.service_running():
+            return []  # no container runs while the service is down
         raise EnumerationError(
             f"container list failed: "
             f"{(result.stderr or '').strip() or '<no stderr>'}"

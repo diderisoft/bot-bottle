@@ -81,6 +81,8 @@ class TestDockerGateway(unittest.TestCase):
                 return _proc(stdout=self.sc.name)          # running
             if argv[:3] == ["docker", "image", "inspect"]:
                 return _proc(stdout="img-A")               # current image id
+            if argv[:2] == ["docker", "inspect"] and "IPAddress" in argv[3]:
+                return _proc(stdout="10.242.255.2")        # at its pinned address
             if argv[:2] == ["docker", "inspect"]:
                 return _proc(stdout="img-A")               # container's image (same)
             return _proc()
@@ -90,6 +92,28 @@ class TestDockerGateway(unittest.TestCase):
         self.assertFalse(restarted)  # adopted: no running bottle needs reattaching
         self.assertEqual([], [c for c in calls if c[:2] == ["docker", "run"]])
         self.assertEqual([], [c for c in calls if c[:2] == ["docker", "rm"]])
+
+    def test_gateway_off_its_pinned_address_is_recreated_there(self) -> None:
+        # Agents bake the gateway's address into their proxy env, so a gateway
+        # anywhere else would strand them: replace it at the pinned address.
+        calls: list[list[str]] = []
+
+        def fake(argv: list[str], **_kw: object) -> Mock:
+            calls.append(argv)
+            if argv[:2] == ["docker", "ps"]:
+                return _proc(stdout=self.sc.name)
+            if argv[:3] == ["docker", "image", "inspect"]:
+                return _proc(stdout="img-A")
+            if argv[:2] == ["docker", "inspect"] and "IPAddress" in argv[3]:
+                return _proc(stdout="10.242.255.9")
+            if argv[:2] == ["docker", "inspect"]:
+                return _proc(stdout="img-A")
+            return _proc()
+
+        with patch(_RUN_DOCKER, side_effect=fake):
+            self.assertTrue(self.sc.connect_to_orchestrator(_ORCH_URL, _TOKEN))
+        (run,) = [c for c in calls if c[:2] == ["docker", "run"]]
+        self.assertEqual("10.242.255.2", run[run.index("--ip") + 1])
 
     def test_ensure_running_recreates_when_image_is_stale(self) -> None:
         # Running, but the container was built from an OLD image → recreate so
@@ -380,9 +404,14 @@ class TestDockerGateway(unittest.TestCase):
             self.sc.stop()  # must not raise
 
     def test_stop_raises_on_other_failure(self) -> None:
-        with patch(_RUN_DOCKER, return_value=_proc(returncode=1, stderr="daemon down")):
+        with patch(_RUN_DOCKER, return_value=_proc(returncode=1, stderr="permission denied")):
             with self.assertRaises(GatewayError):
                 self.sc.stop()
+
+    def test_stop_on_a_stopped_daemon_is_already_stopped(self) -> None:
+        down = _proc(returncode=1, stderr="Cannot connect to the Docker daemon at unix:///x")
+        with patch(_RUN_DOCKER, return_value=down):
+            self.sc.stop()  # must not raise
 
 
 class TestDockerGatewayBuild(unittest.TestCase):

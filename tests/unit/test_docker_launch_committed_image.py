@@ -36,7 +36,6 @@ _IDX = ManifestIndex.from_json_obj({
 _CTX = LaunchContext(
     bottle_id="b1", identity_token="t", source_ip="172.20.0.4",
     network="bot-bottle-gateway", gateway_ip="172.20.0.2",
-    orchestrator_url="http://orch:8099",
 )
 
 

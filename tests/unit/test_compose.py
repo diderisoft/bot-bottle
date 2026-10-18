@@ -94,6 +94,25 @@ class TestComposeProjectListing(unittest.TestCase):
                     raise_on_error=True,
                 )
 
+    def test_stopped_daemon_is_an_authoritative_empty_result(self):
+        # Docker installed but not running must not break cross-backend
+        # enumeration (e.g. `start` on macOS): nothing runs on a stopped daemon.
+        for down in (
+            "Cannot connect to the Docker daemon at unix:///x/docker.sock. "
+            "Is the docker daemon running?",
+            "failed to connect to the docker API at unix:///var/run/docker.sock; check "
+            "if the path is correct and if the daemon is running: dial unix "
+            "/var/run/docker.sock: connect: no such file or directory",
+        ):
+            with mock.patch(
+                "bot_bottle.backend.docker.compose.subprocess.run",
+                return_value=subprocess.CompletedProcess(
+                    args=["docker"], returncode=1, stdout="", stderr=down,
+                ),
+            ):
+                self.assertEqual(
+                    [], list_active_slugs(warn_on_error=False, raise_on_error=True))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -39,7 +39,6 @@ class LaunchContext:
     source_ip: str          # the agent's pinned address (attribution key)
     network: str            # the shared gateway network to attach to
     gateway_ip: str         # the gateway's address — the agent's proxy target
-    orchestrator_url: str
     env_var_secret: str = ""  # encryption key injected into the agent's env
 
 
@@ -100,7 +99,7 @@ def launch_consolidated(
 
     cidr = _network_cidr(network)
     gateway_ip = gateway.address()
-    source_ip = next_free_ip(cidr, _network_container_ips(network))
+    source_ip = next_free_ip(cidr, [*_network_container_ips(network), gateway_ip])
 
     transport = gateway.provisioning_transport()
     reg = provision_bottle(
@@ -113,18 +112,18 @@ def launch_consolidated(
         source_ip=source_ip,
         network=network,
         gateway_ip=gateway_ip,
-        orchestrator_url=url,
         env_var_secret=reg.env_var_secret,
     )
 
 
 def deprovision_consolidated(
-    bottle_id: str, *, orchestrator_url: str, infra_name: str = INFRA_NAME,
-    timeout: float | None = None,
+    bottle_id: str, *, infra_name: str = INFRA_NAME, timeout: float | None = None,
+    service: DockerInfraService | None = None,
 ) -> None:
     """Deregister the bottle and remove its git-gate state. Idempotent."""
     deprovision_bottle(bottle_id, DockerGatewayTransport(infra_name),
-                   orchestrator_url=orchestrator_url, timeout=timeout)
+                       orchestrator=(service or DockerInfraService()).orchestrator(),
+                       timeout=timeout)
 
 
 __all__ = [

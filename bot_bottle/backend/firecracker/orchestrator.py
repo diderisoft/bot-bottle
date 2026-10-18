@@ -153,18 +153,20 @@ class FirecrackerOrchestrator(Orchestrator):
         the console tail) if the VMM exits early."""
         url = f"{self.url()}/health"
         deadline = time.monotonic() + timeout
+        problem: str | None = "it was never probed"
         while time.monotonic() < deadline:
             if vm.vm is not None and not vm.vm.is_alive():
                 die(f"orchestrator VM exited during boot (rc={vm.vm.process.returncode}).\n"
                     f"{firecracker_vm._console_tail(vm.vm.console_log)}")
-            if self.is_healthy():
+            problem = self.health_problem()
+            if problem is None:
                 info(f"orchestrator control plane healthy at {self.url()}")
                 return
             time.sleep(_HEALTH_POLL_SECONDS)
         tail = (firecracker_vm._console_tail(vm.vm.console_log)
                 if vm.vm is not None else "")
         die(f"orchestrator control plane at {url} did not become healthy within "
-            f"{timeout:.0f}s.\n{tail}")
+            f"{timeout:.0f}s ({problem}).\n{tail}")
 
     def _ensure_registry_volume(self) -> Path:
         """Create the empty ext4 registry volume on first use; reuse it after."""

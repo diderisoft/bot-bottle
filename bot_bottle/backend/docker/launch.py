@@ -164,11 +164,7 @@ def launch(
         ctx = launch_consolidated(
             plan.egress_plan, git_gate_plan, image_ref=plan.image, tokens=token_values,
         )
-        stack.callback(
-            deprovision_consolidated, ctx.bottle_id,
-            orchestrator_url=ctx.orchestrator_url,
-            timeout=teardown_timeout,
-        )
+        stack.callback(deprovision_consolidated, ctx.bottle_id, timeout=teardown_timeout)
 
         # Step 4: install the SHARED gateway CA into the agent (replaces the
         # per-bottle CA) — read it out of the running gateway container
