@@ -16,12 +16,17 @@ from .schema import AGENT_MODEL_KEYS, is_valid_entity_name
 # strict semver shape (optional prerelease) rather than shell-quoted ad hoc.
 HARNESS_VERSION_RE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.]*)?")
 
+# Debian package names (policy 5.6.1), with an optional `:arch` and `=version`.
+# Overlay apt entries land in a RUN line, so anything else (a newline above
+# all, which would start a new Dockerfile instruction) is refused.
+APT_PACKAGE_RE = re.compile(r"[a-z0-9][a-z0-9+.-]*(:[a-z0-9-]+)?(=[A-Za-z0-9.+:~-]+)?")
+
 
 @dataclass(frozen=True)
 class ManifestImageOverlay:
     """A small tweak layered on the pinned default agent image (PRD 0085).
 
-    Rendered as a thin `FROM <pinned-default>` layer built on the host — a pinned
+    Rendered as a thin `FROM <pinned-default>` layer — a pinned
     harness version, extra apt packages, and extra files COPYed in — so the base
     stays the verified release image. A harness bump is the exception: it
     replaces the harness the release was tested with, so compatibility is the
@@ -63,13 +68,15 @@ class ManifestImageOverlay:
                 "version like 2.1.180 (or 0.146.0-alpha.1)"
             )
         apt = _overlay_str_list(where, "apt", d.get("apt", []))
+        for pkg in apt:
+            if not APT_PACKAGE_RE.fullmatch(pkg):
+                raise ManifestError(
+                    f"{where}.apt entry {pkg!r} is not a Debian package name "
+                    "(optionally with :arch and =version)"
+                )
         files = _overlay_str_list(where, "files", d.get("files", []))
         for f in files:
-            if f.startswith("/") or ".." in f.split("/"):
-                raise ManifestError(
-                    f"{where}.files entry {f!r} must be a relative path that does "
-                    "not escape the manifest directory (no leading '/' or '..')"
-                )
+            _check_overlay_path(f"{where}.files entry", f)
         dockerfile = d.get("dockerfile", "")
         if not isinstance(dockerfile, str):
             raise ManifestError(
@@ -81,12 +88,20 @@ class ManifestImageOverlay:
                     f"{where}.dockerfile cannot be combined with harness_version, "
                     "apt, or files; put those steps in the Dockerfile instead"
                 )
-            if dockerfile.startswith("/") or ".." in dockerfile.split("/"):
-                raise ManifestError(
-                    f"{where}.dockerfile {dockerfile!r} must be a relative path that "
-                    "does not escape the manifest directory (no leading '/' or '..')"
-                )
+            _check_overlay_path(f"{where}.dockerfile", dockerfile)
         return cls(harness_version=harness, apt=apt, files=files, dockerfile=dockerfile)
+
+
+def _check_overlay_path(what: str, path: str) -> None:
+    # Resolved against the launch directory; it lands in the build context
+    # and (for `files`) in a COPY line.
+    if path.startswith("/") or ".." in path.split("/"):
+        raise ManifestError(
+            f"{what} {path!r} must be a relative path inside the launch directory "
+            "(no leading '/' or '..')"
+        )
+    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in path):
+        raise ManifestError(f"{what} {path!r} must not contain control characters")
 
 
 def _overlay_str_list(where: str, key: str, raw: object) -> tuple[str, ...]:
@@ -120,6 +135,12 @@ class ManifestAgentProvider:
     forward_host_credentials: bool = False
     settings: dict[str, object] = field(default_factory=dict)
     overlay: ManifestImageOverlay = field(default_factory=ManifestImageOverlay)
+
+    @property
+    def builds_custom_image(self) -> bool:
+        """The bottle names its own `dockerfile`, so its image is built from
+        that, never swapped for the published default (PRD 0085)."""
+        return bool(self.dockerfile)
 
     @classmethod
     def from_dict(cls, bottle_name: str, raw: object) -> "ManifestAgentProvider":

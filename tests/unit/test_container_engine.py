@@ -53,6 +53,18 @@ class HostContainerEngine(unittest.TestCase):
              patch.object(ce.subprocess, "run", side_effect=_ok):
             self.assertEqual("podman", ce.host_container_engine())
 
+    def test_forced_engine_that_is_unusable_raises(self) -> None:
+        # An explicit choice must not quietly build somewhere else.
+        with patch.dict("os.environ", {ce.ENGINE_ENV: "docker"}), \
+             patch.object(ce.shutil, "which", return_value=None), \
+             self.assertRaises(ce.EngineUnavailable):
+            ce.host_container_engine()
+
+    def test_unknown_engine_value_raises(self) -> None:
+        with patch.dict("os.environ", {ce.ENGINE_ENV: "dokcer"}), \
+             self.assertRaises(ce.EngineUnavailable):
+            ce.host_container_engine()
+
 
 if __name__ == "__main__":
     unittest.main()

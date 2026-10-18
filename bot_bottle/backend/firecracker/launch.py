@@ -32,9 +32,9 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Callable, Generator
 
-from ... import agent_image, agent_overlay, image_registry
+from ... import agent_image, agent_overlay
 from ...agent_provider import runtime_for
-from ...published_artifacts import FORMAT_EXT4, FORMAT_OCI
+from ...published_artifacts import FORMAT_EXT4, FORMAT_OCI, Artifact, ArtifactsManifestError
 from ...bottle_state import (
     committed_rootfs_path,
     egress_state_dir,
@@ -220,43 +220,20 @@ def launch(
 
 
 def build_or_load_agent_base(plan: FirecrackerBottlePlan) -> Path:
-    """Produce the agent's base rootfs dir. Primary path: build the Dockerfile
-    inside a Firecracker builder VM (buildah, no host docker), smoke-testing
-    the image before export. A committed snapshot (freeze/migrate) is resumed
-    directly from the rootfs tar the freezer wrote — no host docker either."""
+    """The agent's base: a rootfs dir or a prepared ext4 file, which
+    `util.make_bottle_rootfs` turns into this bottle's disk. In order: a
+    committed snapshot (freeze/migrate) resumed from the freezer's tar; the
+    release-pinned published ext4, or an overlay built on the pinned OCI
+    image (PRD 0085); else the bottle's Dockerfile, built in the infra VM. A
+    custom agent_provider.dockerfile is built as written, never replaced by
+    the published default for its template."""
     committed = read_committed_image(plan.slug)
     committed_tar = committed_rootfs_path(plan.slug)
     if committed and committed_tar.is_file():
         info(f"resuming from committed rootfs {committed_tar}")
         return util.build_committed_rootfs_dir(committed_tar)
-    dockerfile = Path(plan.dockerfile_path)
-    # PRD 0085: prefer the release-pinned published agent image. The base is the
-    # published ext4, fetched and verified on the host and booted from a sparse
-    # per-bottle copy. An overlay still builds `FROM` the pinned OCI image in the
-    # infra VM. A custom agent_provider.dockerfile is built as written, never
-    # replaced by the published default image for its template.
-    overlay = plan.image_overlay
-    fmt = FORMAT_EXT4 if overlay.is_empty() else FORMAT_OCI
-    pin = (
-        None if plan.builds_custom_image
-        else agent_image.resolve_agent_pin(plan.agent_provider_template, prefer=(fmt,))
-    )
-    pinned_ref = (
-        image_registry.pinned_reference(pin)
-        if pin is not None and pin.format == FORMAT_OCI else None
-    )
-    smoke = runtime_for(plan.agent_provider_template).smoke_test
-    if not overlay.is_empty() and pinned_ref is None:
-        # No pinned base: building the default instead would drop the overlay.
-        raise agent_overlay.no_published_base_error(plan.agent_provider_template)
     if plan.spec.image_policy == "cached":
-        if pinned_ref is not None and not overlay.is_empty():
-            cached = image_builder.cached_agent_overlay_rootfs_dir(
-                pinned_ref, overlay, source_root=Path(plan.spec.user_cwd))
-        elif pin is not None:
-            cached = image_builder.cached_agent_image_ext4(pin)
-        else:
-            cached = image_builder.cached_agent_rootfs_dir(dockerfile)
+        cached = _cached_agent_base(plan)
         if cached is None:
             die(
                 f"cached agent rootfs for {plan.image!r} not found; "
@@ -264,27 +241,58 @@ def build_or_load_agent_base(plan: FirecrackerBottlePlan) -> Path:
             )
         info(f"using cached agent rootfs {cached.name}")
         return cached
-    if pin is not None and pinned_ref is not None:
-        # Tier 2 overlay: detect a re-pointed tag before the in-VM build,
-        # matching docker/macos, then build a thin FROM<pinned> layer and
-        # export its rootfs.
-        image_registry.verify_tag(pin)
-        return image_builder.acquire_agent_overlay_rootfs_dir(
-            pinned_ref, overlay, template=plan.agent_provider_template,
-            source_root=Path(plan.spec.user_cwd), smoke_test=smoke,
-        )
-    if pin is not None:
-        # Tier 1: the published ext4, verified on download (sha256, fail closed).
+    template = plan.agent_provider_template
+    smoke = runtime_for(template).smoke_test
+    pin = _agent_pin(plan)
+    if pin is None:
+        return image_builder.build_agent_rootfs_dir(
+            Path(plan.dockerfile_path), image_tag=plan.image, smoke_test=smoke)
+    overlay = plan.manifest.bottle.agent_provider.overlay
+    if overlay.is_empty():
         return image_builder.acquire_agent_image_ext4(pin)
-    return image_builder.build_agent_rootfs_dir(
-        dockerfile,
-        image_tag=plan.image,
-        smoke_test=runtime_for(plan.agent_provider_template).smoke_test,
+    return image_builder.acquire_agent_overlay_rootfs_dir(
+        pin, overlay, template=template,
+        source_root=Path(plan.spec.user_cwd), smoke_test=smoke,
+    )
+
+
+def _agent_pin(plan: FirecrackerBottlePlan) -> Artifact | None:
+    """The published artifact this bottle's base comes from: the ext4 image,
+    or the OCI image an overlay builds on. None means build the bottle's own
+    Dockerfile; an overlay with no published base fails closed instead of
+    building the default without it."""
+    provider = plan.manifest.bottle.agent_provider
+    if provider.builds_custom_image:
+        return None
+    overlay = provider.overlay
+    try:
+        pin = agent_image.resolve_agent_pin(
+            plan.agent_provider_template,
+            fmt=FORMAT_EXT4 if overlay.is_empty() else FORMAT_OCI,
+        )
+    except ArtifactsManifestError as e:
+        die(str(e))
+    if pin is None and not overlay.is_empty():
+        raise agent_overlay.no_published_base_error(plan.agent_provider_template)
+    return pin
+
+
+def _cached_agent_base(plan: FirecrackerBottlePlan) -> Path | None:
+    """The cached base `build_or_load_agent_base` would produce, or None."""
+    pin = _agent_pin(plan)
+    if pin is None:
+        return image_builder.cached_agent_rootfs_dir(Path(plan.dockerfile_path))
+    overlay = plan.manifest.bottle.agent_provider.overlay
+    if overlay.is_empty():
+        return image_builder.cached_agent_image_ext4(pin)
+    return image_builder.cached_agent_overlay_rootfs_dir(
+        pin, overlay, template=plan.agent_provider_template,
+        source_root=Path(plan.spec.user_cwd),
     )
 
 
 def stale_checks(plan: FirecrackerBottlePlan) -> None:
-    """Raise when the cached rootfs selected by this plan is stale."""
+    """Raise when the cached base selected by this plan is stale."""
     if plan.spec.image_policy != "cached":
         return
     committed = read_committed_image(plan.slug)
@@ -292,9 +300,10 @@ def stale_checks(plan: FirecrackerBottlePlan) -> None:
     if committed and committed_tar.is_file():
         check_stale_path(f"agent rootfs {committed_tar}", committed_tar)
         return
-    cached = image_builder.cached_agent_rootfs_dir(Path(plan.dockerfile_path))
+    cached = _cached_agent_base(plan)
     if cached is not None:
-        check_stale_path(f"agent rootfs {cached}", cached / ".bb-ready")
+        marker = cached.with_suffix(".ready") if cached.is_file() else cached / ".bb-ready"
+        check_stale_path(f"agent rootfs {cached}", marker)
 
 
 # --- agent guest env -------------------------------------------------

@@ -51,18 +51,18 @@ class AgentImageName(unittest.TestCase):
 class ResolvePin(unittest.TestCase):
     def test_none_without_a_manifest(self) -> None:
         with mock.patch.object(ai, "load_artifacts_manifest_optional", return_value=None):
-            self.assertIsNone(ai.resolve_agent_pin("claude", prefer=(pa.FORMAT_OCI,)))
+            self.assertIsNone(ai.resolve_agent_pin("claude", fmt=pa.FORMAT_OCI))
 
     def test_none_for_a_custom_template(self) -> None:
         # Never even consults the manifest — a custom template has no default.
         with mock.patch.object(ai, "load_artifacts_manifest_optional") as load:
-            self.assertIsNone(ai.resolve_agent_pin("mine", prefer=(pa.FORMAT_OCI,)))
+            self.assertIsNone(ai.resolve_agent_pin("mine", fmt=pa.FORMAT_OCI))
             load.assert_not_called()
 
     def test_returns_the_pinned_oci_artifact(self) -> None:
         with mock.patch.object(ai, "load_artifacts_manifest_optional", return_value=_manifest()), \
                 mock.patch.object(ai, "current_platform", return_value="linux/arm64"):
-            art = ai.resolve_agent_pin("claude", prefer=(pa.FORMAT_OCI,))
+            art = ai.resolve_agent_pin("claude", fmt=pa.FORMAT_OCI)
         assert art is not None
         self.assertEqual(art.format, "oci")
         self.assertEqual(art.digest, _DIGEST_OCI)
@@ -71,7 +71,7 @@ class ResolvePin(unittest.TestCase):
         with mock.patch.object(ai, "load_artifacts_manifest_optional",
                                return_value=_manifest(ext4=False)), \
                 mock.patch.object(ai, "current_platform", return_value="linux/arm64"):
-            self.assertIsNone(ai.resolve_agent_pin("claude", prefer=(pa.FORMAT_EXT4,)))
+            self.assertIsNone(ai.resolve_agent_pin("claude", fmt=pa.FORMAT_EXT4))
 
 
 def _manifest_pair(
@@ -103,7 +103,7 @@ class ProtocolCompat(unittest.TestCase):
         with mock.patch.object(ai, "load_artifacts_manifest_optional", return_value=entries), \
                 mock.patch.object(ai, "current_platform", return_value="linux/arm64"), \
                 mock.patch.object(ai, "PROTOCOL_VERSION", 1):
-            return ai.resolve_agent_pin("claude", prefer=(pa.FORMAT_OCI,))
+            return ai.resolve_agent_pin("claude", fmt=pa.FORMAT_OCI)
 
     def test_matching_protocol_resolves(self) -> None:
         self.assertIsNotNone(self._resolve(_manifest_pair()))
@@ -122,24 +122,6 @@ class ProtocolCompat(unittest.TestCase):
         entries = _manifest_pair(agent_protocol=2, infra_protocol=2)
         with self.assertRaises(pa.ArtifactsManifestError):
             self._resolve(entries)
-
-
-class Materialize(unittest.TestCase):
-    def test_ensure_oci_pulls_and_returns_pinned_ref(self) -> None:
-        with mock.patch.object(ai, "load_artifacts_manifest_optional", return_value=_manifest()), \
-                mock.patch.object(ai, "current_platform", return_value="linux/arm64"), \
-                mock.patch.object(ai.image_registry, "resolve") as resolve, \
-                mock.patch.object(ai.image_registry, "pull") as pull:
-            resolve.return_value = mock.Mock(pinned_ref="reg/o/bot-bottle-claude@" + _DIGEST_OCI)
-            ref = ai.ensure_agent_oci("claude", runtime="docker")
-        self.assertEqual(ref, "reg/o/bot-bottle-claude@" + _DIGEST_OCI)
-        pull.assert_called_once()
-
-    def test_ensure_oci_none_without_a_pin_never_pulls(self) -> None:
-        with mock.patch.object(ai, "load_artifacts_manifest_optional", return_value=None), \
-                mock.patch.object(ai.image_registry, "pull") as pull:
-            self.assertIsNone(ai.ensure_agent_oci("claude"))
-            pull.assert_not_called()
 
 
 if __name__ == "__main__":

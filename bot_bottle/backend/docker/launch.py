@@ -32,19 +32,15 @@ from __future__ import annotations
 
 import dataclasses
 import os
-import tempfile
 from contextlib import ExitStack, contextmanager
-from pathlib import Path
 from typing import Callable, Generator
 
-from ... import agent_image, agent_overlay
 from ...agent_provider import runtime_for
 from ...egress import Egress
 from ...git_gate import GitGate
 from ...image_cache import check_stale
 from ...log import die, info, warn
-from ...manifest import ManifestImageOverlay
-from .. import BottleImages
+from .. import BottleImages, oci_agent_image
 from . import util as docker_mod
 from .bottle import DockerBottle
 from .bottle_plan import DockerBottlePlan
@@ -71,6 +67,15 @@ from .gateway import DockerGateway
 from ... import resources
 
 
+_DOCKER = oci_agent_image.OciRuntime(
+    pull_argv=("docker", "pull"),
+    image_exists=docker_mod.image_exists,
+    tag_image=docker_mod.tag_image,
+    build_image=docker_mod.build_image,
+    verify=docker_mod.verify_agent_image,
+)
+
+
 def build_or_load_images(plan: DockerBottlePlan) -> BottleImages:
     """Resolve the agent image ref for this plan.
 
@@ -80,6 +85,15 @@ def build_or_load_images(plan: DockerBottlePlan) -> BottleImages:
     if committed and docker_mod.image_exists(committed):
         info(f"using committed image {committed!r}")
         return BottleImages(agent=committed)
+    smoke = runtime_for(plan.agent_provider_template).smoke_test
+    # Prefer the release-pinned published image (or an overlay on it) over a
+    # local build (PRD 0085). None: build the bottle's own Dockerfile.
+    published = oci_agent_image.resolve_published_agent_image(
+        plan, _DOCKER, template=plan.agent_provider_template, image=plan.image,
+        smoke_test=smoke,
+    )
+    if published is not None:
+        return BottleImages(agent=published)
     if plan.spec.image_policy == "cached":
         if not docker_mod.image_exists(plan.image):
             die(
@@ -88,52 +102,11 @@ def build_or_load_images(plan: DockerBottlePlan) -> BottleImages:
             )
         info(f"using cached agent image {plan.image!r}")
         return BottleImages(agent=plan.image)
-    # Prefer the release-pinned published image over a local build (PRD 0085).
-    # Absent a pin (custom template, or no manifest yet) fall back to building.
-    # A custom agent_provider.dockerfile is built as written, never replaced by
-    # the published default image for its template.
-    pinned = (
-        None if plan.builds_custom_image
-        else agent_image.ensure_agent_oci(plan.agent_provider_template, runtime="docker")
-    )
-    if pinned is not None:
-        overlay = plan.image_overlay
-        if overlay.is_empty():
-            docker_mod.tag_image(pinned, plan.image)
-            info(f"using published agent image {plan.image!r} (pulled {pinned})")
-        else:
-            _build_overlay_image(plan, pinned, overlay)
-            info(f"built overlay agent image {plan.image!r} on {pinned}")
-        # Smoke-test the result too, not just built-from-source images — a
-        # published (or overlaid) image that can't launch the harness should
-        # fail here, not at start.
-        docker_mod.verify_agent_image(
-            plan.image, runtime_for(plan.agent_provider_template).smoke_test,
-        )
-        return BottleImages(agent=plan.image)
-    if not plan.image_overlay.is_empty():
-        # No pinned base: building the default instead would drop the overlay.
-        raise agent_overlay.no_published_base_error(plan.agent_provider_template)
     docker_mod.build_image(plan.image, str(resources.build_root()), dockerfile=plan.dockerfile_path)
     docker_mod.verify_agent_image(
         plan.image, runtime_for(plan.agent_provider_template).smoke_test,
     )
     return BottleImages(agent=plan.image)
-
-
-def _build_overlay_image(
-    plan: DockerBottlePlan, base_ref: str, overlay: ManifestImageOverlay,
-) -> None:
-    """Build the declared overlay as a thin layer FROM the pinned base image,
-    tagged as plan.image (PRD 0085 tier 2). Overlay files resolve from the launch
-    cwd, like a custom agent_provider.dockerfile."""
-    with tempfile.TemporaryDirectory(prefix="bb-overlay-") as tmp:
-        ctx = Path(tmp)
-        dockerfile = agent_overlay.stage_overlay_context(
-            base_ref, overlay, template=plan.agent_provider_template,
-            source_root=Path(plan.spec.user_cwd), dest=ctx,
-        )
-        docker_mod.build_image(plan.image, str(ctx), dockerfile=str(dockerfile))
 
 
 @contextmanager

@@ -35,9 +35,7 @@ from __future__ import annotations
 import dataclasses
 import os
 import subprocess
-import tempfile
 from contextlib import ExitStack, contextmanager
-from pathlib import Path
 from typing import Callable, Generator
 
 from ...bottle_state import (
@@ -50,10 +48,8 @@ from ...git_gate import GitGate
 from ...gateway.git_gate.http_backend import DEFAULT_PORT as _GIT_HTTP_PORT
 from ...image_cache import check_stale
 from ...log import die, info, warn
-from ...manifest import ManifestImageOverlay
-from ... import agent_image, agent_overlay
 from ... import resources
-from .. import BottleImages
+from .. import BottleImages, oci_agent_image
 from ...supervisor.types import SUPERVISE_PORT
 from ..docker.egress import EGRESS_PORT
 from ..util import AGENT_CA_BUNDLE, AGENT_CA_PATH
@@ -84,11 +80,30 @@ def build_or_load_images(plan: MacosContainerBottlePlan) -> BottleImages:
     return BottleImages(agent=_layer_nested_containers(plan, _agent_image(plan)))
 
 
+# Apple's CLI pulls with `container image pull`. No smoke test yet: the macOS
+# local-build path doesn't run one either.
+_CONTAINER_RUNTIME = oci_agent_image.OciRuntime(
+    pull_argv=("container", "image", "pull"),
+    image_exists=container_mod.image_exists,
+    tag_image=container_mod.tag_image,
+    build_image=container_mod.build_image,
+)
+
+
 def _agent_image(plan: MacosContainerBottlePlan) -> str:
     committed = read_committed_image(plan.slug)
     if committed and container_mod.image_exists(committed):
         info(f"using committed image {committed!r}")
         return committed
+    # Prefer the release-pinned published image (or an overlay on it) over a
+    # local build (PRD 0085); the nested-containers layer is added on top by
+    # the caller either way. None: build the bottle's own Dockerfile.
+    published = oci_agent_image.resolve_published_agent_image(
+        plan, _CONTAINER_RUNTIME, template=plan.agent_provider_template,
+        image=plan.image, smoke_test=(),
+    )
+    if published is not None:
+        return published
     if plan.spec.image_policy == "cached":
         if not container_mod.image_exists(plan.image):
             die(
@@ -97,42 +112,8 @@ def _agent_image(plan: MacosContainerBottlePlan) -> str:
             )
         info(f"using cached agent image {plan.image!r}")
         return plan.image
-    # Prefer the release-pinned published image over a local build (PRD 0085);
-    # the nested-containers layer is added on top by the caller either way.
-    # A custom agent_provider.dockerfile is built as written, never replaced by
-    # the published default image for its template.
-    pinned = (
-        None if plan.builds_custom_image
-        else agent_image.ensure_agent_oci(plan.agent_provider_template, runtime="container")
-    )
-    if pinned is not None:
-        overlay = plan.image_overlay
-        if overlay.is_empty():
-            container_mod.tag_image(pinned, plan.image)
-            info(f"using published agent image {plan.image!r} (pulled {pinned})")
-        else:
-            _build_overlay_image(plan, pinned, overlay)
-            info(f"built overlay agent image {plan.image!r} on {pinned}")
-        return plan.image
-    if not plan.image_overlay.is_empty():
-        # No pinned base: building the default instead would drop the overlay.
-        raise agent_overlay.no_published_base_error(plan.agent_provider_template)
     container_mod.build_image(plan.image, str(resources.build_root()), dockerfile=plan.dockerfile_path)
     return plan.image
-
-
-def _build_overlay_image(
-    plan: MacosContainerBottlePlan, base_ref: str, overlay: ManifestImageOverlay,
-) -> None:
-    """Build the declared overlay as a thin layer FROM the pinned base image,
-    tagged as plan.image (PRD 0085 tier 2)."""
-    with tempfile.TemporaryDirectory(prefix="bb-overlay-") as tmp:
-        ctx = Path(tmp)
-        dockerfile = agent_overlay.stage_overlay_context(
-            base_ref, overlay, template=plan.agent_provider_template,
-            source_root=Path(plan.spec.user_cwd), dest=ctx,
-        )
-        container_mod.build_image(plan.image, str(ctx), dockerfile=str(dockerfile))
 
 
 def _layer_nested_containers(

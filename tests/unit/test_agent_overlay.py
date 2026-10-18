@@ -1,4 +1,4 @@
-"""PRD 0085 tier-2: overlay Dockerfile synthesis + content-addressed cache tag."""
+"""PRD 0085 tier-2: overlay Dockerfile synthesis, validation, staging and cache key."""
 
 from __future__ import annotations
 
@@ -24,7 +24,13 @@ class RenderOverlay(unittest.TestCase):
         self.assertIn(f"FROM {_BASE}", df)
         self.assertIn("apt-get install -y --no-install-recommends jq curl", df)
         self.assertIn("rm -rf /var/lib/apt/lists/*", df)
-        self.assertIn(f"COPY extra/s.json {ao.OVERLAY_DEST}/extra/s.json", df)
+        self.assertIn(f'COPY ["extra/s.json", "{ao.OVERLAY_DEST}/extra/s.json"]', df)
+
+    def test_copy_uses_json_form(self) -> None:
+        # COPY doesn't do shell quoting, so a space in a path must not split it.
+        df = ao.render_overlay_dockerfile(
+            _BASE, ManifestImageOverlay(files=("my file.txt",)), template="claude")
+        self.assertIn(f'COPY ["my file.txt", "{ao.OVERLAY_DEST}/my file.txt"]', df)
 
     def test_apt_runs_as_root_and_restores_image_user(self) -> None:
         # The default images end as `USER node`; apt needs root, and the agent
@@ -46,10 +52,12 @@ class RenderOverlay(unittest.TestCase):
             _BASE, ManifestImageOverlay(files=("f",)), template="claude")
         self.assertNotIn("USER", df)
 
-    def test_apt_package_is_shell_quoted(self) -> None:
-        df = ao.render_overlay_dockerfile(
-            _BASE, ManifestImageOverlay(apt=("a b;rm",)), template="claude")
-        self.assertIn("'a b;rm'", df)
+    def test_invalid_apt_package_rejected_before_rendering(self) -> None:
+        # A newline would start a new Dockerfile instruction (e.g. a second FROM).
+        for pkg in ("a b;rm", "jq\nFROM alpine", "Jq"):
+            with self.subTest(pkg=pkg), self.assertRaises(ao.OverlayError):
+                ao.render_overlay_dockerfile(
+                    _BASE, ManifestImageOverlay(apt=(pkg,)), template="claude")
 
 
 
@@ -124,6 +132,22 @@ class StageContext(unittest.TestCase):
             self.assertIn(f"FROM {_BASE}", df.read_text())
             self.assertTrue((dest / "extra" / "s.json").is_file())
 
+    def test_symlink_out_of_the_launch_dir_is_refused(self) -> None:
+        # The launch dir may be an untrusted checkout: a link to a host secret
+        # must not be copied into the image.
+        with tempfile.TemporaryDirectory() as tmp:
+            secret = Path(tmp) / "secret"
+            secret.write_text("key")
+            root = Path(tmp) / "src"
+            (root / "dir").mkdir(parents=True)
+            (root / "creds").symlink_to(secret)
+            (root / "linked").symlink_to(Path(tmp))
+            for rel in ("creds", "linked/secret"):
+                with self.subTest(rel=rel), self.assertRaises(ao.OverlayError):
+                    ao.stage_overlay_context(
+                        _BASE, ManifestImageOverlay(files=(rel,)), template="claude",
+                        source_root=root, dest=Path(tmp) / f"ctx-{rel.replace('/', '-')}")
+
     def test_missing_file_raises(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "src"
@@ -152,9 +176,11 @@ class RenderDockerfileOverlay(unittest.TestCase):
             with self.subTest(frm=frm):
                 self.assertIn(frm, self._render(frm + "\nRUN true\n"))
 
-    def test_parser_directive_stays_first(self) -> None:
-        out = self._render("# syntax=docker/dockerfile:1\nFROM ${BASE}\n")
-        self.assertEqual("# syntax=docker/dockerfile:1", out.splitlines()[0])
+    def test_comments_and_heredocs_accepted(self) -> None:
+        out = self._render(
+            "FROM ${BASE}\n# set foo=bar later\nRUN <<EOF\necho hi\nEOF\n"
+            "COPY <<'END-OF' /etc/x\nhello\nEND-OF\n")
+        self.assertEqual("USER node", out.splitlines()[-1])
 
     def test_continuation_lines_are_one_instruction(self) -> None:
         out = self._render("FROM ${BASE}\nRUN apt-get update && \\\n    apt-get install -y jq\n")
@@ -168,6 +194,17 @@ class RenderDockerfileOverlay(unittest.TestCase):
             "BASE given a value": "ARG BASE=evil/image\nFROM ${BASE}\n",
             "instruction before FROM": "RUN true\nFROM ${BASE}\n",
             "FROM flags": "FROM --platform=linux/amd64 ${BASE}\n",
+            # Ways to slip past a line-based check that Docker parses differently:
+            "tab after a second FROM": "FROM ${BASE}\nRUN true\nFROM\tscratch\n",
+            "syntax directive": "# syntax=evil/frontend\nFROM ${BASE}\n",
+            "escape directive": "# escape=`\nFROM ${BASE}\nRUN echo hi \\\nFROM scratch\n",
+            "BASE among several ARGs": "ARG X=1 BASE=other:tag\nFROM ${BASE}\n",
+            "BASE across a continuation": "ARG \\\n BASE\nFROM ${BASE}\n",
+            "trailing continuation": "FROM ${BASE}\nRUN echo hi \\\n",
+            "continuation past blanks/comments": "FROM ${BASE}\nRUN echo hi \\\n\n# c\n",
+            "unterminated heredoc": "FROM ${BASE}\nRUN <<EOF\necho hi\n",
+            "heredoc closed by a prefix": "FROM ${BASE}\nRUN <<END-OF\nEND\n",
+            "FROM inside a heredoc": "FROM ${BASE}\nRUN <<EOF\nFROM scratch\nEOF\n",
         }
         for name, text in cases.items():
             with self.subTest(name), self.assertRaises(ao.OverlayError):
@@ -198,6 +235,22 @@ class StageDockerfileOverlay(unittest.TestCase):
             self.assertTrue((dest / "conf" / "a.json").is_file())
             self.assertFalse((dest / "outside.txt").exists())
 
+    def test_context_symlinks_are_copied_as_links(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            secret = Path(tmp) / "secret"
+            secret.write_text("key")
+            ctx_dir = Path(tmp) / "src" / "overlay"
+            ctx_dir.mkdir(parents=True)
+            (ctx_dir / "Dockerfile").write_text("FROM ${BASE}\n")
+            (ctx_dir / "creds").symlink_to(secret)
+            (ctx_dir / "dangling").symlink_to(Path(tmp) / "nope")
+            dest = Path(tmp) / "ctx"
+            ao.stage_overlay_context(
+                _BASE, ManifestImageOverlay(dockerfile="overlay/Dockerfile"),
+                template="claude", source_root=Path(tmp) / "src", dest=dest)
+            self.assertTrue((dest / "creds").is_symlink())
+            self.assertTrue((dest / "dangling").is_symlink())
+
     def test_missing_dockerfile_raises(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(ao.OverlayError):
@@ -206,36 +259,66 @@ class StageDockerfileOverlay(unittest.TestCase):
                     template="claude", source_root=Path(tmp), dest=Path(tmp) / "ctx")
 
 
-class ContextDigest(unittest.TestCase):
-    def test_files_content_edit_changes_digest(self) -> None:
+class StagedOverlayKey(unittest.TestCase):
+    def _key(self, root: Path, overlay: ManifestImageOverlay, base: str = _BASE) -> str:
+        with ao.staged_overlay(base, overlay, template="claude", source_root=root) as st:
+            self.assertTrue(st.dockerfile.is_file())
+            return st.cache_key
+
+    def test_stable_for_same_input(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            o = ManifestImageOverlay(apt=("jq",))
+            self.assertEqual(self._key(Path(tmp), o), self._key(Path(tmp), o))
+
+    def test_changes_with_base_spec_and_file_content(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "f.txt").write_text("one")
-            o = ManifestImageOverlay(files=("f.txt",))
-            before = ao.overlay_context_digest(o, root)
+            with_file = ManifestImageOverlay(apt=("jq",), files=("f.txt",))
+            keys = {
+                self._key(root, ManifestImageOverlay(apt=("jq",))),
+                self._key(root, ManifestImageOverlay(apt=("jq", "curl"))),
+                self._key(root, ManifestImageOverlay(apt=("jq",)), base=_BASE[:-1] + "b"),
+                self._key(root, with_file),
+            }
             (root / "f.txt").write_text("two")
-            self.assertNotEqual(before, ao.overlay_context_digest(o, root))
+            keys.add(self._key(root, with_file))
+            self.assertEqual(5, len(keys))
 
-    def test_dockerfile_context_edit_changes_digest(self) -> None:
+    def test_changes_with_dockerfile_context_and_render(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "ov").mkdir()
             (root / "ov" / "Dockerfile").write_text("FROM ${BASE}\n")
             (root / "ov" / "data.txt").write_text("a")
             o = ManifestImageOverlay(dockerfile="ov/Dockerfile")
-            before = ao.overlay_context_digest(o, root)
+            before = self._key(root, o)
             (root / "ov" / "data.txt").write_text("b")
-            after_data = ao.overlay_context_digest(o, root)
-            (root / "ov" / "Dockerfile").write_text("FROM ${BASE}\nRUN true\n")
-            self.assertNotEqual(before, after_data)
-            self.assertNotEqual(after_data, ao.overlay_context_digest(o, root))
+            after_data = self._key(root, o)
+            # A change to how bot-bottle renders the Dockerfile rebuilds too.
+            with mock.patch.object(ao, "get_provider",
+                                   return_value=mock.Mock(image_user="other")):
+                after_render = self._key(root, o)
+            self.assertEqual(3, len({before, after_data, after_render}))
+
+    def test_symlink_target_is_part_of_the_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ov").mkdir()
+            (root / "ov" / "Dockerfile").write_text("FROM ${BASE}\n")
+            (root / "ov" / "link").symlink_to("a")
+            o = ManifestImageOverlay(dockerfile="ov/Dockerfile")
+            before = self._key(root, o)
+            (root / "ov" / "link").unlink()
+            (root / "ov" / "link").symlink_to("b")
+            self.assertNotEqual(before, self._key(root, o))
 
     def test_missing_input_raises(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             for o in (ManifestImageOverlay(files=("x",)),
                       ManifestImageOverlay(dockerfile="x/Dockerfile")):
                 with self.subTest(o=o), self.assertRaises(ao.OverlayError):
-                    ao.overlay_context_digest(o, Path(tmp))
+                    self._key(Path(tmp), o)
 
 
 class NoPublishedBase(unittest.TestCase):
@@ -243,35 +326,6 @@ class NoPublishedBase(unittest.TestCase):
         err = ao.no_published_base_error("claude")
         self.assertIsInstance(err, ao.OverlayError)
         self.assertIn("'claude'", str(err))
-
-
-class CacheTag(unittest.TestCase):
-    def test_stable_for_same_input(self) -> None:
-        o = ManifestImageOverlay(apt=("jq",))
-        self.assertEqual(ao.overlay_cache_tag("sha256:x", o), ao.overlay_cache_tag("sha256:x", o))
-
-    def test_changes_with_base_digest(self) -> None:
-        o = ManifestImageOverlay(apt=("jq",))
-        self.assertNotEqual(ao.overlay_cache_tag("sha256:x", o), ao.overlay_cache_tag("sha256:y", o))
-
-    def test_changes_with_overlay_spec(self) -> None:
-        a = ao.overlay_cache_tag("sha256:x", ManifestImageOverlay(apt=("jq",)))
-        b = ao.overlay_cache_tag("sha256:x", ManifestImageOverlay(apt=("jq", "curl")))
-        c = ao.overlay_cache_tag("sha256:x", ManifestImageOverlay(files=("f",)))
-        d = ao.overlay_cache_tag("sha256:x", ManifestImageOverlay(
-            apt=("jq",), harness_version="2.1.180"))
-        e = ao.overlay_cache_tag("sha256:x", ManifestImageOverlay(dockerfile="Dockerfile"))
-        self.assertNotEqual(a, b)
-        self.assertNotEqual(a, c)
-        self.assertNotEqual(a, d)
-        self.assertNotEqual(a, e)
-
-    def test_changes_with_context_digest(self) -> None:
-        o = ManifestImageOverlay(files=("f",))
-        self.assertNotEqual(
-            ao.overlay_cache_tag("sha256:x", o, context_digest="aa"),
-            ao.overlay_cache_tag("sha256:x", o, context_digest="bb"),
-        )
 
 
 if __name__ == "__main__":

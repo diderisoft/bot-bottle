@@ -3,7 +3,8 @@
 The consumer side of agent images, mirroring `infra_rootfs` for infra: given a
 built-in provider template, find the release-pinned artifact for this platform in
 the manifest baked into the install, and materialize it (OCI pull for
-docker/macos, ext4 fetch for firecracker).
+docker/macos via `backend.oci_agent_image`, ext4 for firecracker via its
+`image_builder`).
 
 Resolution returns **None** whenever the caller should build locally instead — no
 manifest yet (before the first release), a custom template with no published
@@ -15,12 +16,11 @@ unreachable registry; it never silently falls back to a build.
 from __future__ import annotations
 
 
-from . import image_inputs, image_registry
+from . import image_inputs
 from .compat import PROTOCOL_VERSION
 from .published_artifacts import (
     Artifact,
     ArtifactsManifestError,
-    FORMAT_OCI,
     ImageEntry,
     current_platform,
     load_artifacts_manifest_optional,
@@ -64,11 +64,12 @@ def _assert_protocol_compatible(
 
 
 def resolve_agent_pin(
-    template: str, *, prefer: tuple[str, ...], plat: str | None = None,
+    template: str, *, fmt: str, plat: str | None = None,
 ) -> Artifact | None:
-    """The pinned artifact for `template` on `plat`, or None when the consumer
-    should build locally instead: no manifest yet, a custom template, the image
-    is absent from the manifest, or it has no artifact in `prefer` for `plat`.
+    """The pinned `fmt` artifact for `template` on `plat`, or None when the
+    consumer should build locally instead: no manifest yet, a custom template,
+    the image is absent from the manifest, or it has no `fmt` artifact for
+    `plat`.
 
     A pin that *does* exist but was built for a different agent <-> infra protocol
     raises (fail closed) — see `_assert_protocol_compatible`."""
@@ -82,30 +83,10 @@ def resolve_agent_pin(
     if entry is None:
         return None
     _assert_protocol_compatible(entries, entry)
-    plat = plat or current_platform()
-    for fmt in prefer:
-        artifact = entry.for_format(fmt, plat)
-        if artifact is not None:
-            return artifact
-    return None
-
-
-def ensure_agent_oci(template: str, *, runtime: str = "docker") -> str | None:
-    """Pull + verify the pinned OCI agent image for `template`, returning the
-    local digest-pinned ref to run, or None when nothing is pinned (build).
-
-    A pin that exists but fails verification/pull raises — the pull path never
-    falls back to a build (that is the caller's explicit choice)."""
-    artifact = resolve_agent_pin(template, prefer=(FORMAT_OCI,))
-    if artifact is None:
-        return None
-    resolved = image_registry.resolve(artifact)
-    image_registry.pull(resolved, runtime=runtime)
-    return resolved.pinned_ref
+    return entry.for_format(fmt, plat or current_platform())
 
 
 __all__ = [
     "agent_image_name",
     "resolve_agent_pin",
-    "ensure_agent_oci",
 ]

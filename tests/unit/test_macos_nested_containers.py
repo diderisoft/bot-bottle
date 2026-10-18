@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import unittest
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -12,7 +12,7 @@ from unittest.mock import patch
 from bot_bottle.backend.macos_container import nested_containers
 from bot_bottle.backend.macos_container import launch as launch_mod
 from bot_bottle.backend.macos_container.bottle_plan import MacosContainerBottlePlan
-from bot_bottle.manifest import ManifestImageOverlay
+from bot_bottle.manifest.agent import ManifestAgentProvider
 
 
 class _Bottle:
@@ -50,9 +50,10 @@ class _Plan:
     # A custom (non-published) template, so the PRD 0085 pull path resolves no
     # pin and these tests keep exercising the local build path.
     agent_provider_template: str = "test-agent"
-    # No overlay declared, so the missing pin builds locally instead of failing.
-    image_overlay: ManifestImageOverlay = ManifestImageOverlay()
-    builds_custom_image: bool = False
+    # No overlay or custom Dockerfile declared, so the missing pin builds
+    # locally instead of failing.
+    manifest: object = field(default_factory=lambda: SimpleNamespace(
+        bottle=SimpleNamespace(agent_provider=ManifestAgentProvider(template="test-agent"))))
 
 
 def _base_image_only(ref: str) -> bool:

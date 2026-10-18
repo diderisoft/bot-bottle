@@ -141,62 +141,27 @@ class TestLaunchCommittedImage(unittest.TestCase):
     def test_falls_back_to_build_when_no_committed_image(self) -> None:
         self.assertEqual([_DEFAULT_IMAGE], self._run_launch(_plan(self._tmp), committed_tag=None))
 
-    def test_pulls_when_a_pin_exists(self) -> None:
-        pinned = "reg/o/bot-bottle-claude@sha256:" + "a" * 64
+    def test_runs_the_published_image_when_one_resolves(self) -> None:
         plan = _plan(self._tmp)
         with mock.patch.object(launch_mod, "read_committed_image", return_value=None), \
-                mock.patch.object(launch_mod.agent_image, "ensure_agent_oci", return_value=pinned), \
-                mock.patch.object(launch_mod.docker_mod, "tag_image") as tag, \
-                mock.patch.object(launch_mod.docker_mod, "verify_agent_image"), \
+                mock.patch.object(launch_mod.oci_agent_image, "resolve_published_agent_image",
+                                  return_value="bot-bottle-claude:pin-abc") as resolve, \
                 mock.patch.object(launch_mod.docker_mod, "build_image") as build:
             images = launch_mod.build_or_load_images(plan)
-        self.assertEqual(plan.image, images.agent)
-        tag.assert_called_once_with(pinned, plan.image)
+        self.assertEqual("bot-bottle-claude:pin-abc", images.agent)
+        self.assertIs(launch_mod._DOCKER, resolve.call_args.args[1])
         build.assert_not_called()
 
-    def test_overlay_builds_a_thin_layer_on_the_pin(self) -> None:
-        from unittest.mock import PropertyMock
-        from bot_bottle.manifest import ManifestImageOverlay
-        pinned = "reg/o/bot-bottle-claude@sha256:" + "a" * 64
+    def test_builds_its_own_dockerfile_when_nothing_is_published(self) -> None:
         plan = _plan(self._tmp)
         with mock.patch.object(launch_mod, "read_committed_image", return_value=None), \
-                mock.patch.object(launch_mod.agent_image, "ensure_agent_oci", return_value=pinned), \
-                mock.patch.object(type(plan), "image_overlay", new_callable=PropertyMock,
-                                  return_value=ManifestImageOverlay(apt=("jq",))), \
-                mock.patch.object(launch_mod, "_build_overlay_image") as build_overlay, \
-                mock.patch.object(launch_mod.docker_mod, "verify_agent_image"), \
-                mock.patch.object(launch_mod.docker_mod, "tag_image") as tag:
-            images = launch_mod.build_or_load_images(plan)
-        build_overlay.assert_called_once()
-        tag.assert_not_called()
-        self.assertEqual(plan.image, images.agent)
-
-    def test_custom_dockerfile_builds_even_when_a_pin_exists(self) -> None:
-        from unittest.mock import PropertyMock
-        plan = _plan(self._tmp)
-        with mock.patch.object(launch_mod, "read_committed_image", return_value=None), \
-                mock.patch.object(type(plan), "builds_custom_image", new_callable=PropertyMock,
-                                  return_value=True), \
-                mock.patch.object(launch_mod.agent_image, "ensure_agent_oci") as pull, \
+                mock.patch.object(launch_mod.oci_agent_image, "resolve_published_agent_image",
+                                  return_value=None), \
                 mock.patch.object(launch_mod.docker_mod, "verify_agent_image"), \
                 mock.patch.object(launch_mod.docker_mod, "build_image") as build:
-            launch_mod.build_or_load_images(plan)
-        pull.assert_not_called()
+            images = launch_mod.build_or_load_images(plan)
         build.assert_called_once()
-
-    def test_overlay_without_a_pin_fails_instead_of_dropping_it(self) -> None:
-        from unittest.mock import PropertyMock
-        from bot_bottle.agent_overlay import OverlayError
-        from bot_bottle.manifest import ManifestImageOverlay
-        plan = _plan(self._tmp)
-        with mock.patch.object(launch_mod, "read_committed_image", return_value=None), \
-                mock.patch.object(launch_mod.agent_image, "ensure_agent_oci", return_value=None), \
-                mock.patch.object(type(plan), "image_overlay", new_callable=PropertyMock,
-                                  return_value=ManifestImageOverlay(apt=("jq",))), \
-                mock.patch.object(launch_mod.docker_mod, "build_image") as build:
-            with self.assertRaises(OverlayError):
-                launch_mod.build_or_load_images(plan)
-        build.assert_not_called()
+        self.assertEqual(plan.image, images.agent)
 
     def test_cached_images_skip_build_when_present(self) -> None:
         base = _plan(self._tmp)

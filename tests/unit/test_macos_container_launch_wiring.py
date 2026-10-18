@@ -24,7 +24,7 @@ from bot_bottle.backend.macos_container.launch import (
     build_or_load_images,
 )
 from bot_bottle.log import Die
-from bot_bottle.manifest import ManifestImageOverlay, ManifestIndex
+from bot_bottle.manifest import ManifestIndex
 
 _BOTTLE = "bot_bottle.backend.macos_container.bottle"
 
@@ -75,8 +75,6 @@ def _plan(
         dockerfile_path="/repo/Dockerfile",
         # Custom (non-published) template: no pin, so the build path runs.
         agent_provider_template="test-agent",
-        image_overlay=ManifestImageOverlay(),
-        builds_custom_image=False,
         forwarded_env={"OAUTH_TOKEN": "host-value"},
         egress_plan=egress_plan,
         git_gate_plan=SimpleNamespace(upstreams=()),
@@ -99,44 +97,25 @@ class TestBuildOrLoadImages(unittest.TestCase):
     def tearDown(self) -> None:
         self._tmp.cleanup()
 
-    def test_custom_dockerfile_builds_even_when_a_pin_exists(self) -> None:
-        plan = cast(SimpleNamespace, self.plan)
-        plan.builds_custom_image = True
+    def test_runs_the_published_image_when_one_resolves(self) -> None:
         with (
             patch(
                 "bot_bottle.backend.macos_container.launch.read_committed_image",
                 return_value=None,
             ),
             patch(
-                "bot_bottle.backend.macos_container.launch.agent_image.ensure_agent_oci",
-            ) as pull,
+                "bot_bottle.backend.macos_container.launch.oci_agent_image"
+                ".resolve_published_agent_image",
+                return_value="bot-bottle-claude:pin-abc",
+            ) as resolve,
             patch(
                 "bot_bottle.backend.macos_container.launch.container_mod.build_image",
             ) as build,
         ):
-            build_or_load_images(self.plan)
-        pull.assert_not_called()
-        build.assert_called_once()
-
-    def test_overlay_without_a_pin_fails_instead_of_dropping_it(self) -> None:
-        from bot_bottle.agent_overlay import OverlayError
-        plan = cast(SimpleNamespace, self.plan)
-        plan.image_overlay = ManifestImageOverlay(apt=("jq",))
-        with (
-            patch(
-                "bot_bottle.backend.macos_container.launch.read_committed_image",
-                return_value=None,
-            ),
-            patch(
-                "bot_bottle.backend.macos_container.launch.agent_image.ensure_agent_oci",
-                return_value=None,
-            ),
-            patch(
-                "bot_bottle.backend.macos_container.launch.container_mod.build_image",
-            ) as build,
-            self.assertRaises(OverlayError),
-        ):
-            build_or_load_images(self.plan)
+            images = build_or_load_images(self.plan)
+        self.assertEqual("bot-bottle-claude:pin-abc", images.agent)
+        runtime = resolve.call_args.args[1]
+        self.assertEqual(("container", "image", "pull"), runtime.pull_argv)
         build.assert_not_called()
 
     def test_reuses_present_committed_image(self) -> None:
@@ -192,30 +171,6 @@ class TestBuildOrLoadImages(unittest.TestCase):
         ):
             with self.assertRaises(Die):
                 build_or_load_images(plan)
-
-    def test_fresh_policy_pulls_when_a_pin_exists(self) -> None:
-        pinned = "reg/o/bot-bottle-claude@sha256:" + "a" * 64
-        with (
-            patch(
-                "bot_bottle.backend.macos_container.launch.read_committed_image",
-                return_value=None,
-            ),
-            patch(
-                "bot_bottle.backend.macos_container.launch.agent_image.ensure_agent_oci",
-                return_value=pinned,
-            ),
-            patch(
-                "bot_bottle.backend.macos_container.launch.container_mod.tag_image"
-            ) as tag,
-            patch(
-                "bot_bottle.backend.macos_container.launch.container_mod.build_image"
-            ) as build,
-        ):
-            images = build_or_load_images(self.plan)
-
-        self.assertEqual(self.plan.image, images.agent)
-        tag.assert_called_once_with(pinned, self.plan.image)
-        build.assert_not_called()
 
     def test_fresh_policy_builds_image(self) -> None:
         with (

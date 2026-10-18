@@ -318,14 +318,19 @@ def status() -> int:
     else:
         sys.stderr.write("e2fsprogs: debugfs, e2fsck, resize2fs present\n")
     # Optional: overlays build on the host when an engine is available.
-    engine = container_engine.host_container_engine()
-    if engine is not None:
-        sys.stderr.write(f"container engine: {engine} (agent overlays build on the host)\n")
+    try:
+        engine = container_engine.host_container_engine()
+    except container_engine.EngineUnavailable as e:
+        sys.stderr.write(f"container engine: {e}\n")
+        ok = False
     else:
-        sys.stderr.write(
-            "container engine: none (optional; agent overlays build in the infra "
-            "VM — install Docker or Podman to build them on the host)\n"
-        )
+        if engine is not None:
+            sys.stderr.write(f"container engine: {engine} (agent overlays build on the host)\n")
+        else:
+            sys.stderr.write(
+                "container engine: none (optional; agent overlays build in the infra "
+                "VM — install Docker or Podman to build them on the host)\n"
+            )
     missing = netpool.missing_taps()
     total = netpool.pool_size()
     if missing:

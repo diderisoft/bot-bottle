@@ -31,18 +31,34 @@ def _usable(engine: str) -> bool:
     return probe.returncode == 0
 
 
+class EngineUnavailable(RuntimeError):
+    """`BOT_BOTTLE_BUILD_ENGINE` names an engine that can't be used, or isn't
+    one of the accepted values. An explicit choice fails loudly rather than
+    quietly building somewhere else."""
+
+
 def host_container_engine() -> str | None:
-    """The host engine to build with: `BOT_BOTTLE_BUILD_ENGINE` if it names a
-    usable one, else the first usable of Docker then Podman, else None (and
-    always None when the variable is `vm`)."""
+    """The host engine to build with: the one `BOT_BOTTLE_BUILD_ENGINE` names
+    (raising `EngineUnavailable` if it isn't usable), else the first usable of
+    Docker then Podman, else None. `vm` forces None."""
     forced = os.environ.get(ENGINE_ENV, "").strip().lower()
     if forced == "vm":
         return None
-    candidates = (forced,) if forced in ENGINES else ENGINES
-    for engine in candidates:
+    if forced:
+        if forced not in ENGINES:
+            raise EngineUnavailable(
+                f"{ENGINE_ENV}={forced!r} is not one of: {', '.join((*ENGINES, 'vm'))}"
+            )
+        if not _usable(forced):
+            raise EngineUnavailable(
+                f"{ENGINE_ENV}={forced} but `{forced} info` failed; start it, or "
+                f"unset {ENGINE_ENV} to fall back to another engine or the infra VM"
+            )
+        return forced
+    for engine in ENGINES:
         if _usable(engine):
             return engine
     return None
 
 
-__all__ = ["ENGINES", "ENGINE_ENV", "host_container_engine"]
+__all__ = ["ENGINES", "ENGINE_ENV", "EngineUnavailable", "host_container_engine"]

@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ...agent_provider import PromptMode
-from ...manifest import ManifestImageOverlay
 from .. import BottlePlan
 
 
@@ -57,16 +56,6 @@ class FirecrackerBottlePlan(BottlePlan):
     @property
     def agent_provider_template(self) -> str:
         return self.agent_provision.template
-
-    @property
-    def image_overlay(self) -> ManifestImageOverlay:
-        return self.manifest.bottle.agent_provider.overlay
-
-    @property
-    def builds_custom_image(self) -> bool:
-        """The bottle names its own `agent_provider.dockerfile`, so its image
-        is built from that, never swapped for the published default (PRD 0085)."""
-        return bool(self.manifest.bottle.agent_provider.dockerfile)
 
     @property
     def git_gate_insteadof_host(self) -> str:

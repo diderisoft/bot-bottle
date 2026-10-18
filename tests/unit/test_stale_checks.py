@@ -218,8 +218,9 @@ class TestFirecrackerCachedRootfs(unittest.TestCase):
             image="bot-bottle-agent:latest",
             dockerfile_path="/repo/Dockerfile",
             agent_provider_template="claude",
-            image_overlay=ManifestImageOverlay(),
-            builds_custom_image=False,
+            manifest=SimpleNamespace(bottle=SimpleNamespace(agent_provider=SimpleNamespace(
+                overlay=ManifestImageOverlay(), builds_custom_image=False,
+            ))),
         ))
 
     def test_cached_policy_reuses_ready_rootfs_without_building(self) -> None:
@@ -253,12 +254,10 @@ class TestFirecrackerCachedRootfs(unittest.TestCase):
         with patch.object(mod, "read_committed_image", return_value=""), \
              patch.object(mod.agent_image, "resolve_agent_pin", return_value=pin) as resolve, \
              patch.object(mod.image_builder, "acquire_agent_image_ext4",
-                          return_value=prepared) as acquire, \
-             patch.object(mod.image_registry, "verify_tag") as verify:
+                          return_value=prepared) as acquire:
             self.assertEqual(prepared, mod.build_or_load_agent_base(self._plan("build")))
-        self.assertEqual((FORMAT_EXT4,), resolve.call_args.kwargs["prefer"])
+        self.assertEqual(FORMAT_EXT4, resolve.call_args.kwargs["fmt"])
         acquire.assert_called_once_with(pin)
-        verify.assert_not_called()  # ext4 is sha256-verified on download
 
     def test_overlay_still_resolves_the_oci_artifact(self) -> None:
         from bot_bottle.backend.firecracker import launch as mod
@@ -267,21 +266,20 @@ class TestFirecrackerCachedRootfs(unittest.TestCase):
         pin = Artifact(image="bot-bottle-claude", format=FORMAT_OCI, platform="linux/amd64",
                        url="reg/o/bot-bottle-claude:0.1.0-amd64", digest="sha256:" + "f" * 64)
         plan = self._plan("build")
-        plan.image_overlay = ManifestImageOverlay(apt=("jq",))
+        plan.manifest.bottle.agent_provider.overlay = ManifestImageOverlay(apt=("jq",))
         plan.spec.user_cwd = "/tmp"
         with patch.object(mod, "read_committed_image", return_value=""), \
              patch.object(mod.agent_image, "resolve_agent_pin", return_value=pin) as resolve, \
-             patch.object(mod.image_registry, "verify_tag"), \
              patch.object(mod.image_builder, "acquire_agent_overlay_rootfs_dir",
                           return_value=Path("/cache/o")) as overlay:
             mod.build_or_load_agent_base(plan)
-        self.assertEqual((FORMAT_OCI,), resolve.call_args.kwargs["prefer"])
-        overlay.assert_called_once()
+        self.assertEqual(FORMAT_OCI, resolve.call_args.kwargs["fmt"])
+        self.assertIs(pin, overlay.call_args.args[0])
 
     def test_custom_dockerfile_builds_even_when_a_pin_exists(self) -> None:
         from bot_bottle.backend.firecracker import launch as mod
         plan = self._plan("build")
-        plan.builds_custom_image = True
+        plan.manifest.bottle.agent_provider.builds_custom_image = True
         built = Path("/cache/rootfs/agent-custom")
         with patch.object(mod, "read_committed_image", return_value=""), \
              patch.object(mod.agent_image, "resolve_agent_pin") as pin, \
@@ -296,7 +294,7 @@ class TestFirecrackerCachedRootfs(unittest.TestCase):
         from bot_bottle.manifest import ManifestImageOverlay
         for policy in ("cached", "build"):
             plan = self._plan(policy)
-            plan.image_overlay = ManifestImageOverlay(apt=("jq",))
+            plan.manifest.bottle.agent_provider.overlay = ManifestImageOverlay(apt=("jq",))
             with self.subTest(policy=policy), \
                  patch.object(mod, "read_committed_image", return_value=""), \
                  patch.object(mod.agent_image, "resolve_agent_pin", return_value=None), \
@@ -317,6 +315,24 @@ class TestFirecrackerCachedRootfs(unittest.TestCase):
              patch.object(mod, "check_stale_path") as check:
             mod.stale_checks(self._plan())
         check.assert_called_once_with(f"agent rootfs {cached}", cached / ".bb-ready")
+
+    def test_stale_checks_look_at_the_published_base_launch_would_use(self) -> None:
+        import tempfile
+        from bot_bottle.backend.firecracker import launch as mod
+        from bot_bottle.published_artifacts import FORMAT_EXT4, Artifact
+        pin = Artifact(image="bot-bottle-claude", format=FORMAT_EXT4, platform="linux/amd64",
+                       url="https://example.invalid/r.ext4.gz", digest="sha256:" + "e" * 64)
+        with tempfile.TemporaryDirectory() as tmp:
+            prepared = Path(tmp) / "agent-ext4-x.ext4"
+            prepared.write_bytes(b"")
+            with patch.object(mod, "read_committed_image", return_value=""), \
+                 patch.object(mod.agent_image, "resolve_agent_pin", return_value=pin), \
+                 patch.object(mod.image_builder, "cached_agent_image_ext4",
+                              return_value=prepared), \
+                 patch.object(mod, "check_stale_path") as check:
+                mod.stale_checks(self._plan())
+        check.assert_called_once_with(
+            f"agent rootfs {prepared}", prepared.with_suffix(".ready"))
 
     def test_backend_prelaunch_checks_delegates(self) -> None:
         from bot_bottle.backend.firecracker.backend import FirecrackerBottleBackend

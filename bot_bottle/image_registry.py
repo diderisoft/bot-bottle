@@ -195,16 +195,19 @@ def resolve(
     return ResolvedImage(artifact=artifact, pinned_ref=pinned_reference(artifact))
 
 
-def pull(resolved: ResolvedImage, *, runtime: str = "docker") -> None:
-    """Pull the verified reference with `runtime`.
+def pull(
+    resolved: ResolvedImage, *, runtime: str = "docker", argv: tuple[str, ...] = (),
+) -> None:
+    """Pull the verified reference with `runtime` (or the explicit command
+    prefix `argv`, for a CLI whose pull isn't `<runtime> pull`).
 
     Deliberately never falls back to building: this path exists precisely
     because the image should come from the registry, and a silent local build
     would produce bytes nobody verified. Callers wanting a build ask for one
     explicitly."""
-    argv = [runtime, "pull", resolved.pinned_ref]
+    cmd = [*(argv or (runtime, "pull")), resolved.pinned_ref]
     try:
-        proc = subprocess.run(argv, capture_output=True, check=False, text=True)
+        proc = subprocess.run(cmd, capture_output=True, check=False, text=True)
     except OSError as e:
         raise RegistryError(f"{runtime} not available to pull images: {e}") from e
     if proc.returncode != 0:

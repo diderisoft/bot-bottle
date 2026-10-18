@@ -3,8 +3,8 @@
 A throwaway local registry stands in for the published-image registry, so the
 overlay is built `FROM <ref@digest>` exactly as it is in production — without
 publishing anything. Both overlay shapes go through the docker backend's own
-build path (`_build_overlay_image`): the structured `files` form and the
-free-form `dockerfile` form. Each result is run to check its content landed
+resolver (`oci_agent_image` with the docker runtime): the structured `files`
+form and the free-form `dockerfile` form. Each result is run to check its content landed
 and that the provider's non-root user was restored.
 """
 
@@ -16,11 +16,13 @@ import unittest
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
+from unittest import mock
 
+from bot_bottle.backend import oci_agent_image
 from bot_bottle.backend.docker import launch as launch_mod
-from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
 from bot_bottle.manifest import ManifestImageOverlay
+from bot_bottle.published_artifacts import FORMAT_OCI, Artifact
 from tests._backend import skip_unless_backend
 
 REGISTRY_IMAGE = "registry:2"
@@ -38,6 +40,7 @@ def _docker(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
 class TestAgentOverlayDocker(unittest.TestCase):
     registry: str
     base_ref: str
+    pin: Artifact
     _names: list[str]
 
     @classmethod
@@ -59,6 +62,10 @@ class TestAgentOverlayDocker(unittest.TestCase):
         _docker("push", f"{repo}:base")
         digests = _docker("inspect", "--format", "{{index .RepoDigests 0}}", f"{repo}:base")
         cls.base_ref = digests.stdout.strip()
+        cls.pin = Artifact(
+            image="bot-bottle-claude", format=FORMAT_OCI, platform="linux/amd64",
+            url=f"{repo}:base", digest=cls.base_ref.rsplit("@", 1)[1],
+        )
         cls._names.append(f"{repo}:base")
 
     @classmethod
@@ -68,14 +75,23 @@ class TestAgentOverlayDocker(unittest.TestCase):
         _docker("rm", "-f", cls.registry, check=False)
 
     def _build(self, src: Path, overlay: ManifestImageOverlay) -> str:
-        tag = f"bb-overlay-test-{uuid.uuid4().hex[:8]}:latest"
-        self._names.append(tag)
-        plan = cast(DockerBottlePlan, SimpleNamespace(
-            spec=SimpleNamespace(user_cwd=str(src)),
-            image=tag,
-            agent_provider_template="claude",
+        plan = cast(Any, SimpleNamespace(
+            spec=SimpleNamespace(user_cwd=str(src), image_policy="build"),
+            manifest=SimpleNamespace(bottle=SimpleNamespace(agent_provider=SimpleNamespace(
+                overlay=overlay, builds_custom_image=False,
+            ))),
         ))
-        launch_mod._build_overlay_image(plan, self.base_ref, overlay)  # pyright: ignore[reportPrivateUsage]
+        # The base is already in the local store (it was built and pushed
+        # here), so the resolver builds on it without contacting the registry.
+        with mock.patch.object(oci_agent_image.agent_image, "resolve_agent_pin",
+                               return_value=self.pin):
+            tag = oci_agent_image.resolve_published_agent_image(
+                plan, launch_mod._DOCKER,  # pyright: ignore[reportPrivateUsage]
+                template="claude", image=f"bb-overlay-test-{uuid.uuid4().hex[:8]}:latest",
+                smoke_test=(),
+            )
+        assert tag is not None
+        self._names.append(tag)
         return tag
 
     def _run(self, tag: str, script: str) -> str:
@@ -114,6 +130,20 @@ class TestAgentOverlayDocker(unittest.TestCase):
             tag = self._build(src, ManifestImageOverlay(dockerfile="overlay/Dockerfile"))
         self.assertEqual("built FROM ${BASE}", self._run(tag, "cat /etc/greeting"))
         self.assertEqual("yes", self._run(tag, "test -f /etc/overlay-ran-as-root && echo yes"))
+        self.assertEqual(IMAGE_USER, self._run(tag, "id -un"))
+
+    def test_heredoc_overlay_still_ends_as_the_provider_user(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp)
+            (src / "Dockerfile").write_text(
+                "FROM ${BASE}\n"
+                "USER root\n"
+                "RUN <<EOF\n"
+                "echo heredoc > /etc/heredoc\n"
+                "EOF\n"
+            )
+            tag = self._build(src, ManifestImageOverlay(dockerfile="Dockerfile"))
+        self.assertEqual("heredoc", self._run(tag, "cat /etc/heredoc"))
         self.assertEqual(IMAGE_USER, self._run(tag, "id -un"))
 
 

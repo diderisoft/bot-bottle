@@ -203,6 +203,25 @@ class TestAgentProviderValidation(unittest.TestCase):
                 ManifestAgentProvider.from_dict(
                     "b", {"overlay": {"files": [bad]}})
 
+    def test_overlay_apt_must_be_debian_package_names(self) -> None:
+        # Entries land in a RUN line; a newline would start a new instruction.
+        for bad in ("jq\nFROM alpine", "a b", "jq;rm", "-jq", "JQ"):
+            with self.subTest(bad=bad), self.assertRaises(ManifestError):
+                ManifestAgentProvider.from_dict("b", {"overlay": {"apt": [bad]}})
+        ok = ManifestAgentProvider.from_dict(
+            "b", {"overlay": {"apt": ["libssl3:amd64", "g++=4:14.2.0-1", "python3.12"]}})
+        self.assertEqual(3, len(ok.overlay.apt))
+
+    def test_overlay_paths_reject_control_characters(self) -> None:
+        for key, value in (("files", ["a\nb"]), ("dockerfile", "ov/Docker\tfile")):
+            with self.subTest(key=key), self.assertRaises(ManifestError):
+                ManifestAgentProvider.from_dict("b", {"overlay": {key: value}})
+
+    def test_builds_custom_image_follows_dockerfile(self) -> None:
+        self.assertFalse(ManifestAgentProvider.from_dict("b", {}).builds_custom_image)
+        self.assertTrue(ManifestAgentProvider.from_dict(
+            "b", {"dockerfile": "agent/Dockerfile"}).builds_custom_image)
+
     def test_overlay_rejected_for_custom_template(self) -> None:
         with self.assertRaises(ManifestError):
             ManifestAgentProvider.from_dict(

@@ -1,6 +1,6 @@
 """Unit tests for the docker-free Firecracker agent-image builder.
 
-The VM boot / SSH / buildah plumbing (`_build_in_infra`) is integration-tested
+The VM boot / SSH / buildah plumbing (`_infra_build`) is integration-tested
 on a KVM host; here we cover the cache decision, the boot-bit injection, and
 the smoke-test no-op — the logic that must hold without a VM.
 """
@@ -19,6 +19,15 @@ from unittest.mock import patch
 from bot_bottle.backend.firecracker import image_builder
 
 
+def _patch_dropbear(case: unittest.TestCase, where: Path) -> None:
+    """Every agent cache key hashes the static dropbear; give tests a fake."""
+    dropbear = where / "dropbear"
+    dropbear.write_bytes(b"\x7fELF-fake-dropbear")
+    patcher = patch.object(image_builder.util, "dropbear_path", return_value=dropbear)
+    patcher.start()
+    case.addCleanup(patcher.stop)
+
+
 class TestBuildAgentRootfsDir(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -26,6 +35,7 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
         self.dockerfile = self.cache / "Dockerfile"
         self.dockerfile.write_text("FROM node:22-slim\n")
         self.addCleanup(self._tmp.cleanup)
+        _patch_dropbear(self, self.cache)
 
     def test_cache_hit_skips_rebuild(self):
         digest = image_builder._rootfs_digest(self.dockerfile)
@@ -33,7 +43,7 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
         base.mkdir(parents=True)
         (base / ".bb-ready").write_text("ok\n")
         with patch.object(image_builder.util, "cache_dir", return_value=self.cache), \
-             patch.object(image_builder, "_build_in_infra") as build:
+             patch.object(image_builder, "_infra_build") as build:
             out = image_builder.build_agent_rootfs_dir(
                 self.dockerfile, image_tag="t:latest")
         build.assert_not_called()
@@ -50,15 +60,25 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
 
     def test_cache_miss_builds_injects_and_marks_ready(self):
         with patch.object(image_builder.util, "cache_dir", return_value=self.cache), \
-             patch.object(image_builder, "_build_in_infra") as build, \
+             patch.object(image_builder, "_infra_build") as build, \
              patch.object(image_builder.util, "inject_guest_boot") as inject:
             out = image_builder.build_agent_rootfs_dir(
                 self.dockerfile, image_tag="t:latest", smoke_test=("claude", "--version"))
         build.assert_called_once()
         # smoke_test threads through to the VM build.
-        self.assertEqual(("claude", "--version"), build.call_args.args[2])
+        self.assertEqual(("claude", "--version"), build.call_args.kwargs["smoke_test"])
         inject.assert_called_once()
         self.assertTrue((out / ".bb-ready").is_file())
+
+    def test_failed_build_leaves_nothing_behind(self):
+        def boom(**kw: Any) -> None:
+            (kw["out"] / "partial").write_text("x")
+            raise SystemExit(1)
+        with patch.object(image_builder.util, "cache_dir", return_value=self.cache), \
+             patch.object(image_builder, "_infra_build", side_effect=boom), \
+             self.assertRaises(SystemExit):
+            image_builder.build_agent_rootfs_dir(self.dockerfile, image_tag="t:latest")
+        self.assertEqual([".build.lock"], sorted(p.name for p in (self.cache / "rootfs").iterdir()))
 
     def _ext4_artifact(self, digest_char: str = "a"):
         from bot_bottle.published_artifacts import Artifact
@@ -96,12 +116,13 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
     def test_ext4_key_changes_with_guest_init_and_dropbear(self):
         artifact = self._ext4_artifact()
         dropbear = self._dropbear()
-        with patch.object(image_builder.util, "dropbear_path", return_value=dropbear):
-            base = image_builder._image_ext4_key(artifact)
+        with patch.object(image_builder.util, "dropbear_path", return_value=dropbear), \
+             patch.object(image_builder.util, "cache_dir", return_value=self.cache):
+            base = image_builder._image_ext4_path(artifact)
             with patch.object(image_builder.util, "_GUEST_INIT", "#!/bin/sh\necho changed\n"):
-                self.assertNotEqual(base, image_builder._image_ext4_key(artifact))
+                self.assertNotEqual(base, image_builder._image_ext4_path(artifact))
             dropbear.write_bytes(b"different dropbear")
-            self.assertNotEqual(base, image_builder._image_ext4_key(artifact))
+            self.assertNotEqual(base, image_builder._image_ext4_path(artifact))
 
     @unittest.skipUnless(
         all(shutil.which(t) for t in ("mke2fs", "debugfs", "e2fsck", "resize2fs")),
@@ -138,33 +159,48 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
 
 
 
-    def test_overlay_cache_hit_skips_build(self):
+    def _oci_pin(self, digest_char: str = "d"):
+        from bot_bottle.published_artifacts import Artifact
+        return Artifact(
+            image="bot-bottle-claude", format="oci", platform="linux/amd64",
+            url="reg/o/bot-bottle-claude:0.1.0-amd64", digest="sha256:" + digest_char * 64,
+        )
+
+    def test_overlay_cache_hit_skips_build_and_the_registry(self):
         from bot_bottle.manifest import ManifestImageOverlay
-        base_ref = "reg/o/bot-bottle-claude@sha256:" + "d" * 64
+        pin = self._oci_pin()
         overlay = ManifestImageOverlay(apt=("jq",))
         with patch.object(image_builder.util, "cache_dir", return_value=self.cache):
-            digest = image_builder._overlay_rootfs_digest(base_ref, overlay, self.cache)
-            base = self.cache / "rootfs" / f"agent-overlay-{digest}"
+            with image_builder.agent_overlay.staged_overlay(
+                image_builder.image_registry.pinned_reference(pin), overlay,
+                template="claude", source_root=self.cache,
+            ) as staged:
+                base = self.cache / "rootfs" / image_builder._overlay_rootfs_name(staged)
             base.mkdir(parents=True)
             (base / ".bb-ready").write_text("ok\n")
-            with patch.object(image_builder, "_build_overlay_in_infra") as build:
+            self.assertEqual(base, image_builder.cached_agent_overlay_rootfs_dir(
+                pin, overlay, template="claude", source_root=self.cache))
+            with patch.object(image_builder, "_infra_build") as build, \
+                 patch.object(image_builder.image_registry, "verify_tag") as verify:
                 out = image_builder.acquire_agent_overlay_rootfs_dir(
-                    base_ref, overlay, template="claude", source_root=self.cache)
+                    pin, overlay, template="claude", source_root=self.cache)
         build.assert_not_called()
+        verify.assert_not_called()  # a cached overlay launches offline
         self.assertEqual(base, out)
 
     def _overlay_miss(self, engine: str | None) -> tuple[Any, Any]:
         from bot_bottle.manifest import ManifestImageOverlay
-        base_ref = "reg/o/bot-bottle-claude@sha256:" + "9" * 64
         with patch.object(image_builder.util, "cache_dir", return_value=self.cache), \
+             patch.object(image_builder.image_registry, "verify_tag") as verify, \
              patch.object(image_builder.container_engine, "host_container_engine",
                           return_value=engine), \
              patch.object(image_builder, "_build_overlay_on_host") as host, \
-             patch.object(image_builder, "_build_overlay_in_infra") as vm, \
+             patch.object(image_builder, "_infra_build") as vm, \
              patch.object(image_builder.util, "inject_guest_boot"):
             out = image_builder.acquire_agent_overlay_rootfs_dir(
-                base_ref, ManifestImageOverlay(apt=("jq",)), template="claude",
+                self._oci_pin("9"), ManifestImageOverlay(apt=("jq",)), template="claude",
                 source_root=self.cache)
+        verify.assert_called_once()
         self.assertTrue((out / ".bb-ready").is_file())
         return host, vm
 
@@ -177,54 +213,78 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
     def test_overlay_falls_back_to_the_infra_vm_without_an_engine(self):
         host, vm = self._overlay_miss(None)
         vm.assert_called_once()
+        self.assertEqual("reg", vm.call_args.kwargs["registry"])
+        self.assertIn(".bb-overlay.Dockerfile", str(vm.call_args.kwargs["dockerfile"]))
+        self.assertNotIn(".bb-overlay.Dockerfile", vm.call_args.kwargs["ctx_rels"])
         host.assert_not_called()
+
+    def test_forced_engine_that_is_unusable_dies(self):
+        from bot_bottle.backend.container_engine import EngineUnavailable
+        from bot_bottle.manifest import ManifestImageOverlay
+        with patch.object(image_builder.util, "cache_dir", return_value=self.cache), \
+             patch.object(image_builder.image_registry, "verify_tag"), \
+             patch.object(image_builder.container_engine, "host_container_engine",
+                          side_effect=EngineUnavailable("docker is down")), \
+             patch.object(image_builder, "_infra_build") as vm, \
+             self.assertRaises(SystemExit):
+            image_builder.acquire_agent_overlay_rootfs_dir(
+                self._oci_pin("8"), ManifestImageOverlay(apt=("jq",)), template="claude",
+                source_root=self.cache)
+        vm.assert_not_called()
 
     def _host_build(
         self, engine: str, *, token: str = "", build_rc: int = 0, smoke_rc: int = 0,
     ) -> tuple[list[tuple[list[str], dict[str, Any]]], Any]:
-        from bot_bottle.manifest import ManifestImageOverlay
+        from bot_bottle.agent_overlay import StagedOverlay
         calls: list[tuple[list[str], dict[str, Any]]] = []
 
         def run(argv: list[str], **kw: Any) -> "subprocess.CompletedProcess[str]":
             calls.append((list(argv), kw))
-            rc = 0
+            rc, out = 0, ""
             if "build" in argv:
                 rc = build_rc
             if "run" in argv and "--rm" in argv:
                 rc = smoke_rc
-            return subprocess.CompletedProcess(argv, rc, "", "boom" if rc else "")
+            if argv[:3] == ["docker", "context", "inspect"]:
+                out = "unix:///run/user/1000/docker.sock\n"
+            return subprocess.CompletedProcess(argv, rc, out, "boom" if rc else "")
 
+        staged = StagedOverlay(
+            context=Path("/ctx"), dockerfile=Path("/ctx/.bb-overlay.Dockerfile"),
+            cache_key="abc123")
         env = {image_builder._ARTIFACT_TOKEN_ENV: token}  # "" = no token
         with patch.dict("os.environ", env), \
              patch.object(image_builder.subprocess, "run", side_effect=run), \
-             patch.object(image_builder.agent_overlay, "stage_overlay_context",
-                          return_value=Path("/ctx/.bb-overlay.Dockerfile")), \
              patch.object(image_builder.util, "export_image_rootfs") as export:
             image_builder._build_overlay_on_host(
                 engine, "reg.example/o/bot-bottle-claude@sha256:" + "1" * 64,
-                ManifestImageOverlay(apt=("jq",)), self.cache / "out", self.cache,
-                ("claude", "--version"), "abc123", template="claude")
+                staged, "bot-bottle-agent-overlay-abc123", self.cache / "out",
+                ("claude", "--version"))
         return calls, export
 
-    def test_host_build_isolates_docker_credentials_and_cleans_up(self):
+    def test_host_build_pulls_with_throwaway_docker_credentials(self):
         calls, export = self._host_build("docker", token="t0k")
         login = next(c for c in calls if "login" in c[0])
         self.assertEqual("--config", login[0][1])        # throwaway config dir
         self.assertEqual("t0k", login[1]["input"])        # token via stdin, not argv
         self.assertNotIn("t0k", login[0])
+        pull = next(c for c in calls if "pull" in c[0])
+        self.assertEqual("--config", pull[0][1])
+        # ...pointed at the user's current context, the daemon the build uses.
+        self.assertIn("unix:///run/user/1000/docker.sock", pull[0])
         build = next(c for c in calls if "build" in c[0])
-        self.assertEqual("--config", build[0][1])
+        self.assertNotIn("--config", build[0])           # user's own setup
         export.assert_called_once()
         self.assertEqual(["docker", "rmi", "-f", "bot-bottle-agent-overlay-abc123"], calls[-1][0])
 
-    def test_host_build_uses_a_podman_authfile(self):
+    def test_host_build_pulls_with_a_podman_authfile(self):
         calls, _ = self._host_build("podman", token="t0k")
-        build = next(c for c in calls if "build" in c[0])
-        self.assertIn("--authfile", build[0])
+        self.assertIn("--authfile", next(c for c in calls if "pull" in c[0])[0])
+        self.assertNotIn("--authfile", next(c for c in calls if "build" in c[0])[0])
 
     def test_host_build_without_a_token_uses_the_existing_login(self):
         calls, _ = self._host_build("docker")
-        self.assertFalse(any("login" in c[0] for c in calls))
+        self.assertFalse(any("login" in c[0] or "pull" in c[0] for c in calls))
         build = next(c for c in calls if "build" in c[0])
         self.assertNotIn("--config", build[0])
 
@@ -236,10 +296,8 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self._host_build("docker", smoke_rc=1)
 
-    def test_build_overlay_in_infra_logs_in_builds_and_streams(self):
+    def test_infra_build_logs_in_with_the_token_on_stdin(self):
         from unittest.mock import MagicMock
-        from bot_bottle.manifest import ManifestImageOverlay
-        base_ref = "reg/o/bot-bottle-claude@sha256:" + "c" * 64
         out = self.cache / "overlay-out"
         out.mkdir()
         svc = MagicMock()
@@ -248,22 +306,22 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
         with patch.object(image_builder, "FirecrackerInfraService", return_value=svc), \
              patch.object(image_builder, "_ssh", return_value=ok) as ssh, \
              patch.object(image_builder, "_send_dockerfile") as send_df, \
-             patch.object(image_builder, "_send_overlay_files"), \
+             patch.object(image_builder, "_tar_into_vm") as send_ctx, \
              patch.object(image_builder, "_buildah_build") as build, \
              patch.object(image_builder, "_smoke_test"), \
              patch.object(image_builder, "_stream_rootfs") as stream, \
              patch.dict("os.environ", {image_builder._ARTIFACT_TOKEN_ENV: "TOK"}):
-            image_builder._build_overlay_in_infra(
-                base_ref, ManifestImageOverlay(apt=("jq",)), out,
-                self.cache, ("claude", "--version"), "deadbeef",
-                template="claude")
+            image_builder._infra_build(
+                dockerfile=self.dockerfile, ctx_root=self.cache, ctx_rels=["f"],
+                tag="bot-bottle-agent-overlay-x", build_args={},
+                smoke_test=("claude", "--version"), out=out, registry="reg")
         send_df.assert_called_once()
+        self.assertEqual(["f"], send_ctx.call_args.args[3])
         build.assert_called_once()
         stream.assert_called_once()
-        self.assertTrue(
-            any("buildah login" in c.args[2] for c in ssh.call_args_list),
-            "expected a buildah login for the private base pull",
-        )
+        login = next(c for c in ssh.call_args_list if "buildah login" in c.args[2])
+        self.assertEqual("TOK", login.kwargs["input"])
+        self.assertTrue(all("TOK" not in c.args[2] for c in ssh.call_args_list))
 
     def test_content_addressed_cache_key(self):
         other = self.cache / "Dockerfile2"
@@ -309,6 +367,7 @@ class TestBuildContext(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name)
         self.addCleanup(self._tmp.cleanup)
+        _patch_dropbear(self, self.root)
         codex = self.root / "bot_bottle" / "contrib" / "codex"
         codex.mkdir(parents=True)
         self.sums = codex / "codex-package_SHA256SUMS"
@@ -386,30 +445,24 @@ class TestBuildContext(unittest.TestCase):
             second = image_builder._rootfs_digest(self.dockerfile)
         self.assertNotEqual(first, second)
 
-    def test_send_build_context_noop_without_copy(self):
-        df = self.root / "None"
-        df.write_text("FROM x\n")
-        with self._patch_root(), \
-             patch.object(image_builder.subprocess, "Popen") as popen:
-            image_builder._send_build_context(Path("/k"), "10.0.0.1", df, "/tmp/c")
+    def test_tar_into_vm_noop_without_paths(self):
+        with patch.object(image_builder.subprocess, "Popen") as popen:
+            image_builder._tar_into_vm(Path("/k"), "10.0.0.1", self.root, [], "/tmp/c/ctx")
         popen.assert_not_called()
 
-    def test_send_build_context_streams_copied_files_to_vm(self):
+    def test_tar_into_vm_streams_the_paths(self):
         completed = subprocess.CompletedProcess([], 0, stdout=b"", stderr=b"")
-        with self._patch_root(), \
-             patch.object(image_builder.subprocess, "Popen") as popen, \
+        rel = "bot_bottle/contrib/codex/codex-package_SHA256SUMS"
+        with patch.object(image_builder.subprocess, "Popen") as popen, \
              patch.object(image_builder.subprocess, "run",
                           return_value=completed) as run:
             popen.return_value.stdout = None
             popen.return_value.returncode = 0
             popen.return_value.wait.return_value = 0
-            image_builder._send_build_context(
-                Path("/k"), "10.0.0.1", self.dockerfile, "/tmp/c")
+            image_builder._tar_into_vm(Path("/k"), "10.0.0.1", self.root, [rel], "/tmp/c/ctx")
         tar_argv = popen.call_args.args[0]
         self.assertEqual(tar_argv[:3], ["tar", "-C", str(self.root)])
-        self.assertIn("--", tar_argv)
-        self.assertIn(
-            "bot_bottle/contrib/codex/codex-package_SHA256SUMS", tar_argv)
+        self.assertEqual(["--", rel], tar_argv[-2:])
         self.assertIn("tar -C /tmp/c/ctx -xf -", run.call_args.args[0][-1])
 
 
