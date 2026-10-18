@@ -41,7 +41,9 @@ from ...manifest import ManifestImageOverlay
 from ...published_artifacts import FORMAT_EXT4, Artifact
 from . import util
 from .infra import FirecrackerInfraService
+from . import infra_vm
 from .infra_vm import GUEST_BUILD_STORE
+from .orchestrator import build_store_volume_path
 
 # overlay + chroot: buildah works as root in the microVM on the guest kernel's
 # overlayfs (vfs copied every layer in full, ~8x a large image, and filled the
@@ -595,7 +597,13 @@ def _buildah_build(
     )
     if rc != 0:
         die(f"buildah build in the infra VM failed (exit {rc}); "
-            "see the build output above.")
+            "see the build output above.\n"
+            "If it shows a storage error (e.g. 'layer not known', or a readlink "
+            "under overlay/), the cached build store may be damaged. With no "
+            "bottles running, stop the orchestrator VM and delete the store; the "
+            "next launch recreates it:\n"
+            f"    kill $(cat {infra_vm._pid_file(infra_vm._orch_dir())})\n"
+            f"    rm {build_store_volume_path()}")
 
 
 def _smoke_test(private_key: Path, guest_ip: str, tag: str, ctr: str,

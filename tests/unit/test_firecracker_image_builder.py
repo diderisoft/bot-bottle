@@ -483,6 +483,16 @@ class TestSmokeTest(unittest.TestCase):
         script = ssh.call_args.args[2]
         self.assertIn("--build-arg NODE_BASE_IMAGE=node:pinned", script)
 
+    def test_failed_build_says_how_to_reset_the_build_store(self):
+        with patch.object(image_builder, "_ssh_streamed", return_value=125), \
+             patch.object(image_builder, "info"), \
+             patch.object(image_builder, "die", side_effect=SystemExit) as die, \
+             self.assertRaises(SystemExit):
+            image_builder._buildah_build(Path("/k"), "10.0.0.1", "/tmp/c", "t", {})
+        message = die.call_args.args[0]
+        self.assertIn("build-store.ext4", message)
+        self.assertIn("vm.pid", message)
+
     def test_empty_argv_is_noop(self):
         with patch.object(image_builder, "_ssh") as ssh:
             image_builder._smoke_test(Path("/k"), "10.0.0.1", "tag", "ctr", ())
