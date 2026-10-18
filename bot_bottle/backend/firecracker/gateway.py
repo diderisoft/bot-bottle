@@ -18,11 +18,16 @@ singleton flock) is `FirecrackerInfraService` (`infra.py`).
 
 from __future__ import annotations
 
+import io
 import subprocess
+import tarfile
+from pathlib import Path
 from urllib.parse import urlparse
 
 from ...gateway import (
     DEFAULT_CA_TIMEOUT_SECONDS,
+    GATEWAY_CA_GLOB,
+    MITMPROXY_HOME,
     Gateway,
     GatewayError,
     GatewayTransport,
@@ -47,7 +52,9 @@ _GW_MEM_MIB = 2048
 _GUEST_GATEWAY_JWT_PATH = infra_vm._GUEST_GATEWAY_JWT_PATH
 # mitmproxy writes its CA here a beat after start; agents install it to trust
 # the gateway's TLS interception. Host-side only (SSH cat), so it lives here.
-_GATEWAY_CA_PATH = "/home/mitmproxy/.mitmproxy/mitmproxy-ca-cert.pem"
+_GATEWAY_CA_PATH = f"{MITMPROXY_HOME}/mitmproxy-ca-cert.pem"
+# mitmproxy's signing identity (cert + key); the CA is persisted iff it is.
+_CA_KEY_FILE = "mitmproxy-ca.pem"
 
 _CA_FETCH_TIMEOUT_SECONDS = 15.0
 
@@ -94,19 +101,67 @@ class FirecrackerGateway(Gateway):
             raise GatewayError(
                 f"cannot resolve orchestrator guest IP from {self._orchestrator_url!r}"
             )
-        # Boot on the gateway link from the gateway rootfs, then push the token
-        # the init waits for before starting the data plane.
+        # Boot on the gateway link from the gateway rootfs, restore the
+        # persisted CA, then push the token the init waits for before starting
+        # the data plane (so mitmproxy finds the CA rather than minting one).
         vm = infra_vm.boot_vm(
             name=GATEWAY_NAME, slot=netpool.gw_slot(), run_dir=infra_vm._gw_dir(),
             role="gateway", mem_mib=_GW_MEM_MIB,
             extra_boot_args=f"bb_orch={orchestrator_guest_ip}",
         )
+        restored = self._restore_ca(vm)
         infra_vm.push_secret(
             vm, self._gateway_token, _GUEST_GATEWAY_JWT_PATH,
             "the gateway JWT to the gateway VM (its data plane will not start)",
         )
         self._vm = vm
+        if not restored:
+            self._persist_ca(vm)
         return True
+
+    def _restore_ca(self, vm: infra_vm.InfraVm) -> bool:
+        """Push the persisted CA into the freshly booted VM's mitmproxy
+        confdir. The rootfs is rebuilt every boot, so without this each boot
+        minted a new CA, and running agents (Node reads its CA file once, at
+        start) kept trusting the old one. False when nothing is persisted
+        yet."""
+        files = sorted(infra_vm.gateway_ca_dir().glob(GATEWAY_CA_GLOB))
+        if not any(f.name == _CA_KEY_FILE for f in files):
+            return False
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as tar:
+            for path in files:
+                tar.add(path, arcname=path.name)
+        infra_vm.push_stream(
+            vm, buf.getvalue(),
+            f"umask 077; mkdir -p {MITMPROXY_HOME} && tar -C {MITMPROXY_HOME} -xf -",
+            "the persisted gateway CA to the gateway VM",
+        )
+        return True
+
+    def _persist_ca(self, vm: infra_vm.InfraVm) -> None:
+        """Save the CA mitmproxy just minted on first boot, so every later
+        boot reuses it."""
+        self.ca_cert_pem()  # waits until mitmproxy has written it
+        proc = subprocess.run(
+            util.ssh_base_argv(vm.private_key, vm.guest_ip)
+            + [f"cd {MITMPROXY_HOME} && tar -cf - {GATEWAY_CA_GLOB}"],
+            capture_output=True, timeout=_CA_FETCH_TIMEOUT_SECONDS, check=False,
+        )
+        if proc.returncode != 0:
+            raise GatewayError(
+                "could not save the gateway CA: "
+                f"{proc.stderr.decode(errors='replace').strip() or '<no stderr>'}")
+        dest = infra_vm.gateway_ca_dir()
+        with tarfile.open(fileobj=io.BytesIO(proc.stdout), mode="r") as tar:
+            for member in tar.getmembers():
+                name = Path(member.name).name
+                source = tar.extractfile(member)
+                if not member.isfile() or source is None or not name.startswith("mitmproxy-ca"):
+                    continue
+                target = dest / name
+                target.write_bytes(source.read())
+                target.chmod(0o600)
 
     def is_running(self) -> bool:
         return infra_vm._pidfile_alive(infra_vm._gw_dir())

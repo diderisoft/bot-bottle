@@ -86,8 +86,8 @@ class FirecrackerInfraService(InfraService):
             gateway.connect_to_orchestrator(
                 orchestrator.gateway_url(), orchestrator.mint_gateway_token())
             infra_vm.record_booted_version(want)
-            # Both VMs just booted: the gateway minted a new CA and has no
-            # per-bottle state, and the orchestrator holds no egress tokens.
+            # Both VMs just booted: the gateway has no per-bottle state and the
+            # orchestrator holds no egress tokens.
             return url, True
 
     def stop(self) -> None:

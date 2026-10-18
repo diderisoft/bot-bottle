@@ -12,6 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from subprocess import CompletedProcess
+from typing import Any
 from unittest.mock import patch
 
 from bot_bottle.backend.firecracker import infra_vm
@@ -59,8 +60,11 @@ class TestFirecrackerGatewayConnect(unittest.TestCase):
     def test_boots_the_gateway_vm_and_seeds_the_token(self) -> None:
         gw = FirecrackerGateway()
         booted = infra_vm.InfraVm(guest_ip="10.243.255.3", private_key=Path("/k"))
-        with patch.object(infra_vm, "boot_vm", return_value=booted) as boot, \
-                patch.object(infra_vm, "push_secret") as push:
+        with tempfile.TemporaryDirectory() as td, \
+                patch.object(infra_vm, "gateway_ca_dir", return_value=Path(td)), \
+                patch.object(infra_vm, "boot_vm", return_value=booted) as boot, \
+                patch.object(infra_vm, "push_secret") as push, \
+                patch.object(FirecrackerGateway, "_persist_ca"):
             gw.connect_to_orchestrator(_ORCH_URL, _TOKEN)
         # Booted on the gateway link with the gateway role; the orchestrator's
         # guest IP (parsed off the URL) rides the cmdline as bb_orch.
@@ -71,6 +75,57 @@ class TestFirecrackerGatewayConnect(unittest.TestCase):
         # The host-minted token (never the key — #469) is pushed to the guest.
         push.assert_called_once()
         self.assertEqual(_TOKEN, push.call_args.args[1])
+
+    def test_restores_the_persisted_ca_before_the_data_plane_starts(self) -> None:
+        # The data plane starts once the token arrives, so the CA must already
+        # be in place or mitmproxy mints a new one.
+        import io
+        import tarfile
+        calls: list[str] = []
+
+        def record(step: str) -> Any:
+            def side_effect(*_args: object, **_kwargs: object) -> None:
+                calls.append(step)
+            return side_effect
+
+        booted = infra_vm.InfraVm(guest_ip="10.243.255.3", private_key=Path("/k"))
+        with tempfile.TemporaryDirectory() as td:
+            for name in ("mitmproxy-ca.pem", "mitmproxy-ca-cert.pem"):
+                (Path(td) / name).write_text(name)
+            with patch.object(infra_vm, "gateway_ca_dir", return_value=Path(td)), \
+                    patch.object(infra_vm, "boot_vm", return_value=booted), \
+                    patch.object(infra_vm, "push_stream",
+                                 side_effect=record("ca")) as stream, \
+                    patch.object(infra_vm, "push_secret",
+                                 side_effect=record("token")), \
+                    patch.object(FirecrackerGateway, "_persist_ca") as persist:
+                FirecrackerGateway().connect_to_orchestrator(_ORCH_URL, _TOKEN)
+        self.assertEqual(["ca", "token"], calls)
+        persist.assert_not_called()
+        with tarfile.open(fileobj=io.BytesIO(stream.call_args.args[1])) as tar:
+            self.assertEqual(["mitmproxy-ca-cert.pem", "mitmproxy-ca.pem"],
+                             sorted(tar.getnames()))
+
+    def test_first_boot_saves_the_minted_ca(self) -> None:
+        import io
+        import tarfile
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as tar:
+            for name, data in (("mitmproxy-ca.pem", b"KEY"), ("mitmproxy-dhparam.pem", b"x")):
+                info = tarfile.TarInfo(name)
+                info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
+        booted = infra_vm.InfraVm(guest_ip="10.243.255.3", private_key=Path("/k"))
+        with tempfile.TemporaryDirectory() as td, \
+                patch.object(infra_vm, "gateway_ca_dir", return_value=Path(td)), \
+                patch.object(FirecrackerGateway, "ca_cert_pem", return_value="PEM"), \
+                patch("bot_bottle.backend.firecracker.gateway.subprocess.run",
+                      return_value=CompletedProcess([], 0, buf.getvalue(), b"")):
+            FirecrackerGateway()._persist_ca(booted)
+            saved = Path(td) / "mitmproxy-ca.pem"
+            self.assertEqual(b"KEY", saved.read_bytes())
+            self.assertEqual(0o600, saved.stat().st_mode & 0o777)
+            self.assertFalse((Path(td) / "mitmproxy-dhparam.pem").exists())
 
 
 class TestFirecrackerGatewaySurface(unittest.TestCase):

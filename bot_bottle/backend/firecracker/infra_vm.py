@@ -313,6 +313,35 @@ def push_secret(infra: InfraVm, secret: str, dest: str, what: str) -> None:
     die(f"could not push {what}: {last or '<no stderr>'}")
 
 
+def push_stream(infra: InfraVm, data: bytes, script: str, what: str) -> None:
+    """Pipe `data` to `script` in the guest over SSH, retrying while the
+    guest's SSH comes up; die (naming `what`) if it never succeeds. For file
+    pushes larger than a single secret (a tar of CA material)."""
+    deadline = time.monotonic() + _SECRET_PUSH_TIMEOUT_SECONDS
+    last = ""
+    while time.monotonic() < deadline:
+        proc = subprocess.run(
+            util.ssh_base_argv(infra.private_key, infra.guest_ip) + [script],
+            input=data, capture_output=True, check=False,
+        )
+        if proc.returncode == 0:
+            return
+        last = proc.stderr.decode(errors="replace").strip()
+        time.sleep(_SECRET_PUSH_POLL_SECONDS)
+    die(f"could not push {what}: {last or '<no stderr>'}")
+
+
+def gateway_ca_dir() -> Path:
+    """Where the firecracker gateway's mitmproxy CA persists on the host, so a
+    gateway reboot reuses it rather than minting a new one. Its own dir, not
+    the docker/macOS bind-mount dir: the docker gateway writes that one as
+    root, with the private key mode 0600, so a non-root launcher couldn't read
+    it."""
+    d = _infra_dir() / "gateway-ca"
+    d.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return d
+
+
 def _stable_keypair() -> tuple[Path, str]:
     """The infra VMs' shared SSH keypair — generated once and reused, so any
     later launcher can SSH in (seed secrets / fetch CA / provision) even though

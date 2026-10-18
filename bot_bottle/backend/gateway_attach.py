@@ -1,11 +1,12 @@
 """Reattach running bottles to a freshly (re)started gateway (PRD 0081).
 
 When the gateway or the orchestrator comes up cold, every bottle that was
-already running loses something it depends on: the gateway minted a new CA
-(firecracker; docker and macOS keep theirs on a host bind mount), the gateway's
-per-bottle git-gate repos and credentials are gone, and the orchestrator's
-in-memory egress tokens are empty. `reattach_running_bottles` restores all
-three for every live bottle, the same way on every backend.
+already running loses something it depends on: the gateway's per-bottle
+git-gate repos and credentials are gone, the orchestrator's in-memory egress
+tokens are empty, and after a deliberate CA rotation the gateway serves a CA
+the bottle doesn't trust yet (the CA is otherwise persisted across restarts on
+every backend). `reattach_running_bottles` restores all three for every live
+bottle, the same way on every backend.
 
 Backends supply only the primitives that differ, as a `GatewayAttacher`: how
 to list live bottles, how to install a CA in one, and how to read one's
