@@ -31,6 +31,9 @@ from ...paths import (
 from ... import resources
 from .. import util as backend_util
 from . import util as container_mod
+from ...image_registry import RegistryError
+from ...infra_image import pinned_infra_artifact, pull_pinned_image
+from ...published_artifacts import FORMAT_OCI
 
 # The shared host-only network the gateway container and every agent bottle sit
 # on. The agent's address here is the attribution key. Distinct from the docker
@@ -100,7 +103,18 @@ class MacosGateway(Gateway):
         self._gateway_token = ""
 
     def ensure_built(self) -> None:
-        """Build the data-plane image from `Dockerfile.gateway`."""
+        """Build the data-plane image from `Dockerfile.gateway`. Pulls the release-pinned image instead when it was built
+        from exactly this install's code (PRD 0081 / 0085)."""
+        pin = pinned_infra_artifact("bot-bottle-gateway", FORMAT_OCI)
+        if pin is not None:
+            try:
+                pull_pinned_image(
+                    pin, tag=self.image_ref, image_exists=container_mod.image_exists,
+                    tag_image=container_mod.tag_image,
+                    pull_argv=("container", "image", "pull"))
+            except RegistryError as e:
+                raise GatewayError(str(e)) from e
+            return
         container_mod.build_image(
             self.image_ref, str(self._repo_root), dockerfile="Dockerfile.gateway")
 

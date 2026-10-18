@@ -4,7 +4,12 @@ import os
 import time
 from pathlib import Path
 
+from .util import image_exists as docker_image_exists
 from .util import run_docker
+from .util import tag_image as docker_tag_image
+from ...image_registry import RegistryError
+from ...infra_image import pinned_infra_artifact, pull_pinned_image
+from ...published_artifacts import FORMAT_OCI
 from .gateway_transport import DockerGatewayTransport
 from ...paths import (
     ORCHESTRATOR_AUTH_JWT_ENV,
@@ -89,6 +94,17 @@ class DockerGateway(Gateway):
         when no dockerfile is configured (a pre-pulled image). BOT_BOTTLE_NO_CACHE
         forces a full rebuild (parity with `start --no-cache`)."""
         if self._dockerfile is None:
+            return
+        # Pull the release-pinned image instead when it was built from exactly
+        # this install's code (PRD 0081 / 0085); otherwise build it.
+        pin = pinned_infra_artifact("bot-bottle-gateway", FORMAT_OCI)
+        if pin is not None:
+            try:
+                pull_pinned_image(
+                    pin, tag=self.image_ref, image_exists=docker_image_exists,
+                    tag_image=docker_tag_image, pull_argv=("docker", "pull"))
+            except RegistryError as e:
+                raise GatewayError(str(e)) from e
             return
         context = self._build_context or resources.build_root()
         argv = ["docker", "build", "-t", self.image_ref,

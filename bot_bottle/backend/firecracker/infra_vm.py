@@ -32,6 +32,7 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import os
+import shutil
 import signal
 import subprocess
 import time
@@ -119,10 +120,15 @@ def ensure_built() -> None:
     Default (docker-free, PRD 0069 Stage 2): download + verify the prebuilt
     orchestrator + gateway rootfs artifacts matching this code version (see
     `infra_rootfs`); the launch host needs no Docker.
-    `BOT_BOTTLE_INFRA_BUILD=local` instead builds the images from source with
-    host Docker (the orchestrator-fc image is `FROM` the orchestrator image, so
-    it must exist first) — for iterating on the Dockerfiles."""
-    if image_registry.local_build_requested():
+    It builds the images from source with host Docker instead (the
+    orchestrator-fc image is `FROM` the orchestrator image, so it must exist
+    first) when asked to (`BOT_BOTTLE_INFRA_BUILD=local`) or when no published
+    image matches this install's code (`infra_rootfs.builds_locally`)."""
+    if infra_rootfs.builds_locally():
+        if not image_registry.local_build_requested() and shutil.which("docker") is None:
+            die("no published infra image matches this install's code (installed "
+                "from main after the last release?) and Docker isn't available to "
+                "build one. Install a release, or install Docker.")
         build_infra_images_with_docker()
         return
     infra_rootfs.ensure_available()
@@ -212,7 +218,7 @@ def boot_vm(
 
     run_dir.mkdir(parents=True, exist_ok=True)
     rootfs = run_dir / "rootfs.ext4"
-    if image_registry.local_build_requested():
+    if infra_rootfs.builds_locally():
         util.build_rootfs_ext4(
             build_rootfs_dir(role), rootfs, slack_mib=_ROOTFS_SLACK_MIB[role])
     else:

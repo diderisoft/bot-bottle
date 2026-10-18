@@ -18,6 +18,7 @@ import shutil
 from pathlib import Path
 
 from ... import image_inputs, image_registry
+from ...infra_image import pinned_infra_artifact
 from ...log import info
 from ...published_artifacts import (
     FORMAT_EXT4,
@@ -33,6 +34,13 @@ ROLES = ("orchestrator", "gateway")
 _ROLE_IMAGE = {role: image for image, role in image_inputs.INFRA_ROLES.items()}
 
 _CHUNK = 1 << 20
+
+
+def builds_locally() -> bool:
+    """Whether this host builds the infra rootfs from source instead of pulling
+    the published one: when asked to (`BOT_BOTTLE_INFRA_BUILD=local`), or when
+    nothing published matches this install's code (`infra_image`)."""
+    return any(pinned_infra_artifact(role_image(r), FORMAT_EXT4) is None for r in ROLES)
 
 
 def role_image(role: str) -> str:
@@ -69,7 +77,7 @@ def role_version(role: str) -> str:
     rebuilding locally would leave the committed hash unchanged and adopt the
     stale VM (the very staleness this marker exists to prevent)."""
     image = role_image(role)
-    if image_registry.local_build_requested():
+    if builds_locally():
         return image_inputs.inputs_hash(image)
     entries = load_artifacts_manifest()
     try:
@@ -106,6 +114,7 @@ def ensure_available() -> None:
 
 __all__ = [
     "ROLES",
+    "builds_locally",
     "ensure_available",
     "materialize_ext4",
     "role_artifact",

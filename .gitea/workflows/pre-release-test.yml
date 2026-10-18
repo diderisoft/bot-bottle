@@ -404,3 +404,42 @@ jobs:
         with:
           name: published-artifacts
           path: released/published-artifacts.json
+
+      # PRD 0085 step 3: installs (git+…main by default) take their pins from
+      # the committed manifest, which setup.py bundles into the package. One
+      # automated commit per release; an install whose code has since moved
+      # past the release builds the infra images instead of pulling them
+      # (bot_bottle/infra_image.py), so the pins stay safe as main moves.
+      # Needs the BOT_BOTTLE_RELEASE_PUSH_TOKEN secret: a token for a user on
+      # main's push allowlist. It reaches git through a credential helper that
+      # reads the environment, never the command line.
+      - name: Commit the released manifest to main
+        env:
+          RELEASE_PUSH_TOKEN: ${{ secrets.BOT_BOTTLE_RELEASE_PUSH_TOKEN }}
+        run: |
+          if [ -z "$RELEASE_PUSH_TOKEN" ]; then
+            echo "BOT_BOTTLE_RELEASE_PUSH_TOKEN is not set; installs won't get this release's pins." >&2
+            exit 1
+          fi
+          version=$(python3 -c 'import json; print(next(iter(json.load(open("released/published-artifacts.json")).values()))["version"])')
+          git config user.name "bot-bottle release"
+          git config user.email "release@bot-bottle.invalid"
+          remote="https://gitea.dideric.is/didericis/bot-bottle.git"
+          helper='!f() { echo username=release; echo "password=$RELEASE_PUSH_TOKEN"; }; f'
+          # Retry against a moved main: the commit only touches the manifest.
+          for attempt in 1 2 3; do
+            git -c credential.helper="$helper" fetch "$remote" main
+            git checkout -B release-pins FETCH_HEAD
+            cp released/published-artifacts.json published-artifacts.json
+            git add published-artifacts.json
+            if git diff --cached --quiet; then
+              echo "main already pins $version"
+              exit 0
+            fi
+            git commit -m "chore(release): pin $version published artifacts"
+            if git -c credential.helper="$helper" push "$remote" HEAD:main; then
+              exit 0
+            fi
+            echo "push rejected (attempt $attempt); retrying on the new main" >&2
+          done
+          exit 1
