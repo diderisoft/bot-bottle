@@ -186,32 +186,34 @@ def build_base_rootfs_dir(
     base.mkdir(parents=True)
 
     info(f"exporting {image_ref} rootfs -> {base}")
-    cid = subprocess.run(
-        ["docker", "create", image_ref, "sleep", "infinity"],
-        capture_output=True, text=True, check=False,
-    )
-    if cid.returncode != 0 or not cid.stdout.strip():
-        die(f"docker create {image_ref!r} failed: {cid.stderr.strip()}")
-    container = cid.stdout.strip()
-    try:
-        export = subprocess.Popen(
-            ["docker", "export", container], stdout=subprocess.PIPE,
-        )
-        untar = subprocess.run(
-            ["tar", "-x", "-C", str(base)], stdin=export.stdout, check=False,
-        )
-        export.wait()
-        if export.returncode != 0 or untar.returncode != 0:
-            die(f"exporting rootfs for {image_ref!r} failed")
-    finally:
-        subprocess.run(
-            ["docker", "rm", "-f", container],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
-        )
-
+    export_image_rootfs("docker", image_ref, base)
     inject_guest_boot(base, init_script=init_script)
     ready.write_text("ok\n")
     return base
+
+
+def export_image_rootfs(engine: str, image_ref: str, dest: Path) -> None:
+    """Unpack `image_ref`'s filesystem into `dest` with a host container engine
+    (`docker` or `podman`): create a stopped container, stream `export` into
+    `tar -x`, remove the container."""
+    cid = subprocess.run(
+        [engine, "create", image_ref, "sleep", "infinity"],
+        capture_output=True, text=True, check=False,
+    )
+    if cid.returncode != 0 or not cid.stdout.strip():
+        die(f"{engine} create {image_ref!r} failed: {cid.stderr.strip()}")
+    container = cid.stdout.strip().splitlines()[-1]
+    try:
+        export = subprocess.Popen([engine, "export", container], stdout=subprocess.PIPE)
+        untar = subprocess.run(["tar", "-x", "-C", str(dest)], stdin=export.stdout, check=False)
+        export.wait()
+        if export.returncode != 0 or untar.returncode != 0:
+            die(f"exporting rootfs for {image_ref!r} with {engine} failed")
+    finally:
+        subprocess.run(
+            [engine, "rm", "-f", container],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+        )
 
 
 def build_committed_rootfs_dir(tar_path: Path) -> Path:

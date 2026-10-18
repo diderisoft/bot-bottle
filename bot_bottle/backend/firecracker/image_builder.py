@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Generator
 
 from ... import agent_overlay, image_registry, resources
+from .. import container_engine
 from ...image_registry import TOKEN_ENV as _ARTIFACT_TOKEN_ENV
 from ...log import die, info
 from ...manifest import ManifestImageOverlay
@@ -259,10 +260,19 @@ def acquire_agent_overlay_rootfs_dir(
         staging = util.cache_dir() / "rootfs" / f".overlaying-{digest}"
         shutil.rmtree(staging, ignore_errors=True)
         staging.mkdir(parents=True)
-        info(f"building overlay agent image on {base_ref!r} in the infra VM")
-        _build_overlay_in_infra(
-            base_ref, overlay, staging, source_root, smoke_test, digest,
-            template=template)
+        engine = container_engine.host_container_engine()
+        if engine is not None:
+            info(f"building overlay agent image on {base_ref!r} with host {engine}")
+            _build_overlay_on_host(
+                engine, base_ref, overlay, staging, source_root, smoke_test, digest,
+                template=template)
+        else:
+            info(f"building overlay agent image on {base_ref!r} in the infra VM "
+                 "(install Docker or Podman to build on the host; the VM can run "
+                 "out of space on a large base image)")
+            _build_overlay_in_infra(
+                base_ref, overlay, staging, source_root, smoke_test, digest,
+                template=template)
         util.inject_guest_boot(staging)
         (staging / ".bb-ready").write_text("ok\n")
         shutil.rmtree(base, ignore_errors=True)
@@ -380,6 +390,74 @@ def _buildah_login_prefix(registry_host: str, token: str) -> str:
         f'printf %s "$BB_REG_TOK" | buildah login --username bot-bottle '
         f"--password-stdin {registry_host} && unset BB_REG_TOK && "
     )
+
+
+def _build_overlay_on_host(
+    engine: str,
+    base_ref: str,
+    overlay: ManifestImageOverlay,
+    base_out: Path,
+    source_root: Path,
+    smoke_test: tuple[str, ...],
+    digest: str,
+    *,
+    template: str,
+) -> None:
+    """Build the overlay with a host container engine and unpack its rootfs
+    into `base_out`. Preferred over the infra VM when an engine is present:
+    the host's layer store has room for a large base, the VM's vfs store may
+    not.
+
+    With an artifact token, registry auth goes to a throwaway credentials
+    location (`docker --config` / `podman --authfile`) so the user's own
+    registry login is neither used nor disturbed; without one, the engine's
+    existing login applies, as with the docker backend's pulls."""
+    tag = f"bot-bottle-agent-overlay-{digest}"
+    token = os.environ.get(_ARTIFACT_TOKEN_ENV, "").strip()
+    registry = base_ref.split("/", 1)[0]
+    with tempfile.TemporaryDirectory(prefix="bb-overlay-") as tmp:
+        ctx = Path(tmp) / "ctx"
+        auth = Path(tmp) / "auth"
+        auth.mkdir()
+        dockerfile = agent_overlay.stage_overlay_context(
+            base_ref, overlay, template=template, source_root=source_root, dest=ctx)
+        if engine == "docker":
+            client = [engine, "--config", str(auth)] if token else [engine]
+            build_auth: list[str] = []
+            login_auth: list[str] = []
+        else:
+            client = [engine]
+            authfile = str(auth / "auth.json")
+            build_auth = ["--authfile", authfile] if token else []
+            login_auth = ["--authfile", authfile]
+        try:
+            if token:
+                login = subprocess.run(
+                    [*client, "login", *login_auth, "--username", "bot-bottle",
+                     "--password-stdin", registry],
+                    input=token, capture_output=True, text=True, check=False,
+                )
+                if login.returncode != 0:
+                    die(f"{engine} login to {registry} failed: {login.stderr.strip()}")
+            build = subprocess.run(
+                [*client, "build", *build_auth, "-f", str(dockerfile), "-t", tag, str(ctx)],
+                check=False,
+            )
+            if build.returncode != 0:
+                die(f"{engine} build of the overlay on {base_ref!r} failed "
+                    f"(exit {build.returncode})")
+            if smoke_test:
+                smoke = subprocess.run(
+                    [engine, "run", "--rm", "--entrypoint", smoke_test[0], tag, *smoke_test[1:]],
+                    capture_output=True, text=True, check=False,
+                )
+                if smoke.returncode != 0:
+                    die(f"overlay agent image failed its smoke test ({' '.join(smoke_test)}): "
+                        f"{(smoke.stderr or smoke.stdout).strip()}")
+            util.export_image_rootfs(engine, tag, base_out)
+        finally:
+            subprocess.run([engine, "rmi", "-f", tag],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
 
 def _build_overlay_in_infra(

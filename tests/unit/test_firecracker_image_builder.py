@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 from bot_bottle.backend.firecracker import image_builder
@@ -150,6 +151,89 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
                     base_ref, overlay, template="claude", source_root=self.cache)
         build.assert_not_called()
         self.assertEqual(base, out)
+
+    def _overlay_miss(self, engine: str | None) -> tuple[Any, Any]:
+        from bot_bottle.manifest import ManifestImageOverlay
+        base_ref = "reg/o/bot-bottle-claude@sha256:" + "9" * 64
+        with patch.object(image_builder.util, "cache_dir", return_value=self.cache), \
+             patch.object(image_builder.container_engine, "host_container_engine",
+                          return_value=engine), \
+             patch.object(image_builder, "_build_overlay_on_host") as host, \
+             patch.object(image_builder, "_build_overlay_in_infra") as vm, \
+             patch.object(image_builder.util, "inject_guest_boot"):
+            out = image_builder.acquire_agent_overlay_rootfs_dir(
+                base_ref, ManifestImageOverlay(apt=("jq",)), template="claude",
+                source_root=self.cache)
+        self.assertTrue((out / ".bb-ready").is_file())
+        return host, vm
+
+    def test_overlay_builds_on_the_host_when_an_engine_is_present(self):
+        host, vm = self._overlay_miss("podman")
+        host.assert_called_once()
+        self.assertEqual("podman", host.call_args.args[0])
+        vm.assert_not_called()
+
+    def test_overlay_falls_back_to_the_infra_vm_without_an_engine(self):
+        host, vm = self._overlay_miss(None)
+        vm.assert_called_once()
+        host.assert_not_called()
+
+    def _host_build(
+        self, engine: str, *, token: str = "", build_rc: int = 0, smoke_rc: int = 0,
+    ) -> tuple[list[tuple[list[str], dict[str, Any]]], Any]:
+        from bot_bottle.manifest import ManifestImageOverlay
+        calls: list[tuple[list[str], dict[str, Any]]] = []
+
+        def run(argv: list[str], **kw: Any) -> "subprocess.CompletedProcess[str]":
+            calls.append((list(argv), kw))
+            rc = 0
+            if "build" in argv:
+                rc = build_rc
+            if "run" in argv and "--rm" in argv:
+                rc = smoke_rc
+            return subprocess.CompletedProcess(argv, rc, "", "boom" if rc else "")
+
+        env = {image_builder._ARTIFACT_TOKEN_ENV: token}  # "" = no token
+        with patch.dict("os.environ", env), \
+             patch.object(image_builder.subprocess, "run", side_effect=run), \
+             patch.object(image_builder.agent_overlay, "stage_overlay_context",
+                          return_value=Path("/ctx/.bb-overlay.Dockerfile")), \
+             patch.object(image_builder.util, "export_image_rootfs") as export:
+            image_builder._build_overlay_on_host(
+                engine, "reg.example/o/bot-bottle-claude@sha256:" + "1" * 64,
+                ManifestImageOverlay(apt=("jq",)), self.cache / "out", self.cache,
+                ("claude", "--version"), "abc123", template="claude")
+        return calls, export
+
+    def test_host_build_isolates_docker_credentials_and_cleans_up(self):
+        calls, export = self._host_build("docker", token="t0k")
+        login = next(c for c in calls if "login" in c[0])
+        self.assertEqual("--config", login[0][1])        # throwaway config dir
+        self.assertEqual("t0k", login[1]["input"])        # token via stdin, not argv
+        self.assertNotIn("t0k", login[0])
+        build = next(c for c in calls if "build" in c[0])
+        self.assertEqual("--config", build[0][1])
+        export.assert_called_once()
+        self.assertEqual(["docker", "rmi", "-f", "bot-bottle-agent-overlay-abc123"], calls[-1][0])
+
+    def test_host_build_uses_a_podman_authfile(self):
+        calls, _ = self._host_build("podman", token="t0k")
+        build = next(c for c in calls if "build" in c[0])
+        self.assertIn("--authfile", build[0])
+
+    def test_host_build_without_a_token_uses_the_existing_login(self):
+        calls, _ = self._host_build("docker")
+        self.assertFalse(any("login" in c[0] for c in calls))
+        build = next(c for c in calls if "build" in c[0])
+        self.assertNotIn("--config", build[0])
+
+    def test_host_build_failure_dies_and_still_cleans_up(self):
+        with self.assertRaises(SystemExit):
+            self._host_build("docker", build_rc=1)
+
+    def test_host_build_smoke_failure_dies(self):
+        with self.assertRaises(SystemExit):
+            self._host_build("docker", smoke_rc=1)
 
     def test_build_overlay_in_infra_logs_in_builds_and_streams(self):
         from unittest.mock import MagicMock

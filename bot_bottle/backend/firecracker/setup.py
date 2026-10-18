@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 
 from ... import resources
+from .. import container_engine
 from . import netpool
 from . import util
 
@@ -308,6 +309,24 @@ def status() -> int:
     else:
         sys.stderr.write("mke2fs: NOT found on PATH (install e2fsprogs)\n")
         ok = False
+    # Pulled agent images are prepared rootless with the rest of e2fsprogs:
+    # debugfs writes the guest boot bits in, e2fsck + resize2fs add slack.
+    missing_e2fs = [t for t in ("debugfs", "e2fsck", "resize2fs") if shutil.which(t) is None]
+    if missing_e2fs:
+        sys.stderr.write(f"e2fsprogs: missing {', '.join(missing_e2fs)} (install e2fsprogs)\n")
+        ok = False
+    else:
+        sys.stderr.write("e2fsprogs: debugfs, e2fsck, resize2fs present\n")
+    # Optional: overlays build on the host when an engine is available.
+    engine = container_engine.host_container_engine()
+    if engine is not None:
+        sys.stderr.write(f"container engine: {engine} (agent overlays build on the host)\n")
+    else:
+        sys.stderr.write(
+            "container engine: none (optional; agent overlays build in the infra "
+            "VM, which can run out of space on a large base image — install "
+            "Docker or Podman to build them on the host)\n"
+        )
     missing = netpool.missing_taps()
     total = netpool.pool_size()
     if missing:
