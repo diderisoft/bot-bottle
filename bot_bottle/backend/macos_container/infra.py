@@ -28,7 +28,6 @@ from typing import TYPE_CHECKING
 from ... import resources
 from ...orchestrator.lifecycle import (
     DEFAULT_PORT,
-    DEFAULT_STARTUP_TIMEOUT_SECONDS,
     OrchestratorStartError,
 )
 from ..infra_service import InfraService
@@ -60,6 +59,7 @@ INFRA_NAME = GATEWAY_NAME
 
 
 class MacosInfraService(InfraService):
+    name = "macos-container"
     """Composes the per-host orchestrator + gateway containers. Callers use
     `ensure_running()` (returns the control-plane URL), the `orchestrator()` /
     `gateway()` accessors, and `ca_cert_pem()`."""
@@ -118,9 +118,7 @@ class MacosInfraService(InfraService):
             repo_root=self._repo_root,
         )
 
-    def ensure_running(
-        self, *, startup_timeout: float = DEFAULT_STARTUP_TIMEOUT_SECONDS,
-    ) -> str:
+    def _bring_up(self, *, startup_timeout: float) -> tuple[str, bool]:
         """Ensure the orchestrator + gateway containers are up; return the host
         control-plane URL. Idempotent per-host singleton — a healthy orchestrator
         on current source is left untouched. Raises `OrchestratorStartError` on
@@ -134,10 +132,7 @@ class MacosInfraService(InfraService):
         orchestrator.ensure_built()
         gateway.ensure_built()
 
-        # An orchestrator that wasn't already up starts with no egress tokens
-        # in memory, so running bottles need them restored (PRD 0081).
-        orchestrator_was_up = orchestrator.is_healthy()
-        orchestrator.ensure_running(startup_timeout=startup_timeout)
+        orchestrator_restarted = orchestrator.ensure_running(startup_timeout=startup_timeout)
 
         # (Re)ensure the gateway once the control plane it resolves against is
         # healthy — it needs the orchestrator's control-network address. The
@@ -147,9 +142,7 @@ class MacosInfraService(InfraService):
         url = orchestrator.url()
         gateway_restarted = gateway.connect_to_orchestrator(
             url, orchestrator.mint_gateway_token())
-        if gateway_restarted or not orchestrator_was_up:
-            self.reattach_running_bottles(url)
-        return url
+        return url, orchestrator_restarted or gateway_restarted
 
     def gateway_attacher(self) -> "MacosGatewayAttacher":
         # Local import: the attacher enumerates via `enumerate`, which imports

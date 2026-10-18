@@ -14,18 +14,32 @@ source of truth for how to reach each plane; the convenience `url()` /
 from __future__ import annotations
 
 import abc
+from pathlib import Path
 
 from ..gateway import Gateway
 from ..log import die
 from ..orchestrator.lifecycle import DEFAULT_STARTUP_TIMEOUT_SECONDS, Orchestrator
-from .gateway_attach import GatewayAttachError, GatewayAttacher, reattach_running_bottles
+from ..paths import bot_bottle_root
+from .gateway_attach import (
+    AttachPolicy,
+    GatewayAttachError,
+    GatewayAttacher,
+    reattach_running_bottles,
+)
 
 
 class InfraService(abc.ABC):
     """Compose + bring up the per-host orchestrator + gateway pair.
 
     Backend-neutral: docker/macOS run the pair as two containers, firecracker as
-    two microVMs. Callers read reach-info off `orchestrator()` / `gateway()`."""
+    two microVMs. Callers read reach-info off `orchestrator()` / `gateway()`.
+
+    `ensure_running` is the same everywhere: a backend's `_bring_up` brings the
+    pair up and reports whether either plane was (re)started, and only then are
+    running bottles reattached (PRD 0081). Backends never decide that."""
+
+    # Names this backend's "reattach pending" marker.
+    name: str = "infra"
 
     @abc.abstractmethod
     def orchestrator(self) -> Orchestrator:
@@ -35,14 +49,43 @@ class InfraService(abc.ABC):
     def gateway(self) -> Gateway:
         """The data-plane service. Cheap to reconstruct."""
 
-    @abc.abstractmethod
     def ensure_running(
-        self, *, startup_timeout: float = DEFAULT_STARTUP_TIMEOUT_SECONDS,
+        self,
+        *,
+        startup_timeout: float = DEFAULT_STARTUP_TIMEOUT_SECONDS,
+        attach_policy: AttachPolicy = AttachPolicy.STRICT,
     ) -> str:
         """Bring the orchestrator + gateway pair up (idempotent per-host
-        singleton — a healthy, current pair is left running). Returns the host
-        control-plane URL. Raises `OrchestratorStartError` on control-plane
-        startup timeout."""
+        singleton — a healthy, current pair is left running) and, when either
+        plane was (re)started, reattach every running bottle to it. Returns
+        the host control-plane URL. Raises `OrchestratorStartError` on
+        control-plane startup timeout.
+
+        A reattach that didn't finish (it failed, or the launcher was
+        interrupted) leaves a marker, so the next bring-up retries it even
+        when it adopts the pair; otherwise the bottles it missed would stay
+        broken until the next restart. Under the default STRICT policy a
+        failure ends the bring-up naming each bottle."""
+        url, restarted = self._bring_up(startup_timeout=startup_timeout)
+        marker = self._reattach_pending_marker()
+        if restarted or marker.exists():
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.touch()
+            try:
+                reattach_running_bottles(
+                    self.gateway_attacher(), orchestrator_url=url,
+                    gateway=self.gateway(), policy=attach_policy,
+                )
+            except GatewayAttachError as e:
+                die(str(e))
+            marker.unlink(missing_ok=True)
+        return url
+
+    @abc.abstractmethod
+    def _bring_up(self, *, startup_timeout: float) -> tuple[str, bool]:
+        """Bring the pair up; return the host control-plane URL and whether the
+        orchestrator or the gateway was (re)started (and so lost its egress
+        tokens or per-bottle state) rather than adopted."""
 
     @abc.abstractmethod
     def stop(self) -> None:
@@ -53,17 +96,8 @@ class InfraService(abc.ABC):
         """How this backend lists its running bottles and reattaches one to
         the gateway (PRD 0081)."""
 
-    def reattach_running_bottles(self, url: str) -> None:
-        """Restore every running bottle's CA, git-gate state and egress tokens
-        after the gateway or orchestrator came up cold (PRD 0081). Called by
-        `ensure_running` on that path only, never when it adopted a running
-        pair. Any bottle that can't be reattached ends the bring-up, naming
-        each one."""
-        try:
-            reattach_running_bottles(
-                self.gateway_attacher(), orchestrator_url=url, gateway=self.gateway())
-        except GatewayAttachError as e:
-            die(str(e))
+    def _reattach_pending_marker(self) -> Path:
+        return bot_bottle_root() / "infra" / f"{self.name}.reattach-pending"
 
     def url(self) -> str:
         """The host-facing control-plane URL the CLI reaches (the orchestrator's)."""

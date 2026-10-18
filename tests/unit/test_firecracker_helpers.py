@@ -29,21 +29,21 @@ class TestGuestIpFromConfig(unittest.TestCase):
     def test_extracts_guest_ip(self):
         cfg = {"boot-source": {"boot_args":
                "console=ttyS0 ip=10.243.0.1::10.243.0.0:255.255.255.254::eth0:off"}}
-        self.assertEqual("10.243.0.1", freezer._guest_ip_from_config(self._write(cfg)))
+        self.assertEqual("10.243.0.1", util.guest_ip_from_config(self._write(cfg)))
 
     def test_no_ip_token(self):
-        self.assertEqual("", freezer._guest_ip_from_config(
+        self.assertEqual("", util.guest_ip_from_config(
             self._write({"boot-source": {"boot_args": "console=ttyS0"}})))
 
     def test_missing_file(self):
-        self.assertEqual("", freezer._guest_ip_from_config(Path("/nope/config.json")))
+        self.assertEqual("", util.guest_ip_from_config(Path("/nope/config.json")))
 
     def test_malformed_json(self):
         d = tempfile.mkdtemp(prefix="fc-cfg.")
         p = Path(d) / "config.json"
         p.write_text("{not json")
         self.addCleanup(lambda: p.unlink(missing_ok=True))
-        self.assertEqual("", freezer._guest_ip_from_config(p))
+        self.assertEqual("", util.guest_ip_from_config(p))
 
 
 class TestNetpoolProbes(unittest.TestCase):

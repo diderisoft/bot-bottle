@@ -22,6 +22,7 @@ def slugify(name: str) -> str:
 
 def run_docker(
     argv: list[str], *, env: dict[str, str] | None = None, input: str | None = None,
+    timeout: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run a `docker` command, capturing stdout/stderr as text. Never raises on
     a non-zero exit — callers inspect `returncode` / `stderr` so they can stay
@@ -33,7 +34,7 @@ def run_docker(
     never lands on argv or in `docker inspect`'s recorded command line."""
     return subprocess.run(
         argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-        check=False, env=env, input=input,
+        check=False, env=env, input=input, timeout=timeout,
     )
 
 

@@ -117,13 +117,14 @@ class FirecrackerOrchestrator(Orchestrator):
 
     def ensure_running(
         self, *, startup_timeout: float = DEFAULT_STARTUP_TIMEOUT_SECONDS,
-    ) -> None:
+    ) -> bool:
         """Boot the orchestrator VM on its link with the persistent registry
         volume, seed the signing key over SSH, and block until `/health` answers.
         Idempotent — a live, healthy control plane is left alone (the pair
-        coordinator otherwise `stop()`s it before calling, so this boots fresh)."""
+        coordinator otherwise `stop()`s it before calling, so this boots fresh).
+        Returns True when it booted the VM, False when it adopted one."""
         if self.is_running() and self.is_healthy():
-            return
+            return False
         vm = infra_vm.boot_vm(
             name=ORCHESTRATOR_NAME, slot=netpool.orch_slot(),
             run_dir=infra_vm._orch_dir(), role="orchestrator", mem_mib=_ORCH_MEM_MIB,
@@ -143,6 +144,7 @@ class FirecrackerOrchestrator(Orchestrator):
         )
         self._vm = vm
         self._wait_for_health(vm, timeout=startup_timeout)
+        return True
 
     def _wait_for_health(
         self, vm: infra_vm.InfraVm, *, timeout: float,

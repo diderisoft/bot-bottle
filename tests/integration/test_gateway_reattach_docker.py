@@ -119,13 +119,18 @@ class TestGatewayReattachDocker(unittest.TestCase):
             capture_output=True, text=True, check=False,
         ).stdout
 
-    def _probe(self, identity_token: str, *, want: str) -> str:
-        gateway_ip = subprocess.run(
+    @staticmethod
+    def _gateway_ip() -> str:
+        return subprocess.run(
             ["docker", "inspect", "-f",
              '{{(index .NetworkSettings.Networks "' + GATEWAY_NETWORK + '").IPAddress}}',
              GATEWAY_NAME],
             capture_output=True, text=True, check=True,
         ).stdout.strip()
+
+    def _probe(self, identity_token: str, gateway_ip: str, *, want: str) -> str:
+        # A real agent has the gateway's address from launch baked into its
+        # proxy settings, so probe through that one, not the current one.
         proxy = f"http://bottle:{identity_token}@{gateway_ip}:{EGRESS_PORT}"
         deadline, out = time.monotonic() + 60, ""
         while time.monotonic() < deadline:
@@ -147,22 +152,23 @@ class TestGatewayReattachDocker(unittest.TestCase):
             env_var_secret=env_var_secret,
         )
         self._start_agent(source_ip, env_var_secret)
+        gateway_ip = self._gateway_ip()
         want = f"200 AUTH=Bearer {_TOKEN}"
-        self.assertEqual(want, self._probe(bottle.identity_token, want=want))
+        self.assertEqual(want, self._probe(bottle.identity_token, gateway_ip, want=want))
 
         # Orchestrator restart: its in-memory tokens are gone until the
         # bring-up hands the bottle's ENV_VAR_SECRET back.
         subprocess.run(["docker", "rm", "--force", ORCHESTRATOR_NAME],
                        capture_output=True, check=True)
         self.svc.ensure_running(startup_timeout=300)
-        self.assertEqual(want, self._probe(bottle.identity_token, want=want))
+        self.assertEqual(want, self._probe(bottle.identity_token, gateway_ip, want=want))
         self.assertEqual(self._gateway_ca().strip(),
                          self._agent_exec("cat", AGENT_CA_PATH).strip())
 
         # Gateway restart: recreated from scratch, then the bottle reattached.
         subprocess.run(["docker", "rm", "--force", GATEWAY_NAME], capture_output=True, check=True)
         self.svc.ensure_running(startup_timeout=300)
-        self.assertEqual(want, self._probe(bottle.identity_token, want=want))
+        self.assertEqual(want, self._probe(bottle.identity_token, gateway_ip, want=want))
         self.assertEqual(self._gateway_ca().strip(),
                          self._agent_exec("cat", AGENT_CA_PATH).strip())
 

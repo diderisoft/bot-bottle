@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 
 from bot_bottle.backend.macos_container.gateway import (
     GATEWAY_NAME,
+    ORCHESTRATOR_AUTH_JWT_ENV,
     GatewayError,
     MacosGateway,
 )
@@ -42,7 +43,9 @@ class TestMacosGatewayConnect(unittest.TestCase):
             self.assertTrue(self.gw.connect_to_orchestrator(url, token))
         return run
 
-    def _connect_running(self, *, running_digest: str, env_url: str) -> tuple[bool, Mock]:
+    def _connect_running(
+        self, *, running_digest: str, env_url: str, env_token: str = _TOKEN,
+    ) -> tuple[bool, Mock]:
         with patch(f"{_GW}.container_mod") as mod, \
                 patch(f"{_GW}.host_gateway_ca_dir", return_value=Path("/ca")):
             mod.dns_server.return_value = "1.1.1.1"
@@ -51,7 +54,8 @@ class TestMacosGatewayConnect(unittest.TestCase):
             mod.container_is_running.return_value = True
             mod.container_image_digest.return_value = running_digest
             mod.image_digest.return_value = "sha256:current"
-            mod.container_env.return_value = {"BOT_BOTTLE_ORCHESTRATOR_URL": env_url}
+            mod.container_env.return_value = {
+                "BOT_BOTTLE_ORCHESTRATOR_URL": env_url, ORCHESTRATOR_AUTH_JWT_ENV: env_token}
             restarted = self.gw.connect_to_orchestrator(_ORCH_URL, _TOKEN)
             return restarted, mod
 
@@ -63,10 +67,17 @@ class TestMacosGatewayConnect(unittest.TestCase):
         mod.force_remove_container.assert_not_called()
         mod.run_container_argv.assert_not_called()
 
-    def test_recreates_on_a_new_image_or_a_moved_orchestrator(self) -> None:
-        for digest, url in (("sha256:old", _ORCH_URL), ("sha256:current", "http://old:8099")):
-            with self.subTest(digest=digest, url=url):
-                restarted, mod = self._connect_running(running_digest=digest, env_url=url)
+    def test_recreates_on_a_new_image_moved_orchestrator_or_new_token(self) -> None:
+        # An unreadable digest ("") counts as not current: fail closed.
+        for digest, url, token in (
+            ("sha256:old", _ORCH_URL, _TOKEN),
+            ("", _ORCH_URL, _TOKEN),
+            ("sha256:current", "http://old:8099", _TOKEN),
+            ("sha256:current", _ORCH_URL, "rotated-out"),
+        ):
+            with self.subTest(digest=digest, url=url, token=token):
+                restarted, mod = self._connect_running(
+                    running_digest=digest, env_url=url, env_token=token)
                 self.assertTrue(restarted)
                 mod.force_remove_container.assert_called_once()
 

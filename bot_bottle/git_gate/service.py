@@ -30,6 +30,33 @@ from . import provision as _provision
 from . import host_key as _host_key
 
 
+
+def stage_git_gate_scripts(
+    stage_dir: Path, upstreams: tuple[GitGateUpstream, ...],
+) -> tuple[Path, Path, Path, Path]:
+    """Render the git-gate entrypoint, pre-receive hook, access hook and
+    gitleaks config from the current code into `stage_dir`, returning their
+    paths in that order. Used at launch and when a restarted gateway is
+    re-provisioned (PRD 0081), so both always install current hooks."""
+    entrypoint = stage_dir / "git_gate_entrypoint.sh"
+    entrypoint.write_text(git_gate_render_entrypoint(upstreams))
+    entrypoint.chmod(0o600)
+    hook = stage_dir / "git_gate_pre_receive.sh"
+    hook.write_text(git_gate_render_hook())
+    hook.chmod(0o600)
+    access_hook = stage_dir / "git_gate_access_hook.sh"
+    access_hook.write_text(git_gate_render_access_hook())
+    # 0o700 (not 0o600): git daemon execs --access-hook directly, not via
+    # `sh`, so the script needs the x bit. The gateway copy does not
+    # necessarily preserve this mode (`docker cp` does, the Apple `container
+    # cp` does not), so provisioning re-applies +x on the gateway side — see
+    # backend/provision_gateway.py.
+    access_hook.chmod(0o700)
+    gitleaks_config = stage_dir / "git_gate_gitleaks.toml"
+    gitleaks_config.write_text(git_gate_render_gitleaks_config())
+    gitleaks_config.chmod(0o600)
+    return entrypoint, hook, access_hook, gitleaks_config
+
 class GitGate:
     """The per-agent git-gate host-side service. Stateless — the backend's
     launch step drives `prepare` → `provision_dynamic_keys` and, at teardown,
@@ -49,23 +76,8 @@ class GitGate:
         `internal_network` / `egress_network` via `dataclasses.replace` before
         passing the plan to `.start`."""
         upstreams = git_gate_upstreams_for_bottle(bottle)
-        entrypoint = stage_dir / "git_gate_entrypoint.sh"
-        entrypoint.write_text(git_gate_render_entrypoint(upstreams))
-        entrypoint.chmod(0o600)
-        hook = stage_dir / "git_gate_pre_receive.sh"
-        hook.write_text(git_gate_render_hook())
-        hook.chmod(0o600)
-        access_hook = stage_dir / "git_gate_access_hook.sh"
-        access_hook.write_text(git_gate_render_access_hook())
-        # 0o700 (not 0o600): git daemon execs --access-hook directly, not via
-        # `sh`, so the script needs the x bit. The gateway copy does not
-        # necessarily preserve this mode (`docker cp` does, the Apple `container
-        # cp` does not), so provisioning re-applies +x on the gateway side — see
-        # backend/provision_gateway.py.
-        access_hook.chmod(0o700)
-        gitleaks_config = stage_dir / "git_gate_gitleaks.toml"
-        gitleaks_config.write_text(git_gate_render_gitleaks_config())
-        gitleaks_config.chmod(0o600)
+        entrypoint, hook, access_hook, gitleaks_config = stage_git_gate_scripts(
+            stage_dir, upstreams)
         upstreams_with_files: list[GitGateUpstream] = []
         for u in upstreams:
             known_hosts_file = Path()

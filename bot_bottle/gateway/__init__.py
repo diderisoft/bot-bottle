@@ -132,7 +132,8 @@ class Gateway(abc.ABC):
         Returns True when the gateway was (re)started, so it lost its
         per-bottle state (and, without a persisted CA, minted a new one);
         False when a running, current gateway was adopted untouched. The
-        infra service reattaches running bottles on True (PRD 0081)."""
+        infra service's bring-up reattaches running bottles when this or the
+        orchestrator reports a (re)start (PRD 0081)."""
 
     @abc.abstractmethod
     def is_running(self) -> bool:

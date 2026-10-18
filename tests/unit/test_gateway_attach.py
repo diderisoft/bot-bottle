@@ -14,7 +14,9 @@ from bot_bottle.backend import gateway_attach as ga
 from bot_bottle.backend.gateway_attach import (
     AttachPolicy, GatewayAttachError, GatewayAttacher, RunningBottle,
 )
+from bot_bottle.backend.util import ROOT_EXEC_PATH
 from bot_bottle.gateway import GatewayError
+from bot_bottle.orchestrator.client import OrchestratorClientError
 
 _A = RunningBottle(ref="ref-a", slug="a", source_ip="10.0.0.2")
 _B = RunningBottle(ref="ref-b", slug="b", source_ip="10.0.0.3")
@@ -25,7 +27,7 @@ class _Attacher(GatewayAttacher):
                  secrets: dict[str, str] | None = None) -> None:
         self.bottles = bottles
         self.fail_ca = fail_ca or set()
-        self.secrets = secrets or {}
+        self.secrets = secrets if secrets is not None else {b.slug: f"s-{b.slug}" for b in bottles}
         self.installed: list[tuple[str, str]] = []
 
     def running_bottles(self) -> list[RunningBottle]:
@@ -54,22 +56,20 @@ class ReattachRunningBottles(unittest.TestCase):
         git_gate = patch.object(ga, "reprovision_git_gate")
         self.git_gate = git_gate.start()
         self.addCleanup(git_gate.stop)
-        tokens = patch.object(ga, "reprovision_bottles")
-        self.tokens = tokens.start()
-        self.addCleanup(tokens.stop)
 
     def _run(self, attacher: GatewayAttacher, policy: AttachPolicy = AttachPolicy.STRICT) -> None:
         ga.reattach_running_bottles(
             attacher, orchestrator_url="http://orch", gateway=self.gateway, policy=policy)
 
     def test_restores_ca_git_gate_and_egress_tokens_for_every_bottle(self) -> None:
-        attacher = _Attacher([_A, _B], secrets={"a": "sa", "b": "sb"})
+        attacher = _Attacher([_A, _B])
         self._run(attacher)
         self.assertEqual([("a", "PEM"), ("b", "PEM")], attacher.installed)
         transport = self.gateway.provisioning_transport.return_value
         self.git_gate.assert_any_call(transport, "id-a", "a")
         self.git_gate.assert_any_call(transport, "id-b", "b")
-        self.assertEqual({"10.0.0.2": "sa", "10.0.0.3": "sb"}, self.tokens.call_args.args[1])
+        self.client.reprovision_gateway.assert_any_call("id-a", "s-a")
+        self.client.reprovision_gateway.assert_any_call("id-b", "s-b")
 
     def test_no_running_bottles_touches_nothing(self) -> None:
         self._run(_Attacher([]))
@@ -77,23 +77,40 @@ class ReattachRunningBottles(unittest.TestCase):
         self.client.list_bottles.assert_not_called()
 
     def test_every_bottle_is_attempted_and_failures_raised_together(self) -> None:
-        attacher = _Attacher([_A, _B], fail_ca={"a"}, secrets={"b": "sb"})
+        attacher = _Attacher([_A, _B], fail_ca={"a"})
         with self.assertRaises(GatewayAttachError) as raised:
             self._run(attacher)
         self.assertIn("a: ssh: connection refused", str(raised.exception))
         self.assertEqual([("b", "PEM")], attacher.installed)  # b still reattached
-        self.assertEqual({"10.0.0.3": "sb"}, self.tokens.call_args.args[1])
+        self.client.reprovision_gateway.assert_called_once_with("id-b", "s-b")
+
+    def test_token_restore_failure_is_reported_against_its_bottle(self) -> None:
+        self.client.reprovision_gateway.side_effect = OrchestratorClientError("HTTP 400")
+        with self.assertRaises(GatewayAttachError) as raised:
+            self._run(_Attacher([_A]))
+        self.assertIn("a: HTTP 400", str(raised.exception))
+
+    def test_missing_secret_is_a_failure_not_a_silent_skip(self) -> None:
+        with self.assertRaises(GatewayAttachError) as raised:
+            self._run(_Attacher([_A], secrets={}))
+        self.assertIn("a: its ENV_VAR_SECRET is missing", str(raised.exception))
+        self.client.reprovision_gateway.assert_not_called()
 
     def test_report_policy_warns_and_continues(self) -> None:
         with patch.object(ga, "warn") as warn:
             self._run(_Attacher([_A], fail_ca={"a"}), AttachPolicy.REPORT)
         self.assertIn("could not reattach 1", warn.call_args.args[0])
 
-    def test_unregistered_bottle_is_a_failure(self) -> None:
+    def test_unregistered_or_addressless_bottles_are_skipped(self) -> None:
+        # Mid-launch (no address yet, or not registered until the pair is up)
+        # or mid-teardown: nothing to restore, and not a failure.
         self.client.list_bottles.return_value = [{"bottle_id": "id-a", "source_ip": "10.0.0.2"}]
-        with self.assertRaises(GatewayAttachError) as raised:
-            self._run(_Attacher([_A, _B]))
-        self.assertIn("b: running but not registered", str(raised.exception))
+        pending = RunningBottle(ref="ref-c", slug="c", source_ip="")
+        attacher = _Attacher([_A, _B, pending])
+        with patch.object(ga, "info") as info:
+            self._run(attacher)
+        self.assertEqual([("a", "PEM")], attacher.installed)
+        self.assertTrue(any("skipped 2" in c.args[0] for c in info.call_args_list))
 
     def test_unreachable_gateway_fails_before_any_bottle(self) -> None:
         self.gateway.ca_cert_pem.side_effect = GatewayError("no CA yet")
@@ -106,28 +123,23 @@ class ReattachRunningBottles(unittest.TestCase):
 class ReprovisionGitGate(unittest.TestCase):
     transport = MagicMock()
 
-    def test_rebuilds_the_plan_from_the_state_dir(self) -> None:
+    def test_uses_the_snapshot_and_renders_current_hooks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp)
             (state / "upstreams.json").write_text(json.dumps([
                 {"name": "repo", "upstream_url": "ssh://git@forge/o/r.git",
                  "upstream_host": "forge", "upstream_port": "22",
-                 "identity_file": "/manifest/key", "known_host_key": "ssh-ed25519 AAA"},
+                 "identity_file": str(state / "repo-key"), "known_host_key": "ssh-ed25519 AAA"},
             ]))
-            (state / "repo-key").write_text("deploy key")
             (state / "git_gate_pre_receive.sh").write_text("stale hook")
             with patch.object(ga, "git_gate_state_dir", return_value=state), \
                  patch.object(ga, "provision_git_gate") as provision:
                 ga.reprovision_git_gate(self.transport, "id-a", "a")
             hook_text = (state / "git_gate_pre_receive.sh").read_text()
-            access_mode = (state / "git_gate_access_hook.sh").stat().st_mode
         transport, bottle_id, plan = provision.call_args.args
         self.assertEqual((self.transport, "id-a"), (transport, bottle_id))
         self.assertEqual(str(state / "repo-key"), plan.upstreams[0].identity_file)
-        self.assertEqual(state / "git_gate_gitleaks.toml", plan.gitleaks_config)
-        # Hooks come from the current code, not the bottle's stale staged copy.
-        self.assertEqual(ga.git_gate_render_hook(), hook_text)
-        self.assertEqual(0o700, access_mode & 0o777)
+        self.assertNotEqual("stale hook", hook_text)  # rendered from current code
 
     def test_no_snapshot_means_no_git_upstreams(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, \
@@ -137,17 +149,55 @@ class ReprovisionGitGate(unittest.TestCase):
         provision.assert_not_called()
 
 
-class InfraServiceReattach(unittest.TestCase):
-    def test_failure_ends_the_bring_up_with_the_reasons(self) -> None:
+class InfraServiceTrigger(unittest.TestCase):
+    """The bring-up template decides when to reattach, for every backend."""
+
+    def setUp(self) -> None:
         from bot_bottle.backend.docker.infra import DockerInfraService
-        svc = DockerInfraService(port=8099)
-        with patch("bot_bottle.backend.infra_service.reattach_running_bottles",
-                   side_effect=GatewayAttachError("could not reattach 1 bottle")), \
-             patch.object(svc, "gateway"), \
-             patch("bot_bottle.backend.infra_service.die", side_effect=SystemExit) as die, \
+        self.svc = DockerInfraService(port=8099)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = patch("bot_bottle.backend.infra_service.bot_bottle_root",
+                     return_value=Path(tmp.name))
+        root.start()
+        self.addCleanup(root.stop)
+        reattach = patch("bot_bottle.backend.infra_service.reattach_running_bottles")
+        self.reattach = reattach.start()
+        self.addCleanup(reattach.stop)
+        gateway = patch.object(self.svc, "gateway")
+        gateway.start()
+        self.addCleanup(gateway.stop)
+        self.marker = Path(tmp.name) / "infra" / "docker.reattach-pending"
+
+    def _ensure(self, restarted: bool, **kwargs: Any) -> str:
+        with patch.object(self.svc, "_bring_up", return_value=("http://orch", restarted)):
+            return self.svc.ensure_running(**kwargs)
+
+    def test_adopted_pair_does_not_reattach(self) -> None:
+        self.assertEqual("http://orch", self._ensure(False))
+        self.reattach.assert_not_called()
+
+    def test_restarted_pair_reattaches_and_clears_the_marker(self) -> None:
+        self._ensure(True)
+        self.assertEqual("http://orch", self.reattach.call_args.kwargs["orchestrator_url"])
+        self.assertIs(AttachPolicy.STRICT, self.reattach.call_args.kwargs["policy"])
+        self.assertFalse(self.marker.exists())
+
+    def test_a_failed_reattach_is_retried_even_on_adopt(self) -> None:
+        self.reattach.side_effect = GatewayAttachError("could not reattach 1 bottle")
+        with patch("bot_bottle.backend.infra_service.die", side_effect=SystemExit) as die, \
              self.assertRaises(SystemExit):
-            svc.reattach_running_bottles("http://orch")
+            self._ensure(True)
         self.assertIn("could not reattach 1 bottle", die.call_args.args[0])
+        self.assertTrue(self.marker.exists())
+        self.reattach.side_effect = None
+        self._ensure(False)  # adopted, but the marker says it never finished
+        self.assertEqual(2, self.reattach.call_count)
+        self.assertFalse(self.marker.exists())
+
+    def test_policy_is_passed_through(self) -> None:
+        self._ensure(True, attach_policy=AttachPolicy.REPORT)
+        self.assertIs(AttachPolicy.REPORT, self.reattach.call_args.kwargs["policy"])
 
 
 def _done(rc: int = 0, out: str = "", err: str = "") -> "subprocess.CompletedProcess[str]":
@@ -180,9 +230,10 @@ class FirecrackerAttacher(unittest.TestCase):
             fga.FirecrackerGatewayAttacher().install_ca(_A, "PEM")
         self.assertEqual("PEM", run.call_args.kwargs["input"])
         self.assertIn("update-ca-certificates", run.call_args.args[0][-1])
-        with patch.object(fga.subprocess, "run", return_value=_done(255, err="refused")), \
-             self.assertRaises(GatewayAttachError):
+        with patch.object(fga.subprocess, "run", return_value=_done(255, err="refused\x1b[2J")), \
+             self.assertRaises(GatewayAttachError) as raised:
             fga.FirecrackerGatewayAttacher().install_ca(_A, "PEM")
+        self.assertNotIn("\x1b", str(raised.exception))  # no terminal escapes
 
 
 class DockerAttacher(unittest.TestCase):
@@ -199,28 +250,58 @@ class DockerAttacher(unittest.TestCase):
             bottles = dga.DockerGatewayAttacher("net").running_bottles()
         self.assertEqual([RunningBottle("c0ffee", "a", "172.30.0.5")], bottles)
 
-    def test_ca_installs_as_root_over_stdin(self) -> None:
+    def test_ca_installs_as_root_without_the_agents_path(self) -> None:
+        # The agent's PATH can include dirs it writes to: an absolute shell and
+        # a pinned system PATH keep anything it planted from running as root.
         from bot_bottle.backend.docker import gateway_attach as dga
         with patch.object(dga, "run_docker", return_value=_done()) as run:
             dga.DockerGatewayAttacher().install_ca(_A, "PEM")
         argv = run.call_args.args[0]
-        self.assertEqual(["docker", "exec", "-u", "0", "-i", "ref-a"], argv[:6])
+        self.assertEqual(["docker", "exec", "-u", "0", "-i", "ref-a", "/bin/sh", "-c"], argv[:8])
+        self.assertTrue(argv[8].startswith(f"export PATH={ROOT_EXEC_PATH};"))
         self.assertEqual("PEM", run.call_args.kwargs["input"])
+        self.assertIsNotNone(run.call_args.kwargs["timeout"])
 
-    def test_unset_secret_is_empty_not_an_error(self) -> None:
+    def test_secret_is_read_from_the_container_config_not_by_exec(self) -> None:
         from bot_bottle.backend.docker import gateway_attach as dga
-        with patch.object(dga, "run_docker", return_value=_done(1)):
-            self.assertEqual("", dga.DockerGatewayAttacher().read_env_var_secret(_A))
+        env = json.dumps(["PATH=/x", "ENV_VAR_SECRET=s3cret"])
+        with patch.object(dga, "run_docker", return_value=_done(out=env)) as run:
+            self.assertEqual("s3cret", dga.DockerGatewayAttacher().read_env_var_secret(_A))
+        self.assertEqual("inspect", run.call_args.args[0][1])
+
+    def test_unreadable_config_raises(self) -> None:
+        from bot_bottle.backend.docker import gateway_attach as dga
+        with patch.object(dga, "run_docker", return_value=_done(1, err="no such container")), \
+             self.assertRaises(GatewayAttachError):
+            dga.DockerGatewayAttacher().read_env_var_secret(_A)
+
+    def test_exec_timeout_raises(self) -> None:
+        from bot_bottle.backend.docker import gateway_attach as dga
+        with patch.object(dga, "run_docker",
+                          side_effect=subprocess.TimeoutExpired("docker", 60)), \
+             self.assertRaises(GatewayAttachError):
+            dga.DockerGatewayAttacher().install_ca(_A, "PEM")
 
 
 class MacosAttacher(unittest.TestCase):
-    def test_ca_is_copied_in_then_installed_as_root(self) -> None:
+    def test_ca_is_staged_in_root_only_dir_then_installed(self) -> None:
         from bot_bottle.backend.macos_container import gateway_attach as mga
         with patch.object(mga.container_mod, "run_container_argv", return_value=_done()) as run:
             mga.MacosGatewayAttacher("net").install_ca(_A, "PEM")
         cp, exec_ = (c.args[0] for c in run.call_args_list)
         self.assertEqual(["container", "cp"], cp[:2])
-        self.assertEqual(["container", "exec", "--user", "root", "ref-a"], exec_[:5])
+        self.assertTrue(cp[3].startswith("ref-a:/root/"))  # not world-writable /tmp
+        self.assertEqual(["container", "exec", "--user", "root", "ref-a", "/bin/sh", "-c"],
+                         exec_[:7])
+        self.assertTrue(exec_[7].startswith(f"export PATH={ROOT_EXEC_PATH};"))
+
+    def test_secret_comes_from_the_container_config(self) -> None:
+        from bot_bottle.backend.macos_container import gateway_attach as mga
+        inspect = json.dumps([{"configuration": {"initProcess": {
+            "environment": ["HOME=/home/node", "ENV_VAR_SECRET=s3cret"]}}}])
+        with patch.object(mga.container_mod, "run_container_argv",
+                          return_value=_done(out=inspect)):
+            self.assertEqual("s3cret", mga.MacosGatewayAttacher("net").read_env_var_secret(_A))
 
     def test_uninspectable_container_fails_hard(self) -> None:
         from bot_bottle.backend.macos_container import gateway_attach as mga

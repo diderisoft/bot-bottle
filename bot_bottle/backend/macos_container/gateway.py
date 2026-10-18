@@ -129,7 +129,7 @@ class MacosGateway(Gateway):
                 "gateway requires a pre-minted `gateway` token to run "
                 "(the orchestrator mints it; the gateway never holds the key)"
             )
-        if self.is_running() and self._is_current(orchestrator_url):
+        if self.is_running() and self._is_current(orchestrator_url, gateway_token):
             return False
         container_mod.force_remove_container(self.name)
         argv = [
@@ -165,17 +165,19 @@ class MacosGateway(Gateway):
             )
         return True
 
-    def _is_current(self, orchestrator_url: str) -> bool:
-        """True iff the running gateway was created from the current image and
-        resolves policy against `orchestrator_url`. An unreadable image digest
-        counts as current, so a working gateway isn't churned on a failed
-        inspect."""
+    def _is_current(self, orchestrator_url: str, gateway_token: str) -> bool:
+        """True iff the running gateway was created from the current image,
+        resolves policy against `orchestrator_url`, and presents
+        `gateway_token`. Anything unreadable counts as not current: recreating
+        costs a reattach, while keeping a stale gateway could keep it on an
+        old image or a rotated-out token."""
         running = container_mod.container_image_digest(self.name)
         wanted = container_mod.image_digest(self.image_ref)
-        if running and wanted and running != wanted:
+        if not running or running != wanted:
             return False
         env = container_mod.container_env(self.name)
-        return env.get("BOT_BOTTLE_ORCHESTRATOR_URL", orchestrator_url) == orchestrator_url
+        return (env.get("BOT_BOTTLE_ORCHESTRATOR_URL") == orchestrator_url
+                and env.get(ORCHESTRATOR_AUTH_JWT_ENV) == gateway_token)
 
     def is_running(self) -> bool:
         return container_mod.container_is_running(self.name)

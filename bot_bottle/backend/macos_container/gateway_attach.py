@@ -2,21 +2,27 @@
 (PRD 0081); the flow itself is `backend.gateway_attach`.
 
 Agents are `container` instances named by slug, attributed by their address on
-the shared agent network.
+the shared agent network. The CA is staged under root-only `/root` (not
+world-writable `/tmp`, where the agent could plant a symlink) and installed
+through an absolute `/bin/sh` with a pinned system PATH; the secret is read
+from the container's config on the host side.
 """
 
 from __future__ import annotations
 
+import json
+import subprocess
 import tempfile
 from pathlib import Path
 
 from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
 from ..gateway_attach import GatewayAttachError, GatewayAttacher, RunningBottle
-from ..util import AGENT_CA_PATH
+from ..util import install_agent_ca_script
 from . import util as container_mod
 from .enumerate import CONTAINER_NAME_PREFIX, EnumerationError, enumerate_active
 
-_STAGED_CA = "/tmp/bot-bottle-gateway-ca.pem"
+_STAGED_CA = "/root/bot-bottle-gateway-ca.pem"
+_EXEC_TIMEOUT_SECONDS = 60
 
 
 class MacosGatewayAttacher(GatewayAttacher):
@@ -34,8 +40,7 @@ class MacosGatewayAttacher(GatewayAttacher):
             source_ip = container_mod.inspect_container_network_ip(name, self._network)
             if source_ip is None:
                 raise GatewayAttachError(f"could not inspect container {name}")
-            if source_ip:
-                bottles.append(RunningBottle(ref=name, slug=agent.slug, source_ip=source_ip))
+            bottles.append(RunningBottle(ref=name, slug=agent.slug, source_ip=source_ip))
         return bottles
 
     def install_ca(self, bottle: RunningBottle, ca_pem: str) -> None:
@@ -47,24 +52,33 @@ class MacosGatewayAttacher(GatewayAttacher):
             self._run(["container", "cp", str(pem), f"{bottle.ref}:{_STAGED_CA}"],
                       what="copying the gateway CA in")
         self._run(
-            ["container", "exec", "--user", "root", bottle.ref, "sh", "-c",
-             f"mkdir -p /usr/local/share/ca-certificates && "
-             f"mv {_STAGED_CA} {AGENT_CA_PATH} && chmod 644 {AGENT_CA_PATH} && "
-             "update-ca-certificates >/dev/null"],
+            ["container", "exec", "--user", "root", bottle.ref,
+             "/bin/sh", "-c", install_agent_ca_script(_STAGED_CA)],
             what="installing the gateway CA",
         )
 
     def read_env_var_secret(self, bottle: RunningBottle) -> str:
-        return container_mod.read_container_env(bottle.ref, ENV_VAR_SECRET_NAME)
+        data = json.loads(self._run(["container", "inspect", bottle.ref],
+                                    what="reading the agent container's config") or "[]")
+        record = data[0] if isinstance(data, list) and data else {}
+        config = record.get("configuration", {}) if isinstance(record, dict) else {}
+        init = config.get("initProcess", {}) if isinstance(config, dict) else {}
+        env = init.get("environment", []) if isinstance(init, dict) else []
+        prefix = f"{ENV_VAR_SECRET_NAME}="
+        return next((e[len(prefix):] for e in env
+                     if isinstance(e, str) and e.startswith(prefix)), "")
 
     @staticmethod
-    def _run(argv: list[str], *, what: str) -> None:
-        result = container_mod.run_container_argv(argv)
+    def _run(argv: list[str], *, what: str) -> str:
+        try:
+            result = container_mod.run_container_argv(argv, timeout=_EXEC_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired as e:
+            raise GatewayAttachError(f"{what} timed out after {e.timeout:.0f}s") from e
         if result.returncode != 0:
+            detail = "".join(c for c in (result.stderr or "").strip() if c.isprintable())
             raise GatewayAttachError(
-                f"{what} failed (exit {result.returncode}): "
-                f"{(result.stderr or '').strip() or '<no stderr>'}"
-            )
+                f"{what} failed (exit {result.returncode}): {detail or '<no stderr>'}")
+        return result.stdout
 
 
 __all__ = ["MacosGatewayAttacher"]

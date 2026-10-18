@@ -72,11 +72,13 @@ class Orchestrator(abc.ABC):
     @abc.abstractmethod
     def ensure_running(
         self, *, startup_timeout: float = DEFAULT_STARTUP_TIMEOUT_SECONDS,
-    ) -> None:
+    ) -> bool:
         """Start the control plane if it isn't already healthy on the current
         source, then block until `/health` answers. Idempotent — a healthy,
         current control plane is left running so its in-memory egress tokens
-        survive (#381). Raises `OrchestratorStartError` on startup timeout."""
+        survive (#381). Returns True when it (re)started the control plane
+        (so its in-memory egress tokens are gone), False when it adopted a
+        running one. Raises `OrchestratorStartError` on startup timeout."""
 
     @abc.abstractmethod
     def is_running(self) -> bool:

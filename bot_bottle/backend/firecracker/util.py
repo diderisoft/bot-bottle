@@ -14,6 +14,7 @@ and `bot-bottle backend setup --backend=firecracker`.
 
 from __future__ import annotations
 
+import json
 import hashlib
 import os
 import platform
@@ -384,6 +385,25 @@ def _dir_size_mib(path: Path) -> int:
 
 
 # --- per-bottle SSH keys --------------------------------------------
+
+# Where the launch writes the bottle's ENV_VAR_SECRET inside the agent VM.
+ENV_VAR_SECRET_PATH = "/run/bot-bottle/env-var-secret"
+
+
+def guest_ip_from_config(config_path: Path) -> str:
+    """The agent VM's guest IP from its Firecracker config (the `ip=` kernel
+    argument), or "" if it can't be read."""
+    try:
+        cfg = json.loads(config_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return ""
+    boot_args = cfg.get("boot-source", {}).get("boot_args", "")
+    for token in boot_args.split():
+        if token.startswith("ip="):
+            # ip=<client>::<gw>:<mask>::<dev>:off
+            return token[len("ip="):].split(":", 1)[0]
+    return ""
+
 
 def generate_keypair(dest_dir: Path) -> tuple[Path, str]:
     """Mint a per-bottle ed25519 keypair. Returns (private_key_path,

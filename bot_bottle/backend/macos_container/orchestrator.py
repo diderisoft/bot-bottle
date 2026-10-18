@@ -119,17 +119,19 @@ class MacosOrchestrator(Orchestrator):
 
     def ensure_running(
         self, *, startup_timeout: float = DEFAULT_STARTUP_TIMEOUT_SECONDS,
-    ) -> None:
+    ) -> bool:
         """Ensure the control-plane container is up on current source; block
         until healthy. Idempotent — a healthy orchestrator on current source is
-        left untouched. Raises `OrchestratorStartError` on startup timeout.
-        The control network must already exist (the composer ensures it)."""
+        left untouched and False is returned; True when it was (re)started.
+        Raises `OrchestratorStartError` on startup timeout. The control
+        network must already exist (the composer ensures it)."""
         current_hash = source_hash(self._repo_root)
         if self._source_current(current_hash) and self.is_healthy():
-            return
+            return False
         log.info("starting orchestrator container", context={"name": self.name})
         self._run_container(current_hash)
         self._wait_healthy(startup_timeout)
+        return True
 
     def _run_container(self, current_hash: str) -> None:
         container_mod.force_remove_container(self.name)

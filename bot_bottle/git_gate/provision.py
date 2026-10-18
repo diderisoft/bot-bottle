@@ -167,7 +167,30 @@ def _write_upstreams_snapshot(
     snapshot.chmod(0o600)
 
 
+def load_upstreams_snapshot(stage_dir: Path) -> tuple[GitGateUpstream, ...]:
+    """The upstream table `_write_upstreams_snapshot` persisted at launch, or
+    () when the bottle has no git upstreams. Each upstream's known_hosts file
+    is the one staged next to it, when present."""
+    snapshot = stage_dir / "upstreams.json"
+    if not snapshot.is_file():
+        return ()
+    upstreams: list[GitGateUpstream] = []
+    for u in json.loads(snapshot.read_text()):
+        known_hosts = stage_dir / f"{u['name']}-known_hosts"
+        upstreams.append(GitGateUpstream(
+            name=u["name"],
+            upstream_url=u["upstream_url"],
+            upstream_host=u.get("upstream_host", ""),
+            upstream_port=u.get("upstream_port", ""),
+            identity_file=u.get("identity_file", ""),
+            known_host_key=u.get("known_host_key", ""),
+            known_hosts_file=known_hosts if known_hosts.is_file() else Path(),
+        ))
+    return tuple(upstreams)
+
+
 __all__ = [
+    "load_upstreams_snapshot",
     "revoke_git_gate_provisioned_keys",
     "provision_git_gate_dynamic_keys",
     "_provision_dynamic_key",

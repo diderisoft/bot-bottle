@@ -11,7 +11,6 @@ snapshot.
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 from pathlib import Path
@@ -29,7 +28,7 @@ class FirecrackerFreezer(Freezer):
     def _freeze(self, agent: ActiveAgent) -> str:
         run_dir = util.cache_dir() / "run" / agent.slug
         private_key = run_dir / "bottle_id_ed25519"
-        guest_ip = _guest_ip_from_config(run_dir / "config.json")
+        guest_ip = util.guest_ip_from_config(run_dir / "config.json")
         if not private_key.is_file() or not guest_ip:
             die(f"cannot freeze {agent.slug}: run dir {run_dir} is missing the "
                 f"SSH key or VM config (is the bottle still running?)")
@@ -40,19 +39,6 @@ class FirecrackerFreezer(Freezer):
 
     def _export_hint(self, slug: str, image_ref: str) -> None:
         info(f"to export for migration:      cp {image_ref} {slug}.tar")
-
-
-def _guest_ip_from_config(config_path: Path) -> str:
-    try:
-        cfg = json.loads(config_path.read_text())
-    except (OSError, json.JSONDecodeError):
-        return ""
-    boot_args = cfg.get("boot-source", {}).get("boot_args", "")
-    for token in boot_args.split():
-        if token.startswith("ip="):
-            # ip=<client>::<gw>:<mask>::<dev>:off
-            return token[len("ip="):].split(":", 1)[0]
-    return ""
 
 
 def _commit_rootfs_via_ssh(private_key: Path, guest_ip: str, tar_path: Path) -> None:

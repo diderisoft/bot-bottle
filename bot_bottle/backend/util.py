@@ -44,6 +44,26 @@ def poll_ca_cert(fetch: Callable[[], str | None], *, timeout: float) -> str:
 AGENT_CA_PATH = "/usr/local/share/ca-certificates/bot-bottle-mitm-ca.crt"
 AGENT_CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt"
 
+# The root-owned system PATH the host pins when it runs commands as root
+# inside an agent. The agent's own PATH can include directories it writes to
+# (`~/.local/bin`), so a root exec that inherited it would run whatever the
+# agent planted there.
+ROOT_EXEC_PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
+
+
+def install_agent_ca_script(source: str) -> str:
+    """A `/bin/sh -c` script that installs the CA PEM at `source` (a path, or
+    `-` for stdin) as the agent's trusted CA and rebuilds its trust store. Run
+    as root; it pins `ROOT_EXEC_PATH` itself."""
+    read = "cat" if source == "-" else f"cat {source}"
+    return (
+        f"export PATH={ROOT_EXEC_PATH}; "
+        "mkdir -p /usr/local/share/ca-certificates && "
+        f"{read} > {AGENT_CA_PATH} && chmod 644 {AGENT_CA_PATH} && "
+        + ("" if source == "-" else f"rm -f {source} && ")
+        + "update-ca-certificates >/dev/null"
+    )
+
 
 def host_skill_dir(name: str) -> str:
     """Return the host-side path for a named skill:

@@ -8,6 +8,7 @@ the gateway is connected to it with a freshly minted token."""
 
 from __future__ import annotations
 
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -28,9 +29,15 @@ class TestInfraEnsureRunning(unittest.TestCase):
             p = patch.object(self.svc, name, return_value=mock)
             p.start()
             self.addCleanup(p.stop)
-        reattach = patch.object(self.svc, "reattach_running_bottles")
+        # Reattaching itself is covered by the shared template's tests.
+        reattach = patch("bot_bottle.backend.infra_service.reattach_running_bottles")
         self.reattach = reattach.start()
         self.addCleanup(reattach.stop)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = patch("bot_bottle.backend.infra_service.bot_bottle_root", return_value=Path(tmp.name))
+        root.start()
+        self.addCleanup(root.stop)
 
     def test_composes_networks_builds_and_brings_up_orchestrator_first(self) -> None:
         with patch(f"{_INFRA}.ensure_networks") as nets:
@@ -49,23 +56,16 @@ class TestInfraEnsureRunning(unittest.TestCase):
             "http://192.168.128.2:8099", "gw.jwt")
         self.orch.mint_gateway_token.assert_called_once()
 
-    def test_adopted_pair_does_not_reattach(self) -> None:
-        self.orch.is_healthy.return_value = True
-        self.gw.connect_to_orchestrator.return_value = False
-        with patch(f"{_INFRA}.ensure_networks"):
-            self.svc.ensure_running()
-        self.reattach.assert_not_called()
-
-    def test_restarted_gateway_or_orchestrator_reattaches(self) -> None:
-        # (orchestrator healthy before?, gateway restarted?)
-        for was_up, restarted in ((True, True), (False, False)):
-            with self.subTest(was_up=was_up, restarted=restarted):
-                self.reattach.reset_mock()
-                self.orch.is_healthy.return_value = was_up
-                self.gw.connect_to_orchestrator.return_value = restarted
+    def test_bring_up_reports_whether_either_plane_restarted(self) -> None:
+        # The shared template reattaches on True; adopting both planes is False.
+        for orch_restarted, gw_restarted in ((False, False), (True, False), (False, True)):
+            with self.subTest(orch=orch_restarted, gw=gw_restarted):
+                self.orch.ensure_running.return_value = orch_restarted
+                self.gw.connect_to_orchestrator.return_value = gw_restarted
                 with patch(f"{_INFRA}.ensure_networks"):
-                    self.svc.ensure_running()
-                self.reattach.assert_called_once_with("http://192.168.128.2:8099")
+                    url, restarted = self.svc._bring_up(startup_timeout=1)
+                self.assertEqual("http://192.168.128.2:8099", url)
+                self.assertEqual(orch_restarted or gw_restarted, restarted)
 
     def test_is_healthy_delegates_to_the_orchestrator(self) -> None:
         self.orch.is_healthy.return_value = True

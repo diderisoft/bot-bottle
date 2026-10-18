@@ -496,7 +496,7 @@ def container_ipv4_on_network(name: str, network: str) -> str:
 
 
 def run_container_argv(
-    argv: list[str], *, env: dict[str, str] | None = None,
+    argv: list[str], *, env: dict[str, str] | None = None, timeout: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run a `container` command, returning the result for the caller to
     interpret. Unlike the `die`-on-failure helpers above, this lets callers
@@ -506,9 +506,10 @@ def run_container_argv(
     `env` sets the child process environment — used to hand a secret to a bare
     `--env NAME` flag (Apple's "just key → inherit from host" form) so the
     value is inherited from this process, never written onto argv or into
-    `container inspect`'s recorded command line."""
+    `container inspect`'s recorded command line. `timeout` raises
+    `subprocess.TimeoutExpired` when exceeded."""
     return subprocess.run(
-        argv, capture_output=True, text=True, check=False, env=env)
+        argv, capture_output=True, text=True, check=False, env=env, timeout=timeout)
 
 
 def bind_mount_spec(source: str, target: str, *, readonly: bool = False) -> str:

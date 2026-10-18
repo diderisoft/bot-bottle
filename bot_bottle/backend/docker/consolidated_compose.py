@@ -73,6 +73,10 @@ def consolidated_agent_compose(
         # registered this IP, and the gateway attributes the bottle by it.
         "networks": {network: {"ipv4_address": source_ip}},
         "environment": env,
+        # No raw sockets: with NET_RAW a root process could forge addresses on
+        # the shared gateway network and impersonate another bottle (the
+        # macOS backend drops it for the same reason).
+        "cap_drop": ["NET_RAW"],
     }
     if plan.use_runsc:
         service["runtime"] = "runsc"

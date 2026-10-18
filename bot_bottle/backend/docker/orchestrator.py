@@ -10,8 +10,11 @@ the sole holder of the signing key (#469).
 The publish needs a second network: Docker doesn't publish ports for a
 container whose only networks are `--internal` (Docker 28+), so the CLI could
 never reach the control plane. The container is started on a dedicated publish
-network with IP masquerading off, which carries the loopback mapping but gives
-no outbound route, and then joined to the control network.
+network with IP masquerading off (no NAT'd path to the internet; it can still
+reach host services through the bridge address, as any bridge member can),
+with external DNS pointed at an unroutable resolver so the publish network
+can't be used to resolve or leak through DNS, and then joined to the control
+network.
 """
 
 from __future__ import annotations
@@ -43,9 +46,13 @@ from ...orchestrator.lifecycle import (
 ORCHESTRATOR_NAME = "bot-bottle-orchestrator"
 ORCHESTRATOR_LABEL = "bot-bottle-orchestrator=1"
 ORCHESTRATOR_NETWORK = "bot-bottle-orchestrator"
-# Carries only the host-loopback port mapping; masquerading off, so no egress.
+# Carries only the host-loopback port mapping; masquerading off, so no NAT'd
+# egress.
 ORCHESTRATOR_PUBLISH_NETWORK = "bot-bottle-orchestrator-publish"
 _NO_MASQUERADE = "com.docker.network.bridge.enable_ip_masquerade"
+# Upstream for Docker's embedded DNS: TEST-NET-1, never routed, so external
+# names don't resolve while container names on the control network still do.
+_NO_EXTERNAL_DNS = "192.0.2.1"
 ORCHESTRATOR_IMAGE = os.environ.get(
     "BOT_BOTTLE_ORCHESTRATOR_IMAGE", "bot-bottle-orchestrator:latest"
 )
@@ -191,7 +198,7 @@ class DockerOrchestrator(Orchestrator):
         ])
         if proc.returncode == 0:
             if proc.stdout.strip() != "false":
-                raise GatewayError(
+                raise OrchestratorStartError(
                     f"network {self.publish_network} exists with IP masquerading on, "
                     "which would give the orchestrator outbound access; remove it "
                     f"(`docker network rm {self.publish_network}`) so it is recreated"
@@ -202,28 +209,29 @@ class DockerOrchestrator(Orchestrator):
             self.publish_network,
         ])
         if proc.returncode != 0 and "already exists" not in proc.stderr:
-            raise GatewayError(
+            raise OrchestratorStartError(
                 f"orchestrator publish network {self.publish_network} failed to create: "
                 f"{proc.stderr.strip()}"
             )
 
     def ensure_running(
         self, *, startup_timeout: float = DEFAULT_STARTUP_TIMEOUT_SECONDS,
-    ) -> None:
+    ) -> bool:
         """Ensure the control-plane container is up on current source; block
         until healthy. Idempotent — a healthy orchestrator on current source is
-        left untouched (its in-memory egress tokens survive). Raises
+        left untouched (its in-memory egress tokens survive) and False is
+        returned; True when it was (re)started. Raises
         `OrchestratorStartError` on startup timeout."""
         current_hash = source_hash(self._repo_root)
         if self.is_healthy() and self._source_current(current_hash):
-            return
+            return False
         log.info("starting orchestrator container", context={"name": self.name})
         self._run_container(current_hash)
         deadline = time.monotonic() + startup_timeout
         while time.monotonic() < deadline:
             if self.is_healthy():
                 log.info("orchestrator healthy", context={"url": self.url()})
-                return
+                return True
             time.sleep(_HEALTH_POLL_SECONDS)
         raise OrchestratorStartError(
             f"orchestrator at {self.url()} did not become healthy "
@@ -251,6 +259,7 @@ class DockerOrchestrator(Orchestrator):
             # is joined right after (agents are never on either, so they have
             # no route to the control plane: the L3 block, not just the JWT).
             "--network", self.publish_network,
+            "--dns", _NO_EXTERNAL_DNS,
             # Host CLI reaches the control plane here (loopback by default).
             # Socket-shared CI joins the container directly to the job network;
             # the host-side mapping remains loopback-only in that topology. The

@@ -285,8 +285,19 @@ class TestPublishNetwork(unittest.TestCase):
     def test_existing_network_with_masquerade_is_refused(self) -> None:
         # An empty option means Docker's default: masquerading on, i.e. egress.
         with patch(_RUN, return_value=_proc(stdout="\n")), \
-                self.assertRaises(GatewayError):
+                self.assertRaises(OrchestratorStartError):
             DockerOrchestrator()._ensure_publish_network()
+
+    def test_external_dns_is_pointed_at_an_unroutable_resolver(self) -> None:
+        # The publish network isn't --internal, so Docker's embedded DNS would
+        # otherwise resolve external names for the orchestrator.
+        def fake(argv: list[str], **_kw: object) -> Mock:
+            return _proc(stdout="false") if argv[:3] == ["docker", "network", "inspect"] else _proc()
+
+        with patch(_RUN, side_effect=fake) as run, patch(_TOKEN, return_value="k"):
+            DockerOrchestrator()._run_container("hash")
+        argv = next(c.args[0] for c in run.call_args_list if c.args[0][:2] == ["docker", "run"])
+        self.assertEqual("192.0.2.1", argv[argv.index("--dns") + 1])
 
 
 if __name__ == "__main__":

@@ -40,7 +40,6 @@ from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
 from ..provision_bottle import deprovision_bottle, provision_bottle
 from . import util
 from .gateway import FirecrackerGateway
-from .gateway_attach import ENV_VAR_SECRET_PATH as _ENV_VAR_SECRET_PATH
 from .infra import FirecrackerInfraService
 
 
@@ -64,7 +63,7 @@ def persist_env_var_secret(private_key: Path, guest_ip: str, secret: str) -> Non
     """Mirror the exec-time key into guest tmpfs for restart recovery."""
     proc = subprocess.run(
         util.ssh_base_argv(private_key, guest_ip)
-        + [f"umask 077; mkdir -p /run/bot-bottle; cat > {_ENV_VAR_SECRET_PATH}"],
+        + [f"umask 077; mkdir -p /run/bot-bottle; cat > {util.ENV_VAR_SECRET_PATH}"],
         input=secret, capture_output=True, text=True, check=False,
     )
     if proc.returncode != 0:

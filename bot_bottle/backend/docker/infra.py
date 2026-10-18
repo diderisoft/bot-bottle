@@ -43,7 +43,6 @@ from ...gateway import (
 from ..infra_service import InfraService
 from ...orchestrator.lifecycle import (
     DEFAULT_PORT,
-    DEFAULT_STARTUP_TIMEOUT_SECONDS,
 )
 
 # Back-compat aliases: the split retired the combined `bot-bottle-infra`
@@ -53,6 +52,7 @@ INFRA_NAME = GATEWAY_NAME  # the container agents attribute against is the gatew
 
 
 class DockerInfraService(InfraService):
+    name = "docker"
     """Composes the per-host control plane + gateway as two containers.
 
     `orchestrator_name` / `gateway_name` let callers run independent pairs on
@@ -122,9 +122,7 @@ class DockerInfraService(InfraService):
             ca_mount_source=self._gateway_ca_mount_source,
         )
 
-    def ensure_running(
-        self, *, startup_timeout: float = DEFAULT_STARTUP_TIMEOUT_SECONDS,
-    ) -> str:
+    def _bring_up(self, *, startup_timeout: float) -> tuple[str, bool]:
         """Ensure the orchestrator + gateway containers are up; return the host
         control-plane URL. Idempotent — a healthy orchestrator on current source
         (and a current-image gateway) is left untouched. Raises
@@ -136,10 +134,7 @@ class DockerInfraService(InfraService):
         orchestrator.ensure_built()
         gateway.ensure_built()
 
-        # An orchestrator that wasn't already up starts with no egress tokens
-        # in memory, so running bottles need them restored (PRD 0081).
-        orchestrator_was_up = orchestrator.is_healthy()
-        orchestrator.ensure_running(startup_timeout=startup_timeout)
+        orchestrator_restarted = orchestrator.ensure_running(startup_timeout=startup_timeout)
 
         # Bring up (or refresh) the gateway once the control plane it resolves
         # against is healthy. The orchestrator (which holds the signing key)
@@ -149,10 +144,7 @@ class DockerInfraService(InfraService):
         gateway_restarted = gateway.connect_to_orchestrator(
             orchestrator.gateway_url(), orchestrator.mint_gateway_token(),
         )
-        url = orchestrator.url()
-        if gateway_restarted or not orchestrator_was_up:
-            self.reattach_running_bottles(url)
-        return url
+        return orchestrator.url(), orchestrator_restarted or gateway_restarted
 
     def gateway_attacher(self) -> DockerGatewayAttacher:
         return DockerGatewayAttacher(self.network)
