@@ -32,7 +32,7 @@ def _manifest(*, oci: bool = True, ext4: bool = True, plat: str = "linux/arm64")
         }
     return pa.parse_artifacts_manifest({
         "bot-bottle-claude": {
-            "version": "0.14.2", "inputs_hash": "9f2c1e4b7a83d10c",
+            "version": "0.14.2", "inputs_hash": "9f2c1e4b7a83d10c", "protocol": 1,
             "artifacts": artifacts,
         }
     })
@@ -75,12 +75,15 @@ class ResolvePin(unittest.TestCase):
             self.assertIsNone(ai.resolve_agent_pin("claude", prefer=(pa.FORMAT_EXT4,)))
 
 
-def _manifest_pair(*, agent_version: str, infra_version: str, plat: str = "linux/arm64"):
+def _manifest_pair(
+    *, agent_version: str = "0.14.2", infra_version: str = "0.14.2",
+    agent_protocol: int = 1, infra_protocol: int = 1, plat: str = "linux/arm64",
+):
     on_disk = plat.replace("/", "-")
 
-    def _entry(name: str, version: str):
+    def _entry(name: str, version: str, protocol: int):
         return {
-            "version": version, "inputs_hash": "9f2c1e4b7a83d10c",
+            "version": version, "inputs_hash": "9f2c1e4b7a83d10c", "protocol": protocol,
             "artifacts": {
                 f"oci_{on_disk}": {
                     "type": "oci", "platform": on_disk,
@@ -91,25 +94,35 @@ def _manifest_pair(*, agent_version: str, infra_version: str, plat: str = "linux
         }
 
     return pa.parse_artifacts_manifest({
-        "bot-bottle-claude": _entry("bot-bottle-claude", agent_version),
-        "bot-bottle-gateway": _entry("bot-bottle-gateway", infra_version),
+        "bot-bottle-claude": _entry("bot-bottle-claude", agent_version, agent_protocol),
+        "bot-bottle-gateway": _entry("bot-bottle-gateway", infra_version, infra_protocol),
     })
 
 
-class ReleaseCompat(unittest.TestCase):
-    def test_matching_agent_and_infra_release_resolves(self) -> None:
-        entries = _manifest_pair(agent_version="0.14.2", infra_version="0.14.2")
+class ProtocolCompat(unittest.TestCase):
+    def _resolve(self, entries: dict[str, pa.ImageEntry]) -> pa.Artifact | None:
         with mock.patch.object(ai, "load_artifacts_manifest_optional", return_value=entries), \
-                mock.patch.object(ai, "current_platform", return_value="linux/arm64"):
-            art = ai.resolve_agent_pin("claude", prefer=(pa.FORMAT_OCI,))
-        self.assertIsNotNone(art)
+                mock.patch.object(ai, "current_platform", return_value="linux/arm64"), \
+                mock.patch.object(ai, "PROTOCOL_VERSION", 1):
+            return ai.resolve_agent_pin("claude", prefer=(pa.FORMAT_OCI,))
 
-    def test_mismatched_release_refuses(self) -> None:
-        entries = _manifest_pair(agent_version="0.14.2", infra_version="0.14.3")
-        with mock.patch.object(ai, "load_artifacts_manifest_optional", return_value=entries), \
-                mock.patch.object(ai, "current_platform", return_value="linux/arm64"):
-            with self.assertRaises(pa.ArtifactsManifestError):
-                ai.resolve_agent_pin("claude", prefer=(pa.FORMAT_OCI,))
+    def test_matching_protocol_resolves(self) -> None:
+        self.assertIsNotNone(self._resolve(_manifest_pair()))
+
+    def test_partial_republish_at_a_new_version_still_resolves(self) -> None:
+        # Republishing only the agent image bumps its version, not its protocol.
+        entries = _manifest_pair(agent_version="0.14.3", infra_version="0.14.2")
+        self.assertIsNotNone(self._resolve(entries))
+
+    def test_agent_infra_protocol_mismatch_refuses(self) -> None:
+        entries = _manifest_pair(agent_protocol=1, infra_protocol=2)
+        with self.assertRaises(pa.ArtifactsManifestError):
+            self._resolve(entries)
+
+    def test_agent_protocol_unlike_this_host_refuses(self) -> None:
+        entries = _manifest_pair(agent_protocol=2, infra_protocol=2)
+        with self.assertRaises(pa.ArtifactsManifestError):
+            self._resolve(entries)
 
 
 class Materialize(unittest.TestCase):

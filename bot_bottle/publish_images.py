@@ -36,6 +36,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .compat import PROTOCOL_VERSION
 from . import image_inputs, resources
 from .published_artifacts import (
     ARTIFACTS_MANIFEST_NAME,
@@ -78,6 +79,9 @@ class BuiltImage:
     name: str
     version: str
     artifacts: list[BuiltArtifact] = field(default_factory=list)
+    # The agent <-> infra protocol these bytes speak: the source's at build
+    # time, or the tested manifest's when promoting (never re-stamped).
+    protocol: int = PROTOCOL_VERSION
 
 
 def _config() -> tuple[str, str, str]:
@@ -383,6 +387,7 @@ def artifacts_manifest_entry(built: BuiltImage) -> dict[str, object]:
     return {
         "version": built.version,
         "inputs_hash": next(iter({a.inputs_hash for a in built.artifacts})),
+        "protocol": built.protocol,
         "artifacts": artifacts,
     }
 
@@ -546,7 +551,7 @@ def promote(
     entries = parse_artifacts_manifest(json.loads(manifest.read_text()))
     promoted: list[BuiltImage] = []
     for name, entry in sorted(entries.items()):
-        out = BuiltImage(name=name, version=to_version)
+        out = BuiltImage(name=name, version=to_version, protocol=entry.protocol)
         for artifact in entry.artifacts:
             if artifact.format == FORMAT_OCI:
                 digest = _promote_oci(artifact, to_version, runtime=runtime)

@@ -96,6 +96,8 @@ class ImageEntry:
     version: str
     inputs_hash: str
     artifacts: tuple[Artifact, ...]
+    # The agent <-> infra protocol the image was built for (see `compat`).
+    protocol: int = 0
 
     def for_format(self, fmt: str, plat: str) -> "Artifact | None":
         for artifact in self.artifacts:
@@ -164,6 +166,11 @@ def parse_artifacts_manifest(
             fail(f"{name}: inputs_hash must be 16 lowercase hex chars, got {inputs_hash!r}")
             inputs_hash = ""
 
+        protocol = raw.get("protocol")
+        if isinstance(protocol, bool) or not isinstance(protocol, int) or protocol < 1:
+            fail(f"{name}: protocol must be a positive integer, got {protocol!r}")
+            protocol = 0
+
         artifacts: list[Artifact] = []
         raw_artifacts = raw.get("artifacts")
         if not isinstance(raw_artifacts, dict) or not raw_artifacts:
@@ -212,6 +219,7 @@ def parse_artifacts_manifest(
             entries[name] = ImageEntry(
                 name=name, version=version,
                 inputs_hash=inputs_hash, artifacts=tuple(artifacts),
+                protocol=protocol,
             )
 
     return entries

@@ -44,6 +44,7 @@ def _entry(**over: object) -> dict[str, Any]:
     data = {
         "version": "0.14.2",
         "inputs_hash": "9f2c1e4b7a83d10c",
+        "protocol": 1,
         "artifacts": {
             "oci_linux-arm64": {
                 "type": "oci", "platform": "linux-arm64",
@@ -497,6 +498,21 @@ class ManifestFile(unittest.TestCase):
             with self.assertRaises(pa.ArtifactsManifestError) as ctx:
                 pa.load_artifacts_manifest(Path(tmp))
             self.assertIn("publish images first", str(ctx.exception))
+
+    def test_protocol_is_parsed(self) -> None:
+        entries = pa.parse_artifacts_manifest(_entry())
+        self.assertEqual(1, next(iter(entries.values())).protocol)
+
+    def test_missing_or_invalid_protocol_is_rejected(self) -> None:
+        for bad in (None, 0, -1, "1", True):
+            raw = _entry()
+            body = next(iter(raw.values()))
+            if bad is None:
+                body.pop("protocol")
+            else:
+                body["protocol"] = bad
+            with self.subTest(bad=bad), self.assertRaises(pa.ArtifactsManifestError):
+                pa.parse_artifacts_manifest(raw)
 
     def test_round_trip_from_disk(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

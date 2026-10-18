@@ -191,6 +191,7 @@ class ProtectedSet(unittest.TestCase):
         "bot-bottle-gateway": {
             "version": "0.14.2",
             "inputs_hash": "9f2c1e4b7a83d10c",
+            "protocol": 1,
             "artifacts": {
                 "oci_linux-amd64": {
                     "type": "oci", "platform": "linux-amd64",

@@ -190,6 +190,10 @@ class WriteManifest(unittest.TestCase):
             self.assertEqual(list(data), ["a-img", "b-img"])
             self.assertEqual(data["a-img"]["inputs_hash"], _HASH)
 
+    def test_entry_records_the_source_protocol(self) -> None:
+        from bot_bottle.compat import PROTOCOL_VERSION
+        self.assertEqual(PROTOCOL_VERSION, pi.artifacts_manifest_entry(_built())["protocol"])
+
     def test_entry_carries_both_formats(self) -> None:
         entry = pi.artifacts_manifest_entry(_built())
         artifacts: Any = entry["artifacts"]
@@ -520,7 +524,7 @@ class Promotion(unittest.TestCase):
     def _manifest(self, tmp: Path) -> Path:
         p = tmp / "tested.json"
         p.write_text(json.dumps({"bot-bottle-gateway": {
-            "version": "0.0.0-dev", "inputs_hash": _HASH,
+            "version": "0.0.0-dev", "inputs_hash": _HASH, "protocol": 1,
             "artifacts": {
                 "oci_linux-arm64": {
                     "type": "oci", "platform": "linux-arm64",
@@ -552,6 +556,8 @@ class Promotion(unittest.TestCase):
         self.assertEqual(len(promoted), 1)
         self.assertEqual({a.fmt for a in promoted[0].artifacts}, {"oci", "ext4"})
         self.assertEqual(promoted[0].version, "1.0.0")
+        # The tested bytes' protocol ships with them; promotion never re-stamps it.
+        self.assertEqual(promoted[0].protocol, 1)
 
     def test_oci_is_pulled_by_digest_not_tag(self) -> None:
         """What gets re-tagged has to be exactly what was tested."""
