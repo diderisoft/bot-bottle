@@ -37,18 +37,31 @@ from ...manifest import ManifestImageOverlay
 from ...published_artifacts import FORMAT_EXT4, Artifact
 from . import util
 from .infra import FirecrackerInfraService
+from .infra_vm import GUEST_BUILD_STORE
 
 # overlay + chroot: buildah works as root in the microVM on the guest kernel's
 # overlayfs (vfs copied every layer in full, ~8x a large image, and filled the
-# VM disk). The store gets its own root so a VM still holding an older vfs
-# store never trips buildah's driver-mismatch check. `--isolation` is a
-# build/run-only flag; `from`/`mount` take just the store.
+# VM disk). The store root is the orchestrator's persistent build-store volume,
+# so pulled bases survive VM restarts (and an older vfs store never trips
+# buildah's driver-mismatch check). `--isolation` is a build/run-only flag;
+# `from`/`mount` take just the store. Every command that writes the store
+# ends in `sync`: the infra VM is stopped by killing it, and unflushed layer
+# metadata comes back empty and breaks the next mount.
 _STORE_FLAG = ("--storage-driver overlay"
-               " --root /var/lib/containers/overlay-storage"
+               f" --root {GUEST_BUILD_STORE}"
                " --runroot /run/containers/overlay-storage")
 _BUILD_FLAGS = f"--isolation chroot {_STORE_FLAG}"
 
 _BUILD_TIMEOUT_SECONDS = 900.0
+
+# Below this much free space in the build store, drop every image before a
+# build. The store is a cache: a wipe costs one re-pull, while a full store
+# fails the build.
+_STORE_MIN_FREE_MIB = 4096
+_PRUNE_LOW_STORE = (
+    f"[ \"$(df -Pm {GUEST_BUILD_STORE} | awk 'NR==2 {{print $4}}')\" -ge "
+    f"{_STORE_MIN_FREE_MIB} ] || buildah rmi -a -f {_STORE_FLAG} >/dev/null 2>&1 || true; "
+)
 
 
 def _dockerfile_hash(dockerfile: Path) -> str:
@@ -271,9 +284,7 @@ def acquire_agent_overlay_rootfs_dir(
                 engine, base_ref, overlay, staging, source_root, smoke_test, digest,
                 template=template)
         else:
-            info(f"building overlay agent image on {base_ref!r} in the infra VM "
-                 "(install Docker or Podman to build on the host and keep the "
-                 "base's layers cached across infra VM restarts)")
+            info(f"building overlay agent image on {base_ref!r} in the infra VM")
             _build_overlay_in_infra(
                 base_ref, overlay, staging, source_root, smoke_test, digest,
                 template=template)
@@ -356,8 +367,8 @@ def _build_in_infra(
         # Remove only THIS build's working containers/image/context — never
         # `buildah rm -a`, which would nuke a concurrent build's container.
         _ssh(key, ip,
-             f"buildah rm {smoke_ctr} {export_ctr} >/dev/null 2>&1; "
-             f"buildah rmi {_STORE_FLAG} {tag} >/dev/null 2>&1; rm -rf {ctx}",
+             f"buildah rm {_STORE_FLAG} {smoke_ctr} {export_ctr} >/dev/null 2>&1; "
+             f"buildah rmi {_STORE_FLAG} {tag} >/dev/null 2>&1; rm -rf {ctx}; sync",
              timeout=60)
 
     _cleanup()  # clear leftovers from a crashed prior build of this digest
@@ -409,8 +420,8 @@ def _build_overlay_on_host(
 ) -> None:
     """Build the overlay with a host container engine and unpack its rootfs
     into `base_out`. Preferred over the infra VM when an engine is present:
-    the host's layer store persists, while the infra VM's rootfs (and so its
-    buildah store) is fresh each boot, so it re-pulls the base.
+    it shares the user's existing layer cache, has no fixed store size, and
+    skips streaming the rootfs out of the VM.
 
     With an artifact token, registry auth goes to a throwaway credentials
     location (`docker --config` / `podman --authfile`) so the user's own
@@ -490,9 +501,9 @@ def _build_overlay_in_infra(
 
     def _cleanup() -> None:
         _ssh(key, ip,
-             f"buildah rm {smoke_ctr} {export_ctr} >/dev/null 2>&1; "
+             f"buildah rm {_STORE_FLAG} {smoke_ctr} {export_ctr} >/dev/null 2>&1; "
              f"buildah rmi {_STORE_FLAG} {tag} >/dev/null 2>&1; "
-             f"buildah logout {registry_host} >/dev/null 2>&1; rm -rf {ctx}",
+             f"buildah logout {registry_host} >/dev/null 2>&1; rm -rf {ctx}; sync",
              timeout=60)
 
     _cleanup()  # clear leftovers from a crashed prior build of this digest
@@ -636,8 +647,9 @@ def _buildah_build(
     )
     rc = _ssh_streamed(
         private_key, guest_ip,
+        f"mkdir -p {GUEST_BUILD_STORE}; {_PRUNE_LOW_STORE}"
         f"buildah build {_BUILD_FLAGS} {arg_flags} "
-        f"-t {tag} -f {ctx}/Dockerfile {ctx}/ctx",
+        f"-t {tag} -f {ctx}/Dockerfile {ctx}/ctx; rc=$?; sync; exit $rc",
         timeout=_BUILD_TIMEOUT_SECONDS,
     )
     if rc != 0:
@@ -656,7 +668,7 @@ def _smoke_test(private_key: Path, guest_ip: str, tag: str, ctr: str,
     cmd = (
         f"set -e; buildah from {_STORE_FLAG} --name {ctr} {tag} >/dev/null; "
         f"buildah run {_BUILD_FLAGS} {ctr} -- {' '.join(argv)}; rc=$?; "
-        f"buildah rm {ctr} >/dev/null 2>&1 || true; exit $rc"
+        f"buildah rm {_STORE_FLAG} {ctr} >/dev/null 2>&1 || true; sync; exit $rc"
     )
     result = _ssh(private_key, guest_ip, cmd, timeout=120)
     if result.returncode != 0:

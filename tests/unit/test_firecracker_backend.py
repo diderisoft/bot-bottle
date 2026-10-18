@@ -404,16 +404,19 @@ class TestBootArgs(unittest.TestCase):
         self.assertEqual("bbfc0", cfg["network-interfaces"][0]["host_dev_name"])
         self.assertEqual(1, len(cfg["drives"]))  # no data drive by default
 
-    def test_config_adds_data_drive(self):
+    def test_config_adds_data_drives_in_order(self):
         cfg = cast(Any, firecracker_vm._config(
             rootfs=Path("/run/rootfs.ext4"), tap="bbfc0",
             guest_ip="100.64.0.1", host_ip="100.64.0.0", pubkey="k",
             vcpus=2, mem_mib=2048, guest_mac="06:00:AC:10:00:02",
-            data_drive=Path("/run/registry.ext4"),
+            data_drives=(Path("/run/registry.ext4"), Path("/run/build-store.ext4")),
         ))
-        self.assertEqual(2, len(cfg["drives"]))
-        self.assertFalse(cfg["drives"][1]["is_root_device"])
-        self.assertEqual("/run/registry.ext4", cfg["drives"][1]["path_on_host"])
+        self.assertEqual(3, len(cfg["drives"]))
+        # Guest device order follows the list: /dev/vdb, then /dev/vdc.
+        self.assertEqual(["/run/registry.ext4", "/run/build-store.ext4"],
+                         [d["path_on_host"] for d in cfg["drives"][1:]])
+        self.assertFalse(any(d["is_root_device"] for d in cfg["drives"][1:]))
+        self.assertEqual(2, len({d["drive_id"] for d in cfg["drives"][1:]}))
 
 
 class TestBottleExecClose(unittest.TestCase):

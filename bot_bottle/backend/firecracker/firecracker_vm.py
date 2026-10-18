@@ -19,6 +19,7 @@ import json
 import signal
 import subprocess
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -84,7 +85,7 @@ def _config(
     vcpus: int,
     mem_mib: int,
     guest_mac: str,
-    data_drive: Path | None = None,
+    data_drives: Sequence[Path] = (),
     extra_boot_args: str = "",
 ) -> dict[str, object]:
     drives: list[dict[str, object]] = [
@@ -95,13 +96,13 @@ def _config(
             "is_read_only": False,
         }
     ]
-    # A second virtio-block device (guest /dev/vdb) — the infra VM's
-    # persistent registry "volume", a host-side ext4 file that outlives the
-    # ephemeral rootfs across VM restarts.
-    if data_drive is not None:
+    # Further virtio-block devices (guest /dev/vdb, /dev/vdc, ... in order) —
+    # the infra VM's persistent "volumes", host-side ext4 files that outlive
+    # the ephemeral rootfs across VM restarts.
+    for i, drive in enumerate(data_drives):
         drives.append({
-            "drive_id": "data",
-            "path_on_host": str(data_drive),
+            "drive_id": f"data{i}",
+            "path_on_host": str(drive),
             "is_root_device": False,
             "is_read_only": False,
         })
@@ -138,7 +139,7 @@ def boot(
     mem_mib: int = 2048,
     guest_mac: str = "06:00:AC:10:00:02",
     detached: bool = False,
-    data_drive: Path | None = None,
+    data_drives: Sequence[Path] = (),
     extra_boot_args: str = "",
 ) -> VmHandle:
     """Write the config and launch the VMM. Returns once the process is
@@ -155,7 +156,7 @@ def boot(
         _config(
             rootfs=rootfs, tap=tap, guest_ip=guest_ip, host_ip=host_ip,
             pubkey=pubkey, vcpus=vcpus, mem_mib=mem_mib, guest_mac=guest_mac,
-            data_drive=data_drive, extra_boot_args=extra_boot_args,
+            data_drives=data_drives, extra_boot_args=extra_boot_args,
         ),
         indent=2,
     ))

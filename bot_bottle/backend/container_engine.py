@@ -1,9 +1,8 @@
 """Detect a usable host container engine (Docker or Podman).
 
 Optional everywhere it is used: the firecracker backend runs without one, but
-when one is present it builds agent overlays on the host instead of inside the
-infra VM, whose buildah store starts empty each boot and re-pulls the base
-(PRD 0085). `BOT_BOTTLE_BUILD_ENGINE` picks one explicitly (`docker`,
+when one is present it builds agent overlays on the host, sharing its layer
+cache, instead of with buildah inside the infra VM (PRD 0085). `BOT_BOTTLE_BUILD_ENGINE` picks one explicitly (`docker`,
 `podman`) or turns host builds off (`vm`).
 """
 

@@ -52,6 +52,8 @@ class TestRoleInits(unittest.TestCase):
         self.assertIn("export PATH=", init)  # shared preamble
         # Persistent registry volume mounted at the DB dir on the orchestrator.
         self.assertIn("/dev/vdb", init)
+        # Persistent buildah store mounted where image_builder points --root.
+        self.assertIn(f"mount -t ext4 /dev/vdc {infra_vm.GUEST_BUILD_STORE}", init)
         self.assertIn(f"cat {infra_vm._GUEST_SIGNING_KEY_PATH}", init)  # host-seeded key
         self.assertIn("refusing to start the control plane", init)     # no open mode
         self.assertIn('BOT_BOTTLE_ORCHESTRATOR_TOKEN="$CP_KEY" python3 -m bot_bottle.orchestrator',
@@ -62,6 +64,7 @@ class TestRoleInits(unittest.TestCase):
         self.assertNotIn("bb_role=", init)
         self.assertNotIn("bot_bottle.orchestrator", init)
         self.assertNotIn("/dev/vdb", init)  # no registry volume on the data plane
+        self.assertNotIn("/dev/vdc", init)  # no build store either
         self.assertIn("export PATH=", init)  # shared preamble
         self.assertIn("BOT_BOTTLE_GATEWAY_DAEMONS=egress,git-http,supervise", init)
         self.assertIn(f"cat {infra_vm._GUEST_GATEWAY_JWT_PATH}", init)  # host-minted JWT

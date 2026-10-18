@@ -67,7 +67,7 @@ class TestFirecrackerGatewayConnect(unittest.TestCase):
         kw = boot.call_args.kwargs
         self.assertEqual("gateway", kw["role"])
         self.assertIn("bb_orch=10.243.255.1", kw["extra_boot_args"])
-        self.assertIsNone(kw.get("data_drive"))  # data plane never opens the DB
+        self.assertFalse(kw.get("data_drives"))  # data plane never opens the DB
         # The host-minted token (never the key — #469) is pushed to the guest.
         push.assert_called_once()
         self.assertEqual(_TOKEN, push.call_args.args[1])

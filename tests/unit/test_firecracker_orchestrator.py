@@ -16,6 +16,7 @@ from bot_bottle.backend.firecracker import infra_vm
 from bot_bottle.backend.firecracker.orchestrator import (
     ORCHESTRATOR_NAME,
     FirecrackerOrchestrator,
+    build_store_volume_path,
     registry_volume_path,
 )
 from bot_bottle.backend.firecracker.infra_vm import ORCHESTRATOR_PORT
@@ -47,12 +48,14 @@ class TestEnsureRunning(unittest.TestCase):
                 patch("bot_bottle.trust_domain.host_signing_key", return_value="host-key"), \
                 patch.object(orch, "is_running", return_value=False), \
                 patch.object(orch, "_ensure_registry_volume", return_value=Path("/reg")), \
+                patch.object(orch, "_ensure_build_store_volume", return_value=Path("/bs")), \
                 patch.object(orch, "_wait_for_health"):
             orch.ensure_running()
         kw = boot.call_args.kwargs
         self.assertEqual("orchestrator", kw["role"])
         self.assertEqual(4096, kw["mem_mib"])          # orchestrator keeps build headroom
-        self.assertEqual(Path("/reg"), kw["data_drive"])  # DB volume on the CP
+        # DB volume (/dev/vdb), then the buildah store (/dev/vdc).
+        self.assertEqual((Path("/reg"), Path("/bs")), kw["data_drives"])
         # The host-canonical signing key is pushed to the guest signing-key path.
         self.assertEqual("host-key", push.call_args.args[1])
         self.assertEqual(infra_vm._GUEST_SIGNING_KEY_PATH, push.call_args.args[2])
@@ -118,6 +121,20 @@ class TestRegistryVolume(unittest.TestCase):
         with patch.object(infra_vm, "_infra_dir", return_value=Path("/infra")):
             self.assertEqual(Path("/infra/registry.ext4"), registry_volume_path())
 
+    def test_build_store_volume_created_at_its_own_path(self) -> None:
+        from subprocess import CompletedProcess
+        orch = FirecrackerOrchestrator()
+        with tempfile.TemporaryDirectory() as td:
+            with patch.object(infra_vm, "_infra_dir", return_value=Path(td)), \
+                    patch(f"{_ORCH}.subprocess.run",
+                          return_value=CompletedProcess([], 0)) as run:
+                out = orch._ensure_build_store_volume()
+                self.assertEqual(build_store_volume_path(), out)
+            self.assertEqual(Path(td) / "build-store.ext4", out)
+            argv = run.call_args.args[0]
+            self.assertIn("mke2fs", argv)
+            self.assertIn(str(out), argv)
+
 
 class TestLifecycle(unittest.TestCase):
     def test_is_running_reads_the_orch_pidfile(self) -> None:
@@ -133,10 +150,35 @@ class TestLifecycle(unittest.TestCase):
             d = Path(td)
             (d / "vm.pid").write_text("123")
             with patch.object(infra_vm, "_orch_dir", return_value=d), \
+                    patch.object(orch, "is_running", return_value=False), \
                     patch.object(infra_vm, "_kill_pidfile") as kill:
                 orch.stop()
             kill.assert_called_once_with(d)
             self.assertFalse((d / "vm.pid").exists())
+
+    def test_stop_syncs_the_guest_before_killing(self) -> None:
+        orch = FirecrackerOrchestrator()
+        calls: list[str] = []
+        with patch.object(orch, "is_running", return_value=True), \
+                patch.object(orch, "ssh_target", return_value=(Path("/k"), "10.0.0.1")), \
+                patch(f"{_ORCH}.subprocess.run",
+                      side_effect=lambda argv, **_: calls.append(argv[-1])), \
+                patch.object(infra_vm, "_kill_pidfile",
+                             side_effect=lambda _d: calls.append("kill")), \
+                patch.object(infra_vm, "_orch_dir", return_value=Path("/nonexistent")):
+            orch.stop()
+        self.assertEqual(["sync", "kill"], calls)
+
+    def test_stop_still_kills_when_sync_hangs(self) -> None:
+        from subprocess import TimeoutExpired
+        orch = FirecrackerOrchestrator()
+        with patch.object(orch, "is_running", return_value=True), \
+                patch.object(orch, "ssh_target", return_value=(Path("/k"), "10.0.0.1")), \
+                patch(f"{_ORCH}.subprocess.run", side_effect=TimeoutExpired("ssh", 15)), \
+                patch.object(infra_vm, "_kill_pidfile") as kill, \
+                patch.object(infra_vm, "_orch_dir", return_value=Path("/nonexistent")):
+            orch.stop()
+        kill.assert_called_once()
 
     def test_name_is_the_orchestrator_vm(self) -> None:
         self.assertEqual(ORCHESTRATOR_NAME, FirecrackerOrchestrator().name)

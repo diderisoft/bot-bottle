@@ -37,6 +37,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -74,6 +75,10 @@ _ROOTFS_IMAGE = {"orchestrator": _ORCHESTRATOR_FC_IMAGE, "gateway": _GATEWAY_IMA
 _ROOTFS_SLACK_MIB = {"orchestrator": 8192, "gateway": 1024}
 
 ORCHESTRATOR_PORT = 8099
+
+# Where the orchestrator VM mounts its persistent buildah store volume
+# (/dev/vdc); image_builder points buildah's `--root` here.
+GUEST_BUILD_STORE = "/var/lib/containers/overlay-storage"
 
 # The infra VMs make direct upstream connections (gateway egress, and buildah
 # during builds), and the kernel `ip=` cmdline sets no resolver. Public for
@@ -196,7 +201,7 @@ def boot_vm(
     run_dir: Path,
     role: str,
     mem_mib: int,
-    data_drive: Path | None = None,
+    data_drives: Sequence[Path] = (),
     extra_boot_args: str = "",
 ) -> InfraVm:
     """Boot the `role` infra VM from its per-plane rootfs on `slot`'s link.
@@ -222,7 +227,7 @@ def boot_vm(
         name=name, rootfs=rootfs, tap=slot.iface,
         guest_ip=slot.guest_ip, host_ip=slot.host_ip, pubkey=pubkey,
         run_dir=run_dir, mem_mib=mem_mib, detached=True,
-        data_drive=data_drive, extra_boot_args=boot_args,
+        data_drives=data_drives, extra_boot_args=boot_args,
     )
     _pid_file(run_dir).write_text(str(vm.process.pid))
     return InfraVm(guest_ip=slot.guest_ip, private_key=private_key, vm=vm)
@@ -483,6 +488,10 @@ def _orchestrator_init() -> str:
 # Persistent registry volume (second virtio-block device, /dev/vdb) mounted at
 # the DB dir, so bot-bottle.db survives orchestrator-VM restarts.
 mount -t ext4 /dev/vdb /var/lib/bot-bottle 2>/dev/null || true
+# Persistent buildah store (/dev/vdc), so pulled bases and layer cache survive
+# restarts. Unmounted, buildah falls back to the ephemeral rootfs.
+mkdir -p {GUEST_BUILD_STORE}
+mount -t ext4 /dev/vdc {GUEST_BUILD_STORE} 2>/dev/null || true
 CP_KEY=""
 i=0
 while [ "$i" -lt 600 ]; do

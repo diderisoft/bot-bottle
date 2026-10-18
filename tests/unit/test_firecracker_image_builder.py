@@ -7,6 +7,7 @@ the smoke-test no-op — the logic that must hold without a VM.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import tempfile
@@ -483,6 +484,41 @@ class TestStreamRootfs(unittest.TestCase):
                 (base / "bb-dropbear").write_bytes(b"")
             finally:
                 src.chmod(0o755)
+
+
+class TestPruneLowStore(unittest.TestCase):
+    """The pre-build prune snippet, run under sh with stub `df`/`buildah`."""
+
+    def _run(self, free_mib: int) -> bool:
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir, marker = Path(tmp) / "bin", Path(tmp) / "pruned"
+            bin_dir.mkdir()
+            stubs = {
+                "df": "echo 'Filesystem 1M-blocks Used Available Capacity Mounted'\n"
+                      f"echo '/dev/vdc 16000 100 {free_mib} 1% /store'",
+                "buildah": f"touch {marker}",
+            }
+            for name, body in stubs.items():
+                stub = bin_dir / name
+                stub.write_text(f"#!/bin/sh\n{body}\n")
+                stub.chmod(0o755)
+            subprocess.run(["sh", "-c", image_builder._PRUNE_LOW_STORE],
+                           env={"PATH": f"{bin_dir}:{os.environ['PATH']}"}, check=True)
+            return marker.exists()
+
+    def test_keeps_images_with_room(self) -> None:
+        self.assertFalse(self._run(image_builder._STORE_MIN_FREE_MIB))
+
+    def test_drops_images_when_low(self) -> None:
+        self.assertTrue(self._run(image_builder._STORE_MIN_FREE_MIB - 1))
+
+    def test_build_prunes_before_buildah_build(self) -> None:
+        with patch.object(image_builder, "_ssh_streamed", return_value=0) as ssh, \
+                patch.object(image_builder, "info"):
+            image_builder._buildah_build(Path("/k"), "10.0.0.1", "/tmp/c", "t", {})
+        script = ssh.call_args.args[2]
+        self.assertLess(script.index(image_builder._PRUNE_LOW_STORE),
+                        script.index("buildah build"))
 
 
 if __name__ == "__main__":
