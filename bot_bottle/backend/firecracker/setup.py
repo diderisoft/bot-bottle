@@ -324,7 +324,7 @@ def status() -> int:
     else:
         sys.stderr.write(
             "container engine: none (optional; agent overlays build in the infra "
-            "VM, which can run out of space on a large base image — install "
+            "VM, which re-pulls the base after each infra VM restart — install "
             "Docker or Podman to build them on the host)\n"
         )
     missing = netpool.missing_taps()

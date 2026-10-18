@@ -38,11 +38,15 @@ from ...published_artifacts import FORMAT_EXT4, Artifact
 from . import util
 from .infra import FirecrackerInfraService
 
-# vfs + chroot: buildah works as root in the microVM (no fuse-overlayfs /
-# overlay module / subuid maps). `--isolation` is a build/run-only flag;
-# `from`/`mount` take just the store.
-_BUILD_FLAGS = "--isolation chroot --storage-driver vfs"
-_STORE_FLAG = "--storage-driver vfs"
+# overlay + chroot: buildah works as root in the microVM on the guest kernel's
+# overlayfs (vfs copied every layer in full, ~8x a large image, and filled the
+# VM disk). The store gets its own root so a VM still holding an older vfs
+# store never trips buildah's driver-mismatch check. `--isolation` is a
+# build/run-only flag; `from`/`mount` take just the store.
+_STORE_FLAG = ("--storage-driver overlay"
+               " --root /var/lib/containers/overlay-storage"
+               " --runroot /run/containers/overlay-storage")
+_BUILD_FLAGS = f"--isolation chroot {_STORE_FLAG}"
 
 _BUILD_TIMEOUT_SECONDS = 900.0
 
@@ -188,8 +192,8 @@ def acquire_agent_image_ext4(artifact: Artifact) -> Path:
     it, and add slack. Prepared once and cached; each bottle then gets a sparse
     copy (`util.make_bottle_rootfs`).
 
-    Replaces pulling the OCI image inside the infra VM, whose vfs storage
-    multiplied a ~1 GB agent image to ~7.5 GB and filled the VM's disk."""
+    Replaces pulling the OCI image inside the infra VM: no per-boot re-pull,
+    and each launch is a sparse copy rather than an `mke2fs -d`."""
     if artifact.format != FORMAT_EXT4:
         die(f"firecracker agent base must be an ext4 artifact, got {artifact.format!r}")
     image = _image_ext4_path(artifact)
@@ -268,8 +272,8 @@ def acquire_agent_overlay_rootfs_dir(
                 template=template)
         else:
             info(f"building overlay agent image on {base_ref!r} in the infra VM "
-                 "(install Docker or Podman to build on the host; the VM can run "
-                 "out of space on a large base image)")
+                 "(install Docker or Podman to build on the host and keep the "
+                 "base's layers cached across infra VM restarts)")
             _build_overlay_in_infra(
                 base_ref, overlay, staging, source_root, smoke_test, digest,
                 template=template)
@@ -405,8 +409,8 @@ def _build_overlay_on_host(
 ) -> None:
     """Build the overlay with a host container engine and unpack its rootfs
     into `base_out`. Preferred over the infra VM when an engine is present:
-    the host's layer store has room for a large base, the VM's vfs store may
-    not.
+    the host's layer store persists, while the infra VM's rootfs (and so its
+    buildah store) is fresh each boot, so it re-pulls the base.
 
     With an artifact token, registry auth goes to a throwaway credentials
     location (`docker --config` / `podman --authfile`) so the user's own
@@ -676,8 +680,12 @@ def _stream_rootfs(private_key: Path, guest_ip: str, tag: str, ctr: str, base: P
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
     assert ssh_proc.stdout is not None
+    # --no-overwrite-dir: the stream's `.` entry carries the mount root's mode
+    # (0555 on overlay), which would leave `base` unwritable for the guest
+    # boot bits injected next.
     untar = subprocess.run(
-        ["tar", "-x", "-C", str(base)], stdin=ssh_proc.stdout, check=False,
+        ["tar", "-x", "--no-overwrite-dir", "-C", str(base)],
+        stdin=ssh_proc.stdout, check=False,
     )
     ssh_proc.stdout.close()
     ssh_err = (ssh_proc.stderr.read().decode(errors="replace")

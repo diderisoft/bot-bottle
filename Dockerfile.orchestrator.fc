@@ -8,8 +8,9 @@
 # carries none of this build tooling — the exposed data plane stays minimal.
 #
 # `crun` is the OCI runtime; `netavark` + `aardvark-dns` are the network backend
-# for `FROM` pulls + `RUN` egress. `vfs` + `chroot`: buildah works as root in the
-# bare microVM (no fuse-overlayfs / overlay module / subuid maps). The trixie
+# for `FROM` pulls + `RUN` egress. `overlay` (the guest kernel's overlayfs) +
+# `chroot`: buildah works as root in the bare microVM (no fuse-overlayfs /
+# subuid maps); image_builder passes these explicitly too. The trixie
 # base (from Dockerfile.orchestrator's python:3.12-slim) carries buildah 1.39,
 # which parses the Dockerfile heredocs agent images use (bookworm's 1.28 can't).
 # Matches image_builder. There is deliberately no default: the build coordinator
@@ -30,5 +31,5 @@ RUN apt-get -o Acquire::Check-Valid-Until=false update \
  && apt-get install -y --no-install-recommends \
       buildah crun netavark aardvark-dns \
  && rm -rf /var/lib/apt/lists/*
-ENV STORAGE_DRIVER=vfs \
+ENV STORAGE_DRIVER=overlay \
     BUILDAH_ISOLATION=chroot

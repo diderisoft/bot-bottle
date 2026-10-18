@@ -462,5 +462,28 @@ class TestMakeBottleRootfs(unittest.TestCase):
             build.assert_called_once_with(base, out)
 
 
+class TestStreamRootfs(unittest.TestCase):
+    def test_read_only_mount_root_leaves_base_writable(self) -> None:
+        # buildah's overlay mount root is 0555 and `tar -C $mnt -cf - .`
+        # carries that in the `.` entry; the guest boot bits are written into
+        # `base` afterwards, so it must keep its own mode.
+        with tempfile.TemporaryDirectory() as tmp:
+            src, base = Path(tmp) / "mnt", Path(tmp) / "base"
+            (src / "etc").mkdir(parents=True)
+            (src / "etc" / "hostname").write_text("bottle\n")
+            base.mkdir()
+            src.chmod(0o555)
+            try:
+                fake_ssh = ["sh", "-c", f'tar -C "{src}" -cf - .']
+                with patch.object(image_builder.util, "ssh_base_argv",
+                                  return_value=fake_ssh):
+                    image_builder._stream_rootfs(
+                        Path("/key"), "10.0.0.1", "tag", "ctr", base)
+                self.assertEqual((base / "etc" / "hostname").read_text(), "bottle\n")
+                (base / "bb-dropbear").write_bytes(b"")
+            finally:
+                src.chmod(0o755)
+
+
 if __name__ == "__main__":
     unittest.main()

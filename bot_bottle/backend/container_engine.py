@@ -2,7 +2,7 @@
 
 Optional everywhere it is used: the firecracker backend runs without one, but
 when one is present it builds agent overlays on the host instead of inside the
-infra VM, whose vfs storage can run out of space on a large base image
+infra VM, whose buildah store starts empty each boot and re-pulls the base
 (PRD 0085). `BOT_BOTTLE_BUILD_ENGINE` picks one explicitly (`docker`,
 `podman`) or turns host builds off (`vm`).
 """
