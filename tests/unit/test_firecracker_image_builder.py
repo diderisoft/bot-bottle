@@ -570,29 +570,9 @@ class TestPruneLowStore(unittest.TestCase):
                 patch.object(image_builder, "info"):
             image_builder._buildah_build(Path("/k"), "10.0.0.1", "/tmp/c", "t", {})
         script = ssh.call_args.args[2]
-        self.assertLess(script.index(image_builder._MOUNT_BUILD_STORE),
-                        script.index(image_builder._PRUNE_LOW_STORE))
         self.assertLess(script.index(image_builder._PRUNE_LOW_STORE),
                         script.index("buildah build"))
 
-    def test_mounts_the_store_only_when_not_already_mounted(self) -> None:
-        # An infra rootfs published before the volume existed never mounts it.
-        for mounted, expect_mount in ((True, False), (False, True)):
-            with self.subTest(mounted=mounted), tempfile.TemporaryDirectory() as tmp:
-                bin_dir, marker = Path(tmp) / "bin", Path(tmp) / "mounted"
-                bin_dir.mkdir()
-                stubs = {
-                    "mountpoint": f"exit {0 if mounted else 1}",
-                    "mount": f"touch {marker}",
-                    "mkdir": "true",
-                }
-                for name, body in stubs.items():
-                    stub = bin_dir / name
-                    stub.write_text(f"#!/bin/sh\n{body}\n")
-                    stub.chmod(0o755)
-                subprocess.run(["sh", "-c", image_builder._MOUNT_BUILD_STORE],
-                               env={"PATH": f"{bin_dir}:{os.environ['PATH']}"}, check=True)
-                self.assertEqual(expect_mount, marker.exists())
 
 
 if __name__ == "__main__":

@@ -62,15 +62,6 @@ _SMOKE_TIMEOUT_SECONDS = 120.0
 # Below this much free space in the build store, drop every image before a
 # build. The store is a cache: a wipe costs one re-pull, while a full store
 # fails the build.
-# The build-store volume is mounted by the orchestrator init, but an infra
-# rootfs published before the volume existed has no such line. Mount it here
-# when it is attached and not yet mounted; without the drive this is a no-op
-# and buildah uses the VM's rootfs.
-_MOUNT_BUILD_STORE = (
-    f"mkdir -p {GUEST_BUILD_STORE}; mountpoint -q {GUEST_BUILD_STORE} || "
-    f"mount -t ext4 /dev/vdc {GUEST_BUILD_STORE} 2>/dev/null || true; "
-)
-
 _STORE_MIN_FREE_MIB = 4096
 _PRUNE_LOW_STORE = (
     f"[ \"$(df -Pm {GUEST_BUILD_STORE} | awk 'NR==2 {{print $4}}')\" -ge "
@@ -597,7 +588,7 @@ def _buildah_build(
     )
     rc = _ssh_streamed(
         private_key, guest_ip,
-        f"{_MOUNT_BUILD_STORE}{_PRUNE_LOW_STORE}"
+        f"mkdir -p {GUEST_BUILD_STORE}; {_PRUNE_LOW_STORE}"
         f"buildah build {_BUILD_FLAGS} {arg_flags} "
         f"-t {tag} -f {ctx}/Dockerfile {ctx}/ctx; rc=$?; sync; exit $rc",
         timeout=_BUILD_TIMEOUT_SECONDS,
