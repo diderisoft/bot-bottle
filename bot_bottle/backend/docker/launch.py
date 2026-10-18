@@ -90,7 +90,12 @@ def build_or_load_images(plan: DockerBottlePlan) -> BottleImages:
         return BottleImages(agent=plan.image)
     # Prefer the release-pinned published image over a local build (PRD 0085).
     # Absent a pin (custom template, or no manifest yet) fall back to building.
-    pinned = agent_image.ensure_agent_oci(plan.agent_provider_template, runtime="docker")
+    # A custom agent_provider.dockerfile is built as written, never replaced by
+    # the published default image for its template.
+    pinned = (
+        None if plan.builds_custom_image
+        else agent_image.ensure_agent_oci(plan.agent_provider_template, runtime="docker")
+    )
     if pinned is not None:
         overlay = plan.image_overlay
         if overlay.is_empty():

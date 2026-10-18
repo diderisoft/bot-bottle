@@ -52,6 +52,7 @@ class _Plan:
     agent_provider_template: str = "test-agent"
     # No overlay declared, so the missing pin builds locally instead of failing.
     image_overlay: ManifestImageOverlay = ManifestImageOverlay()
+    builds_custom_image: bool = False
 
 
 def _base_image_only(ref: str) -> bool:

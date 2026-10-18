@@ -193,6 +193,13 @@ class ManifestAgentProvider:
         overlay = ManifestImageOverlay()
         if "overlay" in d:
             overlay = ManifestImageOverlay.from_dict(bottle_name, d["overlay"])
+        if not overlay.is_empty() and dockerfile:
+            raise ManifestError(
+                f"bottle '{bottle_name}' sets both agent_provider.overlay and "
+                "agent_provider.dockerfile; an overlay builds on the published "
+                "default image, so use one or the other (an overlay's own "
+                "Dockerfile goes in overlay.dockerfile)"
+            )
         if not overlay.is_empty() and template not in PROVIDER_TEMPLATES:
             raise ManifestError(
                 f"bottle '{bottle_name}' agent_provider.overlay is only "

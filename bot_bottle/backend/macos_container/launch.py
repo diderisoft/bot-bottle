@@ -99,7 +99,12 @@ def _agent_image(plan: MacosContainerBottlePlan) -> str:
         return plan.image
     # Prefer the release-pinned published image over a local build (PRD 0085);
     # the nested-containers layer is added on top by the caller either way.
-    pinned = agent_image.ensure_agent_oci(plan.agent_provider_template, runtime="container")
+    # A custom agent_provider.dockerfile is built as written, never replaced by
+    # the published default image for its template.
+    pinned = (
+        None if plan.builds_custom_image
+        else agent_image.ensure_agent_oci(plan.agent_provider_template, runtime="container")
+    )
     if pinned is not None:
         overlay = plan.image_overlay
         if overlay.is_empty():

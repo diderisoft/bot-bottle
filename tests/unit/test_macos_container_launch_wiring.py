@@ -76,6 +76,7 @@ def _plan(
         # Custom (non-published) template: no pin, so the build path runs.
         agent_provider_template="test-agent",
         image_overlay=ManifestImageOverlay(),
+        builds_custom_image=False,
         forwarded_env={"OAUTH_TOKEN": "host-value"},
         egress_plan=egress_plan,
         git_gate_plan=SimpleNamespace(upstreams=()),
@@ -97,6 +98,25 @@ class TestBuildOrLoadImages(unittest.TestCase):
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
+
+    def test_custom_dockerfile_builds_even_when_a_pin_exists(self) -> None:
+        plan = cast(SimpleNamespace, self.plan)
+        plan.builds_custom_image = True
+        with (
+            patch(
+                "bot_bottle.backend.macos_container.launch.read_committed_image",
+                return_value=None,
+            ),
+            patch(
+                "bot_bottle.backend.macos_container.launch.agent_image.ensure_agent_oci",
+            ) as pull,
+            patch(
+                "bot_bottle.backend.macos_container.launch.container_mod.build_image",
+            ) as build,
+        ):
+            build_or_load_images(self.plan)
+        pull.assert_not_called()
+        build.assert_called_once()
 
     def test_overlay_without_a_pin_fails_instead_of_dropping_it(self) -> None:
         from bot_bottle.agent_overlay import OverlayError

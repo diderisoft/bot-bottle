@@ -63,6 +63,12 @@ class FirecrackerBottlePlan(BottlePlan):
         return self.manifest.bottle.agent_provider.overlay
 
     @property
+    def builds_custom_image(self) -> bool:
+        """The bottle names its own `agent_provider.dockerfile`, so its image
+        is built from that, never swapped for the published default (PRD 0085)."""
+        return bool(self.manifest.bottle.agent_provider.dockerfile)
+
+    @property
     def git_gate_insteadof_host(self) -> str:
         if self.agent_git_gate_url.startswith("http://"):
             return self.agent_git_gate_url.removeprefix("http://").rstrip("/")

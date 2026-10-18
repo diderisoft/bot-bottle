@@ -219,6 +219,7 @@ class TestFirecrackerCachedRootfs(unittest.TestCase):
             dockerfile_path="/repo/Dockerfile",
             agent_provider_template="claude",
             image_overlay=ManifestImageOverlay(),
+            builds_custom_image=False,
         ))
 
     def test_cached_policy_reuses_ready_rootfs_without_building(self) -> None:
@@ -242,6 +243,18 @@ class TestFirecrackerCachedRootfs(unittest.TestCase):
              self.assertRaises(SystemExit):
             mod.build_or_load_agent_base(self._plan())
         build.assert_not_called()
+
+    def test_custom_dockerfile_builds_even_when_a_pin_exists(self) -> None:
+        from bot_bottle.backend.firecracker import launch as mod
+        plan = self._plan("build")
+        plan.builds_custom_image = True
+        built = Path("/cache/rootfs/agent-custom")
+        with patch.object(mod, "read_committed_image", return_value=""), \
+             patch.object(mod.agent_image, "resolve_agent_pin") as pin, \
+             patch.object(mod.image_builder, "build_agent_rootfs_dir", return_value=built) as build:
+            self.assertEqual(built, mod.build_or_load_agent_base(plan))
+        pin.assert_not_called()
+        build.assert_called_once()
 
     def test_overlay_without_a_pin_fails_instead_of_dropping_it(self) -> None:
         from bot_bottle.agent_overlay import OverlayError

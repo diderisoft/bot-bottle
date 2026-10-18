@@ -168,6 +168,14 @@ class TestAgentProviderValidation(unittest.TestCase):
                     "overlay": {"dockerfile": bad},
                 })
 
+    def test_overlay_and_custom_dockerfile_rejected_together(self) -> None:
+        with self.assertRaises(ManifestError):
+            ManifestAgentProvider.from_dict("b", {
+                "template": "claude",
+                "dockerfile": "agent.Dockerfile",
+                "overlay": {"apt": ["jq"]},
+            })
+
     def test_image_overlay_dockerfile_must_be_string(self) -> None:
         with self.assertRaises(ManifestError):
             ManifestAgentProvider.from_dict("b", {

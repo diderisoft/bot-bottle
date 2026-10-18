@@ -233,7 +233,12 @@ def build_or_load_agent_base(plan: FirecrackerBottlePlan) -> Path:
     # PRD 0085: prefer the release-pinned published agent image. Firecracker
     # consumes a rootfs *dir*, so it pulls the OCI image inside the infra VM
     # (buildah) and exports its rootfs — the same shape a local build produces.
-    pin = agent_image.resolve_agent_pin(plan.agent_provider_template, prefer=(FORMAT_OCI,))
+    # A custom agent_provider.dockerfile is built as written, never replaced by
+    # the published default image for its template.
+    pin = (
+        None if plan.builds_custom_image
+        else agent_image.resolve_agent_pin(plan.agent_provider_template, prefer=(FORMAT_OCI,))
+    )
     pinned_ref = image_registry.pinned_reference(pin) if pin is not None else None
     overlay = plan.image_overlay
     smoke = runtime_for(plan.agent_provider_template).smoke_test
