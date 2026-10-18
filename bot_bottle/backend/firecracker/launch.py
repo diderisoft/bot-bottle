@@ -34,7 +34,7 @@ from typing import Callable, Generator
 
 from ... import agent_image, agent_overlay, image_registry
 from ...agent_provider import runtime_for
-from ...published_artifacts import FORMAT_OCI
+from ...published_artifacts import FORMAT_EXT4, FORMAT_OCI
 from ...bottle_state import (
     committed_rootfs_path,
     egress_state_dir,
@@ -177,7 +177,7 @@ def launch(
             # *after* it (ExitStack is LIFO).
             stack.callback(lambda: shutil.rmtree(run_dir, ignore_errors=True))
             rootfs = run_dir / "rootfs.ext4"
-            util.build_rootfs_ext4(agent_base, rootfs)
+            util.make_bottle_rootfs(agent_base, rootfs)
             private_key, pubkey = util.generate_keypair(run_dir)
 
             vm = firecracker_vm.boot(
@@ -230,17 +230,21 @@ def build_or_load_agent_base(plan: FirecrackerBottlePlan) -> Path:
         info(f"resuming from committed rootfs {committed_tar}")
         return util.build_committed_rootfs_dir(committed_tar)
     dockerfile = Path(plan.dockerfile_path)
-    # PRD 0085: prefer the release-pinned published agent image. Firecracker
-    # consumes a rootfs *dir*, so it pulls the OCI image inside the infra VM
-    # (buildah) and exports its rootfs — the same shape a local build produces.
-    # A custom agent_provider.dockerfile is built as written, never replaced by
-    # the published default image for its template.
+    # PRD 0085: prefer the release-pinned published agent image. The base is the
+    # published ext4, fetched and verified on the host and booted from a sparse
+    # per-bottle copy. An overlay still builds `FROM` the pinned OCI image in the
+    # infra VM. A custom agent_provider.dockerfile is built as written, never
+    # replaced by the published default image for its template.
+    overlay = plan.image_overlay
+    fmt = FORMAT_EXT4 if overlay.is_empty() else FORMAT_OCI
     pin = (
         None if plan.builds_custom_image
-        else agent_image.resolve_agent_pin(plan.agent_provider_template, prefer=(FORMAT_OCI,))
+        else agent_image.resolve_agent_pin(plan.agent_provider_template, prefer=(fmt,))
     )
-    pinned_ref = image_registry.pinned_reference(pin) if pin is not None else None
-    overlay = plan.image_overlay
+    pinned_ref = (
+        image_registry.pinned_reference(pin)
+        if pin is not None and pin.format == FORMAT_OCI else None
+    )
     smoke = runtime_for(plan.agent_provider_template).smoke_test
     if not overlay.is_empty() and pinned_ref is None:
         # No pinned base: building the default instead would drop the overlay.
@@ -249,8 +253,8 @@ def build_or_load_agent_base(plan: FirecrackerBottlePlan) -> Path:
         if pinned_ref is not None and not overlay.is_empty():
             cached = image_builder.cached_agent_overlay_rootfs_dir(
                 pinned_ref, overlay, source_root=Path(plan.spec.user_cwd))
-        elif pinned_ref is not None:
-            cached = image_builder.cached_agent_image_rootfs_dir(pinned_ref)
+        elif pin is not None:
+            cached = image_builder.cached_agent_image_ext4(pin)
         else:
             cached = image_builder.cached_agent_rootfs_dir(dockerfile)
         if cached is None:
@@ -261,17 +265,17 @@ def build_or_load_agent_base(plan: FirecrackerBottlePlan) -> Path:
         info(f"using cached agent rootfs {cached.name}")
         return cached
     if pin is not None and pinned_ref is not None:
-        # Detect a re-pointed tag before the in-VM pull, matching docker/macos
-        # (which verify via ensure_agent_oci). The pull is by digest, so bytes
-        # are pinned regardless; this surfaces an overwritten published version.
+        # Tier 2 overlay: detect a re-pointed tag before the in-VM build,
+        # matching docker/macos, then build a thin FROM<pinned> layer and
+        # export its rootfs.
         image_registry.verify_tag(pin)
-        if not overlay.is_empty():
-            # Tier 2: build a thin FROM<pinned> layer in the VM, export its rootfs.
-            return image_builder.acquire_agent_overlay_rootfs_dir(
-                pinned_ref, overlay, template=plan.agent_provider_template,
-                source_root=Path(plan.spec.user_cwd), smoke_test=smoke,
-            )
-        return image_builder.acquire_agent_image_rootfs_dir(pinned_ref, smoke_test=smoke)
+        return image_builder.acquire_agent_overlay_rootfs_dir(
+            pinned_ref, overlay, template=plan.agent_provider_template,
+            source_root=Path(plan.spec.user_cwd), smoke_test=smoke,
+        )
+    if pin is not None:
+        # Tier 1: the published ext4, verified on download (sha256, fail closed).
+        return image_builder.acquire_agent_image_ext4(pin)
     return image_builder.build_agent_rootfs_dir(
         dockerfile,
         image_tag=plan.image,

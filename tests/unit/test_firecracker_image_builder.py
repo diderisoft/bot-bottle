@@ -7,6 +7,7 @@ the smoke-test no-op — the logic that must hold without a VM.
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -57,58 +58,83 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
         inject.assert_called_once()
         self.assertTrue((out / ".bb-ready").is_file())
 
-    def test_pulled_image_cache_hit_skips_pull(self):
-        image = "reg/o/bot-bottle-claude@sha256:" + "a" * 64
-        digest = image_builder._image_rootfs_digest(image)
-        base = self.cache / "rootfs" / f"agent-image-{digest}"
-        base.mkdir(parents=True)
-        (base / ".bb-ready").write_text("ok\n")
-        with patch.object(image_builder.util, "cache_dir", return_value=self.cache), \
-             patch.object(image_builder, "_pull_in_infra") as pull:
-            out = image_builder.acquire_agent_image_rootfs_dir(image)
-        pull.assert_not_called()
-        self.assertEqual(base, out)
-
-    def test_pulled_image_cache_miss_pulls_injects_and_marks_ready(self):
-        image = "reg/o/bot-bottle-claude@sha256:" + "b" * 64
-        with patch.object(image_builder.util, "cache_dir", return_value=self.cache), \
-             patch.object(image_builder, "_pull_in_infra") as pull, \
-             patch.object(image_builder.util, "inject_guest_boot") as inject:
-            out = image_builder.acquire_agent_image_rootfs_dir(
-                image, smoke_test=("claude", "--version"))
-        pull.assert_called_once()
-        self.assertEqual(("claude", "--version"), pull.call_args.args[2])
-        inject.assert_called_once()
-        self.assertTrue((out / ".bb-ready").is_file())
-
-    def test_acquire_requires_a_digest_pinned_image(self):
-        with patch.object(image_builder.util, "cache_dir", return_value=self.cache):
-            with self.assertRaises(SystemExit):
-                image_builder.acquire_agent_image_rootfs_dir("reg/o/bot-bottle-claude:0.1.0")
-
-    def test_pull_in_infra_pulls_smoke_tests_and_streams(self):
-        # The VM SSH/buildah I/O is mocked; the orchestration logic (pull the
-        # pinned image, smoke test, export rootfs, clean up) is exercised.
-        from unittest.mock import MagicMock
-        image = "reg/o/bot-bottle-claude@sha256:" + "c" * 64
-        base = self.cache / "out"
-        base.mkdir()
-        svc = MagicMock()
-        svc.orchestrator.return_value.ssh_target.return_value = (Path("/k"), "10.0.0.2")
-        ok = subprocess.CompletedProcess([], 0, "", "")
-        with patch.object(image_builder, "FirecrackerInfraService", return_value=svc), \
-             patch.object(image_builder, "_ssh", return_value=ok) as ssh, \
-             patch.object(image_builder, "_smoke_test") as smoke, \
-             patch.object(image_builder, "_stream_rootfs") as stream:
-            image_builder._pull_in_infra(image, base, ("claude", "--version"), "deadbeef")
-        svc.ensure_running.assert_called_once()
-        self.assertTrue(
-            any("buildah pull" in c.args[2] and "@sha256:" in c.args[2]
-                for c in ssh.call_args_list),
-            "expected a buildah pull of the digest-pinned image",
+    def _ext4_artifact(self, digest_char: str = "a"):
+        from bot_bottle.published_artifacts import Artifact
+        return Artifact(
+            image="bot-bottle-claude", format="ext4", platform="linux/amd64",
+            url="https://example.invalid/rootfs.amd64.ext4.gz",
+            digest="sha256:" + digest_char * 64, version="0.1.0",
         )
-        smoke.assert_called_once()
-        stream.assert_called_once()
+
+    def _dropbear(self) -> Path:
+        dropbear = self.cache / "dropbear"
+        dropbear.write_bytes(b"\x7fELF-fake-dropbear")
+        return dropbear
+
+    def test_pulled_ext4_cache_hit_skips_download(self):
+        artifact = self._ext4_artifact()
+        with patch.object(image_builder.util, "cache_dir", return_value=self.cache), \
+             patch.object(image_builder.util, "dropbear_path", return_value=self._dropbear()), \
+             patch.object(image_builder.image_registry, "ensure_ext4") as ensure:
+            image = image_builder._image_ext4_path(artifact)
+            image.parent.mkdir(parents=True, exist_ok=True)
+            image.write_bytes(b"prepared")
+            image.with_suffix(".ready").write_text("ok\n")
+            out = image_builder.acquire_agent_image_ext4(artifact)
+        ensure.assert_not_called()
+        self.assertEqual(image, out)
+
+    def test_pulled_ext4_rejects_a_non_ext4_artifact(self):
+        from dataclasses import replace
+        artifact = replace(self._ext4_artifact(), format="oci")
+        with patch.object(image_builder.util, "cache_dir", return_value=self.cache), \
+             self.assertRaises(SystemExit):
+            image_builder.acquire_agent_image_ext4(artifact)
+
+    def test_ext4_key_changes_with_guest_init_and_dropbear(self):
+        artifact = self._ext4_artifact()
+        dropbear = self._dropbear()
+        with patch.object(image_builder.util, "dropbear_path", return_value=dropbear):
+            base = image_builder._image_ext4_key(artifact)
+            with patch.object(image_builder.util, "_GUEST_INIT", "#!/bin/sh\necho changed\n"):
+                self.assertNotEqual(base, image_builder._image_ext4_key(artifact))
+            dropbear.write_bytes(b"different dropbear")
+            self.assertNotEqual(base, image_builder._image_ext4_key(artifact))
+
+    @unittest.skipUnless(
+        all(shutil.which(t) for t in ("mke2fs", "debugfs", "e2fsck", "resize2fs")),
+        "e2fsprogs not installed",
+    )
+    def test_pulled_ext4_is_prepared_with_guest_boot_and_slack(self):
+        import gzip as gz_mod
+        src = self.cache / "src"
+        (src / "etc").mkdir(parents=True)
+        (src / "etc" / "hello").write_text("published\n")
+        raw = self.cache / "published.ext4"
+        subprocess.run(["mke2fs", "-q", "-t", "ext4", "-d", str(src), "-F", str(raw), "16M"],
+                       check=True)
+        gz = self.cache / "published.ext4.gz"
+        gz.write_bytes(gz_mod.compress(raw.read_bytes()))
+        artifact = self._ext4_artifact("c")
+        with patch.object(image_builder.util, "cache_dir", return_value=self.cache), \
+             patch.object(image_builder.util, "dropbear_path", return_value=self._dropbear()), \
+             patch.object(image_builder, "_PULLED_IMAGE_SLACK_MIB", 8), \
+             patch.object(image_builder.image_registry, "ensure_ext4", return_value=gz):
+            out = image_builder.acquire_agent_image_ext4(artifact)
+        self.assertTrue(out.with_suffix(".ready").is_file())
+        self.assertEqual(24 << 20, out.stat().st_size)  # 16M + 8M slack
+        for name in ("bb-init", "bb-dropbear"):
+            stat = subprocess.run(["debugfs", "-R", f"stat /{name}", str(out)],
+                                  capture_output=True, text=True, check=True).stdout
+            self.assertIn("Mode:  0755", stat)
+        init = subprocess.run(["debugfs", "-R", "cat /bb-init", str(out)],
+                              capture_output=True, text=True, check=True).stdout
+        self.assertEqual(image_builder.util._GUEST_INIT, init)
+        hello = subprocess.run(["debugfs", "-R", "cat /etc/hello", str(out)],
+                               capture_output=True, text=True, check=True).stdout
+        self.assertEqual("published\n", hello)
+
+
 
     def test_overlay_cache_hit_skips_build(self):
         from bot_bottle.manifest import ManifestImageOverlay
@@ -330,6 +356,26 @@ class TestSmokeTest(unittest.TestCase):
         with patch.object(image_builder, "_ssh", return_value=result), \
              self.assertRaises(SystemExit):
             image_builder._smoke_test(Path("/k"), "10.0.0.1", "tag", "ctr", ("claude", "--version"))
+
+
+class TestMakeBottleRootfs(unittest.TestCase):
+    def test_image_base_is_copied(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp) / "base.ext4"
+            base.write_bytes(b"ext4-bytes")
+            out = Path(tmp) / "run" / "rootfs.ext4"
+            image_builder.util.make_bottle_rootfs(base, out)
+            self.assertEqual(b"ext4-bytes", out.read_bytes())
+            self.assertEqual(b"ext4-bytes", base.read_bytes())
+
+    def test_directory_base_goes_through_mke2fs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp) / "base"
+            base.mkdir()
+            out = Path(tmp) / "rootfs.ext4"
+            with patch.object(image_builder.util, "build_rootfs_ext4") as build:
+                image_builder.util.make_bottle_rootfs(base, out)
+            build.assert_called_once_with(base, out)
 
 
 if __name__ == "__main__":

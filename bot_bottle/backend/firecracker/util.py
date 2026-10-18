@@ -19,6 +19,7 @@ import os
 import platform
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 from ...log import die, info, warn
@@ -304,6 +305,70 @@ def build_rootfs_ext4(base_dir: Path, out_path: Path, *, slack_mib: int = 1024) 
     )
     if result.returncode != 0:
         die(f"mke2fs for {out_path} failed: {result.stderr.strip()}")
+
+
+def make_bottle_rootfs(agent_base: Path, out_path: Path) -> None:
+    """The per-bottle writable disk from `agent_base`, which is either a
+    prepared ext4 image (a pulled published agent, PRD 0085) or a rootfs
+    directory (a local build, overlay, or resumed snapshot). An image is copied
+    sparsely — the base already carries its guest boot bits and slack — while a
+    directory goes through `mke2fs -d`. Either way the base stays pristine for
+    the next bottle."""
+    if agent_base.is_file():
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        result = subprocess.run(
+            ["cp", "--sparse=always", str(agent_base), str(out_path)],
+            capture_output=True, text=True, check=False,
+        )
+        if result.returncode != 0:
+            die(f"copying agent rootfs {agent_base} failed: {result.stderr.strip()}")
+        return
+    build_rootfs_ext4(agent_base, out_path)
+
+
+def inject_guest_boot_ext4(image: Path, init_script: str | None = None) -> None:
+    """`inject_guest_boot` for a prepared ext4 image instead of a directory:
+    replace `/bb-dropbear` and `/bb-init` with this host's copies, mode 0755,
+    owned by root. Rootless (`debugfs -w`, no mount), so the host's guest init
+    stays authoritative over whatever an image was published with."""
+    with tempfile.TemporaryDirectory(prefix="bb-guest-boot-") as tmp:
+        init = Path(tmp) / "bb-init"
+        init.write_bytes((init_script or _GUEST_INIT).encode())
+        commands = "\n".join([
+            "rm /bb-dropbear",
+            "rm /bb-init",
+            f"write {dropbear_path()} /bb-dropbear",
+            f"write {init} /bb-init",
+            *(f"sif /{name} {field} {value}"
+              for name in ("bb-dropbear", "bb-init")
+              for field, value in (("mode", "0100755"), ("uid", "0"), ("gid", "0"))),
+        ]) + "\n"
+        script = Path(tmp) / "commands"
+        script.write_text(commands)
+        # debugfs reports a missing file on `rm` but carries on; success is
+        # checked below by reading the files back, not from its exit code.
+        subprocess.run(["debugfs", "-w", "-f", str(script), str(image)],
+                       capture_output=True, text=True, check=False)
+        for name in ("bb-dropbear", "bb-init"):
+            stat = subprocess.run(["debugfs", "-R", f"stat /{name}", str(image)],
+                                  capture_output=True, text=True, check=False)
+            if "Mode:  0755" not in stat.stdout and "Mode:  0100755" not in stat.stdout:
+                die(f"writing /{name} into {image} failed: {stat.stderr.strip() or stat.stdout[:200]}")
+
+
+def grow_ext4(image: Path, slack_mib: int) -> None:
+    """Add `slack_mib` of free space to an ext4 image file (rootless:
+    `e2fsck -f` then `resize2fs`), so a bottle has room to install and write
+    beyond what the published image left free."""
+    check = subprocess.run(["e2fsck", "-f", "-y", str(image)],
+                           capture_output=True, text=True, check=False)
+    if check.returncode not in (0, 1):  # 1 = errors corrected
+        die(f"e2fsck {image} failed (exit {check.returncode}): {check.stdout[-300:]}")
+    size_mib = (image.stat().st_size >> 20) + slack_mib
+    result = subprocess.run(["resize2fs", str(image), f"{size_mib}M"],
+                            capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        die(f"resize2fs {image} failed: {result.stderr.strip()}")
 
 
 def _dir_size_mib(path: Path) -> int:

@@ -14,14 +14,12 @@ unreachable registry; it never silently falls back to a build.
 
 from __future__ import annotations
 
-from pathlib import Path
 
 from . import image_inputs, image_registry
 from .compat import PROTOCOL_VERSION
 from .published_artifacts import (
     Artifact,
     ArtifactsManifestError,
-    FORMAT_EXT4,
     FORMAT_OCI,
     ImageEntry,
     current_platform,
@@ -106,18 +104,8 @@ def ensure_agent_oci(template: str, *, runtime: str = "docker") -> str | None:
     return resolved.pinned_ref
 
 
-def ensure_agent_ext4(template: str) -> Path | None:
-    """Fetch + verify the pinned ext4 agent rootfs for `template`, returning the
-    cached `.gz` path, or None when nothing is pinned (build)."""
-    artifact = resolve_agent_pin(template, prefer=(FORMAT_EXT4,))
-    if artifact is None:
-        return None
-    return image_registry.ensure_ext4(artifact)
-
-
 __all__ = [
     "agent_image_name",
     "resolve_agent_pin",
     "ensure_agent_oci",
-    "ensure_agent_ext4",
 ]

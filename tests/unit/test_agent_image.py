@@ -4,7 +4,6 @@ agent image, or returns None so the caller builds locally."""
 from __future__ import annotations
 
 import unittest
-from pathlib import Path
 from unittest import mock
 
 from bot_bottle import agent_image as ai
@@ -141,21 +140,6 @@ class Materialize(unittest.TestCase):
                 mock.patch.object(ai.image_registry, "pull") as pull:
             self.assertIsNone(ai.ensure_agent_oci("claude"))
             pull.assert_not_called()
-
-    def test_ensure_ext4_returns_cached_path(self) -> None:
-        with mock.patch.object(ai, "load_artifacts_manifest_optional", return_value=_manifest()), \
-                mock.patch.object(ai, "current_platform", return_value="linux/arm64"), \
-                mock.patch.object(ai.image_registry, "ensure_ext4",
-                                  return_value=Path("/cache/x.ext4.gz")) as ensure:
-            path = ai.ensure_agent_ext4("claude")
-        self.assertEqual(path, Path("/cache/x.ext4.gz"))
-        ensure.assert_called_once()
-
-    def test_ensure_ext4_none_without_a_pin(self) -> None:
-        with mock.patch.object(ai, "load_artifacts_manifest_optional", return_value=None), \
-                mock.patch.object(ai.image_registry, "ensure_ext4") as ensure:
-            self.assertIsNone(ai.ensure_agent_ext4("claude"))
-            ensure.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ into a disposable builder (booted from this same image on its own TAP) later.
 from __future__ import annotations
 
 import fcntl
+import gzip
 import hashlib
 import os
 import re
@@ -28,10 +29,11 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator
 
-from ... import agent_overlay, resources
+from ... import agent_overlay, image_registry, resources
 from ...image_registry import TOKEN_ENV as _ARTIFACT_TOKEN_ENV
 from ...log import die, info
 from ...manifest import ManifestImageOverlay
+from ...published_artifacts import FORMAT_EXT4, Artifact
 from . import util
 from .infra import FirecrackerInfraService
 
@@ -150,41 +152,65 @@ def _image_rootfs_digest(image: str) -> str:
     return h.hexdigest()[:16]
 
 
-def cached_agent_image_rootfs_dir(image: str) -> Path | None:
-    """A ready rootfs previously exported from digest-pinned `image`, or None."""
-    base = util.cache_dir() / "rootfs" / f"agent-image-{_image_rootfs_digest(image)}"
-    return base if (base / ".bb-ready").is_file() else None
+# Free space added to a pulled agent image beyond what it was published with,
+# matching the slack a directory-built bottle disk gets (`build_rootfs_ext4`).
+_PULLED_IMAGE_SLACK_MIB = 1024
 
 
-def acquire_agent_image_rootfs_dir(
-    image: str, *, smoke_test: tuple[str, ...] = (),
-) -> Path:
-    """Pull a digest-pinned published agent image inside the infra VM (buildah,
-    no host docker), smoke-test it, and export its rootfs to a cached base dir —
-    the pull-side analogue of `build_agent_rootfs_dir`. Cached by pinned ref +
-    injected guest init, so a repeat launch skips the pull."""
-    if "@sha256:" not in image:
-        die(f"prebuilt firecracker agent image is not digest-pinned: {image}")
-    digest = _image_rootfs_digest(image)
-    base = util.cache_dir() / "rootfs" / f"agent-image-{digest}"
-    cached = cached_agent_image_rootfs_dir(image)
-    if cached is not None:
-        info(f"using cached agent rootfs {cached.name}")
-        return cached
+def _image_ext4_key(artifact: Artifact) -> str:
+    """Cache key for a prepared ext4 agent base: the published file's digest
+    plus this host's guest boot bits (init script and dropbear), so a change to
+    either re-prepares even for the same published image."""
+    h = hashlib.sha256()
+    h.update(artifact.digest.encode())
+    h.update(b"\0")
+    h.update(util._GUEST_INIT.encode())
+    h.update(b"\0")
+    h.update(hashlib.sha256(util.dropbear_path().read_bytes()).digest())
+    return h.hexdigest()[:16]
+
+
+def _image_ext4_path(artifact: Artifact) -> Path:
+    return util.cache_dir() / "rootfs" / f"agent-ext4-{_image_ext4_key(artifact)}.ext4"
+
+
+def cached_agent_image_ext4(artifact: Artifact) -> Path | None:
+    """A prepared ext4 base previously made from published `artifact`, or None."""
+    image = _image_ext4_path(artifact)
+    return image if image.with_suffix(".ready").is_file() else None
+
+
+def acquire_agent_image_ext4(artifact: Artifact) -> Path:
+    """The bootable agent base for a published ext4 `artifact` (PRD 0085):
+    download and verify it on the host (`image_registry.ensure_ext4`, digest
+    checked, fail closed), decompress it, write this host's guest boot bits into
+    it, and add slack. Prepared once and cached; each bottle then gets a sparse
+    copy (`util.make_bottle_rootfs`).
+
+    Replaces pulling the OCI image inside the infra VM, whose vfs storage
+    multiplied a ~1 GB agent image to ~7.5 GB and filled the VM's disk."""
+    if artifact.format != FORMAT_EXT4:
+        die(f"firecracker agent base must be an ext4 artifact, got {artifact.format!r}")
+    image = _image_ext4_path(artifact)
+    ready = image.with_suffix(".ready")
+    if ready.is_file():
+        info(f"using cached agent rootfs {image.name}")
+        return image
     with _build_lock():
-        if (base / ".bb-ready").is_file():  # another launch pulled while we waited
-            info(f"using cached agent rootfs {base.name}")
-            return base
-        staging = util.cache_dir() / "rootfs" / f".pulling-{digest}"
-        shutil.rmtree(staging, ignore_errors=True)
-        staging.mkdir(parents=True)
-        info(f"pulling published agent image {image!r} in the infra VM")
-        _pull_in_infra(image, staging, smoke_test, digest)
-        util.inject_guest_boot(staging)
-        (staging / ".bb-ready").write_text("ok\n")
-        shutil.rmtree(base, ignore_errors=True)
-        os.rename(staging, base)
-    return base
+        if ready.is_file():  # another launch prepared it while we waited
+            info(f"using cached agent rootfs {image.name}")
+            return image
+        gz = image_registry.ensure_ext4(artifact)
+        staging = image.with_suffix(".part")
+        staging.parent.mkdir(parents=True, exist_ok=True)
+        info(f"preparing published agent rootfs {artifact.image} ({artifact.digest[:19]}…)")
+        with gzip.open(gz, "rb") as src, open(staging, "wb") as out:
+            shutil.copyfileobj(src, out, 1 << 20)
+        util.inject_guest_boot_ext4(staging)
+        util.grow_ext4(staging, _PULLED_IMAGE_SLACK_MIB)
+        staging.replace(image)
+        ready.write_text("ok\n")
+    return image
 
 
 def _overlay_rootfs_digest(
@@ -354,48 +380,6 @@ def _buildah_login_prefix(registry_host: str, token: str) -> str:
         f'printf %s "$BB_REG_TOK" | buildah login --username bot-bottle '
         f"--password-stdin {registry_host} && unset BB_REG_TOK && "
     )
-
-
-def _pull_in_infra(
-    image: str, base: Path, smoke_test: tuple[str, ...], digest: str,
-) -> None:
-    """Ensure the infra VMs are up, `buildah pull` the digest-pinned `image` in
-    the orchestrator VM, smoke test it, and stream its rootfs into `base`.
-    Mirrors `_build_in_infra`, but the image comes from the registry, not a
-    local build. Only this pull's working containers/image are cleaned up."""
-    service = FirecrackerInfraService()
-    service.ensure_running()
-    key, ip = service.orchestrator().ssh_target()
-    tag = f"bot-bottle-agent-pull-{digest}"
-    smoke_ctr, export_ctr = f"{tag}-smoke", f"{tag}-export"
-    quoted = shlex.quote(image)
-    registry_host = shlex.quote(image.split("/", 1)[0])
-    token = os.environ.get(_ARTIFACT_TOKEN_ENV, "").strip()
-
-    def _cleanup() -> None:
-        _ssh(key, ip,
-             f"buildah rm {smoke_ctr} {export_ctr} >/dev/null 2>&1; "
-             f"buildah rmi {_STORE_FLAG} {tag} >/dev/null 2>&1; "
-             f"buildah logout {registry_host} >/dev/null 2>&1",
-             timeout=60)
-
-    _cleanup()  # clear leftovers from a crashed prior pull of this digest
-    try:
-        # The published images live in a private Gitea registry, so buildah in
-        # the VM must authenticate before the pull.
-        login = _buildah_login_prefix(registry_host, token)
-        result = _ssh(
-            key, ip,
-            f"{login}buildah pull {_STORE_FLAG} {quoted} && "
-            f"buildah tag {_STORE_FLAG} {quoted} {tag}",
-            timeout=_BUILD_TIMEOUT_SECONDS,
-        )
-        if result.returncode != 0:
-            die(f"pulling pinned agent image failed: {result.stderr.strip()}")
-        _smoke_test(key, ip, tag, smoke_ctr, smoke_test)
-        _stream_rootfs(key, ip, tag, export_ctr, base)
-    finally:
-        _cleanup()
 
 
 def _build_overlay_in_infra(
