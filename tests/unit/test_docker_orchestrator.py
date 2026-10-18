@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, Mock, patch
 from bot_bottle.backend.docker.orchestrator import (
     ORCHESTRATOR_NAME,
     ORCHESTRATOR_NETWORK,
+    ORCHESTRATOR_PUBLISH_NETWORK,
     ORCHESTRATOR_SOURCE_HASH_LABEL,
     DockerOrchestrator,
 )
@@ -44,6 +45,10 @@ class TestDockerOrchestrator(unittest.TestCase):
         p = patch(_TOKEN, return_value="signing-key")
         p.start()
         self.addCleanup(p.stop)
+        # The publish network's own checks are covered in TestPublishNetwork.
+        net = patch.object(DockerOrchestrator, "_ensure_publish_network")
+        net.start()
+        self.addCleanup(net.stop)
 
     def test_url_is_host_loopback(self) -> None:
         self.assertEqual("http://127.0.0.1:8099", self.orch.url())
@@ -153,8 +158,11 @@ class TestDockerOrchestrator(unittest.TestCase):
             self.orch.ensure_running()
         argv = next(c.args[0] for c in run.call_args_list if c.args[0][:2] == ["docker", "run"])
         self.assertIn(ORCHESTRATOR_NAME, argv)
-        # Control network only — agents are never on it.
-        self.assertEqual(ORCHESTRATOR_NETWORK, argv[argv.index("--network") + 1])
+        # Started on the publish network (it carries the loopback mapping),
+        # then joined to the control network. Agents are on neither.
+        self.assertEqual(ORCHESTRATOR_PUBLISH_NETWORK, argv[argv.index("--network") + 1])
+        self.assertIn(["docker", "network", "connect", ORCHESTRATOR_NETWORK, ORCHESTRATOR_NAME],
+                      [c.args[0] for c in run.call_args_list])
         # Published on loopback for the CLI, mapped to the fixed internal 8099.
         self.assertEqual("127.0.0.1:8099:8099", argv[argv.index("--publish") + 1])
         # The lean control plane: no mitmproxy CA mount, no gateway daemons.
@@ -248,6 +256,37 @@ class TestDockerOrchestrator(unittest.TestCase):
             self.orch.stop()
         argv = run.call_args.args[0]
         self.assertEqual(["docker", "rm", "--force", ORCHESTRATOR_NAME], argv)
+
+
+
+class TestPublishNetwork(unittest.TestCase):
+    """Docker publishes no ports for a container on internal networks only, so
+    the orchestrator gets a publish network with no outbound route."""
+
+    def test_created_with_masquerading_off(self) -> None:
+        def fake(argv: list[str], **_kw: object) -> Mock:
+            if argv[:3] == ["docker", "network", "inspect"]:
+                return _proc(returncode=1, stderr="not found")
+            return _proc()
+
+        with patch(_RUN, side_effect=fake) as run:
+            DockerOrchestrator()._ensure_publish_network()
+        create = next(c.args[0] for c in run.call_args_list
+                      if c.args[0][:3] == ["docker", "network", "create"])
+        self.assertIn("com.docker.network.bridge.enable_ip_masquerade=false", create)
+        self.assertNotIn("--internal", create)
+        self.assertEqual(ORCHESTRATOR_PUBLISH_NETWORK, create[-1])
+
+    def test_existing_network_without_masquerade_is_reused(self) -> None:
+        with patch(_RUN, return_value=_proc(stdout="false\n")) as run:
+            DockerOrchestrator()._ensure_publish_network()
+        self.assertFalse([c for c in run.call_args_list if "create" in c.args[0]])
+
+    def test_existing_network_with_masquerade_is_refused(self) -> None:
+        # An empty option means Docker's default: masquerading on, i.e. egress.
+        with patch(_RUN, return_value=_proc(stdout="\n")), \
+                self.assertRaises(GatewayError):
+            DockerOrchestrator()._ensure_publish_network()
 
 
 if __name__ == "__main__":

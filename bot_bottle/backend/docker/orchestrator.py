@@ -3,9 +3,15 @@
 
 `DockerOrchestrator` is the docker implementation of the backend-neutral
 `Orchestrator` service. The lean control-plane container joins the `--internal`
-control network only (agents are never on it, so they have no L3 route to it)
-plus a host-loopback publish for the CLI. It is the sole opener of
-`bot-bottle.db` and the sole holder of the signing key (#469).
+control network (agents are never on it, so they have no L3 route to it) plus a
+host-loopback publish for the CLI. It is the sole opener of `bot-bottle.db` and
+the sole holder of the signing key (#469).
+
+The publish needs a second network: Docker doesn't publish ports for a
+container whose only networks are `--internal` (Docker 28+), so the CLI could
+never reach the control plane. The container is started on a dedicated publish
+network with IP masquerading off, which carries the loopback mapping but gives
+no outbound route, and then joined to the control network.
 """
 
 from __future__ import annotations
@@ -37,6 +43,9 @@ from ...orchestrator.lifecycle import (
 ORCHESTRATOR_NAME = "bot-bottle-orchestrator"
 ORCHESTRATOR_LABEL = "bot-bottle-orchestrator=1"
 ORCHESTRATOR_NETWORK = "bot-bottle-orchestrator"
+# Carries only the host-loopback port mapping; masquerading off, so no egress.
+ORCHESTRATOR_PUBLISH_NETWORK = "bot-bottle-orchestrator-publish"
+_NO_MASQUERADE = "com.docker.network.bridge.enable_ip_masquerade"
 ORCHESTRATOR_IMAGE = os.environ.get(
     "BOT_BOTTLE_ORCHESTRATOR_IMAGE", "bot-bottle-orchestrator:latest"
 )
@@ -66,6 +75,7 @@ class DockerOrchestrator(Orchestrator):
         label: str = ORCHESTRATOR_LABEL,
         port: int = DEFAULT_PORT,
         control_network: str = ORCHESTRATOR_NETWORK,
+        publish_network: str = ORCHESTRATOR_PUBLISH_NETWORK,
         repo_root: Path | None = None,
         host_root: Path | None = None,
         root_mount_source: str | Path | None = None,
@@ -81,6 +91,7 @@ class DockerOrchestrator(Orchestrator):
         self.label = label
         self.port = port
         self.control_network = control_network
+        self.publish_network = publish_network
         # Build context: the repo root in a checkout, a staged copy from the
         # installed wheel otherwise (bot_bottle.resources).
         self._repo_root = repo_root if repo_root is not None else resources.build_root()
@@ -170,6 +181,32 @@ class DockerOrchestrator(Orchestrator):
                 f"{proc.stderr.strip()}"
             )
 
+    def _ensure_publish_network(self) -> None:
+        """Create the publish network with masquerading off, and refuse one
+        that exists with it on: that would hand the control plane an outbound
+        route."""
+        proc = run_docker([
+            "docker", "network", "inspect", "--format",
+            '{{index .Options "' + _NO_MASQUERADE + '"}}', self.publish_network,
+        ])
+        if proc.returncode == 0:
+            if proc.stdout.strip() != "false":
+                raise GatewayError(
+                    f"network {self.publish_network} exists with IP masquerading on, "
+                    "which would give the orchestrator outbound access; remove it "
+                    f"(`docker network rm {self.publish_network}`) so it is recreated"
+                )
+            return
+        proc = run_docker([
+            "docker", "network", "create", "--opt", f"{_NO_MASQUERADE}=false",
+            self.publish_network,
+        ])
+        if proc.returncode != 0 and "already exists" not in proc.stderr:
+            raise GatewayError(
+                f"orchestrator publish network {self.publish_network} failed to create: "
+                f"{proc.stderr.strip()}"
+            )
+
     def ensure_running(
         self, *, startup_timeout: float = DEFAULT_STARTUP_TIMEOUT_SECONDS,
     ) -> None:
@@ -194,10 +231,12 @@ class DockerOrchestrator(Orchestrator):
         )
 
     def _run_container(self, current_hash: str) -> None:
-        """Start the lean control-plane container on the control network only,
-        published to host loopback for the CLI. Idempotent (clears a stale
-        fixed-name container first)."""
+        """Start the lean control-plane container on the publish network (which
+        carries the host-loopback mapping for the CLI) and join it to the
+        control network. Idempotent (clears a stale fixed-name container
+        first)."""
         self._ensure_control_network()
+        self._ensure_publish_network()
         run_docker(["docker", "rm", "--force", self.name])
         # The signing key comes through the shared provisioning contract (#476),
         # which fail-closes rather than yield an empty key that would run OPEN.
@@ -207,9 +246,11 @@ class DockerOrchestrator(Orchestrator):
             "--name", self.name,
             "--label", self.label,
             "--label", f"{ORCHESTRATOR_SOURCE_HASH_LABEL}={current_hash}",
-            # Control network only — agents are never on it, so they have no
-            # route to the control plane (the L3 block, not just the JWT).
-            "--network", self.control_network,
+            # The publish network: no other containers and no masquerading,
+            # it only carries the loopback mapping below. The control network
+            # is joined right after (agents are never on either, so they have
+            # no route to the control plane: the L3 block, not just the JWT).
+            "--network", self.publish_network,
             # Host CLI reaches the control plane here (loopback by default).
             # Socket-shared CI joins the container directly to the job network;
             # the host-side mapping remains loopback-only in that topology. The
@@ -237,6 +278,12 @@ class DockerOrchestrator(Orchestrator):
             raise OrchestratorStartError(
                 f"orchestrator container failed to start: {proc.stderr.strip()}"
             )
+        proc = run_docker(["docker", "network", "connect", self.control_network, self.name])
+        if proc.returncode != 0:
+            raise OrchestratorStartError(
+                f"orchestrator container failed to join control network "
+                f"{self.control_network}: {proc.stderr.strip()}"
+            )
         if self._client_network:
             proc = run_docker([
                 "docker", "network", "connect", self._client_network, self.name,
@@ -257,6 +304,7 @@ __all__ = [
     "ORCHESTRATOR_NAME",
     "ORCHESTRATOR_LABEL",
     "ORCHESTRATOR_NETWORK",
+    "ORCHESTRATOR_PUBLISH_NETWORK",
     "ORCHESTRATOR_IMAGE",
     "ORCHESTRATOR_DOCKERFILE",
     "ORCHESTRATOR_SOURCE_HASH_LABEL",
