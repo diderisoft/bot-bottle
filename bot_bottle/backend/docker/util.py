@@ -38,20 +38,22 @@ def run_docker(
     )
 
 
-# Older and newer docker CLIs word it differently.
-_DAEMON_DOWN_MARKERS = (
-    "Cannot connect to the Docker daemon",
-    "failed to connect to the docker API",
-    "Is the docker daemon running",
-)
+_DAEMON_PROBE_TIMEOUT_SECONDS = 10
 
 
-def daemon_unreachable(stderr: str) -> bool:
-    """True iff a failed docker command's `stderr` says the daemon isn't
-    running. bot-bottle's docker containers bind-mount host paths, so they only
-    ever run on a local daemon: an unreachable one has no bottle or gateway
-    running."""
-    return any(marker in stderr for marker in _DAEMON_DOWN_MARKERS)
+def daemon_running() -> bool:
+    """True iff the docker daemon answers. bot-bottle's docker containers
+    bind-mount host paths, so they only ever run on a local daemon: when it
+    doesn't answer, no bottle or gateway is running. A probe that hangs counts
+    as running, so callers don't claim an empty host they couldn't check."""
+    try:
+        proc = run_docker(["docker", "version", "--format", "{{.Server.Version}}"],
+                          timeout=_DAEMON_PROBE_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        return True
+    except OSError:
+        return False
+    return proc.returncode == 0
 
 
 # Cap on the suffix the container-name conflict logic will try before

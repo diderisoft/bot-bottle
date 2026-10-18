@@ -5,7 +5,7 @@ import os
 import time
 from pathlib import Path
 
-from .util import daemon_unreachable, run_docker
+from .util import daemon_running, run_docker
 from .gateway_transport import DockerGatewayTransport
 from ...paths import (
     ORCHESTRATOR_AUTH_JWT_ENV,
@@ -336,7 +336,7 @@ class DockerGateway(Gateway):
         a daemon that isn't running, means it is already stopped."""
         proc = run_docker(["docker", "rm", "--force", self.name])
         if (proc.returncode != 0 and "No such container" not in proc.stderr
-                and not daemon_unreachable(proc.stderr)):
+                and daemon_running()):
             raise GatewayError(f"gateway failed to stop: {proc.stderr.strip()}")
 
     def address(self) -> str:

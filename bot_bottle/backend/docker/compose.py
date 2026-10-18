@@ -17,7 +17,7 @@ from typing import Any
 
 from ...log import die, warn
 from ..base import EnumerationError
-from .util import daemon_unreachable
+from .util import daemon_running
 
 
 # --- Lifecycle helpers (PRD 0018 chunk 3) ----------------------------------
@@ -86,7 +86,7 @@ def list_compose_projects(
             ) from exc
         return []
     if result.returncode != 0:
-        if daemon_unreachable(result.stderr):
+        if not daemon_running():
             return []
         message = f"docker compose ls failed: {result.stderr.strip()}"
         if raise_on_error:

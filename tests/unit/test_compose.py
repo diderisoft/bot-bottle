@@ -44,6 +44,14 @@ class TestProjectNaming(unittest.TestCase):
 
 
 class TestComposeProjectListing(unittest.TestCase):
+    def setUp(self):
+        # The daemon answers unless a test says otherwise; the real probe would
+        # make these tests depend on the host's docker.
+        probe = mock.patch("bot_bottle.backend.docker.compose.daemon_running",
+                           return_value=True)
+        self.daemon_running = probe.start()
+        self.addCleanup(probe.stop)
+
     def test_compose_ls_empty_when_docker_unusable(self):
         # Missing is the obvious case; present-but-not-executable raises
         # PermissionError instead, which must not escape as a crash.
@@ -97,21 +105,37 @@ class TestComposeProjectListing(unittest.TestCase):
     def test_stopped_daemon_is_an_authoritative_empty_result(self):
         # Docker installed but not running must not break cross-backend
         # enumeration (e.g. `start` on macOS): nothing runs on a stopped daemon.
-        for down in (
-            "Cannot connect to the Docker daemon at unix:///x/docker.sock. "
-            "Is the docker daemon running?",
-            "failed to connect to the docker API at unix:///var/run/docker.sock; check "
-            "if the path is correct and if the daemon is running: dial unix "
-            "/var/run/docker.sock: connect: no such file or directory",
+        # Decided by probing the daemon, not by the failure's wording.
+        self.daemon_running.return_value = False
+        with mock.patch(
+            "bot_bottle.backend.docker.compose.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                args=["docker"], returncode=1, stdout="", stderr="any wording",
+            ),
         ):
-            with mock.patch(
-                "bot_bottle.backend.docker.compose.subprocess.run",
-                return_value=subprocess.CompletedProcess(
-                    args=["docker"], returncode=1, stdout="", stderr=down,
-                ),
-            ):
-                self.assertEqual(
-                    [], list_active_slugs(warn_on_error=False, raise_on_error=True))
+            self.assertEqual([], list_active_slugs(warn_on_error=False, raise_on_error=True))
+
+
+class TestDaemonRunning(unittest.TestCase):
+    _RUN = "bot_bottle.backend.docker.util.run_docker"
+
+    def test_answers_from_the_server_version_probe(self):
+        from bot_bottle.backend.docker.util import daemon_running
+        up = subprocess.CompletedProcess(["docker"], 0, "28.0.1\n", "")
+        down = subprocess.CompletedProcess(["docker"], 1, "", "Cannot connect")
+        with mock.patch(self._RUN, return_value=up) as run:
+            self.assertTrue(daemon_running())
+        self.assertEqual(["docker", "version", "--format", "{{.Server.Version}}"],
+                         run.call_args.args[0])
+        with mock.patch(self._RUN, return_value=down):
+            self.assertFalse(daemon_running())
+
+    def test_missing_cli_is_not_running_but_a_hang_is_not_assumed_down(self):
+        from bot_bottle.backend.docker.util import daemon_running
+        with mock.patch(self._RUN, side_effect=FileNotFoundError):
+            self.assertFalse(daemon_running())
+        with mock.patch(self._RUN, side_effect=subprocess.TimeoutExpired("docker", 10)):
+            self.assertTrue(daemon_running())
 
 
 if __name__ == "__main__":

@@ -24,6 +24,7 @@ from tests.unit import use_bottle_root
 _CA_PEM = "-----BEGIN CERTIFICATE-----\nMII...\n-----END CERTIFICATE-----\n"
 
 _RUN_DOCKER = "bot_bottle.backend.docker.gateway.run_docker"
+_DAEMON_RUNNING = "bot_bottle.backend.docker.gateway.daemon_running"
 
 
 def _proc(returncode: int = 0, stdout: str = "", stderr: str = "") -> Mock:
@@ -404,13 +405,14 @@ class TestDockerGateway(unittest.TestCase):
             self.sc.stop()  # must not raise
 
     def test_stop_raises_on_other_failure(self) -> None:
-        with patch(_RUN_DOCKER, return_value=_proc(returncode=1, stderr="permission denied")):
+        with patch(_RUN_DOCKER, return_value=_proc(returncode=1, stderr="permission denied")), \
+                patch(_DAEMON_RUNNING, return_value=True):
             with self.assertRaises(GatewayError):
                 self.sc.stop()
 
     def test_stop_on_a_stopped_daemon_is_already_stopped(self) -> None:
-        down = _proc(returncode=1, stderr="Cannot connect to the Docker daemon at unix:///x")
-        with patch(_RUN_DOCKER, return_value=down):
+        with patch(_RUN_DOCKER, return_value=_proc(returncode=1, stderr="any wording")), \
+                patch(_DAEMON_RUNNING, return_value=False):
             self.sc.stop()  # must not raise
 
 
