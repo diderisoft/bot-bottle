@@ -121,11 +121,7 @@ def launch(
             image_ref=plan.image,
             tokens=token_values,
         )
-        stack.callback(
-            deprovision_consolidated, ctx.bottle_id,
-            orchestrator_url=ctx.orchestrator_url,
-            timeout=teardown_timeout,
-        )
+        stack.callback(deprovision_consolidated, ctx.bottle_id, timeout=teardown_timeout)
 
         # Step 5: install the SHARED gateway CA (replaces the per-bottle CA).
         # Write it to a stable host path so the provisioner can copy it over SSH.

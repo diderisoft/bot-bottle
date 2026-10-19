@@ -55,11 +55,7 @@ from ..docker.egress import EGRESS_PORT
 from ..util import AGENT_CA_BUNDLE, AGENT_CA_PATH
 from . import util as container_mod
 from .bottle import MacosContainerBottle
-from .gateway_hosts import (
-    GATEWAY_HOSTNAME,
-    refresh_gateway_host,
-    set_gateway_host,
-)
+from .gateway_hosts import GATEWAY_HOSTNAME, set_gateway_host
 from . import nested_containers as nested_containers_mod
 from .bottle_plan import MacosContainerBottlePlan
 from ...orchestrator.store.config_store import resolve_teardown_timeout
@@ -174,12 +170,9 @@ def launch(
     try:
         # Step 1: the per-host singletons. Must precede the agent run — its
         # proxy env needs the gateway's address at `container run` time.
+        # Bringing them up cold re-points running bottles at the gateway's new
+        # address as part of the reattach (PRD 0081).
         endpoint = ensure_gateway()
-        # The gateway's address may have changed since these bottles launched
-        # (any infra recreate re-runs DHCP). They name the gateway rather than
-        # address it, so re-pointing /etc/hosts re-attaches them in place
-        # instead of leaving them stranded until relaunch.
-        refresh_gateway_host(endpoint.gateway_ip)
 
         # Step 2: mint this bottle's deploy keys, then point it at the SHARED
         # gateway's CA + git-http/supervise ports.
@@ -223,11 +216,7 @@ def launch(
             tokens=token_values,
             env_var_secret=plan.env_var_secret,
         )
-        stack.callback(
-            deprovision_consolidated, ctx.bottle_id,
-            orchestrator_url=ctx.orchestrator_url,
-            timeout=teardown_timeout,
-        )
+        stack.callback(deprovision_consolidated, ctx.bottle_id, timeout=teardown_timeout)
         info(
             f"agent {plan.container_name} registered "
             f"(gateway {endpoint.gateway_ip}, ip {source_ip})"

@@ -102,7 +102,8 @@ class TestMacosContainerEnumerate(unittest.TestCase):
         self.assertEqual(["dev-abc"], [a.slug for a in agents])
 
     def test_raises_when_the_cli_fails(self):
-        with self.assertRaises(EnumerationError):
+        with patch.object(enum_mod.container_mod, "service_running", return_value=True), \
+             self.assertRaises(EnumerationError):
             self._enumerate("", returncode=1)
 
     def test_raises_typed_error_when_cli_is_missing(self):

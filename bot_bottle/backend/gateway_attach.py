@@ -1,17 +1,18 @@
 """Reattach running bottles to a freshly (re)started gateway (PRD 0081).
 
 When the gateway or the orchestrator comes up cold, every bottle that was
-already running loses something it depends on: the gateway's per-bottle
-git-gate repos and credentials are gone, the orchestrator's in-memory egress
-tokens are empty, and after a deliberate CA rotation the gateway serves a CA
-the bottle doesn't trust yet (the CA is otherwise persisted across restarts on
-every backend). `reattach_running_bottles` restores all three for every live
-bottle, the same way on every backend.
+already running loses something it depends on: the gateway may be at a new
+address, its per-bottle git-gate repos and credentials are gone, the
+orchestrator's in-memory egress tokens are empty, and after a deliberate CA
+rotation the gateway serves a CA the bottle doesn't trust yet (the CA is
+otherwise persisted across restarts on every backend).
+`reattach_running_bottles` restores all four for every live bottle, the same
+way on every backend.
 
 Backends supply only the primitives that differ, as a `GatewayAttacher`: how
-to list live bottles, how to install a CA in one, and how to read one's
-`ENV_VAR_SECRET`. What gets restored, which bottles are in scope, and what a
-failure means all live here.
+to list live bottles, how to point one at the gateway's address, how to
+install a CA in one, and how to read one's `ENV_VAR_SECRET`. What gets
+restored, which bottles are in scope, and what a failure means all live here.
 
 Failure policy: every bottle is attempted and every failure collected. By
 default the failures then abort the bring-up, naming each bottle, because a
@@ -70,6 +71,13 @@ class GatewayAttacher(abc.ABC):
         would silently skip bottles)."""
 
     @abc.abstractmethod
+    def point_at_gateway(self, bottle: RunningBottle, address: str) -> None:
+        """Make the bottle reach the gateway at `address`, its current
+        agent-facing address. A backend whose gateway address is fixed by
+        construction only confirms it. Raises if the bottle can't reach the
+        gateway there."""
+
+    @abc.abstractmethod
     def install_ca(self, bottle: RunningBottle, ca_pem: str) -> None:
         """Make the bottle trust `ca_pem` (write it and rebuild the trust
         store). Raises on failure."""
@@ -87,13 +95,14 @@ def reattach_running_bottles(
     gateway: Gateway,
     policy: AttachPolicy = AttachPolicy.STRICT,
 ) -> None:
-    """Restore the CA, git-gate state and egress tokens of every running
-    bottle against the current gateway and orchestrator."""
+    """Restore the gateway address, CA, git-gate state and egress tokens of
+    every running bottle against the current gateway and orchestrator."""
     bottles = attacher.running_bottles()
     if not bottles:
         return
     client = OrchestratorClient(orchestrator_url)
     try:
+        address = gateway.address()
         ca_pem = gateway.ca_cert_pem()
         registered = client.list_bottles()
     except (GatewayError, OrchestratorClientError) as e:
@@ -116,6 +125,7 @@ def reattach_running_bottles(
             skipped.append(bottle.slug)
             continue
         try:
+            attacher.point_at_gateway(bottle, address)
             attacher.install_ca(bottle, ca_pem)
             reprovision_git_gate(transport, bottle_id, bottle.slug)
             secret = attacher.read_env_var_secret(bottle)

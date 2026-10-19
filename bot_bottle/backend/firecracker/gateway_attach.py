@@ -34,6 +34,11 @@ class FirecrackerGatewayAttacher(GatewayAttacher):
             ))
         return bottles
 
+    def point_at_gateway(self, bottle: RunningBottle, address: str) -> None:
+        # Nothing to re-point: an agent VM dials its own slot's host-side TAP
+        # address, which the netpool DNATs to the gateway VM's fixed link.
+        del bottle, address
+
     def install_ca(self, bottle: RunningBottle, ca_pem: str) -> None:
         self._ssh(bottle, install_agent_ca_script("-"), stdin=ca_pem,
                   what="installing the gateway CA")

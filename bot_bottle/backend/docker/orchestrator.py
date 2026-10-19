@@ -244,14 +244,16 @@ class DockerOrchestrator(Orchestrator):
         log.info("starting orchestrator container", context={"name": self.name})
         self._run_container(current_hash)
         deadline = time.monotonic() + startup_timeout
+        problem: str | None = "it was never probed"
         while time.monotonic() < deadline:
-            if self.is_healthy():
+            problem = self.health_problem()
+            if problem is None:
                 log.info("orchestrator healthy", context={"url": self.url()})
                 return True
             time.sleep(_HEALTH_POLL_SECONDS)
         raise OrchestratorStartError(
             f"orchestrator at {self.url()} did not become healthy "
-            f"within {startup_timeout:g}s"
+            f"within {startup_timeout:g}s ({problem})"
         )
 
     def _run_container(self, current_hash: str) -> None:

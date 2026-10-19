@@ -38,6 +38,24 @@ def run_docker(
     )
 
 
+_DAEMON_PROBE_TIMEOUT_SECONDS = 10
+
+
+def daemon_running() -> bool:
+    """True iff the docker daemon answers. bot-bottle's docker containers
+    bind-mount host paths, so they only ever run on a local daemon: when it
+    doesn't answer, no bottle or gateway is running. A probe that hangs counts
+    as running, so callers don't claim an empty host they couldn't check."""
+    try:
+        proc = run_docker(["docker", "version", "--format", "{{.Server.Version}}"],
+                          timeout=_DAEMON_PROBE_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        return True
+    except OSError:
+        return False
+    return proc.returncode == 0
+
+
 # Cap on the suffix the container-name conflict logic will try before
 # giving up: base, base-2, ..., base-MAX_CONTAINER_SUFFIX.
 MAX_CONTAINER_SUFFIX = 100

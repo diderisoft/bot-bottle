@@ -11,19 +11,13 @@ generic `bot-bottle backend {setup,status}`.
 from __future__ import annotations
 
 import shutil
-import subprocess
 import sys
 
 from . import util as _container
 
 
 def _service_running() -> bool:
-    if shutil.which("container") is None:
-        return False
-    return subprocess.run(
-        ["container", "system", "status"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
-    ).returncode == 0
+    return _container.service_running()
 
 
 def setup() -> int:

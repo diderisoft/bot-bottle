@@ -20,6 +20,7 @@ from ..gateway_attach import GatewayAttachError, GatewayAttacher, RunningBottle
 from ..util import install_agent_ca_script
 from . import util as container_mod
 from .enumerate import CONTAINER_NAME_PREFIX, EnumerationError, enumerate_active
+from .gateway_hosts import gateway_host_argv
 
 _STAGED_CA = "/root/bot-bottle-gateway-ca.pem"
 _EXEC_TIMEOUT_SECONDS = 60
@@ -42,6 +43,13 @@ class MacosGatewayAttacher(GatewayAttacher):
                 raise GatewayAttachError(f"could not inspect container {name}")
             bottles.append(RunningBottle(ref=name, slug=agent.slug, source_ip=source_ip))
         return bottles
+
+    def point_at_gateway(self, bottle: RunningBottle, address: str) -> None:
+        # vmnet's DHCP moves the gateway on every recreate; bottles name it
+        # through /etc/hosts, which is rewritten here.
+        self._run(["container", "exec", "--user", "root", bottle.ref,
+                   *gateway_host_argv(address)],
+                  what="pointing the bottle at the gateway")
 
     def install_ca(self, bottle: RunningBottle, ca_pem: str) -> None:
         # `container exec` has no stdin we can rely on, so stage the PEM with

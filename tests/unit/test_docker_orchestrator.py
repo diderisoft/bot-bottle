@@ -112,6 +112,14 @@ class TestDockerOrchestrator(unittest.TestCase):
         with patch(_URLOPEN, side_effect=urllib.error.URLError("refused")):
             self.assertFalse(self.orch.is_healthy())
 
+    def test_health_problem_says_why_it_is_unhealthy(self) -> None:
+        with patch(_URLOPEN, return_value=_health(200)):
+            self.assertIsNone(self.orch.health_problem())
+        with patch(_URLOPEN, side_effect=urllib.error.URLError("refused")):
+            self.assertIn("refused", self.orch.health_problem() or "")
+        with patch.object(self.orch, "url", return_value=""):
+            self.assertEqual("it has no address yet", self.orch.health_problem())
+
     def test_noop_when_healthy_and_source_unchanged(self) -> None:
         # A healthy orchestrator on current source is left alone — recreating it
         # on every launch drops in-memory egress tokens (#381).

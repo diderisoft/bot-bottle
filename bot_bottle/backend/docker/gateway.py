@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import ipaddress
 import os
 import time
 from pathlib import Path
 
 from .util import image_exists as docker_image_exists
-from .util import run_docker
+from .util import daemon_running, run_docker
 from .util import tag_image as docker_tag_image
 from ...image_registry import RegistryError
 from ...infra_image import pinned_infra_artifact, pull_pinned_image
@@ -142,6 +143,17 @@ class DockerGateway(Gateway):
             return True  # can't compare → don't churn a working container
         return running.stdout.strip() == current.stdout.strip()
 
+    def pinned_address(self) -> str:
+        """The gateway's fixed address on the agent network: the subnet's
+        first host after docker's router (`.1`)."""
+        return str(ipaddress.ip_network(self._subnet, strict=False).network_address + 2)
+
+    def _at_pinned_address(self) -> bool:
+        try:
+            return self.address() == self.pinned_address()
+        except GatewayError:
+            return False
+
     def _ensure_network(self) -> None:
         """Create the shared gateway network if it doesn't exist. Idempotent —
         a concurrent create loses harmlessly (the loser sees 'already exists').
@@ -242,7 +254,8 @@ class DockerGateway(Gateway):
         # so source changes to the gateway's flat daemons take effect — not
         # just when the container is absent.
         self._ensure_network()
-        if self.is_running() and self._running_image_is_current():
+        if (self.is_running() and self._running_image_is_current()
+                and self._at_pinned_address()):
             return False
         # Clear any stale (stopped OR outdated-image) container holding the
         # fixed name, then start fresh. `rm --force` on an absent name is a
@@ -253,6 +266,9 @@ class DockerGateway(Gateway):
             "--name", self.name,
             "--label", GATEWAY_LABEL,
             "--network", self.network,
+            # A fixed address: agents bake it into their proxy env, so a
+            # recreated gateway must come back where they already point.
+            "--ip", self.pinned_address(),
             # Persist the self-generated CA on the host so it survives both
             # container recreation AND docker volume pruning (agents trust it)
             # — see host_gateway_ca_dir / issue #450.
@@ -274,7 +290,8 @@ class DockerGateway(Gateway):
         # signing key — only this pre-minted token, which it cannot rewrite into
         # a `cli` token, so a compromised data-plane process can't drive the
         # operator routes (issue #469 review). Bare `--env NAME` keeps the value
-        # off argv / `docker inspect`; only the gateway (not the agent) is given it.
+        # off argv (it is still in the container config `docker inspect` shows,
+        # which only the host user can read); only the gateway is given it.
         argv += ["--env", ORCHESTRATOR_AUTH_JWT_ENV]
         run_env[ORCHESTRATOR_AUTH_JWT_ENV] = self._gateway_token
         argv.append(self.image_ref)
@@ -331,8 +348,11 @@ class DockerGateway(Gateway):
         return source if source.is_absolute() else None
 
     def stop(self) -> None:
+        """Remove the gateway container. Idempotent: an absent container, or
+        a daemon that isn't running, means it is already stopped."""
         proc = run_docker(["docker", "rm", "--force", self.name])
-        if proc.returncode != 0 and "No such container" not in proc.stderr:
+        if (proc.returncode != 0 and "No such container" not in proc.stderr
+                and daemon_running()):
             raise GatewayError(f"gateway failed to stop: {proc.stderr.strip()}")
 
     def address(self) -> str:

@@ -130,11 +130,23 @@ class TestMacosOrchestratorEnsureRunning(unittest.TestCase):
         with patch(f"{_ORCH}.source_hash", return_value="h1"), \
                 patch.object(orch, "_source_current", return_value=False), \
                 patch.object(orch, "_run_container"), \
-                patch.object(orch, "is_healthy", return_value=False), \
+                patch.object(orch, "health_problem", return_value="connection refused"), \
                 patch(f"{_ORCH}.time.sleep"), \
                 patch(f"{_ORCH}.time.monotonic", side_effect=[0.0, 0.5, 2.0]):
-            with self.assertRaises(OrchestratorStartError):
+            with self.assertRaisesRegex(OrchestratorStartError, "connection refused"):
                 orch.ensure_running(startup_timeout=1.0)
+
+    def test_unreachable_host_points_at_local_network_privacy(self) -> None:
+        # A Python macOS hasn't granted Local Network access gets EHOSTUNREACH
+        # to vmnet addresses that curl reaches fine.
+        orch = self._orch()
+        with patch.object(orch, "health_problem",
+                          return_value="http://192.168.128.2:8099/health: "
+                                       "[Errno 65] No route to host"), \
+                patch(f"{_ORCH}.time.sleep"), \
+                patch(f"{_ORCH}.time.monotonic", side_effect=[0.0, 2.0]):
+            with self.assertRaisesRegex(OrchestratorStartError, "Local Network"):
+                orch._wait_healthy(1.0)  # pyright: ignore[reportPrivateUsage]
 
 
 class TestMacosOrchestratorBuildStop(unittest.TestCase):

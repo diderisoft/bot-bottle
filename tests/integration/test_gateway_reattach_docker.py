@@ -91,10 +91,10 @@ class TestGatewayReattachDocker(unittest.TestCase):
                        capture_output=True, check=False)
         self._tmp.cleanup()
 
-    def _start_agent(self, source_ip: str, env_var_secret: str) -> None:
+    def _start_agent(self, source_ip: str, env_var_secret: str, proxy: str) -> None:
         """A stand-in agent: its own compose project with an `agent` service
-        pinned to the registered address, carrying its ENV_VAR_SECRET, exactly
-        how a docker bottle is laid out."""
+        pinned to the registered address, carrying its ENV_VAR_SECRET and its
+        launch-time proxy URL, exactly how a docker bottle is laid out."""
         compose = Path(self._tmp.name) / "compose.yml"
         compose.write_text(json.dumps({
             "name": self._project,
@@ -102,14 +102,15 @@ class TestGatewayReattachDocker(unittest.TestCase):
                 "image": GATEWAY_IMAGE,
                 "entrypoint": ["sleep", "infinity"],
                 "networks": {GATEWAY_NETWORK: {"ipv4_address": source_ip}},
-                "environment": [ENV_VAR_SECRET_NAME],
+                "environment": [ENV_VAR_SECRET_NAME, "HTTPS_PROXY"],
             }},
             "networks": {GATEWAY_NETWORK: {"external": True}},
         }))
         subprocess.run(
             ["docker", "compose", "-p", self._project, "-f", str(compose), "up", "--detach"],
             capture_output=True, check=True,
-            env={**__import__("os").environ, ENV_VAR_SECRET_NAME: env_var_secret},
+            env={**__import__("os").environ, ENV_VAR_SECRET_NAME: env_var_secret,
+                 "HTTPS_PROXY": proxy},
         )
 
     def _agent_exec(self, *argv: str) -> str:
@@ -151,8 +152,9 @@ class TestGatewayReattachDocker(unittest.TestCase):
             source_ip, policy=_POLICY, tokens={"EGRESS_TOKEN_0": _TOKEN},
             env_var_secret=env_var_secret,
         )
-        self._start_agent(source_ip, env_var_secret)
         gateway_ip = self._gateway_ip()
+        self._start_agent(source_ip, env_var_secret,
+                          f"http://bottle:{bottle.identity_token}@{gateway_ip}:{EGRESS_PORT}")
         want = f"200 AUTH=Bearer {_TOKEN}"
         self.assertEqual(want, self._probe(bottle.identity_token, gateway_ip, want=want))
 

@@ -1,10 +1,13 @@
-# Keep the Docker build context lean. The Dockerfile doesn't COPY anything
-# from the repo today, so this is mostly defensive — but it also means
-# `docker build` doesn't ship gigabytes-of-history (.git) to the daemon as
-# the repo grows.
+# Keep the Docker build context lean, and free of anything that changes
+# without a source change. Bytecode is the important one: the images COPY
+# bot_bottle/, so a stray .pyc from a local run would change the image digest
+# and make every launch recreate the gateway (an installed wheel's staged
+# build root already drops it; see resources.py).
 .git
 .gitignore
 .dockerignore
 .claude
 docs
 *.md
+**/__pycache__
+**/*.pyc

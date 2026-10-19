@@ -73,7 +73,6 @@ class LaunchContext:
     source_ip: str          # the agent's DHCP-assigned address (attribution key)
     gateway_ip: str
     network: str
-    orchestrator_url: str
     env_var_secret: str = ""  # encryption key injected into the agent's env
 
 
@@ -157,19 +156,20 @@ def register_agent(
         source_ip=source_ip,
         gateway_ip=endpoint.gateway_ip,
         network=endpoint.network,
-        orchestrator_url=endpoint.orchestrator_url,
         env_var_secret=reg.env_var_secret,
     )
 
 
 def deprovision_consolidated(
-    bottle_id: str, *, orchestrator_url: str, timeout: float | None = None,
+    bottle_id: str, *, timeout: float | None = None,
+    service: MacosInfraService | None = None,
 ) -> None:
     """Deregister the bottle and remove its git-gate state from the gateway.
     Both steps are idempotent so this is safe from a cleanup trap. Does NOT
     stop the gateway — it's a persistent per-host singleton."""
     deprovision_bottle(bottle_id, MacosGatewayTransport(),
-                   orchestrator_url=orchestrator_url, timeout=timeout)
+                       orchestrator=(service or MacosInfraService()).orchestrator(),
+                       timeout=timeout)
 
 
 __all__ = [

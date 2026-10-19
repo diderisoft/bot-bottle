@@ -41,14 +41,19 @@ def require_container() -> None:
     _require_container_service()
 
 
-def _require_container_service() -> None:
-    result = subprocess.run(
+def service_running() -> bool:
+    """True iff Apple Container's system service is up. When it isn't, no
+    container runs."""
+    if shutil.which(_CONTAINER) is None:
+        return False
+    return subprocess.run(
         [_CONTAINER, "system", "status"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
-    if result.returncode != 0:
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+    ).returncode == 0
+
+
+def _require_container_service() -> None:
+    if not service_running():
         info("Apple Container system service is not running.")
         info("Start it with: container system start")
         die("container system service not running")

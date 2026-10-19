@@ -10,13 +10,17 @@ them. The git-gate half of the work lives in `provision_gateway`.
 from __future__ import annotations
 
 import dataclasses
+from typing import TYPE_CHECKING
 
 from ..egress import EgressPlan
 from ..git_gate import GitGatePlan
-from ..orchestrator.client import OrchestratorClient, RegisteredBottle
+from ..orchestrator.client import OrchestratorClient, OrchestratorClientError, RegisteredBottle
 from ..orchestrator.registration import registration_inputs
 from ..orchestrator.store.secret_store import new_env_var_secret
 from .provision_gateway import GatewayTransport, deprovision_git_gate, provision_git_gate
+
+if TYPE_CHECKING:
+    from ..orchestrator.lifecycle import Orchestrator
 
 
 def provision_bottle(
@@ -55,15 +59,20 @@ def deprovision_bottle(
     bottle_id: str,
     transport: GatewayTransport,
     *,
-    orchestrator_url: str,
+    orchestrator: Orchestrator,
     timeout: float | None = None,
 ) -> None:
     """Deregister the bottle and remove its git-gate state. Both steps are
-    idempotent so this is safe from a cleanup trap."""
+    idempotent so this is safe from a cleanup trap. The orchestrator is
+    reached at its address now, not at launch: it may have been recreated
+    elsewhere while the bottle ran."""
     from ..orchestrator.store.config_store import DEFAULT_TEARDOWN_TIMEOUT_SECONDS
+    url = orchestrator.url()
+    if not url:
+        raise OrchestratorClientError(
+            f"DELETE /bottles/{bottle_id}: the orchestrator isn't running")
     OrchestratorClient(
-        orchestrator_url,
-        timeout=timeout if timeout is not None else DEFAULT_TEARDOWN_TIMEOUT_SECONDS,
+        url, timeout=timeout if timeout is not None else DEFAULT_TEARDOWN_TIMEOUT_SECONDS,
     ).teardown_bottle(bottle_id)
     deprovision_git_gate(transport, bottle_id)
 

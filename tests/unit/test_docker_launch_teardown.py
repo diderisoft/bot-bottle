@@ -90,7 +90,6 @@ class TestTeardownWarning(unittest.TestCase):
         ctx = LaunchContext(
             bottle_id="b1", identity_token="t", source_ip="172.20.0.4",
             network="bot-bottle-gateway", gateway_ip="172.20.0.2",
-            orchestrator_url="http://orch:8099",
             env_var_secret="encryption-key",
         )
 

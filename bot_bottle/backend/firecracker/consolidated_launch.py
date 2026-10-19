@@ -55,7 +55,6 @@ class LaunchContext:
     identity_token: str
     source_ip: str          # the VM's guest IP — the attribution key
     gateway_ca_pem: str     # the shared gateway CA the provisioner installs
-    orchestrator_url: str
     env_var_secret: str = ""  # encryption key injected into the agent's env
 
 
@@ -102,20 +101,18 @@ def launch_consolidated(
         identity_token=reg.identity_token,
         source_ip=guest_ip,
         gateway_ca_pem=gateway.ca_cert_pem(),
-        orchestrator_url=url,
         env_var_secret=reg.env_var_secret,
     )
 
 
-def deprovision_consolidated(
-    bottle_id: str, *, orchestrator_url: str, timeout: float | None = None,
-) -> None:
+def deprovision_consolidated(bottle_id: str, *, timeout: float | None = None) -> None:
     """Deregister the bottle and remove its git-gate state from the gateway
     VM. Both steps are idempotent so this is safe from a cleanup trap. Does
     NOT stop the infra VMs — they're persistent per-host singletons shared by
     every bottle."""
     deprovision_bottle(bottle_id, FirecrackerGateway().provisioning_transport(),
-                   orchestrator_url=orchestrator_url, timeout=timeout)
+                       orchestrator=FirecrackerInfraService().orchestrator(),
+                       timeout=timeout)
 
 
 __all__ = [
