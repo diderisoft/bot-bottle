@@ -50,9 +50,10 @@ BUNDLED_RESOURCES: tuple[str, ...] = (
 )
 
 # Root-level files bundled into the wheel *only when present at build time*.
-# The published-artifacts manifest exists only after a release (publish-images.yml
-# commits it), so a pre-release wheel ships without it and the consumer falls back
-# to a local build. Kept out of BUNDLED_RESOURCES so its absence is not a build
+# The published-artifacts manifest exists only after a release (the release
+# workflow, pre-release-test.yml's promote job, commits it to main), so a
+# pre-release wheel ships without it and the consumer falls back to a local
+# build. Kept out of BUNDLED_RESOURCES so its absence is not a build
 # error and its guard test does not require it to exist. Keep in sync with
 # ``setup.py``'s ``_OPTIONAL_BUNDLED_RESOURCES`` (``test_resources`` guards drift).
 OPTIONAL_BUNDLED_RESOURCES: tuple[str, ...] = (

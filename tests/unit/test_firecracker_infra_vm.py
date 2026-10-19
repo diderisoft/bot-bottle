@@ -100,6 +100,7 @@ class TestEnsureBuilt(unittest.TestCase):
         # for the integration suite, and that ambient value would otherwise send
         # this default-path test down the local Docker-build branch.
         with patch.dict(os.environ, {"BOT_BOTTLE_INFRA_BUILD": ""}), \
+                patch.object(infra_vm.infra_rootfs, "builds_locally", return_value=False), \
                 patch.object(infra_vm.docker_mod, "build_image") as build, \
                 patch.object(infra_vm.infra_rootfs, "ensure_available") as pull:
             infra_vm.ensure_built()
@@ -107,6 +108,17 @@ class TestEnsureBuilt(unittest.TestCase):
         # Fetched up front, both planes together: booting one and then failing
         # to fetch the other leaves half a control plane running.
         pull.assert_called_once_with()
+
+    def test_unmatched_published_images_without_docker_die_clearly(self):
+        # Installed from main past the last release, on a host with no Docker:
+        # neither pulling (stale) nor building works, so say so.
+        with patch.dict(os.environ, {"BOT_BOTTLE_INFRA_BUILD": ""}), \
+                patch.object(infra_vm.infra_rootfs, "builds_locally", return_value=True), \
+                patch.object(infra_vm.shutil, "which", return_value=None), \
+                patch.object(infra_vm, "die", side_effect=SystemExit) as die, \
+                self.assertRaises(SystemExit):
+            infra_vm.ensure_built()
+        self.assertIn("no published infra image matches", die.call_args.args[0])
 
     def test_local_mode_builds_orchestrator_before_its_fc_image(self):
         with patch.dict(os.environ, {"BOT_BOTTLE_INFRA_BUILD": "local"}), \

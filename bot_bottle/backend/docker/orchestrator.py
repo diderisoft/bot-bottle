@@ -25,7 +25,12 @@ from pathlib import Path
 
 from ... import log
 from ... import resources
+from .util import image_exists as docker_image_exists
 from .util import run_docker
+from .util import tag_image as docker_tag_image
+from ...image_registry import RegistryError
+from ...infra_image import pinned_infra_artifact, pull_pinned_image
+from ...published_artifacts import FORMAT_OCI
 from ...paths import (
     ORCHESTRATOR_TOKEN_ENV,
     bot_bottle_root,
@@ -143,6 +148,17 @@ class DockerOrchestrator(Orchestrator):
         no-op when nothing changed). No-op when no dockerfile is configured (a
         pre-pulled image). BOT_BOTTLE_NO_CACHE forces a full rebuild."""
         if self._dockerfile is None:
+            return
+        # Pull the release-pinned image instead when it was built from exactly
+        # this install's code (PRD 0081 / 0085); otherwise build it.
+        pin = pinned_infra_artifact("bot-bottle-orchestrator", FORMAT_OCI)
+        if pin is not None:
+            try:
+                pull_pinned_image(
+                    pin, tag=self.image_ref, image_exists=docker_image_exists,
+                    tag_image=docker_tag_image, pull_argv=("docker", "pull"))
+            except RegistryError as e:
+                raise GatewayError(str(e)) from e
             return
         argv = ["docker", "build", "-t", self.image_ref,
                 "-f", str(self._repo_root / self._dockerfile),

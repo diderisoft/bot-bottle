@@ -27,6 +27,9 @@ from ...orchestrator.lifecycle import (
     source_hash,
 )
 from . import util as container_mod
+from ...image_registry import RegistryError
+from ...infra_image import pinned_infra_artifact, pull_pinned_image
+from ...published_artifacts import FORMAT_OCI
 from .gateway import CONTROL_NETWORK
 
 ORCHESTRATOR_IMAGE = os.environ.get(
@@ -101,7 +104,18 @@ class MacosOrchestrator(Orchestrator):
     def ensure_built(self) -> None:
         """Build the control-plane image. The source is bind-mounted so a code
         change takes effect without a rebuild; the image still carries the
-        package for its entrypoint."""
+        package for its entrypoint. Pulls the release-pinned image instead when it was built
+        from exactly this install's code (PRD 0081 / 0085)."""
+        pin = pinned_infra_artifact("bot-bottle-orchestrator", FORMAT_OCI)
+        if pin is not None:
+            try:
+                pull_pinned_image(
+                    pin, tag=self.image_ref, image_exists=container_mod.image_exists,
+                    tag_image=container_mod.tag_image,
+                    pull_argv=("container", "image", "pull"))
+            except RegistryError as e:
+                raise OrchestratorStartError(str(e)) from e
+            return
         container_mod.build_image(
             self.image_ref, str(self._repo_root), dockerfile="Dockerfile.orchestrator")
 
