@@ -21,6 +21,11 @@ on:
           the flow without writing to the real namespace.
         required: false
         default: didericis
+      version:
+        description: >-
+          Publish under this version instead of pyproject's. For rehearsals:
+          use a throwaway like 0.0.0-dev so a trial can't be taken for a release.
+        required: false
 
 jobs:
   publish:
@@ -65,9 +70,11 @@ jobs:
           # spliced into the command would let a dispatcher's `images` value run as
           # shell. Word-splitting $IMAGES into the arg list is the intended parse.
           IMAGES: ${{ github.event.inputs.images }}
+          VERSION: ${{ github.event.inputs.version }}
         run: |
           set -- --work-dir candidate --platform linux/amd64 --platform linux/arm64
           for i in $IMAGES; do set -- "$@" --image "$i"; done
+          if [ -n "$VERSION" ]; then set -- "$@" --version "$VERSION"; fi
           python3 -m bot_bottle.publish_images "$@"
 
       - name: Verify the manifest
