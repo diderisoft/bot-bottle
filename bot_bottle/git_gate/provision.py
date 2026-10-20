@@ -18,7 +18,7 @@ from ..bottle_state import globalize_slug
 from ..errors import MissingEnvVarError
 from ..lib.log import info
 from ..manifest import ManifestBottle, ManifestGitEntry
-from ..gateway.git_gate.render import GitGateUpstream
+from ..control.git_gate_render import GitGateUpstream
 
 if TYPE_CHECKING:
     from .plan import GitGatePlan

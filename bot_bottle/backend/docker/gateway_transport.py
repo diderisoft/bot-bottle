@@ -8,7 +8,7 @@ provisioning logic that drives it lives in `backend.provision_gateway`.
 from __future__ import annotations
 
 from .util import run_docker
-from ...gateway import GatewayProvisionError
+from ...control.gateway import GatewayProvisionError
 
 
 class DockerGatewayTransport:

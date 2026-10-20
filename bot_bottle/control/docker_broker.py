@@ -16,7 +16,7 @@ from __future__ import annotations
 import subprocess
 
 from ..backend.docker.util import run_docker
-from .broker import LaunchBroker, LaunchRequest
+from ..orchestrator.broker import LaunchBroker, LaunchRequest
 
 CONTAINER_PREFIX = "bot-bottle-orch-"
 BOTTLE_ID_LABEL = "bot-bottle-bottle-id"

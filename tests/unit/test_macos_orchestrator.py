@@ -12,7 +12,7 @@ from bot_bottle.backend.macos_container.orchestrator import (
     MacosOrchestrator,
     probe_orchestrator_url,
 )
-from bot_bottle.orchestrator.lifecycle import OrchestratorStartError
+from bot_bottle.control.lifecycle import OrchestratorStartError
 
 _ORCH = "bot_bottle.backend.macos_container.orchestrator"
 

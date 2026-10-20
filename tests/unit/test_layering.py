@@ -20,21 +20,9 @@ STDLIB_ONLY = ("contract", "lib")
 # (importer, imported) pairs that break the rules today. Remove entries as the
 # modules move; never add one.
 ALLOWED: frozenset[tuple[str, str]] = frozenset({
-    ("bot_bottle.gateway", "bot_bottle.paths"),
-    ("bot_bottle.gateway.git_gate.render", "bot_bottle.manifest"),
-    ("bot_bottle.orchestrator", "bot_bottle.gateway"),
+    ("bot_bottle.orchestrator.__main__", "bot_bottle.control.docker_broker"),
     ("bot_bottle.orchestrator.__main__", "bot_bottle.trust_domain"),
     ("bot_bottle.orchestrator.api", "bot_bottle.trust_domain"),
-    ("bot_bottle.orchestrator.client", "bot_bottle.backend.firecracker"),
-    ("bot_bottle.orchestrator.client", "bot_bottle.backend.firecracker.infra_vm"),
-    ("bot_bottle.orchestrator.client", "bot_bottle.backend.macos_container.infra"),
-    ("bot_bottle.orchestrator.client", "bot_bottle.trust_domain"),
-    ("bot_bottle.orchestrator.docker_broker", "bot_bottle.backend.docker.util"),
-    ("bot_bottle.orchestrator.lifecycle", "bot_bottle.trust_domain"),
-    ("bot_bottle.orchestrator.registration", "bot_bottle.egress"),
-    ("bot_bottle.orchestrator.rotate_ca", "bot_bottle.backend"),
-    ("bot_bottle.orchestrator.rotate_ca", "bot_bottle.backend.infra_service"),
-    ("bot_bottle.orchestrator.rotate_ca", "bot_bottle.gateway"),
     ("bot_bottle.orchestrator.server", "bot_bottle.trust_domain"),
     ("bot_bottle.orchestrator.store.config_store", "bot_bottle.paths"),
     ("bot_bottle.orchestrator.store.queue_store", "bot_bottle.paths"),

@@ -13,8 +13,8 @@ Layout:
   * `provision`, `host_key` — the deploy-key + host-key host-side helpers the
     service delegates to.
 
-The rendering + the in-gateway hook execution live in
-`bot_bottle.gateway.git_gate.render`. The public names are re-exported lazily
+The rendering, including the hook scripts the gateway runs, lives in
+`bot_bottle.control.git_gate_render`. The public names are re-exported lazily
 via `__getattr__`, so `from bot_bottle.git_gate import …` keeps working and
 importing `git_gate.plan` (the contract's dependency) doesn't drag in the
 provisioning / forge-API code.
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
         provision_git_gate_dynamic_keys,
         revoke_git_gate_provisioned_keys,
     )
-    from ..gateway.git_gate.render import (
+    from ..control.git_gate_render import (
         GIT_GATE_HOSTNAME,
         GIT_GATE_TIMEOUT_SECS,
         GitGateUpstream,
@@ -56,18 +56,18 @@ _LAZY: dict[str, str] = {
     "revoke_git_gate_provisioned_keys": ".provision",
     "_provision_dynamic_key": ".provision",
     "_resolve_identity_file": ".provision",
-    "GIT_GATE_HOSTNAME": "..gateway.git_gate.render",
-    "GIT_GATE_TIMEOUT_SECS": "..gateway.git_gate.render",
-    "GitGateUpstream": "..gateway.git_gate.render",
-    "git_gate_upstreams_for_bottle": "..gateway.git_gate.render",
-    "git_gate_render_gitconfig": "..gateway.git_gate.render",
-    "git_gate_render_gitleaks_config": "..gateway.git_gate.render",
-    "git_gate_known_hosts_line": "..gateway.git_gate.render",
-    "git_gate_render_entrypoint": "..gateway.git_gate.render",
-    "git_gate_render_provision": "..gateway.git_gate.render",
-    "git_gate_render_hook": "..gateway.git_gate.render",
-    "git_gate_render_access_hook": "..gateway.git_gate.render",
-    "_gitconfig_validate_value": "..gateway.git_gate.render",
+    "GIT_GATE_HOSTNAME": "..control.git_gate_render",
+    "GIT_GATE_TIMEOUT_SECS": "..control.git_gate_render",
+    "GitGateUpstream": "..control.git_gate_render",
+    "git_gate_upstreams_for_bottle": "..control.git_gate_render",
+    "git_gate_render_gitconfig": "..control.git_gate_render",
+    "git_gate_render_gitleaks_config": "..control.git_gate_render",
+    "git_gate_known_hosts_line": "..control.git_gate_render",
+    "git_gate_render_entrypoint": "..control.git_gate_render",
+    "git_gate_render_provision": "..control.git_gate_render",
+    "git_gate_render_hook": "..control.git_gate_render",
+    "git_gate_render_access_hook": "..control.git_gate_render",
+    "_gitconfig_validate_value": "..control.git_gate_render",
 }
 
 

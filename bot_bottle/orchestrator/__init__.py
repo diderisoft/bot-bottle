@@ -10,10 +10,6 @@ backend-neutral "consolidation core" that needs no VM packaging:
   * `broker`        — the signed, structured launch-request contract + a
                       `LaunchBroker` (stub for the harness) that verifies
                       provenance before acting.
-  * `gateway`       — the consolidated per-host gateway: the `Gateway`
-                      lifecycle contract (idempotent singleton). One
-                      gateway shared by all bottles instead of one per
-                      bottle; backend impls live under `backend/*/gateway`.
   * `service`       — the `OrchestratorCore`: owns the registry, brokers the
                       launch lifecycle (launch/teardown), manages the
                       shared gateway, attributes.
@@ -40,16 +36,13 @@ if TYPE_CHECKING:
         sign_request,
         verify_request,
     )
-    from .docker_broker import DockerBroker, DockerBrokerError
-    from ..gateway import Gateway, GatewayError
-    from .lifecycle import Orchestrator
     from .service import OrchestratorCore
     from .server import OrchestratorServer, create_app, make_server
 
 
 # Facade name -> submodule that defines it. Lazy so importing a leaf (or the
 # parent package, e.g. via `orchestrator.store.store_manager`) doesn't drag the
-# whole orchestrator — server, docker_broker + the docker backend, http — while
+# whole orchestrator — server, http — while
 # `from bot_bottle.orchestrator import RegistryStore` keeps working.
 _LAZY: dict[str, str] = {
     "BottleRecord": ".store.registry_store",
@@ -61,11 +54,6 @@ _LAZY: dict[str, str] = {
     "StubBroker": ".broker",
     "sign_request": ".broker",
     "verify_request": ".broker",
-    "DockerBroker": ".docker_broker",
-    "DockerBrokerError": ".docker_broker",
-    "Gateway": "..gateway",
-    "GatewayError": "..gateway",
-    "Orchestrator": ".lifecycle",
     "OrchestratorCore": ".service",
     "create_app": ".server",
     "OrchestratorServer": ".server",
@@ -94,11 +82,6 @@ __all__ = [
     "StubBroker",
     "sign_request",
     "verify_request",
-    "DockerBroker",
-    "DockerBrokerError",
-    "Gateway",
-    "GatewayError",
-    "Orchestrator",
     "OrchestratorCore",
     "create_app",
     "OrchestratorServer",

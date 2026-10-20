@@ -18,8 +18,8 @@ from dataclasses import dataclass
 from .util import run_docker
 from ...egress import EgressPlan
 from ...git_gate import GitGatePlan
-from ...orchestrator.client import OrchestratorClient
-from ...gateway import GATEWAY_NETWORK
+from ...control.client import OrchestratorClient
+from ...control.gateway import GATEWAY_NETWORK
 from .infra import INFRA_NAME, DockerInfraService
 from ..provision_bottle import deprovision_bottle, provision_bottle
 from .gateway_transport import DockerGatewayTransport

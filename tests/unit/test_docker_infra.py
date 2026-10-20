@@ -17,7 +17,7 @@ from bot_bottle.backend.docker.infra import (
     ORCHESTRATOR_NAME,
     DockerInfraService,
 )
-from bot_bottle.gateway import GATEWAY_NAME
+from bot_bottle.control.gateway import GATEWAY_NAME
 
 _RUN = "bot_bottle.backend.docker.infra.run_docker"
 

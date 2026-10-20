@@ -23,7 +23,7 @@ from bot_bottle.backend.firecracker.gateway import (
 from bot_bottle.backend.firecracker.gateway_transport import (
     FirecrackerGatewayTransport,
 )
-from bot_bottle.gateway import GatewayError, GatewayProvisionError
+from bot_bottle.control.gateway import GatewayError, GatewayProvisionError
 
 _GW = "bot_bottle.backend.firecracker.gateway"
 _GW_TRANSPORT = "bot_bottle.backend.firecracker.gateway_transport"

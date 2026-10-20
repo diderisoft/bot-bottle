@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 
 from ...lib.log import die, info
-from ...orchestrator.lifecycle import (
+from ...control.lifecycle import (
     DEFAULT_STARTUP_TIMEOUT_SECONDS,
     Orchestrator,
 )

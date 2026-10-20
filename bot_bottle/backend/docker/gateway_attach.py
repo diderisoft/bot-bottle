@@ -17,7 +17,7 @@ import json
 import subprocess
 from urllib.parse import urlsplit
 
-from ...gateway import GATEWAY_NETWORK
+from ...control.gateway import GATEWAY_NETWORK
 from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
 from ..gateway_attach import GatewayAttachError, GatewayAttacher, RunningBottle
 from ..util import install_agent_ca_script

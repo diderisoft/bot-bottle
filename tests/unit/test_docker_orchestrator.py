@@ -14,8 +14,8 @@ from bot_bottle.backend.docker.orchestrator import (
     ORCHESTRATOR_SOURCE_HASH_LABEL,
     DockerOrchestrator,
 )
-from bot_bottle.gateway import GatewayError
-from bot_bottle.orchestrator.lifecycle import OrchestratorStartError, source_hash
+from bot_bottle.control.gateway import GatewayError
+from bot_bottle.control.lifecycle import OrchestratorStartError, source_hash
 
 _ORCH = "bot_bottle.backend.docker.orchestrator"
 _RUN = f"{_ORCH}.run_docker"
@@ -25,7 +25,7 @@ _MONOTONIC = f"{_ORCH}.time.monotonic"
 # its host-canonical key file read to keep it off the real host file.
 _TOKEN = "bot_bottle.trust_domain.host_signing_key"
 # The ABC's is_healthy probes /health via urllib in the lifecycle module.
-_URLOPEN = "bot_bottle.orchestrator.lifecycle.urllib.request.urlopen"
+_URLOPEN = "bot_bottle.control.lifecycle.urllib.request.urlopen"
 
 
 def _health(status: int) -> MagicMock:

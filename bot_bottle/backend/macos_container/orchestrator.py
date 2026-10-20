@@ -19,7 +19,7 @@ from pathlib import Path
 from ...lib import log
 from ... import resources
 from ...paths import ORCHESTRATOR_TOKEN_ENV
-from ...orchestrator.lifecycle import (
+from ...control.lifecycle import (
     DEFAULT_PORT,
     DEFAULT_STARTUP_TIMEOUT_SECONDS,
     Orchestrator,

@@ -35,8 +35,8 @@ from ...paths import (
     ORCHESTRATOR_TOKEN_ENV,
     bot_bottle_root,
 )
-from ...gateway import GatewayError
-from ...orchestrator.lifecycle import (
+from ...control.gateway import GatewayError
+from ...control.lifecycle import (
     DEFAULT_PORT,
     DEFAULT_STARTUP_TIMEOUT_SECONDS,
     Orchestrator,

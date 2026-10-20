@@ -29,12 +29,12 @@ import enum
 from dataclasses import dataclass
 
 from ..bottle_state import git_gate_state_dir
-from ..gateway import Gateway, GatewayError
+from ..control.gateway import Gateway, GatewayError
 from ..git_gate.plan import GitGatePlan
 from ..git_gate.provision import load_upstreams_snapshot
 from ..git_gate.service import stage_git_gate_scripts
 from ..lib.log import info, warn
-from ..orchestrator.client import OrchestratorClient, OrchestratorClientError
+from ..control.client import OrchestratorClient, OrchestratorClientError
 from .provision_gateway import GatewayTransport, provision_git_gate
 
 

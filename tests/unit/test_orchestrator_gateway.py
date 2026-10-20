@@ -12,7 +12,7 @@ from bot_bottle.backend.docker.gateway import (
     DEFAULT_GATEWAY_SUBNET,
     DockerGateway,
 )
-from bot_bottle.gateway import (
+from bot_bottle.control.gateway import (
     GATEWAY_CA_CERT,
     GATEWAY_NAME,
     GatewayError,

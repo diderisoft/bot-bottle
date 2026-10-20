@@ -32,8 +32,8 @@ from pathlib import Path
 
 from ...egress import EgressPlan
 from ...git_gate import GitGatePlan
-from ...orchestrator.client import OrchestratorClient
-from ...orchestrator.lifecycle import (
+from ...control.client import OrchestratorClient
+from ...control.lifecycle import (
     OrchestratorStartError,  # re-exported so callers can catch it
 )
 from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
