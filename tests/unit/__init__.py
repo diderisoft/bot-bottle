@@ -54,3 +54,22 @@ def use_bottle_root(root: Path) -> Callable[[], None]:
     patcher = mock.patch.dict(os.environ, {"BOT_BOTTLE_ROOT": str(root)})
     patcher.start()
     return patcher.stop
+
+
+# The unit suite never sees the repo's committed `published-artifacts.json`:
+# with it present, launch paths resolve real pins and pull from the registry.
+# Tests that want a manifest pass a `repo_root` or patch the loader. Assigned,
+# not `mock.patch`ed, so a test's `mock.patch.stopall()` can't undo it.
+from bot_bottle import published_artifacts as _published_artifacts  # pylint: disable=wrong-import-position
+
+_real_artifacts_manifest_path = _published_artifacts.artifacts_manifest_path
+
+
+def _no_committed_manifest(repo_root: Path | None = None) -> Path:
+    if repo_root is None:
+        missing = Path(_tmp_home) / "no-committed-manifest"
+        return missing / _published_artifacts.ARTIFACTS_MANIFEST_NAME
+    return _real_artifacts_manifest_path(repo_root)
+
+
+_published_artifacts.artifacts_manifest_path = _no_committed_manifest
