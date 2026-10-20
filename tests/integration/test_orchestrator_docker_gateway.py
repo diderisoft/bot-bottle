@@ -10,6 +10,7 @@ import secrets
 import subprocess
 import unittest
 
+from bot_bottle.cli.settings import settings_from_env
 from bot_bottle.backend.docker.gateway import DockerGateway
 from tests._backend import skip_unless_backend
 
@@ -20,7 +21,7 @@ IMAGE = "busybox"
 class TestDockerGatewayIntegration(unittest.TestCase):
     def setUp(self) -> None:
         self.name = "bot-bottle-orch-gateway-itest-" + secrets.token_hex(4)
-        self.sc = DockerGateway(IMAGE, name=self.name)
+        self.sc = DockerGateway(IMAGE, name=self.name, settings=settings_from_env())
         self.addCleanup(self.sc.stop)
 
     def _connect(self) -> None:

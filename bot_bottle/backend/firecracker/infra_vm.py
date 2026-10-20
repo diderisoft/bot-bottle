@@ -44,7 +44,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Generator
 
-from ... import image_registry, resources
+from ... import resources
+from ...contract.hostctl import InfraSettings, Settings
 from ...lib.log import die, info
 from ...paths import HOST_DB_FILENAME
 from ..docker import util as docker_mod
@@ -111,11 +112,11 @@ def role_init(role: str) -> str:
     return _orchestrator_init() if role == "orchestrator" else _gateway_init()
 
 
-def _role_version(role: str) -> str:
-    return infra_rootfs.role_version(role)
+def _role_version(role: str, infra: InfraSettings) -> str:
+    return infra_rootfs.role_version(role, infra)
 
 
-def ensure_built() -> None:
+def ensure_built(settings: Settings) -> None:
     """Ensure both infra rootfs artifacts are available before boot.
 
     Default (docker-free, PRD 0069 Stage 2): download + verify the prebuilt
@@ -125,17 +126,18 @@ def ensure_built() -> None:
     orchestrator-fc image is `FROM` the orchestrator image, so it must exist
     first) when asked to (`BOT_BOTTLE_INFRA_BUILD=local`) or when no published
     image matches this install's code (`infra_rootfs.builds_locally`)."""
-    if infra_rootfs.builds_locally():
-        if not image_registry.local_build_requested() and shutil.which("docker") is None:
+    infra = settings.infra
+    if infra_rootfs.builds_locally(infra):
+        if not infra.infra_build_local and shutil.which("docker") is None:
             die("no published infra image matches this install's code (installed "
                 "from main after the last release?) and Docker isn't available to "
                 "build one. Install a release, or install Docker.")
-        build_infra_images_with_docker()
+        build_infra_images_with_docker(no_cache=settings.operation.no_cache)
         return
-    infra_rootfs.ensure_available()
+    infra_rootfs.ensure_available(infra)
 
 
-def build_infra_images_with_docker() -> None:
+def build_infra_images_with_docker(*, no_cache: bool = False) -> None:
     """Build the fixed images from source with host Docker: orchestrator,
     gateway, then the orchestrator-fc image (Dockerfile.orchestrator.fc: FROM
     orchestrator + buildah). The gateway VM boots the gateway image directly.
@@ -143,26 +145,27 @@ def build_infra_images_with_docker() -> None:
     `publish_infra` uses it off-host to produce the published artifacts."""
     root = str(resources.build_root())
     docker_mod.build_image(
-        _ORCHESTRATOR_IMAGE, root, dockerfile="Dockerfile.orchestrator")
+        _ORCHESTRATOR_IMAGE, root, dockerfile="Dockerfile.orchestrator", no_cache=no_cache)
     orchestrator_base = docker_mod.pinned_local_image_ref(_ORCHESTRATOR_IMAGE)
     docker_mod.build_image(
-        _GATEWAY_IMAGE, root, dockerfile="Dockerfile.gateway")
+        _GATEWAY_IMAGE, root, dockerfile="Dockerfile.gateway", no_cache=no_cache)
     docker_mod.build_image(
         _ORCHESTRATOR_FC_IMAGE,
         root,
         dockerfile="Dockerfile.orchestrator.fc",
         build_args={"ORCHESTRATOR_BASE_IMAGE": orchestrator_base},
+        no_cache=no_cache,
     )
 
 
-def build_rootfs_dir(role: str) -> Path:
+def build_rootfs_dir(role: str, infra: InfraSettings) -> Path:
     """`role`'s base rootfs dir: its source image prepared with the role init as
     PID 1. The init's content is folded into the cache key so an init change
     rebuilds the rootfs (the base image digest alone wouldn't catch it)."""
     init = role_init(role)
     tag = hashlib.sha256(init.encode()).hexdigest()[:8]
     return util.build_base_rootfs_dir(
-        _ROOTFS_IMAGE[role], variant=f"-{role}-{tag}", init_script=init,
+        _ROOTFS_IMAGE[role], infra, variant=f"-{role}-{tag}", init_script=init,
     )
 
 
@@ -203,6 +206,7 @@ def stop() -> None:
 
 def boot_vm(
     *,
+    settings: Settings,
     name: str,
     slot: netpool.Slot,
     run_dir: Path,
@@ -219,19 +223,20 @@ def boot_vm(
 
     run_dir.mkdir(parents=True, exist_ok=True)
     rootfs = run_dir / "rootfs.ext4"
-    if infra_rootfs.builds_locally():
+    infra = settings.infra
+    if infra_rootfs.builds_locally(infra):
         util.build_rootfs_ext4(
-            build_rootfs_dir(role), rootfs, slack_mib=_ROOTFS_SLACK_MIB[role])
+            build_rootfs_dir(role, infra), rootfs, slack_mib=_ROOTFS_SLACK_MIB[role])
     else:
         # Prebuilt artifact already carries the role's build slack; expand it to
         # a fresh writable rootfs for this boot.
-        infra_rootfs.materialize_ext4(role, rootfs)
+        infra_rootfs.materialize_ext4(role, rootfs, infra)
     private_key, pubkey = _stable_keypair()
 
     info(f"booting {role} VM on {slot.iface} (guest {slot.guest_ip})")
     boot_args = extra_boot_args
     vm = firecracker_vm.boot(
-        name=name, rootfs=rootfs, tap=slot.iface,
+        name=name, kernel=util.kernel_path(infra), rootfs=rootfs, tap=slot.iface,
         guest_ip=slot.guest_ip, host_ip=slot.host_ip, pubkey=pubkey,
         run_dir=run_dir, mem_mib=mem_mib, detached=True,
         data_drives=data_drives, extra_boot_args=boot_args,
@@ -272,10 +277,10 @@ def _version_file() -> Path:
     return _infra_dir() / "booted-version"
 
 
-def expected_version() -> str:
+def expected_version(infra: InfraSettings) -> str:
     """The combined marker for the running pair: both per-plane artifact
     versions, so a change to either rootfs dislodges the adopted pair."""
-    return " ".join(f"{role}={_role_version(role)}" for role in infra_rootfs.ROLES)
+    return " ".join(f"{role}={_role_version(role, infra)}" for role in infra_rootfs.ROLES)
 
 
 def adoptable(key: Path, url: str, want: str) -> bool:

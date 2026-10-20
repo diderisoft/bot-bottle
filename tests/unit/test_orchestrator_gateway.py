@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from bot_bottle.contract.hostctl import OperationSettings, Settings
 from bot_bottle.backend.docker.gateway import (
     DEFAULT_GATEWAY_SUBNET,
     DockerGateway,
@@ -46,7 +47,7 @@ class TestDockerGateway(unittest.TestCase):
         self.addCleanup(use_bottle_root(Path(self._tmp.name)))
         # Resolver-only data plane (PRD 0070): running the gateway requires an
         # orchestrator URL, so the fixture supplies one.
-        self.sc = DockerGateway("bot-bottle-gateway:latest")
+        self.sc = DockerGateway("bot-bottle-gateway:latest", settings=Settings())
 
     def test_default_name(self) -> None:
         self.assertEqual(GATEWAY_NAME, self.sc.name)
@@ -54,7 +55,7 @@ class TestDockerGateway(unittest.TestCase):
     def test_connect_refuses_without_orchestrator_url(self) -> None:
         # No policy source → the data-plane daemons would only crash-loop, so
         # the launch must fail closed with a clear error rather than start one.
-        sc = DockerGateway("bot-bottle-gateway:latest")
+        sc = DockerGateway("bot-bottle-gateway:latest", settings=Settings())
         with patch(_RUN_DOCKER) as m:
             with self.assertRaises(GatewayError):
                 sc.connect_to_orchestrator("", _TOKEN)
@@ -63,7 +64,7 @@ class TestDockerGateway(unittest.TestCase):
     def test_connect_refuses_without_gateway_token(self) -> None:
         # The gateway never mints — it must be handed a pre-minted `gateway`
         # token. Missing one is a misconfiguration, so fail closed before start.
-        sc = DockerGateway("bot-bottle-gateway:latest")
+        sc = DockerGateway("bot-bottle-gateway:latest", settings=Settings())
         with patch(_RUN_DOCKER) as m:
             with self.assertRaises(GatewayError):
                 sc.connect_to_orchestrator(_ORCH_URL, "")
@@ -197,7 +198,7 @@ class TestDockerGateway(unittest.TestCase):
 
     def test_named_ca_volume_supports_socket_shared_runner(self) -> None:
         sc = DockerGateway(
-            "bot-bottle-gateway:latest", ca_mount_source="ci-ca-volume"
+            "bot-bottle-gateway:latest", ca_mount_source="ci-ca-volume", settings=Settings()
         )
 
         def fake(argv: list[str], **_kw: object) -> Mock:
@@ -440,7 +441,7 @@ class TestDockerGateway(unittest.TestCase):
 
 class TestDockerGatewayBuild(unittest.TestCase):
     def setUp(self) -> None:
-        self.sc = DockerGateway()  # defaults to the real bundle image + dockerfile
+        self.sc = DockerGateway(settings=Settings())  # defaults to the real bundle image + dockerfile
 
     def test_image_exists_reads_docker_inspect(self) -> None:
         with patch(_RUN_DOCKER, return_value=_proc(returncode=0)):
@@ -469,21 +470,21 @@ class TestDockerGatewayBuild(unittest.TestCase):
         )
         self.assertNotIn("--no-cache", builds[0])
 
-    def test_ensure_built_no_cache_env_forces_full_rebuild(self) -> None:
+    def test_ensure_built_no_cache_forces_full_rebuild(self) -> None:
         calls: list[list[str]] = []
 
         def rec(argv: list[str], **_kw: object) -> Mock:
             calls.append(argv)
             return _proc()
 
-        with patch(_RUN_DOCKER, side_effect=rec), \
-                patch.dict("os.environ", {"BOT_BOTTLE_NO_CACHE": "1"}):
-            self.sc.ensure_built()
+        no_cache = Settings(operation=OperationSettings(no_cache=True))
+        with patch(_RUN_DOCKER, side_effect=rec):
+            DockerGateway(settings=no_cache).ensure_built()
         builds = [c for c in calls if c[:2] == ["docker", "build"]]
         self.assertIn("--no-cache", builds[0])
 
     def test_ensure_built_noop_when_no_dockerfile(self) -> None:
-        sc = DockerGateway("busybox", dockerfile=None)
+        sc = DockerGateway("busybox", dockerfile=None, settings=Settings())
         with patch(_RUN_DOCKER) as m:
             sc.ensure_built()
         m.assert_not_called()

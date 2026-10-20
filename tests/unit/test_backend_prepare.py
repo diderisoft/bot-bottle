@@ -12,6 +12,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from bot_bottle.contract.hostctl import Settings
 from bot_bottle import bottle_state
 from tests.unit import use_bottle_root
 from bot_bottle.backend import BottleSpec
@@ -67,7 +68,7 @@ class _FakeStateMixin:
 
 class TestDockerPrepare(_FakeStateMixin, unittest.TestCase):
     def test_records_backend_and_preserves_env_split(self) -> None:
-        backend = DockerBottleBackend()
+        backend = DockerBottleBackend(Settings())
         spec = _spec(Path(self.tmp.name), identity="demo-docker")
 
         with (
@@ -94,7 +95,7 @@ class TestDockerPrepare(_FakeStateMixin, unittest.TestCase):
 
 class TestFirecrackerPrepare(_FakeStateMixin, unittest.TestCase):
     def test_records_backend_and_builds_guest_env(self) -> None:
-        backend = FirecrackerBottleBackend()
+        backend = FirecrackerBottleBackend(Settings())
         spec = _spec(Path(self.tmp.name), identity="demo-fc")
 
         with (
@@ -105,7 +106,7 @@ class TestFirecrackerPrepare(_FakeStateMixin, unittest.TestCase):
         ):
             plan = backend.prepare(spec, Path(self.tmp.name) / "stage")
 
-        preflight.assert_called_once_with()
+        preflight.assert_called_once_with(backend.settings.infra)
         metadata = bottle_state.read_metadata("demo-fc")
         self.assertIsNotNone(metadata)
         assert metadata is not None
@@ -125,7 +126,7 @@ class TestNestedContainersRejection(_FakeStateMixin, unittest.TestCase):
     """
 
     def test_docker_backend_refuses_the_flag(self) -> None:
-        backend = DockerBottleBackend()
+        backend = DockerBottleBackend(Settings())
         spec = _spec(
             Path(self.tmp.name), identity="demo-docker", nested_containers=True,
         )
@@ -140,7 +141,7 @@ class TestNestedContainersRejection(_FakeStateMixin, unittest.TestCase):
         self.assertIn("docker", die.call_args.args[0])
 
     def test_firecracker_backend_refuses_the_flag(self) -> None:
-        backend = FirecrackerBottleBackend()
+        backend = FirecrackerBottleBackend(Settings())
         spec = _spec(Path(self.tmp.name), identity="demo-fc", nested_containers=True)
         with (
             patch(

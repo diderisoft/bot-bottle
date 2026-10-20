@@ -17,6 +17,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from tests.unit import use_bottle_root
+from bot_bottle.contract.hostctl import Settings
 from bot_bottle import bottle_state
 from bot_bottle.backend import EnumerationError
 from bot_bottle.backend.docker import cleanup
@@ -128,7 +129,7 @@ class TestAuthoritativeDiscovery(unittest.TestCase):
              ) as projects, self.assertRaisesRegex(
                  EnumerationError, "compose unavailable",
              ):
-            cleanup.prepare_cleanup()
+            cleanup.prepare_cleanup(Settings())
         projects.assert_called_once_with(
             warn_on_error=False,
             raise_on_error=True,

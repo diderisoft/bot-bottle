@@ -13,6 +13,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from bot_bottle.contract.hostctl import Settings
 from bot_bottle.backend.macos_container.infra import MacosInfraService
 
 _INFRA = "bot_bottle.backend.macos_container.infra"
@@ -20,7 +21,7 @@ _INFRA = "bot_bottle.backend.macos_container.infra"
 
 class TestInfraEnsureRunning(unittest.TestCase):
     def setUp(self) -> None:
-        self.svc = MacosInfraService(repo_root=Path("/r"))
+        self.svc = MacosInfraService(Settings(), repo_root=Path("/r"))
         self.orch = MagicMock()
         self.orch.url.return_value = "http://192.168.128.2:8099"
         self.orch.mint_gateway_token.return_value = "gw.jwt"
@@ -75,7 +76,7 @@ class TestInfraEnsureRunning(unittest.TestCase):
 
 class TestCaCertPem(unittest.TestCase):
     def test_delegates_to_the_gateway_service(self) -> None:
-        svc = MacosInfraService(repo_root=Path("/r"))
+        svc = MacosInfraService(Settings(), repo_root=Path("/r"))
         gw = MagicMock()
         gw.ca_cert_pem.return_value = "-----BEGIN CERTIFICATE-----\n"
         with patch.object(svc, "gateway", return_value=gw):
@@ -86,7 +87,7 @@ class TestCaCertPem(unittest.TestCase):
 
 class TestStop(unittest.TestCase):
     def test_removes_both_containers(self) -> None:
-        svc = MacosInfraService(repo_root=Path("/r"))
+        svc = MacosInfraService(Settings(), repo_root=Path("/r"))
         with patch(f"{_INFRA}.container_mod") as mod:
             svc.stop()
         removed = {c.args[0] for c in mod.force_remove_container.call_args_list}

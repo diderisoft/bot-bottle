@@ -12,6 +12,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from bot_bottle.contract.hostctl import Settings
 from bot_bottle.backend.firecracker import infra_vm
 from bot_bottle.backend.firecracker.orchestrator import (
     ORCHESTRATOR_NAME,
@@ -26,22 +27,22 @@ _ORCH = "bot_bottle.backend.firecracker.orchestrator"
 
 class TestUrls(unittest.TestCase):
     def test_url_and_gateway_url_are_the_orch_link_guest_ip(self) -> None:
-        orch = FirecrackerOrchestrator()
-        ip = infra_vm.netpool.orch_slot().guest_ip
+        orch = FirecrackerOrchestrator(Settings())
+        ip = infra_vm.netpool.from_settings(Settings().infra).orch_slot().guest_ip
         self.assertEqual(f"http://{ip}:{ORCHESTRATOR_PORT}", orch.url())
         self.assertEqual(orch.url(), orch.gateway_url())
 
     def test_ssh_target_is_stable_key_and_orch_guest_ip(self) -> None:
-        orch = FirecrackerOrchestrator()
+        orch = FirecrackerOrchestrator(Settings())
         with patch.object(infra_vm, "_infra_dir", return_value=Path("/infra")):
             key, ip = orch.ssh_target()
         self.assertEqual(Path("/infra/id_ed25519"), key)
-        self.assertEqual(infra_vm.netpool.orch_slot().guest_ip, ip)
+        self.assertEqual(infra_vm.netpool.from_settings(Settings().infra).orch_slot().guest_ip, ip)
 
 
 class TestEnsureRunning(unittest.TestCase):
     def test_boots_orchestrator_role_with_mem_and_registry_then_pushes_key(self) -> None:
-        orch = FirecrackerOrchestrator()
+        orch = FirecrackerOrchestrator(Settings())
         vm = infra_vm.InfraVm(guest_ip="10.243.255.1", private_key=Path("/k"), vm=MagicMock())
         with patch.object(infra_vm, "boot_vm", return_value=vm) as boot, \
                 patch.object(infra_vm, "push_secret") as push, \
@@ -61,7 +62,7 @@ class TestEnsureRunning(unittest.TestCase):
         self.assertEqual(infra_vm._GUEST_SIGNING_KEY_PATH, push.call_args.args[2])
 
     def test_noop_when_running_and_healthy(self) -> None:
-        orch = FirecrackerOrchestrator()
+        orch = FirecrackerOrchestrator(Settings())
         with patch.object(orch, "is_running", return_value=True), \
                 patch.object(orch, "is_healthy", return_value=True), \
                 patch.object(infra_vm, "boot_vm") as boot:
@@ -76,12 +77,12 @@ class TestWaitForHealth(unittest.TestCase):
         return infra_vm.InfraVm(vm=h, guest_ip="10.0.0.1", private_key=Path("/k"))
 
     def test_returns_when_healthy(self) -> None:
-        orch = FirecrackerOrchestrator()
+        orch = FirecrackerOrchestrator(Settings())
         with patch.object(orch, "health_problem", return_value=None):
             orch._wait_for_health(self._vm(), timeout=5)  # must not raise
 
     def test_dies_when_vm_exits(self) -> None:
-        orch = FirecrackerOrchestrator()
+        orch = FirecrackerOrchestrator(Settings())
         vm = self._vm(alive=False)
         assert vm.vm is not None
         vm.vm.process.returncode = 1
@@ -94,7 +95,7 @@ class TestWaitForHealth(unittest.TestCase):
 
 class TestRegistryVolume(unittest.TestCase):
     def test_reuses_existing_volume(self) -> None:
-        orch = FirecrackerOrchestrator()
+        orch = FirecrackerOrchestrator(Settings())
         with tempfile.TemporaryDirectory() as td:
             vol = Path(td) / "registry.ext4"
             vol.write_bytes(b"")  # already present
@@ -106,7 +107,7 @@ class TestRegistryVolume(unittest.TestCase):
 
     def test_creates_volume_when_missing(self) -> None:
         from subprocess import CompletedProcess
-        orch = FirecrackerOrchestrator()
+        orch = FirecrackerOrchestrator(Settings())
         with tempfile.TemporaryDirectory() as td:
             vol = Path(td) / "registry.ext4"
             with patch(f"{_ORCH}.registry_volume_path", return_value=vol), \
@@ -123,7 +124,7 @@ class TestRegistryVolume(unittest.TestCase):
 
     def test_build_store_volume_created_at_its_own_path(self) -> None:
         from subprocess import CompletedProcess
-        orch = FirecrackerOrchestrator()
+        orch = FirecrackerOrchestrator(Settings())
         with tempfile.TemporaryDirectory() as td:
             with patch.object(infra_vm, "_infra_dir", return_value=Path(td)), \
                     patch(f"{_ORCH}.subprocess.run",
@@ -138,14 +139,14 @@ class TestRegistryVolume(unittest.TestCase):
 
 class TestLifecycle(unittest.TestCase):
     def test_is_running_reads_the_orch_pidfile(self) -> None:
-        orch = FirecrackerOrchestrator()
+        orch = FirecrackerOrchestrator(Settings())
         with patch.object(infra_vm, "_pidfile_alive", return_value=True) as alive, \
                 patch.object(infra_vm, "_orch_dir", return_value=Path("/orch")):
             self.assertTrue(orch.is_running())
         alive.assert_called_once_with(Path("/orch"))
 
     def test_stop_kills_only_the_orch_pidfile(self) -> None:
-        orch = FirecrackerOrchestrator()
+        orch = FirecrackerOrchestrator(Settings())
         with tempfile.TemporaryDirectory() as td:
             d = Path(td)
             (d / "vm.pid").write_text("123")
@@ -157,7 +158,7 @@ class TestLifecycle(unittest.TestCase):
             self.assertFalse((d / "vm.pid").exists())
 
     def test_stop_syncs_the_guest_before_killing(self) -> None:
-        orch = FirecrackerOrchestrator()
+        orch = FirecrackerOrchestrator(Settings())
         calls: list[str] = []
 
         def fake_run(argv: list[str], **_: object) -> None:
@@ -176,7 +177,7 @@ class TestLifecycle(unittest.TestCase):
 
     def test_stop_still_kills_when_sync_hangs(self) -> None:
         from subprocess import TimeoutExpired
-        orch = FirecrackerOrchestrator()
+        orch = FirecrackerOrchestrator(Settings())
         with patch.object(orch, "is_running", return_value=True), \
                 patch.object(orch, "ssh_target", return_value=(Path("/k"), "10.0.0.1")), \
                 patch(f"{_ORCH}.subprocess.run", side_effect=TimeoutExpired("ssh", 15)), \
@@ -186,7 +187,7 @@ class TestLifecycle(unittest.TestCase):
         kill.assert_called_once()
 
     def test_name_is_the_orchestrator_vm(self) -> None:
-        self.assertEqual(ORCHESTRATOR_NAME, FirecrackerOrchestrator().name)
+        self.assertEqual(ORCHESTRATOR_NAME, FirecrackerOrchestrator(Settings()).name)
 
 
 if __name__ == "__main__":

@@ -77,6 +77,7 @@ def _boot_args(
 
 def _config(
     *,
+    kernel: Path,
     rootfs: Path,
     tap: str,
     guest_ip: str,
@@ -108,7 +109,7 @@ def _config(
         })
     return {
         "boot-source": {
-            "kernel_image_path": str(util.kernel_path()),
+            "kernel_image_path": str(kernel),
             "boot_args": _boot_args(guest_ip, host_ip, pubkey, extra_boot_args),
         },
         "drives": drives,
@@ -129,6 +130,7 @@ def _config(
 def boot(
     *,
     name: str,
+    kernel: Path,
     rootfs: Path,
     tap: str,
     guest_ip: str,
@@ -154,7 +156,7 @@ def boot(
     console_log = run_dir / "console.log"
     config_path.write_text(json.dumps(
         _config(
-            rootfs=rootfs, tap=tap, guest_ip=guest_ip, host_ip=host_ip,
+            kernel=kernel, rootfs=rootfs, tap=tap, guest_ip=guest_ip, host_ip=host_ip,
             pubkey=pubkey, vcpus=vcpus, mem_mib=mem_mib, guest_mac=guest_mac,
             data_drives=data_drives, extra_boot_args=extra_boot_args,
         ),

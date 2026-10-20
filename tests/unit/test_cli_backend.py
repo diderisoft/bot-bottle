@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import subprocess
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 from bot_bottle.cli.commands import backend as cmd
 from bot_bottle.backend.docker import setup as docker_setup
@@ -28,7 +28,7 @@ class TestCmdBackendDispatch(unittest.TestCase):
         b = self._fake_backend()
         with patch.object(cmd, "get_bottle_backend", return_value=b) as gbb:
             rc = cmd.cmd_backend(["setup", "--backend", "firecracker"])
-        gbb.assert_called_once_with("firecracker")
+        gbb.assert_called_once_with(ANY, "firecracker")
         b.setup.assert_called_once_with()
         b.status.assert_not_called()
         self.assertEqual(0, rc)
@@ -52,7 +52,7 @@ class TestCmdBackendDispatch(unittest.TestCase):
         b = self._fake_backend()
         with patch.object(cmd, "get_bottle_backend", return_value=b) as gbb:
             cmd.cmd_backend(["status"])
-        gbb.assert_called_once_with(None)
+        gbb.assert_called_once_with(ANY, None)
 
     def test_unknown_action_exits(self):
         with self.assertRaises(SystemExit):

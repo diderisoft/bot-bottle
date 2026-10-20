@@ -79,9 +79,9 @@ def launch_consolidated(
     egress_plan: EgressPlan,
     git_gate_plan: GitGatePlan,
     *,
+    service: DockerInfraService,
     image_ref: str = "",
     tokens: dict[str, str] | None = None,
-    service: DockerInfraService | None = None,
     infra_name: str = INFRA_NAME,
     network: str = GATEWAY_NETWORK,
 ) -> LaunchContext:
@@ -89,7 +89,6 @@ def launch_consolidated(
     provision its git-gate state. Returns the agent's attach context. (Bringing
     the pair up cold also reattaches already-running bottles; see
     `InfraService.reattach_running_bottles`.)"""
-    service = service or DockerInfraService()
     url = service.ensure_running()
     # Agents attribute against the *gateway* container (data plane), not the
     # orchestrator — the two planes are now separate containers. Read its
@@ -117,12 +116,12 @@ def launch_consolidated(
 
 
 def deprovision_consolidated(
-    bottle_id: str, *, infra_name: str = INFRA_NAME, timeout: float | None = None,
-    service: DockerInfraService | None = None,
+    bottle_id: str, *, service: DockerInfraService, infra_name: str = INFRA_NAME,
+    timeout: float | None = None,
 ) -> None:
     """Deregister the bottle and remove its git-gate state. Idempotent."""
     deprovision_bottle(bottle_id, DockerGatewayTransport(infra_name),
-                       orchestrator=(service or DockerInfraService()).orchestrator(),
+                       orchestrator=service.orchestrator(),
                        timeout=timeout)
 
 

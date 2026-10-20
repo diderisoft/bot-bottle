@@ -51,8 +51,7 @@ def _client() -> Mock:
 
 class TestEnsureGateway(unittest.TestCase):
     def _run(self, service: MagicMock) -> GatewayEndpoint:
-        with patch(f"{_MOD}.MacosInfraService", return_value=service):
-            return ensure_gateway()
+        return ensure_gateway(service=service)
 
     def _service(self) -> MagicMock:
         service = MagicMock()

@@ -7,6 +7,7 @@ import urllib.error
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
+from bot_bottle.contract.hostctl import Settings
 from bot_bottle.backend.docker.orchestrator import (
     ORCHESTRATOR_NAME,
     ORCHESTRATOR_NETWORK,
@@ -40,7 +41,7 @@ def _proc(returncode: int = 0, stdout: str = "", stderr: str = "") -> Mock:
 
 class TestDockerOrchestrator(unittest.TestCase):
     def setUp(self) -> None:
-        self.orch = DockerOrchestrator(port=8099)
+        self.orch = DockerOrchestrator(port=8099, settings=Settings())
         # _run_container seeds the signing key; keep it off the real host file.
         p = patch(_TOKEN, return_value="signing-key")
         p.start()
@@ -55,7 +56,7 @@ class TestDockerOrchestrator(unittest.TestCase):
 
     def test_socket_shared_client_uses_explicit_host_and_open_bind(self) -> None:
         orch = DockerOrchestrator(
-            port=8099, client_host="172.17.0.1", root_mount_source="state-volume"
+            port=8099, client_host="172.17.0.1", root_mount_source="state-volume", settings=Settings()
         )
         with patch(_TOKEN, return_value="k"), \
                 patch(_URLOPEN, side_effect=[urllib.error.URLError("down"), _health(200)]), \
@@ -72,6 +73,7 @@ class TestDockerOrchestrator(unittest.TestCase):
             DockerOrchestrator(
                 host_root=Path("/host/path"),
                 root_mount_source="state-volume",
+                settings=Settings(),
             )
 
     def test_socket_shared_job_network_uses_container_dns(self) -> None:
@@ -80,6 +82,7 @@ class TestDockerOrchestrator(unittest.TestCase):
             port=22001,
             client_network="runner-job-network",
             root_mount_source="state-volume",
+            settings=Settings(),
         )
         with patch(_TOKEN, return_value="k"), \
                 patch(
@@ -187,7 +190,7 @@ class TestDockerOrchestrator(unittest.TestCase):
         def fake(argv: list[str], **_kw: object) -> Mock:
             return _proc(stdout="") if argv[:2] == ["docker", "ps"] else _proc()
 
-        orch = DockerOrchestrator(port=20001)
+        orch = DockerOrchestrator(port=20001, settings=Settings())
         with patch(_TOKEN, return_value="k"), \
                 patch(_URLOPEN, side_effect=[urllib.error.URLError("down"), _health(200)]), \
                 patch(_RUN, side_effect=fake) as run, patch(_SLEEP):
@@ -249,7 +252,7 @@ class TestDockerOrchestrator(unittest.TestCase):
                 self.orch.ensure_built()
 
     def test_ensure_built_noop_without_dockerfile(self) -> None:
-        orch = DockerOrchestrator(dockerfile=None)
+        orch = DockerOrchestrator(dockerfile=None, settings=Settings())
         with patch(_RUN) as run:
             orch.ensure_built()
         run.assert_not_called()
@@ -279,7 +282,7 @@ class TestPublishNetwork(unittest.TestCase):
             return _proc()
 
         with patch(_RUN, side_effect=fake) as run:
-            DockerOrchestrator()._ensure_publish_network()
+            DockerOrchestrator(settings=Settings())._ensure_publish_network()
         create = next(c.args[0] for c in run.call_args_list
                       if c.args[0][:3] == ["docker", "network", "create"])
         self.assertIn("com.docker.network.bridge.enable_ip_masquerade=false", create)
@@ -288,14 +291,14 @@ class TestPublishNetwork(unittest.TestCase):
 
     def test_existing_network_without_masquerade_is_reused(self) -> None:
         with patch(_RUN, return_value=_proc(stdout="false\n")) as run:
-            DockerOrchestrator()._ensure_publish_network()
+            DockerOrchestrator(settings=Settings())._ensure_publish_network()
         self.assertFalse([c for c in run.call_args_list if "create" in c.args[0]])
 
     def test_existing_network_with_masquerade_is_refused(self) -> None:
         # An empty option means Docker's default: masquerading on, i.e. egress.
         with patch(_RUN, return_value=_proc(stdout="\n")), \
                 self.assertRaises(OrchestratorStartError):
-            DockerOrchestrator()._ensure_publish_network()
+            DockerOrchestrator(settings=Settings())._ensure_publish_network()
 
     def test_external_dns_is_pointed_at_an_unroutable_resolver(self) -> None:
         # The publish network isn't --internal, so Docker's embedded DNS would
@@ -304,7 +307,7 @@ class TestPublishNetwork(unittest.TestCase):
             return _proc(stdout="false") if argv[:3] == ["docker", "network", "inspect"] else _proc()
 
         with patch(_RUN, side_effect=fake) as run, patch(_TOKEN, return_value="k"):
-            DockerOrchestrator()._run_container("hash")
+            DockerOrchestrator(settings=Settings())._run_container("hash")
         argv = next(c.args[0] for c in run.call_args_list if c.args[0][:2] == ["docker", "run"])
         self.assertEqual("192.0.2.1", argv[argv.index("--dns") + 1])
 

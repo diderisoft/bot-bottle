@@ -16,6 +16,7 @@ from pathlib import Path
 
 from ...backend import is_backend_ready, known_backend_names
 from ..constants import PROG
+from ..settings import settings_from_env
 
 MIN_PYTHON = (3, 11)
 CONFIG_DIR = ".bot-bottle"
@@ -50,9 +51,10 @@ def _check_backends() -> bool:
     on a host with a stopped Docker daemon or a half-configured Firecracker,
     where `start` still can't work. Each not-ready backend prints its own
     diagnostics (quiet=False) so the operator sees exactly what's missing."""
+    settings = settings_from_env()
     ready = []
     for name in known_backend_names():
-        if is_backend_ready(name, quiet=False):
+        if is_backend_ready(settings, name, quiet=False):
             _ok("backend", f"{name}: ready")
             ready.append(name)
         else:

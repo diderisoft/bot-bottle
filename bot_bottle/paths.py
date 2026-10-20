@@ -122,21 +122,32 @@ def host_orchestrator_token() -> str:
     return host_signing_key(ORCHESTRATOR_TOKEN_FILENAME)
 
 
-def host_artifact_cache_dir() -> Path:
-    """Where verified downloads of published artifacts are kept.
+def host_artifact_cache_dir(override: str = "") -> Path:
+    """Where verified downloads of published artifacts are kept: `override`
+    (`InfraSettings.artifact_cache`) when set.
 
     Under `~/.cache`, not the app-data root: everything here is re-downloadable
     from the registry and verified against the manifest on arrival, so losing it
     costs bandwidth rather than state."""
-    override = os.environ.get("BOT_BOTTLE_ARTIFACT_CACHE")
     if override:
         return Path(override)
     return Path.home() / ".cache" / "bot-bottle" / "artifacts"
 
 
+def host_firecracker_cache_dir() -> Path:
+    """The firecracker backend's cache root (kernel, rootfs, run dirs), created
+    on demand. `BOT_BOTTLE_FC_CACHE` relocates it, like `BOT_BOTTLE_ROOT`."""
+    d = Path(os.environ.get(
+        "BOT_BOTTLE_FC_CACHE", str(Path.home() / ".cache" / "bot-bottle" / "firecracker"),
+    ))
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 __all__ = [
     "HOST_DB_FILENAME",
     "host_artifact_cache_dir",
+    "host_firecracker_cache_dir",
     "GATEWAY_CA_DIRNAME",
     "bot_bottle_root",
     "host_db_path",

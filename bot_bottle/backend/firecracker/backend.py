@@ -50,26 +50,23 @@ class FirecrackerBottleBackend(
         install pointer at launch."""
         return _util.is_host_capable()
 
-    @classmethod
-    def setup(cls) -> int:
+    def setup(self) -> int:
         from . import setup as _setup
-        return _setup.setup()
+        return _setup.setup(self.settings)
 
-    @classmethod
-    def status(cls, *, quiet: bool = False) -> int:
+    def status(self, *, quiet: bool = False) -> int:
         from . import setup as _setup
         if quiet:
             with redirect_stderr(io.StringIO()):
-                return _setup.status()
-        return _setup.status()
+                return _setup.status(self.settings)
+        return _setup.status(self.settings)
 
-    @classmethod
-    def teardown(cls) -> int:
+    def teardown(self) -> int:
         from . import setup as _setup
-        return _setup.teardown()
+        return _setup.teardown(self.settings)
 
     def _preflight(self) -> None:
-        _resolve_plan.preflight()
+        _resolve_plan.preflight(self.settings)
 
     def _build_guest_env(self, resolved_env: ResolvedEnv) -> dict[str, str]:
         return _resolve_plan.build_guest_env(resolved_env)
@@ -97,6 +94,7 @@ class FirecrackerBottleBackend(
             supervise_plan=supervise_plan,
             git_gate_plan=git_gate_plan,
             stage_dir=stage_dir,
+            settings=self.settings,
         )
 
     def _build_or_load_images(self, plan: FirecrackerBottlePlan) -> BottleImages:
@@ -117,7 +115,7 @@ class FirecrackerBottleBackend(
         return _cleanup.prepare_cleanup()
 
     def cleanup(self, plan: FirecrackerBottleCleanupPlan) -> None:
-        _cleanup.cleanup(plan)
+        _cleanup.cleanup(plan, self.settings)
 
     def enumerate_active(self) -> Sequence[ActiveAgent]:
         return _enumerate.enumerate_active()
@@ -127,4 +125,4 @@ class FirecrackerBottleBackend(
 
     def infra_service(self) -> "FirecrackerInfraService":
         from .infra import FirecrackerInfraService
-        return FirecrackerInfraService()
+        return FirecrackerInfraService(self.settings)

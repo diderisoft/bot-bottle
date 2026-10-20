@@ -15,10 +15,12 @@ from __future__ import annotations
 
 import abc
 import fcntl
+import json
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 
+from ..contract.hostctl import Settings
 from ..control.gateway import Gateway
 from ..lib.log import die
 from ..control.lifecycle import DEFAULT_STARTUP_TIMEOUT_SECONDS, Orchestrator
@@ -68,6 +70,7 @@ class InfraService(abc.ABC):
 
     # Names this backend's "reattach pending" marker.
     name: str = "infra"
+    settings: Settings
 
     @abc.abstractmethod
     def orchestrator(self) -> Orchestrator:
@@ -101,6 +104,8 @@ class InfraService(abc.ABC):
             marker.parent.mkdir(parents=True, exist_ok=True)
             marker.touch()
             url, restarted = self._bring_up(startup_timeout=startup_timeout)
+            if restarted:
+                self._record_infra_settings()
             if restarted or pending:
                 try:
                     reattach_running_bottles(
@@ -137,6 +142,29 @@ class InfraService(abc.ABC):
 
     def _reattach_pending_marker(self) -> Path:
         return bot_bottle_root() / "infra" / f"{self.name}.reattach-pending"
+
+    def _infra_settings_record(self) -> Path:
+        return bot_bottle_root() / "infra" / f"{self.name}.settings.json"
+
+    def _record_infra_settings(self) -> None:
+        """Record the `InfraSettings` this bring-up (re)started the pair with."""
+        infra = self.settings.infra
+        record = {"fingerprint": infra.fingerprint(), "infra": self.settings.to_json()["infra"]}
+        path = self._infra_settings_record()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
+        tmp.replace(path)
+
+    def recorded_infra_fingerprint(self) -> str | None:
+        """The fingerprint of the `InfraSettings` the running pair was last
+        (re)started with, or None when none is recorded."""
+        try:
+            record = json.loads(self._infra_settings_record().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        fingerprint = record.get("fingerprint") if isinstance(record, dict) else None
+        return fingerprint if isinstance(fingerprint, str) else None
 
     def url(self) -> str:
         """The host-facing control-plane URL the CLI reaches (the orchestrator's)."""

@@ -25,6 +25,7 @@ from ...control.lifecycle import (
     DEFAULT_STARTUP_TIMEOUT_SECONDS,
     Orchestrator,
 )
+from ...contract.hostctl import Settings
 from . import firecracker_vm, infra_vm, netpool, util
 from .infra_vm import ORCHESTRATOR_PORT
 
@@ -73,15 +74,17 @@ class FirecrackerOrchestrator(Orchestrator):
 
     name = ORCHESTRATOR_NAME
 
-    def __init__(self, vm: infra_vm.InfraVm | None = None) -> None:
+    def __init__(self, settings: Settings, vm: infra_vm.InfraVm | None = None) -> None:
         # The live VM handle when this process booted it; None when adapting an
         # already-running orchestrator (health/URL go through the fixed link).
+        self._settings = settings
+        self._slot = netpool.from_settings(settings.infra).orch_slot()
         self._vm = vm
 
     def url(self) -> str:
         """The orchestrator VM's guest IP URL — where the host CLI reaches the
         control plane."""
-        return f"http://{netpool.orch_slot().guest_ip}:{ORCHESTRATOR_PORT}"
+        return f"http://{self._slot.guest_ip}:{ORCHESTRATOR_PORT}"
 
     def gateway_url(self) -> str:
         """Same guest IP the host uses — the gateway resolves the orchestrator at
@@ -92,7 +95,7 @@ class FirecrackerOrchestrator(Orchestrator):
         """(private key, guest IP) for SSHing into the orchestrator VM. In-VM
         agent-image builds (buildah) run here — the build host drives them over
         SSH with the stable infra key."""
-        return infra_vm._infra_dir() / "id_ed25519", netpool.orch_slot().guest_ip
+        return infra_vm._infra_dir() / "id_ed25519", self._slot.guest_ip
 
     def is_running(self) -> bool:
         return infra_vm._pidfile_alive(infra_vm._orch_dir())
@@ -126,7 +129,7 @@ class FirecrackerOrchestrator(Orchestrator):
         if self.is_running() and self.is_healthy():
             return False
         vm = infra_vm.boot_vm(
-            name=ORCHESTRATOR_NAME, slot=netpool.orch_slot(),
+            settings=self._settings, name=ORCHESTRATOR_NAME, slot=self._slot,
             run_dir=infra_vm._orch_dir(), role="orchestrator", mem_mib=_ORCH_MEM_MIB,
             data_drives=(self._ensure_registry_volume(),
                          self._ensure_build_store_volume()),

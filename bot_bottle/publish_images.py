@@ -460,12 +460,14 @@ def build_ext4(
     filesystem with `mke2fs -d`. The infra pair boots a role-specific PID 1;
     agent images take the default init (`init_script=None`)."""
     from .backend.firecracker import infra_vm, util as fc_util
+    from .cli.settings import settings_from_env
 
     role = image_inputs.INFRA_ROLES.get(image)
     init = infra_vm.role_init(role) if role else None
     source = rootfs_source_tag(image, plat, repo_root=repo_root, runtime=runtime)
     base = fc_util.build_base_rootfs_dir(
-        source, variant=f"-{image}-{_platform_suffix(plat)}", init_script=init,
+        source, settings_from_env().infra, variant=f"-{image}-{_platform_suffix(plat)}",
+        init_script=init,
     )
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -614,8 +616,11 @@ def _promote_ext4(artifact: "Artifact", to_version: str, token: str) -> str:
     Downloaded through the same verified path a launch host uses, so the bytes
     re-uploaded are provably the tested ones."""
     from . import image_registry
+    from .cli.settings import settings_from_env
+    from .paths import host_artifact_cache_dir
 
-    gz = image_registry.ensure_ext4(artifact)
+    cache_root = host_artifact_cache_dir(settings_from_env().infra.artifact_cache)
+    gz = image_registry.ensure_ext4(artifact, cache_root=cache_root)
     url = ext4_url(artifact.image, to_version, artifact.platform)
     print(f"  promoting {artifact.image} {artifact.platform} rootfs -> {to_version}")
     put_generic(url, gz, token)

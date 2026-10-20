@@ -20,7 +20,6 @@ from ...egress import Egress
 from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
 from ..util import AGENT_CA_BUNDLE, AGENT_CA_PATH
 from .bottle_plan import DockerBottlePlan
-from .egress import EGRESS_PORT
 
 
 def consolidated_agent_compose(
@@ -38,7 +37,7 @@ def consolidated_agent_compose(
     # headers (git config extraHeader / MCP header).
     token = getattr(plan, "identity_token", "")
     cred = f"bottle:{token}@" if token else ""
-    proxy_url = f"http://{cred}{gateway_ip}:{EGRESS_PORT}"
+    proxy_url = f"http://{cred}{gateway_ip}:{plan.settings.infra.egress_port}"
     # git-http + supervise live on the gateway too and must NOT go through the
     # egress proxy — the agent reaches them directly by the gateway address.
     no_proxy = f"localhost,127.0.0.1,{gateway_ip}"

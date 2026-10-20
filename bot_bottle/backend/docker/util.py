@@ -4,7 +4,6 @@ names, checking image/container existence, and building images."""
 
 from __future__ import annotations
 
-import os
 from datetime import datetime, timezone
 import shutil
 import subprocess
@@ -154,6 +153,7 @@ def build_image(
     *,
     dockerfile: str = "",
     build_args: dict[str, str] | None = None,
+    no_cache: bool = False,
 ) -> None:
     """Invokes `docker build` every call. Layer cache makes no-change
     rebuilds cheap; running every time means Dockerfile edits land
@@ -163,14 +163,14 @@ def build_image(
     absolute) for callers that need to build from a non-default
     Dockerfile in the same context — e.g. `Dockerfile.git-gate`.
 
-    Set `BOT_BOTTLE_NO_CACHE=1` (the `start --no-cache` flag) to force
-    `--no-cache`. The npm/curl installers some provider Dockerfiles
+    `no_cache` (the `start --no-cache` flag) forces `--no-cache`. The
+    npm/curl installers some provider Dockerfiles
     shell out to can silently no-op on a transient network failure —
     e.g. an `optionalDependencies` fetch for a platform-native binary —
     and Docker will then cache that broken layer indefinitely."""
     info(f"building image {ref} from {context} (layer cache keeps repeat builds fast)")
     args = ["docker", "build", "-t", ref]
-    if os.environ.get("BOT_BOTTLE_NO_CACHE") == "1":
+    if no_cache:
         args.append("--no-cache")
     if dockerfile:
         args.extend(["-f", dockerfile])

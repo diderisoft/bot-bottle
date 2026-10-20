@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import subprocess
 
+from ...contract.hostctl import Settings
 from ...paths import bot_bottle_root
 from ...lib.log import info
 from .. import EnumerationError
@@ -120,7 +121,7 @@ def _list_orphan_state_dirs(
     return orphans
 
 
-def prepare_cleanup() -> DockerBottleCleanupPlan:
+def prepare_cleanup(settings: Settings) -> DockerBottleCleanupPlan:
     """Enumerate everything cleanup will touch. No removals.
 
     Pulls the union of live identities across backends via
@@ -135,7 +136,7 @@ def prepare_cleanup() -> DockerBottleCleanupPlan:
     # Late import to avoid a circular at module-load time —
     # the backend package's __init__ imports this module.
     from .. import enumerate_active_agents
-    protected = {a.slug for a in enumerate_active_agents()}
+    protected = {a.slug for a in enumerate_active_agents(settings)}
     return DockerBottleCleanupPlan(
         projects=tuple(projects),
         stray_containers=tuple(_list_prefixed_containers()),
@@ -146,11 +147,11 @@ def prepare_cleanup() -> DockerBottleCleanupPlan:
     )
 
 
-def cleanup(plan: DockerBottleCleanupPlan) -> None:
+def cleanup(plan: DockerBottleCleanupPlan, settings: Settings) -> None:
     """Remove everything in the plan. Projects first (whose `compose
     down` reaps their containers + networks atomically), then stray
     legacy resources, then orphan state dirs."""
-    failures = CleanupFailures()
+    failures = CleanupFailures(timeout=settings.operation.cleanup_command_timeout_seconds)
     for project in plan.projects:
         info(f"docker compose down  ({project})")
         failures.run(

@@ -59,8 +59,9 @@ def _require_container_service() -> None:
         die("container system service not running")
 
 
-def dns_server() -> str:
-    override = os.environ.get("BOT_BOTTLE_MACOS_CONTAINER_DNS", "").strip()
+def dns_server(override: str = "") -> str:
+    """`override` (`InfraSettings.macos_container_dns`), else the host's IPv4
+    resolver, else a public default."""
     if override:
         return override
     return _host_ipv4_dns() or _DEFAULT_DNS
@@ -72,11 +73,14 @@ def build_image(
     *,
     dockerfile: str = "",
     build_args: dict[str, str] | None = None,
+    no_cache: bool = False,
+    dns_override: str = "",
 ) -> None:
-    """Build an OCI image with Apple's BuildKit-backed `container build`.
+    """Build an OCI image with Apple's BuildKit-backed `container build`,
+    resolving through `dns_server(dns_override)`.
 
-    Set `BOT_BOTTLE_NO_CACHE=1` (the `start --no-cache` flag) to force
-    `--no-cache`. The npm/curl installers some provider Dockerfiles
+    `no_cache` (the `start --no-cache` flag) forces `--no-cache`. The
+    npm/curl installers some provider Dockerfiles
     shell out to can silently no-op on a transient network failure —
     e.g. an `optionalDependencies` fetch for a platform-native binary —
     and the builder will then cache that broken layer indefinitely."""
@@ -84,9 +88,9 @@ def build_image(
         f"building image {ref} from {context} with Apple Container "
         "(layer cache keeps repeat builds fast)"
     )
-    _ensure_builder_dns()
-    args = [_CONTAINER, "build", "-t", ref, "--dns", dns_server()]
-    if os.environ.get("BOT_BOTTLE_NO_CACHE") == "1":
+    _ensure_builder_dns(dns_override)
+    args = [_CONTAINER, "build", "-t", ref, "--dns", dns_server(dns_override)]
+    if no_cache:
         args.append("--no-cache")
     if dockerfile:
         # `container build` resolves -f relative to the current working
@@ -128,7 +132,9 @@ def verify_agent_image(image: str, argv: tuple[str, ...]) -> None:
         )
 
 
-def commit_container(container_name: str, image_tag: str) -> None:
+def commit_container(
+    container_name: str, image_tag: str, *, no_cache: bool = False, dns_override: str = "",
+) -> None:
     """Snapshot a running Apple Container as a local image.
 
     `container export` requires a stopped container, but Apple Container
@@ -171,14 +177,14 @@ def commit_container(container_name: str, image_tag: str) -> None:
                 "USER node\n"
                 "WORKDIR /home/node\n"
             )
-        build_image(image_tag, tmp, dockerfile=dockerfile)
+        build_image(image_tag, tmp, dockerfile=dockerfile, no_cache=no_cache,
+                    dns_override=dns_override)
     info(f"committed {container_name!r} → {image_tag!r}")
 
 
-def _ensure_builder_dns() -> None:
-    dns = dns_server()
+def _ensure_builder_dns(override: str) -> None:
+    dns = dns_server(override)
     status = _builder_status()
-    override = os.environ.get("BOT_BOTTLE_MACOS_CONTAINER_DNS", "").strip()
     if _builder_running(status) and _builder_resolves_build_hosts():
         if override and not _builder_has_dns(status, dns):
             _restart_builder_with_dns(dns)

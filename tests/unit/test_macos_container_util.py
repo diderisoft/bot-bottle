@@ -59,8 +59,7 @@ resolver #2
 """,
             stderr="",
         )
-        with patch.object(util.os, "environ", {}), \
-             patch.object(util.platform, "system", return_value="Darwin"), \
+        with patch.object(util.platform, "system", return_value="Darwin"), \
              patch.object(util.subprocess, "run", return_value=scutil):
             self.assertEqual("192.168.1.1", util.dns_server())
 
@@ -74,11 +73,8 @@ resolver #2
             ),
             stderr="",
         )
-        with patch.object(util.subprocess, "run", return_value=status) as run, \
-             patch.object(util.os, "environ", {
-                 "BOT_BOTTLE_MACOS_CONTAINER_DNS": "9.9.9.9",
-             }):
-            util.build_image("bot-bottle-agent:latest", "/repo", dockerfile="/repo/Dockerfile")
+        with patch.object(util.subprocess, "run", return_value=status) as run:
+            util.build_image("bot-bottle-agent:latest", "/repo", dockerfile="/repo/Dockerfile", dns_override="9.9.9.9")
         self.assertEqual(
             [
                 "container", "build", "-t", "bot-bottle-agent:latest",
@@ -98,15 +94,11 @@ resolver #2
             ),
             stderr="",
         )
-        with patch.object(util.subprocess, "run", return_value=status) as run, \
-             patch.object(util.os, "environ", {
-                 "BOT_BOTTLE_MACOS_CONTAINER_DNS": "9.9.9.9",
-             }):
+        with patch.object(util.subprocess, "run", return_value=status) as run:
             util.build_image(
                 "bot-bottle-gateway:latest",
                 "/repo",
-                dockerfile="Dockerfile.gateway",
-            )
+                dockerfile="Dockerfile.gateway", dns_override="9.9.9.9")
         self.assertEqual(
             [
                 "container", "build", "-t", "bot-bottle-gateway:latest",
@@ -130,13 +122,12 @@ resolver #2
                  util.resources,
                  "image_build_args",
                  return_value={"NODE_BASE_IMAGE": "node:pinned"},
-             ), patch.object(util.os, "environ", {
-                 "BOT_BOTTLE_MACOS_CONTAINER_DNS": "9.9.9.9",
-             }):
+             ):
             util.build_image(
                 "bot-bottle-agent:latest",
                 "/repo",
                 dockerfile="Dockerfile.agent",
+                dns_override="9.9.9.9",
             )
         self.assertIn(
             ["--build-arg", "NODE_BASE_IMAGE=node:pinned"],
@@ -204,7 +195,8 @@ resolver #2
         )
         dockerfile_text = ""
 
-        def fake_build_image(image_tag: str, context: str, *, dockerfile: str = "") -> None:
+        def fake_build_image(image_tag: str, context: str, *, dockerfile: str = "",
+                             **_kw: object) -> None:
             nonlocal dockerfile_text
             with open(dockerfile, encoding="utf-8") as f:
                 dockerfile_text = f.read()
@@ -254,11 +246,8 @@ resolver #2
             ),
             stderr="",
         )
-        with patch.object(util.subprocess, "run", return_value=status) as run, \
-             patch.object(util.os, "environ", {
-                 "BOT_BOTTLE_MACOS_CONTAINER_DNS": "9.9.9.9",
-             }):
-            util.build_image("bot-bottle-agent:latest", "/repo")
+        with patch.object(util.subprocess, "run", return_value=status) as run:
+            util.build_image("bot-bottle-agent:latest", "/repo", dns_override="9.9.9.9")
         calls = [c.args[0] for c in run.call_args_list]
         self.assertIn(["container", "builder", "stop"], calls)
         self.assertIn(
@@ -290,7 +279,6 @@ resolver #2
             args=[], returncode=0, stdout="", stderr="",
         )
         with patch.object(util, "dns_server", return_value="192.168.1.1"), \
-             patch.object(util.os, "environ", {}), \
              patch.object(util.subprocess, "run", side_effect=[status, probe, build]) as run:
             util.build_image("bot-bottle-agent:latest", "/repo")
         calls = [c.args[0] for c in run.call_args_list]
@@ -317,7 +305,6 @@ resolver #2
             args=[], returncode=0, stdout="", stderr="",
         )
         with patch.object(util, "dns_server", return_value="192.168.1.1"), \
-             patch.object(util.os, "environ", {}), \
              patch.object(
                  util.subprocess,
                  "run",

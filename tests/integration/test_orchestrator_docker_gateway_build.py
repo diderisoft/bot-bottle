@@ -11,6 +11,7 @@ from __future__ import annotations
 import subprocess
 import unittest
 
+from bot_bottle.cli.settings import settings_from_env
 from bot_bottle.backend.docker.gateway import DockerGateway
 from tests._backend import skip_unless_backend
 
@@ -26,9 +27,9 @@ class TestDockerGatewayImageExists(unittest.TestCase):
             ["docker", "pull", IMAGE],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
         )
-        self.assertTrue(DockerGateway(IMAGE, dockerfile=None).image_exists())
+        self.assertTrue(DockerGateway(IMAGE, dockerfile=None, settings=settings_from_env()).image_exists())
         self.assertFalse(
-            DockerGateway("bot-bottle-nonexistent:doesnotexist", dockerfile=None).image_exists()
+            DockerGateway("bot-bottle-nonexistent:doesnotexist", dockerfile=None, settings=settings_from_env()).image_exists()
         )
 
 

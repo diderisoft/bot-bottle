@@ -41,21 +41,18 @@ class MacosContainerBottleBackend(
     def is_available(cls) -> bool:
         return _container.is_available()
 
-    @classmethod
-    def setup(cls) -> int:
+    def setup(self) -> int:
         from . import setup as _setup
         return _setup.setup()
 
-    @classmethod
-    def status(cls, *, quiet: bool = False) -> int:
+    def status(self, *, quiet: bool = False) -> int:
         from . import setup as _setup
         if quiet:
             with redirect_stderr(io.StringIO()):
                 return _setup.status()
         return _setup.status()
 
-    @classmethod
-    def teardown(cls) -> int:
+    def teardown(self) -> int:
         from . import setup as _setup
         return _setup.teardown()
 
@@ -88,6 +85,7 @@ class MacosContainerBottleBackend(
             supervise_plan=supervise_plan,
             git_gate_plan=git_gate_plan,
             stage_dir=stage_dir,
+            settings=self.settings,
         )
 
     def prelaunch_checks(self, plan: MacosContainerBottlePlan) -> None:
@@ -105,13 +103,13 @@ class MacosContainerBottleBackend(
 
     def infra_service(self) -> "MacosInfraService":
         from .infra import MacosInfraService
-        return MacosInfraService()
+        return MacosInfraService(self.settings)
 
     def prepare_cleanup(self) -> MacosContainerBottleCleanupPlan:
         return _cleanup.prepare_cleanup()
 
     def cleanup(self, plan: MacosContainerBottleCleanupPlan) -> None:
-        _cleanup.cleanup(plan)
+        _cleanup.cleanup(plan, self.settings)
 
     def enumerate_active(self) -> Sequence[ActiveAgent]:
         return _enumerate.enumerate_active()

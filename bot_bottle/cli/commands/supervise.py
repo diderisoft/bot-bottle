@@ -35,6 +35,7 @@ from ...contract.supervise import (
     TOOL_EGRESS_TOKEN_ALLOW,
 )
 from ..constants import PROG
+from ..settings import settings_from_env
 
 
 _REFRESH_INTERVAL_MS = 1000
@@ -78,11 +79,12 @@ def _resolve_orchestrator_url() -> str:
     has booted the control plane. So when discovery finds nothing, bring up
     the selected backend's orchestrator + gateway (idempotent) rather than
     failing with "launch a bottle first"."""
+    settings = settings_from_env()
     try:
-        return discover_orchestrator_url()
+        return discover_orchestrator_url(settings)
     except OrchestratorClientError:
         from ...backend import get_bottle_backend
-        backend = get_bottle_backend()
+        backend = get_bottle_backend(settings)
         info(f"no orchestrator control plane running; starting one ({backend.name})…")
         return backend.ensure_orchestrator()
 

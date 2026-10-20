@@ -31,6 +31,7 @@ from .util import tag_image as docker_tag_image
 from ...image_registry import RegistryError
 from ...infra_image import pinned_infra_artifact, pull_pinned_image
 from ...published_artifacts import FORMAT_OCI
+from ...contract.hostctl import Settings
 from ...contract.identity import ORCHESTRATOR_TOKEN_ENV
 from ...paths import HOST_DB_FILENAME, bot_bottle_root
 from ...control.gateway import GatewayError
@@ -56,9 +57,6 @@ _NO_MASQUERADE = "com.docker.network.bridge.enable_ip_masquerade"
 # Upstream for Docker's embedded DNS: TEST-NET-1, never routed, so external
 # names don't resolve while container names on the control network still do.
 _NO_EXTERNAL_DNS = "192.0.2.1"
-ORCHESTRATOR_IMAGE = os.environ.get(
-    "BOT_BOTTLE_ORCHESTRATOR_IMAGE", "bot-bottle-orchestrator:latest"
-)
 ORCHESTRATOR_DOCKERFILE = "Dockerfile.orchestrator"
 # Baked as a container label so `ensure_running` can detect whether the running
 # orchestrator image was built from the current source.
@@ -80,8 +78,9 @@ class DockerOrchestrator(Orchestrator):
 
     def __init__(
         self,
-        image_ref: str = ORCHESTRATOR_IMAGE,
+        image_ref: str | None = None,
         *,
+        settings: Settings,
         name: str = ORCHESTRATOR_NAME,
         label: str = ORCHESTRATOR_LABEL,
         port: int = DEFAULT_PORT,
@@ -97,7 +96,8 @@ class DockerOrchestrator(Orchestrator):
     ) -> None:
         if host_root is not None and root_mount_source is not None:
             raise ValueError("pass host_root or root_mount_source, not both")
-        self.image_ref = image_ref
+        self.image_ref = image_ref or settings.infra.orchestrator_image
+        self._settings = settings
         self.name = name
         self.label = label
         self.port = port
@@ -106,19 +106,13 @@ class DockerOrchestrator(Orchestrator):
         # Build context: the repo root in a checkout, a staged copy from the
         # installed wheel otherwise (bot_bottle.resources).
         self._repo_root = repo_root if repo_root is not None else resources.build_root()
-        configured_root = os.environ.get("BOT_BOTTLE_DOCKER_ROOT_MOUNT", "").strip()
+        infra = settings.infra
         self._root_mount_source = str(
-            root_mount_source or configured_root or host_root or bot_bottle_root()
+            root_mount_source or infra.docker_root_mount or host_root or bot_bottle_root()
         )
-        configured_network = os.environ.get(
-            "BOT_BOTTLE_DOCKER_CLIENT_NETWORK", ""
-        ).strip()
-        self._client_network = client_network or configured_network or None
-        configured_host = os.environ.get(
-            "BOT_BOTTLE_DOCKER_HOST_ADDRESS", ""
-        ).strip()
+        self._client_network = client_network or infra.docker_client_network or None
         self._client_host = (
-            client_host or configured_host
+            client_host or infra.docker_host_address
             or (self.name if self._client_network else "127.0.0.1")
         )
         # A socket-shared CI runner reaches published ports through its Docker
@@ -145,12 +139,14 @@ class DockerOrchestrator(Orchestrator):
     def ensure_built(self) -> None:
         """Build the control-plane image from its Dockerfile, cache-aware (a
         no-op when nothing changed). No-op when no dockerfile is configured (a
-        pre-pulled image). BOT_BOTTLE_NO_CACHE forces a full rebuild."""
+        pre-pulled image). `no_cache` forces a full rebuild."""
         if self._dockerfile is None:
             return
         # Pull the release-pinned image instead when it was built from exactly
         # this install's code (PRD 0081 / 0085); otherwise build it.
-        pin = pinned_infra_artifact("bot-bottle-orchestrator", FORMAT_OCI)
+        pin = pinned_infra_artifact(
+            "bot-bottle-orchestrator", FORMAT_OCI,
+            local_build=self._settings.infra.infra_build_local)
         if pin is not None:
             try:
                 self.image_ref = pull_pinned_image(
@@ -162,7 +158,7 @@ class DockerOrchestrator(Orchestrator):
         argv = ["docker", "build", "-t", self.image_ref,
                 "-f", str(self._repo_root / self._dockerfile),
                 str(self._repo_root)]
-        if os.environ.get("BOT_BOTTLE_NO_CACHE"):
+        if self._settings.operation.no_cache:
             argv.insert(2, "--no-cache")
         for name, value in resources.image_build_args(
             self._dockerfile,
@@ -331,7 +327,6 @@ __all__ = [
     "ORCHESTRATOR_LABEL",
     "ORCHESTRATOR_NETWORK",
     "ORCHESTRATOR_PUBLISH_NETWORK",
-    "ORCHESTRATOR_IMAGE",
     "ORCHESTRATOR_DOCKERFILE",
     "ORCHESTRATOR_SOURCE_HASH_LABEL",
 ]

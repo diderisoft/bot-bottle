@@ -29,14 +29,13 @@ from .gateway import DockerGateway
 from .gateway_attach import DockerGatewayAttacher
 from .orchestrator import (
     DockerOrchestrator,
-    ORCHESTRATOR_IMAGE,
     ORCHESTRATOR_LABEL,
     ORCHESTRATOR_NAME,
     ORCHESTRATOR_NETWORK,
 )
 from ... import resources
+from ...contract.hostctl import Settings
 from ...control.gateway import (
-    GATEWAY_IMAGE,
     GATEWAY_NAME,
     GATEWAY_NETWORK,
 )
@@ -61,12 +60,13 @@ class DockerInfraService(InfraService):
 
     def __init__(
         self,
+        settings: Settings,
         *,
         port: int = DEFAULT_PORT,
         network: str = GATEWAY_NETWORK,
         control_network: str = ORCHESTRATOR_NETWORK,
-        orchestrator_image: str = ORCHESTRATOR_IMAGE,
-        gateway_image: str = GATEWAY_IMAGE,
+        orchestrator_image: str | None = None,
+        gateway_image: str | None = None,
         repo_root: Path | None = None,
         host_root: Path | None = None,
         root_mount_source: str | Path | None = None,
@@ -75,11 +75,12 @@ class DockerInfraService(InfraService):
         orchestrator_label: str = ORCHESTRATOR_LABEL,
         gateway_name: str = GATEWAY_NAME,
     ) -> None:
+        self.settings = settings
         self.port = port
         self.network = network
         self.control_network = control_network
-        self.orchestrator_image = orchestrator_image
-        self.gateway_image = gateway_image
+        self.orchestrator_image = orchestrator_image or settings.infra.orchestrator_image
+        self.gateway_image = gateway_image or settings.infra.gateway_image
         # Build context: the repo root in a checkout, a staged copy from the
         # installed wheel otherwise (bot_bottle.resources).
         self._repo_root = repo_root if repo_root is not None else resources.build_root()
@@ -98,6 +99,7 @@ class DockerInfraService(InfraService):
         reads its `url()` / `gateway_url()` / `mint_gateway_token()` off it."""
         return DockerOrchestrator(
             self.orchestrator_image,
+            settings=self.settings,
             name=self._orchestrator_name,
             label=self._orchestrator_label,
             port=self.port,
@@ -115,6 +117,7 @@ class DockerInfraService(InfraService):
         plane."""
         return DockerGateway(
             self.gateway_image,
+            settings=self.settings,
             name=self._gateway_name,
             network=self.network,
             control_network=self.control_network,

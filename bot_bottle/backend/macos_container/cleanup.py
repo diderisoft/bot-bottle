@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 
 from .. import EnumerationError
+from ...contract.hostctl import Settings
 from ..cleanup_control import CleanupFailures
 from ...lib.log import info
 from . import util as container_mod
@@ -53,8 +54,8 @@ def prepare_cleanup() -> MacosContainerBottleCleanupPlan:
     )
 
 
-def cleanup(plan: MacosContainerBottleCleanupPlan) -> None:
-    failures = CleanupFailures()
+def cleanup(plan: MacosContainerBottleCleanupPlan, settings: Settings) -> None:
+    failures = CleanupFailures(timeout=settings.operation.cleanup_command_timeout_seconds)
     for name in plan.containers:
         info(f"container delete --force {name}")
         failures.run(

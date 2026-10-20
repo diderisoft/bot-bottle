@@ -15,10 +15,16 @@ import unittest
 from typing import Callable
 from unittest.mock import MagicMock, patch
 
+from bot_bottle.contract.hostctl import Settings
 from bot_bottle.backend.docker import setup as dk
+from bot_bottle.contract.hostctl import InfraSettings, Settings
 from bot_bottle.backend.firecracker import netpool
 from bot_bottle.backend.firecracker import setup as fc
 from bot_bottle.backend.macos_container import setup as mc
+
+
+_S = Settings()
+_POOL = netpool.from_settings(_S.infra)
 
 
 def _cap(fn: Callable[[], int | None]) -> tuple[int | None, str]:
@@ -54,7 +60,7 @@ class TestFirecrackerSetup(unittest.TestCase):
     def setUp(self):
         self._p = [
             patch.object(fc, "_print_prereqs", lambda: None),
-            patch.object(fc, "_warn_overlaps", lambda: None),
+            patch.object(fc, "_warn_overlaps", return_value=None),
         ]
         for p in self._p:
             p.start()
@@ -62,7 +68,7 @@ class TestFirecrackerSetup(unittest.TestCase):
 
     def test_nixos_prints_module_import(self):
         with patch.object(fc, "_is_nixos", return_value=True):
-            rc, out = _cap(fc.setup)
+            rc, out = _cap(lambda: fc.setup(_S))
         self.assertEqual(0, rc)
         self.assertIn("nixosModules.firecracker-netpool", out)
         self.assertIn("NON-INVASIVE", out)
@@ -74,7 +80,7 @@ class TestFirecrackerSetup(unittest.TestCase):
              patch.object(fc.os, "geteuid", return_value=0), \
              patch.object(fc, "_UNIT_PATH", unit), \
              patch.object(fc.subprocess, "run", return_value=_ok()):
-            rc, out = _cap(fc.setup)
+            rc, out = _cap(lambda: fc.setup(_S))
         self.assertEqual(0, rc)
         unit.write_text.assert_called_once()
         self.assertIn("Installed and started", out)
@@ -87,7 +93,7 @@ class TestFirecrackerSetup(unittest.TestCase):
              patch.object(fc, "_UNIT_PATH", unit), \
              patch.object(fc.subprocess, "run",
                           side_effect=[_ok(), subprocess.CompletedProcess([], 1)]):
-            rc, out = _cap(fc.setup)
+            rc, out = _cap(lambda: fc.setup(_S))
         self.assertEqual(0, rc)
         self.assertIn("enable --now` failed", out)
 
@@ -95,7 +101,7 @@ class TestFirecrackerSetup(unittest.TestCase):
         with patch.object(fc, "_is_nixos", return_value=False), \
              patch.object(fc, "_has_systemd", return_value=True), \
              patch.object(fc.os, "geteuid", return_value=1000):
-            rc, out = _cap(fc.setup)
+            rc, out = _cap(lambda: fc.setup(_S))
         self.assertEqual(0, rc)
         self.assertIn("sudo tee", out)
         self.assertIn("systemctl enable --now", out)
@@ -103,7 +109,7 @@ class TestFirecrackerSetup(unittest.TestCase):
     def test_no_systemd_prints_shell(self):
         with patch.object(fc, "_is_nixos", return_value=False), \
              patch.object(fc, "_has_systemd", return_value=False):
-            rc, out = _cap(fc.setup)
+            rc, out = _cap(lambda: fc.setup(_S))
         self.assertEqual(0, rc)
         self.assertIn("firecracker-netpool.sh up", out)
 
@@ -111,20 +117,20 @@ class TestFirecrackerSetup(unittest.TestCase):
 class TestFirecrackerWarnOverlaps(unittest.TestCase):
     def test_emits_on_conflict(self):
         conflict = netpool.RouteConflict(dst="10.243.0.0/24", dev="eth0")
-        with patch.object(fc.netpool, "overlapping_routes", return_value=[conflict]):
-            _, out = _cap(fc._warn_overlaps)
+        with patch.object(netpool.NetPool, "overlapping_routes", return_value=[conflict]):
+            _, out = _cap(lambda: fc._warn_overlaps(_POOL))
         self.assertIn("overlaps existing routes", out)
 
     def test_silent_when_clear(self):
-        with patch.object(fc.netpool, "overlapping_routes", return_value=[]):
-            _, out = _cap(fc._warn_overlaps)
+        with patch.object(netpool.NetPool, "overlapping_routes", return_value=[]):
+            _, out = _cap(lambda: fc._warn_overlaps(_POOL))
         self.assertEqual("", out)
 
 
 class TestFirecrackerTeardown(unittest.TestCase):
     def test_nixos(self):
         with patch.object(fc, "_is_nixos", return_value=True):
-            rc, out = _cap(fc.teardown)
+            rc, out = _cap(lambda: fc.teardown(_S))
         self.assertEqual(0, rc)
         self.assertIn("enable = false", out)
 
@@ -135,7 +141,7 @@ class TestFirecrackerTeardown(unittest.TestCase):
              patch.object(fc.os, "geteuid", return_value=0), \
              patch.object(fc, "_UNIT_PATH", unit), \
              patch.object(fc.subprocess, "run", return_value=_ok()):
-            rc, out = _cap(fc.teardown)
+            rc, out = _cap(lambda: fc.teardown(_S))
         self.assertEqual(0, rc)
         unit.unlink.assert_called_once()
         self.assertIn("removed", out)
@@ -144,14 +150,14 @@ class TestFirecrackerTeardown(unittest.TestCase):
         with patch.object(fc, "_is_nixos", return_value=False), \
              patch.object(fc, "_has_systemd", return_value=True), \
              patch.object(fc.os, "geteuid", return_value=1000):
-            rc, out = _cap(fc.teardown)
+            rc, out = _cap(lambda: fc.teardown(_S))
         self.assertEqual(0, rc)
         self.assertIn("systemctl disable", out)
 
     def test_no_systemd(self):
         with patch.object(fc, "_is_nixos", return_value=False), \
              patch.object(fc, "_has_systemd", return_value=False):
-            rc, out = _cap(fc.teardown)
+            rc, out = _cap(lambda: fc.teardown(_S))
         self.assertEqual(0, rc)
         self.assertIn("firecracker-netpool.sh down", out)
 
@@ -242,9 +248,8 @@ class TestDockerSetupStatus(unittest.TestCase):
 
 class TestNetpoolSpanConflict(unittest.TestCase):
     def test_pool_span_bounds(self):
-        with patch.dict("os.environ", {"BOT_BOTTLE_FC_IP_BASE": "10.243.0.0",
-                                       "BOT_BOTTLE_FC_POOL_SIZE": "8"}):
-            lo, hi = netpool._pool_span()
+        pool = netpool.from_settings(InfraSettings(fc_ip_base="10.243.0.0", fc_pool_size=8))
+        lo, hi = pool.pool_span()
         # base .. base + 2*8 - 1  (16 addresses)
         self.assertEqual(15, hi - lo)
 
@@ -313,19 +318,16 @@ class TestMacosSetupStatus(unittest.TestCase):
 
 class TestNetpoolShellRenderers(unittest.TestCase):
     def test_shell_setup_default(self):
-        with patch.dict("os.environ", {}, clear=True):
-            out = netpool.render_shell_setup()
+        out = netpool.render_shell_setup(_POOL)
         self.assertIn("firecracker-netpool.sh up", out)
         self.assertNotIn("BOT_BOTTLE_FC_", out)  # no env prefix when all default
 
     def test_shell_setup_with_overrides(self):
-        # pool_size()/ip_base() re-read the env; IFACE_PREFIX is a
-        # module constant, so exercise the function-backed knobs.
-        with patch.dict("os.environ", {"BOT_BOTTLE_FC_IP_BASE": "10.9.0.0",
-                                       "BOT_BOTTLE_FC_POOL_SIZE": "4"}):
-            out = netpool.render_shell_setup()
+        pool = netpool.from_settings(InfraSettings(fc_ip_base="10.9.0.0", fc_pool_size=4))
+        out = netpool.render_shell_setup(pool)
         self.assertIn("BOT_BOTTLE_FC_IP_BASE=10.9.0.0", out)
         self.assertIn("BOT_BOTTLE_FC_POOL_SIZE=4", out)
+        self.assertNotIn("BOT_BOTTLE_FC_IFACE_PREFIX", out)
 
 
 class TestFirecrackerBinaryCheck(unittest.TestCase):
@@ -390,9 +392,8 @@ class TestFirecrackerArtifactCheck(unittest.TestCase):
         d.is_file.return_value = True
         stack.enter_context(patch.object(fc.util, "dropbear_path", return_value=d))
         stack.enter_context(patch.object(fc.shutil, "which", return_value="/usr/bin/x"))
-        stack.enter_context(patch.object(netpool, "missing_taps", return_value=[]))
-        stack.enter_context(patch.object(netpool, "pool_size", return_value=8))
-        stack.enter_context(patch.object(netpool, "overlapping_routes", return_value=[]))
+        stack.enter_context(patch.object(netpool.NetPool, "missing_taps", return_value=[]))
+        stack.enter_context(patch.object(netpool.NetPool, "overlapping_routes", return_value=[]))
         stack.enter_context(patch.object(fc, "_report_persistence", lambda: None))
 
     def test_status_fails_when_kernel_missing(self):
@@ -401,7 +402,7 @@ class TestFirecrackerArtifactCheck(unittest.TestCase):
             k: MagicMock = MagicMock()
             k.is_file.return_value = False
             stack.enter_context(patch.object(fc.util, "kernel_path", return_value=k))
-            rc, out = _cap(fc.status)
+            rc, out = _cap(lambda: fc.status(_S))
         self.assertEqual(1, rc)
         self.assertIn("guest kernel: NOT found", out)
 
@@ -411,7 +412,7 @@ class TestFirecrackerArtifactCheck(unittest.TestCase):
             d: MagicMock = MagicMock()
             d.is_file.return_value = False
             stack.enter_context(patch.object(fc.util, "dropbear_path", return_value=d))
-            rc, out = _cap(fc.status)
+            rc, out = _cap(lambda: fc.status(_S))
         self.assertEqual(1, rc)
         self.assertIn("dropbear: NOT found", out)
 
@@ -422,7 +423,7 @@ class TestFirecrackerArtifactCheck(unittest.TestCase):
                 fc.shutil, "which",
                 side_effect=lambda cmd: (None if cmd == "mke2fs" else "/usr/bin/x"),  # type: ignore[misc]
             ))
-            rc, out = _cap(fc.status)
+            rc, out = _cap(lambda: fc.status(_S))
         self.assertEqual(1, rc)
         self.assertIn("mke2fs: NOT found", out)
 
@@ -437,9 +438,8 @@ class TestFirecrackerStatusRuntime(unittest.TestCase):
         dropbear_mock.is_file.return_value = True
         stack.enter_context(patch.object(fc.util, "kernel_path", return_value=kernel_mock))
         stack.enter_context(patch.object(fc.util, "dropbear_path", return_value=dropbear_mock))
-        stack.enter_context(patch.object(netpool, "missing_taps", return_value=[]))
-        stack.enter_context(patch.object(netpool, "pool_size", return_value=8))
-        stack.enter_context(patch.object(netpool, "overlapping_routes", return_value=[]))
+        stack.enter_context(patch.object(netpool.NetPool, "missing_taps", return_value=[]))
+        stack.enter_context(patch.object(netpool.NetPool, "overlapping_routes", return_value=[]))
         stack.enter_context(patch.object(fc, "_report_persistence", lambda: None))
 
     def test_status_fails_when_binary_missing(self):
@@ -451,7 +451,7 @@ class TestFirecrackerStatusRuntime(unittest.TestCase):
             stack.enter_context(
                 patch.object(fc.shutil, "which", return_value=None))
             self._apply_pool_ok(stack)
-            rc, out = _cap(fc.status)
+            rc, out = _cap(lambda: fc.status(_S))
         self.assertEqual(1, rc)
         self.assertIn("NOT found on PATH", out)
 
@@ -466,7 +466,7 @@ class TestFirecrackerStatusRuntime(unittest.TestCase):
             stack.enter_context(
                 patch.object(fc.os.path, "exists", return_value=True))
             self._apply_pool_ok(stack)
-            rc, out = _cap(fc.status)
+            rc, out = _cap(lambda: fc.status(_S))
         self.assertEqual(1, rc)
         self.assertIn("not accessible", out)
 
@@ -479,9 +479,9 @@ class TestFirecrackerStatusRuntime(unittest.TestCase):
             stack.enter_context(
                 patch.object(fc, "_kvm_accessible", return_value=True))
             stack.enter_context(
-                patch.object(netpool, "nft_table_present", return_value=True))
+                patch.object(netpool.NetPool, "nft_table_present", return_value=True))
             self._apply_pool_ok(stack)
-            rc, out = _cap(fc.status)
+            rc, out = _cap(lambda: fc.status(_S))
         self.assertEqual(0, rc)
         self.assertIn("firecracker binary: ok", out)
         self.assertIn("KVM:", out)
@@ -496,7 +496,7 @@ class TestBackendStatusQuiet(unittest.TestCase):
     def test_docker_quiet_true_propagates_return_code(self):
         from bot_bottle.backend.docker.backend import DockerBottleBackend
         with patch.object(dk, "status", return_value=0):
-            self.assertEqual(0, DockerBottleBackend.status(quiet=True))
+            self.assertEqual(0, DockerBottleBackend(_S).status(quiet=True))
 
     def test_docker_quiet_true_suppresses_stderr(self):
         import io as _io
@@ -510,18 +510,18 @@ class TestBackendStatusQuiet(unittest.TestCase):
         with patch.object(dk, "status", side_effect=_loud_status):
             buf = _io.StringIO()
             with contextlib.redirect_stderr(buf):
-                DockerBottleBackend.status(quiet=True)
+                DockerBottleBackend(_S).status(quiet=True)
         self.assertEqual("", buf.getvalue())
 
     def test_firecracker_quiet_true_propagates_return_code(self):
         from bot_bottle.backend.firecracker.backend import FirecrackerBottleBackend
         with patch.object(fc, "status", return_value=1):
-            self.assertEqual(1, FirecrackerBottleBackend.status(quiet=True))
+            self.assertEqual(1, FirecrackerBottleBackend(_S).status(quiet=True))
 
     def test_macos_quiet_true_propagates_return_code(self):
         from bot_bottle.backend.macos_container.backend import MacosContainerBottleBackend
         with patch.object(mc, "status", return_value=0):
-            self.assertEqual(0, MacosContainerBottleBackend.status(quiet=True))
+            self.assertEqual(0, MacosContainerBottleBackend(_S).status(quiet=True))
 
 
 if __name__ == "__main__":

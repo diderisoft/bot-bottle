@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+from bot_bottle.contract.hostctl import Settings
 from bot_bottle.backend import gateway_attach as ga
 from bot_bottle.backend.gateway_attach import (
     AttachPolicy, GatewayAttachError, GatewayAttacher, RunningBottle,
@@ -160,7 +161,7 @@ class InfraServiceTrigger(unittest.TestCase):
 
     def setUp(self) -> None:
         from bot_bottle.backend.docker.infra import DockerInfraService
-        self.svc = DockerInfraService(port=8099)
+        self.svc = DockerInfraService(Settings(), port=8099)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         root = patch("bot_bottle.backend.infra_service.bot_bottle_root",

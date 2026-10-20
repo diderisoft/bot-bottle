@@ -15,6 +15,7 @@ from subprocess import CompletedProcess
 from typing import Any
 from unittest.mock import patch
 
+from bot_bottle.contract.hostctl import Settings
 from bot_bottle.backend.firecracker import infra_vm
 from bot_bottle.backend.firecracker.gateway import (
     GATEWAY_NAME,
@@ -34,31 +35,31 @@ _TOKEN = "gw-jwt-token"
 
 class TestFirecrackerGatewayConnect(unittest.TestCase):
     def test_default_name(self) -> None:
-        self.assertEqual(GATEWAY_NAME, FirecrackerGateway().name)
+        self.assertEqual(GATEWAY_NAME, FirecrackerGateway(Settings()).name)
 
     def test_refuses_without_orchestrator_url(self) -> None:
-        gw = FirecrackerGateway()
+        gw = FirecrackerGateway(Settings())
         with patch.object(infra_vm, "boot_vm") as boot:
             with self.assertRaises(GatewayError):
                 gw.connect_to_orchestrator("", _TOKEN)
             boot.assert_not_called()
 
     def test_refuses_without_gateway_token(self) -> None:
-        gw = FirecrackerGateway()
+        gw = FirecrackerGateway(Settings())
         with patch.object(infra_vm, "boot_vm") as boot:
             with self.assertRaises(GatewayError):
                 gw.connect_to_orchestrator(_ORCH_URL, "")
             boot.assert_not_called()
 
     def test_refuses_a_url_without_a_host(self) -> None:
-        gw = FirecrackerGateway()
+        gw = FirecrackerGateway(Settings())
         with patch.object(infra_vm, "boot_vm") as boot:
             with self.assertRaises(GatewayError):
                 gw.connect_to_orchestrator("http://:8099", _TOKEN)
             boot.assert_not_called()
 
     def test_boots_the_gateway_vm_and_seeds_the_token(self) -> None:
-        gw = FirecrackerGateway()
+        gw = FirecrackerGateway(Settings())
         booted = infra_vm.InfraVm(guest_ip="10.243.255.3", private_key=Path("/k"))
         with tempfile.TemporaryDirectory() as td, \
                 patch.object(infra_vm, "gateway_ca_dir", return_value=Path(td)), \
@@ -99,7 +100,7 @@ class TestFirecrackerGatewayConnect(unittest.TestCase):
                     patch.object(infra_vm, "push_secret",
                                  side_effect=record("token")), \
                     patch.object(FirecrackerGateway, "_persist_ca") as persist:
-                FirecrackerGateway().connect_to_orchestrator(_ORCH_URL, _TOKEN)
+                FirecrackerGateway(Settings()).connect_to_orchestrator(_ORCH_URL, _TOKEN)
         self.assertEqual(["ca", "token"], calls)
         persist.assert_not_called()
         with tarfile.open(fileobj=io.BytesIO(stream.call_args.args[1])) as tar:
@@ -121,7 +122,7 @@ class TestFirecrackerGatewayConnect(unittest.TestCase):
                 patch.object(FirecrackerGateway, "ca_cert_pem", return_value="PEM"), \
                 patch("bot_bottle.backend.firecracker.gateway.subprocess.run",
                       return_value=CompletedProcess([], 0, buf.getvalue(), b"")):
-            FirecrackerGateway()._persist_ca(booted)
+            FirecrackerGateway(Settings())._persist_ca(booted)
             saved = Path(td) / "mitmproxy-ca.pem"
             self.assertEqual(b"KEY", saved.read_bytes())
             self.assertEqual(0o600, saved.stat().st_mode & 0o777)
@@ -130,14 +131,14 @@ class TestFirecrackerGatewayConnect(unittest.TestCase):
 
 class TestFirecrackerGatewaySurface(unittest.TestCase):
     def test_is_running_reads_the_gateway_pidfile(self) -> None:
-        gw = FirecrackerGateway()
+        gw = FirecrackerGateway(Settings())
         with patch.object(infra_vm, "_pidfile_alive", return_value=True) as alive, \
                 patch.object(infra_vm, "_gw_dir", return_value=Path("/gw")):
             self.assertTrue(gw.is_running())
         alive.assert_called_once_with(Path("/gw"))
 
     def test_stop_kills_only_the_gateway_pidfile(self) -> None:
-        gw = FirecrackerGateway()
+        gw = FirecrackerGateway(Settings())
         with tempfile.TemporaryDirectory() as td:
             d = Path(td)
             (d / "vm.pid").write_text("123")
@@ -148,12 +149,12 @@ class TestFirecrackerGatewaySurface(unittest.TestCase):
             self.assertFalse((d / "vm.pid").exists())  # pidfile cleared
 
     def test_address_is_the_gateway_link_guest_ip(self) -> None:
-        gw = FirecrackerGateway()
-        self.assertEqual(infra_vm.netpool.gw_slot().guest_ip, gw.address())
+        gw = FirecrackerGateway(Settings())
+        self.assertEqual(infra_vm.netpool.from_settings(Settings().infra).gw_slot().guest_ip, gw.address())
 
     def test_ca_cert_pem_reads_over_ssh_from_the_handle(self) -> None:
         vm = infra_vm.InfraVm(guest_ip="10.243.255.3", private_key=Path("/k"))
-        gw = FirecrackerGateway(vm)
+        gw = FirecrackerGateway(Settings(), vm)
         pem = "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n"
         with patch.object(infra_vm.subprocess, "run",
                           return_value=CompletedProcess([], 0, stdout=pem)) as run:
@@ -164,17 +165,17 @@ class TestFirecrackerGatewaySurface(unittest.TestCase):
         self.assertIn("cat /home/mitmproxy/.mitmproxy/mitmproxy-ca-cert.pem", argv)
 
     def test_ca_cert_pem_raises_gateway_error_when_absent(self) -> None:
-        gw = FirecrackerGateway()
+        gw = FirecrackerGateway(Settings())
         with patch.object(infra_vm.subprocess, "run",
                           return_value=CompletedProcess([], 1, stdout="", stderr="")):
             with self.assertRaises(GatewayError):
                 gw.ca_cert_pem(timeout=0)
 
     def test_provisioning_transport_targets_the_gateway_link(self) -> None:
-        gw = FirecrackerGateway()
+        gw = FirecrackerGateway(Settings())
         transport = gw.provisioning_transport()
         assert isinstance(transport, FirecrackerGatewayTransport)
-        self.assertEqual(infra_vm.netpool.gw_slot().guest_ip, transport._ip)
+        self.assertEqual(infra_vm.netpool.from_settings(Settings().infra).gw_slot().guest_ip, transport._ip)
 
 
 class TestFirecrackerGatewayTransport(unittest.TestCase):

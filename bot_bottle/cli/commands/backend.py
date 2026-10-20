@@ -5,8 +5,8 @@ to provision) the chosen backend's one-time host prerequisites.
 `bot-bottle backend status   [--backend=NAME]` reports readiness.
 `bot-bottle backend teardown [--backend=NAME]` undoes setup (uninstall).
 
-All dispatch to the backend's `setup()` / `status()` / `teardown()`
-classmethods, so there are no backend-specific commands — swapping
+All dispatch to the backend's `setup()` / `status()` / `teardown()`,
+so there are no backend-specific commands — swapping
 backends is just a different `--backend` (or `$BOT_BOTTLE_BACKEND`, or
 the host default).
 """
@@ -17,6 +17,7 @@ import argparse
 
 from ...backend import get_bottle_backend, known_backend_names
 from ..constants import PROG
+from ..settings import settings_from_env
 
 
 def cmd_backend(args: list[str]) -> int:
@@ -38,7 +39,7 @@ def cmd_backend(args: list[str]) -> int:
     )
     ns = parser.parse_args(args)
 
-    backend = get_bottle_backend(ns.backend)
+    backend = get_bottle_backend(settings_from_env(), ns.backend)
     if ns.action == "setup":
         return backend.setup()
     if ns.action == "teardown":

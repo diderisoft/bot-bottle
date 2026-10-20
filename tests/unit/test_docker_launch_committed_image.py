@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
+from bot_bottle.contract.hostctl import Settings
 from bot_bottle.agent_provider import AgentProvisionPlan
 from bot_bottle.backend import BottleSpec
 from bot_bottle.backend.docker import launch as launch_mod
@@ -63,6 +64,7 @@ def _plan(tmp: str) -> DockerBottlePlan:
             guest_env={},
         ),
         slug=_SLUG, forwarded_env={}, use_runsc=False,
+        settings=Settings(),
     )
 
 
@@ -85,8 +87,8 @@ class TestLaunchCommittedImage(unittest.TestCase):
         gw = mock.Mock()
         gw.ca_cert_pem.return_value = "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n"
 
-        def _build(image: str, ctx: str, *, dockerfile: str = "") -> None:
-            del ctx, dockerfile
+        def _build(image: str, ctx: str, *, dockerfile: str = "", no_cache: bool = False) -> None:
+            del ctx, dockerfile, no_cache
             built.append(image)
 
         with mock.patch.object(launch_mod, "read_committed_image", return_value=committed_tag), \
@@ -148,7 +150,7 @@ class TestLaunchCommittedImage(unittest.TestCase):
                 mock.patch.object(launch_mod.docker_mod, "build_image") as build:
             images = launch_mod.build_or_load_images(plan)
         self.assertEqual("bot-bottle-claude:pin-abc", images.agent)
-        self.assertIs(launch_mod._DOCKER, resolve.call_args.args[1])
+        self.assertEqual(("docker", "pull"), resolve.call_args.args[1].pull_argv)
         build.assert_not_called()
 
     def test_builds_its_own_dockerfile_when_nothing_is_published(self) -> None:

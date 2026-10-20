@@ -33,11 +33,13 @@ Two things follow from that inversion:
 from __future__ import annotations
 
 import dataclasses
+import functools
 import os
 import subprocess
 from contextlib import ExitStack, contextmanager
 from typing import Callable, Generator
 
+from ...contract.hostctl import Settings
 from ...bottle_state import (
     egress_state_dir,
     git_gate_state_dir,
@@ -51,7 +53,6 @@ from ...lib.log import die, info, warn
 from ... import resources
 from .. import BottleImages, oci_agent_image
 from ...contract.supervise import SUPERVISE_PORT
-from ..docker.egress import EGRESS_PORT
 from ..util import AGENT_CA_BUNDLE, AGENT_CA_PATH
 from . import util as container_mod
 from .bottle import MacosContainerBottle
@@ -61,6 +62,7 @@ from .bottle_plan import MacosContainerBottlePlan
 from ...orchestrator.store.config_store import resolve_teardown_timeout
 from ...paths import host_db_path
 from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME, new_env_var_secret
+from .infra import MacosInfraService
 from .consolidated_launch import (
     GatewayEndpoint,
     ensure_gateway,
@@ -77,14 +79,22 @@ def build_or_load_images(plan: MacosContainerBottlePlan) -> BottleImages:
     return BottleImages(agent=_layer_nested_containers(plan, _agent_image(plan)))
 
 
-# Apple's CLI pulls with `container image pull`. No smoke test yet: the macOS
-# local-build path doesn't run one either.
-_CONTAINER_RUNTIME = oci_agent_image.OciRuntime(
-    pull_argv=("container", "image", "pull"),
-    image_exists=container_mod.image_exists,
-    tag_image=container_mod.tag_image,
-    build_image=container_mod.build_image,
-)
+def _build_image_fn(settings: Settings) -> Callable[..., None]:
+    """`container_mod.build_image` bound to the settings' cache + DNS knobs."""
+    return functools.partial(
+        container_mod.build_image, no_cache=settings.operation.no_cache,
+        dns_override=settings.infra.macos_container_dns)
+
+
+def _container_runtime(settings: Settings) -> oci_agent_image.OciRuntime:
+    # Apple's CLI pulls with `container image pull`. No smoke test yet: the
+    # macOS local-build path doesn't run one either.
+    return oci_agent_image.OciRuntime(
+        pull_argv=("container", "image", "pull"),
+        image_exists=container_mod.image_exists,
+        tag_image=container_mod.tag_image,
+        build_image=_build_image_fn(settings),
+    )
 
 
 def _agent_image(plan: MacosContainerBottlePlan) -> str:
@@ -96,7 +106,7 @@ def _agent_image(plan: MacosContainerBottlePlan) -> str:
     # local build (PRD 0085); the nested-containers layer is added on top by
     # the caller either way. None: build the bottle's own Dockerfile.
     published = oci_agent_image.resolve_published_agent_image(
-        plan, _CONTAINER_RUNTIME, template=plan.agent_provider_template,
+        plan, _container_runtime(plan.settings), template=plan.agent_provider_template,
         image=plan.image, smoke_test=(),
     )
     if published is not None:
@@ -109,7 +119,8 @@ def _agent_image(plan: MacosContainerBottlePlan) -> str:
             )
         info(f"using cached agent image {plan.image!r}")
         return plan.image
-    container_mod.build_image(plan.image, str(resources.build_root()), dockerfile=plan.dockerfile_path)
+    _build_image_fn(plan.settings)(
+        plan.image, str(resources.build_root()), dockerfile=plan.dockerfile_path)
     return plan.image
 
 
@@ -135,7 +146,7 @@ def _layer_nested_containers(
         return derived
     return nested_containers_mod.build_image(
         pinned_base,
-        container_mod.build_image,
+        _build_image_fn(plan.settings),
     )
 
 
@@ -173,7 +184,8 @@ def launch(
         # proxy env needs the gateway's address at `container run` time.
         # Bringing them up cold re-points running bottles at the gateway's new
         # address as part of the reattach (PRD 0081).
-        endpoint = ensure_gateway()
+        service = MacosInfraService(plan.settings)
+        endpoint = ensure_gateway(service=service)
 
         # Step 2: mint this bottle's deploy keys, then point it at the SHARED
         # gateway's CA + git-http/supervise ports.
@@ -217,7 +229,8 @@ def launch(
             tokens=token_values,
             env_var_secret=plan.env_var_secret,
         )
-        stack.callback(deprovision_consolidated, ctx.bottle_id, timeout=teardown_timeout)
+        stack.callback(deprovision_consolidated, ctx.bottle_id, service=service,
+                       timeout=teardown_timeout)
         info(
             f"agent {plan.container_name} registered "
             f"(gateway {endpoint.gateway_ip}, ip {source_ip})"
@@ -233,7 +246,7 @@ def launch(
         plan = dataclasses.replace(plan, identity_token=ctx.identity_token)
 
         exec_env = {
-            **_identity_proxy_env(endpoint, ctx.identity_token),
+            **_identity_proxy_env(endpoint, ctx.identity_token, plan.settings.infra.egress_port),
             **nested_containers_mod.guest_env(plan.nested_containers),
         }
         bottle = MacosContainerBottle(
@@ -342,7 +355,7 @@ def _stamp_agent_urls(
     )
 
 
-def _proxy_url(identity_token: str = "") -> str:
+def _proxy_url(egress_port: int, identity_token: str = "") -> str:
     """The agent's egress proxy URL. The identity token rides as proxy
     credentials — the gateway reads Proxy-Authorization, resolves the
     (source_ip, token) pair against the control plane, and strips it before
@@ -352,7 +365,7 @@ def _proxy_url(identity_token: str = "") -> str:
     process environment, which cannot be rewritten once the agent is running,
     so an address baked here is unfixable if the gateway moves."""
     cred = f"bottle:{identity_token}@" if identity_token else ""
-    return f"http://{cred}{GATEWAY_HOSTNAME}:{EGRESS_PORT}"
+    return f"http://{cred}{GATEWAY_HOSTNAME}:{egress_port}"
 
 
 def _no_proxy() -> str:
@@ -364,7 +377,7 @@ def _no_proxy() -> str:
 
 
 def _identity_proxy_env(
-    endpoint: GatewayEndpoint, identity_token: str,
+    endpoint: GatewayEndpoint, identity_token: str, egress_port: int,
 ) -> dict[str, str]:
     """The token-bearing proxy env applied at `container exec` — the only way
     to get the token in, since it does not exist until after the container
@@ -378,7 +391,7 @@ def _identity_proxy_env(
     if not identity_token:
         return {}
     del endpoint  # the gateway is named, not addressed
-    url = _proxy_url(identity_token)
+    url = _proxy_url(egress_port, identity_token)
     return {
         "HTTPS_PROXY": url, "HTTP_PROXY": url,
         "https_proxy": url, "http_proxy": url,

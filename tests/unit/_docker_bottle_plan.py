@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from bot_bottle.contract.hostctl import Settings
 from bot_bottle.agent_provider import AgentProvisionPlan
 from bot_bottle.backend import BottleSpec
 from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
@@ -159,4 +160,5 @@ def _plan(
             prompt_file=STAGE / "prompt",
             guest_env={},
         ),
+        settings=Settings(),
     )

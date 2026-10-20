@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from bot_bottle.contract.hostctl import Settings
 from bot_bottle import bottle_state
 from tests.unit import use_bottle_root
 from bot_bottle.backend import ActiveAgent
@@ -38,21 +39,21 @@ def _make_agent(slug: str, backend: str = "docker") -> ActiveAgent:
 
 class TestGetFreezer(unittest.TestCase):
     def test_docker(self):
-        self.assertIsInstance(get_freezer("docker"), DockerFreezer)
+        self.assertIsInstance(get_freezer(Settings(), "docker"), DockerFreezer)
 
     def test_empty_backend_gives_docker(self):
-        self.assertIsInstance(get_freezer(""), DockerFreezer)
+        self.assertIsInstance(get_freezer(Settings(), ""), DockerFreezer)
 
     def test_macos_container(self):
-        self.assertIsInstance(get_freezer("macos-container"), MacosContainerFreezer)
+        self.assertIsInstance(get_freezer(Settings(), "macos-container"), MacosContainerFreezer)
 
     def test_firecracker(self):
-        self.assertIsInstance(get_freezer("firecracker"), FirecrackerFreezer)
+        self.assertIsInstance(get_freezer(Settings(), "firecracker"), FirecrackerFreezer)
 
     def test_unknown_backend_dies(self):
         with patch("bot_bottle.backend.freeze.die", side_effect=SystemExit("die")):
             with self.assertRaises(SystemExit):
-                get_freezer("unknown-backend")
+                get_freezer(Settings(), "unknown-backend")
 
 
 class TestFreezerBaseCommit(_FakeHomeMixin, unittest.TestCase):
@@ -70,7 +71,7 @@ class TestFreezerBaseCommit(_FakeHomeMixin, unittest.TestCase):
             identity=slug, agent_name="dev", cwd="", copy_cwd=False,
             started_at="t", backend="docker",
         ))
-        freezer = get_freezer("docker")
+        freezer = get_freezer(Settings(), "docker")
         agent = _make_agent(slug)
 
         with patch.object(freezer, "_freeze", return_value="bot-bottle-committed-dev-abc12:latest"), \
@@ -89,7 +90,7 @@ class TestFreezerBaseCommit(_FakeHomeMixin, unittest.TestCase):
             identity=slug, agent_name="dev", cwd="", copy_cwd=False,
             started_at="t", backend="docker",
         ))
-        freezer = get_freezer("docker")
+        freezer = get_freezer(Settings(), "docker")
         captured = {}
 
         def capture_freeze(agent: ActiveAgent) -> str:
@@ -116,7 +117,7 @@ class TestDockerFreezer(_FakeHomeMixin, unittest.TestCase):
             identity=slug, agent_name="dev", cwd="", copy_cwd=False,
             started_at="t", backend="docker",
         ))
-        freezer = DockerFreezer()
+        freezer = DockerFreezer(Settings())
         agent = _make_agent(slug)
 
         with patch("bot_bottle.backend.docker.freezer.commit_container") as mock_commit, \
@@ -152,7 +153,7 @@ class TestMacosContainerFreezer(_FakeHomeMixin, unittest.TestCase):
         """Commit should exec-tar the running container, not stop it."""
         slug = "dev-abc12"
         self._write_meta(slug)
-        freezer = MacosContainerFreezer()
+        freezer = MacosContainerFreezer(Settings())
         agent = _make_agent(slug, "macos-container")
 
         with patch("bot_bottle.backend.macos_container.freezer.commit_container") as mock_commit, \
@@ -163,6 +164,7 @@ class TestMacosContainerFreezer(_FakeHomeMixin, unittest.TestCase):
         mock_commit.assert_called_once_with(
             f"bot-bottle-{slug}",
             f"bot-bottle-committed-{slug}:latest",
+            no_cache=False, dns_override="",
         )
         self.assertEqual(
             f"bot-bottle-committed-{slug}:latest",
@@ -210,7 +212,7 @@ class TestFirecrackerFreezer(_FakeHomeMixin, unittest.TestCase):
         slug = "dev-abc12"
         self._write_meta(slug)
         self._stage_run_dir(slug)
-        freezer = FirecrackerFreezer()
+        freezer = FirecrackerFreezer(Settings())
         agent = _make_agent(slug, "firecracker")
 
         commit_fn = "bot_bottle.backend.firecracker.freezer._commit_rootfs_via_ssh"

@@ -12,6 +12,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
+from bot_bottle.contract.hostctl import Settings
 from bot_bottle import bottle_state
 from tests.unit import use_bottle_root
 from bot_bottle.backend import Bottle, BottleSpec, ExecResult
@@ -66,7 +67,7 @@ class TestRuntimeWorkspaceProvisioning(_FakeStateMixin, unittest.TestCase):
     def test_default_backend_method_copies_workspace_to_running_bottle(self) -> None:
         (self.tmp / "src.txt").write_text("hello\n")
         (self.tmp / ".git").mkdir()
-        backend = DockerBottleBackend()
+        backend = DockerBottleBackend(Settings())
 
         with (
             patch("bot_bottle.backend.docker.resolve_plan.docker_mod.require_docker"),
@@ -97,7 +98,7 @@ class TestRuntimeWorkspaceProvisioning(_FakeStateMixin, unittest.TestCase):
         bottle.cp_in.assert_called_once_with(str(self.tmp), "/home/node/workspace")
 
     def test_default_backend_method_noops_without_copy_cwd(self) -> None:
-        backend = DockerBottleBackend()
+        backend = DockerBottleBackend(Settings())
         with (
             patch("bot_bottle.backend.docker.resolve_plan.docker_mod.require_docker"),
             patch(
@@ -114,7 +115,7 @@ class TestRuntimeWorkspaceProvisioning(_FakeStateMixin, unittest.TestCase):
         bottle.cp_in.assert_not_called()
 
     def test_firecracker_uses_same_running_bottle_method(self) -> None:
-        backend = FirecrackerBottleBackend()
+        backend = FirecrackerBottleBackend(Settings())
         with patch(
             "bot_bottle.backend.firecracker.resolve_plan.util.require_firecracker",
         ):
@@ -135,7 +136,7 @@ class TestRuntimeWorkspaceProvisioning(_FakeStateMixin, unittest.TestCase):
 
 class TestWorkspaceTrustPath(_FakeStateMixin, unittest.TestCase):
     def test_prepare_trusts_workspace_path_when_copying_cwd(self) -> None:
-        backend = DockerBottleBackend()
+        backend = DockerBottleBackend(Settings())
 
         with (
             patch("bot_bottle.backend.docker.resolve_plan.docker_mod.require_docker"),

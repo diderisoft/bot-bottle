@@ -13,6 +13,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from bot_bottle.contract.hostctl import Settings
 from bot_bottle.agent_provider import AgentProvisionPlan
 from bot_bottle.backend import BottleSpec
 from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
@@ -104,6 +105,7 @@ def _docker_plan(spec: BottleSpec, manifest: Manifest, tmp: str) -> DockerBottle
         slug="test-00001",
         forwarded_env={},
         use_runsc=False,
+        settings=Settings(),
     )
 
 
@@ -119,6 +121,7 @@ def _firecracker_plan(spec: BottleSpec, manifest: Manifest, tmp: str) -> Firecra
         agent_provision=_agent_provision(tmp),
         slug="test-00001",
         forwarded_env={},
+        settings=Settings(),
     )
 
 

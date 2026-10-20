@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 from tests._backend import (
     selected_backend,
@@ -65,7 +65,7 @@ class TestSkipUnlessSelectedBackendAvailable(unittest.TestCase):
                 patch("tests._backend.is_backend_ready", return_value=True) as has:
             decorated = skip_unless_selected_backend_available()(_new_case())
         self.assertFalse(_skipped(decorated))
-        has.assert_called_once_with("firecracker", quiet=False)
+        has.assert_called_once_with(ANY, "firecracker", quiet=False)
 
     def test_skips_when_selected_backend_unavailable(self):
         with patch.dict(os.environ, {"BOT_BOTTLE_BACKEND": "firecracker"}, clear=True), \

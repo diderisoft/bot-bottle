@@ -18,6 +18,7 @@ from pathlib import Path
 
 from ...lib import log
 from ... import resources
+from ...contract.hostctl import Settings
 from ...contract.identity import ORCHESTRATOR_TOKEN_ENV
 from ...paths import HOST_DB_FILENAME
 from ...control.lifecycle import (
@@ -33,9 +34,6 @@ from ...infra_image import pinned_infra_artifact, pull_pinned_image
 from ...published_artifacts import FORMAT_OCI
 from .gateway import CONTROL_NETWORK
 
-ORCHESTRATOR_IMAGE = os.environ.get(
-    "BOT_BOTTLE_ORCHESTRATOR_IMAGE", "bot-bottle-orchestrator:latest"
-)
 ORCHESTRATOR_NAME = "bot-bottle-mac-orchestrator"
 ORCHESTRATOR_LABEL = "bot-bottle-mac-orchestrator=1"
 # Container-only volume holding bot-bottle.db, mounted ONLY into the
@@ -58,8 +56,9 @@ class MacosOrchestrator(Orchestrator):
 
     def __init__(
         self,
-        image_ref: str = ORCHESTRATOR_IMAGE,
+        image_ref: str | None = None,
         *,
+        settings: Settings,
         name: str = ORCHESTRATOR_NAME,
         label: str = ORCHESTRATOR_LABEL,
         port: int = DEFAULT_PORT,
@@ -67,7 +66,8 @@ class MacosOrchestrator(Orchestrator):
         repo_root: Path | None = None,
         db_volume: str = ORCHESTRATOR_DB_VOLUME,
     ) -> None:
-        self.image_ref = image_ref
+        self.image_ref = image_ref or settings.infra.orchestrator_image
+        self._settings = settings
         self.name = name
         self.label = label
         self.port = port
@@ -108,7 +108,9 @@ class MacosOrchestrator(Orchestrator):
         change takes effect without a rebuild; the image still carries the
         package for its entrypoint. Pulls the release-pinned image instead when it was built
         from exactly this install's code (PRD 0081 / 0085)."""
-        pin = pinned_infra_artifact("bot-bottle-orchestrator", FORMAT_OCI)
+        pin = pinned_infra_artifact(
+            "bot-bottle-orchestrator", FORMAT_OCI,
+            local_build=self._settings.infra.infra_build_local)
         if pin is not None:
             try:
                 self.image_ref = pull_pinned_image(
@@ -119,7 +121,9 @@ class MacosOrchestrator(Orchestrator):
                 raise OrchestratorStartError(str(e)) from e
             return
         container_mod.build_image(
-            self.image_ref, str(self._repo_root), dockerfile="Dockerfile.orchestrator")
+            self.image_ref, str(self._repo_root), dockerfile="Dockerfile.orchestrator",
+            no_cache=self._settings.operation.no_cache,
+            dns_override=self._settings.infra.macos_container_dns)
 
     def ensure_running(
         self, *, startup_timeout: float = DEFAULT_STARTUP_TIMEOUT_SECONDS,
@@ -149,7 +153,7 @@ class MacosOrchestrator(Orchestrator):
             "--label", self.label,
             # Control network only — agents are never on it (L3-isolated).
             "--network", self.control_network,
-            "--dns", container_mod.dns_server(),
+            "--dns", container_mod.dns_server(self._settings.infra.macos_container_dns),
             # Container-only DB volume: exactly one kernel writes bot-bottle.db.
             "--volume", f"{self._db_volume}:{_DB_ROOT_IN_CONTAINER}",
             # Live control-plane source (a code change takes effect on relaunch).
@@ -218,7 +222,6 @@ __all__ = [
     "MacosOrchestrator",
     "ORCHESTRATOR_NAME",
     "ORCHESTRATOR_LABEL",
-    "ORCHESTRATOR_IMAGE",
     "ORCHESTRATOR_DB_VOLUME",
     "probe_orchestrator_url",
 ]

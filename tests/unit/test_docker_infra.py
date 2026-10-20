@@ -13,6 +13,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from bot_bottle.contract.hostctl import Settings
 from bot_bottle.backend.docker.infra import (
     ORCHESTRATOR_NAME,
     DockerInfraService,
@@ -24,7 +25,7 @@ _RUN = "bot_bottle.backend.docker.infra.run_docker"
 
 class TestDockerInfraService(unittest.TestCase):
     def setUp(self) -> None:
-        self.svc = DockerInfraService(port=8099)
+        self.svc = DockerInfraService(Settings(), port=8099)
         self.orch = MagicMock()
         self.orch.url.return_value = "http://127.0.0.1:8099"
         self.orch.gateway_url.return_value = f"http://{ORCHESTRATOR_NAME}:8099"
@@ -90,6 +91,7 @@ class TestDockerInfraService(unittest.TestCase):
 
     def test_named_mounts_propagate_to_both_planes(self) -> None:
         svc = DockerInfraService(
+            Settings(),
             root_mount_source="registry-volume",
             gateway_ca_mount_source="ca-volume",
         )
@@ -99,6 +101,7 @@ class TestDockerInfraService(unittest.TestCase):
     def test_host_path_and_named_root_mount_are_mutually_exclusive(self) -> None:
         with self.assertRaisesRegex(ValueError, "host_root or root_mount_source"):
             DockerInfraService(
+                Settings(),
                 host_root=Path("/host/path"),
                 root_mount_source="registry-volume",
             )

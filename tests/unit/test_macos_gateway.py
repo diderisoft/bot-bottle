@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from bot_bottle.contract.hostctl import Settings
 from bot_bottle.backend.macos_container.gateway import (
     GATEWAY_NAME,
     ORCHESTRATOR_AUTH_JWT_ENV,
@@ -30,7 +31,7 @@ def _spec(src: str, tgt: str, readonly: bool = False) -> str:
 
 class TestMacosGatewayConnect(unittest.TestCase):
     def setUp(self) -> None:
-        self.gw = MacosGateway("bot-bottle-gateway:latest")
+        self.gw = MacosGateway("bot-bottle-gateway:latest", settings=Settings())
 
     def _connect(self, url: str = _ORCH_URL, token: str = _TOKEN) -> Mock:
         run = Mock(return_value=_proc())
@@ -131,7 +132,7 @@ class TestMacosGatewayConnect(unittest.TestCase):
 
 class TestMacosGatewayLifecycle(unittest.TestCase):
     def setUp(self) -> None:
-        self.gw = MacosGateway("bot-bottle-gateway:latest")
+        self.gw = MacosGateway("bot-bottle-gateway:latest", settings=Settings())
 
     def test_is_running_reads_container_state(self) -> None:
         with patch(f"{_GW}.container_mod") as mod:

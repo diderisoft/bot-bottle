@@ -24,6 +24,7 @@ from ...control.gateway import (
     GatewayError,
     GatewayTransport,
 )
+from ...contract.hostctl import DEFAULT_GATEWAY_IMAGE, Settings
 from ...contract.identity import ORCHESTRATOR_AUTH_JWT_ENV
 from ...paths import host_gateway_ca_dir
 from ... import resources
@@ -52,7 +53,7 @@ GATEWAY_LABEL = "bot-bottle-mac-infra=1"
 # The gateway subset the consolidated model runs (no per-bottle git:// daemon).
 GATEWAY_DAEMONS = "egress,git-http,supervise"
 
-GATEWAY_IMAGE = os.environ.get("BOT_BOTTLE_GATEWAY_IMAGE", "bot-bottle-gateway:latest")
+GATEWAY_IMAGE = DEFAULT_GATEWAY_IMAGE
 
 
 def ensure_networks(
@@ -78,15 +79,17 @@ class MacosGateway(Gateway):
 
     def __init__(
         self,
-        image_ref: str = GATEWAY_IMAGE,
+        image_ref: str | None = None,
         *,
+        settings: Settings,
         name: str = GATEWAY_NAME,
         network: str = GATEWAY_NETWORK,
         egress_network: str = GATEWAY_EGRESS_NETWORK,
         control_network: str = CONTROL_NETWORK,
         repo_root: Path | None = None,
     ) -> None:
-        self.image_ref = image_ref
+        self.image_ref = image_ref or settings.infra.gateway_image
+        self._settings = settings
         self.name = name
         self.network = network
         self.egress_network = egress_network
@@ -103,7 +106,8 @@ class MacosGateway(Gateway):
     def ensure_built(self) -> None:
         """Build the data-plane image from `Dockerfile.gateway`. Pulls the release-pinned image instead when it was built
         from exactly this install's code (PRD 0081 / 0085)."""
-        pin = pinned_infra_artifact("bot-bottle-gateway", FORMAT_OCI)
+        pin = pinned_infra_artifact(
+            "bot-bottle-gateway", FORMAT_OCI, local_build=self._settings.infra.infra_build_local)
         if pin is not None:
             try:
                 self.image_ref = pull_pinned_image(
@@ -114,7 +118,9 @@ class MacosGateway(Gateway):
                 raise GatewayError(str(e)) from e
             return
         container_mod.build_image(
-            self.image_ref, str(self._repo_root), dockerfile="Dockerfile.gateway")
+            self.image_ref, str(self._repo_root), dockerfile="Dockerfile.gateway",
+            no_cache=self._settings.operation.no_cache,
+            dns_override=self._settings.infra.macos_container_dns)
 
     def connect_to_orchestrator(self, orchestrator_url: str, gateway_token: str) -> bool:
         """Bind the gateway to this orchestrator and bring it up, dual-homed on
@@ -155,7 +161,7 @@ class MacosGateway(Gateway):
             "--network", self.egress_network,
             "--network", self.network,
             "--network", self.control_network,
-            "--dns", container_mod.dns_server(),
+            "--dns", container_mod.dns_server(self._settings.infra.macos_container_dns),
             # The mitmproxy CA on a host bind-mount (survives recreation +
             # volume pruning — issue #450). No DB mount: the data plane never
             # opens bot-bottle.db (#469).

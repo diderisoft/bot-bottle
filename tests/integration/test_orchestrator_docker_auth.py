@@ -24,6 +24,7 @@ import subprocess
 import tempfile
 import unittest
 
+from bot_bottle.cli.settings import settings_from_env
 from bot_bottle.contract.auth import ROLE_CLI, ROLE_GATEWAY, mint
 from bot_bottle.control.client import OrchestratorClient
 from bot_bottle.backend.docker.infra import DockerInfraService
@@ -73,6 +74,7 @@ class TestDockerOrchestratorAuthIntegration(unittest.TestCase):
         )
 
         cls.svc = DockerInfraService(
+            settings_from_env(),
             orchestrator_name=orchestrator_name,
             gateway_name=gateway_name,
             network=network,

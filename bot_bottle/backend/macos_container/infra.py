@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ... import resources
+from ...contract.hostctl import Settings
 from ...control.lifecycle import (
     DEFAULT_PORT,
     OrchestratorStartError,
@@ -36,7 +37,6 @@ from .gateway import (
     CONTROL_NETWORK,
     DEFAULT_CA_TIMEOUT_SECONDS,
     GATEWAY_EGRESS_NETWORK,
-    GATEWAY_IMAGE,
     GATEWAY_NAME,
     GATEWAY_NETWORK,
     MacosGateway,
@@ -44,7 +44,6 @@ from .gateway import (
 )
 from .orchestrator import (
     ORCHESTRATOR_DB_VOLUME,
-    ORCHESTRATOR_IMAGE,
     ORCHESTRATOR_NAME,
     MacosOrchestrator,
     probe_orchestrator_url,
@@ -66,24 +65,26 @@ class MacosInfraService(InfraService):
 
     def __init__(
         self,
+        settings: Settings,
         *,
         port: int = DEFAULT_PORT,
         network: str = GATEWAY_NETWORK,
         egress_network: str = GATEWAY_EGRESS_NETWORK,
         control_network: str = CONTROL_NETWORK,
-        gateway_image: str = GATEWAY_IMAGE,
-        orchestrator_image: str = ORCHESTRATOR_IMAGE,
+        gateway_image: str | None = None,
+        orchestrator_image: str | None = None,
         repo_root: Path | None = None,
         orchestrator_name: str = ORCHESTRATOR_NAME,
         gateway_name: str = INFRA_NAME,
         db_volume: str = ORCHESTRATOR_DB_VOLUME,
     ) -> None:
+        self.settings = settings
         self.port = port
         self.network = network
         self.egress_network = egress_network
         self.control_network = control_network
-        self.gateway_image = gateway_image
-        self.orchestrator_image = orchestrator_image
+        self.gateway_image = gateway_image or settings.infra.gateway_image
+        self.orchestrator_image = orchestrator_image or settings.infra.orchestrator_image
         # Build context / bind-mount source: the repo root in a checkout, a
         # staged copy from the installed wheel otherwise (bot_bottle.resources).
         self._repo_root = repo_root if repo_root is not None else resources.build_root()
@@ -97,6 +98,7 @@ class MacosInfraService(InfraService):
         `mint_gateway_token()` off it."""
         return MacosOrchestrator(
             self.orchestrator_image,
+            settings=self.settings,
             name=self._orchestrator_name,
             port=self.port,
             control_network=self.control_network,
@@ -111,6 +113,7 @@ class MacosInfraService(InfraService):
         connects it to the control plane."""
         return MacosGateway(
             self.gateway_image,
+            settings=self.settings,
             name=self._gateway_name,
             network=self.network,
             egress_network=self.egress_network,

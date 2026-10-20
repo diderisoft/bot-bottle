@@ -5,7 +5,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 from bot_bottle.cli.commands.commit import cmd_commit
 from tests.unit import use_bottle_root
@@ -48,7 +48,7 @@ class TestCmdCommitSlugArg(_FakeHomeMixin, unittest.TestCase):
             rc = cmd_commit([slug])
 
         self.assertEqual(0, rc)
-        mock_gf.assert_called_once_with("docker")
+        mock_gf.assert_called_once_with(ANY, "docker")
         mock_freezer.commit_slug.assert_called_once_with(slug)
 
     def test_empty_backend_passed_to_get_freezer(self):
@@ -62,7 +62,7 @@ class TestCmdCommitSlugArg(_FakeHomeMixin, unittest.TestCase):
             rc = cmd_commit([slug])
 
         self.assertEqual(0, rc)
-        mock_gf.assert_called_once_with("")
+        mock_gf.assert_called_once_with(ANY, "")
 
     def test_commits_macos_container_bottle(self):
         slug = "dev-abc12"
@@ -74,7 +74,7 @@ class TestCmdCommitSlugArg(_FakeHomeMixin, unittest.TestCase):
             rc = cmd_commit([slug])
 
         self.assertEqual(0, rc)
-        mock_gf.assert_called_once_with("macos-container")
+        mock_gf.assert_called_once_with(ANY, "macos-container")
         mock_freezer.commit_slug.assert_called_once_with(slug)
 
     def test_commits_firecracker_bottle(self):
@@ -87,7 +87,7 @@ class TestCmdCommitSlugArg(_FakeHomeMixin, unittest.TestCase):
             rc = cmd_commit([slug])
 
         self.assertEqual(0, rc)
-        mock_gf.assert_called_once_with("firecracker")
+        mock_gf.assert_called_once_with(ANY, "firecracker")
 
     def test_returns_zero_on_commit_cancelled(self):
         slug = "dev-abc12"
