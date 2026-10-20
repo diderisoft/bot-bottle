@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from ...log import die, warn
+from ...lib.log import die, warn
 from ..base import EnumerationError
 from .util import daemon_running
 

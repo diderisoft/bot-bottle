@@ -23,7 +23,7 @@ from bot_bottle.backend.macos_container.launch import (
     _identity_proxy_env,
     build_or_load_images,
 )
-from bot_bottle.log import Die
+from bot_bottle.lib.log import Die
 from bot_bottle.manifest import ManifestIndex
 
 _BOTTLE = "bot_bottle.backend.macos_container.bottle"

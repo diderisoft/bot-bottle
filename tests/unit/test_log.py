@@ -18,7 +18,7 @@ import unittest
 from typing import Callable
 from unittest import mock
 
-from bot_bottle import log
+from bot_bottle.lib import log
 
 
 def _capture(

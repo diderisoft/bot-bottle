@@ -16,7 +16,7 @@ import os
 import sys
 from typing import Any, Optional
 
-from ..log import debug
+from ..lib.log import debug
 
 
 def filter_multiselect(

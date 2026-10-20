@@ -14,7 +14,7 @@ import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
-from ...constants import GIT_GATE_TIMEOUT_SECS, IDENTITY_HEADER
+from ...contract.identity import GIT_GATE_TIMEOUT_SECS, IDENTITY_HEADER
 from ...manifest import ManifestBottle, ManifestGitEntry
 from ..egress.dlp_detectors import TOKEN_PATTERNS
 
@@ -306,10 +306,10 @@ from pathlib import Path
 # calling bottle exactly as a direct write once did.
 try:
     from bot_bottle.gateway.policy_resolver import PolicyResolver, PolicyResolveError
-    from bot_bottle.supervisor.types import TOOL_GITLEAKS_ALLOW
+    from bot_bottle.contract.supervise import TOOL_GITLEAKS_ALLOW
 except ImportError:
     from policy_resolver import PolicyResolver, PolicyResolveError
-    from supervisor.types import TOOL_GITLEAKS_ALLOW
+    from contract.supervise import TOOL_GITLEAKS_ALLOW
 
 report_path = Path(sys.argv[1])
 source_ip = os.environ.get("SUPERVISE_SOURCE_IP", "")

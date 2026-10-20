@@ -22,7 +22,7 @@ from ..gateway.egress.types import (
     Route,
 )
 from ..errors import MissingEnvVarError
-from ..log import die
+from ..lib.log import die
 from .plan import EgressPlan, EgressRoute
 
 if TYPE_CHECKING:

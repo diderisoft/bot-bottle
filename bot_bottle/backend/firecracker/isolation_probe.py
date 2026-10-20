@@ -22,7 +22,7 @@ import subprocess
 import threading
 from pathlib import Path
 
-from ...log import die, info, warn
+from ...lib.log import die, info, warn
 from . import util
 
 

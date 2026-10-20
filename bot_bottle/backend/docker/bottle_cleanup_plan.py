@@ -23,7 +23,7 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass
 
-from ...log import info
+from ...lib.log import info
 from .. import BottleCleanupPlan
 
 

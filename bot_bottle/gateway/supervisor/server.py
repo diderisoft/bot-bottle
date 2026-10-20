@@ -56,7 +56,7 @@ import time
 import typing
 from dataclasses import dataclass
 
-from bot_bottle.constants import IDENTITY_HEADER
+from bot_bottle.contract.identity import IDENTITY_HEADER
 from bot_bottle.gateway.bounded_http import (
     BodyReadError,
     BoundedThreadingHTTPServer,
@@ -72,7 +72,7 @@ from bot_bottle.gateway.supervisor.mcp_dispatch import (
     dispatch,
     resolved_routes_payload,
 )
-from bot_bottle.supervisor import types as _sv
+from bot_bottle.contract import supervise as _sv
 
 
 # --- JSON-RPC / MCP plumbing ----------------------------------------------

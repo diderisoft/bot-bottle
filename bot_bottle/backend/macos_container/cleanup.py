@@ -6,7 +6,7 @@ import subprocess
 
 from .. import EnumerationError
 from ..cleanup_control import CleanupFailures
-from ...log import info
+from ...lib.log import info
 from . import util as container_mod
 from .bottle_cleanup_plan import MacosContainerBottleCleanupPlan
 

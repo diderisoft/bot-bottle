@@ -36,7 +36,7 @@ from ... import agent_overlay, image_registry, resources
 from .. import container_engine
 from ...image_registry import TOKEN_ENV as _ARTIFACT_TOKEN_ENV
 from ...image_registry import RegistryError
-from ...log import die, info
+from ...lib.log import die, info
 from ...manifest import ManifestImageOverlay
 from ...published_artifacts import FORMAT_EXT4, Artifact
 from . import util

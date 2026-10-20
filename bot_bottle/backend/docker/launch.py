@@ -39,7 +39,7 @@ from ...agent_provider import runtime_for
 from ...egress import Egress
 from ...git_gate import GitGate
 from ...image_cache import check_stale
-from ...log import die, info, warn
+from ...lib.log import die, info, warn
 from .. import BottleImages, oci_agent_image
 from . import util as docker_mod
 from .bottle import DockerBottle

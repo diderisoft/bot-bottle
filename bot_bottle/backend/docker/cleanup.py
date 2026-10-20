@@ -26,7 +26,7 @@ from __future__ import annotations
 import subprocess
 
 from ...paths import bot_bottle_root
-from ...log import info
+from ...lib.log import info
 from .. import EnumerationError
 from ..cleanup_control import CleanupFailures
 from . import util as docker_mod

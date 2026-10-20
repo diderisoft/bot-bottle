@@ -5,7 +5,7 @@ from __future__ import annotations
 from .. import ActiveAgent
 from ..freeze import Freezer
 from .util import commit_container
-from ...log import info
+from ...lib.log import info
 
 
 class DockerFreezer(Freezer):

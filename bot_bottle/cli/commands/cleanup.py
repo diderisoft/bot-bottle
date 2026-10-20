@@ -23,7 +23,7 @@ import sys
 
 from ...backend import get_bottle_backend, has_backend, known_backend_names
 from ...backend.cleanup_control import CleanupError
-from ...log import info
+from ...lib.log import info
 from ...util import read_tty_line
 
 

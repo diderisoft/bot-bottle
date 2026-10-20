@@ -19,7 +19,7 @@ from unittest import mock
 
 from tests.unit import use_bottle_root
 from bot_bottle.cli.commands import supervise as supervise_cli
-from bot_bottle.log import Die, die
+from bot_bottle.lib.log import Die, die
 
 
 class TestDieCarriesMessage(unittest.TestCase):

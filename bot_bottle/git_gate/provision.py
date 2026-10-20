@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 from ..bottle_state import globalize_slug
 from ..errors import MissingEnvVarError
-from ..log import info
+from ..lib.log import info
 from ..manifest import ManifestBottle, ManifestGitEntry
 from ..gateway.git_gate.render import GitGateUpstream
 

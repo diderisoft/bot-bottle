@@ -6,7 +6,7 @@ import base64
 import json
 import unittest
 
-from bot_bottle.orchestrator_auth import ROLE_CLI, ROLE_GATEWAY, ROLES, mint, verify
+from bot_bottle.contract.auth import ROLE_CLI, ROLE_GATEWAY, ROLES, mint, verify
 
 _KEY = "test-key"
 
@@ -45,14 +45,14 @@ class TestMintVerify(unittest.TestCase):
     def test_validly_signed_but_wrong_alg_rejected(self) -> None:
         # Alg-confusion: even a *correctly signed* token whose header claims a
         # non-HS256 alg must be rejected.
-        from bot_bottle.orchestrator_auth import _sign  # noqa: PLC0415
+        from bot_bottle.contract.auth import _sign  # noqa: PLC0415
         signing_input = f"{_b64({'alg': 'none', 'typ': 'JWT'})}.{_b64({'role': 'cli'})}"
         self.assertIsNone(verify(f"{signing_input}.{_sign(_KEY, signing_input)}", _KEY))
 
     def test_validly_signed_but_undecodable_rejected(self) -> None:
         # A correct signature over a header that isn't valid base64/JSON still
         # fails closed rather than raising.
-        from bot_bottle.orchestrator_auth import _sign  # noqa: PLC0415
+        from bot_bottle.contract.auth import _sign  # noqa: PLC0415
         signing_input = f"!!!not-base64!!!.{_b64({'role': 'cli'})}"
         self.assertIsNone(verify(f"{signing_input}.{_sign(_KEY, signing_input)}", _KEY))
 
@@ -67,7 +67,7 @@ class TestMintVerify(unittest.TestCase):
         header, _p, _s = mint(ROLE_CLI, _KEY).split(".")
         # Re-sign a token carrying an unknown role — a valid signature but a
         # role the control plane doesn't recognise must still be rejected.
-        from bot_bottle.orchestrator_auth import _sign  # noqa: PLC0415
+        from bot_bottle.contract.auth import _sign  # noqa: PLC0415
         payload = _b64({"role": "root"})
         signing_input = f"{header}.{payload}"
         forged = f"{signing_input}.{_sign(_KEY, signing_input)}"

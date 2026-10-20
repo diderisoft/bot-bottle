@@ -21,27 +21,13 @@ STDLIB_ONLY = ("contract", "lib")
 # modules move; never add one.
 ALLOWED: frozenset[tuple[str, str]] = frozenset({
     ("bot_bottle.gateway", "bot_bottle.paths"),
-    ("bot_bottle.gateway.egress.addon", "bot_bottle.constants"),
-    ("bot_bottle.gateway.egress.addon", "bot_bottle.supervisor.types"),
-    ("bot_bottle.gateway.egress.context", "bot_bottle.log"),
-    ("bot_bottle.gateway.egress.schema", "bot_bottle.yaml_subset"),
-    ("bot_bottle.gateway.git_gate.http_backend", "bot_bottle.constants"),
-    ("bot_bottle.gateway.git_gate.render", "bot_bottle.constants"),
     ("bot_bottle.gateway.git_gate.render", "bot_bottle.manifest"),
-    ("bot_bottle.gateway.supervisor.mcp_dispatch", "bot_bottle.supervisor"),
-    ("bot_bottle.gateway.supervisor.server", "bot_bottle.constants"),
-    ("bot_bottle.gateway.supervisor.server", "bot_bottle.supervisor"),
     ("bot_bottle.orchestrator", "bot_bottle.gateway"),
-    ("bot_bottle.orchestrator.__main__", "bot_bottle.log"),
     ("bot_bottle.orchestrator.__main__", "bot_bottle.trust_domain"),
-    ("bot_bottle.orchestrator.api", "bot_bottle.orchestrator_auth"),
-    ("bot_bottle.orchestrator.api", "bot_bottle.supervisor.types"),
     ("bot_bottle.orchestrator.api", "bot_bottle.trust_domain"),
     ("bot_bottle.orchestrator.client", "bot_bottle.backend.firecracker"),
     ("bot_bottle.orchestrator.client", "bot_bottle.backend.firecracker.infra_vm"),
     ("bot_bottle.orchestrator.client", "bot_bottle.backend.macos_container.infra"),
-    ("bot_bottle.orchestrator.client", "bot_bottle.log"),
-    ("bot_bottle.orchestrator.client", "bot_bottle.orchestrator_auth"),
     ("bot_bottle.orchestrator.client", "bot_bottle.trust_domain"),
     ("bot_bottle.orchestrator.docker_broker", "bot_bottle.backend.docker.util"),
     ("bot_bottle.orchestrator.lifecycle", "bot_bottle.trust_domain"),
@@ -50,23 +36,14 @@ ALLOWED: frozenset[tuple[str, str]] = frozenset({
     ("bot_bottle.orchestrator.rotate_ca", "bot_bottle.backend.infra_service"),
     ("bot_bottle.orchestrator.rotate_ca", "bot_bottle.gateway"),
     ("bot_bottle.orchestrator.server", "bot_bottle.trust_domain"),
-    ("bot_bottle.orchestrator.service", "bot_bottle.util"),
     ("bot_bottle.orchestrator.store.config_store", "bot_bottle.paths"),
-    ("bot_bottle.orchestrator.store.config_store", "bot_bottle.store.db_store"),
-    ("bot_bottle.orchestrator.store.config_store", "bot_bottle.store.migrations"),
     ("bot_bottle.orchestrator.store.queue_store", "bot_bottle.paths"),
-    ("bot_bottle.orchestrator.store.queue_store", "bot_bottle.store.db_store"),
-    ("bot_bottle.orchestrator.store.queue_store", "bot_bottle.store.migrations"),
-    ("bot_bottle.orchestrator.store.queue_store", "bot_bottle.supervisor.types"),
     ("bot_bottle.orchestrator.store.registry_store", "bot_bottle.paths"),
-    ("bot_bottle.orchestrator.store.registry_store", "bot_bottle.store.db_store"),
-    ("bot_bottle.orchestrator.store.registry_store", "bot_bottle.store.migrations"),
     ("bot_bottle.orchestrator.store.store_manager", "bot_bottle.paths"),
     ("bot_bottle.orchestrator.store.store_manager", "bot_bottle.store.audit_store"),
     ("bot_bottle.orchestrator.store.store_manager", "bot_bottle.store.config_store"),
     ("bot_bottle.orchestrator.supervisor", "bot_bottle.store.audit_store"),
     ("bot_bottle.orchestrator.supervisor", "bot_bottle.supervisor.plan"),
-    ("bot_bottle.orchestrator.supervisor", "bot_bottle.supervisor.types"),
 })
 
 
@@ -159,7 +136,7 @@ class TestLayering(unittest.TestCase):
         self.assertEqual("gateway", layer("bot_bottle.gateway"))
         self.assertEqual("contract", layer("bot_bottle.contract.http"))
         self.assertEqual("host", layer("bot_bottle.cli.commands.start"))
-        self.assertEqual("host", layer("bot_bottle.orchestrator_auth"))
+        self.assertEqual("host", layer("bot_bottle.trust_domain"))
 
 
 if __name__ == "__main__":

@@ -5,10 +5,10 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from ..supervisor.types import AuditEntry
+from ..contract.supervise import AuditEntry
 from ..paths import host_db_path
-from .db_store import DbStore
-from .migrations import TableMigrations
+from ..lib.db_store import DbStore
+from ..lib.migrations import TableMigrations
 
 
 class AuditStore(DbStore):

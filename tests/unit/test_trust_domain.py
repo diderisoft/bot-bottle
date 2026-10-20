@@ -5,8 +5,8 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from bot_bottle import orchestrator_auth
-from bot_bottle.orchestrator_auth import ROLE_CLI, ROLE_GATEWAY
+from bot_bottle.contract import auth as orchestrator_auth
+from bot_bottle.contract.auth import ROLE_CLI, ROLE_GATEWAY
 from bot_bottle.trust_domain import (
     CONTROL_PLANE,
     ControlPlaneProvisioning,

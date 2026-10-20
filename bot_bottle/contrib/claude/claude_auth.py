@@ -18,7 +18,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ...log import die
+from ...lib.log import die
 
 
 _KEYCHAIN_SERVICE = "Claude Code-credentials"

@@ -7,7 +7,7 @@ import json
 import os
 from pathlib import Path
 
-from ...log import die
+from ...lib.log import die
 from ..constants import PROG
 
 

@@ -30,7 +30,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from ...log import die, info
+from ...lib.log import die, info
 
 _INIT = "/usr/local/libexec/bot-bottle/nested-containers-init"
 # Deliberately cryptic and short. podman derives conmon's attach socket as

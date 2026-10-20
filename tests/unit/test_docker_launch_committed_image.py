@@ -19,7 +19,7 @@ from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
 from bot_bottle.backend.docker.consolidated_launch import LaunchContext
 from bot_bottle.egress import EgressPlan
 from bot_bottle.git_gate import GitGatePlan
-from bot_bottle.log import Die
+from bot_bottle.lib.log import Die
 from bot_bottle.manifest import ManifestIndex
 from tests.unit import use_bottle_root
 

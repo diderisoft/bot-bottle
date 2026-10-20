@@ -24,7 +24,7 @@ from ...agent_provider import (
     provider_startup_args,
 )
 from ...egress import EgressRoute
-from ...log import die, info
+from ...lib.log import die, info
 
 
 if TYPE_CHECKING:

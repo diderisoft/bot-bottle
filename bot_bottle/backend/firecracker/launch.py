@@ -45,8 +45,8 @@ from ...bottle_state import (
 from ...egress import Egress
 from ...git_gate import GitGate
 from ...image_cache import check_stale_path
-from ...log import die, info, warn
-from ...supervisor.types import SUPERVISE_PORT
+from ...lib.log import die, info, warn
+from ...contract.supervise import SUPERVISE_PORT
 from ..docker.egress import EGRESS_PORT
 from ..util import AGENT_CA_BUNDLE, AGENT_CA_PATH
 from . import firecracker_vm, image_builder, isolation_probe, lifecycle_lock, netpool, util

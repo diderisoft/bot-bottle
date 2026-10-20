@@ -11,7 +11,7 @@ paths, and a `booted-version` marker, so two pairs can't coexist on one host.
 
 from __future__ import annotations
 
-from ...log import die, info
+from ...lib.log import die, info
 from ...image_registry import RegistryError
 from ...published_artifacts import ArtifactsManifestError
 from ..infra_service import InfraService

@@ -10,7 +10,7 @@ import uvicorn
 
 from ..trust_domain import CONTROL_PLANE
 from .api import create_app
-from .http_contract import MAX_BODY_BYTES, ORCHESTRATOR_AUTH_HEADER
+from ..contract.http import MAX_BODY_BYTES, ORCHESTRATOR_AUTH_HEADER
 from .service import OrchestratorCore
 
 MAX_REQUESTS = 32

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import subprocess
 
-from ...log import die, info, warn
+from ...lib.log import die, info, warn
 
 
 def network_name_for_slug(slug: str) -> str:

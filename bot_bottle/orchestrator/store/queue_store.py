@@ -6,10 +6,10 @@ import os
 import sqlite3
 from pathlib import Path
 
-from ...supervisor.types import Proposal, Response
+from ...contract.supervise import Proposal, Response
 from ...paths import host_db_path
-from ...store.db_store import DbStore
-from ...store.migrations import TableMigrations
+from ...lib.db_store import DbStore
+from ...lib.migrations import TableMigrations
 
 
 class QueueStore(DbStore):

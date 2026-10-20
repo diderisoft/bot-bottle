@@ -45,7 +45,7 @@ from pathlib import Path
 from typing import Generator
 
 from ... import image_registry, resources
-from ...log import die, info
+from ...lib.log import die, info
 from ..docker import util as docker_mod
 from . import firecracker_vm, infra_rootfs, netpool, util
 

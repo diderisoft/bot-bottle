@@ -19,7 +19,7 @@ orchestrator its key and the gateway its token, instead of re-deriving that
 wiring per backend (the bug class behind PR #471 — see
 `docs/prds/0079-control-plane-auth-provisioning.md`).
 
-Stdlib-only: the HMAC lives in `orchestrator_auth`, the key file in `paths`.
+Stdlib-only: the HMAC lives in `contract.auth`, the key file in `paths`.
 """
 
 from __future__ import annotations
@@ -28,8 +28,8 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from . import orchestrator_auth
-from .orchestrator_auth import ROLE_GATEWAY
+from .contract import auth as orchestrator_auth
+from .contract.auth import ROLE_GATEWAY
 from .paths import (
     ORCHESTRATOR_AUTH_JWT_ENV,
     ORCHESTRATOR_TOKEN_ENV,

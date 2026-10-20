@@ -26,7 +26,7 @@ from ..bottle_state import (
 )
 from ..egress import Egress, EgressPlan
 from ..git_gate import GitGate, GitGatePlan
-from ..log import die
+from ..lib.log import die
 from ..manifest import Manifest, ManifestBottle
 from ..supervisor.plan import SupervisePlan
 from ..orchestrator.supervisor import Supervisor

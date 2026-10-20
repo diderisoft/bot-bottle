@@ -18,10 +18,10 @@ import urllib.request
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from ..log import debug
-from ..orchestrator_auth import ROLE_CLI
+from ..lib.log import debug
+from ..contract.auth import ROLE_CLI
 from ..trust_domain import CONTROL_PLANE
-from .http_contract import ORCHESTRATOR_AUTH_HEADER
+from ..contract.http import ORCHESTRATOR_AUTH_HEADER
 
 DEFAULT_TIMEOUT_SECONDS = 5.0
 

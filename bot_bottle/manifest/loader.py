@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..log import warn
+from ..lib.log import warn
 from .bottle import ManifestBottle
 from .extends import resolve_bottles
 from .schema import (
@@ -12,7 +12,7 @@ from .schema import (
     validate_bottle_frontmatter_keys,
 )
 from .util import ManifestError
-from ..yaml_subset import YamlSubsetError, parse_frontmatter
+from ..contract.yaml_subset import YamlSubsetError, parse_frontmatter
 
 
 def check_stale_json(dir_path: Path, md_dir: Path, label: str) -> None:

@@ -23,7 +23,7 @@ import os
 import time
 from pathlib import Path
 
-from ... import log
+from ...lib import log
 from ... import resources
 from .util import image_exists as docker_image_exists
 from .util import run_docker

@@ -14,7 +14,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Mapping
 
-from ..log import warn
+from ..lib.log import warn
 from .util import ManifestError, as_json_object
 from .agent import ManifestAgent
 from .bottle import ManifestBottle
@@ -27,7 +27,7 @@ from .loader import (
     scan_bottle_names,
 )
 from .schema import validate_agent_frontmatter_keys
-from ..yaml_subset import YamlSubsetError, parse_frontmatter
+from ..contract.yaml_subset import YamlSubsetError, parse_frontmatter
 
 
 def _section_dict(value: object, label: str) -> dict[str, object]:

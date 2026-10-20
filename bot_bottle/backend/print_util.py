@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Sequence
 
-from ..log import info
+from ..lib.log import info
 
 
 def print_multi(label: str, values: Sequence[str]) -> None:

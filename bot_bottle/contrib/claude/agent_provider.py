@@ -24,7 +24,7 @@ from ...agent_provider import (
 )
 from ...backend.docker import util as docker_mod
 from ...egress import CLAUDE_HOST_CREDENTIAL_TOKEN_REF, EgressRoute
-from ...log import die, info, warn
+from ...lib.log import die, info, warn
 from .claude_auth import claude_host_access_token
 
 

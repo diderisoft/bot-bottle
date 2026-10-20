@@ -16,7 +16,7 @@ import subprocess
 from pathlib import Path
 
 from ...bottle_state import committed_rootfs_path
-from ...log import die, info
+from ...lib.log import die, info
 from .. import ActiveAgent
 from ..freeze import Freezer
 from . import util

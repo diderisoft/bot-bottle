@@ -26,7 +26,7 @@ import os
 import signal
 from pathlib import Path
 
-from ...log import info
+from ...lib.log import info
 from .. import EnumerationError
 from ..cleanup_control import CleanupError, CleanupFailures
 from . import lifecycle_lock, util

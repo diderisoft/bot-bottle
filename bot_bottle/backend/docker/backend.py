@@ -25,7 +25,7 @@ from contextlib import contextmanager, redirect_stderr
 from pathlib import Path
 from typing import TYPE_CHECKING, Generator, Sequence
 
-from ...supervisor.types import SUPERVISE_HOSTNAME, SUPERVISE_PORT
+from ...contract.supervise import SUPERVISE_HOSTNAME, SUPERVISE_PORT
 from ...agent_provider import AgentProvisionPlan
 from ...egress import EgressPlan
 from ...env import ResolvedEnv

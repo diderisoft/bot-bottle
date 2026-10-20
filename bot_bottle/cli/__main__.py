@@ -12,7 +12,7 @@ from __future__ import annotations
 import sys
 
 from ..errors import MissingEnvVarError
-from ..log import Die, die, error
+from ..lib.log import Die, die, error
 from ..manifest import ManifestError
 from ..orchestrator.store.store_manager import StoreManager
 from .commands import COMMANDS, NO_MIGRATION_COMMANDS

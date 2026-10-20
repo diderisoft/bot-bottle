@@ -23,7 +23,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from ...log import die, info, warn
+from ...lib.log import die, info, warn
 from . import netpool
 
 
