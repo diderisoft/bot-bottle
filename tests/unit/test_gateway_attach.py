@@ -202,6 +202,29 @@ class InfraServiceTrigger(unittest.TestCase):
         self.assertEqual(2, self.reattach.call_count)
         self.assertFalse(self.marker.exists())
 
+    def _changed_settings(self, *, healthy: bool) -> MagicMock:
+        """Record a fingerprint other than the service's, then ensure."""
+        self.svc._record_infra_settings()  # pyright: ignore[reportPrivateUsage]
+        record = self.marker.parent / "docker.settings.json"
+        record.write_text(record.read_text().replace(self.svc.settings.infra.fingerprint(), "older"))
+        with patch.object(self.svc, "is_healthy", return_value=healthy), \
+             patch.object(self.svc, "stop") as stop:
+            self._ensure(True)
+        return stop
+
+    def test_changed_infra_settings_restart_running_infra(self) -> None:
+        self._changed_settings(healthy=True).assert_called_once()
+
+    def test_changed_infra_settings_leave_stopped_infra_alone(self) -> None:
+        self._changed_settings(healthy=False).assert_not_called()
+
+    def test_unchanged_or_unrecorded_settings_never_stop_the_pair(self) -> None:
+        with patch.object(self.svc, "is_healthy", return_value=True), \
+             patch.object(self.svc, "stop") as stop:
+            self._ensure(True)   # nothing recorded yet; this records it
+            self._ensure(False)  # recorded and unchanged
+        stop.assert_not_called()
+
     def test_policy_is_passed_through(self) -> None:
         self._ensure(True, attach_policy=AttachPolicy.REPORT)
         self.assertIs(AttachPolicy.REPORT, self.reattach.call_args.kwargs["policy"])

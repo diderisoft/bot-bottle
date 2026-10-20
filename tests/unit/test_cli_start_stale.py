@@ -62,6 +62,7 @@ class TestLaunchBottleStaleHandling(unittest.TestCase):
         with patch.object(start_mod, "prepare_with_preflight",
                           return_value=(_fake_plan(), "dev-abc")), \
              patch.object(start_mod, "settle_state"), \
+             patch.object(start_mod, "ensure_via_daemon") as self.ensure_via_daemon, \
              patch.object(start_mod, "info"):
             return start_mod._launch_bottle(
                 spec,
@@ -121,6 +122,7 @@ class TestLaunchBottleStaleHandling(unittest.TestCase):
         self.assertEqual(0, rc)
         backend_mock.prelaunch_checks.assert_called_once()
         backend_mock.launch.assert_called_once()
+        self.assertEqual(backend_mock.name, self.ensure_via_daemon.call_args.args[1])
 
     def test_interactive_yes_uppercase_also_accepted(self) -> None:
         """'Y' or 'YES' should also be accepted as confirmation."""

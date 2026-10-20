@@ -41,6 +41,7 @@ from ...image_cache import StaleImageError
 from ...lib.log import info, die
 from ...manifest import Manifest, ManifestIndex
 from ..constants import PROG
+from ...control.hostctl.orchestrator import ensure_via_daemon
 from ..settings import settings_from_env
 from ...util import read_tty_line, slugify
 from .. import tui
@@ -591,6 +592,8 @@ def _launch_bottle(
             sys.stderr.flush()
             if read_tty_line() not in ("y", "Y", "yes", "YES"):
                 return 0
+        # The host controller brings the orchestrator up; launch then adopts it.
+        ensure_via_daemon(settings, backend.name)
         with backend.launch(plan) as bottle:
             agent_provider_template = getattr(plan, "agent_provider_template", "claude")
             extra_args: tuple[str, ...] = ()

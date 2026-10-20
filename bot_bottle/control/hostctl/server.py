@@ -9,11 +9,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import cast
 from urllib.parse import parse_qs, urlsplit
 
+from ...contract.auth import ROLE_CLI
 from ...contract.hostctl import (
-    AUTH_HEADER, AUTH_SCHEME, HOST_CONTROL, JOBS_PATH, STATUS_PATH, status_body,
+    AUTH_HEADER, AUTH_SCHEME, HOST_CONTROL, JOBS_PATH, ORCHESTRATOR_PATH, STATUS_PATH,
+    Settings, status_body,
 )
 from ...lib.log import debug
+from . import orchestrator
 from .jobs import JobRegistry
+
+MAX_BODY_BYTES = 1 << 20
 
 
 class HostControlServer(ThreadingHTTPServer):
@@ -49,6 +54,44 @@ class _Handler(BaseHTTPRequestHandler):
             self._jobs_route(server, parts[1:], parse_qs(url.query))
         else:
             self._send(404, {"error": f"no route {url.path}"})
+
+    def do_POST(self) -> None:  # pylint: disable=invalid-name
+        server = cast(HostControlServer, self.server)
+        path = urlsplit(self.path).path
+        action = path.removeprefix(ORCHESTRATOR_PATH + "/")
+        if not path.startswith(ORCHESTRATOR_PATH + "/") or action not in ("ensure", "restart", "status"):
+            self._send(404, {"error": f"no route {path}"})
+            return
+        role = self._role()
+        if role is None:
+            self._send(401, {"error": "missing or invalid token"})
+            return
+        if role != ROLE_CLI:
+            self._send(403, {"error": f"{path} is for the cli role"})
+            return
+        try:
+            settings = Settings.from_json(self._json_body().get("settings"))
+        except ValueError as e:
+            self._send(400, {"error": str(e)})
+            return
+        if action == "status":
+            self._send(200, orchestrator.status(settings))
+            return
+        job = server.jobs.start(
+            f"orchestrator.{action}", role,
+            lambda: orchestrator.ensure(settings, restart=action == "restart"),
+        )
+        self._send(202, {"job": job.id})
+
+    def _json_body(self) -> dict[str, object]:
+        """The request's JSON object body; ValueError if missing, too big or not an object."""
+        length = int(self.headers.get("Content-Length") or 0)
+        if not 0 < length <= MAX_BODY_BYTES:
+            raise ValueError("request body missing or too large")
+        body = json.loads(self.rfile.read(length))
+        if not isinstance(body, dict):
+            raise ValueError("request body must be a JSON object")
+        return body
 
     def _jobs_route(self, server: HostControlServer, rest: list[str],
                     query: dict[str, list[str]]) -> None:

@@ -208,14 +208,15 @@ class TestResolveOrchestratorUrl(unittest.TestCase):
     def test_starts_backend_orchestrator_when_none_running(self) -> None:
         backend = MagicMock()
         backend.name = "firecracker"
-        backend.ensure_orchestrator.return_value = "http://10.243.255.1:8099"
         with patch.object(
             supervise_cli, "discover_orchestrator_url",
             side_effect=supervise_cli.OrchestratorClientError("none"),
-        ), patch("bot_bottle.backend.get_bottle_backend", return_value=backend):
+        ), patch("bot_bottle.backend.get_bottle_backend", return_value=backend), \
+             patch.object(supervise_cli, "ensure_via_daemon",
+                          return_value="http://10.243.255.1:8099") as via_daemon:
             url = supervise_cli._resolve_orchestrator_url()
         self.assertEqual(url, "http://10.243.255.1:8099")
-        backend.ensure_orchestrator.assert_called_once_with()
+        self.assertEqual("firecracker", via_daemon.call_args.args[1])
 
 
 if __name__ == "__main__":

@@ -35,6 +35,7 @@ from ...contract.supervise import (
     TOOL_EGRESS_TOKEN_ALLOW,
 )
 from ..constants import PROG
+from ...control.hostctl.orchestrator import ensure_via_daemon
 from ..settings import settings_from_env
 
 
@@ -86,7 +87,7 @@ def _resolve_orchestrator_url() -> str:
         from ...backend import get_bottle_backend
         backend = get_bottle_backend(settings)
         info(f"no orchestrator control plane running; starting one ({backend.name})…")
-        return backend.ensure_orchestrator()
+        return ensure_via_daemon(settings, backend.name)
 
 
 def _client() -> OrchestratorClient:

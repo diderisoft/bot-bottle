@@ -82,7 +82,22 @@ resolver #2
             ],
             run.call_args_list[-1].args[0],
         )
-        self.assertTrue(run.call_args_list[-1].kwargs["check"])
+
+    def test_build_image_raises_when_the_build_fails(self):
+        status = util.subprocess.CompletedProcess(
+            args=[], returncode=0,
+            stdout='[{"status":{"state":"running"},"configuration":{"dns":{"nameservers":["9.9.9.9"]}}}]',
+            stderr="",
+        )
+        failed = util.subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="")
+
+        def run(argv, **kwargs):  # type: ignore[no-untyped-def]
+            del kwargs
+            return failed if argv[:2] == ["container", "build"] else status
+
+        with patch.object(util.subprocess, "run", side_effect=run), \
+             self.assertRaises(util.subprocess.CalledProcessError):
+            util.build_image("bot-bottle-agent:latest", "/repo", dns_override="9.9.9.9")
 
     def test_build_image_anchors_relative_dockerfile_to_context(self):
         status = util.subprocess.CompletedProcess(

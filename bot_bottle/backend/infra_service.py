@@ -22,7 +22,7 @@ from pathlib import Path
 
 from ..contract.hostctl import Settings
 from ..control.gateway import Gateway
-from ..lib.log import die
+from ..lib.log import die, info
 from ..control.lifecycle import DEFAULT_STARTUP_TIMEOUT_SECONDS, Orchestrator
 from ..paths import bot_bottle_root
 from .gateway_attach import (
@@ -103,6 +103,11 @@ class InfraService(abc.ABC):
             pending = marker.exists()
             marker.parent.mkdir(parents=True, exist_ok=True)
             marker.touch()
+            recorded = self.recorded_infra_fingerprint()
+            if (recorded is not None and recorded != self.settings.infra.fingerprint()
+                    and self.is_healthy()):
+                info(f"{self.name} infra settings changed; bringing it up again with them")
+                self.stop()
             url, restarted = self._bring_up(startup_timeout=startup_timeout)
             if restarted:
                 self._record_infra_settings()

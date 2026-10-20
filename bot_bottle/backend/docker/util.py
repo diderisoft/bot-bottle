@@ -11,6 +11,7 @@ from typing import Iterator
 
 from ... import resources
 from ...lib.log import die, info
+from ...lib.proc import run_streaming
 from ...util import slugify as _slugify
 
 
@@ -182,7 +183,8 @@ def build_image(
     for name, value in effective_build_args.items():
         args.extend(["--build-arg", f"{name}={value}"])
     args.append(context)
-    subprocess.run(args, check=True)
+    # Streamed, so a host controller job captures the build's output.
+    run_streaming(args, check=True)
 
 
 def image_id(ref: str) -> str:
