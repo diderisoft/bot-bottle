@@ -21,6 +21,7 @@ from unittest import mock
 
 from bot_bottle.backend import oci_agent_image
 from bot_bottle.backend.docker import launch as launch_mod
+from bot_bottle.cli.settings import settings_from_env
 from bot_bottle.manifest import ManifestImageOverlay
 from bot_bottle.published_artifacts import FORMAT_OCI, Artifact
 from tests._backend import skip_unless_backend
@@ -86,7 +87,7 @@ class TestAgentOverlayDocker(unittest.TestCase):
         with mock.patch.object(oci_agent_image.agent_image, "resolve_agent_pin",
                                return_value=self.pin):
             tag = oci_agent_image.resolve_published_agent_image(
-                plan, launch_mod._DOCKER,  # pyright: ignore[reportPrivateUsage]
+                plan, launch_mod._docker_runtime(settings_from_env()),  # pyright: ignore[reportPrivateUsage]
                 template="claude", image=f"bb-overlay-test-{uuid.uuid4().hex[:8]}:latest",
                 smoke_test=(),
             )
