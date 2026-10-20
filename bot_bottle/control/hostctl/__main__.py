@@ -12,8 +12,9 @@ import sys
 import threading
 from types import FrameType
 
-from ...contract.hostctl import PORT_ENV
+from ...contract.hostctl import HOST_CONTROL, PORT_ENV
 from ...lib.log import info
+from ...trust_domain import signing_key
 from .build import current_build_id
 from .runner import HostControlState, clear_state, write_state
 from .server import HostControlServer
@@ -21,7 +22,7 @@ from .server import HostControlServer
 
 def main() -> int:
     port = int(os.environ.get(PORT_ENV, "0") or "0")
-    server = HostControlServer(("127.0.0.1", port), current_build_id())
+    server = HostControlServer(("127.0.0.1", port), current_build_id(), signing_key(HOST_CONTROL))
     state = HostControlState(
         pid=os.getpid(), port=server.server_address[1], build_id=server.build_id
     )

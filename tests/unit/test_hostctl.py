@@ -14,17 +14,19 @@ from pathlib import Path
 from unittest import mock
 
 from bot_bottle.cli.commands.hostctl import cmd_hostctl
-from bot_bottle.contract.hostctl import SERVICE_NAME
+from bot_bottle.contract.auth import CONTROL_PLANE, ROLE_CLI, ROLE_GATEWAY
+from bot_bottle.contract.hostctl import HOST_CONTROL, ROLE_ORCHESTRATOR, SERVICE_NAME, bearer
 from bot_bottle.control.hostctl import runner
 from bot_bottle.control.hostctl.build import build_id
 from bot_bottle.control.hostctl.server import HostControlServer
+from bot_bottle.trust_domain import signing_key
 
 from . import use_bottle_root
 
 
 class TestServer(unittest.TestCase):
     def setUp(self) -> None:
-        self.server = HostControlServer(("127.0.0.1", 0), "build-x")
+        self.server = HostControlServer(("127.0.0.1", 0), "build-x", "k" * 32)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.addCleanup(self.server.server_close)
         self.addCleanup(self.server.shutdown)
@@ -41,6 +43,37 @@ class TestServer(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as cm:
             urllib.request.urlopen(self.url + "/nope", timeout=5)
         self.assertEqual(404, cm.exception.code)
+
+
+class TestAuth(unittest.TestCase):
+    def setUp(self) -> None:
+        self.addCleanup(use_bottle_root(Path(self.enterContext(tempfile.TemporaryDirectory()))))
+        self.key = signing_key(HOST_CONTROL)
+        self.server = HostControlServer(("127.0.0.1", 0), "b", self.key)
+        self.addCleanup(self.server.server_close)
+
+    def test_roles_from_bearer_tokens(self) -> None:
+        for role in (ROLE_CLI, ROLE_ORCHESTRATOR, ROLE_GATEWAY):
+            header = bearer(HOST_CONTROL.mint(role, self.key))["Authorization"]
+            self.assertEqual(role, self.server.role_of(header))
+
+    def test_rejects_other_keys_domains_and_malformed_headers(self) -> None:
+        self.assertIsNone(self.server.role_of(None))
+        self.assertIsNone(self.server.role_of("Bearer"))
+        self.assertIsNone(self.server.role_of("Basic abc"))
+        other = HOST_CONTROL.mint(ROLE_CLI, "x" * 32)
+        self.assertIsNone(self.server.role_of(f"Bearer {other}"))
+        control_plane = CONTROL_PLANE.mint(ROLE_CLI, signing_key(CONTROL_PLANE))
+        self.assertIsNone(self.server.role_of(f"Bearer {control_plane}"))
+
+    def test_own_key_file_and_cli_token(self) -> None:
+        self.assertNotEqual(HOST_CONTROL.key_filename, CONTROL_PLANE.key_filename)
+        self.assertNotEqual(self.key, signing_key(CONTROL_PLANE))
+        self.assertEqual(ROLE_CLI, self.server.role_of(bearer(runner.cli_token())["Authorization"]))
+
+    def test_refuses_to_start_without_a_key(self) -> None:
+        with self.assertRaises(ValueError):
+            HostControlServer(("127.0.0.1", 0), "b", "")
 
 
 class TestBuildId(unittest.TestCase):

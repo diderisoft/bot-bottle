@@ -7,18 +7,29 @@ import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import cast
 
-from ...contract.hostctl import STATUS_PATH, status_body
+from ...contract.hostctl import AUTH_HEADER, AUTH_SCHEME, HOST_CONTROL, STATUS_PATH, status_body
 from ...lib.log import debug
 
 
 class HostControlServer(ThreadingHTTPServer):
-    """Serves the host controller's routes. `build_id` is what `/status` reports."""
+    """Serves the host controller's routes. `build_id` is what `/status`
+    reports; `key` verifies callers' `HOST_CONTROL` tokens."""
 
     daemon_threads = True
 
-    def __init__(self, address: tuple[str, int], build_id: str) -> None:
+    def __init__(self, address: tuple[str, int], build_id: str, key: str) -> None:
+        if not key:
+            raise ValueError("host controller needs its signing key")
         super().__init__(address, _Handler)
         self.build_id = build_id
+        self.key = key
+
+    def role_of(self, authorization: str | None) -> str | None:
+        """The `HOST_CONTROL` role an `Authorization` header carries, or None."""
+        scheme, _, token = (authorization or "").partition(" ")
+        if scheme != AUTH_SCHEME or not token:
+            return None
+        return HOST_CONTROL.verify(token.strip(), self.key)
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -28,6 +39,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(200, status_body(build_id=server.build_id, pid=os.getpid()))
         else:
             self._send(404, {"error": f"no route {self.path}"})
+
+    def _role(self) -> str | None:
+        """The caller's `HOST_CONTROL` role, from its bearer token."""
+        return cast(HostControlServer, self.server).role_of(self.headers.get(AUTH_HEADER))
 
     def _send(self, code: int, body: dict[str, object]) -> None:
         payload = json.dumps(body).encode()

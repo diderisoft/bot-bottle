@@ -21,9 +21,11 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from ...contract.hostctl import SERVICE_NAME, STATUS_PATH
+from ...contract.auth import ROLE_CLI
+from ...contract.hostctl import HOST_CONTROL, SERVICE_NAME, STATUS_PATH
 from ...lib.log import info
 from ...paths import bot_bottle_root
+from ...trust_domain import mint
 from .build import PACKAGE_ROOT, current_build_id
 
 STATE_FILENAME = "state.json"
@@ -118,6 +120,11 @@ def ensure_running(timeout: float = START_TIMEOUT_SECONDS) -> HostControlState:
         return _start(timeout)
 
 
+def cli_token() -> str:
+    """A `cli` token for the host controller, signed with its host key."""
+    return mint(HOST_CONTROL, ROLE_CLI)
+
+
 def stop() -> bool:
     """Stop the live host controller. False if none was running."""
     with _lock():
@@ -183,6 +190,6 @@ def _stop(state: HostControlState) -> None:
 
 
 __all__ = [
-    "HostControlError", "HostControlState", "clear_state", "ensure_running",
+    "HostControlError", "HostControlState", "clear_state", "cli_token", "ensure_running",
     "probe", "read_state", "running", "state_dir", "stop", "write_state",
 ]
