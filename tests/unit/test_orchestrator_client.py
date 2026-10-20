@@ -9,7 +9,7 @@ import unittest
 import urllib.error
 from unittest.mock import MagicMock, patch
 
-from bot_bottle.orchestrator_auth import ROLE_CLI, verify
+from bot_bottle.contract.auth import ROLE_CLI, verify
 from bot_bottle.orchestrator.client import (
     OrchestratorClient,
     OrchestratorClientError,

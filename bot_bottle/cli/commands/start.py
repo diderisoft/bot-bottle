@@ -36,7 +36,7 @@ from ...bottle_state import (
     mark_preserved,
 )
 from ...image_cache import StaleImageError
-from ...log import info, die
+from ...lib.log import info, die
 from ...manifest import Manifest, ManifestIndex
 from ..constants import PROG
 from ...util import read_tty_line, slugify
@@ -381,7 +381,7 @@ def _peek_agent_bottle(manifest: ManifestIndex, agent_name: str) -> str:
         return ""
 
     from ...manifest.loader import scan_agent_names
-    from ...yaml_subset import YamlSubsetError, parse_frontmatter
+    from ...contract.yaml_subset import YamlSubsetError, parse_frontmatter
 
     home_agents = scan_agent_names(manifest.home_md / "agents")
     cwd_agents: dict[str, Path] = {}
@@ -449,7 +449,7 @@ def _bottle_lineage(manifest: ManifestIndex) -> dict[str, str]:
     if not bottles_dir.is_dir():
         return {}
 
-    from ...yaml_subset import YamlSubsetError, parse_frontmatter
+    from ...contract.yaml_subset import YamlSubsetError, parse_frontmatter
 
     extends_of: dict[str, str] = {}
     for path in bottles_dir.glob("*.md"):

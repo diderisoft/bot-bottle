@@ -19,7 +19,7 @@ import os
 
 from ...backend import BottleSpec
 from ...bottle_state import read_metadata
-from ...log import die
+from ...lib.log import die
 from ...manifest import ManifestIndex
 from ..constants import PROG
 from .start import _launch_bottle

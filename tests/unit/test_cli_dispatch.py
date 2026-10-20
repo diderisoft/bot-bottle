@@ -12,8 +12,8 @@ from unittest.mock import patch
 
 import bot_bottle.cli as climod
 from bot_bottle.cli import main
-from bot_bottle.store.db_store import DbStore
-from bot_bottle.log import Die
+from bot_bottle.lib.db_store import DbStore
+from bot_bottle.lib.log import Die
 from bot_bottle.manifest import ManifestError
 from bot_bottle.orchestrator.store.store_manager import StoreManager
 

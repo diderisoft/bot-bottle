@@ -16,7 +16,7 @@ from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 from bot_bottle.image_cache import StaleImageError
-from bot_bottle.log import Die
+from bot_bottle.lib.log import Die
 
 
 def _fake_plan() -> Any:

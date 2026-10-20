@@ -10,7 +10,7 @@ from bot_bottle.gateway.supervisor.mcp_dispatch import (
     MethodNotFoundError,
     dispatch,
 )
-from bot_bottle.supervisor import types as _sv
+from bot_bottle.contract import supervise as _sv
 
 
 @dataclass(frozen=True)

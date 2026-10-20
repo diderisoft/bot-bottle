@@ -15,7 +15,7 @@ import argparse
 from ...backend import enumerate_active_agents
 from ...backend.freeze import CommitCancelled, get_freezer
 from ...bottle_state import read_metadata
-from ...log import die
+from ...lib.log import die
 from ..constants import PROG
 from .. import tui
 

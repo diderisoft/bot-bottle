@@ -16,7 +16,7 @@ import sys
 import time
 from pathlib import Path
 
-from ... import log
+from ...lib import log
 from ... import resources
 from ...paths import ORCHESTRATOR_TOKEN_ENV
 from ...orchestrator.lifecycle import (

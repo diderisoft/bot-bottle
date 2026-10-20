@@ -252,7 +252,7 @@ class AgentProvider(ABC):
         run update-ca-certificates, log the fingerprint. Override for
         non-Debian base images or non-standard trust mechanisms."""
         from .backend.util import AGENT_CA_PATH, log_ca_fingerprint, select_ca_cert
-        from .log import die
+        from .lib.log import die
         cert_host_path, label = select_ca_cert(plan.egress_plan)
         # Ensure the target directory exists. A backend's rootfs build
         # may not preserve the empty /usr/local/share/ca-certificates/
@@ -277,7 +277,7 @@ class AgentProvider(ABC):
         Default: Debian/node — writes the git-gate insteadOf gitconfig
         and sets user.name/email as node. Workspace copy runs through
         BottleBackend.provision_workspace against the running bottle."""
-        from .log import die, info
+        from .lib.log import die, info
 
         # Firecracker exports image rootfs files through an unprivileged host
         # tar extraction, so image-time ownership of XDG directories is not

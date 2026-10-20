@@ -14,7 +14,7 @@ from bot_bottle.contrib.codex.codex_auth import (
     codex_dummy_auth_json,
     codex_host_access_token,
 )
-from bot_bottle.log import Die
+from bot_bottle.lib.log import Die
 
 
 def _jwt(exp: int) -> str:

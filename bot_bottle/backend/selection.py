@@ -12,7 +12,7 @@ import os
 import sys
 from typing import Any
 
-from ..log import die, info, warn
+from ..lib.log import die, info, warn
 from ..util import read_tty_line
 from .base import ActiveAgent, BackendStatus, BottleBackend
 

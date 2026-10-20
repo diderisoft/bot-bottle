@@ -15,7 +15,7 @@ from collections.abc import Callable
 from functools import cache
 
 from . import image_inputs, image_registry
-from .log import info
+from .lib.log import info
 from .published_artifacts import Artifact, current_platform, load_artifacts_manifest_optional
 
 

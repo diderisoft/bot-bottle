@@ -20,14 +20,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ...paths import bot_bottle_root
-from ...log import Die, error, info
+from ...lib.log import Die, error, info
 from ...orchestrator.client import (
     OrchestratorClient,
     OrchestratorClientError,
     discover_orchestrator_url,
 )
 
-from ...supervisor.types import (
+from ...contract.supervise import (
     Proposal,
     TOOL_EGRESS_ALLOW,
     TOOL_EGRESS_BLOCK,

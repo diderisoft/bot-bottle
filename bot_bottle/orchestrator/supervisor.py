@@ -9,7 +9,7 @@ dependency explicit and injectable in tests.
 For convenience this package also re-exports the neutral vocabulary
 (`bot_bottle.supervisor`'s types + `SupervisePlan`), so orchestrator-side
 callers import from one place. (Generic helpers like `render_diff` /
-`sha256_hex` live in `bot_bottle.util`.) The data plane must NOT import this
+`sha256_hex` live in `bot_bottle.lib.text`.) The data plane must NOT import this
 package — it imports
 `bot_bottle.supervisor` (neutral) directly and reaches the queue over the
 control-plane RPC.
@@ -19,12 +19,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..supervisor.types import *  # noqa: F401,F403 — re-export the neutral vocabulary
+from ..contract.supervise import *  # noqa: F401,F403 — re-export the neutral vocabulary
 from ..supervisor.plan import SupervisePlan
 from .store.store_manager import StoreManager
 from .store.queue_store import QueueStore
 from ..store.audit_store import AuditStore
-from ..supervisor.types import AuditEntry, Proposal, Response
+from ..contract.supervise import AuditEntry, Proposal, Response
 
 
 class Supervisor:

@@ -24,10 +24,10 @@ from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from bot_bottle.orchestrator_auth import ROLE_CLI, ROLE_GATEWAY, mint
+from bot_bottle.contract.auth import ROLE_CLI, ROLE_GATEWAY, mint
 from bot_bottle.orchestrator import api as orchestrator_api
 from bot_bottle.orchestrator.broker import StubBroker
-from bot_bottle.orchestrator.http_contract import ORCHESTRATOR_AUTH_HEADER
+from bot_bottle.contract.http import ORCHESTRATOR_AUTH_HEADER
 from bot_bottle.orchestrator.server import MAX_BODY_BYTES, create_app, make_server
 from bot_bottle.orchestrator.store.registry_store import BottleRecord, RegistryStore
 from bot_bottle.orchestrator.service import OrchestratorCore

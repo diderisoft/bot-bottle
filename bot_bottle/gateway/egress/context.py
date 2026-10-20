@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import typing
 
-from ...log import debug
+from ...lib.log import debug
 from .types import Config
 
 

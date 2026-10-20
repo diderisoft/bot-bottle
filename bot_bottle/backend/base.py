@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Generator, Generic, Sequence, TypeVar
 from ..agent_provider import AgentProvisionPlan, get_provider
 from ..egress import EgressPlan
 from ..git_gate import GitGatePlan
-from ..log import die, info
+from ..lib.log import die, info
 from ..util import expand_tilde
 from ..manifest import Manifest, ManifestIndex
 from ..supervisor.plan import SupervisePlan

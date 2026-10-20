@@ -47,10 +47,10 @@ from ...egress import Egress
 from ...git_gate import GitGate
 from ...gateway.git_gate.http_backend import DEFAULT_PORT as _GIT_HTTP_PORT
 from ...image_cache import check_stale
-from ...log import die, info, warn
+from ...lib.log import die, info, warn
 from ... import resources
 from .. import BottleImages, oci_agent_image
-from ...supervisor.types import SUPERVISE_PORT
+from ...contract.supervise import SUPERVISE_PORT
 from ..docker.egress import EGRESS_PORT
 from ..util import AGENT_CA_BUNDLE, AGENT_CA_PATH
 from . import util as container_mod

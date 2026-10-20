@@ -11,11 +11,11 @@ live in `paths` — import them from there.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from ..util import sha256_hex
 
 TOOL_EGRESS_BLOCK = "egress-block"
 TOOL_EGRESS_ALLOW = "egress-allow"
@@ -106,7 +106,7 @@ class Proposal:
             proposed_file=proposed_file,
             justification=justification,
             arrival_timestamp=ts,
-            current_file_hash=sha256_hex(proposed_file),
+            current_file_hash=hashlib.sha256(proposed_file.encode("utf-8")).hexdigest(),
         )
 
     def to_dict(self) -> dict[str, object]:

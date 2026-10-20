@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .db_store import DbStore
-from .migrations import TableMigrations
+from ..lib.db_store import DbStore
+from ..lib.migrations import TableMigrations
 from ..paths import host_db_path
 
 

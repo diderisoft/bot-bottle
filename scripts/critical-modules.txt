@@ -46,9 +46,9 @@ bot_bottle/gateway/git_gate/http_backend.py
 
 # Supervise proposal protocol and data plane.
 bot_bottle/supervisor/plan.py
-bot_bottle/supervisor/types.py
+bot_bottle/contract/supervise.py
 bot_bottle/gateway/supervisor/server.py
 
 # Shared parsers and state validation.
-bot_bottle/yaml_subset.py
+bot_bottle/contract/yaml_subset.py
 bot_bottle/bottle_state.py

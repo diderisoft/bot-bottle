@@ -38,7 +38,7 @@ from dataclasses import dataclass
 
 from ...egress import EgressPlan
 from ...git_gate import GitGatePlan
-from ...log import info
+from ...lib.log import info
 from ...orchestrator.client import OrchestratorClient, OrchestratorClientError
 from ..provision_bottle import deprovision_bottle, provision_bottle
 from . import util as container_mod

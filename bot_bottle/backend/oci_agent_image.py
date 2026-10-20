@@ -17,7 +17,7 @@ from pathlib import Path
 
 from .. import agent_image, agent_overlay, image_registry
 from ..image_registry import RegistryError
-from ..log import die, info
+from ..lib.log import die, info
 from ..published_artifacts import FORMAT_OCI, Artifact, ArtifactsManifestError
 from .base import BottlePlan
 

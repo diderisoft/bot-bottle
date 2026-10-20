@@ -21,7 +21,7 @@ from bot_bottle.egress import (
 from bot_bottle.egress.service import _yaml_str_escape
 from bot_bottle.errors import MissingEnvVarError
 from bot_bottle.manifest import ManifestIndex
-from bot_bottle.yaml_subset import parse_yaml_subset
+from bot_bottle.contract.yaml_subset import parse_yaml_subset
 
 
 def _inspect_routes(routes):  # type: ignore

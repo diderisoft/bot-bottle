@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 import bot_bottle.cli.commands.start as start_mod
 import bot_bottle.cli.tui as tui_mod
 from bot_bottle.backend import ActiveAgent
-from bot_bottle.log import Die
+from bot_bottle.lib.log import Die
 from bot_bottle.manifest import ManifestError
 
 

@@ -23,7 +23,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from ...log import die, info
+from ...lib.log import die, info
 from . import util
 
 

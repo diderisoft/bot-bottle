@@ -36,7 +36,7 @@ import sys
 from dataclasses import dataclass, field
 
 from .errors import MissingEnvVarError
-from .log import die
+from .lib.log import die
 from .manifest import Manifest
 
 _INTERPOLATED_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")

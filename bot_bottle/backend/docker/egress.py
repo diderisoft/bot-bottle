@@ -13,7 +13,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from ...log import die
+from ...lib.log import die
 
 
 # Listening port the egress daemon binds inside the bundle. The

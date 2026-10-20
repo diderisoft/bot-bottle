@@ -13,7 +13,7 @@ from bot_bottle.contrib.claude.claude_auth import (
     claude_auth_path,
     claude_host_access_token,
 )
-from bot_bottle.log import Die
+from bot_bottle.lib.log import Die
 
 
 def _cred_json(access_token: str, **extra: object) -> str:

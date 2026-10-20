@@ -20,7 +20,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from ...log import die, info
+from ...lib.log import die, info
 from ...orchestrator.lifecycle import (
     DEFAULT_STARTUP_TIMEOUT_SECONDS,
     Orchestrator,

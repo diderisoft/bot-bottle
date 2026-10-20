@@ -7,7 +7,7 @@ from pathlib import Path
 
 from bot_bottle.orchestrator import supervisor as supervise
 from bot_bottle.paths import host_db_path
-from bot_bottle.util import render_diff, sha256_hex
+from bot_bottle.lib.text import render_diff, sha256_hex
 from tests.unit import use_bottle_root
 from bot_bottle.store.audit_store import AuditStore
 from bot_bottle.orchestrator.store.queue_store import QueueStore

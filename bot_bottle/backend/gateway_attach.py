@@ -33,7 +33,7 @@ from ..gateway import Gateway, GatewayError
 from ..git_gate.plan import GitGatePlan
 from ..git_gate.provision import load_upstreams_snapshot
 from ..git_gate.service import stage_git_gate_scripts
-from ..log import info, warn
+from ..lib.log import info, warn
 from ..orchestrator.client import OrchestratorClient, OrchestratorClientError
 from .provision_gateway import GatewayTransport, provision_git_gate
 

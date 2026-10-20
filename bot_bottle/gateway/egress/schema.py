@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import typing
 
-from ...yaml_subset import YamlSubsetError, parse_yaml_subset
+from ...contract.yaml_subset import YamlSubsetError, parse_yaml_subset
 from .dlp_config import parse_inspect_block
 from .types import (
     HEADER_MATCH_TYPES,

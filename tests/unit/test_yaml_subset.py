@@ -5,8 +5,8 @@ actually use, and every rejection case the PRD enumerates."""
 import textwrap
 import unittest
 
-from bot_bottle.yaml_subset import YamlSubsetError
-from bot_bottle.yaml_subset import parse_frontmatter, parse_yaml_subset, serialize_yaml_subset
+from bot_bottle.contract.yaml_subset import YamlSubsetError
+from bot_bottle.contract.yaml_subset import parse_frontmatter, parse_yaml_subset, serialize_yaml_subset
 
 
 def _y(s: str):

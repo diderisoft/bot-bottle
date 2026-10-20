@@ -24,7 +24,7 @@ import subprocess
 import tempfile
 import unittest
 
-from bot_bottle.orchestrator_auth import ROLE_CLI, ROLE_GATEWAY, mint
+from bot_bottle.contract.auth import ROLE_CLI, ROLE_GATEWAY, mint
 from bot_bottle.orchestrator.client import OrchestratorClient
 from bot_bottle.backend.docker.infra import DockerInfraService
 from bot_bottle.paths import host_orchestrator_token

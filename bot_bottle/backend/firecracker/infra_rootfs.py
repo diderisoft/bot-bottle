@@ -19,7 +19,7 @@ from pathlib import Path
 
 from ... import image_inputs, image_registry
 from ...infra_image import pinned_infra_artifact
-from ...log import info
+from ...lib.log import info
 from ...published_artifacts import (
     FORMAT_EXT4,
     ArtifactsManifestError,

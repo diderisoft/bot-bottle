@@ -12,7 +12,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ..log import die, info
+from ..lib.log import die, info
 
 if TYPE_CHECKING:
     from ..egress import EgressPlan

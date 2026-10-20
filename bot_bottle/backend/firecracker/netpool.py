@@ -42,7 +42,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
-from ...log import die
+from ...lib.log import die
 
 
 # The pool defaults live in one shared file (see module docstring); the

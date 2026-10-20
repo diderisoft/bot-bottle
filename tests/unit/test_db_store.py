@@ -9,8 +9,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from bot_bottle.store.db_store import DbStore
-from bot_bottle.store.migrations import TableMigrations
+from bot_bottle.lib.db_store import DbStore
+from bot_bottle.lib.migrations import TableMigrations
 
 
 def _store(tmp: Path) -> DbStore:

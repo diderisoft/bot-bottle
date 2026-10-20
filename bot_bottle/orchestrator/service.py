@@ -41,7 +41,7 @@ from .supervisor import (
     TOOL_EGRESS_BLOCK,
     Supervisor,
 )
-from ..util import render_diff
+from ..lib.text import render_diff
 
 
 # Operator decision → Response.status. The apply half (egress tools) runs

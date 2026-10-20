@@ -8,7 +8,7 @@ from typing import Callable, Protocol
 
 from bot_bottle.gateway.egress.schema import load_config, route_to_yaml_dict
 from bot_bottle.gateway.policy_resolver import PolicyResolveError, PolicyResolver
-from bot_bottle.supervisor import types as _sv
+from bot_bottle.contract import supervise as _sv
 
 
 class Request(Protocol):

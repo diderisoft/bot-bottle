@@ -16,9 +16,9 @@ import sys
 from pathlib import Path
 from typing import cast
 
-from ..log import die, info
+from ..lib.log import die, info
 from ..manifest import Manifest
-from ..yaml_subset import YamlSubsetError, parse_frontmatter, serialize_yaml_subset
+from ..contract.yaml_subset import YamlSubsetError, parse_frontmatter, serialize_yaml_subset
 
 
 # Preferred key types, most secure first.

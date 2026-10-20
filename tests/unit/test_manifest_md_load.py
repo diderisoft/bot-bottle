@@ -171,7 +171,7 @@ class TestStdlibOnly(unittest.TestCase):
     existence of an `import yaml`-free file is the assertion."""
 
     def test_no_pyyaml(self):
-        src = Path("bot_bottle/yaml_subset.py").read_text()
+        src = Path("bot_bottle/contract/yaml_subset.py").read_text()
         self.assertNotIn("import yaml", src)
         self.assertNotIn("from yaml", src)
 

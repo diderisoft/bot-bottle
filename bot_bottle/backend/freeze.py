@@ -17,7 +17,7 @@ from abc import ABC, abstractmethod
 
 from . import ActiveAgent
 from ..bottle_state import mark_preserved, write_committed_image
-from ..log import die, info
+from ..lib.log import die, info
 
 
 class CommitCancelled(Exception):

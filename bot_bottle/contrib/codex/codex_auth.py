@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
 
-from ...log import die
+from ...lib.log import die
 from ...util import expand_tilde
 
 

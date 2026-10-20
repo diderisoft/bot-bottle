@@ -20,7 +20,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from ..gateway import Gateway
-from ..log import die
+from ..lib.log import die
 from ..orchestrator.lifecycle import DEFAULT_STARTUP_TIMEOUT_SECONDS, Orchestrator
 from ..paths import bot_bottle_root
 from .gateway_attach import (

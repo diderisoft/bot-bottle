@@ -12,10 +12,10 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, StrictStr
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from ..orchestrator_auth import ROLE_CLI, ROLES
-from ..supervisor.types import TOOLS
+from ..contract.auth import ROLE_CLI, ROLES
+from ..contract.supervise import TOOLS
 from ..trust_domain import CONTROL_PLANE
-from .http_contract import (
+from ..contract.http import (
     MAX_BODY_BYTES,
     ORCHESTRATOR_AUTH_HEADER,
     REQUEST_BODY_TIMEOUT_SECONDS,

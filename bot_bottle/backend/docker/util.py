@@ -11,7 +11,7 @@ import subprocess
 from typing import Iterator
 
 from ... import resources
-from ...log import die, info
+from ...lib.log import die, info
 from ...util import slugify as _slugify
 
 

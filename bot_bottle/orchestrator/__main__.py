@@ -16,7 +16,7 @@ import argparse
 import secrets
 from pathlib import Path
 
-from .. import log
+from ..lib import log
 from ..trust_domain import CONTROL_PLANE
 from .broker import LaunchBroker, StubBroker
 from .docker_broker import DockerBroker

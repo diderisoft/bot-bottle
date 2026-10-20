@@ -15,7 +15,7 @@ import typing
 
 from mitmproxy import http  # type: ignore[import-not-found]  # pylint: disable=import-error
 
-from bot_bottle.constants import IDENTITY_HEADER
+from bot_bottle.contract.identity import IDENTITY_HEADER
 from bot_bottle.gateway.egress.dlp_detectors import redact_tokens
 from bot_bottle.gateway.egress.dlp_config import (
     DEFAULT_OUTBOUND_ON_MATCH,
@@ -47,7 +47,7 @@ from bot_bottle.gateway.egress.types import (
     ScanResult,
 )
 from bot_bottle.gateway.policy_resolver import PolicyResolveError, PolicyResolver
-from bot_bottle.supervisor.types import (
+from bot_bottle.contract.supervise import (
     STATUS_APPROVED,
     STATUS_MODIFIED,
     STATUSES,
