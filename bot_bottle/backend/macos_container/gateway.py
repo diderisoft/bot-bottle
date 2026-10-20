@@ -108,8 +108,8 @@ class MacosGateway(Gateway):
         pin = pinned_infra_artifact("bot-bottle-gateway", FORMAT_OCI)
         if pin is not None:
             try:
-                pull_pinned_image(
-                    pin, tag=self.image_ref, image_exists=container_mod.image_exists,
+                self.image_ref = pull_pinned_image(
+                    pin, local_ref=self.image_ref, image_exists=container_mod.image_exists,
                     tag_image=container_mod.tag_image,
                     pull_argv=("container", "image", "pull"))
             except RegistryError as e:

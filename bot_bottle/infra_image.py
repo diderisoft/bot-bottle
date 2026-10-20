@@ -49,20 +49,34 @@ def _note_mismatch(image: str, version: str) -> None:
 def pull_pinned_image(
     artifact: Artifact,
     *,
-    tag: str,
+    local_ref: str,
     image_exists: Callable[[str], bool],
     tag_image: Callable[[str, str], None],
     pull_argv: tuple[str, ...],
-) -> None:
-    """Make the pinned `artifact` available locally as `tag`: pulled by digest
-    (after checking its tag still points there) unless the digest is already
-    local, so an install that has it launches offline. Raises `RegistryError`
-    when the registry disagrees or can't be reached."""
+) -> str:
+    """Make the pinned `artifact` available locally and return the tag to run
+    in place of `local_ref`: `<its repo>:pin-<digest>`, pulled by digest (after
+    checking its tag still points there) unless the digest is already local,
+    so an install that has it launches offline. The tag names only this
+    digest: retagging a shared one like `:latest` can leave a local build
+    answering to it (Apple Container keeps the built image's literal name, and
+    its `image tag` normalizes the new one). Raises `RegistryError` when the
+    registry disagrees or can't be reached."""
+    tag = f"{_repo(local_ref)}:pin-{artifact.digest.removeprefix('sha256:')[:16]}"
+    if image_exists(tag):
+        return tag
     pinned_ref = image_registry.pinned_reference(artifact)
     if not image_exists(pinned_ref):
         info(f"pulling published {artifact.image} ({artifact.digest[:19]}…)")
         image_registry.pull(image_registry.resolve(artifact), argv=pull_argv)
     tag_image(pinned_ref, tag)
+    return tag
+
+
+def _repo(ref: str) -> str:
+    """`ref` without its tag (`host:5000/img:latest` -> `host:5000/img`)."""
+    name, _, tag = ref.rpartition(":")
+    return name if name and "/" not in tag else ref
 
 
 __all__ = ["pinned_infra_artifact", "pull_pinned_image"]

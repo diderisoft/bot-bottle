@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import subprocess
 import tempfile
 import unittest
 import urllib.error
@@ -365,6 +366,23 @@ class RegistryPlumbing(unittest.TestCase):
             with self.assertRaises(ir.RegistryError) as ctx:
                 ir.pull(ir.resolve(self.artifact, verify=False))
         self.assertIn("denied", str(ctx.exception))
+
+    def test_unauthorized_pull_says_how_to_get_access(self) -> None:
+        proc = mock.Mock(returncode=1, stdout="", stderr="unauthorized: authentication required")
+        with mock.patch("subprocess.run", return_value=proc):
+            with self.assertRaises(ir.RegistryError) as ctx:
+                ir.pull(ir.resolve(self.artifact, verify=False))
+        self.assertIn("log the container runtime in", str(ctx.exception))
+
+    def test_a_pull_that_never_finishes_times_out(self) -> None:
+        # Apple's `container image pull` waits forever on a registry it can't
+        # read instead of failing.
+        timeout = subprocess.TimeoutExpired(["container"], ir.PULL_TIMEOUT_SECONDS)
+        with mock.patch("subprocess.run", side_effect=timeout) as run:
+            with self.assertRaises(ir.RegistryError) as ctx:
+                ir.pull(ir.resolve(self.artifact, verify=False))
+        self.assertEqual(ir.PULL_TIMEOUT_SECONDS, run.call_args.kwargs["timeout"])
+        self.assertIn("did not finish", str(ctx.exception))
 
     def test_missing_runtime_is_named(self) -> None:
         with mock.patch("subprocess.run", side_effect=OSError("no docker")):

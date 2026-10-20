@@ -154,11 +154,11 @@ class DockerOrchestrator(Orchestrator):
         pin = pinned_infra_artifact("bot-bottle-orchestrator", FORMAT_OCI)
         if pin is not None:
             try:
-                pull_pinned_image(
-                    pin, tag=self.image_ref, image_exists=docker_image_exists,
+                self.image_ref = pull_pinned_image(
+                    pin, local_ref=self.image_ref, image_exists=docker_image_exists,
                     tag_image=docker_tag_image, pull_argv=("docker", "pull"))
             except RegistryError as e:
-                raise GatewayError(str(e)) from e
+                raise OrchestratorStartError(str(e)) from e
             return
         argv = ["docker", "build", "-t", self.image_ref,
                 "-f", str(self._repo_root / self._dockerfile),

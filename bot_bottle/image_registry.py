@@ -207,14 +207,35 @@ def pull(
     explicitly."""
     cmd = [*(argv or (runtime, "pull")), resolved.pinned_ref]
     try:
-        proc = subprocess.run(cmd, capture_output=True, check=False, text=True)
+        proc = subprocess.run(cmd, capture_output=True, check=False, text=True,
+                              timeout=PULL_TIMEOUT_SECONDS)
     except OSError as e:
         raise RegistryError(f"{runtime} not available to pull images: {e}") from e
-    if proc.returncode != 0:
+    except subprocess.TimeoutExpired as e:
+        # Apple's `container image pull` waits forever on a registry it isn't
+        # allowed to read, rather than failing.
         raise RegistryError(
-            f"pulling {resolved.pinned_ref} failed (exit {proc.returncode}):\n"
-            f"{(proc.stderr or proc.stdout).strip()}"
+            f"pulling {resolved.pinned_ref} did not finish in {PULL_TIMEOUT_SECONDS // 60} "
+            f"minutes. {_ACCESS_HINT}") from e
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout).strip()
+        hint = f"\n{_ACCESS_HINT}" if _looks_unauthorized(detail) else ""
+        raise RegistryError(
+            f"pulling {resolved.pinned_ref} failed (exit {proc.returncode}):\n{detail}{hint}"
         )
+
+
+# Long enough for a multi-GB agent image on a slow link.
+PULL_TIMEOUT_SECONDS = 30 * 60
+_ACCESS_HINT = (
+    "If the registry isn't public, log the container runtime in to it "
+    "(`docker login` / `container registry login`), or set "
+    "BOT_BOTTLE_INFRA_BUILD=local to build instead.")
+
+
+def _looks_unauthorized(detail: str) -> bool:
+    lowered = detail.lower()
+    return any(word in lowered for word in ("unauthorized", "denied", "401", "403"))
 
 
 def ext4_url(artifact: Artifact) -> str:
