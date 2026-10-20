@@ -111,6 +111,11 @@ class TestDockerGateway(unittest.TestCase):
                 self.assertTrue(self.sc.connect_to_orchestrator(_ORCH_URL, _TOKEN), kwargs)
             self.assertEqual(1, len([c for c in calls if c[:2] == ["docker", "run"]]))
 
+    def test_an_unreadable_binding_counts_as_not_bound(self) -> None:
+        for answer in (_proc(returncode=1, stderr="no such container"), _proc(stdout="{not json")):
+            with patch(_RUN_DOCKER, return_value=answer):
+                self.assertFalse(self.sc._bound_to(_ORCH_URL, _TOKEN))  # pyright: ignore[reportPrivateUsage]
+
     def test_gateway_off_its_pinned_address_is_recreated_there(self) -> None:
         # Agents bake the gateway's address into their proxy env, so a gateway
         # anywhere else would strand them: replace it at the pinned address.
