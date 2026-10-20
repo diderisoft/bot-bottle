@@ -1,7 +1,7 @@
 """Unit: Firecracker cleanup (orphan enumeration + removal) and the
 thin backend classmethod delegates.
 
-Cleanup shells out to pgrep/docker and touches the run dir; mock those so
+Cleanup reads /proc and touches the run dir; mock those so
 the orphan-discovery + removal logic is covered without a live host. The
 delegate tests just assert each backend's setup/status/teardown/cleanup
 classmethods forward to their module.
@@ -9,7 +9,6 @@ classmethods forward to their module.
 
 from __future__ import annotations
 
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -20,10 +19,6 @@ from bot_bottle.backend.firecracker import cleanup as fc_cleanup
 from bot_bottle.backend.firecracker.bottle_cleanup_plan import (
     FirecrackerBottleCleanupPlan,
 )
-
-
-def _proc(stdout: str = "", returncode: int = 0) -> "subprocess.CompletedProcess[str]":
-    return subprocess.CompletedProcess([], returncode, stdout=stdout, stderr="")
 
 
 class TestProcessScan(unittest.TestCase):
@@ -60,8 +55,7 @@ class TestProcessScan(unittest.TestCase):
                 333: ("firecracker", "--config-file", "/elsewhere/config.json"),
             }
             with patch.object(
-                fc_cleanup.subprocess, "run",
-                return_value=_proc("111\n222\n333\nnotanint\n"),
+                fc_cleanup, "_firecracker_pids", return_value=[111, 222, 333],
             ), patch.object(
                 fc_cleanup, "_process_args", side_effect=args.get,
             ):
@@ -75,7 +69,7 @@ class TestProcessScan(unittest.TestCase):
             live = run_root / "live bottle"
             live.mkdir()
             with patch.object(
-                fc_cleanup.subprocess, "run", return_value=_proc("111\n"),
+                fc_cleanup, "_firecracker_pids", return_value=[111],
             ), patch.object(
                 fc_cleanup, "_process_args",
                 return_value=("firecracker", "--config-file",
@@ -86,19 +80,24 @@ class TestProcessScan(unittest.TestCase):
                     fc_cleanup._scan_processes(run_root),
                 )
 
-    def test_scan_empty_when_pgrep_finds_no_processes(self):
-        with patch.object(fc_cleanup.subprocess, "run", return_value=_proc(returncode=1)):
+    def test_scan_empty_when_no_firecracker_runs(self):
+        with patch.object(fc_cleanup, "_firecracker_pids", return_value=[]):
             self.assertEqual((set(), []), fc_cleanup._scan_processes(Path("/x")))
 
-    def test_scan_raises_when_pgrep_errors(self):
-        proc = subprocess.CompletedProcess(
-            [], 2, stdout="", stderr="invalid process expression",
-        )
-        with (
-            patch.object(fc_cleanup.subprocess, "run", return_value=proc),
-            self.assertRaisesRegex(EnumerationError, "invalid process expression"),
-        ):
-            fc_cleanup._scan_processes(Path("/x"))
+    def test_pids_come_from_proc_without_pgrep(self):
+        # No procps needed: the KVM CI runner's PATH has no pgrep.
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = Path(tmp)
+            for pid, name in ((111, "firecracker"), (222, "python3"), (333, "firecracker")):
+                (proc / str(pid)).mkdir()
+                (proc / str(pid) / "comm").write_text(f"{name}\n")
+            (proc / "444").mkdir()  # exited mid-scan: no comm
+            (proc / "self").mkdir()  # not a pid
+            self.assertEqual([111, 333], fc_cleanup._firecracker_pids(proc))
+
+    def test_an_unreadable_proc_raises_rather_than_reporting_nothing(self):
+        with self.assertRaises(EnumerationError):
+            fc_cleanup._firecracker_pids(Path("/nonexistent-proc"))
 
     def test_prepare_cleanup_does_not_plan_deletions_when_scan_errors(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -108,9 +107,8 @@ class TestProcessScan(unittest.TestCase):
             with (
                 patch.object(fc_cleanup, "_run_root", return_value=run_root),
                 patch.object(
-                    fc_cleanup.subprocess,
-                    "run",
-                    return_value=_proc(returncode=2),
+                    fc_cleanup, "_firecracker_pids",
+                    side_effect=EnumerationError("could not enumerate"),
                 ),
                 self.assertRaises(EnumerationError),
             ):
@@ -145,8 +143,7 @@ class TestProcessScan(unittest.TestCase):
             (run_root / "live-a").mkdir()
             (run_root / "dead-b").mkdir()
             with patch.object(fc_cleanup, "_run_root", return_value=run_root), \
-                 patch.object(fc_cleanup.subprocess, "run",
-                              return_value=_proc("111\n")), \
+                 patch.object(fc_cleanup, "_firecracker_pids", return_value=[111]), \
                  patch.object(
                      fc_cleanup, "_process_args",
                      return_value=("firecracker", "--config-file",

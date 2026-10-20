@@ -24,7 +24,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 import os
 import signal
-import subprocess
 from pathlib import Path
 
 from ...log import info
@@ -75,6 +74,28 @@ def _process_args(pid: int) -> tuple[str, ...] | None:
     return _decode_cmdline(raw)
 
 
+def _firecracker_pids(proc_root: Path = Path("/proc")) -> list[int]:
+    """Pids of running processes whose name contains `firecracker`, read from
+    `/proc` (what `pgrep firecracker` matches, without needing procps on the
+    host's PATH). A process that exits mid-scan is skipped; an unreadable
+    `/proc` raises, since an empty answer would hide live VMs."""
+    try:
+        entries = [e for e in proc_root.iterdir() if e.name.isdigit()]
+    except OSError as exc:
+        raise EnumerationError(
+            f"could not enumerate Firecracker processes: {exc}"
+        ) from exc
+    pids: list[int] = []
+    for entry in entries:
+        try:
+            name = (entry / "comm").read_text(errors="replace").strip()
+        except OSError:  # exited meanwhile, or not ours to read
+            continue
+        if "firecracker" in name:
+            pids.append(int(entry.name))
+    return sorted(pids)
+
+
 def _scan_processes(run_root: Path) -> tuple[set[str], list[int]]:
     """Inspect running firecracker VMs under ``run_root``.
 
@@ -83,30 +104,9 @@ def _scan_processes(run_root: Path) -> tuple[set[str], list[int]]:
       * ``orphan_pids`` — firecracker pids whose run dir no longer exists
         (a lingering VMM to kill).
     """
-    try:
-        result = subprocess.run(
-            ["pgrep", "firecracker"],
-            capture_output=True, text=True, check=False,
-        )
-    except OSError as exc:
-        raise EnumerationError(
-            f"could not enumerate Firecracker processes: {exc}"
-        ) from exc
-    if result.returncode == 1:
-        # pgrep's documented "no processes matched" result.
-        return set(), []
-    if result.returncode != 0:
-        detail = (result.stderr or "").strip() or f"exit {result.returncode}"
-        raise EnumerationError(
-            f"could not enumerate Firecracker processes: {detail}"
-        )
     live: set[str] = set()
     orphan_pids: list[int] = []
-    for line in result.stdout.splitlines():
-        try:
-            pid = int(line.strip())
-        except ValueError:
-            continue
+    for pid in _firecracker_pids():
         args = _process_args(pid)
         if args is None:
             continue
