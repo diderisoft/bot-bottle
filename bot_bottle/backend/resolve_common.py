@@ -28,8 +28,9 @@ from ..egress import Egress, EgressPlan
 from ..git_gate import GitGate, GitGatePlan
 from ..lib.log import die
 from ..manifest import Manifest, ManifestBottle
+from ..orchestrator.store.store_manager import StoreManager
+from ..paths import host_db_path
 from ..supervisor.plan import SupervisePlan
-from ..orchestrator.supervisor import Supervisor
 from ..util import slugify
 from . import BottleSpec
 
@@ -96,13 +97,15 @@ def prepare_egress(
 
 
 def prepare_supervise(bottle: ManifestBottle, slug: str) -> SupervisePlan | None:
-    """Prepare the supervise daemon state dir. Returns None when
-    bottle.supervise is falsy."""
+    """Prepare the supervise daemon state dir and migrate the host database.
+    Returns None when bottle.supervise is falsy. `internal_network` is set by
+    the launch step before `.start`."""
     if not bottle.supervise:
         return None
-    supervise_dir = supervise_state_dir(slug)
-    supervise_dir.mkdir(parents=True, exist_ok=True)
-    return Supervisor().prepare(slug, supervise_dir)
+    supervise_state_dir(slug).mkdir(parents=True, exist_ok=True)
+    mgr = StoreManager(host_db_path())
+    mgr.migrate()
+    return SupervisePlan(slug=slug, db_path=mgr.db_path)
 
 
 def merge_provision_env_vars(provision: AgentProvisionPlan) -> AgentProvisionPlan:

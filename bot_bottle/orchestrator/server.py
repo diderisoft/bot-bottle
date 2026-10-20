@@ -8,7 +8,7 @@ import threading
 
 import uvicorn
 
-from ..trust_domain import CONTROL_PLANE
+from ..contract.auth import CONTROL_PLANE
 from .api import create_app
 from ..contract.http import MAX_BODY_BYTES, ORCHESTRATOR_AUTH_HEADER
 from .service import OrchestratorCore

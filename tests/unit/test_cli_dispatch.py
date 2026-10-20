@@ -23,7 +23,6 @@ class TestMainDispatch(unittest.TestCase):
         patcher = patch.object(DbStore, "is_migrated", return_value=True)
         self._mock_check = patcher.start()
         self.addCleanup(patcher.stop)
-        self.addCleanup(StoreManager.reset)
 
     def test_no_args_prints_usage_returns_2(self) -> None:
         with patch("sys.stderr", io.StringIO()):
@@ -103,7 +102,6 @@ class TestMigrationGate(unittest.TestCase):
         patcher = patch.object(StoreManager, "is_migrated", return_value=False)
         patcher.start()
         self.addCleanup(patcher.stop)
-        self.addCleanup(StoreManager.reset)
 
     def test_store_command_blocks_when_stdin_cannot_confirm(self) -> None:
         # Non-TTY stdin at EOF (as in CI): the [y/N] prompt reads "" and the

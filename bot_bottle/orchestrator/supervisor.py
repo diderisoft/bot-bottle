@@ -2,17 +2,16 @@
 
 `Supervisor` is the service object the `OrchestratorCore` owns and calls: it wraps
 the supervise queue + audit stores (queue proposals, record operator responses,
-write audit entries, stage the DB at launch). Binding those operations to one
-object — optionally scoped to a `db_path` — makes the orchestrator's supervise
-dependency explicit and injectable in tests.
+write audit entries). Binding those operations to one object scoped to a
+`db_path` makes the orchestrator's supervise dependency explicit and injectable
+in tests.
 
-For convenience this package also re-exports the neutral vocabulary
-(`bot_bottle.supervisor`'s types + `SupervisePlan`), so orchestrator-side
-callers import from one place. (Generic helpers like `render_diff` /
+For convenience this module also re-exports the neutral vocabulary
+(`bot_bottle.contract.supervise`), so orchestrator-side callers import from one
+place. (Generic helpers like `render_diff` /
 `sha256_hex` live in `bot_bottle.lib.text`.) The data plane must NOT import this
-package — it imports
-`bot_bottle.supervisor` (neutral) directly and reaches the queue over the
-control-plane RPC.
+module; it imports `bot_bottle.contract.supervise` directly and reaches the
+queue over the control-plane RPC.
 """
 
 from __future__ import annotations
@@ -20,20 +19,16 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..contract.supervise import *  # noqa: F401,F403 — re-export the neutral vocabulary
-from ..supervisor.plan import SupervisePlan
-from .store.store_manager import StoreManager
+from .store.audit_store import AuditStore
 from .store.queue_store import QueueStore
-from ..store.audit_store import AuditStore
 from ..contract.supervise import AuditEntry, Proposal, Response
 
 
 class Supervisor:
-    """Host-side supervise service: the queue + audit I/O and launch-time DB
-    staging the orchestrator drives. Stateless apart from an optional `db_path`
-    (None → the host DB, resolved per store as before), so a test can point a
-    `Supervisor` at a temp database."""
+    """The supervise queue + audit I/O the orchestrator drives, against the
+    database at `db_path`."""
 
-    def __init__(self, db_path: Path | None = None) -> None:
+    def __init__(self, db_path: Path) -> None:
         self._db_path = db_path
 
     def _queue(self, queue_key: str) -> QueueStore:
@@ -79,13 +74,3 @@ class Supervisor:
     def read_audit_entries(self, component: str, slug: str) -> list[AuditEntry]:
         """Load all audit entries for the given component+slug."""
         return self._audit().read_audit_entries(component, slug)
-
-    # --- Launch-time staging ----------------------------------------------
-
-    def prepare(self, slug: str, stage_dir: Path) -> SupervisePlan:
-        """Stage the host database and return the plan. Called by the backend at
-        launch; `internal_network` is set by the launch step before `.start`."""
-        del stage_dir
-        mgr = StoreManager(self._db_path) if self._db_path else StoreManager.instance()
-        mgr.migrate()
-        return SupervisePlan(slug=slug, db_path=mgr.db_path)

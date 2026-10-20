@@ -69,9 +69,9 @@ class OrchestratorCore:
         self.registry = registry
         self._broker = broker
         self._secret = sign_secret
-        # The supervise service (queue + audit I/O). Injectable so tests can
-        # point it at a temp DB; defaults to the host DB.
-        self._supervisor = supervisor or Supervisor()
+        # The supervise service (queue + audit I/O). Injectable for tests;
+        # defaults to the registry's DB, which co-tenants the supervise tables.
+        self._supervisor = supervisor or Supervisor(registry.db_path)
         # Per-bottle egress auth tokens (env_name -> value), keyed by bottle_id.
         # Held **in memory only** — never written to the registry DB — so the
         # gateway can inject each bottle's upstream credential without secrets

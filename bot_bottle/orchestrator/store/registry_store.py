@@ -38,7 +38,6 @@ from pathlib import Path
 
 from ...lib.db_store import DbStore
 from ...lib.migrations import TableMigrations
-from ...paths import host_db_path
 
 # 256 bits of urandom, URL-safe — unguessable per-bottle identity token.
 IDENTITY_TOKEN_BYTES = 32
@@ -53,13 +52,6 @@ DEFAULT_REAP_GRACE_SECONDS = 120.0
 def new_identity_token() -> str:
     """A fresh per-bottle identity token (PRD 0070 attribution defence)."""
     return secrets.token_urlsafe(IDENTITY_TOKEN_BYTES)
-
-
-def default_db_path() -> Path:
-    """The shared host state DB (`bot-bottle.db`) — all bot-bottle runtime
-    state in one file, co-tenanted via schema_key. Host-resident so it
-    survives orchestrator restarts (re-adoption sweeps it)."""
-    return host_db_path()
 
 
 @dataclass(frozen=True)
@@ -153,8 +145,8 @@ def _row_to_record(row: sqlite3.Row) -> BottleRecord:
 class RegistryStore(DbStore):
     """SQLite-backed registry of live bottles + fail-closed attribution."""
 
-    def __init__(self, db_path: Path | None = None) -> None:
-        super().__init__(db_path or default_db_path(), _MIGRATIONS)
+    def __init__(self, db_path: Path) -> None:
+        super().__init__(db_path, _MIGRATIONS)
 
     def _connect(self) -> sqlite3.Connection:
         """Open a connection with a busy timeout for the shared DB."""
@@ -426,7 +418,6 @@ __all__ = [
     "BottleRecord",
     "RegistryStore",
     "new_identity_token",
-    "default_db_path",
     "IDENTITY_TOKEN_BYTES",
     "DEFAULT_REAP_GRACE_SECONDS",
 ]

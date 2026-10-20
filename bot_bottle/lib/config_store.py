@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..lib.db_store import DbStore
-from ..lib.migrations import TableMigrations
-from ..paths import host_db_path
+from .db_store import DbStore
+from .migrations import TableMigrations
 
 
 DEFAULT_CACHED_IMAGE_STALE_WARNING_DAYS = 1
@@ -15,7 +14,7 @@ DEFAULT_CACHED_IMAGE_STALE_WARNING_DAYS = 1
 class ConfigStore(DbStore):
     """SQLite configuration for host-side bot-bottle settings."""
 
-    def __init__(self, db_path: Path | None = None) -> None:
+    def __init__(self, db_path: Path) -> None:
         migrations = TableMigrations("config_store", [
             # v1 — host-side bot-bottle settings
             """
@@ -25,7 +24,7 @@ class ConfigStore(DbStore):
             )
             """,
         ])
-        super().__init__(db_path or host_db_path(), migrations)
+        super().__init__(db_path, migrations)
 
     def cached_image_stale_warning_days(self) -> int:
         if not self.db_path.is_file():
