@@ -83,6 +83,14 @@ jobs:
           python3 --version
           python3 cli.py backend status --backend=docker
 
+      # Same as test.yml: the gateway container and network have fixed names on
+      # this shared runner, so drop any a previous job left (both are recreated
+      # by ensure_running).
+      - name: Preflight — clear any leftover gateway
+        run: |
+          docker rm --force bot-bottle-orch-gateway 2>/dev/null || true
+          docker network rm bot-bottle-gateway 2>/dev/null || true
+
       - name: Run integration tests (docker) with coverage
         env:
           BOT_BOTTLE_BACKEND: docker

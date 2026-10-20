@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -17,7 +18,7 @@ from bot_bottle.gateway import (
     GatewayError,
     rotate_gateway_ca,
 )
-from bot_bottle.paths import GATEWAY_CA_DIRNAME, host_gateway_ca_dir
+from bot_bottle.paths import ORCHESTRATOR_AUTH_JWT_ENV, GATEWAY_CA_DIRNAME, host_gateway_ca_dir
 from tests.unit import use_bottle_root
 
 
@@ -73,8 +74,10 @@ class TestDockerGateway(unittest.TestCase):
         with patch(_RUN_DOCKER, return_value=_proc(stdout="")):
             self.assertFalse(self.sc.is_running())
 
-    def test_ensure_running_noop_when_up_and_image_current(self) -> None:
-        calls: list[list[str]] = []
+    def _running_gateway(self, calls: list[list[str]], *, token: str = _TOKEN,
+                         url: str = _ORCH_URL):
+        env = json.dumps([f"BOT_BOTTLE_ORCHESTRATOR_URL={url}",
+                          f"{ORCHESTRATOR_AUTH_JWT_ENV}={token}"])
 
         def fake(argv: list[str], **_kw: object) -> Mock:
             calls.append(argv)
@@ -84,15 +87,29 @@ class TestDockerGateway(unittest.TestCase):
                 return _proc(stdout="img-A")               # current image id
             if argv[:2] == ["docker", "inspect"] and "IPAddress" in argv[3]:
                 return _proc(stdout="10.242.255.2")        # at its pinned address
+            if argv[:2] == ["docker", "inspect"] and "Config.Env" in argv[3]:
+                return _proc(stdout=env)                   # its orchestrator binding
             if argv[:2] == ["docker", "inspect"]:
                 return _proc(stdout="img-A")               # container's image (same)
             return _proc()
+        return fake
 
-        with patch(_RUN_DOCKER, side_effect=fake):
+    def test_ensure_running_noop_when_up_and_image_current(self) -> None:
+        calls: list[list[str]] = []
+        with patch(_RUN_DOCKER, side_effect=self._running_gateway(calls)):
             restarted = self.sc.connect_to_orchestrator(_ORCH_URL, _TOKEN)
         self.assertFalse(restarted)  # adopted: no running bottle needs reattaching
         self.assertEqual([], [c for c in calls if c[:2] == ["docker", "run"]])
         self.assertEqual([], [c for c in calls if c[:2] == ["docker", "rm"]])
+
+    def test_a_gateway_bound_to_another_orchestrator_is_replaced(self) -> None:
+        # Left by a run with another signing key, it would present a token the
+        # current orchestrator rejects, so every request 403s.
+        for kwargs in ({"token": "old-run-token"}, {"url": "http://elsewhere:9000"}):
+            calls: list[list[str]] = []
+            with patch(_RUN_DOCKER, side_effect=self._running_gateway(calls, **kwargs)):
+                self.assertTrue(self.sc.connect_to_orchestrator(_ORCH_URL, _TOKEN), kwargs)
+            self.assertEqual(1, len([c for c in calls if c[:2] == ["docker", "run"]]))
 
     def test_gateway_off_its_pinned_address_is_recreated_there(self) -> None:
         # Agents bake the gateway's address into their proxy env, so a gateway

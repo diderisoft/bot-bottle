@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import json
 import os
 import time
 from pathlib import Path
@@ -154,6 +155,22 @@ class DockerGateway(Gateway):
         except GatewayError:
             return False
 
+    def _bound_to(self, orchestrator_url: str, gateway_token: str) -> bool:
+        """True iff the running gateway resolves policy against
+        `orchestrator_url` and presents `gateway_token`. A gateway left from
+        another orchestrator (another signing key) would have every request
+        refused, so anything unreadable counts as not bound."""
+        proc = run_docker(["docker", "inspect", "--format", "{{json .Config.Env}}", self.name])
+        if proc.returncode != 0:
+            return False
+        try:
+            entries = json.loads(proc.stdout or "null") or []
+        except json.JSONDecodeError:
+            return False
+        env = dict(e.split("=", 1) for e in entries if isinstance(e, str) and "=" in e)
+        return (env.get("BOT_BOTTLE_ORCHESTRATOR_URL") == orchestrator_url
+                and env.get(ORCHESTRATOR_AUTH_JWT_ENV) == gateway_token)
+
     def _ensure_network(self) -> None:
         """Create the shared gateway network if it doesn't exist. Idempotent —
         a concurrent create loses harmlessly (the loser sees 'already exists').
@@ -255,7 +272,8 @@ class DockerGateway(Gateway):
         # just when the container is absent.
         self._ensure_network()
         if (self.is_running() and self._running_image_is_current()
-                and self._at_pinned_address()):
+                and self._at_pinned_address()
+                and self._bound_to(orchestrator_url, gateway_token)):
             return False
         # Clear any stale (stopped OR outdated-image) container holding the
         # fixed name, then start fresh. `rm --force` on an absent name is a
