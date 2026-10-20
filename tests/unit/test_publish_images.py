@@ -150,8 +150,17 @@ class PutGeneric(unittest.TestCase):
         resp = mock.MagicMock()
         resp.__enter__.return_value = mock.Mock(status=201)
         with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch("urllib.request.urlopen", return_value=resp):
+            with mock.patch("urllib.request.urlopen", return_value=resp) as urlopen:
                 pi.put_generic("https://x/y", self._body(tmp), "tok")
+        # The registry stores and hashes a big rootfs before answering.
+        self.assertEqual(pi._UPLOAD_TIMEOUT_SECONDS, urlopen.call_args.kwargs["timeout"])
+
+    def test_no_answer_in_time_is_a_publish_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch("urllib.request.urlopen",
+                            side_effect=TimeoutError("The read operation timed out")):
+                with self.assertRaisesRegex(pi.PublishError, "no answer within"):
+                    pi.put_generic("https://x/y", self._body(tmp), "tok")
 
     def test_conflict_points_at_the_version(self) -> None:
         """A 409 means this version was already published. Overwriting silently

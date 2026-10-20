@@ -48,6 +48,9 @@ from .published_artifacts import (
 
 _CHUNK = 1 << 20
 _HTTP_TIMEOUT_SECONDS = 60.0
+# After the body of a multi-hundred-MB rootfs is sent, the registry stores and
+# hashes it before answering, which can outlast the normal timeout.
+_UPLOAD_TIMEOUT_SECONDS = 900.0
 
 _DEFAULT_BASE = "https://gitea.dideric.is"
 _DEFAULT_OWNER = "didericis"
@@ -212,7 +215,7 @@ def put_generic(url: str, body: Path, token: str) -> None:
         if token:
             req.add_header("Authorization", f"token {token}")
         try:
-            with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT_SECONDS) as resp:
+            with urllib.request.urlopen(req, timeout=_UPLOAD_TIMEOUT_SECONDS) as resp:
                 print(f"  uploaded {url} (HTTP {resp.status})")
         except urllib.error.HTTPError as e:
             if e.code == 409:
@@ -223,6 +226,9 @@ def put_generic(url: str, body: Path, token: str) -> None:
             raise PublishError(f"upload failed (HTTP {e.code}): {url}") from e
         except urllib.error.URLError as e:
             raise PublishError(f"registry unreachable: {url} ({e.reason})") from e
+        except TimeoutError as e:
+            raise PublishError(
+                f"upload of {url} got no answer within {_UPLOAD_TIMEOUT_SECONDS:.0f}s") from e
 
 
 def ext4_url(image: str, version: str, plat: str) -> str:
