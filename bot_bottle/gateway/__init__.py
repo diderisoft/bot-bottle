@@ -56,6 +56,13 @@ GATEWAY_CA_CERT = f"{MITMPROXY_HOME}/mitmproxy-ca-cert.pem"
 # signing identity; the rest are derived encodings agents/clients consume.
 GATEWAY_CA_GLOB = "mitmproxy-ca*"
 
+# Python in the gateway with a known PATH: exec'd commands don't get a login
+# shell's PATH (the firecracker gateway is reached over SSH).
+_GATEWAY_PYTHON = (
+    "/usr/bin/env", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "python3",
+)
+
 # The gateway data-plane image + its Dockerfile. Kept as a local constant
 # rather than imported from the backend layer, which would drag
 # the whole backend layer into the lean orchestrator (see #359); unify when
@@ -157,8 +164,24 @@ class Gateway(abc.ABC):
     def persisted_ca_dir(self) -> Path | None:
         """The host dir the gateway's CA persists in across restarts, or None
         when it isn't a host dir this process can clear (a named volume).
-        Rotating the CA is deleting its contents and restarting the gateway
-        (`rotate_gateway_ca`)."""
+        Clearing it (`rotate_gateway_ca`) makes the next start mint a fresh,
+        unrelated CA; `roll_over_ca` is the rotation running agents survive."""
+
+    def roll_over_ca(self) -> None:
+        """Replace the running gateway's CA with a new one cross-signed by the
+        current one (PRD 0090). Takes effect on the gateway's next start;
+        agents that loaded the current CA keep validating it. Raises
+        `GatewayError`."""
+        try:
+            self.provisioning_transport().exec(
+                [*_GATEWAY_PYTHON, "-m", "bot_bottle.gateway.ca_rollover", MITMPROXY_HOME])
+        except GatewayProvisionError as e:
+            raise GatewayError(f"could not roll the gateway CA over: {e}") from e
+        self._save_rolled_over_ca()
+
+    def _save_rolled_over_ca(self) -> None:
+        """Copy the rolled-over CA to where it persists across restarts.
+        Default: nothing, the gateway's CA dir is the persisted one."""
 
     @abc.abstractmethod
     def provisioning_transport(self) -> "GatewayTransport":

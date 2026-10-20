@@ -1,14 +1,15 @@
-"""Rotate every backend's gateway mitmproxy CA (issue #450).
+"""Rotate every backend's gateway mitmproxy CA (issue #450, PRD 0090).
 
     python -m bot_bottle.orchestrator.rotate_ca
 
-For each backend available on this host, under its bring-up lock: stop the
-gateway (whose mitmproxy holds the CA in memory), then delete the persisted CA
-(`Gateway.persisted_ca_dir`) so the next start mints a fresh one and
-reattaches every running bottle to it (PRD 0081). Backends may share a CA dir;
-a dir is cleared only once every gateway using it has stopped, so a gateway
-that can't be stopped keeps serving a CA that still exists on disk. Running
-bottles lose egress until the next bring-up.
+Under every backend's bring-up lock, backends are grouped by the CA dir their
+gateways share (docker and macOS share one). For a group with a running
+gateway, the CA is rolled over through it to a new one cross-signed by the
+current one, then each running gateway is restarted and its bottles reattached
+(PRD 0081): agents that loaded the old CA keep validating, new ones trust the
+new CA. A group with no running gateway has its persisted CA cleared, so the
+next start mints a fresh one. A failed group keeps its CA and the command
+exits non-zero; the others still rotate.
 """
 
 from __future__ import annotations
@@ -41,18 +42,32 @@ def _services() -> list[tuple[str, Callable[[], "InfraService"]]]:
     ]
 
 
-def _stop_gateway(name: str, service: "InfraService") -> bool:
-    try:
-        gateway = service.gateway()
+def _rotate_group(ca_dir: Path | None, members: dict[str, "InfraService"]) -> None:
+    """Rotate the CA one or more backends share. Raises on failure."""
+    running = [name for name, service in members.items() if service.gateway().is_running()]
+    if not running:
+        label = ", ".join(members)
+        if ca_dir is None:
+            _out(f"{label}: gateway isn't running and its CA is in a named volume; "
+                 "remove the volume to rotate")
+            return
+        removed = rotate_gateway_ca(ca_dir)
+        _out(f"{label}: gateway isn't running; removed {len(removed)} CA file(s) from "
+             f"{ca_dir}, so its next start mints a new CA")
+        return
+    # The rollover runs the gateway's own installed code, so bring it up to
+    # date first (a no-op when it's current).
+    members[running[0]].ensure_running()
+    members[running[0]].gateway().roll_over_ca()
+    _out(f"{running[0]}: rolled the CA over to a new one cross-signed by the current one")
+    for name in running:
+        gateway = members[name].gateway()
         gateway.stop()
         if gateway.is_running():
-            raise GatewayError("it is still running")
-    except Exception as e:  # pylint: disable=broad-exception-caught
-        # Any backend can fail in its own way; report it and keep its CA.
-        _out(f"{name}: could not stop the gateway: {e}")
-        return False
-    _out(f"{name}: stopped the gateway")
-    return True
+            raise GatewayError(f"the {name} gateway is still running after stop")
+    for name in running:
+        members[name].ensure_running()
+        _out(f"{name}: restarted the gateway on the new CA and reattached running bottles")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -61,33 +76,28 @@ def main(argv: list[str] | None = None) -> int:
     if not services:
         _out("no backend available on this host; nothing to rotate")
         return 0
-    users: dict[Path | None, list[str]] = {}
-    stopped: dict[str, bool] = {}
+    groups: dict[Path | str, tuple[Path | None, dict[str, "InfraService"]]] = {}
+    for name, service in services:
+        ca_dir = service.gateway().persisted_ca_dir()
+        key: Path | str = ca_dir.resolve() if ca_dir else f"volume:{name}"
+        groups.setdefault(key, (ca_dir, {}))[1][name] = service
+    failed = False
     with ExitStack() as locks:
         for _, service in services:
             locks.enter_context(service.bring_up_lock())
-        for name, service in services:
-            ca_dir = service.gateway().persisted_ca_dir()
-            users.setdefault(ca_dir.resolve() if ca_dir else None, []).append(name)
-            stopped[name] = _stop_gateway(name, service)
-        for ca_dir, names in users.items():
-            if ca_dir is None:
-                _out(f"{', '.join(names)}: CA isn't in a host dir (named volume); "
-                     "remove it to rotate")
-                continue
-            if blocked := [n for n in names if not stopped[n]]:
-                _out(f"kept the CA in {ca_dir}: the {', '.join(blocked)} gateway "
-                     "could not be stopped")
-                continue
-            removed = rotate_gateway_ca(ca_dir)
-            _out(f"{', '.join(names)}: removed {len(removed)} CA file(s) from {ca_dir}"
-                 if removed else f"{', '.join(names)}: no persisted CA under {ca_dir}")
-    if not all(stopped.values()):
+        for ca_dir, members in groups.values():
+            try:
+                _rotate_group(ca_dir, members)
+            except (Exception, SystemExit) as e:  # pylint: disable=broad-exception-caught
+                # Any backend can fail in its own way, and a failed reattach
+                # ends its bring-up via die(); report it, keep going.
+                _out(f"{', '.join(members)}: rotation failed: {e}")
+                failed = True
+    if failed:
         _out("incomplete — fix the errors above and run it again")
         return 1
-    _out("done — the next bottle launch mints the new CA and reattaches running "
-         "bottles to it; agents that load their CA once at start (Node's "
-         "NODE_EXTRA_CA_CERTS) need a restart to trust it")
+    _out("done — running agents keep working on the old CA's cross-signature; "
+         "new processes and bottles trust the new CA")
     return 0
 
 

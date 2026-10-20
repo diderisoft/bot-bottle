@@ -143,8 +143,17 @@ class FirecrackerGateway(Gateway):
         """Save the CA mitmproxy just minted on first boot, so every later
         boot reuses it."""
         self.ca_cert_pem()  # waits until mitmproxy has written it
+        self._save_ca(vm.private_key, vm.guest_ip)
+
+    def _save_rolled_over_ca(self) -> None:
+        # The VM's rootfs is rebuilt every boot: the rolled-over CA only
+        # survives the restart if it's in the host dir `_restore_ca` pushes.
+        self._save_ca(infra_vm._infra_dir() / "id_ed25519", netpool.gw_slot().guest_ip)
+
+    def _save_ca(self, key: Path, ip: str) -> None:
+        """Copy the gateway VM's CA files to the persisted CA dir."""
         proc = subprocess.run(
-            util.ssh_base_argv(vm.private_key, vm.guest_ip)
+            util.ssh_base_argv(key, ip)
             + [f"cd {MITMPROXY_HOME} && tar -cf - {GATEWAY_CA_GLOB}"],
             capture_output=True, timeout=_CA_FETCH_TIMEOUT_SECONDS, check=False,
         )
