@@ -12,6 +12,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from bot_bottle.contract.hostctl import Settings
 from bot_bottle.backend.firecracker import infra_vm
 from bot_bottle.backend.firecracker.gateway import FirecrackerGateway
 from bot_bottle.backend.firecracker.infra import FirecrackerInfraService
@@ -28,18 +29,18 @@ _ROOT = "bot_bottle.backend.infra_service.bot_bottle_root"
 
 class TestAccessors(unittest.TestCase):
     def test_orchestrator_and_gateway_services(self) -> None:
-        svc = FirecrackerInfraService()
+        svc = FirecrackerInfraService(Settings())
         self.assertIsInstance(svc.orchestrator(), FirecrackerOrchestrator)
         self.assertIsInstance(svc.gateway(), FirecrackerGateway)
 
     def test_stop_stops_both_vms(self) -> None:
         with patch.object(infra_vm, "stop") as stop:
-            FirecrackerInfraService().stop()
+            FirecrackerInfraService(Settings()).stop()
         stop.assert_called_once()
 
     def test_url_and_is_healthy_delegate_to_the_orchestrator(self) -> None:
-        svc = FirecrackerInfraService()
-        ip = infra_vm.netpool.orch_slot().guest_ip
+        svc = FirecrackerInfraService(Settings())
+        ip = infra_vm.netpool.from_settings(Settings().infra).orch_slot().guest_ip
         self.assertEqual(f"http://{ip}:{infra_vm.ORCHESTRATOR_PORT}", svc.url())
 
 
@@ -58,12 +59,12 @@ class TestEnsureRunning(unittest.TestCase):
                     patch.object(infra_vm, "stop") as stop, \
                     patch.object(infra_vm, "ensure_built") as built, \
                     patch(_REATTACH) as reconcile, patch(_ROOT, return_value=Path(td)):
-                url = FirecrackerInfraService().ensure_running()
+                url = FirecrackerInfraService(Settings()).ensure_running()
             stop.assert_not_called()
             built.assert_not_called()
             # Adopt path: no reconcile — gateway state is intact.
             reconcile.assert_not_called()
-            ip = infra_vm.netpool.orch_slot().guest_ip
+            ip = infra_vm.netpool.from_settings(Settings().infra).orch_slot().guest_ip
             self.assertEqual(f"http://{ip}:{infra_vm.ORCHESTRATOR_PORT}", url)
 
     def test_reboots_both_when_version_stale(self):
@@ -83,7 +84,7 @@ class TestEnsureRunning(unittest.TestCase):
                     patch(_REATTACH) as reconcile, patch(_ROOT, return_value=Path(td)):
                 orch_cls.return_value.gateway_url.return_value = "http://10.243.255.1:8099"
                 orch_cls.return_value.mint_gateway_token.return_value = "gw.jwt"
-                FirecrackerInfraService().ensure_running()
+                FirecrackerInfraService(Settings()).ensure_running()
             stop.assert_called_once()          # dislodge the outdated pair
             orch_cls.return_value.ensure_running.assert_called_once()
             # The gateway service is bound to the orchestrator's gateway URL,
@@ -110,7 +111,7 @@ class TestEnsureRunning(unittest.TestCase):
                     patch.object(infra_vm, "ensure_built"), \
                     patch(_ORCH_CLS) as orch_cls, patch(_GW_CLS) as gw_cls, \
                     patch(_REATTACH) as reconcile, patch(_ROOT, return_value=Path(td)):
-                FirecrackerInfraService().ensure_running()
+                FirecrackerInfraService(Settings()).ensure_running()
             stop.assert_called_once()
             orch_cls.return_value.ensure_running.assert_called_once()
             gw_cls.return_value.connect_to_orchestrator.assert_called_once()
@@ -125,7 +126,7 @@ class TestEnsureRunning(unittest.TestCase):
                     patch.object(infra_vm, "ensure_built") as built, \
                     patch(_ORCH_CLS) as orch_cls, patch(_GW_CLS) as gw_cls, \
                     patch(_REATTACH) as reconcile, patch(_ROOT, return_value=Path(td)):
-                FirecrackerInfraService().ensure_running()
+                FirecrackerInfraService(Settings()).ensure_running()
         stop.assert_called_once()      # clear stale VMs first
         built.assert_called_once()
         # Orchestrator is brought up BEFORE the gateway is connected (its daemons
@@ -145,7 +146,7 @@ class TestEnsureRunning(unittest.TestCase):
                     patch(_ORCH_CLS) as orch_cls, patch(_GW_CLS), \
                     patch(_REATTACH) as reconcile, patch(_ROOT, return_value=Path(td)):
                 orch_cls.return_value.url.return_value = "http://10.243.255.1:8099"
-                FirecrackerInfraService().ensure_running()
+                FirecrackerInfraService(Settings()).ensure_running()
         # Both VMs booted cold, so every running bottle is reattached against
         # the orchestrator's host URL.
         reconcile.assert_called_once()

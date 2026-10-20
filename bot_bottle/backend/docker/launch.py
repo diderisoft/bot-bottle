@@ -31,6 +31,7 @@ Teardown (ExitStack callbacks fire in reverse):
 from __future__ import annotations
 
 import dataclasses
+import functools
 import os
 from contextlib import ExitStack, contextmanager
 from typing import Callable, Generator
@@ -63,18 +64,21 @@ from .consolidated_compose import consolidated_agent_compose
 from ...orchestrator.store.config_store import resolve_teardown_timeout
 from ...paths import host_db_path
 from .consolidated_launch import launch_consolidated, deprovision_consolidated
-from .infra import INFRA_NAME
+from .infra import INFRA_NAME, DockerInfraService
 from .gateway import DockerGateway
+from ...contract.hostctl import Settings
 from ... import resources
 
 
-_DOCKER = oci_agent_image.OciRuntime(
-    pull_argv=("docker", "pull"),
-    image_exists=docker_mod.image_exists,
-    tag_image=docker_mod.tag_image,
-    build_image=docker_mod.build_image,
-    verify=docker_mod.verify_agent_image,
-)
+def _docker_runtime(settings: Settings) -> oci_agent_image.OciRuntime:
+    return oci_agent_image.OciRuntime(
+        pull_argv=("docker", "pull"),
+        image_exists=docker_mod.image_exists,
+        tag_image=docker_mod.tag_image,
+        build_image=functools.partial(
+            docker_mod.build_image, no_cache=settings.operation.no_cache),
+        verify=docker_mod.verify_agent_image,
+    )
 
 
 def build_or_load_images(plan: DockerBottlePlan) -> BottleImages:
@@ -90,7 +94,8 @@ def build_or_load_images(plan: DockerBottlePlan) -> BottleImages:
     # Prefer the release-pinned published image (or an overlay on it) over a
     # local build (PRD 0085). None: build the bottle's own Dockerfile.
     published = oci_agent_image.resolve_published_agent_image(
-        plan, _DOCKER, template=plan.agent_provider_template, image=plan.image,
+        plan, _docker_runtime(plan.settings), template=plan.agent_provider_template,
+        image=plan.image,
         smoke_test=smoke,
     )
     if published is not None:
@@ -103,7 +108,8 @@ def build_or_load_images(plan: DockerBottlePlan) -> BottleImages:
             )
         info(f"using cached agent image {plan.image!r}")
         return BottleImages(agent=plan.image)
-    docker_mod.build_image(plan.image, str(resources.build_root()), dockerfile=plan.dockerfile_path)
+    docker_mod.build_image(plan.image, str(resources.build_root()), dockerfile=plan.dockerfile_path,
+                           no_cache=plan.settings.operation.no_cache)
     docker_mod.verify_agent_image(
         plan.image, runtime_for(plan.agent_provider_template).smoke_test,
     )
@@ -162,10 +168,13 @@ def launch(
             plan.egress_plan.token_env_map, effective_env,
         )
         teardown_timeout = resolve_teardown_timeout(host_db_path())
+        service = DockerInfraService(plan.settings)
         ctx = launch_consolidated(
-            plan.egress_plan, git_gate_plan, image_ref=plan.image, tokens=token_values,
+            plan.egress_plan, git_gate_plan, service=service, image_ref=plan.image,
+            tokens=token_values,
         )
-        stack.callback(deprovision_consolidated, ctx.bottle_id, timeout=teardown_timeout)
+        stack.callback(deprovision_consolidated, ctx.bottle_id, service=service,
+                       timeout=teardown_timeout)
 
         # Step 4: install the SHARED gateway CA into the agent (replaces the
         # per-bottle CA) — read it out of the running gateway container
@@ -174,7 +183,7 @@ def launch(
         ca_dir = egress_state_dir(plan.slug) / "gateway-ca"
         ca_dir.mkdir(parents=True, exist_ok=True)
         ca_file = ca_dir / "gateway-ca.pem"
-        ca_file.write_text(DockerGateway(name=INFRA_NAME).ca_cert_pem())
+        ca_file.write_text(DockerGateway(settings=plan.settings, name=INFRA_NAME).ca_cert_pem())
         egress_plan = dataclasses.replace(
             plan.egress_plan,
             mitmproxy_ca_host_path=ca_file,

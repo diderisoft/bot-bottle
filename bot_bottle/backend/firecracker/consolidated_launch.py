@@ -39,7 +39,6 @@ from ...control.lifecycle import (
 from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
 from ..provision_bottle import deprovision_bottle, provision_bottle
 from . import util
-from .gateway import FirecrackerGateway
 from .infra import FirecrackerInfraService
 
 
@@ -76,6 +75,7 @@ def launch_consolidated(
     egress_plan: EgressPlan,
     git_gate_plan: GitGatePlan,
     *,
+    service: FirecrackerInfraService,
     guest_ip: str,
     image_ref: str = "",
     tokens: dict[str, str] | None = None,
@@ -83,7 +83,6 @@ def launch_consolidated(
     """Ensure the infra VM is up, register the bottle by its guest IP, and
     provision its git-gate state into the gateway VM. Returns the context the
     agent-VM launch needs. Raises on failure — the caller tears down."""
-    service = FirecrackerInfraService()
     url = service.ensure_running()
     client = OrchestratorClient(url)
 
@@ -105,13 +104,15 @@ def launch_consolidated(
     )
 
 
-def deprovision_consolidated(bottle_id: str, *, timeout: float | None = None) -> None:
+def deprovision_consolidated(
+    bottle_id: str, *, service: FirecrackerInfraService, timeout: float | None = None,
+) -> None:
     """Deregister the bottle and remove its git-gate state from the gateway
     VM. Both steps are idempotent so this is safe from a cleanup trap. Does
     NOT stop the infra VMs — they're persistent per-host singletons shared by
     every bottle."""
-    deprovision_bottle(bottle_id, FirecrackerGateway().provisioning_transport(),
-                       orchestrator=FirecrackerInfraService().orchestrator(),
+    deprovision_bottle(bottle_id, service.gateway().provisioning_transport(),
+                       orchestrator=service.orchestrator(),
                        timeout=timeout)
 
 

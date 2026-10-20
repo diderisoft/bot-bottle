@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 from collections.abc import Sequence
@@ -14,23 +13,18 @@ class CleanupError(RuntimeError):
 
 
 class CleanupFailures:
-    """Attempt every approved mutation, then fail with complete diagnostics."""
+    """Attempt every approved mutation, then fail with complete diagnostics.
+    Each command gets `timeout` seconds (at least one)."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, timeout: float) -> None:
         self._messages: list[str] = []
+        self._timeout = max(timeout, 1.0)
 
     def run(self, argv: Sequence[str], description: str) -> None:
-        raw_timeout = os.environ.get(
-            "BOT_BOTTLE_CLEANUP_COMMAND_TIMEOUT_SECONDS", "120",
-        )
-        try:
-            timeout = float(raw_timeout)
-        except ValueError:
-            timeout = 120.0
         try:
             result = subprocess.run(
                 list(argv), capture_output=True, text=True, check=False,
-                timeout=max(timeout, 1.0),
+                timeout=self._timeout,
             )
         except (OSError, subprocess.SubprocessError) as exc:
             self._messages.append(f"{description}: {exc}")

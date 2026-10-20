@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ...agent_provider import AgentProvisionPlan
+from ...contract.hostctl import Settings
 from ...egress import EgressPlan
 from ...env import ResolvedEnv
 from ...git_gate import GitGatePlan
@@ -33,6 +34,7 @@ def resolve_plan(
     supervise_plan: SupervisePlan | None,
     git_gate_plan: GitGatePlan,
     stage_dir: Path,
+    settings: Settings,
 ) -> MacosContainerBottlePlan:
     return MacosContainerBottlePlan(
         spec=spec,
@@ -45,4 +47,5 @@ def resolve_plan(
         supervise_plan=supervise_plan,
         agent_provision=agent_provision_plan,
         nested_containers=manifest.bottle.nested_containers,
+        settings=settings,
     )

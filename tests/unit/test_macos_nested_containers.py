@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from typing import cast
 from unittest.mock import patch
 
+from bot_bottle.contract.hostctl import Settings
 from bot_bottle.backend.macos_container import nested_containers
 from bot_bottle.backend.macos_container import launch as launch_mod
 from bot_bottle.backend.macos_container.bottle_plan import MacosContainerBottlePlan
@@ -47,6 +48,7 @@ class _Plan:
     nested_containers: bool
     agent_provision: _AgentProvision
     spec: _Spec = _Spec()
+    settings: Settings = field(default_factory=Settings)
     # A custom (non-published) template, so the PRD 0085 pull path resolves no
     # pin and these tests keep exercising the local build path.
     agent_provider_template: str = "test-agent"
@@ -305,10 +307,11 @@ class TestBuildOrLoadImages(unittest.TestCase):
 
         build.assert_called_once_with(
             "agent:base", str(launch_mod.resources.build_root()),
-            dockerfile="/repo/Dockerfile",
+            dockerfile="/repo/Dockerfile", no_cache=False, dns_override="",
         )
         pin.assert_called_once_with("agent:base")
-        derived.assert_called_once_with("agent:sha256-deadbeef", build)
+        self.assertEqual("agent:sha256-deadbeef", derived.call_args.args[0])
+        self.assertIs(build, derived.call_args.args[1].func)
         self.assertEqual("agent:sha256-deadbeef-nested-containers", images.agent)
 
     def test_derived_image_layers_onto_a_committed_image(self) -> None:
@@ -335,7 +338,8 @@ class TestBuildOrLoadImages(unittest.TestCase):
 
         build.assert_not_called()
         pin.assert_called_once_with("agent:committed")
-        derived.assert_called_once_with("agent:sha256-cafebabe", build)
+        self.assertEqual("agent:sha256-cafebabe", derived.call_args.args[0])
+        self.assertIs(build, derived.call_args.args[1].func)
         self.assertEqual("agent:sha256-cafebabe-nested-containers", images.agent)
 
     def test_cached_policy_refuses_to_build_the_derived_image(self) -> None:

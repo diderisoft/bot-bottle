@@ -25,6 +25,7 @@ from ...backend import get_bottle_backend, has_backend, known_backend_names
 from ...backend.cleanup_control import CleanupError
 from ...lib.log import info
 from ...util import read_tty_line
+from ..settings import settings_from_env
 
 
 def cmd_cleanup(_argv: list[str]) -> int:
@@ -32,10 +33,11 @@ def cmd_cleanup(_argv: list[str]) -> int:
     # deterministic across runs. Skip backends whose runtime
     # isn't available on this host so e.g. macos-container
     # doesn't error on Linux.
+    settings = settings_from_env()
     plans = [
-        (name, get_bottle_backend(name))
+        (name, get_bottle_backend(settings, name))
         for name in known_backend_names()
-        if has_backend(name)
+        if has_backend(settings, name)
     ]
     prepared = [(name, b, b.prepare_cleanup()) for name, b in plans]
 

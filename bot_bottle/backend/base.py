@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Generator, Generic, Sequence, TypeVar
 
 from ..agent_provider import AgentProvisionPlan, get_provider
+from ..contract.hostctl import Settings
 from ..egress import EgressPlan
 from ..git_gate import GitGatePlan
 from ..lib.log import die, info
@@ -108,6 +109,7 @@ class BottlePlan(ABC):
     egress_plan: EgressPlan
     supervise_plan: SupervisePlan | None
     agent_provision: AgentProvisionPlan
+    settings: Settings
 
     @property
     def workspace_plan(self) -> WorkspacePlan:
@@ -300,6 +302,9 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
     # Backends that cannot must reject `nested_containers: true` rather than
     # reach for a host daemon socket (issue #392).
     supports_nested_containers: bool = False
+
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
 
     def prepare(self, spec: BottleSpec, stage_dir: Path) -> PlanT:
         """Template method: run cross-backend host-side validation, then
@@ -526,9 +531,8 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         doesn't fail when `cli.py active` walks past
         firecracker."""
 
-    @classmethod
     @abstractmethod
-    def setup(cls) -> int:
+    def setup(self) -> int:
         """Emit this backend's one-time host setup — privileged network
         pool, daemon bring-up, install pointers, etc. — as
         host-appropriate config or commands. Prints to stdout/stderr and
@@ -536,12 +540,10 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         backend that needs no host setup prints a short note and returns
         0. Invoked generically by `bot-bottle backend setup [--backend=…]`
         so operators can provision any backend without a
-        backend-specific command. Classmethod (like `is_available`) —
-        it's a host query, not per-bottle state."""
+        backend-specific command."""
 
-    @classmethod
     @abstractmethod
-    def status(cls, *, quiet: bool = False) -> int:
+    def status(self, *, quiet: bool = False) -> int:
         """Report whether this backend's prerequisites are satisfied on
         the host — binaries, daemon reachability, network pool, range
         conflicts, etc. Returns BackendStatus.READY (0) when the backend
@@ -554,9 +556,8 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         Invoked by `bot-bottle backend status [--backend=…]` (quiet=False)
         and by is_backend_ready() (caller-controlled)."""
 
-    @classmethod
     @abstractmethod
-    def teardown(cls) -> int:
+    def teardown(self) -> int:
         """Undo `setup()` — the inverse operation, surfaced as
         `bot-bottle backend teardown [--backend=…]` (uninstall). Symmetric
         with setup: where setup is advisory (prints the privileged

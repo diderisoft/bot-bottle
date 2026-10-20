@@ -18,7 +18,9 @@ import shutil
 from pathlib import Path
 
 from ... import image_inputs, image_registry
+from ...contract.hostctl import InfraSettings
 from ...infra_image import pinned_infra_artifact
+from ...paths import host_artifact_cache_dir
 from ...lib.log import info
 from ...published_artifacts import (
     FORMAT_EXT4,
@@ -36,11 +38,13 @@ _ROLE_IMAGE = {role: image for image, role in image_inputs.INFRA_ROLES.items()}
 _CHUNK = 1 << 20
 
 
-def builds_locally() -> bool:
+def builds_locally(infra: InfraSettings) -> bool:
     """Whether this host builds the infra rootfs from source instead of pulling
-    the published one: when asked to (`BOT_BOTTLE_INFRA_BUILD=local`), or when
-    nothing published matches this install's code (`infra_image`)."""
-    return any(pinned_infra_artifact(role_image(r), FORMAT_EXT4) is None for r in ROLES)
+    the published one: when asked to (`infra_build_local`), or when nothing
+    published matches this install's code (`infra_image`)."""
+    return any(
+        pinned_infra_artifact(role_image(r), FORMAT_EXT4, local_build=infra.infra_build_local)
+        is None for r in ROLES)
 
 
 def role_image(role: str) -> str:
@@ -61,7 +65,7 @@ def role_artifact(role: str):
     )
 
 
-def role_version(role: str) -> str:
+def role_version(role: str, infra: InfraSettings) -> str:
     """What identifies the artifact `role` should be running.
 
     The `inputs_hash`, not the release `version`. The version is a release number
@@ -77,7 +81,7 @@ def role_version(role: str) -> str:
     rebuilding locally would leave the committed hash unchanged and adopt the
     stale VM (the very staleness this marker exists to prevent)."""
     image = role_image(role)
-    if builds_locally():
+    if builds_locally(infra):
         return image_inputs.inputs_hash(image)
     entries = load_artifacts_manifest()
     try:
@@ -88,14 +92,15 @@ def role_version(role: str) -> str:
         ) from None
 
 
-def materialize_ext4(role: str, dest: Path) -> None:
+def materialize_ext4(role: str, dest: Path, infra: InfraSettings) -> None:
     """Expand `role`'s verified rootfs into `dest`, a fresh disk for this boot.
 
     The cached `.gz` stays pristine: the VM writes to its rootfs, so each boot
     gets its own copy rather than sharing one. Atomic via a `.part` sibling, so
     an interrupted expand cannot be booted."""
     artifact = role_artifact(role)
-    gz = image_registry.ensure_ext4(artifact)
+    gz = image_registry.ensure_ext4(
+        artifact, cache_root=host_artifact_cache_dir(infra.artifact_cache))
     tmp = dest.with_suffix(dest.suffix + ".part")
     info(f"expanding {role} rootfs -> {dest}")
     with gzip.open(gz, "rb") as src, open(tmp, "wb") as out:
@@ -103,13 +108,14 @@ def materialize_ext4(role: str, dest: Path) -> None:
     tmp.replace(dest)
 
 
-def ensure_available() -> None:
+def ensure_available(infra: InfraSettings) -> None:
     """Fetch and verify every role's rootfs before any VM boots.
 
     Up front rather than lazily: booting the orchestrator and then failing to
     fetch the gateway leaves half a control plane running."""
     for role in ROLES:
-        image_registry.ensure_ext4(role_artifact(role))
+        image_registry.ensure_ext4(
+            role_artifact(role), cache_root=host_artifact_cache_dir(infra.artifact_cache))
 
 
 __all__ = [

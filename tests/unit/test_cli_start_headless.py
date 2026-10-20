@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import bot_bottle.cli.commands.start as start_mod
 import bot_bottle.cli.tui as tui_mod
+from bot_bottle.contract.hostctl import Settings
 from bot_bottle.backend import ActiveAgent
 from bot_bottle.lib.log import Die
 from bot_bottle.manifest import ManifestError
@@ -208,6 +209,7 @@ class TestPrepareWithPreflight(unittest.TestCase):
              patch("bot_bottle.cli.commands.start.info"):
             start_mod.prepare_with_preflight(
                 MagicMock(),
+                Settings(),
                 stage_dir=Path("/tmp"),
                 render_preflight=render,
                 prompt_yes=MagicMock(),

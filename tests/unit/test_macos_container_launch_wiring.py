@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from typing import cast
 from unittest.mock import ANY, patch
 
+from bot_bottle.contract.hostctl import Settings
 from bot_bottle.backend.macos_container.bottle import MacosContainerBottle
 from bot_bottle.backend.macos_container.bottle_plan import MacosContainerBottlePlan
 from bot_bottle.backend.macos_container.consolidated_launch import GatewayEndpoint
@@ -66,6 +67,7 @@ def _plan(
     )
     return cast(MacosContainerBottlePlan, SimpleNamespace(
         spec=SimpleNamespace(image_policy=image_policy),
+        settings=Settings(),
         manifest=_MANIFEST,
         stage_dir=stage_dir,
         slug="dev-abc",
@@ -189,6 +191,8 @@ class TestBuildOrLoadImages(unittest.TestCase):
             self.plan.image,
             ANY,
             dockerfile=self.plan.dockerfile_path,
+            no_cache=False,
+            dns_override="",
         )
 
 
@@ -270,21 +274,21 @@ class TestAgentRunArgv(unittest.TestCase):
 
 class TestIdentityTokenDelivery(unittest.TestCase):
     def test_exec_env_carries_the_token_as_proxy_credentials(self) -> None:
-        env = _identity_proxy_env(_endpoint(), "s3cret")
+        env = _identity_proxy_env(_endpoint(), "s3cret", 9099)
         self.assertEqual(
             f"http://bottle:s3cret@{GATEWAY_HOSTNAME}:9099", env["HTTP_PROXY"],
         )
         self.assertEqual(env["HTTP_PROXY"], env["https_proxy"])
 
     def test_no_token_means_no_override(self) -> None:
-        self.assertEqual({}, _identity_proxy_env(_endpoint(), ""))
+        self.assertEqual({}, _identity_proxy_env(_endpoint(), "", 9099))
 
     def test_token_value_never_reaches_argv(self) -> None:
         """`ps` is world-readable: the token rides the child env behind a bare
         `--env` name, never the command line."""
         bottle = MacosContainerBottle(
             "bot-bottle-demo", lambda: None, None,
-            exec_env=_identity_proxy_env(_endpoint(), "s3cret"),
+            exec_env=_identity_proxy_env(_endpoint(), "s3cret", 9099),
         )
         argv = bottle.agent_argv(["--help"], tty=False)
         self.assertNotIn("s3cret", " ".join(argv))
@@ -331,7 +335,7 @@ class TestPlanIdentityToken(unittest.TestCase):
         fetches anything would otherwise egress token-less and be denied."""
         bottle = MacosContainerBottle(
             "bot-bottle-demo", lambda: None, None,
-            exec_env=_identity_proxy_env(_endpoint(), "s3cret"),
+            exec_env=_identity_proxy_env(_endpoint(), "s3cret", 9099),
         )
         with patch(f"{_BOTTLE}.subprocess.run") as run:
             run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")

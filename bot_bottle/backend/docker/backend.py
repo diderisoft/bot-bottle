@@ -58,21 +58,18 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
         launch."""
         return shutil.which("docker") is not None
 
-    @classmethod
-    def setup(cls) -> int:
+    def setup(self) -> int:
         from . import setup as _setup
         return _setup.setup()
 
-    @classmethod
-    def status(cls, *, quiet: bool = False) -> int:
+    def status(self, *, quiet: bool = False) -> int:
         from . import setup as _setup
         if quiet:
             with redirect_stderr(io.StringIO()):
                 return _setup.status()
         return _setup.status()
 
-    @classmethod
-    def teardown(cls) -> int:
+    def teardown(self) -> int:
         from . import setup as _setup
         return _setup.teardown()
 
@@ -105,6 +102,7 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
             supervise_plan=supervise_plan,
             git_gate_plan=git_gate_plan,
             stage_dir=stage_dir,
+            settings=self.settings,
         )
 
     def prelaunch_checks(self, plan: DockerBottlePlan) -> None:
@@ -120,7 +118,7 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
 
     def infra_service(self) -> "DockerInfraService":
         from .infra import DockerInfraService
-        return DockerInfraService()
+        return DockerInfraService(self.settings)
 
     def supervise_mcp_url(self, plan: DockerBottlePlan) -> str:
         """Docker bottles reach the supervise daemon via the
@@ -136,10 +134,10 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
         return f"http://{SUPERVISE_HOSTNAME}:{SUPERVISE_PORT}/"
 
     def prepare_cleanup(self) -> DockerBottleCleanupPlan:
-        return _cleanup.prepare_cleanup()
+        return _cleanup.prepare_cleanup(self.settings)
 
     def cleanup(self, plan: DockerBottleCleanupPlan) -> None:
-        _cleanup.cleanup(plan)
+        _cleanup.cleanup(plan, self.settings)
 
     def enumerate_active(self) -> Sequence[ActiveAgent]:
         return _enumerate.enumerate_active()

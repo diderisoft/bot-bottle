@@ -47,7 +47,6 @@ from ...git_gate import GitGate
 from ...image_cache import check_stale_path
 from ...lib.log import die, info, warn
 from ...contract.supervise import SUPERVISE_PORT
-from ..docker.egress import EGRESS_PORT
 from ..util import AGENT_CA_BUNDLE, AGENT_CA_PATH
 from . import firecracker_vm, image_builder, isolation_probe, lifecycle_lock, netpool, util
 from .bottle import FirecrackerBottle
@@ -55,6 +54,7 @@ from .bottle_plan import FirecrackerBottlePlan
 from ...orchestrator.store.config_store import resolve_teardown_timeout
 from ...paths import host_db_path
 from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
+from .infra import FirecrackerInfraService
 from .consolidated_launch import (
     launch_consolidated,
     persist_env_var_secret,
@@ -101,7 +101,7 @@ def launch(
             )
 
         # Step 3: claim a TAP slot; the flock is held until teardown.
-        slot, lock = netpool.allocate(plan.slug)
+        slot, lock = netpool.from_settings(plan.settings.infra).allocate(plan.slug)
         stack.callback(lock.close)
         info(f"firecracker slot {slot.iface}: host={slot.host_ip} "
              f"guest={slot.guest_ip}")
@@ -116,13 +116,16 @@ def launch(
             plan.egress_plan.token_env_map, effective_env,
         )
         teardown_timeout = resolve_teardown_timeout(host_db_path())
+        service = FirecrackerInfraService(plan.settings)
         ctx = launch_consolidated(
             plan.egress_plan, git_gate_plan,
+            service=service,
             guest_ip=slot.guest_ip,
             image_ref=plan.image,
             tokens=token_values,
         )
-        stack.callback(deprovision_consolidated, ctx.bottle_id, timeout=teardown_timeout)
+        stack.callback(deprovision_consolidated, ctx.bottle_id, service=service,
+                       timeout=teardown_timeout)
 
         # Step 5: install the SHARED gateway CA (replaces the per-bottle CA).
         # Write it to a stable host path so the provisioner can copy it over SSH.
@@ -157,7 +160,7 @@ def launch(
             # token) pair, and strips it before upstream.
             agent_proxy_url=(
                 f"http://bottle:{ctx.identity_token}"
-                f"@{slot.host_ip}:{EGRESS_PORT}"
+                f"@{slot.host_ip}:{plan.settings.infra.egress_port}"
             ),
             agent_git_gate_url=git_gate_url,
             agent_supervise_url=supervise_url,
@@ -180,6 +183,7 @@ def launch(
 
             vm = firecracker_vm.boot(
                 name=plan.container_name,
+                kernel=util.kernel_path(plan.settings.infra),
                 rootfs=rootfs,
                 tap=slot.iface,
                 guest_ip=slot.guest_ip,
@@ -249,7 +253,7 @@ def build_or_load_agent_base(plan: FirecrackerBottlePlan) -> Path:
     committed_tar = committed_rootfs_path(plan.slug)
     if committed and committed_tar.is_file():
         info(f"resuming from committed rootfs {committed_tar}")
-        return util.build_committed_rootfs_dir(committed_tar)
+        return util.build_committed_rootfs_dir(committed_tar, plan.settings.infra)
     if plan.spec.image_policy == "cached":
         cached = _cached_agent_base(plan)
         if cached is None:
@@ -264,12 +268,12 @@ def build_or_load_agent_base(plan: FirecrackerBottlePlan) -> Path:
     pin = _agent_pin(plan)
     if pin is None:
         return image_builder.build_agent_rootfs_dir(
-            Path(plan.dockerfile_path), image_tag=plan.image, smoke_test=smoke)
+            Path(plan.dockerfile_path), plan.settings, image_tag=plan.image, smoke_test=smoke)
     overlay = plan.manifest.bottle.agent_provider.overlay
     if overlay.is_empty():
-        return image_builder.acquire_agent_image_ext4(pin)
+        return image_builder.acquire_agent_image_ext4(pin, plan.settings)
     return image_builder.acquire_agent_overlay_rootfs_dir(
-        pin, overlay, template=template,
+        pin, overlay, plan.settings, template=template,
         source_root=Path(plan.spec.user_cwd), smoke_test=smoke,
     )
 
@@ -299,12 +303,13 @@ def _cached_agent_base(plan: FirecrackerBottlePlan) -> Path | None:
     """The cached base `build_or_load_agent_base` would produce, or None."""
     pin = _agent_pin(plan)
     if pin is None:
-        return image_builder.cached_agent_rootfs_dir(Path(plan.dockerfile_path))
+        return image_builder.cached_agent_rootfs_dir(
+            Path(plan.dockerfile_path), plan.settings.infra)
     overlay = plan.manifest.bottle.agent_provider.overlay
     if overlay.is_empty():
-        return image_builder.cached_agent_image_ext4(pin)
+        return image_builder.cached_agent_image_ext4(pin, plan.settings.infra)
     return image_builder.cached_agent_overlay_rootfs_dir(
-        pin, overlay, template=plan.agent_provider_template,
+        pin, overlay, plan.settings.infra, template=plan.agent_provider_template,
         source_root=Path(plan.spec.user_cwd),
     )
 
@@ -331,7 +336,7 @@ def _agent_guest_env(plan: FirecrackerBottlePlan, host_ip: str) -> dict[str, str
     baked process env (it just runs init), so the proxy/CA/git/supervise
     wiring is applied per-invocation."""
     # Carries the identity token as proxy credentials (set in `launch`).
-    proxy_url = plan.agent_proxy_url or f"http://{host_ip}:{EGRESS_PORT}"
+    proxy_url = plan.agent_proxy_url or f"http://{host_ip}:{plan.settings.infra.egress_port}"
     no_proxy = f"localhost,127.0.0.1,{host_ip}"
     env: dict[str, str] = {
         "HTTPS_PROXY": proxy_url, "HTTP_PROXY": proxy_url,

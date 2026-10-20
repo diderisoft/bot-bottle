@@ -13,11 +13,12 @@ from ...image_registry import RegistryError
 from ...infra_image import pinned_infra_artifact, pull_pinned_image
 from ...published_artifacts import FORMAT_OCI
 from .gateway_transport import DockerGatewayTransport
+from ...contract.hostctl import Settings
 from ...contract.identity import ORCHESTRATOR_AUTH_JWT_ENV
 from ...paths import host_gateway_ca_dir
 from ... import resources
 from ...control.gateway import (
-  Gateway, GatewayTransport, GATEWAY_IMAGE, GATEWAY_NAME, GATEWAY_NETWORK,
+  Gateway, GatewayTransport, GATEWAY_NAME, GATEWAY_NETWORK,
   GATEWAY_DOCKERFILE, GATEWAY_LABEL, MITMPROXY_HOME,
   DEFAULT_CA_TIMEOUT_SECONDS, CA_POLL_SECONDS, GATEWAY_CA_CERT, GatewayError
 )
@@ -29,15 +30,16 @@ _GATEWAY_SUBNET_LABEL = "bot-bottle.gateway-subnet"
 class DockerGateway(Gateway):
     """The consolidated gateway as a single, fixed-name Docker container.
 
-    `image_ref` defaults to the gateway data-plane image; `ensure_built`
+    `image_ref` defaults to `settings.infra.gateway_image`; `ensure_built`
     builds it from `Dockerfile.gateway` when it's missing. (Note: slice 5
     builds + launches the bundle container; wiring its per-bottle,
     source-IP-keyed config is a later slice — see PRD 0070.)"""
 
     def __init__(
         self,
-        image_ref: str = GATEWAY_IMAGE,
+        image_ref: str | None = None,
         *,
+        settings: Settings,
         name: str = GATEWAY_NAME,
         network: str = GATEWAY_NETWORK,
         control_network: str = "",
@@ -47,9 +49,10 @@ class DockerGateway(Gateway):
         ca_mount_source: str | Path | None = None,
         subnet: str | None = None,
     ) -> None:
-        self.image_ref = image_ref
+        self.image_ref = image_ref or settings.infra.gateway_image
         self.name = name
         self.network = network
+        self._settings = settings
         # When set, the gateway is dual-homed: it also joins this `--internal`
         # control network (shared only with the orchestrator) so it can resolve
         # `orchestrator_url` by container name over docker DNS. Agents are never
@@ -71,13 +74,10 @@ class DockerGateway(Gateway):
         # Docker's DNAT + the nft `ct status dnat accept` rule handle the rest.
         self._host_port_bindings = host_port_bindings
         self._subnet = (
-            subnet
-            or os.environ.get("BOT_BOTTLE_DOCKER_GATEWAY_SUBNET", "").strip()
-            or DEFAULT_GATEWAY_SUBNET
+            subnet or settings.infra.docker_gateway_subnet or DEFAULT_GATEWAY_SUBNET
         )
-        configured_ca = os.environ.get("BOT_BOTTLE_DOCKER_CA_MOUNT", "").strip()
         self._ca_mount_source = str(
-            ca_mount_source or configured_ca or host_gateway_ca_dir()
+            ca_mount_source or settings.infra.docker_ca_mount or host_gateway_ca_dir()
         )
 
     def image_exists(self) -> bool:
@@ -91,13 +91,14 @@ class DockerGateway(Gateway):
         This deliberately builds every time rather than build-if-missing: the
         per-bottle model kept the image fresh via compose's `build:` on up, and
         a stale image silently runs the OLD single-tenant daemons. No-op only
-        when no dockerfile is configured (a pre-pulled image). BOT_BOTTLE_NO_CACHE
-        forces a full rebuild (parity with `start --no-cache`)."""
+        when no dockerfile is configured (a pre-pulled image). `no_cache` forces
+        a full rebuild (parity with `start --no-cache`)."""
         if self._dockerfile is None:
             return
         # Pull the release-pinned image instead when it was built from exactly
         # this install's code (PRD 0081 / 0085); otherwise build it.
-        pin = pinned_infra_artifact("bot-bottle-gateway", FORMAT_OCI)
+        pin = pinned_infra_artifact(
+            "bot-bottle-gateway", FORMAT_OCI, local_build=self._settings.infra.infra_build_local)
         if pin is not None:
             try:
                 self.image_ref = pull_pinned_image(
@@ -110,7 +111,7 @@ class DockerGateway(Gateway):
         argv = ["docker", "build", "-t", self.image_ref,
                 "-f", str(context / self._dockerfile),
                 str(context)]
-        if os.environ.get("BOT_BOTTLE_NO_CACHE"):
+        if self._settings.operation.no_cache:
             argv.insert(2, "--no-cache")
         for name, value in resources.image_build_args(
             self._dockerfile,

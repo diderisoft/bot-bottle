@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from bot_bottle.contract.hostctl import Settings
 from bot_bottle.backend.macos_container.orchestrator import (
     ORCHESTRATOR_DB_VOLUME,
     ORCHESTRATOR_NAME,
@@ -37,7 +38,7 @@ class TestMacosOrchestratorRun(unittest.TestCase):
             mod.dns_server.return_value = "1.1.1.1"
             mod.bind_mount_spec.side_effect = _spec
             mod.run_container_argv = run
-            MacosOrchestrator(repo_root=Path("/r"))._run_container("h1")
+            MacosOrchestrator(repo_root=Path("/r"), settings=Settings())._run_container("h1")
         return run.call_args.args[0]
 
     def test_runs_on_the_control_network_only(self) -> None:
@@ -71,25 +72,25 @@ class TestMacosOrchestratorRun(unittest.TestCase):
             mod.dns_server.return_value = "1.1.1.1"
             mod.run_container_argv = Mock(return_value=_fail())
             with self.assertRaises(OrchestratorStartError):
-                MacosOrchestrator(repo_root=Path("/r"))._run_container("h1")
+                MacosOrchestrator(repo_root=Path("/r"), settings=Settings())._run_container("h1")
 
 
 class TestMacosOrchestratorUrls(unittest.TestCase):
     def test_url_and_gateway_url_are_the_control_net_address(self) -> None:
-        orch = MacosOrchestrator(port=8099)
+        orch = MacosOrchestrator(port=8099, settings=Settings())
         with patch(f"{_ORCH}.container_mod") as mod:
             mod.try_container_ipv4_on_network.return_value = "192.168.128.2"
             self.assertEqual("http://192.168.128.2:8099", orch.url())
             self.assertEqual("http://192.168.128.2:8099", orch.gateway_url())
 
     def test_url_empty_when_no_address(self) -> None:
-        orch = MacosOrchestrator()
+        orch = MacosOrchestrator(settings=Settings())
         with patch(f"{_ORCH}.container_mod") as mod:
             mod.try_container_ipv4_on_network.return_value = ""
             self.assertEqual("", orch.url())
 
     def test_is_healthy_false_when_no_address(self) -> None:
-        orch = MacosOrchestrator()
+        orch = MacosOrchestrator(settings=Settings())
         with patch(f"{_ORCH}.container_mod") as mod:
             mod.try_container_ipv4_on_network.return_value = ""
             self.assertFalse(orch.is_healthy())
@@ -97,7 +98,7 @@ class TestMacosOrchestratorUrls(unittest.TestCase):
 
 class TestMacosOrchestratorEnsureRunning(unittest.TestCase):
     def _orch(self) -> MacosOrchestrator:
-        return MacosOrchestrator(repo_root=Path("/r"))
+        return MacosOrchestrator(repo_root=Path("/r"), settings=Settings())
 
     def test_noop_when_current_and_healthy(self) -> None:
         orch = self._orch()
@@ -153,14 +154,14 @@ class TestMacosOrchestratorEnsureRunning(unittest.TestCase):
 
 class TestMacosOrchestratorBuildStop(unittest.TestCase):
     def test_ensure_built_builds_the_orchestrator_image(self) -> None:
-        orch = MacosOrchestrator(repo_root=Path("/r"))
+        orch = MacosOrchestrator(repo_root=Path("/r"), settings=Settings())
         with patch(f"{_ORCH}.container_mod") as mod:
             orch.ensure_built()
         _args, kwargs = mod.build_image.call_args
         self.assertEqual("Dockerfile.orchestrator", kwargs["dockerfile"])
 
     def test_stop_removes_the_container(self) -> None:
-        orch = MacosOrchestrator()
+        orch = MacosOrchestrator(settings=Settings())
         with patch(f"{_ORCH}.container_mod") as mod:
             orch.stop()
         mod.force_remove_container.assert_called_once_with(ORCHESTRATOR_NAME)

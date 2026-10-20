@@ -24,21 +24,22 @@ from .gateway import GatewayError, rotate_gateway_ca
 
 if TYPE_CHECKING:
     from ..backend.infra_service import InfraService
+    from ..contract.hostctl import Settings
 
 
 def _out(msg: str) -> None:
     sys.stdout.write(f"rotate-ca: {msg}\n")
 
 
-def _services() -> list[tuple[str, Callable[[], "InfraService"]]]:
+def _services(settings: "Settings") -> list[tuple[str, Callable[[], "InfraService"]]]:
     """(backend name, infra service factory) for every registered backend
     available on this host. Driven by the backend registry, so a new backend
     is covered without changes here."""
     from ..backend import get_bottle_backend, has_backend, known_backend_names
     return [
-        (name, lambda name=name: get_bottle_backend(name).infra_service())
+        (name, lambda name=name: get_bottle_backend(settings, name).infra_service())
         for name in sorted(known_backend_names())
-        if has_backend(name)
+        if has_backend(settings, name)
     ]
 
 
@@ -72,7 +73,8 @@ def _rotate_group(ca_dir: Path | None, members: dict[str, "InfraService"]) -> No
 
 def main(argv: list[str] | None = None) -> int:
     del argv  # no flags — a single deliberate action
-    services = [(name, factory()) for name, factory in _services()]
+    from ..cli.settings import settings_from_env
+    services = [(name, factory()) for name, factory in _services(settings_from_env())]
     if not services:
         _out("no backend available on this host; nothing to rotate")
         return 0

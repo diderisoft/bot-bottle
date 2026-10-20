@@ -6,7 +6,8 @@ entry records the `inputs_hash` of what went into its image, and the install
 can compute the same hash from its own sources, so a match means the pulled
 image is byte-for-byte what a local build would produce. A mismatch (an install
 from `main` past the last release) builds instead of running an image older
-than the code that drives it. `BOT_BOTTLE_INFRA_BUILD=local` always builds.
+than the code that drives it. `local_build` (`BOT_BOTTLE_INFRA_BUILD=local`)
+always builds.
 """
 
 from __future__ import annotations
@@ -19,11 +20,11 @@ from .lib.log import info
 from .published_artifacts import Artifact, current_platform, load_artifacts_manifest_optional
 
 
-def pinned_infra_artifact(image: str, fmt: str) -> Artifact | None:
+def pinned_infra_artifact(image: str, fmt: str, *, local_build: bool) -> Artifact | None:
     """The published `fmt` artifact of infra `image` to pull, or None to build
-    it locally: a local build was requested, nothing is published yet, the
+    it locally: `local_build` was requested, nothing is published yet, the
     image or format isn't in the manifest, or it was built from other code."""
-    if image_registry.local_build_requested():
+    if local_build:
         return None
     entries = load_artifacts_manifest_optional()
     entry = entries.get(image) if entries else None

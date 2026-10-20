@@ -25,7 +25,6 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-from .paths import host_artifact_cache_dir
 from .published_artifacts import Artifact, FORMAT_EXT4, FORMAT_OCI
 
 REGISTRY_HTTP_TIMEOUT_SECONDS = 30.0
@@ -301,7 +300,7 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def ensure_ext4(artifact: Artifact, *, cache_root: Path | None = None) -> Path:
+def ensure_ext4(artifact: Artifact, *, cache_root: Path) -> Path:
     """The verified, cached `.gz` for an ext4 artifact, downloading it once.
 
     The counterpart to the OCI half: `pull` hands a digest to the container
@@ -321,9 +320,6 @@ def ensure_ext4(artifact: Artifact, *, cache_root: Path | None = None) -> Path:
         raise RegistryError(
             f"ensure_ext4 is for {FORMAT_EXT4} artifacts, got {artifact.format!r}"
         )
-    if cache_root is None:
-        cache_root = host_artifact_cache_dir()
-
     # Content-addressed, by digest rather than by (image, version, platform).
     # A version can be republished with different bytes — `--force` exists — and
     # a path that does not include the digest would then serve the previous
@@ -381,21 +377,12 @@ def _download(url: str, dest: Path) -> None:
     tmp.replace(dest)
 
 
-def local_build_requested() -> bool:
-    """True when the operator opted into building instead of pulling.
-
-    A supported path, not a dev-only hatch: it is the answer for a current or
-    custom agent harness. Same env var the firecracker artifact path honours."""
-    return os.environ.get("BOT_BOTTLE_INFRA_BUILD", "").strip().lower() == "local"
-
-
 __all__ = [
     "DigestMismatch",
     "ensure_ext4",
     "ext4_url",
     "RegistryError",
     "ResolvedImage",
-    "local_build_requested",
     "pinned_reference",
     "pull",
     "resolve",

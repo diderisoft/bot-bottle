@@ -19,6 +19,7 @@ import os
 import shutil
 import sys
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 from typing import Callable
 
@@ -30,6 +31,7 @@ from ...backend import (
     enumerate_active_agents,
     get_bottle_backend,
 )
+from ...contract.hostctl import Settings
 from ...bottle_state import (
     cleanup_state,
     is_preserved,
@@ -39,6 +41,7 @@ from ...image_cache import StaleImageError
 from ...lib.log import info, die
 from ...manifest import Manifest, ManifestIndex
 from ..constants import PROG
+from ..settings import settings_from_env
 from ...util import read_tty_line, slugify
 from .. import tui
 
@@ -110,17 +113,16 @@ def cmd_start(argv: list[str]) -> int:
         die("--cached-images is only supported with --headless")
 
     dry_run = args.dry_run or os.environ.get("BOT_BOTTLE_DRY_RUN") == "1"
-    if args.no_cache or os.environ.get("BOT_BOTTLE_NO_CACHE") == "1":
-        # Read by build_image() in each backend's util module — set here
-        # so both the interactive and --headless paths pick it up without
-        # threading a no_cache field through every backend's plan dataclass.
-        os.environ["BOT_BOTTLE_NO_CACHE"] = "1"
+    settings = settings_from_env()
+    if args.no_cache:
+        settings = replace(
+            settings, operation=replace(settings.operation, no_cache=True))
 
     manifest = ManifestIndex.resolve(os.getcwd())
 
     if args.headless:
         return _start_headless(
-            manifest, args, dry_run=dry_run
+            manifest, args, settings, dry_run=dry_run
         )
 
     agent_name: str | None = args.name
@@ -157,7 +159,7 @@ def cmd_start(argv: list[str]) -> int:
     bottle_names = tuple(label_to_name.get(lbl, lbl) for lbl in selected_labels)
 
     label, color = tui.name_color_modal(default_label=agent_name)
-    label, color = _resolve_unique_label(label, color)
+    label, color = _resolve_unique_label(settings, label, color)
 
     image_policy = _select_image_policy()
     if image_policy is None:
@@ -175,6 +177,7 @@ def cmd_start(argv: list[str]) -> int:
     )
     return _launch_bottle(
         spec,
+        settings,
         dry_run=dry_run,
     )
 
@@ -185,6 +188,7 @@ def cmd_start(argv: list[str]) -> int:
 def _start_headless(
     manifest: ManifestIndex,
     args: argparse.Namespace,
+    settings: Settings,
     *,
     dry_run: bool,
 ) -> int:
@@ -229,7 +233,7 @@ def _start_headless(
             )
         bottle_names = (default_bottle,)
 
-    label = _uniquify_label_headless(args.label or agent_name)
+    label = _uniquify_label_headless(settings, args.label or agent_name)
 
     spec = BottleSpec(
         manifest=manifest,
@@ -244,18 +248,19 @@ def _start_headless(
     )
     return _launch_bottle(
         spec,
+        settings,
         dry_run=dry_run,
         assume_yes=True,
         headless_prompt_text=prompt,
     )
 
 
-def _uniquify_label_headless(label: str) -> str:
+def _uniquify_label_headless(settings: Settings, label: str) -> str:
     """Non-interactive analog of `_resolve_unique_label`: if the label's
     slug collides with a running bottle, append -2, -3, … until free,
     logging the chosen label. Orchestrators fire-and-forget many bottles,
     so silently picking a free name beats erroring on every collision."""
-    active_slugs = {a.slug for a in enumerate_active_agents()}
+    active_slugs = {a.slug for a in enumerate_active_agents(settings)}
     if slugify(label) not in active_slugs:
         return label
     n = 2
@@ -271,6 +276,7 @@ def _uniquify_label_headless(label: str) -> str:
 
 def prepare_with_preflight(
     spec: BottleSpec,
+    settings: Settings,
     *,
     stage_dir: Path,
     render_preflight: Callable[[BottlePlan, str], None],
@@ -282,7 +288,7 @@ def prepare_with_preflight(
     injected callable, prompt y/N via the injected callable.
 
     `backend_name` selects which backend prepares the plan
-    (`None` → `$BOT_BOTTLE_BACKEND` → host auto-selection).
+    (`None` → `settings.operation.backend` → host auto-selection).
 
     When `spec.headless` is True the docker-fallback prompt is suppressed:
     auto-selection dies with an actionable message rather than blocking
@@ -293,7 +299,7 @@ def prepare_with_preflight(
     returns so callers can reap the prepare-time state dir via
     `settle_state(identity)` in their finally — exactly the existing
     semantics."""
-    backend = get_bottle_backend(backend_name, prompt=not spec.headless)
+    backend = get_bottle_backend(settings, backend_name, prompt=not spec.headless)
     plan = backend.prepare(spec, stage_dir=stage_dir)
     identity = _identity_from_plan(plan)
 
@@ -399,13 +405,13 @@ def _peek_agent_bottle(manifest: ManifestIndex, agent_name: str) -> str:
         return ""
 
 
-def _resolve_unique_label(label: str, color: str) -> tuple[str, str]:
+def _resolve_unique_label(settings: Settings, label: str, color: str) -> tuple[str, str]:
     """Re-prompt with a disclaimer until the label's slug is not already
     in use among running bottles.  Passes through unchanged when no
     collision is found on the first check."""
     while True:
         slug_candidate = slugify(label)
-        active_slugs = {a.slug for a in enumerate_active_agents()}
+        active_slugs = {a.slug for a in enumerate_active_agents(settings)}
         if slug_candidate not in active_slugs:
             return label, color
         label, color = tui.name_color_modal(
@@ -543,6 +549,7 @@ def _manifest_to_yaml(manifest: Manifest) -> str:
 
 def _launch_bottle(
     spec: BottleSpec,
+    settings: Settings,
     *,
     dry_run: bool,
     backend_name: str | None = None,
@@ -564,6 +571,7 @@ def _launch_bottle(
     try:
         plan, identity = prepare_with_preflight(
             spec,
+            settings,
             stage_dir=stage_dir,
             render_preflight=_text_render_preflight(),
             prompt_yes=(lambda: True) if assume_yes else _text_prompt_yes,
@@ -573,7 +581,7 @@ def _launch_bottle(
         if plan is None:
             return 0
 
-        backend = get_bottle_backend(backend_name)
+        backend = get_bottle_backend(settings, backend_name)
         try:
             backend.prelaunch_checks(plan)
         except StaleImageError as exc:

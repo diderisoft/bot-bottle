@@ -14,6 +14,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from bot_bottle.contract.hostctl import Settings
 from bot_bottle.agent_provider import (
     AgentProvisionCommand,
     AgentProvisionFile,
@@ -107,6 +108,7 @@ def _plan(
             prompt_file=Path("/tmp/state/demo-abc12/agent/prompt.txt"),
             guest_env={},
         ),
+        settings=Settings(),
     )
 
 

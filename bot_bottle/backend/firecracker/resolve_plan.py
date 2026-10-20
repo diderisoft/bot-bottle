@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ...agent_provider import AgentProvisionPlan
+from ...contract.hostctl import Settings
 from ...egress import EgressPlan
 from ...env import ResolvedEnv
 from ...git_gate import GitGatePlan
@@ -15,8 +16,8 @@ from . import util
 from .bottle_plan import FirecrackerBottlePlan
 
 
-def preflight() -> None:
-    util.require_firecracker()
+def preflight(settings: Settings) -> None:
+    util.require_firecracker(settings.infra)
 
 
 def build_guest_env(resolved_env: ResolvedEnv) -> dict[str, str]:
@@ -33,6 +34,7 @@ def resolve_plan(
     supervise_plan: SupervisePlan | None,
     git_gate_plan: GitGatePlan,
     stage_dir: Path,
+    settings: Settings,
 ) -> FirecrackerBottlePlan:
     return FirecrackerBottlePlan(
         spec=spec,
@@ -44,4 +46,5 @@ def resolve_plan(
         egress_plan=egress_plan,
         supervise_plan=supervise_plan,
         agent_provision=agent_provision_plan,
+        settings=settings,
     )

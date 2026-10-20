@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from bot_bottle.contract.hostctl import Settings
 from bot_bottle.control.gateway import GatewayError, GatewayProvisionError
 from bot_bottle.control import rotate_ca
 
@@ -154,16 +155,17 @@ class TestRotateCaCli(unittest.TestCase):
         # Driven by the backend registry: a new backend needs no change here.
         backend = MagicMock()
 
-        def available(name: str) -> bool:
+        def available(_settings: object, name: str) -> bool:
             return name == "b"
 
         with patch("bot_bottle.backend.known_backend_names", return_value=("a", "b")), \
                 patch("bot_bottle.backend.has_backend", side_effect=available), \
                 patch("bot_bottle.backend.get_bottle_backend", return_value=backend) as get:
-            services = rotate_ca._services()  # pyright: ignore[reportPrivateUsage]
+            settings = Settings()
+            services = rotate_ca._services(settings)  # pyright: ignore[reportPrivateUsage]
             self.assertEqual(["b"], [name for name, _ in services])
             self.assertIs(backend.infra_service.return_value, services[0][1]())
-        get.assert_called_once_with("b")
+        get.assert_called_once_with(settings, "b")
 
     def test_no_backend_available_is_a_noop(self) -> None:
         self.assertEqual(0, self._main([]))
@@ -172,7 +174,7 @@ class TestRotateCaCli(unittest.TestCase):
 class TestGatewayRollOver(unittest.TestCase):
     def test_runs_the_rollover_in_the_gateway_with_a_known_path(self) -> None:
         from bot_bottle.backend.docker.gateway import DockerGateway
-        gateway = DockerGateway()
+        gateway = DockerGateway(settings=Settings())
         with patch.object(gateway, "provisioning_transport") as transport:
             gateway.roll_over_ca()
         argv = transport.return_value.exec.call_args.args[0]
@@ -183,7 +185,7 @@ class TestGatewayRollOver(unittest.TestCase):
 
     def test_a_failed_exec_is_a_gateway_error(self) -> None:
         from bot_bottle.backend.macos_container.gateway import MacosGateway
-        gateway = MacosGateway()
+        gateway = MacosGateway(settings=Settings())
         with patch.object(gateway, "provisioning_transport") as transport:
             transport.return_value.exec.side_effect = GatewayProvisionError("exit 1")
             with self.assertRaisesRegex(GatewayError, "roll the gateway CA over"):
@@ -192,7 +194,7 @@ class TestGatewayRollOver(unittest.TestCase):
     def test_firecracker_saves_the_rolled_over_ca_to_the_host(self) -> None:
         # Its rootfs is rebuilt every boot: only the host copy survives.
         from bot_bottle.backend.firecracker.gateway import FirecrackerGateway
-        gateway = FirecrackerGateway()
+        gateway = FirecrackerGateway(Settings())
         with patch.object(gateway, "provisioning_transport"), \
                 patch.object(gateway, "_save_ca") as save:
             gateway.roll_over_ca()
@@ -202,15 +204,15 @@ class TestGatewayRollOver(unittest.TestCase):
 class TestPersistedCaDir(unittest.TestCase):
     def test_docker_bind_mount_is_a_dir_but_a_named_volume_is_not(self) -> None:
         from bot_bottle.backend.docker.gateway import DockerGateway
-        self.assertEqual(Path("/ca"), DockerGateway(ca_mount_source="/ca").persisted_ca_dir())
-        self.assertIsNone(DockerGateway(ca_mount_source="ci-ca-volume").persisted_ca_dir())
+        self.assertEqual(Path("/ca"), DockerGateway(ca_mount_source="/ca", settings=Settings()).persisted_ca_dir())
+        self.assertIsNone(DockerGateway(ca_mount_source="ci-ca-volume", settings=Settings()).persisted_ca_dir())
 
     def test_firecracker_uses_its_own_infra_dir(self) -> None:
         from bot_bottle.backend.firecracker import infra_vm
         from bot_bottle.backend.firecracker.gateway import FirecrackerGateway
         with tempfile.TemporaryDirectory() as td, \
                 patch.object(infra_vm, "_infra_dir", return_value=Path(td)):
-            self.assertEqual(Path(td) / "gateway-ca", FirecrackerGateway().persisted_ca_dir())
+            self.assertEqual(Path(td) / "gateway-ca", FirecrackerGateway(Settings()).persisted_ca_dir())
 
 
 if __name__ == "__main__":

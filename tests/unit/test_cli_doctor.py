@@ -51,7 +51,7 @@ class TestDoctor(unittest.TestCase):
 
     def test_passes_when_at_least_one_backend_ready(self):
         # docker not ready, firecracker ready → overall pass, mixed report.
-        def ready(name: str, *, quiet: bool = False) -> bool:
+        def ready(_settings: object, name: str, *, quiet: bool = False) -> bool:
             del quiet
             return name == "firecracker"
 

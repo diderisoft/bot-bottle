@@ -428,14 +428,6 @@ class RegistryPlumbing(unittest.TestCase):
             with self.assertRaises(ir.RegistryError):
                 ir.pull(ir.resolve(self.artifact, verify=False))
 
-    def test_local_build_opt_in(self) -> None:
-        """Building stays a supported path — it is the answer for a current or
-        custom agent harness, since published agent images may lag."""
-        with mock.patch.dict("os.environ", {"BOT_BOTTLE_INFRA_BUILD": "local"}):
-            self.assertTrue(ir.local_build_requested())
-        with mock.patch.dict("os.environ", {"BOT_BOTTLE_INFRA_BUILD": ""}):
-            self.assertFalse(ir.local_build_requested())
-
     def test_auth_header_is_sent_when_a_token_is_set(self) -> None:
         with mock.patch.dict("os.environ", {ir.TOKEN_ENV: "secret-value"}):
             req = ir._request("https://example.test/v2/x/manifests/t")
@@ -510,7 +502,7 @@ class Ext4Fetch(unittest.TestCase):
         oci = pa.resolve(pa.parse_artifacts_manifest(_entry()),
                          "bot-bottle-gateway", prefer=("oci",), plat="linux/arm64")
         with self.assertRaises(ir.RegistryError):
-            ir.ensure_ext4(oci)
+            ir.ensure_ext4(oci, cache_root=Path("/unused"))
 
     def test_url_is_the_baked_in_manifest_url(self) -> None:
         artifact, _ = self._artifact(b"x")

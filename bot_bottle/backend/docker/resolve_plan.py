@@ -15,6 +15,7 @@ from pathlib import Path
 from . import util as docker_mod
 from .bottle_plan import DockerBottlePlan
 from .. import BottleSpec
+from ...contract.hostctl import Settings
 from ...env import ResolvedEnv
 from ...agent_provider import AgentProvisionPlan
 from ...egress import EgressPlan
@@ -40,6 +41,7 @@ def resolve_plan(
     supervise_plan: SupervisePlan | None,
     git_gate_plan: GitGatePlan,
     stage_dir: Path,
+    settings: Settings,
 ) -> DockerBottlePlan:
     """Resolve Docker-specific names and write scratch files. Trusts
     that the agent and its skills/git-gate keys are present —
@@ -59,4 +61,5 @@ def resolve_plan(
         supervise_plan=supervise_plan,
         use_runsc=use_runsc,
         agent_provision=agent_provision_plan,
+        settings=settings,
     )

@@ -12,6 +12,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from bot_bottle.contract.hostctl import Settings
 from bot_bottle.agent_provider import (
     AgentProvider,
     AgentProvisionPlan,
@@ -95,6 +96,7 @@ def _plan(*, git_user: dict | None = None,  # type: ignore
             prompt_file=Path("/tmp/prompt.txt"),
             guest_env={},
         ),
+        settings=Settings(),
     )
 
 

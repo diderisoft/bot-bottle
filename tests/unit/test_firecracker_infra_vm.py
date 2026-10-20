@@ -7,11 +7,11 @@ pidfile/adoption helpers. The pair coordinator is tested in test_firecracker_inf
 
 from __future__ import annotations
 
-import os
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from bot_bottle.contract.hostctl import InfraSettings, Settings
 from bot_bottle.backend.firecracker import infra_vm
 
 
@@ -82,14 +82,14 @@ class TestBuildRootfsDir(unittest.TestCase):
     def test_orchestrator_rootfs_uses_the_fc_image_and_role_variant(self):
         with patch.object(infra_vm.util, "build_base_rootfs_dir") as build:
             build.return_value = Path("/cache/rootfs/x")
-            infra_vm.build_rootfs_dir("orchestrator")
+            infra_vm.build_rootfs_dir("orchestrator", InfraSettings())
         self.assertEqual(infra_vm._ORCHESTRATOR_FC_IMAGE, build.call_args.args[0])
         self.assertTrue(build.call_args.kwargs["variant"].startswith("-orchestrator-"))
 
     def test_gateway_rootfs_uses_the_gateway_image_directly(self):
         with patch.object(infra_vm.util, "build_base_rootfs_dir") as build:
             build.return_value = Path("/cache/rootfs/x")
-            infra_vm.build_rootfs_dir("gateway")
+            infra_vm.build_rootfs_dir("gateway", InfraSettings())
         self.assertEqual(infra_vm._GATEWAY_IMAGE, build.call_args.args[0])
         self.assertTrue(build.call_args.kwargs["variant"].startswith("-gateway-"))
 
@@ -97,39 +97,35 @@ class TestBuildRootfsDir(unittest.TestCase):
 class TestEnsureBuilt(unittest.TestCase):
     def test_default_pulls_both_artifacts_without_docker(self):
         # PRD 0069 Stage 2: the launch host pulls the prebuilt rootfs; no Docker.
-        # Pin BOT_BOTTLE_INFRA_BUILD off: the coverage CI job exports it =local
-        # for the integration suite, and that ambient value would otherwise send
-        # this default-path test down the local Docker-build branch.
-        with patch.dict(os.environ, {"BOT_BOTTLE_INFRA_BUILD": ""}), \
-                patch.object(infra_vm.infra_rootfs, "builds_locally", return_value=False), \
+        settings = Settings()
+        with patch.object(infra_vm.infra_rootfs, "builds_locally", return_value=False), \
                 patch.object(infra_vm.docker_mod, "build_image") as build, \
                 patch.object(infra_vm.infra_rootfs, "ensure_available") as pull:
-            infra_vm.ensure_built()
+            infra_vm.ensure_built(settings)
         build.assert_not_called()
         # Fetched up front, both planes together: booting one and then failing
         # to fetch the other leaves half a control plane running.
-        pull.assert_called_once_with()
+        pull.assert_called_once_with(settings.infra)
 
     def test_unmatched_published_images_without_docker_die_clearly(self):
         # Installed from main past the last release, on a host with no Docker:
         # neither pulling (stale) nor building works, so say so.
-        with patch.dict(os.environ, {"BOT_BOTTLE_INFRA_BUILD": ""}), \
-                patch.object(infra_vm.infra_rootfs, "builds_locally", return_value=True), \
+        with patch.object(infra_vm.infra_rootfs, "builds_locally", return_value=True), \
                 patch.object(infra_vm.shutil, "which", return_value=None), \
                 patch.object(infra_vm, "die", side_effect=SystemExit) as die, \
                 self.assertRaises(SystemExit):
-            infra_vm.ensure_built()
+            infra_vm.ensure_built(Settings())
         self.assertIn("no published infra image matches", die.call_args.args[0])
 
     def test_local_mode_builds_orchestrator_before_its_fc_image(self):
-        with patch.dict(os.environ, {"BOT_BOTTLE_INFRA_BUILD": "local"}), \
-                patch.object(infra_vm.docker_mod, "build_image") as build, \
+        local = Settings(infra=InfraSettings(infra_build_local=True))
+        with patch.object(infra_vm.docker_mod, "build_image") as build, \
                 patch.object(
                     infra_vm.docker_mod,
                     "pinned_local_image_ref",
                     return_value="bot-bottle-orchestrator:sha256-" + "a" * 64,
                 ) as pinned_ref:
-            infra_vm.ensure_built()
+            infra_vm.ensure_built(local)
         tags = [c.args[0] for c in build.call_args_list]
         # orchestrator-fc is FROM orchestrator, so the base is built first.
         self.assertIn(infra_vm._ORCHESTRATOR_IMAGE, tags)

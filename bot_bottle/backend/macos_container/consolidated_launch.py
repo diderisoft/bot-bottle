@@ -76,14 +76,11 @@ class LaunchContext:
     env_var_secret: str = ""  # encryption key injected into the agent's env
 
 
-def ensure_gateway(
-    *, service: MacosInfraService | None = None,
-) -> GatewayEndpoint:
+def ensure_gateway(*, service: MacosInfraService) -> GatewayEndpoint:
     """Ensure the per-host pair (orchestrator + gateway containers) is up and
     report how to reach the gateway. Idempotent — one singleton pair, so N bottle
     launches share it. Call before starting the agent container: the agent's
     proxy env needs `gateway_ip` at run time."""
-    service = service or MacosInfraService()
     orchestrator_url = service.ensure_running()
     endpoint = GatewayEndpoint(
         orchestrator_url=orchestrator_url,
@@ -161,14 +158,13 @@ def register_agent(
 
 
 def deprovision_consolidated(
-    bottle_id: str, *, timeout: float | None = None,
-    service: MacosInfraService | None = None,
+    bottle_id: str, *, service: MacosInfraService, timeout: float | None = None,
 ) -> None:
     """Deregister the bottle and remove its git-gate state from the gateway.
     Both steps are idempotent so this is safe from a cleanup trap. Does NOT
     stop the gateway — it's a persistent per-host singleton."""
     deprovision_bottle(bottle_id, MacosGatewayTransport(),
-                       orchestrator=(service or MacosInfraService()).orchestrator(),
+                       orchestrator=service.orchestrator(),
                        timeout=timeout)
 
 

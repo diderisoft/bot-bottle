@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 import subprocess
 import unittest
 from contextlib import AbstractContextManager
@@ -17,7 +16,9 @@ from pathlib import Path
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
+from bot_bottle.contract.hostctl import Settings
 from bot_bottle.backend.firecracker import firecracker_vm, netpool
+from bot_bottle.contract.hostctl import InfraSettings, Settings
 from bot_bottle.backend.firecracker.bottle import FirecrackerBottle
 
 
@@ -31,33 +32,41 @@ def _bottle(**kw: Any) -> FirecrackerBottle:
     return FirecrackerBottle(**defaults)  # type: ignore[arg-type]
 
 
+def _pool(**fields: Any) -> netpool.NetPool:
+    return netpool.from_settings(InfraSettings(**fields))
+
+
 class TestNetpoolSlots(unittest.TestCase):
     def test_slot_ip_math_31_pairs(self):
-        with patch.dict(os.environ, {"BOT_BOTTLE_FC_IP_BASE": "100.64.0.0"}):
-            s0, s1 = netpool.slot(0), netpool.slot(1)
-        # Iface names track netpool's (env-driven) prefix — the KVM CI runner
-        # overrides it for its isolated pool, so don't hardcode "bbfc".
-        pfx = netpool.IFACE_PREFIX
+        pool = _pool(fc_ip_base="100.64.0.0")
+        s0, s1 = pool.slot(0), pool.slot(1)
+        pfx = pool.iface_prefix
         self.assertEqual((f"{pfx}0", "100.64.0.0", "100.64.0.1"),
                          (s0.iface, s0.host_ip, s0.guest_ip))
         self.assertEqual((f"{pfx}1", "100.64.0.2", "100.64.0.3"),
                          (s1.iface, s1.host_ip, s1.guest_ip))
 
     def test_guest_cidr_is_31(self):
-        with patch.dict(os.environ, {"BOT_BOTTLE_FC_IP_BASE": "100.64.0.0"}):
-            self.assertEqual("100.64.0.1/31", netpool.slot(0).guest_cidr)
+        self.assertEqual("100.64.0.1/31", _pool(fc_ip_base="100.64.0.0").slot(0).guest_cidr)
 
     def test_default_base_avoids_cgnat_and_common_private_ranges(self):
         # The default base must NOT sit in 100.64.0.0/10 (RFC-6598 CGNAT,
         # which Tailscale hands node addresses from); it's an obscure
         # RFC-1918 block instead.
-        with patch.dict(os.environ, {}, clear=True):
-            self.assertEqual("10.243.0.0", netpool.ip_base())
+        self.assertEqual("10.243.0.0", _pool().ip_base)
 
-    def test_pool_size_env_override(self):
-        with patch.dict(os.environ, {"BOT_BOTTLE_FC_POOL_SIZE": "4"}):
-            self.assertEqual(4, netpool.pool_size())
-            self.assertEqual(4, len(netpool.all_slots()))
+    def test_pool_size_override(self):
+        pool = _pool(fc_pool_size=4)
+        self.assertEqual(4, pool.pool_size)
+        self.assertEqual(4, len(pool.all_slots()))
+
+    def test_iface_overrides(self):
+        pool = _pool(fc_iface_prefix="bbci", fc_orch_iface="bbciorch0",
+                     fc_gw_iface="bbcigw0", fc_nft_table="bb_ci")
+        self.assertEqual("bbci3", pool.slot(3).iface)
+        self.assertEqual("bbciorch0", pool.orch_slot().iface)
+        self.assertEqual("bbcigw0", pool.gw_slot().iface)
+        self.assertEqual("bb_ci", pool.nft_table)
 
 
 class TestNetpoolRenderers(unittest.TestCase):
@@ -92,13 +101,12 @@ class TestNetpoolRenderers(unittest.TestCase):
         self.assertIn("netpool.defaults.env", mod)
         self.assertIn("BOT_BOTTLE_FC_NFT_TABLE", mod)
         # No duplicated literals or nft ruleset.
-        self.assertNotIn(netpool.ip_base(), mod)      # 10.243.0.0
-        self.assertNotIn(netpool.NFT_TABLE, mod)      # bot_bottle_fc
+        self.assertNotIn(_pool().ip_base, mod)        # 10.243.0.0
+        self.assertNotIn(_pool().nft_table, mod)      # bot_bottle_fc
         self.assertNotIn("ct status dnat", mod)       # the nft ruleset
 
     def test_shell_setup_reflects_overrides(self):
-        with patch.dict(os.environ, {"BOT_BOTTLE_FC_POOL_SIZE": "3"}):
-            out = netpool.render_shell_setup()
+        out = netpool.render_shell_setup(_pool(fc_pool_size=3))
         self.assertIn("BOT_BOTTLE_FC_POOL_SIZE=3", out)
         self.assertIn("firecracker-netpool.sh up", out)
 
@@ -107,12 +115,12 @@ class TestNetpoolRenderers(unittest.TestCase):
         # Environment= (must not depend on $SUDO_USER at boot), delegating
         # bring-up/teardown to the bundled script.
         script = "/opt/bb/scripts/firecracker-netpool.sh"
-        with patch.dict(os.environ, {"BOT_BOTTLE_FC_POOL_SIZE": "4"}):
-            unit = netpool.render_systemd_unit("alice", script)
+        pool = _pool(fc_pool_size=4)
+        unit = netpool.render_systemd_unit(pool, "alice", script)
         self.assertIn("Type=oneshot", unit)
         self.assertIn("BOT_BOTTLE_FC_POOL_SIZE=4", unit)
         self.assertIn("BOT_BOTTLE_FC_OWNER=alice", unit)
-        self.assertIn(f"BOT_BOTTLE_FC_IP_BASE={netpool.ip_base()}", unit)
+        self.assertIn(f"BOT_BOTTLE_FC_IP_BASE={pool.ip_base}", unit)
         self.assertIn(f"ExecStart={script} up", unit)
         self.assertIn(f"ExecStop={script} down", unit)
         self.assertIn("WantedBy=multi-user.target", unit)
@@ -129,7 +137,7 @@ class TestFirecrackerStatus(unittest.TestCase):
         from bot_bottle.backend.firecracker import setup as fc_setup
         buf = io.StringIO()
         with contextlib.redirect_stderr(buf):
-            rc = fc_setup.status()
+            rc = fc_setup.status(Settings())
         return rc, buf.getvalue()
 
     def _stub_artifacts(self, fc_setup: object) -> tuple[MagicMock, MagicMock]:
@@ -146,8 +154,8 @@ class TestFirecrackerStatus(unittest.TestCase):
             return None if cmd == "nft" else f"/usr/bin/{cmd}"
 
         k, d = self._stub_artifacts(fc_setup)
-        with patch.object(fc_setup.netpool, "missing_taps", return_value=[]), \
-             patch.object(fc_setup.netpool, "overlapping_routes", return_value=[]), \
+        with patch.object(netpool.NetPool, "missing_taps", return_value=[]), \
+             patch.object(netpool.NetPool, "overlapping_routes", return_value=[]), \
              patch.object(fc_setup.shutil, "which", side_effect=_which), \
              patch.object(fc_setup, "_firecracker_binary_ok", return_value=True), \
              patch.object(fc_setup, "_kvm_accessible", return_value=True), \
@@ -160,8 +168,8 @@ class TestFirecrackerStatus(unittest.TestCase):
     def test_not_ready_when_taps_missing(self):
         from bot_bottle.backend.firecracker import setup as fc_setup
         k, d = self._stub_artifacts(fc_setup)
-        with patch.object(fc_setup.netpool, "missing_taps", return_value=["bbfc0"]), \
-             patch.object(fc_setup.netpool, "overlapping_routes", return_value=[]), \
+        with patch.object(netpool.NetPool, "missing_taps", return_value=["bbfc0"]), \
+             patch.object(netpool.NetPool, "overlapping_routes", return_value=[]), \
              patch.object(fc_setup.shutil, "which", return_value=None), \
              patch.object(fc_setup, "_firecracker_binary_ok", return_value=True), \
              patch.object(fc_setup, "_kvm_accessible", return_value=True), \
@@ -175,8 +183,8 @@ class TestFirecrackerStatus(unittest.TestCase):
         from bot_bottle.backend.firecracker import setup as fc_setup
         k, d = self._stub_artifacts(fc_setup)
         conflict = netpool.RouteConflict(dst="10.243.0.0/24", dev="eth0")
-        with patch.object(fc_setup.netpool, "missing_taps", return_value=[]), \
-             patch.object(fc_setup.netpool, "overlapping_routes", return_value=[conflict]), \
+        with patch.object(netpool.NetPool, "missing_taps", return_value=[]), \
+             patch.object(netpool.NetPool, "overlapping_routes", return_value=[conflict]), \
              patch.object(fc_setup.shutil, "which", return_value=None), \
              patch.object(fc_setup, "_firecracker_binary_ok", return_value=True), \
              patch.object(fc_setup, "_kvm_accessible", return_value=True), \
@@ -205,57 +213,52 @@ class TestNetpoolOverlap(unittest.TestCase):
 
     def test_flags_route_overlapping_pool(self):
         # base 100.64.0.0 + a Tailscale peer /32 inside the pool window.
-        with patch.dict(os.environ, {"BOT_BOTTLE_FC_IP_BASE": "100.64.0.0",
-                                     "BOT_BOTTLE_FC_POOL_SIZE": "8"}), \
-             self._routes([
+        with self._routes([
                  {"dst": "default", "dev": "enp4s0"},
                  {"dst": "100.64.0.5", "dev": "tailscale0"},
              ]):
-            conflicts = netpool.overlapping_routes()
+            conflicts = _pool(fc_ip_base="100.64.0.0", fc_pool_size=8).overlapping_routes()
         self.assertEqual(1, len(conflicts))
         self.assertEqual("tailscale0", conflicts[0].dev)
 
     def test_ignores_own_taps_and_default(self):
-        # The "own tap" route uses netpool's (env-driven) iface name, so the
-        # test still exercises the self-ignore path on the KVM CI runner, whose
-        # BOT_BOTTLE_FC_IFACE_PREFIX differs from the default.
-        with patch.dict(os.environ, {"BOT_BOTTLE_FC_IP_BASE": "10.243.0.0",
-                                     "BOT_BOTTLE_FC_POOL_SIZE": "8"}), \
-             self._routes([
+        pool = _pool(fc_ip_base="10.243.0.0", fc_pool_size=8)
+        with self._routes([
                  {"dst": "default", "dev": "enp4s0"},
-                 {"dst": "10.243.0.0/31", "dev": netpool.slot(0).iface},
+                 {"dst": "10.243.0.0/31", "dev": pool.slot(0).iface},
                  {"dst": "192.168.1.0/24", "dev": "enp4s0"},
              ]):
-            self.assertEqual([], netpool.overlapping_routes())
+            self.assertEqual([], pool.overlapping_routes())
 
     def test_empty_when_ip_missing(self):
         with self._routes([]) as run:
             run.side_effect = FileNotFoundError()
-            self.assertEqual([], netpool.overlapping_routes())
+            self.assertEqual([], _pool().overlapping_routes())
 
 
 class TestNetpoolAllocation(unittest.TestCase):
+    # A prefix of its own, so the test's lock files can't collide with a real pool.
+    _POOL = _pool(fc_pool_size=1, fc_iface_prefix="bbunit")
+
     def test_allocate_is_mutually_exclusive(self):
-        with patch.dict(os.environ, {"BOT_BOTTLE_FC_POOL_SIZE": "1"}):
-            # First allocation grabs the only slot; the lock is held
-            # until the handle is closed, so a second call must fail
-            # over (and here, exhaust the pool).
-            slot, lock = netpool.allocate("first")
-            self.addCleanup(lock.close)
-            self.assertEqual(netpool.slot(0).iface, slot.iface)
-            with patch.object(netpool, "die",
-                              side_effect=SystemExit("exhausted")):
-                with self.assertRaises(SystemExit):
-                    netpool.allocate("second")
+        # First allocation grabs the only slot; the lock is held
+        # until the handle is closed, so a second call must fail
+        # over (and here, exhaust the pool).
+        slot, lock = self._POOL.allocate("first")
+        self.addCleanup(lock.close)
+        self.assertEqual(self._POOL.slot(0).iface, slot.iface)
+        with patch.object(netpool, "die",
+                          side_effect=SystemExit("exhausted")):
+            with self.assertRaises(SystemExit):
+                self._POOL.allocate("second")
 
     def test_allocate_releases_on_close(self):
-        with patch.dict(os.environ, {"BOT_BOTTLE_FC_POOL_SIZE": "1"}):
-            slot, lock = netpool.allocate("first")
-            lock.close()
-            # Slot is free again after close.
-            slot2, lock2 = netpool.allocate("second")
-            self.addCleanup(lock2.close)
-            self.assertEqual(slot.iface, slot2.iface)
+        slot, lock = self._POOL.allocate("first")
+        lock.close()
+        # Slot is free again after close.
+        slot2, lock2 = self._POOL.allocate("second")
+        self.addCleanup(lock2.close)
+        self.assertEqual(slot.iface, slot2.iface)
 
 
 class TestBottleAgentArgv(unittest.TestCase):
@@ -359,21 +362,16 @@ class TestNetpoolDefaultsSingleSource(unittest.TestCase):
 
     def test_python_reads_the_shared_file(self):
         d = self._shared_defaults()
-        with patch.dict(os.environ, {}, clear=True):
-            self.assertEqual(int(d["BOT_BOTTLE_FC_POOL_SIZE"]), netpool.pool_size())
-            self.assertEqual(d["BOT_BOTTLE_FC_IP_BASE"], netpool.ip_base())
-        # The module's *defaults* come from the same shared file. Assert the
-        # parsed defaults (not IFACE_PREFIX/NFT_TABLE, which layer a live env
-        # override on top — the KVM CI runner sets those for its isolated pool,
-        # which would otherwise mask this single-source check).
-        self.assertEqual(d["BOT_BOTTLE_FC_IFACE_PREFIX"],
-                         netpool._DEFAULTS["BOT_BOTTLE_FC_IFACE_PREFIX"])
-        self.assertEqual(d["BOT_BOTTLE_FC_NFT_TABLE"],
-                         netpool._DEFAULTS["BOT_BOTTLE_FC_NFT_TABLE"])
+        pool = _pool()
+        self.assertEqual(int(d["BOT_BOTTLE_FC_POOL_SIZE"]), pool.pool_size)
+        self.assertEqual(d["BOT_BOTTLE_FC_IP_BASE"], pool.ip_base)
+        self.assertEqual(d["BOT_BOTTLE_FC_IFACE_PREFIX"], pool.iface_prefix)
+        self.assertEqual(d["BOT_BOTTLE_FC_NFT_TABLE"], pool.nft_table)
+        self.assertEqual(d["BOT_BOTTLE_FC_ORCH_IFACE"], pool.orch_iface)
+        self.assertEqual(d["BOT_BOTTLE_FC_GW_IFACE"], pool.gw_iface)
 
-    def test_env_var_overrides_the_shared_default(self):
-        with patch.dict(os.environ, {"BOT_BOTTLE_FC_IP_BASE": "10.99.0.0"}):
-            self.assertEqual("10.99.0.0", netpool.ip_base())
+    def test_settings_override_the_shared_default(self):
+        self.assertEqual("10.99.0.0", _pool(fc_ip_base="10.99.0.0").ip_base)
 
     def test_script_defers_to_shared_file_without_literals(self):
         script = (self._root() / "scripts" / "firecracker-netpool.sh").read_text()
@@ -395,18 +393,19 @@ class TestBootArgs(unittest.TestCase):
 
     def test_config_has_rootfs_and_tap(self):
         cfg = cast(Any, firecracker_vm._config(
-            rootfs=Path("/run/rootfs.ext4"), tap="bbfc0",
+            kernel=Path("/k/vmlinux"), rootfs=Path("/run/rootfs.ext4"), tap="bbfc0",
             guest_ip="100.64.0.1", host_ip="100.64.0.0", pubkey="k",
             vcpus=2, mem_mib=2048, guest_mac="06:00:AC:10:00:02",
         ))
         self.assertEqual("/run/rootfs.ext4", cfg["drives"][0]["path_on_host"])
         self.assertFalse(cfg["drives"][0]["is_read_only"])
         self.assertEqual("bbfc0", cfg["network-interfaces"][0]["host_dev_name"])
+        self.assertEqual("/k/vmlinux", cfg["boot-source"]["kernel_image_path"])
         self.assertEqual(1, len(cfg["drives"]))  # no data drive by default
 
     def test_config_adds_data_drives_in_order(self):
         cfg = cast(Any, firecracker_vm._config(
-            rootfs=Path("/run/rootfs.ext4"), tap="bbfc0",
+            kernel=Path("/k/vmlinux"), rootfs=Path("/run/rootfs.ext4"), tap="bbfc0",
             guest_ip="100.64.0.1", host_ip="100.64.0.0", pubkey="k",
             vcpus=2, mem_mib=2048, guest_mac="06:00:AC:10:00:02",
             data_drives=(Path("/run/registry.ext4"), Path("/run/build-store.ext4")),
@@ -468,6 +467,7 @@ class TestBottlePlanProperties(unittest.TestCase):
             stage_dir=Path("/stage"), git_gate_plan=cast(Any, MagicMock()),
             egress_plan=egress_plan, supervise_plan=None,
             agent_provision=ap, slug="demo-x", forwarded_env={},
+            settings=Settings(),
         )
         fields.update(overrides)
         return FirecrackerBottlePlan(**fields)  # type: ignore[arg-type]

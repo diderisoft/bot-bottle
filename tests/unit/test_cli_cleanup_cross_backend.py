@@ -34,7 +34,7 @@ class TestCmdCleanup(unittest.TestCase):
             return_value=("docker", "firecracker"),
         ), patch.object(
             cmd, "get_bottle_backend",
-            side_effect=lambda name: backends_by_name[name],  # type: ignore
+            side_effect=lambda _settings, name: backends_by_name[name],  # type: ignore
         ), patch.object(
             cmd, "has_backend", return_value=True,
         ), patch.object(
@@ -53,7 +53,7 @@ class TestCmdCleanup(unittest.TestCase):
         macos = MagicMock()
         backends_by_name = {"docker": docker}
 
-        def _has(name: str) -> bool:
+        def _has(_settings: object, name: str) -> bool:
             return name == "docker"
 
         with patch.object(
@@ -61,7 +61,7 @@ class TestCmdCleanup(unittest.TestCase):
             return_value=("docker", "macos-container"),
         ), patch.object(
             cmd, "get_bottle_backend",
-            side_effect=lambda name: backends_by_name[name],  # type: ignore
+            side_effect=lambda _settings, name: backends_by_name[name],  # type: ignore
         ), patch.object(
             cmd, "has_backend", side_effect=_has,
         ), patch.object(
@@ -83,7 +83,7 @@ class TestCmdCleanup(unittest.TestCase):
             return_value=("docker", "firecracker"),
         ), patch.object(
             cmd, "get_bottle_backend",
-            side_effect=lambda name: backends_by_name[name],  # type: ignore
+            side_effect=lambda _settings, name: backends_by_name[name],  # type: ignore
         ), patch.object(
             cmd, "has_backend", return_value=True,
         ), patch.object(
@@ -104,7 +104,7 @@ class TestCmdCleanup(unittest.TestCase):
             return_value=("docker", "firecracker"),
         ), patch.object(
             cmd, "get_bottle_backend",
-            side_effect=lambda name: backends_by_name[name],  # type: ignore
+            side_effect=lambda _settings, name: backends_by_name[name],  # type: ignore
         ), patch.object(
             cmd, "has_backend", return_value=True,
         ), patch.object(
@@ -126,7 +126,7 @@ class TestCmdCleanup(unittest.TestCase):
             return_value=("docker", "firecracker"),
         ), patch.object(
             cmd, "get_bottle_backend",
-            side_effect=lambda name: backends_by_name[name],  # type: ignore
+            side_effect=lambda _settings, name: backends_by_name[name],  # type: ignore
         ), patch.object(
             cmd, "has_backend", return_value=True,
         ), patch.object(

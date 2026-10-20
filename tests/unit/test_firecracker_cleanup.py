@@ -14,11 +14,15 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from bot_bottle.contract.hostctl import Settings
 from bot_bottle.backend import EnumerationError
 from bot_bottle.backend.firecracker import cleanup as fc_cleanup
 from bot_bottle.backend.firecracker.bottle_cleanup_plan import (
     FirecrackerBottleCleanupPlan,
 )
+
+
+_S = Settings()
 
 
 class TestProcessScan(unittest.TestCase):
@@ -166,7 +170,7 @@ class TestCleanupRemoval(unittest.TestCase):
              patch.object(fc_cleanup, "_terminate_orphan") as terminate, \
              patch("bot_bottle.backend.cleanup_control.shutil.rmtree") as rmtree, \
              patch.object(fc_cleanup, "info"):
-            fc_cleanup.cleanup(plan)
+            fc_cleanup.cleanup(plan, Settings())
         terminate.assert_called_once_with(101, Path("/run"))
         rmtree.assert_called_once_with(Path("/run/dev-x"))
 
@@ -179,7 +183,7 @@ class TestCleanupRemoval(unittest.TestCase):
             return_value=FirecrackerBottleCleanupPlan(),
         ), patch.object(fc_cleanup, "_terminate_orphan") as terminate, \
              patch("bot_bottle.backend.cleanup_control.shutil.rmtree") as rmtree:
-            fc_cleanup.cleanup(preview)
+            fc_cleanup.cleanup(preview, Settings())
         terminate.assert_not_called()
         rmtree.assert_not_called()
 
@@ -226,7 +230,7 @@ class TestCleanupPlan(unittest.TestCase):
 
 
 class TestBackendDelegates(unittest.TestCase):
-    """Each backend's setup/status/teardown/cleanup classmethods forward
+    """Each backend's setup/status/teardown/cleanup methods forward
     to their module — assert the forwarding (and return-code passthrough)."""
 
     def test_firecracker_delegates(self):
@@ -234,15 +238,15 @@ class TestBackendDelegates(unittest.TestCase):
         with patch("bot_bottle.backend.firecracker.setup.setup", return_value=1) as s, \
              patch("bot_bottle.backend.firecracker.setup.status", return_value=2), \
              patch("bot_bottle.backend.firecracker.setup.teardown", return_value=3):
-            self.assertEqual(1, FirecrackerBottleBackend.setup())
-            self.assertEqual(2, FirecrackerBottleBackend.status())
-            self.assertEqual(3, FirecrackerBottleBackend.teardown())
-        s.assert_called_once_with()
+            self.assertEqual(1, FirecrackerBottleBackend(_S).setup())
+            self.assertEqual(2, FirecrackerBottleBackend(_S).status())
+            self.assertEqual(3, FirecrackerBottleBackend(_S).teardown())
+        s.assert_called_once_with(_S)
         with patch("bot_bottle.backend.firecracker.cleanup.prepare_cleanup") as pc, \
              patch("bot_bottle.backend.firecracker.cleanup.cleanup") as cl, \
              patch("bot_bottle.backend.firecracker.enumerate.enumerate_active",
                    return_value=[]):
-            b = FirecrackerBottleBackend()
+            b = FirecrackerBottleBackend(_S)
             b.prepare_cleanup()
             b.cleanup(FirecrackerBottleCleanupPlan())
             self.assertEqual([], b.enumerate_active())
@@ -254,18 +258,18 @@ class TestBackendDelegates(unittest.TestCase):
         with patch("bot_bottle.backend.docker.setup.setup", return_value=4), \
              patch("bot_bottle.backend.docker.setup.status", return_value=5), \
              patch("bot_bottle.backend.docker.setup.teardown", return_value=6):
-            self.assertEqual(4, DockerBottleBackend.setup())
-            self.assertEqual(5, DockerBottleBackend.status())
-            self.assertEqual(6, DockerBottleBackend.teardown())
+            self.assertEqual(4, DockerBottleBackend(_S).setup())
+            self.assertEqual(5, DockerBottleBackend(_S).status())
+            self.assertEqual(6, DockerBottleBackend(_S).teardown())
 
     def test_macos_delegates(self):
         from bot_bottle.backend.macos_container import MacosContainerBottleBackend
         with patch("bot_bottle.backend.macos_container.setup.setup", return_value=7), \
              patch("bot_bottle.backend.macos_container.setup.status", return_value=8), \
              patch("bot_bottle.backend.macos_container.setup.teardown", return_value=9):
-            self.assertEqual(7, MacosContainerBottleBackend.setup())
-            self.assertEqual(8, MacosContainerBottleBackend.status())
-            self.assertEqual(9, MacosContainerBottleBackend.teardown())
+            self.assertEqual(7, MacosContainerBottleBackend(_S).setup())
+            self.assertEqual(8, MacosContainerBottleBackend(_S).status())
+            self.assertEqual(9, MacosContainerBottleBackend(_S).teardown())
 
 
 if __name__ == "__main__":

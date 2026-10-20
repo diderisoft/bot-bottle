@@ -23,6 +23,7 @@ import time
 import unittest
 from pathlib import Path
 
+from bot_bottle.cli.settings import settings_from_env
 from bot_bottle.backend.docker.consolidated_launch import _network_cidr, _network_container_ips
 from bot_bottle.backend.docker.egress import EGRESS_PORT
 from bot_bottle.backend.docker.gateway_net import next_free_ip
@@ -69,7 +70,7 @@ class TestGatewayReattachDocker(unittest.TestCase):
         self._slug = "reattach-" + secrets.token_hex(3)
         self._project = f"bot-bottle-{self._slug}"
         self._tmp = tempfile.TemporaryDirectory()
-        self.svc = DockerInfraService(root_mount_source=self._root_volume)
+        self.svc = DockerInfraService(settings_from_env(), root_mount_source=self._root_volume)
         self.addCleanup(self._teardown)
         url = self.svc.ensure_running(startup_timeout=300)
         self.client = OrchestratorClient(url)

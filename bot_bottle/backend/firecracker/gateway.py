@@ -32,6 +32,7 @@ from ...control.gateway import (
     GatewayError,
     GatewayTransport,
 )
+from ...contract.hostctl import Settings
 from .. import util as backend_util
 from . import infra_vm, netpool, util
 from .gateway_transport import FirecrackerGatewayTransport
@@ -68,10 +69,12 @@ class FirecrackerGateway(Gateway):
 
     name = GATEWAY_NAME
 
-    def __init__(self, vm: infra_vm.InfraVm | None = None) -> None:
+    def __init__(self, settings: Settings, vm: infra_vm.InfraVm | None = None) -> None:
         # The live VM handle when this process booted it; None when adapting an
         # already-running gateway (CA fetch / provisioning go through the stable
         # key + fixed link, so no live handle is needed).
+        self._settings = settings
+        self._slot = netpool.from_settings(settings.infra).gw_slot()
         self._vm = vm
         self._orchestrator_url = ""
         self._gateway_token = ""
@@ -105,7 +108,8 @@ class FirecrackerGateway(Gateway):
         # persisted CA, then push the token the init waits for before starting
         # the data plane (so mitmproxy finds the CA rather than minting one).
         vm = infra_vm.boot_vm(
-            name=GATEWAY_NAME, slot=netpool.gw_slot(), run_dir=infra_vm._gw_dir(),
+            settings=self._settings,
+            name=GATEWAY_NAME, slot=self._slot, run_dir=infra_vm._gw_dir(),
             role="gateway", mem_mib=_GW_MEM_MIB,
             extra_boot_args=f"bb_orch={orchestrator_guest_ip}",
         )
@@ -148,7 +152,7 @@ class FirecrackerGateway(Gateway):
     def _save_rolled_over_ca(self) -> None:
         # The VM's rootfs is rebuilt every boot: the rolled-over CA only
         # survives the restart if it's in the host dir `_restore_ca` pushes.
-        self._save_ca(infra_vm._infra_dir() / "id_ed25519", netpool.gw_slot().guest_ip)
+        self._save_ca(infra_vm._infra_dir() / "id_ed25519", self._slot.guest_ip)
 
     def _save_ca(self, key: Path, ip: str) -> None:
         """Copy the gateway VM's CA files to the persisted CA dir."""
@@ -188,7 +192,7 @@ class FirecrackerGateway(Gateway):
     def address(self) -> str:
         """The gateway VM's guest IP — the agent-facing target agent VMs'
         gateway-port traffic is DNAT'd to."""
-        return netpool.gw_slot().guest_ip
+        return self._slot.guest_ip
 
     def ca_cert_pem(self, *, timeout: float = DEFAULT_CA_TIMEOUT_SECONDS) -> str:
         """The gateway's mitmproxy CA (PEM) agents install to trust its TLS
@@ -197,7 +201,7 @@ class FirecrackerGateway(Gateway):
         falls back to the stable key + fixed link when this process didn't boot
         the VM."""
         key = self._vm.private_key if self._vm else infra_vm._infra_dir() / "id_ed25519"
-        ip = self._vm.guest_ip if self._vm else netpool.gw_slot().guest_ip
+        ip = self._vm.guest_ip if self._vm else self._slot.guest_ip
 
         def _fetch() -> str | None:
             proc = subprocess.run(
@@ -219,7 +223,7 @@ class FirecrackerGateway(Gateway):
         built from the stable key + the gateway link's guest IP, so teardown can
         use it too."""
         return FirecrackerGatewayTransport(
-            infra_vm._infra_dir() / "id_ed25519", netpool.gw_slot().guest_ip)
+            infra_vm._infra_dir() / "id_ed25519", self._slot.guest_ip)
 
 
 __all__ = ["FirecrackerGateway", "FirecrackerGatewayTransport", "GATEWAY_NAME"]

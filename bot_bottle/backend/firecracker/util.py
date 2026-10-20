@@ -23,7 +23,9 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from ...contract.hostctl import InfraSettings
 from ...lib.log import die, info, warn
+from ...paths import host_firecracker_cache_dir
 from . import netpool
 
 
@@ -37,27 +39,18 @@ _KVM_DEVICE = "/dev/kvm"
 
 
 def cache_dir() -> Path:
-    d = Path(
-        os.environ.get(
-            "BOT_BOTTLE_FC_CACHE",
-            str(Path.home() / ".cache" / "bot-bottle" / "firecracker"),
-        )
-    )
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    return host_firecracker_cache_dir()
 
 
-def kernel_path() -> Path:
-    return Path(os.environ.get("BOT_BOTTLE_FC_KERNEL", str(cache_dir() / "vmlinux")))
+def kernel_path(infra: InfraSettings) -> Path:
+    return Path(infra.fc_kernel) if infra.fc_kernel else cache_dir() / "vmlinux"
 
 
-def dropbear_path() -> Path:
+def dropbear_path(infra: InfraSettings) -> Path:
     """The static dropbear injected into every guest rootfs as its SSH
     server. Must be statically linked — the guest has none of the
     host's shared libraries."""
-    return Path(
-        os.environ.get("BOT_BOTTLE_FC_DROPBEAR", str(cache_dir() / "dropbear"))
-    )
+    return Path(infra.fc_dropbear) if infra.fc_dropbear else cache_dir() / "dropbear"
 
 
 # --- availability + preflight ---------------------------------------
@@ -84,7 +77,7 @@ def is_available() -> bool:
     return is_host_capable() and shutil.which("firecracker") is not None
 
 
-def require_firecracker() -> None:
+def require_firecracker(infra: InfraSettings) -> None:
     """Fail-closed preflight. Every check that gates the security
     boundary (the isolation table, the TAP pool) errors rather than
     booting a VM without it."""
@@ -96,15 +89,15 @@ def require_firecracker() -> None:
         info("Install: https://github.com/firecracker-microvm/firecracker/releases")
         die("firecracker not found on PATH")
     _require_kvm()
-    if not kernel_path().is_file():
-        die(f"guest kernel not found at {kernel_path()}. Set "
+    if not kernel_path(infra).is_file():
+        die(f"guest kernel not found at {kernel_path(infra)}. Set "
             "BOT_BOTTLE_FC_KERNEL or place a vmlinux there.")
-    if not dropbear_path().is_file():
-        die(f"static dropbear not found at {dropbear_path()}. Set "
+    if not dropbear_path(infra).is_file():
+        die(f"static dropbear not found at {dropbear_path(infra)}. Set "
             "BOT_BOTTLE_FC_DROPBEAR or cache one there.")
     if shutil.which("mke2fs") is None:
         die("mke2fs (e2fsprogs) not found — required to build guest rootfs")
-    _require_network_pool()
+    _require_network_pool(netpool.from_settings(infra))
 
 
 def _require_kvm() -> None:
@@ -116,7 +109,7 @@ def _require_kvm() -> None:
             "the `kvm` group and re-login.")
 
 
-def _require_network_pool() -> None:
+def _require_network_pool(pool: netpool.NetPool) -> None:
     """Fail-closed on the parts we can check unprivileged; defer the
     rest to the post-boot isolation probe.
 
@@ -127,22 +120,22 @@ def _require_network_pool() -> None:
     empirical isolation probe run after boot, before the agent starts
     (see isolation_probe.verify_isolation). What we must never do is
     boot without the TAP pool."""
-    conflicts = netpool.overlapping_routes()
+    conflicts = pool.overlapping_routes()
     if conflicts:
         detail = "; ".join(f"{c.dst} dev {c.dev}" for c in conflicts)
-        warn(f"Firecracker pool range ({netpool.ip_base()}, "
-             f"{netpool.pool_size()} slots) overlaps existing routes: "
+        warn(f"Firecracker pool range ({pool.ip_base}, "
+             f"{pool.pool_size} slots) overlaps existing routes: "
              f"{detail}. This can shadow or be shadowed by that route; "
              f"set BOT_BOTTLE_FC_IP_BASE to a free range and re-run "
              f"bot-bottle backend setup --backend=firecracker.")
-    missing = netpool.missing_taps()
+    missing = pool.missing_taps()
     if missing:
         die(f"network pool incomplete — missing TAP devices: "
             f"{', '.join(missing)}.\n    bot-bottle backend setup --backend=firecracker")
-    if shutil.which("nft") is not None and not netpool.nft_table_present():
+    if shutil.which("nft") is not None and not pool.nft_table_present():
         # nft is queryable and says the table is absent — that's a
         # definite, catchable misconfiguration; fail early.
-        warn(f"isolation table `inet {netpool.NFT_TABLE}` not found via nft. "
+        warn(f"isolation table `inet {pool.nft_table}` not found via nft. "
              "If this is a permissions issue it will be re-checked "
              "empirically after boot; otherwise run: "
              "bot-bottle backend setup --backend=firecracker")
@@ -163,7 +156,7 @@ def docker_image_id(ref: str) -> str:
 
 
 def build_base_rootfs_dir(
-    image_ref: str, *, variant: str = "", init_script: str | None = None,
+    image_ref: str, infra: InfraSettings, *, variant: str = "", init_script: str | None = None,
 ) -> Path:
     """Export the image's filesystem and inject the guest init + static
     dropbear. Cached by image digest — the per-bottle bits
@@ -188,7 +181,7 @@ def build_base_rootfs_dir(
 
     info(f"exporting {image_ref} rootfs -> {base}")
     export_image_rootfs("docker", image_ref, base)
-    inject_guest_boot(base, init_script=init_script)
+    inject_guest_boot(base, infra, init_script=init_script)
     ready.write_text("ok\n")
     return base
 
@@ -217,7 +210,7 @@ def export_image_rootfs(engine: str, image_ref: str, dest: Path) -> None:
         )
 
 
-def build_committed_rootfs_dir(tar_path: Path) -> Path:
+def build_committed_rootfs_dir(tar_path: Path, infra: InfraSettings) -> Path:
     """Prepare a base rootfs dir from a frozen-bottle snapshot tar (the
     freeze/resume path — no Docker). Extracts the snapshot, recreates the
     virtual mount points the freezer excluded, and injects the guest init +
@@ -255,12 +248,14 @@ def build_committed_rootfs_dir(tar_path: Path) -> Path:
     for mount_point in ("proc", "sys", "dev", "run"):
         (base / mount_point).mkdir(mode=0o755, exist_ok=True)
 
-    inject_guest_boot(base)
+    inject_guest_boot(base, infra)
     ready.write_text("ok\n")
     return base
 
 
-def inject_guest_boot(rootfs: Path, init_script: str | None = None) -> None:
+def inject_guest_boot(
+    rootfs: Path, infra: InfraSettings, init_script: str | None = None,
+) -> None:
     """Drop the static dropbear and the PID-1 init into the rootfs.
     `init_script` defaults to the SSH-only agent init; each infra VM
     passes its own per-plane init (orchestrator or gateway).
@@ -270,7 +265,7 @@ def inject_guest_boot(rootfs: Path, init_script: str | None = None) -> None:
     ~/.bashrc). Replace whatever is there and create the files with
     O_EXCL|O_NOFOLLOW so the write always lands a fresh regular file in
     the staging tree and never follows a planted symlink out of it."""
-    _write_staged_file(rootfs / "bb-dropbear", dropbear_path().read_bytes())
+    _write_staged_file(rootfs / "bb-dropbear", dropbear_path(infra).read_bytes())
     _write_staged_file(rootfs / "bb-init", (init_script or _GUEST_INIT).encode())
 
 
@@ -329,7 +324,9 @@ def make_bottle_rootfs(agent_base: Path, out_path: Path) -> None:
     build_rootfs_ext4(agent_base, out_path)
 
 
-def inject_guest_boot_ext4(image: Path, init_script: str | None = None) -> None:
+def inject_guest_boot_ext4(
+    image: Path, infra: InfraSettings, init_script: str | None = None,
+) -> None:
     """`inject_guest_boot` for a prepared ext4 image instead of a directory:
     replace `/bb-dropbear` and `/bb-init` with this host's copies, mode 0755,
     owned by root. Rootless (`debugfs -w`, no mount), so the host's guest init
@@ -340,7 +337,7 @@ def inject_guest_boot_ext4(image: Path, init_script: str | None = None) -> None:
         commands = "\n".join([
             "rm /bb-dropbear",
             "rm /bb-init",
-            f"write {dropbear_path()} /bb-dropbear",
+            f"write {dropbear_path(infra)} /bb-dropbear",
             f"write {init} /bb-init",
             *(f"sif /{name} {field} {value}"
               for name in ("bb-dropbear", "bb-init")

@@ -11,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
+from bot_bottle.contract.hostctl import Settings
 
 
 def _bottle_cm(bottle: Any) -> MagicMock:
@@ -32,7 +33,7 @@ class TestBottleBackendLaunchTemplate(unittest.TestCase):
 
     def _make_backend(self) -> Any:
         from bot_bottle.backend.docker.backend import DockerBottleBackend
-        return DockerBottleBackend()
+        return DockerBottleBackend(Settings())
 
     def test_launch_delegates_to_build_or_load_and_launch_impl(self) -> None:
         from bot_bottle.backend import BottleImages
@@ -54,7 +55,7 @@ class TestBottleBackendLaunchTemplate(unittest.TestCase):
     def test_noop_default_prelaunch_checks(self) -> None:
         from bot_bottle.backend.docker.backend import DockerBottleBackend
         from bot_bottle.backend import BottleBackend
-        backend = DockerBottleBackend()
+        backend = DockerBottleBackend(Settings())
         # Base-class prelaunch_checks is a no-op — must not raise.
         BottleBackend.prelaunch_checks(backend, cast(Any, SimpleNamespace()))  # type: ignore[arg-type]
 
@@ -69,6 +70,7 @@ class TestDockerStaleChecks(unittest.TestCase):
         provision = SimpleNamespace(image="bot-bottle-agent:latest")
         return cast(Any, SimpleNamespace(
             spec=spec,
+            settings=Settings(),
             slug=slug,
             image="bot-bottle-agent:latest",
             agent_provision=provision,
@@ -135,7 +137,7 @@ class TestDockerStaleChecks(unittest.TestCase):
     def test_backend_prelaunch_checks_delegates(self) -> None:
         from bot_bottle.backend.docker.backend import DockerBottleBackend
         from bot_bottle.backend.docker import launch as mod
-        backend = DockerBottleBackend()
+        backend = DockerBottleBackend(Settings())
         plan = self._plan()
         with patch.object(mod, "stale_checks") as sc:
             backend.prelaunch_checks(plan)  # type: ignore[arg-type]
@@ -150,6 +152,7 @@ class TestMacosContainerStaleChecks(unittest.TestCase):
     def _plan(self, policy: str = "cached", slug: str = "dev-abc") -> Any:
         return cast(Any, SimpleNamespace(
             spec=SimpleNamespace(image_policy=policy),
+            settings=Settings(),
             slug=slug,
             image="bot-bottle-agent:latest",
         ))
@@ -198,7 +201,7 @@ class TestMacosContainerStaleChecks(unittest.TestCase):
     def test_backend_prelaunch_checks_delegates(self) -> None:
         from bot_bottle.backend.macos_container.backend import MacosContainerBottleBackend
         from bot_bottle.backend.macos_container import launch as mod
-        backend = MacosContainerBottleBackend()
+        backend = MacosContainerBottleBackend(Settings())
         plan = self._plan()
         with patch.object(mod, "stale_checks") as sc:
             backend.prelaunch_checks(plan)  # type: ignore[arg-type]
@@ -214,6 +217,7 @@ class TestFirecrackerCachedRootfs(unittest.TestCase):
         from bot_bottle.manifest import ManifestImageOverlay
         return cast(Any, SimpleNamespace(
             spec=SimpleNamespace(image_policy=policy),
+            settings=Settings(),
             slug="dev-abc",
             image="bot-bottle-agent:latest",
             dockerfile_path="/repo/Dockerfile",
@@ -255,9 +259,10 @@ class TestFirecrackerCachedRootfs(unittest.TestCase):
              patch.object(mod.agent_image, "resolve_agent_pin", return_value=pin) as resolve, \
              patch.object(mod.image_builder, "acquire_agent_image_ext4",
                           return_value=prepared) as acquire:
-            self.assertEqual(prepared, mod.build_or_load_agent_base(self._plan("build")))
+            plan = self._plan("build")
+            self.assertEqual(prepared, mod.build_or_load_agent_base(plan))
         self.assertEqual(FORMAT_EXT4, resolve.call_args.kwargs["fmt"])
-        acquire.assert_called_once_with(pin)
+        acquire.assert_called_once_with(pin, plan.settings)
 
     def test_overlay_still_resolves_the_oci_artifact(self) -> None:
         from bot_bottle.backend.firecracker import launch as mod
@@ -339,7 +344,7 @@ class TestFirecrackerCachedRootfs(unittest.TestCase):
         from bot_bottle.backend.firecracker import launch as mod
         plan = self._plan()
         with patch.object(mod, "stale_checks") as checks:
-            FirecrackerBottleBackend().prelaunch_checks(plan)
+            FirecrackerBottleBackend(Settings()).prelaunch_checks(plan)
         checks.assert_called_once_with(plan)
 
 

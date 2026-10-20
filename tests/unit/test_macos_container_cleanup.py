@@ -5,6 +5,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
+from bot_bottle.contract.hostctl import Settings
 from bot_bottle.backend import EnumerationError
 from bot_bottle.backend.cleanup_control import CleanupError
 from bot_bottle.backend.macos_container import cleanup, enumerate as enum_mod
@@ -36,7 +37,7 @@ class TestMacosContainerCleanup(unittest.TestCase):
             args=[], returncode=0, stdout="", stderr="",
         )
         with patch.object(cleanup.subprocess, "run", return_value=completed) as run:
-            cleanup.cleanup(plan)
+            cleanup.cleanup(plan, Settings())
         self.assertEqual(
             ["container", "delete", "--force", "bot-bottle-a"],
             run.call_args_list[0].args[0],
@@ -55,7 +56,7 @@ class TestMacosContainerCleanup(unittest.TestCase):
         )
         with patch.object(cleanup.subprocess, "run", return_value=failed) as run, \
              self.assertRaisesRegex(CleanupError, "unavailable"):
-            cleanup.cleanup(plan)
+            cleanup.cleanup(plan, Settings())
         self.assertEqual(2, run.call_count)
 
     def test_container_enumeration_failure_aborts(self):

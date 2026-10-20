@@ -4,13 +4,14 @@
 orchestrator + gateway microVMs as an idempotent per-host singleton pair over
 the shared `infra_vm` substrate (boot primitives, the singleton flock, the
 adopt/version machinery). Unlike the docker/macOS services it takes no
-per-instance config — the firecracker pair is a **hard** per-host singleton,
+per-instance config beyond `Settings` — the firecracker pair is a **hard** per-host singleton,
 pinned to the fixed netpool links (`orch_slot()` / `gw_slot()`), host cache
 paths, and a `booted-version` marker, so two pairs can't coexist on one host.
 """
 
 from __future__ import annotations
 
+from ...contract.hostctl import Settings
 from ...lib.log import die, info
 from ...image_registry import RegistryError
 from ...published_artifacts import ArtifactsManifestError
@@ -26,15 +27,18 @@ class FirecrackerInfraService(InfraService):
 
     name = "firecracker"
 
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+
     def orchestrator(self) -> FirecrackerOrchestrator:
         """The control-plane service (adopts the running orchestrator VM by its
         fixed link; no live handle needed for URL / SSH / health)."""
-        return FirecrackerOrchestrator()
+        return FirecrackerOrchestrator(self.settings)
 
     def gateway(self) -> FirecrackerGateway:
         """The data-plane service (adopts the running gateway VM by its fixed
         link; CA fetch / provisioning go through the stable key)."""
-        return FirecrackerGateway()
+        return FirecrackerGateway(self.settings)
 
     def _bring_up(self, *, startup_timeout: float) -> tuple[str, bool]:
         """Idempotent per-host singleton pair. Adopt the running VMs if the
@@ -55,7 +59,7 @@ class FirecrackerInfraService(InfraService):
         # or malformed one, or an unresolvable image, should surface as a clean
         # one-line error with remediation, not a traceback out of a launch.
         try:
-            want = infra_vm.expected_version()
+            want = infra_vm.expected_version(self.settings.infra)
         except (RegistryError, ArtifactsManifestError) as e:
             die(str(e))
         if infra_vm.adoptable(key, url, want):
@@ -74,7 +78,7 @@ class FirecrackerInfraService(InfraService):
             # unreachable registry is a clean fail-closed message, not a stack
             # trace (matches the behavior of the retired infra_artifact.py).
             try:
-                infra_vm.ensure_built()
+                infra_vm.ensure_built(self.settings)
             except (RegistryError, ArtifactsManifestError) as e:
                 die(str(e))
             # Orchestrator first — the gateway daemons reach the control plane at

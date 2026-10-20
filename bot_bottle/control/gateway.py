@@ -20,10 +20,10 @@ binding, so N bottle launches never spawn N gateways.
 from __future__ import annotations
 
 import abc
-import os
 from pathlib import Path
 from typing import Protocol
 
+from ..contract.hostctl import DEFAULT_GATEWAY_IMAGE
 from ..paths import host_gateway_ca_dir
 
 # The gateway's mitmproxy writes its CA a beat after the container starts, so
@@ -63,11 +63,9 @@ _GATEWAY_PYTHON = (
     "python3",
 )
 
-# The gateway data-plane image + its Dockerfile. Kept as a local constant
-# rather than imported from the backend layer, which would drag
-# the whole backend layer into the lean orchestrator (see #359); unify when
-# that lands. Env override matches the backend's BOT_BOTTLE_GATEWAY_IMAGE.
-GATEWAY_IMAGE = os.environ.get("BOT_BOTTLE_GATEWAY_IMAGE", "bot-bottle-gateway:latest")
+# The default gateway data-plane image (launches use `InfraSettings.gateway_image`)
+# and its Dockerfile.
+GATEWAY_IMAGE = DEFAULT_GATEWAY_IMAGE
 GATEWAY_DOCKERFILE = "Dockerfile.gateway"
 
 

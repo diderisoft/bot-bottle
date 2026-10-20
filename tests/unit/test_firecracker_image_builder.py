@@ -17,6 +17,9 @@ from typing import Any
 from unittest.mock import patch
 
 from bot_bottle.backend.firecracker import image_builder
+from bot_bottle.contract.hostctl import Settings
+
+_S = Settings()
 
 
 def _patch_dropbear(case: unittest.TestCase, where: Path) -> None:
@@ -38,32 +41,30 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
         _patch_dropbear(self, self.cache)
 
     def test_cache_hit_skips_rebuild(self):
-        digest = image_builder._rootfs_digest(self.dockerfile)
+        digest = image_builder._rootfs_digest(self.dockerfile, _S.infra)
         base = self.cache / "rootfs" / f"agent-{digest}"
         base.mkdir(parents=True)
         (base / ".bb-ready").write_text("ok\n")
         with patch.object(image_builder.util, "cache_dir", return_value=self.cache), \
              patch.object(image_builder, "_infra_build") as build:
-            out = image_builder.build_agent_rootfs_dir(
-                self.dockerfile, image_tag="t:latest")
+            out = image_builder.build_agent_rootfs_dir(self.dockerfile, _S, image_tag="t:latest")
         build.assert_not_called()
         self.assertEqual(base, out)
 
     def test_cached_lookup_requires_ready_marker(self):
-        digest = image_builder._rootfs_digest(self.dockerfile)
+        digest = image_builder._rootfs_digest(self.dockerfile, _S.infra)
         base = self.cache / "rootfs" / f"agent-{digest}"
         base.mkdir(parents=True)
         with patch.object(image_builder.util, "cache_dir", return_value=self.cache):
-            self.assertIsNone(image_builder.cached_agent_rootfs_dir(self.dockerfile))
+            self.assertIsNone(image_builder.cached_agent_rootfs_dir(self.dockerfile, _S.infra))
             (base / ".bb-ready").write_text("ok\n")
-            self.assertEqual(base, image_builder.cached_agent_rootfs_dir(self.dockerfile))
+            self.assertEqual(base, image_builder.cached_agent_rootfs_dir(self.dockerfile, _S.infra))
 
     def test_cache_miss_builds_injects_and_marks_ready(self):
         with patch.object(image_builder.util, "cache_dir", return_value=self.cache), \
              patch.object(image_builder, "_infra_build") as build, \
              patch.object(image_builder.util, "inject_guest_boot") as inject:
-            out = image_builder.build_agent_rootfs_dir(
-                self.dockerfile, image_tag="t:latest", smoke_test=("claude", "--version"))
+            out = image_builder.build_agent_rootfs_dir(self.dockerfile, _S, image_tag="t:latest", smoke_test=("claude", "--version"))
         build.assert_called_once()
         # smoke_test threads through to the VM build.
         self.assertEqual(("claude", "--version"), build.call_args.kwargs["smoke_test"])
@@ -77,7 +78,7 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
         with patch.object(image_builder.util, "cache_dir", return_value=self.cache), \
              patch.object(image_builder, "_infra_build", side_effect=boom), \
              self.assertRaises(SystemExit):
-            image_builder.build_agent_rootfs_dir(self.dockerfile, image_tag="t:latest")
+            image_builder.build_agent_rootfs_dir(self.dockerfile, _S, image_tag="t:latest")
         self.assertEqual([".build.lock"], sorted(p.name for p in (self.cache / "rootfs").iterdir()))
 
     def _ext4_artifact(self, digest_char: str = "a"):
@@ -98,11 +99,11 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
         with patch.object(image_builder.util, "cache_dir", return_value=self.cache), \
              patch.object(image_builder.util, "dropbear_path", return_value=self._dropbear()), \
              patch.object(image_builder.image_registry, "ensure_ext4") as ensure:
-            image = image_builder._image_ext4_path(artifact)
+            image = image_builder._image_ext4_path(artifact, _S.infra)
             image.parent.mkdir(parents=True, exist_ok=True)
             image.write_bytes(b"prepared")
             image.with_suffix(".ready").write_text("ok\n")
-            out = image_builder.acquire_agent_image_ext4(artifact)
+            out = image_builder.acquire_agent_image_ext4(artifact, _S)
         ensure.assert_not_called()
         self.assertEqual(image, out)
 
@@ -111,18 +112,18 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
         artifact = replace(self._ext4_artifact(), format="oci")
         with patch.object(image_builder.util, "cache_dir", return_value=self.cache), \
              self.assertRaises(SystemExit):
-            image_builder.acquire_agent_image_ext4(artifact)
+            image_builder.acquire_agent_image_ext4(artifact, _S)
 
     def test_ext4_key_changes_with_guest_init_and_dropbear(self):
         artifact = self._ext4_artifact()
         dropbear = self._dropbear()
         with patch.object(image_builder.util, "dropbear_path", return_value=dropbear), \
              patch.object(image_builder.util, "cache_dir", return_value=self.cache):
-            base = image_builder._image_ext4_path(artifact)
+            base = image_builder._image_ext4_path(artifact, _S.infra)
             with patch.object(image_builder.util, "_GUEST_INIT", "#!/bin/sh\necho changed\n"):
-                self.assertNotEqual(base, image_builder._image_ext4_path(artifact))
+                self.assertNotEqual(base, image_builder._image_ext4_path(artifact, _S.infra))
             dropbear.write_bytes(b"different dropbear")
-            self.assertNotEqual(base, image_builder._image_ext4_path(artifact))
+            self.assertNotEqual(base, image_builder._image_ext4_path(artifact, _S.infra))
 
     @unittest.skipUnless(
         all(shutil.which(t) for t in ("mke2fs", "debugfs", "e2fsck", "resize2fs")),
@@ -143,7 +144,7 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
              patch.object(image_builder.util, "dropbear_path", return_value=self._dropbear()), \
              patch.object(image_builder, "_PULLED_IMAGE_SLACK_MIB", 8), \
              patch.object(image_builder.image_registry, "ensure_ext4", return_value=gz):
-            out = image_builder.acquire_agent_image_ext4(artifact)
+            out = image_builder.acquire_agent_image_ext4(artifact, _S)
         self.assertTrue(out.with_suffix(".ready").is_file())
         self.assertEqual(24 << 20, out.stat().st_size)  # 16M + 8M slack
         for name in ("bb-init", "bb-dropbear"):
@@ -175,15 +176,15 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
                 image_builder.image_registry.pinned_reference(pin), overlay,
                 template="claude", source_root=self.cache,
             ) as staged:
-                base = self.cache / "rootfs" / image_builder._overlay_rootfs_name(staged)
+                base = self.cache / "rootfs" / image_builder._overlay_rootfs_name(staged, _S.infra)
             base.mkdir(parents=True)
             (base / ".bb-ready").write_text("ok\n")
             self.assertEqual(base, image_builder.cached_agent_overlay_rootfs_dir(
-                pin, overlay, template="claude", source_root=self.cache))
+                pin, overlay, _S.infra, template="claude", source_root=self.cache))
             with patch.object(image_builder, "_infra_build") as build, \
                  patch.object(image_builder.image_registry, "verify_tag") as verify:
                 out = image_builder.acquire_agent_overlay_rootfs_dir(
-                    pin, overlay, template="claude", source_root=self.cache)
+                    pin, overlay, _S, template="claude", source_root=self.cache)
         build.assert_not_called()
         verify.assert_not_called()  # a cached overlay launches offline
         self.assertEqual(base, out)
@@ -198,7 +199,7 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
              patch.object(image_builder, "_infra_build") as vm, \
              patch.object(image_builder.util, "inject_guest_boot"):
             out = image_builder.acquire_agent_overlay_rootfs_dir(
-                self._oci_pin("9"), ManifestImageOverlay(apt=("jq",)), template="claude",
+                self._oci_pin("9"), ManifestImageOverlay(apt=("jq",)), _S, template="claude",
                 source_root=self.cache)
         verify.assert_called_once()
         self.assertTrue((out / ".bb-ready").is_file())
@@ -228,7 +229,7 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
              patch.object(image_builder, "_infra_build") as vm, \
              self.assertRaises(SystemExit):
             image_builder.acquire_agent_overlay_rootfs_dir(
-                self._oci_pin("8"), ManifestImageOverlay(apt=("jq",)), template="claude",
+                self._oci_pin("8"), ManifestImageOverlay(apt=("jq",)), _S, template="claude",
                 source_root=self.cache)
         vm.assert_not_called()
 
@@ -314,7 +315,7 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
             image_builder._infra_build(
                 dockerfile=self.dockerfile, ctx_root=self.cache, ctx_rels=["f"],
                 tag="bot-bottle-agent-overlay-x", build_args={},
-                smoke_test=("claude", "--version"), out=out, registry="reg")
+                smoke_test=("claude", "--version"), out=out, settings=_S, registry="reg")
         send_df.assert_called_once()
         self.assertEqual(["f"], send_ctx.call_args.args[3])
         build.assert_called_once()
@@ -335,12 +336,12 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
         # Same Dockerfile, different injected init -> different rootfs key, so
         # an init fix (e.g. /tmp perms) rebuilds instead of reusing a stale
         # rootfs; different Dockerfiles also differ.
-        base = image_builder._rootfs_digest(self.dockerfile)
+        base = image_builder._rootfs_digest(self.dockerfile, _S.infra)
         with patch.object(image_builder.util, "_GUEST_INIT", "#!/bin/sh\n# changed\n"):
-            self.assertNotEqual(base, image_builder._rootfs_digest(self.dockerfile))
+            self.assertNotEqual(base, image_builder._rootfs_digest(self.dockerfile, _S.infra))
         other = self.cache / "Dockerfile2"
         other.write_text("FROM python:3.12-slim\n")
-        self.assertNotEqual(base, image_builder._rootfs_digest(other))
+        self.assertNotEqual(base, image_builder._rootfs_digest(other, _S.infra))
 
     def test_rootfs_digest_tracks_centralized_build_args(self):
         with patch.object(
@@ -348,13 +349,13 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
             "image_build_args",
             return_value={"NODE_BASE_IMAGE": "node:first"},
         ):
-            first = image_builder._rootfs_digest(self.dockerfile)
+            first = image_builder._rootfs_digest(self.dockerfile, _S.infra)
         with patch.object(
             image_builder.resources,
             "image_build_args",
             return_value={"NODE_BASE_IMAGE": "node:second"},
         ):
-            second = image_builder._rootfs_digest(self.dockerfile)
+            second = image_builder._rootfs_digest(self.dockerfile, _S.infra)
         self.assertNotEqual(first, second)
 
 
@@ -440,9 +441,9 @@ class TestBuildContext(unittest.TestCase):
     def test_rootfs_digest_tracks_context_file_content(self):
         with self._patch_root(), \
              patch.object(image_builder.util, "cache_dir", return_value=self.root):
-            first = image_builder._rootfs_digest(self.dockerfile)
+            first = image_builder._rootfs_digest(self.dockerfile, _S.infra)
             self.sums.write_text("bbbb  codex-package-x86_64-unknown-linux-musl.tar.gz\n")
-            second = image_builder._rootfs_digest(self.dockerfile)
+            second = image_builder._rootfs_digest(self.dockerfile, _S.infra)
         self.assertNotEqual(first, second)
 
     def test_tar_into_vm_noop_without_paths(self):

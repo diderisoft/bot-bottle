@@ -21,7 +21,9 @@ class MacosContainerFreezer(Freezer):
     def _freeze(self, agent: ActiveAgent) -> str:
         container = f"bot-bottle-{agent.slug}"
         image_tag = f"bot-bottle-committed-{agent.slug}:latest"
-        commit_container(container, image_tag)
+        commit_container(
+            container, image_tag, no_cache=self.settings.operation.no_cache,
+            dns_override=self.settings.infra.macos_container_dns)
         return image_tag
 
     def _export_hint(self, slug: str, image_ref: str) -> None:

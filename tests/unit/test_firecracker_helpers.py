@@ -16,6 +16,10 @@ from typing import Any
 from unittest.mock import patch
 
 from bot_bottle.backend.firecracker import firecracker_vm, freezer, netpool, util
+from bot_bottle.contract.hostctl import InfraSettings
+
+_INFRA = InfraSettings()
+_POOL = netpool.from_settings(_INFRA)
 
 
 class TestGuestIpFromConfig(unittest.TestCase):
@@ -69,35 +73,31 @@ class TestNetpoolProbes(unittest.TestCase):
         for exc in (FileNotFoundError, PermissionError(13, "Permission denied", "ip")):
             with self.subTest(exc=type(exc).__name__), \
                  patch.object(netpool.subprocess, "run", side_effect=exc):
-                self.assertEqual([], netpool.overlapping_routes())
+                self.assertEqual([], _POOL.overlapping_routes())
 
     def test_tap_and_nft_probes(self):
         with patch.object(netpool, "_run_ok", return_value=True) as ok:
             self.assertTrue(netpool.tap_present("bbfc0"))
-            self.assertTrue(netpool.nft_table_present())
+            self.assertTrue(_POOL.nft_table_present())
         self.assertEqual(2, ok.call_count)
 
     def test_missing_taps(self):
-        # Derive the expected iface from netpool's (env-driven) config rather
-        # than hardcoding "bbfc1": the KVM CI runner sets BOT_BOTTLE_FC_* for
-        # its isolated pool, so the prefix there is not the default.
-        with patch.dict("os.environ", {"BOT_BOTTLE_FC_POOL_SIZE": "2"}), \
-             patch.object(netpool, "tap_present", side_effect=[True, False]):
-            self.assertEqual([netpool.slot(1).iface], netpool.missing_taps())
+        pool = netpool.from_settings(InfraSettings(fc_pool_size=2))
+        with patch.object(netpool, "tap_present", side_effect=[True, False]):
+            self.assertEqual([pool.slot(1).iface], pool.missing_taps())
 
     def test_orch_slot_is_top_of_ip_base_16(self):
         # Dedicated orchestrator link: /31 at the top of the IP_BASE /16,
         # clear of the pool (bottom of the block). Must match the shell
         # script's orch_host()/orch_guest() and be a non-pool index.
-        with patch.dict("os.environ", {"BOT_BOTTLE_FC_IP_BASE": "10.243.0.0"}):
-            s = netpool.orch_slot()
-        self.assertEqual(netpool.ORCH_IFACE, s.iface)
+        pool = netpool.from_settings(InfraSettings(fc_ip_base="10.243.0.0"))
+        s = pool.orch_slot()
+        self.assertEqual(pool.orch_iface, s.iface)
         self.assertEqual("10.243.255.0", s.host_ip)
         self.assertEqual("10.243.255.1", s.guest_ip)
         self.assertEqual(-1, s.index)
         # Never collides with a pool slot's guest address.
-        with patch.dict("os.environ", {"BOT_BOTTLE_FC_IP_BASE": "10.243.0.0"}):
-            pool_guests = {sl.guest_ip for sl in netpool.all_slots()}
+        pool_guests = {sl.guest_ip for sl in pool.all_slots()}
         self.assertNotIn(s.guest_ip, pool_guests)
 
     def test_gw_slot_is_second_link_above_orch(self):
@@ -105,11 +105,11 @@ class TestNetpoolProbes(unittest.TestCase):
         # orchestrator link. Must match the shell script's gw_host()/gw_guest()
         # and be a distinct non-pool index that never collides with the
         # orchestrator link or the agent pool.
-        with patch.dict("os.environ", {"BOT_BOTTLE_FC_IP_BASE": "10.243.0.0"}):
-            s = netpool.gw_slot()
-            orch = netpool.orch_slot()
-            pool_guests = {sl.guest_ip for sl in netpool.all_slots()}
-        self.assertEqual(netpool.GW_IFACE, s.iface)
+        pool = netpool.from_settings(InfraSettings(fc_ip_base="10.243.0.0"))
+        s = pool.gw_slot()
+        orch = pool.orch_slot()
+        pool_guests = {sl.guest_ip for sl in pool.all_slots()}
+        self.assertEqual(pool.gw_iface, s.iface)
         self.assertEqual("10.243.255.2", s.host_ip)
         self.assertEqual("10.243.255.3", s.guest_ip)
         self.assertEqual(-2, s.index)
@@ -140,21 +140,21 @@ class TestRequireFirecracker(unittest.TestCase):
     def test_dies_when_not_linux(self):
         with patch.object(util, "is_linux", return_value=False), self._die():
             with self.assertRaises(SystemExit):
-                util.require_firecracker()
+                util.require_firecracker(_INFRA)
 
     def test_dies_when_binary_missing(self):
         with patch.object(util, "is_linux", return_value=True), \
              patch.object(util.shutil, "which", return_value=None), \
              patch.object(util, "info"), self._die():
             with self.assertRaises(SystemExit):
-                util.require_firecracker()
+                util.require_firecracker(_INFRA)
 
     def test_dies_when_kvm_missing(self):
         with patch.object(util, "is_linux", return_value=True), \
              patch.object(util.shutil, "which", return_value="/usr/bin/firecracker"), \
              patch.object(util.os.path, "exists", return_value=False), self._die():
             with self.assertRaises(SystemExit):
-                util.require_firecracker()
+                util.require_firecracker(_INFRA)
 
     def test_dies_when_kernel_missing(self):
         with patch.object(util, "is_linux", return_value=True), \
@@ -162,7 +162,7 @@ class TestRequireFirecracker(unittest.TestCase):
              patch.object(util, "_require_kvm", lambda: None), \
              patch.object(util.Path, "is_file", return_value=False), self._die():
             with self.assertRaises(SystemExit):
-                util.require_firecracker()
+                util.require_firecracker(_INFRA)
 
 
 class TestBuildCommittedRootfsDir(unittest.TestCase):
@@ -194,7 +194,7 @@ class TestBuildCommittedRootfsDir(unittest.TestCase):
             with patch.object(util, "cache_dir", return_value=cache), \
                  patch.object(util, "dropbear_path", return_value=dropbear), \
                  patch.object(util, "info"):
-                base = util.build_committed_rootfs_dir(tar_path)
+                base = util.build_committed_rootfs_dir(tar_path, _INFRA)
 
             self.assertEqual("hi", (base / "home" / "node" / "hello").read_text())
             for mount_point in ("proc", "sys", "dev", "run"):
@@ -231,8 +231,8 @@ class TestBuildCommittedRootfsDir(unittest.TestCase):
                 return real_run(argv, *a, **k)
 
             with patch.object(util.subprocess, "run", side_effect=counting_run):
-                first = util.build_committed_rootfs_dir(tar_path)
-                second = util.build_committed_rootfs_dir(tar_path)
+                first = util.build_committed_rootfs_dir(tar_path, _INFRA)
+                second = util.build_committed_rootfs_dir(tar_path, _INFRA)
                 self.assertEqual(first, second)
                 self.assertEqual(1, calls["n"])  # cached — no re-extract
 
@@ -248,7 +248,7 @@ class TestBuildCommittedRootfsDir(unittest.TestCase):
                 st = tar_path.stat()
                 os.utime(tar_path, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
 
-                third = util.build_committed_rootfs_dir(tar_path)
+                third = util.build_committed_rootfs_dir(tar_path, _INFRA)
                 self.assertNotEqual(first, third)
                 self.assertEqual(2, calls["n"])
 
@@ -273,7 +273,7 @@ class TestInjectGuestBootSymlinkSafe(unittest.TestCase):
             (rootfs / "bb-dropbear").symlink_to(victim)
 
             with patch.object(util, "dropbear_path", return_value=dropbear):
-                util.inject_guest_boot(rootfs, init_script="#!/bin/sh\nreal\n")
+                util.inject_guest_boot(rootfs, _INFRA, init_script="#!/bin/sh\nreal\n")
 
             # Host file untouched; the staged paths are fresh regular files.
             self.assertEqual("original", victim.read_text())

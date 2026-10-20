@@ -7,6 +7,7 @@ import sys
 
 from ...backend import enumerate_active_agents
 from ..constants import PROG
+from ..settings import settings_from_env
 
 _ANSI_COLOR_CODES: dict[str, str] = {
     "red": "\033[91m",
@@ -39,7 +40,7 @@ def cmd_active(argv: list[str]) -> int:
         sys.stderr.write("Output: <backend>\\t<slug>\\t<label>\\t<services>\n")
         return 0
 
-    active = enumerate_active_agents()
+    active = enumerate_active_agents(settings_from_env())
     if not active:
         print("no active bot-bottle bottles", file=sys.stderr)
         return 0

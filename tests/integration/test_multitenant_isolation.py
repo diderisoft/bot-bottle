@@ -21,6 +21,7 @@ import subprocess
 import time
 import unittest
 
+from bot_bottle.cli.settings import settings_from_env
 from bot_bottle.backend.docker.consolidated_launch import (
     _network_cidr,
     _network_container_ips,
@@ -77,7 +78,7 @@ class TestMultitenantIsolation(unittest.TestCase):
         # Named volume → a clean registry DB that is also visible to a
         # socket-shared host daemon when the test process runs in act_runner.
         self._root_volume = "bot-bottle-mtitest-root-" + secrets.token_hex(4)
-        self.svc = DockerInfraService(root_mount_source=self._root_volume)
+        self.svc = DockerInfraService(settings_from_env(), root_mount_source=self._root_volume)
         self.addCleanup(self._teardown_docker)
         # ensure_running builds the bundle image (slow on a cold cache) and
         # brings up the shared network + gateway + orchestrator.

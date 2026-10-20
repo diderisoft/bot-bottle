@@ -8,7 +8,7 @@ backend directories.
 Entry points:
   Freezer.commit(agent)      — freeze by ActiveAgent
   Freezer.commit_slug(slug)  — convenience wrapper for cmd_commit
-  get_freezer(backend_name)  — factory
+  get_freezer(settings, backend_name)  — factory
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 from . import ActiveAgent
+from ..contract.hostctl import Settings
 from ..bottle_state import mark_preserved, write_committed_image
 from ..lib.log import die, info
 
@@ -37,6 +38,9 @@ class Freezer(ABC):
     """
 
     backend_name: str
+
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
 
     def commit(self, agent: ActiveAgent) -> None:
         """Freeze the bottle for `agent` to a resumable artifact.
@@ -78,7 +82,7 @@ class Freezer(ABC):
         self.commit(agent)
 
 
-def get_freezer(backend_name: str) -> Freezer:
+def get_freezer(settings: Settings, backend_name: str) -> Freezer:
     """Return the Freezer for the named backend.
 
     backend_name "" is treated as "docker" for backward compatibility
@@ -86,13 +90,13 @@ def get_freezer(backend_name: str) -> Freezer:
     resolved = backend_name or "docker"
     if resolved == "docker":
         from .docker.freezer import DockerFreezer
-        return DockerFreezer()
+        return DockerFreezer(settings)
     if resolved == "macos-container":
         from .macos_container.freezer import MacosContainerFreezer
-        return MacosContainerFreezer()
+        return MacosContainerFreezer(settings)
     if resolved == "firecracker":
         from .firecracker.freezer import FirecrackerFreezer
-        return FirecrackerFreezer()
+        return FirecrackerFreezer(settings)
     die(
         f"commit is only supported for docker, macos-container, and "
         f"firecracker; backend {backend_name!r} has no freezer"

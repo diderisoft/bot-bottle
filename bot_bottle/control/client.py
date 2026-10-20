@@ -20,6 +20,7 @@ from dataclasses import dataclass
 
 from ..lib.log import debug
 from ..contract.auth import CONTROL_PLANE, ROLE_CLI
+from ..contract.hostctl import Settings
 from ..trust_domain import mint
 from ..contract.http import ORCHESTRATOR_AUTH_HEADER
 
@@ -277,7 +278,7 @@ class OrchestratorClient:
         self._ok("POST", "/supervise/respond", body)
 
 
-def discover_orchestrator_url(*, timeout: float = 2.0) -> str:
+def discover_orchestrator_url(settings: "Settings", *, timeout: float = 2.0) -> str:
     """The URL of the one running per-host orchestrator control plane, probing
     the backends' well-known control-plane addresses (both on port 8099):
     docker publishes it on loopback; the firecracker infra VM serves it on the
@@ -294,8 +295,8 @@ def discover_orchestrator_url(*, timeout: float = 2.0) -> str:
     try:  # firecracker: infra VM control plane on the orchestrator TAP
         from ..backend.firecracker import netpool
         from ..backend.firecracker.infra_vm import ORCHESTRATOR_PORT
-        candidates.append(
-            f"http://{netpool.orch_slot().guest_ip}:{ORCHESTRATOR_PORT}")
+        orch_ip = netpool.from_settings(settings.infra).orch_slot().guest_ip
+        candidates.append(f"http://{orch_ip}:{ORCHESTRATOR_PORT}")
     except Exception as exc:  # noqa: BLE001 — backend optional / not firecracker
         failures.append(_probe_failure("firecracker", exc))
     try:  # macOS: orchestrator container on its host-only address

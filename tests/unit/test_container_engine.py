@@ -15,55 +15,50 @@ def _ok(*_a: object, **_k: object) -> "subprocess.CompletedProcess[str]":
 
 class HostContainerEngine(unittest.TestCase):
     def test_prefers_docker_when_both_are_usable(self) -> None:
-        with patch.dict("os.environ", {}, clear=False), \
-             patch.object(ce.shutil, "which", return_value="/bin/x"), \
+        with patch.object(ce.shutil, "which", return_value="/bin/x"), \
              patch.object(ce.subprocess, "run", side_effect=_ok):
-            self.assertEqual("docker", ce.host_container_engine())
+            self.assertEqual("docker", ce.host_container_engine(""))
 
     def test_falls_back_to_podman(self) -> None:
         def which(name: str) -> str | None:
             return "/bin/podman" if name == "podman" else None
         with patch.object(ce.shutil, "which", side_effect=which), \
              patch.object(ce.subprocess, "run", side_effect=_ok):
-            self.assertEqual("podman", ce.host_container_engine())
+            self.assertEqual("podman", ce.host_container_engine(""))
 
     def test_unreachable_docker_daemon_is_not_usable(self) -> None:
         def run(argv: list[str], **_k: object) -> "subprocess.CompletedProcess[str]":
             return subprocess.CompletedProcess(argv, 1 if argv[0] == "docker" else 0, "", "")
         with patch.object(ce.shutil, "which", return_value="/bin/x"), \
              patch.object(ce.subprocess, "run", side_effect=run):
-            self.assertEqual("podman", ce.host_container_engine())
+            self.assertEqual("podman", ce.host_container_engine(""))
 
     def test_probe_timeout_is_not_usable(self) -> None:
         with patch.object(ce.shutil, "which", return_value="/bin/x"), \
              patch.object(ce.subprocess, "run",
                           side_effect=subprocess.TimeoutExpired("docker info", 15)):
-            self.assertIsNone(ce.host_container_engine())
+            self.assertIsNone(ce.host_container_engine(""))
 
-    def test_env_vm_disables_host_builds(self) -> None:
-        with patch.dict("os.environ", {ce.ENGINE_ENV: "vm"}), \
-             patch.object(ce.shutil, "which", return_value="/bin/x"), \
+    def test_vm_disables_host_builds(self) -> None:
+        with patch.object(ce.shutil, "which", return_value="/bin/x"), \
              patch.object(ce.subprocess, "run", side_effect=_ok) as run:
-            self.assertIsNone(ce.host_container_engine())
+            self.assertIsNone(ce.host_container_engine("vm"))
         run.assert_not_called()
 
-    def test_env_can_force_podman(self) -> None:
-        with patch.dict("os.environ", {ce.ENGINE_ENV: "podman"}), \
-             patch.object(ce.shutil, "which", return_value="/bin/x"), \
+    def test_can_force_podman(self) -> None:
+        with patch.object(ce.shutil, "which", return_value="/bin/x"), \
              patch.object(ce.subprocess, "run", side_effect=_ok):
-            self.assertEqual("podman", ce.host_container_engine())
+            self.assertEqual("podman", ce.host_container_engine("podman"))
 
     def test_forced_engine_that_is_unusable_raises(self) -> None:
         # An explicit choice must not quietly build somewhere else.
-        with patch.dict("os.environ", {ce.ENGINE_ENV: "docker"}), \
-             patch.object(ce.shutil, "which", return_value=None), \
+        with patch.object(ce.shutil, "which", return_value=None), \
              self.assertRaises(ce.EngineUnavailable):
-            ce.host_container_engine()
+            ce.host_container_engine("docker")
 
     def test_unknown_engine_value_raises(self) -> None:
-        with patch.dict("os.environ", {ce.ENGINE_ENV: "dokcer"}), \
-             self.assertRaises(ce.EngineUnavailable):
-            ce.host_container_engine()
+        with self.assertRaises(ce.EngineUnavailable):
+            ce.host_container_engine("dokcer")
 
 
 if __name__ == "__main__":

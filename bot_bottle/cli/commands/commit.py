@@ -17,6 +17,7 @@ from ...backend.freeze import CommitCancelled, get_freezer
 from ...bottle_state import read_metadata
 from ...lib.log import die
 from ..constants import PROG
+from ..settings import settings_from_env
 from .. import tui
 
 
@@ -33,9 +34,10 @@ def cmd_commit(argv: list[str]) -> int:
     )
     args = parser.parse_args(argv)
 
+    settings = settings_from_env()
     slug = args.slug
     if slug is None:
-        active = enumerate_active_agents()
+        active = enumerate_active_agents(settings)
         if not active:
             die("no active bottles; start one with `bot-bottle start`")
         choices = [a.slug for a in active]
@@ -47,7 +49,7 @@ def cmd_commit(argv: list[str]) -> int:
     backend = metadata.backend if metadata else ""
 
     try:
-        get_freezer(backend).commit_slug(slug)
+        get_freezer(settings, backend).commit_slug(slug)
     except CommitCancelled:
         return 0
     return 0

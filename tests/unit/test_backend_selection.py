@@ -1,19 +1,19 @@
 """Unit: backend selection + cross-backend enumeration (issue #77).
 
-`get_bottle_backend(name)` resolves a backend by explicit name,
-env var, or default. `enumerate_active_agents()` walks every
+`get_bottle_backend(settings, name)` resolves a backend by explicit name,
+`settings.operation.backend`, or default. `enumerate_active_agents(settings)` walks every
 registered backend and concatenates their `ActiveAgent`
 listings — the CLI and dashboard both go through this so adding
 a backend lights it up in both places."""
 
 from __future__ import annotations
 
-import os
 import unittest
 from unittest.mock import patch
 
 from bot_bottle import backend as backend_mod
 from bot_bottle.backend import selection as _sel
+from bot_bottle.contract.hostctl import OperationSettings, Settings
 from bot_bottle.backend import (
     ActiveAgent,
     enumerate_active_agents,
@@ -21,17 +21,21 @@ from bot_bottle.backend import (
     known_backend_names,
 )
 
+_S = Settings()
+_FIRECRACKER = Settings(operation=OperationSettings(backend="firecracker"))
+
 
 class TestGetBottleBackend(unittest.TestCase):
-    def test_explicit_name_wins_over_env(self):
-        with patch.dict(os.environ, {"BOT_BOTTLE_BACKEND": "firecracker"}):
-            b = get_bottle_backend("docker")
+    def test_explicit_name_wins_over_settings(self):
+        b = get_bottle_backend(_FIRECRACKER, "docker")
         self.assertEqual("docker", b.name)
 
-    def test_env_var_fallback(self):
-        with patch.dict(os.environ, {"BOT_BOTTLE_BACKEND": "firecracker"}):
-            b = get_bottle_backend()
+    def test_settings_backend_fallback(self):
+        b = get_bottle_backend(_FIRECRACKER)
         self.assertEqual("firecracker", b.name)
+
+    def test_backends_carry_the_settings(self):
+        self.assertIs(_FIRECRACKER, get_bottle_backend(_FIRECRACKER).settings)
 
     def test_default_macos_container_when_available(self):
         class _FakeBackend:
@@ -40,12 +44,11 @@ class TestGetBottleBackend(unittest.TestCase):
             def is_available(self) -> bool:
                 return True
 
-        with patch.dict(os.environ, {}, clear=True), \
-             patch.object(_sel, "_backends", {
+        with patch.object(_sel, "_get_backends", return_value={
                  "macos-container": _FakeBackend(),
                  "docker": _FakeBackend(),
              }):
-            b = get_bottle_backend()
+            b = get_bottle_backend(_S)
         self.assertEqual("macos-container", b.name)
 
     def test_default_docker_when_no_macos_and_host_not_kvm(self):
@@ -60,15 +63,14 @@ class TestGetBottleBackend(unittest.TestCase):
         # No macOS container and the host can't run firecracker (no
         # KVM / not Linux) → docker fallback with a prompt. Simulate
         # the user picking "d" (use docker anyway).
-        with patch.dict(os.environ, {}, clear=True), \
-             patch.object(backend_mod.FirecrackerBottleBackend,
+        with patch.object(backend_mod.FirecrackerBottleBackend,
                           "is_host_capable", classmethod(lambda cls: False)), \
-             patch.object(_sel, "_backends", {
+             patch.object(_sel, "_get_backends", return_value={
                  "macos-container": _FakeBackend("macos-container", False),
                  "docker": _FakeBackend("docker", True),
              }), \
              patch.object(_sel, "read_tty_line", return_value="d"):
-            b = get_bottle_backend()
+            b = get_bottle_backend(_S)
         self.assertEqual("docker", b.name)
 
     def test_default_firecracker_on_kvm_host_even_when_binary_missing(self):
@@ -83,21 +85,20 @@ class TestGetBottleBackend(unittest.TestCase):
         # A KVM-capable Linux host defaults to firecracker even when the
         # binary isn't installed (is_available False) — start then prints
         # the install pointer instead of falling back to docker.
-        with patch.dict(os.environ, {}, clear=True), \
-             patch.object(backend_mod.FirecrackerBottleBackend,
+        with patch.object(backend_mod.FirecrackerBottleBackend,
                           "is_host_capable", classmethod(lambda cls: True)), \
-             patch.object(_sel, "_backends", {
+             patch.object(_sel, "_get_backends", return_value={
                  "macos-container": _FakeBackend("macos-container", False),
                  "firecracker": _FakeBackend("firecracker", False),
                  "docker": _FakeBackend("docker", True),
              }):
-            b = get_bottle_backend()
+            b = get_bottle_backend(_S)
         self.assertEqual("firecracker", b.name)
 
     def test_unknown_dies(self):
         with patch.object(_sel, "die", side_effect=SystemExit("die")):
             with self.assertRaises(SystemExit):
-                get_bottle_backend("nonexistent")
+                get_bottle_backend(_S, "nonexistent")
 
     def test_no_backend_available_dies(self):
         # No VM and no docker → print install instructions and die.
@@ -109,16 +110,15 @@ class TestGetBottleBackend(unittest.TestCase):
             def is_available(self) -> bool:
                 return self._available
 
-        with patch.dict(os.environ, {}, clear=True), \
-             patch.object(backend_mod.FirecrackerBottleBackend,
+        with patch.object(backend_mod.FirecrackerBottleBackend,
                           "is_host_capable", classmethod(lambda cls: False)), \
-             patch.object(_sel, "_backends", {
+             patch.object(_sel, "_get_backends", return_value={
                  "macos-container": _FakeBackend("macos-container", False),
                  "docker": _FakeBackend("docker", False),
              }), \
              patch.object(_sel, "die", side_effect=SystemExit("die")):
             with self.assertRaises(SystemExit):
-                get_bottle_backend()
+                get_bottle_backend(_S)
 
     def test_docker_fallback_user_quits(self):
         # VM unavailable, docker available, user picks "q" → die.
@@ -130,17 +130,16 @@ class TestGetBottleBackend(unittest.TestCase):
             def is_available(self) -> bool:
                 return self._available
 
-        with patch.dict(os.environ, {}, clear=True), \
-             patch.object(backend_mod.FirecrackerBottleBackend,
+        with patch.object(backend_mod.FirecrackerBottleBackend,
                           "is_host_capable", classmethod(lambda cls: False)), \
-             patch.object(_sel, "_backends", {
+             patch.object(_sel, "_get_backends", return_value={
                  "macos-container": _FakeBackend("macos-container", False),
                  "docker": _FakeBackend("docker", True),
              }), \
              patch.object(_sel, "read_tty_line", return_value="q"), \
              patch.object(_sel, "die", side_effect=SystemExit("die")):
             with self.assertRaises(SystemExit):
-                get_bottle_backend()
+                get_bottle_backend(_S)
 
 
     def test_docker_fallback_non_interactive_dies(self):
@@ -153,16 +152,15 @@ class TestGetBottleBackend(unittest.TestCase):
             def is_available(self) -> bool:
                 return self._available
 
-        with patch.dict(os.environ, {}, clear=True), \
-             patch.object(backend_mod.FirecrackerBottleBackend,
+        with patch.object(backend_mod.FirecrackerBottleBackend,
                           "is_host_capable", classmethod(lambda cls: False)), \
-             patch.object(_sel, "_backends", {
+             patch.object(_sel, "_get_backends", return_value={
                  "macos-container": _FakeBackend("macos-container", False),
                  "docker": _FakeBackend("docker", True),
              }), \
              patch.object(_sel, "die", side_effect=SystemExit("die")):
             with self.assertRaises(SystemExit):
-                get_bottle_backend(prompt=False)
+                get_bottle_backend(_S, prompt=False)
 
     def test_docker_fallback_user_picks_install(self):
         # User picks [i] → print install instructions then die.
@@ -174,10 +172,9 @@ class TestGetBottleBackend(unittest.TestCase):
             def is_available(self) -> bool:
                 return self._available
 
-        with patch.dict(os.environ, {}, clear=True), \
-             patch.object(backend_mod.FirecrackerBottleBackend,
+        with patch.object(backend_mod.FirecrackerBottleBackend,
                           "is_host_capable", classmethod(lambda cls: False)), \
-             patch.object(_sel, "_backends", {
+             patch.object(_sel, "_get_backends", return_value={
                  "macos-container": _FakeBackend("macos-container", False),
                  "docker": _FakeBackend("docker", True),
              }), \
@@ -185,7 +182,7 @@ class TestGetBottleBackend(unittest.TestCase):
              patch.object(_sel, "_print_vm_install_instructions") as mock_inst, \
              patch.object(_sel, "die", side_effect=SystemExit("die")):
             with self.assertRaises(SystemExit):
-                get_bottle_backend()
+                get_bottle_backend(_S)
         mock_inst.assert_called_once()
 
 
@@ -275,10 +272,10 @@ class TestEnumerateActiveAgents(unittest.TestCase):
                 return self._items
 
         with patch.object(
-            _sel, "_backends",
+            _sel, "_get_backends", return_value=
             {"docker": _FakeBackend([a]), "firecracker": _FakeBackend([b])},
         ):
-            self.assertEqual([a, b], enumerate_active_agents())
+            self.assertEqual([a, b], enumerate_active_agents(_S))
 
     def test_sorts_by_started_at_then_slug_across_backends(self):
         newer = ActiveAgent(
@@ -309,7 +306,7 @@ class TestEnumerateActiveAgents(unittest.TestCase):
                 return self._items
 
         with patch.object(
-            _sel, "_backends",
+            _sel, "_get_backends", return_value=
             {
                 "docker": _FakeBackend([newer, tie_b]),
                 "firecracker": _FakeBackend([missing_metadata, tie_a]),
@@ -317,7 +314,7 @@ class TestEnumerateActiveAgents(unittest.TestCase):
         ):
             self.assertEqual(
                 [missing_metadata, tie_a, tie_b, newer],
-                enumerate_active_agents(),
+                enumerate_active_agents(_S),
             )
 
     def test_empty_when_no_backends_have_active(self):
@@ -329,10 +326,10 @@ class TestEnumerateActiveAgents(unittest.TestCase):
                 return []
 
         with patch.object(
-            _sel, "_backends",
+            _sel, "_get_backends", return_value=
             {"docker": _FakeBackend(), "firecracker": _FakeBackend()},
         ):
-            self.assertEqual([], enumerate_active_agents())
+            self.assertEqual([], enumerate_active_agents(_S))
 
     def test_skips_unavailable_backends(self):
         # If a backend's runtime isn't installed (docker missing on a
@@ -360,13 +357,13 @@ class TestEnumerateActiveAgents(unittest.TestCase):
                 return self._items
 
         with patch.object(
-            _sel, "_backends",
+            _sel, "_get_backends", return_value=
             {
                 "docker": _FakeBackend([present], available=True),
                 "firecracker": _FakeBackend([hidden], available=False),
             },
         ):
-            self.assertEqual([present], enumerate_active_agents())
+            self.assertEqual([present], enumerate_active_agents(_S))
 
 
 class TestHasBackend(unittest.TestCase):
@@ -376,21 +373,21 @@ class TestHasBackend(unittest.TestCase):
                 return False
 
         with patch.object(
-            _sel, "_backends", {"docker": _FakeBackend()},
+            _sel, "_get_backends", return_value={"docker": _FakeBackend()},
         ):
             from bot_bottle.backend import has_backend
-            self.assertFalse(has_backend("docker"))
+            self.assertFalse(has_backend(_S, "docker"))
 
     def test_unknown_backend_returns_false(self):
         from bot_bottle.backend import has_backend
-        self.assertFalse(has_backend("nonexistent"))
+        self.assertFalse(has_backend(_S, "nonexistent"))
 
 
 class TestIsBackendAvailable(unittest.TestCase):
     def test_delegates_to_has_backend(self):
         from bot_bottle.backend import is_backend_available
-        with patch.object(_sel, "_backends", {}):
-            self.assertFalse(is_backend_available("docker"))
+        with patch.object(_sel, "_get_backends", return_value={}):
+            self.assertFalse(is_backend_available(_S, "docker"))
 
     def test_known_and_available(self):
         class _Ready:
@@ -398,15 +395,15 @@ class TestIsBackendAvailable(unittest.TestCase):
                 return True
 
         from bot_bottle.backend import is_backend_available
-        with patch.object(_sel, "_backends", {"docker": _Ready()}):
-            self.assertTrue(is_backend_available("docker"))
+        with patch.object(_sel, "_get_backends", return_value={"docker": _Ready()}):
+            self.assertTrue(is_backend_available(_S, "docker"))
 
 
 class TestIsBackendReady(unittest.TestCase):
     def test_unknown_backend_returns_false(self):
         from bot_bottle.backend import is_backend_ready
-        with patch.object(_sel, "_backends", {}):
-            self.assertFalse(is_backend_ready("docker"))
+        with patch.object(_sel, "_get_backends", return_value={}):
+            self.assertFalse(is_backend_ready(_S, "docker"))
 
     def test_ready_when_status_returns_zero(self):
         class _ReadyBackend:
@@ -414,8 +411,8 @@ class TestIsBackendReady(unittest.TestCase):
                 return 0
 
         from bot_bottle.backend import is_backend_ready
-        with patch.object(_sel, "_backends", {"docker": _ReadyBackend()}):
-            self.assertTrue(is_backend_ready("docker"))
+        with patch.object(_sel, "_get_backends", return_value={"docker": _ReadyBackend()}):
+            self.assertTrue(is_backend_ready(_S, "docker"))
 
     def test_not_ready_when_status_nonzero(self):
         class _BrokenBackend:
@@ -423,8 +420,8 @@ class TestIsBackendReady(unittest.TestCase):
                 return 1
 
         from bot_bottle.backend import is_backend_ready
-        with patch.object(_sel, "_backends", {"docker": _BrokenBackend()}):
-            self.assertFalse(is_backend_ready("docker"))
+        with patch.object(_sel, "_get_backends", return_value={"docker": _BrokenBackend()}):
+            self.assertFalse(is_backend_ready(_S, "docker"))
 
     def test_quiet_flag_forwarded(self):
         calls = []
@@ -435,8 +432,8 @@ class TestIsBackendReady(unittest.TestCase):
                 return 0
 
         from bot_bottle.backend import is_backend_ready
-        with patch.object(_sel, "_backends", {"docker": _SpyBackend()}):
-            is_backend_ready("docker", quiet=True)
+        with patch.object(_sel, "_get_backends", return_value={"docker": _SpyBackend()}):
+            is_backend_ready(_S, "docker", quiet=True)
         self.assertEqual([True], calls)
 
 
@@ -445,7 +442,7 @@ class TestEnsureOrchestrator(unittest.TestCase):
     each backend's InfraService brings up its orchestrator + gateway pair."""
 
     def test_docker_delegates_to_infra_service(self):
-        b = get_bottle_backend("docker")
+        b = get_bottle_backend(_S, "docker")
         with patch(
             "bot_bottle.backend.docker.infra.DockerInfraService"
         ) as service_cls:
@@ -457,7 +454,7 @@ class TestEnsureOrchestrator(unittest.TestCase):
         service_cls.return_value.ensure_running.assert_called_once_with()
 
     def test_firecracker_delegates_to_infra_service(self):
-        b = get_bottle_backend("firecracker")
+        b = get_bottle_backend(_S, "firecracker")
         with patch(
             "bot_bottle.backend.firecracker.infra.FirecrackerInfraService"
         ) as service_cls:
@@ -468,7 +465,7 @@ class TestEnsureOrchestrator(unittest.TestCase):
         self.assertEqual(url, "http://10.243.255.1:8099")
 
     def test_macos_delegates_to_infra_service(self):
-        b = get_bottle_backend("macos-container")
+        b = get_bottle_backend(_S, "macos-container")
         with patch(
             "bot_bottle.backend.macos_container.infra.MacosInfraService"
         ) as service_cls:

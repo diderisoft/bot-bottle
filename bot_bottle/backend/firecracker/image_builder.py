@@ -34,10 +34,12 @@ from typing import Generator
 
 from ... import agent_overlay, image_registry, resources
 from .. import container_engine
+from ...contract.hostctl import InfraSettings, Settings
 from ...image_registry import TOKEN_ENV as _ARTIFACT_TOKEN_ENV
 from ...image_registry import RegistryError
 from ...lib.log import die, info
 from ...manifest import ManifestImageOverlay
+from ...paths import host_artifact_cache_dir
 from ...published_artifacts import FORMAT_EXT4, Artifact
 from . import util
 from .infra import FirecrackerInfraService
@@ -134,17 +136,17 @@ def _context_files(dockerfile: Path) -> list[tuple[str, Path]]:
     return sorted(resolved.items())
 
 
-def _boot_bits_hash() -> str:
+def _boot_bits_hash(infra: InfraSettings) -> str:
     """The guest boot bits written into every agent rootfs: the init script and
     the static dropbear. Part of every agent cache key, so a change to either
     re-prepares the rootfs instead of reusing one that carries the old bits."""
     h = hashlib.sha256(util._GUEST_INIT.encode())
     h.update(b"\0")
-    h.update(hashlib.sha256(util.dropbear_path().read_bytes()).digest())
+    h.update(hashlib.sha256(util.dropbear_path(infra).read_bytes()).digest())
     return h.hexdigest()
 
 
-def _rootfs_digest(dockerfile: Path) -> str:
+def _rootfs_digest(dockerfile: Path, infra: InfraSettings) -> str:
     """Cache key for a rootfs built from `dockerfile`: the Dockerfile, the
     centralized build args, the guest boot bits, and the content of any files
     the Dockerfile COPYs from the build context (so a repinned input, e.g. a
@@ -157,7 +159,7 @@ def _rootfs_digest(dockerfile: Path) -> str:
         h.update(b"=")
         h.update(value.encode())
         h.update(b"\0")
-    h.update(_boot_bits_hash().encode())
+    h.update(_boot_bits_hash(infra).encode())
     for rel, path in _context_files(dockerfile):
         h.update(b"\0")
         h.update(rel.encode())
@@ -191,7 +193,9 @@ def _force_rmtree(path: Path) -> None:
     shutil.rmtree(path)
 
 
-def _publish_rootfs_dir(name: str, build: Callable[[Path], None]) -> Path:
+def _publish_rootfs_dir(
+    name: str, build: Callable[[Path], None], infra: InfraSettings,
+) -> Path:
     """The cached rootfs dir `name`, built on a miss: `build(staging)` fills a
     staging dir, the guest boot bits are injected, and the result is published
     by atomic rename, all under the host build lock (the infra VM's buildah
@@ -212,7 +216,7 @@ def _publish_rootfs_dir(name: str, build: Callable[[Path], None]) -> Path:
         staging.mkdir(parents=True)
         try:
             build(staging)
-            util.inject_guest_boot(staging)
+            util.inject_guest_boot(staging, infra)
             (staging / ".bb-ready").write_text("ok\n")
             _force_rmtree(base)
             os.rename(staging, base)
@@ -221,9 +225,9 @@ def _publish_rootfs_dir(name: str, build: Callable[[Path], None]) -> Path:
     return base
 
 
-def cached_agent_rootfs_dir(dockerfile: Path) -> Path | None:
+def cached_agent_rootfs_dir(dockerfile: Path, infra: InfraSettings) -> Path | None:
     """Return the ready cached rootfs for ``dockerfile``, if one exists."""
-    return _ready_dir(f"agent-{_rootfs_digest(dockerfile)}")
+    return _ready_dir(f"agent-{_rootfs_digest(dockerfile, infra)}")
 
 
 # Free space added to a pulled agent image beyond what it was published with,
@@ -231,20 +235,20 @@ def cached_agent_rootfs_dir(dockerfile: Path) -> Path | None:
 _PULLED_IMAGE_SLACK_MIB = 1024
 
 
-def _image_ext4_path(artifact: Artifact) -> Path:
+def _image_ext4_path(artifact: Artifact, infra: InfraSettings) -> Path:
     """Where the prepared ext4 base for published `artifact` is cached, keyed by
     the published file's digest plus this host's guest boot bits."""
-    h = hashlib.sha256(f"{artifact.digest}\0{_boot_bits_hash()}".encode())
+    h = hashlib.sha256(f"{artifact.digest}\0{_boot_bits_hash(infra)}".encode())
     return _rootfs_dir(f"agent-ext4-{h.hexdigest()[:16]}.ext4")
 
 
-def cached_agent_image_ext4(artifact: Artifact) -> Path | None:
+def cached_agent_image_ext4(artifact: Artifact, infra: InfraSettings) -> Path | None:
     """A prepared ext4 base previously made from published `artifact`, or None."""
-    image = _image_ext4_path(artifact)
+    image = _image_ext4_path(artifact, infra)
     return image if image.with_suffix(".ready").is_file() else None
 
 
-def acquire_agent_image_ext4(artifact: Artifact) -> Path:
+def acquire_agent_image_ext4(artifact: Artifact, settings: Settings) -> Path:
     """The bootable agent base for a published ext4 `artifact` (PRD 0085):
     download and verify it on the host (`image_registry.ensure_ext4`, digest
     checked, fail closed), decompress it, add slack, and write this host's
@@ -252,7 +256,8 @@ def acquire_agent_image_ext4(artifact: Artifact) -> Path:
     sparse copy (`util.make_bottle_rootfs`)."""
     if artifact.format != FORMAT_EXT4:
         die(f"firecracker agent base must be an ext4 artifact, got {artifact.format!r}")
-    image = _image_ext4_path(artifact)
+    infra = settings.infra
+    image = _image_ext4_path(artifact, infra)
     ready = image.with_suffix(".ready")
     if ready.is_file():
         info(f"using cached agent rootfs {image.name}")
@@ -262,7 +267,8 @@ def acquire_agent_image_ext4(artifact: Artifact) -> Path:
             info(f"using cached agent rootfs {image.name}")
             return image
         try:
-            gz = image_registry.ensure_ext4(artifact)
+            gz = image_registry.ensure_ext4(
+                artifact, cache_root=host_artifact_cache_dir(infra.artifact_cache))
         except RegistryError as e:
             die(str(e))
         staging = image.with_suffix(".part")
@@ -273,7 +279,7 @@ def acquire_agent_image_ext4(artifact: Artifact) -> Path:
                 shutil.copyfileobj(src, out, 1 << 20)
             # Grow first: debugfs can write a truncated file into a full image.
             util.grow_ext4(staging, _PULLED_IMAGE_SLACK_MIB)
-            util.inject_guest_boot_ext4(staging)
+            util.inject_guest_boot_ext4(staging, infra)
             staging.replace(image)
             ready.write_text("ok\n")
         finally:
@@ -281,13 +287,14 @@ def acquire_agent_image_ext4(artifact: Artifact) -> Path:
     return image
 
 
-def _overlay_rootfs_name(staged: agent_overlay.StagedOverlay) -> str:
-    h = hashlib.sha256(f"{staged.cache_key}\0{_boot_bits_hash()}".encode())
+def _overlay_rootfs_name(staged: agent_overlay.StagedOverlay, infra: InfraSettings) -> str:
+    h = hashlib.sha256(f"{staged.cache_key}\0{_boot_bits_hash(infra)}".encode())
     return f"agent-overlay-{h.hexdigest()[:16]}"
 
 
 def cached_agent_overlay_rootfs_dir(
-    artifact: Artifact, overlay: ManifestImageOverlay, *, template: str, source_root: Path,
+    artifact: Artifact, overlay: ManifestImageOverlay, infra: InfraSettings,
+    *, template: str, source_root: Path,
 ) -> Path | None:
     """A ready rootfs previously built for `overlay` on the pinned OCI
     `artifact`, or None."""
@@ -295,12 +302,13 @@ def cached_agent_overlay_rootfs_dir(
         image_registry.pinned_reference(artifact), overlay,
         template=template, source_root=source_root,
     ) as staged:
-        return _ready_dir(_overlay_rootfs_name(staged))
+        return _ready_dir(_overlay_rootfs_name(staged, infra))
 
 
 def acquire_agent_overlay_rootfs_dir(
     artifact: Artifact,
     overlay: ManifestImageOverlay,
+    settings: Settings,
     *,
     template: str,
     source_root: Path,
@@ -317,11 +325,11 @@ def acquire_agent_overlay_rootfs_dir(
     with agent_overlay.staged_overlay(
         base_ref, overlay, template=template, source_root=source_root,
     ) as staged:
-        name = _overlay_rootfs_name(staged)
+        name = _overlay_rootfs_name(staged, settings.infra)
         if _ready_dir(name) is None:
             try:
                 image_registry.verify_tag(artifact)
-                engine = container_engine.host_container_engine()
+                engine = container_engine.host_container_engine(settings.infra.build_engine)
             except (RegistryError, container_engine.EngineUnavailable) as e:
                 die(str(e))
         else:
@@ -339,14 +347,14 @@ def acquire_agent_overlay_rootfs_dir(
                 ctx_rels=sorted(p.name for p in staged.context.iterdir()
                                 if p != staged.dockerfile),
                 tag=tag, build_args={}, smoke_test=smoke_test, out=out,
-                registry=base_ref.split("/", 1)[0],
+                settings=settings, registry=base_ref.split("/", 1)[0],
             )
 
-        return _publish_rootfs_dir(name, build)
+        return _publish_rootfs_dir(name, build, settings.infra)
 
 
 def build_agent_rootfs_dir(
-    dockerfile: Path, *, image_tag: str, smoke_test: tuple[str, ...] = (),
+    dockerfile: Path, settings: Settings, *, image_tag: str, smoke_test: tuple[str, ...] = (),
 ) -> Path:
     """Build `dockerfile` in the infra VM (buildah, no host docker), export its
     rootfs, inject the guest boot bits, and return the cached base dir — the
@@ -356,7 +364,7 @@ def build_agent_rootfs_dir(
     `smoke_test` (the provider's declared argv, e.g. `("claude","--version")`)
     is run in the freshly built image before export, catching an npm
     silent-failure image at build time rather than at first agent use."""
-    digest = _rootfs_digest(dockerfile)
+    digest = _rootfs_digest(dockerfile, settings.infra)
 
     def build(out: Path) -> None:
         info(f"building agent image {image_tag!r} in the infra VM")
@@ -365,10 +373,10 @@ def build_agent_rootfs_dir(
             ctx_rels=[rel for rel, _ in _context_files(dockerfile)],
             tag=f"bot-bottle-agent-build-{digest}",
             build_args=resources.image_build_args(dockerfile),
-            smoke_test=smoke_test, out=out,
+            smoke_test=smoke_test, out=out, settings=settings,
         )
 
-    return _publish_rootfs_dir(f"agent-{digest}", build)
+    return _publish_rootfs_dir(f"agent-{digest}", build, settings.infra)
 
 
 @contextmanager
@@ -394,6 +402,7 @@ def _infra_build(
     build_args: dict[str, str],
     smoke_test: tuple[str, ...],
     out: Path,
+    settings: Settings,
     registry: str = "",
 ) -> None:
     """`buildah build` `dockerfile` in the orchestrator VM, with the paths
@@ -402,7 +411,7 @@ def _infra_build(
     buildah logs in first (token on stdin) so a FROM can pull a private base.
     The infra VMs persist; only this build's containers, image, login and
     context are cleaned up, never another build's."""
-    service = FirecrackerInfraService()
+    service = FirecrackerInfraService(settings)
     service.ensure_running()
     key, ip = service.orchestrator().ssh_target()
     ctx = f"/tmp/{tag}"

@@ -22,6 +22,7 @@ from pathlib import Path
 
 from ... import resources
 from .. import container_engine
+from ...contract.hostctl import Settings
 from . import netpool
 from . import util
 
@@ -92,32 +93,33 @@ def _is_nixos() -> bool:
         return False
 
 
-def _warn_overlaps() -> None:
+def _warn_overlaps(pool: netpool.NetPool) -> None:
     """Warn if the chosen pool range collides with an existing host route
     (Tailscale CGNAT peer, a docker/libvirt bridge, the LAN…)."""
-    conflicts = netpool.overlapping_routes()
+    conflicts = pool.overlapping_routes()
     if not conflicts:
         return
     detail = "\n".join(f"    {c.dst} dev {c.dev}" for c in conflicts)
     sys.stderr.write(
-        f"WARNING: pool range (base {netpool.ip_base()}, "
-        f"{netpool.pool_size()} slots) overlaps existing routes:\n"
+        f"WARNING: pool range (base {pool.ip_base}, "
+        f"{pool.pool_size} slots) overlaps existing routes:\n"
         f"{detail}\n"
         "Set BOT_BOTTLE_FC_IP_BASE to a free range before setup, or the "
         "pool may shadow / be shadowed by the above.\n\n"
     )
 
 
-def setup() -> int:
+def setup(settings: Settings) -> int:
+    pool = netpool.from_settings(settings.infra)
     sys.stderr.write("Firecracker backend — one-time host setup.\n\n")
     _print_prereqs()
-    slots = netpool.all_slots()
+    slots = pool.all_slots()
     sys.stderr.write(
         f"2) network pool: {len(slots)} slots "
-        f"({slots[0].iface}..{slots[-1].iface}), base {netpool.ip_base()} — "
+        f"({slots[0].iface}..{slots[-1].iface}), base {pool.ip_base} — "
         f"TAP devices + nft isolation table, privileged (needs root once).\n\n"
     )
-    _warn_overlaps()
+    _warn_overlaps(pool)
     if _is_nixos():
         sys.stderr.write(
             "Detected NixOS. Import the module — it is NON-INVASIVE: it does "
@@ -133,21 +135,21 @@ def setup() -> int:
             "Then `nixos-rebuild switch`.\n"
         )
     elif _has_systemd():
-        _setup_systemd()
+        _setup_systemd(pool)
     else:
         sys.stderr.write(
             "No systemd detected. Run the one-time bring-up as root (and add "
             "your own boot persistence — e.g. an OpenRC/runit service):\n\n"
         )
-        sys.stdout.write(netpool.render_shell_setup() + "\n")
+        sys.stdout.write(netpool.render_shell_setup(pool) + "\n")
     return 0
 
 
-def _setup_systemd() -> None:
+def _setup_systemd(pool: netpool.NetPool) -> None:
     """Install the pool as a persistent systemd unit — the portable path,
     identical on every systemd distro. Performs the install directly when
     run as root; otherwise prints a self-contained copy-paste block."""
-    unit = netpool.render_systemd_unit(_owner(), _script_path())
+    unit = netpool.render_systemd_unit(pool, _owner(), _script_path())
     sys.stderr.write(
         f"Persistent install (systemd — same on every systemd distro). Needs "
         f"`nft` (nftables) and `ip` (iproute2); install via your package "
@@ -186,11 +188,12 @@ def _setup_systemd() -> None:
     )
 
 
-def teardown() -> int:
-    slots = netpool.all_slots()
+def teardown(settings: Settings) -> int:
+    pool = netpool.from_settings(settings.infra)
+    slots = pool.all_slots()
     sys.stderr.write(
         f"Undo the Firecracker network pool ({len(slots)} slots, base "
-        f"{netpool.ip_base()}) — a privileged operation.\n\n"
+        f"{pool.ip_base}) — a privileged operation.\n\n"
     )
     if _is_nixos():
         sys.stderr.write(
@@ -256,7 +259,8 @@ def _kvm_accessible() -> bool:
         return False
 
 
-def status() -> int:
+def status(settings: Settings) -> int:
+    pool = netpool.from_settings(settings.infra)
     # Readiness == what the launch preflight hard-requires: the binary
     # executable, /dev/kvm accessible, the TAP pool present, and no range
     # overlap. Listing the nft table usually needs root, so — like the
@@ -285,7 +289,7 @@ def status() -> int:
                 f"KVM: {util._KVM_DEVICE} not accessible (open/ioctl failed)\n"
             )
         ok = False
-    kernel = util.kernel_path()
+    kernel = util.kernel_path(settings.infra)
     if kernel.is_file():
         sys.stderr.write(f"guest kernel: {kernel}\n")
     else:
@@ -294,7 +298,7 @@ def status() -> int:
             f"(set BOT_BOTTLE_FC_KERNEL or cache a vmlinux there)\n"
         )
         ok = False
-    dropbear = util.dropbear_path()
+    dropbear = util.dropbear_path(settings.infra)
     if dropbear.is_file():
         sys.stderr.write(f"dropbear: {dropbear}\n")
     else:
@@ -319,7 +323,7 @@ def status() -> int:
         sys.stderr.write("e2fsprogs: debugfs, e2fsck, resize2fs present\n")
     # Optional: overlays build on the host when an engine is available.
     try:
-        engine = container_engine.host_container_engine()
+        engine = container_engine.host_container_engine(settings.infra.build_engine)
     except container_engine.EngineUnavailable as e:
         sys.stderr.write(f"container engine: {e}\n")
         ok = False
@@ -331,8 +335,8 @@ def status() -> int:
                 "container engine: none (optional; agent overlays build in the infra "
                 "VM — install Docker or Podman to build them on the host)\n"
             )
-    missing = netpool.missing_taps()
-    total = netpool.pool_size()
+    missing = pool.missing_taps()
+    total = pool.pool_size
     if missing:
         sys.stderr.write(f"TAP pool: {total - len(missing)}/{total} present "
                          f"(missing: {', '.join(missing)})\n")
@@ -340,21 +344,21 @@ def status() -> int:
     else:
         sys.stderr.write(f"TAP pool: {total}/{total} present\n")
     if shutil.which("nft") is None:
-        sys.stderr.write(f"nft table inet {netpool.NFT_TABLE}: unverified "
+        sys.stderr.write(f"nft table inet {pool.nft_table}: unverified "
                          f"(nft not on PATH; enforced + checked post-boot)\n")
-    elif netpool.nft_table_present():
-        sys.stderr.write(f"nft table inet {netpool.NFT_TABLE}: present\n")
+    elif pool.nft_table_present():
+        sys.stderr.write(f"nft table inet {pool.nft_table}: present\n")
     else:
-        sys.stderr.write(f"nft table inet {netpool.NFT_TABLE}: not confirmable "
+        sys.stderr.write(f"nft table inet {pool.nft_table}: not confirmable "
                          f"unprivileged (listing needs root; verified post-boot)\n")
-    conflicts = netpool.overlapping_routes()
+    conflicts = pool.overlapping_routes()
     if conflicts:
         detail = ", ".join(f"{c.dst} dev {c.dev}" for c in conflicts)
-        sys.stderr.write(f"range overlap: base {netpool.ip_base()} CLASHES "
+        sys.stderr.write(f"range overlap: base {pool.ip_base} CLASHES "
                          f"with {detail}\n")
         ok = False
     else:
-        sys.stderr.write(f"range overlap: none (base {netpool.ip_base()})\n")
+        sys.stderr.write(f"range overlap: none (base {pool.ip_base})\n")
     _report_persistence()
     if not ok:
         sys.stderr.write("\nRun: bot-bottle backend setup --backend=firecracker\n")

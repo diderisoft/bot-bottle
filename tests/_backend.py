@@ -14,6 +14,7 @@ import os
 import unittest
 
 from bot_bottle.backend import is_backend_ready
+from bot_bottle.cli.settings import settings_from_env
 
 # Default when ``BOT_BOTTLE_BACKEND`` is unset. Docker preserves the historical
 # Docker-backed CI path (and mirrors the pin in ``test_sandbox_escape``).
@@ -49,7 +50,7 @@ def skip_unless_backend(backend: str):
             f"backend {backend!r} not selected (BOT_BOTTLE_BACKEND={sel})"
         )
     return unittest.skipUnless(
-        is_backend_ready(backend, quiet=False),
+        is_backend_ready(settings_from_env(), backend, quiet=False),
         f"{backend} backend not ready",
     )
 
@@ -66,6 +67,6 @@ def skip_unless_selected_backend_available():
     """
     backend = selected_backend()
     return unittest.skipUnless(
-        is_backend_ready(backend, quiet=False),
+        is_backend_ready(settings_from_env(), backend, quiet=False),
         f"selected backend {backend!r} not ready",
     )

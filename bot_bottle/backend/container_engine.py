@@ -8,7 +8,6 @@ cache, instead of with buildah inside the infra VM (PRD 0085). `BOT_BOTTLE_BUILD
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 
@@ -37,11 +36,11 @@ class EngineUnavailable(RuntimeError):
     quietly building somewhere else."""
 
 
-def host_container_engine() -> str | None:
-    """The host engine to build with: the one `BOT_BOTTLE_BUILD_ENGINE` names
-    (raising `EngineUnavailable` if it isn't usable), else the first usable of
+def host_container_engine(forced: str) -> str | None:
+    """The host engine to build with: `forced` (`InfraSettings.build_engine`,
+    raising `EngineUnavailable` if it isn't usable), else the first usable of
     Docker then Podman, else None. `vm` forces None."""
-    forced = os.environ.get(ENGINE_ENV, "").strip().lower()
+    forced = forced.strip().lower()
     if forced == "vm":
         return None
     if forced:

@@ -9,17 +9,16 @@ under its python init supervisor."""
 
 from __future__ import annotations
 
-import os
 import subprocess
 from pathlib import Path
 
+from ...contract.hostctl import DEFAULT_EGRESS_PORT
 from ...lib.log import die
 
 
-# Listening port the egress daemon binds inside the bundle. The
-# agent's HTTP_PROXY env var resolves to `http://egress:<port>`,
-# and the bundle's network aliases route `egress` to itself.
-EGRESS_PORT = int(os.environ.get("BOT_BOTTLE_EGRESS_PORT", "9099"))
+# Default listening port of the egress daemon in the gateway; launches use
+# `InfraSettings.egress_port`.
+EGRESS_PORT = DEFAULT_EGRESS_PORT
 
 # In-container path for mitmproxy's CA. The format is a single PEM
 # file holding BOTH the cert and the private key, concatenated.

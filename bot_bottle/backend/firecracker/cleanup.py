@@ -26,6 +26,7 @@ import os
 import signal
 from pathlib import Path
 
+from ...contract.hostctl import Settings
 from ...lib.log import info
 from .. import EnumerationError
 from ..cleanup_control import CleanupError, CleanupFailures
@@ -145,13 +146,13 @@ def prepare_cleanup() -> FirecrackerBottleCleanupPlan:
     )
 
 
-def cleanup(plan: FirecrackerBottleCleanupPlan) -> None:
+def cleanup(plan: FirecrackerBottleCleanupPlan, settings: Settings) -> None:
     """Revalidate the preview under the launch lock, then remove its survivors."""
     with lifecycle_lock.hold():
         fresh = prepare_cleanup()
         approved_pids = set(plan.vm_pids).intersection(fresh.vm_pids)
         approved_dirs = set(plan.run_dirs).intersection(fresh.run_dirs)
-        failures = CleanupFailures()
+        failures = CleanupFailures(timeout=settings.operation.cleanup_command_timeout_seconds)
         for pid in sorted(approved_pids):
             try:
                 _terminate_orphan(pid, _run_root())
