@@ -55,6 +55,13 @@ def _ca_builder(subject: x509.Name, issuer: x509.Name, *, public_key: rsa.RSAPub
     )
 
 
+def not_after(cert: x509.Certificate) -> dt.datetime:
+    """`cert`'s expiry, timezone-aware (`not_valid_after_utc` is cryptography
+    42+; the gateway pins 44, the dev floor is 41)."""
+    aware = getattr(cert, "not_valid_after_utc", None)
+    return aware if aware is not None else cert.not_valid_after.replace(tzinfo=dt.timezone.utc)
+
+
 def _pem(cert: x509.Certificate) -> bytes:
     return cert.public_bytes(serialization.Encoding.PEM)
 
@@ -78,15 +85,15 @@ def roll_over(confdir: Path, *, now: dt.datetime | None = None) -> x509.Certific
         x509.NameAttribute(NameOID.ORGANIZATION_NAME, "bot-bottle"),
     ])
     not_before = now - dt.timedelta(days=1)  # tolerate clock skew in agents
-    not_after = now + _VALIDITY
+    expires = now + _VALIDITY
     new_ca = _ca_builder(
         subject, subject, public_key=key.public_key(), issuer_public_key=key.public_key(),
-        not_before=not_before, not_after=not_after,
+        not_before=not_before, not_after=expires,
     ).sign(key, hashes.SHA256())
     cross = _ca_builder(
         subject, current.subject, public_key=key.public_key(),
         issuer_public_key=current_key.public_key(), not_before=not_before,
-        not_after=min(not_after, current.not_valid_after_utc),
+        not_after=min(expires, not_after(current)),
     ).sign(current_key, hashes.SHA256())
 
     key_pem = key.private_bytes(serialization.Encoding.PEM,

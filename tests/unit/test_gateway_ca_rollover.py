@@ -150,7 +150,7 @@ class TestCaRollover(unittest.TestCase):
         self.assertEqual(new_ca.subject, cross.subject)
         self.assertEqual(new_ca.public_key(), cross.public_key())
         self.assertNotEqual(old_ca.subject, new_ca.subject)
-        self.assertLessEqual(cross.not_valid_after_utc, old_ca.not_valid_after_utc)
+        self.assertLessEqual(ca_rollover.not_after(cross), ca_rollover.not_after(old_ca))
         key = serialization.load_pem_private_key(raw, None)
         self.assertEqual(new_ca.public_key(), key.public_key())
 
